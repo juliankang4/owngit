@@ -1,0 +1,182 @@
+{{define "layout"}}<!doctype html>
+<html lang="{{.Lang}}" class="theme-system" data-appearance="system"
+      data-lang="{{.Lang}}" data-lang-cookie="owngit_lang"{{if .Chrome.Connection.Encrypted}} data-secure="1"{{end}}
+      data-title-en="{{.TitleEN}}" data-title-ko="{{.TitleKO}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}}</title>
+<link rel="icon" href="{{.Asset "logo.svg"}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{.Asset "owngit.css"}}">
+<script src="{{.Asset "owngit.js"}}" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">{{bi .Lang "app.skip_to_content"}}</a>
+
+<div class="app{{if not .Chrome.Nav.OverviewURL}} app--bare{{end}}">
+  {{template "toolbar" .}}
+
+  <div class="app__body">
+    {{if .Chrome.Nav.OverviewURL}}{{template "sidebar" .}}{{end}}
+    <main id="main" class="content" tabindex="-1">
+      {{template "notices" .}}
+      {{template "body" .}}
+    </main>
+  </div>
+</div>
+</body>
+</html>{{end}}
+
+{{define "toolbar"}}
+<header class="toolbar">
+  <div class="toolbar__id">
+    <img class="toolbar__logo" src="{{.Asset "logo.svg"}}" alt="" width="27" height="27">
+    <span class="toolbar__name">OwnGit</span>
+    {{/* Storage location is owner and administrator information, so the
+         backend clears Visible for an ordinary visitor. */}}
+    {{if .Chrome.Storage.Visible}}
+      <span class="toolbar__host">
+        {{with .Chrome.Storage.Label}}<span>{{.}}</span>{{end}}
+        {{with .Chrome.Storage.Path}}<span class="mono">{{.}}</span>{{end}}
+      </span>
+    {{end}}
+  </div>
+
+  {{if .Chrome.Nav.OverviewURL}}
+  <form class="field" role="search" method="get" action="{{.Chrome.Nav.OverviewURL}}">
+    <label class="visually-hidden" for="q">{{bi .Lang "app.search.repositories"}}</label>
+    <input id="q" name="q" type="search" autocomplete="off" value="{{.Chrome.Nav.Query}}"
+           {{biAttr .Lang "placeholder" "app.search.repositories"}}>
+    <input type="hidden" name="lang" value="{{.Lang}}">
+  </form>
+  {{end}}
+
+  {{template "connection" .}}
+
+  <div class="appear" role="group" {{biAttr .Lang "aria-label" "app.appearance"}} data-appearance-picker>
+    <button type="button" class="appear__btn" data-appearance-set="light" aria-pressed="false">
+      {{themeIcon "light"}}<span class="appear__t">{{bi .Lang "app.appearance.light"}}</span>
+    </button>
+    <button type="button" class="appear__btn" data-appearance-set="dark" aria-pressed="false">
+      {{themeIcon "dark"}}<span class="appear__t">{{bi .Lang "app.appearance.dark"}}</span>
+    </button>
+    <button type="button" class="appear__btn" data-appearance-set="system" aria-pressed="true">
+      {{themeIcon "system"}}<span class="appear__t">{{bi .Lang "app.appearance.system"}}</span>
+    </button>
+  </div>
+
+  {{/* Language links work without JavaScript: the backend validates lang and
+       stores the preference. With the script loaded they switch in place, so
+       typing in a form is never lost. */}}
+  <nav class="lang" {{biAttr .Lang "aria-label" "app.language"}} data-lang-picker>
+    {{range .LangLinks}}
+      <a class="lang__btn" href="{{.URL}}" hreflang="{{.Lang}}" data-lang-set="{{.Lang}}"
+         {{if .Selected}}aria-current="true"{{end}}>{{.Label}}</a>
+    {{end}}
+  </nav>
+</header>
+{{end}}
+
+{{define "connection"}}
+{{$c := .Chrome.Connection}}
+{{/* Report only what this request shows. A host name is not proof of
+     encryption, and the application cannot see the rest of the network. */}}
+<p class="conn{{if $c.Encrypted}} conn--secure{{else}} conn--plain{{end}}"
+   {{if $c.Encrypted}}{{biAttr .Lang "title" "connection.encrypted"}}{{else}}{{biAttrText .Lang "title" (printf "%s %s" (t "en" "connection.plain_detail") (t "en" "connection.no_proof")) (printf "%s %s" (t "ko" "connection.plain_detail") (t "ko" "connection.no_proof"))}}{{end}}>
+  {{if $c.Encrypted}}{{icon "lock"}}{{else}}{{icon "unlocked"}}{{end}}
+  <span class="conn__t">{{if $c.Encrypted}}{{bi .Lang "connection.encrypted"}}{{else}}{{bi .Lang "connection.plain"}}{{end}}</span>
+</p>
+{{end}}
+
+{{define "sidebar"}}
+{{$nav := .Chrome.Nav}}
+<nav class="sidebar" {{biAttr .Lang "aria-label" "app.nav.primary"}}>
+  <div class="sidebar__inner">
+    <p class="sb__label">{{bi .Lang "app.nav.repositories"}}</p>
+    <a class="sb__item" href="{{$nav.OverviewURL}}"{{if and (eq $nav.Section "overview") (not $nav.ActiveRepoID)}} aria-current="page"{{end}}>
+      <span class="sb__name">{{bi .Lang "app.nav.all"}}</span>
+      <span class="sb__count">{{number $nav.Total}}</span>
+    </a>
+    {{range $nav.Repositories}}
+      <a class="sb__item" href="{{.URL}}"{{if eq .ID $nav.ActiveRepoID}} aria-current="page"{{end}}>
+        <span class="sb__name">{{.Name}}</span>
+        {{/* An uncomputed count stays blank rather than rendering as zero. */}}
+        {{if .CountKnown}}<span class="sb__count">{{number .CommitCount}}</span>{{end}}
+      </a>
+    {{else}}
+      <p class="sb__none">{{bi $.Lang "app.nav.no_repositories"}}</p>
+    {{end}}
+
+    <hr class="sb__rule">
+
+    <a class="sb__item" href="{{$nav.ActivityURL}}"{{if eq $nav.Section "activity"}} aria-current="page"{{end}}>
+      <span class="sb__name">{{bi .Lang "activity.title"}}</span>
+    </a>
+    {{with $nav.NewRepoURL}}
+      <a class="sb__item" href="{{.}}">
+        {{icon "plus"}}<span class="sb__name">{{bi $.Lang "repo.new.title"}}</span>
+      </a>
+    {{end}}
+    {{with $nav.SettingsURL}}
+      <a class="sb__item" href="{{.}}"{{if eq $nav.Section "settings"}} aria-current="page"{{end}}>
+        {{icon "settings"}}<span class="sb__name">{{bi $.Lang "settings.title"}}</span>
+      </a>
+    {{end}}
+
+    {{if or $nav.LogoutURL $nav.AdminLogoutURL}}
+      <div class="sb__out">
+        {{with $nav.AdminLogoutURL}}
+        <form method="post" action="{{.}}">
+          <input type="hidden" name="csrf" value="{{$.Chrome.CSRF}}">
+          <button type="submit" class="linkbtn">{{bi $.Lang "app.end_admin"}}</button>
+        </form>
+        {{end}}
+        {{with $nav.LogoutURL}}
+        <form method="post" action="{{.}}">
+          <input type="hidden" name="csrf" value="{{$.Chrome.CSRF}}">
+          <button type="submit" class="linkbtn">{{bi $.Lang "app.sign_out"}}</button>
+        </form>
+        {{end}}
+      </div>
+    {{end}}
+  </div>
+</nav>
+{{end}}
+
+{{define "notices"}}
+{{if .PageNotices}}
+<div class="notices">
+  {{range .PageNotices}}
+    <p class="notice notice--{{.Kind}}"{{if eq .Kind "error"}} role="alert"{{else}} role="status"{{end}}>
+      {{statusIcon .Kind}}
+      <span>{{biNotice $.Lang .}}{{with .Detail}} <span class="mono">{{.}}</span>{{end}}</span>
+    </p>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
+{{/* Field-level error. Call as:
+     {{template "fieldNotice" dict "Lang" .Lang "Notices" .Chrome.Notices "Field" "storage_path"}} */}}
+{{/* A field error, rendered beside the input that carries it.
+
+     The same field name can appear in several forms on one page: every
+     settings form collects "admin_password". The note element therefore needs
+     an id unique to its form, or two inputs would share one id and
+     aria-describedby would point at whichever came first. Pass "Scope" (the
+     action name) to namespace it. */}}
+{{define "fieldNotice"}}
+{{$field := .Field}}{{$lang := .Lang}}{{$id := noteID .Scope .Field}}
+{{range .Notices}}
+  {{if eq .Field $field}}
+    <p class="fieldnote fieldnote--{{.Kind}}" id="{{$id}}">
+      {{statusIcon .Kind}}<span>{{biNotice $lang .}}{{with .Detail}} <span class="mono">{{.}}</span>{{end}}</span>
+    </p>
+  {{end}}
+{{end}}
+{{end}}
+
+{{/* aria-invalid and aria-describedby for a field that carries an error. */}}
+{{define "fieldInvalid"}}{{$field := .Field}}{{$id := noteID .Scope .Field}}{{range .Notices}}{{if and (eq .Field $field) (eq .Kind "error")}} aria-invalid="true" aria-describedby="{{$id}}"{{end}}{{end}}{{end}}

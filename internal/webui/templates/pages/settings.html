@@ -1,0 +1,169 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}{{$pending := $p.PendingAction}}
+
+<div class="phead">
+  <h1>{{bi $lang "settings.title"}}</h1>
+  {{/* Every security change verifies the administrator password in the form
+       itself. A short confirmation state does not replace that check, and no
+       browser is remembered as an administrator. */}}
+  <p>{{bi $lang "settings.admin_required"}}</p>
+</div>
+
+<div class="card">
+  <div class="setblock">
+    <h2 class="setblock__h">{{bi $lang "settings.access.title"}}</h2>
+    <p class="setblock__now">
+      {{if eq $p.AccessMode "password"}}{{icon "lock"}}{{bi $lang "settings.access.password_now"}}
+      {{else}}{{icon "unlocked"}}{{bi $lang "settings.access.open_now"}}{{end}}
+    </p>
+
+    {{if eq $p.AccessMode "password"}}
+      {{$act := "change_access_password"}}{{$fn := forAction $pending $act $n}}
+      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
+        <summary class="btn">{{bi $lang "settings.access.change"}}</summary>
+        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="action" value="{{$act}}">
+          <div class="f">
+            <label for="chg-access">{{bi $lang "settings.access.change"}}</label>
+            <input id="chg-access" name="access_password" type="password" autocomplete="new-password" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "access_password"}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "access_password"}}
+          </div>
+          <div class="f">
+            <label for="chg-access-admin">{{bi $lang "admin.field"}}</label>
+            <input id="chg-access-admin" name="admin_password" type="password" autocomplete="current-password" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+          </div>
+          <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "settings.access.change"}}</button></div>
+        </form>
+      </details>
+
+      {{$act := "disable_access_password"}}{{$fn := forAction $pending $act $n}}
+      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
+        <summary class="btn">{{bi $lang "settings.access.disable"}}</summary>
+        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="action" value="{{$act}}">
+          <p class="fieldnote">{{icon "warning"}}<span>{{bi $lang "settings.access.disable_warning"}}</span></p>
+          <div class="f">
+            <label for="dis-access-admin">{{bi $lang "admin.field"}}</label>
+            <input id="dis-access-admin" name="admin_password" type="password" autocomplete="current-password" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+          </div>
+          <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "settings.access.disable"}}</button></div>
+        </form>
+      </details>
+    {{else}}
+      {{$act := "enable_access_password"}}{{$fn := forAction $pending $act $n}}
+      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
+        <summary class="btn">{{bi $lang "settings.access.enable"}}</summary>
+        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="action" value="{{$act}}">
+          <div class="f">
+            <label for="en-access">{{bi $lang "setup.access.password"}}</label>
+            <input id="en-access" name="access_password" type="password" autocomplete="new-password" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "access_password"}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "access_password"}}
+            <p class="f__help">{{bi $lang "setup.access.password_help"}}</p>
+          </div>
+          <div class="f">
+            <label for="en-access-admin">{{bi $lang "admin.field"}}</label>
+            <input id="en-access-admin" name="admin_password" type="password" autocomplete="current-password" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+          </div>
+          <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "settings.access.enable"}}</button></div>
+        </form>
+      </details>
+    {{end}}
+  </div>
+
+  <div class="setblock">
+    <h2 class="setblock__h">{{bi $lang "settings.admin.title"}}</h2>
+    {{$act := "change_admin_password"}}{{$fn := forAction $pending $act $n}}
+    <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
+      <summary class="btn">{{bi $lang "settings.admin.change"}}</summary>
+      <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="action" value="{{$act}}">
+        <div class="f">
+          <label for="cur-admin">{{bi $lang "settings.admin.current"}}</label>
+          <input id="cur-admin" name="admin_password" type="password" autocomplete="current-password" required
+                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+        </div>
+        <div class="f">
+          <label for="new-admin">{{bi $lang "settings.admin.new"}}</label>
+          <input id="new-admin" name="new_admin_password" type="password" autocomplete="new-password" required
+                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "new_admin_password"}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "new_admin_password"}}
+        </div>
+        <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "settings.admin.change"}}</button></div>
+      </form>
+    </details>
+    <p class="f__help">{{bi $lang "settings.admin.reset_hint"}}</p>
+  </div>
+
+  <div class="setblock">
+    <h2 class="setblock__h">{{bi $lang "settings.connection.title"}}</h2>
+    <p class="setblock__now">
+      {{if .Chrome.Connection.Encrypted}}{{icon "lock"}}{{bi $lang "connection.encrypted"}}
+      {{else}}{{icon "unlocked"}}{{bi $lang "connection.plain"}}{{end}}
+    </p>
+    {{/* Explain the situation first, then the limit of what OwnGit can
+         actually observe about the rest of the path. */}}
+    {{if not .Chrome.Connection.Encrypted}}
+      <p class="setblock__d">{{bi $lang "connection.plain_detail"}}</p>
+    {{end}}
+    <p class="setblock__d">{{bi $lang "connection.no_proof"}}</p>
+
+    {{/* Acknowledging plain HTTP is a security setting, so it also verifies
+         the administrator password. */}}
+    {{if and (not .Chrome.Connection.Encrypted) (not .Chrome.Connection.InsecureAcknowledged)}}
+      <p class="setblock__d">{{bi $lang "setup.insecure.help"}}</p>
+      {{$act := "acknowledge_insecure"}}{{$fn := forAction $pending $act $n}}
+      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}" open>
+        <summary class="btn">{{bi $lang "settings.connection.acknowledge"}}</summary>
+        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="action" value="{{$act}}">
+          <label class="check">
+            <input type="checkbox" name="insecure_ack" value="1" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "insecure_ack"}}>
+            <span class="check__t">{{bi $lang "setup.insecure.label"}}</span>
+            <span class="check__d">{{bi $lang "connection.tailscale_hint"}}</span>
+          </label>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "insecure_ack"}}
+          <div class="f">
+            <label for="ack-admin">{{bi $lang "admin.field"}}</label>
+            <input id="ack-admin" name="admin_password" type="password" autocomplete="current-password" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+          </div>
+          <div class="actions"><button type="submit" class="btn">{{bi $lang "settings.connection.acknowledge"}}</button></div>
+        </form>
+      </details>
+    {{else if not .Chrome.Connection.Encrypted}}
+      <p class="f__help">{{bi $lang "connection.tailscale_hint"}}</p>
+    {{end}}
+  </div>
+
+  {{/* Storage location and clone address are administrator information. The
+       backend clears them for an ordinary visitor. */}}
+  {{if $p.Storage.Visible}}
+  <div class="setblock">
+    <h2 class="setblock__h">{{bi $lang "settings.storage.title"}}</h2>
+    <dl class="kv">
+      {{with $p.Storage.Label}}<div><dt>{{biText $lang "Installation" "설치"}}</dt><dd>{{.}}</dd></div>{{end}}
+      <div><dt>{{bi $lang "settings.storage.title"}}</dt><dd class="mono">{{$p.Storage.Path}}</dd></div>
+      {{with $p.CloneHint}}<div><dt>{{bi $lang "settings.clone.title"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
+    </dl>
+    <p class="f__help">{{bi $lang "settings.storage.help"}}</p>
+  </div>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" role="img" aria-labelledby="title desc">
+  <title id="title">OwnGit</title>
+  <desc id="desc">Three saved versions joined by a main history line and a returning branch.</desc>
+  <rect width="40" height="40" rx="10" fill="#0A62C9"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13 13v14M27 13v3c0 7-14 3-14 11"/>
+    <circle cx="13" cy="11" r="3" fill="#0A62C9"/>
+    <circle cx="27" cy="11" r="3" fill="#0A62C9"/>
+    <circle cx="13" cy="29" r="3" fill="#0A62C9"/>
+  </g>
+</svg>

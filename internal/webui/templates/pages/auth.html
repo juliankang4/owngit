@@ -1,0 +1,43 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}
+{{$admin := eq $p.Scope "admin"}}
+{{$field := "password"}}{{if $admin}}{{$field = "admin_password"}}{{end}}
+
+<div class="card">
+  <div class="phead">
+    <h1>{{if $admin}}{{bi $lang "admin.title"}}{{else}}{{bi $lang "login.title"}}{{end}}</h1>
+    <p>{{if $admin}}{{bi $lang "admin.body"}}{{else}}{{bi $lang "login.body"}}{{end}}</p>
+  </div>
+
+  <form class="form" method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    {{with $p.Next}}<input type="hidden" name="next" value="{{.}}">{{end}}
+
+    <div class="f">
+      <label for="{{$field}}">{{if $admin}}{{bi $lang "admin.field"}}{{else}}{{bi $lang "login.field"}}{{end}}</label>
+      {{/* A failed attempt never redisplays what was typed. */}}
+      <input id="{{$field}}" name="{{$field}}" type="password" autocomplete="current-password"
+             required autofocus{{if $p.Locked}} disabled{{end}}
+             {{template "fieldInvalid" dict "Notices" $n "Field" $field}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" $field}}
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn--primary"{{if $p.Locked}} disabled{{end}}>
+        {{if $admin}}{{bi $lang "admin.submit"}}{{else}}{{bi $lang "login.submit"}}{{end}}
+      </button>
+    </div>
+  </form>
+
+  {{if $p.Locked}}
+    <p class="fieldnote">{{icon "warning"}}<span>{{if $admin}}{{bi $lang "admin.locked"}}{{else}}{{bi $lang "login.locked"}}{{end}}{{if not $p.RetryAfter.IsZero}} <span class="mono">{{clock $p.RetryAfter}}</span>{{end}}</span></p>
+  {{end}}
+
+  {{/* Administrator confirmation is a short state, never permanent trust in
+       this browser, and recovery runs on the installation host. */}}
+  {{if $admin}}
+    <p class="f__help" style="margin-top:14px">{{bi $lang "admin.temporary_notice"}}</p>
+    <p class="f__help">{{bi $lang "admin.forgot"}}</p>
+  {{end}}
+</div>
+{{end}}

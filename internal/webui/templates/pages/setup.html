@@ -1,0 +1,149 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}
+
+{{if eq $p.Stage "welcome"}}
+  {{/* The one-time code arrives in the URL fragment, which the browser never
+       sends to the server. The script moves it into the hidden field, clears
+       the address bar, and keeps nothing in storage. Opening or previewing
+       this page redeems nothing: only this form's POST does. */}}
+  <div class="card">
+    <div class="phead">
+      <h1>{{bi $lang "setup.welcome.title"}}</h1>
+      <p>{{bi $lang "setup.welcome.body"}}</p>
+    </div>
+
+    {{if $p.Prerequisites}}
+      <ul class="prereq">
+        {{range $p.Prerequisites}}
+          <li class="prereq__row {{if .Satisfied}}is-ok{{else}}is-bad{{end}}">
+            {{if .Satisfied}}{{icon "check"}}{{else}}{{icon "warning"}}{{end}}
+            <span>{{bi $lang .Code}}{{with .Detail}} <span class="prereq__n">{{.}}</span>{{end}}</span>
+          </li>
+        {{end}}
+      </ul>
+    {{end}}
+
+    {{/* The server cannot see the fragment, so it must not claim either that
+         a code is held or that none is. Both statements start hidden and the
+         script reveals exactly one after reading the address bar. Without
+         scripting neither is shown; the noscript message explains why setup
+         cannot continue at all. */}}
+    <form class="form" method="post" action="{{$p.RedeemURL}}" data-redeem-form>
+      <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+      <input type="hidden" name="token" value="">
+      <p class="f__help" data-redeem-held hidden>{{bi $lang "setup.welcome.secret_held"}}</p>
+      <p class="fieldnote" data-redeem-missing hidden>{{icon "warning"}}<span>{{bi $lang "setup.welcome.missing_token"}}</span></p>
+      <noscript>
+        <p class="fieldnote">{{icon "warning"}}<span>{{bi $lang "setup.welcome.needs_script"}}</span></p>
+      </noscript>
+      <div class="actions">
+        <button type="submit" class="btn btn--primary" data-redeem-start disabled>{{bi $lang "setup.welcome.start"}}</button>
+      </div>
+    </form>
+  </div>
+
+{{else if eq $p.Stage "wizard"}}
+  <div class="card">
+    <div class="phead">
+      <h1>{{bi $lang "setup.wizard.title"}}</h1>
+      <p>{{bi $lang "setup.wizard.body"}}</p>
+    </div>
+
+    <form class="form" method="post" action="{{$p.SubmitURL}}">
+      <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+
+      <div class="setblock">
+        <h2 class="setblock__h">{{bi $lang "setup.storage.label"}}</h2>
+        <p class="setblock__d">{{bi $lang "setup.storage.help"}}</p>
+        <div class="f">
+          <label for="storage_path">{{bi $lang "setup.storage.label"}}</label>
+          <input id="storage_path" name="storage_path" type="text" spellcheck="false" autocapitalize="off"
+                 autocomplete="off" required
+                 value="{{$p.Form.StoragePath}}"
+                 {{with $p.Form.SuggestedPath}}placeholder="{{.}}"{{end}}
+                 {{template "fieldInvalid" dict "Notices" $n "Field" "storage_path"}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "storage_path"}}
+          <p class="f__help">{{bi $lang "setup.storage.local_only"}}</p>
+        </div>
+      </div>
+
+      <div class="setblock">
+        <h2 class="setblock__h">{{bi $lang "setup.access.label"}}</h2>
+        <p class="setblock__d">{{bi $lang "setup.access.help"}}</p>
+
+        <label class="choice">
+          <input type="radio" name="access_mode" value="open"{{if ne $p.Form.AccessMode "password"}} checked{{end}}>
+          <span class="choice__t">{{bi $lang "setup.access.open"}}</span>
+          <span class="choice__d">{{bi $lang "setup.access.open_help"}}</span>
+        </label>
+
+        <label class="choice">
+          <input type="radio" name="access_mode" value="password"{{if eq $p.Form.AccessMode "password"}} checked{{end}}>
+          <span class="choice__t">{{bi $lang "setup.access.password"}}</span>
+          <span class="choice__d">{{bi $lang "setup.access.password_help"}}</span>
+          <span class="choice__nest">
+            {{/* A submitted password is never written back into the form. */}}
+            <label class="f__label" for="access_password">{{bi $lang "setup.access.password"}}</label>
+            <input id="access_password" name="access_password" type="password" autocomplete="new-password"
+                   {{template "fieldInvalid" dict "Notices" $n "Field" "access_password"}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "access_password"}}
+            {{if $p.Form.AccessPasswordSet}}
+              <span class="stateline">{{icon "check"}}{{bi $lang "setup.access.password_saved"}}</span>
+            {{end}}
+          </span>
+        </label>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "access_mode"}}
+      </div>
+
+      <div class="setblock">
+        <h2 class="setblock__h">{{bi $lang "setup.admin.label"}}</h2>
+        <p class="setblock__d">{{bi $lang "setup.admin.help"}}</p>
+        <div class="f">
+          <label for="admin_password">{{bi $lang "setup.admin.label"}}</label>
+          <input id="admin_password" name="admin_password" type="password" autocomplete="new-password" required
+                 {{template "fieldInvalid" dict "Notices" $n "Field" "admin_password"}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "admin_password"}}
+          {{if $p.Form.AdminPasswordSet}}
+            <span class="stateline">{{icon "check"}}{{bi $lang "setup.admin.saved"}}</span>
+          {{end}}
+        </div>
+      </div>
+
+      {{/* Plain HTTP is allowed after a clear notice and a deliberate choice.
+           Afterwards the header shows the connection state instead of asking
+           again. This is a statement about this request, not a claim about
+           the whole network. */}}
+      {{if not .Chrome.Connection.Encrypted}}
+      <div class="setblock">
+        <h2 class="setblock__h">{{bi $lang "settings.connection.title"}}</h2>
+        {{/* What OwnGit does, then what it cannot know, then the choice. */}}
+        <p class="setblock__d">{{bi $lang "setup.insecure.help"}}</p>
+        <p class="setblock__d">{{bi $lang "connection.no_proof"}}</p>
+        <label class="check">
+          <input type="checkbox" name="insecure_ack" value="1"{{if $p.Form.InsecureAck}} checked{{end}}
+                 {{template "fieldInvalid" dict "Notices" $n "Field" "insecure_ack"}}>
+          <span class="check__t">{{bi $lang "setup.insecure.label"}}</span>
+          <span class="check__d">{{bi $lang "connection.tailscale_hint"}}</span>
+        </label>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "insecure_ack"}}
+      </div>
+      {{end}}
+
+      <div class="actions">
+        <button type="submit" class="btn btn--primary">{{bi $lang "setup.submit"}}</button>
+      </div>
+    </form>
+  </div>
+
+{{else}}
+  {{/* Expired, already redeemed, or already configured. Recovery is through
+       the installation host, so no email or account service is implied. */}}
+  <div class="card">
+    <div class="errpage">
+      <h1 class="errpage__t">{{bi $lang $p.Reason}}</h1>
+      {{if $p.RecoveryHint}}<p class="errpage__d">{{bi $lang $p.RecoveryHint}}</p>{{end}}
+      {{with .Chrome.Nav.OverviewURL}}<a class="btn" href="{{.}}">{{bi $lang "app.back_to_repositories"}}</a>{{end}}
+    </div>
+  </div>
+{{end}}
+{{end}}

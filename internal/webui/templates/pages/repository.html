@@ -1,0 +1,313 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}
+
+{{template "repoHead" dict "Lang" $lang "P" $p}}
+
+<div class="rpane">
+{{if or $p.Repo.Unreadable $p.Repo.Empty}}
+  {{template "repoState" dict "Lang" $lang "Repo" $p.Repo}}
+  {{template "cloneblock" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL "PushCommands" $p.Overview.PushCommands}}
+
+{{else if eq $p.Tab "overview"}}
+  {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.OverviewURL}}
+  {{template "cloneblock" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL}}
+
+  {{with $p.Overview.Head}}
+  <section class="sec">
+    <div class="sec__bar"><h2>{{bi $lang "app.latest_commit"}}</h2></div>
+    <a class="row row--repo" href="{{.URL}}">
+      <span class="row__name mono">{{.ShortOID}}</span>
+      <span class="row__ref">{{.AuthorName}}</span>
+      <span class="row__msg">{{.Subject}}</span>
+      <span class="row__when">{{biRelative $lang $now .AuthorDate}}</span>
+    </a>
+  </section>
+  {{end}}
+
+  <section class="sec">
+    <div class="sec__bar">
+      <h2>{{bi $lang "app.branches"}}</h2>
+      <span class="sec__n">{{biCount $lang "branch" (len $p.Overview.Branches)}}</span>
+    </div>
+    {{if $p.Overview.Branches}}
+      <div class="reflist">
+        {{range $p.Overview.Branches}}
+          <div class="refline">
+            <span class="refline__n">
+              {{icon "branch"}}
+              {{if .URL}}<a href="{{.URL}}">{{.Name}}</a>{{else}}<span class="mono">{{.Name}}</span>{{end}}
+              {{if .IsDefault}}<span class="pill pill--default">{{biText $lang "Default" "기본"}}</span>{{end}}
+            </span>
+            <span class="refline__msg">{{.Tip.Subject}}</span>
+            <span class="refline__when">{{biRelative $lang $now .Tip.AuthorDate}}</span>
+          </div>
+        {{end}}
+      </div>
+      {{/* Ref.Missing only says the selected ref did not resolve. It is also
+           true when a reader asks for a branch that never existed, so it
+           cannot by itself mean the default branch is gone. The backend sends
+           the notice that names the actual reason, and it is rendered with the
+           other page notices. */}}
+    {{else}}
+      <p class="empty">{{bi $lang "repo.no_branches"}}</p>
+    {{end}}
+  </section>
+
+  <section class="sec">
+    <div class="sec__bar">
+      <h2>{{bi $lang "app.tags"}}</h2>
+      <span class="sec__n">{{biCount $lang "tag" (len $p.Overview.Tags)}}</span>
+    </div>
+    {{if $p.Overview.Tags}}
+      <div class="reflist">
+        {{range $p.Overview.Tags}}
+          <div class="refline">
+            <span class="refline__n">
+              {{icon "tag"}}
+              {{if .URL}}<a href="{{.URL}}">{{.Name}}</a>{{else}}<span class="mono">{{.Name}}</span>{{end}}
+              {{if .Annotated}}<span class="pill">{{biText $lang "Annotated" "주석"}}</span>{{end}}
+            </span>
+            <span class="refline__msg">{{.Tip.Subject}}</span>
+            <span class="refline__when">{{biRelative $lang $now .Tip.AuthorDate}}</span>
+          </div>
+        {{end}}
+      </div>
+    {{else}}
+      <p class="empty">{{bi $lang "repo.no_tags"}}</p>
+    {{end}}
+  </section>
+
+  {{/* History kept after a force push or a deleted ref. It is listed as kept
+       history, never as a live branch, and there is no restore control here
+       because restoring is not implemented. */}}
+  {{if $p.Overview.RetainedRefs}}
+  <section class="sec">
+    <div class="sec__bar">
+      <h2>{{bi $lang "repo.retained.title"}}</h2>
+      <span class="sec__n">{{biCount $lang "item" (len $p.Overview.RetainedRefs)}}</span>
+    </div>
+    <div class="reflist">
+      {{range $p.Overview.RetainedRefs}}
+        <div class="refline">
+          <span class="refline__n">
+            {{/* Kept history is browsable only when the backend can address
+                 it. Without a URL it is listed as a plain record rather than
+                 a link that would go nowhere. */}}
+            {{icon "kept"}}
+            {{if .URL}}<a href="{{.URL}}">{{.Name}}</a>{{else}}<span class="mono">{{.Name}}</span>{{end}}
+            <span class="pill pill--kept">{{bi $lang "repo.retained.title"}}</span>
+          </span>
+          <span class="refline__msg">{{.Tip.Subject}}</span>
+          <span class="refline__when">{{biRelative $lang $now .Tip.AuthorDate}}</span>
+        </div>
+      {{end}}
+    </div>
+    <p class="hm__note">{{bi $lang "repo.retained.help"}}</p>
+  </section>
+  {{end}}
+
+  {{if $p.Overview.Activity.Year}}
+  <section class="sec">
+    {{template "graph" dict "Lang" $lang "G" $p.Overview.Activity}}
+  </section>
+  {{end}}
+
+{{else if eq $p.Tab "code"}}
+  {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CodeURL "Path" $p.Code.Path}}
+
+  {{/* A missing ref has no tree to show. The refbar above already carries the
+       warning, and the backend's page notice names the actual reason, so the
+       panel stays quiet rather than printing the same generic sentence a
+       second line below the first. */}}
+  {{if $p.Ref.Missing}}
+  {{else if $p.Code.NotFound}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "code.path_missing"}}</p>
+      <p class="mono">{{$p.Code.Path}}</p>
+      <a class="btn" href="{{$p.CodeURL}}">{{bi $lang "app.root_folder"}}</a>
+    </div>
+  {{else}}
+    <nav class="crumbs" {{biAttr $lang "aria-label" "app.root_folder"}}>
+      {{range $i, $c := $p.Code.Crumbs}}
+        {{if $i}}<span class="crumbs__sep" aria-hidden="true">/</span>{{end}}
+        {{if or $c.Current (not $c.URL)}}
+          <span class="crumbs__here" aria-current="page">{{$c.Name}}</span>
+        {{else}}
+          <a href="{{$c.URL}}">{{$c.Name}}</a>
+        {{end}}
+      {{end}}
+    </nav>
+
+    <div class="code__split">
+      <nav class="tree" {{biAttr $lang "aria-label" "app.files_label"}}>
+        <p class="tree__h mono">{{if $p.Code.Path}}{{$p.Code.Path}}{{else}}/{{end}}</p>
+        <ul class="tree__list">
+          {{with $p.Code.UpURL}}
+            <li><a class="tree__row tree__row--up" href="{{.}}">{{icon "up"}}<span class="tree__name">{{bi $lang "app.up_one_level"}}</span></a></li>
+          {{end}}
+          {{range $p.Code.Entries}}
+            <li>
+              <a class="tree__row" href="{{.URL}}"{{if and $p.Code.File (eq .Path $p.Code.File.Path)}} aria-current="page"{{end}}>
+                {{if eq .Kind "dir"}}{{icon "folder"}}
+                {{else if eq .Kind "symlink"}}{{icon "symlink"}}
+                {{else if eq .Kind "submodule"}}{{icon "module"}}
+                {{else}}{{icon "file"}}{{end}}
+                <span class="tree__name">{{.Name}}</span>
+                {{if eq .Kind "file"}}<span class="tree__n">{{bytes .Size}}</span>{{end}}
+              </a>
+            </li>
+          {{else}}
+            {{if not $p.Code.File}}<li class="tree__empty">{{bi $lang "code.empty_directory"}}</li>{{end}}
+          {{end}}
+        </ul>
+      </nav>
+
+      <div class="filepane">
+        {{with $p.Code.File}}
+          <div class="filepane__bar">
+            <p class="filepane__path mono">{{.Path}}</p>
+            <p class="filepane__meta">
+              <span>{{biCount $lang "line" (len .Lines)}}</span>
+              <span>{{bytes .Size}}</span>
+              {{with .RawURL}}<a href="{{.}}">{{bi $lang "code.raw_link"}}</a>{{end}}
+            </p>
+          </div>
+
+          {{if .Binary}}
+            <p class="empty">{{bi $lang "code.binary"}}</p>
+          {{else}}
+            {{/* Repository content is rendered as text through the template's
+                 escaping. It is never inserted as markup. */}}
+            <div class="codebox" tabindex="0" role="region" aria-label="{{.Path}}">
+              <table class="codetable">
+                <tbody>
+                  {{range $i, $line := .Lines}}
+                    <tr>
+                      <td class="codetable__n">{{add $i 1}}</td>
+                      <td class="codetable__t">{{$line}}</td>
+                    </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            </div>
+            {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "code.truncated"}}</span></p>{{end}}
+          {{end}}
+        {{else}}
+          {{if not $p.Code.Entries}}
+            <p class="empty">{{bi $lang "code.empty_directory"}}</p>
+          {{end}}
+        {{end}}
+      </div>
+    </div>
+  {{end}}
+
+{{else}}
+  {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CommitsURL}}
+
+  {{if $p.Commits.NotFound}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "commits.not_found"}}</p>
+      <a class="btn" href="{{$p.CommitsURL}}">{{bi $lang "app.commit_history"}}</a>
+    </div>
+  {{else if not $p.Commits.List}}
+    <div class="empty"><p class="empty__lead">{{bi $lang "commits.empty"}}</p></div>
+  {{else}}
+    <div class="commits__split">
+      <nav class="clist" {{biAttr $lang "aria-label" "app.commit_history"}}>
+        <div class="clist__list">
+          {{range $p.Commits.List}}
+            <a class="clist__row" href="{{.URL}}"{{if and $p.Commits.Detail (eq .OID $p.Commits.Detail.Commit.OID)}} aria-current="page"{{end}}>
+              <span class="clist__msg">{{.Subject}}</span>
+              <span class="clist__meta"><span>{{.ShortOID}}</span><span>{{biRelative $lang $now .AuthorDate}}</span></span>
+            </a>
+          {{end}}
+        </div>
+        {{if or $p.Commits.NewerURL $p.Commits.OlderURL}}
+          <nav class="pager" style="padding:8px">
+            {{with $p.Commits.NewerURL}}<a class="btn" href="{{.}}">{{bi $lang "app.newer"}}</a>{{end}}
+            {{with $p.Commits.OlderURL}}<a class="btn" href="{{.}}">{{bi $lang "app.older"}}</a>{{end}}
+          </nav>
+        {{end}}
+      </nav>
+
+      <div class="cdetail">
+        {{with $p.Commits.Detail}}
+          <div class="cdetail__head">
+            <h2 class="cdetail__msg">{{.Commit.Subject}}</h2>
+            {{with .Body}}<p class="cdetail__body">{{.}}</p>{{end}}
+            <p class="cdetail__meta">
+              <span class="mono">{{.Commit.ShortOID}}</span>
+              <span>{{.Commit.AuthorName}}</span>
+              <span>{{biDateTime $lang .Commit.AuthorDate}}</span>
+              {{range .Parents}}<a class="mono" href="{{.URL}}">{{.ShortOID}}</a>{{end}}
+            </p>
+            {{/* Git records an author and a committer. When they differ, the
+                 author line alone would be a partial account, so the committer
+                 is shown beside it as a plain fact. What the difference means
+                 is the reader's call. The name is repeated only when it is
+                 someone else's. */}}
+            {{if .HasDistinctCommitter}}
+              <p class="cdetail__meta cdetail__committer">
+                <span>{{bi $lang "commits.committer"}}</span>
+                <span>{{.CommitterName}}</span>
+                {{if not .CommitterDate.IsZero}}<span>{{biDateTime $lang .CommitterDate}}</span>{{end}}
+              </p>
+            {{end}}
+          </div>
+
+          {{if .Unavailable}}
+            <p class="empty">{{bi $lang .UnavailableReason}}</p>
+          {{else}}
+            {{if .Files}}
+              <div class="fchips">
+                {{range .Files}}
+                  <a class="fchip" href="{{.URL}}"{{if .Selected}} aria-current="page"{{end}}>
+                    <span class="fchip__p">{{.Path}}</span>
+                    <span class="fchip__n">
+                      {{if .Binary}}<span>{{bi $lang "commits.binary_file"}}</span>
+                      {{else}}<span class="add">+{{.Additions}}</span><span class="del">-{{.Deletions}}</span>{{end}}
+                    </span>
+                  </a>
+                {{end}}
+              </div>
+            {{end}}
+
+            {{range .Files}}
+              {{if and .Selected .Hunks}}
+                <div class="filepane__bar">
+                  <p class="filepane__path mono">{{.Path}}</p>
+                  <p class="filepane__meta">
+                    {{if .OldPath}}<span class="mono">{{.OldPath}}</span>{{end}}
+                    <span class="add">+{{.Additions}}</span><span class="del">-{{.Deletions}}</span>
+                  </p>
+                </div>
+                <div class="diffbox" tabindex="0" role="region" aria-label="{{.Path}}">
+                  <table class="difftable">
+                    <tbody>
+                      {{range .Hunks}}
+                        <tr class="difftable__hunk"><td colspan="3">{{.Header}}</td></tr>
+                        {{range .Lines}}
+                          <tr class="difftable__r{{if eq .Kind "add"}} is-add{{else if eq .Kind "del"}} is-del{{end}}">
+                            <td class="difftable__n">{{if .OldLine}}{{.OldLine}}{{end}}</td>
+                            <td class="difftable__n">{{if .NewLine}}{{.NewLine}}{{end}}</td>
+                            {{/* The marker is a separate span, so the change is
+                                 readable without relying on the row colour. */}}
+                            <td class="difftable__t"><span class="difftable__s" aria-hidden="true">{{if eq .Kind "add"}}+{{else if eq .Kind "del"}}-{{else}} {{end}}</span>{{.Text}}</td>
+                          </tr>
+                        {{end}}
+                      {{end}}
+                    </tbody>
+                  </table>
+                </div>
+              {{end}}
+            {{end}}
+
+            {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "commits.diff_truncated"}}</span></p>{{end}}
+          {{end}}
+        {{end}}
+      </div>
+    </div>
+  {{end}}
+{{end}}
+</div>
+{{end}}

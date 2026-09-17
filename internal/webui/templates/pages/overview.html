@@ -1,0 +1,74 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}
+
+{{template "graph" dict "Lang" $lang "G" $p.Activity}}
+
+<section class="sec">
+  <div class="sec__bar">
+    <h2>{{bi $lang "app.nav.repositories"}}</h2>
+    <span class="sec__n">{{biCount $lang "repository" $p.TotalCount}}</span>
+    {{with .Chrome.Nav.NewRepoURL}}
+      <span class="sec__hint"><a href="{{.}}">{{bi $lang "repo.new.title"}}</a></span>
+    {{end}}
+  </div>
+
+  {{if $p.Repositories}}
+    <div class="rows">
+      {{range $p.Repositories}}
+        <a class="row row--repo" href="{{.URL}}">
+          <span class="row__name">{{.Name}}</span>
+          <span class="row__ref">
+            {{/* A badge is one short line, so the row names the status only.
+                 The repository's own pages carry the full explanation and
+                 what to do about it. */}}
+            {{if .DefaultBranchMissing}}
+              {{icon "warning"}}<span class="pill pill--missing">{{bi $lang "repo.default_branch_missing.short"}}</span>
+            {{else if .DefaultBranch}}
+              {{icon "branch"}}<span class="row__refname" title="{{.DefaultBranch}}">{{.DefaultBranch}}</span>
+            {{end}}
+          </span>
+          {{/* An empty repository says so instead of showing a blank row that
+               looks like missing data. */}}
+          <span class="row__msg">
+            {{if .Empty}}{{bi $lang "repo.empty"}}
+            {{else if .Head.Subject}}{{.Head.Subject}}
+            {{else if .Description}}{{.Description}}{{end}}
+          </span>
+          <span class="row__when">
+            {{if not .Empty}}{{biRelative $lang $now .Head.AuthorDate}}{{end}}
+          </span>
+        </a>
+      {{end}}
+    </div>
+  {{else if .Chrome.Nav.Query}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "app.no_matches"}}</p>
+      <a class="btn" href="{{.Chrome.Nav.OverviewURL}}">{{bi $lang "app.clear_search"}}</a>
+    </div>
+  {{else}}
+    {{/* The dashboard is legitimately empty right after setup. Creating a
+         repository is an invitation, not a forced step. */}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "app.overview_empty"}}</p>
+      <p>{{bi $lang "app.overview_start"}}</p>
+      {{with .Chrome.Nav.NewRepoURL}}
+        <a class="btn btn--primary" href="{{.}}">{{icon "plus"}}{{bi $lang "repo.new.submit"}}</a>
+      {{end}}
+    </div>
+  {{end}}
+</section>
+
+{{if $p.Recent}}
+<section class="sec">
+  <div class="sec__bar">
+    <h2>{{bi $lang "app.latest_activity"}}</h2>
+    {{with $p.RecentMoreURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "app.see_all"}}</a></span>{{end}}
+  </div>
+  <div class="rows">
+    {{range $p.Recent}}
+      {{template "activityRow" dict "Lang" $lang "Now" $now "E" . "ShowRepo" true}}
+    {{end}}
+  </div>
+</section>
+{{end}}
+{{end}}

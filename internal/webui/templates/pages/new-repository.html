@@ -1,0 +1,38 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}
+
+<p class="backline"><a class="back" href="{{.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
+
+<div class="card">
+  <div class="phead">
+    <h1>{{bi $lang "repo.new.title"}}</h1>
+  </div>
+
+  <form class="form" method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+
+    <div class="f">
+      <label for="name">{{bi $lang "repo.new.name"}}</label>
+      <input id="name" name="name" type="text" required autofocus spellcheck="false"
+             autocapitalize="off" autocomplete="off" value="{{$p.Name}}"
+             {{template "fieldInvalid" dict "Notices" $n "Field" "name"}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "name"}}
+      {{/* The naming rule is visible before a mistake, not only after one. */}}
+      <p class="f__help">{{if $p.NameRules}}{{bi $lang $p.NameRules}}{{else}}{{bi $lang "repo.new.name_rules"}}{{end}}</p>
+    </div>
+
+    <div class="f">
+      <label for="description">{{bi $lang "repo.new.description"}}</label>
+      <textarea id="description" name="description" rows="3"
+                {{template "fieldInvalid" dict "Notices" $n "Field" "description"}}>{{$p.Description}}</textarea>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "description"}}
+      <p class="f__help">{{bi $lang "repo.new.description_help"}}</p>
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn--primary">{{bi $lang "repo.new.submit"}}</button>
+      <a class="btn" href="{{.Chrome.Nav.OverviewURL}}">{{bi $lang "app.cancel"}}</a>
+    </div>
+  </form>
+</div>
+{{end}}

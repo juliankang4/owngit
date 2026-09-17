@@ -1,0 +1,35 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}
+
+<div class="phead">
+  <h1>{{bi $lang "activity.title"}}</h1>
+</div>
+
+{{template "graph" dict "Lang" $lang "G" $p.Activity}}
+
+<section class="sec">
+  {{if $p.Days}}
+    {{range $p.Days}}
+      <div class="daygroup">
+        <h2 class="daygroup__h">{{biDayHeading $lang $now .Date}}</h2>
+        <div class="rows">
+          {{range .Entries}}
+            {{template "activityRow" dict "Lang" $lang "Now" $now "E" . "ShowRepo" true}}
+          {{end}}
+        </div>
+      </div>
+    {{end}}
+
+    {{if or $p.NewerURL $p.OlderURL}}
+      <nav class="pager">
+        {{with $p.NewerURL}}<a class="btn" href="{{.}}">{{bi $lang "app.newer"}}</a>{{end}}
+        {{with $p.OlderURL}}<a class="btn" href="{{.}}">{{bi $lang "app.older"}}</a>{{end}}
+      </nav>
+    {{end}}
+  {{else}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "activity.empty"}}</p>
+    </div>
+  {{end}}
+</section>
+{{end}}

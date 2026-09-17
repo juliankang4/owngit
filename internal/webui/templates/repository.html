@@ -1,0 +1,118 @@
+{{/* Shared repository partials: header, tabs, ref picker, clone block. */}}
+
+{{define "repoHead"}}
+{{$lang := .Lang}}{{$p := .P}}
+<p class="backline"><a class="back" href="{{$p.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
+
+<div class="rhead">
+  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+  {{if $p.Repo.Description}}
+    <p class="rhead__desc">{{$p.Repo.Description}}</p>
+  {{end}}
+</div>
+
+{{/* Semantic tabs: these are real navigation between URLs, so they are links
+     marked with aria-current rather than ARIA tab widgets that would promise
+     in-page panels. */}}
+<nav class="rtabs" {{biAttr $lang "aria-label" "app.repo_tabs_label"}}>
+  <a class="rtabs__btn" href="{{$p.OverviewURL}}"{{if eq $p.Tab "overview"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.overview"}}</a>
+  <a class="rtabs__btn" href="{{$p.CodeURL}}"{{if eq $p.Tab "code"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.code"}}</a>
+  <a class="rtabs__btn" href="{{$p.CommitsURL}}"{{if eq $p.Tab "commits"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.commits"}}</a>
+</nav>
+{{end}}
+
+{{/* The ref picker plus an honest statement about the selected ref.
+     A missing, detached, or retained ref is named as such; the view never
+     silently substitutes a different branch. */}}
+{{define "refbar"}}
+{{$lang := .Lang}}{{$ref := .Ref}}
+<div class="refbar">
+  {{if or $ref.Branches $ref.Tags}}
+  <form class="refbar__pick" method="get" action="{{.Action}}">
+    {{/* The picker holds branches and tags, and when it is closed only the
+         chosen short name is visible, so the label must not say "Branch"
+         while a tag is selected. */}}
+    <label class="refbar__label" for="ref-select">{{bi $lang "app.ref_label"}}</label>
+    {{/* The button submits without JavaScript; the shared script submits on
+         change so the picker feels immediate when scripting is available. */}}
+    {{/* A branch and a tag can share one short name. The option shows the
+         short name but submits the unambiguous ref the backend put in its
+         URL, so picking one never resolves to the other. */}}
+    <select id="ref-select" name="ref" data-submit-on-change>
+      {{if $ref.Branches}}
+      <optgroup {{biAttr $lang "label" "app.branches"}}>
+        {{range $ref.Branches}}
+          <option value="{{refValue .}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </optgroup>
+      {{end}}
+      {{if $ref.Tags}}
+      <optgroup {{biAttr $lang "label" "app.tags"}}>
+        {{range $ref.Tags}}
+          <option value="{{refValue .}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </optgroup>
+      {{end}}
+      {{/* A retained, detached, or missing selection is not in the lists
+           above, so it is offered explicitly. Without it the browser selects
+           the first option instead, which both misreports what is being shown
+           and leaves the reader stuck: picking that already-selected entry
+           fires no change event, so the picker cannot move anywhere.
+
+           The value is the ref actually requested, recovered from this form's
+           own action, so submitting it unchanged asks for the same missing ref
+           rather than silently resolving to a same-named branch or tag. */}}
+      {{if and $ref.Name (or $ref.Detached $ref.Retained $ref.Missing)}}
+        {{$current := queryRef .Action}}
+        {{if not $current}}{{$current = $ref.Name}}{{end}}
+        <option value="{{$current}}" selected>{{$ref.Name}}</option>
+      {{end}}
+    </select>
+    {{with .Path}}<input type="hidden" name="path" value="{{.}}">{{end}}
+    <input type="hidden" name="lang" value="{{$lang}}">
+    <button type="submit" class="btn refbar__go" data-hide-with-script>{{bi $lang "app.show"}}</button>
+  </form>
+  {{end}}
+
+  {{with $ref.ShortRevision}}<span class="refbar__rev">{{.}}</span>{{end}}
+
+  {{if $ref.Missing}}
+    <span class="pill pill--missing">{{icon "warning"}}{{bi $lang "repo.ref_missing"}}</span>
+  {{else if $ref.Retained}}
+    <span class="pill pill--kept">{{icon "kept"}}{{bi $lang "repo.ref_retained"}}</span>
+  {{else if $ref.Detached}}
+    <span class="refbar__note">{{bi $lang "repo.detached"}}</span>
+  {{else if $ref.IsDefault}}
+    <span class="pill pill--default">{{bi $lang "app.branch_label"}}</span>
+  {{end}}
+</div>
+{{end}}
+
+{{define "cloneblock"}}
+{{$lang := .Lang}}
+<div class="clone">
+  <p class="clone__h">{{bi $lang "repo.clone.title"}}</p>
+  <p class="clone__v">{{.CloneURL}}</p>
+  {{with .PushCommands}}
+    <pre class="clone__cmds">{{range .}}{{.}}
+{{end}}</pre>
+  {{end}}
+</div>
+{{end}}
+
+{{/* Empty and unreadable repositories are explained instead of rendered as a
+     blank history that looks like a failure. */}}
+{{define "repoState"}}
+{{$lang := .Lang}}{{$repo := .Repo}}
+{{if $repo.Unreadable}}
+  <div class="empty">
+    <p class="empty__lead">{{bi $lang "repo.unreadable"}}</p>
+    {{if $repo.UnreadableReason}}<p>{{bi $lang $repo.UnreadableReason}}</p>{{end}}
+  </div>
+{{else if $repo.Empty}}
+  <div class="empty">
+    <p class="empty__lead">{{bi $lang "repo.empty"}}</p>
+    <p>{{bi $lang "repo.empty.push_hint"}}</p>
+  </div>
+{{end}}
+{{end}}

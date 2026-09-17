@@ -1,0 +1,17 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}
+
+<div class="errpage">
+  <p class="errpage__code">{{$p.Status}}</p>
+  <h1 class="errpage__t">{{bi $lang $p.Code}}</h1>
+  {{/* The detail is repository or request data, so it is shown as text and
+       never translated or treated as markup. */}}
+  {{with $p.Detail}}<p class="errpage__d mono">{{.}}</p>{{end}}
+
+  {{if $p.RetryURL}}
+    <a class="btn btn--primary" href="{{$p.RetryURL}}">{{bi $lang "error.back_home"}}</a>
+  {{else if .Chrome.Nav.OverviewURL}}
+    <a class="btn" href="{{.Chrome.Nav.OverviewURL}}">{{bi $lang "error.back_home"}}</a>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,131 @@
+{{/* The annual activity graph.
+     Call as: {{template "graph" dict "Lang" .Lang "G" .Page.Activity}}
+
+     Counting is the backend's: author dates, current and retained historical
+     branches, one count per commit per repository. This template only draws
+     what it is given, and says so when the count is incomplete rather than
+     presenting a partial total as final. */}}
+{{define "graph"}}
+{{$lang := .Lang}}{{$g := .G}}
+<section class="hm" aria-labelledby="graph-total">
+  <div class="hm__bar">
+    <div class="hm__titles">
+      <p class="hm__kicker">{{bi $lang "app.graph_kicker"}}</p>
+      <h2 class="hm__total" id="graph-total">
+        {{if $g.Available}}
+          {{biText $lang
+            (printf "%s in %d" (count "en" "commit" $g.Total) $g.Year)
+            (printf "%d년 %s" $g.Year (count "ko" "commit" $g.Total))}}
+        {{else}}
+          {{bi $lang "activity.unavailable"}}
+        {{end}}
+      </h2>
+      {{if $g.Available}}
+      <p class="hm__range">
+        {{if $g.Scope}}
+          {{$g.Scope}}
+        {{else}}
+          {{biCount $lang "repository" $g.RepositoryCount}}
+        {{end}}
+      </p>
+      {{end}}
+    </div>
+    {{if $g.Years}}
+    <nav class="hm__years" {{biAttr $lang "aria-label" "app.select_year"}}>
+      {{range $g.Years}}
+        <a class="hm__year" href="{{.URL}}"{{if eq .Year $g.Year}} aria-current="true"{{end}}>{{.Year}}</a>
+      {{end}}
+    </nav>
+    {{end}}
+  </div>
+
+  {{if $g.Available}}
+    {{$layout := weeks $g}}
+    {{/* data-graph scopes the keyboard behaviour, and the readout below is
+         inside it, so the script can find the element it updates. */}}
+    <div class="hm__body" data-graph data-weeks="{{$layout.Weeks}}">
+    <div class="hm__scroll" tabindex="0" role="region" {{biAttr $lang "aria-label" "app.graph_region"}}>
+      <div class="hm__inner" style="--weeks:{{$layout.Weeks}}">
+        <div class="hm__months" aria-hidden="true">
+          {{range $layout.Months}}
+            <span class="hm__month" style="grid-column:{{.Column}} / span 4">{{biText $lang .LabelEN .LabelKO}}</span>
+          {{end}}
+        </div>
+        <div class="hm__days" aria-hidden="true">
+          {{range $layout.Rows}}<span class="hm__day">{{biText $lang .LabelEN .LabelKO}}</span>{{end}}
+        </div>
+        <div class="hm__grid" role="grid" {{biAttr $lang "aria-label" "app.graph_title"}} aria-describedby="graph-readout">
+          {{range $layout.Rows}}
+            <div class="hm__wk" role="row">
+              {{range .Cells}}
+                {{if .Blank}}
+                  <div class="hm__blank" role="presentation"></div>
+                {{else}}
+                  {{/* Each day is a real link to the filtered activity list, so
+                       a click, Enter, or a browser without scripting all reach
+                       the same page. A day the backend cannot address stays a
+                       plain cell rather than a control that does nothing. */}}
+                  <div class="hm__cellwrap" role="gridcell">
+                    {{if .Day.URL}}
+                      <a class="hm__cell" href="{{.Day.URL}}" data-day data-index="{{.Day.Date.YearDay}}"
+                         data-l="{{.Level}}"
+                         {{if and (not $g.SelectedDate.IsZero) (eq .Day.Date.YearDay $g.SelectedDate.YearDay)}}aria-current="true"{{end}}
+                         {{biAttrText $lang "aria-label" .LabelEN .LabelKO}}></a>
+                    {{else}}
+                      <span class="hm__cell" data-day data-index="{{.Day.Date.YearDay}}"
+                            data-l="{{.Level}}"
+                            {{if and (not $g.SelectedDate.IsZero) (eq .Day.Date.YearDay $g.SelectedDate.YearDay)}}aria-current="true"{{end}}
+                            {{biAttrText $lang "aria-label" .LabelEN .LabelKO}}></span>
+                    {{end}}
+                  </div>
+                {{end}}
+              {{end}}
+            </div>
+          {{end}}
+        </div>
+      </div>
+    </div>
+
+    <div class="hm__foot">
+      <p class="hm__read" id="graph-readout" data-graph-readout role="status">{{bi $lang "app.graph_hint"}}</p>
+      <p class="hm__legend">
+        <span>{{bi $lang "app.graph_less"}}</span>
+        <span class="hm__sw" style="background:var(--hm-0)"></span>
+        <span class="hm__sw" style="background:var(--hm-1)"></span>
+        <span class="hm__sw" style="background:var(--hm-2)"></span>
+        <span class="hm__sw" style="background:var(--hm-3)"></span>
+        <span class="hm__sw" style="background:var(--hm-4)"></span>
+        <span>{{bi $lang "app.graph_more"}}</span>
+      </p>
+    </div>
+    </div>
+
+    {{/* An incomplete count is stated plainly. A partial total must never
+         read as the authoritative number. */}}
+    {{if not $g.Complete}}
+      <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "activity.incomplete"}} {{bi $lang $g.IncompleteReason}}</span></p>
+    {{end}}
+    <p class="hm__note">{{bi $lang "activity.no_check_claim"}}</p>
+  {{else}}
+    <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang $g.UnavailableReason}}</span></p>
+  {{end}}
+</section>
+{{end}}
+
+{{/* One commit row in an activity list.
+     Call as: {{template "activityRow" dict "Lang" .Lang "Now" .Chrome.Now "E" $entry "ShowRepo" true}} */}}
+{{define "activityRow"}}
+{{$lang := .Lang}}{{$e := .E}}
+<a class="row row--act" href="{{$e.Commit.URL}}">
+  <span class="row__time">{{clock $e.Commit.AuthorDate}}</span>
+  {{if .ShowRepo}}<span class="row__name">{{$e.RepositoryName}}</span>{{end}}
+  {{/* The ref name carries its own element so a long name can be shortened
+       without clipping the status badge beside it. The title attribute keeps
+       the whole name available when it is visually shortened. */}}
+  <span class="row__ref">
+    {{icon "branch"}}<span class="row__refname" title="{{$e.Ref}}">{{$e.Ref}}</span>
+    {{if $e.RefRetained}}<span class="pill pill--kept">{{bi $lang "repo.retained.title"}}</span>{{end}}
+  </span>
+  <span class="row__msg">{{$e.Commit.Subject}}</span>
+</a>
+{{end}}
