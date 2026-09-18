@@ -9,12 +9,35 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestMain(m *testing.M) {
+	pathInfo := os.Getenv("PATH_INFO")
+	if os.Getenv("GIT_HTTP_EXPORT_ALL") == "1" && os.Getenv("SCRIPT_NAME") == "/git" && strings.HasPrefix(pathInfo, "/sample.git/") {
+		runPortableFakeBackend()
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func runPortableFakeBackend() {
+	if os.Getenv("REQUEST_METHOD") == http.MethodPost {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		_, _ = io.WriteString(os.Stdout, "Content-Type: application/x-git-receive-pack-result\r\n\r\n0000")
+		return
+	}
+	_, _ = io.WriteString(os.Stdout, "Content-Type: application/x-git-upload-pack-advertisement\r\n\r\n")
+	block := []byte("0123456789abcdef0123456789abcdef")
+	for {
+		if _, err := os.Stdout.Write(block); err != nil {
+			return
+		}
+	}
+}
 
 type stalledRequestBody struct {
 	once   sync.Once
@@ -41,16 +64,13 @@ func (body *stalledRequestBody) Close() error {
 }
 
 func TestStalledChunkedBodyTimesOutAndReapsOperation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("synthetic shell backend is Unix-only")
-	}
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := filepath.Join(t.TempDir(), "stalled-backend")
-	if err := os.WriteFile(backend, []byte("#!/bin/sh\ncat >/dev/null\nprintf 'Content-Type: application/x-git-receive-pack-result\\r\\n\\r\\n0000'\n"), 0o700); err != nil {
+	backend, err := os.Executable()
+	if err != nil {
 		t.Fatal(err)
 	}
 	handler.BackendPath = backend
@@ -88,17 +108,13 @@ func TestStalledChunkedBodyTimesOutAndReapsOperation(t *testing.T) {
 }
 
 func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("synthetic shell backend is Unix-only")
-	}
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := filepath.Join(t.TempDir(), "endless-backend")
-	script := "#!/bin/sh\nprintf 'Content-Type: application/x-git-upload-pack-advertisement\\r\\n\\r\\n'\nwhile :; do printf '0123456789abcdef0123456789abcdef'; done\n"
-	if err := os.WriteFile(backend, []byte(script), 0o700); err != nil {
+	backend, err := os.Executable()
+	if err != nil {
 		t.Fatal(err)
 	}
 	handler.BackendPath = backend

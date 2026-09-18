@@ -865,15 +865,19 @@ span.hm__cell { cursor: default; }
 }
 
 .reflist { display: grid; }
+/* Name, subject, an optional action, and the date. The action track collapses
+   to nothing when the backend supplied no link, so a row without one keeps the
+   same alignment as the rows around it. */
 .refline {
   display: grid;
-  grid-template-columns: minmax(130px, 260px) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(130px, 260px) minmax(0, 1fr) auto auto;
   align-items: baseline;
   gap: 2px 12px;
   padding: 8px 2px;
   border-bottom: 1px solid var(--sep);
   font-size: 12.5px;
 }
+.refline__act { grid-column: 3; font-size: 11.5px; white-space: nowrap; }
 .refline__n { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .refline__n a { font-family: var(--mono); font-size: 11.5px; }
 .refline__msg { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1083,6 +1087,9 @@ span.hm__cell { cursor: default; }
 }
 .fchip:hover { background: var(--bg-fill-2); text-decoration: none; }
 .fchip[aria-current="page"] { background: var(--accent-soft); border-color: var(--accent); }
+/* A preview chip states a fact; it is not a control, so it gets no hover
+   affordance and no pointer. */
+.fchip--static { cursor: default; color: var(--text-1); }
 .fchip__p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
 .fchip__n { flex: none; display: inline-flex; gap: 6px; font-size: 11px; }
 
@@ -1138,6 +1145,125 @@ span.hm__cell { cursor: default; }
 .errpage__code { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .errpage__t { font-size: 19px; font-weight: 640; letter-spacing: -0.02em; }
 .errpage__d { font-size: 12.5px; color: var(--text-2); max-width: 64ch; }
+
+/* ---------- restore ---------- */
+
+/* This screen writes to a repository, so it is the one place that pairs a
+   selection with the consequences of applying it. The visual language stays
+   the same as settings: cards, a disclosure of detail, one accent. The only
+   emphasis it adds is on deletions, because that is the outcome a reader
+   cannot check afterwards by opening the file. */
+
+.restore { display: grid; gap: 16px; max-width: none; }
+.restore .card { margin: 0; }
+.restore__entry { margin: 16px 0 0; }
+
+/* Source and target read as one sentence across the top: take from here, put
+   it there. On a narrow screen they stack in that same order. */
+.restore__pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.restore__from, .restore__to { display: grid; gap: 7px; min-width: 0; }
+
+.restore__commit {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.restore__commit .mono { color: var(--text-2); flex: none; }
+.restore__subject { font-size: 13px; font-weight: 560; min-width: 0; word-break: break-word; }
+.restore__meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.restore__files { margin-top: 18px; }
+/* While the whole project is selected the per-file ticks are not what decides
+   the result. The panel used to be faded with opacity, which multiplies
+   through to the text: --text-2 on the list surface measures 6.8:1 at full
+   strength but only 2.9:1 at 0.62, so the help and status words fell below
+   the contrast this project requires. The inactive state is now carried by
+   the panel's own edge and surface plus a line of text, and every word inside
+   keeps its full colour. */
+.restore__files[data-restore-dimmed] {
+  border-radius: var(--r-m);
+  background: var(--bg-fill);
+  box-shadow: inset 0 0 0 1px var(--sep);
+  padding: 12px;
+  margin-left: -12px;
+  margin-right: -12px;
+}
+.restore__note {
+  display: none;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.restore__files[data-restore-dimmed] .restore__note { display: flex; }
+.restore__note .icon { color: var(--text-3); flex: none; position: relative; top: 2px; }
+
+.rpaths {
+  display: grid;
+  gap: 1px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--sep);
+  border-radius: var(--r-m);
+  padding: 6px;
+  background: var(--bg-sidebar);
+}
+.rpaths--plain { max-height: 220px; background: transparent; border-color: transparent; padding: 0; }
+.rpath { border-radius: var(--r-s); padding: 5px 7px; }
+.rpath:hover { background: var(--bg-fill-2); }
+.rpaths--plain .rpath:hover { background: transparent; }
+.rpath .check { align-items: baseline; }
+.rpath .check__t { word-break: break-all; font-weight: 400; }
+
+/* Status is a word plus a shape. The tint only repeats what the words and the
+   icon already say. */
+.rpath__s {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+.rpath__s--deleted { color: var(--bad); }
+.rpath__s--added { color: var(--ok); }
+.rpath__s--modified { color: var(--text-2); }
+
+.restore__preview { display: grid; gap: 14px; }
+.restore__preview .fchips { margin-top: 2px; }
+
+.restore__deletes {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r-m);
+  background: var(--bad-soft);
+  border-left: 3px solid var(--bad);
+}
+.restore__deletes-h {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 590;
+  color: var(--text-1);
+}
+.restore__deletes-h .icon { color: var(--bad); }
+.restore__deletes .rpath { padding: 2px 0; }
+
+.cdetail__act { margin-top: 10px; }
 
 /* ---------- adaptable layout ---------- */
 
@@ -1196,6 +1322,7 @@ span.hm__cell { cursor: default; }
 @media (max-width: 760px) {
   .code__split { grid-template-columns: minmax(0, 1fr); }
   .tree__list { max-height: 260px; }
+  .restore__pair { grid-template-columns: minmax(0, 1fr); gap: 20px; }
 }
 
 @media (max-width: 620px) {
@@ -1211,6 +1338,7 @@ span.hm__cell { cursor: default; }
   .hm__years { margin-left: 0; }
   .refline { grid-template-columns: minmax(0, 1fr) auto; }
   .refline__msg { grid-column: 1 / -1; }
+  .refline__act { grid-column: 1; }
   .card { padding: 16px 14px; }
 }
 

@@ -3,10 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +97,9 @@ func TestResetAdminPreservesRepositoryDataAndRevokesSession(t *testing.T) {
 	if err := os.WriteFile(passwordFile, []byte("new-admin-password\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := state.ProtectPrivatePath(passwordFile, false); err != nil {
+		t.Fatal(err)
+	}
 	if err := resetAdmin([]string{"--state-dir", stateDir, "--password-file", passwordFile}); err != nil {
 		t.Fatal(err)
 	}
@@ -118,16 +121,52 @@ func TestResetAdminPreservesRepositoryDataAndRevokesSession(t *testing.T) {
 	}
 }
 
-func TestReadPrivatePasswordRejectsBroadPermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX mode check does not apply on Windows")
-	}
-	path := filepath.Join(t.TempDir(), "password")
-	if err := os.WriteFile(path, []byte("valid-password"), 0o644); err != nil {
+func TestBackupRefusesStateHeldByLiveServer(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	repositoryRoot := filepath.Join(root, "repositories")
+	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	store, err := state.Open(context.Background(), stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminHash, _ := auth.HashPassword("admin-password")
+	if err := store.CompleteSetup(context.Background(), repositoryRoot, "open", "", adminHash, false); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	store.Close()
+	unlock, err := state.AcquireOfflineLock(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	output := filepath.Join(root, "backup")
+	err = backupState([]string{"--state-dir", stateDir, "--output", output})
+	if !errors.Is(err, state.ErrInstanceRunning) {
+		t.Fatalf("backup error=%v, want live-instance refusal", err)
+	}
+	if _, statErr := os.Stat(output); !os.IsNotExist(statErr) {
+		t.Fatalf("refused backup created output: %v", statErr)
+	}
+}
+
+func TestReadPrivatePasswordRejectsBroadPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "password")
+	if err := os.WriteFile(path, []byte("valid-password"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ProtectPrivatePath(path, false); err != nil {
+		t.Fatal(err)
+	}
+	makePasswordFileBroad(t, path)
+	if err := state.ValidatePrivateFile(path); err == nil {
+		t.Fatal("password fixture unexpectedly has owner-only protection")
+	}
 	if _, err := readPrivatePassword(path); err == nil {
-		t.Fatal("group-readable password file was accepted")
+		t.Fatal("broadly accessible password file was accepted")
 	}
 }
 

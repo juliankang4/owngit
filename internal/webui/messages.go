@@ -245,6 +245,61 @@ const (
 	MsgCommitCommitter  MessageCode = "commits.committer"
 )
 
+// Restoring files from an earlier commit.
+//
+// The first seven codes are the shared outcomes the backend reports. The rest
+// are the screen's own labels and help text, which the renderer owns.
+const (
+	MsgRestoreInvalid     MessageCode = "restore.invalid"
+	MsgRestoreConflict    MessageCode = "restore.conflict"
+	MsgRestoreNoChanges   MessageCode = "restore.no_changes"
+	MsgRestoreUnsupported MessageCode = "restore.unsupported"
+	MsgRestoreFailed      MessageCode = "restore.failed"
+	MsgRestoreReady       MessageCode = "restore.ready"
+	MsgRestoreSuccess     MessageCode = "restore.success"
+
+	MsgRestoreTitle    MessageCode = "restore.title"
+	MsgRestoreIntro    MessageCode = "restore.intro"
+	MsgRestoreOpen     MessageCode = "restore.open"
+	MsgRestoreOpenFile MessageCode = "restore.open_file"
+
+	MsgRestoreSourceLabel  MessageCode = "restore.source.label"
+	MsgRestoreSourceHelp   MessageCode = "restore.source.help"
+	MsgRestoreTargetLabel  MessageCode = "restore.target.label"
+	MsgRestoreTargetHelp   MessageCode = "restore.target.help"
+	MsgRestoreTargetChoose MessageCode = "restore.target.choose"
+	MsgRestoreTargetNew    MessageCode = "restore.target.recreated"
+	MsgRestoreTargetEmpty  MessageCode = "restore.target.empty"
+
+	MsgRestoreScopeLabel     MessageCode = "restore.scope.label"
+	MsgRestoreModeAll        MessageCode = "restore.scope.all"
+	MsgRestoreModeAllHelp    MessageCode = "restore.scope.all_help"
+	MsgRestoreModeFiles      MessageCode = "restore.scope.files"
+	MsgRestoreModeFilesHelp  MessageCode = "restore.scope.files_help"
+	MsgRestoreFilesLabel     MessageCode = "restore.files.label"
+	MsgRestoreFilesHelp      MessageCode = "restore.files.help"
+	MsgRestoreFilesInactive  MessageCode = "restore.files.inactive"
+	MsgRestoreFilesNone      MessageCode = "restore.files.none"
+	MsgRestoreFilesEmpty     MessageCode = "restore.files.empty"
+	MsgRestoreStatusAdded    MessageCode = "restore.status.added"
+	MsgRestoreStatusModified MessageCode = "restore.status.modified"
+	MsgRestoreStatusDeleted  MessageCode = "restore.status.deleted"
+
+	MsgRestorePreviewSubmit MessageCode = "restore.preview.submit"
+	MsgRestorePreviewTitle  MessageCode = "restore.preview.title"
+	MsgRestorePreviewHelp   MessageCode = "restore.preview.help"
+	MsgRestorePreviewStale  MessageCode = "restore.preview.stale"
+	MsgRestoreDeletesLabel  MessageCode = "restore.preview.deletes"
+	MsgRestoreDiffTruncated MessageCode = "restore.preview.diff_truncated"
+	MsgRestoreBinaryFile    MessageCode = "restore.preview.binary_file"
+
+	MsgRestoreConfirmLabel MessageCode = "restore.confirm.label"
+	MsgRestoreConfirmHelp  MessageCode = "restore.confirm.help"
+	MsgRestoreApplySubmit  MessageCode = "restore.apply.submit"
+	MsgRestoreChangeChoice MessageCode = "restore.apply.change_choice"
+	MsgRestoreChangeHelp   MessageCode = "restore.apply.change_help"
+)
+
 // Activity.
 const (
 	MsgActivityTitle      MessageCode = "activity.title"
@@ -875,9 +930,12 @@ var catalog = map[MessageCode]message{
 		en: "Kept history",
 		ko: "보관된 기록",
 	},
+	// Whether a particular entry can be opened or restored depends on what the
+	// backend can address, so this says what the list is rather than promising
+	// a control that may not be there. The entries carry their own links.
 	MsgRepoRetainHelp: {
-		en: "Commits kept after a force push or a deleted branch or tag. Restoring them from the browser is not available yet.",
-		ko: "강제 푸시나 브랜치, 태그 삭제 뒤에 보관된 커밋입니다. 브라우저에서 되돌리는 기능은 아직 없습니다.",
+		en: "Commits kept after a force push or a deleted branch or tag. They are records of past work, not current branches.",
+		ko: "강제 푸시나 브랜치, 태그 삭제 뒤에 보관된 커밋입니다. 현재 브랜치가 아니라 지난 작업의 기록입니다.",
 	},
 	MsgRepoNotFound: {
 		en: "That repository does not exist.",
@@ -948,6 +1006,227 @@ var catalog = map[MessageCode]message{
 	MsgCommitCommitter: {
 		en: "Committed by",
 		ko: "커밋한 사람",
+	},
+
+	// -- restore -------------------------------------------------------
+	//
+	// Restoring writes to a repository, so the wording says plainly what will
+	// change, what will be deleted, and what stays untouched. It never claims
+	// anything about other people's computers, which OwnGit cannot reach.
+	MsgRestoreInvalid: {
+		en: "That selection cannot be restored. Check the commit and the branch, then preview again.",
+		ko: "그 선택은 되돌릴 수 없습니다. 커밋과 브랜치를 확인한 뒤 다시 미리 보세요.",
+	},
+	MsgRestoreConflict: {
+		// The check compares the branch against the tip that was previewed. Any
+		// difference trips it: a new commit, a deletion, a branch recreated
+		// elsewhere, or one moved back to an older commit. Naming only the
+		// first would describe the wrong event for the others.
+		en: "The branch changed after the preview. Preview again before restoring.",
+		ko: "미리 보기 뒤에 브랜치가 바뀌었습니다. 다시 미리 본 뒤 되돌리세요.",
+	},
+	MsgRestoreNoChanges: {
+		en: "The branch already matches this selection, so there is nothing to restore.",
+		ko: "브랜치가 이미 선택한 내용과 같아서 되돌릴 것이 없습니다.",
+	},
+	MsgRestoreUnsupported: {
+		// The third case is reachable from this screen: choosing selected files
+		// while the target is a branch that does not exist yet. Picking files
+		// out of a commit is a comparison against the branch's current state,
+		// and there is nothing to compare against when the branch is new.
+		en: "Part of this selection cannot be restored from the browser. Submodule entries, and paths that would replace files you did not select, have to be handled with Git. Restoring selected files also needs a branch that already exists; choose the whole project to start a new one.",
+		ko: "선택한 항목 가운데 일부는 브라우저에서 되돌릴 수 없습니다. 서브모듈 항목과, 선택하지 않은 파일까지 바꾸게 되는 경로는 Git으로 처리해야 합니다. 또한 파일을 골라 되돌리려면 이미 있는 브랜치여야 하니, 새 브랜치를 만들 때는 프로젝트 전체를 고르세요.",
+	},
+	MsgRestoreFailed: {
+		// This is the outcome the backend could not establish. It is reported
+		// when publishing the change failed and reading the branch back failed
+		// too, so whether the branch moved is unknown. Saying it was left alone
+		// would be a promise nothing verified; the reader is told to look.
+		en: "Could not confirm the restore. Check the branch before trying again.",
+		ko: "되돌리기 결과를 확인하지 못했습니다. 다시 시도하기 전에 브랜치를 확인하세요.",
+	},
+	MsgRestoreReady: {
+		en: "Nothing has changed yet. Read the list below, then restore.",
+		ko: "아직 바뀐 것은 없습니다. 아래 목록을 확인한 뒤 되돌리세요.",
+	},
+	// Restoring onto an existing branch writes a commit. Restoring to a name
+	// that is not a branch yet creates it at the selected commit and writes no
+	// commit at all, so the generic result states the outcome both cases
+	// actually share.
+	MsgRestoreSuccess: {
+		en: "Restored. The earlier history is still there.",
+		ko: "되돌렸습니다. 이전 기록도 그대로 있습니다.",
+	},
+
+	MsgRestoreTitle: {
+		en: "Restore files",
+		ko: "파일 되돌리기",
+	},
+	MsgRestoreIntro: {
+		en: "Choose the commit to take files from and the branch to put them on. Earlier commits are never removed or rewritten.",
+		ko: "파일을 가져올 커밋과 그 파일을 올릴 브랜치를 고르세요. 이전 커밋은 지우거나 고쳐 쓰지 않습니다.",
+	},
+	MsgRestoreOpen: {
+		en: "Restore files from here",
+		ko: "여기서 파일 되돌리기",
+	},
+	MsgRestoreOpenFile: {
+		en: "Restore this file",
+		ko: "이 파일 되돌리기",
+	},
+
+	MsgRestoreSourceLabel: {
+		en: "Take files from",
+		ko: "파일을 가져올 커밋",
+	},
+	MsgRestoreSourceHelp: {
+		en: "Files are read from this commit. The commit itself does not change.",
+		ko: "이 커밋에서 파일을 읽습니다. 커밋 자체는 바뀌지 않습니다.",
+	},
+	MsgRestoreTargetLabel: {
+		en: "Put them on",
+		ko: "파일을 올릴 브랜치",
+	},
+	// The last sentence is the boundary users most often get wrong, so it is
+	// stated where the branch is chosen rather than only in the result.
+	// The two targets behave differently, and the earlier wording described
+	// only one of them. An existing branch keeps its own history: the restore
+	// commit's parent is that branch's current tip, not the selected commit. A
+	// name that does not exist yet is created at the selected commit, so it
+	// continues that history instead.
+	//
+	// It also claimed nothing is removed, which is false. Restoring changes
+	// and deletes files in the tree on purpose; what it preserves is the
+	// history, and that promise is made where the reader confirms the write.
+	MsgRestoreTargetChoose: {
+		en: "Choose an existing branch or enter a new name. The restore adds to an existing branch's history; a new branch continues from the selected commit.",
+		ko: "기존 브랜치를 고르거나 새 이름을 입력하세요. 기존 브랜치는 현재 기록 뒤에 새 커밋을 추가하고, 새 브랜치는 선택한 커밋의 기록을 이어갑니다.",
+	},
+	// What this branch choice does is stated by the two messages above it.
+	// This one covers the boundary a reader is most likely to get wrong, so it
+	// says only what is true either way.
+	MsgRestoreTargetHelp: {
+		en: "Only this repository changes. Working copies on other computers are not touched; pull to receive the change there.",
+		ko: "이 저장소만 바뀝니다. 다른 컴퓨터의 작업 폴더는 건드리지 않으며, 그쪽에서 받으려면 pull 하세요.",
+	},
+	// "Recreates" was wrong for the general case. This notice appears for any
+	// name that is not currently a branch, including a suggested one that
+	// never existed, so it says the branch is created rather than implying
+	// something is being brought back under its former name.
+	MsgRestoreTargetNew: {
+		en: "This branch does not exist yet. Restoring creates it from the selected commit's history.",
+		ko: "아직 없는 브랜치입니다. 선택한 커밋의 기록을 이어 새로 만듭니다.",
+	},
+	MsgRestoreTargetEmpty: {
+		en: "Choose the branch to restore onto.",
+		ko: "되돌릴 브랜치를 고르세요.",
+	},
+
+	MsgRestoreScopeLabel: {
+		en: "What to restore",
+		ko: "되돌릴 범위",
+	},
+	MsgRestoreModeAll: {
+		en: "The whole project",
+		ko: "프로젝트 전체",
+	},
+	MsgRestoreModeAllHelp: {
+		en: "Make the branch match this commit. Files the commit does not have are deleted.",
+		ko: "브랜치를 이 커밋과 같은 상태로 만듭니다. 이 커밋에 없는 파일은 삭제됩니다.",
+	},
+	MsgRestoreModeFiles: {
+		en: "Selected files",
+		ko: "선택한 파일",
+	},
+	MsgRestoreModeFilesHelp: {
+		en: "Change only the files you tick. The rest of the branch stays as it is.",
+		ko: "체크한 파일만 바꿉니다. 브랜치의 나머지는 그대로 둡니다.",
+	},
+	MsgRestoreFilesLabel: {
+		en: "Files",
+		ko: "파일",
+	},
+	MsgRestoreFilesInactive: {
+		en: "The whole project is selected, so these ticks are not used. They are kept if you switch back.",
+		ko: "프로젝트 전체를 선택했기 때문에 이 체크는 사용하지 않습니다. 다시 바꾸면 그대로 남아 있습니다.",
+	},
+	MsgRestoreFilesHelp: {
+		en: "Each row says what restoring that path would do to the branch.",
+		ko: "각 줄은 그 경로를 되돌렸을 때 브랜치가 어떻게 바뀌는지 알려 줍니다.",
+	},
+	MsgRestoreFilesNone: {
+		en: "Tick at least one file, or restore the whole project.",
+		ko: "파일을 하나 이상 체크하거나 프로젝트 전체를 되돌리세요.",
+	},
+	MsgRestoreFilesEmpty: {
+		en: "There are no files to choose from for this selection.",
+		ko: "이 선택으로 고를 수 있는 파일이 없습니다.",
+	},
+	// The status is what restoring would do to the branch, not what the source
+	// commit did. "Deleted" alone would read as a fact about the past.
+	MsgRestoreStatusAdded: {
+		en: "Will be added",
+		ko: "추가 예정",
+	},
+	MsgRestoreStatusModified: {
+		en: "Will be changed",
+		ko: "변경 예정",
+	},
+	MsgRestoreStatusDeleted: {
+		en: "Will be deleted",
+		ko: "삭제 예정",
+	},
+
+	MsgRestorePreviewSubmit: {
+		en: "Preview changes",
+		ko: "바뀔 내용 미리 보기",
+	},
+	MsgRestorePreviewTitle: {
+		en: "What will change",
+		ko: "바뀔 내용",
+	},
+	MsgRestorePreviewHelp: {
+		en: "Read this list before restoring. Only the changes listed here are applied.",
+		ko: "되돌리기 전에 이 목록을 확인하세요. 여기 있는 변경만 적용됩니다.",
+	},
+	MsgRestorePreviewStale: {
+		en: "The selection changed after this preview. Preview again before restoring.",
+		ko: "미리 보기 뒤에 선택이 바뀌었습니다. 되돌리기 전에 다시 미리 보세요.",
+	},
+	MsgRestoreDeletesLabel: {
+		en: "Files that will be deleted",
+		ko: "삭제될 파일",
+	},
+	// The changed-path list is always complete; only the line by line view is
+	// cut, and the sentence says which is which.
+	MsgRestoreDiffTruncated: {
+		en: "Some file contents were too large to show line by line. The list of changed files is complete.",
+		ko: "일부 파일 내용은 너무 커서 줄 단위로는 다 보여주지 못했습니다. 변경되는 파일 목록은 전체입니다.",
+	},
+	MsgRestoreBinaryFile: {
+		en: "Not text, so there is no line by line view",
+		ko: "텍스트가 아니어서 줄 단위로 보여주지 않습니다",
+	},
+
+	MsgRestoreConfirmLabel: {
+		en: "I have read these changes and want to restore them",
+		ko: "이 변경 내용을 확인했고 되돌리겠습니다",
+	},
+	MsgRestoreConfirmHelp: {
+		en: "Restoring does not remove or rewrite any commit that is already in this repository.",
+		ko: "되돌려도 이 저장소에 이미 있는 커밋은 지우거나 고쳐 쓰지 않습니다.",
+	},
+	MsgRestoreApplySubmit: {
+		en: "Restore",
+		ko: "되돌리기",
+	},
+	MsgRestoreChangeChoice: {
+		en: "Change the selection",
+		ko: "선택 바꾸기",
+	},
+	MsgRestoreChangeHelp: {
+		en: "Your choices are kept, and OwnGit shows the changes again before anything is restored.",
+		ko: "선택한 내용은 그대로 두고, 되돌리기 전에 바뀔 내용을 다시 보여 줍니다.",
 	},
 
 	// -- activity ------------------------------------------------------

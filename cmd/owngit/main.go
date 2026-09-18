@@ -21,6 +21,8 @@ import (
 	"owngit/internal/bootstrap"
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
+	"owngit/internal/pullrequest"
+	"owngit/internal/recovery"
 	"owngit/internal/repository"
 	"owngit/internal/server"
 	"owngit/internal/state"
@@ -29,7 +31,9 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		log.Printf("error: %v", err)
+		if !writeStructuredCommandError(os.Stdout, err) {
+			log.Printf("error: %v", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -55,6 +59,12 @@ func run(arguments []string) error {
 		return resetAdmin(arguments)
 	case "approve-host":
 		return approveHost(arguments)
+	case "backup":
+		return backupState(arguments)
+	case "restore":
+		return restoreState(arguments)
+	case "pr":
+		return prCommand(arguments)
 	default:
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", command)
@@ -84,6 +94,11 @@ func serve(arguments []string) error {
 		return err
 	}
 	defer store.Close()
+	unlock, err := state.AcquireOfflineLock(store.Dir())
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))
 	if err != nil {
 		return err
@@ -105,8 +120,12 @@ func serve(arguments []string) error {
 		return err
 	}
 	repositories := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: settings.RepositoryRoot}
+	pullRequests := &pullrequest.Service{Store: store, Repositories: repositories}
 	if settings.Initialized {
 		if err := repositories.PrepareExisting(ctx); err != nil {
+			return err
+		}
+		if err := pullRequests.ReconcileAll(ctx); err != nil {
 			return err
 		}
 	}
@@ -151,7 +170,7 @@ func serve(arguments []string) error {
 
 	home, _ := os.UserHomeDir()
 	application := &server.App{
-		Store: store, Auth: authentication, Repositories: repositories, GitHTTP: gitHandler,
+		Store: store, Auth: authentication, Repositories: repositories, PullRequests: pullRequests, GitHTTP: gitHandler,
 		Renderer: renderer, Hosts: policy, SuggestedRepositoryRoot: filepath.Join(home, "OwnGit-Repositories"),
 		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true,
 	}
@@ -312,6 +331,70 @@ func approveHost(arguments []string) error {
 	return nil
 }
 
+func backupState(arguments []string) error {
+	flags := flag.NewFlagSet("backup", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
+	output := flags.String("output", "", "new backup directory")
+	gitPath := flags.String("git", "", "Git executable path")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *output == "" {
+		return errors.New("backup requires --output and accepts no positional arguments")
+	}
+	if err := state.RequireExisting(*stateDir); err != nil {
+		return err
+	}
+	unlock, err := state.AcquireOfflineLock(*stateDir)
+	if err != nil {
+		return fmt.Errorf("backup requires OwnGit to be offline: %w", err)
+	}
+	defer unlock()
+	store, err := state.Open(context.Background(), *stateDir)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	settings, err := store.Settings(context.Background())
+	if err != nil {
+		return err
+	}
+	if !settings.Initialized {
+		return errors.New("setup is not complete")
+	}
+	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))
+	if err != nil {
+		return err
+	}
+	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: settings.RepositoryRoot}
+	if err := recovery.Create(context.Background(), store, manager, *output); err != nil {
+		return err
+	}
+	fmt.Printf("Offline backup written to %s. SHA-256 hashes detect corruption but do not authenticate a replaced backup.\n", *output)
+	return nil
+}
+
+func restoreState(arguments []string) error {
+	flags := flag.NewFlagSet("restore", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	stateDir := flags.String("state-dir", defaultStateDir(), "new host-local state directory")
+	input := flags.String("input", "", "offline backup directory")
+	repositoryRoot := flags.String("repository-root", "", "new repository storage directory")
+	gitPath := flags.String("git", "", "Git executable path")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *input == "" || *repositoryRoot == "" {
+		return errors.New("restore requires --input and --repository-root and accepts no positional arguments")
+	}
+	if err := recovery.Restore(context.Background(), *input, *stateDir, *repositoryRoot, *gitPath); err != nil {
+		return err
+	}
+	fmt.Printf("Offline backup restored to %s with repositories at %s. Previous sessions and trusted hosts were not restored.\n", *stateDir, *repositoryRoot)
+	return nil
+}
+
 func readPrivatePassword(path string) (string, error) {
 	if err := state.ValidatePrivateFile(path); err != nil {
 		return "", fmt.Errorf("inspect password file: %w", err)
@@ -369,7 +452,7 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|backup|restore|pr] [options]")
 }
 
 type stringList []string

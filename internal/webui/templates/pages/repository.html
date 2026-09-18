@@ -12,6 +12,13 @@
   {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.OverviewURL}}
   {{template "cloneblock" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL}}
 
+  {{/* Recovery starts from the repository too, not only from a commit page,
+       because someone looking for lost work does not know which commit they
+       need yet. The link is rendered only when the backend supplied one. */}}
+  {{with $p.RestoreURL}}
+  <p class="restore__entry"><a class="btn" href="{{.}}">{{icon "kept"}}{{bi $lang "restore.title"}}</a></p>
+  {{end}}
+
   {{with $p.Overview.Head}}
   <section class="sec">
     <div class="sec__bar"><h2>{{bi $lang "app.latest_commit"}}</h2></div>
@@ -39,6 +46,7 @@
               {{if .IsDefault}}<span class="pill pill--default">{{biText $lang "Default" "기본"}}</span>{{end}}
             </span>
             <span class="refline__msg">{{.Tip.Subject}}</span>
+            {{with .RestoreURL}}<a class="refline__act" href="{{.}}">{{bi $lang "restore.open"}}</a>{{end}}
             <span class="refline__when">{{biRelative $lang $now .Tip.AuthorDate}}</span>
           </div>
         {{end}}
@@ -68,6 +76,7 @@
               {{if .Annotated}}<span class="pill">{{biText $lang "Annotated" "주석"}}</span>{{end}}
             </span>
             <span class="refline__msg">{{.Tip.Subject}}</span>
+            {{with .RestoreURL}}<a class="refline__act" href="{{.}}">{{bi $lang "restore.open"}}</a>{{end}}
             <span class="refline__when">{{biRelative $lang $now .Tip.AuthorDate}}</span>
           </div>
         {{end}}
@@ -78,8 +87,9 @@
   </section>
 
   {{/* History kept after a force push or a deleted ref. It is listed as kept
-       history, never as a live branch, and there is no restore control here
-       because restoring is not implemented. */}}
+       history, never as a live branch. Each entry offers a restore link only
+       when the backend supplied one, because whether a kept commit is still
+       reachable is its decision, not something this page infers. */}}
   {{if $p.Overview.RetainedRefs}}
   <section class="sec">
     <div class="sec__bar">
@@ -98,6 +108,10 @@
             <span class="pill pill--kept">{{bi $lang "repo.retained.title"}}</span>
           </span>
           <span class="refline__msg">{{.Tip.Subject}}</span>
+          {{/* Kept history is exactly what a reader most often wants back, so
+               each entry the backend can address opens restore with its tip
+               already chosen as the source. */}}
+          {{with .RestoreURL}}<a class="refline__act" href="{{.}}">{{bi $lang "restore.open"}}</a>{{end}}
           <span class="refline__when">{{biRelative $lang $now .Tip.AuthorDate}}</span>
         </div>
       {{end}}
@@ -170,6 +184,7 @@
               <span>{{biCount $lang "line" (len .Lines)}}</span>
               <span>{{bytes .Size}}</span>
               {{with .RawURL}}<a href="{{.}}">{{bi $lang "code.raw_link"}}</a>{{end}}
+              {{with .RestoreURL}}<a href="{{.}}">{{bi $lang "restore.open_file"}}</a>{{end}}
             </p>
           </div>
 
@@ -241,6 +256,9 @@
               <span>{{biDateTime $lang .Commit.AuthorDate}}</span>
               {{range .Parents}}<a class="mono" href="{{.URL}}">{{.ShortOID}}</a>{{end}}
             </p>
+            {{with .RestoreURL}}
+              <p class="cdetail__act"><a class="btn" href="{{.}}">{{icon "kept"}}{{bi $lang "restore.open"}}</a></p>
+            {{end}}
             {{/* Git records an author and a committer. When they differ, the
                  author line alone would be a partial account, so the committer
                  is shown beside it as a plain fact. What the difference means
@@ -272,34 +290,10 @@
               </div>
             {{end}}
 
+            {{/* The same partial the restore preview uses, so one diff
+                 rendering serves both screens. */}}
             {{range .Files}}
-              {{if and .Selected .Hunks}}
-                <div class="filepane__bar">
-                  <p class="filepane__path mono">{{.Path}}</p>
-                  <p class="filepane__meta">
-                    {{if .OldPath}}<span class="mono">{{.OldPath}}</span>{{end}}
-                    <span class="add">+{{.Additions}}</span><span class="del">-{{.Deletions}}</span>
-                  </p>
-                </div>
-                <div class="diffbox" tabindex="0" role="region" aria-label="{{.Path}}">
-                  <table class="difftable">
-                    <tbody>
-                      {{range .Hunks}}
-                        <tr class="difftable__hunk"><td colspan="3">{{.Header}}</td></tr>
-                        {{range .Lines}}
-                          <tr class="difftable__r{{if eq .Kind "add"}} is-add{{else if eq .Kind "del"}} is-del{{end}}">
-                            <td class="difftable__n">{{if .OldLine}}{{.OldLine}}{{end}}</td>
-                            <td class="difftable__n">{{if .NewLine}}{{.NewLine}}{{end}}</td>
-                            {{/* The marker is a separate span, so the change is
-                                 readable without relying on the row colour. */}}
-                            <td class="difftable__t"><span class="difftable__s" aria-hidden="true">{{if eq .Kind "add"}}+{{else if eq .Kind "del"}}-{{else}} {{end}}</span>{{.Text}}</td>
-                          </tr>
-                        {{end}}
-                      {{end}}
-                    </tbody>
-                  </table>
-                </div>
-              {{end}}
+              {{if .Selected}}{{template "diffFile" dict "Lang" $lang "F" .}}{{end}}
             {{end}}
 
             {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "commits.diff_truncated"}}</span></p>{{end}}

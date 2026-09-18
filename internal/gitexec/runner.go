@@ -108,6 +108,11 @@ func (r *Runner) Environment(extra ...string) []string {
 		"TMPDIR=" + r.TempDir,
 	}
 	if runtime.GOOS == "windows" {
+		env = append(env,
+			"GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=core.longpaths",
+			"GIT_CONFIG_VALUE_0=true",
+		)
 		for _, key := range []string{"SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP"} {
 			if value := os.Getenv(key); value != "" {
 				env = append(env, key+"="+value)
@@ -118,10 +123,21 @@ func (r *Runner) Environment(extra ...string) []string {
 }
 
 func (r *Runner) Run(ctx context.Context, dir string, stdin io.Reader, args ...string) (Result, error) {
-	return r.RunWithOutputLimit(ctx, dir, stdin, r.OutputLimit, args...)
+	return r.run(ctx, dir, stdin, r.OutputLimit, nil, args...)
+}
+
+// RunWithEnvironment executes Git with the runner's isolated environment plus
+// the supplied variables. Callers use this for Git-owned controls such as a
+// private index path, never to inherit the host environment.
+func (r *Runner) RunWithEnvironment(ctx context.Context, dir string, stdin io.Reader, extraEnv []string, args ...string) (Result, error) {
+	return r.run(ctx, dir, stdin, r.OutputLimit, extraEnv, args...)
 }
 
 func (r *Runner) RunWithOutputLimit(ctx context.Context, dir string, stdin io.Reader, limit int64, args ...string) (Result, error) {
+	return r.run(ctx, dir, stdin, limit, nil, args...)
+}
+
+func (r *Runner) run(ctx context.Context, dir string, stdin io.Reader, limit int64, extraEnv []string, args ...string) (Result, error) {
 	if limit <= 0 {
 		limit = defaultOutputLimit
 	}
@@ -130,7 +146,7 @@ func (r *Runner) RunWithOutputLimit(ctx context.Context, dir string, stdin io.Re
 	stderr.limit = limit
 	cmd := exec.Command(r.GitPath, args...)
 	cmd.Dir = dir
-	cmd.Env = r.Environment()
+	cmd.Env = r.Environment(extraEnv...)
 	cmd.Stdin = stdin
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

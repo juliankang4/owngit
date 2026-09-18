@@ -1,0 +1,38 @@
+{{/* One changed file: its header bar and, when the backend loaded them, its
+     hunks. A commit detail and a restore preview show the same thing, so they
+     render it through this one partial.
+
+     Repository content reaches the page as text through the template's
+     escaping. It is never inserted as markup, and a symlink is drawn as the
+     data it stores rather than followed.
+
+     Call as: {{template "diffFile" dict "Lang" $lang "F" $file}} */}}
+{{define "diffFile"}}
+{{$lang := .Lang}}{{with .F}}{{if .Hunks}}
+<div class="filepane__bar">
+  <p class="filepane__path mono">{{.Path}}</p>
+  <p class="filepane__meta">
+    {{if .OldPath}}<span class="mono">{{.OldPath}}</span>{{end}}
+    <span class="add">+{{.Additions}}</span><span class="del">-{{.Deletions}}</span>
+  </p>
+</div>
+<div class="diffbox" tabindex="0" role="region" aria-label="{{.Path}}">
+  <table class="difftable">
+    <tbody>
+      {{range .Hunks}}
+        <tr class="difftable__hunk"><td colspan="3">{{.Header}}</td></tr>
+        {{range .Lines}}
+          <tr class="difftable__r{{if eq .Kind "add"}} is-add{{else if eq .Kind "del"}} is-del{{end}}">
+            <td class="difftable__n">{{if .OldLine}}{{.OldLine}}{{end}}</td>
+            <td class="difftable__n">{{if .NewLine}}{{.NewLine}}{{end}}</td>
+            {{/* The marker is a separate span, so the change is readable
+                 without relying on the row colour. */}}
+            <td class="difftable__t"><span class="difftable__s" aria-hidden="true">{{if eq .Kind "add"}}+{{else if eq .Kind "del"}}-{{else}} {{end}}</span>{{.Text}}</td>
+          </tr>
+        {{end}}
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}{{end}}
+{{end}}

@@ -1,12 +1,18 @@
 package repository
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+
+	"owngit/internal/gitexec"
 )
 
 func TestFullyQualifiedRefsDisambiguateCollidingBranchAndTag(t *testing.T) {
@@ -41,25 +47,28 @@ func TestFullyQualifiedRefsDisambiguateCollidingBranchAndTag(t *testing.T) {
 
 func TestBrowseRealTreeBlobCommitAndDiff(t *testing.T) {
 	manager, _, work := newTestRepository(t)
-	if err := os.Mkdir(filepath.Join(work, "dir"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	content := "<script>alert('not markup')</script>\nsecond line\n"
-	if err := os.WriteFile(filepath.Join(work, "dir", "back\\slash.txt"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, work, "add", ".")
+	rawDirectory := `raw\directory`
+	rawFile := `back\slash.txt`
+	filePath := "dir/" + rawDirectory + "/" + rawFile
+	blobOID := gitInputOutput(t, work, []byte(content), "hash-object", "-w", "--stdin")
+	directoryTree := gitInputOutput(t, work, []byte("100644 blob "+blobOID+"\t"+rawFile+"\x00"), "mktree", "-z")
+	nestedTree := gitInputOutput(t, work, []byte("040000 tree "+directoryTree+"\t"+rawDirectory+"\x00"), "mktree", "-z")
+	rootTree := gitInputOutput(t, work, []byte("040000 tree "+nestedTree+"\tdir\x00"), "mktree", "-z")
 	messagePath := filepath.Join(t.TempDir(), "message")
 	if err := os.WriteFile(messagePath, []byte("subject with separator\n\nbody "+string(rune(0x1e))+" remains data\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command("git", "commit", "-F", messagePath)
+	command := exec.Command("git", "commit-tree", rootTree, "-F", messagePath)
 	command.Dir = work
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v\n%s", err, output)
+	command.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2024-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2024-01-01T00:00:00Z")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("commit special-name tree: %v\n%s", err, output)
 	}
-	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
-	oid := gitOutput(t, work, "rev-parse", "HEAD")
+	oid := strings.TrimSpace(string(output))
+	runGit(t, work, "update-ref", "refs/heads/main", oid)
+	runGit(t, work, "push", "origin", "refs/heads/main")
 
 	summary, err := manager.Summary(context.Background(), "sample")
 	if err != nil {
@@ -79,10 +88,17 @@ func TestBrowseRealTreeBlobCommitAndDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(directory) != 1 || directory[0].Name != "back\\slash.txt" {
+	if len(directory) != 1 || directory[0].Name != rawDirectory || directory[0].Type != "tree" {
 		t.Fatalf("unexpected directory tree: %+v", directory)
 	}
-	_, blob, err := manager.ReadBlob(context.Background(), "sample", "main", "dir/back\\slash.txt", 2<<20)
+	_, nested, err := manager.Tree(context.Background(), "sample", "main", "dir/"+rawDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nested) != 1 || nested[0].Name != rawFile || nested[0].Path != filePath {
+		t.Fatalf("unexpected nested raw-name tree: %+v", nested)
+	}
+	_, blob, err := manager.ReadBlob(context.Background(), "sample", "main", filePath, 2<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +116,7 @@ func TestBrowseRealTreeBlobCommitAndDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || files[0].Path != "dir/back\\slash.txt" || files[0].Status != "added" || files[0].Additions != 2 {
+	if len(files) != 1 || files[0].Path != filePath || files[0].Status != "added" || files[0].Additions != 2 {
 		t.Fatalf("unexpected changed files: %+v", files)
 	}
 	detail, err := manager.Commit(context.Background(), "sample", oid, files[0].Path)
@@ -110,8 +126,174 @@ func TestBrowseRealTreeBlobCommitAndDiff(t *testing.T) {
 	if !strings.Contains(detail.Diff, "+<script>alert('not markup')</script>") || detail.CommitterName == "" {
 		t.Fatalf("unexpected commit detail: %+v", detail)
 	}
-	records, incomplete, err := manager.ActivityRecords(context.Background(), "sample", 100)
-	if err != nil || incomplete || len(records) != 1 || records[0].OID != oid || records[0].Source != "refs/heads/main" {
-		t.Fatalf("unexpected activity records: records=%+v incomplete=%v err=%v", records, incomplete, err)
+	activity, err := manager.Activity(context.Background(), "sample", 100)
+	if err != nil || activity.Incomplete || len(activity.Records) != 1 || activity.Records[0].OID != oid || activity.Records[0].Source != "refs/heads/main" {
+		t.Fatalf("unexpected activity records: records=%+v incomplete=%v err=%v", activity.Records, activity.Incomplete, err)
 	}
+}
+
+func TestDeepTreeLookupUsesBoundedGitProcesses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the command-counting wrapper is a Unix test fixture")
+	}
+	manager, remote, _ := newTestRepository(t)
+	components := make([]string, 256)
+	for index := range components {
+		components[index] = fmt.Sprintf("level%03d", index)
+	}
+	directory := strings.Join(components, "/")
+	filePath := directory + "/deep.txt"
+	fixture := "blob\nmark :1\ndata 5\ndeep\n" +
+		"commit refs/heads/deep\ncommitter Deep Test <deep@example.invalid> 1704067200 +0000\ndata 4\ndeep\n" +
+		"M 100644 :1 " + filePath + "\n\ndone\n"
+	command := exec.Command("git", "--git-dir", remote, "fast-import", "--quiet")
+	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Stdin = strings.NewReader(fixture)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("create deep tree fixture: %v\n%s", err, output)
+	}
+
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracePath := filepath.Join(t.TempDir(), "git-commands")
+	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
+	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + shellQuote(tracePath) + "\nprintf '\\n' >> " + shellQuote(tracePath) + "\nexec " + shellQuote(gitPath) + " \"$@\"\n"
+	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Git = traced
+
+	resetTrace := func() {
+		t.Helper()
+		if err := os.WriteFile(tracePath, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lsTreeCalls := func() int {
+		t.Helper()
+		content, err := os.ReadFile(tracePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bytes.Count(content, []byte("\x00ls-tree\x00"))
+	}
+
+	resetTrace()
+	_, entries, err := manager.Tree(context.Background(), "sample", "refs/heads/deep", directory)
+	if err != nil || len(entries) != 1 || entries[0].Path != filePath {
+		t.Fatalf("deep Tree entries=%+v err=%v", entries, err)
+	}
+	if calls := lsTreeCalls(); calls != 2 {
+		t.Fatalf("deep Tree used %d ls-tree processes, want 2", calls)
+	}
+
+	resetTrace()
+	_, blob, err := manager.ReadBlob(context.Background(), "sample", "refs/heads/deep", filePath, 1024)
+	if err != nil || string(blob.Content) != "deep\n" {
+		t.Fatalf("deep ReadBlob=%q err=%v", blob.Content, err)
+	}
+	if calls := lsTreeCalls(); calls != 1 {
+		t.Fatalf("deep ReadBlob used %d ls-tree processes, want 1", calls)
+	}
+}
+
+func TestRefTipsBatchMetadataAcrossRefs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the command-counting wrapper is a Unix test fixture")
+	}
+	manager, _, work := newTestRepository(t)
+	commitFile(t, work, "base", "base", "2024-01-01T00:00:00Z")
+	base := gitOutput(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+	branchOIDs := make(map[string]string)
+	for index := 0; index < 5; index++ {
+		name := "branch-" + strconv.Itoa(index)
+		commitFile(t, work, name, name, fmt.Sprintf("2024-01-0%dT00:00:00Z", index+2))
+		branchOIDs[name] = gitOutput(t, work, "rev-parse", "HEAD")
+		runGit(t, work, "push", "origin", "HEAD:refs/heads/"+name)
+	}
+	runGit(t, work, "tag", "lightweight", base)
+	runGit(t, work, "tag", "-a", "annotated", "-m", "annotated", base)
+	inner := gitOutput(t, work, "rev-parse", "refs/tags/annotated")
+	runGit(t, work, "tag", "-a", "nested", "-m", "nested", inner)
+	blob := gitInputOutput(t, work, []byte("blob\n"), "hash-object", "-w", "--stdin")
+	runGit(t, work, "tag", "-a", "blobtag", "-m", "blobtag", blob)
+	runGit(t, work, "push", "origin", "refs/tags/lightweight", "refs/tags/annotated", "refs/tags/nested", "refs/tags/blobtag")
+
+	summary, err := manager.Summary(context.Background(), "sample")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracePath := filepath.Join(t.TempDir(), "git-commands")
+	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
+	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + shellQuote(tracePath) + "\nprintf '\\n' >> " + shellQuote(tracePath) + "\nexec " + shellQuote(gitPath) + " \"$@\"\n"
+	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Git = traced
+	if err := os.WriteFile(tracePath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	branchTips, err := manager.RefTips(context.Background(), "sample", summary.Branches)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagTips, err := manager.RefTips(context.Background(), "sample", summary.Tags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(branchTips) != len(summary.Branches) {
+		t.Fatalf("branch tips=%d, want %d", len(branchTips), len(summary.Branches))
+	}
+	for name, oid := range branchOIDs {
+		if branchTips[name].OID != oid {
+			t.Fatalf("branch %s tip=%q, want %q", name, branchTips[name].OID, oid)
+		}
+	}
+	for _, name := range []string{"lightweight", "annotated", "nested"} {
+		if tagTips[name].OID != base {
+			t.Fatalf("tag %s tip=%q, want %q", name, tagTips[name].OID, base)
+		}
+	}
+	if _, ok := tagTips["blobtag"]; ok {
+		t.Fatal("blob tag unexpectedly produced a commit tip")
+	}
+	trace, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := bytes.Count(trace, []byte("\x00log\x00")); count != 2 {
+		t.Fatalf("RefTips used %d log processes, want 2", count)
+	}
+	if count := bytes.Count(trace, []byte("\x00cat-file\x00")); count != 1 {
+		t.Fatalf("RefTips used %d cat-file processes, want 1", count)
+	}
+}
+
+func gitInputOutput(t *testing.T, directory string, input []byte, arguments ...string) string {
+	t.Helper()
+	command := exec.Command("git", arguments...)
+	command.Dir = directory
+	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Stdin = strings.NewReader(string(input))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(arguments, " "), err, output)
+	}
+	return strings.TrimSpace(string(output))
 }

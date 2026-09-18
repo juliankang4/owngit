@@ -13,14 +13,24 @@ func TestPasswordHashRoundTripAndBounds(t *testing.T) {
 	if strings.Contains(encoded, "correct horse") {
 		t.Fatal("encoded hash contains password text")
 	}
+	if err := ValidatePasswordHash(encoded); err != nil {
+		t.Fatalf("generated password hash was rejected: %v", err)
+	}
 	if !CheckPassword(encoded, "correct horse battery staple") {
 		t.Fatal("correct password did not verify")
 	}
 	if CheckPassword(encoded, "incorrect horse battery staple") {
 		t.Fatal("incorrect password verified")
 	}
-	if CheckPassword("$argon2id$v=19$m=999999999,t=1,p=1$YWJjZGVmZ2hpamtsbW5vcA$YWJjZGVmZ2hpamtsbW5vcA", "anything") {
+	outOfBounds := "$argon2id$v=19$m=999999999,t=1,p=1$YWJjZGVmZ2hpamtsbW5vcA$YWJjZGVmZ2hpamtsbW5vcA"
+	if CheckPassword(outOfBounds, "anything") {
 		t.Fatal("out-of-bounds hash parameters were accepted")
+	}
+	if err := ValidatePasswordHash(outOfBounds); err == nil {
+		t.Fatal("out-of-bounds stored hash was accepted")
+	}
+	if err := ValidatePasswordHash("not-a-password-hash"); err == nil {
+		t.Fatal("malformed stored hash was accepted")
 	}
 }
 

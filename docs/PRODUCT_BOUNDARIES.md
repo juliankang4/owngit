@@ -6,7 +6,9 @@ These constraints define OwnGit's product behavior. They are not a list of imple
 
 - Keep OwnGit's public source separate from users' private repositories. Core repository use must not require published code, an external Git-host account, or an AI subscription.
 - Preserve submitted work and Git history. Before accepting a force-push or branch/tag deletion, retain the history it replaces or deletes. Never silently discard current work or delete history. Recovery covers Git-tracked files, not application databases, uploads, untracked files, or full-system state.
-- Build repository activity from commit author dates across working branches and retained historical branches. Count an identical commit once per repository. Ref rewriting or deletion must not erase retained activity, and activity is not evidence that checks passed.
+- Browser restore must preview additions, changes, and deletions, then add a commit without rewriting an existing branch. Refuse the write if the branch changed after preview. Repository paths and symbolic links are data, not host filesystem paths.
+- A portable backup preserves every repository ref and object reachable from those refs, repository metadata, HEAD identity, access mode, and password hashes. Host sessions, setup capabilities, trusted-host approval, and transport consent stay machine-local.
+- Build repository activity from commit author dates across working branches and retained historical branches. Count an identical commit once per repository. Ref rewriting or deletion must not erase retained activity, and activity is not evidence that checks passed. When a bounded observation is truncated, prefer current history and report the result as incomplete.
 
 ## Access and administration
 
@@ -21,6 +23,9 @@ These constraints define OwnGit's product behavior. They are not a list of imple
 - Keep storage, visibility, and acceptance policy separate from coding-agent execution. OwnGit must not silently launch coding sessions or move heavyweight checks onto the storage host.
 - Bind check evidence to the tested revision, configuration, and policy. Never reuse stale success for changed work or present an agent summary or AI review as an executed check.
 - Missing checks are not passing checks, but their absence alone does not block progress. A failed check preserves submitted work and holds main-version promotion within the verified enforcement boundary.
+- Keep ordinary push independent from pull requests. An optional pull request review must be requested or explicitly skipped. Bind every decision and merge to exact source and target revisions, and invalidate the decision when either revision moves.
+- Record an external coding tool's reviewer label as supplied provenance. Do not present it as independent review or executed checks, and do not launch an AI reviewer implicitly.
+- Publish a pull request merge as a fast-forward or a nonrewriting merge commit. Preserve exact revision refs and a protected merge receipt so retries and recovery do not create another merge.
 - Claim protection for an external Git host only when that enforcement has been verified. In coexistence mode, keep the external host authoritative.
 - External review or integration must not silently transmit private code. Require explicit, informed enablement and disclose the data being sent.
 

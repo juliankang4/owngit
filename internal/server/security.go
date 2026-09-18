@@ -46,11 +46,19 @@ func (policy *HostPolicy) Allows(requestHost string) bool {
 func (policy *HostPolicy) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if !policy.Allows(request.Host) {
-			http.Error(writer, "unrecognized host", http.StatusMisdirectedRequest)
+			if strings.HasPrefix(request.URL.Path, "/api/") {
+				writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
+			} else {
+				http.Error(writer, "unrecognized host", http.StatusMisdirectedRequest)
+			}
 			return
 		}
 		if origin := request.Header.Get("Origin"); origin != "" && !sameOrigin(request, origin) {
-			http.Error(writer, "origin does not match this server", http.StatusForbidden)
+			if strings.HasPrefix(request.URL.Path, "/api/") {
+				writeAPIError(writer, http.StatusForbidden, "origin_mismatch", "The supplied Origin does not match this server.", nil)
+			} else {
+				http.Error(writer, "origin does not match this server", http.StatusForbidden)
+			}
 			return
 		}
 		writer.Header().Set("X-Content-Type-Options", "nosniff")

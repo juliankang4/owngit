@@ -27,6 +27,7 @@ var pageNames = []string{
 	"activity",
 	"repository",
 	"new-repository",
+	"restore",
 	"error",
 }
 
@@ -161,7 +162,7 @@ func newViewData(page Page, prints fingerprints) (*viewData, error) {
 		Lang:        chrome.Lang,
 		Page:        page,
 		Name:        page.page(),
-		LangLinks:   languageLinks(chrome),
+		LangLinks:   languageLinks(chrome, canonicalURL(page, chrome)),
 		PageNotices: pageNotices,
 		Title:       title,
 		TitleEN:     titleEN,
@@ -219,6 +220,10 @@ func chromeOf(page Page) (Chrome, bool) {
 		return p.Chrome, true
 	case *NewRepositoryPage:
 		return p.Chrome, true
+	case RestorePage:
+		return p.Chrome, true
+	case *RestorePage:
+		return p.Chrome, true
 	case ErrorPage:
 		return p.Chrome, true
 	case *ErrorPage:
@@ -257,6 +262,13 @@ func documentTitle(page Page, lang Lang) string {
 		section = Text(lang, MsgRepoNewTitle)
 	case *NewRepositoryPage:
 		section = Text(lang, MsgRepoNewTitle)
+	// The restore title names the repository as well as the action, because
+	// this page writes to that repository and a tab strip full of "Restore"
+	// would not say which one.
+	case RestorePage:
+		section = restoreTitle(lang, p.Repo.Name)
+	case *RestorePage:
+		section = restoreTitle(lang, p.Repo.Name)
 	case ErrorPage:
 		section = Text(lang, p.Code)
 	case *ErrorPage:
@@ -270,17 +282,46 @@ func documentTitle(page Page, lang Lang) string {
 
 // languageLinks builds switch links that keep the current screen. The backend
 // persists the choice in a cookie when it sees the lang parameter.
-func languageLinks(chrome Chrome) []LangLink {
+func languageLinks(chrome Chrome, current string) []LangLink {
+	if current == "" {
+		current = chrome.CurrentURL
+	}
 	links := make([]LangLink, 0, len(Langs()))
 	for _, l := range Langs() {
 		links = append(links, LangLink{
 			Lang:     l,
 			Label:    languageLabel(l),
-			URL:      withLang(chrome.CurrentURL, l),
+			URL:      withLang(current, l),
 			Selected: l == chrome.Lang,
 		})
 	}
 	return links
+}
+
+// canonicalURL is the address a reader can follow back to the current screen
+// with an ordinary GET.
+//
+// For most pages that is the request URL. A page reached by POST has no such
+// address of its own: the restore preview is rendered from a POST-only route,
+// so a language link built from the request URL is a GET at a route that
+// refuses GET, which is a 404 for anyone whose browser follows the link
+// normally. Such pages state where their equivalent GET lives.
+func canonicalURL(page Page, chrome Chrome) string {
+	switch p := page.(type) {
+	case RestorePage:
+		return restoreSelectionURL(p)
+	case *RestorePage:
+		return restoreSelectionURL(*p)
+	}
+	return chrome.CurrentURL
+}
+
+func restoreTitle(lang Lang, repo string) string {
+	title := Text(lang, MsgRestoreTitle)
+	if repo == "" {
+		return title
+	}
+	return title + " " + repo
 }
 
 func authTitle(lang Lang, scope AuthScope) string {

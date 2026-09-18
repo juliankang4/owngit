@@ -141,6 +141,30 @@ func TestOnlyOneConcurrentSetupCompletionWins(t *testing.T) {
 	}
 }
 
+func TestSQLiteFileURIKeepsWindowsDriveInThePathAndEscapesReservedBytes(t *testing.T) {
+	if got, want := sqliteFileURI("C:/OwnGit state/#?%.sqlite"), "file:///C:/OwnGit%20state/%23%3F%25.sqlite"; got != want {
+		t.Fatalf("Windows SQLite URI = %q, want %q", got, want)
+	}
+	if got, want := sqliteFileURI("/tmp/OwnGit state/#?%.sqlite"), "file:///tmp/OwnGit%20state/%23%3F%25.sqlite"; got != want {
+		t.Fatalf("Unix SQLite URI = %q, want %q", got, want)
+	}
+}
+
+func TestStateOpenHandlesEscapedPathCharacters(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "OwnGit state # %")
+	store, err := Open(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.Settings(context.Background()); err != nil {
+		t.Fatalf("read state from escaped path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, databaseName)); err != nil {
+		t.Fatalf("state database was not created at the requested path: %v", err)
+	}
+}
+
 func TestStateFilesAreOwnerOnly(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
 	store, err := Open(context.Background(), directory)
@@ -151,15 +175,7 @@ func TestStateFilesAreOwnerOnly(t *testing.T) {
 	if databaseName != "owngit.sqlite" {
 		t.Fatalf("database name = %q, want owngit.sqlite", databaseName)
 	}
-	for _, path := range []string{directory, filepath.Join(directory, "owngit.sqlite")} {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := info.Mode().Perm(); got&0o077 != 0 {
-			t.Fatalf("%s permissions are %o, want no group/other access", path, got)
-		}
-	}
+	assertStateStoragePrivate(t, directory)
 }
 
 func openTestStore(t *testing.T) *Store {

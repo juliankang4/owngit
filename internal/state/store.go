@@ -15,7 +15,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const databaseName = "owngit.sqlite"
+const (
+	databaseName                = "owngit.sqlite"
+	IncompleteRestoreMarkerName = ".owngit-restore-pending"
+)
 
 var ErrSetupComplete = errors.New("setup is already complete")
 
@@ -77,6 +80,11 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 	if err := os.MkdirAll(absolute, 0o700); err != nil {
 		return nil, fmt.Errorf("create state directory: %w", err)
 	}
+	if _, err := os.Lstat(filepath.Join(absolute, IncompleteRestoreMarkerName)); err == nil {
+		return nil, errors.New("state directory belongs to an incomplete offline restore; follow the interrupted-restore procedure before use")
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect incomplete restore marker: %w", err)
+	}
 	if err := ProtectPrivatePath(absolute, true); err != nil {
 		return nil, fmt.Errorf("protect state directory: %w", err)
 	}
@@ -84,7 +92,7 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 		return nil, fmt.Errorf("validate state directory: %w", err)
 	}
 	path := filepath.Join(absolute, databaseName)
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	dsn := sqliteFileURI(path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open state database: %w", err)
@@ -102,6 +110,15 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 		}
 	}
 	return store, nil
+}
+
+func sqliteFileURI(path string) string {
+	slashPath := filepath.ToSlash(path)
+	if len(slashPath) >= 3 && slashPath[1] == ':' && slashPath[2] == '/' &&
+		(('a' <= slashPath[0] && slashPath[0] <= 'z') || ('A' <= slashPath[0] && slashPath[0] <= 'Z')) {
+		slashPath = "/" + slashPath
+	}
+	return (&url.URL{Scheme: "file", Path: slashPath}).String()
 }
 
 func (s *Store) initialize(ctx context.Context) error {
@@ -143,6 +160,60 @@ func (s *Store) initialize(ctx context.Context) error {
 			description TEXT NOT NULL,
 			created_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS pull_requests (
+			repository_id TEXT NOT NULL,
+			number INTEGER NOT NULL CHECK (number > 0),
+			title TEXT NOT NULL,
+			source_branch TEXT NOT NULL,
+			target_branch TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('creating','open','merged')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			merge_source_oid TEXT NOT NULL DEFAULT '',
+			merge_target_oid TEXT NOT NULL DEFAULT '',
+			merge_oid TEXT NOT NULL DEFAULT '',
+			merge_receipt_ref TEXT NOT NULL DEFAULT '',
+			merged_at INTEGER,
+			PRIMARY KEY (repository_id, number),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS pull_request_revisions (
+			repository_id TEXT NOT NULL,
+			pull_request_number INTEGER NOT NULL,
+			source_oid TEXT NOT NULL,
+			target_oid TEXT NOT NULL,
+			recorded_at INTEGER NOT NULL,
+			PRIMARY KEY (repository_id, pull_request_number, source_oid, target_oid),
+			FOREIGN KEY (repository_id, pull_request_number) REFERENCES pull_requests(repository_id, number) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS pull_request_reviews (
+			repository_id TEXT NOT NULL,
+			pull_request_number INTEGER NOT NULL,
+			sequence INTEGER NOT NULL CHECK (sequence > 0),
+			source_oid TEXT NOT NULL,
+			target_oid TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('pending','approved','changes_requested','skipped')),
+			reviewer_label TEXT NOT NULL,
+			provenance TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (repository_id, pull_request_number, sequence),
+			FOREIGN KEY (repository_id, pull_request_number) REFERENCES pull_requests(repository_id, number) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS pull_request_merge_intents (
+			repository_id TEXT NOT NULL,
+			pull_request_number INTEGER NOT NULL,
+			source_oid TEXT NOT NULL,
+			target_oid TEXT NOT NULL,
+			mode TEXT NOT NULL,
+			tree_oid TEXT NOT NULL,
+			result_oid TEXT NOT NULL,
+			receipt_ref TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('preparing','planned','ready','complete')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (repository_id, pull_request_number, source_oid, target_oid),
+			FOREIGN KEY (repository_id, pull_request_number) REFERENCES pull_requests(repository_id, number) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS trusted_hosts (
 			host TEXT PRIMARY KEY,
 			created_at INTEGER NOT NULL
@@ -164,6 +235,24 @@ func (s *Store) initialize(ctx context.Context) error {
 
 func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) Dir() string  { return s.dir }
+
+func RequireExisting(directory string) error {
+	absolute, err := filepath.Abs(directory)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(filepath.Join(absolute, databaseName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("OwnGit state does not exist")
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return errors.New("OwnGit state database must be a regular file")
+	}
+	return nil
+}
 
 func (s *Store) Settings(ctx context.Context) (Settings, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT key,value FROM metadata`)

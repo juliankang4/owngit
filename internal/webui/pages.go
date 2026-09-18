@@ -321,6 +321,9 @@ type RepositoryPage struct {
 	OverviewURL string
 	CodeURL     string
 	CommitsURL  string
+	// RestoreURL opens the restore screen for this repository. Empty means no
+	// link, which is what an older caller that never sets it gets.
+	RestoreURL string
 
 	// Ref is the currently selected branch, tag, or revision.
 	Ref RefSelection
@@ -417,6 +420,9 @@ type RefLine struct {
 	Annotated bool
 	// Tip is the commit this ref points at. Zero when unavailable.
 	Tip CommitSummary
+	// RestoreURL opens the restore screen with this ref's tip preselected as
+	// the source. Empty means no link.
+	RestoreURL string
 }
 
 // CodeView is the file browser panel.
@@ -467,6 +473,9 @@ type FileView struct {
 	Truncated bool
 	// RawURL downloads the file. Empty when the backend does not offer it.
 	RawURL string
+	// RestoreURL opens the restore screen with this file preselected. Empty
+	// means no link.
+	RestoreURL string
 }
 
 // CommitsView is the commit history panel.
@@ -517,6 +526,9 @@ type CommitDetail struct {
 	// Unavailable is true when the diff could not be produced, for example for
 	// a merge commit the backend does not expand.
 	Unavailable bool
+	// RestoreURL opens the restore screen with this commit as the source.
+	// Empty means no link.
+	RestoreURL string
 
 	// UnavailableReason explains why. Used only when Unavailable is true.
 	UnavailableReason MessageCode
@@ -604,6 +616,109 @@ type NewRepositoryPage struct {
 }
 
 func (NewRepositoryPage) page() string { return "new-repository" }
+
+// ---------------------------------------------------------------------------
+// Restore
+// ---------------------------------------------------------------------------
+
+// Restore selection values submitted in the "mode" field.
+const (
+	// RestoreModeAll restores the whole project tree as the source commit
+	// recorded it, including deleting files the source does not have.
+	RestoreModeAll = "all"
+	// RestoreModeFiles restores only the paths submitted in the repeated
+	// "path" field.
+	RestoreModeFiles = "files"
+)
+
+// RestoreConfirm is the value the "confirm" field must carry before the apply
+// request is a restore request at all. The reader ticks it after reading the
+// preview, and the backend checks it again; neither side treats a rendered
+// form as permission.
+const RestoreConfirm = "restore"
+
+// RestorePage renders GET /repositories/{id}/restore and the result of
+// POST /repositories/{id}/restore/preview.
+//
+// Restoring is two deliberate steps. The first form posts the selection to
+// PreviewURL and gets back the same page with Previewed set and Changes
+// filled. The second form posts that reviewed selection to ApplyURL together
+// with ExpectedHead and confirm=restore. Every field is redisplayed input:
+// the backend revalidates the selection, recomputes the result, and refuses a
+// target whose tip no longer matches ExpectedHead.
+//
+// Applying writes a new commit on the target branch. It never rewrites the
+// branch's existing history, and it cannot reach a working copy on another
+// computer.
+type RestorePage struct {
+	Chrome Chrome
+	Repo   RepositoryHeader
+	// Source is the commit the files come from, already resolved by the
+	// backend. Its OID is submitted in the "source" field.
+	Source CommitSummary
+	// TargetBranch is the branch the restore writes to, submitted in the
+	// "target" field. It may name a branch that does not exist, which the
+	// restore creates at the selected commit.
+	TargetBranch string
+	// CreatesBranch reports that restoring would create TargetBranch rather
+	// than add to an existing one. The backend observes this together with
+	// ExpectedHead, so the page describes the branch from one observation
+	// instead of inferring it from Branches, which is read separately and can
+	// disagree with what the preview was computed against.
+	CreatesBranch bool
+	// Branches are existing branch names, offered only as suggestions. The
+	// target is typed, because recreating a branch that was deleted is how
+	// deleted work comes back and such a name is not in this list.
+	Branches []RefOption
+	// Mode is RestoreModeAll or RestoreModeFiles, submitted in the "mode"
+	// field.
+	Mode string
+	// Paths are the source commit's files, each with the change restoring it
+	// would make and whether it is currently selected. Selected paths are
+	// submitted in the repeated "path" field.
+	Paths []RestorePath
+	// Changes are the previewed differences between the target branch and the
+	// restored result, including deletions. Filled only after a preview.
+	Changes []DiffFile
+	// ExpectedHead is the target tip the preview was computed against, or the
+	// zero OID when the target does not exist. It is submitted with the apply
+	// request so a branch that moved in the meantime fails instead of being
+	// overwritten.
+	ExpectedHead string
+	// Previewed is true once the page shows the result of a preview. Until
+	// then there is no apply form at all.
+	Previewed bool
+	// CanApply is the backend's decision that this previewed selection is
+	// still applicable. False disables the apply control; the reason arrives
+	// as a notice.
+	CanApply bool
+	// DiffTruncated is true when a file's text diff was too large to show in
+	// full. The changed paths are still listed completely.
+	DiffTruncated bool
+
+	// PreviewURL and ApplyURL are the two POST targets. CancelURL returns to
+	// the repository.
+	PreviewURL string
+	ApplyURL   string
+	CancelURL  string
+}
+
+func (RestorePage) page() string { return "restore" }
+
+// RestorePath is one file of the source commit offered for selection.
+//
+// Path is a repository path presented as text. It is never a host path, and
+// the renderer escapes it like any other repository content.
+type RestorePath struct {
+	Path string
+	// Status is the change restoring this path would make to the target
+	// branch: "added", "modified", or "deleted". A deletion is listed as its
+	// own entry, because a selected source that lacks a file removes that file
+	// from the branch, and nobody should have to infer that from a directory.
+	Status string
+	// Selected is the current checkbox state.
+	Selected bool
+}
 
 // ---------------------------------------------------------------------------
 // Errors

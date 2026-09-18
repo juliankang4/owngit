@@ -7,8 +7,11 @@ OwnGit is Git for HomeLab & Local. It keeps private repositories and their histo
 ## What it does
 
 - Supports clone, fetch, and push over Smart HTTP from standard Git clients.
+- Creates, inspects, reviews, and merges pull requests through structured CLI commands. Ordinary `git push` remains available without a pull request.
 - Shows repositories, branches, tags, files, commits, diffs, and author-date activity in the browser.
 - Retains replaced or deleted branch and tag history in hidden refs.
+- Restores a whole repository tree or selected files in the browser after showing additions, changes, and deletions.
+- Creates and restores offline backups containing repository refs, objects, pull request records, and portable OwnGit settings.
 - Runs as one Go executable with a host-local SQLite database. No Node, Python, or database service is required at runtime.
 - Provides English and Korean interfaces with Light, Dark, and System appearance modes.
 
@@ -35,9 +38,11 @@ See [Operations](docs/OPERATIONS.md) for access from another device, Host approv
 
 ## Status and limits
 
-OwnGit is an initial implementation with no release download. Build it from source as shown above. Runtime verification currently covers the core macOS paths; Windows, Linux, NAS use, upgrades, and deployment remain unverified.
+OwnGit is an initial implementation with no release download. Build it from source as shown above. Runtime checks have passed on macOS, Windows 11, Ubuntu Linux, and Debian with Git 2.39.5 in an isolated container on NAS hardware. Command-driven pull request journeys, cross-device Git use, and offline recovery have also been exercised. Repositories on a mounted SMB share and on NFS passed fetch, push, retention, restart, and offline backup with one writer at a time. A snapshot-based upgrade check from the first commit to a later build preserved repository records, though compatibility with future releases is untested. Release packaging, production deployment, and primary-storage migration remain unverified.
 
-History retention has no restore or permanent-delete interface and is not a backup. Import, Git LFS hosting, project check execution, and coding-agent execution are not implemented.
+History retention has no permanent-delete interface and is not a backup by itself. OwnGit provides browser restore and host-owner offline backup commands. Pull request commands use optional review: the external coding tool supplies a labelled result or explicitly skips review. OwnGit does not launch a reviewer or claim that a supplied result is independent. Project checks are not configured in this release and appear as `not_configured`, never as passed. The browser has no pull request interface yet. Pull request merge requires Git 2.38 or newer, while clone, fetch, push, and browsing do not depend on that merge capability.
+
+A dedicated import interface, automatic backup schedules, Git LFS hosting, project check execution, and OwnGit-hosted coding-agent execution are not implemented.
 
 No software license has been selected, so the source must not be treated as licensed yet.
 

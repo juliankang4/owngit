@@ -1,0 +1,306 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}
+{{/* The error a refused apply should leave the reader on, in reading order. */}}
+{{$focus := firstAlert $n "target" "mode" "path"}}
+
+<p class="backline"><a class="back" href="{{$p.CancelURL}}">{{icon "back"}}{{bi $lang "app.back_to_repository"}}</a></p>
+
+<div class="phead">
+  <h1>{{bi $lang "restore.title"}}</h1>
+  <p>{{bi $lang "restore.intro"}}</p>
+</div>
+
+{{/* The screen is one step at a time. Before a preview the selection is a
+     form; after one it is a summary of what was actually previewed.
+
+     Keeping the form editable next to the preview was a real defect: the
+     preview and the apply request describe the selection that was computed,
+     so a reader could change the branch in the picker, see "release" on
+     screen, confirm, and have the write go to main. Rather than watching for
+     that with a script, the editable controls are simply not present once
+     there is something to confirm. Changing the choice is a link back to this
+     same screen, which returns to step one and requires a fresh preview. */}}
+{{if not $p.Previewed}}
+<form class="form form--wide restore" method="post" action="{{$p.PreviewURL}}">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+
+  <div class="card">
+    <div class="restore__pair">
+      <div class="restore__from">
+        <h2 class="setblock__h">{{bi $lang "restore.source.label"}}</h2>
+        {{/* The source is a commit the backend already resolved. It is shown
+             as what it is and submitted unchanged; the reader picks a
+             different one by opening restore from another commit. */}}
+        <input type="hidden" name="source" value="{{$p.Source.OID}}">
+        <p class="restore__commit">
+          <span class="mono">{{$p.Source.ShortOID}}</span>
+          <span class="restore__subject">{{$p.Source.Subject}}</span>
+        </p>
+        <p class="restore__meta">
+          {{with $p.Source.AuthorName}}<span>{{.}}</span>{{end}}
+          <span>{{biRelative $lang $now $p.Source.AuthorDate}}</span>
+        </p>
+        <p class="f__help">{{bi $lang "restore.source.help"}}</p>
+      </div>
+
+      <div class="restore__to">
+        <h2 class="setblock__h">{{bi $lang "restore.target.label"}}</h2>
+        <div class="f">
+          <label for="restore-target">{{bi $lang "app.branch_label"}}</label>
+          {{/* Recreating a branch that was deleted is how deleted work comes
+               back, so the target is typed rather than picked. A list of
+               existing names would have made exactly that case unreachable,
+               and a select silently falls back to its first option when its
+               value is absent, which could retarget the write.
+
+               The datalist offers the existing branches as suggestions
+               without limiting what can be entered. Whether the name is
+               valid, and whether writing there is allowed, is decided by Git
+               and the backend; nothing here judges either. */}}
+          <input id="restore-target" name="target" type="text" required
+                 spellcheck="false" autocapitalize="off" autocomplete="off"
+                 list="restore-branches" value="{{$p.TargetBranch}}"
+                 {{template "fieldInvalid" dict "Notices" $n "Field" "target"}}>
+          {{if $p.Branches}}
+            <datalist id="restore-branches">
+              {{range $p.Branches}}<option value="{{.Name}}"></option>{{end}}
+            </datalist>
+          {{end}}
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "target"}}
+          {{/* Both outcomes are described here, because this field is still
+               being edited and either one is reachable from it.
+
+               Which one applies is deliberately not stated at this step. That
+               answer is the backend's observation of one branch, and this
+               control can be retyped or picked from the suggestions without
+               asking again, so a rendered answer survives the choice it was
+               about: opening the screen on an absent name and then selecting
+               an existing branch left "this branch will be created" beside a
+               branch that already exists. The claim is made once, on the
+               preview below, which is computed from the submitted name and
+               cannot be edited afterwards. */}}
+          <p class="f__help">{{bi $lang "restore.target.choose"}}</p>
+          <p class="f__help">{{bi $lang "restore.target.help"}}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <fieldset class="fset">
+      <legend>{{bi $lang "restore.scope.label"}}</legend>
+
+      <label class="choice">
+        <input type="radio" name="mode" value="all" data-restore-scope="all"
+               {{if ne $p.Mode "files"}} checked{{end}}>
+        <span class="choice__t">{{bi $lang "restore.scope.all"}}</span>
+        <span class="choice__d">{{bi $lang "restore.scope.all_help"}}</span>
+      </label>
+
+      <label class="choice">
+        <input type="radio" name="mode" value="files" data-restore-scope="files"
+               {{if eq $p.Mode "files"}} checked{{end}}>
+        <span class="choice__t">{{bi $lang "restore.scope.files"}}</span>
+        <span class="choice__d">{{bi $lang "restore.scope.files_help"}}</span>
+      </label>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "mode"}}
+    </fieldset>
+
+    {{/* The file list stays usable without scripting: the mode radio above is
+         what decides whether these ticks are read. With the script loaded the
+         panel also states, in words, when the whole project is selected and
+         these ticks are therefore not what decides the result. */}}
+    <div class="restore__files" data-restore-files>
+      <fieldset class="fset">
+        <legend>{{bi $lang "restore.files.label"}}</legend>
+        {{/* Shown by the stylesheet only while the panel is marked inactive,
+             so a reader without scripting never sees a claim about a state
+             that nothing is maintaining. */}}
+        <p class="restore__note">{{icon "info"}}<span>{{bi $lang "restore.files.inactive"}}</span></p>
+        <p class="f__help">{{bi $lang "restore.files.help"}}</p>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "path"}}
+
+        {{if $p.Paths}}
+          <ul class="rpaths">
+            {{range $i, $path := $p.Paths}}
+              <li class="rpath">
+                <label class="check">
+                  <input type="checkbox" name="path" value="{{$path.Path}}"{{if $path.Selected}} checked{{end}}>
+                  <span class="check__t mono">{{$path.Path}}</span>
+                  {{/* The status is a word and a shape, never a colour on its
+                       own, and a deletion is stated on its own row instead of
+                       being folded into a directory. */}}
+                  {{with changeStatus $path.Status}}
+                    <span class="check__d rpath__s rpath__s--{{$path.Status}}">
+                      {{if eq $path.Status "deleted"}}{{icon "warning"}}{{else}}{{icon "file"}}{{end}}
+                      {{bi $lang .}}
+                    </span>
+                  {{end}}
+                </label>
+              </li>
+            {{end}}
+          </ul>
+        {{else}}
+          <p class="empty">{{bi $lang "restore.files.empty"}}</p>
+        {{end}}
+      </fieldset>
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn--primary">{{bi $lang "restore.preview.submit"}}</button>
+      <a class="btn" href="{{$p.CancelURL}}">{{bi $lang "app.cancel"}}</a>
+    </div>
+  </div>
+</form>
+{{else}}
+
+{{/* What the preview below was actually computed from. These are statements,
+     not controls, so nothing here can drift from the request that follows. */}}
+<div class="card restore__locked">
+  <div class="restore__pair">
+    <div class="restore__from">
+      <h2 class="setblock__h">{{bi $lang "restore.source.label"}}</h2>
+      <p class="restore__commit">
+        <span class="mono">{{$p.Source.ShortOID}}</span>
+        <span class="restore__subject">{{$p.Source.Subject}}</span>
+      </p>
+      <p class="restore__meta">
+        {{with $p.Source.AuthorName}}<span>{{.}}</span>{{end}}
+        <span>{{biRelative $lang $now $p.Source.AuthorDate}}</span>
+      </p>
+    </div>
+
+    <div class="restore__to">
+      <h2 class="setblock__h">{{bi $lang "restore.target.label"}}</h2>
+      <p class="restore__commit"><span class="mono">{{$p.TargetBranch}}</span></p>
+      {{/* Whether the branch would be created is the backend's observation,
+           made together with the tip this preview was computed against.
+           Comparing the name against the suggestion list instead would be a
+           second, separately read source of truth that can disagree with the
+           plan. It is stated only here, where the value is fixed. */}}
+      {{if $p.CreatesBranch}}
+        <p class="stateline">{{icon "kept"}}<span>{{bi $lang "restore.target.recreated"}}</span></p>
+      {{end}}
+      {{/* A rejected apply reports the field it rejected. There is no input
+           here to attach it to, so the notice sits beside the value it is
+           about and announces itself: without a control to carry
+           aria-describedby, nothing else would.
+
+           A stale branch is reported this way, and it is the reason the
+           restore below is unavailable, so it has to reach someone who is
+           not looking at this corner of the screen. */}}
+      {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $n "Field" "target" "Focus" $focus}}
+      <p class="f__help">{{bi $lang "restore.target.help"}}</p>
+    </div>
+  </div>
+
+  <div class="restore__scope">
+    <h2 class="setblock__h">{{bi $lang "restore.scope.label"}}</h2>
+    {{if eq $p.Mode "files"}}
+      <p class="restore__scope-t">{{bi $lang "restore.scope.files"}}</p>
+      {{with pickedPaths $p.Paths}}
+        <ul class="rpaths rpaths--plain">
+          {{range .}}<li class="rpath"><span class="mono">{{.Path}}</span></li>{{end}}
+        </ul>
+      {{end}}
+    {{else}}
+      <p class="restore__scope-t">{{bi $lang "restore.scope.all"}}</p>
+    {{end}}
+    {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $n "Field" "mode" "Focus" $focus}}
+    {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $n "Field" "path" "Focus" $focus}}
+  </div>
+
+  <p class="restore__edit">
+    <a class="btn" href="{{selectionURL $p}}">{{bi $lang "restore.apply.change_choice"}}</a>
+    <span class="f__help">{{bi $lang "restore.apply.change_help"}}</span>
+  </p>
+</div>
+{{end}}
+
+{{/* Step two exists only after a preview. Until the backend has computed the
+     result there is nothing to confirm, so no apply control is rendered at
+     all. */}}
+{{if $p.Previewed}}
+<div class="card restore__preview">
+  <div class="sec__bar">
+    <h2>{{bi $lang "restore.preview.title"}}</h2>
+    <span class="sec__n">{{biCount $lang "file" (len $p.Changes)}}</span>
+  </div>
+  <p class="f__help">{{bi $lang "restore.preview.help"}}</p>
+
+  {{if $p.Changes}}
+    {{$gone := deletions $p.Changes}}
+    {{if $gone}}
+      {{/* Deletions are the one outcome a reader cannot check afterwards by
+           opening the file, so they are named together as well as listed in
+           order below. */}}
+      <div class="restore__deletes">
+        <p class="restore__deletes-h">{{icon "warning"}}<span>{{bi $lang "restore.preview.deletes"}}</span></p>
+        <ul class="rpaths rpaths--plain">
+          {{range $gone}}<li class="rpath"><span class="mono">{{.Path}}</span></li>{{end}}
+        </ul>
+      </div>
+    {{end}}
+
+    <div class="fchips">
+      {{range $p.Changes}}
+        {{$status := .Status}}
+        <span class="fchip fchip--static">
+          <span class="fchip__p">{{.Path}}</span>
+          <span class="fchip__n">
+            {{with changeStatus $status}}<span class="rpath__s rpath__s--{{$status}}">{{bi $lang .}}</span>{{end}}
+            {{if .Binary}}<span>{{bi $lang "restore.preview.binary_file"}}</span>
+            {{else}}<span class="add">+{{.Additions}}</span><span class="del">-{{.Deletions}}</span>{{end}}
+          </span>
+        </span>
+      {{end}}
+    </div>
+
+    {{/* A file the backend did not load hunks for renders nothing here. It is
+         still listed above as a changed path, so the list stays complete. */}}
+    {{range $p.Changes}}
+      {{template "diffFile" dict "Lang" $lang "F" .}}
+    {{end}}
+
+    {{if $p.DiffTruncated}}
+      <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "restore.preview.diff_truncated"}}</span></p>
+    {{end}}
+  {{else}}
+    <p class="empty">{{bi $lang "restore.no_changes"}}</p>
+  {{end}}
+
+  {{/* The apply form resubmits exactly what was previewed, including the
+       observed target tip. The backend revalidates all of it and refuses the
+       write when the branch moved, so these fields are a statement of what
+       the reader reviewed, not an authorization. */}}
+  <form class="form form--wide" method="post" action="{{$p.ApplyURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="source" value="{{$p.Source.OID}}">
+    <input type="hidden" name="target" value="{{$p.TargetBranch}}">
+    <input type="hidden" name="mode" value="{{$p.Mode}}">
+    <input type="hidden" name="expected_head" value="{{$p.ExpectedHead}}">
+    {{if eq $p.Mode "files"}}
+      {{range pickedPaths $p.Paths}}
+        <input type="hidden" name="path" value="{{.Path}}">
+      {{end}}
+    {{end}}
+
+    <label class="check">
+      <input type="checkbox" name="confirm" value="restore" required
+             {{if not $p.CanApply}}disabled{{end}}
+             {{template "fieldInvalid" dict "Notices" $n "Field" "confirm"}}>
+      <span class="check__t">{{bi $lang "restore.confirm.label"}}</span>
+      <span class="check__d">{{bi $lang "restore.confirm.help"}}</span>
+    </label>
+    {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "confirm"}}
+
+    <div class="actions">
+      <button type="submit" class="btn btn--primary"{{if not $p.CanApply}} disabled{{end}}>
+        {{bi $lang "restore.apply.submit"}}
+      </button>
+      <a class="btn" href="{{$p.CancelURL}}">{{bi $lang "app.cancel"}}</a>
+    </div>
+  </form>
+</div>
+{{end}}
+{{end}}

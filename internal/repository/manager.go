@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -25,11 +26,12 @@ var (
 )
 
 type Manager struct {
-	Store *state.Store
-	Git   *gitexec.Runner
-	Locks *gitexec.Locks
-	Root  string
-	mu    sync.RWMutex
+	Store            *state.Store
+	Git              *gitexec.Runner
+	Locks            *gitexec.Locks
+	Root             string
+	restorePublisher func(context.Context, string, string, string, string) error
+	mu               sync.RWMutex
 }
 
 func (m *Manager) SetRoot(root string) {
@@ -53,6 +55,9 @@ func (m *Manager) Create(ctx context.Context, name, description string) (state.R
 		return state.Repository{}, ErrInvalidDescription
 	}
 	id := strings.ToLower(name)
+	if err := ValidateID(id); err != nil {
+		return state.Repository{}, fmt.Errorf("%w: %v", ErrInvalidName, err)
+	}
 	if _, exists, err := m.Store.Repository(ctx, id); err != nil {
 		return state.Repository{}, err
 	} else if exists {
@@ -108,8 +113,8 @@ func (m *Manager) Create(ctx context.Context, name, description string) (state.R
 }
 
 func (m *Manager) Path(id string) (string, error) {
-	if !validName.MatchString(id) || id != strings.ToLower(id) || strings.HasSuffix(id, ".git") {
-		return "", errors.New("invalid repository ID")
+	if err := ValidateID(id); err != nil {
+		return "", err
 	}
 	root, err := canonicalRoot(m.RepositoryRoot())
 	if err != nil {
@@ -160,11 +165,16 @@ func canonicalRoot(root string) (string, error) {
 	if !info.IsDir() {
 		return "", errors.New("repository root is not a directory")
 	}
+	if _, err := os.Lstat(filepath.Join(absolute, state.IncompleteRestoreMarkerName)); err == nil {
+		return "", errors.New("repository root belongs to an incomplete offline restore; follow the interrupted-restore procedure before use")
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect incomplete restore marker: %w", err)
+	}
 	return filepath.Clean(absolute), nil
 }
 
 func repositoryConfig() [][2]string {
-	return [][2]string{
+	config := [][2]string{
 		{"http.receivepack", "true"},
 		{"http.getanyfile", "false"},
 		{"receive.hideRefs", "refs/owngit/"},
@@ -180,12 +190,30 @@ func repositoryConfig() [][2]string {
 		{"maintenance.autoDetach", "false"},
 		{"core.logAllRefUpdates", "false"},
 	}
+	if runtime.GOOS == "windows" {
+		config = append(config, [2]string{"core.longpaths", "true"})
+	}
+	return config
 }
 
 // PrepareExisting reapplies safety-critical configuration to repositories that
-// predate the current executable. In particular, Git must never start
-// automatic maintenance while OwnGit's retention refs are being managed.
+// predate the current executable. It prevents automatic maintenance during
+// retention and enables long repository paths on Windows.
 func (m *Manager) PrepareExisting(ctx context.Context) error {
+	return m.prepareExisting(ctx, m.Git)
+}
+
+// PrepareExistingForRuntime writes hooks for a runtime path that will become
+// active after staged repository storage is published. Git commands still run
+// through the manager's current, usable runner.
+func (m *Manager) PrepareExistingForRuntime(ctx context.Context, hookRuntime *gitexec.Runner) error {
+	if hookRuntime == nil {
+		return errors.New("hook runtime is unavailable")
+	}
+	return m.prepareExisting(ctx, hookRuntime)
+}
+
+func (m *Manager) prepareExisting(ctx context.Context, hookRuntime *gitexec.Runner) error {
 	repositories, err := m.Store.Repositories(ctx)
 	if err != nil {
 		return err
@@ -207,7 +235,7 @@ func (m *Manager) PrepareExisting(ctx context.Context) error {
 			}
 		}
 		if err == nil {
-			err = writeRetentionHook(path, m.Git)
+			err = writeRetentionHook(path, hookRuntime)
 		}
 		lock.Unlock()
 		if err != nil {
@@ -259,7 +287,7 @@ if test "$kind" = heads && test "$new" != "$zero"; then
     test "$status" = 1 || { echo "could not compare branch history" >&2; exit 1; }
   fi
 fi
-commands=$(mktemp "$TMPDIR/owngit-retention-commands.XXXXXX") || exit 1
+commands=$(mktemp %s) || exit 1
 trap 'rm -f "$commands"' EXIT HUP INT TERM
 retained="refs/owngit/retained/$kind/$old"
 provenance="refs/owngit/provenance/$kind/$short/$old"
@@ -280,7 +308,8 @@ if test -s "$commands"; then
     run_git update-ref --stdin >/dev/null 2>&1 || { echo "could not preserve previous history" >&2; exit 1; }
 fi
 `, shellQuote(filepath.Dir(runner.GitPath)), home, home, config, config, temp, git,
-		shellQuote(filepath.Dir(runner.GitPath)), home, home, config, config, temp, git)
+		shellQuote(filepath.Dir(runner.GitPath)), home, home, config, config, temp, git,
+		shellQuote(filepath.Join(runner.TempDir, "owngit-retention-commands.XXXXXX")))
 	if err := writeHookFile(filepath.Join(hooks, "update"), updateScript); err != nil {
 		return err
 	}

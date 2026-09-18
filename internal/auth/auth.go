@@ -71,6 +71,11 @@ func CheckPassword(encoded, password string) bool {
 	return subtle.ConstantTimeCompare(actual, expected) == 1
 }
 
+func ValidatePasswordHash(encoded string) error {
+	_, _, _, err := parseHash(encoded)
+	return err
+}
+
 func ValidatePassword(password string) error {
 	if len(password) < 8 {
 		return errors.New("password must contain at least 8 characters")

@@ -1,7 +1,9 @@
 package repository
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,140 @@ import (
 	"owngit/internal/gitexec"
 	"owngit/internal/state"
 )
+
+func TestActivityRevisionInputAvoidsOptionsInStdin(t *testing.T) {
+	got := activityRevisionInput([]string{"refs/owngit/retained/heads/old"}, []string{"refs/heads/main", "refs/heads/release"})
+	want := "refs/owngit/retained/heads/old\n^refs/heads/main\n^refs/heads/release\n"
+	if got != want {
+		t.Fatalf("activity revision input = %q, want %q", got, want)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "--") {
+			t.Fatalf("activity input contains an option unsupported by older Git: %q", line)
+		}
+	}
+}
+
+type countingRetainedRunner struct {
+	delegate *gitexec.Runner
+	commands [][]string
+	inputs   []string
+}
+
+func (runner *countingRetainedRunner) Run(ctx context.Context, directory string, stdin io.Reader, arguments ...string) (gitexec.Result, error) {
+	runner.commands = append(runner.commands, append([]string(nil), arguments...))
+	return runner.delegate.Run(ctx, directory, stdin, arguments...)
+}
+
+func (runner *countingRetainedRunner) RunWithOutputLimit(ctx context.Context, directory string, stdin io.Reader, limit int64, arguments ...string) (gitexec.Result, error) {
+	runner.commands = append(runner.commands, append([]string(nil), arguments...))
+	if stdin != nil {
+		content, err := io.ReadAll(stdin)
+		if err != nil {
+			return gitexec.Result{}, err
+		}
+		runner.inputs = append(runner.inputs, string(content))
+		stdin = bytes.NewReader(content)
+	}
+	return runner.delegate.RunWithOutputLimit(ctx, directory, stdin, limit, arguments...)
+}
+
+func TestRetainedRefsBatchPeelsAndLoadsMetadataWithoutDiffProcesses(t *testing.T) {
+	manager, remote, work := newTestRepository(t)
+	var oids []string
+	for index := 0; index < 12; index++ {
+		commitFile(t, work, strings.Repeat("x", index+1), "retained metadata", "2024-01-01T00:00:00Z")
+		oids = append(oids, gitOutput(t, work, "rev-parse", "HEAD"))
+	}
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/transfer")
+	runGit(t, work, "checkout", "--orphan", "replacement")
+	runGit(t, work, "rm", "-rf", ".")
+	commitFile(t, work, "replacement", "current main", "2024-02-01T00:00:00Z")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+	for _, oid := range oids {
+		runGit(t, "", "--git-dir", remote, "update-ref", "refs/owngit/retained/heads/"+oid, oid)
+		runGit(t, "", "--git-dir", remote, "update-ref", "refs/owngit/provenance/heads/main/"+oid, oid)
+	}
+
+	runner := &countingRetainedRunner{delegate: manager.Git}
+	retained, err := retainedRefs(context.Background(), runner, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retained) != len(oids) {
+		t.Fatalf("retained refs=%d, want %d", len(retained), len(oids))
+	}
+	if len(runner.commands) != 6 {
+		t.Fatalf("retained overview used %d Git processes for %d branch refs, want 6", len(runner.commands), len(oids))
+	}
+	metadataProcesses := 0
+	ancestryProcesses := 0
+	for _, arguments := range runner.commands {
+		command := strings.Join(arguments, " ")
+		if strings.Contains(command, " cat-file ") || strings.Contains(command, " rev-parse ") || strings.Contains(command, " merge-base ") || strings.Contains(command, " show ") || strings.Contains(command, " diff") {
+			t.Fatalf("retained overview invoked object-by-object or diff command: %s", command)
+		}
+		if strings.Contains(command, "--no-merged=") {
+			ancestryProcesses++
+		}
+		if strings.Contains(command, " log ") {
+			metadataProcesses++
+			if !strings.Contains(command, "--no-walk") || !strings.Contains(command, "--stdin") {
+				t.Fatalf("metadata command is not bounded to supplied OIDs: %s", command)
+			}
+		}
+	}
+	if metadataProcesses != 1 || ancestryProcesses != 1 {
+		t.Fatalf("metadata processes=%d ancestry processes=%d, want one batched process each", metadataProcesses, ancestryProcesses)
+	}
+	if len(runner.inputs) != 1 || len(strings.Fields(runner.inputs[0])) != len(oids) {
+		t.Fatalf("metadata stdin does not contain one plain OID per retained commit: %q", runner.inputs)
+	}
+	for _, revision := range strings.Fields(runner.inputs[0]) {
+		if !isOID(revision) {
+			t.Fatalf("metadata stdin contains a non-OID revision: %q", revision)
+		}
+	}
+	for _, ref := range retained {
+		if ref.Commit.OID != ref.CommitOID || ref.Commit.Subject != "retained metadata" || ref.Commit.AuthoredAt.IsZero() {
+			t.Fatalf("retained metadata is incomplete: %+v", ref)
+		}
+	}
+}
+
+func TestRetainedRefsBatchPeelsNestedAnnotatedTag(t *testing.T) {
+	manager, remote, work := newTestRepository(t)
+	commitFile(t, work, "nested", "nested target", "2024-01-01T00:00:00Z")
+	commitOID := gitOutput(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+	runGit(t, work, "tag", "-a", "inner", "-m", "inner")
+	runGit(t, work, "tag", "-a", "outer", "-m", "outer", "inner")
+	oldOuter := gitOutput(t, work, "rev-parse", "refs/tags/outer")
+	runGit(t, work, "push", "origin", "refs/tags/outer")
+	peeled, err := batchPeelRetainedTags(context.Background(), manager.Git, remote, []string{oldOuter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peeled[oldOuter].oid != commitOID || peeled[oldOuter].objectType != "commit" {
+		t.Fatalf("batch peel=%+v, want terminal commit %s", peeled[oldOuter], commitOID)
+	}
+	runGit(t, work, "tag", "-f", "-a", "outer", "-m", "replacement", "HEAD")
+	runGit(t, work, "push", "--force", "origin", "refs/tags/outer")
+
+	retained, err := manager.RetainedRefs(context.Background(), "sample")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range retained {
+		if ref.OID == oldOuter {
+			if ref.CommitOID != commitOID || ref.Commit.OID != commitOID || ref.Commit.Subject != "nested target" {
+				t.Fatalf("nested tag metadata=%+v", ref)
+			}
+			return
+		}
+	}
+	t.Fatalf("nested retained tag %s was not returned: %+v", oldOuter, retained)
+}
 
 func TestRepositoryDisablesAutomaticMaintenanceOnCreateAndRestart(t *testing.T) {
 	manager, remote, _ := newTestRepository(t)
@@ -131,6 +267,18 @@ func TestRetentionSurvivesRewritesDeletionAndGC(t *testing.T) {
 	if err != nil || len(retainedAfterRestart) == 0 {
 		t.Fatalf("Git-authoritative retained refs were not reconstructed after restart: refs=%+v err=%v", retainedAfterRestart, err)
 	}
+	retainedCommits := make(map[string]string)
+	retainedSeen := make(map[string]bool)
+	for _, ref := range retainedAfterRestart {
+		retainedSeen[ref.OID] = true
+		retainedCommits[ref.OID] = ref.CommitOID
+	}
+	if retainedCommits[oldAnnotated] != replacement || retainedCommits[newAnnotated] != first {
+		t.Fatalf("annotated retained tags were not peeled to commits: %+v", retainedAfterRestart)
+	}
+	if !retainedSeen[oldBlobTag] || !retainedSeen[newBlobTag] || retainedCommits[oldBlobTag] != "" || retainedCommits[newBlobTag] != "" {
+		t.Fatalf("retained blob tags were exposed as recoverable commits: %+v", retainedAfterRestart)
+	}
 	activity, err := restarted.Activity(context.Background(), "sample", 100)
 	if err != nil {
 		t.Fatal(err)
@@ -173,6 +321,73 @@ func TestRetentionFailureRejectsPublicUpdate(t *testing.T) {
 	}
 }
 
+func TestActivityObservationStaysCurrentHistoryFirstAndHonest(t *testing.T) {
+	manager, _, work := newTestRepository(t)
+	commitFile(t, work, "one", "one", "2024-01-01T00:00:00Z")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+	commitFile(t, work, "two", "two", "2024-01-05T00:00:00Z")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+	runGit(t, work, "reset", "--hard", "HEAD~1")
+	runGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
+
+	// The retained commit is newer, but a capped observation must stay
+	// current-history-first and report itself incomplete.
+	capped, err := manager.Activity(context.Background(), "sample", 1)
+	if err != nil || !capped.Incomplete || len(capped.Days) != 1 || capped.Days[0].Day != "2024-01-01" {
+		t.Fatalf("capped observation: days=%+v incomplete=%v err=%v", capped.Days, capped.Incomplete, err)
+	}
+	// The full budget observes current and retained history.
+	complete, err := manager.Activity(context.Background(), "sample", 2)
+	if err != nil || complete.Incomplete || len(complete.Days) != 2 {
+		t.Fatalf("complete observation: days=%+v incomplete=%v err=%v", complete.Days, complete.Incomplete, err)
+	}
+	if _, err := manager.Activity(context.Background(), "missing", 10); err == nil {
+		t.Fatal("missing repository did not return an error")
+	}
+}
+
+func TestActivityObservationReportsExactBoundaryAndRetainedCompleteness(t *testing.T) {
+	manager, _, work := newTestRepository(t)
+	commitFile(t, work, "one", "one", "2024-01-01T00:00:00Z")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+	commitFile(t, work, "two", "two", "2024-01-02T00:00:00Z")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+
+	exact, err := manager.Activity(context.Background(), "sample", 2)
+	if err != nil || exact.Incomplete || len(exact.Records) != 2 {
+		t.Fatalf("exact boundary: records=%d incomplete=%v err=%v", len(exact.Records), exact.Incomplete, err)
+	}
+	capped, err := manager.Activity(context.Background(), "sample", 1)
+	if err != nil || !capped.Incomplete || len(capped.Records) != 1 {
+		t.Fatalf("capped boundary: records=%d incomplete=%v err=%v", len(capped.Records), capped.Incomplete, err)
+	}
+
+	runGit(t, work, "checkout", "--orphan", "replacement")
+	runGit(t, work, "rm", "-rf", ".")
+	commitFile(t, work, "replacement", "replacement", "2024-01-03T00:00:00Z")
+	runGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
+
+	// The current walk fills the budget exactly, so retained history was not
+	// observed and the observation must not claim completeness.
+	currentOnly, err := manager.Activity(context.Background(), "sample", 1)
+	if err != nil || !currentOnly.Incomplete || len(currentOnly.Records) != 1 {
+		t.Fatalf("current-only budget: records=%d incomplete=%v err=%v", len(currentOnly.Records), currentOnly.Incomplete, err)
+	}
+	// One more slot observes part of retained history, which is still short.
+	partial, err := manager.Activity(context.Background(), "sample", 2)
+	if err != nil || !partial.Incomplete || len(partial.Records) != 2 {
+		t.Fatalf("partial retained budget: records=%d incomplete=%v err=%v", len(partial.Records), partial.Incomplete, err)
+	}
+	// The full budget observes all current and retained history.
+	complete, err := manager.Activity(context.Background(), "sample", 3)
+	if err != nil || complete.Incomplete || len(complete.Records) != 3 {
+		t.Fatalf("complete budget: records=%d incomplete=%v err=%v", len(complete.Records), complete.Incomplete, err)
+	}
+	if _, err := manager.Activity(context.Background(), "missing", 10); err == nil {
+		t.Fatal("missing repository did not return an error")
+	}
+}
+
 func TestActivityRecordsSeparateCurrentAndRetainedProvenance(t *testing.T) {
 	manager, _, work := newTestRepository(t)
 	commitFile(t, work, "one", "one", "2024-01-01T00:00:00Z")
@@ -188,10 +403,11 @@ func TestActivityRecordsSeparateCurrentAndRetainedProvenance(t *testing.T) {
 	current := gitOutput(t, work, "rev-parse", "HEAD")
 	runGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
 
-	records, incomplete, err := manager.ActivityRecords(context.Background(), "sample", 100)
-	if err != nil || incomplete {
-		t.Fatalf("ActivityRecords incomplete=%v err=%v", incomplete, err)
+	activity, err := manager.Activity(context.Background(), "sample", 100)
+	if err != nil || activity.Incomplete {
+		t.Fatalf("Activity incomplete=%v err=%v", activity.Incomplete, err)
 	}
+	records := activity.Records
 	foundCurrent, foundRetained := false, false
 	for _, record := range records {
 		switch record.OID {
@@ -224,9 +440,9 @@ func TestFailedAtomicDestructivePushPreservesObjectWithoutClaimingRewrite(t *tes
 	if err != nil || len(retained) != 0 {
 		t.Fatalf("failed atomic update was classified as successful retention: refs=%+v err=%v", retained, err)
 	}
-	records, _, err := manager.ActivityRecords(context.Background(), "sample", 100)
-	if err != nil || len(records) != 1 || records[0].OID != old || records[0].Retained {
-		t.Fatalf("failed atomic update mislabeled current activity: records=%+v err=%v", records, err)
+	activity, err := manager.Activity(context.Background(), "sample", 100)
+	if err != nil || len(activity.Records) != 1 || activity.Records[0].OID != old || activity.Records[0].Retained {
+		t.Fatalf("failed atomic update mislabeled current activity: records=%+v err=%v", activity.Records, err)
 	}
 
 	runGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
@@ -254,9 +470,7 @@ func TestInterruptedRetentionIsClassifiedFromPublicRefAfterRestart(t *testing.T)
 	// Simulate interruption after durable old-object retention but before the
 	// public ref transaction. The hidden object remains, but is not called a
 	// successful rewrite while main still names it.
-	hook := exec.Command(filepath.Join(remote, "hooks", "update"), "refs/heads/main", old, replacement)
-	hook.Env = append(os.Environ(), "GIT_DIR="+remote)
-	if output, err := hook.CombinedOutput(); err != nil {
+	if output, err := executeUpdateHook(manager.Git, remote, "refs/heads/main", old, replacement); err != nil {
 		t.Fatalf("prepare retention interruption fixture: %v\n%s", err, output)
 	}
 	legacyPending := "refs/owngit/pending/retained/heads/main/" + old
@@ -287,18 +501,18 @@ func TestInterruptedRetentionIsClassifiedFromPublicRefAfterRestart(t *testing.T)
 	if err != nil || len(retained) != 1 || retained[0].OID != old || retained[0].Kind != "branch" {
 		t.Fatalf("after-public interruption classification = %+v err=%v", retained, err)
 	}
-	records, _, err := restarted.ActivityRecords(context.Background(), "sample", 100)
+	activity, err := restarted.Activity(context.Background(), "sample", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	foundHistorical := false
-	for _, record := range records {
+	for _, record := range activity.Records {
 		if record.OID == old && record.Retained && record.Source == "refs/heads/main" {
 			foundHistorical = true
 		}
 	}
 	if !foundHistorical {
-		t.Fatalf("historical activity provenance was lost after restart: %+v", records)
+		t.Fatalf("historical activity provenance was lost after restart: %+v", activity.Records)
 	}
 	runGit(t, "", "--git-dir", remote, "reflog", "expire", "--expire=now", "--all")
 	runGit(t, "", "--git-dir", remote, "gc", "--prune=now")
@@ -323,16 +537,34 @@ func TestPartialDestructivePushRetainsOnlySuccessfulUpdate(t *testing.T) {
 }
 
 func TestRetentionHookRejectsMismatchedOldOID(t *testing.T) {
-	_, remote, work := newTestRepository(t)
+	manager, remote, work := newTestRepository(t)
 	commitFile(t, work, "one", "one", "2024-01-01T00:00:00Z")
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	current := gitOutput(t, work, "rev-parse", "HEAD")
 	wrong := strings.Repeat("1", len(current))
-	command := exec.Command(filepath.Join(remote, "hooks", "update"), "refs/heads/main", wrong, current)
-	command.Env = append(os.Environ(), "GIT_DIR="+remote)
-	if output, err := command.CombinedOutput(); err == nil {
+	if output, err := executeUpdateHook(manager.Git, remote, "refs/heads/main", wrong, current); err == nil {
 		t.Fatalf("hook accepted mismatched old OID: %s", output)
 	}
+}
+
+func executeUpdateHook(runner *gitexec.Runner, repositoryPath string, arguments ...string) ([]byte, error) {
+	// A ! alias runs through Git's trusted shell, including the bundled shell on
+	// Windows, while still executing the generated hook as the command itself.
+	hookPath := filepath.ToSlash(filepath.Join(repositoryPath, "hooks", "update"))
+	gitArguments := []string{
+		"-c", `alias.owngit-test-update=!f() { "$@"; }; f`,
+		"owngit-test-update", hookPath,
+	}
+	gitArguments = append(gitArguments, arguments...)
+	command := exec.Command(runner.GitPath, gitArguments...)
+	command.Dir = repositoryPath
+	for _, variable := range runner.Environment("GIT_DIR=" + repositoryPath) {
+		name, _, _ := strings.Cut(variable, "=")
+		if !strings.EqualFold(name, "TMPDIR") {
+			command.Env = append(command.Env, variable)
+		}
+	}
+	return command.CombinedOutput()
 }
 
 func newTestRepository(t *testing.T) (*Manager, string, string) {

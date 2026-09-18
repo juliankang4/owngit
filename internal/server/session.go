@@ -220,6 +220,8 @@ func noticeFromQuery(request *http.Request) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgLogoutDone)}
 	case "admin_logout":
 		return []webui.Notice{webui.Success(webui.MsgAdminEnded)}
+	case "restore_success":
+		return []webui.Notice{webui.Success(webui.MsgRestoreSuccess)}
 	default:
 		return nil
 	}

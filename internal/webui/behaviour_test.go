@@ -217,8 +217,11 @@ func TestNarrowLayoutAvoidsHorizontalOverflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	css := string(data)
-	// Wide content scrolls inside its own panel instead of the document.
-	for _, panel := range []string{".codebox, .diffbox", ".hm__scroll"} {
+	// Wide content scrolls inside its own panel instead of the document. The
+	// restore file list is here because a project can have far more paths than
+	// fit on a screen, and a page-long list would push the confirmation control
+	// out of reach.
+	for _, panel := range []string{".codebox, .diffbox", ".hm__scroll", ".rpaths {"} {
 		idx := strings.Index(css, panel)
 		if idx < 0 {
 			t.Errorf("%s is not defined", panel)
@@ -237,6 +240,18 @@ func TestNarrowLayoutAvoidsHorizontalOverflow(t *testing.T) {
 	}
 	if !strings.Contains(css, "min-width: 0") {
 		t.Error("grid children can overflow their track")
+	}
+
+	// The restore screen's two-column source and target pair has to collapse,
+	// or a repository path would be squeezed into an unreadable column on a
+	// phone. Its narrow rule must come after the two-column default so it wins.
+	wide := strings.Index(css, ".restore__pair {")
+	narrow := strings.Index(css, ".restore__pair { grid-template-columns: minmax(0, 1fr)")
+	if wide < 0 || narrow < 0 {
+		t.Fatal("the restore source and target pair has no narrow layout")
+	}
+	if narrow < wide {
+		t.Error("the narrow restore layout is overridden by the wide one")
 	}
 }
 

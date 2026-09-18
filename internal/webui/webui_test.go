@@ -143,12 +143,58 @@ func allPages(lang Lang) map[string]Page {
 				Commit: CommitSummary{ShortOID: "77b30d5", Subject: "Cap retry delays", AuthorDate: testNow, URL: "/x"},
 			}}}},
 		},
-		"repo-overview":  repoPage(c, RepoTabOverview),
-		"repo-code":      repoPage(c, RepoTabCode),
-		"repo-commits":   repoPage(c, RepoTabCommits),
-		"new-repository": NewRepositoryPage{Chrome: c, SubmitURL: "/repositories"},
-		"error":          ErrorPage{Chrome: c, Status: 404, Code: MsgErrNotFound, Detail: "/nope", RetryURL: "/"},
+		"repo-overview":     repoPage(c, RepoTabOverview),
+		"repo-code":         repoPage(c, RepoTabCode),
+		"repo-commits":      repoPage(c, RepoTabCommits),
+		"new-repository":    NewRepositoryPage{Chrome: c, SubmitURL: "/repositories"},
+		"restore-choose":    restorePage(c, false),
+		"restore-previewed": restorePage(c, true),
+		"error":             ErrorPage{Chrome: c, Status: 404, Code: MsgErrNotFound, Detail: "/nope", RetryURL: "/"},
 	}
+}
+
+// restorePage is the restore screen before and after a preview. Previewed is
+// the only difference, because the apply step exists only once the backend has
+// computed a result.
+func restorePage(c Chrome, previewed bool) RestorePage {
+	page := RestorePage{
+		Chrome: c,
+		Repo: RepositoryHeader{ID: "r1", Name: "forge-cli", URL: "/repositories/r1",
+			CloneURL: "http://owngit.local:8080/git/forge-cli.git"},
+		Source: CommitSummary{OID: "7f2c1a0bb", ShortOID: "7f2c1a0", Subject: "Cap retry delays",
+			AuthorName: "Dana", AuthorDate: testNow, URL: "/repositories/r1/commits/7f2c1a0bb"},
+		TargetBranch: "main",
+		Branches: []RefOption{
+			{Name: "main", Selected: true, IsDefault: true},
+			{Name: "fix/cursor"},
+		},
+		Mode: RestoreModeFiles,
+		Paths: []RestorePath{
+			{Path: "internal/retry/backoff.go", Status: "modified", Selected: true},
+			{Path: "internal/retry/limits.go", Status: "added", Selected: true},
+			{Path: "internal/retry/legacy.go", Status: "deleted", Selected: false},
+		},
+		PreviewURL: "/repositories/r1/restore/preview",
+		ApplyURL:   "/repositories/r1/restore",
+		CancelURL:  "/repositories/r1",
+	}
+	if !previewed {
+		return page
+	}
+	page.Previewed = true
+	page.CanApply = true
+	page.ExpectedHead = "a41c9e2ff"
+	page.Changes = []DiffFile{
+		{Path: "internal/retry/backoff.go", Status: "modified", Additions: 4, Deletions: 2, Selected: true,
+			Hunks: []DiffHunk{{Header: "@@ -12,7 +12,9 @@ func Backoff", Lines: []DiffLine{
+				{Kind: "context", OldLine: 12, NewLine: 12, Text: "// Backoff caps the delay"},
+				{Kind: "add", NewLine: 13, Text: "const maxDelay = 30 * time.Second"},
+				{Kind: "del", OldLine: 13, Text: "const maxDelay = time.Hour"},
+			}}}},
+		{Path: "internal/retry/limits.go", Status: "added", Additions: 18},
+		{Path: "internal/retry/legacy.go", Status: "deleted", Deletions: 44},
+	}
+	return page
 }
 
 func repoPage(c Chrome, tab RepoTab) RepositoryPage {
@@ -159,6 +205,7 @@ func repoPage(c Chrome, tab RepoTab) RepositoryPage {
 		Repo: RepositoryHeader{ID: "r1", Name: "forge-cli", Description: "Command line tool",
 			URL: "/repositories/r1", CloneURL: "http://owngit.local:8080/git/forge-cli.git"},
 		OverviewURL: "/repositories/r1", CodeURL: "/repositories/r1/code", CommitsURL: "/repositories/r1/commits",
+		RestoreURL: "/repositories/r1/restore",
 		Ref: RefSelection{
 			Name: "main", Kind: "branch", IsDefault: true, Revision: "a41c9e2ff", ShortRevision: "a41c9e2",
 			Branches: []RefOption{{Name: "main", URL: "/repositories/r1/code?ref=main", Selected: true, IsDefault: true},
@@ -170,7 +217,8 @@ func repoPage(c Chrome, tab RepoTab) RepositoryPage {
 			Branches: []RefLine{{Name: "main", URL: "/x", Kind: "branch", IsDefault: true, Tip: head}},
 			Tags:     []RefLine{{Name: "v1.2.0", URL: "/x", Kind: "tag", Annotated: true, Tip: head}},
 			RetainedRefs: []RefLine{{Name: "old/main@7f2c1a", URL: "/x", Kind: "branch", Retained: true,
-				Tip: CommitSummary{ShortOID: "7f2c1a0", Subject: "Replaced by force push", AuthorDate: testNow}}},
+				RestoreURL: "/repositories/r1/restore?source=7f2c1a0bb",
+				Tip:        CommitSummary{ShortOID: "7f2c1a0", Subject: "Replaced by force push", AuthorDate: testNow}}},
 			Activity:     sampleGraph(),
 			PushCommands: []string{"git remote add origin http://owngit.local:8080/git/forge-cli.git", "git push -u origin main"},
 		},
@@ -183,13 +231,15 @@ func repoPage(c Chrome, tab RepoTab) RepositoryPage {
 				{Name: "cursor.go", Path: "internal/pagination/cursor.go", URL: "/x", Kind: "file", Size: 1420},
 			},
 			File: &FileView{Path: "internal/pagination/cursor.go", Size: 1420,
-				Lines:  []string{"package pagination", "", `// <script>alert(1)</script> not markup`},
-				RawURL: "/repositories/r1/raw/internal/pagination/cursor.go"},
+				Lines:      []string{"package pagination", "", `// <script>alert(1)</script> not markup`},
+				RawURL:     "/repositories/r1/raw/internal/pagination/cursor.go",
+				RestoreURL: "/repositories/r1/restore?path=internal%2Fpagination%2Fcursor.go"},
 		},
 		Commits: CommitsView{
 			List: []CommitSummary{head, {OID: "77b30d5aa", ShortOID: "77b30d5", Subject: "Add cursor boundary fixtures", AuthorDate: testNow, URL: "/y"}},
 			Detail: &CommitDetail{
 				Commit: head, Body: "Ties are broken by record id.",
+				RestoreURL:    "/repositories/r1/restore?source=a41c9e2ff",
 				CommitterName: "Rebase Bot", CommitterDate: testNow,
 				Parents: []CommitSummary{{ShortOID: "77b30d5", URL: "/y"}},
 				Files: []DiffFile{{Path: "internal/pagination/cursor.go", Status: "modified",
@@ -220,7 +270,7 @@ func TestAllScreensRenderInBothLanguages(t *testing.T) {
 				t.Errorf("%s/%s: document not closed", lang, name)
 			}
 			// A raw message key reaching the page means a missing catalog entry.
-			for _, key := range []string{"setup.", "login.", "repo.new.", "error.", "activity."} {
+			for _, key := range []string{"setup.", "login.", "repo.new.", "error.", "activity.", "restore."} {
 				if strings.Contains(out, ">"+key) {
 					t.Errorf("%s/%s: raw message key %q rendered", lang, name, key)
 				}
@@ -628,20 +678,46 @@ func TestDeletedDefaultBranchIsHandledHonestly(t *testing.T) {
 	}
 }
 
-func TestRetainedHistoryIsLabelledAndHasNoRestoreControl(t *testing.T) {
+func TestRetainedHistoryIsLabelledAndOffersOnlyRealControls(t *testing.T) {
+	// Restoring from kept history is now implemented, so the control belongs
+	// here when the backend can address the entry. What must still never
+	// appear is a control for behaviour that does not exist.
 	r := newRenderer(t)
 	out := render(t, r, repoPage(fullChrome(LangEN), RepoTabOverview))
 	if !strings.Contains(out, wantText(LangEN, MsgRepoRetainTitle)) {
 		t.Fatal("retained history is not labelled")
 	}
 	if !strings.Contains(out, wantText(LangEN, MsgRepoRetainHelp)) {
-		t.Error("retained history does not say that restoring is unavailable")
+		t.Error("retained history is not explained")
 	}
-	// Restoration is deferred, so there must be no control promising it.
-	for _, dead := range []string{"Restore", "restore_", "Run checks", "Review with AI"} {
+	if !strings.Contains(out, wantText(LangEN, MsgRestoreOpen)) {
+		t.Error("kept history does not offer the restore entry point the backend addressed")
+	}
+	for _, dead := range []string{"Run checks", "Review with AI"} {
 		if strings.Contains(out, dead) {
 			t.Errorf("a control for unimplemented behaviour is present: %q", dead)
 		}
+	}
+
+	// Without a backend-supplied URL there is still no control and no dead
+	// link, because this package never invents an address.
+	bare := repoPage(fullChrome(LangEN), RepoTabOverview)
+	bare.RestoreURL = ""
+	for i := range bare.Overview.RetainedRefs {
+		bare.Overview.RetainedRefs[i].RestoreURL = ""
+	}
+	for i := range bare.Overview.Branches {
+		bare.Overview.Branches[i].RestoreURL = ""
+	}
+	for i := range bare.Overview.Tags {
+		bare.Overview.Tags[i].RestoreURL = ""
+	}
+	out = render(t, r, bare)
+	if strings.Contains(out, wantText(LangEN, MsgRestoreOpen)) {
+		t.Error("a restore control appeared without an address behind it")
+	}
+	if strings.Contains(out, `href=""`) {
+		t.Error("a restore entry point rendered as an empty link")
 	}
 }
 

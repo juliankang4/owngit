@@ -123,7 +123,16 @@
 
   var TEXT_ATTRS = ['placeholder', 'title', 'aria-label', 'value', 'alt'];
 
-  function applyLanguage(lang) {
+  /* target is the link the reader followed, when there was one. Its href is
+   * the server's own address for this screen in the chosen language, so it is
+   * what the address bar should end up showing.
+   *
+   * Deriving the address from window.location instead was a real defect. A
+   * screen rendered from a POST, such as the restore preview, has a request
+   * address that only accepts POST. Rewriting that address with a language
+   * parameter left the reader on a URL that answers 404 when reloaded or
+   * shared, and dropped the selection the link carried. */
+  function applyLanguage(lang, target) {
     var other = lang === 'ko' ? 'en' : 'ko';
 
     all('[data-' + lang + ']').forEach(function (node) {
@@ -158,10 +167,11 @@
     all('input[name="lang"]').forEach(function (field) { field.value = lang; });
 
     // Update the address bar without navigating, so a reload or a shared link
-    // keeps the language the reader is actually looking at.
+    // keeps both the language and the screen the reader is looking at.
     if (window.history && window.history.replaceState) {
       try {
-        var url = new URL(window.location.href);
+        var href = target && target.getAttribute && target.getAttribute('href');
+        var url = new URL(href || window.location.href, window.location.href);
         url.searchParams.set('lang', lang);
         window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
       } catch (e) { /* older browser: the cookie still carries the choice */ }
@@ -176,7 +186,7 @@
     if (!link) { return; }
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) { return; }
     event.preventDefault();
-    applyLanguage(link.getAttribute('data-lang-set'));
+    applyLanguage(link.getAttribute('data-lang-set'), link);
   });
 
   /* ------------------------------------------------------------------ */
@@ -343,5 +353,51 @@
       if (!form) { return; }
       if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); }
     });
+  });
+
+  /* Restore: show which of the two scopes the per-file ticks belong to.
+   *
+   * The radio is what the backend reads, with or without this script, so the
+   * ticks are only marked inactive, never disabled or cleared. A reader who
+   * chose the whole project can still read the list to see what that will do,
+   * and switching back finds their earlier ticks intact.
+   *
+   * The marking is an attribute the stylesheet reads. It changes the panel's
+   * surface and reveals a line of text; it never fades the text itself, so
+   * every word in here keeps its normal contrast. */
+
+  all('[data-restore-files]').forEach(function (panel) {
+    var form = panel.closest && panel.closest('form');
+    if (!form) { return; }
+    var scopes = all('[data-restore-scope]', form);
+    if (!scopes.length) { return; }
+
+    function sync() {
+      var picked = form.querySelector('[data-restore-scope]:checked');
+      var files = picked && picked.getAttribute('data-restore-scope') === 'files';
+      if (files) {
+        panel.removeAttribute('data-restore-dimmed');
+      } else {
+        panel.setAttribute('data-restore-dimmed', '');
+      }
+    }
+
+    scopes.forEach(function (scope) { scope.addEventListener('change', sync); });
+
+    // Ticking a path is a statement that those paths are what should be
+    // restored, so it selects the matching scope rather than being read under
+    // a scope that ignores it.
+    all('input[type="checkbox"][name="path"]', panel).forEach(function (box) {
+      box.addEventListener('change', function () {
+        if (!box.checked) { return; }
+        var files = form.querySelector('[data-restore-scope="files"]');
+        if (files && !files.checked) {
+          files.checked = true;
+          sync();
+        }
+      });
+    });
+
+    sync();
   });
 })();

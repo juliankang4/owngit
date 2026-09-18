@@ -44,6 +44,10 @@ type Blob struct {
 	Truncated bool
 }
 
+const commitLogFormat = "%H%x00%P%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%s%x00%b"
+
+var errTreeEntryNotFound = errors.New("tree entry not found")
+
 type Commit struct {
 	OID            string
 	Parents        []string
@@ -202,46 +206,104 @@ func (m *Manager) Tree(ctx context.Context, id, requestedRef, directory string) 
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	args := []string{"--git-dir", repositoryPath, "ls-tree", "-z", "-l", commitOID}
+	treeOID := commitOID
 	if directory != "" {
-		args = append(args, "--", directory+"/")
+		entry, err := m.lookupTreeEntry(ctx, repositoryPath, commitOID, directory)
+		if err != nil {
+			if errors.Is(err, errTreeEntryNotFound) {
+				return "", nil, errors.New("directory not found")
+			}
+			return "", nil, err
+		}
+		if entry.Type != "tree" {
+			return "", nil, errors.New("directory not found")
+		}
+		treeOID = entry.OID
 	}
-	result, err := m.Git.Run(ctx, "", nil, args...)
+	entries, err := m.listTree(ctx, repositoryPath, treeOID, directory)
 	if err != nil {
 		return "", nil, err
+	}
+	return commitOID, entries, nil
+}
+
+func (m *Manager) lookupTreeEntry(ctx context.Context, repositoryPath, rootOID, filePath string) (TreeEntry, error) {
+	if !isOID(rootOID) {
+		return TreeEntry{}, errors.New("invalid tree ID")
+	}
+	// The explicit magic prefix was verified with Git for Windows. It keeps the
+	// repository path literal without disabling pathspec magic parsing globally.
+	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "ls-tree", "-z", "-l", rootOID, "--", ":(top,literal)"+filePath)
+	if err != nil {
+		return TreeEntry{}, err
+	}
+	records := bytes.Split(bytes.TrimSuffix(result.Stdout, []byte{0}), []byte{0})
+	if len(records) == 1 && len(records[0]) == 0 {
+		return TreeEntry{}, errTreeEntryNotFound
+	}
+	if len(records) != 1 {
+		return TreeEntry{}, errors.New("Git returned ambiguous tree lookup data")
+	}
+	entry, err := parseTreeEntry(records[0])
+	if err != nil {
+		return TreeEntry{}, err
+	}
+	if entry.Name != filePath {
+		return TreeEntry{}, errors.New("Git returned mismatched tree lookup data")
+	}
+	entry.Path = filePath
+	if separator := strings.LastIndexByte(filePath, '/'); separator >= 0 {
+		entry.Name = filePath[separator+1:]
+	}
+	return entry, nil
+}
+
+func (m *Manager) listTree(ctx context.Context, repositoryPath, treeOID, prefix string) ([]TreeEntry, error) {
+	if !isOID(treeOID) {
+		return nil, errors.New("invalid tree ID")
+	}
+	// Listing a tree object without a pathspec avoids host path normalization.
+	// Runner output limits keep each untrusted tree listing bounded.
+	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "ls-tree", "-z", "-l", treeOID)
+	if err != nil {
+		return nil, err
 	}
 	var entries []TreeEntry
 	for _, record := range bytes.Split(result.Stdout, []byte{0}) {
 		if len(record) == 0 {
 			continue
 		}
-		metadata, nameBytes, ok := bytes.Cut(record, []byte{'\t'})
-		if !ok {
-			return "", nil, errors.New("Git returned a malformed tree entry")
+		entry, err := parseTreeEntry(record)
+		if err != nil {
+			return nil, err
 		}
-		fields := strings.Fields(string(metadata))
-		if len(fields) != 4 {
-			return "", nil, errors.New("Git returned malformed tree metadata")
+		entry.Path = entry.Name
+		if prefix != "" {
+			entry.Path = prefix + "/" + entry.Name
 		}
-		entryPath := string(nameBytes)
-		if directory != "" {
-			prefix := directory + "/"
-			if !strings.HasPrefix(entryPath, prefix) {
-				continue
-			}
-			entryPath = strings.TrimPrefix(entryPath, prefix)
-			if strings.Contains(entryPath, "/") {
-				continue
-			}
-		}
-		size := int64(-1)
-		if fields[3] != "-" {
-			size, _ = strconv.ParseInt(fields[3], 10, 64)
-		}
-		fullPath := path.Join(directory, entryPath)
-		entries = append(entries, TreeEntry{Name: entryPath, Path: fullPath, Mode: fields[0], Type: fields[1], OID: fields[2], Size: size})
+		entries = append(entries, entry)
 	}
-	return commitOID, entries, nil
+	return entries, nil
+}
+
+func parseTreeEntry(record []byte) (TreeEntry, error) {
+	metadata, nameBytes, ok := bytes.Cut(record, []byte{'\t'})
+	if !ok || len(nameBytes) == 0 {
+		return TreeEntry{}, errors.New("Git returned a malformed tree entry")
+	}
+	fields := strings.Fields(string(metadata))
+	if len(fields) != 4 || !isOID(fields[2]) {
+		return TreeEntry{}, errors.New("Git returned malformed tree metadata")
+	}
+	size := int64(-1)
+	if fields[3] != "-" {
+		parsed, err := strconv.ParseInt(fields[3], 10, 64)
+		if err != nil || parsed < 0 {
+			return TreeEntry{}, errors.New("Git returned an invalid tree entry size")
+		}
+		size = parsed
+	}
+	return TreeEntry{Name: string(nameBytes), Mode: fields[0], Type: fields[1], OID: fields[2], Size: size}, nil
 }
 
 func (m *Manager) ReadBlob(ctx context.Context, id, requestedRef, filePath string, limit int64) (string, Blob, error) {
@@ -259,21 +321,21 @@ func (m *Manager) ReadBlob(ctx context.Context, id, requestedRef, filePath strin
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	entry, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "ls-tree", "-z", commitOID, "--", filePath)
+	entry, err := m.lookupTreeEntry(ctx, repositoryPath, commitOID, filePath)
 	if err != nil {
+		if errors.Is(err, errTreeEntryNotFound) {
+			return "", Blob{}, errors.New("file not found")
+		}
 		return "", Blob{}, err
 	}
-	record := bytes.TrimSuffix(entry.Stdout, []byte{0})
-	metadata, foundPath, ok := bytes.Cut(record, []byte{'\t'})
-	fields := strings.Fields(string(metadata))
-	if !ok || string(foundPath) != filePath || len(fields) != 3 || fields[1] != "blob" {
+	if entry.Type != "blob" {
 		return "", Blob{}, errors.New("file not found")
 	}
 	if limit <= 0 {
 		limit = 2 << 20
 	}
-	result, runErr := m.Git.RunWithOutputLimit(ctx, "", nil, limit+1, "--git-dir", repositoryPath, "cat-file", "blob", fields[2])
-	blob := Blob{Path: filePath, OID: fields[2], Content: result.Stdout, Binary: bytes.IndexByte(result.Stdout, 0) >= 0}
+	result, runErr := m.Git.RunWithOutputLimit(ctx, "", nil, limit+1, "--git-dir", repositoryPath, "cat-file", "blob", entry.OID)
+	blob := Blob{Path: filePath, OID: entry.OID, Content: result.Stdout, Binary: bytes.IndexByte(result.Stdout, 0) >= 0}
 	var limitErr *gitexec.LimitError
 	if runErr != nil {
 		if errors.As(runErr, &limitErr) && len(result.Stdout) >= int(limit) {
@@ -298,17 +360,116 @@ func (m *Manager) Commits(ctx context.Context, id, requestedRef string, limit in
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	repositoryPath, _, _, _ := m.ExistingPath(ctx, id)
+	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
+	if err != nil || !exists {
+		if err == nil {
+			err = errors.New("repository not found")
+		}
+		return "", nil, err
+	}
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	format := "%H%x00%P%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%s%x00%b"
-	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "log", "-z", "--no-decorate", "--max-count="+strconv.Itoa(limit), "--format="+format, commitOID)
+	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "log", "-z", "--no-decorate", "--max-count="+strconv.Itoa(limit), "--format="+commitLogFormat, commitOID)
 	if err != nil {
 		return "", nil, err
 	}
 	commits, err := parseCommits(result.Stdout)
 	return commitOID, commits, err
+}
+
+// RefTips resolves commit metadata for branch and tag refs in two bounded Git
+// calls instead of two per ref. Refs that do not resolve to a commit are
+// omitted. The returned map is keyed by the ref's short name, so callers pass
+// branches and tags separately when their names can collide.
+func (m *Manager) RefTips(ctx context.Context, id string, refs []Ref) (map[string]Commit, error) {
+	if len(refs) == 0 {
+		return map[string]Commit{}, nil
+	}
+	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
+	if err != nil || !exists {
+		if err == nil {
+			err = errors.New("repository not found")
+		}
+		return nil, err
+	}
+	lock := m.Locks.For(id)
+	lock.RLock()
+	defer lock.RUnlock()
+	commitOIDs := make(map[string]string, len(refs))
+	var annotated []string
+	for _, ref := range refs {
+		switch ref.Type {
+		case "commit":
+			commitOIDs[ref.Name] = ref.OID
+		case "tag":
+			annotated = append(annotated, ref.OID)
+		}
+	}
+	if len(annotated) != 0 {
+		peeled, err := batchPeelRetainedTags(ctx, m.Git, repositoryPath, annotated)
+		if err != nil {
+			return nil, err
+		}
+		for _, ref := range refs {
+			if ref.Type != "tag" {
+				continue
+			}
+			if terminal, ok := peeled[ref.OID]; ok && terminal.objectType == "commit" {
+				commitOIDs[ref.Name] = terminal.oid
+			}
+		}
+	}
+	oids := make([]string, 0, len(commitOIDs))
+	for _, oid := range commitOIDs {
+		oids = append(oids, oid)
+	}
+	metadata, err := commitMetadataByOID(ctx, m.Git, repositoryPath, oids)
+	if err != nil {
+		return nil, err
+	}
+	tips := make(map[string]Commit, len(commitOIDs))
+	for name, oid := range commitOIDs {
+		if commit, ok := metadata[oid]; ok {
+			tips[name] = commit
+		}
+	}
+	return tips, nil
+}
+
+func commitMetadataByOID(ctx context.Context, runner retainedRunner, repositoryPath string, oids []string) (map[string]Commit, error) {
+	metadata := make(map[string]Commit)
+	if len(oids) == 0 {
+		return metadata, nil
+	}
+	unique := make([]string, 0, len(oids))
+	for _, oid := range oids {
+		if !isOID(oid) {
+			return nil, errors.New("invalid commit ID")
+		}
+		if _, exists := metadata[oid]; !exists {
+			metadata[oid] = Commit{}
+			unique = append(unique, oid)
+		}
+	}
+	result, err := runner.RunWithOutputLimit(ctx, "", strings.NewReader(strings.Join(unique, "\n")+"\n"), 64<<20,
+		"--git-dir", repositoryPath, "log", "--no-walk", "--stdin", "-z", "--no-decorate", "--format="+commitLogFormat)
+	if err != nil {
+		return nil, err
+	}
+	commits, err := parseCommits(result.Stdout)
+	if err != nil {
+		return nil, err
+	}
+	for _, commit := range commits {
+		metadata[commit.OID] = commit
+	}
+	for _, oid := range unique {
+		if metadata[oid].OID == "" {
+			return nil, errors.New("Git omitted requested commit metadata")
+		}
+	}
+	return metadata, nil
 }
 
 func (m *Manager) Commit(ctx context.Context, id, oid, filePath string) (CommitDetail, error) {
@@ -327,8 +488,7 @@ func (m *Manager) Commit(ctx context.Context, id, oid, filePath string) (CommitD
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	format := "%H%x00%P%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%s%x00%b"
-	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "show", "-z", "--quiet", "--format="+format, oid)
+	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "show", "-z", "--quiet", "--format="+commitLogFormat, oid)
 	if err != nil {
 		return CommitDetail{}, errors.New("commit not found")
 	}
@@ -338,7 +498,7 @@ func (m *Manager) Commit(ctx context.Context, id, oid, filePath string) (CommitD
 	}
 	args := []string{"--git-dir", repositoryPath, "show", "--format=", "--no-ext-diff", "--no-textconv", "--find-renames=50%", "--unified=3", oid}
 	if filePath != "" {
-		args = append(args, "--", filePath)
+		args = append(args, "--", ":(top,literal)"+filePath)
 	}
 	diffResult, diffErr := m.Git.Run(ctx, "", nil, args...)
 	detail := CommitDetail{Commit: commits[0], Diff: string(diffResult.Stdout)}

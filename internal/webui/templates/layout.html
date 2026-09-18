@@ -178,5 +178,34 @@
 {{end}}
 {{end}}
 
+{{/* A field notice with nowhere to attach itself.
+
+     The partial above is announced through the input it describes: the
+     control carries aria-describedby, so reaching it reads the message. A
+     read-only summary has no such control, which left the restore preview
+     showing a conflict that was visible but never announced.
+
+     This variant is for that case only. It carries role="alert" itself
+     instead of relying on a control to describe it. Use it where the
+     notice's field has no rendered input; beside one it would duplicate the
+     message that input already points at.
+
+     An error here is also a focus target, because a refused submission
+     answers with a new document and the browser would otherwise start the
+     reader at the top of it. Pass "Focus" with the position in Notices the
+     response should land on, chosen once per page so only one notice claims
+     the reader. A position identifies one notice even when a field carries
+     two errors. */}}
+{{define "fieldNoticeAlone"}}
+{{$field := .Field}}{{$lang := .Lang}}{{$id := noteID .Scope .Field}}{{$focus := .Focus}}
+{{range $i, $n := .Notices}}
+  {{if eq $n.Field $field}}
+    <p class="fieldnote fieldnote--{{$n.Kind}}" id="{{$id}}"{{if eq $n.Kind "error"}} role="alert" tabindex="-1"{{if eq $i $focus}} autofocus{{end}}{{else}} role="status"{{end}}>
+      {{statusIcon $n.Kind}}<span>{{biNotice $lang $n}}{{with $n.Detail}} <span class="mono">{{.}}</span>{{end}}</span>
+    </p>
+  {{end}}
+{{end}}
+{{end}}
+
 {{/* aria-invalid and aria-describedby for a field that carries an error. */}}
 {{define "fieldInvalid"}}{{$field := .Field}}{{$id := noteID .Scope .Field}}{{range .Notices}}{{if and (eq .Field $field) (eq .Kind "error")}} aria-invalid="true" aria-describedby="{{$id}}"{{end}}{{end}}{{end}}

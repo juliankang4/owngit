@@ -9,6 +9,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/githttp"
+	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -26,6 +27,7 @@ type App struct {
 	Store                   *state.Store
 	Auth                    *auth.Manager
 	Repositories            *repository.Manager
+	PullRequests            *pullrequest.Service
 	GitHTTP                 *githttp.Handler
 	Renderer                *webui.Renderer
 	Hosts                   *HostPolicy
@@ -33,6 +35,7 @@ type App struct {
 	GitVersion              string
 	HTTPBackendFound        bool
 	HTTPTimeout             time.Duration
+	ActivityLimit           int
 	Now                     func() time.Time
 }
 
@@ -84,7 +87,15 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	settings, err := app.Store.Settings(request.Context())
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		if strings.HasPrefix(request.URL.Path, "/api/") {
+			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "OwnGit state is unavailable.", nil)
+		} else {
+			app.writePlainError(writer, http.StatusServiceUnavailable)
+		}
+		return
+	}
+	if strings.HasPrefix(request.URL.Path, "/api/") {
+		app.handleAPI(writer, request, settings)
 		return
 	}
 	if !settings.Initialized && request.URL.Path != "/setup" && request.URL.Path != "/setup/redeem" {
@@ -127,7 +138,7 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleCreateRepository(writer, request, settings)
 	case request.URL.Path == "/activity" && request.Method == http.MethodGet:
 		app.handleActivity(writer, request, settings)
-	case strings.HasPrefix(request.URL.Path, "/repositories/") && request.Method == http.MethodGet:
+	case strings.HasPrefix(request.URL.Path, "/repositories/") && (request.Method == http.MethodGet || request.Method == http.MethodPost):
 		app.handleRepositoryRoute(writer, request, settings)
 	default:
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)

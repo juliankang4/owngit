@@ -28,13 +28,7 @@ func TestIssueWritesSecretOnlyToOwnerFile(t *testing.T) {
 	if filepath.Base(path) != ownerFileName {
 		t.Fatalf("unexpected owner file: %s", path)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("owner file mode = %o, want 600", info.Mode().Perm())
-	}
+	assertOwnerFilePrivate(t, path)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

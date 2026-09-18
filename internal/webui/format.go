@@ -45,8 +45,13 @@ func templateFuncs() template.FuncMap {
 		"dict":         dict,
 		"noteID":       noteID,
 		"forAction":    noticesForAction,
+		"firstAlert":   firstAlertField,
 		"refValue":     refValue,
 		"queryRef":     queryRef,
+		"changeStatus": changeStatus,
+		"deletions":    deletions,
+		"pickedPaths":  pickedPaths,
+		"selectionURL": restoreSelectionURL,
 		"hasPrefix":    strings.HasPrefix,
 		"add":          func(a, b int) int { return a + b },
 		"sub":          func(a, b int) int { return a - b },
@@ -99,6 +104,25 @@ func noteID(scope any, field string) string {
 	return text + "-" + field + "-note"
 }
 
+// firstAlertField returns the index in notices of the error a refused request
+// should place the reader on, or -1 when there is none. Fields are given in
+// the order they are rendered.
+//
+// A read-only summary answers a refusal with a whole new document and has no
+// input to carry that placement, so the notice itself is the focus target.
+// The index identifies one notice even when a field carries two errors, where
+// a field name would match both and produce two autofocus attributes.
+func firstAlertField(notices []Notice, fields ...string) int {
+	for _, field := range fields {
+		for i, notice := range notices {
+			if notice.Field == field && notice.Kind == NoticeError {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
 // noticesForAction keeps only the notices belonging to the form the reader
 // actually submitted. Settings shows several forms that collect the same field
 // name; without this, a rejected password in one form would light up the
@@ -111,6 +135,93 @@ func noticesForAction(pending, action string, notices []Notice) []Notice {
 		return nil
 	}
 	return notices
+}
+
+// ---------------------------------------------------------------------------
+// Restore selection
+// ---------------------------------------------------------------------------
+
+// changeStatus names what restoring a path would do to the target branch.
+// The statuses are the ones RestorePath and DiffFile use; an unknown value
+// renders nothing rather than a guess, because a wrong word here would
+// describe a write.
+func changeStatus(status string) MessageCode {
+	switch status {
+	case "added", "copied":
+		return MsgRestoreStatusAdded
+	case "modified", "renamed":
+		return MsgRestoreStatusModified
+	case "deleted":
+		return MsgRestoreStatusDeleted
+	default:
+		return ""
+	}
+}
+
+// deletions are the previewed changes that remove a file. They are listed
+// again on their own, because a deletion is the one outcome a reader cannot
+// undo by looking at the file afterwards, and it must not be something they
+// only find by reading a long mixed list.
+func deletions(changes []DiffFile) []DiffFile {
+	var out []DiffFile
+	for _, change := range changes {
+		if change.Status == "deleted" {
+			out = append(out, change)
+		}
+	}
+	return out
+}
+
+// pickedPaths are the currently selected paths, which the apply form resubmits
+// as the repeated "path" field.
+func pickedPaths(paths []RestorePath) []RestorePath {
+	var out []RestorePath
+	for _, path := range paths {
+		if path.Selected {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+// restoreSelectionURL builds the canonical address of a restore selection.
+//
+// Previewing is a POST, so the request URL of a previewed page cannot be
+// opened again: following it with a plain GET, which is what a language link
+// or a new tab does, would reach a route that only accepts POST. This is the
+// same screen expressed as a GET, carrying the choices the reader made so
+// they survive a language switch or a step back.
+//
+// It deliberately does not carry the preview. Returning here re-opens the
+// selection, and the reader previews again before anything can be applied.
+func restoreSelectionURL(p RestorePage) string {
+	base := p.ApplyURL
+	if base == "" {
+		return p.CancelURL
+	}
+	values := url.Values{}
+	if p.Source.OID != "" {
+		values.Set("source", p.Source.OID)
+	}
+	if p.TargetBranch != "" {
+		values.Set("target", p.TargetBranch)
+	}
+	if p.Mode != "" {
+		values.Set("mode", p.Mode)
+	}
+	// Only the active selection is carried. In whole-project mode the ticks
+	// are not what decides the result, and a whole-project request that also
+	// names paths describes two different restores, so the address states the
+	// selection as it actually stands.
+	if p.Mode == RestoreModeFiles {
+		for _, picked := range pickedPaths(p.Paths) {
+			values.Add("path", picked.Path)
+		}
+	}
+	if len(values) == 0 {
+		return base
+	}
+	return base + "?" + values.Encode()
 }
 
 // dict builds a map for template partials that need several values.

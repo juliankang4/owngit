@@ -89,9 +89,17 @@ func windowsNetworkPath(path string) bool {
 	return strings.HasPrefix(upper, `\\`) || strings.HasPrefix(upper, `//`) || strings.HasPrefix(upper, `\\?\UNC\`)
 }
 
+// Windows maps an effective GENERIC_ALL file ACE to this object-specific mask.
+// Using it directly keeps the stored ACL canonical while inherited grants may
+// still retain GENERIC_ALL for child objects.
+const fileAllAccess windows.ACCESS_MASK = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1ff
+
 func ProtectPrivatePath(path string, directory bool) error {
-	user, err := processUser()
+	user, defaultOwner, err := processIdentity()
 	if err != nil {
+		return err
+	}
+	if err := validateProcessOwned(path, user, defaultOwner); err != nil {
 		return err
 	}
 	inheritance := uint32(windows.NO_INHERITANCE)
@@ -99,7 +107,7 @@ func ProtectPrivatePath(path string, directory bool) error {
 		inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
 	}
 	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
-		AccessPermissions: windows.GENERIC_ALL,
+		AccessPermissions: fileAllAccess,
 		AccessMode:        windows.GRANT_ACCESS,
 		Inheritance:       inheritance,
 		Trustee: windows.TRUSTEE{
@@ -112,11 +120,11 @@ func ProtectPrivatePath(path string, directory bool) error {
 		return fmt.Errorf("build owner-only ACL: %w", err)
 	}
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, acl, nil); err != nil {
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		user, nil, acl, nil); err != nil {
 		return fmt.Errorf("set owner-only ACL: %w", err)
 	}
-	return validateOwnerOnly(path, user)
+	return validateOwnerOnly(path, user, directory)
 }
 
 func ValidatePrivateFile(path string) error {
@@ -127,23 +135,64 @@ func ValidatePrivateFile(path string) error {
 	if !info.Mode().IsRegular() {
 		return errors.New("private input must be a regular file")
 	}
-	user, err := processUser()
+	user, _, err := processIdentity()
 	if err != nil {
 		return err
 	}
-	return validateOwnerOnly(path, user)
+	return validateOwnerOnly(path, user, false)
 }
 
-func processUser() (*windows.SID, error) {
+type tokenOwner struct {
+	Owner *windows.SID
+}
+
+func processIdentity() (*windows.SID, *windows.SID, error) {
 	token := windows.GetCurrentProcessToken()
-	user, err := token.GetTokenUser()
+	tokenUser, err := token.GetTokenUser()
 	if err != nil {
-		return nil, fmt.Errorf("read current Windows user: %w", err)
+		return nil, nil, fmt.Errorf("read current Windows user: %w", err)
 	}
-	return user.User.Sid, nil
+	user, err := tokenUser.User.Sid.Copy()
+	if err != nil {
+		return nil, nil, fmt.Errorf("copy current Windows user: %w", err)
+	}
+	var size uint32
+	err = windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &size)
+	if err != windows.ERROR_INSUFFICIENT_BUFFER || size == 0 {
+		return nil, nil, fmt.Errorf("read current Windows token owner size: %w", err)
+	}
+	buffer := make([]byte, size)
+	if err := windows.GetTokenInformation(token, windows.TokenOwner, &buffer[0], size, &size); err != nil {
+		return nil, nil, fmt.Errorf("read current Windows token owner: %w", err)
+	}
+	owner := (*tokenOwner)(unsafe.Pointer(&buffer[0])).Owner
+	if owner == nil {
+		return nil, nil, errors.New("current Windows token has no default owner")
+	}
+	defaultOwner, err := owner.Copy()
+	if err != nil {
+		return nil, nil, fmt.Errorf("copy current Windows token owner: %w", err)
+	}
+	return user, defaultOwner, nil
 }
 
-func validateOwnerOnly(path string, user *windows.SID) error {
+func validateProcessOwned(path string, user, defaultOwner *windows.SID) error {
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read private-file owner: %w", err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || !ownerMatchesProcess(owner, user, defaultOwner) {
+		return errors.New("private file must be owned by the current Windows user or its token owner")
+	}
+	return nil
+}
+
+func ownerMatchesProcess(owner, user, defaultOwner *windows.SID) bool {
+	return owner != nil && (owner.Equals(user) || owner.Equals(defaultOwner))
+}
+
+func validateOwnerOnly(path string, user *windows.SID, directory bool) error {
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
@@ -158,16 +207,51 @@ func validateOwnerOnly(path string, user *windows.SID) error {
 		return errors.New("private file ACL must not inherit access entries")
 	}
 	dacl, _, err := descriptor.DACL()
-	if err != nil || dacl == nil || dacl.AceCount != 1 {
+	if err != nil || dacl == nil || dacl.AceCount == 0 {
 		return errors.New("private file ACL must grant access only to its owner")
 	}
-	var ace *windows.ACCESS_ALLOWED_ACE
-	if err := windows.GetAce(dacl, 0, &ace); err != nil || ace == nil {
-		return errors.New("private file ACL cannot be inspected")
+
+	// Windows can split a directory grant into an effective FILE_ALL_ACCESS ACE
+	// and an inherit-only GENERIC_ALL ACE. Validate their security semantics
+	// rather than requiring a platform-dependent ACE count.
+	effectiveFullAccess := false
+	objectsInherit := false
+	containersInherit := false
+	allowedFlags := uint32(0)
+	if directory {
+		allowedFlags = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE | windows.INHERIT_ONLY_ACE
 	}
-	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !aceSID.Equals(user) || ace.Mask&windows.GENERIC_ALL != windows.GENERIC_ALL {
-		return errors.New("private file ACL must grant full access only to its owner")
+	for index := uint16(0); index < dacl.AceCount; index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, uint32(index), &ace); err != nil || ace == nil {
+			return errors.New("private file ACL cannot be inspected")
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			return errors.New("private file ACL must grant access only to its owner")
+		}
+		flags := uint32(ace.Header.AceFlags)
+		if flags & ^allowedFlags != 0 || flags&windows.INHERIT_ONLY_ACE != 0 && flags&(windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE) == 0 {
+			return errors.New("private file ACL has unsafe inheritance flags")
+		}
+		aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if !aceSID.Equals(user) || !hasFullFileAccess(ace.Mask) {
+			return errors.New("private file ACL must grant full access only to its owner")
+		}
+		if flags&windows.INHERIT_ONLY_ACE == 0 {
+			effectiveFullAccess = true
+		}
+		objectsInherit = objectsInherit || flags&windows.OBJECT_INHERIT_ACE != 0
+		containersInherit = containersInherit || flags&windows.CONTAINER_INHERIT_ACE != 0
+	}
+	if !effectiveFullAccess {
+		return errors.New("private file ACL must include an effective owner grant")
+	}
+	if directory && (!objectsInherit || !containersInherit) {
+		return errors.New("private directory ACL must protect inherited files and directories")
 	}
 	return nil
+}
+
+func hasFullFileAccess(mask windows.ACCESS_MASK) bool {
+	return mask&windows.GENERIC_ALL == windows.GENERIC_ALL || mask&fileAllAccess == fileAllAccess
 }
