@@ -127,40 +127,65 @@
   <div class="phead">
     <h1>{{bi $lang "cc.title"}}</h1>
     <p>{{bi $lang "cc.intro"}}</p>
+    <p>{{bi $lang "cc.advisory"}}</p>
+    {{/* The Settings tab lists this page; this line leads back to it. */}}
+    {{with $p.Tabs.SettingsURL}}<p class="ev__more">{{bi $lang "repoadmin.settings.listed"}} <a href="{{.}}">{{bi $lang "repoadmin.settings_tab"}}</a></p>{{end}}
   </div>
 
-  <p class="ev__note">{{bi $lang "cc.advisory"}}</p>
-  <p class="ev__note">{{bi $lang "cc.workflow"}}</p>
-  <p class="ev__note">{{bi $lang "cc.manual_helper"}}</p>
-
-  {{/* Saved policy, current permission and observed runtime are three
-       separate answers. Collapsing them would let a stored policy read as
-       running work, or a closed runtime read as a failed check. */}}
-  <div class="card">
-    <h2 class="setblock__h">{{bi $lang "cc.state.title"}}</h2>
-    <div class="ccstate">
-      <div class="ccstate__row">
-        <span class="ccstate__k">{{bi $lang "cc.state.policy"}}</span>
-        {{template "stateChip" dict "Lang" $lang "S" (policyState $policy)}}
+  {{/* The status answers four questions a reader has on arrival (is it on,
+       where, when, is the file there) and names the one thing left to do.
+       Saved settings, permission and the observed runtime stay separate
+       facts: "on" is only said when permission is granted and the runtime is
+       open, and a closed runtime reads as paused, never as a failed check.
+       Every state is a word with an icon, so none depends on colour. */}}
+  <section class="card ccstatus" aria-labelledby="cc-status-h">
+    <h2 class="setblock__h" id="cc-status-h">{{bi $lang "cc.state.title"}}</h2>
+    <dl class="ccstatus__list">
+      <div class="ccstatus__row">
+        <dt>{{bi $lang "cc.state.consent"}}</dt>
+        <dd>{{template "stateChip" dict "Lang" $lang "S" (checksRunning $p)}}</dd>
       </div>
-      <div class="ccstate__row">
-        <span class="ccstate__k">{{bi $lang "cc.state.consent"}}</span>
-        {{template "stateChip" dict "Lang" $lang "S" (consentState $policy)}}
+      <div class="ccstatus__row">
+        <dt>{{bi $lang "cc.state.where"}}</dt>
+        <dd>{{if $policy.Saved}}{{bi $lang (executorName $policy.Executor)}}{{else}}<span class="ccstatus__none">{{bi $lang "cc.state.not_chosen"}}</span>{{end}}</dd>
       </div>
-      <div class="ccstate__row">
-        <span class="ccstate__k">{{bi $lang "cc.state.runtime"}}</span>
-        {{template "stateChip" dict "Lang" $lang "S" (runtimeState $p.Runtime)}}
+      <div class="ccstatus__row">
+        <dt>{{bi $lang "cc.state.when"}}</dt>
+        <dd>
+          {{if and $policy.Saved $policy.AllowedEvents}}
+            <ul class="ccinline">
+              {{if $policy.AllowsPush}}<li>{{bi $lang "cc.state.event_push"}}</li>{{end}}
+              {{if $policy.AllowsPullRequest}}<li>{{bi $lang "cc.state.event_pull_request"}}</li>{{end}}
+            </ul>
+          {{else}}<span class="ccstatus__none">{{bi $lang "cc.state.not_chosen"}}</span>{{end}}
+        </dd>
       </div>
-    </div>
-
-    {{if $policy.Saved}}
-      <dl class="kv kv--tight">
-        <div><dt>{{bi $lang "cc.state.version"}}</dt><dd class="mono">v{{$policy.Version}}</dd></div>
-        {{with $policy.ShortDigest}}<div><dt>{{bi $lang "cc.state.digest"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
-        {{if notZero $policy.UpdatedAt}}<div><dt>{{bi $lang "cc.state.updated_at"}}</dt><dd>{{biDateTime $lang $policy.UpdatedAt}}</dd></div>{{end}}
-        <div><dt>{{bi $lang "cc.policy.executor"}}</dt><dd>{{bi $lang (executorName $policy.Executor)}}</dd></div>
-      </dl>
-    {{end}}
+      {{with $p.CheckFile}}{{if .State}}
+      <div class="ccstatus__row">
+        <dt>{{bi $lang "cc.state.file"}}</dt>
+        <dd>
+          {{template "stateChip" dict "Lang" $lang "S" (checkFileState .)}}
+          {{if .Branch}}<span class="mono ccstatus__sub">{{.Branch}}</span>{{end}}
+          {{if .Found}}<span class="ccstatus__sub">{{checkFileCount $lang .Checks}}</span>{{end}}
+          {{with .Problem}}<span class="ccstatus__problem mono">{{.}}</span>{{end}}
+        </dd>
+      </div>
+      {{end}}{{end}}
+      <div class="ccstatus__row">
+        <dt>{{bi $lang "cc.state.policy"}}</dt>
+        <dd>
+          {{if not $policy.Saved}}<span class="ccstatus__none">{{bi $lang "cc.state.policy_none"}}</span>
+          {{else}}
+            {{template "stateChip" dict "Lang" $lang "S" (policyState $policy)}}
+            <span class="ccstatus__sub">{{bi $lang "cc.state.version"}} {{$policy.Version}}{{if notZero $policy.UpdatedAt}}, {{biDateTime $lang $policy.UpdatedAt}}{{end}}</span>
+          {{end}}
+        </dd>
+      </div>
+      <div class="ccstatus__row">
+        <dt>{{bi $lang "cc.state.runtime"}}</dt>
+        <dd>{{template "stateChip" dict "Lang" $lang "S" (runtimeState $p.Runtime)}}</dd>
+      </div>
+    </dl>
 
     {{if $policy.Legacy}}
       <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "cc.state.policy_legacy"}}</span></p>
@@ -170,222 +195,230 @@
          claims the preparation is a check that passed, and it says plainly
          that ordinary repository work is unaffected. */}}
     {{if not $p.Runtime.Available}}
-      <p class="ev__warn" role="alert">
+      <div class="ev__warn" role="alert">
         {{icon "warning"}}
         <span>
           {{bi $lang (runtimeReason $p.Runtime.Code)}}
           {{with $p.Runtime.Code}}<span class="ev__sub mono">{{.}}</span>{{end}}
+          <span class="ccwarn__more">{{bi $lang "cc.state.runtime_repair"}}</span>
+          <span class="ccwarn__more">{{bi $lang "cc.state.runtime_separate"}}</span>
         </span>
-      </p>
-      <p class="ev__note">{{bi $lang "cc.state.runtime_repair"}}</p>
-      <p class="ev__note">{{bi $lang "cc.state.runtime_separate"}}</p>
+      </div>
     {{end}}
 
-    <p class="ev__note">{{bi $lang "cc.state.consent_cleared"}}</p>
-    <p class="ev__note">{{bi $lang "cc.password_each_time"}}</p>
+    <p class="ccnext"><span class="ccnext__k">{{bi $lang "cc.next.label"}}</span><span class="ccnext__v">{{bi $lang (nextCheckStep $p)}}</span></p>
+  </section>
 
-    {{with $p.RunnerTokensURL}}<p class="ev__more"><a href="{{.}}">{{bi $lang "runner.open"}}</a></p>{{end}}
-    {{with $p.TasksURL}}<p class="ev__more"><a href="{{.}}">{{bi $lang "tasks.tab"}}</a></p>{{end}}
-  </div>
-
-  {{/* Turning execution on or off is its own decision, kept apart from the
-       policy form so saving settings never enables anything by itself. */}}
-  <div class="card">
-    <h2 class="setblock__h">{{bi $lang "cc.consent.title"}}</h2>
-    {{if not $policy.Saved}}
-      <p class="ev__note">{{bi $lang "cc.consent.blocked"}}</p>
-    {{else if $policy.ConsentActive}}
-      {{$act := disableChecksAction}}{{$fn := forAction $pending $act $n}}
-      <form class="form" method="post" action="{{$p.SubmitURL}}">
-        <input type="hidden" name="csrf" value="{{$csrf}}">
-        <input type="hidden" name="action" value="{{$act}}">
-        <p class="f__help">{{bi $lang "cc.consent.disable_help"}}</p>
-        {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" "cc-disable-password"}}
-        <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "cc.consent.disable"}}</button></div>
-      </form>
-    {{else}}
-      {{$act := enableChecksAction}}{{$fn := forAction $pending $act $n}}
-      <form class="form" method="post" action="{{$p.SubmitURL}}">
-        <input type="hidden" name="csrf" value="{{$csrf}}">
-        <input type="hidden" name="action" value="{{$act}}">
-        {{/* The approval quotes the exact generation this page drew. The store
-             compares both against the row it is about to write, inside the
-             same transaction, so consent can never attach to a policy that
-             replaced this one while the page was open. */}}
-        <input type="hidden" name="policy_version" value="{{$policy.Version}}">
-        <input type="hidden" name="policy_digest" value="{{$policy.Digest}}">
-        <p class="f__help">{{bi $lang "cc.consent.enable_help"}}</p>
-        {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" "cc-enable-password"}}
-        <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "cc.consent.enable"}}</button></div>
-      </form>
-    {{end}}
-  </div>
-
-  {{/* The policy itself. Ordinary labelled fields with their ranges stated,
-       not a JSON editor: the owner is choosing execution authority and needs
-       to see what each value means. */}}
+  {{/* The setup, in the order it has to happen. Steps 1 to 4 are one form,
+       because they are saved together; turning checks on is its own form in
+       step 5, so saving settings never enables anything by itself. */}}
   {{$act := savePolicyAction}}{{$fn := forAction $pending $act $n}}
-  <div class="card">
-    <h2 class="setblock__h">{{bi $lang "cc.policy.title"}}</h2>
-    <p class="setblock__d">{{bi $lang "cc.policy.help"}}</p>
-    <p class="f__help">{{bi $lang "cc.policy.keep"}}</p>
-
-    <form class="form form--wide" method="post" action="{{$p.SubmitURL}}">
+  <div class="card ccflow">
+    <form class="form form--wide ccform" method="post" action="{{$p.SubmitURL}}">
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <input type="hidden" name="action" value="{{$act}}">
 
-      <fieldset class="fset" role="group"
-          {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "executor"}}>
-        <legend>{{bi $lang "cc.policy.executor"}}</legend>
-        {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "executor"}}
+      <section class="ccstep" aria-labelledby="cc-step-where">
+        <h2 class="ccstep__h" id="cc-step-where"><span class="ccstep__n" aria-hidden="true">1</span><span class="visually-hidden">{{stepNumber $lang 1}}: </span>{{bi $lang "cc.step.where"}}</h2>
 
-        {{/* Each mode states the access it actually confers, beside the
+        {{/* Each place states the access it actually confers, beside the
              control that selects it. */}}
-        <label class="choice">
-          <input type="radio" name="executor" value="{{hostExecutor}}"{{if $f.IsHost}} checked{{end}}>
-          <span class="choice__t">{{bi $lang "cc.policy.executor.host"}}</span>
-          <span class="choice__d">{{bi $lang "cc.policy.executor.host_help"}}</span>
-        </label>
-        <label class="choice">
-          <input type="radio" name="executor" value="{{containerExecutor}}"{{if $f.IsContainer}} checked{{end}}>
-          <span class="choice__t">{{bi $lang "cc.policy.executor.container"}}</span>
-          <span class="choice__d">{{bi $lang "cc.policy.executor.container_help"}}</span>
-        </label>
-        <label class="choice">
-          <input type="radio" name="executor" value="{{runnerExecutor}}"{{if $f.IsExternalRunner}} checked{{end}}>
-          <span class="choice__t">{{bi $lang "cc.policy.executor.runner"}}</span>
-          <span class="choice__d">{{bi $lang "cc.policy.executor.runner_help"}}</span>
-        </label>
-        <p class="f__help">{{bi $lang "cc.policy.no_fallback"}}</p>
-      </fieldset>
+        <fieldset class="fset" aria-labelledby="cc-step-where"
+            {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "executor"}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "executor"}}
+          <label class="choice">
+            <input type="radio" name="executor" value="{{hostExecutor}}"{{if $f.IsHost}} checked{{end}}>
+            <span class="choice__t">{{bi $lang "cc.policy.executor.host"}}</span>
+            <span class="choice__d">{{bi $lang "cc.policy.executor.host_help"}}</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="executor" value="{{containerExecutor}}"{{if $f.IsContainer}} checked{{end}}>
+            <span class="choice__t">{{bi $lang "cc.policy.executor.container"}}</span>
+            <span class="choice__d">{{bi $lang "cc.policy.executor.container_help"}}</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="executor" value="{{runnerExecutor}}"{{if $f.IsExternalRunner}} checked{{end}}>
+            <span class="choice__t">{{bi $lang "cc.policy.executor.runner"}}</span>
+            <span class="choice__d">{{bi $lang "cc.policy.executor.runner_help"}}</span>
+          </label>
+          <p class="f__help">{{bi $lang "cc.policy.no_fallback"}}</p>
+        </fieldset>
 
-      {{/* The refusal belongs to the choice as a whole, not to one checkbox,
-           so the group carries the invalid state and points at the message. */}}
-      <fieldset class="fset" role="group"
-          {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "events"}}>
-        <legend>{{bi $lang "cc.policy.events"}}</legend>
-        {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "events"}}
-        <label class="check">
-          <input type="checkbox" name="event_push" value="1"{{if $f.PushSelected}} checked{{end}}>
-          <span class="check__t">{{bi $lang "cc.policy.events.push"}}</span>
-        </label>
-        <label class="check">
-          <input type="checkbox" name="event_pull_request" value="1"{{if $f.PullRequestSelected}} checked{{end}}>
-          <span class="check__t">{{bi $lang "cc.policy.events.pull_request"}}</span>
-        </label>
-        <p class="f__help">{{bi $lang "cc.policy.events.help"}}</p>
-      </fieldset>
-
-      <fieldset class="fset">
-        <legend>{{bi $lang "cc.policy.limits"}}</legend>
-        <div class="ccgrid">
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "max_timeout_ms" "ID" "cc-timeout" "Label" "cc.policy.timeout"
-              "Help" "cc.policy.timeout_help" "Value" $f.MaxTimeoutMS}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "max_output_limit_bytes" "ID" "cc-output" "Label" "cc.policy.output"
-              "Help" "cc.policy.output_help" "Value" $f.MaxOutputLimitBytes}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "queue_limit" "ID" "cc-queue" "Label" "cc.policy.queue"
-              "Value" $f.QueueLimit}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "max_active_jobs" "ID" "cc-active" "Label" "cc.policy.active"
-              "Value" $f.MaxActiveJobs}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "max_lease_ms" "ID" "cc-lease" "Label" "cc.policy.lease"
-              "Help" "cc.policy.lease_help" "Value" $f.MaxLeaseMS}}
-        </div>
-      </fieldset>
-
-      <fieldset class="fset">
-        <legend>{{bi $lang "cc.policy.source"}}</legend>
-        <p class="f__help">{{bi $lang "cc.policy.source_help"}}</p>
-        <p class="f__help">{{bi $lang "cc.policy.source.default_help"}}</p>
-        <div class="ccgrid">
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "source_max_entries" "ID" "cc-src-entries" "Label" "cc.policy.source.entries"
-              "Value" $f.SourceMaxEntries}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "source_max_file_bytes" "ID" "cc-src-file" "Label" "cc.policy.source.file_bytes"
-              "Value" $f.SourceMaxFileBytes}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "source_max_total_bytes" "ID" "cc-src-total" "Label" "cc.policy.source.total_bytes"
-              "Value" $f.SourceMaxTotalBytes}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "source_max_path_depth" "ID" "cc-src-depth" "Label" "cc.policy.source.depth"
-              "Value" $f.SourceMaxPathDepth}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "source_max_path_bytes" "ID" "cc-src-path" "Label" "cc.policy.source.path_bytes"
-              "Value" $f.SourceMaxPathBytes}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "source_max_name_bytes" "ID" "cc-src-name" "Label" "cc.policy.source.name_bytes"
-              "Value" $f.SourceMaxNameBytes}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "source_metadata_limit_bytes" "ID" "cc-src-meta" "Label" "cc.policy.source.metadata_bytes"
-              "Value" $f.SourceMetadataLimitBytes}}
-        </div>
-      </fieldset>
-
-      {{/* The container fields stay visible whichever mode is selected, so a
-           reader can see the settings before choosing that mode and nothing
-           depends on scripting to appear. The backend refuses them for the
-           other modes. */}}
-      <fieldset class="fset">
-        <legend>{{bi $lang "cc.policy.container"}}</legend>
-        <p class="f__help">{{bi $lang "cc.policy.container_help"}}</p>
-
-        <div class="f">
-          <label for="cc-image">{{bi $lang "cc.policy.container.image"}}</label>
-          <input id="cc-image" name="container_image" type="text" class="mono" autocomplete="off"
-                 spellcheck="false" value="{{$f.ContainerImage}}"
-                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_image"}}>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_image"}}
-          <p class="f__help">{{bi $lang "cc.policy.container.image_help"}}</p>
-        </div>
-
-        <div class="f">
-          <span class="f__label" id="cc-network-label">{{bi $lang "cc.policy.container.network"}}</span>
-          <div role="group" aria-labelledby="cc-network-label"
-              {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_network"}}>
-            <label class="check">
-              <input type="radio" name="container_network" value="{{noneNetwork}}"{{if not $f.NetworkIsBridge}} checked{{end}}>
-              <span class="check__t">{{bi $lang "cc.policy.container.network_none"}}</span>
-            </label>
-            <label class="check">
-              <input type="radio" name="container_network" value="{{bridgeNetwork}}"{{if $f.NetworkIsBridge}} checked{{end}}>
-              <span class="check__t">{{bi $lang "cc.policy.container.network_bridge"}}</span>
-            </label>
+        {{/* Mode-specific settings appear only for their mode. The stylesheet
+             hides them with :has(), so no script is involved; a browser
+             without :has() shows them with the line that says which mode
+             uses them. The backend ignores container values for other
+             modes, so a hidden field never changes what is saved. */}}
+        <div class="ccpanel ccmode ccmode--container">
+          <h3 class="ccmode__h">{{bi $lang "cc.policy.container"}}</h3>
+          <p class="f__help ccmode__only">{{bi $lang "cc.policy.container_only"}}</p>
+          <p class="f__help">{{bi $lang "cc.policy.container_help"}}</p>
+          <div class="f">
+            <label for="cc-image">{{bi $lang "cc.policy.container.image"}}</label>
+            <input id="cc-image" name="container_image" type="text" class="mono" autocomplete="off"
+                   spellcheck="false" value="{{$f.ContainerImage}}"
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_image"}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_image"}}
+            <p class="f__help">{{bi $lang "cc.policy.container.image_help"}}</p>
           </div>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_network"}}
-          <p class="f__help">{{bi $lang "cc.policy.container.network_help"}}</p>
+          <div class="f">
+            <span class="f__label" id="cc-network-label">{{bi $lang "cc.policy.container.network"}}</span>
+            <div class="ccradios" role="radiogroup" aria-labelledby="cc-network-label"
+                {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_network"}}>
+              <label class="check">
+                <input type="radio" name="container_network" value="{{noneNetwork}}"{{if not $f.NetworkIsBridge}} checked{{end}}>
+                <span class="check__t">{{bi $lang "cc.policy.container.network_none"}}</span>
+              </label>
+              <label class="check">
+                <input type="radio" name="container_network" value="{{bridgeNetwork}}"{{if $f.NetworkIsBridge}} checked{{end}}>
+                <span class="check__t">{{bi $lang "cc.policy.container.network_bridge"}}</span>
+              </label>
+            </div>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_network"}}
+            <p class="f__help">{{bi $lang "cc.policy.container.network_help"}}</p>
+          </div>
         </div>
 
-        <div class="ccgrid">
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "container_cpu_millis" "ID" "cc-cpu" "Label" "cc.policy.container.cpu"
-              "Value" $f.ContainerCPUMillis}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "container_memory_bytes" "ID" "cc-memory" "Label" "cc.policy.container.memory"
-              "Value" $f.ContainerMemoryBytes}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "container_pids" "ID" "cc-pids" "Label" "cc.policy.container.pids"
-              "Value" $f.ContainerPIDs}}
-          {{template "policyNumber" dict "Lang" $lang "Notices" $fn "Scope" $act "Ranges" $f.Ranges
-              "Field" "container_scratch_bytes" "ID" "cc-scratch" "Label" "cc.policy.container.scratch"
-              "Value" $f.ContainerScratchBytes}}
+        <div class="ccpanel ccmode ccmode--runner">
+          <p class="f__help ccmode__only">{{bi $lang "cc.runner.only"}}</p>
+          <p class="ccmode__lead">{{bi $lang "cc.runner.what"}}</p>
+          {{if not $policy.Saved}}<p class="f__help">{{bi $lang "cc.runner.needs_save"}}</p>{{end}}
+          {{with $p.RunnerTokensURL}}<p><a class="btn" href="{{.}}">{{icon "key"}}{{bi $lang "cc.runner.link"}}</a></p>{{end}}
         </div>
+      </section>
 
-        <p class="f__help">{{bi $lang "cc.policy.container.no_disk_quota"}}</p>
-        <p class="f__help">{{bi $lang "cc.policy.container.trust"}}</p>
-      </fieldset>
+      <section class="ccstep" aria-labelledby="cc-step-when">
+        <h2 class="ccstep__h" id="cc-step-when"><span class="ccstep__n" aria-hidden="true">2</span><span class="visually-hidden">{{stepNumber $lang 2}}: </span>{{bi $lang "cc.step.when"}}</h2>
+        {{/* The refusal belongs to the choice as a whole, not to one
+             checkbox, so the group carries the invalid state and points at
+             the message. */}}
+        <fieldset class="fset" aria-labelledby="cc-step-when"
+            {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "events"}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "events"}}
+          <label class="check">
+            <input type="checkbox" name="event_push" value="1"{{if $f.PushSelected}} checked{{end}}>
+            <span class="check__t">{{bi $lang "cc.policy.events.push"}}</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="event_pull_request" value="1"{{if $f.PullRequestSelected}} checked{{end}}>
+            <span class="check__t">{{bi $lang "cc.policy.events.pull_request"}}</span>
+          </label>
+          <p class="f__help">{{bi $lang "cc.policy.events.help"}}</p>
+        </fieldset>
+      </section>
 
-      {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" "cc-save-password"}}
+      {{/* Everything needed to write a first check file, on this page. The
+           example is parsed by the real workflow parser in a test, so the page
+           never offers a file OwnGit would refuse. */}}
+      <section class="ccstep" aria-labelledby="cc-step-file">
+        <h2 class="ccstep__h" id="cc-step-file"><span class="ccstep__n" aria-hidden="true">3</span><span class="visually-hidden">{{stepNumber $lang 3}}: </span>{{bi $lang "cc.step.file"}}</h2>
+        <p class="ccstep__d">{{bi $lang "cc.workflow"}}</p>
+        <div class="ccfile">
+          <div class="ccfile__bar">
+            <span class="mono ccfile__name">.owngit/checks.json</span>
+            <span class="ccfile__status" role="status" data-copy-status
+                  data-copy-ok-en="{{t "en" "cc.file.copied"}}" data-copy-ok-ko="{{t "ko" "cc.file.copied"}}"
+                  data-copy-fail-en="{{t "en" "cc.file.copy_failed"}}" data-copy-fail-ko="{{t "ko" "cc.file.copy_failed"}}"></span>
+            <button type="button" class="btn ccfile__copy" data-copy-target="cc-example" hidden>{{bi $lang "cc.file.copy"}}</button>
+          </div>
+          <pre class="ccfile__code" id="cc-example" tabindex="0" role="region" {{biAttr $lang "aria-label" "cc.file.example"}}>{{checkFileExample}}</pre>
+        </div>
+        <h3 class="ccmode__h">{{bi $lang "cc.file.keys_title"}}</h3>
+        <dl class="cckeys">
+          <div><dt class="mono">version</dt><dd>{{bi $lang "cc.file.key_version"}}</dd></div>
+          <div><dt class="mono">events</dt><dd>{{bi $lang "cc.file.key_events"}}</dd></div>
+          <div><dt class="mono">branches</dt><dd>{{bi $lang "cc.file.key_branches"}}</dd></div>
+          <div><dt class="mono">checks</dt><dd>{{bi $lang "cc.file.key_checks"}}</dd></div>
+          <div><dt class="mono">limits</dt><dd>{{bi $lang "cc.file.key_limits"}}</dd></div>
+        </dl>
+      </section>
 
-      <div class="actions">
-        <button type="submit" class="btn btn--primary">{{bi $lang "cc.policy.save"}}</button>
-      </div>
-      <p class="f__help">{{bi $lang "cc.policy.save_help"}}</p>
+      <section class="ccstep" aria-labelledby="cc-step-save">
+        <h2 class="ccstep__h" id="cc-step-save"><span class="ccstep__n" aria-hidden="true">4</span><span class="visually-hidden">{{stepNumber $lang 4}}: </span>{{bi $lang "cc.step.save"}}</h2>
+        <p class="ccstep__d">{{bi $lang "cc.policy.help"}}</p>
+
+        {{/* Limits start collapsed with working values in place. They open
+             by themselves when a refusal points at one of them, so the reader
+             lands on the field that needs attention. */}}
+        <details class="ccadv"{{if limitsOpen $fn}} open{{end}}>
+          <summary class="btn">{{bi $lang "cc.advanced"}}</summary>
+          <div class="ccadv__body">
+            <p class="f__help">{{bi $lang "cc.advanced_help"}} {{bi $lang "cc.size_note"}}</p>
+
+            <fieldset class="fset">
+              <legend>{{bi $lang "cc.policy.limits"}}</legend>
+              <div class="ccgrid">
+                {{range limitFields "run"}}{{template "policyLimit" dict "Lang" $lang "Notices" $fn "Scope" $act "Form" $f "L" .}}{{end}}
+              </div>
+            </fieldset>
+
+            <fieldset class="fset">
+              <legend>{{bi $lang "cc.policy.source"}}</legend>
+              <p class="f__help">{{bi $lang "cc.policy.source_help"}}</p>
+              <div class="ccgrid">
+                {{range limitFields "source"}}{{template "policyLimit" dict "Lang" $lang "Notices" $fn "Scope" $act "Form" $f "L" .}}{{end}}
+              </div>
+            </fieldset>
+
+            <fieldset class="fset ccmode ccmode--container">
+              <legend>{{bi $lang "cc.policy.container_limits"}}</legend>
+              <p class="f__help ccmode__only">{{bi $lang "cc.policy.container_only"}}</p>
+              <div class="ccgrid">
+                {{range limitFields "container"}}{{template "policyLimit" dict "Lang" $lang "Notices" $fn "Scope" $act "Form" $f "L" .}}{{end}}
+              </div>
+              <p class="f__help">{{bi $lang "cc.policy.container.no_disk_quota"}}</p>
+              <p class="f__help">{{bi $lang "cc.policy.container.trust"}}</p>
+            </fieldset>
+          </div>
+        </details>
+
+        {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" "cc-save-password" "Help" "cc.password_each_time"}}
+        <div class="actions">
+          <button type="submit" class="btn btn--primary">{{bi $lang "cc.policy.save"}}</button>
+        </div>
+        <p class="f__help">{{bi $lang "cc.policy.save_help"}}</p>
+      </section>
     </form>
+
+    {{/* Turning checks on or off is its own decision, kept apart from the
+         settings form so saving never enables anything by itself. When it
+         cannot be done yet, the button stays visible, disabled, with the
+         reason it points at. */}}
+    <section class="ccstep" aria-labelledby="cc-step-switch">
+      <h2 class="ccstep__h" id="cc-step-switch"><span class="ccstep__n" aria-hidden="true">5</span><span class="visually-hidden">{{stepNumber $lang 5}}: </span>{{bi $lang "cc.step.switch"}}</h2>
+      <p class="ccswitch__now">{{bi $lang "cc.state.consent"}} {{template "stateChip" dict "Lang" $lang "S" (checksRunning $p)}}</p>
+      {{if not $policy.Saved}}
+        <p class="f__help" id="cc-enable-why">{{bi $lang "cc.consent.blocked"}}</p>
+        <div class="actions"><button type="button" class="btn btn--primary" disabled aria-describedby="cc-enable-why">{{bi $lang "cc.consent.enable"}}</button></div>
+      {{else if $policy.Legacy}}
+        <p class="f__help" id="cc-enable-why">{{bi $lang "cc.consent.blocked_legacy"}}</p>
+        <div class="actions"><button type="button" class="btn btn--primary" disabled aria-describedby="cc-enable-why">{{bi $lang "cc.consent.enable"}}</button></div>
+      {{else if $policy.ConsentActive}}
+        {{$act := disableChecksAction}}{{$fn := forAction $pending $act $n}}
+        <form class="form" method="post" action="{{$p.SubmitURL}}">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="action" value="{{$act}}">
+          <p class="f__help">{{bi $lang "cc.consent.disable_help"}}</p>
+          {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" "cc-disable-password" "Help" "cc.password_each_time"}}
+          <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "cc.consent.disable"}}</button></div>
+        </form>
+      {{else}}
+        {{$act := enableChecksAction}}{{$fn := forAction $pending $act $n}}
+        <form class="form" method="post" action="{{$p.SubmitURL}}">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="action" value="{{$act}}">
+          {{/* The approval quotes the exact generation this page drew. The
+               store compares both against the row it is about to write, inside
+               the same transaction, so consent can never attach to a policy
+               that replaced this one while the page was open. */}}
+          <input type="hidden" name="policy_version" value="{{$policy.Version}}">
+          <input type="hidden" name="policy_digest" value="{{$policy.Digest}}">
+          <p class="f__help">{{bi $lang "cc.consent.enable_help"}}</p>
+          {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" "cc-enable-password" "Help" "cc.password_each_time"}}
+          <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "cc.consent.enable"}}</button></div>
+        </form>
+      {{end}}
+    </section>
   </div>
 
   <section class="sec">
@@ -428,6 +461,8 @@
       </div>
     {{end}}
   </section>
+
+  <p class="ev__note ccmanual">{{bi $lang "cc.manual_helper"}}{{with $p.TasksURL}} <a href="{{.}}">{{bi $lang "tasks.tab"}}</a>{{end}}</p>
 {{end}}
 </div>
 {{end}}

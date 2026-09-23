@@ -1,0 +1,74 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}
+
+<p class="backline"><a class="back" href="{{.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
+
+<div class="rhead">
+  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+</div>
+
+{{template "repoTabs" dict "Lang" $lang "T" $p.Tabs}}
+
+<div class="rpane rdel">
+<div class="phead">
+  <h2 class="rdel__title">{{icon "trash"}}{{bi $lang "repoadmin.delete.title"}}</h2>
+  <p>{{bi $lang "repoadmin.delete.lead"}}</p>
+</div>
+
+{{/* A plain form, so the page works without the script and every step is
+     reachable from the keyboard. Neither consequence is preselected: the
+     administrator picks one, types the name, and gives the password again. */}}
+<form class="form rdel__form" method="post" action="{{$p.SubmitURL}}">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <input type="hidden" name="lang" value="{{$lang}}">
+
+  <fieldset class="fset">
+    <legend>{{bi $lang "repoadmin.delete.choose"}}</legend>
+    <label class="choice">
+      <input type="radio" name="mode" value="keep_files" required{{if eq $p.Mode "keep_files"}} checked{{end}}
+             {{template "fieldInvalid" dict "Notices" $n "Field" "mode"}}>
+      <span class="choice__t">{{bi $lang "repoadmin.delete.keep.title"}}</span>
+      <span class="choice__d">{{bi $lang "repoadmin.delete.keep.desc"}} {{bi $lang "repoadmin.delete.keep.back"}}</span>
+    </label>
+    <label class="choice choice--danger">
+      <input type="radio" name="mode" value="delete_files" required{{if eq $p.Mode "delete_files"}} checked{{end}}
+             {{template "fieldInvalid" dict "Notices" $n "Field" "mode"}}>
+      <span class="choice__t">{{bi $lang "repoadmin.delete.files.title"}}</span>
+      <span class="choice__d">{{bi $lang "repoadmin.delete.files.desc"}}</span>
+      <span class="choice__warn">{{icon "warning"}}<span>{{bi $lang "repoadmin.delete.files.warn"}}</span></span>
+    </label>
+    {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "mode"}}
+  </fieldset>
+
+  {{if or $p.GitPath $p.RemovedPath}}
+  <dl class="kv rdel__paths">
+    {{with $p.GitPath}}<div><dt>{{bi $lang "repoadmin.delete.git_path"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
+    {{with $p.RemovedPath}}<div><dt>{{bi $lang "repoadmin.delete.removed_path"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
+  </dl>
+  {{end}}
+
+  <div class="f">
+    {{/* The name to type is part of the label, so a screen reader announces
+         it with the field and the field's error can own aria-describedby. */}}
+    <label for="rdel-name">{{bi $lang "repoadmin.delete.name.help"}} <span class="mono rdel__need">{{$p.Repo.Name}}</span></label>
+    <input id="rdel-name" name="confirm_name" type="text" required autocomplete="off" spellcheck="false"
+           autocapitalize="off"
+           {{template "fieldInvalid" dict "Notices" $n "Field" "confirm_name"}}>
+    {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "confirm_name"}}
+  </div>
+
+  <div class="f">
+    <label for="rdel-password">{{bi $lang "admin.field"}}</label>
+    <input id="rdel-password" name="admin_password" type="password" required autocomplete="current-password"
+           {{template "fieldInvalid" dict "Notices" $n "Field" "admin_password"}}>
+    {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "admin_password"}}
+    <p class="f__help">{{bi $lang "repoadmin.delete.password.help"}}</p>
+  </div>
+
+  <div class="actions">
+    <button type="submit" class="btn btn--danger-solid">{{icon "trash"}}<span>{{bi $lang "repoadmin.delete.submit"}}</span></button>
+    {{with $p.CancelURL}}<a class="btn" href="{{.}}">{{bi $lang "app.cancel"}}</a>{{end}}
+  </div>
+</form>
+</div>
+{{end}}

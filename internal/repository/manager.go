@@ -37,6 +37,11 @@ type Manager struct {
 	// It must be nonblocking and must not execute repository commands.
 	OnChange func(string)
 	mu       sync.RWMutex
+
+	// deletionClock and deletionHook let tests fix the kept-folder time and
+	// stop a deletion after a durable step, as a crash would.
+	deletionClock func() time.Time
+	deletionHook  func(step string) error
 }
 
 func (m *Manager) SetRoot(root string) {
@@ -107,6 +112,11 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		return state.Repository{}, err
 	} else if exists {
 		return state.Repository{}, ErrNameTaken
+	}
+	if _, pending, err := m.Store.RepositoryDeletion(ctx, id); err != nil {
+		return state.Repository{}, err
+	} else if pending {
+		return state.Repository{}, fmt.Errorf("%w: an earlier repository with this name is still being deleted", ErrNameTaken)
 	}
 	root, err := canonicalRoot(m.RepositoryRoot())
 	if err != nil {
@@ -285,36 +295,84 @@ func (m *Manager) PrepareExistingForRuntime(ctx context.Context, hookRuntime *gi
 	return m.prepareExisting(ctx, hookRuntime)
 }
 
+// prepareConcurrency bounds how many repositories startup prepares at once.
+// Over a network share each Git process mostly waits on storage, so a few in
+// parallel shorten startup without a burst of processes.
+const prepareConcurrency = 8
+
 func (m *Manager) prepareExisting(ctx context.Context, hookRuntime *gitexec.Runner) error {
 	repositories, err := m.Store.Repositories(ctx)
 	if err != nil {
 		return err
 	}
-	for _, stored := range repositories {
-		path, _, exists, err := m.ExistingPath(ctx, stored.ID)
-		if err != nil || !exists {
-			if err == nil {
-				err = errors.New("repository not found")
-			}
-			return fmt.Errorf("prepare repository %q: %w", stored.ID, err)
-		}
-		lock := m.Locks.For(stored.ID)
-		lock.Lock()
-		for _, setting := range repositoryConfig() {
-			_, err = m.Git.Run(ctx, path, nil, "--git-dir", ".", "config", "--local", setting[0], setting[1])
-			if err != nil {
-				break
-			}
-		}
-		if err == nil {
-			err = writeRetentionHook(path, hookRuntime)
-		}
-		lock.Unlock()
+	errs := make([]error, len(repositories))
+	slots := make(chan struct{}, prepareConcurrency)
+	var group sync.WaitGroup
+	for index, stored := range repositories {
+		group.Add(1)
+		slots <- struct{}{}
+		go func() {
+			defer group.Done()
+			defer func() { <-slots }()
+			errs[index] = m.prepareRepository(ctx, stored.ID, hookRuntime)
+		}()
+	}
+	group.Wait()
+	for index, err := range errs {
 		if err != nil {
-			return fmt.Errorf("prepare repository %q: %w", stored.ID, err)
+			return fmt.Errorf("prepare repository %q: %w", repositories[index].ID, err)
 		}
 	}
 	return nil
+}
+
+// prepareRepository reads the local configuration once and writes only the
+// settings that differ, then refreshes the retention hook.
+func (m *Manager) prepareRepository(ctx context.Context, id string, hookRuntime *gitexec.Runner) error {
+	path, _, exists, err := m.ExistingPath(ctx, id)
+	if err != nil || !exists {
+		if err == nil {
+			err = errors.New("repository not found")
+		}
+		return err
+	}
+	lock := m.Locks.For(id)
+	lock.Lock()
+	defer lock.Unlock()
+	current, err := m.localConfig(ctx, path)
+	if err != nil {
+		return err
+	}
+	for _, setting := range repositoryConfig() {
+		// A setting is already correct only with exactly one matching value.
+		// Anything else is written as before, so a multi-valued key still
+		// fails instead of being accepted.
+		if values := current[strings.ToLower(setting[0])]; len(values) == 1 && values[0] == setting[1] {
+			continue
+		}
+		if _, err := m.Git.Run(ctx, path, nil, "--git-dir", ".", "config", "--local", setting[0], setting[1]); err != nil {
+			return err
+		}
+	}
+	return writeRetentionHook(path, hookRuntime)
+}
+
+// localConfig returns the repository's local configuration values by key.
+// Git prints section and variable names in lower case.
+func (m *Manager) localConfig(ctx context.Context, repositoryPath string) (map[string][]string, error) {
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "config", "--local", "--list", "-z")
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string][]string)
+	for _, entry := range strings.Split(string(result.Stdout), "\x00") {
+		if entry == "" {
+			continue
+		}
+		key, value, _ := strings.Cut(entry, "\n")
+		values[key] = append(values[key], value)
+	}
+	return values, nil
 }
 
 func writeRetentionHook(repositoryPath string, runner *gitexec.Runner) error {
@@ -394,6 +452,14 @@ fi
 }
 
 func writeHookFile(path, content string) error {
+	// Startup refreshes every hook. An identical regular file with the
+	// expected mode is left alone, which avoids a write per repository on
+	// slow storage.
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode().Perm() == 0o700 {
+			return nil
+		}
+	}
 	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
 		return fmt.Errorf("write Git hook %s: %w", filepath.Base(path), err)
 	}

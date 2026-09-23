@@ -465,6 +465,108 @@
     });
   });
 
+  /* Copy an example to the clipboard.
+   *
+   * The button is rendered hidden and shown only here, because without a
+   * script it would do nothing; the example itself stays selectable text.
+   * The result is announced in the page's current language from words the
+   * server rendered, and the words are also set as data-en/data-ko so a later
+   * language switch rewrites them like any other text. */
+
+  all('[data-copy-target]').forEach(function (button) {
+    var source = document.getElementById(button.getAttribute('data-copy-target'));
+    var status = button.parentNode && button.parentNode.querySelector('[data-copy-status]');
+    if (!source) { return; }
+    button.hidden = false;
+
+    function say(kind) {
+      if (!status) { return; }
+      var lang = root.getAttribute('data-lang') === 'ko' ? 'ko' : 'en';
+      var en = status.getAttribute('data-copy-' + kind + '-en') || '';
+      var ko = status.getAttribute('data-copy-' + kind + '-ko') || '';
+      status.setAttribute('data-en', en);
+      status.setAttribute('data-ko', ko);
+      status.textContent = lang === 'ko' ? ko : en;
+    }
+
+    function selectSource() {
+      var range = document.createRange();
+      range.selectNodeContents(source);
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    button.addEventListener('click', function () {
+      var text = source.textContent;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { say('ok'); }, function () {
+          selectSource();
+          say('fail');
+        });
+      } else {
+        selectSource();
+        say('fail');
+      }
+    });
+  });
+
+  /* Clone address copy button. The address is a read-only field that can be
+   * selected by hand, so the button is rendered hidden and only revealed
+   * here. Both outcomes are server-rendered in both languages; the script
+   * chooses which one to show and never writes text of its own. */
+
+  all('[data-clone]').forEach(function (box) {
+    var button = box.querySelector('[data-copy]');
+    var field = button && document.getElementById(button.getAttribute('data-copy'));
+    if (!field) { return; }
+    var done = box.querySelector('[data-copy-done]');
+    var fail = box.querySelector('[data-copy-fail]');
+    var timer = null;
+
+    function show(ok) {
+      if (done) { done.hidden = !ok; }
+      if (fail) { fail.hidden = ok; }
+      window.clearTimeout(timer);
+      timer = window.setTimeout(function () {
+        if (done) { done.hidden = true; }
+        if (fail) { fail.hidden = true; }
+      }, 4000);
+    }
+
+    function fallback() {
+      field.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (error) { ok = false; }
+      show(ok);
+    }
+
+    button.hidden = false;
+    button.addEventListener('click', function () {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(field.value).then(function () { show(true); }, fallback);
+      } else {
+        fallback();
+      }
+    });
+  });
+
+  /* Sidebar: bring the open repository into view inside the list on load.
+   * On a wide screen the list scrolls on its own, so a repository far down
+   * would otherwise be selected but out of sight. Only the list's own
+   * scrollTop moves; the page and focus stay where they are. */
+
+  var sideList = document.querySelector('.sidebar__inner');
+  var sideCurrent = sideList && sideList.querySelector('.sb__item[aria-current="page"]');
+  if (sideCurrent && sideList.scrollHeight > sideList.clientHeight) {
+    var listBox = sideList.getBoundingClientRect();
+    var itemBox = sideCurrent.getBoundingClientRect();
+    var visibleBottom = Math.min(listBox.bottom, window.innerHeight);
+    if (itemBox.bottom > visibleBottom || itemBox.top < listBox.top) {
+      sideList.scrollTop += itemBox.top - listBox.top - (visibleBottom - listBox.top - itemBox.height) / 2;
+    }
+  }
+
   /* Tab strips: reveal on load, on keyboard focus, and on resize.
    *
    * Tabbing to a partly visible link does not reliably bring the whole link

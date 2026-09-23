@@ -192,11 +192,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	base := app.baseRepositoryPage(request, chrome, stored, summary)
 	page := webui.ImportPage{
 		Chrome: chrome, Repo: base.Repo, SubmitURL: base.Repo.URL + "/import", SelfURL: base.Repo.URL + "/import",
-		Tabs: webui.RepoTabs{
-			OverviewURL: base.OverviewURL, CodeURL: base.CodeURL, CommitsURL: base.CommitsURL,
-			PullRequestsURL: base.PullRequestsURL, TasksURL: base.TasksURL, ImportsURL: base.ImportsURL,
-			Active: webui.RepoTabImport,
-		},
+		Tabs: repositoryTabs(base, webui.RepoTabImport),
 	}
 	if app.Imports == nil {
 		app.render(writer, status, page)

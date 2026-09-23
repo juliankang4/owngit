@@ -23,6 +23,10 @@ type Activity struct {
 	Days       []ActivityDay
 	Commits    int
 	Incomplete bool
+	// Key identifies the refs this observation was computed from. Two
+	// observations with the same Key and limit are identical, so callers may
+	// cache an observation until RefSnapshot reports a different key.
+	Key string
 }
 
 type RetainedRef struct {
@@ -66,25 +70,32 @@ func (m *Manager) Activity(ctx context.Context, id string, maximumCommits int) (
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	refsResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)", "refs/heads", "refs/owngit/retained/heads")
+	// One listing supplies the roots, the retained provenance, and the key, so
+	// the key describes exactly the refs this observation used.
+	refsResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(objectname)%00%(refname)", "refs/heads", "refs/owngit/retained/heads", "refs/owngit/provenance/heads")
 	if err != nil {
 		return Activity{}, err
 	}
 	var current, retained []string
-	for _, ref := range strings.Fields(string(refsResult.Stdout)) {
-		if strings.HasPrefix(ref, "refs/heads/") {
-			current = append(current, ref)
-		} else if strings.HasPrefix(ref, "refs/owngit/retained/heads/") {
-			retained = append(retained, ref)
+	var keyed []activityKeyRef
+	for _, line := range bytes.Split(bytes.TrimSpace(refsResult.Stdout), []byte{'\n'}) {
+		oid, ref, ok := bytes.Cut(line, []byte{0})
+		if !ok {
+			continue
+		}
+		name := string(ref)
+		keyed = append(keyed, activityKeyRef{name: name, oid: string(oid)})
+		if strings.HasPrefix(name, "refs/heads/") {
+			current = append(current, name)
+		} else if strings.HasPrefix(name, "refs/owngit/retained/heads/") {
+			retained = append(retained, name)
 		}
 	}
+	key := activityKey(keyed)
 	if len(current) == 0 && len(retained) == 0 {
-		return Activity{}, nil
+		return Activity{Key: key}, nil
 	}
-	provenance, err := m.retainedProvenance(ctx, repositoryPath, "heads")
-	if err != nil {
-		return Activity{}, err
-	}
+	provenance := parseRetainedProvenance(refsResult.Stdout, "heads")
 
 	// Current history is scanned first. Retained history explicitly excludes
 	// every current root, so a reachable commit is never mislabeled as detached
@@ -115,7 +126,7 @@ func (m *Manager) Activity(ctx context.Context, id string, maximumCommits int) (
 			incomplete = true
 		}
 	}
-	activity := Activity{Records: records, Commits: len(records), Incomplete: incomplete}
+	activity := Activity{Records: records, Commits: len(records), Incomplete: incomplete, Key: key}
 	counts := make(map[string]int)
 	for _, record := range records {
 		counts[record.AuthoredAt.Format("2006-01-02")]++
@@ -178,29 +189,36 @@ func activityRevisionInput(roots, excluded []string) string {
 	return input.String()
 }
 
-func (m *Manager) retainedProvenance(ctx context.Context, repositoryPath, kind string) (map[string]string, error) {
-	return retainedProvenance(ctx, m.Git, repositoryPath, kind)
-}
-
 func retainedProvenance(ctx context.Context, runner retainedRunner, repositoryPath, kind string) (map[string]string, error) {
 	if kind != "heads" && kind != "tags" {
 		return nil, errors.New("invalid retained ref kind")
 	}
-	prefix := "refs/owngit/provenance/" + kind + "/"
-	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(objectname)%00%(refname)", strings.TrimSuffix(prefix, "/"))
+	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(objectname)%00%(refname)", "refs/owngit/provenance/"+kind)
 	if err != nil {
 		return nil, err
 	}
+	return parseRetainedProvenance(result.Stdout, kind), nil
+}
+
+// parseRetainedProvenance maps retained object IDs to the branch or tag they
+// were retained from. listing holds "objectname NUL refname" lines; refs
+// outside the kind's provenance namespace are ignored. An object retained from
+// more than one source maps to "" because its source is ambiguous.
+func parseRetainedProvenance(listing []byte, kind string) map[string]string {
+	prefix := "refs/owngit/provenance/" + kind + "/"
 	provenance := make(map[string]string)
-	for _, line := range bytes.Split(bytes.TrimSpace(result.Stdout), []byte{'\n'}) {
+	for _, line := range bytes.Split(bytes.TrimSpace(listing), []byte{'\n'}) {
 		parts := bytes.SplitN(line, []byte{0}, 2)
 		if len(parts) != 2 {
 			continue
 		}
 		oid, ref := string(parts[0]), string(parts[1])
+		if !strings.HasPrefix(ref, prefix) {
+			continue
+		}
 		remainder := strings.TrimPrefix(ref, prefix)
 		last := strings.LastIndex(remainder, "/")
-		if ref == remainder || last <= 0 || !isOID(remainder[last+1:]) {
+		if last <= 0 || !isOID(remainder[last+1:]) {
 			continue
 		}
 		source := "refs/" + kind + "/" + remainder[:last]
@@ -213,7 +231,7 @@ func retainedProvenance(ctx context.Context, runner retainedRunner, repositoryPa
 			provenance[oid] = source
 		}
 	}
-	return provenance, nil
+	return provenance
 }
 
 func (m *Manager) RetainedRefs(ctx context.Context, id string) ([]RetainedRef, error) {

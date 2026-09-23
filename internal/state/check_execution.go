@@ -62,6 +62,21 @@ func DefaultCheckSourceLimits() CheckSourceLimits {
 	return defaultCheckSourceLimits()
 }
 
+// CheckContainerLimits are the container resource settings a policy can
+// leave unset.
+type CheckContainerLimits struct {
+	CPUMillis    int64
+	MemoryBytes  int64
+	PIDs         int64
+	ScratchBytes int64
+}
+
+// DefaultCheckContainerLimits returns the container resources used when the
+// operator leaves individual container limits unset.
+func DefaultCheckContainerLimits() CheckContainerLimits {
+	return CheckContainerLimits{CPUMillis: 1000, MemoryBytes: 512 << 20, PIDs: 256, ScratchBytes: 512 << 20}
+}
+
 func defaultCheckSourceLimits() CheckSourceLimits {
 	return CheckSourceLimits{
 		MaxEntries: defaultSourceMaxEntries, MaxFileBytes: defaultSourceMaxFileBytes,
@@ -141,17 +156,18 @@ func normalizeCheckExecutionSettings(executor string, settings CheckExecutionSet
 		if settings.ContainerNetwork != ContainerNetworkNone && settings.ContainerNetwork != ContainerNetworkBridge {
 			return CheckExecutionSettings{}, unknownValueError(FieldContainerNetwork, settings.ContainerNetwork)
 		}
+		containerDefaults := DefaultCheckContainerLimits()
 		if settings.ContainerCPUMillis == 0 {
-			settings.ContainerCPUMillis = 1000
+			settings.ContainerCPUMillis = containerDefaults.CPUMillis
 		}
 		if settings.ContainerMemoryBytes == 0 {
-			settings.ContainerMemoryBytes = 512 << 20
+			settings.ContainerMemoryBytes = containerDefaults.MemoryBytes
 		}
 		if settings.ContainerPIDs == 0 {
-			settings.ContainerPIDs = 256
+			settings.ContainerPIDs = containerDefaults.PIDs
 		}
 		if settings.ContainerScratchBytes == 0 {
-			settings.ContainerScratchBytes = 512 << 20
+			settings.ContainerScratchBytes = containerDefaults.ScratchBytes
 		}
 		// The same four bounds as before, now read from the published table
 		// and reported one field at a time.

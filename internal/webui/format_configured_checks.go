@@ -3,6 +3,7 @@ package webui
 import (
 	"html/template"
 	"strconv"
+	"strings"
 )
 
 // Presentation helpers for the configured-check screens.
@@ -134,28 +135,41 @@ func networkName(network string) MessageCode {
 // compare the same strings.
 func savePolicyAction() string { return ActionSaveCheckPolicy }
 
-// fieldRange renders the accepted range of one numeric field.
+// fieldRange renders the accepted range of one numeric field in the units a
+// person reads, such as "1 second to 24 hours".
 //
-// The numbers are the backend's, passed through the view adapter. A field
-// whose floor is another setting says so and still states its maximum, because
-// a moving floor is no reason to leave the ceiling enforced but unstated. Only
-// a field the backend publishes nothing for renders nothing.
+// The numbers are the backend's, passed through the view adapter; only their
+// spelling changes here. A field whose floor is another setting says so and
+// still states its maximum, because a moving floor is no reason to leave the
+// ceiling enforced but unstated. Only a field the backend publishes nothing
+// for renders nothing.
 func fieldRange(lang Lang, ranges map[string]FieldRange, field string) template.HTML {
 	bounds, present := ranges[field]
 	if !present || !bounds.Known {
 		return ""
 	}
-	high := strconv.FormatInt(bounds.Max, 10)
+	highEN, highKO := LimitText(LangEN, field, bounds.Max), LimitText(LangKO, field, bounds.Max)
 	if bounds.MinLabel != "" {
 		return biText(lang,
-			"Accepted range: at least \""+Text(LangEN, bounds.MinLabel)+"\", up to "+high,
-			"\ud5c8\uc6a9 \ubc94\uc704: \""+Text(LangKO, bounds.MinLabel)+"\" \uc774\uc0c1, \ucd5c\ub300 "+high)
+			"Allowed: at least \""+Text(LangEN, bounds.MinLabel)+"\", up to "+highEN,
+			"\ud5c8\uc6a9 \ubc94\uc704: \""+Text(LangKO, bounds.MinLabel)+"\" \uc774\uc0c1, \ucd5c\ub300 "+highKO)
 	}
-	low := strconv.FormatInt(bounds.Min, 10)
 	return biText(lang,
-		"Accepted range: "+low+" to "+high,
-		"\ud5c8\uc6a9 \ubc94\uc704: "+low+" ~ "+high)
+		"Allowed: "+LimitText(LangEN, field, bounds.Min)+" to "+highEN,
+		"\ud5c8\uc6a9 \ubc94\uc704: "+LimitText(LangKO, field, bounds.Min)+" ~ "+highKO)
 }
+
+// LimitText writes a stored value of one policy field the way the screen
+// states it in running text, such as "10 minutes" or "64 MB". A field this
+// package has no control for is written as a plain number.
+func LimitText(lang Lang, field string, value int64) string {
+	kind := LimitCount
+	if limit, known := PolicyLimitFor(field); known {
+		kind = limit.Kind
+	}
+	return humanLimit(lang, kind, value)
+}
+
 func enableChecksAction() string { return ActionEnableChecks }
 func disableChecksAction() string {
 	return ActionDisableChecks
@@ -180,4 +194,158 @@ func forRunnerCredential(pendingAction, pendingID, rowID string, notices []Notic
 		return nil
 	}
 	return notices
+}
+
+// CheckFileExample is the minimal check file the settings screen offers to
+// copy. A test parses it with the real workflow parser, so the page never
+// offers a file OwnGit would refuse.
+const CheckFileExample = `{
+  "version": 1,
+  "events": {
+    "push": {},
+    "pull_request": {}
+  },
+  "checks": [
+    {"name": "test", "command": "make test"}
+  ]
+}
+`
+
+func checkFileExample() string { return CheckFileExample }
+
+// checksRunning answers the first status question: will a matching push or
+// pull request actually run checks now?
+//
+// Permission on its own is not an answer. A permitted policy whose runtime is
+// closed runs nothing, so it says "on, but paused" rather than "on".
+func checksRunning(p ConfiguredChecksPage) stateLabel {
+	switch {
+	case !p.Policy.Saved || !p.Policy.ConsentActive:
+		return known(MsgCCConsentOff, "minus", "quiet")
+	case !p.Runtime.Available:
+		return known(MsgCCConsentPaused, "warning", "warn")
+	default:
+		return known(MsgCCConsentOn, "check", "ok")
+	}
+}
+
+// checkFileState names what the default branch holds at the check file path.
+// A lookup that failed says so and is never reported as a missing file.
+func checkFileState(file CheckFileView) stateLabel {
+	switch file.State {
+	case CheckFileFound:
+		return known(MsgCCFileFound, "check", "ok")
+	case CheckFileMissing:
+		return known(MsgCCFileMissing, "minus", "quiet")
+	case CheckFileNoCommits:
+		return known(MsgCCFileNoCommits, "minus", "quiet")
+	case CheckFileInvalid:
+		return known(MsgCCFileInvalid, "warning", "warn")
+	case CheckFileUnreadable:
+		return known(MsgCCFileUnreadable, "info", "quiet")
+	default:
+		return stateLabel{}
+	}
+}
+
+// checkFileCount renders "3 checks" in both languages.
+func checkFileCount(lang Lang, n int) template.HTML {
+	en := MsgCCFileChecksMany
+	if n == 1 {
+		en = MsgCCFileChecksOne
+	}
+	number := formatNumber(n)
+	return biText(lang,
+		strings.ReplaceAll(Text(LangEN, en), "%s", number),
+		strings.ReplaceAll(Text(LangKO, en), "%s", number))
+}
+
+// nextCheckStep is the one thing the owner still has to do, in the order the
+// page asks for it. It only uses facts the page already holds.
+//
+// "Nothing left to do" is a promise that the next matching push runs checks,
+// so it is said only when every prerequisite is known to hold. A fact that
+// could not be read (an unreadable check file, an unknown token count) yields
+// a neutral "could not tell" instead of either an instruction or that promise.
+// In runner mode even a known token is not evidence that a runner is running,
+// and in container mode nothing here shows that Docker runs or the image is
+// present, so the last step in both says what still has to be true rather
+// than promising execution. Only host mode, whose prerequisites the page does
+// hold, ends with the promise.
+func nextCheckStep(p ConfiguredChecksPage) MessageCode {
+	runner := p.Policy.Executor == ExecutorExternalRunner
+	switch {
+	case !p.Runtime.Available:
+		return MsgCCNextRepair
+	case !p.Policy.Saved:
+		return MsgCCNextSave
+	case p.Policy.Legacy:
+		return MsgCCNextResave
+	case p.CheckFile.State == CheckFileMissing || p.CheckFile.State == CheckFileNoCommits:
+		return MsgCCNextFile
+	case p.CheckFile.State == CheckFileInvalid:
+		return MsgCCNextFixFile
+	case p.CheckFile.Found() && !sharesEvent(p.Policy.AllowedEvents, p.CheckFile.Events):
+		return MsgCCNextEvents
+	case !p.Policy.ConsentActive:
+		return MsgCCNextEnable
+	case !p.CheckFile.Found():
+		return MsgCCNextFileUnknown
+	case runner && !p.RunnerTokensKnown:
+		return MsgCCNextRunnerUnknown
+	case runner && p.ActiveRunnerTokens == 0:
+		return MsgCCNextRunner
+	case runner:
+		return MsgCCNextRunnerStart
+	case p.Policy.Executor == ExecutorContainer && latestJobUnavailable(p):
+		return MsgCCNextContainerFailed
+	case p.Policy.Executor == ExecutorContainer:
+		return MsgCCNextContainerStart
+	case p.Policy.Executor == ExecutorHost:
+		return MsgCCNextNone
+	default:
+		return MsgCCNextUnknown
+	}
+}
+
+// latestJobUnavailable reports whether the newest recorded job ran under the
+// current settings in a container and could not run. The job records why, and
+// the reason may be Docker, the image, or something else entirely (a commit
+// over a file limit), so the hint built on this names no cause and sends the
+// reader to the job.
+func latestJobUnavailable(p ConfiguredChecksPage) bool {
+	if len(p.Jobs) == 0 {
+		return false
+	}
+	job := p.Jobs[0]
+	return job.Status == JobUnavailable && job.Executor == ExecutorContainer && job.PolicyVersion == p.Policy.Version
+}
+
+func sharesEvent(allowed, file []string) bool {
+	for _, event := range file {
+		if containsEvent(allowed, event) {
+			return true
+		}
+	}
+	return false
+}
+
+// stepNumber renders "Step 3" for a screen reader, in both languages. The
+// visible badge shows only the digit.
+func stepNumber(lang Lang, n int) template.HTML {
+	number := strconv.Itoa(n)
+	return biText(lang,
+		strings.ReplaceAll(Text(LangEN, MsgCCStepN), "%s", number),
+		strings.ReplaceAll(Text(LangKO, MsgCCStepN), "%s", number))
+}
+
+// limitsOpen reports whether the advanced limits start expanded: only when a
+// refusal points into them, so the reader lands on the field that needs work.
+func limitsOpen(notices []Notice) bool {
+	for _, notice := range notices {
+		if _, known := PolicyLimitFor(notice.Field); known {
+			return true
+		}
+	}
+	return false
 }

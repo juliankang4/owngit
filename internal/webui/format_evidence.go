@@ -337,6 +337,8 @@ func repoTabsOf(p RepositoryPage) RepoTabs {
 		PullRequestsURL: p.PullRequestsURL,
 		TasksURL:        p.TasksURL,
 		ImportsURL:      p.ImportsURL,
+		SettingsURL:     p.SettingsURL,
+		DeleteURL:       p.DeleteURL,
 		Active:          p.Tab,
 	}
 }

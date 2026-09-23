@@ -173,6 +173,11 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	repositories := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: settings.RepositoryRoot}
 	pullRequests := &pullrequest.Service{Store: store, Repositories: repositories}
 	if settings.Initialized {
+		// Deleted repositories have no rows, so an unfinished deletion never
+		// blocks startup; it is reported and retried at the next start.
+		if err := repositories.ReconcileDeletions(ctx); err != nil {
+			logf("unfinished repository deletion was not completed: %v", err)
+		}
 		if err := repositories.PrepareExisting(ctx); err != nil {
 			return err
 		}
@@ -245,6 +250,10 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	gitHandler.Authorize = application.AuthorizeGit
 	gitHandler.OnReceive = checkCoordinator.Wake
+	// Activity is counted in the background under the serving lifetime, so
+	// startup does not wait for it and the dashboard finds it ready.
+	application.StartBackground(ctx)
+	defer application.StopBackground()
 	pullRequests.OnChange = checkCoordinator.Wake
 	checkContext, cancelChecks := context.WithCancel(ctx)
 	defer cancelChecks()

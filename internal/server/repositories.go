@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -29,38 +30,36 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 		app.writePlainError(writer, http.StatusServiceUnavailable)
 		return
 	}
+	if request.URL.Query().Get("notice") == removedNotice {
+		chrome.Notices = app.removedNotices(writer, request, chrome.Viewer.AdminConfirmed)
+	}
 	repositories, err := app.Store.Repositories(request.Context())
 	if err != nil {
 		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
 		return
 	}
+	ctx := request.Context()
+	snapshots, snapshotErrs := app.refSnapshots(ctx, repositories)
 	query := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("q")))
 	var summaries []webui.RepositorySummary
-	for _, stored := range repositories {
-		summary, summaryErr := app.repositorySummary(request, stored)
-		if summaryErr != nil {
+	for index, stored := range repositories {
+		if snapshotErrs[index] != nil {
 			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoUnreadable, stored.Name)
 			return
 		}
 		if query == "" || strings.Contains(strings.ToLower(stored.Name), query) || strings.Contains(strings.ToLower(stored.Description), query) {
-			summaries = append(summaries, summary)
+			summaries = append(summaries, app.repositorySummary(request, stored, snapshots[index]))
 		}
 	}
-	observation := app.observeActivity(request, repositories, app.activityLimit())
+	app.activity.forget(repositories)
+	observation := app.observeActivity(ctx, repositories, activityKeysFrom(snapshots, snapshotErrs), app.activityLimit())
 	recent := observation.entries
 	sortActivityEntries(recent)
 	if len(recent) > 8 {
 		recent = recent[:8]
 	}
 	graph := buildActivityGraph(observation.counts, selectedYear(request, app.now().Year()), app.now(), len(repositories))
-	graph.Complete = observation.complete
-	graph.Available = observation.available
-	if !observation.complete {
-		graph.IncompleteReason = webui.MsgActivityLimit
-	}
-	if !observation.available {
-		graph.UnavailableReason = webui.MsgActivityScanFail
-	}
+	observation.describe(&graph)
 	app.render(writer, http.StatusOK, webui.OverviewPage{
 		Chrome: chrome, Activity: graph, Repositories: summaries, Recent: recent,
 		RecentMoreURL: "/activity", TotalCount: len(repositories),
@@ -133,16 +132,10 @@ func (app *App) handleActivity(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	year := selectedYear(request, app.now().Year())
-	observation := app.observeActivity(request, repositories, app.activityLimit())
+	ctx := request.Context()
+	observation := app.observeActivity(ctx, repositories, app.activityKeys(ctx, repositories), app.activityLimit())
 	graph := buildActivityGraph(observation.counts, year, app.now(), len(repositories))
-	graph.Complete = observation.complete
-	graph.Available = observation.available
-	if !observation.complete {
-		graph.IncompleteReason = webui.MsgActivityLimit
-	}
-	if !observation.available {
-		graph.UnavailableReason = webui.MsgActivityScanFail
-	}
+	observation.describe(&graph)
 	selectedDay := request.URL.Query().Get("date")
 	if parsed, err := time.ParseInLocation("2006-01-02", selectedDay, app.now().Location()); err == nil && parsed.Year() == year {
 		graph.SelectedDate = parsed
@@ -173,7 +166,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	// administrator only, and that is decided here by route rather than by
 	// which controls a page would draw. Hiding a button is presentation; this
 	// is the authorization.
-	if len(parts) == 2 && administratorRepositoryScreen(parts[1]) {
+	if len(parts) >= 2 && administratorRepositoryScreen(parts[1]) {
 		session, ok = app.requireBrowserAdmin(writer, request)
 	} else {
 		session, ok = app.requireGeneral(writer, request, settings)
@@ -192,7 +185,17 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.writePlainError(writer, http.StatusServiceUnavailable)
 		return
 	}
-	summary, err := app.Repositories.Summary(request.Context(), id)
+	// Deleting does not need the Git data, so it is routed before that read:
+	// a repository whose data cannot be read can still be removed.
+	if len(parts) == 2 && parts[1] == "delete" {
+		app.handleRepositoryDelete(writer, request, stored, chrome, session)
+		return
+	}
+	// One ref listing gives the summary every tab needs and the activity key
+	// the overview's graph needs, where Summary alone would start two Git
+	// processes and the graph a third.
+	snapshot, err := app.Repositories.RefSnapshot(request.Context(), id)
+	summary := snapshot.Summary
 	if err != nil {
 		page := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
 		page.Repo.Unreadable = true
@@ -247,6 +250,14 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.handleRunnerTokens(writer, request, stored, summary, chrome)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "settings" && request.Method == http.MethodGet {
+		app.handleRepositorySettingsGet(writer, request, stored, summary, chrome)
+		return
+	}
+	if len(parts) == 3 && parts[1] == "settings" && parts[2] == "default-branch" && request.Method == http.MethodPost {
+		app.handleSetDefaultBranch(writer, request, stored, summary, chrome, session)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "import" {
 		app.handleImportPage(writer, request, stored, summary, chrome)
 		return
@@ -272,7 +283,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	switch {
 	case len(parts) == 1:
 		page.Tab = webui.RepoTabOverview
-		app.fillRepositoryOverview(request, &page, summary, requestedRef)
+		app.fillRepositoryOverview(request, &page, summary, snapshot.ActivityKey, requestedRef)
 	case len(parts) == 2 && parts[1] == "code":
 		page.Tab = webui.RepoTabCode
 		app.fillCode(request, &page, summary, requestedRef, request.URL.Query().Get("path"))
@@ -294,7 +305,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 // execution authority, so a general session must not reach them at all.
 func administratorRepositoryScreen(segment string) bool {
 	switch segment {
-	case "helper-credentials", "configured-checks", "runner-tokens", "import":
+	case "helper-credentials", "configured-checks", "runner-tokens", "import", "settings", "delete":
 		return true
 	default:
 		return false
@@ -312,6 +323,13 @@ func (app *App) baseRepositoryPage(request *http.Request, chrome webui.Chrome, s
 		PullRequestsURL: base + "/pull-requests",
 		TasksURL:        base + "/tasks",
 		ImportsURL:      base + "/import",
+	}
+	// The administrator sections are offered only to an administrator
+	// session. The chrome already read that session, so no second lookup is
+	// needed; the routes still check it themselves.
+	if chrome.Viewer.AdminConfirmed {
+		page.SettingsURL = base + "/settings"
+		page.DeleteURL = base + "/delete"
 	}
 	return page
 }
@@ -373,7 +391,21 @@ func refKind(ref string) string {
 	return "branch"
 }
 
-func (app *App) fillRepositoryOverview(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested string) {
+// Bounds for the overview. Every figure the overview shows comes from one
+// bounded read, so a repository with thousands of refs, commits, or pull
+// requests costs the same page work as a small one.
+const (
+	overviewRecentCommits = 7
+	overviewOpenPRBound   = 99
+	overviewBranchRows    = 6
+	overviewTagRows       = 5
+	overviewRetainedRows  = 5
+	overviewAllRefsQuery  = "refs"
+	overviewAllRefsValue  = "all"
+	overviewRefsFragment  = "#refs"
+)
+
+func (app *App) fillRepositoryOverview(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, activityKey, requested string) {
 	selectedRef, resolved := app.selectRef(request, page, summary, requested)
 	if page.Ref.Missing {
 		code := webui.MsgRepoRefMissing
@@ -382,6 +414,11 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		}
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Notice{Kind: webui.NoticeWarning, Code: code})
 	}
+	if summary.DefaultOID != "" {
+		page.Overview.DefaultBranch = summary.DefaultBranch
+	}
+	page.Overview.BranchCount = len(summary.Branches)
+	page.Overview.TagCount = len(summary.Tags)
 	if page.Repo.Empty {
 		page.Overview.PushCommands = []string{
 			"git remote add origin " + page.Repo.CloneURL,
@@ -391,13 +428,25 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		return
 	}
 	if resolved {
-		_, commits, err := app.Repositories.Commits(request.Context(), page.Repo.ID, selectedRef, 1)
-		if err == nil && len(commits) == 1 {
-			page.Overview.Head = app.commitSummary(page.Repo.ID, selectedRef, commits[0])
+		// One extra commit says whether older history exists without counting it.
+		_, commits, err := app.Repositories.Commits(request.Context(), page.Repo.ID, selectedRef, overviewRecentCommits+1)
+		if err == nil && len(commits) > 0 {
+			if len(commits) > overviewRecentCommits {
+				page.Overview.RecentMore = true
+				commits = commits[:overviewRecentCommits]
+			}
+			for _, commit := range commits {
+				page.Overview.Recent = append(page.Overview.Recent, app.commitSummary(page.Repo.ID, selectedRef, commit))
+			}
+			page.Overview.Head = page.Overview.Recent[0]
 		}
 	}
+	app.fillOverviewEvidence(request, page, summary)
+
+	showAll := request.URL.Query().Get(overviewAllRefsQuery) == overviewAllRefsValue
 	branchTips, _ := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Branches)
 	tagTips, _ := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Tags)
+	var branches, tags, retainedLines []webui.RefLine
 	for _, branch := range summary.Branches {
 		full := "refs/heads/" + branch.Name
 		line := webui.RefLine{Name: branch.Name, Kind: "branch", IsDefault: branch.Name == summary.DefaultBranch, URL: withRef(page.Repo.URL, full)}
@@ -405,7 +454,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 			line.Tip = app.commitSummary(page.Repo.ID, full, commit)
 			line.RestoreURL = restoreURL(page.Repo.ID, commit.OID, branch.Name, "")
 		}
-		page.Overview.Branches = append(page.Overview.Branches, line)
+		branches = append(branches, line)
 	}
 	for _, tag := range summary.Tags {
 		full := "refs/tags/" + tag.Name
@@ -414,7 +463,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 			line.Tip = app.commitSummary(page.Repo.ID, full, commit)
 			line.RestoreURL = restoreURL(page.Repo.ID, commit.OID, summary.DefaultBranch, "")
 		}
-		page.Overview.Tags = append(page.Overview.Tags, line)
+		tags = append(tags, line)
 	}
 	retained, err := app.Repositories.RetainedRefs(request.Context(), page.Repo.ID)
 	if err == nil {
@@ -425,15 +474,101 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 				line.URL = line.Tip.URL
 				line.RestoreURL = restoreURL(page.Repo.ID, ref.CommitOID, recoveredTarget(ref.OID, summary.Branches), "")
 			}
-			page.Overview.RetainedRefs = append(page.Overview.RetainedRefs, line)
+			retainedLines = append(retainedLines, line)
 		}
 	}
-	activity, err := app.Repositories.Activity(request.Context(), page.Repo.ID, app.activityLimit())
-	if err != nil {
-		page.Overview.Activity = unavailableActivityGraph(selectedYear(request, app.now().Year()), page.Repo.Name)
-	} else {
-		page.Overview.Activity = activityGraph(activity, selectedYear(request, app.now().Year()), app.now(), page.Repo.Name)
+	// Newest first, so a repository with many releases shows its recent ones
+	// rather than the first names in alphabetical order.
+	sortRefLinesNewestFirst(branches)
+	sortRefLinesNewestFirst(tags)
+	sortRefLinesNewestFirst(retainedLines)
+	page.Overview.RetainedCount = len(retainedLines)
+	hidden := false
+	if !showAll {
+		var cut bool
+		branches, cut = firstRefLines(branches, overviewBranchRows)
+		hidden = hidden || cut
+		tags, cut = firstRefLines(tags, overviewTagRows)
+		hidden = hidden || cut
+		retainedLines, cut = firstRefLines(retainedLines, overviewRetainedRows)
+		hidden = hidden || cut
 	}
+	page.Overview.Branches, page.Overview.Tags, page.Overview.RetainedRefs = branches, tags, retainedLines
+	switch {
+	case showAll:
+		page.Overview.FewerRefsURL = overviewRefsURL(request, false)
+	case hidden:
+		page.Overview.AllRefsURL = overviewRefsURL(request, true)
+	}
+
+	page.Overview.Activity = app.repositoryActivityGraph(request, page.Repo.ID, page.Repo.Name, activityKey)
+}
+
+// fillOverviewEvidence reads the two summary figures that come from OwnGit's
+// own records: how many pull requests are open, and the latest check on the
+// default branch tip. Each is one bounded query. A failed read is reported as
+// unreadable instead of as zero or as "no check".
+func (app *App) fillOverviewEvidence(request *http.Request, page *webui.RepositoryPage, summary repository.Summary) {
+	open, more, err := app.Store.OpenPullRequests(request.Context(), page.Repo.ID, overviewOpenPRBound)
+	if err == nil {
+		page.Overview.OpenPullRequests = len(open)
+		page.Overview.OpenPullRequestsMore = more
+		page.Overview.OpenPullRequestsKnown = true
+	}
+	if summary.DefaultOID == "" {
+		return
+	}
+	page.Overview.DefaultCheckRev = summary.DefaultOID
+	attempt, exists, err := app.Store.LatestCheckAttemptForRevision(request.Context(), page.Repo.ID, summary.DefaultOID)
+	if err != nil {
+		return
+	}
+	page.Overview.DefaultCheckKnown = true
+	if exists {
+		page.Overview.HasDefaultCheck = true
+		page.Overview.DefaultCheck = app.browserAttemptRecord(attempt)
+	}
+}
+
+// sortRefLinesNewestFirst orders rows by the tip date the row displays, so the
+// list reads in the order it claims. A row without a tip goes last, and equal
+// dates fall back to the name so the order is stable across reloads.
+func sortRefLinesNewestFirst(lines []webui.RefLine) {
+	sort.SliceStable(lines, func(i, j int) bool {
+		left, right := lines[i], lines[j]
+		if left.IsDefault != right.IsDefault {
+			return left.IsDefault
+		}
+		if !left.Tip.AuthorDate.Equal(right.Tip.AuthorDate) {
+			return left.Tip.AuthorDate.After(right.Tip.AuthorDate)
+		}
+		return left.Name < right.Name
+	})
+}
+
+// firstRefLines keeps at most limit rows and reports whether any were cut.
+func firstRefLines(lines []webui.RefLine, limit int) ([]webui.RefLine, bool) {
+	if len(lines) <= limit {
+		return lines, false
+	}
+	return lines[:limit], true
+}
+
+// overviewRefsURL is this overview with every ref listed, or with the short
+// lists again. It keeps the selected ref and language, and lands on the ref
+// column.
+func overviewRefsURL(request *http.Request, all bool) string {
+	values := request.URL.Query()
+	values.Del(overviewAllRefsQuery)
+	values.Del("notice")
+	if all {
+		values.Set(overviewAllRefsQuery, overviewAllRefsValue)
+	}
+	target := request.URL.Path
+	if encoded := values.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	return target + overviewRefsFragment
 }
 
 func recoveredTarget(oid string, branches []repository.Ref) string {
@@ -600,11 +735,8 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	page.Commits.Detail = &view
 }
 
-func (app *App) repositorySummary(request *http.Request, stored state.Repository) (webui.RepositorySummary, error) {
-	summary, err := app.Repositories.Summary(request.Context(), stored.ID)
-	if err != nil {
-		return webui.RepositorySummary{}, err
-	}
+func (app *App) repositorySummary(request *http.Request, stored state.Repository, snapshot repository.RefSnapshot) webui.RepositorySummary {
+	summary := snapshot.Summary
 	result := webui.RepositorySummary{
 		ID: stored.ID, Name: stored.Name, Description: stored.Description,
 		URL: "/repositories/" + url.PathEscape(stored.ID), CloneURL: app.baseURL(request) + "/git/" + url.PathEscape(stored.ID) + ".git",
@@ -612,14 +744,10 @@ func (app *App) repositorySummary(request *http.Request, stored state.Repository
 		DefaultBranchMissing: summary.DefaultBranch != "" && summary.DefaultOID == "",
 		BranchCount:          len(summary.Branches), TagCount: len(summary.Tags), Counted: true,
 	}
-	if summary.DefaultOID != "" {
-		defaultRef := "refs/heads/" + summary.DefaultBranch
-		_, commits, err := app.Repositories.Commits(request.Context(), stored.ID, defaultRef, 1)
-		if err == nil && len(commits) == 1 {
-			result.Head = app.commitSummary(stored.ID, defaultRef, commits[0])
-		}
+	if snapshot.HeadFound {
+		result.Head = app.commitSummary(stored.ID, "refs/heads/"+summary.DefaultBranch, snapshot.Head)
 	}
-	return result, nil
+	return result
 }
 
 func (app *App) commitSummary(repositoryID, ref string, commit repository.Commit) webui.CommitSummary {
@@ -634,36 +762,80 @@ type activityObservation struct {
 	counts    map[string]int
 	complete  bool
 	available bool
+	// counting is true while some repository is still being counted.
+	counting bool
 }
 
-// observeActivity reads one bounded, current-history-first observation per
+// observeActivity gathers one bounded, current-history-first observation per
 // repository and reuses it for both the recent list and the annual graph. The
 // page-wide budget is shared, so a truncated observation is honestly
-// incomplete for both outputs.
-func (app *App) observeActivity(request *http.Request, repositories []state.Repository, maximum int) activityObservation {
+// incomplete for both outputs. Observations come from activityCache, keyed by
+// the refs in keys.
+func (app *App) observeActivity(ctx context.Context, repositories []state.Repository, keys []string, maximum int) activityObservation {
 	observation := activityObservation{counts: make(map[string]int), complete: true, available: true}
-	remaining := maximum
-	for _, stored := range repositories {
-		if remaining <= 0 {
-			observation.complete = false
-			break
-		}
-		activity, err := app.Repositories.Activity(request.Context(), stored.ID, remaining)
-		if err != nil {
+	ids := make([]string, len(repositories))
+	for index, stored := range repositories {
+		ids[index] = stored.ID
+	}
+	parts := app.activity.observe(ctx, app.Repositories, ids, keys, maximum, activityWait)
+	for index, part := range parts {
+		if part.err != nil {
 			observation.available = false
 			observation.complete = false
 			continue
 		}
-		if activity.Incomplete {
+		if part.incomplete || part.pending {
 			observation.complete = false
 		}
-		remaining -= len(activity.Records)
-		observation.entries = append(observation.entries, app.activityEntries(stored, activity.Records)...)
-		for _, day := range activity.Days {
-			observation.counts[day.Day] += day.Count
+		observation.counting = observation.counting || part.pending
+		observation.entries = append(observation.entries, app.activityEntries(repositories[index], part.records)...)
+		for _, record := range part.records {
+			observation.counts[record.AuthoredAt.Format("2006-01-02")]++
 		}
 	}
 	return observation
+}
+
+// describe sets the graph's completeness and availability from the
+// observation. Counting in progress takes precedence over the limit reason.
+func (observation activityObservation) describe(graph *webui.ActivityGraph) {
+	graph.Complete = observation.complete
+	graph.Available = observation.available
+	switch {
+	case observation.counting:
+		graph.IncompleteReason = webui.MsgActivityCounting
+	case !observation.complete:
+		graph.IncompleteReason = webui.MsgActivityLimit
+	}
+	if !observation.available {
+		graph.UnavailableReason = webui.MsgActivityScanFail
+	}
+}
+
+// repositoryActivityGraph builds one repository's activity graph from the
+// shared cache, with the repository's own full budget. key is the activity key
+// of the ref snapshot the page was built from.
+func (app *App) repositoryActivityGraph(request *http.Request, id, name, key string) webui.ActivityGraph {
+	year := selectedYear(request, app.now().Year())
+	ctx := request.Context()
+	part := app.activity.observe(ctx, app.Repositories, []string{id}, []string{key}, app.activityLimit(), activityWait)[0]
+	if part.err != nil {
+		return unavailableActivityGraph(year, name)
+	}
+	counts := make(map[string]int)
+	for _, record := range part.records {
+		counts[record.AuthoredAt.Format("2006-01-02")]++
+	}
+	graph := buildActivityGraph(counts, year, app.now(), 1)
+	graph.Scope = name
+	graph.Complete = !part.incomplete && !part.pending
+	switch {
+	case part.pending:
+		graph.IncompleteReason = webui.MsgActivityCountRepo
+	case part.incomplete:
+		graph.IncompleteReason = webui.MsgActivityLimit
+	}
+	return graph
 }
 
 func (app *App) activityLimit() int {
@@ -691,20 +863,6 @@ func (app *App) activityEntries(stored state.Repository, records []repository.Ac
 		})
 	}
 	return entries
-}
-
-func activityGraph(activity repository.Activity, year int, now time.Time, scope string) webui.ActivityGraph {
-	counts := make(map[string]int, len(activity.Days))
-	for _, day := range activity.Days {
-		counts[day.Day] = day.Count
-	}
-	graph := buildActivityGraph(counts, year, now, 1)
-	graph.Scope = scope
-	graph.Complete = !activity.Incomplete
-	if activity.Incomplete {
-		graph.IncompleteReason = webui.MsgActivityLimit
-	}
-	return graph
 }
 
 func buildActivityGraph(counts map[string]int, year int, now time.Time, repositoryCount int) webui.ActivityGraph {

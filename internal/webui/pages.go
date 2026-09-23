@@ -293,9 +293,10 @@ type RepositorySummary struct {
 	// Head is the latest commit. Zero when Empty.
 	Head CommitSummary
 	// BranchCount and TagCount are displayed when Counted is true.
-	BranchCount int
-	TagCount    int
-	Counted     bool
+	BranchCount   int
+	TagCount      int
+	RetainedCount int
+	Counted       bool
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +328,11 @@ type RepoTabs struct {
 	PullRequestsURL string
 	TasksURL        string
 	ImportsURL      string
+	// SettingsURL and DeleteURL are set only for an administrator session.
+	// Settings sits in the normal tab order; Delete is the right-aligned
+	// control that opens the confirmation page.
+	SettingsURL string
+	DeleteURL   string
 	// Active marks the current section.
 	Active RepoTab
 }
@@ -349,6 +355,11 @@ type RepositoryPage struct {
 	PullRequestsURL string
 	TasksURL        string
 	ImportsURL      string
+	// SettingsURL and DeleteURL are the administrator-only sections. The
+	// backend sets them only when the viewer holds an administrator session;
+	// the routes check that session themselves.
+	SettingsURL string
+	DeleteURL   string
 
 	// Ref is the currently selected branch, tag, or revision.
 	Ref RefSelection
@@ -419,9 +430,38 @@ type RefOption struct {
 type RepositoryOverview struct {
 	// Head is the latest commit on the selected ref. Zero when empty.
 	Head CommitSummary
-	// Branches and Tags are the full ref lists.
-	Branches []RefLine
-	Tags     []RefLine
+	// Recent are the newest commits on the selected ref, Head first. The
+	// backend bounds the list; RecentMore says older commits exist.
+	Recent     []CommitSummary
+	RecentMore bool
+	// DefaultBranch names the repository's default branch. Empty when the
+	// repository has none that resolves.
+	DefaultBranch string
+	// OpenPullRequests counts open pull requests up to a bound.
+	// OpenPullRequestsMore means the real count is above it, and
+	// OpenPullRequestsKnown is false when the count could not be read.
+	OpenPullRequests      int
+	OpenPullRequestsMore  bool
+	OpenPullRequestsKnown bool
+	// DefaultCheck is the latest check attempt for the default branch tip.
+	// DefaultCheckKnown is false when the record could not be read, and
+	// HasDefaultCheck is false when no check has run for that revision.
+	DefaultCheck      AttemptRecord
+	HasDefaultCheck   bool
+	DefaultCheckKnown bool
+	DefaultCheckRev   string
+	// Branches and Tags are the ref rows shown in the side column, newest
+	// first. With many refs only the newest few are listed; BranchCount and
+	// TagCount keep the real totals, and AllRefsURL shows every ref.
+	Branches      []RefLine
+	Tags          []RefLine
+	BranchCount   int
+	TagCount      int
+	RetainedCount int
+	// AllRefsURL lists every branch and tag. Empty when nothing is hidden.
+	// FewerRefsURL returns to the short lists while every ref is shown.
+	AllRefsURL   string
+	FewerRefsURL string
 	// RetainedRefs lists preserved history whose ref no longer exists.
 	RetainedRefs []RefLine
 	// Activity is the graph scoped to this repository.

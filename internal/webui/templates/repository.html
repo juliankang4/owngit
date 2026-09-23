@@ -4,11 +4,19 @@
 {{$lang := .Lang}}{{$p := .P}}
 <p class="backline"><a class="back" href="{{$p.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
 
-<div class="rhead">
-  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
-  {{if $p.Repo.Description}}
-    <p class="rhead__desc">{{$p.Repo.Description}}</p>
-  {{end}}
+{{/* The overview carries the clone address beside the name, where it is
+     found without scrolling. It is a read-only field, so without the script
+     it is still selectable text; the script only adds the copy button. An
+     empty or unreadable repository shows its own clone and push block. */}}
+{{$clone := and (eq $p.Tab "overview") $p.Repo.CloneURL (not $p.Repo.Empty) (not $p.Repo.Unreadable)}}
+<div class="rhead{{if $clone}} rhead--clone{{end}}">
+  <div class="rhead__id">
+    <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+    {{if $p.Repo.Description}}
+      <p class="rhead__desc">{{$p.Repo.Description}}</p>
+    {{end}}
+  </div>
+  {{if $clone}}{{template "clonefield" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL}}{{end}}
 </div>
 
 {{/* One tab strip serves every screen that belongs to a repository, so the
@@ -92,6 +100,26 @@
     <pre class="clone__cmds">{{range .}}{{.}}
 {{end}}</pre>
   {{end}}
+</div>
+{{end}}
+
+{{/* A compact clone address with a copy button. The button starts hidden and
+     the shared script reveals it, so a reader without scripting never meets
+     a control that does nothing. Both outcomes are rendered here in both
+     languages; the script only chooses which one to show. */}}
+{{define "clonefield"}}
+{{$lang := .Lang}}
+<div class="clonefield" data-clone>
+  <label class="clonefield__l" for="clone-url">{{bi $lang "repo.overview.clone_address"}}</label>
+  <div class="clonefield__row">
+    <input id="clone-url" class="clonefield__v mono" type="text" readonly value="{{.CloneURL}}"
+           spellcheck="false" autocomplete="off" data-select-on-focus>
+    <button type="button" class="btn clonefield__copy" data-copy="clone-url" hidden>{{icon "copy"}}<span>{{bi $lang "repo.overview.copy"}}</span></button>
+  </div>
+  <p class="clonefield__note" role="status">
+    <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
+    <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
+  </p>
 </div>
 {{end}}
 

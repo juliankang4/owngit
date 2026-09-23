@@ -192,7 +192,9 @@ func allPages(lang Lang) map[string]Page {
 		},
 		"new-import": NewImportPage{Chrome: c, SubmitURL: "/repositories/new-import", Name: "project"},
 
-		"error": ErrorPage{Chrome: c, Status: 404, Code: MsgErrNotFound, Detail: "/nope", RetryURL: "/"},
+		"repository-settings": repositorySettingsPage(c),
+		"repository-delete":   repositoryDeletePage(c),
+		"error":               ErrorPage{Chrome: c, Status: 404, Code: MsgErrNotFound, Detail: "/nope", RetryURL: "/"},
 	}
 }
 
@@ -568,6 +570,7 @@ func repoPage(c Chrome, tab RepoTab) RepositoryPage {
 			RetainedRefs: []RefLine{{Name: "old/main@7f2c1a", URL: "/x", Kind: "branch", Retained: true,
 				RestoreURL: "/repositories/r1/restore?source=7f2c1a0bb",
 				Tip:        CommitSummary{ShortOID: "7f2c1a0", Subject: "Replaced by force push", AuthorDate: testNow}}},
+			BranchCount: 1, TagCount: 1, RetainedCount: 1,
 			Activity:     sampleGraph(),
 			PushCommands: []string{"git remote add origin http://owngit.local:8080/git/forge-cli.git", "git push -u origin main"},
 		},

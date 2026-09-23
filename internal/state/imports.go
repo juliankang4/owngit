@@ -87,6 +87,11 @@ const (
 // repository.
 var ErrImportActive = errors.New("an import run is already active")
 
+// ErrImportSourceChanged reports a run whose source generation is no longer
+// configured, for example because the repository was deleted after the run
+// read its source.
+var ErrImportSourceChanged = errors.New("the import source changed before the run was recorded")
+
 // ImportSource is one repository's persisted inbound source configuration.
 // SourceGeneration advances only when the URL identity changes, preserving
 // same-source observations. AuthorityRevision advances for every effective
@@ -447,6 +452,17 @@ func (s *Store) BeginImportRun(ctx context.Context, run ImportRun) error {
 	}
 	if active > 0 {
 		return ErrImportActive
+	}
+	// Repository deletion removes the source in its own immediate transaction,
+	// so a run admitted from a source read before that commit is refused here
+	// instead of leaving a run row for a deleted repository.
+	var configured int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM import_sources WHERE repository_id=? AND source_generation=?`,
+		run.RepositoryID, run.SourceGeneration).Scan(&configured); err != nil {
+		return err
+	}
+	if configured == 0 {
+		return ErrImportSourceChanged
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO import_runs(
 		id,repository_id,source_generation,authority_revision,kind,status,started_at,finished_at,cancel_requested_at,object_format,

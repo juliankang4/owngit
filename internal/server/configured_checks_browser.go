@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/checkapi"
+	"owngit/internal/checkworkflow"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -301,10 +303,11 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 	} else {
 		page.Form = policyFormFrom(page.Policy)
 	}
-	// The accepted ranges come from the backend on every render, refused or
-	// not, so the editor states the same numbers that will judge the next
-	// submission.
+	// The accepted ranges and defaults come from the backend on every render,
+	// refused or not, so the editor states the same numbers that will judge
+	// the next submission.
 	page.Form.Ranges = policyFieldRanges()
+	page.Form.Defaults = policyFieldDefaults()
 
 	if opened := request.URL.Query().Get("job"); opened != "" {
 		page.Detail = app.browserCheckJobDetail(request, stored.ID, opened, self)
@@ -317,6 +320,16 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 		page.SelfURL = configuredCheckJobURL(self, opened)
 		app.render(writer, status, page)
 		return
+	}
+
+	page.CheckFile = app.browserCheckFile(request, stored.ID, summary, policy, exists)
+	if credentials, err := app.Store.CheckRunnerCredentials(request.Context(), stored.ID); err == nil {
+		page.RunnerTokensKnown = true
+		for _, credential := range credentials {
+			if credential.RevokedAt == nil {
+				page.ActiveRunnerTokens++
+			}
+		}
 	}
 
 	jobs, err := app.Store.LatestCheckJobs(request.Context(), stored.ID, maximumBrowserJobs+1)
@@ -333,6 +346,58 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 		page.Jobs = append(page.Jobs, browserCheckJobRow(job, self))
 	}
 	app.render(writer, status, page)
+}
+
+// browserCheckFile reports what the default branch holds at the check file
+// path, read and judged exactly as job admission does: the same bounded read
+// of the same path, the same file checks, and the same parser.
+//
+// It answers the owner's "is my file there and does OwnGit accept it?". It is
+// only a hint, because every job reads the file from the exact commit it
+// checks, and a lookup that fails is reported as unreadable rather than as a
+// missing file.
+func (app *App) browserCheckFile(request *http.Request, repositoryID string, summary repository.Summary, policy state.CheckPolicy, policyExists bool) webui.CheckFileView {
+	view := webui.CheckFileView{Branch: summary.DefaultBranch}
+	if summary.Empty || summary.DefaultOID == "" {
+		view.State = webui.CheckFileNoCommits
+		return view
+	}
+	metadataLimit := state.DefaultCheckSourceLimits().MetadataLimit
+	if policyExists && policy.Execution.Source.MetadataLimit > 0 {
+		metadataLimit = policy.Execution.Source.MetadataLimit
+	}
+	pinned, err := app.Repositories.PinRepository(request.Context(), repositoryID, summary.DefaultOID, summary.DefaultOID)
+	if err != nil {
+		view.State = webui.CheckFileUnreadable
+		return view
+	}
+	blob, err := pinned.ReadBlob(request.Context(), repository.PinnedHead, checkworkflow.Path, 0, metadataLimit,
+		checkworkflow.MaximumBytes+1, checkworkflow.MaximumBytes+1)
+	switch {
+	case errors.Is(err, repository.ErrPinnedPathNotFound):
+		view.State = webui.CheckFileMissing
+		return view
+	case errors.Is(err, repository.ErrPinnedUnsupportedObject), errors.Is(err, repository.ErrPinnedOutputLimit):
+		view.State, view.Problem = webui.CheckFileInvalid, err.Error()
+		return view
+	case err != nil:
+		view.State = webui.CheckFileUnreadable
+		return view
+	}
+	if blob.Symlink || (blob.Mode != "100644" && blob.Mode != "100755") || blob.HasMore ||
+		blob.Size != int64(len(blob.Content)) || len(blob.Content) > checkworkflow.MaximumBytes {
+		view.State, view.Problem = webui.CheckFileInvalid, "the check file must be a regular file of at most 64 KiB"
+		return view
+	}
+	document, err := checkworkflow.Parse(blob.Content)
+	if err != nil {
+		view.State, view.Problem = webui.CheckFileInvalid, err.Error()
+		return view
+	}
+	view.State = webui.CheckFileFound
+	view.Checks = len(document.Checks)
+	view.Events = document.EventNames()
+	return view
 }
 
 // browserCheckJobDetail assembles one opened job.
@@ -548,8 +613,6 @@ func terminalBrowserJob(status string) bool {
 	}
 }
 
-// policyFormFrom fills the form from the stored policy, so a field the owner
-// does not touch resubmits its saved value.
 // policyFieldRanges copies the backend's published bounds into the view's own
 // shape.
 //
@@ -586,111 +649,170 @@ var policyFloorLabels = map[string]webui.MessageCode{
 // policyRangeFields are the numeric controls the editor draws. The names are
 // the backend's field vocabulary, which is also what the form inputs are named
 // and what a refusal reports.
-var policyRangeFields = []string{
-	state.FieldMaxTimeoutMS, state.FieldMaxOutputLimitBytes, state.FieldQueueLimit,
-	state.FieldMaxActiveJobs, state.FieldMaxLeaseMS,
-	state.FieldSourceMaxEntries, state.FieldSourceMaxFileBytes, state.FieldSourceMaxTotalBytes,
-	state.FieldSourceMaxPathDepth, state.FieldSourceMaxPathBytes, state.FieldSourceMaxNameBytes,
-	state.FieldSourceMetadataLimit,
-	state.FieldContainerCPUMillis, state.FieldContainerMemoryBytes,
-	state.FieldContainerPIDs, state.FieldContainerScratchBytes,
+var policyRangeFields = func() []string {
+	var fields []string
+	for _, limit := range webui.PolicyLimitFields() {
+		fields = append(fields, limit.Field)
+	}
+	return fields
+}()
+
+// policyFieldDefaults is what the backend uses for each field left empty. The
+// numbers come from the backend's own default tables. Fields without an entry
+// have no default and must be filled in.
+func policyFieldDefaults() map[string]int64 {
+	source := state.DefaultCheckSourceLimits()
+	container := state.DefaultCheckContainerLimits()
+	return map[string]int64{
+		state.FieldSourceMaxEntries:      int64(source.MaxEntries),
+		state.FieldSourceMaxFileBytes:    source.MaxFileBytes,
+		state.FieldSourceMaxTotalBytes:   source.MaxTotalBytes,
+		state.FieldSourceMaxPathDepth:    int64(source.MaxPathDepth),
+		state.FieldSourceMaxPathBytes:    int64(source.MaxPathBytes),
+		state.FieldSourceMaxNameBytes:    int64(source.MaxNameBytes),
+		state.FieldSourceMetadataLimit:   source.MetadataLimit,
+		state.FieldContainerCPUMillis:    container.CPUMillis,
+		state.FieldContainerMemoryBytes:  container.MemoryBytes,
+		state.FieldContainerPIDs:         container.PIDs,
+		state.FieldContainerScratchBytes: container.ScratchBytes,
+	}
 }
 
+// Starting values for the limits that have no backend default, offered only
+// before anything is saved. They are ordinary suggestions the owner can
+// change: the time limit matches the default a check file gets when it asks
+// for none, and the rest are the values the documented example policy uses.
+var suggestedPolicyLimits = map[string]int64{
+	state.FieldMaxTimeoutMS:        checkworkflow.DefaultTimeoutMS,
+	state.FieldMaxOutputLimitBytes: 1 << 20,
+	state.FieldQueueLimit:          32,
+	state.FieldMaxActiveJobs:       1,
+	state.FieldMaxLeaseMS:          60 * 1000,
+}
+
+// storedPolicyLimits reads every numeric field of a stored policy by its
+// backend name.
+func storedPolicyLimits(policy webui.CheckPolicyView) map[string]int64 {
+	return map[string]int64{
+		state.FieldMaxTimeoutMS:        policy.MaxTimeoutMS,
+		state.FieldMaxOutputLimitBytes: policy.MaxOutputLimitBytes,
+		state.FieldQueueLimit:          int64(policy.QueueLimit),
+		state.FieldMaxActiveJobs:       int64(policy.MaxActiveJobs),
+		state.FieldMaxLeaseMS:          policy.MaxLeaseMS,
+
+		state.FieldSourceMaxEntries:    int64(policy.Source.MaxEntries),
+		state.FieldSourceMaxFileBytes:  policy.Source.MaxFileBytes,
+		state.FieldSourceMaxTotalBytes: policy.Source.MaxTotalBytes,
+		state.FieldSourceMaxPathDepth:  int64(policy.Source.MaxPathDepth),
+		state.FieldSourceMaxPathBytes:  int64(policy.Source.MaxPathBytes),
+		state.FieldSourceMaxNameBytes:  int64(policy.Source.MaxNameBytes),
+		state.FieldSourceMetadataLimit: policy.Source.MetadataLimit,
+
+		state.FieldContainerCPUMillis:    policy.Container.CPUMillis,
+		state.FieldContainerMemoryBytes:  policy.Container.MemoryBytes,
+		state.FieldContainerPIDs:         policy.Container.PIDs,
+		state.FieldContainerScratchBytes: policy.Container.ScratchBytes,
+	}
+}
+
+// policyFormFrom fills the form from the stored policy, so a field the owner
+// does not touch resubmits its saved value. Each value is written in the
+// largest unit that holds it exactly, so resubmitting it unchanged stores the
+// same number.
 func policyFormFrom(policy webui.CheckPolicyView) webui.CheckPolicyForm {
-	if !policy.Saved {
-		// No policy yet. Only the mode has a starting point, and it is the
-		// one that needs no extra runtime.
-		return webui.CheckPolicyForm{Executor: webui.ExecutorHost, ContainerNetwork: webui.ContainerNetworkNone}
-	}
+	// Before anything is saved, the form starts from values that save as they
+	// are: the mode that needs no extra runtime, both events (matching the
+	// example check file), and the suggested limits. Saving still turns
+	// nothing on; that stays its own step.
+	values := suggestedPolicyLimits
 	form := webui.CheckPolicyForm{
-		Executor:            policy.Executor,
-		PushSelected:        policy.AllowsPush(),
-		PullRequestSelected: policy.AllowsPullRequest(),
-		MaxTimeoutMS:        formatOptionalInt(policy.MaxTimeoutMS),
-		MaxOutputLimitBytes: formatOptionalInt(policy.MaxOutputLimitBytes),
-		QueueLimit:          formatOptionalInt(int64(policy.QueueLimit)),
-		MaxActiveJobs:       formatOptionalInt(int64(policy.MaxActiveJobs)),
-		MaxLeaseMS:          formatOptionalInt(policy.MaxLeaseMS),
-
-		SourceMaxEntries:         formatOptionalInt(int64(policy.Source.MaxEntries)),
-		SourceMaxFileBytes:       formatOptionalInt(policy.Source.MaxFileBytes),
-		SourceMaxTotalBytes:      formatOptionalInt(policy.Source.MaxTotalBytes),
-		SourceMaxPathDepth:       formatOptionalInt(int64(policy.Source.MaxPathDepth)),
-		SourceMaxPathBytes:       formatOptionalInt(int64(policy.Source.MaxPathBytes)),
-		SourceMaxNameBytes:       formatOptionalInt(int64(policy.Source.MaxNameBytes)),
-		SourceMetadataLimitBytes: formatOptionalInt(policy.Source.MetadataLimit),
-
-		ContainerImage:        policy.Container.Image,
-		ContainerNetwork:      policy.Container.Network,
-		ContainerCPUMillis:    formatOptionalInt(policy.Container.CPUMillis),
-		ContainerMemoryBytes:  formatOptionalInt(policy.Container.MemoryBytes),
-		ContainerPIDs:         formatOptionalInt(policy.Container.PIDs),
-		ContainerScratchBytes: formatOptionalInt(policy.Container.ScratchBytes),
+		Executor: webui.ExecutorHost, ContainerNetwork: webui.ContainerNetworkNone,
+		PushSelected: true, PullRequestSelected: true,
 	}
-	if form.ContainerNetwork == "" {
-		form.ContainerNetwork = webui.ContainerNetworkNone
+	if policy.Saved {
+		values = storedPolicyLimits(policy)
+		form = webui.CheckPolicyForm{
+			Executor:            policy.Executor,
+			PushSelected:        policy.AllowsPush(),
+			PullRequestSelected: policy.AllowsPullRequest(),
+			ContainerImage:      policy.Container.Image,
+			ContainerNetwork:    policy.Container.Network,
+		}
+		if form.ContainerNetwork == "" {
+			form.ContainerNetwork = webui.ContainerNetworkNone
+		}
+	}
+	form.Limits = make(map[string]webui.LimitInput, len(policyRangeFields))
+	for _, limit := range webui.PolicyLimitFields() {
+		form.Limits[limit.Field] = webui.FormatLimit(limit.Kind, values[limit.Field], limit.Unit)
 	}
 	return form
 }
 
-func formatOptionalInt(value int64) string {
-	if value == 0 {
-		return ""
-	}
-	return strconv.FormatInt(value, 10)
-}
-
 func submittedPolicyForm(request *http.Request) webui.CheckPolicyForm {
-	return webui.CheckPolicyForm{
+	form := webui.CheckPolicyForm{
 		Executor:            postValue(request, "executor"),
 		PushSelected:        formChecked(postValue(request, "event_push")),
 		PullRequestSelected: formChecked(postValue(request, "event_pull_request")),
-
-		MaxTimeoutMS:        strings.TrimSpace(postValue(request, "max_timeout_ms")),
-		MaxOutputLimitBytes: strings.TrimSpace(postValue(request, "max_output_limit_bytes")),
-		QueueLimit:          strings.TrimSpace(postValue(request, "queue_limit")),
-		MaxActiveJobs:       strings.TrimSpace(postValue(request, "max_active_jobs")),
-		MaxLeaseMS:          strings.TrimSpace(postValue(request, "max_lease_ms")),
-
-		SourceMaxEntries:         strings.TrimSpace(postValue(request, "source_max_entries")),
-		SourceMaxFileBytes:       strings.TrimSpace(postValue(request, "source_max_file_bytes")),
-		SourceMaxTotalBytes:      strings.TrimSpace(postValue(request, "source_max_total_bytes")),
-		SourceMaxPathDepth:       strings.TrimSpace(postValue(request, "source_max_path_depth")),
-		SourceMaxPathBytes:       strings.TrimSpace(postValue(request, "source_max_path_bytes")),
-		SourceMaxNameBytes:       strings.TrimSpace(postValue(request, "source_max_name_bytes")),
-		SourceMetadataLimitBytes: strings.TrimSpace(postValue(request, "source_metadata_limit_bytes")),
-
-		ContainerImage:        strings.TrimSpace(postValue(request, "container_image")),
-		ContainerNetwork:      postValue(request, "container_network"),
-		ContainerCPUMillis:    strings.TrimSpace(postValue(request, "container_cpu_millis")),
-		ContainerMemoryBytes:  strings.TrimSpace(postValue(request, "container_memory_bytes")),
-		ContainerPIDs:         strings.TrimSpace(postValue(request, "container_pids")),
-		ContainerScratchBytes: strings.TrimSpace(postValue(request, "container_scratch_bytes")),
+		ContainerImage:      strings.TrimSpace(postValue(request, "container_image")),
+		ContainerNetwork:    postValue(request, "container_network"),
+		Limits:              make(map[string]webui.LimitInput, len(policyRangeFields)),
 	}
+	for _, limit := range webui.PolicyLimitFields() {
+		input := webui.LimitInput{
+			Amount: strings.TrimSpace(postValue(request, limit.Field)),
+			Unit:   strings.TrimSpace(postValue(request, limit.UnitField())),
+		}
+		// A number posted without a unit is in the stored base unit, which
+		// is what a script or an older page sends. Re-showing it needs a unit
+		// the menu offers, so it is rewritten into one when it converts
+		// cleanly; otherwise the text is kept exactly as sent.
+		if input.Unit == "" && input.Amount != "" && limit.Kind != webui.LimitCount {
+			if value, err := webui.ParseLimit(limit.Kind, input); err == nil && value != 0 {
+				input = webui.FormatLimit(limit.Kind, value, limit.Unit)
+			}
+		}
+		form.Limits[limit.Field] = input
+	}
+	return form
 }
 
 // policyInputFrom turns the submitted text into the backend's policy input.
 //
-// It checks only what the browser can check: a field that must be a number is
-// a number, an event is selected, and container settings are supplied only for
-// the mode that uses them. Every range, the image format, and the relationship
-// between limits stay the backend's decision, so the two cannot disagree.
+// It checks only what the browser can check: a field that must be an amount
+// is one and converts exactly to the stored unit, an event is selected, and
+// container settings are supplied only for the mode that uses them. Every
+// range, the image format, and the relationship between limits stay the
+// backend's decision, so the two cannot disagree.
 func policyInputFrom(repositoryID string, form webui.CheckPolicyForm) (state.CheckPolicyInput, []webui.Notice) {
 	var notices []webui.Notice
-	// The only thing checked here is that text meant to be a number is one.
-	// Whether that number is acceptable is the backend's decision, reported
-	// back as a field notice, so no bound is written twice. An empty field
-	// arrives as zero, which the backend answers with its own rule.
-	number := func(field, value string) int64 {
-		if value == "" {
+	// The only thing checked here is that an amount converts to a whole
+	// stored value. Whether that value is acceptable is the backend's
+	// decision, reported back as a field notice, so no bound is written twice.
+	// An empty field arrives as zero, which the backend answers with its own
+	// rule: a default where one exists, a refusal where none does.
+	value := func(field string) int64 {
+		limit, known := webui.PolicyLimitFor(field)
+		if !known {
 			return 0
 		}
-		parsed, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || parsed < 0 {
-			notices = append(notices, webui.Error(field, webui.MsgCCNumberInvalid))
+		parsed, err := webui.ParseLimit(limit.Kind, form.Limit(field))
+		if err != nil {
+			notices = append(notices, webui.Error(field, webui.LimitNoticeCode(limit.Kind, err)))
 			return 0
 		}
 		return parsed
+	}
+	// A count stored as a Go int must fit one. Every published maximum is far
+	// below that, so this only turns an absurd amount into the backend's
+	// ordinary range refusal instead of a silent wrap.
+	count := func(field string) int {
+		parsed := value(field)
+		if parsed > int64(math.MaxInt32) {
+			notices = append(notices, webui.Error(field, webui.MsgCCFieldRange))
+			return 0
+		}
+		return int(parsed)
 	}
 
 	input := state.CheckPolicyInput{RepositoryID: repositoryID, Executor: form.Executor}
@@ -701,22 +823,22 @@ func policyInputFrom(repositoryID string, form webui.CheckPolicyForm) (state.Che
 		input.AllowedEvents = append(input.AllowedEvents, webui.CheckEventPullRequest)
 	}
 
-	input.MaxTimeoutMS = number("max_timeout_ms", form.MaxTimeoutMS)
-	input.MaxOutputLimitBytes = number("max_output_limit_bytes", form.MaxOutputLimitBytes)
-	input.QueueLimit = int(number("queue_limit", form.QueueLimit))
-	input.MaxActiveJobs = int(number("max_active_jobs", form.MaxActiveJobs))
-	input.MaxLeaseMS = number("max_lease_ms", form.MaxLeaseMS)
+	input.MaxTimeoutMS = value(state.FieldMaxTimeoutMS)
+	input.MaxOutputLimitBytes = value(state.FieldMaxOutputLimitBytes)
+	input.QueueLimit = count(state.FieldQueueLimit)
+	input.MaxActiveJobs = count(state.FieldMaxActiveJobs)
+	input.MaxLeaseMS = value(state.FieldMaxLeaseMS)
 
 	// An empty source field asks for the server's own bounded default, which
 	// is what a zero means to the backend.
 	input.Execution.Source = state.CheckSourceLimits{
-		MaxEntries:    int(number("source_max_entries", form.SourceMaxEntries)),
-		MaxFileBytes:  number("source_max_file_bytes", form.SourceMaxFileBytes),
-		MaxTotalBytes: number("source_max_total_bytes", form.SourceMaxTotalBytes),
-		MaxPathDepth:  int(number("source_max_path_depth", form.SourceMaxPathDepth)),
-		MaxPathBytes:  int(number("source_max_path_bytes", form.SourceMaxPathBytes)),
-		MaxNameBytes:  int(number("source_max_name_bytes", form.SourceMaxNameBytes)),
-		MetadataLimit: number("source_metadata_limit_bytes", form.SourceMetadataLimitBytes),
+		MaxEntries:    count(state.FieldSourceMaxEntries),
+		MaxFileBytes:  value(state.FieldSourceMaxFileBytes),
+		MaxTotalBytes: value(state.FieldSourceMaxTotalBytes),
+		MaxPathDepth:  count(state.FieldSourceMaxPathDepth),
+		MaxPathBytes:  count(state.FieldSourceMaxPathBytes),
+		MaxNameBytes:  count(state.FieldSourceMaxNameBytes),
+		MetadataLimit: value(state.FieldSourceMetadataLimit),
 	}
 
 	// Container settings belong to the container mode alone. Sending them with
@@ -731,10 +853,10 @@ func policyInputFrom(repositoryID string, form webui.CheckPolicyForm) (state.Che
 		}
 		input.Execution.ContainerImage = form.ContainerImage
 		input.Execution.ContainerNetwork = form.ContainerNetwork
-		input.Execution.ContainerCPUMillis = number("container_cpu_millis", form.ContainerCPUMillis)
-		input.Execution.ContainerMemoryBytes = number("container_memory_bytes", form.ContainerMemoryBytes)
-		input.Execution.ContainerPIDs = number("container_pids", form.ContainerPIDs)
-		input.Execution.ContainerScratchBytes = number("container_scratch_bytes", form.ContainerScratchBytes)
+		input.Execution.ContainerCPUMillis = value(state.FieldContainerCPUMillis)
+		input.Execution.ContainerMemoryBytes = value(state.FieldContainerMemoryBytes)
+		input.Execution.ContainerPIDs = value(state.FieldContainerPIDs)
+		input.Execution.ContainerScratchBytes = value(state.FieldContainerScratchBytes)
 	}
 	return input, notices
 }

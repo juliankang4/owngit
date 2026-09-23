@@ -9,122 +9,136 @@
   {{template "cloneblock" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL "PushCommands" $p.Overview.PushCommands}}
 
 {{else if eq $p.Tab "overview"}}
-  {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.OverviewURL}}
-  {{template "cloneblock" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL}}
-
-  {{/* Recovery starts from the repository too, not only from a commit page,
-       because someone looking for lost work does not know which commit they
-       need yet. The link is rendered only when the backend supplied one. */}}
-  {{with $p.RestoreURL}}
-  <p class="restore__entry"><a class="btn" href="{{.}}">{{icon "kept"}}{{bi $lang "restore.title"}}</a></p>
-  {{end}}
-
-  {{with $p.Overview.Head}}
-  <section class="sec">
-    <div class="sec__bar"><h2>{{bi $lang "app.latest_commit"}}</h2></div>
-    <a class="row row--repo" href="{{.URL}}">
-      <span class="row__name mono">{{.ShortOID}}</span>
-      <span class="row__ref">{{.AuthorName}}</span>
-      <span class="row__msg">{{.Subject}}</span>
-      <span class="row__when">{{biRelative $lang $now .AuthorDate}}</span>
-    </a>
+  {{$o := $p.Overview}}
+  {{/* Commit activity comes first, directly under the tabs. */}}
+  {{if $o.Activity.Year}}
+  <section class="sec ov-graph">
+    {{template "graph" dict "Lang" $lang "G" $o.Activity}}
   </section>
   {{end}}
 
-  <section class="sec">
-    <div class="sec__bar">
-      <h2>{{bi $lang "app.branches"}}</h2>
-      <span class="sec__n">{{biCount $lang "branch" (len $p.Overview.Branches)}}</span>
+  {{/* The summary strip. Each figure is a recorded fact or says that it could
+       not be read; none falls back to a reassuring zero. */}}
+  <dl class="facts" {{biAttr $lang "aria-label" "repo.overview.summary_label"}}>
+    <div class="facts__i">
+      <dt>{{bi $lang "repo.overview.default_branch"}}</dt>
+      <dd>{{if $o.DefaultBranch}}{{icon "branch"}}<span class="mono">{{$o.DefaultBranch}}</span>
+          {{else}}{{icon "warning"}}<span>{{bi $lang "repo.overview.no_default_branch"}}</span>{{end}}</dd>
     </div>
-    {{if $p.Overview.Branches}}
-      <div class="reflist">
-        {{range $p.Overview.Branches}}
-          <div class="refline">
-            <span class="refline__n">
-              {{icon "branch"}}
-              {{if .URL}}<a href="{{.URL}}">{{.Name}}</a>{{else}}<span class="mono">{{.Name}}</span>{{end}}
-              {{if .IsDefault}}<span class="pill pill--default">{{biText $lang "Default" "기본"}}</span>{{end}}
-            </span>
-            <span class="refline__msg">{{.Tip.Subject}}</span>
-            {{with .RestoreURL}}<a class="refline__act" href="{{.}}">{{bi $lang "restore.open"}}</a>{{end}}
-            <span class="refline__when">{{biRelative $lang $now .Tip.AuthorDate}}</span>
-          </div>
+    <div class="facts__i"><dt>{{bi $lang "app.branches"}}</dt><dd>{{number $o.BranchCount}}</dd></div>
+    <div class="facts__i"><dt>{{bi $lang "app.tags"}}</dt><dd>{{number $o.TagCount}}</dd></div>
+    {{with $o.Head.URL}}
+    <div class="facts__i">
+      <dt>{{bi $lang "repo.overview.last_commit"}}</dt>
+      <dd><a href="{{.}}">{{biRelative $lang $now $o.Head.AuthorDate}}</a></dd>
+    </div>
+    {{end}}
+    <div class="facts__i">
+      <dt>{{bi $lang "repo.overview.open_pull_requests"}}</dt>
+      <dd>{{if $o.OpenPullRequestsKnown}}
+            {{if $p.PullRequestsURL}}<a href="{{$p.PullRequestsURL}}">{{number $o.OpenPullRequests}}{{if $o.OpenPullRequestsMore}}+{{end}}</a>
+            {{else}}{{number $o.OpenPullRequests}}{{if $o.OpenPullRequestsMore}}+{{end}}{{end}}
+          {{else}}{{icon "slash"}}<span class="facts__sub">{{bi $lang "repo.overview.unreadable"}}</span>{{end}}</dd>
+    </div>
+    {{if $o.DefaultBranch}}
+    <div class="facts__i">
+      <dt>{{bi $lang "repo.overview.default_check"}}</dt>
+      <dd>{{if not $o.DefaultCheckKnown}}{{icon "slash"}}<span class="facts__sub">{{bi $lang "repo.overview.unreadable"}}</span>
+          {{else if $o.HasDefaultCheck}}{{template "stateChip" dict "Lang" $lang "S" (recordState $o.DefaultCheck)}}
+            {{if $p.TasksURL}}<a class="mono facts__sub" href="{{$p.TasksURL}}">{{$o.DefaultCheck.RevisionShortOID}}</a>{{else}}<span class="mono facts__sub">{{$o.DefaultCheck.RevisionShortOID}}</span>{{end}}
+          {{else}}{{template "stateChip" dict "Lang" $lang "S" (attemptState "absent")}}{{end}}</dd>
+    </div>
+    {{end}}
+  </dl>
+
+  <div class="ov-cols">
+    <section class="ov-commits" aria-labelledby="ov-commits-h">
+      <div class="sec__bar">
+        <h2 id="ov-commits-h">{{bi $lang "repo.overview.recent_commits"}}</h2>
+        {{if $p.CommitsURL}}<a class="sec__hint" href="{{$p.CommitsURL}}">{{bi $lang "repo.overview.all_commits"}}</a>{{end}}
+      </div>
+      {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.OverviewURL}}
+      {{if $o.Recent}}
+      <div class="ov-rows">
+        {{range $o.Recent}}
+          <a class="row row--commit" href="{{.URL}}">
+            <span class="row__sha mono">{{.ShortOID}}</span>
+            <span class="row__subj">{{.Subject}}</span>
+            <span class="row__who">{{.AuthorName}}</span>
+            <span class="row__when">{{biRelative $lang $now .AuthorDate}}</span>
+          </a>
         {{end}}
       </div>
-      {{/* Ref.Missing only says the selected ref did not resolve. It is also
-           true when a reader asks for a branch that never existed, so it
-           cannot by itself mean the default branch is gone. The backend sends
-           the notice that names the actual reason, and it is rendered with the
-           other page notices. */}}
-    {{else}}
-      <p class="empty">{{bi $lang "repo.no_branches"}}</p>
-    {{end}}
-  </section>
-
-  <section class="sec">
-    <div class="sec__bar">
-      <h2>{{bi $lang "app.tags"}}</h2>
-      <span class="sec__n">{{biCount $lang "tag" (len $p.Overview.Tags)}}</span>
-    </div>
-    {{if $p.Overview.Tags}}
-      <div class="reflist">
-        {{range $p.Overview.Tags}}
-          <div class="refline">
-            <span class="refline__n">
-              {{icon "tag"}}
-              {{if .URL}}<a href="{{.URL}}">{{.Name}}</a>{{else}}<span class="mono">{{.Name}}</span>{{end}}
-              {{if .Annotated}}<span class="pill">{{biText $lang "Annotated" "주석"}}</span>{{end}}
-            </span>
-            <span class="refline__msg">{{.Tip.Subject}}</span>
-            {{with .RestoreURL}}<a class="refline__act" href="{{.}}">{{bi $lang "restore.open"}}</a>{{end}}
-            <span class="refline__when">{{biRelative $lang $now .Tip.AuthorDate}}</span>
-          </div>
-        {{end}}
-      </div>
-    {{else}}
-      <p class="empty">{{bi $lang "repo.no_tags"}}</p>
-    {{end}}
-  </section>
-
-  {{/* History kept after a force push or a deleted ref. It is listed as kept
-       history, never as a live branch. Each entry offers a restore link only
-       when the backend supplied one, because whether a kept commit is still
-       reachable is its decision, not something this page infers. */}}
-  {{if $p.Overview.RetainedRefs}}
-  <section class="sec">
-    <div class="sec__bar">
-      <h2>{{bi $lang "repo.retained.title"}}</h2>
-      <span class="sec__n">{{biCount $lang "item" (len $p.Overview.RetainedRefs)}}</span>
-    </div>
-    <div class="reflist">
-      {{range $p.Overview.RetainedRefs}}
-        <div class="refline">
-          <span class="refline__n">
-            {{/* Kept history is browsable only when the backend can address
-                 it. Without a URL it is listed as a plain record rather than
-                 a link that would go nowhere. */}}
-            {{icon "kept"}}
-            {{if .URL}}<a href="{{.URL}}">{{.Name}}</a>{{else}}<span class="mono">{{.Name}}</span>{{end}}
-            <span class="pill pill--kept">{{bi $lang "repo.retained.title"}}</span>
-          </span>
-          <span class="refline__msg">{{.Tip.Subject}}</span>
-          {{/* Kept history is exactly what a reader most often wants back, so
-               each entry the backend can address opens restore with its tip
-               already chosen as the source. */}}
-          {{with .RestoreURL}}<a class="refline__act" href="{{.}}">{{bi $lang "restore.open"}}</a>{{end}}
-          <span class="refline__when">{{biRelative $lang $now .Tip.AuthorDate}}</span>
-        </div>
+      {{if and $o.RecentMore $p.CommitsURL}}<p class="ov-more"><a href="{{$p.CommitsURL}}">{{bi $lang "repo.overview.all_commits"}}</a></p>{{end}}
       {{end}}
-    </div>
-    <p class="hm__note">{{bi $lang "repo.retained.help"}}</p>
-  </section>
-  {{end}}
+    </section>
 
-  {{if $p.Overview.Activity.Year}}
-  <section class="sec">
-    {{template "graph" dict "Lang" $lang "G" $p.Overview.Activity}}
-  </section>
-  {{end}}
+    {{/* The side column lists the newest refs. A long list is cut to the
+         newest few and says how many exist; "Show all" reloads with every
+         ref, so nothing depends on the script. */}}
+    <aside class="ov-side" id="refs" {{biAttr $lang "aria-label" "repo.overview.side_label"}}>
+      <section class="ov-panel" aria-labelledby="ov-branches-h">
+        <div class="sec__bar">
+          <h2 id="ov-branches-h">{{bi $lang "app.branches"}}</h2>
+          <span class="sec__n">{{biCount $lang "branch" $o.BranchCount}}</span>
+          {{if and $o.AllRefsURL (gt $o.BranchCount (len $o.Branches))}}<a class="sec__hint" href="{{$o.AllRefsURL}}">{{bi $lang "repo.overview.show_all_refs"}}</a>{{end}}
+        </div>
+        {{if $o.Branches}}
+          {{template "sideRefs" dict "Lang" $lang "Now" $now "Rows" $o.Branches}}
+          {{if gt $o.BranchCount 1}}<p class="ov-order">{{bi $lang "repo.overview.newest_shown"}}</p>{{end}}
+        {{else}}
+          <p class="empty">{{bi $lang "repo.no_branches"}}</p>
+        {{end}}
+      </section>
+
+      {{if $o.Tags}}
+      <section class="ov-panel" aria-labelledby="ov-tags-h">
+        <div class="sec__bar">
+          <h2 id="ov-tags-h">{{bi $lang "app.tags"}}</h2>
+          <span class="sec__n">{{biCount $lang "tag" $o.TagCount}}</span>
+          {{if and $o.AllRefsURL (gt $o.TagCount (len $o.Tags))}}<a class="sec__hint" href="{{$o.AllRefsURL}}">{{bi $lang "repo.overview.show_all_refs"}}</a>{{end}}
+        </div>
+        {{template "sideRefs" dict "Lang" $lang "Now" $now "Rows" $o.Tags}}
+        {{if gt $o.TagCount 1}}<p class="ov-order">{{bi $lang "repo.overview.newest_shown"}}</p>{{end}}
+      </section>
+      {{else}}
+      <section class="ov-panel" aria-labelledby="ov-tags-h">
+        <div class="sec__bar sec__bar--flat">
+          <h2 id="ov-tags-h">{{bi $lang "app.tags"}}</h2>
+          <span class="sec__n">{{icon "tag"}}{{bi $lang "repo.overview.no_tags_yet"}}</span>
+        </div>
+      </section>
+      {{end}}
+
+      {{/* History kept after a force push or a deleted ref. It is listed as
+           kept history, never as a live branch, and each entry offers restore
+           only when the backend supplied an address for it. */}}
+      {{if $o.RetainedRefs}}
+      <section class="ov-panel" aria-labelledby="ov-kept-h">
+        <div class="sec__bar">
+          <h2 id="ov-kept-h">{{bi $lang "repo.retained.title"}}</h2>
+          <span class="sec__n">{{biCount $lang "item" $o.RetainedCount}}</span>
+          {{if and $o.AllRefsURL (gt $o.RetainedCount (len $o.RetainedRefs))}}<a class="sec__hint" href="{{$o.AllRefsURL}}">{{bi $lang "repo.overview.show_all_refs"}}</a>{{end}}
+        </div>
+        {{template "sideRefs" dict "Lang" $lang "Now" $now "Rows" $o.RetainedRefs}}
+        <p class="hm__note">{{bi $lang "repo.retained.help"}}</p>
+      </section>
+      {{end}}
+
+      {{with $o.FewerRefsURL}}<p class="ov-order"><a href="{{.}}">{{bi $lang "repo.overview.show_fewer_refs"}}</a></p>{{end}}
+
+      {{/* Recovery starts from the repository too, not only from a commit
+           page, because someone looking for lost work does not know which
+           commit they need yet. */}}
+      {{with $p.RestoreURL}}
+      <section class="ov-restore" aria-labelledby="ov-restore-h">
+        <h2 id="ov-restore-h" class="ov-restore__h">{{icon "kept"}}{{bi $lang "restore.title"}}</h2>
+        <p class="ov-restore__d">{{bi $lang "repo.overview.restore_lead"}}</p>
+        <a class="btn" href="{{.}}">{{bi $lang "repo.overview.restore_start"}}</a>
+      </section>
+      {{end}}
+    </aside>
+  </div>
 
 {{else if eq $p.Tab "code"}}
   {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CodeURL "Path" $p.Code.Path}}
@@ -303,5 +317,27 @@
     </div>
   {{end}}
 {{end}}
+</div>
+{{end}}
+
+{{/* One compact ref row for the overview side column: name and marks, time,
+     then the tip subject and restore on their own line. */}}
+{{define "sideRefs"}}
+{{$lang := .Lang}}{{$now := .Now}}
+<div class="reflist reflist--side">
+  {{range .Rows}}
+    <div class="refline">
+      <span class="refline__n">
+        {{if .Retained}}{{icon "kept"}}{{else if eq .Kind "tag"}}{{icon "tag"}}{{else}}{{icon "branch"}}{{end}}
+        {{if .URL}}<a href="{{.URL}}">{{.Name}}</a>{{else}}<span class="mono">{{.Name}}</span>{{end}}
+        {{if .IsDefault}}<span class="pill pill--default">{{biText $lang "Default" "기본"}}</span>{{end}}
+        {{if .Annotated}}<span class="pill">{{biText $lang "Annotated" "주석"}}</span>{{end}}
+        {{if .Retained}}<span class="pill pill--kept">{{bi $lang "repo.retained.title"}}</span>{{end}}
+      </span>
+      <span class="refline__when">{{if not .Tip.AuthorDate.IsZero}}{{biRelative $lang $now .Tip.AuthorDate}}{{end}}</span>
+      <span class="refline__msg">{{.Tip.Subject}}</span>
+      {{with .RestoreURL}}<a class="refline__act" href="{{.}}">{{bi $lang "restore.open"}}</a>{{end}}
+    </div>
+  {{end}}
 </div>
 {{end}}

@@ -6,48 +6,62 @@
      stored policy never reads as "running" and a closed runtime never reads
      as a failed check. */}}
 
-{{/* One number field of the policy form.
+{{/* One numeric limit of the settings form: an amount and a unit.
 
      Every field keeps the value that was submitted, including one the backend
      refused, so a rejected form does not quietly replace what was typed. The
      note is scoped by the action because several forms on this screen collect
      the same field names.
 
-     Call as: {{template "policyNumber" dict "Lang" $lang "Notices" $fn
-                 "Scope" $act "Field" "max_timeout_ms" "ID" "cc-timeout"
-                 "Label" "cc.policy.timeout" "Help" "cc.policy.timeout_help"
-                 "Value" $f.MaxTimeoutMS}} */}}
-{{define "policyNumber"}}
-{{$lang := .Lang}}
-{{/* The accepted range is printed from the numbers the backend publishes, not
-     from a copy kept here. A refusal beside this field says the value is
-     outside the range shown, and this is the range it means. */}}
-{{$range := fieldRange $lang .Ranges .Field}}
-<div class="f">
-  <label for="{{.ID}}">{{bi $lang (code .Label)}}</label>
-  <input id="{{.ID}}" name="{{.Field}}" type="text" inputmode="numeric" autocomplete="off"
-         value="{{.Value}}"
-         {{template "fieldInvalid" dict "Notices" .Notices "Scope" .Scope "Field" .Field}}>
-  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Scope "Field" .Field}}
-  {{with $range}}<p class="f__help f__range">{{.}}</p>{{end}}
-  {{with .Help}}<p class="f__help">{{bi $lang (code .)}}</p>{{end}}
+     The accepted range and the default are printed from the numbers the
+     backend publishes, written in the units a person reads. A refusal beside
+     this field says the value is outside the range shown, and this is the
+     range it means.
+
+     Call as: {{template "policyLimit" dict "Lang" $lang "Notices" $fn
+                 "Scope" $act "Form" $f "L" $limit}} */}}
+{{define "policyLimit"}}
+{{$lang := .Lang}}{{$l := .L}}{{$f := .Form}}{{$v := $f.Limit $l.Field}}
+<div class="f cclimit">
+  <label for="{{$l.ID}}">{{bi $lang $l.Label}}</label>
+  <div class="cclimit__row">
+    <input id="{{$l.ID}}" name="{{$l.Field}}" type="text" inputmode="{{$l.InputMode}}" autocomplete="off"
+           spellcheck="false" value="{{$v.Amount}}"
+           {{template "fieldInvalid" dict "Notices" .Notices "Scope" .Scope "Field" $l.Field}}>
+    {{if $l.Kind.HasUnitMenu}}
+      <select name="{{$l.UnitField}}" {{unitMenuLabel $lang $l.Label}}>
+        {{range $l.Kind.Units}}
+          <option value="{{.Name}}"{{if eq .Name $v.Unit}} selected{{end}} {{biOption .Label}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+    {{else}}{{with $l.Kind.FixedUnit}}
+      <input type="hidden" name="{{$l.UnitField}}" value="{{.Name}}">
+      <span class="cclimit__u">{{bi $lang .Label}}</span>
+    {{end}}{{end}}
+  </div>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Scope "Field" $l.Field}}
+  <p class="f__help f__range">{{fieldRange $lang $f.Ranges $l.Field}}{{with fieldDefault $lang $f.Defaults $l.Field}}<br>{{.}}{{end}}</p>
+  {{with $l.Help}}<p class="f__help">{{bi $lang .}}</p>{{end}}
 </div>
 {{end}}
 
 {{/* The administrator password field one form collects.
 
      Holding a signed-in session is not consent to change execution authority,
-     so every form here asks again and scopes its own notice.
+     so every form here asks again and scopes its own notice. An optional Help
+     line says why, and the field points at it together with any refusal.
 
      Call as: {{template "adminField" dict "Lang" $lang "Notices" $fn
-                 "Scope" $act "ID" "cc-save-password"}} */}}
+                 "Scope" $act "ID" "cc-save-password" "Help" "cc.password_each_time"}} */}}
 {{define "adminField"}}
-{{$lang := .Lang}}
+{{$lang := .Lang}}{{$id := .ID}}{{$help := .Help}}
+{{$refused := false}}{{range .Notices}}{{if and (eq .Field "admin_password") (eq .Kind "error")}}{{$refused = true}}{{end}}{{end}}
 <div class="f">
-  <label for="{{.ID}}">{{bi $lang "admin.field"}}</label>
-  <input id="{{.ID}}" name="admin_password" type="password" required autocomplete="current-password"
-         {{template "fieldInvalid" dict "Notices" .Notices "Scope" .Scope "Field" "admin_password"}}>
+  <label for="{{$id}}">{{bi $lang "admin.field"}}</label>
+  <input id="{{$id}}" name="admin_password" type="password" required autocomplete="current-password"
+         {{if $refused}}aria-invalid="true" aria-describedby="{{noteID .Scope "admin_password"}}{{if $help}} {{$id}}-help{{end}}"{{else if $help}}aria-describedby="{{$id}}-help"{{end}}>
   {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Scope "Field" "admin_password"}}
+  {{with $help}}<p class="f__help" id="{{$id}}-help">{{bi $lang (code .)}}</p>{{end}}
 </div>
 {{end}}
 

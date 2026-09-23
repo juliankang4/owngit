@@ -5,6 +5,9 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -153,11 +156,11 @@ func TestBrowserPolicySaveDoesNotEnableExecution(t *testing.T) {
 	// quoted without the digest that went with it.
 	for name, identity := range map[string]url.Values{
 		"stale version":  {"policy_version": {"0"}, "policy_digest": {policy.Digest}},
-		"stale digest":   {"policy_version": {formatOptionalInt(policy.Version)}, "policy_digest": {"an-older-digest"}},
-		"no digest":      {"policy_version": {formatOptionalInt(policy.Version)}},
+		"stale digest":   {"policy_version": {strconv.FormatInt(policy.Version, 10)}, "policy_digest": {"an-older-digest"}},
+		"no digest":      {"policy_version": {strconv.FormatInt(policy.Version, 10)}},
 		"no identity":    {},
 		"unparsable":     {"policy_version": {"soon"}, "policy_digest": {policy.Digest}},
-		"digest as name": {"policy_version": {formatOptionalInt(policy.Version)}, "policy_digest": {""}},
+		"digest as name": {"policy_version": {strconv.FormatInt(policy.Version, 10)}, "policy_digest": {""}},
 	} {
 		stale := url.Values{
 			"csrf": {csrf}, "action": {webui.ActionEnableChecks},
@@ -177,7 +180,7 @@ func TestBrowserPolicySaveDoesNotEnableExecution(t *testing.T) {
 	enable := url.Values{
 		"csrf": {csrf}, "action": {webui.ActionEnableChecks},
 		"admin_password": {"admin-password"},
-		"policy_version": {formatOptionalInt(policy.Version)},
+		"policy_version": {strconv.FormatInt(policy.Version, 10)},
 		"policy_digest":  {policy.Digest},
 	}
 	enabled := browserForm(t, client, policyURL, enable, server.URL)
@@ -218,7 +221,7 @@ func TestBrowserSaveResultDoesNotClaimExecutionIsOffWhenItIsOn(t *testing.T) {
 	enable := url.Values{
 		"csrf": {csrf}, "action": {webui.ActionEnableChecks},
 		"admin_password": {"admin-password"},
-		"policy_version": {formatOptionalInt(policy.Version)},
+		"policy_version": {strconv.FormatInt(policy.Version, 10)},
 		"policy_digest":  {policy.Digest},
 	}
 	if result := browserForm(t, client, policyURL, enable, server.URL); result.status != http.StatusSeeOther {
@@ -298,27 +301,47 @@ func TestBrowserFailedConsentChangeKeepsTheSavedPolicyOnScreen(t *testing.T) {
 	wrongPassword := url.Values{
 		"csrf": {csrf}, "action": {webui.ActionEnableChecks},
 		"admin_password": {"not-the-password"},
-		"policy_version": {formatOptionalInt(policy.Version)},
+		"policy_version": {strconv.FormatInt(policy.Version, 10)},
 		"policy_digest":  {policy.Digest},
 	}
 	refused := browserForm(t, client, policyURL, wrongPassword, server.URL)
 	if refused.status != http.StatusUnauthorized {
 		t.Fatalf("wrong password status=%d", refused.status)
 	}
-	// The saved values are still the ones on screen.
-	for field, value := range map[string]string{
-		"max_timeout_ms":  "600000",
-		"queue_limit":     "20",
-		"max_active_jobs": "2",
-		"max_lease_ms":    "120000",
+	// The saved values are still the ones on screen, each written in the
+	// largest unit that holds it exactly: 600000 ms is 10 minutes.
+	for field, want := range map[string]webui.LimitInput{
+		"max_timeout_ms":  {Amount: "10", Unit: webui.UnitMinutes},
+		"queue_limit":     {Amount: "20"},
+		"max_active_jobs": {Amount: "2"},
+		"max_lease_ms":    {Amount: "2", Unit: webui.UnitMinutes},
 	} {
-		if !strings.Contains(refused.body, `value="`+value+`"`) {
-			t.Fatalf("a failed enable blanked %s: %q is not on the screen", field, value)
+		if got := limitOnScreen(t, refused.body, field); got != want {
+			t.Fatalf("a failed enable blanked %s: the screen shows %+v, want %+v", field, got, want)
 		}
 	}
 	if strings.Contains(refused.body, `value="not-the-password"`) {
 		t.Fatal("the administrator password was echoed back")
 	}
+}
+
+// limitOnScreen reads the amount and selected unit the page shows for one
+// numeric policy field.
+func limitOnScreen(t *testing.T, body, field string) webui.LimitInput {
+	t.Helper()
+	input := regexp.MustCompile(`<input[^>]*name="` + regexp.QuoteMeta(field) + `"[^>]*>`).FindString(body)
+	if input == "" {
+		t.Fatalf("%s is not on the screen", field)
+	}
+	var got webui.LimitInput
+	if m := regexp.MustCompile(`value="([^"]*)"`).FindStringSubmatch(input); m != nil {
+		got.Amount = m[1]
+	}
+	menu := regexp.MustCompile(`(?s)<select name="` + regexp.QuoteMeta(field) + `_unit".*?</select>`).FindString(body)
+	if m := regexp.MustCompile(`<option value="([^"]*)" selected`).FindStringSubmatch(menu); m != nil {
+		got.Unit = m[1]
+	}
+	return got
 }
 
 func TestTheDisplayedRangeIsTheRangeTheBackendEnforces(t *testing.T) {
@@ -343,7 +366,9 @@ func TestTheDisplayedRangeIsTheRangeTheBackendEnforces(t *testing.T) {
 			t.Errorf("%s is drawn but publishes no bounds", field)
 			continue
 		}
-		high := strconv.FormatInt(bounds.Max, 10)
+		// The numbers are written in the units a reader uses ("24 hours",
+		// "64 MB"), converted from the backend's own values.
+		high := webui.LimitText(webui.LangEN, field, bounds.Max)
 		if !bounds.HasFixedMinimum() {
 			// A moving floor names the field it depends on and still states
 			// the maximum. The ceiling is what must not go unstated.
@@ -352,8 +377,8 @@ func TestTheDisplayedRangeIsTheRangeTheBackendEnforces(t *testing.T) {
 			}
 			continue
 		}
-		low := strconv.FormatInt(bounds.Min, 10)
-		if !strings.Contains(screen.body, "Accepted range: "+low+" to "+high) {
+		low := webui.LimitText(webui.LangEN, field, bounds.Min)
+		if !strings.Contains(screen.body, "Allowed: "+low+" to "+high) {
 			t.Errorf("%s does not show the backend range %s to %s", field, low, high)
 		}
 	}
@@ -376,7 +401,7 @@ func TestTheDisplayedRangeIsTheRangeTheBackendEnforces(t *testing.T) {
 		t.Fatalf("one past the stated maximum was accepted: status=%d", refused.status)
 	}
 	// The refused screen still shows the range its message refers to.
-	if !strings.Contains(refused.body, "Accepted range: "+strconv.FormatInt(bounds.Min, 10)+" to "+strconv.FormatInt(bounds.Max, 10)) {
+	if !strings.Contains(refused.body, "Allowed: "+webui.LimitText(webui.LangEN, state.FieldQueueLimit, bounds.Min)+" to "+webui.LimitText(webui.LangEN, state.FieldQueueLimit, bounds.Max)) {
 		t.Fatal("the refusal refers to a range the screen does not show")
 	}
 }
@@ -691,7 +716,7 @@ func TestBrowserPolicyScreenShowsRecordedJobsWithTheirOwnFacts(t *testing.T) {
 	enable := url.Values{
 		"csrf": {csrf}, "action": {webui.ActionEnableChecks},
 		"admin_password": {"admin-password"},
-		"policy_version": {formatOptionalInt(policy.Version)},
+		"policy_version": {strconv.FormatInt(policy.Version, 10)},
 		"policy_digest":  {policy.Digest},
 	}
 	if result := browserForm(t, client, server.URL+configuredChecksURL("project"), enable, server.URL); result.status != http.StatusSeeOther {
@@ -761,7 +786,7 @@ func admitEnabledJob(t *testing.T, fixture apiFixture, serverURL string, client 
 	enable := url.Values{
 		"csrf": {csrf}, "action": {webui.ActionEnableChecks},
 		"admin_password": {"admin-password"},
-		"policy_version": {formatOptionalInt(policy.Version)},
+		"policy_version": {strconv.FormatInt(policy.Version, 10)},
 		"policy_digest":  {policy.Digest},
 	}
 	if result := browserForm(t, client, serverURL+configuredChecksURL("project"), enable, serverURL); result.status != http.StatusSeeOther {
@@ -1249,5 +1274,178 @@ func TestBrowserJobQueryIsEscapedInTheAddressesTheScreenRenders(t *testing.T) {
 	// The escaped identifier is what the addresses carry.
 	if !strings.Contains(page.body, "job=a%26b%3Cscript%3E") {
 		t.Error("the rendered addresses lost the escaped job identity")
+	}
+}
+
+func TestBrowserPolicyLimitsAreEnteredInReadableUnits(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-units")
+	policyURL := server.URL + configuredChecksURL("project")
+
+	// A fraction of the base unit cannot be stored, so it is refused on its
+	// own field and nothing is saved.
+	fraction := validPolicyValues(csrf)
+	fraction.Set("max_timeout_ms", "0.0005")
+	fraction.Set("max_timeout_ms_unit", webui.UnitSeconds)
+	refused := browserForm(t, client, policyURL, fraction, server.URL)
+	if refused.status != http.StatusUnprocessableEntity && refused.status != http.StatusBadRequest {
+		t.Fatalf("fractional timeout status=%d", refused.status)
+	}
+	if !strings.Contains(refused.body, browserText(webui.MsgCCNumberFraction)) {
+		t.Fatal("the fractional amount was not refused on its field")
+	}
+	if got := limitOnScreen(t, refused.body, "max_timeout_ms"); got != (webui.LimitInput{Amount: "0.0005", Unit: webui.UnitSeconds}) {
+		t.Fatalf("the refused amount was not kept as typed: %+v", got)
+	}
+	if _, exists, err := fixture.store.CheckPolicy(context.Background(), "project"); err != nil || exists {
+		t.Fatalf("a refused form stored a policy: exists=%v err=%v", exists, err)
+	}
+
+	values := validPolicyValues(csrf)
+	for field, input := range map[string]webui.LimitInput{
+		"max_timeout_ms":         {Amount: "1.5", Unit: webui.UnitMinutes},
+		"max_output_limit_bytes": {Amount: "2", Unit: webui.UnitMB},
+		"max_lease_ms":           {Amount: "45", Unit: webui.UnitSeconds},
+	} {
+		values.Set(field, input.Amount)
+		values.Set(field+"_unit", input.Unit)
+	}
+	if result := browserForm(t, client, policyURL, values, server.URL); result.status != http.StatusSeeOther {
+		t.Fatalf("policy save status=%d", result.status)
+	}
+	policy, _, err := fixture.store.CheckPolicy(context.Background(), "project")
+	noErr(t, err)
+	if policy.MaxTimeoutMS != 90_000 || policy.MaxOutputLimitBytes != 2<<20 || policy.MaxLeaseMS != 45_000 {
+		t.Fatalf("stored timeout=%d output=%d lease=%d", policy.MaxTimeoutMS, policy.MaxOutputLimitBytes, policy.MaxLeaseMS)
+	}
+
+	// The saved numbers come back in the unit that holds them exactly, so
+	// saving the page unchanged stores the same numbers.
+	page := browserGET(t, client, policyURL)
+	for field, want := range map[string]webui.LimitInput{
+		"max_timeout_ms":         {Amount: "90", Unit: webui.UnitSeconds},
+		"max_output_limit_bytes": {Amount: "2", Unit: webui.UnitMB},
+		"max_lease_ms":           {Amount: "45", Unit: webui.UnitSeconds},
+	} {
+		if got := limitOnScreen(t, page.body, field); got != want {
+			t.Fatalf("%s shows %+v, want %+v", field, got, want)
+		}
+	}
+}
+
+func TestBrowserNewPolicyStartsFromWorkingValuesAndStatesDefaults(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-defaults")
+	page := browserGET(t, client, server.URL+configuredChecksURL("project"))
+
+	// Saving the untouched form must succeed: every required limit already
+	// holds a value the backend accepts.
+	values := url.Values{
+		"csrf": {csrf}, "action": {webui.ActionSaveCheckPolicy}, "admin_password": {"admin-password"},
+		"executor": {webui.ExecutorHost},
+	}
+	for _, event := range []string{"event_push", "event_pull_request"} {
+		if !regexp.MustCompile(`name="` + event + `" value="1" checked`).MatchString(page.body) {
+			t.Fatalf("%s does not start selected", event)
+		}
+		values.Set(event, "1")
+	}
+	for _, limit := range webui.PolicyLimitFields() {
+		shown := limitOnScreen(t, page.body, limit.Field)
+		values.Set(limit.Field, shown.Amount)
+		values.Set(limit.UnitField(), shown.Unit)
+	}
+	if result := browserForm(t, client, server.URL+configuredChecksURL("project"), values, server.URL); result.status != http.StatusSeeOther {
+		t.Fatalf("the offered starting values were refused: status=%d\n%s", result.status, noticeRegion(t, result.body))
+	}
+
+	// A field left empty uses the backend default, and the page names it.
+	container := state.DefaultCheckContainerLimits()
+	if want := webui.FormatLimit(webui.LimitSize, container.MemoryBytes, ""); !strings.Contains(page.body, want.Amount+" "+want.Unit) {
+		t.Fatalf("the container memory default %s %s is not stated", want.Amount, want.Unit)
+	}
+}
+
+func TestBrowserCheckFileStatusReadsTheDefaultBranch(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	browserAdminSessionFor(t, fixture, server.URL, jar, "cc-file")
+	policyURL := server.URL + configuredChecksURL("project")
+
+	if page := browserGET(t, client, policyURL); !strings.Contains(page.body, browserText(webui.MsgCCFileMissing)) {
+		t.Fatal("a branch without a check file was not reported as missing")
+	}
+
+	push := func(content string) {
+		t.Helper()
+		apiRunGit(t, fixture.work, "checkout", "main")
+		noErr(t, os.MkdirAll(filepath.Join(fixture.work, ".owngit"), 0o700))
+		noErr(t, os.WriteFile(filepath.Join(fixture.work, ".owngit", "checks.json"), []byte(content), 0o600))
+		apiRunGit(t, fixture.work, "add", ".")
+		apiRunGit(t, fixture.work, "commit", "-m", "checks")
+		apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/main")
+	}
+
+	// The example the page offers is a file the real parser accepts.
+	push(webui.CheckFileExample)
+	found := browserGET(t, client, policyURL)
+	if !strings.Contains(found.body, browserText(webui.MsgCCFileFound)) || !strings.Contains(found.body, `data-en="1 check"`) {
+		t.Fatal("the offered example was not recognised as a valid check file")
+	}
+
+	push(`{"version": 2}`)
+	invalid := browserGET(t, client, policyURL)
+	if !strings.Contains(invalid.body, browserText(webui.MsgCCFileInvalid)) {
+		t.Fatal("an unparseable check file was not reported as invalid")
+	}
+	if !regexp.MustCompile(`class="ccstatus__problem mono">[^<]*version`).MatchString(invalid.body) {
+		t.Fatal("the parser's reason is not shown")
+	}
+}
+
+func TestBrowserCPUAmountsAreRefusedAndReshownInCores(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-cores")
+	policyURL := server.URL + configuredChecksURL("project")
+	container := func() url.Values {
+		values := validPolicyValues(csrf)
+		values.Set("executor", webui.ExecutorContainer)
+		values.Set("container_image", "registry.local/checks@sha256:"+strings.Repeat("a", 64))
+		return values
+	}
+
+	// Four decimals of a core cannot be stored, and the refusal says so in
+	// CPU terms rather than milliseconds or bytes.
+	tooFine := container()
+	tooFine.Set("container_cpu_millis", "1.2345")
+	tooFine.Set("container_cpu_millis_unit", webui.UnitCores)
+	refused := browserForm(t, client, policyURL, tooFine, server.URL)
+	if refused.status != http.StatusUnprocessableEntity {
+		t.Fatalf("four decimals of a core status=%d", refused.status)
+	}
+	if !strings.Contains(refused.body, browserText(webui.MsgCCNumberCores)) {
+		t.Fatal("the CPU refusal does not use the CPU message")
+	}
+	if strings.Contains(refused.body, browserText(webui.MsgCCNumberFraction)) {
+		t.Fatal("the CPU refusal names milliseconds or bytes")
+	}
+
+	// A script posting the stored unit (thousandths of a core) without a unit
+	// gets the amount back in cores, so resubmitting the page keeps it.
+	unitless := container()
+	unitless.Set("container_cpu_millis", "1500")
+	unitless.Del("event_push")
+	back := browserForm(t, client, policyURL, unitless, server.URL)
+	if back.status != http.StatusUnprocessableEntity {
+		t.Fatalf("a form without events status=%d", back.status)
+	}
+	if got := limitOnScreen(t, back.body, "container_cpu_millis"); got.Amount != "1.5" {
+		t.Fatalf("1500 thousandths of a core were shown back as %q", got.Amount)
+	}
+	if _, exists, err := fixture.store.CheckPolicy(context.Background(), "project"); err != nil || exists {
+		t.Fatalf("a refused form stored a policy: exists=%v err=%v", exists, err)
 	}
 }

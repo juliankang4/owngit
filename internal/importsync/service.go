@@ -66,6 +66,10 @@ type Service struct {
 	// update, so a test can pin that boundary.
 	afterLiveSnapshot func()
 
+	// beforeRunRecord is an optional test seam called after admission checks
+	// the source and immediately before the run row is recorded.
+	beforeRunRecord func()
+
 	// beforeFinalAuthorityCheck is an optional test seam called under the
 	// repository write lock immediately before publication rechecks authority.
 	beforeFinalAuthorityCheck func()

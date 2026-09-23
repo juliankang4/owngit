@@ -314,6 +314,12 @@ func TestImportScheduleFairnessAndDueOrder(t *testing.T) {
 	if err != nil || len(due) != 3 || due[0].RepositoryID != "alpha" {
 		t.Fatalf("due=%+v err=%v", due, err)
 	}
+	// A run is recorded only for a configured source generation.
+	if _, err := store.ConfigureImportSource(ctx, ImportSourceInput{
+		RepositoryID: "alpha", URL: "https://example.invalid/team/alpha.git", Mode: ImportModeStandalone, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	run := testImportRun(t, strings.Repeat("e", 32), "alpha", 1, ImportKindScheduled, ImportRunPreparing)
 	noErr(t, store.BeginImportRun(ctx, run))
 	due, err = store.DueImportSchedules(ctx, now, 8)

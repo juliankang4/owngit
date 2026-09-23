@@ -99,8 +99,9 @@ func ownerRecoveryProblem(finalPath string, cause error) *Problem {
 	return newProblem(CodeUnresolved, ownerRecoveryMessage(finalPath), cause)
 }
 
-// destinationTaken reports whether a repository row or final directory already
-// exists. It does not create, rename, or remove anything.
+// destinationTaken reports whether a repository row, an unfinished deletion
+// of the same name, or a final directory already exists. It does not create,
+// rename, or remove anything.
 func (s *Service) destinationTaken(ctx context.Context, repositoryID string) (bool, error) {
 	if s.Store == nil || s.Repositories == nil {
 		return false, newProblem(CodeRuntimeUnavailable, "import configuration runtime is unavailable", nil)
@@ -108,6 +109,11 @@ func (s *Service) destinationTaken(ctx context.Context, repositoryID string) (bo
 	if _, exists, err := s.Store.Repository(ctx, repositoryID); err != nil {
 		return false, runStateReadProblem("repository could not be read", err)
 	} else if exists {
+		return true, nil
+	}
+	if _, pending, err := s.Store.RepositoryDeletion(ctx, repositoryID); err != nil {
+		return false, runStateReadProblem("repository deletion state could not be read", err)
+	} else if pending {
 		return true, nil
 	}
 	finalPath, err := s.Repositories.Path(repositoryID)

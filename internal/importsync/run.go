@@ -143,6 +143,9 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 			Kind: kind, Status: state.ImportRunPreparing, StartedAt: now, CreatedAt: now, StagingName: staging.name,
 		},
 	}
+	if s.beforeRunRecord != nil {
+		s.beforeRunRecord()
+	}
 	beginErr := s.Store.BeginImportRun(ctx, run.run)
 	s.lifecycle.RUnlock()
 	if beginErr != nil {
@@ -150,6 +153,9 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 		run.run = s.settleStaging(finishCtx, staging, run.run)
 		if errors.Is(beginErr, state.ErrImportActive) {
 			return run.run, newProblem(CodeBusy, "an import is already running for this repository", ErrBusy)
+		}
+		if errors.Is(beginErr, state.ErrImportSourceChanged) {
+			return run.run, newProblem(CodeSuperseded, "import authority changed before admission", ErrSuperseded)
 		}
 		return run.run, newProblem(CodeStateUnavailable, "import run could not be recorded", beginErr)
 	}

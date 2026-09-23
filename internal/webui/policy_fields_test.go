@@ -65,7 +65,7 @@ func TestAMovingFloorStillShowsItsCeiling(t *testing.T) {
 	}
 	for _, lang := range Langs() {
 		text := string(fieldRange(lang, ranges, "total"))
-		if !strings.Contains(text, "4294967296") {
+		if !strings.Contains(text, "4,294,967,296") {
 			t.Errorf("%s: a moving floor suppressed the ceiling: %q", lang, text)
 		}
 		if !strings.Contains(text, template.HTMLEscapeString(Text(lang, MsgCCSrcFileBytes))) {

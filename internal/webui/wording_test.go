@@ -263,3 +263,25 @@ func TestAcknowledgedConnectionStillReportsItsState(t *testing.T) {
 		t.Error("the acknowledgement is still being requested after it was given")
 	}
 }
+
+func TestSetupStorageWordingMatchesTheSupportedStorage(t *testing.T) {
+	// Repository storage on a mounted SMB or NFS share is supported with one
+	// OwnGit writer at a time; only the database must stay local. The setup
+	// hint must neither forbid the share nor call it unverified.
+	for _, lang := range Langs() {
+		local, remote := Text(lang, MsgSetupStorageLocal), Text(lang, MsgSetupStorageRemote)
+		if !strings.Contains(local, "SMB") || !strings.Contains(local, "NFS") {
+			t.Errorf("%s: the storage hint does not name the supported shares: %q", lang, local)
+		}
+		for _, text := range []string{local, remote} {
+			for _, stale := range []string{"not runtime-verified", "검증되지 않았"} {
+				if strings.Contains(text, stale) {
+					t.Errorf("%s: the storage wording still says %q: %q", lang, stale, text)
+				}
+			}
+			if !strings.Contains(text, "OwnGit") {
+				t.Errorf("%s: the storage wording omits the one-writer rule: %q", lang, text)
+			}
+		}
+	}
+}

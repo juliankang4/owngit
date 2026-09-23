@@ -1,0 +1,77 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}
+
+<p class="backline"><a class="back" href="{{.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
+
+<div class="rhead">
+  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+</div>
+
+{{template "repoTabs" dict "Lang" $lang "T" $p.Tabs}}
+
+<div class="rpane rset">
+<div class="phead">
+  <h2>{{bi $lang "repoadmin.settings.title"}}</h2>
+  <p>{{bi $lang "repoadmin.settings.intro"}}</p>
+</div>
+
+<section class="setblock" aria-labelledby="rset-default-h">
+  <h3 id="rset-default-h" class="setblock__h">{{icon "branch"}}{{bi $lang "repoadmin.default_branch.title"}}</h3>
+  <p class="setblock__d">{{bi $lang "repoadmin.default_branch.help"}}</p>
+
+  {{if $p.DefaultBranchMissing}}
+    {{/* An imported repository whose HEAD names a branch it does not have is
+         the case this form exists for, so the state is named plainly. */}}
+    <p class="ev__warn" role="status">{{icon "warning"}}<span>{{bi $lang "repoadmin.default_branch.missing"}} <span class="mono">{{$p.DefaultBranch}}</span></span></p>
+  {{else if $p.DefaultBranch}}
+    <p class="rset__now">{{bi $lang "repoadmin.default_branch.current"}} <span class="mono">{{$p.DefaultBranch}}</span></p>
+  {{end}}
+
+  {{if $p.Branches}}
+  <form class="form form--inline" method="post" action="{{$p.DefaultBranchURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="lang" value="{{$lang}}">
+    <div class="f">
+      <label for="rset-branch">{{bi $lang "repoadmin.default_branch.label"}}</label>
+      <select id="rset-branch" name="branch" required
+              {{template "fieldInvalid" dict "Notices" $n "Field" "branch"}}>
+        {{/* With no valid preselection (the default names a missing branch),
+             the administrator must pick one; the first name is not a choice. */}}
+        {{if not $p.Selected}}<option value="" selected disabled>{{bi $lang "repoadmin.default_branch.choose"}}</option>{{end}}
+        {{range $p.Branches}}
+          <option value="{{.}}"{{if eq . $p.Selected}} selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "branch"}}
+    </div>
+    <div class="actions">
+      <button type="submit" class="btn btn--primary">{{bi $lang "repoadmin.default_branch.save"}}</button>
+    </div>
+  </form>
+  {{else}}
+    <p class="empty">{{bi $lang "repoadmin.default_branch.none"}}</p>
+  {{end}}
+</section>
+
+<section class="setblock" aria-labelledby="rset-pages-h">
+  <h3 id="rset-pages-h" class="setblock__h">{{bi $lang "repoadmin.pages.title"}}</h3>
+  <ul class="rset__links">
+    {{with $p.ConfiguredChecksURL}}
+    <li><a href="{{.}}">{{bi $lang "cc.title"}}</a><span>{{bi $lang "repoadmin.pages.checks"}}</span></li>
+    {{end}}
+    {{with $p.RunnerTokensURL}}
+    <li><a href="{{.}}">{{bi $lang "runner.title"}}</a><span>{{bi $lang "repoadmin.pages.runners"}}</span></li>
+    {{end}}
+    {{with $p.HelperCredentialsURL}}
+    <li><a href="{{.}}">{{bi $lang "helper.title"}}</a><span>{{bi $lang "repoadmin.pages.helpers"}}</span></li>
+    {{end}}
+    {{with $p.ImportURL}}
+    <li><a href="{{.}}">{{bi $lang "import.title"}}</a><span>{{bi $lang "repoadmin.pages.import"}}</span></li>
+    {{end}}
+    {{with $p.DeleteURL}}
+    <li class="rset__danger"><a href="{{.}}">{{icon "trash"}}{{bi $lang "repoadmin.delete_tab"}}</a><span>{{bi $lang "repoadmin.pages.delete"}}</span></li>
+    {{end}}
+  </ul>
+</section>
+</div>
+{{end}}

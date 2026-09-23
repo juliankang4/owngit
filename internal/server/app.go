@@ -61,6 +61,8 @@ type App struct {
 	// sanitized owner-visible startup status. Empty code means available.
 	CheckRuntimeUnavailableCode   string
 	CheckRuntimeUnavailableReason string
+	// activity caches activity observations by ref key. See activityCache.
+	activity activityCache
 }
 
 func (app *App) Handler() http.Handler {
@@ -104,14 +106,24 @@ func (app *App) importRunLimits() importsync.Limits {
 	return importsync.Limits{RunTimeout: app.importRunTimeout()}
 }
 
-func (app *App) requestTimeout(request *http.Request) time.Duration {
+// replyReserve is the most time an ordinary request keeps after its work
+// deadline for writing the response.
+const replyReserve = 5 * time.Second
+
+// requestTimeout returns how long a request may take and how much of that
+// time is reserved after the handler's work deadline for writing the
+// response. Work that runs out of time, such as Git on slow storage, then
+// still produces an error page instead of an empty reply. An import run keeps
+// ImportResponseMargin beyond its own run deadline instead.
+func (app *App) requestTimeout(request *http.Request) (time.Duration, time.Duration) {
 	if importRunRequest(request) {
-		return ImportRunRequestTimeout(app.importRunTimeout())
+		return ImportRunRequestTimeout(app.importRunTimeout()), 0
 	}
+	timeout := 30 * time.Second
 	if app.HTTPTimeout > 0 {
-		return app.HTTPTimeout
+		timeout = app.HTTPTimeout
 	}
-	return 30 * time.Second
+	return timeout, min(replyReserve, timeout/4)
 }
 
 func importRunRequest(request *http.Request) bool {
@@ -163,8 +175,9 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	deadline := time.Now().Add(app.requestTimeout(request))
-	requestContext, cancel := context.WithDeadline(request.Context(), deadline)
+	timeout, reserve := app.requestTimeout(request)
+	deadline := time.Now().Add(timeout)
+	requestContext, cancel := context.WithDeadline(request.Context(), deadline.Add(-reserve))
 	defer cancel()
 	request = request.WithContext(requestContext)
 	controller := http.NewResponseController(writer)

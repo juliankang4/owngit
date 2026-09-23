@@ -306,6 +306,8 @@ const (
 	MsgActivityEmpty      MessageCode = "activity.empty"
 	MsgActivityIncomplete MessageCode = "activity.incomplete"
 	MsgActivityLimit      MessageCode = "activity.incomplete.limit"
+	MsgActivityCounting   MessageCode = "activity.incomplete.counting"
+	MsgActivityCountRepo  MessageCode = "activity.incomplete.counting_repository"
 	MsgActivityScanFail   MessageCode = "activity.incomplete.scan_failed"
 	MsgActivityUnavail    MessageCode = "activity.unavailable"
 	MsgActivityNotBuilt   MessageCode = "activity.unavailable.not_built"
@@ -443,8 +445,8 @@ var catalog = map[MessageCode]message{
 		ko: "저장소는 이 폴더 안에 만들어집니다. 폴더에 이미 있던 파일은 건드리지 않습니다.",
 	},
 	MsgSetupStorageLocal: {
-		en: "Use a folder on this computer's own disk. Settings and the index are stored beside the server, not on a network share.",
-		ko: "이 컴퓨터의 디스크에 있는 폴더를 사용하세요. 설정과 색인은 네트워크 공유가 아니라 서버가 있는 컴퓨터에 보관합니다.",
+		en: "The folder can be on this computer's disk or on a mounted SMB or NFS share, as long as only one OwnGit uses it at a time. Settings and the database always stay on this computer.",
+		ko: "이 컴퓨터의 디스크나 마운트한 SMB 또는 NFS 공유 폴더를 쓸 수 있습니다. 단, 한 번에 하나의 OwnGit만 그 폴더를 써야 합니다. 설정과 데이터베이스는 항상 이 컴퓨터에 보관합니다.",
 	},
 	MsgSetupStorageMissing: {
 		en: "Enter the folder where repositories should be stored.",
@@ -467,8 +469,8 @@ var catalog = map[MessageCode]message{
 		ko: "그 폴더에는 이미 다른 설치의 데이터가 있습니다.",
 	},
 	MsgSetupStorageRemote: {
-		en: "That folder looks like a network share. Repository storage there is not runtime-verified yet, and the database always stays on this computer.",
-		ko: "그 폴더는 네트워크 공유로 보입니다. 그곳의 저장소 보관은 아직 실행 환경에서 검증되지 않았으며, 데이터베이스는 항상 이 컴퓨터에 남습니다.",
+		en: "That folder looks like a network share. Repositories can be kept there while only one OwnGit uses it at a time. The database always stays on this computer.",
+		ko: "그 폴더는 네트워크 공유로 보입니다. 한 번에 하나의 OwnGit만 쓴다면 저장소를 그곳에 둘 수 있습니다. 데이터베이스는 항상 이 컴퓨터에 남습니다.",
 	},
 	MsgSetupAccessLabel: {
 		en: "Who can read and write repositories",
@@ -1245,6 +1247,14 @@ var catalog = map[MessageCode]message{
 	MsgActivityLimit: {
 		en: "Counting stopped at this installation's limit, so the real total is higher.",
 		ko: "이 설치의 한도에서 집계를 멈췄습니다. 실제 합계는 이보다 많습니다.",
+	},
+	MsgActivityCounting: {
+		en: "Some repositories are still being counted. Reload the page to see the full count.",
+		ko: "일부 저장소를 아직 집계하고 있습니다. 전체 집계를 보려면 페이지를 새로 고치세요.",
+	},
+	MsgActivityCountRepo: {
+		en: "This repository is still being counted. Reload the page to see the full count.",
+		ko: "이 저장소를 아직 집계하고 있습니다. 전체 집계를 보려면 페이지를 새로 고치세요.",
 	},
 	MsgActivityScanFail: {
 		en: "Some repositories could not be read while counting.",

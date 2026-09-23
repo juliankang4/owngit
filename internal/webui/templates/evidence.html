@@ -20,6 +20,11 @@
   {{with $t.PullRequestsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "pull-requests"}} aria-current="page"{{end}}>{{bi $lang "pr.tab"}}</a>{{end}}
   {{with $t.TasksURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "checks"}} aria-current="page"{{end}}>{{bi $lang "tasks.tab"}}</a>{{end}}
   {{with $t.ImportsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "import"}} aria-current="page"{{end}}>{{bi $lang "import.tab"}}</a>{{end}}
+  {{with $t.SettingsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "settings"}} aria-current="page"{{end}}>{{bi $lang "repoadmin.settings_tab"}}</a>{{end}}
+  {{/* The delete control sits apart at the right end. It is a plain link to
+       a confirmation page, never an action by itself, and it reads as
+       dangerous through its word and trash shape as well as its colour. */}}
+  {{with $t.DeleteURL}}<a class="rtabs__btn rtabs__btn--danger" href="{{.}}"{{if eq $t.Active "delete"}} aria-current="page"{{end}}>{{icon "trash"}}<span>{{bi $lang "repoadmin.delete_tab"}}</span></a>{{end}}
 </nav>
 {{end}}
 

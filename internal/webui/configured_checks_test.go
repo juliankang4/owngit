@@ -3,7 +3,6 @@ package webui
 import (
 	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +55,38 @@ func ccFixtureRanges() map[string]FieldRange {
 		// field instead of a number. Its ceiling is fixed like every other.
 		"source_max_total_bytes": {MinLabel: MsgCCSrcFileBytes, Max: 4294967296, Known: true},
 	}
+}
+
+// ccFixtureDefaults supplies the defaults the renderer states. Server tests
+// verify that production views receive the backend's own numbers.
+func ccFixtureDefaults() map[string]int64 {
+	return map[string]int64{
+		"source_max_entries": 20000, "source_max_file_bytes": 64 << 20, "source_max_total_bytes": 256 << 20,
+		"source_max_path_depth": 64, "source_max_path_bytes": 1024, "source_max_name_bytes": 255,
+		"source_metadata_limit_bytes": 16 << 20,
+		"container_cpu_millis":        1000, "container_memory_bytes": 512 << 20, "container_pids": 256,
+		"container_scratch_bytes": 512 << 20,
+	}
+}
+
+// ccFixtureLimits writes a stored policy's numbers into the form the way the
+// server adapter does: each in the largest unit that holds it exactly.
+func ccFixtureLimits(p CheckPolicyView) map[string]LimitInput {
+	stored := map[string]int64{
+		"max_timeout_ms": p.MaxTimeoutMS, "max_output_limit_bytes": p.MaxOutputLimitBytes,
+		"queue_limit": int64(p.QueueLimit), "max_active_jobs": int64(p.MaxActiveJobs), "max_lease_ms": p.MaxLeaseMS,
+		"source_max_entries": int64(p.Source.MaxEntries), "source_max_file_bytes": p.Source.MaxFileBytes,
+		"source_max_total_bytes": p.Source.MaxTotalBytes, "source_max_path_depth": int64(p.Source.MaxPathDepth),
+		"source_max_path_bytes": int64(p.Source.MaxPathBytes), "source_max_name_bytes": int64(p.Source.MaxNameBytes),
+		"source_metadata_limit_bytes": p.Source.MetadataLimit,
+		"container_cpu_millis":        p.Container.CPUMillis, "container_memory_bytes": p.Container.MemoryBytes,
+		"container_pids": p.Container.PIDs, "container_scratch_bytes": p.Container.ScratchBytes,
+	}
+	limits := map[string]LimitInput{}
+	for _, limit := range PolicyLimitFields() {
+		limits[limit.Field] = FormatLimit(limit.Kind, stored[limit.Field], limit.Unit)
+	}
+	return limits
 }
 
 func savedPolicyView() CheckPolicyView {
@@ -130,16 +161,14 @@ func configuredChecksPage(c Chrome, fixture ccFixture) ConfiguredChecksPage {
 	}
 	page.Form = CheckPolicyForm{
 		Executor: ExecutorContainer, PushSelected: true, PullRequestSelected: true,
-		MaxTimeoutMS: "600000", MaxOutputLimitBytes: "262144", QueueLimit: "20",
-		MaxActiveJobs: "2", MaxLeaseMS: "120000",
-		SourceMaxEntries: "20000", SourceMaxFileBytes: "5242880",
-		SourceMaxTotalBytes: "134217728", SourceMaxPathDepth: "32",
-		SourceMaxPathBytes: "1024", SourceMaxNameBytes: "255", SourceMetadataLimitBytes: "65536",
 		ContainerImage: "registry.local/owngit-checks@sha256:aaaa", ContainerNetwork: ContainerNetworkNone,
-		ContainerCPUMillis: "2000", ContainerMemoryBytes: "2147483648",
-		ContainerPIDs: "512", ContainerScratchBytes: "1073741824",
-		Ranges: ccFixtureRanges(),
+		Limits:   ccFixtureLimits(page.Policy),
+		Ranges:   ccFixtureRanges(),
+		Defaults: ccFixtureDefaults(),
 	}
+	page.CheckFile = CheckFileView{State: CheckFileFound, Branch: "main", Checks: 2,
+		Events: []string{CheckEventPullRequest, CheckEventPush}}
+	page.RunnerTokensKnown, page.ActiveRunnerTokens = true, 1
 
 	switch fixture {
 	case ccFixtureNoPolicy:
@@ -148,8 +177,9 @@ func configuredChecksPage(c Chrome, fixture ccFixture) ConfiguredChecksPage {
 		// are what the first submission will be judged against.
 		page.Form = CheckPolicyForm{
 			Executor: ExecutorHost, ContainerNetwork: ContainerNetworkNone,
-			Ranges: ccFixtureRanges(),
+			Ranges: ccFixtureRanges(), Defaults: ccFixtureDefaults(),
 		}
+		page.CheckFile = CheckFileView{State: CheckFileMissing, Branch: "main"}
 		page.Jobs = nil
 	case ccFixtureRuntimeDown:
 		page.Runtime = CheckRuntimeView{Code: RuntimeWorkspaceUnavailable}
@@ -264,10 +294,16 @@ func TestEveryNumericFieldShowsItsAcceptedRange(t *testing.T) {
 					t.Errorf("fixture %d/%s: %s does not show its accepted range: %q",
 						fixture, lang, field, want)
 				}
-				// Whatever the floor looks like, the maximum is always stated.
-				if !strings.Contains(out, strconv.FormatInt(bounds.Max, 10)) {
-					t.Errorf("fixture %d/%s: %s does not state its maximum %d",
-						fixture, lang, field, bounds.Max)
+				// Whatever the floor looks like, the maximum is always stated,
+				// in the units a reader uses rather than as a raw byte or
+				// millisecond count.
+				limit, known := PolicyLimitFor(field)
+				if !known {
+					t.Fatalf("%s has a range but no control", field)
+				}
+				if max := humanLimit(lang, limit.Kind, bounds.Max); !strings.Contains(out, max) {
+					t.Errorf("fixture %d/%s: %s does not state its maximum %q",
+						fixture, lang, field, max)
 				}
 			}
 		}
@@ -281,7 +317,7 @@ func TestARefusedFieldStillShowsTheRangeItsMessageRefersTo(t *testing.T) {
 	ranges := ccFixtureRanges()
 	for _, lang := range Langs() {
 		page := configuredChecksPage(fullChrome(lang), ccFixtureEnabled)
-		page.Form.MaxTimeoutMS = "5"
+		page.Form.Limits["max_timeout_ms"] = LimitInput{Amount: "5", Unit: UnitSeconds}
 		page.Chrome.Notices = []Notice{Error("max_timeout_ms", MsgCCFieldRange)}
 		page.PendingAction = ActionSaveCheckPolicy
 		out := render(t, r, page)
@@ -370,7 +406,7 @@ func TestRefusedPolicyKeepsWhatWasTypedAndNeverThePassword(t *testing.T) {
 	r := newRenderer(t)
 	page := configuredChecksPage(fullChrome(LangEN), ccFixtureEnabled)
 	page.PendingAction = ActionSaveCheckPolicy
-	page.Form.MaxTimeoutMS = "99999999999"
+	page.Form.Limits["max_timeout_ms"] = LimitInput{Amount: "99999999999", Unit: UnitHours}
 	page.Form.ContainerImage = "registry.local/rejected-image"
 	page.Chrome.Notices = []Notice{Error("max_timeout_ms", MsgCCNumberInvalid)}
 	out := render(t, r, page)

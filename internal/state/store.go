@@ -1456,9 +1456,21 @@ func (s *Store) ClearAttempts(ctx context.Context, kind, address string) error {
 	return err
 }
 
+// AddRepository records a repository. It refuses an ID whose earlier deletion
+// is unfinished, so no path can claim a name before that deletion completes.
 func (s *Store) AddRepository(ctx context.Context, repository Repository) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO repositories(id,name,description,created_at) VALUES(?,?,?,?)`, repository.ID, repository.Name, repository.Description, repository.CreatedAt.Unix())
-	return err
+	result, err := s.db.ExecContext(ctx, `INSERT INTO repositories(id,name,description,created_at) SELECT ?,?,?,?
+		WHERE NOT EXISTS(SELECT 1 FROM metadata WHERE key=?)`,
+		repository.ID, repository.Name, repository.Description, repository.CreatedAt.Unix(), repositoryDeletionKey(repository.ID))
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected == 0 {
+		return ErrRepositoryDeletionPending
+	}
+	return nil
 }
 
 func (s *Store) Repository(ctx context.Context, id string) (Repository, bool, error) {

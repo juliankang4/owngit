@@ -38,6 +38,8 @@ var pageNames = []string{
 	"helper-credentials",
 	"configured-checks",
 	"runner-credentials",
+	"repository-settings",
+	"repository-delete",
 	"error",
 }
 
@@ -268,6 +270,14 @@ func chromeOf(page Page) (Chrome, bool) {
 		return p.Chrome, true
 	case RunnerCredentialsPage:
 		return p.Chrome, true
+	case RepositorySettingsPage:
+		return p.Chrome, true
+	case *RepositorySettingsPage:
+		return p.Chrome, true
+	case RepositoryDeletePage:
+		return p.Chrome, true
+	case *RepositoryDeletePage:
+		return p.Chrome, true
 	case *RunnerCredentialsPage:
 		return p.Chrome, true
 	case ErrorPage:
@@ -355,6 +365,14 @@ func documentTitle(page Page, lang Lang) string {
 		section = scopedTitle(lang, MsgRTTitle, p.Repo.Name)
 	case *RunnerCredentialsPage:
 		section = scopedTitle(lang, MsgRTTitle, p.Repo.Name)
+	case RepositorySettingsPage:
+		section = scopedTitle(lang, MsgRepoSettingsTitle, p.Repo.Name)
+	case *RepositorySettingsPage:
+		section = scopedTitle(lang, MsgRepoSettingsTitle, p.Repo.Name)
+	case RepositoryDeletePage:
+		section = scopedTitle(lang, MsgRepoDeleteTitle, p.Repo.Name)
+	case *RepositoryDeletePage:
+		section = scopedTitle(lang, MsgRepoDeleteTitle, p.Repo.Name)
 	case ErrorPage:
 		section = Text(lang, p.Code)
 	case *ErrorPage:
@@ -433,6 +451,15 @@ func canonicalURL(page Page, chrome Chrome) string {
 		return firstURL(p.SubmitURL, chrome.CurrentURL)
 	case *NewImportPage:
 		return firstURL(p.SubmitURL, chrome.CurrentURL)
+	// Both administrator screens answer their forms on the POST route.
+	case RepositorySettingsPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case *RepositorySettingsPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case RepositoryDeletePage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case *RepositoryDeletePage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
 	}
 	return chrome.CurrentURL
 }

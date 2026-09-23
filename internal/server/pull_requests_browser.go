@@ -508,6 +508,8 @@ func repositoryTabs(page webui.RepositoryPage, active webui.RepoTab) webui.RepoT
 		PullRequestsURL: page.PullRequestsURL,
 		TasksURL:        page.TasksURL,
 		ImportsURL:      page.ImportsURL,
+		SettingsURL:     page.SettingsURL,
+		DeleteURL:       page.DeleteURL,
 		Active:          active,
 	}
 }

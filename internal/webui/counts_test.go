@@ -133,6 +133,7 @@ func TestEmptyRepositorySectionsReadCorrectly(t *testing.T) {
 	page.Overview.Branches = nil
 	page.Overview.Tags = nil
 	page.Overview.RetainedRefs = nil
+	page.Overview.BranchCount, page.Overview.TagCount, page.Overview.RetainedCount = 0, 0, 0
 
 	out := render(t, r, page)
 	for _, wrong := range []string{"branchs", "0 branchs", "tagss", "itemss"} {
@@ -145,7 +146,10 @@ func TestEmptyRepositorySectionsReadCorrectly(t *testing.T) {
 	}
 
 	// And with exactly one, the singular is used.
+	// The count is the repository's total, which the side column keeps even
+	// when it lists only the newest few.
 	page.Overview.Branches = []RefLine{{Name: "main", URL: "/x", Kind: "branch", IsDefault: true}}
+	page.Overview.BranchCount = 1
 	out = render(t, r, page)
 	if !strings.Contains(out, "1 branch") || strings.Contains(out, "1 branches") {
 		t.Error(`a repository with one branch does not read "1 branch"`)
@@ -158,6 +162,7 @@ func TestCountsRenderInBothLanguagesOnTheSameElement(t *testing.T) {
 	r := newRenderer(t)
 	page := repoPage(fullChrome(LangEN), RepoTabOverview)
 	page.Overview.Branches = nil
+	page.Overview.BranchCount = 0
 	out := render(t, r, page)
 
 	if !strings.Contains(out, `data-en="0 branches"`) {

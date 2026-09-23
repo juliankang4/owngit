@@ -75,6 +75,38 @@ func (service *Service) readRef(ctx context.Context, repositoryPath, ref string)
 	return oid, true, nil
 }
 
+// refReader reads one ref and reports a missing ref with exists false.
+type refReader func(ctx context.Context, repositoryPath, ref string) (oid string, exists bool, err error)
+
+// knownRefs answers ref reads from one listing taken under the repository
+// lock. It is valid only while that lock is held and no listed ref is written.
+type knownRefs map[string]string
+
+func (service *Service) listPullRequestRefs(ctx context.Context, repositoryPath string) (knownRefs, error) {
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/owngit/pull-requests")
+	if err != nil {
+		return nil, &Problem{Code: "repository_unavailable", Message: "Pull request refs could not be read.", Cause: err}
+	}
+	known := make(knownRefs)
+	for _, line := range strings.Split(strings.TrimSpace(string(result.Stdout)), "\n") {
+		if name, oid, ok := strings.Cut(line, "\x00"); ok {
+			known[name] = oid
+		}
+	}
+	return known, nil
+}
+
+func (known knownRefs) read(_ context.Context, _ string, ref string) (string, bool, error) {
+	oid, exists := known[ref]
+	if !exists {
+		return "", false, nil
+	}
+	if !validOID(oid) {
+		return "", false, NewProblem("repository_integrity_error", "Git returned an invalid object ID for a repository ref.")
+	}
+	return oid, true, nil
+}
+
 func (service *Service) ensureRevisionRefs(ctx context.Context, repositoryPath string, record state.PullRequest, sourceOID, targetOID string) error {
 	sourceRef, targetRef := RevisionRefNames(record.Number, sourceOID, targetOID)
 	commands := []string{"start"}
@@ -111,14 +143,14 @@ func (service *Service) ensureRevisionRefs(ctx context.Context, repositoryPath s
 	return nil
 }
 
-func (service *Service) ensureStoredRevisionRefs(ctx context.Context, repositoryPath string, revision state.PullRequestRevision) error {
+func (service *Service) ensureStoredRevisionRefs(ctx context.Context, repositoryPath string, revision state.PullRequestRevision, readRef refReader) error {
 	sourceRef, targetRef := RevisionRefNames(revision.PullRequestNumber, revision.SourceOID, revision.TargetOID)
 	commands := []string{"start"}
 	for _, binding := range []struct {
 		name string
 		oid  string
 	}{{sourceRef, revision.SourceOID}, {targetRef, revision.TargetOID}} {
-		actual, exists, err := service.readRef(ctx, repositoryPath, binding.name)
+		actual, exists, err := readRef(ctx, repositoryPath, binding.name)
 		if err != nil {
 			return err
 		}

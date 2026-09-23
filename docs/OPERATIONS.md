@@ -59,6 +59,33 @@ An existing branch receives a new commit whose parent is its previous tip. A del
 
 Restore changes Git-tracked content in OwnGit only. It does not touch another computer's working tree or its uncommitted files.
 
+## Changing the default branch
+
+The default branch is the branch that OwnGit and `git clone` open first (the repository's `HEAD`). An imported repository whose only branch is `master` shows no default branch until you choose one. An administrator picks any existing branch in the repository's Settings tab. Changing it creates no branch and leaves every ref and retained history as it was.
+
+## Deleting a repository
+
+Deleting a repository removes it from OwnGit together with its pull requests, reviews, tasks, check settings, jobs and results, runner and helper credentials, import settings, run history and stored import credentials. Queued check jobs are dropped. An administrator deletes a repository with Delete repository, at the end of the repository's tabs, by typing its name and the administrator password. When the deletion finishes, the name is free for a new repository. You choose what happens to the files:
+
+- Keep files moves the bare repository, unchanged, to `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git` inside the repository folder. `ID` is the repository name in lowercase, as in its Git URL, and the time is UTC; a number is added if that name is taken. Its branches, tags and retained history stay in that folder until you remove it yourself.
+- Delete files deletes the bare repository, including its retained history.
+
+OwnGit refuses to delete a repository while an import is running, while a check job is claimed or running, while a check container still waits for OwnGit to confirm its removal, or while another Git operation (a push, clone, restore or merge) still holds the repository after a short wait. Try again once it finishes. A container cleanup that failed is retried when OwnGit starts, so restart OwnGit after Docker is available again. If the server log says the job belongs to another Docker daemon (for example after Docker was reset or reinstalled), OwnGit cannot confirm the cleanup: remove any leftover `owngit-check-*` container yourself, and expect the repository to stay undeletable until the original Docker daemon is back, because this version has no command to release that record.
+
+OwnGit records the deletion in its state database before it moves or deletes the files. If OwnGit stops partway, or the files cannot be moved or deleted, the deletion reports that its files are not finished. The repository is already gone from the dashboard and from Git URLs, and creating or importing a repository with the same name reports that the name is in use. The files stay at `ID.git`, at their kept-folder path, or under a temporary `.owngit-delete-*` name. The next start of OwnGit finishes the move or deletion and frees the name; if it cannot, the reason is in the server log and the files stay where they are.
+
+While a deletion is unfinished, the repository folder also holds a small `.owngit-deletion-ID` file with a random token for that deletion. It shows OwnGit that the folder is the storage the deletion began on. If the file is missing or holds another token at startup, for example because the storage is not mounted or an older copy of it is mounted, OwnGit keeps the deletion recorded, logs that the storage may be unavailable, and tries again at the next start. Do not remove this file while a deletion is unfinished. If you removed it by hand while the correct storage was mounted, recreate it in the repository folder with the `token ...` line quoted in the server log, then restart OwnGit. A leftover file after a finished deletion is harmless. OwnGit never follows a symbolic link while deleting and never removes anything outside that repository's directory. A Git request that was already waiting when the deletion started fails afterwards.
+
+Earlier backups still contain a deleted repository, and the database space its records used is freed but not securely erased. Folders under `.owngit-removed` are never listed as repositories and are not included in backups.
+
+After a Keep files deletion, the dashboard shows the kept folder and this command once. To bring back a kept repository, create a new empty repository in the dashboard, then push the branches and tags from the kept folder:
+
+```sh
+git --git-dir /path/to/repositories/.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git push http://HOST:7654/git/NEW-NAME.git 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
+```
+
+Retained history is not transferred. Commits that only retained history holds stay in the kept folder, and the new repository starts its own retained history. Pull requests, checks and other records do not come back either. If the kept repository's main branch is not `main`, change the default branch afterwards.
+
 ## Moving an existing repository into OwnGit
 
 Create an empty repository in the dashboard. From a clone of the existing repository, add OwnGit as a remote and push branches and tags:
@@ -273,7 +300,9 @@ Raw check logs are stored in `owngit.sqlite`, limited to 256 KiB each, and kept 
 
 - The state directory is the platform config directory joined with `owngit`, or `~/.owngit` when no config directory is available. It holds `owngit.sqlite` and, while the database is in use, its `-wal` and `-shm` files. Keep it on local storage, never on a network share used by other computers. Windows network (UNC) paths are refused.
 - Choose the repository folder during setup. It can be on a separate disk or a mounted SMB or NFS share, with one OwnGit writer at a time. OwnGit leaves existing files in the folder alone and creates repositories there as bare repositories ending in `.git`.
+- The activity graph and recent activity are counted in the background when the server starts, and again when a page is opened after a branch changes. Counts are reused until the branches change. On a slow share the dashboard can appear before counting finishes; it then says that some repositories are still being counted, and reloading shows the full count.
 - A new repository is written under a temporary `.owngit-create-*` name and then renamed into place. On Windows, antivirus or search indexing can briefly lock the new directory. OwnGit retries for about 2 seconds; if the error persists, try again.
+- A repository deleted with its files is first renamed to a temporary `.owngit-delete-*` name and then removed. Kept repositories go to the `.owngit-removed` folder. A `.owngit-deletion-*` file marks a deletion that is still unfinished. See [Deleting a repository](#deleting-a-repository).
 - Repository names cannot end in `.git` or use Windows device names such as `CON`, `AUX`, `NUL`, `COM1`, or `LPT1`, with or without an extension. `new` and `new-import` are reserved. These rules apply on every platform.
 - Expired logs free space inside the database for reuse, but the file does not shrink, the old bytes are not securely erased, and there is no overall size limit. OwnGit does not run `VACUUM`.
 - When a `-wal` or `-shm` file is present at startup, OwnGit copies the database and its WAL to a private temporary directory to inspect them. The temporary volume needs about that much free space.
@@ -284,7 +313,7 @@ Raw check logs are stored in `owngit.sqlite`, limited to 256 KiB each, and kept 
 
 ## Offline backups
 
-Retained history protects against force-pushes and deletions, but it is not a backup. OwnGit has no way to delete it: a secret that was ever pushed stays visible in the browser and is included in every later backup, even after a force-push or branch deletion. Rotate any secret you push by mistake. OwnGit does not schedule backups. Stop OwnGit before creating one. The output directory must not exist:
+Retained history protects against force-pushes and deletions, but it is not a backup. A secret that was ever pushed stays visible in the browser and is included in every later backup, even after a force-push or branch deletion. Only [deleting the repository](#deleting-a-repository) with its files removes that history, and earlier backups still contain it. Rotate any secret you push by mistake. OwnGit does not schedule backups. Stop OwnGit before creating one. The output directory must not exist:
 
 ```sh
 ./bin/owngit backup \

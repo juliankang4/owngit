@@ -101,7 +101,7 @@ func (service *Service) createForHeadsLocked(ctx context.Context, repositoryID, 
 		return nil, &Problem{Code: "state_unavailable", Message: "The provisional pull request metadata could not be saved.", Cause: err}
 	}
 	if err := service.ensureRevisionRefs(ctx, repositoryPath, record, sourceHead.OID, targetHead.OID); err != nil {
-		reconciled, activated, reconcileErr := service.reconcileProvisionalCreationLocked(ctx, repositoryPath, record)
+		reconciled, activated, reconcileErr := service.reconcileProvisionalCreationLocked(ctx, repositoryPath, record, service.readRef)
 		if reconcileErr != nil {
 			return nil, reconcileErr
 		}
@@ -117,7 +117,7 @@ func (service *Service) createForHeadsLocked(ctx context.Context, repositoryID, 
 	return service.viewForHeads(ctx, repositoryPath, record, sourceHead, targetHead)
 }
 
-func (service *Service) reconcileProvisionalCreationLocked(ctx context.Context, repositoryPath string, record state.PullRequest) (state.PullRequest, bool, error) {
+func (service *Service) reconcileProvisionalCreationLocked(ctx context.Context, repositoryPath string, record state.PullRequest, readRef refReader) (state.PullRequest, bool, error) {
 	revisions, err := service.Store.PullRequestRevisionsFor(ctx, record.RepositoryID, record.Number)
 	if err != nil {
 		return state.PullRequest{}, false, &Problem{Code: "state_unavailable", Message: "The provisional pull request revision could not be read.", Cause: err}
@@ -127,11 +127,11 @@ func (service *Service) reconcileProvisionalCreationLocked(ctx context.Context, 
 	}
 	revision := revisions[0]
 	sourceRef, targetRef := RevisionRefNames(record.Number, revision.SourceOID, revision.TargetOID)
-	sourceOID, sourceExists, err := service.readRef(ctx, repositoryPath, sourceRef)
+	sourceOID, sourceExists, err := readRef(ctx, repositoryPath, sourceRef)
 	if err != nil {
 		return state.PullRequest{}, false, NewProblem("pull_request_creation_reconciliation_pending", "The provisional pull request source revision could not be read safely.")
 	}
-	targetOID, targetExists, err := service.readRef(ctx, repositoryPath, targetRef)
+	targetOID, targetExists, err := readRef(ctx, repositoryPath, targetRef)
 	if err != nil {
 		return state.PullRequest{}, false, NewProblem("pull_request_creation_reconciliation_pending", "The provisional pull request target revision could not be read safely.")
 	}
@@ -488,14 +488,21 @@ func (service *Service) ReconcileAll(ctx context.Context) error {
 		}
 		lock := service.Repositories.Locks.For(stored.ID)
 		lock.Lock()
+		// One listing under the lock answers every pull request ref read
+		// below, instead of one Git process per ref.
+		known, err := service.listPullRequestRefs(ctx, repositoryPath)
+		if err != nil {
+			lock.Unlock()
+			return fmt.Errorf("read pull request refs for %s: %w", stored.ID, err)
+		}
 		for _, record := range provisional {
-			if _, _, err := service.reconcileProvisionalCreationLocked(ctx, repositoryPath, record); err != nil {
+			if _, _, err := service.reconcileProvisionalCreationLocked(ctx, repositoryPath, record, known.read); err != nil {
 				lock.Unlock()
 				return fmt.Errorf("reconcile pull request creation %s#%d: %w", stored.ID, record.Number, err)
 			}
 		}
 		for _, revision := range revisions {
-			if err := service.ensureStoredRevisionRefs(ctx, repositoryPath, revision); err != nil {
+			if err := service.ensureStoredRevisionRefs(ctx, repositoryPath, revision, known.read); err != nil {
 				lock.Unlock()
 				return fmt.Errorf("repair pull request revision %s#%d: %w", stored.ID, revision.PullRequestNumber, err)
 			}

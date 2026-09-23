@@ -264,6 +264,8 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 		GitVersion: "git version test", HTTPBackendFound: true,
 	}
 	gitHandler.Authorize = app.AuthorizeGit
+	// Background activity counting ends before the store and directories go.
+	t.Cleanup(app.StopBackground)
 	return app, store, repositoryRoot
 }
 

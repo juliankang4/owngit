@@ -287,6 +287,8 @@ func noticeFromQuery(request *http.Request) []webui.Notice {
 		return []webui.Notice{webui.Info(webui.MsgCCJobRerunExisting)}
 	case "runner_token_revoked":
 		return []webui.Notice{webui.Success(webui.MsgRTRevokedDone)}
+	case "default_branch_saved":
+		return []webui.Notice{webui.Success(webui.MsgRepoDefaultBranchSaved)}
 	default:
 		return nil
 	}

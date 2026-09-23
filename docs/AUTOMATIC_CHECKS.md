@@ -93,12 +93,28 @@ is no background retry and no fallback to another executor.
 Two administrator screens offer the same operations. Every change asks for the
 current administrator password.
 
-`/repositories/{id}/configured-checks` edits the policy, turns execution on or
-off, and lists jobs. It shows separately whether a policy is stored, whether
-execution is enabled, and whether the execution environment is available. Each
-numeric field shows its accepted range, and a refused value is explained next
-to its field. Enabling approves the policy version shown on screen; if someone
-saved a different policy in the meantime, the request is refused with 409.
+`/repositories/{id}/configured-checks` (the **Automatic checks** screen, linked
+from the repository's Checks and Settings tabs) edits the policy, turns
+execution on or off, and lists jobs. It opens with a status summary: whether
+checks are on, where and when they run, whether the default branch has a valid
+`.owngit/checks.json`, whether a policy is stored, whether the execution
+environment is available, and the next thing to do. The setup follows five
+steps: choose where checks run, choose when they run, add a check file (the
+screen shows a minimal example you can copy), save the settings, and turn
+checks on. Container settings appear only when the container is selected.
+
+Limits sit under **Advanced limits** with working values filled in. Times are
+entered in seconds, minutes, or hours and sizes in bytes, KB, MB, or GB, where
+1 KB is 1024 bytes. Each field shows its accepted range and, where the backend
+has one, its default. A refused value is explained next to its field. An
+amount that does not convert to a whole number of milliseconds, bytes, or
+thousandths of a core is refused. The time and output limits are maximums: a
+check gets 10 minutes and keeps 64 KiB of output unless its check file asks
+for a different value under `limits`. In container and runner modes the next
+step never promises that checks will run, because the screen cannot see
+whether Docker or a runner is ready. Enabling approves the policy version shown
+on screen; if someone saved a different policy in the meantime, the request is
+refused with 409.
 
 A job page shows the commit, executor, workflow path, configuration and policy
 versions, and timestamps captured when the job was admitted, so an older job
@@ -184,8 +200,8 @@ defaults:
 | `max_name_bytes` | 255 bytes per name |
 | `metadata_limit_bytes` | 16 MiB of tree listing |
 
-`max_total_bytes` cannot be smaller than `max_file_bytes`. The policy screen
-shows the accepted range of each field.
+`max_total_bytes` cannot be smaller than `max_file_bytes`. The Automatic checks
+screen shows the accepted range and default of each field.
 
 ## Executors
 

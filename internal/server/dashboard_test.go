@@ -452,10 +452,12 @@ func TestRepositoryPageKeepsRefRowsWhenOneMetadataBatchFails(t *testing.T) {
 	}
 }
 
-// pageSection returns the rendered section that starts at the given heading.
+// pageSection returns the rendered section that starts at the given section
+// heading. It matches the h2, because the overview's summary strip names the
+// same groups as labels above their counts.
 func pageSection(t *testing.T, body, heading string) string {
 	t.Helper()
-	start := strings.Index(body, ">"+heading+"<")
+	start := strings.Index(body, ">"+heading+"</span></h2>")
 	if start < 0 {
 		t.Fatalf("page has no %s section", heading)
 	}

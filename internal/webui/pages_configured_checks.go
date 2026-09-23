@@ -126,6 +126,16 @@ type ConfiguredChecksPage struct {
 	// JobsUnavailable is true when the job records could not be read. The
 	// section says so instead of rendering an empty list that reads as "none".
 	JobsUnavailable bool
+
+	// CheckFile is what the default branch currently holds at the check file
+	// path.
+	CheckFile CheckFileView
+	// ActiveRunnerTokens counts the repository's unrevoked runner tokens, and
+	// RunnerTokensKnown says whether that count could be read. A token is not
+	// proof that a runner is connected; the count only tells an owner who
+	// chose the runner mode whether they have created one at all.
+	ActiveRunnerTokens int
+	RunnerTokensKnown  bool
 }
 
 func (ConfiguredChecksPage) page() string { return "configured-checks" }
@@ -241,31 +251,32 @@ type CheckPolicyForm struct {
 	// beside each field so "the accepted range" is shown rather than merely
 	// referred to.
 	Ranges map[string]FieldRange
+	// Defaults maps a field name to the value the backend uses when the field
+	// is left empty. A field without an entry has no default and is required.
+	Defaults map[string]int64
 
 	Executor            string
 	PushSelected        bool
 	PullRequestSelected bool
 
-	MaxTimeoutMS        string
-	MaxOutputLimitBytes string
-	QueueLimit          string
-	MaxActiveJobs       string
-	MaxLeaseMS          string
+	// Limits holds every numeric field by its backend name, as an amount and
+	// a unit. See PolicyLimitFields for the list.
+	Limits map[string]LimitInput
 
-	SourceMaxEntries         string
-	SourceMaxFileBytes       string
-	SourceMaxTotalBytes      string
-	SourceMaxPathDepth       string
-	SourceMaxPathBytes       string
-	SourceMaxNameBytes       string
-	SourceMetadataLimitBytes string
+	ContainerImage   string
+	ContainerNetwork string
+}
 
-	ContainerImage        string
-	ContainerNetwork      string
-	ContainerCPUMillis    string
-	ContainerMemoryBytes  string
-	ContainerPIDs         string
-	ContainerScratchBytes string
+// Limit is one numeric field as the form shows it. A field the map does not
+// hold starts empty in its usual unit.
+func (f CheckPolicyForm) Limit(field string) LimitInput {
+	if value, present := f.Limits[field]; present {
+		return value
+	}
+	if limit, known := PolicyLimitFor(field); known {
+		return LimitInput{Unit: limit.Unit}
+	}
+	return LimitInput{}
 }
 
 // IsHost, IsContainer, and IsExternalRunner select the checked radio.
@@ -277,6 +288,41 @@ func (f CheckPolicyForm) IsExternalRunner() bool {
 
 // NetworkIsBridge reports the selected container network.
 func (f CheckPolicyForm) NetworkIsBridge() bool { return f.ContainerNetwork == ContainerNetworkBridge }
+
+// Check file states on the default branch.
+const (
+	// CheckFileFound means the file is there and OwnGit accepts it.
+	CheckFileFound = "found"
+	// CheckFileMissing means the default branch has no check file.
+	CheckFileMissing = "missing"
+	// CheckFileInvalid means the file is there but OwnGit refuses it.
+	CheckFileInvalid = "invalid"
+	// CheckFileNoCommits means the repository has no default branch commit
+	// to look in yet.
+	CheckFileNoCommits = "no_commits"
+	// CheckFileUnreadable means the lookup itself failed. It is not a
+	// statement that the file is absent.
+	CheckFileUnreadable = "unreadable"
+)
+
+// CheckFileView is what the default branch says about the check file right
+// now. It is a hint for the owner, not a job input: every job reads the file
+// from the exact commit it checks.
+type CheckFileView struct {
+	// State is one of the CheckFile* values. Empty means it was not looked up.
+	State string
+	// Branch is the default branch name the lookup used.
+	Branch string
+	// Checks is the number of commands an accepted file defines.
+	Checks int
+	// Events are the events an accepted file turns on, in canonical order.
+	Events []string
+	// Problem is the parser's untranslated reason for refusing the file.
+	Problem string
+}
+
+// Found reports an accepted check file.
+func (v CheckFileView) Found() bool { return v.State == CheckFileFound }
 
 // CheckRuntimeView is what the backend observed about the execution
 // environment at startup. It is deliberately separate from policy and consent:
