@@ -114,9 +114,7 @@ func TestRealDockerConfiguredChecks(t *testing.T) {
 			assertContainerRestrictions(t, inspection, fixture.sourcePath(job.ID), job.ID, network)
 			assertActualTmpfsMount(t, config, ownership.ContainerID)
 			assertActualCgroupLimits(t, config, ownership.ContainerID)
-			if err := os.Remove(filepath.Join(fixture.sourcePath(job.ID), ".owngit-held")); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Remove(filepath.Join(fixture.sourcePath(job.ID), ".owngit-held")))
 			completed := fixture.waitForTerminalJob(job.ID)
 			if completed.Status != state.CheckJobPassed || completed.AttemptID == "" {
 				t.Fatalf("container job status=%s attempt=%s summary=%s", completed.Status, completed.AttemptID, completed.Summary)
@@ -211,9 +209,7 @@ func requireRealDocker(t *testing.T) realDockerConfig {
 		t.Fatalf("Docker default context must be selected: context=%q err=%v", strings.TrimSpace(contextName), err)
 	}
 	dockerHost, err := dockerCommandPath(context.Background(), docker, "", "context", "inspect", "default", "--format", `{{(index .Endpoints "docker").Host}}`)
-	if err != nil {
-		t.Fatalf("inspect Docker default context: %v", err)
-	}
+	noErr(t, err, "inspect Docker default context")
 	dockerHost = strings.TrimSpace(dockerHost)
 	if !strings.HasPrefix(dockerHost, "unix://") {
 		t.Fatalf("Docker default context is not a local Unix endpoint: %q", dockerHost)
@@ -238,31 +234,19 @@ func newRealDockerFixture(t *testing.T, config realDockerConfig, network, comman
 	fixture := &realDockerFixture{t: t, config: config, ctx: ctx, cancel: cancel, root: t.TempDir()}
 	t.Cleanup(fixture.close)
 	store, err := state.Open(ctx, filepath.Join(fixture.root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fixture.store = store
 	git, err := gitexec.New("", filepath.Join(fixture.root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoryRoot := filepath.Join(fixture.root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", "test-admin-hash", true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", "test-admin-hash", true))
 	fixture.manager = &repository.Manager{Store: store, Git: git, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	stored, err := fixture.manager.Create(ctx, "docker-checks", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fixture.repository = stored
 	bare, err := fixture.manager.Path(stored.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	work := filepath.Join(fixture.root, "source")
 	runGit(t, "init", "--initial-branch=main", work)
 	runGit(t, "-C", work, "config", "user.name", "OwnGit Docker Test")
@@ -272,24 +256,14 @@ func newRealDockerFixture(t *testing.T, config realDockerConfig, network, comman
 		"events":  map[string]any{"push": map[string]any{}},
 		"checks":  []map[string]string{{"name": "real-docker", "command": "/bin/sh .owngit/docker-test.sh"}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := checkworkflow.Parse(workflow); err != nil {
 		t.Fatalf("parse generated Docker workflow: %v", err)
 	}
-	if err := os.Mkdir(filepath.Join(work, ".owngit"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, ".owngit", "docker-test.sh"), []byte("#!/bin/sh\n"+command+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, filepath.FromSlash(checkworkflow.Path)), workflow, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, "source.txt"), []byte("exact source\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(filepath.Join(work, ".owngit"), 0o700))
+	noErr(t, os.WriteFile(filepath.Join(work, ".owngit", "docker-test.sh"), []byte("#!/bin/sh\n"+command+"\n"), 0o600))
+	noErr(t, os.WriteFile(filepath.Join(work, filepath.FromSlash(checkworkflow.Path)), workflow, 0o600))
+	noErr(t, os.WriteFile(filepath.Join(work, "source.txt"), []byte("exact source\n"), 0o600))
 	runGit(t, "-C", work, "add", ".")
 	runGit(t, "-C", work, "commit", "-m", "real Docker integration fixture")
 	runGit(t, "-C", work, "push", bare, "HEAD:refs/heads/main")
@@ -313,9 +287,7 @@ func newRealDockerFixture(t *testing.T, config realDockerConfig, network, comman
 		WorkspaceRoot: filepath.Join(fixture.root, "check-workspaces"), DockerPath: config.docker,
 		Interval: 20 * time.Millisecond,
 	}
-	if err := fixture.coordinator.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.coordinator.Start(ctx))
 	return fixture
 }
 
@@ -488,9 +460,7 @@ func (fixture *realDockerFixture) assertContainerRemoved(containerID string) {
 func inspectOwnedContainer(t *testing.T, config realDockerConfig, containerID string) dockerInspection {
 	t.Helper()
 	content, err := dockerCommand(context.Background(), config, "inspect", containerID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var records []dockerInspection
 	if err := json.Unmarshal([]byte(content), &records); err != nil || len(records) != 1 {
 		t.Fatalf("decode Docker inspection records=%d err=%v", len(records), err)
@@ -531,18 +501,14 @@ func assertContainerRestrictions(t *testing.T, inspection dockerInspection, work
 		t.Fatalf("tmpfs /tmp=%q", tmpfs)
 	}
 	workspace, err := filepath.EvalSymlinks(workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	binds, temporaryFilesystems := 0, 0
 	for _, mount := range inspection.Mounts {
 		switch mount.Type {
 		case "bind":
 			binds++
 			source, err := filepath.EvalSymlinks(mount.Source)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if source != workspace || mount.Destination != "/workspace" || !mount.RW {
 				t.Fatalf("source mount=%+v want source=%s", mount, workspace)
 			}
@@ -572,9 +538,7 @@ while read -r device mountpoint filesystem options remainder; do
 done < /proc/mounts
 exit 1`
 	output, err := dockerCommand(context.Background(), config, "exec", containerID, "/bin/sh", "-c", script)
-	if err != nil {
-		t.Fatalf("inspect actual /tmp mount: %v", err)
-	}
+	noErr(t, err, "inspect actual /tmp mount")
 	values := make(map[string]string)
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		parts := strings.SplitN(line, "=", 2)
@@ -616,9 +580,7 @@ else
  for f in /sys/fs/cgroup/pids/pids.max /sys/fs/cgroup/pids.max; do [ ! -f "$f" ] || { echo pids=$(cat "$f"); break; }; done
 fi`
 	output, err := dockerCommand(context.Background(), config, "exec", containerID, "/bin/sh", "-c", script)
-	if err != nil {
-		t.Fatalf("read actual container cgroups: %v", err)
-	}
+	noErr(t, err, "read actual container cgroups")
 	values := make(map[string]string)
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		parts := strings.SplitN(strings.TrimSpace(line), "=", 2)

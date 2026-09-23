@@ -824,11 +824,25 @@ func validatePullRequestRecord(record PullRequest) error {
 	return nil
 }
 
+// validReviewEventID accepts the 32 lowercase hexadecimal characters an event
+// identity always had.
+func validReviewEventID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || (character > '9' && character < 'a') || character > 'f' {
+			return false
+		}
+	}
+	return true
+}
+
 func validateReviewRecord(review PullRequestReview, requireSequence bool) error {
 	if review.RepositoryID == "" || review.PullRequestNumber <= 0 || (requireSequence && review.Sequence <= 0) || !validObjectID(review.SourceOID) || !validObjectID(review.TargetOID) || review.CreatedAt.IsZero() {
 		return errors.New("invalid pull request review metadata")
 	}
-	if review.ReviewEventID != "" && !validDirectReviewID(review.ReviewEventID) {
+	if review.ReviewEventID != "" && !validReviewEventID(review.ReviewEventID) {
 		return errors.New("invalid pull request review event identity")
 	}
 	switch review.Status {

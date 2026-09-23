@@ -8,9 +8,7 @@ import (
 func TestOfflineLockRefusesConcurrentServerOrRecoveryOperation(t *testing.T) {
 	directory := t.TempDir()
 	unlock, err := AcquireOfflineLock(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if second, err := AcquireOfflineLock(directory); !errors.Is(err, ErrInstanceRunning) {
 		if second != nil {
 			second()
@@ -20,8 +18,6 @@ func TestOfflineLockRefusesConcurrentServerOrRecoveryOperation(t *testing.T) {
 	}
 	unlock()
 	third, err := AcquireOfflineLock(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	third()
 }

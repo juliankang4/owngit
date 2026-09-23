@@ -286,9 +286,7 @@ func TestGraphCaptionSaysWhoseTimeZoneIsUsed(t *testing.T) {
 func TestNoFormatterRestatesAStoredTimeInAnotherZone(t *testing.T) {
 	// The defect was a single conversion. Guard against it returning.
 	data, err := os.ReadFile("format.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if m := regexp.MustCompile(`\.In\(now\.Location\(\)\)`).FindString(string(data)); m != "" {
 		t.Errorf("a formatter converts a stored date into the reference zone (%s), "+
 			"which moves commits to a different calendar day", m)

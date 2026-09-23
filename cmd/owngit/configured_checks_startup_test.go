@@ -20,20 +20,12 @@ func TestUnavailableCheckWorkspacePreservesDataAndDoesNotBlockServe(t *testing.T
 	root := t.TempDir()
 	stateDir := filepath.Join(root, "state")
 	store, err := state.Open(ctx, stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, store.Close())
 	unknown := filepath.Join(stateDir, "runtime", "check-jobs", strings.Repeat("a", 32))
-	if err := os.MkdirAll(unknown, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(unknown, 0o700))
 	sentinel := filepath.Join(unknown, "unrelated.txt")
-	if err := os.WriteFile(sentinel, []byte("preserve"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(sentinel, []byte("preserve"), 0o600))
 	listening := make(chan string, 1)
 	result := make(chan error, 1)
 	degraded := make(chan string, 1)
@@ -70,16 +62,12 @@ func TestUnavailableCheckWorkspacePreservesDataAndDoesNotBlockServe(t *testing.T
 		t.Fatal("check runtime unavailability was not logged")
 	}
 	response, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + address + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	response.Body.Close()
 	cancel()
 	select {
 	case err := <-result:
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 	case <-time.After(10 * time.Second):
 		t.Fatal("serve did not stop")
 	}
@@ -121,17 +109,13 @@ func TestServeStartsAndStopsWithConfiguredCheckCoordinator(t *testing.T) {
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	response, err := client.Get("http://" + address + "/")
-	if err != nil {
-		t.Fatalf("request started serve: %v", err)
-	}
+	noErrf(t, err, "request started serve")
 	response.Body.Close()
 
 	cancel()
 	select {
 	case err := <-result:
-		if err != nil {
-			t.Fatalf("serve shutdown: %v", err)
-		}
+		noErrf(t, err, "serve shutdown")
 	case <-time.After(10 * time.Second):
 		t.Fatal("serve did not stop after cancellation")
 	}

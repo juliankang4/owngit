@@ -67,22 +67,16 @@ func writeStreamFixturePID(path string) {
 func streamTestExecutable(t *testing.T) string {
 	t.Helper()
 	executable, err := os.Executable()
-	if err != nil {
-		t.Fatalf("resolve test executable: %v", err)
-	}
+	noErr(t, err, "resolve test executable")
 	absolute, err := filepath.Abs(executable)
-	if err != nil {
-		t.Fatalf("resolve absolute test executable: %v", err)
-	}
+	noErr(t, err, "resolve absolute test executable")
 	return absolute
 }
 
 func streamTestRunner(t *testing.T, root string) *Runner {
 	t.Helper()
 	config := filepath.Join(root, "gitconfig.empty")
-	if err := os.WriteFile(config, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(config, nil, 0o600))
 	return &Runner{
 		GitPath:          streamTestExecutable(t),
 		HomeDir:          root,

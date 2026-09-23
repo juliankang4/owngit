@@ -46,13 +46,9 @@ func TestCheckRunEvidenceStaysWithinServerBoundsAfterJSON(t *testing.T) {
 func roundTripJSONString(t *testing.T, value string) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var decoded string
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal(encoded, &decoded))
 	return decoded
 }
 

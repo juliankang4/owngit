@@ -91,9 +91,7 @@ func TestInitialRepositoryIsNotDiscoverableBeforeRefsReady(t *testing.T) {
 		t.Fatalf("completed initial refs=%s want %s", got, wanted)
 	}
 	repos, err := f.store.Repositories(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	listed := false
 	for _, repo := range repos {
 		if repo.ID == "project" {
@@ -109,12 +107,8 @@ func TestInitialImportRefusesDestinationBeforeConfiguration(t *testing.T) {
 	f := newFixture(t)
 	f.commit("one", "one\n")
 	final := repositoryFinalPath(t, f, "project")
-	if err := os.Mkdir(final, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(final, "keep.txt"), []byte("foreign"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(final, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(final, "keep.txt"), []byte("foreign"), 0o600))
 	if _, err := f.importProject(ImportInput{}); problemCode(err) != CodeRepositoryTaken {
 		t.Fatalf("directory collision err=%v", err)
 	}
@@ -128,9 +122,7 @@ func TestInitialImportRefusesDestinationBeforeConfiguration(t *testing.T) {
 
 	f = newFixture(t)
 	f.commit("one", "one\n")
-	if err := f.store.AddRepository(context.Background(), state.Repository{ID: "project", Name: "project", CreatedAt: f.now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.AddRepository(context.Background(), state.Repository{ID: "project", Name: "project", CreatedAt: f.now}))
 	if _, err := f.importProject(ImportInput{}); problemCode(err) != CodeRepositoryTaken {
 		t.Fatalf("row collision err=%v", err)
 	}
@@ -228,9 +220,7 @@ func TestInitialCrashBeforeRenamePreservesDirectoryUntilReconcile(t *testing.T) 
 	if got := f.gitMaybe(dirs[0], "--git-dir", ".", "rev-parse", "--verify", "refs/heads/main"); got != wanted {
 		t.Fatalf("preserved main=%s want %s", got, wanted)
 	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.Reconcile(context.Background()))
 	if got := f.destinationRefs()["refs/heads/main"]; got != wanted {
 		t.Fatalf("reconciled main=%s want %s", got, wanted)
 	}
@@ -256,9 +246,7 @@ func TestInitialCrashAfterRenameBeforeRowIsUnresolved(t *testing.T) {
 	if got := f.gitMaybe(final, "--git-dir", ".", "rev-parse", "--verify", "refs/heads/main"); got != wanted {
 		t.Fatalf("landed main=%s want %s", got, wanted)
 	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.Reconcile(context.Background()))
 	if got := f.destinationRefs()["refs/heads/main"]; got != wanted {
 		t.Fatalf("recovered main=%s want %s", got, wanted)
 	}
@@ -279,15 +267,9 @@ func TestIncompleteInitialDirectoryIsRemovedOnlyWithProof(t *testing.T) {
 	}
 	root := f.manager.RepositoryRoot()
 	lookAlike := filepath.Join(root, ".owngit-create-"+strings.Repeat("ab", 16))
-	if err := os.Mkdir(lookAlike, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(lookAlike, "keep.txt"), []byte("foreign"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(lookAlike, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(lookAlike, "keep.txt"), []byte("foreign"), 0o600))
+	noErr(t, f.service.Reconcile(context.Background()))
 	if _, err := os.Lstat(owned[0]); !os.IsNotExist(err) {
 		t.Fatalf("proven incomplete directory remained err=%v", err)
 	}
@@ -304,15 +286,9 @@ func TestUnownedInitialLookAlikeIsPreserved(t *testing.T) {
 	f := newFixture(t)
 	root := f.manager.RepositoryRoot()
 	lookAlike := filepath.Join(root, ".owngit-create-"+strings.Repeat("cd", 16))
-	if err := os.Mkdir(lookAlike, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(lookAlike, "keep.txt"), []byte("foreign"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(lookAlike, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(lookAlike, "keep.txt"), []byte("foreign"), 0o600))
+	noErr(t, f.service.Reconcile(context.Background()))
 	content, err := os.ReadFile(filepath.Join(lookAlike, "keep.txt"))
 	if err != nil || string(content) != "foreign" {
 		t.Fatalf("look-alike changed content=%q err=%v", content, err)
@@ -321,9 +297,7 @@ func TestUnownedInitialLookAlikeIsPreserved(t *testing.T) {
 	if err != nil || !exists || row.State != state.ImportInitialUnknown {
 		t.Fatalf("unknown row=%+v exists=%v err=%v", row, exists, err)
 	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.Reconcile(context.Background()))
 	if _, err := os.Lstat(filepath.Join(lookAlike, "keep.txt")); err != nil {
 		t.Fatalf("second reconcile removed look-alike: %v", err)
 	}
@@ -395,9 +369,7 @@ func TestInitialIntentIsNotJudgedAgainstAnotherDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	foreign := repositoryFinalPath(t, f, "project")
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.Reconcile(context.Background()))
 	stored, exists, err := f.store.ImportIntent(context.Background(), intentID)
 	if err != nil || !exists || stored.ReceiptJSON == "" || stored.Status == state.ImportIntentNotApplied || stored.Status == state.ImportIntentComplete {
 		t.Fatalf("initial intent was judged against another directory: status=%s exists=%v receipt=%q err=%v", stored.Status, exists, stored.ReceiptJSON, err)
@@ -412,15 +384,9 @@ func TestInitialIntentIsNotJudgedAgainstAnotherDirectory(t *testing.T) {
 	if got := f.gitMaybe(foreign, "--git-dir", ".", "rev-parse", "--verify", "refs/heads/main"); got != "" {
 		t.Fatalf("foreign directory gained main=%s", got)
 	}
-	if err := f.store.Exec(context.Background(), `DELETE FROM repositories WHERE id=?`, "project"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(foreign); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.Exec(context.Background(), `DELETE FROM repositories WHERE id=?`, "project"))
+	noErr(t, os.RemoveAll(foreign))
+	noErr(t, f.service.Reconcile(context.Background()))
 	if got := f.destinationRefs()["refs/heads/main"]; got != wanted {
 		t.Fatalf("reconciled owned directory main=%s want %s", got, wanted)
 	}
@@ -585,9 +551,7 @@ func TestInitialCollisionAfterFetchRestoresSourceBinding(t *testing.T) {
 func repositoryFinalPath(t *testing.T, f *fixture, id string) string {
 	t.Helper()
 	path, err := f.manager.Path(id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return path
 }
 
@@ -595,9 +559,7 @@ func unpublishedInitialDirectories(t *testing.T, f *fixture) []string {
 	t.Helper()
 	root := f.manager.RepositoryRoot()
 	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var paths []string
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), unpublishedDirectoryPrefix) {

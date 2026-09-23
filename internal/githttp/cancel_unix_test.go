@@ -23,13 +23,9 @@ func TestClientCancellationReapsBackendProcessTreeBeforeReleasingSlot(t *testing
 	pidFile := filepath.Join(root, "child.pid")
 	backend := filepath.Join(root, "git-http-backend")
 	script := "#!/bin/sh\nsleep 60 &\nchild=$!\nprintf '%s' \"$child\" > " + quoteShell(pidFile) + "\nwait \"$child\"\n"
-	if err := os.WriteFile(backend, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(backend, []byte(script), 0o700))
 	handler, err := New(runner, manager, backend, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	handler.Authorize = func(*http.Request) bool { return true }
 	ctx, cancel := context.WithCancel(context.Background())
 	request := httptest.NewRequest(http.MethodGet, "http://localhost/git/sample.git/info/refs?service=git-upload-pack", nil).WithContext(ctx)
@@ -68,9 +64,7 @@ func TestClientCancellationReapsBackendProcessTreeBeforeReleasingSlot(t *testing
 	}
 	waitContext, waitCancel := context.WithTimeout(context.Background(), time.Second)
 	defer waitCancel()
-	if err := handler.Wait(waitContext); err != nil {
-		t.Fatalf("wait for owned Git operations: %v", err)
-	}
+	noErr(t, handler.Wait(waitContext), "wait for owned Git operations")
 	deadline = time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := syscall.Kill(childPID, 0); errors.Is(err, syscall.ESRCH) {

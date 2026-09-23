@@ -91,13 +91,9 @@ timeout-stdout)
   ;;
 esac
 `
-	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(script, []byte(content), 0o700))
 	config := filepath.Join(root, "gitconfig.empty")
-	if err := os.WriteFile(config, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(config, nil, 0o600))
 	return &Runner{
 		GitPath: script, HomeDir: root, GlobalConfigPath: config, TempDir: root,
 		Timeout: time.Second, OutputLimit: 8, TerminationGrace: 20 * time.Millisecond,

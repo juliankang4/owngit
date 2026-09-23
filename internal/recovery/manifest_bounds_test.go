@@ -10,9 +10,7 @@ import (
 func TestManifestReadAndWriteUseTheSameHardLimit(t *testing.T) {
 	manifest := Manifest{Format: backupFormat, Version: backupVersion, AccessMode: "open", AdminHash: "synthetic-hash"}
 	var complete bytes.Buffer
-	if err := writeManifest(&complete, manifest, 1<<20); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, writeManifest(&complete, manifest, 1<<20))
 	maximum := int64(complete.Len())
 	var exact bytes.Buffer
 	if err := writeManifest(&exact, manifest, maximum); err != nil || int64(exact.Len()) != maximum {

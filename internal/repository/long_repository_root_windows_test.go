@@ -17,29 +17,19 @@ func TestWindowsLongRepositoryRootSupportsCreateBrowsePinnedAndRestore(t *testin
 	ctx := context.Background()
 	repositoryRoot := windowsLongRepositoryRoot(t, "project")
 	store, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	runner, err := gitexec.New("", filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	stored, err := manager.Create(ctx, "project", "long repository root")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoryPath, err := manager.Path(stored.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if got := len(repositoryPath); got != 229 {
 		t.Fatalf("bare repository path length=%d, want 229: %s", got, repositoryPath)
 	}
-	if err := manager.PrepareExisting(ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, manager.PrepareExisting(ctx))
 
 	work := filepath.Join(t.TempDir(), "work")
 	runGit(t, "", "init", "--initial-branch=main", work)
@@ -57,66 +47,48 @@ func TestWindowsLongRepositoryRootSupportsCreateBrowsePinnedAndRestore(t *testin
 	}
 
 	summary, err := manager.Summary(ctx, stored.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if summary.DefaultBranch != "main" || summary.DefaultOID != baseOID || len(summary.Branches) != 2 {
 		t.Fatalf("long-root summary=%+v", summary)
 	}
 	commitOID, entries, err := manager.Tree(ctx, stored.ID, "refs/heads/feature", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if commitOID != headOID || len(entries) != 1 || entries[0].Path != "file.txt" {
 		t.Fatalf("long-root tree commit=%s entries=%+v", commitOID, entries)
 	}
 	_, blob, err := manager.ReadBlob(ctx, stored.ID, "refs/heads/feature", "file.txt", 1024)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if string(blob.Content) != "head\n" || blob.Truncated {
 		t.Fatalf("long-root blob=%q truncated=%v", blob.Content, blob.Truncated)
 	}
 	activity, err := manager.Activity(ctx, stored.ID, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if activity.Commits != 2 || activity.Incomplete {
 		t.Fatalf("long-root activity=%+v", activity)
 	}
 
 	pinned, err := manager.PinRepository(ctx, stored.ID, baseOID, headOID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	change, err := pinned.ReadChange(ctx, 64<<10)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if change.BaseOID != baseOID || change.HeadOID != headOID || len(change.Patch) == 0 || change.Truncated {
 		t.Fatalf("long-root pinned change=%+v", change)
 	}
 	pinnedBlob, err := pinned.ReadBlob(ctx, PinnedHead, "file.txt", 0, 4096, 1024, 4096)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if string(pinnedBlob.Content) != "head\n" || pinnedBlob.HasMore {
 		t.Fatalf("long-root pinned blob=%+v", pinnedBlob)
 	}
 
 	request := RestoreRequest{Source: headOID, Target: "main", Mode: RestoreFiles, Paths: []string{"file.txt"}}
 	preview, err := manager.PreviewRestore(ctx, stored.ID, request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !preview.CanApply || preview.ExpectedHead != baseOID || len(preview.Changes) != 1 {
 		t.Fatalf("long-root restore preview=%+v", preview)
 	}
 	request.ExpectedHead = preview.ExpectedHead
 	restored, err := manager.ApplyRestore(ctx, stored.ID, request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if restored.Created || restored.CommitOID == "" || restored.CommitOID == headOID {
 		t.Fatalf("long-root restore result=%+v", restored)
 	}
@@ -135,8 +107,6 @@ func windowsLongRepositoryRoot(t *testing.T, repositoryID string) string {
 	if got := len(filepath.Join(root, bareName)); got != targetLength {
 		t.Fatalf("constructed bare repository path length=%d, want %d", got, targetLength)
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(root, 0o700))
 	return root
 }

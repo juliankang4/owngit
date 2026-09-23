@@ -22,14 +22,6 @@ type schemaClass int
 const (
 	schemaEmpty schemaClass = iota
 	schemaBaseline
-	schemaSix
-	schemaSeven
-	schemaEight
-	schemaNine
-	schemaTen
-	schemaEleven
-	schemaTwelve
-	schemaThirteen
 	schemaCurrent
 )
 

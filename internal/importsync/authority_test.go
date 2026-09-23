@@ -23,9 +23,7 @@ func TestRefreshReplacesExactlyOwnedTagAndRetainsTagObject(t *testing.T) {
 		t.Fatal("test did not replace the tag object")
 	}
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
+	noErr(t, err, "refresh")
 	if run.RefsUpdated != 1 || run.RefsDivergent != 0 {
 		t.Fatalf("refresh run=%+v", run)
 	}
@@ -74,9 +72,7 @@ func TestNewSourceGenerationCannotInheritBranchAuthorityFromAncestry(t *testing.
 	}
 	second := f.commit("two", "two\n")
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
+	noErr(t, err, "refresh")
 	if run.RefsDivergent != 1 || run.RefsUpdated != 0 {
 		t.Fatalf("new source inherited branch authority: %+v", run)
 	}
@@ -84,9 +80,7 @@ func TestNewSourceGenerationCannotInheritBranchAuthorityFromAncestry(t *testing.
 		t.Fatalf("destination branch=%s first=%s second=%s", got, first, second)
 	}
 	secondRun, err := f.refresh()
-	if err != nil {
-		t.Fatalf("second refresh: %v", err)
-	}
+	noErr(t, err, "second refresh")
 	if secondRun.RefsDivergent != 1 || secondRun.RefsUpdated != 0 || f.destinationRefs()["refs/heads/main"] != first {
 		t.Fatalf("recording the new source observation manufactured authority: run=%+v", secondRun)
 	}
@@ -178,9 +172,7 @@ func TestIdenticalCredentialsDoNotRevokePinnedRun(t *testing.T) {
 	f.commit("one", "one\n")
 	f.mustImport(ImportInput{Credentials: credential})
 	before, _, err := f.store.ImportSource(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	second := f.commit("two", "two\n")
 	f.transport.before = func() {
 		f.transport.before = nil
@@ -201,49 +193,62 @@ func TestIdenticalCredentialsDoNotRevokePinnedRun(t *testing.T) {
 	}
 }
 
+// A credential change whose authority write fails must still stop a run that
+// is already fetching, for a replacement and a revocation alike, and also when
+// recording the cancellation fails too.
 func TestCredentialFailureStopsRunWhenDurableCancellationFails(t *testing.T) {
-	f := newFixture(t)
-	ctx := context.Background()
-	f.commit("initial", "initial\n")
-	f.mustImport(ImportInput{})
-	if err := f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "synthetic-initial-token"}); err != nil {
-		t.Fatal(err)
-	}
-	before := f.destinationRefs()["refs/heads/main"]
-	f.commit("new source tip", "changed\n")
-	started, done, run, runErr := f.gatedRefresh(t)
-	<-started
-	released := false
-	defer func() {
-		if !released {
+	for _, testCase := range []struct {
+		name        string
+		replacement *Credentials
+		cancelFails bool
+	}{
+		{"replace", &Credentials{BearerToken: "synthetic-replacement-token"}, false},
+		{"revoke", nil, false},
+		{"replace without durable cancellation", &Credentials{BearerToken: "synthetic-replacement-token"}, true},
+		{"revoke without durable cancellation", nil, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+			f.commit("initial", "initial\n")
+			f.mustImport(ImportInput{})
+			noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "synthetic-initial-token"}))
+			before := f.destinationRefs()["refs/heads/main"]
+			f.commit("new source tip", "changed\n")
+			started, done, run, runErr := f.gatedRefresh(t)
+			<-started
+			released := false
+			defer func() {
+				if !released {
+					f.transport.gate <- struct{}{}
+					<-done
+				}
+			}()
+			noErr(t, f.store.Exec(ctx, `CREATE TRIGGER fail_authority_write BEFORE UPDATE OF authority_revision ON import_sources BEGIN SELECT RAISE(FAIL,'synthetic authority write failure'); END`))
+			if testCase.cancelFails {
+				noErr(t, f.store.Exec(ctx, `CREATE TRIGGER fail_cancel_write BEFORE UPDATE OF cancel_requested_at ON import_runs WHEN NEW.cancel_requested_at IS NOT OLD.cancel_requested_at BEGIN SELECT RAISE(FAIL,'synthetic cancel write failure'); END`))
+			}
+			if err := f.service.SetCredentials(ctx, "project", testCase.replacement); err == nil {
+				t.Fatal("credential mutation unexpectedly succeeded")
+			}
+			if testCase.cancelFails {
+				persisted, exists, err := f.store.ActiveImportRun(ctx, "project")
+				if err != nil || !exists || persisted.CancelRequestedAt != nil {
+					t.Fatalf("cancel persistence failure was not preserved: exists=%v cancel=%v err=%v", exists, persisted.CancelRequestedAt, err)
+				}
+				noErr(t, f.store.Exec(ctx, `DROP TRIGGER fail_cancel_write`))
+			}
+			noErr(t, f.store.Exec(ctx, `DROP TRIGGER fail_authority_write`))
 			f.transport.gate <- struct{}{}
 			<-done
-		}
-	}()
-	if err := f.store.Exec(ctx, `CREATE TRIGGER fail_authority_write BEFORE UPDATE OF authority_revision ON import_sources BEGIN SELECT RAISE(FAIL,'synthetic authority write failure'); END`); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.store.Exec(ctx, `CREATE TRIGGER fail_cancel_write BEFORE UPDATE OF cancel_requested_at ON import_runs WHEN NEW.cancel_requested_at IS NOT OLD.cancel_requested_at BEGIN SELECT RAISE(FAIL,'synthetic cancel write failure'); END`); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "synthetic-replacement-token"}); err == nil {
-		t.Fatal("credential mutation unexpectedly succeeded")
-	}
-	persisted, exists, err := f.store.ActiveImportRun(ctx, "project")
-	if err != nil || !exists || persisted.CancelRequestedAt != nil {
-		t.Fatalf("cancel persistence failure was not preserved: exists=%v cancel=%v err=%v", exists, persisted.CancelRequestedAt, err)
-	}
-	if err := f.store.Exec(ctx, `DROP TRIGGER fail_cancel_write; DROP TRIGGER fail_authority_write`); err != nil {
-		t.Fatal(err)
-	}
-	f.transport.gate <- struct{}{}
-	<-done
-	released = true
-	if *runErr == nil || run.Status == state.ImportRunComplete {
-		t.Fatalf("local invalidation allowed stale completion: status=%s err=%v", run.Status, *runErr)
-	}
-	if after := f.destinationRefs()["refs/heads/main"]; after != before {
-		t.Fatalf("local invalidation allowed ref publication: before=%s after=%s", before, after)
+			released = true
+			if *runErr == nil || run.Status == state.ImportRunComplete {
+				t.Fatalf("credential failure allowed stale completion: status=%s err=%v", run.Status, *runErr)
+			}
+			if after := f.destinationRefs()["refs/heads/main"]; after != before {
+				t.Fatalf("credential failure allowed ref publication: before=%s after=%s", before, after)
+			}
+		})
 	}
 }
 
@@ -252,9 +257,7 @@ func TestUnchangedConfigurationDoesNotRevokePinnedRun(t *testing.T) {
 	f.commit("one", "one\n")
 	f.mustImport(ImportInput{})
 	before, _, err := f.store.ImportSource(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	second := f.commit("two", "two\n")
 	f.transport.before = func() {
 		f.transport.before = nil

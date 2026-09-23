@@ -1,13 +1,11 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -20,20 +18,15 @@ import (
 
 func TestImportAPIRequiresOwnerAndRejectsCSRF(t *testing.T) {
 	fixture := newImportAPIFixture(t)
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	endpoint := server.URL + "/api/v1/repositories/project/import"
 	unauthenticated := importAPIRequest(t, http.MethodPut, endpoint, map[string]any{"url": "https://example.invalid/team/project.git"}, "", "", "")
 	if unauthenticated.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status=%d", unauthenticated.StatusCode)
 	}
 	settings, err := fixture.store.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.CreateSession(context.Background(), "import-admin", "admin", "import-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, fixture.store.CreateSession(context.Background(), "import-admin", "admin", "import-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	wrong := importSessionRequest(t, http.MethodPut, endpoint, map[string]any{"url": "https://example.invalid/team/project.git"}, "wrong-csrf", "admin-password")
 	if wrong.StatusCode != http.StatusForbidden || importAPICode(t, wrong) != "csrf_required" {
 		t.Fatalf("csrf status=%d code=%s", wrong.StatusCode, importAPICode(t, wrong))
@@ -48,8 +41,7 @@ func TestImportAPIRequiresOwnerAndRejectsCSRF(t *testing.T) {
 
 func TestImportAPICredentialResponseHasNoSecret(t *testing.T) {
 	fixture := newImportAPIFixture(t)
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/project/import"
 	configured := importAPIRequest(t, http.MethodPut, base, map[string]any{
 		"url": "https://example.invalid/team/project.git", "mode": "coexistence", "git_only_consent": true,
@@ -78,8 +70,7 @@ func TestImportAPICredentialResponseHasNoSecret(t *testing.T) {
 
 func TestImportAPIMapsNotConfiguredAndImportsNewRepository(t *testing.T) {
 	fixture := newImportAPIFixture(t)
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/project/import"
 	refresh := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{}, "admin-password", "", "")
 	if refresh.StatusCode != http.StatusNotFound || importAPICode(t, refresh) != importsync.CodeNotConfigured {
@@ -112,8 +103,7 @@ func TestImportRunRouteOutlivesOrdinaryDeadline(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	created := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/slow/import/run", map[string]any{
 		"name": "slow", "url": "https://example.invalid/team/slow.git", "mode": "standalone",
 	}, "admin-password", "", "")
@@ -157,8 +147,7 @@ func TestInitialImportSendsCredentialsWithoutEchoingThem(t *testing.T) {
 		gotCA = string(request.RootCAPEM)
 		return &importfetch.Result{Advertisement: &importgit.Advertisement{Service: "git-upload-pack", ObjectFormat: importgit.FormatSHA1, Empty: true}}, nil
 	}
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	created := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/private/import/run", map[string]any{
 		"name": "private", "url": "https://example.invalid/team/private.git", "mode": "standalone",
 		"credential_form": "bearer", "token": token, "ca_pem": caPEM,
@@ -191,8 +180,7 @@ func TestReservedRepositoryNamesStayOnForms(t *testing.T) {
 			t.Fatalf("import %s error=%v", name, err)
 		}
 	}
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	_ = browserAdminSessionFor(t, fixture, server.URL, jar, "reserved-admin")
 	form := browserGET(t, client, server.URL+"/repositories/new-import")
@@ -219,58 +207,14 @@ func newImportAPIFixture(t *testing.T) apiFixture {
 
 func importAPIRequest(t *testing.T, method, target string, value any, password, csrf, adminHeader string) *http.Response {
 	t.Helper()
-	var body io.Reader = bytes.NewReader(nil)
-	if value != nil {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequest(method, target, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	if password != "" {
-		request.SetBasicAuth("admin", password)
-	}
-	if csrf != "" {
-		request.Header.Set(csrfHeader, csrf)
-	}
-	if adminHeader != "" {
-		request.Header.Set(adminPasswordHeader, adminHeader)
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return response
+	return sendJSON(t, method, target, value, basicAuth("admin", password), header(csrfHeader, csrf), header(adminPasswordHeader, adminHeader))
 }
 
+// importSessionRequest always has a body, CSRF token and password.
 func importSessionRequest(t *testing.T, method, target string, value any, csrf, password string) *http.Response {
 	t.Helper()
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request, err := http.NewRequest(method, target, bytes.NewReader(encoded))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.AddCookie(&http.Cookie{Name: adminCookie, Value: "import-admin"})
-	request.Header.Set(csrfHeader, csrf)
-	request.Header.Set(adminPasswordHeader, password)
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return response
+	return sendJSON(t, method, target, value, adminCookieValue("import-admin"), header(csrfHeader, csrf), header(adminPasswordHeader, password))
 }
-
 func importAPICode(t *testing.T, response *http.Response) string {
 	t.Helper()
 	defer response.Body.Close()
@@ -279,9 +223,7 @@ func importAPICode(t *testing.T, response *http.Response) string {
 			Code string `json:"code"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.NewDecoder(response.Body).Decode(&envelope))
 	return envelope.Error.Code
 }
 
@@ -289,8 +231,6 @@ func importAPIBody(t *testing.T, response *http.Response) string {
 	t.Helper()
 	defer response.Body.Close()
 	content, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return string(content)
 }

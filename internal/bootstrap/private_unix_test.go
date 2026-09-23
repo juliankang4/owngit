@@ -11,13 +11,9 @@ import (
 
 func assertOwnerFilePrivate(t *testing.T, path string) {
 	t.Helper()
-	if err := state.ValidatePrivateFile(path); err != nil {
-		t.Fatalf("owner setup file is not private: %v", err)
-	}
+	noErr(t, state.ValidatePrivateFile(path), "owner setup file is not private")
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("owner setup file mode = %o, want 600", got)
 	}

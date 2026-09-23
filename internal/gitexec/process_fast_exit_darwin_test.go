@@ -13,9 +13,7 @@ import (
 func TestAttachOwnedProcessAcceptsExitedUnreapedChild(t *testing.T) {
 	cmd := exec.Command("/usr/bin/true")
 	ConfigureOwnedProcess(cmd)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start synthetic child: %v", err)
-	}
+	noErr(t, cmd.Start(), "start synthetic child")
 	waited := false
 	t.Cleanup(func() {
 		if !waited {
@@ -30,9 +28,7 @@ func TestAttachOwnedProcessAcceptsExitedUnreapedChild(t *testing.T) {
 		if errors.Is(err, syscall.ESRCH) {
 			break
 		}
-		if err != nil {
-			t.Fatalf("observe synthetic child process group: %v", err)
-		}
+		noErr(t, err, "observe synthetic child process group")
 		if time.Now().After(deadline) {
 			t.Fatal("synthetic child did not reach the exited, unreaped state")
 		}
@@ -47,23 +43,17 @@ func TestAttachOwnedProcessAcceptsExitedUnreapedChild(t *testing.T) {
 		observerCalled = true
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("attach exited, unreaped child: %v", err)
-	}
+	noErr(t, err, "attach exited, unreaped child")
 	if !observerCalled {
 		t.Fatal("attachment observer was not called")
 	}
 	if owner == nil || owner.pgid != cmd.Process.Pid {
 		t.Fatalf("owner=%v, want process group %d", owner, cmd.Process.Pid)
 	}
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("wait for successfully launched child: %v", err)
-	}
+	noErr(t, cmd.Wait(), "wait for successfully launched child")
 	waited = true
 	if cmd.ProcessState == nil || !cmd.ProcessState.Success() {
 		t.Fatalf("synthetic child state=%v, want successful exit", cmd.ProcessState)
 	}
-	if err := CloseOwnedProcess(owner); err != nil {
-		t.Fatalf("close owner: %v", err)
-	}
+	noErr(t, CloseOwnedProcess(owner), "close owner")
 }

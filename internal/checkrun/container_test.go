@@ -20,9 +20,7 @@ func TestContainerCreateArgumentsEnforceRestrictions(t *testing.T) {
 		},
 	}
 	arguments, err := (&Coordinator{}).containerCreateArguments(job, t.TempDir(), "owned-name", "0", "/bin/sh", "-c", "true")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	joined := " " + strings.Join(arguments, " ") + " "
 	for _, required := range []string{
 		" --pull=never ", " --log-driver none ", " --network none ", " --read-only ",
@@ -48,12 +46,8 @@ func TestContainerImageInspectionRequiresConfiguredImmutableIdentity(t *testing.
 	digest := strings.Repeat("a", 64)
 	bare := "sha256:" + digest
 	repository := "example.invalid/checks@sha256:" + digest
-	if err := verifyContainerImageIdentity(bare, `{"id":"`+bare+`","repo_digests":[],"os":"linux","volumes":null}`); err != nil {
-		t.Fatal(err)
-	}
-	if err := verifyContainerImageIdentity(repository, `{"id":"sha256:`+strings.Repeat("b", 64)+`","repo_digests":["normalized/checks@sha256:`+digest+`"],"os":"linux","volumes":{}}`); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, verifyContainerImageIdentity(bare, `{"id":"`+bare+`","repo_digests":[],"os":"linux","volumes":null}`))
+	noErr(t, verifyContainerImageIdentity(repository, `{"id":"sha256:`+strings.Repeat("b", 64)+`","repo_digests":["normalized/checks@sha256:`+digest+`"],"os":"linux","volumes":{}}`))
 	if err := verifyContainerImageIdentity(bare, `{"id":"sha256:`+strings.Repeat("b", 64)+`","repo_digests":[],"os":"linux","volumes":null}`); err == nil {
 		t.Fatal("mismatched image ID was accepted")
 	}

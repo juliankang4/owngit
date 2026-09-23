@@ -35,9 +35,7 @@ func newJobRecoveryFixture(t *testing.T) jobRecoveryFixture {
 
 	terminal := fixture.admit(t, pushJobRequest())
 	claimed, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: terminal.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
@@ -51,13 +49,9 @@ func newJobRecoveryFixture(t *testing.T) jobRecoveryFixture {
 	request.EventKey = "refs/heads/main@" + strings.Repeat("f", 40)
 	request.SourceOID = strings.Repeat("f", 40)
 	pending := fixture.admit(t, request)
-	if err := fixture.store.RecordCheckObservation(ctx, "project", "refs/heads/main", pending.SourceOID, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.RecordCheckObservation(ctx, "project", "refs/heads/main", pending.SourceOID, fixture.now))
 	snapshot, err := fixture.store.RecoverySnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return jobRecoveryFixture{
 		snapshot: snapshot, policyID: policy.RepositoryID, terminalID: terminal.ID, pendingID: pending.ID,
 		attemptID: attempt.ID, runnerToken: token, runnerID: runner.ID,
@@ -128,9 +122,7 @@ func TestRestoreInvalidatesCheckExecutionAuthority(t *testing.T) {
 	exec(`INSERT INTO check_observations(repository_id,ref_name,oid,observed_at) VALUES(?,?,?,?)`,
 		"project", "refs/heads/old", strings.Repeat("e", 40), fixture.now.Unix())
 	exec(`PRAGMA foreign_keys=ON`)
-	if err := destination.RestoreRecoveryState(ctx, t.TempDir(), cloneJobRecoveryState(fixture.snapshot)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, destination.RestoreRecoveryState(ctx, t.TempDir(), cloneJobRecoveryState(fixture.snapshot)))
 
 	policy, exists, err := destination.CheckPolicy(ctx, "project")
 	if err != nil || !exists {
@@ -225,25 +217,12 @@ func TestRestoreInterruptedJobRejectsLateCompletion(t *testing.T) {
 	job := fixture.admit(t, pushJobRequest())
 	runner, _ := fixture.issueRunner(t)
 	ctx := context.Background()
-	claimed, found, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
-	if err != nil || !found {
-		t.Fatalf("claim found=%v err=%v", found, err)
-	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
-		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
-	}, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	claimed := fixture.claimAndStart(t, job, runner, "")
 	attempt := fixture.registerJobAttempt(t, claimed, runner)
 	snapshot, err := fixture.store.RecoverySnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	restored := openTestStore(t)
-	if err := restored.RestoreRecoveryState(ctx, t.TempDir(), snapshot); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, restored.RestoreRecoveryState(ctx, t.TempDir(), snapshot))
 	exit := 0
 	completion := CheckCompletion{
 		AttemptID: attempt.ID, RepositoryID: attempt.RepositoryID, TaskID: attempt.TaskID,

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,15 +20,8 @@ import (
 
 func TestHelperCredentialAuthAndAttemptUpload(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
 	ctx := context.Background()
-	token := "synthetic-helper-token"
-	hash := sha256.Sum256([]byte(token))
-	if _, _, err := fixture.store.CreateHelperCredential(ctx, "project", "laptop", "", hash[:], time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	base := server.URL + "/api/v1/repositories/project"
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
 
 	unauthenticated := checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": "Build"}, "")
 	if unauthenticated.StatusCode != http.StatusUnauthorized || apiErrorCode(t, unauthenticated) != "helper_authentication_required" {
@@ -150,12 +142,8 @@ func TestHelperCredentialAuthAndAttemptUpload(t *testing.T) {
 	// A browser admin session can read with its CSRF header, but issuing
 	// authority still needs the current administrator password.
 	settings, err := fixture.store.Settings(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.CreateSession(ctx, "admin-session", "admin", "admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, fixture.store.CreateSession(ctx, "admin-session", "admin", "admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	sessionRead := adminSessionRequest(t, http.MethodGet, base+"/helper-credentials", nil, "admin-csrf", "")
 	if sessionRead.StatusCode != http.StatusOK {
 		t.Fatalf("admin session read status=%d error=%q", sessionRead.StatusCode, apiErrorCode(t, sessionRead))
@@ -184,7 +172,7 @@ func TestHelperCredentialAuthAndAttemptUpload(t *testing.T) {
 	if _, err := fixture.app.Repositories.Create(ctx, "other", "Other"); err != nil {
 		t.Fatal(err)
 	}
-	scoped := checkRequest(t, http.MethodGet, server.URL+"/api/v1/repositories/other/tasks", nil, token)
+	scoped := checkRequest(t, http.MethodGet, strings.TrimSuffix(base, "/project")+"/other/tasks", nil, token)
 	if scoped.StatusCode != http.StatusForbidden || apiErrorCode(t, scoped) != "helper_credential_scope" {
 		t.Fatalf("cross-repository credential status=%d", scoped.StatusCode)
 	}
@@ -192,8 +180,7 @@ func TestHelperCredentialAuthAndAttemptUpload(t *testing.T) {
 
 func TestHelperCredentialCreationIdentityIsRecoverable(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/project"
 	creationID := "0123456789abcdef0123456789abcdef"
 
@@ -235,18 +222,13 @@ func TestHelperCredentialCreationIdentityIsRecoverable(t *testing.T) {
 
 func TestHelperCredentialChangesRequireTheCurrentAdminPassword(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	ctx := context.Background()
 	base := server.URL + "/api/v1/repositories/project"
 
 	settings, err := fixture.store.Settings(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.CreateSession(ctx, "admin-session", "admin", "admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, fixture.store.CreateSession(ctx, "admin-session", "admin", "admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 
 	// A remembered browser session can read.
 	if status, code := checkStatus(t, adminSessionRequest(t, http.MethodGet, base+"/helper-credentials", nil, "admin-csrf", "")); status != http.StatusOK {
@@ -309,23 +291,11 @@ func TestAttemptRegistrationReplayIgnoresLaterServerClock(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	serverNow := time.Unix(1_800_000_000, 0).UTC()
 	fixture.app.Now = func() time.Time { return serverNow }
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
 	ctx := context.Background()
-	token := "synthetic-helper-token"
-	hash := sha256.Sum256([]byte(token))
-	if _, _, err := fixture.store.CreateHelperCredential(ctx, "project", "clock fixture", "", hash[:], serverNow); err != nil {
-		t.Fatal(err)
-	}
-	base := server.URL + "/api/v1/repositories/project"
-	created := checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": "Clock replay"}, token)
-	var taskResponse checkapi.TaskResponse
-	decodeCheckJSON(t, created, &taskResponse)
-	if taskResponse.Task == nil {
-		t.Fatal("task not created")
-	}
+	base, token := helperAPI(t, fixture, "clock fixture", serverNow)
+	taskID := createCheckTask(t, base, token, "Clock replay")
 	payload := attemptUploadBodyWithID(fixture.sourceOID, "clean", "passed", "ffffffffffffffffffffffffffffffff")
-	first := registerAttempt(t, base, taskResponse.Task.ID, token, payload)
+	first := registerAttempt(t, base, taskID, token, payload)
 	if first.StatusCode != http.StatusOK {
 		t.Fatalf("first registration status=%d error=%q", first.StatusCode, apiErrorCode(t, first))
 	}
@@ -336,7 +306,7 @@ func TestAttemptRegistrationReplayIgnoresLaterServerClock(t *testing.T) {
 	original := attempts[0]
 
 	serverNow = serverNow.Add(2 * time.Second)
-	replay := registerAttempt(t, base, taskResponse.Task.ID, token, payload)
+	replay := registerAttempt(t, base, taskID, token, payload)
 	if replay.StatusCode != http.StatusOK {
 		t.Fatalf("identical registration after server clock advance: status=%d error=%q", replay.StatusCode, apiErrorCode(t, replay))
 	}
@@ -348,19 +318,9 @@ func TestAttemptRegistrationReplayIgnoresLaterServerClock(t *testing.T) {
 
 func TestAttemptRegistrationIsIdempotentAndOrdered(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
 	ctx := context.Background()
-	token := "synthetic-helper-token"
-	hash := sha256.Sum256([]byte(token))
-	if _, _, err := fixture.store.CreateHelperCredential(ctx, "project", "laptop", "", hash[:], time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	base := server.URL + "/api/v1/repositories/project"
-	created := checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": "Idempotent"}, token)
-	var taskResponse checkapi.TaskResponse
-	decodeCheckJSON(t, created, &taskResponse)
-	taskID := taskResponse.Task.ID
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
+	taskID := createCheckTask(t, base, token, "Idempotent")
 
 	// The older attempt is registered first, so it holds the lower sequence.
 	older := attemptUploadBodyWithID(fixture.sourceOID, "clean", "failed", "ffffffffffffffffffffffffffffffff")
@@ -436,19 +396,8 @@ func TestAttemptRegistrationIsIdempotentAndOrdered(t *testing.T) {
 
 func TestCorrectionCycleReservationIsExplicitAndCountedOnce(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	ctx := context.Background()
-	token := "synthetic-helper-token"
-	hash := sha256.Sum256([]byte(token))
-	if _, _, err := fixture.store.CreateHelperCredential(ctx, "project", "laptop", "", hash[:], time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	base := server.URL + "/api/v1/repositories/project"
-	created := checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": "Correction"}, token)
-	var taskResponse checkapi.TaskResponse
-	decodeCheckJSON(t, created, &taskResponse)
-	taskID := taskResponse.Task.ID
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
+	taskID := createCheckTask(t, base, token, "Correction")
 
 	// The initial check consumes no round.
 	initial := recordAttempt(t, base, taskID, token, attemptUploadBody(fixture.sourceOID, "clean", "failed"))
@@ -530,19 +479,8 @@ func TestCorrectionCycleReservationIsExplicitAndCountedOnce(t *testing.T) {
 
 func TestAttemptCompletionValidatesTheDeclaredChecks(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	ctx := context.Background()
-	token := "synthetic-helper-token"
-	hash := sha256.Sum256([]byte(token))
-	if _, _, err := fixture.store.CreateHelperCredential(ctx, "project", "laptop", "", hash[:], time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	base := server.URL + "/api/v1/repositories/project"
-	created := checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": "Validation"}, token)
-	var taskResponse checkapi.TaskResponse
-	decodeCheckJSON(t, created, &taskResponse)
-	taskID := taskResponse.Task.ID
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
+	taskID := createCheckTask(t, base, token, "Validation")
 
 	mismatch := attemptUploadBody(fixture.sourceOID, "clean", "passed")
 	mismatch["results"] = []map[string]any{{
@@ -571,19 +509,8 @@ func TestAttemptCompletionValidatesTheDeclaredChecks(t *testing.T) {
 
 func TestExpiredLogIsReportedWhileTheAttemptRemains(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	ctx := context.Background()
-	token := "synthetic-helper-token"
-	hash := sha256.Sum256([]byte(token))
-	if _, _, err := fixture.store.CreateHelperCredential(ctx, "project", "laptop", "", hash[:], time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	base := server.URL + "/api/v1/repositories/project"
-	created := checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": "Expiry"}, token)
-	var taskResponse checkapi.TaskResponse
-	decodeCheckJSON(t, created, &taskResponse)
-	taskID := taskResponse.Task.ID
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
+	taskID := createCheckTask(t, base, token, "Expiry")
 	recorded := recordAttempt(t, base, taskID, token, attemptUploadBody(fixture.sourceOID, "clean", "passed"))
 	var attemptResponse checkapi.TaskResponse
 	decodeCheckJSON(t, recorded, &attemptResponse)
@@ -602,15 +529,7 @@ func TestExpiredLogIsReportedWhileTheAttemptRemains(t *testing.T) {
 
 func TestCheckEvidenceIsStaleWhenTheConfigurationChanges(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	ctx := context.Background()
-	token := "synthetic-helper-token"
-	hash := sha256.Sum256([]byte(token))
-	if _, _, err := fixture.store.CreateHelperCredential(ctx, "project", "laptop", "", hash[:], time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	base := server.URL + "/api/v1/repositories/project"
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
 	prEndpoint := base + "/pull-requests"
 	created := apiRequest(t, http.MethodPost, prEndpoint, map[string]any{
 		"title": "Configuration change", "source_branch": "feature", "target_branch": "main",
@@ -647,8 +566,7 @@ func TestCheckEvidenceIsStaleWhenTheConfigurationChanges(t *testing.T) {
 
 func TestAdvisoryReadFailureDoesNotBlockAMerge(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	ctx := context.Background()
 	base := server.URL + "/api/v1/repositories/project"
 	prEndpoint := base + "/pull-requests"
@@ -660,9 +578,7 @@ func TestAdvisoryReadFailureDoesNotBlockAMerge(t *testing.T) {
 
 	// Break only the advisory check read. The durable pull request state and
 	// the Git safety checks still work.
-	if err := fixture.store.Exec(ctx, "DROP TABLE check_configurations"); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.Exec(ctx, "DROP TABLE check_configurations"))
 	shown := apiRequest(t, http.MethodGet, prEndpoint+"/"+number, nil, "", "")
 	if shown.StatusCode != http.StatusOK {
 		t.Fatalf("show with a broken advisory read status=%d", shown.StatusCode)
@@ -681,8 +597,7 @@ func TestAdvisoryReadFailureDoesNotBlockAMerge(t *testing.T) {
 
 func TestCreatePullRequestValidatesExpectedHeadsInsideTheLock(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/project/pull-requests"
 
 	// A matching expected head creates the pull request.
@@ -706,15 +621,7 @@ func TestCreatePullRequestValidatesExpectedHeadsInsideTheLock(t *testing.T) {
 
 func TestPullRequestViewShowsRevisionBoundChecksAndAdvisoryMerge(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	ctx := context.Background()
-	token := "synthetic-helper-token"
-	hash := sha256.Sum256([]byte(token))
-	if _, _, err := fixture.store.CreateHelperCredential(ctx, "project", "laptop", "", hash[:], time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	base := server.URL + "/api/v1/repositories/project"
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
 	prEndpoint := base + "/pull-requests"
 
 	created := apiRequest(t, http.MethodPost, prEndpoint, map[string]any{
@@ -756,9 +663,7 @@ func TestPullRequestViewShowsRevisionBoundChecksAndAdvisoryMerge(t *testing.T) {
 
 	// A moved source head must not inherit the old success or failure. The new
 	// pull request never had the old revision, so it has no earlier result.
-	if err := os.WriteFile(filepath.Join(fixture.work, "second.txt"), []byte("second\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(fixture.work, "second.txt"), []byte("second\n"), 0o600))
 	apiRunGit(t, fixture.work, "add", ".")
 	apiRunGit(t, fixture.work, "commit", "-m", "second")
 	apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/feature")
@@ -845,9 +750,7 @@ func recordAttempt(t *testing.T, base, taskID, token string, body map[string]any
 	registered := registerAttempt(t, base, taskID, token, body)
 	content, err := io.ReadAll(registered.Body)
 	registered.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if registered.StatusCode != http.StatusOK {
 		return &http.Response{StatusCode: registered.StatusCode, Header: registered.Header, Body: io.NopCloser(bytes.NewReader(content))}
 	}
@@ -860,91 +763,19 @@ func recordAttempt(t *testing.T, base, taskID, token string, body map[string]any
 
 func checkRequest(t *testing.T, method, target string, value any, token string) *http.Response {
 	t.Helper()
-	var body *bytes.Reader
-	if value == nil {
-		body = bytes.NewReader(nil)
-	} else {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequest(method, target, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
+	bearer := ""
 	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
+		bearer = "Bearer " + token
 	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return response
+	return sendJSON(t, method, target, value, header("Authorization", bearer))
 }
-
 func adminAPIRequest(t *testing.T, method, target string, value any, password string) *http.Response {
 	t.Helper()
-	var body *bytes.Reader
-	if value == nil {
-		body = bytes.NewReader(nil)
-	} else {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequest(method, target, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	request.SetBasicAuth("admin", password)
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return response
+	return sendJSON(t, method, target, value, func(request *http.Request) { request.SetBasicAuth("admin", password) })
 }
-
 func adminSessionRequest(t *testing.T, method, target string, value any, csrf, password string) *http.Response {
 	t.Helper()
-	var body *bytes.Reader
-	if value == nil {
-		body = bytes.NewReader(nil)
-	} else {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequest(method, target, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	request.AddCookie(&http.Cookie{Name: "owngit_admin", Value: "admin-session"})
-	if csrf != "" {
-		request.Header.Set(csrfHeader, csrf)
-	}
-	if password != "" {
-		request.Header.Set(adminPasswordHeader, password)
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return response
+	return sendJSON(t, method, target, value, adminCookieValue("admin-session"), header(csrfHeader, csrf), header(adminPasswordHeader, password))
 }
 
 // checkStatus reads and closes a response, returning its status and error
@@ -953,18 +784,14 @@ func checkStatus(t *testing.T, response *http.Response) (int, string) {
 	t.Helper()
 	defer response.Body.Close()
 	var envelope pullrequest.ErrorEnvelope
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		t.Fatalf("decode API response: %v", err)
-	}
+	noErrf(t, json.NewDecoder(response.Body).Decode(&envelope), "decode API response")
 	return response.StatusCode, envelope.Error.Code
 }
 
 func decodeCheckJSON(t *testing.T, response *http.Response, destination any) {
 	t.Helper()
 	defer response.Body.Close()
-	if err := json.NewDecoder(response.Body).Decode(destination); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.NewDecoder(response.Body).Decode(destination))
 }
 
 // TestCompletionWithTheWrongTaskURLDoesNotMutate covers a completion posted to
@@ -972,15 +799,8 @@ func decodeCheckJSON(t *testing.T, response *http.Response, destination any) {
 // fail before any durable effect.
 func TestCompletionWithTheWrongTaskURLDoesNotMutate(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
 	ctx := context.Background()
-	token := "synthetic-helper-token"
-	hash := sha256.Sum256([]byte(token))
-	if _, _, err := fixture.store.CreateHelperCredential(ctx, "project", "laptop", "", hash[:], time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	base := server.URL + "/api/v1/repositories/project"
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
 	first := checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": "First"}, token)
 	var firstResponse checkapi.TaskResponse
 	decodeCheckJSON(t, first, &firstResponse)
@@ -1005,10 +825,31 @@ func TestCompletionWithTheWrongTaskURLDoesNotMutate(t *testing.T) {
 		t.Fatalf("attempt status=%q after the rejected completion", stored.Status)
 	}
 	task, _, err := fixture.store.Task(ctx, "project", firstResponse.Task.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if task.LastAppliedAttemptID != "" || task.Status != state.TaskActive {
 		t.Fatalf("task mutated by the rejected completion: %+v", task)
 	}
+}
+
+// helperAPI serves fixture with one helper credential for "project" and
+// returns the repository API base URL and that credential's token.
+func helperAPI(t *testing.T, fixture apiFixture, label string, created time.Time) (base, token string) {
+	t.Helper()
+	server := serve(t, fixture.app.Handler())
+	token = "synthetic-helper-token"
+	hash := sha256.Sum256([]byte(token))
+	_, _, err := fixture.store.CreateHelperCredential(context.Background(), "project", label, "", hash[:], created)
+	noErr(t, err)
+	return server.URL + "/api/v1/repositories/project", token
+}
+
+// createCheckTask creates a task through the helper API and returns its ID.
+func createCheckTask(t *testing.T, base, token, title string) string {
+	t.Helper()
+	var response checkapi.TaskResponse
+	decodeCheckJSON(t, checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": title}, token), &response)
+	if response.Task == nil {
+		t.Fatalf("task %q was not created", title)
+	}
+	return response.Task.ID
 }

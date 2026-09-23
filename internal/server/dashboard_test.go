@@ -3,10 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/cookiejar"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,47 +12,32 @@ import (
 	"strings"
 	"testing"
 
-	"owngit/internal/auth"
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
 )
 
 func TestDashboardPreservesCollidingBranchAndTagIdentity(t *testing.T) {
-	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
-	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
-	app.Repositories.SetRoot(canonical)
+	app := newConfiguredApp(t)
 	if _, err := app.Repositories.Create(context.Background(), "collision", ""); err != nil {
 		t.Fatal(err)
 	}
 	remote, _ := app.Repositories.Path("collision")
 	work := filepath.Join(t.TempDir(), "work")
-	runDashboardGit(t, "", "init", "--initial-branch=main", work)
-	runDashboardGit(t, work, "config", "user.name", "Collision Author")
-	runDashboardGit(t, work, "config", "user.email", "collision@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "identity.txt"), []byte("tag identity\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "tag identity")
-	runDashboardGit(t, work, "tag", "same")
-	runDashboardGit(t, work, "remote", "add", "origin", remote)
-	runDashboardGit(t, work, "push", "origin", "refs/tags/same")
-	if err := os.WriteFile(filepath.Join(work, "identity.txt"), []byte("branch identity\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "branch identity")
-	runDashboardGit(t, work, "push", "origin", "HEAD:refs/heads/same")
+	apiRunGit(t, "", "init", "--initial-branch=main", work)
+	apiRunGit(t, work, "config", "user.name", "Collision Author")
+	apiRunGit(t, work, "config", "user.email", "collision@example.invalid")
+	noErr(t, os.WriteFile(filepath.Join(work, "identity.txt"), []byte("tag identity\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "tag identity")
+	apiRunGit(t, work, "tag", "same")
+	apiRunGit(t, work, "remote", "add", "origin", remote)
+	apiRunGit(t, work, "push", "origin", "refs/tags/same")
+	noErr(t, os.WriteFile(filepath.Join(work, "identity.txt"), []byte("branch identity\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "branch identity")
+	apiRunGit(t, work, "push", "origin", "HEAD:refs/heads/same")
 
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	branchBody, branchStatus := dashboardGET(t, client, server.URL+"/repositories/collision/code?ref=refs%2Fheads%2Fsame&path=identity.txt")
@@ -72,43 +55,28 @@ func TestDashboardPreservesCollidingBranchAndTagIdentity(t *testing.T) {
 }
 
 func TestDashboardRendersRealEscapedGitDataAndRetainedHistory(t *testing.T) {
-	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
-	app.Repositories.SetRoot(canonical)
+	app := newConfiguredApp(t)
 	if _, err := app.Repositories.Create(context.Background(), "real-project", "A real repository"); err != nil {
 		t.Fatal(err)
 	}
 	remote, _ := app.Repositories.Path("real-project")
 	work := filepath.Join(t.TempDir(), "work")
-	runDashboardGit(t, "", "init", "--initial-branch=main", work)
-	runDashboardGit(t, work, "config", "user.name", "Dashboard Author")
-	runDashboardGit(t, work, "config", "user.email", "dashboard@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "unsafe.html"), []byte("<script>alert('escaped')</script>\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
+	apiRunGit(t, "", "init", "--initial-branch=main", work)
+	apiRunGit(t, work, "config", "user.name", "Dashboard Author")
+	apiRunGit(t, work, "config", "user.email", "dashboard@example.invalid")
+	noErr(t, os.WriteFile(filepath.Join(work, "unsafe.html"), []byte("<script>alert('escaped')</script>\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
 	commit := exec.Command("git", "commit", "-m", "Render actual repository data")
 	commit.Dir = work
 	commit.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2024-04-05T23:30:00-07:00", "GIT_COMMITTER_DATE=2024-04-06T08:00:00Z")
 	if output, err := commit.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v\n%s", err, output)
 	}
-	oid := dashboardGitOutput(t, work, "rev-parse", "HEAD")
-	runDashboardGit(t, work, "remote", "add", "origin", remote)
-	runDashboardGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+	oid := apiGitOutput(t, work, "rev-parse", "HEAD")
+	apiRunGit(t, work, "remote", "add", "origin", remote)
+	apiRunGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	for target, expected := range map[string]string{
@@ -130,14 +98,12 @@ func TestDashboardRendersRealEscapedGitDataAndRetainedHistory(t *testing.T) {
 		t.Fatalf("explicit missing ref used the wrong notice: status=%d", status)
 	}
 
-	if err := os.WriteFile(filepath.Join(work, "release-only.txt"), []byte("recover this branch\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "release-only work")
-	releaseOID := dashboardGitOutput(t, work, "rev-parse", "HEAD")
-	runDashboardGit(t, work, "push", "origin", "HEAD:refs/heads/release")
-	runDashboardGit(t, work, "push", "origin", ":refs/heads/release")
+	noErr(t, os.WriteFile(filepath.Join(work, "release-only.txt"), []byte("recover this branch\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "release-only work")
+	releaseOID := apiGitOutput(t, work, "rev-parse", "HEAD")
+	apiRunGit(t, work, "push", "origin", "HEAD:refs/heads/release")
+	apiRunGit(t, work, "push", "origin", ":refs/heads/release")
 	recovered := "recovered-" + shortOID(releaseOID)
 	body, status = dashboardGET(t, client, server.URL+"/repositories/real-project")
 	retainedRestoreLink := `/repositories/real-project/restore?source=` + releaseOID + `&amp;target=` + recovered
@@ -155,20 +121,18 @@ func TestDashboardRendersRealEscapedGitDataAndRetainedHistory(t *testing.T) {
 		t.Fatalf("retained restore target was not a missing branch: preview=%+v err=%v", preview, err)
 	}
 
-	runDashboardGit(t, work, "checkout", "--orphan", "replacement")
-	runDashboardGit(t, work, "rm", "-rf", ".")
-	if err := os.WriteFile(filepath.Join(work, "replacement.txt"), []byte("replacement\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "replacement")
-	runDashboardGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
+	apiRunGit(t, work, "checkout", "--orphan", "replacement")
+	apiRunGit(t, work, "rm", "-rf", ".")
+	noErr(t, os.WriteFile(filepath.Join(work, "replacement.txt"), []byte("replacement\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "replacement")
+	apiRunGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
 	body, status = dashboardGET(t, client, server.URL+"/repositories/real-project/commits/"+oid)
 	if status != http.StatusOK || !strings.Contains(body, "Showing a specific revision, not a branch") || strings.Contains(body, "ref=refs%2Fheads%2Fmain") {
 		t.Fatalf("retained activity commit was not shown detached from current main: status=%d", status)
 	}
 
-	runDashboardGit(t, work, "push", "origin", ":refs/heads/main")
+	apiRunGit(t, work, "push", "origin", ":refs/heads/main")
 	body, status = dashboardGET(t, client, server.URL+"/repositories/real-project")
 	if status != http.StatusOK || !strings.Contains(body, shortOID(oid)) || !strings.Contains(body, "default branch no longer exists") {
 		t.Fatalf("deleted default branch page status=%d did not show retained history and missing default", status)
@@ -178,9 +142,7 @@ func TestDashboardRendersRealEscapedGitDataAndRetainedHistory(t *testing.T) {
 		t.Fatalf("retained commit was not browsable after deleting the last branch: status=%d", status)
 	}
 	activity, err := app.Repositories.Activity(context.Background(), "real-project", 100)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	foundRecordedDay := false
 	for _, day := range activity.Days {
 		if day.Day == "2024-04-05" && day.Count == 1 {
@@ -192,25 +154,6 @@ func TestDashboardRendersRealEscapedGitDataAndRetainedHistory(t *testing.T) {
 	}
 }
 
-// newActivityApp creates an open-mode app with no repositories yet.
-func newActivityApp(t *testing.T) *App {
-	t.Helper()
-	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
-	app.Repositories.SetRoot(canonical)
-	return app
-}
-
 // addActivityRepository creates a repository with the requested number of
 // commits on main and returns its bare path and a working clone.
 func addActivityRepository(t *testing.T, app *App, name string, commits int) (remote, work string) {
@@ -220,17 +163,15 @@ func addActivityRepository(t *testing.T, app *App, name string, commits int) (re
 	}
 	remote, _ = app.Repositories.Path(name)
 	work = filepath.Join(t.TempDir(), "work")
-	runDashboardGit(t, "", "init", "--initial-branch=main", work)
-	runDashboardGit(t, work, "config", "user.name", "Activity Author")
-	runDashboardGit(t, work, "config", "user.email", "activity@example.invalid")
+	apiRunGit(t, "", "init", "--initial-branch=main", work)
+	apiRunGit(t, work, "config", "user.name", "Activity Author")
+	apiRunGit(t, work, "config", "user.email", "activity@example.invalid")
 	for index := 0; index < commits; index++ {
-		if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte(strings.Repeat("x", index+1)+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		runDashboardGit(t, work, "add", ".")
-		runDashboardGit(t, work, "commit", "-m", "commit")
+		noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte(strings.Repeat("x", index+1)+"\n"), 0o600))
+		apiRunGit(t, work, "add", ".")
+		apiRunGit(t, work, "commit", "-m", "commit")
 	}
-	runDashboardGit(t, work, "push", remote, "HEAD:refs/heads/main")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
 	return remote, work
 }
 
@@ -238,7 +179,7 @@ func addActivityRepository(t *testing.T, app *App, name string, commits int) (re
 // requested number of commits on main.
 func newActivityFixture(t *testing.T, name string, commits int) (app *App, remote, work string) {
 	t.Helper()
-	app = newActivityApp(t)
+	app = newConfiguredApp(t)
 	remote, work = addActivityRepository(t, app, name, commits)
 	return app, remote, work
 }
@@ -248,23 +189,15 @@ func newActivityFixture(t *testing.T, name string, commits int) (app *App, remot
 func traceGitCommands(t *testing.T, app *App) string {
 	t.Helper()
 	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	tracePath := filepath.Join(t.TempDir(), "git-commands")
 	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
 	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + serverShellQuote(tracePath) + "\nprintf '\\n' >> " + serverShellQuote(tracePath) + "\nexec " + serverShellQuote(gitPath) + " \"$@\"\n"
-	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	app.Repositories.Git = traced
-	if err := os.WriteFile(tracePath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(tracePath, nil, 0o600))
 	return tracePath
 }
 
@@ -277,9 +210,7 @@ func traceGitCommands(t *testing.T, app *App) string {
 func traceActivityLogs(t *testing.T, app *App) string {
 	t.Helper()
 	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	dir := t.TempDir()
 	tracePath := filepath.Join(dir, "git-commands")
 	wrapperPath := filepath.Join(dir, "git-wrapper")
@@ -315,17 +246,11 @@ func traceActivityLogs(t *testing.T, app *App) string {
 		"fi\n" +
 		"printf '%s\\t%s\\t-\\n' \"$dir\" \"$sub\" >> " + serverShellQuote(tracePath) + "\n" +
 		"exec " + serverShellQuote(gitPath) + " \"$@\"\n"
-	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	traced, err := gitexec.New(wrapperPath, filepath.Join(dir, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	app.Repositories.Git = traced
-	if err := os.WriteFile(tracePath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(tracePath, nil, 0o600))
 	return tracePath
 }
 
@@ -333,9 +258,7 @@ func traceActivityLogs(t *testing.T, app *App) string {
 func activityLogCounts(t *testing.T, tracePath string) map[string]map[string]int {
 	t.Helper()
 	trace, err := os.ReadFile(tracePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	counts := map[string]map[string]int{}
 	for _, line := range strings.Split(strings.TrimSpace(string(trace)), "\n") {
 		fields := strings.Split(line, "\t")
@@ -354,8 +277,7 @@ func activityLogCounts(t *testing.T, tracePath string) map[string]map[string]int
 func TestOverviewAndActivityShareOneBoundedObservation(t *testing.T) {
 	app, _, _ := newActivityFixture(t, "bounded", 3)
 	app.ActivityLimit = 2
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	for _, target := range []string{"/", "/activity"} {
@@ -372,8 +294,7 @@ func TestOverviewUsesOneActivityScanPerRepository(t *testing.T) {
 	}
 	app, _, _ := newActivityFixture(t, "scanned", 3)
 	tracePath := traceActivityLogs(t, app)
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	if _, status := dashboardGET(t, client, server.URL+"/"); status != http.StatusOK {
@@ -388,9 +309,7 @@ func TestOverviewUsesOneActivityScanPerRepository(t *testing.T) {
 	// The shared observation replaces the separate combined walk that the
 	// graph used to run with its own budget.
 	trace, err := os.ReadFile(tracePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if count := bytes.Count(trace, []byte("\trev-list\t")); count != 0 {
 		t.Fatalf("overview used %d separate history walks, want 0", count)
 	}
@@ -403,13 +322,12 @@ func TestOverviewActivityBudgetIsPageWideAcrossRepositories(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the command-counting wrapper is a Unix test fixture")
 	}
-	app := newActivityApp(t)
+	app := newConfiguredApp(t)
 	app.ActivityLimit = 2
 	addActivityRepository(t, app, "alpha", 3)
 	addActivityRepository(t, app, "beta", 3)
 	tracePath := traceActivityLogs(t, app)
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	body, status := dashboardGET(t, client, server.URL+"/")
@@ -435,7 +353,7 @@ func TestActivityObservationFailureMarksGraphUnavailable(t *testing.T) {
 	app, remote, _ := newActivityFixture(t, "unreadable-activity", 1)
 	// A commit whose parent is missing makes the branch readable to
 	// for-each-ref but not to the history walk.
-	treeOID := dashboardGitOutput(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main^{tree}")
+	treeOID := apiGitOutput(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main^{tree}")
 	commitObject := "tree " + treeOID + "\nparent " + strings.Repeat("1", 40) + "\nauthor Test <test@example.invalid> 1704067200 +0000\ncommitter Test <test@example.invalid> 1704067200 +0000\n\nbroken parent\n"
 	command := exec.Command("git", "--git-dir", remote, "hash-object", "-t", "commit", "-w", "--stdin")
 	command.Stdin = strings.NewReader(commitObject)
@@ -443,10 +361,9 @@ func TestActivityObservationFailureMarksGraphUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create broken commit object: %v\n%s", err, output)
 	}
-	runDashboardGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/broken", strings.TrimSpace(string(output)))
+	apiRunGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/broken", strings.TrimSpace(string(output)))
 
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	for _, target := range []string{"/", "/activity"} {
@@ -463,15 +380,14 @@ func TestRepositoryPageBatchesRefTipMetadata(t *testing.T) {
 	}
 	app, remote, work := newActivityFixture(t, "batched", 1)
 	for _, branch := range []string{"one", "two", "three"} {
-		runDashboardGit(t, work, "branch", branch)
+		apiRunGit(t, work, "branch", branch)
 	}
-	runDashboardGit(t, work, "tag", "lightweight")
-	runDashboardGit(t, work, "tag", "-a", "annotated", "-m", "annotated")
-	runDashboardGit(t, work, "push", remote, "refs/heads/main", "refs/heads/one", "refs/heads/two", "refs/heads/three", "refs/tags/lightweight", "refs/tags/annotated")
+	apiRunGit(t, work, "tag", "lightweight")
+	apiRunGit(t, work, "tag", "-a", "annotated", "-m", "annotated")
+	apiRunGit(t, work, "push", remote, "refs/heads/main", "refs/heads/one", "refs/heads/two", "refs/heads/three", "refs/tags/lightweight", "refs/tags/annotated")
 	tracePath := traceGitCommands(t, app)
 
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	body, status := dashboardGET(t, client, server.URL+"/repositories/batched")
@@ -484,9 +400,7 @@ func TestRepositoryPageBatchesRefTipMetadata(t *testing.T) {
 		}
 	}
 	trace, err := os.ReadFile(tracePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// One batched metadata read for branches and one for tags replaces two
 	// Git processes per ref.
 	if count := bytes.Count(trace, []byte("\x00--no-walk\x00")); count != 2 {
@@ -500,15 +414,13 @@ func TestRepositoryPageBatchesRefTipMetadata(t *testing.T) {
 // the failed group's tips.
 func TestRepositoryPageKeepsRefRowsWhenOneMetadataBatchFails(t *testing.T) {
 	app, remote, work := newActivityFixture(t, "degraded", 1)
-	runDashboardGit(t, work, "checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "feature tip")
-	runDashboardGit(t, work, "push", remote, "HEAD:refs/heads/feature")
-	runDashboardGit(t, work, "tag", "-a", "good", "-m", "good")
-	runDashboardGit(t, work, "push", remote, "refs/tags/good")
+	apiRunGit(t, work, "checkout", "-b", "feature")
+	noErr(t, os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "feature tip")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/feature")
+	apiRunGit(t, work, "tag", "-a", "good", "-m", "good")
+	apiRunGit(t, work, "push", remote, "refs/tags/good")
 	// A tag object whose target is missing makes the batch peel fail while
 	// for-each-ref still lists the ref.
 	tagObject := "object " + strings.Repeat("1", 40) + "\ntype commit\ntag broken\ntagger Test <test@example.invalid> 1704067200 +0000\n\nbroken\n"
@@ -518,10 +430,9 @@ func TestRepositoryPageKeepsRefRowsWhenOneMetadataBatchFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create broken tag object: %v\n%s", err, output)
 	}
-	runDashboardGit(t, "", "--git-dir", remote, "update-ref", "refs/tags/broken", strings.TrimSpace(string(output)))
+	apiRunGit(t, "", "--git-dir", remote, "update-ref", "refs/tags/broken", strings.TrimSpace(string(output)))
 
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	body, status := dashboardGET(t, client, server.URL+"/repositories/degraded")
@@ -557,35 +468,10 @@ func pageSection(t *testing.T, body, heading string) string {
 
 func dashboardGET(t *testing.T, client *http.Client, target string) (string, int) {
 	t.Helper()
-	response, err := client.Get(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	content, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(content), response.StatusCode
+	result := browserGET(t, client, target)
+	return result.body, result.status
 }
-
-func runDashboardGit(t *testing.T, directory string, arguments ...string) {
-	t.Helper()
-	if output, err := dashboardGitCombined(directory, arguments...); err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(arguments, " "), err, output)
-	}
-}
-
-func dashboardGitOutput(t *testing.T, directory string, arguments ...string) string {
-	t.Helper()
-	output, err := dashboardGitCombined(directory, arguments...)
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(arguments, " "), err, output)
-	}
-	return strings.TrimSpace(output)
-}
-
-func dashboardGitCombined(directory string, arguments ...string) (string, error) {
+func gitCombined(directory string, arguments ...string) (string, error) {
 	command := exec.Command("git", arguments...)
 	command.Dir = directory
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")

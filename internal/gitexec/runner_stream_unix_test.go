@@ -26,9 +26,7 @@ func TestStreamEarlyConsumerErrorReapsBeforeTermination(t *testing.T) {
 	pidFile := filepath.Join(root, "backend.pid")
 	script := filepath.Join(root, "backend")
 	content := "#!/bin/sh\nprintf '%s' \"$$\" > " + shellEscape(pidFile) + "\nprintf 'ready\\n'\nexec sleep 60\n"
-	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(script, []byte(content), 0o700))
 	consumerErr := errors.New("consumer stopped early")
 	consumerReturned := make(chan time.Time, 1)
 	_, err := runner.Stream(context.Background(), script, root, nil, nil, func(reader io.Reader) error {
@@ -64,9 +62,7 @@ func TestStreamCancellationWithPipeHoldingDescendantTerminatesOnce(t *testing.T)
 	content := "#!/bin/sh\nprintf '%s' \"$$\" > " + shellEscape(pidFile) +
 		"\nsleep 60 &\nchild=$!\nprintf '%s' \"$child\" > " + shellEscape(childPIDFile) +
 		"\nprintf 'ready\\n'\nwait \"$child\"\n"
-	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(script, []byte(content), 0o700))
 	terminations := 0
 	originalTerminate := streamTerminateOwnedProcess
 	streamTerminateOwnedProcess = func(owner *ProcessOwner, grace time.Duration) error {

@@ -66,9 +66,7 @@ func TestAdmissionAndReconcileShareOneBarrier(t *testing.T) {
 		t.Fatalf("refresh ended before the transport: %v", *refreshErr)
 	}
 	<-reconcileDone
-	if err := <-reconcileErr; err != nil {
-		t.Fatalf("reconciliation: %v", err)
-	}
+	noErr(t, <-reconcileErr, "reconciliation")
 	active, exists, err := f.store.ActiveImportRun(ctx, "project")
 	if err != nil || !exists {
 		t.Fatalf("live run missing after reconciliation: exists=%v err=%v", exists, err)
@@ -83,9 +81,7 @@ func TestAdmissionAndReconcileShareOneBarrier(t *testing.T) {
 	go func() { second <- f.service.Reconcile(ctx) }()
 	select {
 	case err := <-second:
-		if err != nil {
-			t.Fatalf("reconciliation during fetch: %v", err)
-		}
+		noErr(t, err, "reconciliation during fetch")
 	case <-runDone:
 		t.Fatalf("refresh ended before the second reconciliation: %v", *refreshErr)
 	}
@@ -149,13 +145,9 @@ func TestCloseRefusesWhileRunActiveAndKeepsOwnership(t *testing.T) {
 	if refreshRun.Status != state.ImportRunComplete {
 		t.Fatalf("refresh status=%q", refreshRun.Status)
 	}
-	if err := f.service.Close(); err != nil {
-		t.Fatalf("close after the run finished: %v", err)
-	}
+	noErr(t, f.service.Close(), "close after the run finished")
 	info, err := second.Prepare(ctx)
-	if err != nil {
-		t.Fatalf("second prepare after release: %v", err)
-	}
+	noErr(t, err, "second prepare after release")
 	if info.RootID != rootID {
 		t.Fatalf("root identity changed: %s then %s", rootID, info.RootID)
 	}
@@ -229,9 +221,7 @@ func TestReconcileSnapshotAndInterruptShareTheBarrier(t *testing.T) {
 		}
 	}
 	close(releaseSnapshot)
-	if err := <-reconcileErr; err != nil {
-		t.Fatalf("reconciliation: %v", err)
-	}
+	noErr(t, <-reconcileErr, "reconciliation")
 	select {
 	case <-fetchStarted:
 	case <-runDone:
@@ -270,9 +260,7 @@ func TestReconcileLatchesRestoredMarkerLossBeforeMutation(t *testing.T) {
 		ID: runID, RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1, Kind: state.ImportKindRefresh,
 		Status: state.ImportRunPreparing, StartedAt: f.now, CreatedAt: f.now,
 	}
-	if err := f.store.BeginImportRun(ctx, abandoned); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.BeginImportRun(ctx, abandoned))
 	var stimulusErr, restoreErr error
 	var lossReported bool
 	f.service.afterLiveSnapshot = func() {
@@ -286,12 +274,8 @@ func TestReconcileLatchesRestoredMarkerLossBeforeMutation(t *testing.T) {
 		restoreErr = restore()
 	}
 	reconcileErr := f.service.Reconcile(ctx)
-	if stimulusErr != nil {
-		t.Fatalf("induce operation marker mismatch: %v", stimulusErr)
-	}
-	if restoreErr != nil {
-		t.Fatalf("restore operation marker: %v", restoreErr)
-	}
+	noErr(t, stimulusErr, "induce operation marker mismatch")
+	noErr(t, restoreErr, "restore operation marker")
 	if !lossReported {
 		t.Fatal("operation did not report runtime ownership loss")
 	}
@@ -305,9 +289,7 @@ func TestReconcileLatchesRestoredMarkerLossBeforeMutation(t *testing.T) {
 	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeLost) {
 		t.Fatalf("completed operation cleared ownership loss: %v", err)
 	}
-	if err := f.service.Close(); err != nil {
-		t.Fatalf("close lost idle runtime: %v", err)
-	}
+	noErr(t, f.service.Close(), "close lost idle runtime")
 	info, err := f.service.Prepare(ctx)
 	if err != nil || info.RootID != rootID {
 		t.Fatalf("explicit close did not recover restored root: info=%+v err=%v", info, err)
@@ -348,16 +330,10 @@ func TestCloseRefusesWhileReconciliationInFlight(t *testing.T) {
 	}
 
 	close(continueReconcile)
-	if err := <-reconcileErr; err != nil {
-		t.Fatalf("reconciliation: %v", err)
-	}
-	if err := f.service.Close(); err != nil {
-		t.Fatalf("close after reconciliation: %v", err)
-	}
+	noErr(t, <-reconcileErr, "reconciliation")
+	noErr(t, f.service.Close(), "close after reconciliation")
 	info, err := f.service.Prepare(ctx)
-	if err != nil {
-		t.Fatalf("prepare after close: %v", err)
-	}
+	noErr(t, err, "prepare after close")
 	if info.RootID != rootID {
 		t.Fatalf("root identity changed: %s then %s", rootID, info.RootID)
 	}
@@ -401,9 +377,7 @@ func TestCloseRefusesAfterReconciliationScan(t *testing.T) {
 	f.mustImport(ImportInput{})
 	f.prepareRuntime(t)
 	unknown := filepath.Join(f.service.stagingRootPath(), "unknown-parent-fixture.txt")
-	if err := os.WriteFile(unknown, []byte("preserve"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(unknown, []byte("preserve"), 0o600))
 	reached := make(chan struct{})
 	release := make(chan struct{})
 	done := make(chan error, 1)
@@ -441,8 +415,9 @@ func TestCloseRefusesAfterReconciliationScan(t *testing.T) {
 }
 
 // The lifecycle barrier is free while an external clock callback runs, which is
-// what keeps a caller that blocks in Clock able to admit a run. Moving the clock
-// callback inside the barrier would fail here.
+// what keeps a caller that blocks in Clock able to admit a run. That run is live
+// when reconciliation takes its snapshot, so it must not be interrupted. Moving
+// the clock callback inside the barrier, or snapshotting before it, fails here.
 func TestClockCallbackRunsOutsideLifecycleBarrier(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -450,24 +425,88 @@ func TestClockCallbackRunsOutsideLifecycleBarrier(t *testing.T) {
 	f.mustImport(ImportInput{})
 	clockReached := make(chan struct{})
 	continueReconcile := make(chan struct{})
-	var once sync.Once
+	release := sync.OnceFunc(func() { close(continueReconcile) })
+	var first atomic.Bool
 	f.service.Clock = func() time.Time {
-		once.Do(func() {
+		// Only reconciliation's first call blocks; the run's calls pass.
+		if first.CompareAndSwap(false, true) {
 			close(clockReached)
 			<-continueReconcile
-		})
+		}
 		return f.now
 	}
 	reconcileErr := make(chan error, 1)
-	go func() { reconcileErr <- f.service.Reconcile(ctx) }()
-	<-clockReached
+	reconcileStopped := make(chan struct{})
+	go func() {
+		defer close(reconcileStopped)
+		reconcileErr <- f.service.Reconcile(ctx)
+	}()
+	// Cleanups run in reverse order, before the fixture's teardown. Each one
+	// lets its operation finish so nothing outlives the fixture.
+	t.Cleanup(func() {
+		release()
+		waitStopped(t, reconcileStopped, "reconciliation")
+	})
+	select {
+	case <-clockReached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconciliation did not reach the Clock callback")
+	}
 	if !f.service.lifecycle.TryLock() {
 		t.Fatal("the lifecycle barrier is held while the clock callback runs")
 	}
 	f.service.lifecycle.Unlock()
-	close(continueReconcile)
-	if err := <-reconcileErr; err != nil {
-		t.Fatalf("reconciliation: %v", err)
+
+	started, done, _, runErr := f.gatedRefresh(t)
+	t.Cleanup(func() {
+		release()
+		select {
+		case f.transport.gate <- struct{}{}:
+		default:
+		}
+		waitStopped(t, done, "the run")
+	})
+	select {
+	case <-started:
+	case <-done:
+		t.Fatalf("admission ended before the transport: %v", *runErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("new run did not reach the controlled fetch boundary")
+	}
+	ids := f.service.liveRunIDs()
+	if len(ids) != 1 {
+		t.Fatalf("expected one live run, got %d", len(ids))
+	}
+	before, exists, err := f.store.ImportRun(ctx, ids[0])
+	if err != nil || !exists || terminalImportRun(before.Status) {
+		t.Fatalf("precondition: live run status=%q exists=%v error=%v", before.Status, exists, err)
+	}
+	release()
+	select {
+	case err := <-reconcileErr:
+		noErr(t, err, "reconciliation")
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconciliation did not finish")
+	}
+	after, exists, err := f.store.ImportRun(ctx, ids[0])
+	if err != nil || !exists || after.Status != before.Status {
+		t.Fatalf("reconciliation changed a live run: before=%q after=%q exists=%v error=%v", before.Status, after.Status, exists, err)
+	}
+	f.transport.gate <- struct{}{}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("live run did not finish")
+	}
+	noErr(t, *runErr, "refresh")
+}
+
+func waitStopped(t *testing.T, stopped <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Errorf("%s did not stop during cleanup", what)
 	}
 }
 
@@ -487,9 +526,7 @@ func TestAcquireStagingClaimsExistingInformationalRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir, err := f.service.acquireStaging(ctx, runID, "project", f.now)
-	if err != nil {
-		t.Fatalf("acquire with an informational row: %v", err)
-	}
+	noErr(t, err, "acquire with an informational row")
 	row, exists, err := f.store.ImportStaging(ctx, name)
 	if err != nil || !exists {
 		t.Fatalf("claimed row exists=%v err=%v", exists, err)
@@ -510,13 +547,9 @@ func TestUnknownStagingRegistrationToleratesConcurrentClaim(t *testing.T) {
 	f.prepareRuntime(t)
 	name := "run-" + strings.Repeat("7", 32)
 	first := state.ImportStaging{Name: name, Token: strings.Repeat("b", 32), State: state.ImportStagingUnknown, CreatedAt: f.now}
-	if err := f.service.registerUnknownStaging(ctx, first); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.registerUnknownStaging(ctx, first))
 	second := state.ImportStaging{Name: name, Token: strings.Repeat("c", 32), State: state.ImportStagingUnknown, CreatedAt: f.now}
-	if err := f.service.registerUnknownStaging(ctx, second); err != nil {
-		t.Fatalf("second registration: %v", err)
-	}
+	noErr(t, f.service.registerUnknownStaging(ctx, second), "second registration")
 	row, _, err := f.store.ImportStaging(ctx, name)
 	if err != nil || row.Token != first.Token {
 		t.Fatalf("informational row was replaced: %+v err=%v", row, err)

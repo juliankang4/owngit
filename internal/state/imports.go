@@ -2170,3 +2170,18 @@ func scanImportInitialDestination(scanner rowScanner) (ImportInitialDestination,
 	record.UpdatedAt = unixTime(updated)
 	return record, nil
 }
+
+func nullableUnix(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.Unix()
+}
+
+func nullableTimePointer(value sql.NullInt64) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	result := unixTime(value.Int64)
+	return &result
+}

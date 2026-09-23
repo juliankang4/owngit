@@ -23,13 +23,9 @@ func TestWindowsNetworkPathRecognizesUNCAndFinalUNCForms(t *testing.T) {
 
 func TestWindowsPrivateOwnerAcceptanceIsLimitedToProcessSIDs(t *testing.T) {
 	user, defaultOwner, err := processIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	foreign, err := windows.StringToSid("S-1-0-0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !ownerMatchesProcess(user, user, defaultOwner) || !ownerMatchesProcess(defaultOwner, user, defaultOwner) {
 		t.Fatal("current user or token owner was rejected")
 	}
@@ -54,30 +50,22 @@ func TestWindowsCreatePrivateFileProtectsTheHeldObject(t *testing.T) {
 	directory := t.TempDir()
 	ordinaryPath := filepath.Join(directory, "ordinary")
 	ordinaryName, err := windows.UTF16PtrFromString(ordinaryPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	ordinaryHandle, err := windows.CreateFile(ordinaryName, windows.GENERIC_WRITE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	ordinary := os.NewFile(uintptr(ordinaryHandle), ordinaryPath)
 	ordinaryMoved := ordinaryPath + ".moved"
 	if err := os.Rename(ordinaryPath, ordinaryMoved); err != nil {
 		_ = ordinary.Close()
 		t.Fatalf("replacement positive control failed: %v", err)
 	}
-	if err := ordinary.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, ordinary.Close())
 
 	path := filepath.Join(directory, "private")
 	file, err := CreatePrivateFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	user, _, err := processIdentity()
 	if err != nil {
 		_ = file.Close()
@@ -107,12 +95,8 @@ func TestWindowsCreatePrivateFileProtectsTheHeldObject(t *testing.T) {
 		_ = file.Close()
 		t.Fatal(err)
 	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidatePrivateFile(path); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, file.Close())
+	noErr(t, ValidatePrivateFile(path))
 	if duplicate, err := CreatePrivateFile(path); !os.IsExist(err) {
 		if duplicate != nil {
 			_ = duplicate.Close()
@@ -124,38 +108,24 @@ func TestWindowsCreatePrivateFileProtectsTheHeldObject(t *testing.T) {
 func TestWindowsStateTargetResolutionAndOwnerOnlyACL(t *testing.T) {
 	directory := t.TempDir()
 	resolved, err := finalWindowsPath(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if windowsNetworkPath(resolved) {
 		t.Fatalf("local temporary directory resolved to network path %q", resolved)
 	}
-	if err := ensureLocalStateFilesystem(directory); err != nil {
-		t.Fatal(err)
-	}
-	if err := ProtectPrivatePath(directory, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, ensureLocalStateFilesystem(directory))
+	noErr(t, ProtectPrivatePath(directory, true))
 	user, defaultOwner, err := processIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := validateOwnerOnly(directory, user, true); err != nil {
 		t.Fatalf("protected directory: %v", err)
 	}
 	privateFile := filepath.Join(directory, "private")
-	if err := os.WriteFile(privateFile, []byte("private"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(privateFile, []byte("private"), 0o600))
 	if !defaultOwner.Equals(user) {
 		if err := ValidatePrivateFile(privateFile); err == nil {
 			t.Fatal("strict validation accepted a file still owned by the token default owner")
 		}
 	}
-	if err := ProtectPrivatePath(privateFile, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidatePrivateFile(privateFile); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, ProtectPrivatePath(privateFile, false))
+	noErr(t, ValidatePrivateFile(privateFile))
 }

@@ -41,9 +41,7 @@ func TestExternalRunnerClaimsExactSourceExecutesAndCompletes(t *testing.T) {
 	fixture := newRunnerIntegrationFixture(t, "echo runner-ok")
 	httpServer, origin := fixture.startHTTPServer(nil)
 	defer httpServer.Close()
-	if err := fixture.runner(fixture.client(origin)).Run(fixture.ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.runner(fixture.client(origin)).Run(fixture.ctx))
 	completed := fixture.readJob()
 	if completed.Status != state.CheckJobPassed || completed.AttemptID == "" {
 		t.Fatalf("completed job=%+v", completed)
@@ -89,41 +87,27 @@ func newRunnerIntegrationFixture(t *testing.T, command string) *runnerIntegratio
 	ctx := context.Background()
 	root := t.TempDir()
 	store, err := state.Open(ctx, filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
 			t.Error(err)
 		}
 	})
 	git, err := gitexec.New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", "test-admin-hash", true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", "test-admin-hash", true))
 	manager := &repository.Manager{Store: store, Git: git, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	stored, err := manager.Create(ctx, "runner-test", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoryPath, err := manager.Path(stored.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	work := filepath.Join(root, "source")
 	runGit(t, "init", "--initial-branch=main", work)
 	runGit(t, "-C", work, "config", "user.name", "OwnGit Test")
 	runGit(t, "-C", work, "config", "user.email", "test@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "source.txt"), []byte("exact source\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "source.txt"), []byte("exact source\n"), 0o600))
 	runGit(t, "-C", work, "add", "source.txt")
 	runGit(t, "-C", work, "commit", "-m", "source")
 	runGit(t, "-C", work, "push", repositoryPath, "HEAD:refs/heads/main")
@@ -209,9 +193,7 @@ func (fixture *runnerIntegrationFixture) readJob() state.CheckJob {
 func stateIDForTest(t *testing.T) string {
 	t.Helper()
 	id, err := state.RandomID()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return id
 }
 

@@ -102,15 +102,6 @@ func TestAppearanceDefaultsToSystem(t *testing.T) {
 // The script is the only place that touches browser storage and the address
 // bar, so its promises are checked against its actual source.
 
-func scriptSource(t *testing.T) string {
-	t.Helper()
-	data, err := assetFS.ReadFile("assets/owngit.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
-}
-
 func TestScriptClearsTheSetupFragmentAndNeverStoresIt(t *testing.T) {
 	js := scriptSource(t)
 
@@ -160,122 +151,6 @@ func TestScriptPreferenceCookieIsNotACredential(t *testing.T) {
 		if strings.Contains(js, `'`+forbidden) || strings.Contains(js, `"`+forbidden) {
 			t.Errorf("the script handles %q, which is not a preference", forbidden)
 		}
-	}
-}
-
-func TestScriptTranslatesFromRenderedTextOnly(t *testing.T) {
-	js := scriptSource(t)
-	// All text comes from data-en and data-ko attributes the server rendered,
-	// so the two languages cannot drift from the Go catalog.
-	if !strings.Contains(js, "'data-' + lang") && !strings.Contains(js, "data-' + lang") {
-		t.Error("the language switch does not read the server-rendered text")
-	}
-	for _, word := range []string{"저장소", "브랜치", "Repositories'", "Settings'"} {
-		if strings.Contains(js, word) {
-			t.Errorf("the script carries its own copy of interface text: %q", word)
-		}
-	}
-}
-
-func TestScriptRespectsExplicitAppearanceOverSystem(t *testing.T) {
-	js := scriptSource(t)
-	if !strings.Contains(js, `var APPEARANCE_KEY = 'owngit_appearance';`) {
-		t.Error("the appearance preference does not use the OwnGit storage key")
-	}
-	if !strings.Contains(js, "prefers-color-scheme: dark") {
-		t.Error("System appearance does not follow the operating system")
-	}
-	if !strings.Contains(js, `currentAppearance() === 'system'`) {
-		t.Error("an explicit Light or Dark choice would be overwritten by the system")
-	}
-}
-
-func TestStylesheetKeepsSystemAppearanceSubordinateToAChoice(t *testing.T) {
-	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	css := string(data)
-	if !strings.Contains(css, "@media (prefers-color-scheme: dark)") {
-		t.Fatal("System appearance has no operating-system rule")
-	}
-	if !strings.Contains(css, ".theme-system {") {
-		t.Fatal("the System rule is not scoped to the System class")
-	}
-	// Dark tokens must exist as their own palette, not as a filter.
-	if strings.Contains(css, "filter: invert") {
-		t.Error("Dark appearance is an inverted page rather than a palette")
-	}
-	if !strings.Contains(css, ".theme-dark {") {
-		t.Error("there is no explicit Dark palette")
-	}
-}
-
-func TestNarrowLayoutAvoidsHorizontalOverflow(t *testing.T) {
-	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	css := string(data)
-	// Wide content scrolls inside its own panel instead of the document. The
-	// restore file list is here because a project can have far more paths than
-	// fit on a screen, and a page-long list would push the confirmation control
-	// out of reach.
-	for _, panel := range []string{".codebox, .diffbox", ".hm__scroll", ".rpaths {"} {
-		idx := strings.Index(css, panel)
-		if idx < 0 {
-			t.Errorf("%s is not defined", panel)
-			continue
-		}
-		block := css[idx:]
-		if end := strings.Index(block, "}"); end >= 0 {
-			block = block[:end]
-		}
-		if !strings.Contains(block, "overflow") {
-			t.Errorf("%s does not contain its own overflow", panel)
-		}
-	}
-	if !strings.Contains(css, "@media (max-width: 620px)") {
-		t.Error("there is no narrow-screen layout")
-	}
-	if !strings.Contains(css, "min-width: 0") {
-		t.Error("grid children can overflow their track")
-	}
-
-	// The restore screen's two-column source and target pair has to collapse,
-	// or a repository path would be squeezed into an unreadable column on a
-	// phone. Its narrow rule must come after the two-column default so it wins.
-	wide := strings.Index(css, ".restore__pair {")
-	narrow := strings.Index(css, ".restore__pair { grid-template-columns: minmax(0, 1fr)")
-	if wide < 0 || narrow < 0 {
-		t.Fatal("the restore source and target pair has no narrow layout")
-	}
-	if narrow < wide {
-		t.Error("the narrow restore layout is overridden by the wide one")
-	}
-}
-
-func TestReducedMotionIsRespected(t *testing.T) {
-	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "@media (prefers-reduced-motion: no-preference)") {
-		t.Error("transitions are applied without checking the motion preference")
-	}
-}
-
-func TestFocusIsAlwaysVisible(t *testing.T) {
-	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	css := string(data)
-	if !strings.Contains(css, ":focus-visible") {
-		t.Fatal("there is no visible focus style")
-	}
-	if strings.Contains(css, "outline: none") || strings.Contains(css, "outline: 0") {
-		t.Error("a focus ring is removed somewhere in the stylesheet")
 	}
 }
 

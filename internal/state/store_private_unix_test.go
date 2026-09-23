@@ -21,9 +21,7 @@ func assertStateStoragePrivate(t *testing.T, directory string) {
 		if os.IsNotExist(err) && path != directory && path != filepath.Join(directory, databaseName) {
 			continue
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if got := info.Mode().Perm(); got&0o077 != 0 {
 			t.Fatalf("%s permissions are %o, want no group/other access", path, got)
 		}

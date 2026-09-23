@@ -110,14 +110,16 @@ func TestImportValidatesSkippedAdvertisedObjectsAndPeels(t *testing.T) {
 	})
 }
 
+// A source whose HEAD really is symbolic to a non-branch ref is refused, not
+// imported as a detached HEAD, and the source is left exactly as it was.
 func TestImportRejectsUnsupportedHEADTargetsAndRecordsRawFact(t *testing.T) {
 	for _, target := range []string{"refs/tags/v1", "refs/remotes/origin/main"} {
 		t.Run(target, func(t *testing.T) {
 			f := newFixture(t)
-			f.commit("one", "one\n")
-			f.transport.mutateAdvertised = func(advertisement *importgit.Advertisement) {
-				advertisement.Head.SymrefTarget = target
-			}
+			oid := f.commit("one", "one\n")
+			f.git(f.source, "update-ref", target, oid)
+			f.git(f.source, "symbolic-ref", "HEAD", target)
+			before := f.sourceRefs()
 			result, err := f.importProject(ImportInput{})
 			if err == nil || problemCode(err) != CodeUnsupportedRefs {
 				t.Fatalf("unsupported HEAD result=%+v err=%v", result.Run, err)
@@ -129,6 +131,12 @@ func TestImportRejectsUnsupportedHEADTargetsAndRecordsRawFact(t *testing.T) {
 				t.Fatalf("stored raw HEAD facts were lost: %+v", result.Status.LastRun)
 			}
 			assertImportDestinationAbsent(t, f)
+			if after := f.sourceRefs(); !reflect.DeepEqual(before, after) {
+				t.Fatalf("source refs changed: before=%v after=%v", before, after)
+			}
+			if got := f.git(f.source, "symbolic-ref", "HEAD"); got != target {
+				t.Fatalf("source HEAD changed: got=%s want=%s", got, target)
+			}
 		})
 	}
 }
@@ -184,8 +192,22 @@ func TestSourceReplacementCannotChangeConsentedImportBytes(t *testing.T) {
 	replacement := f.git(f.source, "commit-tree", tree, "-m", "replacement root")
 	f.git(f.source, "update-ref", "refs/heads/main", original)
 	f.git(f.source, "update-ref", "refs/replace/"+original, replacement)
+	if got := f.git(f.source, "show", "refs/heads/main:file.txt"); got != "ordinary bytes" {
+		t.Fatalf("replacement fixture did not mask original: %q", got)
+	}
+	before := f.sourceRefs()
 
-	result := f.mustImport(ImportInput{GitOnlyConsent: true})
+	// Without consent the masked pointer still requires it.
+	result, err := f.importProject(ImportInput{})
+	if err == nil || problemCode(err) != CodeLFSRequired {
+		t.Fatalf("replacement hid original LFS content: status=%s pointers=%d complete=%v err=%v", result.Run.Status, result.Run.LFSDetected, result.Run.LFSInspectionDone, err)
+	}
+	assertImportDestinationAbsent(t, f)
+	if after := f.sourceRefs(); !reflect.DeepEqual(before, after) {
+		t.Fatalf("source refs changed: before=%v after=%v", before, after)
+	}
+
+	result = f.mustImport(ImportInput{GitOnlyConsent: true})
 	if result.Run.LFSDetected != 1 || !result.Run.LFSInspectionDone {
 		t.Fatalf("replacement changed inspection=%+v", result.Run)
 	}
@@ -256,16 +278,10 @@ func TestStrictPackIndexingRejectsMalformedObject(t *testing.T) {
 	f.gitInput(control, pack, "--git-dir", ".", "index-pack", "--stdin", "--keep")
 
 	staging := filepath.Join(f.root, "strict-staging.git")
-	if err := os.Mkdir(staging, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(staging, 0o700))
 	limits, err := (Limits{}).effective()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.createStagingRepository(context.Background(), staging, importgit.FormatSHA1, limits); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, f.service.createStagingRepository(context.Background(), staging, importgit.FormatSHA1, limits))
 	if err := f.service.indexStagingPack(context.Background(), staging, bytes.NewReader(pack), limits); err == nil || problemCode(err) != CodeIndexFailed {
 		t.Fatalf("strict indexing error=%v", err)
 	}
@@ -320,9 +336,7 @@ func TestIncompleteLFSInspectionRequiresConsentForRefresh(t *testing.T) {
 		t.Fatalf("source changed on refusal: before=%v after=%v", beforeSource, after)
 	}
 	refusedStatus, err := f.service.Status(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if refusedStatus.LastRun == nil || refusedStatus.LastRun.Status != state.ImportRunFailed || refusedStatus.LastRun.LFSInspectionDone {
 		t.Fatalf("last attempt=%+v", refusedStatus.LastRun)
 	}
@@ -336,9 +350,7 @@ func TestIncompleteLFSInspectionRequiresConsentForRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	accepted, err := f.service.Refresh(context.Background(), "project", limits)
-	if err != nil {
-		t.Fatalf("consented refresh: %v", err)
-	}
+	noErr(t, err, "consented refresh")
 	if accepted.Status != state.ImportRunComplete || accepted.LFSDetected != 0 || accepted.LFSInspectionDone {
 		t.Fatalf("consented refresh=%+v", accepted)
 	}
@@ -346,9 +358,7 @@ func TestIncompleteLFSInspectionRequiresConsentForRefresh(t *testing.T) {
 		t.Fatalf("destination main=%s want %s", got, second)
 	}
 	status, err := f.service.Status(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !status.Content.Incomplete || status.Content.InspectionComplete || status.Content.LFSDetected != 0 {
 		t.Fatalf("content status=%+v", status.Content)
 	}

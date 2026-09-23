@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -20,13 +19,9 @@ func TestTasksPageReadsOnlyDisplayedAttempts(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	ctx := context.Background()
 	long, err := fixture.store.CreateTask(ctx, "project", "Long history", time.Now().UTC().Add(-time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	other, err := fixture.store.CreateTask(ctx, "project", "Other task", time.Now().UTC().Add(-time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attemptID := func(task, index int) string { return fmt.Sprintf("%012x%020x", task*1000+index, 0) }
 	for index := 0; index <= maximumBrowserTaskAttempts; index++ {
 		recordBrowserAttempt(t, fixture.store, long.ID, fixture.sourceOID, attemptID(1, index), state.WorktreeClean, "", true)
@@ -35,13 +30,10 @@ func TestTasksPageReadsOnlyDisplayedAttempts(t *testing.T) {
 		recordBrowserAttempt(t, fixture.store, other.ID, fixture.sourceOID, attemptID(2, index), state.WorktreeClean, "", true)
 	}
 	for _, hidden := range []string{attemptID(1, 0), attemptID(2, 0)} {
-		if err := fixture.store.Exec(ctx, `UPDATE check_results SET exit_code='unreadable' WHERE attempt_id=?`, hidden); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, fixture.store.Exec(ctx, `UPDATE check_results SET exit_code='unreadable' WHERE attempt_id=?`, hidden))
 	}
 
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	client, _ := newBrowserClient(t)
 	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
 		t.Fatalf("repository status=%d", result.status)

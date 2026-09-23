@@ -28,61 +28,49 @@ import (
 
 var errManifestTooLarge = errors.New("backup manifest is too large")
 
+// errDirectReviewManifest refuses records of the removed built-in review,
+// which only unreleased development builds wrote.
+var errDirectReviewManifest = errors.New("backup contains direct-review records written by an unreleased development build; this build cannot restore them")
+
 const (
 	manifestName        = "manifest.json"
 	backupFormat        = "owngit-offline-backup"
 	legacyBackupVersion = 1
-	// pullRequestBackupVersion added durable pull request records.
+	// pullRequestBackupVersion added durable pull request records. Versions 1
+	// and 2 were written by the committed baseline.
 	pullRequestBackupVersion = 2
-	// checkBackupVersion is the first released check-evidence format. The
-	// unreleased development formats 3 and 4 remain refused.
-	checkBackupVersion = 5
-	// directReviewBackupVersion adds canonical direct-review history and
-	// nonsecret configuration. A 64 MiB cap bounds publication and restore
-	// reads while leaving room for several bounded 1 MiB review results.
-	directReviewBackupVersion = 6
-	// automaticCheckBackupVersion added durable automatic-check policy and job
-	// facts. executionBackupVersion binds effective execution settings and
-	// executor roles while preserving version 7 digest meanings on restore.
-	automaticCheckBackupVersion = 7
-	executionBackupVersion      = 8
-	// importBackupVersion adds portable import sources, refresh history,
-	// reference observations, and publication intents. Machine-local transport
-	// consent, schedules, and raw credentials are deliberately absent.
-	importBackupVersion = 9
-	backupVersion       = 9
-	maximumManifest     = 64 << 20
-	pendingRestoreName  = state.IncompleteRestoreMarkerName
+	// backupVersion is the current format. Versions 3 through 8 were written
+	// only by unreleased development builds and are refused.
+	backupVersion      = 9
+	maximumManifest    = 64 << 20
+	pendingRestoreName = state.IncompleteRestoreMarkerName
 )
 
 type Manifest struct {
-	Format                     string                            `json:"format"`
-	Version                    int                               `json:"version"`
-	CreatedAt                  time.Time                         `json:"created_at"`
-	AccessMode                 string                            `json:"access_mode"`
-	AccessHash                 string                            `json:"access_password_hash,omitempty"`
-	AdminHash                  string                            `json:"admin_password_hash"`
-	Repositories               []RepositoryManifest              `json:"repositories"`
-	PullRequests               []PullRequestManifest             `json:"pull_requests,omitempty"`
-	PullRequestRevisions       []PullRequestRevisionManifest     `json:"pull_request_revisions,omitempty"`
-	PullRequestReviews         []PullRequestReviewManifest       `json:"pull_request_reviews,omitempty"`
-	PullRequestMergeIntents    []PullRequestMergeManifest        `json:"pull_request_merge_intents,omitempty"`
-	Tasks                      []TaskManifest                    `json:"tasks,omitempty"`
-	CheckConfigurations        []CheckConfigurationManifest      `json:"check_configurations,omitempty"`
-	CheckCycles                []CheckCycleManifest              `json:"check_cycles,omitempty"`
-	CheckAttempts              []CheckAttemptManifest            `json:"check_attempts,omitempty"`
-	CheckResults               []CheckResultManifest             `json:"check_results,omitempty"`
-	CheckPolicies              []CheckPolicyManifest             `json:"check_policies,omitempty"`
-	CheckJobs                  []CheckJobManifest                `json:"check_jobs,omitempty"`
-	DirectReviewSettings       []DirectReviewSettingsManifest    `json:"direct_review_settings,omitempty"`
-	DirectReviewTaskContexts   []DirectReviewTaskContextManifest `json:"direct_review_task_contexts,omitempty"`
-	DirectReviewRequests       []DirectReviewRequestManifest     `json:"direct_review_requests,omitempty"`
-	ImportSources              []ImportSourceManifest            `json:"import_sources,omitempty"`
-	ImportRuns                 []ImportRunManifest               `json:"import_runs,omitempty"`
-	ImportRunOrderKnown        bool                              `json:"import_run_order_known,omitempty"`
-	ImportHEADOwnershipVersion int                               `json:"import_head_ownership_version,omitempty"`
-	ImportObservations         []ImportObservationManifest       `json:"import_observations,omitempty"`
-	ImportIntents              []ImportIntentManifest            `json:"import_intents,omitempty"`
+	Format                     string                        `json:"format"`
+	Version                    int                           `json:"version"`
+	CreatedAt                  time.Time                     `json:"created_at"`
+	AccessMode                 string                        `json:"access_mode"`
+	AccessHash                 string                        `json:"access_password_hash,omitempty"`
+	AdminHash                  string                        `json:"admin_password_hash"`
+	Repositories               []RepositoryManifest          `json:"repositories"`
+	PullRequests               []PullRequestManifest         `json:"pull_requests,omitempty"`
+	PullRequestRevisions       []PullRequestRevisionManifest `json:"pull_request_revisions,omitempty"`
+	PullRequestReviews         []PullRequestReviewManifest   `json:"pull_request_reviews,omitempty"`
+	PullRequestMergeIntents    []PullRequestMergeManifest    `json:"pull_request_merge_intents,omitempty"`
+	Tasks                      []TaskManifest                `json:"tasks,omitempty"`
+	CheckConfigurations        []CheckConfigurationManifest  `json:"check_configurations,omitempty"`
+	CheckCycles                []CheckCycleManifest          `json:"check_cycles,omitempty"`
+	CheckAttempts              []CheckAttemptManifest        `json:"check_attempts,omitempty"`
+	CheckResults               []CheckResultManifest         `json:"check_results,omitempty"`
+	CheckPolicies              []CheckPolicyManifest         `json:"check_policies,omitempty"`
+	CheckJobs                  []CheckJobManifest            `json:"check_jobs,omitempty"`
+	ImportSources              []ImportSourceManifest        `json:"import_sources,omitempty"`
+	ImportRuns                 []ImportRunManifest           `json:"import_runs,omitempty"`
+	ImportRunOrderKnown        bool                          `json:"import_run_order_known,omitempty"`
+	ImportHEADOwnershipVersion int                           `json:"import_head_ownership_version,omitempty"`
+	ImportObservations         []ImportObservationManifest   `json:"import_observations,omitempty"`
+	ImportIntents              []ImportIntentManifest        `json:"import_intents,omitempty"`
 }
 
 type TaskManifest struct {
@@ -295,24 +283,6 @@ type PullRequestReviewManifest struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
-type DirectReviewSettingsManifest struct {
-	RepositoryID         string                             `json:"repository_id"`
-	ConfigurationVersion int64                              `json:"configuration_version"`
-	Protocol             string                             `json:"protocol"`
-	Endpoint             string                             `json:"endpoint"`
-	Model                string                             `json:"model"`
-	AuthenticationMode   string                             `json:"authentication_mode"`
-	ProviderLimits       state.DirectReviewProviderLimits   `json:"provider_limits"`
-	RepositoryLimits     state.DirectReviewRepositoryLimits `json:"repository_limits"`
-	InstructionVersion   string                             `json:"instruction_version"`
-	ConnectionVersion    int64                              `json:"connection_version"`
-	CreatedAt            time.Time                          `json:"created_at"`
-	UpdatedAt            time.Time                          `json:"updated_at"`
-}
-
-type DirectReviewTaskContextManifest state.DirectReviewTaskContext
-type DirectReviewRequestManifest state.DirectReviewRequest
-
 type PullRequestMergeManifest struct {
 	RepositoryID      string    `json:"repository_id"`
 	PullRequestNumber int64     `json:"pull_request_number"`
@@ -396,7 +366,6 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	}
 	addPullRequestState(&manifest, snapshot)
 	addCheckState(&manifest, snapshot)
-	addDirectReviewState(&manifest, snapshot)
 	addImportState(&manifest, snapshot)
 	for _, stored := range snapshot.Repositories {
 		if err := repository.ValidateID(stored.ID); err != nil {
@@ -979,9 +948,13 @@ func readManifest(manifestPath string) (Manifest, error) {
 	// Probe the version before strict decoding so a backup written by a newer
 	// OwnGit is rejected with a clear message instead of an unknown-field
 	// error, and never silently loses new records.
+	// Direct-review records are named here only to refuse them clearly.
 	var probe struct {
-		Format  string `json:"format"`
-		Version int    `json:"version"`
+		Format                   string          `json:"format"`
+		Version                  int             `json:"version"`
+		DirectReviewSettings     json.RawMessage `json:"direct_review_settings"`
+		DirectReviewTaskContexts json.RawMessage `json:"direct_review_task_contexts"`
+		DirectReviewRequests     json.RawMessage `json:"direct_review_requests"`
 	}
 	if err := json.Unmarshal(content, &probe); err != nil {
 		return Manifest{}, fmt.Errorf("decode backup manifest: %w", err)
@@ -991,6 +964,9 @@ func readManifest(manifestPath string) (Manifest, error) {
 	}
 	if err := validateBackupVersion(probe.Version); err != nil {
 		return Manifest{}, err
+	}
+	if probe.DirectReviewSettings != nil || probe.DirectReviewTaskContexts != nil || probe.DirectReviewRequests != nil {
+		return Manifest{}, errDirectReviewManifest
 	}
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
@@ -1110,24 +1086,6 @@ func addCheckState(manifest *Manifest, snapshot state.RecoveryState) {
 	}
 }
 
-func addDirectReviewState(manifest *Manifest, snapshot state.RecoveryState) {
-	for _, settings := range snapshot.DirectReviewSettings {
-		manifest.DirectReviewSettings = append(manifest.DirectReviewSettings, DirectReviewSettingsManifest{
-			RepositoryID: settings.RepositoryID, ConfigurationVersion: settings.ConfigurationVersion,
-			Protocol: settings.Protocol, Endpoint: settings.Endpoint, Model: settings.Model,
-			AuthenticationMode: settings.AuthenticationMode, ProviderLimits: settings.ProviderLimits,
-			RepositoryLimits: settings.RepositoryLimits, InstructionVersion: settings.InstructionVersion,
-			ConnectionVersion: settings.ConnectionVersion, CreatedAt: settings.CreatedAt, UpdatedAt: settings.UpdatedAt,
-		})
-	}
-	for _, contextRecord := range snapshot.DirectReviewTaskContexts {
-		manifest.DirectReviewTaskContexts = append(manifest.DirectReviewTaskContexts, DirectReviewTaskContextManifest(contextRecord))
-	}
-	for _, request := range snapshot.DirectReviewRequests {
-		manifest.DirectReviewRequests = append(manifest.DirectReviewRequests, DirectReviewRequestManifest(request))
-	}
-}
-
 func recoveryState(manifest Manifest) state.RecoveryState {
 	snapshot := state.RecoveryState{
 		AccessMode: manifest.AccessMode, AccessPasswordHash: manifest.AccessHash, AdminPasswordHash: manifest.AdminHash,
@@ -1219,23 +1177,15 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 		})
 	}
 	for _, policy := range manifest.CheckPolicies {
-		execution := policy.Execution
-		if manifest.Version == automaticCheckBackupVersion {
-			execution = state.CheckExecutionSettings{Legacy: true}
-		}
 		snapshot.CheckPolicies = append(snapshot.CheckPolicies, state.CheckPolicy{
 			RepositoryID: policy.RepositoryID, Version: policy.PolicyVersion, Digest: policy.PolicyDigest,
 			Executor: policy.Executor, AllowedEvents: policy.AllowedEvents, MaxTimeoutMS: policy.MaxTimeoutMS,
 			MaxOutputLimitBytes: policy.MaxOutputLimitBytes, QueueLimit: policy.QueueLimit, MaxActiveJobs: policy.MaxActiveJobs,
-			MaxLeaseMS: policy.MaxLeaseMS, Execution: execution, ConsentVersion: policy.ConsentVersion, ConsentDigest: policy.ConsentDigest,
+			MaxLeaseMS: policy.MaxLeaseMS, Execution: policy.Execution, ConsentVersion: policy.ConsentVersion, ConsentDigest: policy.ConsentDigest,
 			RunnerGeneration: policy.RunnerGeneration, CreatedAt: policy.CreatedAt, UpdatedAt: policy.UpdatedAt,
 		})
 	}
 	for _, job := range manifest.CheckJobs {
-		execution := job.Execution
-		if manifest.Version == automaticCheckBackupVersion {
-			execution = state.CheckExecutionSettings{Legacy: true}
-		}
 		snapshot.CheckJobs = append(snapshot.CheckJobs, state.CheckJob{
 			ID: job.ID, RepositoryID: job.RepositoryID, TaskID: job.TaskID, Trigger: job.Trigger, EventKey: job.EventKey,
 			SourceOID: job.SourceOID, BaseOID: job.BaseOID, PullRequestNumber: job.PullRequestNumber, TriggerRef: job.TriggerRef,
@@ -1243,7 +1193,7 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 			ConfigurationVersion: job.ConfigurationVersion, Executor: job.Executor, PolicyVersion: job.PolicyVersion,
 			ConsentVersion: job.ConsentVersion,
 			Limits:         state.CheckJobLimits{TimeoutMS: job.Limits.TimeoutMS, OutputLimitBytes: job.Limits.OutputLimitBytes},
-			Execution:      execution,
+			Execution:      job.Execution,
 			DedupDigest:    job.DedupDigest, RerunRoot: job.RerunRoot, RerunGeneration: job.RerunGeneration, Status: job.Status,
 			AttemptID: job.AttemptID, LeaseID: job.LeaseID, LeaseExpiresAt: job.LeaseExpiresAt, CredentialID: job.CredentialID,
 			CredentialGeneration: job.CredentialGeneration, CredentialRole: job.CredentialRole, Protection: job.Protection, AdmittedAt: job.AdmittedAt,
@@ -1251,57 +1201,21 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 			CancelRequestedAt: job.CancelRequestedAt, InterruptedAt: job.InterruptedAt, Summary: job.Summary,
 		})
 	}
-	for _, settings := range manifest.DirectReviewSettings {
-		snapshot.DirectReviewSettings = append(snapshot.DirectReviewSettings, state.DirectReviewSettings{
-			RepositoryID: settings.RepositoryID, ConfigurationVersion: settings.ConfigurationVersion,
-			Protocol: settings.Protocol, Endpoint: settings.Endpoint, Model: settings.Model,
-			AuthenticationMode: settings.AuthenticationMode, ProviderLimits: settings.ProviderLimits,
-			RepositoryLimits: settings.RepositoryLimits, InstructionVersion: settings.InstructionVersion,
-			ConnectionVersion: settings.ConnectionVersion, CreatedAt: settings.CreatedAt, UpdatedAt: settings.UpdatedAt,
-		})
-	}
-	for _, contextRecord := range manifest.DirectReviewTaskContexts {
-		snapshot.DirectReviewTaskContexts = append(snapshot.DirectReviewTaskContexts, state.DirectReviewTaskContext(contextRecord))
-	}
-	for _, request := range manifest.DirectReviewRequests {
-		snapshot.DirectReviewRequests = append(snapshot.DirectReviewRequests, state.DirectReviewRequest(request))
-	}
 	return snapshot
 }
 
-// validateBackupVersion accepts released formats and refuses the unreleased
-// development formats 3 and 4 instead of inventing missing source facts.
+// validateBackupVersion accepts the committed baseline formats and the
+// current format. Every other version below the current one was written only
+// by unreleased development builds.
 func validateBackupVersion(version int) error {
 	switch {
-	case version == legacyBackupVersion || version == pullRequestBackupVersion || version == checkBackupVersion || version == directReviewBackupVersion || version == automaticCheckBackupVersion || version == executionBackupVersion || version == importBackupVersion || version == backupVersion:
+	case version == legacyBackupVersion || version == pullRequestBackupVersion || version == backupVersion:
 		return nil
 	case version > backupVersion:
-		return fmt.Errorf("unsupported backup version %d: this build supports versions %s", version, supportedBackupVersions())
+		return fmt.Errorf("unsupported backup version %d: this build supports versions 1, 2, and %d", version, backupVersion)
 	default:
-		return fmt.Errorf("backup uses the unreleased development format %d; this build supports versions %s", version, supportedBackupVersions())
+		return fmt.Errorf("backup uses the unreleased development format %d; this build supports versions 1, 2, and %d", version, backupVersion)
 	}
-}
-
-// supportedBackupVersions describes the released formats without repeating a
-// version when two constants name the same format.
-func supportedBackupVersions() string {
-	versions := []int{
-		legacyBackupVersion, pullRequestBackupVersion, checkBackupVersion, directReviewBackupVersion,
-		automaticCheckBackupVersion, executionBackupVersion, importBackupVersion, backupVersion,
-	}
-	parts := make([]string, 0, len(versions))
-	last := 0
-	for _, version := range versions {
-		if version == last {
-			continue
-		}
-		last = version
-		parts = append(parts, fmt.Sprintf("%d", version))
-	}
-	if len(parts) > 1 {
-		parts[len(parts)-1] = "and " + parts[len(parts)-1]
-	}
-	return strings.Join(parts, ", ")
 }
 
 func validateManifest(manifest Manifest) error {
@@ -1368,50 +1282,18 @@ func validateManifest(manifest Manifest) error {
 		if len(manifest.PullRequests) != 0 || len(manifest.PullRequestRevisions) != 0 || len(manifest.PullRequestReviews) != 0 || len(manifest.PullRequestMergeIntents) != 0 {
 			return errors.New("version 1 backup contains unsupported pull request metadata")
 		}
-		if len(manifest.Tasks) != 0 || len(manifest.CheckConfigurations) != 0 || len(manifest.CheckCycles) != 0 || len(manifest.CheckAttempts) != 0 || len(manifest.CheckResults) != 0 {
-			return errors.New("version 1 backup contains unsupported check metadata")
-		}
 	}
-	if manifest.Version == pullRequestBackupVersion {
-		if len(manifest.Tasks) != 0 || len(manifest.CheckConfigurations) != 0 || len(manifest.CheckCycles) != 0 || len(manifest.CheckAttempts) != 0 || len(manifest.CheckResults) != 0 {
-			return errors.New("version 2 backup contains unsupported check metadata")
-		}
-	}
-	if manifest.Version < directReviewBackupVersion {
-		if len(manifest.DirectReviewSettings) != 0 || len(manifest.DirectReviewTaskContexts) != 0 || len(manifest.DirectReviewRequests) != 0 {
-			return errors.New("older backup contains unsupported direct review metadata")
+	if manifest.Version < backupVersion {
+		if len(manifest.Tasks) != 0 || len(manifest.CheckConfigurations) != 0 || len(manifest.CheckCycles) != 0 || len(manifest.CheckAttempts) != 0 || len(manifest.CheckResults) != 0 || len(manifest.CheckPolicies) != 0 || len(manifest.CheckJobs) != 0 {
+			return fmt.Errorf("version %d backup contains unsupported check metadata", manifest.Version)
 		}
 		for _, review := range manifest.PullRequestReviews {
 			if review.ReviewEventID != "" {
-				return errors.New("older backup contains an unsupported review event identity")
+				return fmt.Errorf("version %d backup contains an unsupported review event identity", manifest.Version)
 			}
 		}
-	}
-	if manifest.Version < automaticCheckBackupVersion {
-		if len(manifest.CheckPolicies) != 0 || len(manifest.CheckJobs) != 0 {
-			return errors.New("older backup contains unsupported automatic check metadata")
-		}
-		for _, attempt := range manifest.CheckAttempts {
-			if attempt.JobID != "" {
-				return errors.New("older backup contains an unsupported check job identity")
-			}
-		}
-	}
-	if manifest.Version < executionBackupVersion {
-		for _, policy := range manifest.CheckPolicies {
-			if policy.Execution != (state.CheckExecutionSettings{}) {
-				return errors.New("older backup contains unsupported execution settings")
-			}
-		}
-		for _, job := range manifest.CheckJobs {
-			if job.Execution != (state.CheckExecutionSettings{}) || job.CredentialRole != "" {
-				return errors.New("older backup contains unsupported execution authority")
-			}
-		}
-	}
-	if manifest.Version < importBackupVersion {
 		if len(manifest.ImportSources) != 0 || len(manifest.ImportRuns) != 0 || manifest.ImportRunOrderKnown || manifest.ImportHEADOwnershipVersion != 0 || len(manifest.ImportObservations) != 0 || len(manifest.ImportIntents) != 0 {
-			return errors.New("older backup contains unsupported import metadata")
+			return fmt.Errorf("version %d backup contains unsupported import metadata", manifest.Version)
 		}
 	}
 	snapshot := recoveryState(manifest)
@@ -1455,9 +1337,6 @@ func validateManifest(manifest Manifest) error {
 	}
 	if err := state.ValidateCheckRecovery(snapshot); err != nil {
 		return fmt.Errorf("backup check metadata is invalid: %w", err)
-	}
-	if err := state.ValidateDirectReviewRecovery(snapshot); err != nil {
-		return fmt.Errorf("backup direct review metadata is invalid: %w", err)
 	}
 	if err := validateImportManifest(manifest); err != nil {
 		return err

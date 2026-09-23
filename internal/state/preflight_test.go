@@ -33,78 +33,38 @@ func createCrashedWALFixture(t *testing.T, directory string, keepSHM bool, prepa
 		}
 	}
 	prepare(t, workPath, db)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(directory, 0o700))
 	names := []string{databaseName, databaseName + walSuffix}
 	if keepSHM {
 		names = append(names, databaseName+shmSuffix)
 	}
 	for _, name := range names {
 		content, err := os.ReadFile(filepath.Join(work, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(directory, name), content, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
+		noErr(t, os.WriteFile(filepath.Join(directory, name), content, 0o600))
 	}
 	if info, err := os.Stat(filepath.Join(directory, databaseName+walSuffix)); err != nil || info.Size() == 0 {
 		t.Fatalf("fixture did not retain a committed WAL: %v", err)
 	}
 }
 
-// commitCurrentSchemaThenChangeVersion writes the accepted schema 7 catalog
-// into the main file, then commits the requested marker and one metadata row
-// only to the write-ahead log.
-func commitCurrentSchemaThenChangeVersion(version string) func(*testing.T, string, *sql.DB) {
+// commitBaselineThenChangeVersion writes the committed baseline catalog into
+// the main file, then commits one metadata row, and the requested schema
+// marker when version is not empty, only to the write-ahead log.
+func commitBaselineThenChangeVersion(version string) func(*testing.T, string, *sql.DB) {
 	return func(t *testing.T, _ string, db *sql.DB) {
 		t.Helper()
-		if _, err := db.Exec(`PRAGMA wal_autocheckpoint=1000`); err != nil {
-			t.Fatal(err)
+		applyCommittedBaselineCatalog(t, db)
+		for _, statement := range []string{`PRAGMA wal_checkpoint(TRUNCATE)`, `INSERT INTO metadata(key,value) VALUES('wal_only_marker','1')`} {
+			if _, err := db.Exec(statement); err != nil {
+				t.Fatal(err)
+			}
 		}
-		applyGenuineSchemaEight(t, db)
-		removeSchemaEightObjects(t, db)
-		assertSchemaFingerprint(t, db, schemaSevenFingerprint, 7)
-		if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-			t.Fatal(err)
+		if version != "" {
+			if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',?)`, version); err != nil {
+				t.Fatal(err)
+			}
 		}
-		if _, err := db.Exec(`PRAGMA wal_autocheckpoint=0`); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec(`UPDATE metadata SET value=? WHERE key='schema_version'`, version); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('wal_only_marker','1')`); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func commitSchemaSixWithWALMarker(t *testing.T, _ string, db *sql.DB) {
-	t.Helper()
-	if _, err := db.Exec(`PRAGMA wal_autocheckpoint=1000`); err != nil {
-		t.Fatal(err)
-	}
-	applyGenuineSchemaEight(t, db)
-	removeSchemaEightObjects(t, db)
-	for _, statement := range []string{
-		`DROP TABLE check_raw_logs`,
-		`UPDATE metadata SET value='6' WHERE key='schema_version'`,
-		`PRAGMA wal_checkpoint(TRUNCATE)`,
-		`PRAGMA wal_autocheckpoint=0`,
-		`INSERT INTO metadata(key,value) VALUES('wal_only_marker','1')`,
-	} {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatal(err)
-		}
-	}
-	fingerprint, _, err := schemaFingerprint(context.Background(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fingerprint != schemaSixFingerprint {
-		t.Fatalf("schema 6 WAL fixture fingerprint=%s", fingerprint)
 	}
 }
 
@@ -147,9 +107,7 @@ func setFixtureModes(t *testing.T, directory string, modes map[string]os.FileMod
 		return
 	}
 	for name, mode := range modes {
-		if err := os.Chmod(filepath.Join(directory, name), mode); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Chmod(filepath.Join(directory, name), mode))
 	}
 }
 
@@ -158,9 +116,7 @@ func captureProtectionFingerprints(t *testing.T, paths ...string) map[string]str
 	fingerprints := make(map[string]string, len(paths))
 	for _, path := range paths {
 		fingerprint, err := protectionFingerprint(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		fingerprints[path] = fingerprint
 	}
 	return fingerprints
@@ -170,9 +126,7 @@ func assertProtectionFingerprints(t *testing.T, want map[string]string) {
 	t.Helper()
 	for path, fingerprint := range want {
 		got, err := protectionFingerprint(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if got != fingerprint {
 			t.Fatalf("protection changed for %s:\nbefore=%s\nafter=%s", filepath.Base(path), fingerprint, got)
 		}
@@ -207,7 +161,7 @@ func TestCommittedWALDecidesClassificationAndRefusalPreservesSource(t *testing.T
 			}
 			t.Run(name, func(t *testing.T) {
 				directory := filepath.Join(t.TempDir(), "state")
-				createCrashedWALFixture(t, directory, keepSHM, commitCurrentSchemaThenChangeVersion(test.version))
+				createCrashedWALFixture(t, directory, keepSHM, commitBaselineThenChangeVersion(test.version))
 				setFixtureModes(t, directory, map[string]os.FileMode{".": 0o750, databaseName: 0o640, databaseName + walSuffix: 0o644})
 				before := captureSchemaDirectory(t, directory)
 				openRefused(t, directory, test.fragment)
@@ -228,7 +182,7 @@ func TestCommittedWALDataSurvivesAcceptedOpen(t *testing.T) {
 		t.Run(map[bool]string{true: "with SHM", false: "without SHM"}[keepSHM], func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
 			createCrashedWALFixture(t, directory, keepSHM, func(t *testing.T, path string, db *sql.DB) {
-				commitSchemaSixWithWALMarker(t, path, db)
+				commitBaselineThenChangeVersion("")(t, path, db)
 				if _, err := db.Exec(`INSERT INTO repositories(id,name,description,created_at) VALUES('wal','WAL only','',1)`); err != nil {
 					t.Fatal(err)
 				}
@@ -250,13 +204,9 @@ func TestSecondStoreOpensBesideActiveWriter(t *testing.T) {
 	ctx := context.Background()
 	directory := filepath.Join(t.TempDir(), "state")
 	first, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer first.Close()
-	if err := first.AddRepository(ctx, Repository{ID: "one", Name: "one", CreatedAt: time.Unix(1, 0)}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, first.AddRepository(ctx, Repository{ID: "one", Name: "one", CreatedAt: time.Unix(1, 0)}))
 	for _, name := range []string{databaseName + walSuffix, databaseName + shmSuffix} {
 		if _, err := os.Stat(filepath.Join(directory, name)); err != nil {
 			t.Fatalf("active writer has no %s: %v", name, err)
@@ -285,9 +235,7 @@ func TestMissingDatabaseWithRecoveryFilesIsRefused(t *testing.T) {
 	for _, name := range []string{databaseName + walSuffix, databaseName + shmSuffix} {
 		t.Run(name, func(t *testing.T) {
 			directory := t.TempDir()
-			if err := os.WriteFile(filepath.Join(directory, name), []byte("orphan"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(filepath.Join(directory, name), []byte("orphan"), 0o600))
 			before := captureSchemaDirectory(t, directory)
 			openRefused(t, directory, "recovery files exist")
 			assertSchemaDirectoryUnchanged(t, directory, before)
@@ -300,18 +248,12 @@ func TestRollbackJournalIsRefusedWithoutBeingRead(t *testing.T) {
 	directory := filepath.Join(root, "state")
 	createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
 	sentinel := filepath.Join(root, "super-journal-sentinel")
-	if err := os.WriteFile(sentinel, []byte("outside"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(sentinel, []byte("outside"), 0o600))
 	journal := append([]byte("\xd9\xd5\x05\xf9\x20\xa1\x63\xd7"), []byte(sentinel)...)
-	if err := os.WriteFile(filepath.Join(directory, databaseName+journalSuffix), journal, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(directory, databaseName+journalSuffix), journal, 0o600))
 	before := captureSchemaDirectory(t, directory)
 	sentinelBefore, err := os.Stat(sentinel)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	err = openRefused(t, directory, "rollback journal")
 	if !errors.Is(err, errRollbackJournal) || errors.Is(err, ErrInspectionUnstable) {
 		t.Fatalf("an existing rollback journal must be the permanent refusal, not instability: %v", err)
@@ -332,9 +274,7 @@ func TestRollbackJournalPresenceContract(t *testing.T) {
 	if present, err := rollbackJournalPresent(mainPath); err != nil || present {
 		t.Fatalf("absent journal present=%v err=%v", present, err)
 	}
-	if err := os.Mkdir(mainPath+journalSuffix, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(mainPath+journalSuffix, 0o700))
 	if present, err := rollbackJournalPresent(mainPath); err != nil || !present {
 		t.Fatalf("directory journal entry present=%v err=%v", present, err)
 	}
@@ -343,9 +283,7 @@ func TestRollbackJournalPresenceContract(t *testing.T) {
 		return
 	}
 	regular := filepath.Join(directory, "regular")
-	if err := os.WriteFile(regular, []byte("file"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(regular, []byte("file"), 0o600))
 	present, err := rollbackJournalPresent(filepath.Join(regular, databaseName))
 	if present || err == nil || !errors.Is(err, syscall.ENOTDIR) {
 		t.Fatalf("inspection failure present=%v err=%v, want ENOTDIR preserved", present, err)
@@ -373,9 +311,7 @@ func TestRevalidationFilesystemFailureKeepsItsCause(t *testing.T) {
 		prepare func(t *testing.T, directory string)
 	}{
 		{name: "fresh directory", prepare: func(t *testing.T, directory string) {
-			if err := os.Mkdir(directory, 0o750); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Mkdir(directory, 0o750))
 		}},
 		{name: "current database", prepare: func(t *testing.T, directory string) {
 			createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
@@ -384,17 +320,13 @@ func TestRevalidationFilesystemFailureKeepsItsCause(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			parent := filepath.Join(t.TempDir(), "parent")
-			if err := os.Mkdir(parent, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Mkdir(parent, 0o700))
 			directory := filepath.Join(parent, "state")
 			test.prepare(t, directory)
 			before := captureSchemaDirectory(t, directory)
 			t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
 			hookAt(t, pointAccept, func(string) {
-				if err := os.Chmod(parent, 0o000); err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, os.Chmod(parent, 0o000))
 			})
 			store, err := Open(context.Background(), directory)
 			if store != nil {
@@ -406,9 +338,7 @@ func TestRevalidationFilesystemFailureKeepsItsCause(t *testing.T) {
 			if errors.Is(err, ErrInspectionUnstable) || errors.Is(err, errRollbackJournal) {
 				t.Fatalf("filesystem failure was reported as appearance or presence: %v", err)
 			}
-			if err := os.Chmod(parent, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Chmod(parent, 0o700))
 			if info, err := os.Stat(directory); err != nil || info.Mode().Perm() != 0o750 {
 				t.Fatalf("refusal changed directory mode to %v err=%v", infoMode(info), err)
 			}
@@ -429,28 +359,20 @@ func TestNonRegularStateEntriesAreRefused(t *testing.T) {
 		build func(t *testing.T, directory string)
 	}{
 		{name: "database symlink", build: func(t *testing.T, directory string) {
-			if err := os.Symlink(filepath.Join(target, databaseName), filepath.Join(directory, databaseName)); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Symlink(filepath.Join(target, databaseName), filepath.Join(directory, databaseName)))
 		}},
 		{name: "WAL symlink", build: func(t *testing.T, directory string) {
 			createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
-			if err := os.Symlink(filepath.Join(target, databaseName), filepath.Join(directory, databaseName+walSuffix)); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Symlink(filepath.Join(target, databaseName), filepath.Join(directory, databaseName+walSuffix)))
 		}},
 		{name: "SHM directory", build: func(t *testing.T, directory string) {
 			createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
-			if err := os.Mkdir(filepath.Join(directory, databaseName+shmSuffix), 0o700); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Mkdir(filepath.Join(directory, databaseName+shmSuffix), 0o700))
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			if err := os.MkdirAll(directory, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.MkdirAll(directory, 0o700))
 			test.build(t, directory)
 			targetBefore := captureSchemaDirectory(t, target)
 			openRefused(t, directory, "must be a regular file")
@@ -471,68 +393,46 @@ func TestInspectionInstabilityIsRetryableAndLeavesSourceUntouched(t *testing.T) 
 	}{
 		{name: "WAL append", keepSHM: true, point: pointHashed, disturb: func(t *testing.T, directory string) {
 			file, err := os.OpenFile(walPath(directory), os.O_APPEND|os.O_WRONLY, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if _, err := file.Write(make([]byte, 24+4096)); err != nil {
 				t.Fatal(err)
 			}
-			if err := file.Close(); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, file.Close())
 		}},
 		{name: "concurrent checkpoint", keepSHM: true, point: pointHashed, disturb: func(t *testing.T, directory string) {
 			db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
 			if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 				t.Fatal(err)
 			}
-			if err := db.Close(); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, db.Close())
 		}},
 		{name: "WAL removed", keepSHM: true, point: pointHashed, disturb: func(t *testing.T, directory string) {
-			if err := os.Remove(walPath(directory)); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Remove(walPath(directory)))
 		}},
 		{name: "WAL recreated", keepSHM: true, point: pointHashed, disturb: func(t *testing.T, directory string) {
 			content, err := os.ReadFile(walPath(directory))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Remove(walPath(directory)); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(walPath(directory), content, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
+			noErr(t, os.Remove(walPath(directory)))
+			noErr(t, os.WriteFile(walPath(directory), content, 0o600))
 		}},
 		{name: "SHM removed", keepSHM: true, point: pointHashed, disturb: func(t *testing.T, directory string) {
-			if err := os.Remove(shmPath(directory)); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Remove(shmPath(directory)))
 		}},
 		{name: "SHM appears", keepSHM: false, point: pointHashed, disturb: func(t *testing.T, directory string) {
-			if err := os.WriteFile(shmPath(directory), make([]byte, 32768), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(shmPath(directory), make([]byte, 32768), 0o600))
 		}},
 		// The appeared journal is removed before the retry, so the retry
 		// proves that the appearance itself was the only refusal.
 		{name: "rollback journal appears before acceptance", keepSHM: true, point: pointAccept, disturb: func(t *testing.T, directory string) {
-			if err := os.WriteFile(filepath.Join(directory, databaseName+journalSuffix), []byte("orphan"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(filepath.Join(directory, databaseName+journalSuffix), []byte("orphan"), 0o600))
 		}, restore: func(t *testing.T, directory string) {
-			if err := os.Remove(filepath.Join(directory, databaseName+journalSuffix)); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Remove(filepath.Join(directory, databaseName+journalSuffix)))
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			createCrashedWALFixture(t, directory, test.keepSHM, commitCurrentSchemaThenChangeVersion("7"))
+			createCrashedWALFixture(t, directory, test.keepSHM, commitBaselineThenChangeVersion(""))
 			setFixtureModes(t, directory, map[string]os.FileMode{".": 0o750, databaseName: 0o640})
 			hookAt(t, test.point, func(string) { test.disturb(t, directory) })
 			err := openRefused(t, directory, ErrInspectionUnstable.Error())
@@ -558,7 +458,7 @@ func TestInspectionInstabilityIsRetryableAndLeavesSourceUntouched(t *testing.T) 
 
 	t.Run("database replaced before acceptance", func(t *testing.T) {
 		directory := filepath.Join(t.TempDir(), "state")
-		createCrashedWALFixture(t, directory, true, commitCurrentSchemaThenChangeVersion("7"))
+		createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion(""))
 		setFixtureModes(t, directory, map[string]os.FileMode{".": 0o750, databaseName: 0o640})
 		replacement := filepath.Join(t.TempDir(), "replacement")
 		createNumberedSchemaDatabase(t, replacement, currentSchemaVersion)
@@ -607,18 +507,14 @@ func TestSidecarFreeInspectionDetectsAppearanceAndPermissionChange(t *testing.T)
 		disturb func(t *testing.T, directory string)
 	}{
 		{name: "WAL appears", disturb: func(t *testing.T, directory string) {
-			if err := os.WriteFile(filepath.Join(directory, databaseName+walSuffix), []byte("late"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(filepath.Join(directory, databaseName+walSuffix), []byte("late"), 0o600))
 		}},
 		{name: "database modified", disturb: func(t *testing.T, directory string) {
 			db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
 			if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('late','1')`); err != nil {
 				t.Fatal(err)
 			}
-			if err := db.Close(); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, db.Close())
 		}},
 	}
 	if runtime.GOOS != "windows" {
@@ -628,12 +524,8 @@ func TestSidecarFreeInspectionDetectsAppearanceAndPermissionChange(t *testing.T)
 		}{name: "database mode changed", disturb: func(t *testing.T, directory string) {
 			path := filepath.Join(directory, databaseName)
 			info, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(path, info.Mode().Perm()^0o040); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
+			noErr(t, os.Chmod(path, info.Mode().Perm()^0o040))
 		}})
 	}
 	for _, test := range tests {
@@ -659,51 +551,33 @@ func TestFreshDirectoryAcceptanceDetectsAppearanceAndReplacement(t *testing.T) {
 	prepared := filepath.Join(t.TempDir(), "prepared")
 	createNumberedSchemaDatabase(t, prepared, 5)
 	schemaFive, err := os.ReadFile(filepath.Join(prepared, databaseName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	tests := []struct {
 		name     string
 		fragment string
 		disturb  func(t *testing.T, directory string)
 	}{
 		{name: "schema 5 database appears", fragment: ErrInspectionUnstable.Error(), disturb: func(t *testing.T, directory string) {
-			if err := os.WriteFile(filepath.Join(directory, databaseName), schemaFive, 0o640); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(filepath.Join(directory, databaseName), schemaFive, 0o640))
 		}},
 		{name: "WAL appears", fragment: ErrInspectionUnstable.Error(), disturb: func(t *testing.T, directory string) {
-			if err := os.WriteFile(filepath.Join(directory, databaseName+walSuffix), []byte("orphan"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(filepath.Join(directory, databaseName+walSuffix), []byte("orphan"), 0o600))
 		}},
 		{name: "rollback journal appears", fragment: ErrInspectionUnstable.Error(), disturb: func(t *testing.T, directory string) {
-			if err := os.WriteFile(filepath.Join(directory, databaseName+journalSuffix), []byte("orphan"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(filepath.Join(directory, databaseName+journalSuffix), []byte("orphan"), 0o600))
 		}},
 		{name: "directory replaced", fragment: ErrInspectionUnstable.Error(), disturb: func(t *testing.T, directory string) {
 			replacement := filepath.Join(filepath.Dir(directory), "replacement")
-			if err := os.Mkdir(replacement, 0o750); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Rename(directory, directory+".moved"); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Rename(replacement, directory); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Mkdir(replacement, 0o750))
+			noErr(t, os.Rename(directory, directory+".moved"))
+			noErr(t, os.Rename(replacement, directory))
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			if err := os.Mkdir(directory, 0o750); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(directory, 0o750); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Mkdir(directory, 0o750))
+			noErr(t, os.Chmod(directory, 0o750))
 			reached := false
 			hookAt(t, pointAccept, func(string) {
 				reached = true
@@ -826,16 +700,14 @@ func TestPrivateInspectionFailuresLeaveSourceUntouched(t *testing.T) {
 		}},
 		{name: "private query", fragment: "inspect state database", arrange: func(t *testing.T, _ context.CancelFunc) {
 			hookAt(t, pointClassify, func(privateDir string) {
-				if err := os.Truncate(filepath.Join(privateDir, databaseName), 100); err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, os.Truncate(filepath.Join(privateDir, databaseName), 100))
 			})
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			createCrashedWALFixture(t, directory, true, commitCurrentSchemaThenChangeVersion("7"))
+			createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion(""))
 			setFixtureModes(t, directory, map[string]os.FileMode{".": 0o750, databaseName: 0o640})
 			temporaryRoot := t.TempDir()
 			preflightHooks.temporaryRoot = temporaryRoot
@@ -861,7 +733,7 @@ func TestPrivateInspectionFailuresLeaveSourceUntouched(t *testing.T) {
 
 func TestPrivateInspectionCleanupFailureBlocksOpen(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
-	createCrashedWALFixture(t, directory, true, commitCurrentSchemaThenChangeVersion("7"))
+	createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion(""))
 	setFixtureModes(t, directory, map[string]os.FileMode{".": 0o750, databaseName: 0o640})
 	temporaryRoot := t.TempDir()
 	preflightHooks.temporaryRoot = temporaryRoot
@@ -892,7 +764,7 @@ func TestPrivateInspectionCleanupFailureBlocksOpen(t *testing.T) {
 // together, so neither hides the other.
 func TestPrivateCleanupFailureIsJoinedWithCompatibilityError(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
-	createCrashedWALFixture(t, directory, true, commitCurrentSchemaThenChangeVersion("5"))
+	createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion("5"))
 	setFixtureModes(t, directory, map[string]os.FileMode{".": 0o750, databaseName: 0o640})
 	preflightHooks.temporaryRoot = t.TempDir()
 	t.Cleanup(func() { preflightHooks.temporaryRoot = "" })
@@ -919,14 +791,12 @@ func TestSourceReleaseFailureBlocksWritableOpen(t *testing.T) {
 			createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
 		}, handle: func(in *inspection) *os.File { return in.main.handle }},
 		{name: "WAL handle on private-copy path", prepare: func(t *testing.T, directory string) {
-			createCrashedWALFixture(t, directory, true, commitCurrentSchemaThenChangeVersion("7"))
+			createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion(""))
 		}, handle: func(in *inspection) *os.File { return in.wal.handle }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			if err := os.MkdirAll(directory, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.MkdirAll(directory, 0o700))
 			test.prepare(t, directory)
 			before := captureSchemaDirectory(t, directory)
 			paths := []string{directory}
@@ -962,13 +832,11 @@ func TestSourceReleaseFailureBlocksWritableOpen(t *testing.T) {
 // appear in the refusal.
 func TestPrivateCopyCloseFailureIsReportedWithCopyError(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
-	createCrashedWALFixture(t, directory, true, commitCurrentSchemaThenChangeVersion("7"))
+	createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion(""))
 	useHooks(t)
 	preflightHooks.temporaryRoot = t.TempDir()
 	preflightHooks.privateWriter = func(file *os.File) io.Writer {
-		if err := file.Close(); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, file.Close())
 		return file
 	}
 	before := captureSchemaDirectory(t, directory)
@@ -989,9 +857,7 @@ func blockPrivateRemoval(t *testing.T, privateDir string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		file, err := os.Open(filepath.Join(privateDir, databaseName))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		t.Cleanup(func() { _ = file.Close() })
 		return
 	}
@@ -999,14 +865,8 @@ func blockPrivateRemoval(t *testing.T, privateDir string) {
 		t.Skip("directory write bits do not block the superuser")
 	}
 	blocker := filepath.Join(privateDir, "blocker")
-	if err := os.Mkdir(blocker, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(blocker, "held"), []byte("held"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(blocker, 0o500); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(blocker, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(blocker, "held"), []byte("held"), 0o600))
+	noErr(t, os.Chmod(blocker, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(blocker, 0o700) })
 }

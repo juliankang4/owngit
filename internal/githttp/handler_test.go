@@ -21,9 +21,7 @@ import (
 func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	handler.Authorize = func(*http.Request) bool { return true }
 	var sawChunked atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -38,9 +36,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 	runHTTPGit(t, "", "init", "--initial-branch=main", work)
 	runHTTPGit(t, work, "config", "user.name", "HTTP Test")
 	runHTTPGit(t, work, "config", "user.email", "http@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "README.md"), []byte("normal push\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "README.md"), []byte("normal push\n"), 0o600))
 	runHTTPGit(t, work, "add", "README.md")
 	runHTTPGit(t, work, "commit", "-m", "normal")
 	remoteURL := server.URL + "/git/sample.git"
@@ -51,9 +47,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 	if _, err := rand.Read(large); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(work, "large.bin"), large, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "large.bin"), large, 0o600))
 	runHTTPGit(t, work, "add", "large.bin")
 	runHTTPGit(t, work, "commit", "-m", "chunked")
 	runHTTPGit(t, work, "-c", "http.postBuffer=1", "push", "origin", "HEAD:refs/heads/main")
@@ -64,9 +58,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 	clone := filepath.Join(t.TempDir(), "clone")
 	runHTTPGit(t, "", "clone", remoteURL, clone)
 	content, err := os.ReadFile(filepath.Join(clone, "large.bin"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !bytes.Equal(content, large) {
 		t.Fatal("clone did not contain the exact noncompressible push content")
 	}
@@ -75,12 +67,8 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 	if _, err := rand.Read(fetchedPayload); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(work, "large.bin"), fetchedPayload, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, "README.md"), []byte("fetched\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "large.bin"), fetchedPayload, 0o600))
+	noErr(t, os.WriteFile(filepath.Join(work, "README.md"), []byte("fetched\n"), 0o600))
 	runHTTPGit(t, work, "add", "README.md", "large.bin")
 	runHTTPGit(t, work, "commit", "-m", "fetch")
 	runHTTPGit(t, work, "push", "origin", "HEAD:refs/heads/main")
@@ -91,9 +79,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 		t.Fatalf("fetched head %s, want %s", remoteHead, workHead)
 	}
 	fetchedContent, err := httpGitBytes(clone, "show", "origin/main:large.bin")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !bytes.Equal(fetchedContent, fetchedPayload) {
 		t.Fatal("fetch did not contain the exact noncompressible update")
 	}
@@ -101,9 +87,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 	oldMain := workHead
 	runHTTPGit(t, work, "checkout", "--orphan", "replacement")
 	runHTTPGit(t, work, "rm", "-rf", ".")
-	if err := os.WriteFile(filepath.Join(work, "replacement.txt"), []byte("replacement\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "replacement.txt"), []byte("replacement\n"), 0o600))
 	runHTTPGit(t, work, "add", ".")
 	runHTTPGit(t, work, "commit", "-m", "replacement root")
 	replacement := httpGitOutput(t, work, "rev-parse", "HEAD")
@@ -119,9 +103,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 	runHTTPGit(t, work, "push", "origin", ":refs/tags/release")
 
 	retained, err := manager.RetainedRefs(context.Background(), "sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	retainedOIDs := make(map[string]string)
 	for _, ref := range retained {
 		retainedOIDs[ref.OID] = ref.Kind
@@ -132,9 +114,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 		}
 	}
 	remotePath, err := manager.Path("sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	runHTTPGit(t, "", "--git-dir", remotePath, "reflog", "expire", "--expire=now", "--all")
 	runHTTPGit(t, "", "--git-dir", remotePath, "gc", "--prune=now")
 	for _, oid := range []string{oldMain, replacement, oldTag, newTag} {
@@ -145,9 +125,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 func TestSmartHTTPGatesEveryEndpointAndRejectsDumbPaths(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	handler.Authorize = func(*http.Request) bool { return false }
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -169,9 +147,7 @@ func TestSmartHTTPGatesEveryEndpointAndRejectsDumbPaths(t *testing.T) {
 			request.Header.Set("Content-Type", "application/x-"+service+"-request")
 		}
 		response, err := http.DefaultClient.Do(request)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		response.Body.Close()
 		if response.StatusCode != http.StatusUnauthorized {
 			t.Errorf("%s %s status=%d, want 401", method, target, response.StatusCode)
@@ -186,9 +162,7 @@ func TestSmartHTTPGatesEveryEndpointAndRejectsDumbPaths(t *testing.T) {
 		"/git/sample.git/info/refs?service=git-upload-pack&service=git-receive-pack",
 	} {
 		response, err := http.Get(server.URL + target)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		response.Body.Close()
 		if response.StatusCode != http.StatusNotFound {
 			t.Errorf("GET %s status=%d, want 404", target, response.StatusCode)
@@ -200,18 +174,12 @@ func newHTTPTestRepository(t *testing.T) (*repository.Manager, *gitexec.Runner) 
 	t.Helper()
 	root := t.TempDir()
 	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	if _, err := manager.Create(context.Background(), "sample", ""); err != nil {
 		t.Fatal(err)

@@ -33,12 +33,8 @@ func restartService(t *testing.T, f *fixture) {
 	f.service.lifecycle.Lock()
 	f.service.closing = false
 	f.service.lifecycle.Unlock()
-	if err := f.service.Close(); err != nil {
-		t.Fatalf("close before restart: %v", err)
-	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile after restart: %v", err)
-	}
+	noErr(t, f.service.Close(), "close before restart")
+	noErr(t, f.service.Reconcile(context.Background()), "reconcile after restart")
 }
 
 // reimportLeavesNothingUnresolved imports the same name again and checks that
@@ -53,9 +49,7 @@ func reimportLeavesNothingUnresolved(t *testing.T, f *fixture) {
 	if err != nil || status.UnresolvedIntents != 0 {
 		t.Fatalf("status after the new import unresolved=%d err=%v", status.UnresolvedIntents, err)
 	}
-	if err := recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup-after-reimport")); err != nil {
-		t.Fatalf("backup after the new import: %v", err)
-	}
+	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup-after-reimport")), "backup after the new import")
 }
 
 // A cancel or a shutdown that stops an initial import after its ref
@@ -125,9 +119,7 @@ func TestStoppedInitialPublicationIsSettledByTheRun(t *testing.T) {
 			if _, _, exists, err := f.manager.ExistingPath(ctx, "project"); err != nil || exists {
 				t.Fatalf("stopped initial import created a repository exists=%v err=%v", exists, err)
 			}
-			if err := recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")); err != nil {
-				t.Fatalf("backup after the stopped initial import: %v", err)
-			}
+			noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")), "backup after the stopped initial import")
 			if mode == "shutdown" {
 				waitForShutdownClose(t, f)
 			}
@@ -189,12 +181,8 @@ func unreadableInitialPublication(t *testing.T, f *fixture) (state.ImportRun, st
 		t.Fatalf("unreadable initial intent=%s", intent.Status)
 	}
 	restore := func() {
-		if err := os.Rename(hidden, filepath.Join(directory, "refs")); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Remove(filepath.Join(directory, "HEAD.lock")); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Rename(hidden, filepath.Join(directory, "refs")))
+		noErr(t, os.Remove(filepath.Join(directory, "HEAD.lock")))
 	}
 	return run, directory, restore
 }
@@ -228,9 +216,7 @@ func TestReconciliationSettlesUnresolvedInitialPublicationItRemoves(t *testing.T
 	if err != nil || stored.Status != state.ImportRunFailed || stored.ErrorClass != CodePublishFailed || !strings.Contains(stored.Message, "earlier outcome") {
 		t.Fatalf("reconciled run=%+v err=%v", stored, err)
 	}
-	if err := recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")); err != nil {
-		t.Fatalf("backup after reconciliation: %v", err)
-	}
+	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")), "backup after reconciliation")
 	reimportLeavesNothingUnresolved(t, f)
 }
 
@@ -245,9 +231,7 @@ func TestPreservedInitialDirectoryMovedAwaySettlesItsIntent(t *testing.T) {
 	ctx := context.Background()
 	// A marker that no longer matches makes reconciliation preserve the
 	// directory instead of removing it.
-	if err := os.WriteFile(filepath.Join(directory, initialMarkerName), []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(directory, initialMarkerName), []byte("{}\n"), 0o600))
 	restartService(t, f)
 	if _, statErr := os.Stat(directory); statErr != nil {
 		t.Fatalf("an unproven directory was not preserved: %v", statErr)
@@ -268,9 +252,7 @@ func TestPreservedInitialDirectoryMovedAwaySettlesItsIntent(t *testing.T) {
 	}
 
 	moved := filepath.Join(f.root, "inspected")
-	if err := os.Rename(directory, moved); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Rename(directory, moved))
 	restartService(t, f)
 	if intent := initialIntentOf(t, f, run.ID); intent.Status != state.ImportIntentInvalidated {
 		t.Fatalf("intent after its directory was moved away=%s", intent.Status)
@@ -279,9 +261,7 @@ func TestPreservedInitialDirectoryMovedAwaySettlesItsIntent(t *testing.T) {
 	if err != nil || status.UnresolvedIntents != 0 {
 		t.Fatalf("status after settlement unresolved=%d err=%v", status.UnresolvedIntents, err)
 	}
-	if err := recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")); err != nil {
-		t.Fatalf("backup after settlement: %v", err)
-	}
+	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")), "backup after settlement")
 	if _, err := f.service.ResolveUnresolved(ctx, "project"); problemCode(err) != CodeNothingToResolve {
 		t.Fatalf("resolve after settlement err=%v", errors.Unwrap(err))
 	}

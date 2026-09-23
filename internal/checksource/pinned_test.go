@@ -21,26 +21,18 @@ func newSyntheticRepository(t *testing.T) (*repository.Manager, string) {
 	t.Helper()
 	root := t.TempDir()
 	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositories := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositories, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositories, 0o700))
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositories}
 	if _, err := manager.Create(context.Background(), "sample", "synthetic check source"); err != nil {
 		t.Fatal(err)
 	}
 	bare, err := manager.Path("sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return manager, bare
 }
 
@@ -137,9 +129,7 @@ func (b *treeBuilder) writeTree(t *testing.T, prefix string) string {
 func pin(t *testing.T, manager *repository.Manager, commitOID string) *repository.PinnedRepository {
 	t.Helper()
 	pinned, err := manager.PinRepository(context.Background(), "sample", commitOID, commitOID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return pinned
 }
 
@@ -159,9 +149,7 @@ func TestPinnedMaterializationKeepsExactBytesUnderCommittedAttributes(t *testing
 
 	destination := filepath.Join(t.TempDir(), "source")
 	result, err := MaterializePinned(context.Background(), pin(t, manager, commitOID), repository.PinnedHead, destination, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if result.CommitOID != commitOID || result.ObjectFormat == "" {
 		t.Fatalf("unexpected source identity: %+v", result)
 	}
@@ -179,9 +167,7 @@ func TestPinnedMaterializationKeepsExactBytesUnderCommittedAttributes(t *testing
 		}
 	}
 	binary, err := os.ReadFile(filepath.Join(destination, "assets", "image.bin"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(binary) != 9 || binary[0] != 0x89 || binary[5] != 0x0d {
 		t.Fatalf("binary bytes changed: %v", binary)
 	}
@@ -213,9 +199,7 @@ func TestPinnedMaterializationKeepsExactBytesUnderCommittedAttributes(t *testing
 			t.Fatalf("executable mode was not preserved: %+v", file)
 		}
 		info, statErr := os.Stat(filepath.Join(destination, "scripts", "build.sh"))
-		if statErr != nil {
-			t.Fatal(statErr)
-		}
+		noErr(t, statErr)
 		if file.ExecutableApplied != (info.Mode()&0o100 != 0) {
 			t.Fatalf("reported execute bit %v disagrees with mode %v", file.ExecutableApplied, info.Mode())
 		}
@@ -314,16 +298,12 @@ func TestPinnedMaterializationPreservesLFSPointers(t *testing.T) {
 
 	destination := filepath.Join(t.TempDir(), "source")
 	result, err := MaterializePinned(context.Background(), pin(t, manager, commitOID), repository.PinnedHead, destination, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(result.LFSPointerPaths) != 1 || result.LFSPointerPaths[0] != "design/logo.psd" {
 		t.Fatalf("pointer detection reported %v", result.LFSPointerPaths)
 	}
 	content, err := os.ReadFile(filepath.Join(destination, "design", "logo.psd"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if string(content) != string(pointer) {
 		t.Fatalf("pointer bytes were resolved or changed: %q", content)
 	}
@@ -337,13 +317,9 @@ func TestPinnedMaterializationLeavesAnExistingDestinationUnchanged(t *testing.T)
 
 	root := t.TempDir()
 	destination := filepath.Join(root, "existing")
-	if err := os.Mkdir(destination, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(destination, 0o700))
 	sentinel := filepath.Join(destination, "a.txt")
-	if err := os.WriteFile(sentinel, []byte("sentinel\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(sentinel, []byte("sentinel\n"), 0o600))
 	if _, err := MaterializePinned(context.Background(), pin(t, manager, commitOID), repository.PinnedHead,
 		destination, Options{}); !errors.Is(err, ErrDestinationExists) {
 		t.Fatalf("err=%v, want existing destination", err)

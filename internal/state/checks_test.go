@@ -42,9 +42,7 @@ func recordAttempt(t *testing.T, store *Store, attempt CheckAttempt) (Task, Chec
 // completeTestSetup marks the store initialized so portable validation runs.
 func completeTestSetup(t *testing.T, store *Store) {
 	t.Helper()
-	if err := store.CompleteSetup(context.Background(), t.TempDir(), "open", "", "admin-hash", true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(context.Background(), t.TempDir(), "open", "", "admin-hash", true))
 }
 
 // recordAttemptWithLog registers and completes one attempt with a raw log.
@@ -68,16 +66,9 @@ func recordAttemptWithLog(t *testing.T, store *Store, attempt CheckAttempt, log 
 }
 
 func TestCorrectionCyclesBelongToTheTaskAcrossRevisions(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	revisions := []string{
 		"1111111111111111111111111111111111111111",
 		"2222222222222222222222222222222222222222",
@@ -95,9 +86,7 @@ func TestCorrectionCyclesBelongToTheTaskAcrossRevisions(t *testing.T) {
 	for index := 1; index <= CorrectionCycleLimit; index++ {
 		cycleID := cycleIDFor(index)
 		task, _, err = store.ReserveCorrectionCycle(ctx, "project", task.ID, cycleID, now.Add(time.Duration(index)*time.Minute))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if task.CorrectionCyclesUsed != index {
 			t.Fatalf("after %d reservations cycles=%d", index, task.CorrectionCyclesUsed)
 		}
@@ -143,16 +132,9 @@ func TestCleanupFailureCannotResolveTaskOrLoseSubmittedFacts(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := openTestStore(t)
-			ctx := context.Background()
-			now := time.Unix(1_800_000_000, 0)
-			if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-				t.Fatal(err)
-			}
+			store, ctx, now := newProjectStore(t)
 			task, err := store.CreateTask(ctx, "project", "Cleanup failed", now)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			attempt := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptPassed)
 			attempt.Status = AttemptCancelled
 			attempt.Results = append([]CheckResult(nil), test.results...)
@@ -216,22 +198,13 @@ func TestOrdinaryErrorAndCancellationKeepCancellationPrecedence(t *testing.T) {
 }
 
 func TestSuccessfulCorrectionStillCountsAndRetriesReuseTheRound(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Successful correction", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	task, _ = recordAttempt(t, store, attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed))
 	cycleID := cycleIDFor(1)
 	task, cycle, err := store.ReserveCorrectionCycle(ctx, "project", task.ID, cycleID, now.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if cycle.Sequence != 1 || task.CorrectionCyclesUsed != 1 {
 		t.Fatalf("reserved cycle=%+v task=%+v", cycle, task)
 	}
@@ -266,16 +239,9 @@ func TestSuccessfulCorrectionStillCountsAndRetriesReuseTheRound(t *testing.T) {
 }
 
 func TestUnavailableAndRetransmitDoNotConsumeCorrections(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Unavailable environment", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// An unavailable environment is not a real verdict, so it is neither the
 	// initial check nor a correction.
 	task, _ = recordAttempt(t, store, attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptUnavailable))
@@ -300,16 +266,9 @@ func TestUnavailableAndRetransmitDoNotConsumeCorrections(t *testing.T) {
 }
 
 func TestReusedAttemptIdentityWithDifferentContentIsRejected(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Conflict", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	first := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed)
 	if _, _, err := store.RegisterCheckAttempt(ctx, first); err != nil {
 		t.Fatal(err)
@@ -326,22 +285,13 @@ func TestReusedAttemptIdentityWithDifferentContentIsRejected(t *testing.T) {
 }
 
 func TestExactRegistrationReplayUsesTheOriginalServerFacts(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Clock-independent replay", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	first := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed)
 	first.CredentialID = "credential-one"
 	_, registered, err := store.RegisterCheckAttempt(ctx, first)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	replay := first
 	replay.CreatedAt = now.Add(2 * time.Second)
@@ -376,27 +326,16 @@ func TestExactRegistrationReplayUsesTheOriginalServerFacts(t *testing.T) {
 }
 
 func TestOldRegistrationReplayDoesNotChangeNewerConfigurationHistory(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Configuration replay", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	first := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed)
 	_, original, err := store.RegisterCheckAttempt(ctx, first)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	newer := attemptFor(task, "2222222222222222222222222222222222222222", now.Add(time.Minute), AttemptFailed)
 	newer.Checks = []CheckDefinition{{Name: "lint", Command: "go vet ./..."}}
 	_, latestAttempt, err := store.RegisterCheckAttempt(ctx, newer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if original.ConfigurationVersion != 1 || latestAttempt.ConfigurationVersion != 2 {
 		t.Fatalf("configuration versions original=%d newer=%d", original.ConfigurationVersion, latestAttempt.ConfigurationVersion)
 	}
@@ -418,9 +357,7 @@ func TestOldRegistrationReplayDoesNotChangeNewerConfigurationHistory(t *testing.
 		t.Fatalf("latest configuration=%+v exists=%v err=%v", configuration, exists, err)
 	}
 	var configurationCount int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_configurations WHERE repository_id=?`, "project").Scan(&configurationCount); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_configurations WHERE repository_id=?`, "project").Scan(&configurationCount))
 	if configurationCount != 2 {
 		t.Fatalf("configuration count=%d want 2", configurationCount)
 	}
@@ -431,16 +368,9 @@ func TestOldRegistrationReplayDoesNotChangeNewerConfigurationHistory(t *testing.
 }
 
 func TestSimultaneousDuplicateUploadsStoreOneAttempt(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Simultaneous", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed)
 	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
@@ -482,16 +412,9 @@ func TestSimultaneousDuplicateUploadsStoreOneAttempt(t *testing.T) {
 }
 
 func TestAcceptedLogAndResultSurviveAConflictingRetransmit(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Immutable completion", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed)
 	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
@@ -501,15 +424,11 @@ func TestAcceptedLogAndResultSurviveAConflictingRetransmit(t *testing.T) {
 		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "first log",
 	}
 	_, stored, err := store.CompleteCheckAttempt(ctx, completion, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	originalExpiry := *stored.LogExpiresAt
 	// An identical retransmit returns the original result and expiry.
 	_, again, err := store.CompleteCheckAttempt(ctx, completion, now.Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !again.LogExpiresAt.Equal(originalExpiry) || again.CompletionDigest != stored.CompletionDigest {
 		t.Fatalf("identical retransmit changed the accepted result: %+v", again)
 	}
@@ -538,9 +457,7 @@ func TestAcceptedLogAndResultSurviveAConflictingRetransmit(t *testing.T) {
 	// Expiry changes only log readability. An exact replay returns the original
 	// record without extending the accepted expiry.
 	_, expiredReplay, err := store.CompleteCheckAttempt(ctx, completion, originalExpiry.Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if expiredReplay.LogExpiresAt == nil || !expiredReplay.LogExpiresAt.Equal(originalExpiry) {
 		t.Fatalf("expired replay changed the accepted expiry: %+v", expiredReplay)
 	}
@@ -554,16 +471,9 @@ func TestAcceptedLogAndResultSurviveAConflictingRetransmit(t *testing.T) {
 }
 
 func TestLateOlderFailureDoesNotOverrideNewerSuccess(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Late older failure", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	olderRevision := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	newerRevision := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	// The older revision starts first, so it receives the lower sequence.
@@ -580,9 +490,7 @@ func TestLateOlderFailureDoesNotOverrideNewerSuccess(t *testing.T) {
 		AttemptID: newer.ID, RepositoryID: "project", TaskID: newer.TaskID, Results: newer.Results,
 		FinishedAt: newer.FinishedAt, WorktreeState: newer.WorktreeState,
 	}, now.Add(2*time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if task.Status != TaskResolved {
 		t.Fatalf("task after the newer pass = %+v", task)
 	}
@@ -592,9 +500,7 @@ func TestLateOlderFailureDoesNotOverrideNewerSuccess(t *testing.T) {
 		AttemptID: older.ID, RepositoryID: "project", TaskID: older.TaskID, Results: older.Results,
 		FinishedAt: now.Add(10 * time.Hour), WorktreeState: older.WorktreeState,
 	}, now.Add(10*time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if task.Status != TaskResolved || task.CorrectionCyclesUsed != 0 {
 		t.Fatalf("late older failure overrode newer state: %+v", task)
 	}
@@ -613,16 +519,9 @@ func TestLateOlderFailureDoesNotOverrideNewerSuccess(t *testing.T) {
 }
 
 func TestNewRegistrationDoesNotInheritAnOlderSuccess(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "New work", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	task, _ = recordAttempt(t, store, attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptPassed))
 	if task.Status != TaskResolved {
 		t.Fatalf("task after a pass = %+v", task)
@@ -630,9 +529,7 @@ func TestNewRegistrationDoesNotInheritAnOlderSuccess(t *testing.T) {
 	// A new registration is in flight, so the task is no longer resolved.
 	pending := attemptFor(task, "2222222222222222222222222222222222222222", now.Add(time.Minute), AttemptFailed)
 	task, registered, err := store.RegisterCheckAttempt(ctx, pending)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if task.Status != TaskActive || task.PendingAttemptID != registered.ID {
 		t.Fatalf("task after a new registration = %+v", task)
 	}
@@ -647,16 +544,9 @@ func TestNewRegistrationDoesNotInheritAnOlderSuccess(t *testing.T) {
 }
 
 func TestLateResultStaysBoundToItsRevision(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Late result", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	oldRevision := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	newRevision := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	recordAttempt(t, store, attemptFor(task, oldRevision, now, AttemptFailed))
@@ -674,16 +564,9 @@ func TestLateResultStaysBoundToItsRevision(t *testing.T) {
 }
 
 func TestCheckConfigurationIsVersionedByContent(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Versioned configuration", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	first := attemptFor(task, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now, AttemptFailed)
 	if _, registered, err := store.RegisterCheckAttempt(ctx, first); err != nil {
 		t.Fatal(err)
@@ -712,16 +595,9 @@ func TestCheckConfigurationIsVersionedByContent(t *testing.T) {
 }
 
 func TestCompletionRejectsResultsThatDoNotMatchTheDeclaredChecks(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Mismatch", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now, AttemptFailed)
 	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
@@ -737,12 +613,7 @@ func TestCompletionRejectsResultsThatDoNotMatchTheDeclaredChecks(t *testing.T) {
 }
 
 func TestHelperCredentialsAreScopedHashedAndRevocable(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	token := "synthetic-helper-token"
 	hash := sha256.Sum256([]byte(token))
 	credential, created, err := store.CreateHelperCredential(ctx, "project", "laptop", cycleIDFor(7), hash[:], now)
@@ -763,12 +634,8 @@ func TestHelperCredentialsAreScopedHashedAndRevocable(t *testing.T) {
 		t.Fatal("credential use was not recorded")
 	}
 	// A scoped compensating revoke is idempotent.
-	if err := store.RevokeHelperCredentialByCreation(ctx, "project", cycleIDFor(7), now.Add(2*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RevokeHelperCredentialByCreation(ctx, "project", cycleIDFor(7), now.Add(3*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.RevokeHelperCredentialByCreation(ctx, "project", cycleIDFor(7), now.Add(2*time.Minute)))
+	noErr(t, store.RevokeHelperCredentialByCreation(ctx, "project", cycleIDFor(7), now.Add(3*time.Minute)))
 	if _, ok, err := store.HelperCredentialByToken(ctx, hash[:], now.Add(4*time.Minute)); err != nil || ok {
 		t.Fatalf("revoked credential accepted: ok=%v err=%v", ok, err)
 	}
@@ -779,16 +646,9 @@ func TestHelperCredentialsAreScopedHashedAndRevocable(t *testing.T) {
 }
 
 func TestCheckLogsAreDisposableAndPruned(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Disposable log", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("a", 40), now, AttemptFailed)
 	_, stored := recordAttemptWithLog(t, store, attempt, "raw output")
 	if stored.LogID != attempt.ID || stored.LogExpiresAt == nil || stored.LogTruncated {
@@ -815,16 +675,9 @@ func TestCheckLogsAreDisposableAndPruned(t *testing.T) {
 }
 
 func TestPruneDrainsDueRowsAndReportsCommittedProgress(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Prune batches", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	const logs = checkLogPruneBatch + 4
 	for index := 0; index < logs; index++ {
 		attempt := attemptFor(task, fmt.Sprintf("%040x", index+1), now.Add(time.Duration(index)*time.Second), AttemptFailed)
@@ -837,9 +690,7 @@ func TestPruneDrainsDueRowsAndReportsCommittedProgress(t *testing.T) {
 	_, futureStored := recordAttemptWithLog(t, store, futureAttempt, "future raw output")
 	cutoff := now.Add(retention(DefaultCheckLogRetentionDays) + time.Hour)
 	var failID string
-	if err := store.db.QueryRowContext(ctx, `SELECT attempt_id FROM check_raw_logs WHERE expires_at<=? ORDER BY expires_at,attempt_id LIMIT 1 OFFSET ?`, cutoff.Unix(), checkLogPruneBatch).Scan(&failID); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.db.QueryRowContext(ctx, `SELECT attempt_id FROM check_raw_logs WHERE expires_at<=? ORDER BY expires_at,attempt_id LIMIT 1 OFFSET ?`, cutoff.Unix(), checkLogPruneBatch).Scan(&failID))
 	if _, err := store.db.ExecContext(ctx, fmt.Sprintf(`CREATE TRIGGER fail_second_prune_batch BEFORE DELETE ON check_raw_logs WHEN OLD.attempt_id='%s' BEGIN SELECT RAISE(ABORT,'injected prune failure'); END`, failID)); err != nil {
 		t.Fatal(err)
 	}
@@ -870,25 +721,17 @@ func TestRecoveryExcludesRawLogsAndRestoreDoesNotReviveThem(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1_800_000_000, 0)
 	store := openTestStore(t)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}))
 	task, err := store.CreateTask(ctx, "project", "Exclude raw logs from recovery", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("b", 40), now, AttemptFailed)
 	const rawMarker = "unique-raw-log-marker-not-for-recovery"
 	_, stored := recordAttemptWithLog(t, store, attempt, rawMarker)
 	completeTestSetup(t, store)
 	snapshot, err := store.RecoverySnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	encoded, err := json.Marshal(snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if bytes.Contains(encoded, []byte(rawMarker)) {
 		t.Fatal("recovery snapshot contains raw log bytes")
 	}
@@ -906,9 +749,7 @@ func TestRecoveryExcludesRawLogsAndRestoreDoesNotReviveThem(t *testing.T) {
 	if count := checkRawLogCount(t, restored, "orphaned-before-restore"); count != 1 {
 		t.Fatalf("pre-restore raw log rows=%d", count)
 	}
-	if err := restored.RestoreRecoveryState(ctx, t.TempDir(), snapshot); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, restored.RestoreRecoveryState(ctx, t.TempDir(), snapshot))
 	var rawRows int
 	if err := restored.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_raw_logs`).Scan(&rawRows); err != nil || rawRows != 0 {
 		t.Fatalf("raw log rows after restore=%d err=%v", rawRows, err)
@@ -926,21 +767,12 @@ func TestRecoveryExcludesRawLogsAndRestoreDoesNotReviveThem(t *testing.T) {
 }
 
 func TestCheckLogReportsSubmittedTruncation(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Truncated log", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("b", 40), now, AttemptFailed)
 	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	completion := CheckCompletion{
 		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
 		Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState,
@@ -955,9 +787,7 @@ func TestCheckLogReportsSubmittedTruncation(t *testing.T) {
 func checkRawLogCount(t *testing.T, store *Store, attemptID string) int {
 	t.Helper()
 	var count int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM check_raw_logs WHERE attempt_id=?`, attemptID).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.db.QueryRow(`SELECT COUNT(*) FROM check_raw_logs WHERE attempt_id=?`, attemptID).Scan(&count))
 	return count
 }
 
@@ -1001,16 +831,8 @@ func cycleIDFor(sequence int) string {
 // disposable raw row was removed. The accepted completion owns the bytes, so a
 // changed replay must not recreate it with different content.
 func TestChangedReplayAfterLogRemovalKeepsAcceptedBytes(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
+	task := newProjectTask(t, store, ctx, now)
 	attempt := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed)
 	_, stored := recordAttemptWithLog(t, store, attempt, "accepted log\n")
 	if stored.LogID == "" {
@@ -1048,16 +870,8 @@ func TestChangedReplayAfterLogRemovalKeepsAcceptedBytes(t *testing.T) {
 // an empty replay, which must not recreate an empty row for the accepted
 // completion.
 func TestEmptyReplayAfterLogRemovalKeepsAcceptedBytes(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
+	task := newProjectTask(t, store, ctx, now)
 	attempt := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed)
 	_, stored := recordAttemptWithLog(t, store, attempt, "accepted log\n")
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM check_raw_logs WHERE attempt_id=?`, stored.LogID); err != nil {
@@ -1080,16 +894,9 @@ func TestEmptyReplayAfterLogRemovalKeepsAcceptedBytes(t *testing.T) {
 // registration is still in flight. The runtime state must survive the portable
 // validation that a backup performs.
 func TestCompletingAnOlderAttemptWhileANewerIsPendingKeepsRecoveryValid(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for index := 1; index <= CorrectionCycleLimit; index++ {
 		if task, _, err = store.ReserveCorrectionCycle(ctx, "project", task.ID, cycleIDFor(index), now); err != nil {
 			t.Fatal(err)
@@ -1108,9 +915,7 @@ func TestCompletingAnOlderAttemptWhileANewerIsPendingKeepsRecoveryValid(t *testi
 		FinishedAt: older.FinishedAt, WorktreeState: older.WorktreeState,
 	}
 	task, _, err = store.CompleteCheckAttempt(ctx, completion, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// The newer registration is still in flight, so the task stays active even
 	// though the applied attempt exhausted the reserved budget.
 	if task.Status != TaskActive || task.PendingAttemptID != newer.ID {
@@ -1126,16 +931,9 @@ func TestCompletingAnOlderAttemptWhileANewerIsPendingKeepsRecoveryValid(t *testi
 // reverse order. The older unresolved registration is historical, so the task
 // must not advertise it as the current pending attempt.
 func TestCompletingTheNewestPendingAttemptDoesNotPointAtAnOlderOne(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	older := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed)
 	newer := attemptFor(task, "2222222222222222222222222222222222222222", now.Add(time.Minute), AttemptFailed)
 	if _, _, err := store.RegisterCheckAttempt(ctx, older); err != nil {
@@ -1149,9 +947,7 @@ func TestCompletingTheNewestPendingAttemptDoesNotPointAtAnOlderOne(t *testing.T)
 		FinishedAt: newer.FinishedAt, WorktreeState: newer.WorktreeState,
 	}
 	task, _, err = store.CompleteCheckAttempt(ctx, completion, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if task.PendingAttemptID != "" {
 		t.Fatalf("pending attempt=%q want none after the newest completion", task.PendingAttemptID)
 	}
@@ -1162,16 +958,9 @@ func TestCompletingTheNewestPendingAttemptDoesNotPointAtAnOlderOne(t *testing.T)
 }
 
 func TestNewestPendingAttemptIsStableAcrossRecoveryValidation(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Pending order", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	task, _ = recordAttempt(t, store, attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed))
 	older := attemptFor(task, "2222222222222222222222222222222222222222", now.Add(time.Minute), AttemptFailed)
 	newer := attemptFor(task, "3333333333333333333333333333333333333333", now.Add(2*time.Minute), AttemptFailed)
@@ -1179,9 +968,7 @@ func TestNewestPendingAttemptIsStableAcrossRecoveryValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	task, newest, err := store.RegisterCheckAttempt(ctx, newer)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if task.PendingAttemptID != newest.ID {
 		t.Fatalf("pending attempt=%q want highest-sequence %q", task.PendingAttemptID, newest.ID)
 	}
@@ -1204,22 +991,13 @@ func TestNewestPendingAttemptIsStableAcrossRecoveryValidation(t *testing.T) {
 }
 
 func TestMultipleAttemptsCanUseOneReservedCycle(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Retry one correction", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	task, _ = recordAttempt(t, store, attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed))
 	cycleID := cycleIDFor(1)
 	task, _, err = store.ReserveCorrectionCycle(ctx, "project", task.ID, cycleID, now.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	first := attemptFor(task, "2222222222222222222222222222222222222222", now.Add(2*time.Minute), AttemptFailed)
 	first.CycleID = cycleID
 	_, firstStored := recordAttempt(t, store, first)
@@ -1276,17 +1054,10 @@ func TestMultipleAttemptsCanUseOneReservedCycle(t *testing.T) {
 // registered attempt is the newest evidence, not the highest task-local
 // sequence.
 func TestLatestAttemptForARevisionUsesRepositoryOrderNotTaskSequence(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	revision := "1111111111111111111111111111111111111111"
 	historical, err := store.CreateTask(ctx, "project", "Old task", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var last CheckAttempt
 	for index := 0; index < 10; index++ {
 		attempt := attemptFor(historical, revision, now.Add(time.Duration(index)*time.Second), AttemptFailed)
@@ -1298,14 +1069,10 @@ func TestLatestAttemptForARevisionUsesRepositoryOrderNotTaskSequence(t *testing.
 		t.Fatalf("historical sequence=%d want 10", last.Sequence)
 	}
 	recent, err := store.CreateTask(ctx, "project", "New task", now.Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(recent, revision, now.Add(time.Hour), AttemptFailed)
 	_, newest, err := store.RegisterCheckAttempt(ctx, attempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// The sequence is repository-wide, so the newer task continues the counter
 	// instead of restarting at one.
 	if newest.Sequence != 11 {
@@ -1324,12 +1091,7 @@ func TestLatestAttemptForARevisionUsesRepositoryOrderNotTaskSequence(t *testing.
 // operation identity. They must not create duplicate authority or leak a
 // uniqueness error.
 func TestConcurrentCreationIdentityIsIdempotent(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	creationID := "0123456789abcdef0123456789abcdef"
 	hash := sha256.Sum256([]byte("token"))
 	type outcome struct {
@@ -1368,30 +1130,18 @@ func TestConcurrentCreationIdentityIsIdempotent(t *testing.T) {
 // that dirties the tree. The registration observation and the submitted
 // observation are stored separately, and the effective state is the worse one.
 func TestCleanRegistrationWithDirtyCompletionIsNotCertifiedClean(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
+	task := newProjectTask(t, store, ctx, now)
 	attempt := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptPassed)
 	attempt.WorktreeState = WorktreeClean
 	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	completion := CheckCompletion{
 		AttemptID: registered.ID, RepositoryID: "project", TaskID: task.ID, Results: attempt.Results,
 		FinishedAt: attempt.FinishedAt, WorktreeState: WorktreeDirty,
 	}
 	_, stored, err := store.CompleteCheckAttempt(ctx, completion, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if stored.WorktreeState != WorktreeClean || stored.SubmittedWorktreeState != WorktreeDirty {
 		t.Fatalf("stored observations = %q and %q", stored.WorktreeState, stored.SubmittedWorktreeState)
 	}
@@ -1423,21 +1173,12 @@ func TestRawLogStorageFailureUsesOneFreshMetadataTransaction(t *testing.T) {
 		{name: "extended IOERR", code: 10 | 3<<8},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			store := openTestStore(t)
-			ctx := context.Background()
-			now := time.Unix(1_800_000_000, 0)
-			if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-				t.Fatal(err)
-			}
+			store, ctx, now := newProjectStore(t)
 			task, err := store.CreateTask(ctx, "project", "Store metadata after a log failure", now)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			attempt := attemptFor(task, strings.Repeat("1", 40), now, AttemptFailed)
 			_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			completion := CheckCompletion{
 				AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
 				Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "raw log",
@@ -1449,9 +1190,7 @@ func TestRawLogStorageFailureUsesOneFreshMetadataTransaction(t *testing.T) {
 				return injectedSQLiteError{code: test.code}
 			}
 			_, stored, err := store.completeCheckAttempt(ctx, completion, nil, now, ops)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if insertions != 1 {
 				t.Fatalf("raw insertions=%d want 1", insertions)
 			}
@@ -1486,21 +1225,12 @@ func TestRawLogStorageFailureUsesOneFreshMetadataTransaction(t *testing.T) {
 }
 
 func TestMetadataFallbackFailureIsBounded(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Bound a failed fallback", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("8", 40), now, AttemptFailed)
 	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	completion := CheckCompletion{
 		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
 		Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "raw log",
@@ -1534,16 +1264,8 @@ func TestMetadataFallbackFailureIsBounded(t *testing.T) {
 // TestEmptyConfiguredSetIsUnavailableNotPassed covers a helper that declared no
 // checks. An empty set is honest unavailable evidence.
 func TestEmptyConfiguredSetIsUnavailableNotPassed(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
+	task := newProjectTask(t, store, ctx, now)
 	attempt := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptPassed)
 	attempt.Checks = nil
 	attempt.Results = nil
@@ -1569,16 +1291,8 @@ func TestEmptyConfiguredSetIsUnavailableNotPassed(t *testing.T) {
 // reservation boundary. An attempt registered before the reservation cannot
 // certify the round even when it finishes later.
 func TestPreReservationAttemptCannotCertifyTheReservedRound(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
+	task := newProjectTask(t, store, ctx, now)
 	// The initial check passes, so the task is resolved.
 	task, _ = recordAttempt(t, store, attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptPassed))
 	if task.Status != TaskResolved {
@@ -1590,9 +1304,7 @@ func TestPreReservationAttemptCannotCertifyTheReservedRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	task, cycle, err := store.ReserveCorrectionCycle(ctx, "project", task.ID, cycleIDFor(1), now.Add(2*time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// The initial check and the pre-reservation attempt both precede the
 	// reservation, so the boundary is the counter observed at reservation.
 	if cycle.ReservedAfterSequence != 2 {
@@ -1604,9 +1316,7 @@ func TestPreReservationAttemptCannotCertifyTheReservedRound(t *testing.T) {
 		FinishedAt: now.Add(3 * time.Minute), WorktreeState: pre.WorktreeState,
 	}
 	task, _, err = store.CompleteCheckAttempt(ctx, completion, now.Add(3*time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// The round is still uncertified, so the task stays active.
 	if task.Status != TaskActive {
 		t.Fatalf("task after the pre-reservation failure = %+v", task)
@@ -1625,21 +1335,12 @@ func TestPreReservationAttemptCannotCertifyTheReservedRound(t *testing.T) {
 }
 
 func TestRawLogAndCompletionMetadataRollBackTogether(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Roll back an incomplete completion", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("1", 40), now, AttemptFailed)
 	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	completion := CheckCompletion{
 		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
 		Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "submitted bytes",
@@ -1680,21 +1381,12 @@ func TestCompletionReconcilesCommitAmbiguity(t *testing.T) {
 		{name: "FULL rolled back then falls back", storageError: true, wantSuccess: true, wantCommitCalls: 2, wantMetadataOnly: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			store := openTestStore(t)
-			ctx := context.Background()
-			now := time.Unix(1_800_000_000, 0)
-			if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-				t.Fatal(err)
-			}
+			store, ctx, now := newProjectStore(t)
 			task, err := store.CreateTask(ctx, "project", "Resolve an ambiguous commit", now)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			attempt := attemptFor(task, strings.Repeat("6", 40), now, AttemptFailed)
 			_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			completion := CheckCompletion{
 				AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
 				Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "raw bytes",
@@ -1723,9 +1415,7 @@ func TestCompletionReconcilesCommitAmbiguity(t *testing.T) {
 			}
 			_, stored, err := store.completeCheckAttempt(ctx, completion, nil, now, ops)
 			if test.wantSuccess {
-				if err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, err)
 			} else if !errors.Is(err, commitErr) {
 				t.Fatalf("completion error=%v", err)
 			}
@@ -1749,21 +1439,12 @@ func TestCompletionReconcilesCommitAmbiguity(t *testing.T) {
 }
 
 func TestRealSQLiteFullUsesMetadataOnlyFallback(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Survive a full database", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("2", 40), now, AttemptFailed)
 	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for _, statement := range []string{
 		`CREATE TABLE full_reserve(content BLOB)`,
 		`INSERT INTO full_reserve(content) VALUES(zeroblob(131072))`,
@@ -1775,9 +1456,7 @@ func TestRealSQLiteFullUsesMetadataOnlyFallback(t *testing.T) {
 		}
 	}
 	var pageCount int
-	if err := store.db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount))
 	var acceptedLimit int
 	if err := store.db.QueryRowContext(ctx, fmt.Sprintf(`PRAGMA max_page_count=%d`, pageCount)).Scan(&acceptedLimit); err != nil || acceptedLimit != pageCount {
 		t.Fatalf("max page count=%d want %d err=%v", acceptedLimit, pageCount, err)
@@ -1799,9 +1478,7 @@ func TestRealSQLiteFullUsesMetadataOnlyFallback(t *testing.T) {
 		return tx.Commit()
 	}
 	_, stored, err := store.completeCheckAttempt(ctx, completion, nil, now, ops)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if insertions != 1 || commits != 1 {
 		t.Fatalf("raw insertions=%d commits=%d, want one attempted insert and one fallback commit", insertions, commits)
 	}
@@ -1821,25 +1498,17 @@ func TestLegacyLogDirectoryAndStagingFilesRemainUntouched(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1_800_000_000, 0)
 	legacyDirectory := filepath.Join(store.dir, "logs")
-	if err := os.Mkdir(legacyDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(legacyDirectory, 0o700))
 	legacyFiles := map[string][]byte{
 		"accepted.log":       []byte("legacy accepted bytes"),
 		".pending.staging-1": []byte("legacy staging bytes"),
 	}
 	for name, content := range legacyFiles {
-		if err := os.WriteFile(filepath.Join(legacyDirectory, name), content, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(filepath.Join(legacyDirectory, name), content, 0o600))
 	}
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}))
 	task, err := store.CreateTask(ctx, "project", "Ignore legacy filesystem logs", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("3", 40), now, AttemptFailed)
 	_, stored := recordAttemptWithLog(t, store, attempt, "database bytes")
 	if stored.LogID != attempt.ID || stored.LogError != "" {
@@ -1862,19 +1531,13 @@ func TestLegacyLogDirectorySymlinkRemainsUntouched(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	target := t.TempDir()
 	sentinel := filepath.Join(target, "sentinel")
-	if err := os.WriteFile(sentinel, []byte("unchanged"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(sentinel, []byte("unchanged"), 0o600))
 	if err := os.Symlink(target, filepath.Join(store.dir, "logs")); err != nil {
 		t.Skipf("create directory symlink: %v", err)
 	}
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}))
 	task, err := store.CreateTask(ctx, "project", "Ignore a legacy log symlink", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("4", 40), now, AttemptFailed)
 	_, stored := recordAttemptWithLog(t, store, attempt, "database bytes")
 	if stored.LogID != attempt.ID || stored.LogError != "" {
@@ -1894,16 +1557,9 @@ func TestLegacyLogDirectorySymlinkRemainsUntouched(t *testing.T) {
 }
 
 func TestRawLogDigestMismatchIsMissingAndReplayDoesNotRepairIt(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Detect a damaged raw log", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("5", 40), now, AttemptFailed)
 	_, stored := recordAttemptWithLog(t, store, attempt, "accepted bytes")
 	if _, err := store.db.ExecContext(ctx, `UPDATE check_raw_logs SET content=? WHERE attempt_id=?`, []byte("damaged bytes"), stored.ID); err != nil {
@@ -1932,16 +1588,8 @@ func TestRawLogDigestMismatchIsMissingAndReplayDoesNotRepairIt(t *testing.T) {
 // with different payloads. Exactly one is accepted, and the stored log digest
 // describes the raw row that actually exists.
 func TestConcurrentDifferentCompletionsKeepOneHonestOutcome(t *testing.T) {
-	store := openTestStore(t)
-	ctx := context.Background()
-	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, ctx, now := newProjectStore(t)
+	task := newProjectTask(t, store, ctx, now)
 	attempt := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed)
 	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)

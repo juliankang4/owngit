@@ -26,13 +26,9 @@ func TestFullyQualifiedRefsDisambiguateCollidingBranchAndTag(t *testing.T) {
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/collision")
 
 	fullBranch, resolvedBranch, err := manager.ResolveRef(context.Background(), "sample", "refs/heads/collision")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fullTag, resolvedTag, err := manager.ResolveRef(context.Background(), "sample", "refs/tags/collision")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if fullBranch != "refs/heads/collision" || resolvedBranch != branchOID {
 		t.Fatalf("branch resolved as %s %s, want branch %s", fullBranch, resolvedBranch, branchOID)
 	}
@@ -56,9 +52,7 @@ func TestBrowseRealTreeBlobCommitAndDiff(t *testing.T) {
 	nestedTree := gitInputOutput(t, work, []byte("040000 tree "+directoryTree+"\t"+rawDirectory+"\x00"), "mktree", "-z")
 	rootTree := gitInputOutput(t, work, []byte("040000 tree "+nestedTree+"\tdir\x00"), "mktree", "-z")
 	messagePath := filepath.Join(t.TempDir(), "message")
-	if err := os.WriteFile(messagePath, []byte("subject with separator\n\nbody "+string(rune(0x1e))+" remains data\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(messagePath, []byte("subject with separator\n\nbody "+string(rune(0x1e))+" remains data\n"), 0o600))
 	command := exec.Command("git", "commit-tree", rootTree, "-F", messagePath)
 	command.Dir = work
 	command.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2024-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2024-01-01T00:00:00Z")
@@ -71,58 +65,42 @@ func TestBrowseRealTreeBlobCommitAndDiff(t *testing.T) {
 	runGit(t, work, "push", "origin", "refs/heads/main")
 
 	summary, err := manager.Summary(context.Background(), "sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if summary.Empty || summary.DefaultBranch != "main" || summary.DefaultOID != oid {
 		t.Fatalf("unexpected summary: %+v", summary)
 	}
 	_, root, err := manager.Tree(context.Background(), "sample", "main", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(root) != 1 || root[0].Name != "dir" || root[0].Type != "tree" {
 		t.Fatalf("unexpected root tree: %+v", root)
 	}
 	_, directory, err := manager.Tree(context.Background(), "sample", "main", "dir")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(directory) != 1 || directory[0].Name != rawDirectory || directory[0].Type != "tree" {
 		t.Fatalf("unexpected directory tree: %+v", directory)
 	}
 	_, nested, err := manager.Tree(context.Background(), "sample", "main", "dir/"+rawDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(nested) != 1 || nested[0].Name != rawFile || nested[0].Path != filePath {
 		t.Fatalf("unexpected nested raw-name tree: %+v", nested)
 	}
 	_, blob, err := manager.ReadBlob(context.Background(), "sample", "main", filePath, 2<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if string(blob.Content) != content || blob.Binary || blob.Truncated {
 		t.Fatalf("unexpected blob: %+v", blob)
 	}
 	_, commits, err := manager.Commits(context.Background(), "sample", "main", 10)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(commits) != 1 || commits[0].OID != oid || !strings.Contains(commits[0].Body, string(rune(0x1e))) {
 		t.Fatalf("commit metadata lost untrusted control data: %+v", commits)
 	}
 	files, err := manager.ChangedFiles(context.Background(), "sample", oid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(files) != 1 || files[0].Path != filePath || files[0].Status != "added" || files[0].Additions != 2 {
 		t.Fatalf("unexpected changed files: %+v", files)
 	}
 	detail, err := manager.Commit(context.Background(), "sample", oid, files[0].Path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !strings.Contains(detail.Diff, "+<script>alert('not markup')</script>") || detail.CommitterName == "" {
 		t.Fatalf("unexpected commit detail: %+v", detail)
 	}
@@ -154,33 +132,23 @@ func TestDeepTreeLookupUsesBoundedGitProcesses(t *testing.T) {
 	}
 
 	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	tracePath := filepath.Join(t.TempDir(), "git-commands")
 	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
 	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + shellQuote(tracePath) + "\nprintf '\\n' >> " + shellQuote(tracePath) + "\nexec " + shellQuote(gitPath) + " \"$@\"\n"
-	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager.Git = traced
 
 	resetTrace := func() {
 		t.Helper()
-		if err := os.WriteFile(tracePath, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(tracePath, nil, 0o600))
 	}
 	lsTreeCalls := func() int {
 		t.Helper()
 		content, err := os.ReadFile(tracePath)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		return bytes.Count(content, []byte("\x00ls-tree\x00"))
 	}
 
@@ -227,36 +195,22 @@ func TestRefTipsBatchMetadataAcrossRefs(t *testing.T) {
 	runGit(t, work, "push", "origin", "refs/tags/lightweight", "refs/tags/annotated", "refs/tags/nested", "refs/tags/blobtag")
 
 	summary, err := manager.Summary(context.Background(), "sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	tracePath := filepath.Join(t.TempDir(), "git-commands")
 	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
 	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + shellQuote(tracePath) + "\nprintf '\\n' >> " + shellQuote(tracePath) + "\nexec " + shellQuote(gitPath) + " \"$@\"\n"
-	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager.Git = traced
-	if err := os.WriteFile(tracePath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(tracePath, nil, 0o600))
 
 	branchTips, err := manager.RefTips(context.Background(), "sample", summary.Branches)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	tagTips, err := manager.RefTips(context.Background(), "sample", summary.Tags)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(branchTips) != len(summary.Branches) {
 		t.Fatalf("branch tips=%d, want %d", len(branchTips), len(summary.Branches))
 	}
@@ -274,9 +228,7 @@ func TestRefTipsBatchMetadataAcrossRefs(t *testing.T) {
 		t.Fatal("blob tag unexpectedly produced a commit tip")
 	}
 	trace, err := os.ReadFile(tracePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if count := bytes.Count(trace, []byte("\x00log\x00")); count != 2 {
 		t.Fatalf("RefTips used %d log processes, want 2", count)
 	}

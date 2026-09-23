@@ -3,10 +3,7 @@ package state
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -27,9 +24,7 @@ func TestUnsupportedSchemaPreservesDirectoryMode(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	createNumberedSchemaDatabase(t, directory, 5)
-	if err := os.Chmod(directory, 0o750); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Chmod(directory, 0o750))
 	before := captureSchemaDirectory(t, directory)
 	store, err := Open(ctx, directory)
 	if store != nil {
@@ -52,9 +47,7 @@ func TestUnsupportedSchemaInCommittedWALPreservesSource(t *testing.T) {
 	const fixtureVariable = "OWNGIT_UNSUPPORTED_WAL_FIXTURE"
 	if directory := os.Getenv(fixtureVariable); directory != "" {
 		db, err := sql.Open("sqlite", sqliteFileURI(filepath.Join(directory, databaseName)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		for _, statement := range []string{
 			`PRAGMA journal_mode=WAL`,
 			`PRAGMA wal_autocheckpoint=0`,
@@ -90,12 +83,11 @@ func TestUnsupportedSchemaInCommittedWALPreservesSource(t *testing.T) {
 	assertSchemaDirectoryUnchanged(t, directory, before)
 }
 
+// currentSchemaFingerprint pins the catalog of schema 14. A changed migration
+// statement changes it, so the current schema cannot drift unnoticed.
 const (
-	// legacySchemaEightFingerprint is the catalog of the genuine database
-	// emitted before the built-in review removal. It is also the classification
-	// authority for a real schema 8 database.
-	legacySchemaEightFingerprint = schemaEightFingerprint
-	legacySchemaEightObjects     = schemaEightObjects
+	currentSchemaFingerprint = "00471e2330ec05fef67e0a466faef9f5a88d379b0053395df710e79587945b79"
+	currentSchemaObjects     = 61
 )
 
 func TestFreshSchemaOpen(t *testing.T) {
@@ -113,9 +105,7 @@ func TestFreshSchemaOpen(t *testing.T) {
 				test.prepare(t, directory)
 			}
 			store, err := Open(ctx, directory)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			version, err := store.schemaVersion(ctx)
 			if err != nil || version != currentSchemaVersion {
 				store.Close()
@@ -157,511 +147,42 @@ func TestFreshSchemaOpen(t *testing.T) {
 				t.Fatalf("raw log schema table=%d index=%d", rawTable, expiryIndex)
 			}
 			fingerprint, objects, err := schemaFingerprint(ctx, store.db)
-			if err != nil || fingerprint == schemaEightFingerprint || fingerprint == schemaNineFingerprint || fingerprint == schemaTenFingerprint || objects <= schemaTenObjects {
+			if err != nil || fingerprint != currentSchemaFingerprint || objects != currentSchemaObjects {
 				store.Close()
 				t.Fatalf("fresh schema fingerprint=%s objects=%d err=%v", fingerprint, objects, err)
 			}
-			if err := store.Close(); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, store.Close())
 			store, err = Open(ctx, directory)
 			if err != nil {
 				t.Fatalf("reopen current schema: %v", err)
 			}
-			if err := store.Close(); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, store.Close())
 		})
 	}
 }
 
-func TestKnownSchemaSixUpgradesToCurrentInPlace(t *testing.T) {
-	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaSix(t, directory)
-	addSchemaTestRepository(t, directory, "schema-six", "Schema Six", time.Unix(1_800_000_000, 0))
-
-	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatalf("migrate schema 6: %v", err)
-	}
-	defer store.Close()
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
-		t.Fatalf("migrated schema version=%d err=%v", version, err)
-	}
-	if repository, exists, err := store.Repository(ctx, "schema-six"); err != nil || !exists || repository.Name != "Schema Six" {
-		t.Fatalf("preserved repository=%+v exists=%v err=%v", repository, exists, err)
-	}
-	var rawTable int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='check_raw_logs'`).Scan(&rawTable); err != nil || rawTable != 1 {
-		t.Fatalf("raw log table count=%d err=%v", rawTable, err)
-	}
-}
-
-func TestKnownSchemaSevenUpgradesToCurrentInPlace(t *testing.T) {
-	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaSeven(t, directory)
-	addSchemaTestRepository(t, directory, "schema-seven", "Schema Seven", time.Unix(1_800_000_001, 0))
-
-	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatalf("migrate schema 7: %v", err)
-	}
-	defer store.Close()
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
-		t.Fatalf("migrated schema version=%d err=%v", version, err)
-	}
-	if repository, exists, err := store.Repository(ctx, "schema-seven"); err != nil || !exists || repository.Name != "Schema Seven" {
-		t.Fatalf("preserved repository=%+v exists=%v err=%v", repository, exists, err)
-	}
-	var directTables int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name GLOB 'direct_review_*'`).Scan(&directTables); err != nil || directTables != 5 {
-		t.Fatalf("direct review tables=%d err=%v", directTables, err)
-	}
-}
-
-func TestKnownSchemaEightUpgradesToCurrentInPlace(t *testing.T) {
-	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaEight(t, directory)
-	addSchemaTestRepository(t, directory, "schema-eight", "Schema Eight", time.Unix(1_800_000_002, 0))
-
-	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatalf("migrate schema 8: %v", err)
-	}
-	defer store.Close()
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
-		t.Fatalf("migrated schema version=%d err=%v", version, err)
-	}
-	if repository, exists, err := store.Repository(ctx, "schema-eight"); err != nil || !exists || repository.Name != "Schema Eight" {
-		t.Fatalf("preserved repository=%+v exists=%v err=%v", repository, exists, err)
-	}
-	var directTables int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name GLOB 'direct_review_*'`).Scan(&directTables); err != nil || directTables != 5 {
-		t.Fatalf("direct review tables=%d err=%v", directTables, err)
-	}
-}
-
-// TestGenuineSchemaEightCatalogClassifiesAndMigrates builds the checked-in
-// catalog extracted read-only from the genuine pre-removal database. It proves
-// classification happens before any migration statement runs and that the
-// migration preserves the original tables and rows.
-func TestGenuineSchemaNineCatalogClassifiesAndMigrates(t *testing.T) {
-	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaNine(t, directory)
-
-	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-	class, err := classifySchema(ctx, db)
-	if err != nil || class != schemaNine {
-		db.Close()
-		t.Fatalf("genuine schema 9 class=%v err=%v", class, err)
-	}
-	fingerprint, objects, err := schemaFingerprint(ctx, db)
-	if err != nil || fingerprint != schemaNineFingerprint || objects != schemaNineObjects {
-		db.Close()
-		t.Fatalf("genuine schema 9 fingerprint=%s objects=%d err=%v", fingerprint, objects, err)
-	}
-	if _, err := db.Exec(`INSERT INTO repositories(id,name,description,created_at) VALUES('genuine9','Genuine 9','',1)`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatalf("migrate genuine schema 9: %v", err)
-	}
-	defer store.Close()
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
-		t.Fatalf("migrated schema version=%d err=%v", version, err)
-	}
-	if repository, exists, err := store.Repository(ctx, "genuine9"); err != nil || !exists || repository.Name != "Genuine 9" {
-		t.Fatalf("preserved repository=%+v exists=%v err=%v", repository, exists, err)
-	}
-	for table, column := range map[string]string{"check_policies": "execution_json", "check_jobs": "execution_json", "check_runner_credentials": "role"} {
-		var count int
-		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, table, column).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("schema 10 column %s.%s count=%d err=%v", table, column, count, err)
-		}
-	}
-	var runtimeTables int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='check_job_runtime_ownership'`).Scan(&runtimeTables); err != nil || runtimeTables != 1 {
-		t.Fatalf("schema 10 runtime ownership table count=%d err=%v", runtimeTables, err)
-	}
-	policy, err := store.SetCheckPolicy(ctx, CheckPolicyInput{
-		RepositoryID: "genuine9", Executor: CheckExecutorHost, AllowedEvents: []string{"push"},
-		MaxTimeoutMS: 60000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
-	}, time.Unix(2, 0).UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.GrantCheckConsent(ctx, "genuine9", time.Unix(3, 0).UTC()); err != nil {
-		t.Fatal(err)
-	}
-	job, deduped, err := store.AdmitCheckJob(ctx, CheckJobRequest{
-		RepositoryID: "genuine9", Trigger: "push", EventKey: "refs/heads/main@" + strings.Repeat("a", 40),
-		SourceOID: strings.Repeat("a", 40), TriggerRef: "main",
-		WorkflowDigest: strings.Repeat("c", 64), Checks: []CheckDefinition{{Name: "unit", Command: "true"}},
-	}, time.Unix(4, 0).UTC())
-	if err != nil || deduped || job.PolicyVersion != policy.Version {
-		t.Fatalf("admit push after schema 9 migration job=%+v deduped=%v err=%v", job, deduped, err)
-	}
-}
-
-func TestGenuineSchemaTenCatalogClassifiesAndMigrates(t *testing.T) {
-	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaTen(t, directory)
-
-	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-	class, err := classifySchema(ctx, db)
-	if err != nil || class != schemaTen {
-		db.Close()
-		t.Fatalf("genuine schema 10 class=%v err=%v", class, err)
-	}
-	fingerprint, objects, err := schemaFingerprint(ctx, db)
-	if err != nil || fingerprint != schemaTenFingerprint || objects != schemaTenObjects {
-		db.Close()
-		t.Fatalf("genuine schema 10 fingerprint=%s objects=%d err=%v", fingerprint, objects, err)
-	}
-	if _, err := db.Exec(`INSERT INTO repositories(id,name,description,created_at) VALUES('genuine10','Genuine 10','',1)`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatalf("migrate genuine schema 10: %v", err)
-	}
-	defer store.Close()
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
-		t.Fatalf("migrated schema version=%d err=%v", version, err)
-	}
-	if repository, exists, err := store.Repository(ctx, "genuine10"); err != nil || !exists || repository.Name != "Genuine 10" {
-		t.Fatalf("preserved repository=%+v exists=%v err=%v", repository, exists, err)
-	}
-	// The import tables must exist and be usable after the upgrade.
-	source, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-		RepositoryID: "genuine10", URL: "https://example.invalid/team/project.git",
-		Mode: ImportModeStandalone, Now: time.Unix(2, 0).UTC(),
-	})
-	if err != nil || source.SourceGeneration != 1 {
-		t.Fatalf("configure import source after schema 10 migration source=%+v err=%v", source, err)
-	}
-	if _, err := store.SetImportSchedule(ctx, "genuine10", true, 5*time.Minute, time.Unix(3, 0).UTC()); err != nil {
-		t.Fatalf("schedule import after schema 10 migration: %v", err)
-	}
-}
-
-func TestForgedSchemaTenCatalogIsRefusedWithoutWrites(t *testing.T) {
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaTen(t, directory)
-	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-	if _, err := db.Exec(`CREATE TABLE forged(value TEXT)`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	before := captureSchemaDirectory(t, directory)
-	store, err := Open(context.Background(), directory)
-	if store != nil {
-		_ = store.Close()
-	}
-	if err == nil || !strings.Contains(err.Error(), "does not match the supported schema 10 catalog") {
-		t.Fatalf("forged schema 10 error=%v", err)
-	}
-	assertSchemaDirectoryUnchanged(t, directory, before)
-}
-
-func TestGenuineSchemaEightCatalogClassifiesAndMigrates(t *testing.T) {
-	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaEight(t, directory)
-
-	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-	class, err := classifySchema(ctx, db)
-	if err != nil || class != schemaEight {
-		db.Close()
-		t.Fatalf("genuine schema 8 class=%v err=%v", class, err)
-	}
-	fingerprint, objects, err := schemaFingerprint(ctx, db)
-	if err != nil || fingerprint != schemaEightFingerprint || objects != schemaEightObjects {
-		db.Close()
-		t.Fatalf("genuine schema 8 fingerprint=%s objects=%d err=%v", fingerprint, objects, err)
-	}
-	if _, err := db.Exec(`INSERT INTO repositories(id,name,description,created_at) VALUES('genuine','Genuine','',1)`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatalf("migrate genuine schema 8: %v", err)
-	}
-	defer store.Close()
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
-		t.Fatalf("migrated schema version=%d err=%v", version, err)
-	}
-	if repository, exists, err := store.Repository(ctx, "genuine"); err != nil || !exists || repository.Name != "Genuine" {
-		t.Fatalf("preserved repository=%+v exists=%v err=%v", repository, exists, err)
-	}
-	var directTables, jobColumn int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name GLOB 'direct_review_*'`).Scan(&directTables); err != nil || directTables != 5 {
-		t.Fatalf("direct review tables=%d err=%v", directTables, err)
-	}
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('check_attempts') WHERE name='job_id'`).Scan(&jobColumn); err != nil || jobColumn != 1 {
-		t.Fatalf("check attempt job column=%d err=%v", jobColumn, err)
-	}
-}
-
-func TestForgedSchemaNineCatalogIsRefusedWithoutWrites(t *testing.T) {
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaNine(t, directory)
-	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-	if _, err := db.Exec(`CREATE TABLE forged(value TEXT)`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	before := captureSchemaDirectory(t, directory)
-	store, err := Open(context.Background(), directory)
-	if store != nil {
-		_ = store.Close()
-	}
-	if err == nil || !strings.Contains(err.Error(), "does not match the supported schema 9 catalog") {
-		t.Fatalf("forged schema 9 error=%v", err)
-	}
-	assertSchemaDirectoryUnchanged(t, directory, before)
-}
-
-func TestForgedSchemaEightCatalogIsRefusedWithoutWrites(t *testing.T) {
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaEight(t, directory)
-	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-	if _, err := db.Exec(`CREATE TABLE forged(value TEXT)`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	before := captureSchemaDirectory(t, directory)
-	store, err := Open(context.Background(), directory)
-	if store != nil {
-		_ = store.Close()
-	}
-	if err == nil || !strings.Contains(err.Error(), "does not match the supported schema 8 catalog") {
-		t.Fatalf("forged schema 8 error=%v", err)
-	}
-	assertSchemaDirectoryUnchanged(t, directory, before)
-}
-
-func TestSchemaEightRelabeledAsPredecessorIsRefusedWithoutWrites(t *testing.T) {
-	for _, version := range []int{6, 7, 8} {
-		t.Run(strconv.Itoa(version), func(t *testing.T) {
-			directory := filepath.Join(t.TempDir(), "state")
-			store, err := Open(context.Background(), directory)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := store.Close(); err != nil {
-				t.Fatal(err)
-			}
-			db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-			if _, err := db.Exec(`UPDATE metadata SET value=? WHERE key='schema_version'`, version); err != nil {
-				db.Close()
-				t.Fatal(err)
-			}
-			if err := db.Close(); err != nil {
-				t.Fatal(err)
-			}
-			before := captureSchemaDirectory(t, directory)
-			opened, err := Open(context.Background(), directory)
-			if opened != nil {
-				_ = opened.Close()
-			}
-			if err == nil || !strings.Contains(err.Error(), "does not match the supported schema") {
-				t.Fatalf("relabeled schema %d error=%v", version, err)
-			}
-			assertSchemaDirectoryUnchanged(t, directory, before)
-		})
-	}
-}
-
-func TestForgedSchemaSixIsRefusedWithoutWrites(t *testing.T) {
-	directory := filepath.Join(t.TempDir(), "state")
-	createNumberedSchemaDatabase(t, directory, 6)
-	before := captureSchemaDirectory(t, directory)
-	store, err := Open(context.Background(), directory)
-	if store != nil {
-		_ = store.Close()
-	}
-	if err == nil || !strings.Contains(err.Error(), "does not match the supported schema 6 catalog") {
-		t.Fatalf("forged schema 6 error=%v", err)
-	}
-	assertSchemaDirectoryUnchanged(t, directory, before)
-}
-
-func TestSchemaTwelveAddsStructuredHEADOwnership(t *testing.T) {
-	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	db := createSchemaDatabase(t, directory)
-	for _, version := range []int{6, 7, 8, 9, 10, 11} {
-		for _, statement := range migrations[version] {
-			if _, err := db.Exec(statement); err != nil {
-				t.Fatalf("apply schema %d fixture: %v", version, err)
-			}
-		}
-		if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, version); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
-		t.Fatalf("schema version=%d err=%v", version, err)
-	}
-	var notNull int
-	var defaultValue sql.NullString
-	if err := store.db.QueryRowContext(ctx, `SELECT "notnull",dflt_value FROM pragma_table_info('import_publication_intents') WHERE name='head_owned'`).Scan(&notNull, &defaultValue); err != nil || notNull != 1 || !defaultValue.Valid || defaultValue.String != "0" {
-		t.Fatalf("head_owned notnull=%d default=%+v err=%v", notNull, defaultValue, err)
-	}
-}
-
-func TestSchemaTwelveCatalogUpgradesWithoutInventingDestinationOwnership(t *testing.T) {
-	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	db := createSchemaDatabase(t, directory)
-	for _, version := range []int{6, 7, 8, 9, 10, 11, 12} {
-		for _, statement := range migrations[version] {
-			if _, err := db.Exec(statement); err != nil {
-				t.Fatalf("apply schema %d fixture: %v", version, err)
-			}
-		}
-		if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, version); err != nil {
-			t.Fatal(err)
-		}
-	}
-	assertSchemaFingerprint(t, db, schemaTwelveFingerprint, 12)
-	objects := 0
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'`).Scan(&objects); err != nil || objects != schemaTwelveObjects {
-		t.Fatalf("schema 12 objects=%d err=%v", objects, err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
-		t.Fatalf("schema version=%d err=%v", version, err)
-	}
-	if count, err := store.TableRowCount(ctx, "import_initial_destinations"); err != nil || count != 0 {
-		t.Fatalf("upgraded ownership rows=%d err=%v", count, err)
-	}
-}
-
-// The exact schema 13 catalog upgrades in place. The intent table rebuild
-// keeps every row, rowid, and column, and then admits owner_resolved.
-func TestSchemaThirteenCatalogUpgradesToOwnerResolution(t *testing.T) {
-	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	db := createSchemaDatabase(t, directory)
-	for _, version := range []int{6, 7, 8, 9, 10, 11, 12, 13} {
-		for _, statement := range migrations[version] {
-			if _, err := db.Exec(statement); err != nil {
-				t.Fatalf("apply schema %d fixture: %v", version, err)
-			}
-		}
-		if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, version); err != nil {
-			t.Fatal(err)
-		}
-	}
-	assertSchemaFingerprint(t, db, schemaThirteenFingerprint, 13)
-	objects := 0
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'`).Scan(&objects); err != nil || objects != schemaThirteenObjects {
-		t.Fatalf("schema 13 objects=%d err=%v", objects, err)
-	}
-	head := `{"HEAD":"symbolic refs/heads/main ` + strings.Repeat("a", 40) + `","refs/heads/main":"` + strings.Repeat("a", 40) + `"}`
-	if _, err := db.Exec(`INSERT INTO import_publication_intents(rowid,id,repository_id,run_id,source_generation,authority_revision,status,
-		expected_json,desired_json,observed_json,retained_json,reason,created_at,updated_at,head_owned)
-		VALUES(7,?,'project',?,1,1,'complete',?,?,?,'{}','kept',1,2,1)`,
-		strings.Repeat("b", 32), strings.Repeat("c", 32), head, head, head); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
-		t.Fatalf("schema version=%d err=%v", version, err)
-	}
-	var rowID, headOwned int
-	var status, reason, desired string
-	if err := store.db.QueryRowContext(ctx, `SELECT rowid,status,reason,desired_json,head_owned FROM import_publication_intents WHERE id=?`, strings.Repeat("b", 32)).
-		Scan(&rowID, &status, &reason, &desired, &headOwned); err != nil {
-		t.Fatal(err)
-	}
-	if rowID != 7 || status != ImportIntentComplete || reason != "kept" || desired != head || headOwned != 1 {
-		t.Fatalf("upgraded intent rowid=%d status=%s reason=%s desired=%s head_owned=%d", rowID, status, reason, desired, headOwned)
-	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE import_publication_intents SET status='owner_resolved',head_owned=0 WHERE id=?`, strings.Repeat("b", 32)); err != nil {
-		t.Fatalf("upgraded table refuses owner_resolved: %v", err)
-	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE import_publication_intents SET status='bogus' WHERE id=?`, strings.Repeat("b", 32)); err == nil {
-		t.Fatal("upgraded table lost its status constraint")
-	}
-	var indexes int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='import_publication_intents_repository'`).Scan(&indexes); err != nil || indexes != 1 {
-		t.Fatalf("upgraded intent index count=%d err=%v", indexes, err)
-	}
-}
-
+// A database that changed from empty to the baseline after inspection must
+// not be migrated under the empty classification.
 func TestSchemaMigrationRefusesAnIncompatibleOwnerChange(t *testing.T) {
 	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "state")
-	buildGenuineSchemaSix(t, directory)
-
+	root := t.TempDir()
+	directory := filepath.Join(root, "state")
+	if err := testfixture.CreateCommittedBaselineState(ctx, directory, testfixture.BaselineStateOptions{
+		RepositoryRoot: filepath.Join(root, "repositories"), AdminPasswordHash: "synthetic-admin-hash",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
 	defer db.Close()
 	migrating := &Store{db: db, dir: directory}
-	if err := migrating.migrate(ctx, schemaBaseline); !errors.Is(err, ErrInspectionUnstable) {
+	if err := migrating.migrate(ctx, schemaEmpty); !errors.Is(err, ErrInspectionUnstable) {
 		t.Fatalf("incompatible migration owner error=%v", err)
 	}
-	version, err := migrating.schemaVersion(ctx)
-	if err != nil || version != 6 {
-		t.Fatalf("refused migration version=%d err=%v", version, err)
+	if _, versioned, err := readSchemaVersion(ctx, db); err != nil || versioned {
+		t.Fatalf("refused migration versioned=%v err=%v", versioned, err)
 	}
-	var rawTable int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='check_raw_logs'`).Scan(&rawTable); err != nil || rawTable != 0 {
-		t.Fatalf("refused migration raw table=%d err=%v", rawTable, err)
+	if fingerprint, _, err := schemaFingerprint(ctx, db); err != nil || fingerprint != committedBaselineSchemaFingerprint {
+		t.Fatalf("refused migration changed the baseline catalog: %s err=%v", fingerprint, err)
 	}
 }
 
@@ -687,9 +208,7 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 		db.Close()
 		t.Fatalf("fixture does not contain the review constraint from %s: %s", testfixture.CommittedBaselineStateCommit, baselineReviewDDL)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, db.Close())
 
 	store, err := Open(ctx, directory)
 	if err != nil {
@@ -698,6 +217,10 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 	defer store.Close()
 	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
 		t.Fatalf("upgraded schema version=%d err=%v", version, err)
+	}
+	// The only upgrade path must produce exactly the catalog a fresh store has.
+	if fingerprint, objects, err := schemaFingerprint(ctx, store.db); err != nil || fingerprint != currentSchemaFingerprint || objects != currentSchemaObjects {
+		t.Fatalf("upgraded schema fingerprint=%s objects=%d err=%v", fingerprint, objects, err)
 	}
 	settings, err := store.Settings(ctx)
 	if err != nil || !settings.Initialized || settings.RepositoryRoot != repositoryRoot || settings.AccessMode != "open" || settings.AccessSessionVersion != 3 || settings.AdminSessionVersion != 4 || !settings.InsecureHTTPAccepted {
@@ -716,9 +239,7 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 		t.Fatalf("upgraded session=%+v exists=%v err=%v", session, exists, err)
 	}
 	snapshot, err := store.RecoverySnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(snapshot.PullRequests) != 1 || len(snapshot.PullRequestRevisions) != 1 || len(snapshot.PullRequestReviews) != 1 {
 		t.Fatalf("upgraded pull request history: requests=%d revisions=%d reviews=%d", len(snapshot.PullRequests), len(snapshot.PullRequestRevisions), len(snapshot.PullRequestReviews))
 	}
@@ -741,22 +262,28 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 	}
 }
 
+// Every numbered schema below the current one came from an unreleased
+// development build. Schemas 6 through 13 are built with their real catalogs.
 func TestUnsupportedNumberedSchemasAreRefusedWithoutWrites(t *testing.T) {
 	ctx := context.Background()
-	for _, version := range []int{1, 2, 3, 4, 5, 99} {
+	for _, version := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 99} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			createNumberedSchemaDatabase(t, directory, version)
+			if version >= 6 && version < currentSchemaVersion {
+				createMigratedSchemaDatabase(t, directory, version)
+			} else {
+				createNumberedSchemaDatabase(t, directory, version)
+			}
 			before := captureSchemaDirectory(t, directory)
 			store, err := Open(ctx, directory)
 			if store != nil {
 				_ = store.Close()
 			}
+			want := "state database uses the unreleased development schema " + strconv.Itoa(version) + "; this build upgrades only the committed baseline (no schema version) and opens schema 14"
 			if version > currentSchemaVersion {
-				if err == nil || !strings.Contains(err.Error(), "newer") {
-					t.Fatalf("schema %d error=%v", version, err)
-				}
-			} else if err == nil || !strings.Contains(err.Error(), "unreleased development schema") {
+				want = "state database schema version 99 is newer than this OwnGit build supports (14)"
+			}
+			if err == nil || err.Error() != want {
 				t.Fatalf("schema %d error=%v", version, err)
 			}
 			assertSchemaDirectoryUnchanged(t, directory, before)
@@ -775,31 +302,23 @@ func TestUnversionedNonBaselineSchemasAreRefusedWithoutWrites(t *testing.T) {
 			if _, err := db.Exec(`CREATE TABLE unrelated(value TEXT NOT NULL)`); err != nil {
 				t.Fatal(err)
 			}
-			if err := db.Close(); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, db.Close())
 		}},
 		{name: "partial baseline", prepare: func(t *testing.T, directory string) {
 			db := createSchemaDatabase(t, directory)
 			if _, err := db.Exec(`CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)`); err != nil {
 				t.Fatal(err)
 			}
-			if err := db.Close(); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, db.Close())
 		}},
 		{name: "current schema with marker removed", prepare: func(t *testing.T, directory string) {
 			store, err := Open(ctx, directory)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if err := store.Exec(ctx, `DELETE FROM metadata WHERE key='schema_version'`); err != nil {
 				store.Close()
 				t.Fatal(err)
 			}
-			if err := store.Close(); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, store.Close())
 		}},
 	}
 	for _, test := range tests {
@@ -819,200 +338,13 @@ func TestUnversionedNonBaselineSchemasAreRefusedWithoutWrites(t *testing.T) {
 	}
 }
 
-type schemaTestExecer interface {
-	Exec(query string, args ...any) (sql.Result, error)
-}
-
-type genuineSchemaEightCatalog struct {
-	SchemaVersion      int    `json:"schema_version"`
-	CatalogFingerprint string `json:"catalog_fingerprint"`
-	Objects            []struct {
-		Type string `json:"type"`
-		Name string `json:"name"`
-		SQL  string `json:"sql"`
-	} `json:"objects"`
-}
-
-func buildGenuineSchemaNine(t *testing.T, directory string) {
-	t.Helper()
-	content, err := os.ReadFile(filepath.Join("testdata", "genuine-schema9.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(content)
-	if actual := hex.EncodeToString(digest[:]); actual != "ad9adf485581dff0d5a151651b2e4dcf850d4ba126c46837d8391f321c699afb" {
-		t.Fatalf("genuine schema 9 public catalog SHA-256=%s", actual)
-	}
-	var catalog genuineSchemaEightCatalog
-	if err := json.Unmarshal(content, &catalog); err != nil {
-		t.Fatal(err)
-	}
-	if catalog.SchemaVersion != 9 || catalog.CatalogFingerprint != schemaNineFingerprint || len(catalog.Objects) != schemaNineObjects {
-		t.Fatalf("genuine schema 9 catalog shape version=%d fingerprint=%s objects=%d", catalog.SchemaVersion, catalog.CatalogFingerprint, len(catalog.Objects))
-	}
-	db := createSchemaDatabase(t, directory)
-	defer db.Close()
-	for _, objectType := range []string{"table", "index"} {
-		for _, object := range catalog.Objects {
-			if object.Type != objectType {
-				continue
-			}
-			if _, err := db.Exec(object.SQL); err != nil {
-				t.Fatalf("construct genuine schema 9 %s %q: %v", object.Type, object.Name, err)
-			}
-		}
-	}
-	if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version','9')`); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// buildGenuineSchemaTen reconstructs the authoritative schema 10 catalog that
-// the accepted pre-import executable emitted. The fixture bytes are checked in
-// unchanged and their SHA-256 is pinned.
-func buildGenuineSchemaTen(t *testing.T, directory string) {
-	t.Helper()
-	content, err := os.ReadFile(filepath.Join("testdata", "genuine-schema10.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(content)
-	if actual := hex.EncodeToString(digest[:]); actual != "22198b6bf4027e2df361c47bd5bc0569d6672ff6d7a14e6034a0bd013b3f74f6" {
-		t.Fatalf("genuine schema 10 public catalog SHA-256=%s", actual)
-	}
-	var catalog genuineSchemaEightCatalog
-	if err := json.Unmarshal(content, &catalog); err != nil {
-		t.Fatal(err)
-	}
-	if catalog.SchemaVersion != 10 || catalog.CatalogFingerprint != schemaTenFingerprint || len(catalog.Objects) != schemaTenObjects {
-		t.Fatalf("genuine schema 10 catalog shape version=%d fingerprint=%s objects=%d", catalog.SchemaVersion, catalog.CatalogFingerprint, len(catalog.Objects))
-	}
-	db := createSchemaDatabase(t, directory)
-	defer db.Close()
-	for _, objectType := range []string{"table", "index"} {
-		for _, object := range catalog.Objects {
-			if object.Type != objectType {
-				continue
-			}
-			if _, err := db.Exec(object.SQL); err != nil {
-				t.Fatalf("construct genuine schema 10 %s %q: %v", object.Type, object.Name, err)
-			}
-		}
-	}
-	if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version','10')`); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// buildGenuineSchemaEight reconstructs the genuine schema 8 catalog that was
-// extracted read-only from the pre-removal database. The fixture bytes are
-// checked in unchanged.
-func buildGenuineSchemaEight(t *testing.T, directory string) {
-	t.Helper()
-	db := createSchemaDatabase(t, directory)
-	defer db.Close()
-	applyGenuineSchemaEight(t, db)
-}
-
-func applyGenuineSchemaEight(t *testing.T, execer schemaTestExecer) {
-	t.Helper()
-	content, err := os.ReadFile(filepath.Join("testdata", "genuine-schema8.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var catalog genuineSchemaEightCatalog
-	if err := json.Unmarshal(content, &catalog); err != nil {
-		t.Fatal(err)
-	}
-	if catalog.SchemaVersion != 8 || catalog.CatalogFingerprint != schemaEightFingerprint || len(catalog.Objects) != schemaEightObjects {
-		t.Fatalf("genuine catalog shape version=%d fingerprint=%s objects=%d", catalog.SchemaVersion, catalog.CatalogFingerprint, len(catalog.Objects))
-	}
-	for _, objectType := range []string{"table", "index"} {
-		for _, object := range catalog.Objects {
-			if object.Type != objectType {
-				continue
-			}
-			if _, err := execer.Exec(object.SQL); err != nil {
-				t.Fatalf("construct genuine schema 8 %s %q: %v", object.Type, object.Name, err)
-			}
-		}
-	}
-	if _, err := execer.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version','8')`); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func removeSchemaEightObjects(t *testing.T, execer schemaTestExecer) {
-	t.Helper()
-	for _, statement := range []string{
-		`DROP TABLE direct_review_requests`,
-		`DROP TABLE direct_review_task_contexts`,
-		`DROP TABLE direct_review_probes`,
-		`DROP TABLE direct_review_repository_settings`,
-		`DROP TABLE direct_review_credentials`,
-		`DROP INDEX pull_request_reviews_event`,
-		`ALTER TABLE pull_request_reviews DROP COLUMN review_event_id`,
-		`UPDATE metadata SET value='7' WHERE key='schema_version'`,
-	} {
-		if _, err := execer.Exec(statement); err != nil {
-			t.Fatalf("construct genuine schema 7 fixture with %q: %v", statement, err)
-		}
-	}
-}
-
-func buildGenuineSchemaSeven(t *testing.T, directory string) {
-	t.Helper()
-	buildGenuineSchemaEight(t, directory)
-	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-	defer db.Close()
-	removeSchemaEightObjects(t, db)
-	assertSchemaFingerprint(t, db, schemaSevenFingerprint, 7)
-}
-
-func buildGenuineSchemaSix(t *testing.T, directory string) {
-	t.Helper()
-	buildGenuineSchemaSeven(t, directory)
-	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-	defer db.Close()
-	for _, statement := range []string{
-		`DROP TABLE check_raw_logs`,
-		`UPDATE metadata SET value='6' WHERE key='schema_version'`,
-	} {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatal(err)
-		}
-	}
-	assertSchemaFingerprint(t, db, schemaSixFingerprint, 6)
-}
-
-func addSchemaTestRepository(t *testing.T, directory, id, name string, createdAt time.Time) {
-	t.Helper()
-	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-	defer db.Close()
-	if _, err := db.Exec(`INSERT INTO repositories(id,name,description,created_at) VALUES(?,?,?,?)`, id, name, "", createdAt.Unix()); err != nil {
-		t.Fatal(err)
-	}
-}
-func assertSchemaFingerprint(t *testing.T, db queryRower, expected string, version int) {
-	t.Helper()
-	fingerprint, _, err := schemaFingerprint(context.Background(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fingerprint != expected {
-		t.Fatalf("schema %d fixture fingerprint=%s, want accepted predecessor %s", version, fingerprint, expected)
-	}
-}
-
 func createEmptySQLiteDatabase(t *testing.T, directory string) {
 	t.Helper()
 	db := createSchemaDatabase(t, directory)
 	if _, err := db.Exec(`VACUUM`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, db.Close())
 }
 
 func createNumberedSchemaDatabase(t *testing.T, directory string, version int) {
@@ -1024,25 +356,69 @@ func createNumberedSchemaDatabase(t *testing.T, directory string, version int) {
 	if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',?)`, version); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Close(); err != nil {
+	noErr(t, db.Close())
+}
+
+// createMigratedSchemaDatabase builds the catalog an earlier build left at
+// version by applying the recorded migration steps.
+func createMigratedSchemaDatabase(t *testing.T, directory string, version int) {
+	t.Helper()
+	db := createSchemaDatabase(t, directory)
+	defer db.Close()
+	for step := 6; step <= version; step++ {
+		for _, statement := range migrations[step] {
+			if _, err := db.Exec(statement); err != nil {
+				t.Fatalf("apply schema %d fixture: %v", step, err)
+			}
+		}
+		if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, step); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// applyCommittedBaselineCatalog copies the committed baseline catalog, without
+// rows, into db.
+func applyCommittedBaselineCatalog(t *testing.T, db *sql.DB) {
+	t.Helper()
+	root := t.TempDir()
+	source := filepath.Join(root, "baseline")
+	if err := testfixture.CreateCommittedBaselineState(context.Background(), source, testfixture.BaselineStateOptions{
+		RepositoryRoot: filepath.Join(root, "repositories"), AdminPasswordHash: "synthetic-admin-hash",
+	}); err != nil {
 		t.Fatal(err)
+	}
+	baseline := openSchemaDatabase(t, filepath.Join(source, databaseName))
+	defer baseline.Close()
+	rows, err := baseline.Query(`SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type='index',rowid`)
+	noErr(t, err)
+	var statements []string
+	for rows.Next() {
+		var statement string
+		noErr(t, rows.Scan(&statement))
+		statements = append(statements, statement)
+	}
+	noErr(t, closeRows(rows))
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fingerprint, _, err := schemaFingerprint(context.Background(), db); err != nil || fingerprint != committedBaselineSchemaFingerprint {
+		t.Fatalf("baseline catalog fingerprint=%s err=%v", fingerprint, err)
 	}
 }
 
 func createSchemaDatabase(t *testing.T, directory string) *sql.DB {
 	t.Helper()
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(directory, 0o700))
 	return openSchemaDatabase(t, filepath.Join(directory, databaseName))
 }
 
 func openSchemaDatabase(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", sqliteFileURI(path))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	db.SetMaxOpenConns(1)
 	return db
 }
@@ -1055,22 +431,16 @@ type schemaFileSnapshot struct {
 func captureSchemaDirectory(t *testing.T, directory string) map[string]schemaFileSnapshot {
 	t.Helper()
 	entries, err := os.ReadDir(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	snapshot := make(map[string]schemaFileSnapshot, len(entries))
 	for _, entry := range entries {
 		info, err := entry.Info()
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if !info.Mode().IsRegular() {
 			t.Fatalf("unexpected schema fixture entry %q", entry.Name())
 		}
 		content, err := os.ReadFile(filepath.Join(directory, entry.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		snapshot[entry.Name()] = schemaFileSnapshot{mode: info.Mode(), data: content}
 	}
 	return snapshot

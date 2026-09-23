@@ -1,7 +1,6 @@
 package recovery
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -13,9 +12,7 @@ import (
 func importTestManifest(t *testing.T) Manifest {
 	t.Helper()
 	hash, err := auth.HashPassword("valid-password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	now := time.Now().UTC().Truncate(time.Second)
 	return Manifest{
 		Format: backupFormat, Version: backupVersion, CreatedAt: now,
@@ -56,18 +53,6 @@ func TestManifestImportMetadataVersionGates(t *testing.T) {
 	if err := validateManifest(valid); err != nil {
 		t.Fatalf("valid version 9 import metadata rejected: %v", err)
 	}
-	older := valid
-	older.Version = importBackupVersion - 1
-	if err := validateManifest(older); err == nil || !strings.Contains(err.Error(), "unsupported import metadata") {
-		t.Fatalf("version 8 manifest with import metadata error=%v", err)
-	}
-	empty := older
-	empty.ImportSources, empty.ImportRuns, empty.ImportObservations, empty.ImportIntents = nil, nil, nil, nil
-	empty.ImportRunOrderKnown = false
-	empty.ImportHEADOwnershipVersion = 0
-	if err := validateManifest(empty); err != nil {
-		t.Fatalf("version 8 manifest without import metadata rejected: %v", err)
-	}
 	dangling := importTestManifest(t)
 	dangling.ImportIntents[0].RunID = strings.Repeat("d", 32)
 	if err := validateManifest(dangling); err == nil {
@@ -80,17 +65,33 @@ func TestManifestImportMetadataVersionGates(t *testing.T) {
 	}
 }
 
-func TestImportManifestRejectsUnsupportedHEADOwnershipVersions(t *testing.T) {
-	unsupported := importTestManifest(t)
-	unsupported.ImportHEADOwnershipVersion = importHEADOwnershipVersion + 1
-	if err := validateImportManifest(unsupported); err == nil || !strings.Contains(err.Error(), "unsupported") {
-		t.Fatalf("unsupported ownership version error=%v", err)
+// A version 9 manifest from the current build records run order whenever runs
+// exist and the HEAD ownership version whenever intents exist. Development
+// builds that omitted them are refused.
+func TestImportManifestRefusesMissingFormatEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*Manifest)
+		want   string
+	}{
+		{"unsupported ownership version", func(m *Manifest) { m.ImportHEADOwnershipVersion = importHEADOwnershipVersion + 1 }, "backup import HEAD ownership version is unsupported"},
+		{"runs without order", func(m *Manifest) { m.ImportRunOrderKnown = false }, "backup import runs have no recorded order; it was written by an unreleased development build"},
+		{"intents without ownership version", func(m *Manifest) { m.ImportHEADOwnershipVersion = 0 }, "backup import intents have no HEAD ownership version; it was written by an unreleased development build"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := importTestManifest(t)
+			test.mutate(&manifest)
+			if err := validateManifest(manifest); err == nil || err.Error() != test.want {
+				t.Fatalf("error=%v, want %q", err, test.want)
+			}
+		})
 	}
-	unversioned := importTestManifest(t)
-	unversioned.ImportHEADOwnershipVersion = 0
-	unversioned.ImportIntents[0].HeadOwned = true
-	if err := validateImportManifest(unversioned); err == nil || !strings.Contains(err.Error(), "format version") {
-		t.Fatalf("unversioned ownership error=%v", err)
+	// Without runs or intents the evidence is absent in current manifests too.
+	empty := importTestManifest(t)
+	empty.ImportRuns, empty.ImportObservations, empty.ImportIntents = nil, nil, nil
+	empty.ImportRunOrderKnown, empty.ImportHEADOwnershipVersion = false, 0
+	if err := validateManifest(empty); err != nil {
+		t.Fatalf("current manifest without runs or intents rejected: %v", err)
 	}
 }
 
@@ -118,32 +119,8 @@ func TestImportManifestRoundTripsExactHEADFacts(t *testing.T) {
 	}
 }
 
-func TestLegacyImportManifestOmitsRunOrderEvidence(t *testing.T) {
-	manifest := importTestManifest(t)
-	manifest.ImportRunOrderKnown = false
-	manifest.ImportHEADOwnershipVersion = 0
-	manifest.ImportIntents[0].HeadOwned = false
-	encoded, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(encoded), "import_run_order_known") || strings.Contains(string(encoded), "head_owned") || strings.Contains(string(encoded), "import_head_ownership_version") {
-		t.Fatalf("legacy fixture falsely retained new evidence: %s", encoded)
-	}
-	var decoded Manifest
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	var snapshot state.RecoveryState
-	attachImportState(&snapshot, decoded)
-	if snapshot.ImportRunOrderKnown || snapshot.ImportIntents[0].HeadOwned {
-		t.Fatal("legacy archive absence became new authority")
-	}
-}
-
 func TestImportManifestRoundTripClearsMachineLocalConsent(t *testing.T) {
 	snapshot := state.RecoveryState{
-		ImportRunOrderKnown: true,
 		ImportSources: []state.ImportSource{{
 			RepositoryID: "project", URL: "https://example.invalid/team/project.git",
 			SourceGeneration: 3, AuthorityRevision: 5, Mode: state.ImportModeStandalone, GitOnlyConsent: true,
@@ -162,8 +139,8 @@ func TestImportManifestRoundTripClearsMachineLocalConsent(t *testing.T) {
 	}
 	var restored state.RecoveryState
 	attachImportState(&restored, manifest)
-	if len(restored.ImportSources) != 1 || !restored.ImportRunOrderKnown {
-		t.Fatalf("restored sources=%+v order_known=%v", restored.ImportSources, restored.ImportRunOrderKnown)
+	if len(restored.ImportSources) != 1 {
+		t.Fatalf("restored sources=%+v", restored.ImportSources)
 	}
 	source := restored.ImportSources[0]
 	if source.AllowPrivateNetwork || !source.GitOnlyConsent || source.SourceGeneration != 3 || source.AuthorityRevision != 5 || source.URL != "https://example.invalid/team/project.git" {

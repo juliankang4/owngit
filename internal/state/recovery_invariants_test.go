@@ -29,28 +29,18 @@ func newRecoveryInvariantFixture(t *testing.T) recoveryInvariantFixture {
 		{ID: "secondary", Name: "Secondary", CreatedAt: now},
 		{ID: "empty", Name: "Empty", CreatedAt: now},
 	} {
-		if err := store.AddRepository(ctx, repository); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, store.AddRepository(ctx, repository))
 	}
 	firstTask, err := store.CreateTask(ctx, "project", "First task", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	secondTask, err := store.CreateTask(ctx, "project", "Second task", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	secondaryTask, err := store.CreateTask(ctx, "secondary", "Secondary task", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	publishedAttempt := attemptFor(firstTask, strings.Repeat("1", 40), now, AttemptFailed)
 	_, registered, err := store.RegisterCheckAttempt(ctx, publishedAttempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	publishedCompletion := CheckCompletion{
 		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
 		Results: publishedAttempt.Results, FinishedAt: publishedAttempt.FinishedAt,
@@ -62,9 +52,7 @@ func newRecoveryInvariantFixture(t *testing.T) recoveryInvariantFixture {
 
 	truncatedAttempt := attemptFor(secondTask, strings.Repeat("2", 40), now.Add(time.Minute), AttemptFailed)
 	_, registeredTruncated, err := store.RegisterCheckAttempt(ctx, truncatedAttempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, _, err := store.CompleteCheckAttempt(ctx, CheckCompletion{
 		AttemptID: registeredTruncated.ID, RepositoryID: registeredTruncated.RepositoryID, TaskID: registeredTruncated.TaskID,
 		Results: truncatedAttempt.Results, FinishedAt: truncatedAttempt.FinishedAt,
@@ -75,9 +63,7 @@ func newRecoveryInvariantFixture(t *testing.T) recoveryInvariantFixture {
 
 	fallbackAttempt := attemptFor(firstTask, strings.Repeat("3", 40), now.Add(2*time.Minute), AttemptFailed)
 	_, registeredFallback, err := store.RegisterCheckAttempt(ctx, fallbackAttempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fallbackCompletion := CheckCompletion{
 		AttemptID: registeredFallback.ID, RepositoryID: registeredFallback.RepositoryID, TaskID: registeredFallback.TaskID,
 		Results: fallbackAttempt.Results, FinishedAt: fallbackAttempt.FinishedAt,
@@ -95,9 +81,7 @@ func newRecoveryInvariantFixture(t *testing.T) recoveryInvariantFixture {
 
 	pendingAttempt := attemptFor(secondTask, strings.Repeat("4", 40), now.Add(3*time.Minute), AttemptFailed)
 	_, registeredPending, err := store.RegisterCheckAttempt(ctx, pendingAttempt)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, replayed, err := store.RegisterCheckAttempt(ctx, pendingAttempt); err != nil || replayed.Sequence != registeredPending.Sequence {
 		t.Fatalf("registration replay=%+v err=%v", replayed, err)
 	}
@@ -110,9 +94,7 @@ func newRecoveryInvariantFixture(t *testing.T) recoveryInvariantFixture {
 
 	completeTestSetup(t, store)
 	snapshot, err := store.RecoverySnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := ValidateCheckRecovery(snapshot); err != nil {
 		t.Fatalf("generated recovery state is invalid: %v", err)
 	}
@@ -183,9 +165,7 @@ func TestCheckRecoveryAcceptsProducerSequenceAndLogStates(t *testing.T) {
 		t.Fatalf("restore valid producer state: %v", err)
 	}
 	rebacked, err := restored.RecoverySnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !reflect.DeepEqual(rebacked, fixture.snapshot) {
 		t.Fatalf("restore changed portable facts:\nfirst=%+v\nagain=%+v", fixture.snapshot, rebacked)
 	}
@@ -201,9 +181,7 @@ func TestCheckRecoveryAcceptsProducerSequenceAndLogStates(t *testing.T) {
 		t.Fatalf("completion replay recreated %d raw log rows", count)
 	}
 	afterReplay, err := restored.RecoverySnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	project := recoveryRepositoryIndex(t, afterReplay, "project")
 	if afterReplay.Repositories[project].AttemptSequence != 4 {
 		t.Fatalf("registration replay advanced counter to %d", afterReplay.Repositories[project].AttemptSequence)
@@ -309,16 +287,12 @@ func TestRestoreRejectsInvalidCheckRecoveryBeforeDestinationMutation(t *testing.
 		t.Fatal("restored invalid check recovery state")
 	}
 	settings, err := destination.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if settings.Initialized {
 		t.Fatal("invalid recovery initialized the destination")
 	}
 	repositories, err := destination.Repositories(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(repositories) != 0 {
 		t.Fatalf("invalid recovery wrote repositories: %+v", repositories)
 	}

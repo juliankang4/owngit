@@ -9,7 +9,5 @@ import (
 
 func makePasswordFileBroad(t *testing.T, path string) {
 	t.Helper()
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Chmod(path, 0o644))
 }

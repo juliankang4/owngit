@@ -16,14 +16,10 @@ func TestLegacyIntentWithoutExactHEADFactsFailsClosed(t *testing.T) {
 		ID: strings.Repeat("e", 32), RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1,
 		Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing, StartedAt: f.now, CreatedAt: f.now,
 	}
-	if err := f.store.BeginImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.BeginImportRun(context.Background(), run))
 	run.Status = state.ImportRunInterrupted
 	run.FinishedAt = f.now
-	if err := f.store.FinishImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.FinishImportRun(context.Background(), run))
 	intent := state.ImportIntent{
 		ID: strings.Repeat("f", 32), RepositoryID: "project", RunID: run.ID,
 		SourceGeneration: 1, AuthorityRevision: 1, Status: state.ImportIntentPlanning,
@@ -32,9 +28,7 @@ func TestLegacyIntentWithoutExactHEADFactsFailsClosed(t *testing.T) {
 		Observed: map[string]string{"refs/heads/main": oid},
 		Retained: map[string]string{}, CreatedAt: f.now,
 	}
-	if err := f.store.CreateImportIntent(context.Background(), intent); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.CreateImportIntent(context.Background(), intent))
 	if err := f.service.Reconcile(context.Background()); err == nil || problemCode(err) != CodeUnresolved {
 		t.Fatalf("legacy intent did not fail closed: %v", err)
 	}
@@ -50,9 +44,7 @@ func TestIntentObservationRequiresRelatedCompleteRunForHEADOwnership(t *testing.
 	f.git(f.source, "branch", "dev")
 	f.mustImport(ImportInput{})
 	observations, err := f.store.ImportObservations(context.Background(), "project", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for _, observation := range observations {
 		if observation.RefName == state.ImportHeadRef {
 			if err := f.store.Exec(context.Background(), `UPDATE import_ref_observations SET run_id='' WHERE repository_id=? AND source_generation=? AND ref_name=?`,
@@ -63,9 +55,7 @@ func TestIntentObservationRequiresRelatedCompleteRunForHEADOwnership(t *testing.
 	}
 	f.git(f.source, "checkout", "--quiet", "dev")
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if run.RefsDivergent != 1 {
 		t.Fatalf("unrelated HEAD observation established ownership: %+v", run)
 	}

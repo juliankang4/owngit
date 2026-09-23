@@ -36,9 +36,7 @@ func TestBoundedBranchBatchesMakeFairProgressPastFirstPage(t *testing.T) {
 func TestCoordinatorStartStopAndRestartReturn(t *testing.T) {
 	root := t.TempDir()
 	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	coordinator := &Coordinator{
 		Store: store, Repositories: &repository.Manager{Store: store},

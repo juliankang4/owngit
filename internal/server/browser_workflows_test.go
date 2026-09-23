@@ -28,8 +28,7 @@ type browserHTTPResult struct {
 func TestBrowserPullRequestWorkflowUsesObservedHeadsAndAdvisoryEvidence(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	fixture.app.Version = "1.0.0-browser-test"
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 
 	repositoryPage := browserGET(t, client, server.URL+"/repositories/project")
@@ -69,9 +68,7 @@ func TestBrowserPullRequestWorkflowUsesObservedHeadsAndAdvisoryEvidence(t *testi
 		t.Fatalf("forged head status=%d", forged.status)
 	}
 
-	if err := os.WriteFile(fixture.work+"/feature.txt", []byte("feature moved\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(fixture.work+"/feature.txt", []byte("feature moved\n"), 0o600))
 	apiRunGit(t, fixture.work, "add", ".")
 	apiRunGit(t, fixture.work, "commit", "-m", "move feature")
 	apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/feature")
@@ -101,9 +98,7 @@ func TestBrowserPullRequestWorkflowUsesObservedHeadsAndAdvisoryEvidence(t *testi
 	}
 
 	task, err := fixture.store.CreateTask(context.Background(), "project", "Pending advisory check", time.Now().UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	pending := state.CheckAttempt{
 		ID: "11111111111111111111111111111111", TaskID: task.ID, RepositoryID: "project", RevisionOID: movedSource,
 		WorktreeState: state.WorktreeClean, StartedAt: time.Now().UTC(), CreatedAt: time.Now().UTC(), CredentialID: "browser-helper",
@@ -141,20 +136,11 @@ func TestBrowserTaskEvidenceShowsStaleDirtyCleanupAndRepositoryBinding(t *testin
 		Repository: "project", Title: "Evidence mapping", SourceBranch: "feature", TargetBranch: "main",
 		SourceOID: fixture.sourceOID, TargetOID: fixture.targetOID,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	noErr(t, err)
+	server, client, jar := openBrowser(t, fixture)
 
 	staleTask, err := fixture.store.CreateTask(context.Background(), "project", "Older revision", time.Now().UTC().Add(-time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	recordBrowserAttempt(t, fixture.store, staleTask.ID, fixture.targetOID, "22222222222222222222222222222222", state.WorktreeClean, "", false)
 	// Evidence for another branch is not an earlier revision of this change.
 	unrelated := browserGET(t, client, server.URL+pullRequestURL("project", created.Number))
@@ -176,9 +162,7 @@ func TestBrowserTaskEvidenceShowsStaleDirtyCleanupAndRepositoryBinding(t *testin
 	}
 
 	cleanupTask, err := fixture.store.CreateTask(context.Background(), "project", "Cleanup evidence", time.Now().UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	cleanupReason := "owned process <still-present>"
 	recordBrowserAttempt(t, fixture.store, cleanupTask.ID, fixture.sourceOID, "33333333333333333333333333333333", state.WorktreeDirty, cleanupReason, true)
 	cleanupDetail := browserGET(t, client, server.URL+pullRequestURL("project", created.Number))
@@ -220,18 +204,11 @@ func TestBrowserEvidenceReadFailuresStayLocalizedAndAdvisory(t *testing.T) {
 		Repository: "project", Title: "Unreadable advisory evidence",
 		SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "request",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.Exec(context.Background(), `DROP TABLE check_configurations`); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.Exec(context.Background(), `DROP TABLE pull_request_reviews`); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, fixture.store.Exec(context.Background(), `DROP TABLE check_configurations`))
+	noErr(t, fixture.store.Exec(context.Background(), `DROP TABLE pull_request_reviews`))
 
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	result := browserGET(t, client, server.URL+pullRequestURL("project", created.Number)+"?lang=ko")
 	if result.status != http.StatusOK {
@@ -262,12 +239,7 @@ func TestBrowserEvidenceReadFailuresStayLocalizedAndAdvisory(t *testing.T) {
 
 func TestBrowserHelperCredentialsRequireSessionPasswordAndDeliverTokenOnce(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 
 	helperURL := server.URL + baseHelperCredentialsURL("project")
 	withoutAdmin := browserGET(t, client, helperURL)
@@ -276,14 +248,10 @@ func TestBrowserHelperCredentialsRequireSessionPasswordAndDeliverTokenOnce(t *te
 	}
 
 	settings, err := fixture.store.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	const sessionToken = "browser-admin-session"
 	const adminCSRF = "browser-admin-csrf"
-	if err := fixture.store.CreateSession(context.Background(), sessionToken, "admin", adminCSRF, settings.AdminSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.CreateSession(context.Background(), sessionToken, "admin", adminCSRF, settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	parsedServer, _ := url.Parse(server.URL)
 	jar.SetCookies(parsedServer, []*http.Cookie{{Name: adminCookie, Value: sessionToken, Path: "/"}})
 	listed := browserGET(t, client, helperURL)
@@ -356,21 +324,12 @@ func TestBrowserHelperCredentialsRequireSessionPasswordAndDeliverTokenOnce(t *te
 
 func TestBrowserHelperCredentialLabelUTF8ByteBoundaries(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	settings, err := fixture.store.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	const sessionToken = "label-boundary-admin-session"
 	const adminCSRF = "label-boundary-admin-csrf"
-	if err := fixture.store.CreateSession(context.Background(), sessionToken, "admin", adminCSRF, settings.AdminSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.CreateSession(context.Background(), sessionToken, "admin", adminCSRF, settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	parsedServer, _ := url.Parse(server.URL)
 	jar.SetCookies(parsedServer, []*http.Cookie{{Name: adminCookie, Value: sessionToken, Path: "/"}})
 
@@ -417,8 +376,7 @@ func TestBrowserHelperCredentialLabelUTF8ByteBoundaries(t *testing.T) {
 
 func TestProtectedBrowserWorkflowRequiresGeneralSession(t *testing.T) {
 	fixture := newAPIFixture(t, true)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	result := browserGET(t, client, server.URL+"/repositories/project/pull-requests")
 	if result.status != http.StatusSeeOther || !strings.HasPrefix(result.header.Get("Location"), "/login?next=") {
@@ -426,12 +384,8 @@ func TestProtectedBrowserWorkflowRequiresGeneralSession(t *testing.T) {
 	}
 
 	settings, err := fixture.store.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.CreateSession(context.Background(), "protected-admin-session", "admin", "protected-admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, fixture.store.CreateSession(context.Background(), "protected-admin-session", "admin", "protected-admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	parsedServer, _ := url.Parse(server.URL)
 	jar.SetCookies(parsedServer, []*http.Cookie{{Name: adminCookie, Value: "protected-admin-session", Path: "/"}})
 	adminOnly := browserGET(t, client, server.URL+baseHelperCredentialsURL("project"))
@@ -469,27 +423,21 @@ func recordBrowserAttempt(t *testing.T, store *state.Store, taskID, revisionOID,
 func newBrowserClient(t *testing.T) (*http.Client, http.CookieJar) {
 	t.Helper()
 	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, jar
 }
 
 func browserGET(t *testing.T, client *http.Client, target string) browserHTTPResult {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet, target, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return browserRequest(t, client, request)
 }
 
 func browserForm(t *testing.T, client *http.Client, target string, values url.Values, origin string) browserHTTPResult {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, target, strings.NewReader(values.Encode()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", origin)
 	return browserRequest(t, client, request)
@@ -498,14 +446,10 @@ func browserForm(t *testing.T, client *http.Client, target string, values url.Va
 func browserRequest(t *testing.T, client *http.Client, request *http.Request) browserHTTPResult {
 	t.Helper()
 	response, err := client.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return browserHTTPResult{status: response.StatusCode, header: response.Header.Clone(), body: string(body)}
 }
 
@@ -526,4 +470,16 @@ func issuedTokenFromBody(t *testing.T, body string) string {
 		t.Fatal("credential response contained an invalid one-time token")
 	}
 	return token
+}
+
+// openBrowser serves fixture and returns a browser that has loaded the
+// repository page, which issues the general session and its CSRF cookie.
+func openBrowser(t *testing.T, fixture apiFixture) (*httptest.Server, *http.Client, http.CookieJar) {
+	t.Helper()
+	server := serve(t, fixture.app.Handler())
+	client, jar := newBrowserClient(t)
+	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
+		t.Fatalf("repository status=%d", result.status)
+	}
+	return server, client, jar
 }

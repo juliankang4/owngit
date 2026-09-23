@@ -12,14 +12,10 @@ import (
 func TestOpenPullRequestPagesMakeFairProgressPastFirstPageAndBusyHistory(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	now := time.Unix(1_800_000_000, 0).UTC()
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}))
 	for index := 0; index < 130; index++ {
 		if _, err := store.CreatePullRequest(ctx, "project", fmt.Sprintf("Request %03d", index), fmt.Sprintf("feature-%03d", index), "main", strings.Repeat("a", 40), strings.Repeat("b", 40), ReviewSkipped, now.Add(time.Duration(index)*time.Second)); err != nil {
 			t.Fatal(err)
@@ -58,9 +54,7 @@ func TestPullRequestNumbersAreDurableAndPerRepository(t *testing.T) {
 	ctx := context.Background()
 	directory := filepath.Join(t.TempDir(), "state")
 	store, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	for _, repository := range []Repository{
 		{ID: "alpha", Name: "Alpha", CreatedAt: now},
@@ -92,14 +86,10 @@ func TestPullRequestNumbersAreDurableAndPerRepository(t *testing.T) {
 		store.Close()
 		t.Fatalf("pull request numbers: alpha=%d,%d beta=%d", first.Number, second.Number, other.Number)
 	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.Close())
 
 	reopened, err := Open(ctx, directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer reopened.Close()
 	stored, exists, err := reopened.PullRequest(ctx, "alpha", second.Number)
 	if err != nil || !exists || stored.Title != second.Title || stored.SourceBranch != second.SourceBranch {

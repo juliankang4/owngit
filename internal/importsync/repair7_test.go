@@ -140,9 +140,7 @@ func TestObserveIntentRequiresExactKindsForCreationAndRetention(t *testing.T) {
 			Retained: map[string]string{},
 		}
 		observation, err := f.service.observeIntent(context.Background(), path, intent)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if got := f.git(path, "--git-dir", ".", "rev-parse", "refs/heads/created"); got != old {
 			t.Fatalf("fixture alias does not resolve to the desired object: %s", got)
 		}
@@ -170,12 +168,8 @@ func TestObserveIntentRequiresExactKindsForCreationAndRetention(t *testing.T) {
 		path := f.destinationPath()
 		retention := repository.RetainedRefName("heads", old)
 		raw := []byte("ref: refs/heads/missing-target\n")
-		if err := os.MkdirAll(filepath.Dir(filepath.Join(path, filepath.FromSlash(retention))), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(path, filepath.FromSlash(retention)), raw, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.MkdirAll(filepath.Dir(filepath.Join(path, filepath.FromSlash(retention))), 0o700))
+		noErr(t, os.WriteFile(filepath.Join(path, filepath.FromSlash(retention)), raw, 0o600))
 		head := (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: old}).encode()
 		intent := state.ImportIntent{
 			Expected: map[string]string{retention: "", state.ImportHeadRef: head},
@@ -183,9 +177,7 @@ func TestObserveIntentRequiresExactKindsForCreationAndRetention(t *testing.T) {
 			Retained: map[string]string{retention: old},
 		}
 		observation, err := f.service.observeIntent(context.Background(), path, intent)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if observation.retentionComplete {
 			t.Fatalf("dangling alias classified as complete retention: %+v", observation)
 		}
@@ -211,21 +203,15 @@ func TestReconcileAbsentToDanglingAliasIsUnresolved(t *testing.T) {
 	f.mustImport(ImportInput{})
 	path := f.destinationPath()
 	created := filepath.Join(path, "refs", "heads", "created")
-	if err := os.WriteFile(created, []byte("ref: refs/heads/dangling\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(created, []byte("ref: refs/heads/dangling\n"), 0o600))
 	run := state.ImportRun{
 		ID: strings.Repeat("e", 32), RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1,
 		Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing, StartedAt: f.now, CreatedAt: f.now,
 	}
-	if err := f.store.BeginImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.BeginImportRun(context.Background(), run))
 	run.Status = state.ImportRunInterrupted
 	run.FinishedAt = f.now
-	if err := f.store.FinishImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.FinishImportRun(context.Background(), run))
 	head := (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: old}).encode()
 	intent := state.ImportIntent{
 		ID: strings.Repeat("f", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: 1, AuthorityRevision: 1,
@@ -235,9 +221,7 @@ func TestReconcileAbsentToDanglingAliasIsUnresolved(t *testing.T) {
 		Observed: map[string]string{"refs/heads/main": old, "refs/heads/created": old, state.ImportHeadRef: head},
 		Retained: map[string]string{}, CreatedAt: f.now,
 	}
-	if err := f.store.CreateImportIntent(context.Background(), intent); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.CreateImportIntent(context.Background(), intent))
 	if err := f.service.Reconcile(context.Background()); err == nil || problemCode(err) != CodeUnresolved {
 		t.Fatalf("absent-to-dangling reconciliation err=%v", err)
 	}
@@ -291,13 +275,9 @@ func TestPublicationRefQueriesUseFixedNamespaceArguments(t *testing.T) {
 	}
 	// Enumeration omits dangling aliases; the exact read still finds them.
 	dangling := "refs/heads/dangling-alias"
-	if err := os.WriteFile(filepath.Join(path, filepath.FromSlash(dangling)), []byte("ref: refs/heads/nowhere\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(path, filepath.FromSlash(dangling)), []byte("ref: refs/heads/nowhere\n"), 0o600))
 	refs, symrefs, err = f.service.readPublicationRefs(context.Background(), path, []string{dangling})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if symrefs[dangling] != "refs/heads/nowhere" || refs[dangling] != "" {
 		t.Fatalf("dangling alias omitted by bounded enumeration: oid=%q symref=%q", refs[dangling], symrefs[dangling])
 	}
@@ -319,9 +299,7 @@ func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {
 
 	t.Run("repository root link", func(t *testing.T) {
 		link := filepath.Join(f.root, "root-link")
-		if err := os.Symlink(path, link); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Symlink(path, link))
 		if _, err := f.service.acquireHEADLock(context.Background(), run, link, expected); err == nil || problemCode(err) != CodeRepositoryMissing {
 			t.Fatalf("linked repository root accepted: %v", err)
 		}
@@ -331,13 +309,9 @@ func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {
 	})
 	t.Run("HEAD.lock link is preserved", func(t *testing.T) {
 		sentinel := filepath.Join(f.root, "lock-sentinel")
-		if err := os.WriteFile(sentinel, []byte("independent\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(sentinel, []byte("independent\n"), 0o600))
 		lockPath := filepath.Join(path, "HEAD.lock")
-		if err := os.Symlink(sentinel, lockPath); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Symlink(sentinel, lockPath))
 		defer os.Remove(lockPath)
 		if _, err := f.service.acquireHEADLock(context.Background(), run, path, expected); err == nil || problemCode(err) != CodeDestinationChanged {
 			t.Fatalf("linked HEAD.lock accepted: %v", err)
@@ -354,20 +328,12 @@ func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {
 	})
 	t.Run("owned lock replaced by link before rollback", func(t *testing.T) {
 		lock, err := f.service.acquireHEADLock(context.Background(), run, path, expected)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		sentinel := filepath.Join(f.root, "rollback-sentinel")
-		if err := os.WriteFile(sentinel, []byte("independent\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(lock.path, lock.path+".moved"); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(sentinel, []byte("independent\n"), 0o600))
+		noErr(t, os.Rename(lock.path, lock.path+".moved"))
 		defer os.Remove(lock.path + ".moved")
-		if err := os.Symlink(sentinel, lock.path); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Symlink(sentinel, lock.path))
 		defer os.Remove(lock.path)
 		if err := lock.rollback(); err == nil {
 			t.Fatal("rollback removed a replacement link")
@@ -382,23 +348,15 @@ func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {
 	t.Run("HEAD link refused before lock creation", func(t *testing.T) {
 		headPath := filepath.Join(path, "HEAD")
 		original, err := os.ReadFile(headPath)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		// Git recognizes a symlinked HEAD only when the link target begins with
 		// "refs/", so the sentinel lives inside the repository refs tree and the
 		// link target stays relative.
 		sentinel := filepath.Join(path, "refs", "heads", "head-sentinel")
-		if err := os.WriteFile(sentinel, original, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Remove(headPath); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(sentinel, original, 0o600))
+		noErr(t, os.Remove(headPath))
 		linkTarget := "refs/heads/head-sentinel"
-		if err := os.Symlink(linkTarget, headPath); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Symlink(linkTarget, headPath))
 		defer func() {
 			_ = os.Remove(headPath)
 			_ = os.WriteFile(headPath, original, 0o600)

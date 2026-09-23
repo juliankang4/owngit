@@ -102,9 +102,7 @@ func runPreparedHelper(mode string) int {
 func newPreparedHelperRunner(t *testing.T) *Runner {
 	t.Helper()
 	runner, err := New(os.Args[0], filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	runner.TerminationGrace = 50 * time.Millisecond
 	return runner
 }

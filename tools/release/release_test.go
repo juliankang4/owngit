@@ -19,9 +19,7 @@ import (
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		t.Fatalf("repository root %s: %v", root, err)
 	}
@@ -110,17 +108,11 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	root := repoRoot(t)
 	native := nativeTarget(t)
 	dir := t.TempDir()
-	if err := buildCommand([]string{"-source", root, "-out", dir, "-targets", native}); err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if err := verifyDir(dir, "go"); err != nil {
-		t.Fatalf("verify rejected a fresh build: %v", err)
-	}
+	noErrf(t, buildCommand([]string{"-source", root, "-out", dir, "-targets", native}), "build")
+	noErrf(t, verifyDir(dir, "go"), "verify rejected a fresh build")
 
 	document, err := readManifest(filepath.Join(dir, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !document.Artifacts[0].Executed {
 		t.Fatal("the native artifact was not recorded as executed")
 	}
@@ -128,9 +120,7 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 		t.Fatalf("recorded execution output is %q", document.Artifacts[0].ExecutedOutput)
 	}
 	entries, err := readArchive(filepath.Join(dir, document.Artifacts[0].Name), "tar.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	font := false
 	for _, entry := range entries {
 		if entry.name == "THIRD_PARTY_NOTICES/bundled-assets/pretendard/PRETENDARD-LICENSE.txt" {
@@ -145,13 +135,9 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 		copied := copyDist(t, dir)
 		path := filepath.Join(copied, document.Artifacts[0].Name)
 		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		data[len(data)/2] ^= 0xff
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(path, data, 0o644))
 		expectVerifyError(t, copied, "sha256")
 	})
 
@@ -235,9 +221,7 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	t.Run("version drift", func(t *testing.T) {
 		copied := copyDist(t, dir)
 		drifted, err := readManifest(filepath.Join(copied, "manifest.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		drifted.Version = "9.9.9"
 		writeManifest(t, copied, drifted)
 		expectVerifyError(t, copied, "does not match the source version")
@@ -247,12 +231,8 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 		copied := copyDist(t, dir)
 		path := filepath.Join(copied, "SHA256SUMS")
 		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, append([]byte("00"), data...), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
+		noErr(t, os.WriteFile(path, append([]byte("00"), data...), 0o644))
 		expectVerifyError(t, copied, "SHA256SUMS")
 	})
 
@@ -285,9 +265,7 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 func TestRehashedTargetSubstitution(t *testing.T) {
 	dir := copyDist(t, sharedDist(t))
 	document, err := readManifest(filepath.Join(dir, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var darwin, linux *artifact
 	for index := range document.Artifacts {
 		switch document.Artifacts[index].Target {
@@ -301,20 +279,14 @@ func TestRehashedTargetSubstitution(t *testing.T) {
 		t.Fatal("the shared build has no darwin/arm64 and linux/amd64 pair")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, linux.Name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, darwin.Name), data, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, os.WriteFile(filepath.Join(dir, darwin.Name), data, 0o644))
 	darwin.SHA256 = linux.SHA256
 	darwin.Size = linux.Size
 	darwin.Files = linux.Files
 	darwin.BuildInfo = linux.BuildInfo
 	writeManifest(t, dir, document)
-	if err := writeChecksums(dir, document.Artifacts); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, writeChecksums(dir, document.Artifacts))
 	expectVerifyError(t, dir, "embedded build setting GOOS")
 }
 
@@ -328,9 +300,7 @@ func TestNoticesFreshDestination(t *testing.T) {
 
 	t.Run("fresh directory is written", func(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "notices")
-		if err := noticesCommand([]string{"-source", root, "-out", out}); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, noticesCommand([]string{"-source", root, "-out", out}))
 		for _, name := range []string{
 			"manifest.json",
 			"README.md",
@@ -343,20 +313,14 @@ func TestNoticesFreshDestination(t *testing.T) {
 	})
 
 	t.Run("empty directory is accepted", func(t *testing.T) {
-		if err := noticesCommand([]string{"-source", root, "-out", t.TempDir()}); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, noticesCommand([]string{"-source", root, "-out", t.TempDir()}))
 	})
 
 	t.Run("nonempty destination is refused unchanged", func(t *testing.T) {
 		out := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(out, "github.com", "unrelated"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.MkdirAll(filepath.Join(out, "github.com", "unrelated"), 0o755))
 		for _, name := range []string{"github.com/unrelated/keep.txt", "sentinel.txt", "manifest.json"} {
-			if err := os.WriteFile(filepath.Join(out, name), []byte("keep\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(filepath.Join(out, name), []byte("keep\n"), 0o644))
 		}
 		before := snapshotTree(t, out)
 		err := noticesCommand([]string{"-source", root, "-out", out})
@@ -376,13 +340,9 @@ func TestNoticesFreshDestination(t *testing.T) {
 
 	t.Run("check mode is read only", func(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "notices")
-		if err := noticesCommand([]string{"-source", root, "-out", out}); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, noticesCommand([]string{"-source", root, "-out", out}))
 		before := snapshotTree(t, out)
-		if err := noticesCommand([]string{"-source", root, "-out", out, "-check"}); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, noticesCommand([]string{"-source", root, "-out", out, "-check"}))
 		after := snapshotTree(t, out)
 		if !reflect.DeepEqual(before, after) {
 			t.Fatal("check mode changed the destination")
@@ -397,9 +357,7 @@ func TestNoticesCheckDetectsDrift(t *testing.T) {
 	root := repoRoot(t)
 	templatePath := filepath.Join(root, "packaging", "notices", "README.md.tmpl")
 	document, _, err := collectNotices("go", root, "./cmd/owngit")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	cases := []struct {
 		name   string
@@ -416,20 +374,14 @@ func TestNoticesCheckDetectsDrift(t *testing.T) {
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "notices")
-			if err := noticesCommand([]string{"-source", root, "-out", out}); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, noticesCommand([]string{"-source", root, "-out", out}))
 			drifted := document
 			drifted.Entries = append([]noticeEntry{}, document.Entries...)
 			drifted.Entries[0].Files = append([]fileEntry{}, document.Entries[0].Files...)
 			item.mutate(&drifted)
 			encoded, err := json.MarshalIndent(drifted, "", "  ")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(out, "manifest.json"), append(encoded, '\n'), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
+			noErr(t, os.WriteFile(filepath.Join(out, "manifest.json"), append(encoded, '\n'), 0o644))
 			err = checkNotices(out, templatePath, document)
 			if err == nil || !strings.Contains(err.Error(), item.want) {
 				t.Fatalf("checkNotices returned %v, want %q", err, item.want)
@@ -439,12 +391,8 @@ func TestNoticesCheckDetectsDrift(t *testing.T) {
 
 	t.Run("generated readme", func(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "notices")
-		if err := noticesCommand([]string{"-source", root, "-out", out}); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(out, "README.md"), []byte("stale\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, noticesCommand([]string{"-source", root, "-out", out}))
+		noErr(t, os.WriteFile(filepath.Join(out, "README.md"), []byte("stale\n"), 0o644))
 		err := checkNotices(out, templatePath, document)
 		if err == nil || !strings.Contains(err.Error(), "stale") {
 			t.Fatalf("checkNotices returned %v", err)
@@ -524,12 +472,8 @@ func TestNoticesRefusalAdviceIsSafe(t *testing.T) {
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {
 			out := item.dirName
-			if err := os.MkdirAll(out, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(out, "sentinel.txt"), []byte("keep\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.MkdirAll(out, 0o755))
+			noErr(t, os.WriteFile(filepath.Join(out, "sentinel.txt"), []byte("keep\n"), 0o644))
 			err := requireFreshDestination(out)
 			if err == nil {
 				t.Fatal("a nonempty destination was accepted")
@@ -586,9 +530,7 @@ func TestGoRuntimeNoticeFallback(t *testing.T) {
 	t.Run("goroot license and patents are authoritative", func(t *testing.T) {
 		goroot, _ := layout(t, map[string]string{"LICENSE": goLicense, "PATENTS": "goroot patents\n"})
 		files, err := goRuntimeNoticesFrom(goroot)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if got := string(files["LICENSE"]); got != goLicense {
 			t.Errorf("LICENSE = %q, want the GOROOT copy", got)
 		}
@@ -603,9 +545,7 @@ func TestGoRuntimeNoticeFallback(t *testing.T) {
 	t.Run("parent license supplements a missing goroot license", func(t *testing.T) {
 		goroot, _ := layout(t, map[string]string{"PATENTS": "goroot patents\n"})
 		files, err := goRuntimeNoticesFrom(goroot)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if got := string(files["LICENSE"]); got != parentLicense {
 			t.Errorf("LICENSE = %q, want the parent copy", got)
 		}
@@ -620,9 +560,7 @@ func TestGoRuntimeNoticeFallback(t *testing.T) {
 	t.Run("parent patents supplements a missing goroot patents", func(t *testing.T) {
 		goroot, _ := layout(t, map[string]string{"LICENSE": goLicense})
 		files, err := goRuntimeNoticesFrom(goroot)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if got := string(files["PATENTS"]); got != "parent patents\n" {
 			t.Errorf("PATENTS = %q, want the parent copy", got)
 		}
@@ -689,12 +627,8 @@ func TestGoRuntimeNoticeFallback(t *testing.T) {
 
 func writeSynthetic(t *testing.T, dir, name, body string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(dir, 0o755))
+	noErr(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
 }
 
 func snapshotTree(t *testing.T, dir string) map[string]string {
@@ -718,9 +652,7 @@ func snapshotTree(t *testing.T, dir string) map[string]string {
 		files[filepath.ToSlash(relative)] = digest
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return files
 }
 
@@ -729,12 +661,8 @@ func TestNoticesCheckMatchesBuildInputs(t *testing.T) {
 	requireGoToolchain(t)
 	root := repoRoot(t)
 	document, _, err := collectNotices("go", root, "./cmd/owngit")
-	if err != nil {
-		t.Fatalf("collect: %v", err)
-	}
-	if err := checkNotices(filepath.Join(root, "THIRD_PARTY_NOTICES"), filepath.Join(root, "packaging", "notices", "README.md.tmpl"), document); err != nil {
-		t.Fatalf("checked-in notices are stale: %v", err)
-	}
+	noErrf(t, err, "collect")
+	noErrf(t, checkNotices(filepath.Join(root, "THIRD_PARTY_NOTICES"), filepath.Join(root, "packaging", "notices", "README.md.tmpl"), document), "checked-in notices are stale")
 	// One declared embedded asset plus the module graph. The removal dropped
 	// two adopted notice sets, so the bound has one set of slack.
 	if len(document.Entries) < 12 {
@@ -762,9 +690,7 @@ func TestNoticesDeclaredInputsAreEmbeddedAssets(t *testing.T) {
 	requireGoToolchain(t)
 	root := repoRoot(t)
 	document, contents, err := collectNotices("go", root, "./cmd/owngit")
-	if err != nil {
-		t.Fatalf("collect: %v", err)
-	}
+	noErrf(t, err, "collect")
 	inputs := declaredNoticeInputs()
 	if len(inputs) != len(bundledAssets) || len(inputs) == 0 {
 		t.Fatalf("declared inputs = %d, want the declared bundled assets %d", len(inputs), len(bundledAssets))
@@ -807,9 +733,7 @@ func TestNoticeTreeRejectsUndeclaredAndSymlink(t *testing.T) {
 
 	t.Run("undeclared file", func(t *testing.T) {
 		dir := copyTreeToTemp(t, source)
-		if err := os.WriteFile(filepath.Join(dir, "sentinel.txt"), []byte("x\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(filepath.Join(dir, "sentinel.txt"), []byte("x\n"), 0o644))
 		if _, err := declaredNoticeFiles(dir); err == nil || !strings.Contains(err.Error(), "not declared") {
 			t.Fatalf("declaredNoticeFiles returned %v", err)
 		}
@@ -818,12 +742,8 @@ func TestNoticeTreeRejectsUndeclaredAndSymlink(t *testing.T) {
 	t.Run("symlinked notice file", func(t *testing.T) {
 		dir := copyTreeToTemp(t, source)
 		target := filepath.Join(dir, "modernc.org", "sqlite", "LICENSE")
-		if err := os.Remove(target); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink("LICENSE-SQLITE", target); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Remove(target))
+		noErr(t, os.Symlink("LICENSE-SQLITE", target))
 		if _, err := declaredNoticeFiles(dir); err == nil || !strings.Contains(err.Error(), "symlink") {
 			t.Fatalf("declaredNoticeFiles returned %v", err)
 		}
@@ -831,9 +751,7 @@ func TestNoticeTreeRejectsUndeclaredAndSymlink(t *testing.T) {
 
 	t.Run("missing declared file", func(t *testing.T) {
 		dir := copyTreeToTemp(t, source)
-		if err := os.Remove(filepath.Join(dir, "go-runtime", "PATENTS")); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Remove(filepath.Join(dir, "go-runtime", "PATENTS")))
 		if _, err := declaredNoticeFiles(dir); err == nil || !strings.Contains(err.Error(), "missing") {
 			t.Fatalf("declaredNoticeFiles returned %v", err)
 		}
@@ -848,9 +766,7 @@ func TestPackagingRendering(t *testing.T) {
 	manifestPath := filepath.Join(dir, "manifest.json")
 
 	unready := t.TempDir()
-	if err := packagingCommand([]string{"-source", root, "-manifest", manifestPath, "-out", unready}); err != nil {
-		t.Fatalf("packaging without inputs: %v", err)
-	}
+	noErrf(t, packagingCommand([]string{"-source", root, "-manifest", manifestPath, "-out", unready}), "packaging without inputs")
 	formula := readText(t, filepath.Join(unready, "owngit.rb"))
 	if !strings.Contains(formula, "UNREADY") {
 		t.Fatal("a render without publication inputs carries no UNREADY marker")
@@ -872,9 +788,7 @@ func TestPackagingRendering(t *testing.T) {
 		"-publisher", "Example",
 		"-publisher-url", "https://example.test",
 	}
-	if err := packagingCommand(readyArguments); err != nil {
-		t.Fatalf("packaging with inputs: %v", err)
-	}
+	noErrf(t, packagingCommand(readyArguments), "packaging with inputs")
 	formula = readText(t, filepath.Join(ready, "owngit.rb"))
 	if strings.Contains(formula, "UNREADY") {
 		t.Fatal("a fully supplied render still carries an UNREADY marker")
@@ -884,9 +798,7 @@ func TestPackagingRendering(t *testing.T) {
 	}
 	installer := readText(t, filepath.Join(ready, "Example.Owngit.installer.yaml"))
 	document, err := readManifest(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for _, built := range document.Artifacts {
 		if built.Target != "windows/amd64" {
 			continue
@@ -910,9 +822,7 @@ func TestPackagingRendering(t *testing.T) {
 			"-homepage", "https://example.test/owngit",
 			"-tap", "example/homebrew-owngit",
 		})
-		if err != nil {
-			t.Fatalf("homebrew-only render: %v", err)
-		}
+		noErrf(t, err, "homebrew-only render")
 		if strings.Contains(readText(t, filepath.Join(out, "owngit.rb")), "UNREADY") {
 			t.Fatal("a homebrew-only render with its own inputs is unready")
 		}
@@ -931,9 +841,7 @@ func TestPackagingRendering(t *testing.T) {
 			"-publisher", "Example",
 			"-publisher-url", "https://example.test",
 		})
-		if err != nil {
-			t.Fatalf("winget-only render: %v", err)
-		}
+		noErrf(t, err, "winget-only render")
 		if strings.Contains(readText(t, filepath.Join(out, "Example.Owngit.yaml")), "UNREADY") {
 			t.Fatal("a winget-only render with its own inputs is unready")
 		}
@@ -950,9 +858,7 @@ func TestPackagingRendering(t *testing.T) {
 			"-homepage", "https://example.test/owngit",
 			"-tap", "example/homebrew-owngit",
 		})
-		if err != nil {
-			t.Fatalf("render: %v", err)
-		}
+		noErrf(t, err, "render")
 		if strings.Contains(readText(t, filepath.Join(out, "owngit.rb")), "UNREADY") {
 			t.Fatal("the formula is unready although every homebrew input was supplied")
 		}
@@ -969,9 +875,7 @@ func TestPackagingRendering(t *testing.T) {
 		out := t.TempDir()
 		arguments := append([]string{}, readyArguments...)
 		arguments = append(arguments, "-out", out, "-publisher", `Acme "Quoted" #1`)
-		if err := packagingCommand(arguments); err != nil {
-			t.Fatalf("render: %v", err)
-		}
+		noErrf(t, packagingCommand(arguments), "render")
 		locale := readText(t, filepath.Join(out, "Example.Owngit.locale.en-US.yaml"))
 		if !strings.Contains(locale, `Publisher: "Acme \"Quoted\" #1"`) {
 			t.Fatalf("publisher was not encoded: %s", locale)
@@ -1055,9 +959,7 @@ func dropNoticeEntry(t *testing.T, files []memFile, module string) []memFile {
 	kept := make([]memFile, 0, len(files))
 	for _, file := range files {
 		if file.name == "THIRD_PARTY_NOTICES/manifest.json" {
-			if err := json.Unmarshal(file.data, &document); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, json.Unmarshal(file.data, &document))
 			continue
 		}
 		kept = append(kept, file)
@@ -1078,9 +980,7 @@ func dropNoticeEntry(t *testing.T, files []memFile, module string) []memFile {
 	}
 	document.Entries = entries
 	encoded, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	kept = append(kept, memFile{name: "THIRD_PARTY_NOTICES/manifest.json", mode: 0o644, data: append(encoded, '\n')})
 	final := make([]memFile, 0, len(kept))
 	for _, file := range kept {
@@ -1099,9 +999,7 @@ func addNoticeEntry(t *testing.T, files []memFile, module, moduleVersion string)
 	kept := make([]memFile, 0, len(files)+2)
 	for _, file := range files {
 		if file.name == "THIRD_PARTY_NOTICES/manifest.json" {
-			if err := json.Unmarshal(file.data, &document); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, json.Unmarshal(file.data, &document))
 			continue
 		}
 		kept = append(kept, file)
@@ -1112,9 +1010,7 @@ func addNoticeEntry(t *testing.T, files []memFile, module, moduleVersion string)
 		Files: []fileEntry{{Path: "LICENSE", Mode: "0644", Size: int64(len(body)), SHA256: sha256Bytes(body)}},
 	})
 	encoded, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	kept = append(kept, memFile{name: "THIRD_PARTY_NOTICES/manifest.json", mode: 0o644, data: append(encoded, '\n')})
 	kept = append(kept, memFile{name: "THIRD_PARTY_NOTICES/" + module + "/LICENSE", mode: 0o644, data: body})
 	return kept
@@ -1133,21 +1029,15 @@ func removeFile(files []memFile, name string) []memFile {
 func readText(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return string(data)
 }
 
 func writeManifest(t *testing.T, dir string, document manifest) {
 	t.Helper()
 	encoded, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), append(encoded, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, os.WriteFile(filepath.Join(dir, "manifest.json"), append(encoded, '\n'), 0o644))
 }
 
 // copyDist copies the top-level output files, leaving the stage directory out.
@@ -1155,20 +1045,14 @@ func copyDist(t *testing.T, source string) string {
 	t.Helper()
 	destination := t.TempDir()
 	entries, err := os.ReadDir(source)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(source, entry.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(destination, entry.Name()), data, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
+		noErr(t, os.WriteFile(filepath.Join(destination, entry.Name()), data, 0o644))
 	}
 	return destination
 }
@@ -1176,9 +1060,7 @@ func copyDist(t *testing.T, source string) string {
 func copyTreeToTemp(t *testing.T, source string) string {
 	t.Helper()
 	destination := t.TempDir()
-	if err := copyTree(source, destination); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, copyTree(source, destination))
 	return destination
 }
 
@@ -1188,21 +1070,15 @@ func copyTreeToTemp(t *testing.T, source string) string {
 func rewriteDist(t *testing.T, dir string, syncFiles bool, mutate func([]memFile) []memFile) {
 	t.Helper()
 	document, err := readManifest(filepath.Join(dir, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(document.Artifacts) != 1 {
 		t.Fatalf("rewriteDist expects one artifact, found %d", len(document.Artifacts))
 	}
 	built := &document.Artifacts[0]
 	current, err := targetFor(built.Target)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	entries, err := readArchive(filepath.Join(dir, built.Name), current.format)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	files := make([]memFile, 0, len(entries))
 	for _, entry := range entries {
 		files = append(files, memFile{name: entry.name, mode: entry.mode, data: entry.data})
@@ -1214,12 +1090,8 @@ func rewriteDist(t *testing.T, dir string, syncFiles bool, mutate func([]memFile
 	staged := make([]stagedFile, 0, len(files))
 	for _, file := range files {
 		path := filepath.Join(stage, filepath.FromSlash(file.name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, file.data, os.FileMode(file.mode)); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		noErr(t, os.WriteFile(path, file.data, os.FileMode(file.mode)))
 		staged = append(staged, stagedFile{
 			name: file.name, path: path, mode: file.mode,
 			size: int64(len(file.data)), sha: sha256Bytes(file.data),
@@ -1231,9 +1103,7 @@ func rewriteDist(t *testing.T, dir string, syncFiles bool, mutate func([]memFile
 	} else {
 		err = writeTarGz(archivePath, staged)
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	refreshArchiveIdentity(t, dir, document, built)
 	if syncFiles {
 		built.Files = nil
@@ -1245,9 +1115,7 @@ func rewriteDist(t *testing.T, dir string, syncFiles bool, mutate func([]memFile
 		}
 	}
 	writeManifest(t, dir, document)
-	if err := writeChecksums(dir, document.Artifacts); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, writeChecksums(dir, document.Artifacts))
 }
 
 // rewriteTar rewrites the single artifact's tar with an extra header written
@@ -1255,23 +1123,17 @@ func rewriteDist(t *testing.T, dir string, syncFiles bool, mutate func([]memFile
 func rewriteTar(t *testing.T, dir string, extra func(*tar.Writer, []memFile) error) {
 	t.Helper()
 	document, err := readManifest(filepath.Join(dir, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	built := &document.Artifacts[0]
 	entries, err := readArchive(filepath.Join(dir, built.Name), "tar.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	files := make([]memFile, 0, len(entries))
 	for _, entry := range entries {
 		files = append(files, memFile{name: entry.name, mode: entry.mode, data: entry.data})
 	}
 	path := filepath.Join(dir, built.Name)
 	file, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	compressed := gzip.NewWriter(file)
 	archive := tar.NewWriter(compressed)
 	for _, entry := range files {
@@ -1279,43 +1141,27 @@ func rewriteTar(t *testing.T, dir string, extra func(*tar.Writer, []memFile) err
 			Typeflag: tar.TypeReg, Name: entry.name, Size: int64(len(entry.data)),
 			Mode: entry.mode, ModTime: fixedModTime, Format: tar.FormatPAX,
 		}
-		if err := archive.WriteHeader(header); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, archive.WriteHeader(header))
 		if _, err := archive.Write(entry.data); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := extra(archive, files); err != nil {
-		t.Fatal(err)
-	}
-	if err := archive.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := compressed.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, extra(archive, files))
+	noErr(t, archive.Close())
+	noErr(t, compressed.Close())
+	noErr(t, file.Close())
 	refreshArchiveIdentity(t, dir, document, built)
 	writeManifest(t, dir, document)
-	if err := writeChecksums(dir, document.Artifacts); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, writeChecksums(dir, document.Artifacts))
 }
 
 func refreshArchiveIdentity(t *testing.T, dir string, document manifest, built *artifact) {
 	t.Helper()
 	path := filepath.Join(dir, built.Name)
 	digest, err := sha256File(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	built.SHA256 = digest
 	built.Size = info.Size()
 }
@@ -1330,4 +1176,20 @@ func expectVerifyError(t *testing.T, dir, want string) {
 		t.Fatalf("verify error %q does not contain %q", err, want)
 	}
 	t.Logf("rejected: %v", err)
+}
+
+// noErr stops the test when err is not nil.
+func noErr(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// noErrf stops the test when err is not nil, naming the failed step.
+func noErrf(t testing.TB, err error, format string, args ...any) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", fmt.Sprintf(format, args...), err)
+	}
 }

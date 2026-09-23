@@ -95,8 +95,6 @@ func startStreamFixture(t *testing.T, mode string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(streamTestExecutable(t))
 	cmd.Env = append(os.Environ(), streamFixtureEnv+"="+mode)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, cmd.Start())
 	return cmd
 }

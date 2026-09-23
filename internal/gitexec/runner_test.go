@@ -11,20 +11,14 @@ import (
 func TestRunnerIgnoresInheritedGitConfiguration(t *testing.T) {
 	root := t.TempDir()
 	maliciousHome := filepath.Join(root, "user-home")
-	if err := os.Mkdir(maliciousHome, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(maliciousHome, ".gitconfig"), []byte("[core]\n\thooksPath = /tmp/untrusted-hooks\n[credential]\n\thelper = untrusted\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(maliciousHome, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(maliciousHome, ".gitconfig"), []byte("[core]\n\thooksPath = /tmp/untrusted-hooks\n[credential]\n\thelper = untrusted\n"), 0o600))
 	t.Setenv("HOME", maliciousHome)
 	t.Setenv("GIT_CONFIG_COUNT", "1")
 	t.Setenv("GIT_CONFIG_KEY_0", "alias.injected")
 	t.Setenv("GIT_CONFIG_VALUE_0", "status")
 	runner, err := New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if runner.GlobalConfigPath == "/dev/null" || runner.GlobalConfigPath == "NUL" {
 		t.Fatalf("global config path is not portable: %s", runner.GlobalConfigPath)
 	}
@@ -35,9 +29,7 @@ func TestRunnerIgnoresInheritedGitConfiguration(t *testing.T) {
 		}
 	}
 	content, err := os.ReadFile(filepath.Join(maliciousHome, ".gitconfig"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !strings.Contains(string(content), "untrusted-hooks") {
 		t.Fatal("runner changed the user's global Git config")
 	}

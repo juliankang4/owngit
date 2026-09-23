@@ -94,7 +94,7 @@ type ImportIntentManifest struct {
 }
 
 func addImportState(manifest *Manifest, snapshot state.RecoveryState) {
-	manifest.ImportRunOrderKnown = snapshot.ImportRunOrderKnown && len(snapshot.ImportRuns) > 0
+	manifest.ImportRunOrderKnown = len(snapshot.ImportRuns) > 0
 	if len(snapshot.ImportIntents) > 0 {
 		manifest.ImportHEADOwnershipVersion = importHEADOwnershipVersion
 	}
@@ -138,7 +138,6 @@ func addImportState(manifest *Manifest, snapshot state.RecoveryState) {
 }
 
 func attachImportState(snapshot *state.RecoveryState, manifest Manifest) {
-	snapshot.ImportRunOrderKnown = manifest.ImportRunOrderKnown
 	for _, source := range manifest.ImportSources {
 		// Transport consent is machine-local and not part of the manifest.
 		snapshot.ImportSources = append(snapshot.ImportSources, state.ImportSource{
@@ -173,7 +172,7 @@ func attachImportState(snapshot *state.RecoveryState, manifest Manifest) {
 			SourceGeneration: intent.SourceGeneration, AuthorityRevision: intent.AuthorityRevision, Status: intent.Status,
 			Expected: intent.Expected, Desired: intent.Desired, Observed: intent.Observed, Retained: intent.Retained,
 			HeadSymref: intent.HeadSymref, HeadDetach: intent.HeadDetach,
-			HeadOwned:   intent.HeadOwned && manifest.ImportHEADOwnershipVersion == importHEADOwnershipVersion,
+			HeadOwned:   intent.HeadOwned,
 			ReceiptJSON: intent.ReceiptJSON, ReceiptDigest: intent.ReceiptDigest, Reason: intent.Reason,
 			CreatedAt: intent.CreatedAt, UpdatedAt: intent.UpdatedAt,
 		})
@@ -182,14 +181,18 @@ func attachImportState(snapshot *state.RecoveryState, manifest Manifest) {
 
 // validateImportManifest validates decoded import metadata and its internal
 // consistency before a backup is published or restored.
+// The current format records run order whenever runs exist and the HEAD
+// ownership version whenever intents exist. Only unreleased development
+// builds omitted them.
 func validateImportManifest(manifest Manifest) error {
 	if manifest.ImportHEADOwnershipVersion != 0 && manifest.ImportHEADOwnershipVersion != importHEADOwnershipVersion {
 		return errors.New("backup import HEAD ownership version is unsupported")
 	}
-	for _, intent := range manifest.ImportIntents {
-		if intent.HeadOwned && manifest.ImportHEADOwnershipVersion != importHEADOwnershipVersion {
-			return errors.New("backup import HEAD ownership lacks a supported format version")
-		}
+	if len(manifest.ImportRuns) > 0 && !manifest.ImportRunOrderKnown {
+		return errors.New("backup import runs have no recorded order; it was written by an unreleased development build")
+	}
+	if len(manifest.ImportIntents) > 0 && manifest.ImportHEADOwnershipVersion != importHEADOwnershipVersion {
+		return errors.New("backup import intents have no HEAD ownership version; it was written by an unreleased development build")
 	}
 	var snapshot state.RecoveryState
 	for _, item := range manifest.Repositories {

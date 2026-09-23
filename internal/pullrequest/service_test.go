@@ -34,9 +34,7 @@ func TestReviewBoundMergeCreatesExactMergeCommitAndIsIdempotent(t *testing.T) {
 	created, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Merge the feature", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "request",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if created.Review.Status != state.ReviewPending || !created.MergeEligibility.Eligible || created.Checks.Status != "absent" || created.Checks.Configured || created.Checks.Passed || created.Checks.Blocking || !created.Checks.Advisory {
 		t.Fatalf("unexpected created pull request: %+v", created)
 	}
@@ -46,17 +44,13 @@ func TestReviewBoundMergeCreatesExactMergeCommitAndIsIdempotent(t *testing.T) {
 	approved, err := fixture.service.SubmitReview(fixture.ctx, fixture.repositoryID, created.Number, ReviewSubmitInput{
 		SourceOID: sourceOID, TargetOID: targetOID, Decision: state.ReviewApproved, ReviewerLabel: "existing-tool: synthetic-reviewer",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !approved.MergeEligibility.Eligible || approved.Review.Provenance != state.ReviewProvenanceExternalTool || approved.Review.Independent || approved.Review.ExecutedChecks {
 		t.Fatalf("submitted review was represented incorrectly: %+v", approved)
 	}
 
 	merged, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: sourceOID, TargetOID: targetOID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if merged.State != state.PullRequestMerged || merged.Merge == nil || merged.Merge.Mode != "merge_commit" {
 		t.Fatalf("unexpected merge result: %+v", merged)
 	}
@@ -90,9 +84,7 @@ func TestReviewBoundMergeCreatesExactMergeCommitAndIsIdempotent(t *testing.T) {
 	fixture.git("--git-dir", fixture.remote, "merge-base", "--is-ancestor", targetOID, merged.Merge.OID)
 
 	repeated, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: sourceOID, TargetOID: targetOID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if repeated.Merge == nil || repeated.Merge.OID != merged.Merge.OID || fixture.ref("refs/heads/main") != merged.Merge.OID {
 		t.Fatalf("repeated merge changed its result: first=%+v repeated=%+v", merged.Merge, repeated.Merge)
 	}
@@ -108,9 +100,7 @@ func TestObserveCurrentRevisionsBindsSourcePushWithoutViewRead(t *testing.T) {
 	created, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Observe source pushes", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	newSource := fixture.commitFile("feature.txt", "second\n", "feature two")
 	fixture.push("HEAD:refs/heads/feature")
 
@@ -119,9 +109,7 @@ func TestObserveCurrentRevisionsBindsSourcePushWithoutViewRead(t *testing.T) {
 		t.Fatalf("observed=%d more=%v err=%v", observed, more, err)
 	}
 	revisions, err := fixture.store.LatestPullRequestRevisions(fixture.ctx, fixture.repositoryID, 64)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	found := false
 	for _, revision := range revisions {
 		if revision.PullRequestNumber == created.Number && revision.SourceOID == newSource {
@@ -152,40 +140,26 @@ func TestFreshNonFastForwardMergeCalculatesTreeTwice(t *testing.T) {
 	created, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Count merge trees", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	tracePath := filepath.Join(t.TempDir(), "git-commands")
 	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
 	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + shellQuote(tracePath) + "\nprintf '\\n' >> " + shellQuote(tracePath) + "\nexec " + shellQuote(gitPath) + " \"$@\"\n"
-	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fixture.manager.Git = traced
-	if err := os.WriteFile(tracePath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(tracePath, nil, 0o600))
 
 	merged, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: sourceOID, TargetOID: targetOID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if merged.Merge == nil || merged.Merge.Mode != "merge_commit" {
 		t.Fatalf("unexpected merge result: %+v", merged)
 	}
 	trace, err := os.ReadFile(tracePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if count := bytes.Count(trace, []byte("\x00merge-tree\x00")); count != 2 {
 		t.Fatalf("fresh non-fast-forward merge used %d merge-tree processes, want 2", count)
 	}
@@ -195,9 +169,7 @@ func TestPassivePullRequestReadsDoNotPersistRevisionState(t *testing.T) {
 	fixture, number, newSource, targetOID := newMovedHeadFixture(t)
 	refsBefore := fixture.gitOutput("--git-dir", fixture.remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/owngit/pull-requests")
 	rowsBefore, err := fixture.store.PullRequestRevisions(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, number); err != nil {
 		t.Fatal(err)
 	}
@@ -206,9 +178,7 @@ func TestPassivePullRequestReadsDoNotPersistRevisionState(t *testing.T) {
 	}
 	refsAfter := fixture.gitOutput("--git-dir", fixture.remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/owngit/pull-requests")
 	rowsAfter, err := fixture.store.PullRequestRevisions(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if refsAfter != refsBefore {
 		t.Fatalf("passive reads changed protected refs:\nbefore:\n%s\nafter:\n%s", refsBefore, refsAfter)
 	}
@@ -224,9 +194,7 @@ func TestPassivePullRequestReadsDoNotPersistRevisionState(t *testing.T) {
 		t.Fatal("a review decision did not retain the current pair")
 	}
 	rowsFinal, err := fixture.store.PullRequestRevisions(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(rowsFinal) != len(rowsBefore)+1 {
 		t.Fatalf("review decision revision rows=%d, want %d", len(rowsFinal), len(rowsBefore)+1)
 	}
@@ -238,23 +206,15 @@ func TestPassivePullRequestReadsInvokeNoUpdateRef(t *testing.T) {
 	}
 	fixture, number, _, _ := newMovedHeadFixture(t)
 	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	tracePath := filepath.Join(t.TempDir(), "git-commands")
 	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
 	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + shellQuote(tracePath) + "\nprintf '\\n' >> " + shellQuote(tracePath) + "\nexec " + shellQuote(gitPath) + " \"$@\"\n"
-	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fixture.manager.Git = traced
-	if err := os.WriteFile(tracePath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(tracePath, nil, 0o600))
 	if _, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, number); err != nil {
 		t.Fatal(err)
 	}
@@ -262,9 +222,7 @@ func TestPassivePullRequestReadsInvokeNoUpdateRef(t *testing.T) {
 		t.Fatal(err)
 	}
 	trace, err := os.ReadFile(tracePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if count := bytes.Count(trace, []byte("\x00update-ref\x00")); count != 0 {
 		t.Fatalf("passive reads invoked update-ref %d times, want 0", count)
 	}
@@ -280,9 +238,7 @@ func TestPassivePullRequestReadsHoldTheSharedLock(t *testing.T) {
 	}
 	fixture, number, _, _ := newMovedHeadFixture(t)
 	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	dir := t.TempDir()
 	entered := filepath.Join(dir, "entered")
 	release := filepath.Join(dir, "release")
@@ -302,13 +258,9 @@ func TestPassivePullRequestReadsHoldTheSharedLock(t *testing.T) {
 		"  read line < " + shellQuote(release) + "\n" +
 		"fi\n" +
 		"exec " + shellQuote(gitPath) + " \"$@\"\n"
-	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	barrier, err := gitexec.New(wrapperPath, filepath.Join(dir, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fixture.manager.Git = barrier
 	lock := fixture.manager.Locks.For(fixture.repositoryID)
 
@@ -324,9 +276,7 @@ func TestPassivePullRequestReadsHoldTheSharedLock(t *testing.T) {
 	}
 	for _, read := range reads {
 		func() {
-			if err := os.WriteFile(armed, nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(armed, nil, 0o600))
 			// Cancel on assertion failure so the wrapper blocked on the
 			// release FIFO is killed instead of waiting for the runner
 			// timeout.
@@ -343,9 +293,7 @@ func TestPassivePullRequestReadsHoldTheSharedLock(t *testing.T) {
 				lock.Unlock()
 				t.Fatalf("%s held no lock while reading Git", read.name)
 			}
-			if err := os.WriteFile(release, []byte("go\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(release, []byte("go\n"), 0o600))
 			if err := <-done; err != nil {
 				t.Fatalf("%s: %v", read.name, err)
 			}
@@ -363,9 +311,7 @@ func waitForFIFO(t *testing.T, path string) {
 	}()
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 	case <-time.After(10 * time.Second):
 		t.Fatalf("timed out waiting for %s", path)
 	}
@@ -383,9 +329,7 @@ func newMovedHeadFixture(t *testing.T) (*serviceFixture, int64, string, string) 
 	created, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Passive reads", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	newSource := fixture.commitFile("second.txt", "second\n", "feature two")
 	fixture.push("HEAD:refs/heads/feature")
 	return fixture, created.Number, newSource, targetOID
@@ -403,18 +347,14 @@ func TestHeadMovementInvalidatesSkipAndAdvisoryReviewDoesNotBlock(t *testing.T) 
 	created, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Fast forward feature", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !created.MergeEligibility.Eligible || created.Review.Status != state.ReviewSkipped {
 		t.Fatalf("initial skip was not current: %+v", created)
 	}
 	newSource := fixture.commitFile("second.txt", "second\n", "feature two")
 	fixture.push("HEAD:refs/heads/feature")
 	moved, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, created.Number)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if moved.Source.OID != newSource || moved.Review.Status != "decision_required" || len(moved.MergeEligibility.Blockers) != 0 {
 		t.Fatalf("head movement did not invalidate skip: %+v", moved)
 	}
@@ -428,16 +368,12 @@ func TestHeadMovementInvalidatesSkipAndAdvisoryReviewDoesNotBlock(t *testing.T) 
 	changed, err := fixture.service.SubmitReview(fixture.ctx, fixture.repositoryID, created.Number, ReviewSubmitInput{
 		SourceOID: newSource, TargetOID: targetOID, Decision: state.ReviewChangesRequested, ReviewerLabel: "existing-tool: synthetic-reviewer",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !changed.MergeEligibility.Eligible || len(changed.MergeEligibility.Blockers) != 0 {
 		t.Fatalf("changes-requested review blocked merge: %+v", changed)
 	}
 	merged, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: newSource, TargetOID: targetOID})
-	if err != nil {
-		t.Fatalf("advisory changes-requested review blocked merge: %v", err)
-	}
+	noErr(t, err, "advisory changes-requested review blocked merge")
 	if merged.Merge == nil || merged.Merge.Mode != "fast_forward" || merged.Merge.OID != newSource || fixture.ref("refs/heads/main") != newSource {
 		t.Fatalf("fast-forward merge result=%+v", merged)
 	}
@@ -453,9 +389,7 @@ func TestHeadMovementInvalidatesSkipAndAdvisoryReviewDoesNotBlock(t *testing.T) 
 	if fixture.refExists(oldSourceRef) {
 		t.Fatal("synthetic protected-ref interruption did not remove the fixture ref")
 	}
-	if err := fixture.service.ReconcileAll(fixture.ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.service.ReconcileAll(fixture.ctx))
 	if fixture.ref(oldSourceRef) != oldSource {
 		t.Fatal("startup reconciliation did not repair a recorded revision ref")
 	}
@@ -474,9 +408,7 @@ func TestMergeConflictLeavesTargetAndReceiptUnchanged(t *testing.T) {
 	created, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Conflicting feature", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	_, err = fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: sourceOID, TargetOID: targetOID})
 	if problemCode(err) != "merge_conflict" {
 		t.Fatalf("merge conflict error=%v code=%q", err, problemCode(err))
@@ -501,9 +433,7 @@ func TestMergeRejectsUnrelatedHistoriesWithoutChangingTarget(t *testing.T) {
 	created, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Unrelated history", SourceBranch: "isolated", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	_, err = fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: sourceOID, TargetOID: targetOID})
 	if problemCode(err) != "merge_conflict" {
 		t.Fatalf("unrelated merge error=%v code=%q", err, problemCode(err))
@@ -524,9 +454,7 @@ func TestGitSuccessStateFailureReconcilesWithoutDuplicateCommit(t *testing.T) {
 	created, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Recover merge state", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fixture.service.CompleteMerge = func(context.Context, state.PullRequestMergeIntent, time.Time) error {
 		return errors.New("injected state failure")
 	}
@@ -538,13 +466,9 @@ func TestGitSuccessStateFailureReconcilesWithoutDuplicateCommit(t *testing.T) {
 		t.Fatal("Git transaction did not publish before the injected state failure")
 	}
 	fixture.service.CompleteMerge = nil
-	if err := fixture.service.ReconcileAll(fixture.ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.service.ReconcileAll(fixture.ctx))
 	shown, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, created.Number)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if shown.State != state.PullRequestMerged || shown.Merge == nil || shown.Merge.OID != sourceOID || shown.Merge.Mode != "fast_forward" {
 		t.Fatalf("reconciled result=%+v", shown)
 	}
@@ -590,9 +514,7 @@ func TestOldGitReconciliationPreservesPendingNonFastForwardMerge(t *testing.T) {
 			created, err := fixture.service.Create(fixture.ctx, CreateInput{
 				Repository: fixture.repositoryID, Title: "Pending on old Git", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			record, ok, err := fixture.store.PullRequest(fixture.ctx, fixture.repositoryID, created.Number)
 			if err != nil || !ok {
 				t.Fatalf("read pull request: ok=%v err=%v", ok, err)
@@ -601,42 +523,28 @@ func TestOldGitReconciliationPreservesPendingNonFastForwardMerge(t *testing.T) {
 				RepositoryID: fixture.repositoryID, PullRequestNumber: created.Number, SourceOID: sourceOID, TargetOID: targetOID,
 				ReceiptRef: MergeReceiptRef(created.Number), CreatedAt: time.Now(),
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			intent, err = fixture.service.planMerge(fixture.ctx, fixture.remote, intent)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if intent.Mode != "merge_commit" {
 				t.Fatalf("intent mode=%q, want merge_commit", intent.Mode)
 			}
-			if err := fixture.service.ensurePlannedMergeTree(fixture.ctx, fixture.remote, record, intent, true); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, fixture.service.ensurePlannedMergeTree(fixture.ctx, fixture.remote, record, intent, true))
 			intent, err = fixture.store.UpdatePullRequestMergeIntent(fixture.ctx, intent)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if intentStatus == state.MergeIntentReady {
 				intent.ResultOID, err = fixture.service.ensureMergeResult(fixture.ctx, fixture.remote, record, intent, true)
-				if err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, err)
 				intent.Status = state.MergeIntentReady
 				intent.UpdatedAt = time.Now()
 				intent, err = fixture.store.UpdatePullRequestMergeIntent(fixture.ctx, intent)
-				if err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, err)
 			}
 
 			oldRunner, mergeTreeMarker := newOldGitRunner(t, filepath.Join(fixture.store.Dir(), "runtime-old-git"))
 			fixture.manager.Git = oldRunner
 			fixture.service.Repositories = fixture.manager
-			if err := fixture.service.ReconcileAll(fixture.ctx); err != nil {
-				t.Fatalf("reconcile pending merge on old Git: %v", err)
-			}
+			noErr(t, fixture.service.ReconcileAll(fixture.ctx), "reconcile pending merge on old Git")
 			if _, err := os.Stat(mergeTreeMarker); !os.IsNotExist(err) {
 				t.Fatalf("general reconciliation invoked merge-tree: %v", err)
 			}
@@ -681,20 +589,14 @@ func TestReconcileRejectsMismatchedDurableMergeObjects(t *testing.T) {
 			created, err := fixture.service.Create(fixture.ctx, CreateInput{
 				Repository: fixture.repositoryID, Title: "Integrity", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			intent, err := fixture.store.BeginPullRequestMerge(fixture.ctx, state.PullRequestMergeIntent{
 				RepositoryID: fixture.repositoryID, PullRequestNumber: created.Number, SourceOID: sourceOID, TargetOID: targetOID,
 				ReceiptRef: MergeReceiptRef(created.Number), CreatedAt: time.Now(),
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			calculatedTree, err := fixture.service.calculateMergeTree(fixture.ctx, fixture.remote, targetOID, sourceOID)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			intent.Mode = "merge_commit"
 			intent.TreeOID = calculatedTree
 			intent.Status = intentStatus
@@ -712,9 +614,7 @@ func TestReconcileRejectsMismatchedDurableMergeObjects(t *testing.T) {
 					t.Fatalf("read pull request for integrity fixture: ok=%v err=%v", ok, err)
 				}
 				intent.ResultOID, err = fixture.service.createMergeCommit(fixture.ctx, fixture.remote, record, intent)
-				if err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, err)
 			}
 			fixture.git("--git-dir", fixture.remote, "update-ref", treeRef, protectedTree)
 			resultRef := MergeResultRef(created.Number, sourceOID, targetOID)
@@ -722,9 +622,7 @@ func TestReconcileRejectsMismatchedDurableMergeObjects(t *testing.T) {
 				fixture.git("--git-dir", fixture.remote, "update-ref", resultRef, sourceOID)
 			}
 			stored, err := fixture.store.UpdatePullRequestMergeIntent(fixture.ctx, intent)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if err := fixture.service.ReconcileAll(fixture.ctx); problemCode(err) != "repository_integrity_error" {
 				t.Fatalf("reconcile error=%v code=%q", err, problemCode(err))
 			}
@@ -765,52 +663,36 @@ func TestFailedCreateRefPreservationDoesNotExposePRAndRetryCreatesOne(t *testing
 
 	sourceRef, _ := RevisionRefNames(1, sourceOID, targetOID)
 	blockingPath := filepath.Join(fixture.remote, filepath.FromSlash(filepath.Dir(sourceRef)))
-	if err := os.MkdirAll(filepath.Dir(blockingPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(blockingPath, []byte("synthetic ref obstruction\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(filepath.Dir(blockingPath), 0o700))
+	noErr(t, os.WriteFile(blockingPath, []byte("synthetic ref obstruction\n"), 0o600))
 
 	input := CreateInput{Repository: fixture.repositoryID, Title: "Retryable creation", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip"}
 	if _, err := fixture.service.Create(fixture.ctx, input); err == nil {
 		t.Fatal("ref obstruction did not fail pull request creation")
 	}
 	records, err := fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(records) != 0 {
 		t.Fatalf("failed creation exposed pull requests: %+v", records)
 	}
 	provisional, err := fixture.store.ProvisionalPullRequests(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	revisions, err := fixture.store.PullRequestRevisionsFor(fixture.ctx, fixture.repositoryID, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(provisional) != 0 || len(revisions) != 0 {
 		t.Fatalf("failed creation was not fully compensated: provisional=%+v revisions=%+v", provisional, revisions)
 	}
 	if fixture.ref(unrelatedRef) != targetOID {
 		t.Fatal("failed creation changed an unrelated protected ref")
 	}
-	if err := os.Remove(blockingPath); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Remove(blockingPath))
 	created, err := fixture.service.Create(fixture.ctx, input)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if created.Number != 1 {
 		t.Fatalf("retry allocated pull request #%d, want the never-visible number 1", created.Number)
 	}
 	records, err = fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(records) != 1 || records[0].Number != created.Number {
 		t.Fatalf("retry exposed %d pull requests: %+v", len(records), records)
 	}
@@ -828,13 +710,9 @@ func TestBranchMovementDuringCreateLeavesNoVisiblePullRequestAndRetryCreatesOne(
 	fixture.push("HEAD:refs/heads/feature")
 	targetOID := fixture.ref("refs/heads/main")
 	sourceHead, err := fixture.service.resolveBranch(fixture.ctx, fixture.remote, "feature")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	targetHead, err := fixture.service.resolveBranch(fixture.ctx, fixture.remote, "main")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	newSourceOID := fixture.commitFile("feature.txt", "two\n", "feature two")
 	fixture.push("HEAD:refs/heads/feature")
 
@@ -843,23 +721,17 @@ func TestBranchMovementDuringCreateLeavesNoVisiblePullRequestAndRetryCreatesOne(
 		t.Fatalf("create error=%v, want stale_revision", err)
 	}
 	records, err := fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(records) != 0 {
 		t.Fatalf("branch movement exposed pull requests: %+v", records)
 	}
 	provisional, err := fixture.store.ProvisionalPullRequests(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(provisional) != 0 {
 		t.Fatalf("branch movement left provisional records: %+v", provisional)
 	}
 	revisions, err := fixture.store.PullRequestRevisionsFor(fixture.ctx, fixture.repositoryID, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(revisions) != 0 {
 		t.Fatalf("branch movement left revision metadata: %+v", revisions)
 	}
@@ -871,9 +743,7 @@ func TestBranchMovementDuringCreateLeavesNoVisiblePullRequestAndRetryCreatesOne(
 	created, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Moved during creation", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if created.Number != 1 {
 		t.Fatalf("retry allocated pull request #%d, want the never-visible number 1", created.Number)
 	}
@@ -881,9 +751,7 @@ func TestBranchMovementDuringCreateLeavesNoVisiblePullRequestAndRetryCreatesOne(
 		t.Fatalf("retry revision=%s/%s, want %s/%s", created.Source.OID, created.Target.OID, newSourceOID, targetOID)
 	}
 	records, err = fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(records) != 1 || records[0].Number != created.Number {
 		t.Fatalf("retry exposed %d pull requests: %+v", len(records), records)
 	}
@@ -904,28 +772,18 @@ func TestReconcileAllResolvesProvisionalCreateCrashWindows(t *testing.T) {
 			fixture.push("HEAD:refs/heads/feature")
 			targetOID := fixture.ref("refs/heads/main")
 			record, err := fixture.store.BeginPullRequestCreation(fixture.ctx, fixture.repositoryID, "Interrupted creation", "feature", "main", sourceOID, targetOID, state.ReviewSkipped, time.Now())
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if retained {
-				if err := fixture.service.ensureRevisionRefs(fixture.ctx, fixture.remote, record, sourceOID, targetOID); err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, fixture.service.ensureRevisionRefs(fixture.ctx, fixture.remote, record, sourceOID, targetOID))
 			}
-			if err := fixture.service.ReconcileAll(fixture.ctx); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, fixture.service.ReconcileAll(fixture.ctx))
 			provisional, err := fixture.store.ProvisionalPullRequests(fixture.ctx, fixture.repositoryID)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if len(provisional) != 0 {
 				t.Fatalf("reconciliation left provisional records: %+v", provisional)
 			}
 			records, err := fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if retained {
 				if len(records) != 1 || records[0].Number != record.Number || records[0].Status != state.PullRequestOpen {
 					t.Fatalf("retained creation was not activated: %+v", records)
@@ -962,12 +820,8 @@ func TestCreateRejectsReservedMissingAndNonCommitRefs(t *testing.T) {
 		t.Fatalf("hash-object stderr did not contain the expected LF/CRLF conversion warning: %q", hashResult.Stderr)
 	}
 	blobRef := filepath.Join(fixture.remote, "refs", "heads", "blob")
-	if err := os.MkdirAll(filepath.Dir(blobRef), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(blobRef, []byte(blob+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(filepath.Dir(blobRef), 0o700))
+	noErr(t, os.WriteFile(blobRef, []byte(blob+"\n"), 0o600))
 	if _, err := fixture.service.Create(fixture.ctx, CreateInput{
 		Repository: fixture.repositoryID, Title: "Blob", SourceBranch: "blob", TargetBranch: "main", ReviewChoice: "skip",
 	}); problemCode(err) != "source_not_commit" {
@@ -992,30 +846,18 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	store, err := state.Open(ctx, stateRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", "synthetic-admin-hash", true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", "synthetic-admin-hash", true))
 	runner, err := gitexec.New("", filepath.Join(stateRoot, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	stored, err := manager.Create(ctx, "project", "pull request fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	remote, err := manager.Path(stored.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	work := filepath.Join(root, "work")
 	runFixtureGit(t, "", "init", "--initial-branch=main", work)
 	runFixtureGit(t, work, "config", "user.name", "PR Test")
@@ -1106,9 +948,7 @@ func fixtureGitResultOutput(t *testing.T, directory string, arguments ...string)
 func newOldGitRunner(t *testing.T, runtimeDirectory string) (*gitexec.Runner, string) {
 	t.Helper()
 	realGit, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	root := t.TempDir()
 	marker := filepath.Join(root, "merge-tree-invoked")
 	wrapper := filepath.Join(root, "git-old")
@@ -1118,13 +958,9 @@ func newOldGitRunner(t *testing.T, runtimeDirectory string) (*gitexec.Runner, st
 		"  if test \"$arg\" = merge-tree; then printf invoked > " + shellQuote(marker) + "; exit 97; fi\n" +
 		"done\n" +
 		"exec " + shellQuote(realGit) + " \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
 	runner, err := gitexec.New(wrapper, runtimeDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return runner, marker
 }
 

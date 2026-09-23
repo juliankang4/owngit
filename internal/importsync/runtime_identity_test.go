@@ -25,12 +25,8 @@ func TestReplacedRuntimeDirectoryEndsOwnership(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(runtimeRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(filepath.Join(moved, filepath.Base(f.service.stagingRootPath())), f.service.stagingRootPath()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(runtimeRoot, 0o700))
+	noErr(t, os.Rename(filepath.Join(moved, filepath.Base(f.service.stagingRootPath())), f.service.stagingRootPath()))
 
 	root, prepared := f.service.preparedRuntime()
 	if !prepared {

@@ -277,10 +277,10 @@ Raw check logs are stored in `owngit.sqlite`, limited to 256 KiB each, and kept 
 - Repository names cannot end in `.git` or use Windows device names such as `CON`, `AUX`, `NUL`, `COM1`, or `LPT1`, with or without an extension. `new` and `new-import` are reserved. These rules apply on every platform.
 - Expired logs free space inside the database for reuse, but the file does not shrink, the old bytes are not securely erased, and there is no overall size limit. OwnGit does not run `VACUUM`.
 - When a `-wal` or `-shm` file is present at startup, OwnGit copies the database and its WAL to a private temporary directory to inspect them. The temporary volume needs about that much free space.
-- On start, OwnGit upgrades a database from an earlier version in place. It refuses a database from a newer or unknown version and leaves its files unchanged. An older build refuses a database that a newer build has upgraded, so back up before you replace the executable.
+- On start, OwnGit upgrades a database from the earlier committed version in place. It refuses a database from a newer or unknown version, or from an unreleased development build, and leaves its files unchanged. An older build refuses a database that a newer build has upgraded, so back up before you replace the executable.
 - OwnGit does not read or remove a `logs/` directory left by older versions. Remove it yourself once no older OwnGit process uses it.
 - Removing the `owngit` executable leaves the state directory and repositories in place. Delete them yourself only when you no longer need them.
-- Databases from builds that had built-in AI review may still contain provider tokens. OwnGit never reads them, and they are excluded from backups, but upgrading does not erase their bytes.
+- A database from an unreleased development build that had built-in AI review may still hold review records and provider tokens. OwnGit does not use or erase them. Backup never copies the tokens, and it checks for review records and refuses to run while any remain.
 
 ## Offline backups
 
@@ -305,7 +305,7 @@ Backup refuses to run when an import publication is still unsettled for a reposi
 
 The manifest is limited to 64 MiB. A backup that would exceed it fails without writing output and never drops records to fit. Creating a backup holds the whole export in memory.
 
-OwnGit restores backup versions 1, 2, 5, 6, 7, 8, and 9 and refuses others. Older builds refuse a newer backup instead of dropping records they do not know. Restore into new paths that do not exist:
+OwnGit restores backup versions 1, 2, and 9 and refuses others, including the versions 3 through 8 that only unreleased development builds wrote. Older builds refuse a newer backup instead of dropping records they do not know. Restore into new paths that do not exist:
 
 ```sh
 ./bin/owngit restore \

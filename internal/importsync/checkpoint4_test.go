@@ -55,12 +55,8 @@ func TestReconcilePagesPendingIntentsAndDefersLockLogs(t *testing.T) {
 	if _, err := f.service.Prepare(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(f.service.stagingRootPath(), "odd"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(filepath.Join(f.service.stagingRootPath(), "odd"), 0o700))
+	noErr(t, f.service.Reconcile(ctx))
 	if loggedUnderLock {
 		t.Fatal("reconciliation logged while a repository lock was held")
 	}
@@ -68,9 +64,7 @@ func TestReconcilePagesPendingIntentsAndDefersLockLogs(t *testing.T) {
 		t.Fatalf("intent pages=%v", pages)
 	}
 	again := len(pages)
-	if err := f.service.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.Reconcile(ctx))
 	if len(pages) != again {
 		t.Fatal("second reconcile re-read resolved intents")
 	}
@@ -171,9 +165,7 @@ func TestStatusAndHistoryUseBoundedPages(t *testing.T) {
 			OID: strings.Repeat("a", 40), ObservedAt: now,
 		})
 	}
-	if err := f.store.RecordImportObservations(ctx, observations); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.RecordImportObservations(ctx, observations))
 	status, err := f.service.Status(ctx, "project")
 	if err != nil || !status.RefsTruncated || len(status.Refs) > statusRefLimit {
 		t.Fatalf("status did not bound observations: truncated=%v refs=%d err=%v", status.RefsTruncated, len(status.Refs), err)
@@ -184,17 +176,13 @@ func TestStatusAndHistoryUseBoundedPages(t *testing.T) {
 			Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing, StartedAt: now.Add(time.Duration(index) * time.Second),
 			CreatedAt: now,
 		}
-		if err := f.store.BeginImportRun(ctx, run); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, f.store.BeginImportRun(ctx, run))
 		run.Status = state.ImportRunFailed
 		run.FinishedAt = now
 		run.LFSInspectionDone = true
 		run.ErrorClass = CodeRuntimeUnavailable
 		run.Message = "failed"
-		if err := f.store.FinishImportRun(ctx, run); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, f.store.FinishImportRun(ctx, run))
 	}
 	page, more, err := f.service.History(ctx, "project", 1)
 	if err != nil || len(page) != 1 || !more || page[0].RowID == 0 {

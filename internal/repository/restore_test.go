@@ -14,34 +14,22 @@ func TestRestoreWholeTreeSelectedFilesCASAndNoOp(t *testing.T) {
 	manager, remote, work := newTestRepository(t)
 	ctx := context.Background()
 
-	if err := os.WriteFile(filepath.Join(work, "common.txt"), []byte("source\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, "script.sh"), []byte("#!/bin/sh\necho restored\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, "binary.dat"), []byte{0, 1, 2, 255}, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "common.txt"), []byte("source\n"), 0o600))
+	noErr(t, os.WriteFile(filepath.Join(work, "script.sh"), []byte("#!/bin/sh\necho restored\n"), 0o700))
+	noErr(t, os.WriteFile(filepath.Join(work, "binary.dat"), []byte{0, 1, 2, 255}, 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "update-index", "--chmod=+x", "script.sh")
 	// Add symlink data through Git so the fixture does not follow or depend on
 	// host filesystem symlink support.
 	result, err := manager.Git.Run(ctx, work, strings.NewReader("common.txt"), "hash-object", "-w", "--stdin")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	linkBlob := strings.TrimSpace(string(result.Stdout))
 	runGit(t, work, "update-index", "--add", "--cacheinfo", "120000,"+linkBlob+",link")
 	runGit(t, work, "commit", "-m", "source tree")
 	sourceOID := gitOutput(t, work, "rev-parse", "HEAD")
 
-	if err := os.WriteFile(filepath.Join(work, "common.txt"), []byte("target\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, "deleted.txt"), []byte("target only\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "common.txt"), []byte("target\n"), 0o600))
+	noErr(t, os.WriteFile(filepath.Join(work, "deleted.txt"), []byte("target only\n"), 0o600))
 	runGit(t, work, "rm", "script.sh", "binary.dat", "link")
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "target tree")
@@ -50,17 +38,13 @@ func TestRestoreWholeTreeSelectedFilesCASAndNoOp(t *testing.T) {
 
 	request := RestoreRequest{Source: sourceOID, Target: "main", Mode: RestoreAll}
 	preview, err := manager.PreviewRestore(ctx, "sample", request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if preview.ExpectedHead != targetOID || preview.CreatesBranch || !preview.CanApply || len(preview.Changes) != 5 {
 		t.Fatalf("unexpected whole-tree preview: %+v", preview)
 	}
 	request.ExpectedHead = preview.ExpectedHead
 	applied, err := manager.ApplyRestore(ctx, "sample", request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if applied.Created || applied.CommitOID == sourceOID || gitOutput(t, "", "--git-dir", remote, "rev-parse", applied.CommitOID+"^") != targetOID {
 		t.Fatalf("whole restore did not create a child of the target: %+v", applied)
 	}
@@ -87,14 +71,10 @@ func TestRestoreWholeTreeSelectedFilesCASAndNoOp(t *testing.T) {
 	runGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/"+partialTarget, targetOID)
 	partialRequest := RestoreRequest{Source: sourceOID, Target: partialTarget, Mode: RestoreFiles, Paths: []string{"common.txt"}}
 	partialPreview, err := manager.PreviewRestore(ctx, "sample", partialRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	partialRequest.ExpectedHead = partialPreview.ExpectedHead
 	partialResult, err := manager.ApplyRestore(ctx, "sample", partialRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if got := gitOutput(t, "", "--git-dir", remote, "show", partialResult.CommitOID+":common.txt"); got != "source" {
 		t.Fatalf("selected file content=%q", got)
 	}
@@ -112,14 +92,10 @@ func TestRestoreWholeTreeSelectedFilesCASAndNoOp(t *testing.T) {
 		Paths: []string{"common.txt", "script.sh", "binary.dat", "link", "deleted.txt"},
 	}
 	selectedPreview, err := manager.PreviewRestore(ctx, "sample", selectedRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	selectedRequest.ExpectedHead = selectedPreview.ExpectedHead
 	selectedResult, err := manager.ApplyRestore(ctx, "sample", selectedRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if got := gitOutput(t, "", "--git-dir", remote, "rev-parse", selectedResult.CommitOID+"^{tree}"); got != gitOutput(t, "", "--git-dir", remote, "rev-parse", sourceOID+"^{tree}") {
 		t.Fatalf("selected restore tree=%s, want source tree", got)
 	}
@@ -131,9 +107,7 @@ func TestRestoreWholeTreeSelectedFilesCASAndNoOp(t *testing.T) {
 	}
 
 	stalePreview, err := manager.PreviewRestore(ctx, "sample", RestoreRequest{Source: targetOID, Target: selectedTarget, Mode: RestoreAll})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	runGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/"+selectedTarget, targetOID, selectedResult.CommitOID)
 	_, err = manager.ApplyRestore(ctx, "sample", RestoreRequest{Source: sourceOID, Target: selectedTarget, Mode: RestoreAll, ExpectedHead: stalePreview.ExpectedHead})
 	if !errors.Is(err, ErrRestoreConflict) {
@@ -173,9 +147,7 @@ func TestRestorePatchPreviewTreatsMagicFilenamesLiterally(t *testing.T) {
 	runGit(t, work, "push", "origin", targetOID+":refs/heads/main")
 
 	preview, err := manager.PreviewRestore(ctx, "sample", RestoreRequest{Source: sourceOID, Target: "main", Mode: RestoreAll})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	patch := preview.Patches[magic]
 	if patch == "" {
 		t.Fatalf("missing patch for %q: %+v", magic, preview.Patches)
@@ -211,9 +183,7 @@ func TestRestorePublicationReadbackDistinguishesAppliedFailureConflictAndNoChang
 		return context.Canceled
 	}
 	result, err := manager.ApplyRestore(canceledCtx, "sample", appliedRequest)
-	if err != nil {
-		t.Fatalf("applied update reported as failure: %v", err)
-	}
+	noErr(t, err, "applied update reported as failure")
 	assertRef(t, remote, "refs/heads/applied", result.CommitOID)
 
 	manager.restorePublisher = func(_ context.Context, repositoryPath, targetRef, _ string, expected string) error {
@@ -256,9 +226,7 @@ func TestRestoreAllowsExactDanglingCommit(t *testing.T) {
 
 	request := RestoreRequest{Source: sourceOID, Target: "main", Mode: RestoreAll, ExpectedHead: targetOID}
 	result, err := manager.ApplyRestore(ctx, "sample", request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if got := gitOutput(t, "", "--git-dir", remote, "rev-parse", result.CommitOID+"^{tree}"); got != gitOutput(t, "", "--git-dir", remote, "rev-parse", sourceOID+"^{tree}") {
 		t.Fatalf("restored tree=%s, want dangling source tree", got)
 	}
@@ -285,9 +253,7 @@ func TestRepositoryIDsArePortableAcrossSupportedPlatforms(t *testing.T) {
 func TestRestoreRejectsTagGitlinkAndUnsafePathCollision(t *testing.T) {
 	manager, remote, work := newTestRepository(t)
 	ctx := context.Background()
-	if err := os.WriteFile(filepath.Join(work, "node"), []byte("source file\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "node"), []byte("source file\n"), 0o600))
 	runGit(t, work, "add", "node")
 	runGit(t, work, "commit", "-m", "source file")
 	sourceOID := gitOutput(t, work, "rev-parse", "HEAD")
@@ -297,12 +263,8 @@ func TestRestoreRejectsTagGitlinkAndUnsafePathCollision(t *testing.T) {
 
 	runGit(t, work, "checkout", "--orphan", "collision-target")
 	runGit(t, work, "rm", "-rf", ".")
-	if err := os.Mkdir(filepath.Join(work, "node"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, "node", "child"), []byte("keep unless selected\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(filepath.Join(work, "node"), 0o700))
+	noErr(t, os.WriteFile(filepath.Join(work, "node", "child"), []byte("keep unless selected\n"), 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "target directory")
 	targetOID := gitOutput(t, work, "rev-parse", "HEAD")

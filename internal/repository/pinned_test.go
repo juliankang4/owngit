@@ -14,9 +14,7 @@ func TestPinnedRepositoryIgnoresMovedRefsAndReplacementObjects(t *testing.T) {
 	manager, remote, work := newTestRepository(t)
 	commitFile(t, work, "base\n", "base", "2024-01-01T00:00:00Z")
 	baseOID := gitOutput(t, work, "rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(work, ".gitattributes"), []byte("file.txt diff=unsafe filter=unsafe\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, ".gitattributes"), []byte("file.txt diff=unsafe filter=unsafe\n"), 0o600))
 	runGit(t, work, "add", ".gitattributes")
 	commitFile(t, work, "pinned head\n", "head", "2024-01-02T00:00:00Z")
 	headOID := gitOutput(t, work, "rev-parse", "HEAD")
@@ -26,9 +24,7 @@ func TestPinnedRepositoryIgnoresMovedRefsAndReplacementObjects(t *testing.T) {
 	runGit(t, "", "--git-dir", remote, "config", "filter.unsafe.smudge", "definitely-missing-smudge-filter")
 
 	pinned, err := manager.PinRepository(context.Background(), "sample", baseOID, headOID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	commitFile(t, work, "later branch tip\n", "later", "2024-01-03T00:00:00Z")
 	laterOID := gitOutput(t, work, "rev-parse", "HEAD")
@@ -36,16 +32,12 @@ func TestPinnedRepositoryIgnoresMovedRefsAndReplacementObjects(t *testing.T) {
 	runGit(t, "", "--git-dir", remote, "replace", headOID, laterOID)
 
 	blob, err := pinned.ReadBlob(context.Background(), PinnedHead, "file.txt", 0, 64<<10, 1024, 4096)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if string(blob.Content) != "pinned head\n" || blob.HasMore {
 		t.Fatalf("pinned head changed after ref/replacement mutation: content=%q more=%v", blob.Content, blob.HasMore)
 	}
 	change, err := pinned.ReadChange(context.Background(), 64<<10)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !strings.Contains(string(change.Patch), "+pinned head") || strings.Contains(string(change.Patch), "later branch tip") {
 		t.Fatalf("pinned diff followed mutable state:\n%s", change.Patch)
 	}
@@ -79,13 +71,9 @@ func TestPinnedTreePreservesLiteralPathsAndClassifiesSpecialEntries(t *testing.T
 	headOID := commitBareTree(t, remote, rootTreeOID, baseOID)
 
 	pinned, err := manager.PinRepository(context.Background(), "sample", baseOID, headOID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	root, err := pinned.ListTree(context.Background(), PinnedHead, "", 64<<10)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	kinds := make(map[string]string)
 	for _, entry := range root {
 		kinds[entry.Path] = entry.Type + ":" + entry.Mode
@@ -123,22 +111,14 @@ func TestPinnedBlobContinuationAndOutputLimits(t *testing.T) {
 	oid := gitOutput(t, work, "rev-parse", "HEAD")
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	pinned, err := manager.PinRepository(context.Background(), "sample", oid, oid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	first, err := pinned.ReadBlob(context.Background(), PinnedHead, "file.txt", 0, 4096, 5, 12)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	second, err := pinned.ReadBlob(context.Background(), PinnedHead, "file.txt", 5, 4096, 5, 12)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	third, err := pinned.ReadBlob(context.Background(), PinnedHead, "file.txt", 10, 4096, 5, 12)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if string(first.Content) != "01234" || string(second.Content) != "56789" || string(third.Content) != "ab" {
 		t.Fatalf("unexpected continuation chunks: %q %q %q", first.Content, second.Content, third.Content)
 	}
@@ -161,13 +141,9 @@ func TestPinnedChangeReportsTruncationAndCancellation(t *testing.T) {
 	headOID := gitOutput(t, work, "rev-parse", "HEAD")
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	pinned, err := manager.PinRepository(context.Background(), "sample", baseOID, headOID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	change, err := pinned.ReadChange(context.Background(), 128)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !change.Truncated || len(change.Patch) != 128 {
 		t.Fatalf("bounded diff len=%d truncated=%v", len(change.Patch), change.Truncated)
 	}
@@ -219,13 +195,9 @@ func TestPinnedRepositoryDoesNotRetargetVanishedObject(t *testing.T) {
 	treeOID := gitOutput(t, "", "--git-dir", remote, "rev-parse", baseOID+"^{tree}")
 	headOID := commitBareTree(t, remote, treeOID, baseOID)
 	pinned, err := manager.PinRepository(context.Background(), "sample", baseOID, headOID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	objectPath := filepath.Join(remote, "objects", headOID[:2], headOID[2:])
-	if err := os.Remove(objectPath); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Remove(objectPath))
 	if _, err := pinned.ReadChange(context.Background(), 4096); !errors.Is(err, ErrPinnedObjectUnavailable) {
 		t.Fatalf("vanished head err=%v", err)
 	}
@@ -240,14 +212,10 @@ func TestPinnedRepositoryRefusesStorageReplacement(t *testing.T) {
 	oid := gitOutput(t, work, "rev-parse", "HEAD")
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	pinned, err := manager.PinRepository(context.Background(), "sample", oid, oid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	oldPath := remote + ".old"
-	if err := os.Rename(remote, oldPath); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Rename(remote, oldPath))
 	runGit(t, "", "init", "--bare", remote)
 	if _, err := pinned.ListTree(context.Background(), PinnedHead, "", 4096); !errors.Is(err, ErrPinnedRepositoryChanged) {
 		t.Fatalf("replacement repository err=%v", err)
@@ -265,9 +233,7 @@ func TestValidatePinnedPathDeniesHostPathsAndTraversal(t *testing.T) {
 			t.Errorf("literal path %q rejected: %v", value, err)
 		}
 	}
-	if err := ValidatePinnedPath("", true); err != nil {
-		t.Fatalf("root path rejected: %v", err)
-	}
+	noErr(t, ValidatePinnedPath("", true), "root path rejected")
 	if err := ValidatePinnedPath("", false); err == nil {
 		t.Fatal("empty file path unexpectedly accepted")
 	}

@@ -21,13 +21,9 @@ import (
 func applyDistinguishableACL(t *testing.T, path string, directory bool) {
 	t.Helper()
 	user, _, err := processIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	inheritance := uint32(windows.NO_INHERITANCE)
 	if directory {
 		inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
@@ -54,9 +50,7 @@ func applyDistinguishableACL(t *testing.T, path string, directory bool) {
 			},
 		},
 	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		user, nil, acl, nil); err != nil {
@@ -72,9 +66,7 @@ func captureDescriptors(t *testing.T, directory string, names []string) map[stri
 	descriptors := map[string]string{}
 	for _, name := range names {
 		descriptor, err := protectionFingerprint(filepath.Join(directory, name))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		descriptors[name] = descriptor
 	}
 	return descriptors
@@ -84,9 +76,7 @@ func assertDescriptorsUnchanged(t *testing.T, directory string, want map[string]
 	t.Helper()
 	for name, before := range want {
 		after, err := protectionFingerprint(filepath.Join(directory, name))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if after != before {
 			t.Fatalf("refusal changed the security descriptor of %s:\nbefore=%s\nafter=%s", name, before, after)
 		}
@@ -106,7 +96,7 @@ func TestWindowsUnsupportedRefusalPreservesSecurityDescriptors(t *testing.T) {
 			createNumberedSchemaDatabase(t, directory, 5)
 		}},
 		{name: "schema 5 committed in WAL", fragment: "schema 5", prepare: func(t *testing.T, directory string) {
-			createCrashedWALFixture(t, directory, true, commitCurrentSchemaThenChangeVersion("5"))
+			createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion("5"))
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -134,9 +124,7 @@ func TestWindowsFreshDirectoryRefusalPreservesSecurityDescriptor(t *testing.T) {
 	prepared := filepath.Join(t.TempDir(), "prepared")
 	createNumberedSchemaDatabase(t, prepared, 5)
 	schemaFive, err := os.ReadFile(filepath.Join(prepared, databaseName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	tests := []struct {
 		name     string
 		fragment string
@@ -144,17 +132,13 @@ func TestWindowsFreshDirectoryRefusalPreservesSecurityDescriptor(t *testing.T) {
 	}{
 		{name: "schema 5 database appears", fragment: ErrInspectionUnstable.Error(), disturb: func(t *testing.T, directory string) string {
 			path := filepath.Join(directory, databaseName)
-			if err := os.WriteFile(path, schemaFive, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(path, schemaFive, 0o600))
 			applyDistinguishableACL(t, path, false)
 			return databaseName
 		}},
 		{name: "WAL appears", fragment: ErrInspectionUnstable.Error(), disturb: func(t *testing.T, directory string) string {
 			path := filepath.Join(directory, databaseName+walSuffix)
-			if err := os.WriteFile(path, []byte("orphan"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(path, []byte("orphan"), 0o600))
 			applyDistinguishableACL(t, path, false)
 			return databaseName + walSuffix
 		}},
@@ -162,9 +146,7 @@ func TestWindowsFreshDirectoryRefusalPreservesSecurityDescriptor(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			if err := os.Mkdir(directory, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Mkdir(directory, 0o700))
 			applyDistinguishableACL(t, directory, true)
 			original := captureDescriptors(t, directory, []string{"."})
 			var afterDisturbance map[string]string
@@ -188,12 +170,8 @@ func TestWindowsFreshDirectoryRefusalPreservesSecurityDescriptor(t *testing.T) {
 		root := t.TempDir()
 		directory := filepath.Join(root, "state")
 		replacement := filepath.Join(root, "replacement")
-		if err := os.Mkdir(directory, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Mkdir(replacement, 0o700); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Mkdir(directory, 0o700))
+		noErr(t, os.Mkdir(replacement, 0o700))
 		applyDistinguishableACL(t, directory, true)
 		applyDistinguishableACL(t, replacement, true)
 		originalDescriptor := captureDescriptors(t, directory, []string{"."})
@@ -247,24 +225,16 @@ func TestWindowsReparseStateEntriesAreRefused(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			directory := filepath.Join(root, "state")
-			if err := os.Mkdir(directory, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Mkdir(directory, 0o700))
 			if name != databaseName {
 				createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
 			}
 			target := filepath.Join(root, "target")
-			if err := os.Mkdir(target, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Mkdir(target, 0o700))
 			marker := filepath.Join(target, "marker")
-			if err := os.WriteFile(marker, []byte("reparse target"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(marker, []byte("reparse target"), 0o600))
 			beforeInfo, err := os.Stat(marker)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			protections := captureProtectionFingerprints(t, directory, target, marker)
 			junction := filepath.Join(directory, name)
 			command := exec.Command("cmd.exe", "/d", "/c", "mklink", "/J", junction, target)
@@ -272,18 +242,14 @@ func TestWindowsReparseStateEntriesAreRefused(t *testing.T) {
 				t.Fatalf("create junction %s: %v: %s", name, err, output)
 			}
 			junctionName, err := windows.UTF16PtrFromString(junction)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			attributes, err := windows.GetFileAttributes(junctionName)
 			if err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
 				t.Fatalf("junction attributes=%#x err=%v", attributes, err)
 			}
 			openRefused(t, directory, "must be a regular file")
 			afterInfo, err := os.Stat(marker)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			content, err := os.ReadFile(marker)
 			if err != nil || string(content) != "reparse target" || !os.SameFile(beforeInfo, afterInfo) || beforeInfo.Size() != afterInfo.Size() || !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
 				t.Fatalf("reparse target changed: content=%q before=%v after=%v err=%v", content, beforeInfo, afterInfo, err)

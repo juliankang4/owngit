@@ -35,41 +35,27 @@ func newPushFixture(t *testing.T, queueLimit int) *pushFixture {
 	ctx := context.Background()
 	root := t.TempDir()
 	store, err := state.Open(ctx, filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
 			t.Error(err)
 		}
 	})
 	git, err := gitexec.New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", "test-admin-hash", true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", "test-admin-hash", true))
 	manager := &repository.Manager{Store: store, Git: git, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	stored, err := manager.Create(ctx, "workflows", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repoPath, err := manager.Path(stored.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fixture := &pushFixture{t: t, ctx: ctx, store: store, repositoryID: stored.ID, repoPath: repoPath, work: filepath.Join(root, "work")}
 	fixture.git("init", "--initial-branch=main", fixture.work)
 	fixture.git("-C", fixture.work, "config", "user.name", "OwnGit Test")
 	fixture.git("-C", fixture.work, "config", "user.email", "test@example.invalid")
-	if err := os.MkdirAll(filepath.Join(fixture.work, ".owngit"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(filepath.Join(fixture.work, ".owngit"), 0o700))
 
 	now := time.Now().UTC().Add(-time.Minute)
 	if _, err := store.SetCheckPolicy(ctx, state.CheckPolicyInput{
@@ -147,9 +133,7 @@ func TestInvalidWorkflowOnOneBranchDoesNotBlockLaterBranches(t *testing.T) {
 	mainOID := fixture.pushWorkflow("main", validWorkflow)
 	brokenOID := fixture.pushWorkflow("a-broken", `{`)
 	for pass := 0; pass < 2; pass++ {
-		if err := fixture.coordinator.reconcile(fixture.ctx); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, fixture.coordinator.reconcile(fixture.ctx))
 	}
 	if refs := fixture.jobRefs(); len(refs) != 1 || refs[0] != "main" {
 		t.Fatalf("admitted jobs for %v, want only main", refs)
@@ -173,9 +157,7 @@ func TestInvalidWorkflowOnOneBranchDoesNotBlockLaterBranches(t *testing.T) {
 
 	// Fixing the branch moves it to a new revision, which is admitted.
 	fixture.pushWorkflow("a-broken", validWorkflow)
-	if err := fixture.coordinator.reconcile(fixture.ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
 	if refs := fixture.jobRefs(); len(refs) != 2 {
 		t.Fatalf("admitted jobs after the fix=%v", refs)
 	}
@@ -188,9 +170,7 @@ func TestFullQueueKeepsTheBranchForALaterPass(t *testing.T) {
 	fixture.pushWorkflow("a-first", validWorkflow)
 	secondOID := fixture.pushWorkflow("b-second", validWorkflow)
 	policy, _, err := fixture.store.CheckPolicy(fixture.ctx, fixture.repositoryID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := fixture.coordinator.reconcilePushes(fixture.ctx, fixture.repositoryID, policy); !errors.Is(err, state.ErrCheckQueueFull) {
 		t.Fatalf("reconcile err=%v, want a full queue", err)
 	}
@@ -207,9 +187,7 @@ func TestFullQueueKeepsTheBranchForALaterPass(t *testing.T) {
 	if _, err := fixture.store.CancelCheckJob(fixture.ctx, fixture.repositoryID, jobs[0].ID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.coordinator.reconcilePushes(fixture.ctx, fixture.repositoryID, policy); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.coordinator.reconcilePushes(fixture.ctx, fixture.repositoryID, policy))
 	if observed := fixture.observed(); observed["refs/heads/b-second"] != secondOID {
 		t.Fatalf("the branch was not admitted after the queue drained: %v", observed)
 	}

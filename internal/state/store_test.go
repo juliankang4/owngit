@@ -16,9 +16,7 @@ func TestBootstrapRedemptionIsAtomic(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	now := time.Unix(1_800_000_000, 0)
-	if err := store.PutBootstrap(ctx, "owner-token", now.Add(time.Minute)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.PutBootstrap(ctx, "owner-token", now.Add(time.Minute)))
 
 	var redeemed atomic.Int32
 	var wait sync.WaitGroup
@@ -45,9 +43,7 @@ func TestBootstrapRedemptionIsAtomic(t *testing.T) {
 func TestBootstrapWriteAtomicallyRejectsCompletedSetup(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
 	if err := store.PutBootstrap(ctx, "late-token", time.Now().Add(time.Minute)); !errors.Is(err, ErrSetupComplete) {
 		t.Fatalf("PutBootstrap after setup error=%v, want ErrSetupComplete", err)
 	}
@@ -61,18 +57,12 @@ func TestBootstrapExpiryAndReissueInvalidateOldCapability(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	now := time.Unix(1_800_000_000, 0)
-	if err := store.PutBootstrap(ctx, "expired", now.Add(-time.Second)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.PutBootstrap(ctx, "expired", now.Add(-time.Second)))
 	if ok, err := store.RedeemBootstrap(ctx, "expired", "session", "csrf", now, now.Add(time.Minute)); err != nil || ok {
 		t.Fatalf("expired capability redeemed=%v err=%v", ok, err)
 	}
-	if err := store.PutBootstrap(ctx, "first", now.Add(time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.PutBootstrap(ctx, "replacement", now.Add(time.Minute)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.PutBootstrap(ctx, "first", now.Add(time.Minute)))
+	noErr(t, store.PutBootstrap(ctx, "replacement", now.Add(time.Minute)))
 	if ok, err := store.RedeemBootstrap(ctx, "first", "old-session", "csrf", now, now.Add(time.Minute)); err != nil || ok {
 		t.Fatalf("reissued old capability redeemed=%v err=%v", ok, err)
 	}
@@ -84,25 +74,17 @@ func TestBootstrapExpiryAndReissueInvalidateOldCapability(t *testing.T) {
 func TestSetupAndCredentialModeTransitions(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	if err := store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
 	if err := store.CompleteSetup(ctx, t.TempDir(), "open", "", "other", true); err == nil {
 		t.Fatal("second setup unexpectedly succeeded")
 	}
 	settings, err := store.Settings(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !settings.Initialized || settings.AccessMode != "open" || !settings.InsecureHTTPAccepted {
 		t.Fatalf("unexpected settings: %+v", settings)
 	}
-	if err := store.CreateSession(ctx, "old-general", "general", "csrf", settings.AccessSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SetAccessPassword(ctx, "access-hash"); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CreateSession(ctx, "old-general", "general", "csrf", settings.AccessSessionVersion, time.Now().Add(time.Hour)))
+	noErr(t, store.SetAccessPassword(ctx, "access-hash"))
 	if _, ok, err := store.Session(ctx, "old-general", "general", time.Now()); err != nil || ok {
 		t.Fatalf("old session survived mode change: ok=%v err=%v", ok, err)
 	}
@@ -110,9 +92,7 @@ func TestSetupAndCredentialModeTransitions(t *testing.T) {
 	if settings.AccessMode != "password" || settings.AccessSessionVersion != 2 {
 		t.Fatalf("password mode not recorded: %+v", settings)
 	}
-	if err := store.DisableAccessPassword(ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.DisableAccessPassword(ctx))
 	settings, _ = store.Settings(ctx)
 	if settings.AccessMode != "open" || settings.AccessSessionVersion != 3 {
 		t.Fatalf("open mode not restored: %+v", settings)
@@ -153,9 +133,7 @@ func TestSQLiteFileURIKeepsWindowsDriveInThePathAndEscapesReservedBytes(t *testi
 func TestStateOpenHandlesEscapedPathCharacters(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "OwnGit state # %")
 	store, err := Open(context.Background(), directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	if _, err := store.Settings(context.Background()); err != nil {
 		t.Fatalf("read state from escaped path: %v", err)
@@ -168,9 +146,7 @@ func TestStateOpenHandlesEscapedPathCharacters(t *testing.T) {
 func TestStateFilesAreOwnerOnly(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
 	store, err := Open(context.Background(), directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	if databaseName != "owngit.sqlite" {
 		t.Fatalf("database name = %q, want owngit.sqlite", databaseName)
@@ -181,9 +157,35 @@ func TestStateFilesAreOwnerOnly(t *testing.T) {
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "state"))
+	noErr(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+// noErr stops the test on an unexpected error. t.Helper keeps the failure
+// line at the caller.
+func noErr(t testing.TB, err error) {
+	t.Helper()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	return store
+}
+
+// newProjectStore opens a store that holds repository "project" and returns
+// the context and fixed time its setup used.
+func newProjectStore(t *testing.T) (*Store, context.Context, time.Time) {
+	t.Helper()
+	store := openTestStore(t)
+	ctx := context.Background()
+	now := time.Unix(1_800_000_000, 0)
+	noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}))
+	return store, ctx, now
+}
+
+// newProjectTask creates the task most check tests record attempts for.
+func newProjectTask(t *testing.T, store *Store, ctx context.Context, now time.Time) Task {
+	t.Helper()
+	task, err := store.CreateTask(ctx, "project", "Fix the build", now)
+	noErr(t, err)
+	return task
 }

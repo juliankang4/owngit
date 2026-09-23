@@ -21,9 +21,7 @@ const testNativeBaseline = "accepted-core-sha256=abc123;release-sha256=def456"
 
 func TestSelectNativeFormats(t *testing.T) {
 	selected, err := selectNativeFormats("macos,deb")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !selected["macos"] || !selected["deb"] || len(selected) != 2 {
 		t.Fatalf("selected formats = %#v", selected)
 	}
@@ -59,16 +57,12 @@ func TestNativeDebPrototypes(t *testing.T) {
 			t.Fatalf("invalid prototype claims for %s: %#v", built.Name, built)
 		}
 		packageData, err := os.ReadFile(filepath.Join(first, built.Name))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if sha256Bytes(packageData) != built.SHA256 {
 			t.Fatalf("%s digest does not match its manifest", built.Name)
 		}
 		members, err := readAr(packageData)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if got := arMemberNames(members); strings.Join(got, ",") != "debian-binary,control.tar.gz,data.tar.gz" {
 			t.Fatalf("%s members = %v", built.Name, got)
 		}
@@ -113,9 +107,7 @@ func TestNativeDebPrototypes(t *testing.T) {
 			}
 		}
 		var provenance packageProvenance
-		if err := json.Unmarshal(dataFiles["usr/share/doc/owngit/package-provenance.json"].data, &provenance); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, json.Unmarshal(dataFiles["usr/share/doc/owngit/package-provenance.json"].data, &provenance))
 		if provenance.Baseline != testNativeBaseline || provenance.ApplicationBinarySHA256 != built.ApplicationBinarySHA256 {
 			t.Fatalf("%s provenance does not bind the baseline and binary", built.Name)
 		}
@@ -141,13 +133,9 @@ func TestNativeDebPrototypes(t *testing.T) {
 		}
 	}
 	firstManifest, err := os.ReadFile(filepath.Join(first, "native-manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	secondManifest, err := os.ReadFile(filepath.Join(second, "native-manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !bytes.Equal(firstManifest, secondManifest) {
 		t.Fatal("native manifest is not reproducible")
 	}
@@ -174,9 +162,7 @@ func TestNativeRefusesInvalidInputBeforeOutput(t *testing.T) {
 	t.Run("existing destination", func(t *testing.T) {
 		out := t.TempDir()
 		sentinel := filepath.Join(out, "keep.txt")
-		if err := os.WriteFile(sentinel, []byte("keep\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(sentinel, []byte("keep\n"), 0o644))
 		before := snapshotTree(t, out)
 		err := nativeCommand([]string{
 			"-source", root, "-manifest", filepath.Join(portable, "manifest.json"),
@@ -194,18 +180,12 @@ func TestNativeRefusesInvalidInputBeforeOutput(t *testing.T) {
 	t.Run("corrupt portable archive", func(t *testing.T) {
 		corrupt := copyDist(t, portable)
 		document, err := readManifest(filepath.Join(corrupt, "manifest.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		path := filepath.Join(corrupt, document.Artifacts[0].Name)
 		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		data[len(data)/2] ^= 0xff
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(path, data, 0o644))
 		out := filepath.Join(t.TempDir(), "native")
 		err = nativeCommand([]string{
 			"-source", root, "-manifest", filepath.Join(corrupt, "manifest.json"),
@@ -227,13 +207,9 @@ func TestNativePinsPortableInputsBeforeVerification(t *testing.T) {
 	root := repoRoot(t)
 	portable := copyDist(t, sharedDist(t))
 	document, err := readManifest(filepath.Join(portable, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manifestDigest, err := sha256File(filepath.Join(portable, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var archivePath string
 	for _, built := range document.Artifacts {
 		if built.Target == "linux/amd64" {
@@ -249,14 +225,10 @@ func TestNativePinsPortableInputsBeforeVerification(t *testing.T) {
 	writeReplacementTar(t, archivePath, replacementPath, "LICENSE", marker)
 
 	realGo, err := exec.LookPath("go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	wrapperDir := t.TempDir()
 	countPath := filepath.Join(wrapperDir, "count")
-	if err := os.WriteFile(countPath, []byte("0\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(countPath, []byte("0\n"), 0o600))
 	wrapperPath := filepath.Join(wrapperDir, "go-wrapper")
 	wrapper := `#!/bin/sh
 count=$(cat "$OWNGIT_TEST_COUNT")
@@ -269,9 +241,7 @@ if [ "$count" -eq "$OWNGIT_TEST_TRIGGER" ]; then
 fi
 exit "$status"
 `
-	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	t.Setenv("OWNGIT_TEST_COUNT", countPath)
 	t.Setenv("OWNGIT_TEST_REAL_GO", realGo)
 	t.Setenv("OWNGIT_TEST_TRIGGER", strconv.Itoa(len(document.Artifacts)))
@@ -282,16 +252,12 @@ exit "$status"
 		root, filepath.Join(portable, "manifest.json"), testNativeBaseline,
 		wrapperPath, "", "", map[string]bool{"deb": true},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if inputs.manifestSHA256 != manifestDigest {
 		t.Fatalf("manifest digest = %s, want %s", inputs.manifestSHA256, manifestDigest)
 	}
 	sourceEntries, err := readArchive(archivePath, "tar.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !bytes.Equal(archiveEntryData(sourceEntries, "LICENSE"), marker) {
 		t.Fatal("replacement boundary was not exercised")
 	}
@@ -304,9 +270,7 @@ exit "$status"
 func TestLoadPortablePayloadRevalidatesSnapshotEntries(t *testing.T) {
 	portable := copyDist(t, sharedDist(t))
 	snapshot, err := snapshotPortableInputs(filepath.Join(portable, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() {
 		if err := os.RemoveAll(snapshot.dir); err != nil {
 			t.Errorf("remove snapshot %s: %v", snapshot.dir, err)
@@ -314,12 +278,8 @@ func TestLoadPortablePayloadRevalidatesSnapshotEntries(t *testing.T) {
 	})
 
 	realGo, err := exec.LookPath("go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := verifyDir(snapshot.dir, realGo); err != nil {
-		t.Fatalf("verify snapshot before replacement: %v", err)
-	}
+	noErr(t, err)
+	noErrf(t, verifyDir(snapshot.dir, realGo), "verify snapshot before replacement")
 
 	var archivePath string
 	for _, built := range snapshot.manifest.Artifacts {
@@ -332,9 +292,7 @@ func TestLoadPortablePayloadRevalidatesSnapshotEntries(t *testing.T) {
 		t.Fatal("portable manifest has no linux/amd64 fixture")
 	}
 	entries, err := readArchive(archivePath, "tar.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	license := archiveEntryData(entries, "LICENSE")
 	if len(license) == 0 {
 		t.Fatal("portable fixture has no LICENSE bytes")
@@ -344,12 +302,8 @@ func TestLoadPortablePayloadRevalidatesSnapshotEntries(t *testing.T) {
 	replacementPath := filepath.Join(t.TempDir(), "replacement.tar.gz")
 	writeReplacementTar(t, archivePath, replacementPath, "LICENSE", mutated)
 	replacement, err := os.ReadFile(replacementPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(archivePath, replacement, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, os.WriteFile(archivePath, replacement, 0o600))
 
 	_, err = loadPortablePayload(snapshot.dir, snapshot.manifest, "linux/amd64")
 	if err == nil || !strings.Contains(err.Error(), "changed after verification") || !strings.Contains(err.Error(), "LICENSE sha256") {
@@ -398,12 +352,8 @@ func TestPortableInputSnapshotCleanupErrorsAreReturned(t *testing.T) {
 	t.Run("joined with snapshot construction failure", func(t *testing.T) {
 		incomplete := copyDist(t, portable)
 		document, err := readManifest(filepath.Join(incomplete, "manifest.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Remove(filepath.Join(incomplete, document.Artifacts[0].Name)); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
+		noErr(t, os.Remove(filepath.Join(incomplete, document.Artifacts[0].Name)))
 		failure := errors.New("synthetic snapshot cleanup failure during construction")
 		var cleanedPath string
 		cleanupCalls := 0
@@ -449,32 +399,24 @@ func TestPortableInputSnapshotIsPrivate(t *testing.T) {
 	portable := copyDist(t, sharedDist(t))
 	manifestPath := filepath.Join(portable, "manifest.json")
 	snapshot, err := snapshotPortableInputs(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer os.RemoveAll(snapshot.dir)
 
 	dirInfo, err := os.Stat(snapshot.dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if runtime.GOOS != "windows" {
 		if got := dirInfo.Mode().Perm(); got&0o077 != 0 {
 			t.Fatalf("snapshot directory mode = %04o, want no group or other access", got)
 		}
 	}
 	entries, err := os.ReadDir(snapshot.dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(entries) != len(snapshot.manifest.Artifacts)+2 {
 		t.Fatalf("snapshot has %d files, want %d", len(entries), len(snapshot.manifest.Artifacts)+2)
 	}
 	for _, entry := range entries {
 		info, err := entry.Info()
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if !info.Mode().IsRegular() {
 			t.Errorf("snapshot entry %s has mode %s", entry.Name(), info.Mode())
 		}
@@ -483,9 +425,7 @@ func TestPortableInputSnapshotIsPrivate(t *testing.T) {
 		}
 	}
 	manifestDigest, err := sha256File(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if snapshot.manifestSHA256 != manifestDigest {
 		t.Fatalf("snapshot manifest digest = %s, want %s", snapshot.manifestSHA256, manifestDigest)
 	}
@@ -494,22 +434,16 @@ func TestPortableInputSnapshotIsPrivate(t *testing.T) {
 func TestDebVerifierRejectsMemberOrder(t *testing.T) {
 	files := []nativePackageFile{{path: "control", mode: 0o644, data: []byte("Package: owngit\n")}}
 	archive, err := writeDebTarGz(files)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	members := []arMember{
 		{name: "control.tar.gz", data: archive},
 		{name: "debian-binary", data: []byte("2.0\n")},
 		{name: "data.tar.gz", data: archive},
 	}
 	var encoded bytes.Buffer
-	if err := writeAr(&encoded, members); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, writeAr(&encoded, members))
 	path := filepath.Join(t.TempDir(), "bad.deb")
-	if err := os.WriteFile(path, encoded.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(path, encoded.Bytes(), 0o644))
 	if err := verifyDebPackage(path, files, files); err == nil || !strings.Contains(err.Error(), "member 0") {
 		t.Fatalf("verifyDebPackage returned %v", err)
 	}
@@ -589,9 +523,7 @@ let failure = launcherExitMessage(status: 1, reason: .exit, diagnostics: "cleanu
 require(failure.contains("status 1") && failure.contains("cleanup failed"), "diagnostics must retain status and detail")
 print("lifecycle fixture passed")
 `
-	if err := os.WriteFile(fixture, []byte(program), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(fixture, []byte(program), 0o600))
 	binary := filepath.Join(dir, "lifecycle-fixture")
 	lifecycle := filepath.Join(repoRoot(t), "packaging", "macos", "Lifecycle.swift")
 	command := exec.Command("xcrun", "swiftc", lifecycle, fixture, "-o", binary)
@@ -656,13 +588,9 @@ func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 func writeReplacementTar(t *testing.T, source, destination, replaceName string, replacement []byte) {
 	t.Helper()
 	entries, err := readArchive(source, "tar.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	file, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	compressed := gzip.NewWriter(file)
 	archive := tar.NewWriter(compressed)
 	for _, entry := range entries {
@@ -674,22 +602,14 @@ func writeReplacementTar(t *testing.T, source, destination, replaceName string, 
 			Name: entry.name, Mode: entry.mode, Size: int64(len(data)),
 			Typeflag: tar.TypeReg, ModTime: fixedModTime, Format: tar.FormatPAX,
 		}
-		if err := archive.WriteHeader(header); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, archive.WriteHeader(header))
 		if _, err := archive.Write(data); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := archive.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := compressed.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, archive.Close())
+	noErr(t, compressed.Close())
+	noErr(t, file.Close())
 }
 
 func archiveEntryData(entries []archiveEntry, name string) []byte {
@@ -704,13 +624,9 @@ func archiveEntryData(entries []archiveEntry, name string) []byte {
 func readNativeManifest(t *testing.T, dir string) nativeManifest {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, "native-manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var document nativeManifest
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal(data, &document))
 	return document
 }
 
@@ -725,9 +641,7 @@ func arMemberNames(members []arMember) []string {
 func readDebTarFiles(t *testing.T, data []byte) map[string]nativePackageFile {
 	t.Helper()
 	compressed, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer compressed.Close()
 	archive := tar.NewReader(compressed)
 	files := map[string]nativePackageFile{}
@@ -736,9 +650,7 @@ func readDebTarFiles(t *testing.T, data []byte) map[string]nativePackageFile {
 		if err == io.EOF {
 			break
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if header.Typeflag == tar.TypeDir {
 			continue
 		}
@@ -746,9 +658,7 @@ func readDebTarFiles(t *testing.T, data []byte) map[string]nativePackageFile {
 			t.Fatalf("%s is not a regular file", header.Name)
 		}
 		body, err := io.ReadAll(archive)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		name := strings.TrimPrefix(header.Name, "./")
 		files[name] = nativePackageFile{path: name, mode: header.Mode, data: body}
 	}

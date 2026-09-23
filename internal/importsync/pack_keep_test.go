@@ -13,9 +13,7 @@ import (
 func destinationKeepFiles(t *testing.T, path string) []string {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(path, "objects", "pack", "pack-*.keep"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	names := make([]string, 0, len(matches))
 	for _, match := range matches {
 		names = append(names, filepath.Base(match))
@@ -44,9 +42,7 @@ func TestImportRemovesItsDestinationPackKeep(t *testing.T) {
 	}
 	// An operator's .keep file on an existing pack is not this run's to remove.
 	operatorKeep := packs[0][:len(packs[0])-len(".pack")] + ".keep"
-	if err := os.WriteFile(operatorKeep, []byte("operator\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(operatorKeep, []byte("operator\n"), 0o600))
 
 	f.commit("two", "two\n")
 	run, err := f.refresh()

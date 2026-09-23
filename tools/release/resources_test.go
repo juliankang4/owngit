@@ -20,25 +20,15 @@ func TestResourcesTravelInThePortableArchive(t *testing.T) {
 	root := repoRoot(t)
 	native := nativeTarget(t)
 	dir := t.TempDir()
-	if err := buildCommand([]string{"-source", root, "-out", dir, "-targets", native}); err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if err := verifyDir(dir, "go"); err != nil {
-		t.Fatalf("verify rejected a fresh build: %v", err)
-	}
+	noErrf(t, buildCommand([]string{"-source", root, "-out", dir, "-targets", native}), "build")
+	noErrf(t, verifyDir(dir, "go"), "verify rejected a fresh build")
 
 	document, err := readManifest(filepath.Join(dir, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	current, err := targetFor(document.Artifacts[0].Target)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	entries, err := readArchive(filepath.Join(dir, document.Artifacts[0].Name), current.format)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	byName := map[string]archiveEntry{}
 	for _, entry := range entries {
 		byName[entry.name] = entry
@@ -50,9 +40,7 @@ func TestResourcesTravelInThePortableArchive(t *testing.T) {
 			t.Fatalf("the archive does not carry %s", name)
 		}
 		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if string(entry.data) != string(source) {
 			t.Errorf("%s in the archive does not match the source file", name)
 		}
@@ -88,9 +76,7 @@ func TestVerifyRejectsABrokenResourceSet(t *testing.T) {
 	root := repoRoot(t)
 	native := nativeTarget(t)
 	dir := t.TempDir()
-	if err := buildCommand([]string{"-source", root, "-out", dir, "-targets", native}); err != nil {
-		t.Fatalf("build: %v", err)
-	}
+	noErrf(t, buildCommand([]string{"-source", root, "-out", dir, "-targets", native}), "build")
 
 	t.Run("a resource is missing", func(t *testing.T) {
 		copied := copyDist(t, dir)
@@ -154,12 +140,8 @@ func TestResourceCollectionRefusesUnsafeInput(t *testing.T) {
 		dir := t.TempDir()
 		for _, name := range releaseResources {
 			path := filepath.Join(dir, filepath.FromSlash(name))
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, []byte("body\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			noErr(t, os.WriteFile(path, []byte("body\n"), 0o644))
 		}
 		return dir
 	}
@@ -168,13 +150,9 @@ func TestResourceCollectionRefusesUnsafeInput(t *testing.T) {
 		dir := stage(t)
 		target := releaseResources[0]
 		path := filepath.Join(dir, filepath.FromSlash(target))
-		if err := os.Remove(path); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Remove(path))
 		real := filepath.Join(dir, "elsewhere.md")
-		if err := os.WriteFile(real, []byte("body\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(real, []byte("body\n"), 0o644))
 		if err := os.Symlink(real, path); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
@@ -187,9 +165,7 @@ func TestResourceCollectionRefusesUnsafeInput(t *testing.T) {
 	t.Run("an empty resource", func(t *testing.T) {
 		dir := stage(t)
 		path := filepath.Join(dir, filepath.FromSlash(releaseResources[0]))
-		if err := os.WriteFile(path, nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(path, nil, 0o644))
 		err := mustFail(t, dir)
 		if !strings.Contains(err.Error(), "empty") {
 			t.Fatalf("error %q does not report the empty file", err)
@@ -198,9 +174,7 @@ func TestResourceCollectionRefusesUnsafeInput(t *testing.T) {
 
 	t.Run("a missing resource", func(t *testing.T) {
 		dir := stage(t)
-		if err := os.Remove(filepath.Join(dir, filepath.FromSlash(releaseResources[0]))); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Remove(filepath.Join(dir, filepath.FromSlash(releaseResources[0]))))
 		mustFail(t, dir)
 	})
 }
@@ -245,9 +219,7 @@ func TestALinkedAncestorCannotDecideWhatIsPackaged(t *testing.T) {
 		t.Run("internal "+ancestor, func(t *testing.T) {
 			dir := stageResourceTree(t)
 			inside := filepath.Join(dir, "internal-copy", filepath.FromSlash(ancestor))
-			if err := os.MkdirAll(inside, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.MkdirAll(inside, 0o755))
 			relinkAncestor(t, dir, ancestor, inside, true)
 			mustFail(t, dir)
 		})
@@ -261,12 +233,8 @@ func stageResourceTree(t *testing.T) string {
 	dir := t.TempDir()
 	for _, name := range releaseResources {
 		path := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("body\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		noErr(t, os.WriteFile(path, []byte("body\n"), 0o644))
 	}
 	if _, err := collectResources(dir); err != nil {
 		t.Fatalf("the synthetic tree was refused before it was altered: %v", err)
@@ -286,17 +254,11 @@ func relinkAncestor(t *testing.T, root, ancestor, target string, populate bool) 
 				continue
 			}
 			moved := filepath.Join(target, filepath.FromSlash(strings.TrimPrefix(name, ancestor+"/")))
-			if err := os.MkdirAll(filepath.Dir(moved), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(moved, []byte("relocated body\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.MkdirAll(filepath.Dir(moved), 0o755))
+			noErr(t, os.WriteFile(moved, []byte("relocated body\n"), 0o644))
 		}
 	}
-	if err := os.RemoveAll(path); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.RemoveAll(path))
 	if err := os.Symlink(target, path); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
@@ -314,9 +276,7 @@ func TestAReachableRootIsStillAccepted(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	files, err := collectResources(linked)
-	if err != nil {
-		t.Fatalf("a source root reached through a link was refused: %v", err)
-	}
+	noErrf(t, err, "a source root reached through a link was refused")
 	if len(files) != len(releaseResources) {
 		t.Fatalf("collected %d files, want %d", len(files), len(releaseResources))
 	}
@@ -329,9 +289,7 @@ func TestAReachableRootIsStillAccepted(t *testing.T) {
 	// A root that is not a directory is refused before any component walk,
 	// so the failure names the root rather than a confusing missing child.
 	notADirectory := filepath.Join(t.TempDir(), "root-file")
-	if err := os.WriteFile(notADirectory, []byte("not a tree\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(notADirectory, []byte("not a tree\n"), 0o644))
 	err = mustFail(t, notADirectory)
 	if !strings.Contains(err.Error(), "source root") {
 		t.Fatalf("error %q does not name the source root", err)
@@ -379,9 +337,7 @@ func TestTheMacAppCarriesTheResources(t *testing.T) {
 			t.Fatalf("the app does not carry %s", bundled)
 		}
 		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if file.SHA256 != sha256Bytes(source) {
 			t.Errorf("%s does not match the source file", bundled)
 		}
@@ -412,13 +368,9 @@ func TestTheDebianPackageInstallsTheResources(t *testing.T) {
 
 	for _, built := range document.Artifacts {
 		packageData, err := os.ReadFile(filepath.Join(out, built.Name))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		members, err := readAr(packageData)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		data := readDebTarFiles(t, members[2].data)
 		for _, name := range releaseResources {
 			installed := "usr/share/doc/owngit/" + name
@@ -427,9 +379,7 @@ func TestTheDebianPackageInstallsTheResources(t *testing.T) {
 				t.Fatalf("%s does not install %s", built.Name, installed)
 			}
 			source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if string(file.data) != string(source) {
 				t.Errorf("%s in %s does not match the source file", installed, built.Name)
 			}
@@ -457,9 +407,7 @@ func TestNativeResourcesComeFromTheVerifiedPayload(t *testing.T) {
 	}
 
 	files, err := resourceFiles(payload)
-	if err != nil {
-		t.Fatalf("resourceFiles rejected a complete payload: %v", err)
-	}
+	noErrf(t, err, "resourceFiles rejected a complete payload")
 	if len(files) != len(releaseResources) {
 		t.Fatalf("resourceFiles returned %d files, want %d", len(files), len(releaseResources))
 	}
@@ -494,9 +442,7 @@ func TestTheArchiveNoteDescribesARelativeInvocation(t *testing.T) {
 	templatePath := filepath.Join(root, "packaging", "archive", "README.txt.tmpl")
 	for _, current := range releaseTargets {
 		rendered, err := renderArchiveReadme(templatePath, "1.0.0", current)
-		if err != nil {
-			t.Fatalf("%s: %v", current, err)
-		}
+		noErrf(t, err, "%s", current)
 		note := string(rendered)
 		invocation := "./" + current.binary
 		if current.goos == "windows" {
@@ -547,28 +493,18 @@ func TestAReplacementAfterTheCheckCannotReachTheArchive(t *testing.T) {
 			root := t.TempDir()
 			for _, name := range releaseResources {
 				path := filepath.Join(root, filepath.FromSlash(name))
-				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, os.MkdirAll(filepath.Dir(path), 0o755))
+				noErr(t, os.WriteFile(path, []byte(original), 0o644))
 			}
 			resources, err := collectResources(root)
-			if err != nil {
-				t.Fatalf("collectResources: %v", err)
-			}
+			noErrf(t, err, "collectResources")
 			target := resources[0]
 
 			// An atomic replacement, the case a re-stat and re-hash would
 			// silently adopt.
 			pending := filepath.Join(root, "pending-replacement")
-			if err := os.WriteFile(pending, []byte(replacement), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Rename(pending, target.path); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(pending, []byte(replacement), 0o644))
+			noErr(t, os.Rename(pending, target.path))
 
 			archive := filepath.Join(t.TempDir(), "resources."+format)
 			if format == "zip" {
@@ -576,13 +512,9 @@ func TestAReplacementAfterTheCheckCannotReachTheArchive(t *testing.T) {
 			} else {
 				err = writeTarGz(archive, resources)
 			}
-			if err != nil {
-				t.Fatalf("writing the archive: %v", err)
-			}
+			noErrf(t, err, "writing the archive")
 			entries, err := readArchive(archive, format)
-			if err != nil {
-				t.Fatalf("readArchive: %v", err)
-			}
+			noErrf(t, err, "readArchive")
 
 			// The manifest this run would record.
 			var built artifact
@@ -592,12 +524,8 @@ func TestAReplacementAfterTheCheckCannotReachTheArchive(t *testing.T) {
 					Size: file.size, SHA256: file.sha,
 				})
 			}
-			if err := compareEntries(built, entries); err != nil {
-				t.Fatalf("the archive and the manifest disagree: %v", err)
-			}
-			if err := verifyResourceSet(entries); err != nil {
-				t.Fatalf("verifyResourceSet: %v", err)
-			}
+			noErrf(t, compareEntries(built, entries), "the archive and the manifest disagree")
+			noErrf(t, verifyResourceSet(entries), "verifyResourceSet")
 
 			for _, entry := range entries {
 				if entry.name != target.name {
@@ -626,9 +554,7 @@ func TestAReplacementAfterTheCheckCannotReachTheArchive(t *testing.T) {
 func TestTheStagedSnapshotAndTheManifestCannotDisagree(t *testing.T) {
 	root := stageResourceTree(t)
 	resources, err := collectResources(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	cases := map[string]func(stagedFile) stagedFile{
 		"a digest that does not describe the bytes": func(file stagedFile) stagedFile {
@@ -666,9 +592,7 @@ func TestTheStagedSnapshotAndTheManifestCannotDisagree(t *testing.T) {
 func TestAnApprovedSnapshotIsBoundToTheCheckedFile(t *testing.T) {
 	root := stageResourceTree(t)
 	resources, err := collectResources(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for _, file := range resources {
 		if len(file.data) == 0 {
 			t.Fatalf("%s was collected without its approved bytes", file.name)
@@ -681,12 +605,8 @@ func TestAnApprovedSnapshotIsBoundToTheCheckedFile(t *testing.T) {
 		}
 		// The snapshot is independent of the file it came from.
 		onDisk, err := os.ReadFile(file.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(file.path, []byte("changed after collection\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
+		noErr(t, os.WriteFile(file.path, []byte("changed after collection\n"), 0o644))
 		if sha256Bytes(file.data) != file.sha || string(file.data) != string(onDisk) {
 			t.Fatalf("%s snapshot followed a later change to the file", file.name)
 		}
@@ -697,20 +617,12 @@ func TestAnApprovedSnapshotIsBoundToTheCheckedFile(t *testing.T) {
 	// so on Windows this also shows that it fixes the identity at the check
 	// instead of leaving os.SameFile to look it up from the path afterwards.
 	swapped, err := canonicalResourceRoot(stageResourceTree(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	leaf, walked, err := inspectResource(swapped, releaseResources[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	other := filepath.Join(swapped, "other-file")
-	if err := os.WriteFile(other, []byte("body\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(other, leaf); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(other, []byte("body\n"), 0o644))
+	noErr(t, os.Rename(other, leaf))
 	if _, _, err := readApprovedFile(leaf, walked); err == nil {
 		t.Fatal("a replaced leaf was read as the inspected file")
 	} else if !strings.Contains(err.Error(), "replaced") {
@@ -731,9 +643,7 @@ func TestAnApprovedSnapshotIsBoundToTheCheckedFile(t *testing.T) {
 func TestBuildTargetStagesResourcesAsApprovedSnapshots(t *testing.T) {
 	root := repoRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "tools", "release", "build.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	body := string(data)
 	start := strings.Index(body, "resources, err := collectResources(root)")
 	if start < 0 {
@@ -765,16 +675,12 @@ func TestBuildTargetStagesResourcesAsApprovedSnapshots(t *testing.T) {
 func TestTheApprovedSnapshotSurvivesTheWholeStagedSet(t *testing.T) {
 	root := stageResourceTree(t)
 	resources, err := collectResources(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	// A streamed entry, staged the way the build stages its own files.
 	streamedPath := filepath.Join(t.TempDir(), "README.txt")
 	streamed := []byte("streamed entry\n")
-	if err := os.WriteFile(streamedPath, streamed, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(streamedPath, streamed, 0o644))
 	files := []stagedFile{{
 		name: "README.txt", path: streamedPath, mode: 0o644,
 		size: int64(len(streamed)), sha: sha256Bytes(streamed),
@@ -785,21 +691,13 @@ func TestTheApprovedSnapshotSurvivesTheWholeStagedSet(t *testing.T) {
 	// streamed entry.
 	target := resources[0]
 	pending := filepath.Join(root, "pending")
-	if err := os.WriteFile(pending, []byte("replacement body\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(pending, target.path); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(pending, []byte("replacement body\n"), 0o644))
+	noErr(t, os.Rename(pending, target.path))
 
 	archive := filepath.Join(t.TempDir(), "mixed.tar.gz")
-	if err := writeTarGz(archive, files); err != nil {
-		t.Fatalf("writeTarGz: %v", err)
-	}
+	noErrf(t, writeTarGz(archive, files), "writeTarGz")
 	entries, err := readArchive(archive, "tar.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	byName := map[string]archiveEntry{}
 	for _, entry := range entries {
 		byName[entry.name] = entry

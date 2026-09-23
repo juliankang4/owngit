@@ -22,41 +22,14 @@ const (
 	IncompleteRestoreMarkerName = ".owngit-restore-pending"
 
 	// currentSchemaVersion is the schema this build writes. The committed
-	// baseline wrote no version marker. Numbered development schemas 1 through
-	// 5 are refused instead of being converted.
+	// baseline wrote no version marker. Every numbered schema below the
+	// current one was written only by unreleased development builds and is
+	// refused before any file changes.
 	currentSchemaVersion = 14
-	// These SHA-256 fingerprints cover normalized, non-internal sqlite_master
-	// entries. The baseline was emitted by commit
-	// 37b54e394a3292bc94383a0e7e1d19af85f9ab52. Only the exact accepted schema
-	// 6 through schema 13 catalogs have numbered migration paths.
+	// This SHA-256 fingerprint covers normalized, non-internal sqlite_master
+	// entries of the baseline emitted by commit
+	// 37b54e394a3292bc94383a0e7e1d19af85f9ab52.
 	committedBaselineSchemaFingerprint = "0b1acb0288e7a64da492d7a2a768538052492f887c3b5e6ec2efc7a42b465600"
-	schemaSixFingerprint               = "65686ebd119549d65748682365fa49cb2117ed644e044082c8f2f7ac00ce1154"
-	schemaSevenFingerprint             = "d39f721d07d4c23a9405fb3e9ede9118685f732cd84e333d6e51a7e024746e68"
-	// schemaEightFingerprint is the catalog emitted by the pre-removal source.
-	// The AI removal deleted code and no table, so the genuine pre-removal
-	// database and a matched catalog both classify as this exact schema 8.
-	schemaEightFingerprint = "684514623e9c47c9e784922c9dc2e148d6ad11977231036ce2a1498ae84ddab2"
-	schemaEightObjects     = 36
-	// schemaNineFingerprint is the authoritative catalog emitted by the
-	// accepted frozen schema 9 executable.
-	schemaNineFingerprint = "c422373c5a738f3512c17158d92cac5fff30c1a7d3fb717b7bb73b752ed5f55d"
-	schemaNineObjects     = 47
-	// schemaTenFingerprint is the authoritative catalog emitted by the accepted
-	// pre-import executable. It is the genuine predecessor of the inbound
-	// import tables.
-	schemaTenFingerprint = "d4f49a6da4344eedd1436d1d6f75ea196bf36de33308a47cbdb983a101a38e88"
-	schemaTenObjects     = 48
-	// schemaElevenFingerprint is the exact frozen parent13 importer catalog.
-	schemaElevenFingerprint = "bfe848b56e2ac9ce1d28125311c57920b42773be2427761481d20b6ed41ab68c"
-	schemaElevenObjects     = 59
-	// schemaTwelveFingerprint is the catalog this build emitted before
-	// unpublished initial-destination ownership was added.
-	schemaTwelveFingerprint = "2da2ccd30c01c81b079caadb6da5615a58a5d44216c5dfdc9104232462ef3c04"
-	schemaTwelveObjects     = 59
-	// schemaThirteenFingerprint is the catalog this build emitted before
-	// owner resolution of unresolved publication intents was added.
-	schemaThirteenFingerprint = "ef47d7a1f41a3c1f652843709093199ebf12267c0c36eb8345398796a6e8bfdd"
-	schemaThirteenObjects     = 61
 )
 
 var ErrSetupComplete = errors.New("setup is already complete")
@@ -260,45 +233,10 @@ func classifySchema(ctx context.Context, db queryRower) (schemaClass, error) {
 	switch {
 	case version == currentSchemaVersion:
 		return schemaCurrent, nil
-	case version == 6 || version == 7 || version == 8 || version == 9 || version == 10 || version == 11 || version == 12 || version == 13:
-		fingerprint, objects, err := schemaFingerprint(ctx, db)
-		if err != nil {
-			return 0, err
-		}
-		expected := schemaSixFingerprint
-		class := schemaSix
-		switch version {
-		case 7:
-			expected = schemaSevenFingerprint
-			class = schemaSeven
-		case 8:
-			expected = schemaEightFingerprint
-			class = schemaEight
-		case 9:
-			expected = schemaNineFingerprint
-			class = schemaNine
-		case 10:
-			expected = schemaTenFingerprint
-			class = schemaTen
-		case 11:
-			expected = schemaElevenFingerprint
-			class = schemaEleven
-		case 12:
-			expected = schemaTwelveFingerprint
-			class = schemaTwelve
-		case 13:
-			expected = schemaThirteenFingerprint
-			class = schemaThirteen
-		}
-		expectedObjects := map[int]int{9: schemaNineObjects, 10: schemaTenObjects, 11: schemaElevenObjects, 12: schemaTwelveObjects, 13: schemaThirteenObjects}
-		if fingerprint != expected || (expectedObjects[version] != 0 && objects != expectedObjects[version]) {
-			return 0, fmt.Errorf("state database schema version %d does not match the supported schema %d catalog", version, version)
-		}
-		return class, nil
 	case version > currentSchemaVersion:
 		return 0, fmt.Errorf("state database schema version %d is newer than this OwnGit build supports (%d)", version, currentSchemaVersion)
 	case version >= 1:
-		return 0, fmt.Errorf("state database uses the unreleased development schema %d; this build supports the committed baseline and schemas 6, 7, 8, 9, 10, 11, 12, 13, and %d", version, currentSchemaVersion)
+		return 0, fmt.Errorf("state database uses the unreleased development schema %d; this build upgrades only the committed baseline (no schema version) and opens schema %d", version, currentSchemaVersion)
 	default:
 		return 0, fmt.Errorf("unsupported state database schema version %d", version)
 	}
@@ -398,27 +336,8 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) error {
 	if class != expected {
 		return unstable("state database changed before schema migration")
 	}
-	versions := []int{14}
-	switch class {
-	case schemaEmpty, schemaBaseline:
-		versions = []int{6, 7, 8, 9, 10, 11, 12, 13, 14}
-	case schemaSix:
-		versions = []int{7, 8, 9, 10, 11, 12, 13, 14}
-	case schemaSeven:
-		versions = []int{8, 9, 10, 11, 12, 13, 14}
-	case schemaEight:
-		versions = []int{9, 10, 11, 12, 13, 14}
-	case schemaNine:
-		versions = []int{10, 11, 12, 13, 14}
-	case schemaTen:
-		versions = []int{11, 12, 13, 14}
-	case schemaEleven:
-		versions = []int{12, 13, 14}
-	case schemaTwelve:
-		versions = []int{13, 14}
-	case schemaThirteen:
-		versions = []int{14}
-	}
+	// Only the committed baseline and an empty database reach this point.
+	versions := []int{6, 7, 8, 9, 10, 11, 12, 13, 14}
 	for _, version := range versions {
 		statements, ok := migrations[version]
 		if !ok {
@@ -436,9 +355,11 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) error {
 	return tx.Commit()
 }
 
-// migrations maps each accepted upgrade target to its statements. Version 6
+// migrations maps each upgrade step to its statements. The steps always run
+// in order from the committed baseline or an empty database, and together they
+// produce the current schema catalog, so their text must not change. Version 6
 // upgrades the committed baseline, version 7 adds local raw check logs, version
-// 8 adds durable direct-review state, version 9 adds the automatic-check
+// 8 adds the unused direct-review tables, version 9 adds the automatic-check
 // foundation, version 10 binds executable settings and executor roles, version
 // 11 adds inbound import state, version 12 records structured HEAD ownership,
 // version 13 records machine-local ownership of unpublished initial

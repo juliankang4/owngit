@@ -28,22 +28,14 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, "source-state")
 	repositoriesRoot := filepath.Join(root, "source-repositories")
-	if err := os.Mkdir(repositoriesRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoriesRoot, 0o700))
 	store, err := state.Open(ctx, stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	accessHash, _ := auth.HashPassword("shared-password")
 	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(ctx, repositoriesRoot, "password", accessHash, adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(ctx, repositoriesRoot, "password", accessHash, adminHash, true))
 	runner, err := gitexec.New("", filepath.Join(stateDir, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoriesRoot}
 	if _, err := manager.Create(ctx, "project", "portable metadata"); err != nil {
 		t.Fatal(err)
@@ -55,21 +47,15 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings, _ := store.Settings(ctx)
-	if err := store.CreateSession(ctx, "general-session", "general", "csrf", settings.AccessSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.AddTrustedHost(ctx, "private-host.example"); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CreateSession(ctx, "general-session", "general", "csrf", settings.AccessSessionVersion, time.Now().Add(time.Hour)))
+	noErr(t, store.AddTrustedHost(ctx, "private-host.example"))
 
 	remote, _ := manager.Path("project")
 	work := filepath.Join(root, "work")
 	runGit(t, "", "init", "--initial-branch=main", work)
 	runGit(t, work, "config", "user.name", "Backup Test")
 	runGit(t, work, "config", "user.email", "backup@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "data.txt"), []byte("portable\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "data.txt"), []byte("portable\n"), 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "portable commit")
 	oid := gitOutput(t, work, "rev-parse", "HEAD")
@@ -85,27 +71,17 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	runGit(t, "", "--git-dir", detachedRemote, "update-ref", "-d", "refs/heads/temporary")
 
 	backup := filepath.Join(root, "backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, store, manager, backup))
+	noErr(t, store.Close())
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
-	if err := Restore(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
 	restoredStore, err := state.Open(ctx, restoredState)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer restoredStore.Close()
 	restoredSettings, err := restoredStore.Settings(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if restoredSettings.RepositoryRoot != restoredRepositories || restoredSettings.AccessMode != "password" || restoredSettings.InsecureHTTPAccepted {
 		t.Fatalf("unexpected restored settings: %+v", restoredSettings)
 	}
@@ -150,9 +126,7 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 
 	runGit(t, work, "checkout", "--orphan", "replacement")
 	runGit(t, work, "rm", "-rf", ".")
-	if err := os.WriteFile(filepath.Join(work, "replacement.txt"), []byte("replacement\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "replacement.txt"), []byte("replacement\n"), 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "replacement")
 	runGit(t, work, "remote", "add", "restored", restoredRemote)
@@ -167,19 +141,13 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	store, manager := newBackupStore(t, root)
 	work := filepath.Join(root, "backup-work")
 	remote, err := manager.Path("project")
-	if err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	service := &pullrequest.Service{Store: store, Repositories: manager}
 	baseOID := gitOutput(t, work, "rev-parse", "HEAD")
 	runGit(t, work, "remote", "add", "origin", remote)
 
 	runGit(t, work, "checkout", "-b", "reviewed")
-	if err := os.WriteFile(filepath.Join(work, "reviewed.txt"), []byte("reviewed\n"), 0o600); err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "reviewed.txt"), []byte("reviewed\n"), 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "reviewed change")
 	reviewedOID := gitOutput(t, work, "rev-parse", "HEAD")
@@ -187,23 +155,16 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	openPR, err := service.Create(ctx, pullrequest.CreateInput{
 		Repository: "project", Title: "Needs another review", SourceBranch: "reviewed", TargetBranch: "main", ReviewChoice: "request",
 	})
-	if err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := service.SubmitReview(ctx, "project", openPR.Number, pullrequest.ReviewSubmitInput{
 		SourceOID: reviewedOID, TargetOID: baseOID, Decision: state.ReviewChangesRequested, ReviewerLabel: "existing-tool: recovery-test",
 	}); err != nil {
-		store.Close()
 		t.Fatal(err)
 	}
 
 	runGit(t, work, "checkout", "main")
 	runGit(t, work, "checkout", "-b", "merge-ready")
-	if err := os.WriteFile(filepath.Join(work, "merged.txt"), []byte("merged\n"), 0o600); err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "merged.txt"), []byte("merged\n"), 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "merge-ready change")
 	mergeSourceOID := gitOutput(t, work, "rev-parse", "HEAD")
@@ -211,60 +172,37 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	mergedPR, err := service.Create(ctx, pullrequest.CreateInput{
 		Repository: "project", Title: "Ready to merge", SourceBranch: "merge-ready", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	mergedView, err := service.Merge(ctx, "project", mergedPR.Number, pullrequest.RevisionInput{SourceOID: mergeSourceOID, TargetOID: baseOID})
-	if err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if mergedView.Merge == nil {
-		store.Close()
 		t.Fatal("merged pull request has no receipt")
 	}
 	if _, err := service.Show(ctx, "project", openPR.Number); err != nil {
-		store.Close()
 		t.Fatal(err)
 	}
 
 	backup := filepath.Join(root, "pr-backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, store, manager, backup))
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
-	if err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if manifest.Version != backupVersion || len(manifest.PullRequests) != 2 || len(manifest.PullRequestReviews) != 3 || len(manifest.PullRequestMergeIntents) != 1 {
-		store.Close()
 		t.Fatalf("backup manifest pull request state: version=%d prs=%d reviews=%d intents=%d", manifest.Version, len(manifest.PullRequests), len(manifest.PullRequestReviews), len(manifest.PullRequestMergeIntents))
 	}
 	// Format 2 is the released pull request backup. Rewriting only the format
 	// marker yields the records that reader must continue to accept.
 	manifest.Version = pullRequestBackupVersion
 	writeManifestFile(t, filepath.Join(backup, manifestName), manifest)
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.Close())
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-pr-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-pr-repositories"))
-	if err := Restore(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
 	restoredStore, err := state.Open(ctx, restoredState)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer restoredStore.Close()
 	snapshot, err := restoredStore.RecoverySnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(snapshot.PullRequests) != 2 || len(snapshot.PullRequestReviews) != 3 || len(snapshot.PullRequestMergeIntents) != 1 {
 		t.Fatalf("restored pull request snapshot: prs=%d reviews=%d intents=%d", len(snapshot.PullRequests), len(snapshot.PullRequestReviews), len(snapshot.PullRequestMergeIntents))
 	}
@@ -283,15 +221,11 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	assertRef(t, restoredRemote, openSourceRef, reviewedOID)
 	assertRef(t, restoredRemote, openTargetRef, baseOID)
 	restoredRunner, err := gitexec.New("", filepath.Join(restoredState, "runtime-test"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	restoredManager := &repository.Manager{Store: restoredStore, Git: restoredRunner, Locks: gitexec.NewLocks(), Root: restoredRepositories}
 	restoredService := &pullrequest.Service{Store: restoredStore, Repositories: restoredManager}
 	openView, err := restoredService.Show(ctx, "project", openPR.Number)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if openView.State != state.PullRequestOpen || openView.Review.Status != "decision_required" {
 		t.Fatalf("restored open pull request=%+v", openView)
 	}
@@ -303,11 +237,52 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 		t.Fatalf("re-backup after format 2 restore: %v", err)
 	}
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if rebacked.Version != backupVersion || !reflect.DeepEqual(rebacked.PullRequests, manifest.PullRequests) || !reflect.DeepEqual(rebacked.PullRequestRevisions, manifest.PullRequestRevisions) || !reflect.DeepEqual(rebacked.PullRequestReviews, manifest.PullRequestReviews) || !reflect.DeepEqual(rebacked.PullRequestMergeIntents, manifest.PullRequestMergeIntents) {
 		t.Fatalf("format 2 re-backup changed pull request history: %+v", rebacked)
+	}
+
+	// A current backup carries the event identity a pending review was recorded
+	// with, and restore keeps it. Format 2 cannot carry it, so this uses format 9.
+	eventID := strings.Repeat("e", 32)
+	pending, err := restoredStore.AppendPullRequestReview(ctx, state.PullRequestReview{
+		RepositoryID: "project", PullRequestNumber: openPR.Number, SourceOID: reviewedOID, TargetOID: baseOID,
+		Status: state.ReviewPending, Provenance: state.ReviewProvenanceRequest, ReviewEventID: eventID,
+		CreatedAt: time.Unix(1_800_100_000, 0).UTC(),
+	})
+	noErr(t, err)
+	eventBackup := filepath.Join(root, "pr-backup-event")
+	noErr(t, Create(ctx, restoredStore, restoredManager, eventBackup))
+	eventManifest, err := readManifest(filepath.Join(eventBackup, manifestName))
+	noErr(t, err)
+	eventIndex := -1
+	for index, review := range eventManifest.PullRequestReviews {
+		if review.PullRequestNumber == openPR.Number && review.Sequence == pending.Sequence {
+			eventIndex = index
+		}
+	}
+	if eventIndex < 0 || eventManifest.PullRequestReviews[eventIndex].ReviewEventID != eventID {
+		t.Fatalf("backup reviews=%+v, want sequence %d with event %s", eventManifest.PullRequestReviews, pending.Sequence, eventID)
+	}
+	eventState := canonicalTestTarget(t, filepath.Join(root, "restored-event-state"))
+	noErr(t, Restore(ctx, eventBackup, eventState, canonicalTestTarget(t, filepath.Join(root, "restored-event-repositories")), ""))
+	eventStore, err := state.Open(ctx, eventState)
+	noErr(t, err)
+	defer eventStore.Close()
+	restoredReview, exists, err := eventStore.PullRequestReviewForRevision(ctx, "project", openPR.Number, reviewedOID, baseOID)
+	if err != nil || !exists || restoredReview.Status != state.ReviewPending || restoredReview.ReviewEventID != eventID {
+		t.Fatalf("restored review=%+v exists=%v err=%v, want event %s", restoredReview, exists, err, eventID)
+	}
+
+	// A malformed identity is refused before any destination is created.
+	eventManifest.PullRequestReviews[eventIndex].ReviewEventID = "not-a-review-event"
+	writeManifestFile(t, filepath.Join(eventBackup, manifestName), eventManifest)
+	malformedState, malformedRepositories := filepath.Join(root, "malformed-event-state"), filepath.Join(root, "malformed-event-repositories")
+	if err := Restore(ctx, eventBackup, malformedState, malformedRepositories, ""); err == nil || !strings.Contains(err.Error(), "invalid pull request review event identity") {
+		t.Fatalf("restore with malformed review event identity err=%v", err)
+	}
+	for _, target := range []string{malformedState, malformedRepositories} {
+		assertNoRecoveryOutputOrStages(t, target, ".owngit-restore-")
 	}
 }
 
@@ -319,25 +294,16 @@ func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T
 			store, manager := newBackupStore(t, root)
 			work := filepath.Join(root, "backup-work")
 			remote, err := manager.Path("project")
-			if err != nil {
-				store.Close()
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			runGit(t, work, "remote", "add", "origin", remote)
 			runGit(t, work, "checkout", "-b", "candidate")
-			if err := os.WriteFile(filepath.Join(work, "candidate.txt"), []byte("candidate\n"), 0o600); err != nil {
-				store.Close()
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(filepath.Join(work, "candidate.txt"), []byte("candidate\n"), 0o600))
 			runGit(t, work, "add", ".")
 			runGit(t, work, "commit", "-m", "candidate change")
 			sourceOID := gitOutput(t, work, "rev-parse", "HEAD")
 			runGit(t, work, "push", "origin", "HEAD:refs/heads/candidate")
 			runGit(t, work, "checkout", "main")
-			if err := os.WriteFile(filepath.Join(work, "target.txt"), []byte("target\n"), 0o600); err != nil {
-				store.Close()
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(filepath.Join(work, "target.txt"), []byte("target\n"), 0o600))
 			runGit(t, work, "add", ".")
 			runGit(t, work, "commit", "-m", "target change")
 			targetOID := gitOutput(t, work, "rev-parse", "HEAD")
@@ -347,54 +313,38 @@ func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T
 			created, err := service.Create(ctx, pullrequest.CreateInput{
 				Repository: "project", Title: "Unpublished merge candidate", SourceBranch: "candidate", TargetBranch: "main", ReviewChoice: "skip",
 			})
-			if err != nil {
-				store.Close()
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			intent, err := store.BeginPullRequestMerge(ctx, state.PullRequestMergeIntent{
 				RepositoryID: "project", PullRequestNumber: created.Number, SourceOID: sourceOID, TargetOID: targetOID,
 				ReceiptRef: pullrequest.MergeReceiptRef(created.Number), CreatedAt: time.Unix(1_900_000_000, 0).UTC(),
 			})
-			if err != nil {
-				store.Close()
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			treeResult, err := manager.Git.Run(ctx, "", nil, "--git-dir", remote, "merge-tree", "--write-tree", targetOID, sourceOID)
-			if err != nil {
-				store.Close()
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			intent.Mode = "merge_commit"
 			intent.TreeOID = strings.Fields(string(treeResult.Stdout))[0]
 			treeRef := pullrequest.MergeTreeRef(created.Number, sourceOID, targetOID)
 			if _, err := manager.Git.Run(ctx, "", nil, "--git-dir", remote, "update-ref", treeRef, intent.TreeOID); err != nil {
-				store.Close()
 				t.Fatal(err)
 			}
 			intent.Status = state.MergeIntentPlanned
 			intent.UpdatedAt = intent.CreatedAt
 			intent, err = store.UpdatePullRequestMergeIntent(ctx, intent)
-			if err != nil {
-				store.Close()
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			expectedResult := createRecoveryMergeCommit(t, ctx, manager.Git, remote, created, intent)
 			if intentStatus == state.MergeIntentReady {
 				resultRef := pullrequest.MergeResultRef(created.Number, sourceOID, targetOID)
 				if _, err := manager.Git.Run(ctx, "", nil, "--git-dir", remote, "update-ref", resultRef, expectedResult); err != nil {
-					store.Close()
 					t.Fatal(err)
 				}
 				intent.ResultOID = expectedResult
 				intent.Status = state.MergeIntentReady
 				intent.UpdatedAt = intent.CreatedAt.Add(time.Second)
 				if _, err := store.UpdatePullRequestMergeIntent(ctx, intent); err != nil {
-					store.Close()
 					t.Fatal(err)
 				}
 			}
 			if refExists(t, remote, pullrequest.MergeReceiptRef(created.Number)) {
-				store.Close()
 				t.Fatal("unpublished fixture unexpectedly has a merge receipt")
 			}
 
@@ -404,20 +354,13 @@ func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T
 			if runtime.GOOS != "windows" {
 				oldGitPath, mergeTreeMarker = newOldGitExecutable(t)
 				oldBackupRunner, err := gitexec.New(oldGitPath, filepath.Join(root, "runtime-old-git-backup-"+intentStatus))
-				if err != nil {
-					store.Close()
-					t.Fatal(err)
-				}
+				noErr(t, err)
 				manager.Git = oldBackupRunner
 			}
-			if err := Create(ctx, store, manager, backup); err != nil {
-				store.Close()
-				t.Fatal(err)
-			}
+			noErr(t, Create(ctx, store, manager, backup))
 			manager.Git = realRunner
 			if mergeTreeMarker != "" {
 				if _, err := os.Stat(mergeTreeMarker); !os.IsNotExist(err) {
-					store.Close()
 					t.Fatalf("old Git backup invoked merge-tree: %v", err)
 				}
 			}
@@ -426,26 +369,17 @@ func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T
 			if intentStatus == state.MergeIntentReady {
 				assertRef(t, remote, resultRef, expectedResult)
 			} else if refExists(t, remote, resultRef) {
-				store.Close()
 				t.Fatal("planned backup reconciliation fabricated a ready merge result ref")
 			}
-			if err := store.Close(); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, store.Close())
 			restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-"+intentStatus+"-state"))
 			restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-"+intentStatus+"-repositories"))
-			if err := Restore(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
 			restoredStore, err := state.Open(ctx, restoredState)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			defer restoredStore.Close()
 			restoredRunner, err := gitexec.New("", filepath.Join(restoredState, "runtime-merge-retry"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			restoredManager := &repository.Manager{Store: restoredStore, Git: restoredRunner, Locks: gitexec.NewLocks(), Root: restoredRepositories}
 			restoredService := &pullrequest.Service{Store: restoredStore, Repositories: restoredManager}
 			restoredRemote := filepath.Join(restoredRepositories, "project.git")
@@ -490,14 +424,10 @@ func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T
 					t.Fatalf("old Git restore invoked merge-tree: %v", err)
 				}
 				oldStore, err := state.Open(ctx, oldState)
-				if err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, err)
 				defer oldStore.Close()
 				oldRunner, err := gitexec.New(oldGitPath, filepath.Join(oldState, "runtime-old-git-merge"))
-				if err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, err)
 				oldManager := &repository.Manager{Store: oldStore, Git: oldRunner, Locks: gitexec.NewLocks(), Root: oldRepositories}
 				oldService := &pullrequest.Service{Store: oldStore, Repositories: oldManager}
 				oldRemote := filepath.Join(oldRepositories, "project.git")
@@ -526,17 +456,11 @@ func TestRestoreReconcilesGitPublishedMergeWithPendingSQLiteState(t *testing.T) 
 	store, manager := newBackupStore(t, root)
 	work := filepath.Join(root, "backup-work")
 	remote, err := manager.Path("project")
-	if err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	runGit(t, work, "remote", "add", "origin", remote)
 	baseOID := gitOutput(t, work, "rev-parse", "HEAD")
 	runGit(t, work, "checkout", "-b", "pending-state")
-	if err := os.WriteFile(filepath.Join(work, "pending.txt"), []byte("pending\n"), 0o600); err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "pending.txt"), []byte("pending\n"), 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "pending state merge")
 	sourceOID := gitOutput(t, work, "rev-parse", "HEAD")
@@ -545,42 +469,28 @@ func TestRestoreReconcilesGitPublishedMergeWithPendingSQLiteState(t *testing.T) 
 	created, err := service.Create(ctx, pullrequest.CreateInput{
 		Repository: "project", Title: "Reconcile after restore", SourceBranch: "pending-state", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	service.CompleteMerge = func(context.Context, state.PullRequestMergeIntent, time.Time) error {
 		return errors.New("injected SQLite completion failure")
 	}
 	if _, err := service.Merge(ctx, "project", created.Number, pullrequest.RevisionInput{SourceOID: sourceOID, TargetOID: baseOID}); err == nil {
-		store.Close()
 		t.Fatal("injected state completion failure was not reported")
 	}
 	record, exists, err := store.PullRequest(ctx, "project", created.Number)
 	if err != nil || !exists || record.Status != state.PullRequestOpen {
-		store.Close()
 		t.Fatalf("pre-backup pull request state=%+v exists=%v err=%v", record, exists, err)
 	}
 	assertRef(t, remote, "refs/heads/main", sourceOID)
 	assertRef(t, remote, pullrequest.MergeReceiptRef(created.Number), sourceOID)
 
 	backup := filepath.Join(root, "pending-merge-backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
-		store.Close()
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, store, manager, backup))
+	noErr(t, store.Close())
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "pending-restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "pending-restored-repositories"))
-	if err := Restore(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
 	restoredStore, err := state.Open(ctx, restoredState)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer restoredStore.Close()
 	restored, exists, err := restoredStore.PullRequest(ctx, "project", created.Number)
 	if err != nil || !exists || restored.Status != state.PullRequestMerged || restored.MergeOID != sourceOID {
@@ -598,41 +508,31 @@ func TestRestoreAcceptsStrictLegacyV1AndRejectsV1PullRequestFields(t *testing.T)
 		store.Close()
 		t.Fatal(err)
 	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.Close())
 	manifestPath := filepath.Join(backup, manifestName)
 	manifest, err := readManifest(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manifest.Version = legacyBackupVersion
 	manifest.PullRequests = nil
 	manifest.PullRequestRevisions = nil
 	manifest.PullRequestReviews = nil
 	manifest.PullRequestMergeIntents = nil
 	file, err := os.OpenFile(manifestPath, os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(manifest); err != nil {
 		file.Close()
 		t.Fatal(err)
 	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, file.Close())
 	legacyState := canonicalTestTarget(t, filepath.Join(root, "legacy-state"))
 	legacyRepositories := canonicalTestTarget(t, filepath.Join(root, "legacy-repositories"))
 	if err := Restore(ctx, backup, legacyState, legacyRepositories, ""); err != nil {
 		t.Fatalf("strict version 1 backup was rejected: %v", err)
 	}
 	restored, err := state.Open(ctx, legacyState)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	restoredRunner, err := gitexec.New("", filepath.Join(legacyState, "runtime-test"))
 	if err != nil {
 		restored.Close()
@@ -644,13 +544,9 @@ func TestRestoreAcceptsStrictLegacyV1AndRejectsV1PullRequestFields(t *testing.T)
 		restored.Close()
 		t.Fatalf("re-backup after format 1 restore: %v", err)
 	}
-	if err := restored.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, restored.Close())
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if rebacked.Version != backupVersion || len(rebacked.PullRequests) != 0 || len(rebacked.Tasks) != 0 {
 		t.Fatalf("format 1 re-backup=%+v", rebacked)
 	}
@@ -663,9 +559,7 @@ func TestRestoreAcceptsStrictLegacyV1AndRejectsV1PullRequestFields(t *testing.T)
 
 func TestManifestRejectsInvalidOrUnexpectedPasswordHashes(t *testing.T) {
 	validHash, err := auth.HashPassword("valid-password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	valid := Manifest{
 		Format: backupFormat, Version: backupVersion, CreatedAt: time.Now().UTC(),
 		AccessMode: "password", AccessHash: validHash, AdminHash: validHash,
@@ -695,12 +589,8 @@ func TestRestoreRejectsCorruptionAndExistingDestination(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	malformed := filepath.Join(root, "malformed-backup")
-	if err := os.Mkdir(malformed, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(malformed, manifestName), []byte("{not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(malformed, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(malformed, manifestName), []byte("{not json"), 0o600))
 	if err := Restore(ctx, malformed, filepath.Join(root, "malformed-state"), filepath.Join(root, "malformed-repositories"), ""); err == nil || !strings.Contains(err.Error(), "decode backup manifest") {
 		t.Fatalf("malformed manifest error=%v", err)
 	}
@@ -708,14 +598,10 @@ func TestRestoreRejectsCorruptionAndExistingDestination(t *testing.T) {
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, store, manager, backup))
 	bundle := filepath.Join(backup, "repositories", "project.bundle")
 	file, err := os.OpenFile(bundle, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := file.WriteString("corruption"); err != nil {
 		t.Fatal(err)
 	}
@@ -733,12 +619,8 @@ func TestRestoreRejectsCorruptionAndExistingDestination(t *testing.T) {
 	}
 
 	existing := filepath.Join(root, "existing-state")
-	if err := os.Mkdir(existing, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(existing, "sentinel"), []byte("preserve"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(existing, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(existing, "sentinel"), []byte("preserve"), 0o600))
 	if err := Restore(ctx, backup, existing, filepath.Join(root, "unused-repositories"), ""); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("existing destination error=%v", err)
 	}
@@ -764,15 +646,9 @@ func TestCompletedDirectoryPublicationNeverReplacesExistingDestination(t *testin
 	root := t.TempDir()
 	stage := filepath.Join(root, "stage")
 	destination := filepath.Join(root, "destination")
-	if err := os.Mkdir(stage, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(destination, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(destination, "sentinel"), []byte("preserve"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(stage, 0o700))
+	noErr(t, os.Mkdir(destination, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(destination, "sentinel"), []byte("preserve"), 0o600))
 	if err := renameNoReplace(stage, destination); err == nil {
 		t.Fatal("no-replace publication replaced an existing destination")
 	}
@@ -825,9 +701,7 @@ func TestRestoreRejectsTargetThroughAncestorSymlinkIntoBackup(t *testing.T) {
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, store, manager, backup))
 	alias := ancestorSymlink(t, root)
 	stateTarget := filepath.Join(alias, "backup", "inside-state")
 	repositoryTarget := filepath.Join(root, "restored-repositories")
@@ -865,9 +739,7 @@ func TestGuardedStateBlocksOpenBetweenRestorePublications(t *testing.T) {
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, store, manager, backup))
 	stateTarget := canonicalTestTarget(t, filepath.Join(root, "guarded-state"))
 	repositoryTarget := canonicalTestTarget(t, filepath.Join(root, "guarded-repositories"))
 	published := make(chan struct{})
@@ -899,9 +771,7 @@ func TestGuardedStateBlocksOpenBetweenRestorePublications(t *testing.T) {
 		t.Fatalf("state target was usable between restore publications: %v", openErr)
 	}
 	close(resume)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, <-done)
 	restored, err := state.Open(ctx, stateTarget)
 	if err != nil {
 		t.Fatalf("completed restored state did not open: %v", err)
@@ -915,9 +785,7 @@ func TestRestorePreparationAndPublicationFailuresLeaveNoFinalDestinations(t *tes
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, store, manager, backup))
 
 	tests := []struct {
 		name   string
@@ -988,9 +856,7 @@ func TestRestorePreservesAndMarksPathsWhenPublicationRollbackFails(t *testing.T)
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, store, manager, backup))
 	stateTarget := canonicalTestTarget(t, filepath.Join(root, "partial-state"))
 	repositoryTarget := canonicalTestTarget(t, filepath.Join(root, "partial-repositories"))
 	operations := defaultRestoreOperations()
@@ -1032,13 +898,9 @@ func TestRestorePreservesAndMarksPathsWhenPublicationRollbackFails(t *testing.T)
 func TestRestoreRejectsNonportableRepositoryIDBeforePublishing(t *testing.T) {
 	root := t.TempDir()
 	backup := filepath.Join(root, "backup")
-	if err := os.Mkdir(backup, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(backup, 0o700))
 	hash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manifest := Manifest{
 		Format: backupFormat, Version: backupVersion, CreatedAt: time.Now().UTC(),
 		AccessMode: "open", AdminHash: hash,
@@ -1052,16 +914,12 @@ func TestRestoreRejectsNonportableRepositoryIDBeforePublishing(t *testing.T) {
 	}
 	manifest.Repositories[0].ID = "con.archive"
 	file, err := os.OpenFile(filepath.Join(backup, manifestName), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := json.NewEncoder(file).Encode(manifest); err != nil {
 		file.Close()
 		t.Fatal(err)
 	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, file.Close())
 	stateTarget := filepath.Join(root, "state-target")
 	repositoryTarget := filepath.Join(root, "repository-target")
 	if err := Restore(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), "not portable") {
@@ -1073,12 +931,8 @@ func TestRestoreRejectsNonportableRepositoryIDBeforePublishing(t *testing.T) {
 
 func TestIncompleteRestoreMarkerBlocksStateOpen(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "pending-state")
-	if err := os.Mkdir(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(directory, pendingRestoreName), []byte("pending\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(directory, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(directory, pendingRestoreName), []byte("pending\n"), 0o600))
 	if _, err := state.Open(context.Background(), directory); err == nil || !strings.Contains(err.Error(), "incomplete offline restore") {
 		t.Fatalf("open pending state error=%v", err)
 	}
@@ -1087,9 +941,7 @@ func TestIncompleteRestoreMarkerBlocksStateOpen(t *testing.T) {
 func newOldGitExecutable(t *testing.T) (string, string) {
 	t.Helper()
 	realGit, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	root := t.TempDir()
 	marker := filepath.Join(root, "merge-tree-invoked")
 	wrapper := filepath.Join(root, "git-old")
@@ -1099,9 +951,7 @@ func newOldGitExecutable(t *testing.T) (string, string) {
 		"  if test \"$arg\" = merge-tree; then printf invoked > " + recoveryShellQuote(marker) + "; exit 97; fi\n" +
 		"done\n" +
 		"exec " + recoveryShellQuote(realGit) + " \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
 	return wrapper, marker
 }
 
@@ -1131,9 +981,7 @@ func createRecoveryMergeCommit(t *testing.T, ctx context.Context, runner *gitexe
 	message := "Merge pull request #" + strconv.FormatInt(request.Number, 10) + ": " + request.Title + "\n"
 	result, err := runner.RunWithEnvironment(ctx, "", strings.NewReader(message), environment,
 		"--git-dir", repositoryPath, "commit-tree", intent.TreeOID, "-p", intent.TargetOID, "-p", intent.SourceOID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return strings.TrimSpace(string(result.Stdout))
 }
 
@@ -1152,9 +1000,7 @@ func objectExists(t *testing.T, repositoryPath, oid string) bool {
 func canonicalTestTarget(t *testing.T, target string) string {
 	t.Helper()
 	identity, err := absentTarget(target, "test")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return identity
 }
 
@@ -1164,16 +1010,12 @@ func assertNoRecoveryOutputOrStages(t *testing.T, target, stageInfix string) {
 		t.Fatalf("final destination exists after failure: %s (%v)", target, err)
 	}
 	matches, err := filepath.Glob(target + stageInfix + "*")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(matches) != 0 {
 		t.Fatalf("operation-owned stages remain after ordinary failure: %v", matches)
 	}
 	backupMatches, err := filepath.Glob(filepath.Join(filepath.Dir(target), "."+filepath.Base(target)+stageInfix+"*"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(backupMatches) != 0 {
 		t.Fatalf("operation-owned backup stages remain after ordinary failure: %v", backupMatches)
 	}
@@ -1184,23 +1026,15 @@ func newBackupStore(t *testing.T, root string) (*state.Store, *repository.Manage
 	ctx := context.Background()
 	stateDir := filepath.Join(root, "source-state")
 	repositoriesRoot := filepath.Join(root, "source-repositories")
-	if err := os.Mkdir(repositoriesRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoriesRoot, 0o700))
 	store, err := state.Open(ctx, stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// Windows cannot remove the open database file during TempDir cleanup.
 	t.Cleanup(func() { _ = store.Close() })
 	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(ctx, repositoriesRoot, "open", "", adminHash, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(ctx, repositoriesRoot, "open", "", adminHash, false))
 	runner, err := gitexec.New("", filepath.Join(stateDir, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoriesRoot}
 	if _, err := manager.Create(ctx, "project", ""); err != nil {
 		t.Fatal(err)
@@ -1210,9 +1044,7 @@ func newBackupStore(t *testing.T, root string) (*state.Store, *repository.Manage
 	runGit(t, "", "init", "--initial-branch=main", work)
 	runGit(t, work, "config", "user.name", "Backup Test")
 	runGit(t, work, "config", "user.email", "backup@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "file"), []byte("data"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "file"), []byte("data"), 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "data")
 	runGit(t, work, "push", remote, "HEAD:refs/heads/main")
@@ -1252,5 +1084,14 @@ func assertRef(t *testing.T, repositoryPath, ref, want string) {
 	t.Helper()
 	if got := gitOutput(t, "", "--git-dir", repositoryPath, "rev-parse", "--verify", ref); got != want {
 		t.Fatalf("%s=%s, want %s", ref, got, want)
+	}
+}
+
+// noErr stops the test on an unexpected error. t.Helper keeps the failure
+// line at the caller.
+func noErr(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }

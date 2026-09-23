@@ -79,9 +79,7 @@ func TestCaptureStdoutDrainsLargeOutputWhileItIsWritten(t *testing.T) {
 		_, err := io.WriteString(os.Stdout, payload)
 		return err
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if output != payload {
 		t.Fatalf("captured %d bytes, want %d", len(output), len(payload))
 	}
@@ -145,46 +143,24 @@ func TestResetAdminPreservesRepositoryDataAndRevokesSession(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, "state")
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	preserved := filepath.Join(repositoryRoot, "project.git", "objects", "sentinel")
-	if err := os.MkdirAll(filepath.Dir(preserved), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(preserved, []byte("repository data"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(filepath.Dir(preserved), 0o700))
+	noErr(t, os.WriteFile(preserved, []byte("repository data"), 0o600))
 	store, err := state.Open(context.Background(), stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	accessHash, _ := auth.HashPassword("shared-password")
 	adminHash, _ := auth.HashPassword("old-admin-password")
-	if err := store.CompleteSetup(context.Background(), repositoryRoot, "password", accessHash, adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(context.Background(), repositoryRoot, "password", accessHash, adminHash, true))
 	settings, _ := store.Settings(context.Background())
-	if err := store.CreateSession(context.Background(), "admin-session", "admin", "csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CreateSession(context.Background(), "admin-session", "admin", "csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
+	noErr(t, store.Close())
 	passwordFile := filepath.Join(root, "new-password")
-	if err := os.WriteFile(passwordFile, []byte("new-admin-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(passwordFile, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := resetAdmin([]string{"--state-dir", stateDir, "--password-file", passwordFile}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(passwordFile, []byte("new-admin-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(passwordFile, false))
+	noErr(t, resetAdmin([]string{"--state-dir", stateDir, "--password-file", passwordFile}))
 	store, err = state.Open(context.Background(), stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	encoded, _ := store.PasswordHash(context.Background(), "admin")
 	if !auth.CheckPassword(encoded, "new-admin-password") {
@@ -203,13 +179,9 @@ func TestBackupRefusesStateHeldByLiveServer(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, "state")
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	store, err := state.Open(context.Background(), stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	adminHash, _ := auth.HashPassword("admin-password")
 	if err := store.CompleteSetup(context.Background(), repositoryRoot, "open", "", adminHash, false); err != nil {
 		store.Close()
@@ -217,9 +189,7 @@ func TestBackupRefusesStateHeldByLiveServer(t *testing.T) {
 	}
 	store.Close()
 	unlock, err := state.AcquireOfflineLock(stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer unlock()
 	output := filepath.Join(root, "backup")
 	err = backupState([]string{"--state-dir", stateDir, "--output", output})
@@ -233,12 +203,8 @@ func TestBackupRefusesStateHeldByLiveServer(t *testing.T) {
 
 func TestReadPrivatePasswordRejectsBroadPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password")
-	if err := os.WriteFile(path, []byte("valid-password"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(path, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(path, []byte("valid-password"), 0o600))
+	noErr(t, state.ProtectPrivatePath(path, false))
 	makePasswordFileBroad(t, path)
 	if err := state.ValidatePrivateFile(path); err == nil {
 		t.Fatal("password fixture unexpectedly has owner-only protection")
@@ -256,5 +222,21 @@ func TestOwnerOriginRejectsCredentialAndPath(t *testing.T) {
 	}
 	if got, err := ownerOrigin("", "0.0.0.0:7654"); err != nil || got != "http://127.0.0.1:7654" {
 		t.Fatalf("default owner origin=%q err=%v", got, err)
+	}
+}
+
+// noErr stops the test when err is not nil.
+func noErr(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// noErrf stops the test when err is not nil, naming the failed step.
+func noErrf(t testing.TB, err error, format string, args ...any) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", fmt.Sprintf(format, args...), err)
 	}
 }

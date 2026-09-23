@@ -17,9 +17,7 @@ import (
 func (f *fixture) prepareRuntime(t *testing.T) string {
 	t.Helper()
 	info, err := f.service.Prepare(context.Background())
-	if err != nil {
-		t.Fatalf("prepare runtime: %v", err)
-	}
+	noErr(t, err, "prepare runtime")
 	return info.RootID
 }
 
@@ -46,64 +44,70 @@ func (f *fixture) writeStagingEntry(t *testing.T, name, repositoryID, runID, tok
 	t.Helper()
 	rootID := f.prepareRuntime(t)
 	directory := filepath.Join(f.service.stagingRootPath(), name)
-	if err := os.Mkdir(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(directory, 0o700))
 	marker := stagingMarker{
 		Version: stagingMarkerVersion, Name: name, RootID: rootID, RunID: runID,
 		RepositoryID: repositoryID, Token: token, CreatedAt: f.now.Unix(),
 	}
-	if err := writeStagingMarker(directory, marker); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, writeStagingMarker(directory, marker))
 	return directory
 }
 
-// Main's original counterexample: a marker written by nobody is not ownership.
+// A marker written by nobody is not ownership.
 // Repeated reconciliation, and a later process, must keep preserving it.
 func TestUnknownStagingNeverManufacturesCleanupAuthority(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.service.Prepare(ctx); err != nil {
-		t.Fatal(err)
-	}
+	rootID := f.prepareRuntime(t)
 	root := f.service.stagingRootPath()
 	preserved := map[string]string{}
 
 	markerless := filepath.Join(root, "run-"+strings.Repeat("a", 32))
-	if err := os.Mkdir(markerless, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(markerless, 0o700))
 	preserved[f.writeSentinel(markerless, "markerless")] = "markerless"
 
 	malformed := filepath.Join(root, "run-"+strings.Repeat("b", 32))
-	if err := os.Mkdir(malformed, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(malformed, stagingMarkerName), []byte("not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(malformed, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(malformed, stagingMarkerName), []byte("not json"), 0o600))
 	preserved[f.writeSentinel(malformed, "malformed")] = "malformed"
 
 	foreign := filepath.Join(root, "run-"+strings.Repeat("c", 32))
-	if err := os.Mkdir(foreign, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(foreign, 0o700))
 	foreignID := strings.Repeat("d", 32)
 	marker := stagingMarker{
 		Version: stagingMarkerVersion, Name: filepath.Base(foreign), RootID: foreignID,
 		RunID: strings.Repeat("e", 32), RepositoryID: "foreign", Token: strings.Repeat("f", 32),
 		CreatedAt: f.now.Unix(),
 	}
-	if err := writeStagingMarker(foreign, marker); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, writeStagingMarker(foreign, marker))
 	preserved[f.writeSentinel(foreign, "foreign")] = "foreign"
 
-	stray := filepath.Join(root, "notes.txt")
-	if err := os.WriteFile(stray, []byte("stray"), 0o600); err != nil {
-		t.Fatal(err)
+	// A well-formed marker without a runtime root identity is invalid.
+	rootless := filepath.Join(root, "run-"+strings.Repeat("9", 32))
+	noErr(t, os.Mkdir(rootless, 0o700))
+	noErr(t, writeStagingMarker(rootless, stagingMarker{
+		Version: stagingMarkerVersion, Name: filepath.Base(rootless), RunID: strings.Repeat("9", 32),
+		RepositoryID: "foreign", Token: strings.Repeat("8", 64), CreatedAt: f.now.Unix(),
+	}))
+	preserved[f.writeSentinel(rootless, "rootless")] = "rootless"
+
+	// A readable marker naming this runtime root and repository still proves
+	// nothing without an authorization row.
+	readable := filepath.Join(root, "run-"+strings.Repeat("7", 32))
+	noErr(t, os.Mkdir(readable, 0o700))
+	noErr(t, writeStagingMarker(readable, stagingMarker{
+		Version: stagingMarkerVersion, Name: filepath.Base(readable), RootID: rootID,
+		RunID: strings.Repeat("7", 32), RepositoryID: "project", Token: strings.Repeat("6", 64),
+		CreatedAt: f.now.Unix(),
+	}))
+	if _, err := readStagingMarker(readable); err != nil {
+		t.Fatalf("fixture marker must be readable: %v", err)
 	}
+	preserved[f.writeSentinel(readable, "readable")] = "readable"
+	directories := []string{markerless, malformed, foreign, rootless, readable}
+
+	stray := filepath.Join(root, "notes.txt")
+	noErr(t, os.WriteFile(stray, []byte("stray"), 0o600))
 	preserved[stray] = "stray"
 
 	check := func(label string) {
@@ -111,9 +115,9 @@ func TestUnknownStagingNeverManufacturesCleanupAuthority(t *testing.T) {
 		for path, payload := range preserved {
 			f.assertSentinel(path, payload)
 		}
-		for _, name := range []string{"run-" + strings.Repeat("a", 32), "run-" + strings.Repeat("b", 32), "run-" + strings.Repeat("c", 32)} {
-			if _, err := os.Stat(filepath.Join(root, name)); err != nil {
-				t.Fatalf("%s: marker directory %s was removed", label, name)
+		for _, directory := range directories {
+			if _, err := os.Stat(directory); err != nil {
+				t.Fatalf("%s: marker directory %s was removed", label, directory)
 			}
 		}
 		info, err := os.Lstat(root)
@@ -139,7 +143,8 @@ func TestUnknownStagingNeverManufacturesCleanupAuthority(t *testing.T) {
 		check("restarted process")
 	}
 	// Unknown rows stay informational.
-	for _, name := range []string{"run-" + strings.Repeat("a", 32), "run-" + strings.Repeat("b", 32), "run-" + strings.Repeat("c", 32), "notes.txt"} {
+	for _, directory := range append(directories, stray) {
+		name := filepath.Base(directory)
 		row, exists, err := f.store.ImportStaging(ctx, name)
 		if err != nil || !exists || row.State != state.ImportStagingUnknown {
 			t.Fatalf("unknown row %s=%+v exists=%v err=%v", name, row, exists, err)
@@ -164,9 +169,7 @@ func TestAuthorizedTerminalStagingIsCleaned(t *testing.T) {
 
 	runID := strings.Repeat("7", 32)
 	token, err := newStagingToken()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	directory := f.writeStagingEntry(t, "run-"+runID, "project", runID, token)
 	f.writeSentinel(directory, "terminal")
 	if err := f.store.RegisterImportStaging(ctx, state.ImportStaging{
@@ -179,18 +182,12 @@ func TestAuthorizedTerminalStagingIsCleaned(t *testing.T) {
 		ID: runID, RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1, Kind: state.ImportKindRefresh,
 		Status: state.ImportRunPreparing, StartedAt: f.now, CreatedAt: f.now,
 	}
-	if err := f.store.BeginImportRun(ctx, run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.BeginImportRun(ctx, run))
 	run.Status = state.ImportRunInterrupted
 	run.FinishedAt = f.now
-	if err := f.store.FinishImportRun(ctx, run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.FinishImportRun(ctx, run))
 
-	if err := f.service.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.Reconcile(ctx))
 	if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("authorized terminal staging survived: %v", err)
 	}
@@ -226,9 +223,7 @@ func TestReconcileLeavesLiveRunAlone(t *testing.T) {
 	}()
 	<-started
 
-	if err := f.service.Reconcile(ctx); err != nil {
-		t.Fatalf("reconcile during live run: %v", err)
-	}
+	noErr(t, f.service.Reconcile(ctx), "reconcile during live run")
 	active, exists, err := f.store.ActiveImportRun(ctx, "project")
 	if err != nil || !exists {
 		t.Fatalf("live run disappeared: exists=%v err=%v", exists, err)
@@ -245,9 +240,7 @@ func TestReconcileLeavesLiveRunAlone(t *testing.T) {
 
 	f.transport.gate <- struct{}{}
 	<-done
-	if refreshErr != nil {
-		t.Fatalf("refresh: %v", refreshErr)
-	}
+	noErr(t, refreshErr, "refresh")
 	if refreshRun.ID != active.ID || refreshRun.Status != state.ImportRunComplete {
 		t.Fatalf("live run did not finish: %+v", refreshRun)
 	}
@@ -266,9 +259,7 @@ func TestSecondRuntimeOwnershipIsRefused(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	first, err := f.service.Prepare(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	second := &Service{Store: f.store, Repositories: f.manager}
 	defer func() { _ = second.Close() }()
 	if _, err := second.Prepare(ctx); !errors.Is(err, ErrRuntimeHeld) {
@@ -276,9 +267,7 @@ func TestSecondRuntimeOwnershipIsRefused(t *testing.T) {
 	}
 	f.service.Close()
 	recovered, err := second.Prepare(ctx)
-	if err != nil {
-		t.Fatalf("prepare after release: %v", err)
-	}
+	noErr(t, err, "prepare after release")
 	if recovered.RootID != first.RootID {
 		t.Fatalf("root identity changed across ownership: %s then %s", first.RootID, recovered.RootID)
 	}
@@ -306,9 +295,7 @@ func TestReplacedRuntimeLockIsRevalidated(t *testing.T) {
 	} else if err := os.WriteFile(lockPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := assertRuntimeStillOwned(f.service); err != nil {
-		t.Fatalf("established runtime ownership after replacement attempt: %v", err)
-	}
+	noErr(t, assertRuntimeStillOwned(f.service), "established runtime ownership after replacement attempt")
 
 	second := &Service{Store: f.store, Repositories: f.manager}
 	defer func() { _ = second.Close() }()
@@ -318,26 +305,19 @@ func TestReplacedRuntimeLockIsRevalidated(t *testing.T) {
 	if replaced {
 		// A platform that permits unlinking the lock still relies on the held
 		// marker generation for authority.
-		if err := f.service.Reconcile(ctx); err != nil {
-			t.Fatalf("established owner lost authority: %v", err)
-		}
+		noErr(t, f.service.Reconcile(ctx), "established owner lost authority")
 	} else if err := assertRuntimeStillOwned(f.service); err != nil {
 		t.Fatalf("sharing protection did not preserve ownership: %v", err)
 	}
-	if err := f.service.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.Close())
 	info, err := second.Prepare(ctx)
-	if err != nil {
-		t.Fatalf("next owner could not prepare after release: %v", err)
-	}
+	noErr(t, err, "next owner could not prepare after release")
 	if info.RootID != rootID {
 		t.Fatalf("root identity changed: %s then %s", rootID, info.RootID)
 	}
 }
 
 // Replacement must not give a second service authority over a live run.
-// Main reproduced the original failure with both assertions below.
 func TestReplacementPreservesAnotherOwnersLiveRun(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -369,9 +349,7 @@ func TestReplacementPreservesAnotherOwnersLiveRun(t *testing.T) {
 	if err := os.Rename(lockPath, lockPath+".preserved"); err != nil && !runtimeSharingViolation(err) {
 		t.Fatalf("rename runtime lock: %v", err)
 	}
-	if err := assertRuntimeStillOwned(f.service); err != nil {
-		t.Fatalf("live owner's runtime after replacement attempt: %v", err)
-	}
+	noErr(t, assertRuntimeStillOwned(f.service), "live owner's runtime after replacement attempt")
 	second := &Service{Store: f.store, Repositories: f.manager}
 	defer func() { _ = second.Close() }()
 	if err := second.Reconcile(ctx); !errors.Is(err, ErrRuntimeHeld) {
@@ -394,9 +372,7 @@ func TestReplacementPreservesAnotherOwnersLiveRun(t *testing.T) {
 	if *refreshErr != nil || refreshRun.Status != state.ImportRunComplete {
 		t.Fatalf("live run did not finish: status=%q err=%v", refreshRun.Status, *refreshErr)
 	}
-	if err := f.service.Close(); err != nil {
-		t.Fatalf("close first owner: %v", err)
-	}
+	noErr(t, f.service.Close(), "close first owner")
 	info, err := second.Prepare(ctx)
 	if err != nil || info.RootID != rootID {
 		t.Fatalf("next owner did not retain root identity: info=%+v err=%v", info, err)
@@ -429,24 +405,18 @@ func TestIdentityLossLatchesWhileRunActive(t *testing.T) {
 	}
 	stagingMarkerPath := filepath.Join(staging, stagingMarkerName)
 	markerBefore, err := os.ReadFile(stagingMarkerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := os.Lstat(filepath.Join(staging, "HEAD")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("staging HEAD existed before transport release: %v", err)
 	}
 
 	restore, err := induceRuntimeMarkerMismatch(f.service, ".identity-preserved")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	availability := f.service.Availability(ctx)
 	if availability.Available || availability.Code != CodeRuntimeUnavailable {
 		t.Fatalf("availability did not report ownership loss: %+v", availability)
 	}
-	if err := restore(); err != nil {
-		t.Fatalf("restore runtime marker: %v", err)
-	}
+	noErr(t, restore(), "restore runtime marker")
 	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeLost) {
 		t.Fatalf("restored marker cleared ownership loss: err=%v", err)
 	}
@@ -473,9 +443,7 @@ func TestIdentityLossLatchesWhileRunActive(t *testing.T) {
 	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeLost) {
 		t.Fatalf("completed run cleared ownership loss: err=%v", err)
 	}
-	if err := f.service.Close(); err != nil {
-		t.Fatalf("close lost idle runtime: %v", err)
-	}
+	noErr(t, f.service.Close(), "close lost idle runtime")
 	info, err := f.service.Prepare(ctx)
 	if err != nil || info.RootID != rootID {
 		t.Fatalf("explicit close did not recover the restored root: info=%+v err=%v", info, err)
@@ -498,14 +466,10 @@ func TestHeldMarkerCanBeRevalidatedThroughOwningHandle(t *testing.T) {
 func TestPartialRuntimeInitializationWithoutMarkerIsRefused(t *testing.T) {
 	f := newFixture(t)
 	root := f.service.stagingRootPath()
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(root, 0o700))
 	generation := strings.Repeat("a", 32)
 	content := fmt.Sprintf("{\"version\":%d,\"generation\":%q}\n", runtimeLockRecordVersion, generation)
-	if err := os.WriteFile(filepath.Join(root, runtimeRootLockName), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(root, runtimeRootLockName), []byte(content), 0o600))
 	if _, err := f.service.Prepare(context.Background()); !errors.Is(err, ErrRuntimeUnsafe) {
 		t.Fatalf("partial initialization was adopted: %v", err)
 	}
@@ -555,21 +519,13 @@ func TestUnownedNonemptyRootIsAdoptedWithoutModeChange(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	root := f.service.stagingRootPath()
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(root, 0o755))
+	noErr(t, os.Chmod(root, 0o755))
 	unknown := filepath.Join(root, "run-"+strings.Repeat("1", 32))
-	if err := os.Mkdir(unknown, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(unknown, 0o755))
 	sentinel := f.writeSentinel(unknown, "unowned")
 	before, err := os.Stat(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// Windows reports directory permissions from attributes, not from
 	// Chmod, so only the unchanged mode is portable. Unix also checks the
 	// exact mode the test set.
@@ -586,9 +542,7 @@ func TestUnownedNonemptyRootIsAdoptedWithoutModeChange(t *testing.T) {
 	}
 	f.assertSentinel(sentinel, "unowned")
 	for pass := 1; pass <= 2; pass++ {
-		if err := f.service.Reconcile(ctx); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, f.service.Reconcile(ctx))
 		f.assertSentinel(sentinel, "unowned")
 	}
 	if _, err := os.Stat(filepath.Join(root, runtimeRootMarkerName)); err != nil {
@@ -602,17 +556,11 @@ func TestLinkedStagingRootIsRefusedAndPreserved(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	target := filepath.Join(f.root, "linked-target")
-	if err := os.MkdirAll(target, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(target, 0o700))
 	sentinel := f.writeSentinel(target, "linked")
 	root := f.service.stagingRootPath()
-	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, root); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(filepath.Dir(root), 0o700))
+	noErr(t, os.Symlink(target, root))
 	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeUnsafe) {
 		t.Fatalf("prepare linked root err=%v", err)
 	}
@@ -641,9 +589,7 @@ func TestStagingCollisionPreservesExistingDirectory(t *testing.T) {
 	f.prepareRuntime(t)
 	runID := strings.Repeat("9", 32)
 	collision := filepath.Join(f.service.stagingRootPath(), "run-"+runID)
-	if err := os.Mkdir(collision, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(collision, 0o700))
 	sentinel := f.writeSentinel(collision, "collision")
 
 	if _, err := f.service.acquireStaging(ctx, runID, "project", f.now); err == nil {
@@ -654,9 +600,7 @@ func TestStagingCollisionPreservesExistingDirectory(t *testing.T) {
 		t.Fatalf("collision left an authorization row: exists=%v err=%v", exists, err)
 	}
 
-	if err := f.service.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.Reconcile(ctx))
 	f.assertSentinel(sentinel, "collision")
 	row, exists, err := f.store.ImportStaging(ctx, "run-"+runID)
 	if err != nil || !exists || row.State != state.ImportStagingUnknown {
@@ -669,14 +613,10 @@ func TestMalformedRootMarkerIsRefusedAndPreserved(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	root := f.service.stagingRootPath()
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(root, 0o700))
 	markerPath := filepath.Join(root, runtimeRootMarkerName)
 	content := []byte(`{"version":1,"root_id":"short"}`)
-	if err := os.WriteFile(markerPath, content, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(markerPath, content, 0o600))
 	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeUnsafe) {
 		t.Fatalf("prepare with malformed root marker err=%v", err)
 	}
@@ -689,8 +629,6 @@ func TestMalformedRootMarkerIsRefusedAndPreserved(t *testing.T) {
 func mustReadDir(t *testing.T, directory string) []os.DirEntry {
 	t.Helper()
 	entries, err := os.ReadDir(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return entries
 }

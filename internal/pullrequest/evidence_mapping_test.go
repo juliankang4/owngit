@@ -14,13 +14,9 @@ import (
 func TestEvidenceQueryFailuresRemainStructuredAndAdvisory(t *testing.T) {
 	t.Run("configuration presence is unknown", func(t *testing.T) {
 		fixture, pullRequest, _ := newEvidenceReadFixture(t)
-		if err := fixture.store.Exec(fixture.ctx, `DROP TABLE check_configurations`); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, fixture.store.Exec(fixture.ctx, `DROP TABLE check_configurations`))
 		view, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, pullRequest.Number)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if view.Checks.ReadFailure == nil || view.Checks.ReadFailure.Code != ReadFailureCheckConfiguration || view.Checks.Configured || view.Checks.Status != "" {
 			t.Fatalf("configuration read failure=%+v", view.Checks)
 		}
@@ -31,26 +27,18 @@ func TestEvidenceQueryFailuresRemainStructuredAndAdvisory(t *testing.T) {
 		fixture, pullRequest, sourceOID := newEvidenceReadFixture(t)
 		now := time.Date(2026, 9, 19, 13, 0, 0, 0, time.UTC)
 		task, err := fixture.store.CreateTask(fixture.ctx, fixture.repositoryID, "Read check evidence", now)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		_, _, err = fixture.store.RegisterCheckAttempt(fixture.ctx, state.CheckAttempt{
 			ID: "11111111111111111111111111111111", TaskID: task.ID, RepositoryID: fixture.repositoryID,
 			RevisionOID: sourceOID, WorktreeState: state.WorktreeClean,
 			StartedAt: now, CreatedAt: now, Protection: state.ProtectionUnknown, ExecutionScope: state.ExecutionScopeInherited,
 			Checks: []state.CheckDefinition{{Name: "unit", Command: "go test ./..."}},
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		// The attempt query itself succeeds, then its real result query fails.
-		if err := fixture.store.Exec(fixture.ctx, `DROP TABLE check_results`); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, fixture.store.Exec(fixture.ctx, `DROP TABLE check_results`))
 		view, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, pullRequest.Number)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if view.Checks.ReadFailure == nil || view.Checks.ReadFailure.Code != ReadFailureCheckEvidence || !view.Checks.Configured || view.Checks.Status != "" {
 			t.Fatalf("check evidence read failure=%+v", view.Checks)
 		}
@@ -59,13 +47,9 @@ func TestEvidenceQueryFailuresRemainStructuredAndAdvisory(t *testing.T) {
 
 	t.Run("review read failure is not execution unavailable", func(t *testing.T) {
 		fixture, pullRequest, _ := newEvidenceReadFixture(t)
-		if err := fixture.store.Exec(fixture.ctx, `DROP TABLE pull_request_reviews`); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, fixture.store.Exec(fixture.ctx, `DROP TABLE pull_request_reviews`))
 		view, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, pullRequest.Number)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if view.Review.ReadFailure == nil || view.Review.ReadFailure.Code != ReadFailureReviewEvidence || view.Review.Status != "" {
 			t.Fatalf("review read failure=%+v", view.Review)
 		}
@@ -88,9 +72,7 @@ func newEvidenceReadFixture(t *testing.T) (*serviceFixture, *View, string) {
 		Repository: fixture.repositoryID, Title: "Read advisory evidence",
 		SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "request",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return fixture, created, sourceOID
 }
 
@@ -103,9 +85,7 @@ func assertAdvisoryEvidenceDidNotBlockMerge(t *testing.T, view *View) {
 
 func TestChecksFromAttemptPreservesCleanupAndPendingEvidence(t *testing.T) {
 	store, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	service := Service{Store: store, Now: func() time.Time { return now }}
@@ -153,9 +133,7 @@ func TestChecksFromAttemptPreservesCleanupAndPendingEvidence(t *testing.T) {
 // response, so it must not appear in the JSON.
 func TestChecksCarryTheRecordedJobLinkWithoutWideningTheAPI(t *testing.T) {
 	store, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	now := time.Date(2026, 9, 21, 9, 0, 0, 0, time.UTC)
 	service := Service{Store: store, Now: func() time.Time { return now }}
@@ -191,13 +169,9 @@ func TestChecksCarryTheRecordedJobLinkWithoutWideningTheAPI(t *testing.T) {
 	// pointers on every call and their values are what matter; the link itself
 	// is excluded from that encoding, which the assertions below rely on.
 	sameFacts, err := json.Marshal(manual)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	linkedFacts, err := json.Marshal(automatic)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if string(sameFacts) != string(linkedFacts) {
 		t.Errorf("the job link changed other evidence:\nunlinked=%s\nlinked=%s", sameFacts, linkedFacts)
 	}
@@ -207,9 +181,7 @@ func TestChecksCarryTheRecordedJobLinkWithoutWideningTheAPI(t *testing.T) {
 		t.Errorf("the job link reached the pull request API response: %s", linkedFacts)
 	}
 	var decoded map[string]any
-	if err := json.Unmarshal(linkedFacts, &decoded); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal(linkedFacts, &decoded))
 	if _, present := decoded["job_id"]; present {
 		t.Error("the API response gained a job_id field")
 	}

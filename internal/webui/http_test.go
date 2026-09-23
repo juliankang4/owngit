@@ -68,9 +68,7 @@ func TestRenderWritesToAnOrdinaryWriter(t *testing.T) {
 	// Render must not touch response headers or status: the caller owns those.
 	r := newRenderer(t)
 	rec := httptest.NewRecorder()
-	if err := r.Render(rec.Body, OverviewPage{Chrome: fullChrome(LangEN), Activity: sampleGraph()}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, r.Render(rec.Body, OverviewPage{Chrome: fullChrome(LangEN), Activity: sampleGraph()}))
 	if len(rec.Header()) != 0 {
 		t.Errorf("Render set response headers: %v", rec.Header())
 	}

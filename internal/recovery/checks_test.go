@@ -68,29 +68,19 @@ func sealDigests(manifest *Manifest) {
 	}
 }
 
-func TestBackupFiveSerializesOnlyAuthoritativeTaskAndCycleFacts(t *testing.T) {
+func TestBackupSerializesOnlyAuthoritativeTaskAndCycleFacts(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	store, err := state.Open(ctx, filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	adminHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, filepath.Join(root, "repositories"), "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(ctx, filepath.Join(root, "repositories"), "open", "", adminHash, true))
 	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(ctx, state.Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(ctx, state.Repository{ID: "project", Name: "Project", CreatedAt: now}))
 	task, err := store.CreateTask(ctx, "project", "Authoritative backup", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	cycleID := "fedcba9876543210fedcba9876543210"
 	if _, _, err := store.ReserveCorrectionCycle(ctx, "project", task.ID, cycleID, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
@@ -106,19 +96,13 @@ func TestBackupFiveSerializesOnlyAuthoritativeTaskAndCycleFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, err := store.RecoverySnapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manifest := Manifest{Format: backupFormat, Version: backupVersion, CreatedAt: now, AccessMode: "open", AdminHash: adminHash}
 	addCheckState(&manifest, snapshot)
 	encoded, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var document map[string]any
-	if err := json.Unmarshal(encoded, &document); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal(encoded, &document))
 	taskRecord := document["tasks"].([]any)[0].(map[string]any)
 	if len(taskRecord) != 5 || taskRecord["id"] != task.ID || taskRecord["repository_id"] != "project" || taskRecord["title"] != "Authoritative backup" || taskRecord["created_at"] == nil || taskRecord["updated_at"] == nil {
 		t.Fatalf("backup task facts=%v", taskRecord)
@@ -140,47 +124,33 @@ func TestBackupFiveSerializesOnlyAuthoritativeTaskAndCycleFacts(t *testing.T) {
 	}
 	taskRecord["status"] = state.TaskResolved
 	tampered, err := json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manifestPath := filepath.Join(root, manifestName)
-	if err := os.WriteFile(manifestPath, tampered, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(manifestPath, tampered, 0o600))
 	if _, err := readManifest(manifestPath); err == nil || !strings.Contains(err.Error(), `unknown field "status"`) {
-		t.Fatalf("format 5 accepted a removed task projection field: %v", err)
+		t.Fatalf("backup accepted a removed task projection field: %v", err)
 	}
 }
 
-func TestBackupFivePreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
+func TestBackupPreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	stateDir := filepath.Join(root, "state")
 	repositoriesRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoriesRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoriesRoot, 0o700))
 	store, err := state.Open(ctx, stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(ctx, repositoriesRoot, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(ctx, repositoriesRoot, "open", "", adminHash, true))
 	runner, err := gitexec.New("", filepath.Join(stateDir, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoriesRoot}
 	if _, err := manager.Create(ctx, "project", "check records"); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Unix(1_800_000_000, 0)
 	task, err := store.CreateTask(ctx, "project", "Build the project", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	exit := 1
 	attempt := state.CheckAttempt{
 		ID: "0123456789abcdef0123456789abcdef", TaskID: task.ID, RepositoryID: "project",
@@ -204,27 +174,19 @@ func TestBackupFivePreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 	if _, _, err := store.CreateHelperCredential(ctx, "project", "laptop", "", tokenHash[:], now); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.Close())
 
 	store, err = state.Open(ctx, stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager = &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoriesRoot}
 	backup := filepath.Join(root, "backup")
 	if err := Create(ctx, store, manager, backup); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.Close())
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if manifest.Version != backupVersion || len(manifest.Tasks) != 1 || len(manifest.CheckConfigurations) != 1 || len(manifest.CheckAttempts) != 1 || len(manifest.CheckResults) != 1 {
 		t.Fatalf("backup check records: version=%d tasks=%d configs=%d attempts=%d results=%d",
 			manifest.Version, len(manifest.Tasks), len(manifest.CheckConfigurations), len(manifest.CheckAttempts), len(manifest.CheckResults))
@@ -237,13 +199,9 @@ func TestBackupFivePreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
-	if err := Restore(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
 	restored, err := state.Open(ctx, restoredState)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer restored.Close()
 	tasks, err := restored.Tasks(ctx, "project")
 	if err != nil || len(tasks) != 1 || tasks[0].Status != state.TaskActive || tasks[0].CorrectionCyclesUsed != 0 || !tasks[0].InitialCheckDone {
@@ -270,18 +228,14 @@ func TestBackupFivePreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 		t.Fatalf("restored helper credentials=%+v err=%v", credentials, err)
 	}
 	restoredRunner, err := gitexec.New("", filepath.Join(restoredState, "runtime-test"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	restoredManager := &repository.Manager{Store: restored, Git: restoredRunner, Locks: gitexec.NewLocks(), Root: restoredRepositories}
 	rebackup := filepath.Join(root, "backup-again")
 	if err := Create(ctx, restored, restoredManager, rebackup); err != nil {
 		t.Fatalf("re-backup restored checks: %v", err)
 	}
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !reflect.DeepEqual(rebacked.Tasks, manifest.Tasks) ||
 		!reflect.DeepEqual(rebacked.CheckConfigurations, manifest.CheckConfigurations) ||
 		!reflect.DeepEqual(rebacked.CheckCycles, manifest.CheckCycles) ||
@@ -293,9 +247,7 @@ func TestBackupFivePreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 
 func TestBackupForwardVersionIsRejectedAndVersionTwoStillRestores(t *testing.T) {
 	validHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	directory := t.TempDir()
 	manifestPath := filepath.Join(directory, manifestName)
 	manifest := Manifest{
@@ -315,29 +267,59 @@ func TestBackupForwardVersionIsRejectedAndVersionTwoStillRestores(t *testing.T) 
 	manifest.Version = pullRequestBackupVersion
 	writeManifestFile(t, manifestPath, manifest)
 	read, err := readManifest(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := validateManifest(read); err != nil {
 		t.Fatalf("version 2 backup rejected: %v", err)
 	}
-	read.Tasks = []TaskManifest{{ID: "task"}}
-	if err := validateManifest(read); err == nil || !strings.Contains(err.Error(), "version 2") {
-		t.Fatalf("version 2 manifest accepted check metadata: %v", err)
+}
+
+// The committed baseline formats predate checks, review event identities and
+// imports, so a manifest of those versions cannot carry them.
+func TestBaselineBackupVersionsRefuseNewerRecords(t *testing.T) {
+	hash, err := auth.HashPassword("admin-password")
+	noErr(t, err)
+	for _, version := range []int{legacyBackupVersion, pullRequestBackupVersion} {
+		empty := Manifest{Format: backupFormat, Version: version, CreatedAt: time.Now().UTC(), AccessMode: "open", AdminHash: hash}
+		if err := validateManifest(empty); err != nil {
+			t.Fatalf("empty version %d manifest rejected: %v", version, err)
+		}
+	}
+	for _, test := range []struct {
+		name    string
+		version int
+		mutate  func(*Manifest)
+		want    string
+	}{
+		{"v1 task", 1, func(m *Manifest) { m.Tasks = []TaskManifest{{ID: "task"}} }, "version 1 backup contains unsupported check metadata"},
+		{"task", 2, func(m *Manifest) { m.Tasks = []TaskManifest{{ID: "task"}} }, "version 2 backup contains unsupported check metadata"},
+		{"policy", 2, func(m *Manifest) { m.CheckPolicies = []CheckPolicyManifest{{RepositoryID: "project"}} }, "version 2 backup contains unsupported check metadata"},
+		{"job", 2, func(m *Manifest) { m.CheckJobs = []CheckJobManifest{{ID: strings.Repeat("1", 32)}} }, "version 2 backup contains unsupported check metadata"},
+		{"job identity", 2, func(m *Manifest) {
+			m.CheckAttempts = []CheckAttemptManifest{{ID: strings.Repeat("3", 32), JobID: strings.Repeat("4", 32)}}
+		}, "version 2 backup contains unsupported check metadata"},
+		{"review event", 2, func(m *Manifest) {
+			m.PullRequestReviews = []PullRequestReviewManifest{{RepositoryID: "project", PullRequestNumber: 1, ReviewEventID: strings.Repeat("5", 32)}}
+		}, "version 2 backup contains an unsupported review event identity"},
+		{"import source", 2, func(m *Manifest) { m.ImportSources = []ImportSourceManifest{{RepositoryID: "project"}} }, "version 2 backup contains unsupported import metadata"},
+		{"import order evidence", 2, func(m *Manifest) { m.ImportRunOrderKnown = true }, "version 2 backup contains unsupported import metadata"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := Manifest{Format: backupFormat, Version: test.version, CreatedAt: time.Now().UTC(), AccessMode: "open", AdminHash: hash}
+			test.mutate(&manifest)
+			if err := validateManifest(manifest); err == nil || err.Error() != test.want {
+				t.Fatalf("error=%v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
 func TestBackupRejectsTamperedCheckMetadata(t *testing.T) {
 	validHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	now := time.Now().UTC()
 	checks := []CheckDefinitionManifest{{Name: "unit", Command: "go test ./..."}}
 	encoded, err := json.Marshal(checks)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	hash := sha256.Sum256(encoded)
 	attemptID := "0123456789abcdef0123456789abcdef"
 	logExpiresAt := now.Add(30 * 24 * time.Hour)
@@ -446,9 +428,7 @@ func TestBackupRejectsTamperedCheckMetadata(t *testing.T) {
 			})
 		}
 		encoded, err := json.Marshal(definitions)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		configurationHash := sha256.Sum256(encoded)
 		manifest.CheckConfigurations[0].Checks = definitions
 		manifest.CheckConfigurations[0].ConfigHash = hex.EncodeToString(configurationHash[:])
@@ -571,18 +551,14 @@ func TestBackupRejectsTamperedCheckMetadata(t *testing.T) {
 func writeManifestFile(t *testing.T, path string, manifest Manifest) {
 	t.Helper()
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(manifest); err != nil {
 		file.Close()
 		t.Fatal(err)
 	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, file.Close())
 }
 
 // TestBackupRejectsInvalidCheckGraphs covers graph relationships that the
@@ -590,18 +566,14 @@ func writeManifestFile(t *testing.T, path string, manifest Manifest) {
 // inconsistent history.
 func TestBackupRejectsInvalidCheckGraphs(t *testing.T) {
 	validHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	now := time.Now().UTC()
 	checks := []CheckDefinitionManifest{
 		{Name: "unit", Command: "go test ./..."},
 		{Name: "vet", Command: "go vet ./..."},
 	}
 	encoded, err := json.Marshal(checks)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	hash := sha256.Sum256(encoded)
 	attemptID := "0123456789abcdef0123456789abcdef"
 	cycleID := "fedcba9876543210fedcba9876543210"
@@ -692,40 +664,34 @@ func TestBackupRejectsInvalidCheckGraphs(t *testing.T) {
 	}
 }
 
-// TestUnreleasedBackupVersionsAreRefused covers the interim development backup
-// formats. They are refused instead of being converted.
+// TestUnreleasedBackupVersionsAreRefused covers the development backup formats
+// 3 through 8 and a newer format. They are refused before any file is written.
 func TestUnreleasedBackupVersionsAreRefused(t *testing.T) {
 	validHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	root := t.TempDir()
 	backup := filepath.Join(root, "backup")
-	if err := os.Mkdir(backup, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(backup, 0o700))
 	manifestPath := filepath.Join(backup, manifestName)
 	manifest := Manifest{
 		Format: backupFormat, Version: backupVersion, CreatedAt: time.Now().UTC(),
 		AccessMode: "open", AdminHash: validHash,
 	}
-	for _, version := range []int{3, 4, backupVersion + 1} {
+	for _, version := range []int{3, 4, 5, 6, 7, 8, backupVersion + 1} {
 		manifest.Version = version
 		writeManifestFile(t, manifestPath, manifest)
-		want := "unreleased development format"
+		want := fmt.Sprintf("backup uses the unreleased development format %d; this build supports versions 1, 2, and 9", version)
 		if version > backupVersion {
-			want = "unsupported backup version"
+			want = "unsupported backup version 10: this build supports versions 1, 2, and 9"
 		}
 		before, err := os.ReadFile(manifestPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := readManifest(manifestPath); err == nil || !strings.Contains(err.Error(), want) {
+		noErr(t, err)
+		if _, err := readManifest(manifestPath); err == nil || err.Error() != want {
 			t.Fatalf("backup version %d error=%v", version, err)
 		}
 		stateTarget := filepath.Join(root, fmt.Sprintf("state-%d", version))
 		repositoryTarget := filepath.Join(root, fmt.Sprintf("repositories-%d", version))
-		if err := Restore(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), want) {
+		if err := Restore(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || err.Error() != want {
 			t.Fatalf("restore backup version %d error=%v", version, err)
 		}
 		for _, target := range []string{stateTarget, repositoryTarget} {
@@ -734,9 +700,7 @@ func TestUnreleasedBackupVersionsAreRefused(t *testing.T) {
 			}
 		}
 		after, err := os.ReadFile(manifestPath)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if !bytes.Equal(after, before) {
 			t.Fatalf("refused backup version %d changed its input manifest", version)
 		}
@@ -751,27 +715,21 @@ func TestCommittedBaselineUpgradesAndRoundTripsThroughBackup(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, "state")
 	repositoriesRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoriesRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoriesRoot, 0o700))
 	remote := filepath.Join(repositoriesRoot, testfixture.BaselineRepositoryID+".git")
 	runGit(t, "", "init", "--bare", "--initial-branch=main", remote)
 	work := filepath.Join(root, "baseline-work")
 	runGit(t, "", "init", "--initial-branch=main", work)
 	runGit(t, work, "config", "user.name", "Baseline Test")
 	runGit(t, work, "config", "user.email", "baseline@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "baseline target")
 	targetOID := gitOutput(t, work, "rev-parse", "HEAD")
 	runGit(t, work, "remote", "add", "origin", remote)
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	runGit(t, work, "checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600))
 	runGit(t, work, "add", ".")
 	runGit(t, work, "commit", "-m", "baseline source")
 	sourceOID := gitOutput(t, work, "rev-parse", "HEAD")
@@ -781,9 +739,7 @@ func TestCommittedBaselineUpgradesAndRoundTripsThroughBackup(t *testing.T) {
 	runGit(t, "", "--git-dir", remote, "update-ref", targetRef, targetOID)
 
 	adminHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := testfixture.CreateCommittedBaselineState(ctx, stateDir, testfixture.BaselineStateOptions{
 		RepositoryRoot: repositoriesRoot, AdminPasswordHash: adminHash,
 		SourceOID: sourceOID, TargetOID: targetOID,
@@ -819,9 +775,7 @@ func TestCommittedBaselineUpgradesAndRoundTripsThroughBackup(t *testing.T) {
 		store.Close()
 		t.Fatalf("backup of the upgraded baseline failed: %v", err)
 	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.Close())
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
@@ -829,9 +783,7 @@ func TestCommittedBaselineUpgradesAndRoundTripsThroughBackup(t *testing.T) {
 		t.Fatalf("restore of the upgraded baseline failed: %v", err)
 	}
 	restored, err := state.Open(ctx, restoredState)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	restoredSettings, err := restored.Settings(ctx)
 	if err != nil || !restoredSettings.Initialized || restoredSettings.RepositoryRoot != restoredRepositories || restoredSettings.AccessMode != "open" || restoredSettings.AccessSessionVersion != 1 || restoredSettings.AdminSessionVersion != 1 || restoredSettings.InsecureHTTPAccepted {
 		restored.Close()
@@ -875,17 +827,11 @@ func TestCommittedBaselineUpgradesAndRoundTripsThroughBackup(t *testing.T) {
 		restored.Close()
 		t.Fatalf("re-backup of the restored baseline failed: %v", err)
 	}
-	if err := restored.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, restored.Close())
 	first, err := readManifest(filepath.Join(backup, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	again, err := readManifest(filepath.Join(second, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if first.Version != backupVersion || again.Version != backupVersion || first.AccessMode != again.AccessMode || first.AccessHash != again.AccessHash || first.AdminHash != again.AdminHash || !reflect.DeepEqual(first.PullRequests, again.PullRequests) || !reflect.DeepEqual(first.PullRequestRevisions, again.PullRequestRevisions) || !reflect.DeepEqual(first.PullRequestReviews, again.PullRequestReviews) || !reflect.DeepEqual(first.Tasks, again.Tasks) {
 		t.Fatalf("re-backup changed baseline records: first=%+v again=%+v", first, again)
 	}

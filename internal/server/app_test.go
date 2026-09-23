@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -40,13 +41,9 @@ func TestCookieNamesUseOwngitNamespace(t *testing.T) {
 
 func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
-	if err := store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
+	server := serve(t, app.Handler())
+	client, jar := newBrowserClient(t)
 
 	response := request(t, client, http.MethodGet, server.URL+"/setup", nil, "")
 	if response.StatusCode != http.StatusOK {
@@ -64,13 +61,9 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("setup session ok=%v err=%v", ok, err)
 	}
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	unrelated := filepath.Join(repositoryRoot, "owner-notes.txt")
-	if err := os.WriteFile(unrelated, []byte("leave this file alone"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(unrelated, []byte("leave this file alone"), 0o600))
 	response = request(t, client, http.MethodPost, server.URL+"/setup", url.Values{
 		"csrf": {setupSession.CSRF}, "storage_path": {repositoryRoot}, "access_mode": {"open"},
 		"admin_password": {"admin-password-one"}, "insecure_ack": {"on"},
@@ -80,9 +73,7 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 	}
 	settings, _ := store.Settings(context.Background())
 	canonicalRoot, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !settings.Initialized || settings.AccessMode != "open" || settings.RepositoryRoot != canonicalRoot {
 		t.Fatalf("unexpected completed settings: %+v", settings)
 	}
@@ -160,9 +151,7 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 	gitDiscoveryURL := server.URL + "/git/project-one.git/info/refs?service=git-upload-pack"
 	gitRequest, _ := http.NewRequest(http.MethodGet, gitDiscoveryURL, nil)
 	gitResponse, err := client.Do(gitRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	gitResponse.Body.Close()
 	if gitResponse.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("protected Git discovery without Basic auth status=%d", gitResponse.StatusCode)
@@ -170,9 +159,7 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 	gitRequest, _ = http.NewRequest(http.MethodGet, gitDiscoveryURL, nil)
 	gitRequest.SetBasicAuth("owngit", "shared-password-one")
 	gitResponse, err = client.Do(gitRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	gitResponse.Body.Close()
 	if gitResponse.StatusCode != http.StatusOK {
 		t.Fatalf("protected Git discovery with shared password status=%d", gitResponse.StatusCode)
@@ -227,9 +214,7 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 	}
 	gitRequest, _ = http.NewRequest(http.MethodGet, gitDiscoveryURL, nil)
 	gitResponse, err = client.Do(gitRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	gitResponse.Body.Close()
 	if gitResponse.StatusCode != http.StatusOK {
 		t.Fatalf("open Git discovery after disabling password status=%d", gitResponse.StatusCode)
@@ -238,13 +223,9 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 
 func TestSetupGETAndHEADDoNotConsumeCapabilityAndFormNeedsOrigin(t *testing.T) {
 	app, store, _ := newTestApp(t)
-	if err := store.PutBootstrap(context.Background(), "owner-token", time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	noErr(t, store.PutBootstrap(context.Background(), "owner-token", time.Now().Add(time.Hour)))
+	server := serve(t, app.Handler())
+	client, jar := newBrowserClient(t)
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodGet} {
 		response := request(t, client, method, server.URL+"/setup", nil, "")
 		if method == http.MethodGet && response.StatusCode != http.StatusOK {
@@ -266,25 +247,17 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	t.Helper()
 	root := t.TempDir()
 	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoryRoot := filepath.Join(root, "repositories")
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks()}
 	gitHandler, err := githttp.New(runner, manager, "", 2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	authentication := &auth.Manager{Store: store, SessionLife: time.Hour, AdminSessionLife: 5 * time.Minute}
 	renderer, err := webui.New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	app := &App{
 		Store: store, Auth: authentication, Repositories: manager, GitHTTP: gitHandler,
 		Renderer: renderer, Hosts: NewHostPolicy(), SuggestedRepositoryRoot: repositoryRoot,
@@ -292,6 +265,29 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	}
 	gitHandler.Authorize = app.AuthorizeGit
 	return app, store, repositoryRoot
+}
+
+// newConfiguredApp returns an app whose setup is complete in open mode with
+// the administrator password "admin-password" and no repositories yet.
+func newConfiguredApp(t *testing.T) *App {
+	t.Helper()
+	app, store, repositoryRoot := newTestApp(t)
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
+	canonical, err := filepath.EvalSymlinks(repositoryRoot)
+	noErr(t, err)
+	adminHash, err := auth.HashPassword("admin-password")
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true))
+	app.Repositories.SetRoot(canonical)
+	return app
+}
+
+// serve starts a test server for handler and closes it when the test ends.
+func serve(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return server
 }
 
 func request(t *testing.T, client *http.Client, method, target string, values url.Values, origin string) *http.Response {
@@ -303,9 +299,7 @@ func request(t *testing.T, client *http.Client, method, target string, values ur
 		body = strings.NewReader(values.Encode())
 	}
 	request, err := http.NewRequest(method, target, body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if values != nil {
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
@@ -313,9 +307,7 @@ func request(t *testing.T, client *http.Client, method, target string, values ur
 		request.Header.Set("Origin", origin)
 	}
 	response, err := client.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	response.Body.Close()
 	return response
 }
@@ -330,4 +322,20 @@ func cookieValue(t *testing.T, jar http.CookieJar, rawURL, name string) string {
 	}
 	t.Fatalf("cookie %s not found", name)
 	return ""
+}
+
+// noErr stops the test when err is not nil.
+func noErr(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// noErrf stops the test when err is not nil, naming the failed step.
+func noErrf(t testing.TB, err error, format string, args ...any) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", fmt.Sprintf(format, args...), err)
+	}
 }

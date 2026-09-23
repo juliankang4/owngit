@@ -81,9 +81,7 @@ func TestCheckRecoveryValidationReadsEachResultOnce(t *testing.T) {
 		checkRecoveryResultVisited = func() { visits++ }
 		err := ValidateCheckRecovery(snapshot)
 		checkRecoveryResultVisited = nil
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if visits != len(snapshot.CheckResults) {
 			t.Fatalf("%d attempts with %d results: validation read %d result records", attempts, len(snapshot.CheckResults), visits)
 		}

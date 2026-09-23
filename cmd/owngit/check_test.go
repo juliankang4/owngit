@@ -32,9 +32,7 @@ import (
 
 func TestVersionFlagWorksWithoutOpeningState(t *testing.T) {
 	output, err := captureStdout(func() error { return run([]string{"--version"}) })
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// The CLI must propagate the single authoritative value, not a copy.
 	if output != "owngit "+version.Version+"\n" {
 		t.Fatalf("version output=%q", output)
@@ -46,33 +44,21 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	store, err := state.Open(ctx, stateRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	adminHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true))
 	runner, err := gitexec.New("", filepath.Join(stateRoot, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	if _, err := manager.Create(ctx, "project", "check CLI fixture"); err != nil {
 		t.Fatal(err)
 	}
 	gitHandler, err := githttp.New(runner, manager, "", 2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	application := &server.App{
 		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
 		PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
@@ -88,20 +74,14 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	credentialFile := filepath.Join(root, "helper-token")
-	if err := os.WriteFile(credentialFile, []byte(token+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(credentialFile, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(credentialFile, []byte(token+"\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(credentialFile, false))
 
 	work := filepath.Join(root, "work")
 	runPRGit(t, "", "init", "--initial-branch=main", work)
 	runPRGit(t, work, "config", "user.name", "Check Test")
 	runPRGit(t, work, "config", "user.email", "check-test@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("base\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("base\n"), 0o600))
 	runPRGit(t, work, "add", ".")
 	runPRGit(t, work, "commit", "-m", "base")
 	revision := prGitOutput(t, work, "rev-parse", "HEAD")
@@ -111,12 +91,8 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 	// Credential management uses the administrator password over Basic, and a
 	// wrong password is rejected.
 	adminPasswordFile := filepath.Join(root, "admin-password")
-	if err := os.WriteFile(adminPasswordFile, []byte("admin-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(adminPasswordFile, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(adminPasswordFile, []byte("admin-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(adminPasswordFile, false))
 	adminFlags := []string{"--server", httpServer.URL, "--accept-insecure-http", "--repository", "project", "--password-file", adminPasswordFile}
 	issuedTokenFile := filepath.Join(root, "issued-token")
 	credentialOutput, err := captureStdout(func() error {
@@ -151,12 +127,8 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 		t.Fatalf("credentials after the rejected create=%d err=%v", len(credentials), err)
 	}
 	wrongPasswordFile := filepath.Join(root, "wrong-admin-password")
-	if err := os.WriteFile(wrongPasswordFile, []byte("wrong-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(wrongPasswordFile, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrongPasswordFile, []byte("wrong-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(wrongPasswordFile, false))
 	if _, err := captureStdout(func() error {
 		return helperCredentialCommand([]string{"create", "--label", "cli", "--output", filepath.Join(root, "wrong-token"), "--server", httpServer.URL, "--accept-insecure-http", "--repository", "project", "--password-file", wrongPasswordFile})
 	}); err == nil {
@@ -182,9 +154,7 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 	taskOutput, err := captureStdout(func() error {
 		return checkCommand(append([]string{"task", "new", "--title", "CLI task"}, remoteFlags...))
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var taskResponse checkapi.TaskResponse
 	if err := json.Unmarshal([]byte(taskOutput), &taskResponse); err != nil || taskResponse.Task == nil {
 		t.Fatalf("task output=%q err=%v", taskOutput, err)
@@ -206,9 +176,7 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 		t.Fatalf("passing run error=%v output=%s", err, passOutput)
 	}
 	var passResult checkRunOutput
-	if err := json.Unmarshal([]byte(passOutput), &passResult); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(passOutput), &passResult))
 	if !passResult.OK || !passResult.Uploaded || passResult.Attempt == nil || passResult.Attempt.Status != state.AttemptPassed {
 		t.Fatalf("passing run result=%+v", passResult)
 	}
@@ -224,9 +192,7 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 		t.Fatalf("failing run error=%v output=%s", err, failOutput)
 	}
 	var failResult checkRunOutput
-	if err := json.Unmarshal([]byte(failOutput), &failResult); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(failOutput), &failResult))
 	if !failResult.OK || failResult.Attempt == nil || failResult.Attempt.Status != state.AttemptFailed {
 		t.Fatalf("failing run result=%+v", failResult)
 	}
@@ -254,9 +220,7 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 		t.Fatalf("correction run error=%v output=%s", err, correctionOutput)
 	}
 	var correctionResult checkRunOutput
-	if err := json.Unmarshal([]byte(correctionOutput), &correctionResult); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(correctionOutput), &correctionResult))
 	if correctionResult.Attempt == nil || correctionResult.Attempt.CycleID != cycleResponse.Cycle.ID {
 		t.Fatalf("correction attempt=%+v", correctionResult.Attempt)
 	}
@@ -277,20 +241,14 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 		t.Fatalf("post-execution dirty run error=%v output=%s", err, postDirtyOutput)
 	}
 	var postDirtyResult checkRunOutput
-	if err := json.Unmarshal([]byte(postDirtyOutput), &postDirtyResult); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(postDirtyOutput), &postDirtyResult))
 	if postDirtyResult.Attempt == nil || postDirtyResult.Attempt.WorktreeState != state.WorktreeDirty {
 		t.Fatalf("post-execution dirty attempt=%+v", postDirtyResult.Attempt)
 	}
-	if err := os.Remove(filepath.Join(work, "generated.txt")); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Remove(filepath.Join(work, "generated.txt")))
 
 	// A dirty worktree must not be reported as a tested commit.
-	if err := os.WriteFile(filepath.Join(work, "dirty.txt"), []byte("dirty\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "dirty.txt"), []byte("dirty\n"), 0o600))
 	dirtyOutput, err := captureStdout(func() error {
 		return checkCommand(append([]string{"run", "--task", taskID, "--workdir", work, "--check", "pass=exit 0"}, remoteFlags...))
 	})
@@ -298,9 +256,7 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 		t.Fatalf("dirty run error=%v output=%s", err, dirtyOutput)
 	}
 	var dirtyResult checkRunOutput
-	if err := json.Unmarshal([]byte(dirtyOutput), &dirtyResult); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(dirtyOutput), &dirtyResult))
 	if dirtyResult.Attempt == nil || dirtyResult.Attempt.WorktreeState != state.WorktreeDirty {
 		t.Fatalf("dirty attempt=%+v", dirtyResult.Attempt)
 	}
@@ -309,9 +265,7 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 	// being rejected by the server. Read a fixture file so the check command
 	// itself stays below the Windows command-line limit.
 	largeFixture := filepath.Join(work, "large-output.txt")
-	if err := os.WriteFile(largeFixture, []byte(strings.Repeat("y", 20000)), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(largeFixture, []byte(strings.Repeat("y", 20000)), 0o600))
 	largeCommand := "cat large-output.txt"
 	if runtime.GOOS == "windows" {
 		largeCommand = "type large-output.txt"
@@ -323,9 +277,7 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 		t.Fatalf("large output run error=%v output=%s", err, largeOutput)
 	}
 	var largeResult checkRunOutput
-	if err := json.Unmarshal([]byte(largeOutput), &largeResult); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(largeOutput), &largeResult))
 	if !largeResult.Uploaded || largeResult.Attempt == nil || len(largeResult.Attempt.Results) != 1 {
 		t.Fatalf("large output result=%+v", largeResult)
 	}
@@ -341,9 +293,7 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 		t.Fatalf("local run error=%v output=%s", err, localOutput)
 	}
 	var localResult checkRunOutput
-	if err := json.Unmarshal([]byte(localOutput), &localResult); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(localOutput), &localResult))
 	if !localResult.OK || localResult.Uploaded || localResult.Attempt == nil || localResult.Attempt.Status != state.AttemptPassed {
 		t.Fatalf("local run result=%+v", localResult)
 	}
@@ -407,24 +357,16 @@ func TestReservedTokenFileKeepsTheHandleAndDetectsReplacement(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "token")
 	reserved, err := reservePrivateTokenFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// Replace the path with a different regular file while the handle stays
 	// open, as a concurrent writer would.
 	moved := path + ".moved"
-	if err := os.Rename(path, moved); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("replacement\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Rename(path, moved))
+	noErr(t, os.WriteFile(path, []byte("replacement\n"), 0o600))
 	if !reserved.replaced() {
 		t.Fatal("path replacement was not detected")
 	}
-	if err := reserved.write("token-value"); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, reserved.write("token-value"))
 	// The token went to the reserved file, and the replacement is untouched.
 	content, err := os.ReadFile(moved)
 	if err != nil || string(content) != "token-value\n" {
@@ -434,9 +376,7 @@ func TestReservedTokenFileKeepsTheHandleAndDetectsReplacement(t *testing.T) {
 	if err != nil || string(replacement) != "replacement\n" {
 		t.Fatalf("replacement=%q err=%v", replacement, err)
 	}
-	if err := reserved.preserve(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, reserved.preserve())
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("preserve removed the replacement target: %v", err)
 	}
@@ -449,33 +389,21 @@ func TestReservedTokenFileDoesNotWriteThroughASymlinkReplacement(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "token")
 	reserved, err := reservePrivateTokenFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	target := filepath.Join(directory, "target")
-	if err := os.WriteFile(target, []byte("target\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, path); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(target, []byte("target\n"), 0o600))
+	noErr(t, os.Remove(path))
+	noErr(t, os.Symlink(target, path))
 	if !reserved.replaced() {
 		t.Fatal("symlink replacement was not detected")
 	}
-	if err := reserved.write("token-value"); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, reserved.write("token-value"))
 	// The symlink target is not written through.
 	content, err := os.ReadFile(target)
 	if err != nil || string(content) != "target\n" {
 		t.Fatalf("symlink target=%q err=%v", content, err)
 	}
-	if err := reserved.preserve(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, reserved.preserve())
 	if _, err := os.Lstat(path); err != nil {
 		t.Fatalf("preserve removed the symlink: %v", err)
 	}
@@ -485,33 +413,21 @@ func TestCompensatingRevokeIsScopedAndIdempotent(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	store, err := state.Open(ctx, filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	adminHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true))
 	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	if _, err := manager.Create(ctx, "project", "compensate"); err != nil {
 		t.Fatal(err)
 	}
 	gitHandler, err := githttp.New(runner, manager, "", 2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	application := &server.App{
 		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
 		PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
@@ -520,9 +436,7 @@ func TestCompensatingRevokeIsScopedAndIdempotent(t *testing.T) {
 	httpServer := httptest.NewServer(application.Handler())
 	defer httpServer.Close()
 	parsed, err := apiclient.ValidateServer(httpServer.URL, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	client := apiclient.NewAdmin(parsed, "admin-password")
 	path := "/api/v1/repositories/project"
 	creationID := "0123456789abcdef0123456789abcdef"
@@ -555,88 +469,40 @@ func TestCompensatingRevokeIsScopedAndIdempotent(t *testing.T) {
 }
 
 func TestCredentialCreateConflictPreservesExistingAuthority(t *testing.T) {
-	root := t.TempDir()
-	passwordFile := filepath.Join(root, "password")
-	if err := os.WriteFile(passwordFile, []byte("admin-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(passwordFile, false); err != nil {
-		t.Fatal(err)
-	}
-	output := filepath.Join(root, "token")
-	deleteRequests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		if request.Method == http.MethodDelete {
-			deleteRequests++
-		}
+	create := runCredentialCreate(t, func(writer http.ResponseWriter, _ checkapi.CreateCredentialInput, _ string) {
 		writer.WriteHeader(http.StatusConflict)
 		_, _ = io.WriteString(writer, `{"ok":false,"error":{"code":"creation_conflict","message":"The creation identity has different content."}}`)
-	}))
-	defer server.Close()
-
-	_, err := captureStdout(func() error {
-		return helperCredentialCommand([]string{
-			"create", "--label", "laptop", "--output", output,
-			"--server", server.URL, "--accept-insecure-http", "--repository", "project", "--password-file", passwordFile,
-		})
 	})
 	var problem *apiclient.Error
-	if !errors.As(err, &problem) || problem.Code != "creation_conflict" || !strings.Contains(problem.Message, "preserved") {
-		t.Fatalf("creation conflict error=%v", err)
+	if !errors.As(create.err, &problem) || problem.Code != "creation_conflict" || !strings.Contains(problem.Message, "preserved") {
+		t.Fatalf("creation conflict error=%v", create.err)
 	}
-	if deleteRequests != 0 {
-		t.Fatalf("creation conflict sent %d compensating revokes", deleteRequests)
+	if len(create.deleted) != 0 {
+		t.Fatalf("creation conflict sent %d compensating revokes", len(create.deleted))
 	}
-	content, readErr := os.ReadFile(output)
+	content, readErr := os.ReadFile(create.output)
 	if readErr != nil || len(content) != 0 {
 		t.Fatalf("reserved artifact=%q err=%v", content, readErr)
 	}
 }
 
 func TestCredentialCreateCompensatesAMalformedResponse(t *testing.T) {
-	root := t.TempDir()
-	passwordFile := filepath.Join(root, "password")
-	if err := os.WriteFile(passwordFile, []byte("admin-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(passwordFile, false); err != nil {
-		t.Fatal(err)
-	}
-	output := filepath.Join(root, "token")
-	var deleted []string
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		if request.Method == http.MethodDelete {
-			deleted = append(deleted, request.URL.Path)
-			_, _ = io.WriteString(writer, `{"ok":true}`)
-			return
-		}
-		// A success body without a token, as a lost token would look.
-		body, _ := io.ReadAll(request.Body)
-		var input checkapi.CreateCredentialInput
-		_ = json.Unmarshal(body, &input)
+	// A success body without a token, as a lost token would look.
+	create := runCredentialCreate(t, func(writer http.ResponseWriter, input checkapi.CreateCredentialInput, _ string) {
 		_, _ = fmt.Fprintf(writer, `{"ok":true,"credential":{"id":"0123456789abcdef0123456789abcdef","repository_id":"project","creation_id":%q}}`, input.CreationID)
-	}))
-	defer server.Close()
-	_, err := captureStdout(func() error {
-		return helperCredentialCommand([]string{
-			"create", "--label", "laptop", "--output", output,
-			"--server", server.URL, "--accept-insecure-http", "--repository", "project", "--password-file", passwordFile,
-		})
 	})
 	var problem *apiclient.Error
-	if !errors.As(err, &problem) || problem.Code != "credential_creation_failed" {
-		t.Fatalf("malformed response error=%v", err)
+	if !errors.As(create.err, &problem) || problem.Code != "credential_creation_failed" {
+		t.Fatalf("malformed response error=%v", create.err)
 	}
 	// The compensation is scoped by the creation identity, not by a credential
 	// identifier the caller may not have.
-	if len(deleted) != 1 || !strings.Contains(deleted[0], "/helper-credentials/by-creation/") {
-		t.Fatalf("compensating revoke=%v", deleted)
+	if len(create.deleted) != 1 || !strings.Contains(create.deleted[0], "/helper-credentials/by-creation/") {
+		t.Fatalf("compensating revoke=%v", create.deleted)
 	}
 	// The reserved artifact remains because identity-checked pathname deletion
 	// is not available here.
-	content, readErr := os.ReadFile(output)
+	content, readErr := os.ReadFile(create.output)
 	if readErr != nil || len(content) != 0 || !strings.Contains(problem.Message, "preserved") {
 		t.Fatalf("reserved artifact=%q readErr=%v problem=%v", content, readErr, problem)
 	}
@@ -645,13 +511,9 @@ func TestCredentialCreateCompensatesAMalformedResponse(t *testing.T) {
 func TestReservedTokenFileWriteFailureIsReported(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token")
 	reserved, err := reservePrivateTokenFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// Close the handle behind the helper, as a failed sync would leave it.
-	if err := reserved.file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, reserved.file.Close())
 	if err := reserved.write("token-value"); err == nil {
 		t.Fatal("a write to a closed handle succeeded")
 	}
@@ -660,12 +522,8 @@ func TestReservedTokenFileWriteFailureIsReported(t *testing.T) {
 func TestReservedTokenFilePreservesArtifactOnFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token")
 	reserved, err := reservePrivateTokenFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := reserved.preserve(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, reserved.preserve())
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("reserved artifact was removed: %v", err)
 	}
@@ -693,40 +551,17 @@ func TestReservationProtectionFailurePreservesTheCreatedArtifact(t *testing.T) {
 // names a different repository and creation identity. The token must not be
 // delivered as if the request had succeeded.
 func TestCredentialCreateRejectsAMismatchedResponseIdentity(t *testing.T) {
-	root := t.TempDir()
-	passwordFile := filepath.Join(root, "password")
-	if err := os.WriteFile(passwordFile, []byte("admin-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(passwordFile, false); err != nil {
-		t.Fatal(err)
-	}
-	output := filepath.Join(root, "token")
-	var deleted []string
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		if request.Method == http.MethodDelete {
-			deleted = append(deleted, request.URL.Path)
-			_, _ = io.WriteString(writer, `{"ok":true}`)
-			return
-		}
+	create := runCredentialCreate(t, func(writer http.ResponseWriter, _ checkapi.CreateCredentialInput, _ string) {
 		_, _ = io.WriteString(writer, `{"ok":true,"token":"secret","credential":{"id":"0123456789abcdef0123456789abcdef","repository_id":"other","creation_id":"ffffffffffffffffffffffffffffffff"}}`)
-	}))
-	defer server.Close()
-	_, err := captureStdout(func() error {
-		return helperCredentialCommand([]string{
-			"create", "--label", "laptop", "--output", output,
-			"--server", server.URL, "--accept-insecure-http", "--repository", "project", "--password-file", passwordFile,
-		})
 	})
 	var problem *apiclient.Error
-	if !errors.As(err, &problem) || problem.Code != "credential_creation_failed" {
-		t.Fatalf("mismatched response error=%v", err)
+	if !errors.As(create.err, &problem) || problem.Code != "credential_creation_failed" {
+		t.Fatalf("mismatched response error=%v", create.err)
 	}
-	if len(deleted) != 1 || !strings.Contains(deleted[0], "/helper-credentials/by-creation/") {
-		t.Fatalf("compensating revoke=%v", deleted)
+	if len(create.deleted) != 1 || !strings.Contains(create.deleted[0], "/helper-credentials/by-creation/") {
+		t.Fatalf("compensating revoke=%v", create.deleted)
 	}
-	content, readErr := os.ReadFile(output)
+	content, readErr := os.ReadFile(create.output)
 	if readErr != nil || len(content) != 0 || !strings.Contains(problem.Message, "preserved") {
 		t.Fatalf("reserved artifact=%q readErr=%v problem=%v", content, readErr, problem)
 	}
@@ -739,56 +574,29 @@ func TestCredentialCreateCompensatesAReplacedOutputPath(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows denies path replacement while the private handle is open")
 	}
-	root := t.TempDir()
-	passwordFile := filepath.Join(root, "password")
-	if err := os.WriteFile(passwordFile, []byte("admin-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(passwordFile, false); err != nil {
-		t.Fatal(err)
-	}
-	output := filepath.Join(root, "token")
-	moved := output + ".moved"
-	var deleted []string
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		if request.Method == http.MethodDelete {
-			deleted = append(deleted, request.URL.Path)
-			_, _ = io.WriteString(writer, `{"ok":true}`)
-			return
-		}
-		body, _ := io.ReadAll(request.Body)
-		var input checkapi.CreateCredentialInput
-		_ = json.Unmarshal(body, &input)
-		if err := os.Rename(output, moved); err != nil {
+	create := runCredentialCreate(t, func(writer http.ResponseWriter, input checkapi.CreateCredentialInput, output string) {
+		if err := os.Rename(output, output+".moved"); err != nil {
 			t.Errorf("replace the reserved path: %v", err)
 		}
 		if err := os.WriteFile(output, []byte("replacement\n"), 0o600); err != nil {
 			t.Errorf("write the replacement: %v", err)
 		}
 		_, _ = fmt.Fprintf(writer, `{"ok":true,"token":"secret","credential":{"id":"0123456789abcdef0123456789abcdef","repository_id":"project","creation_id":%q}}`, input.CreationID)
-	}))
-	defer server.Close()
-	_, err := captureStdout(func() error {
-		return helperCredentialCommand([]string{
-			"create", "--label", "laptop", "--output", output,
-			"--server", server.URL, "--accept-insecure-http", "--repository", "project", "--password-file", passwordFile,
-		})
 	})
 	var problem *apiclient.Error
-	if !errors.As(err, &problem) || problem.Code != "output_replaced" {
-		t.Fatalf("replaced output error=%v", err)
+	if !errors.As(create.err, &problem) || problem.Code != "output_replaced" {
+		t.Fatalf("replaced output error=%v", create.err)
 	}
-	replacement, err := os.ReadFile(output)
+	replacement, err := os.ReadFile(create.output)
 	if err != nil || string(replacement) != "replacement\n" {
 		t.Fatalf("replacement=%q err=%v", replacement, err)
 	}
-	reserved, err := os.ReadFile(moved)
+	reserved, err := os.ReadFile(create.output + ".moved")
 	if err != nil || len(reserved) != 0 {
 		t.Fatalf("reserved artifact=%q err=%v", reserved, err)
 	}
-	if len(deleted) != 1 || !strings.Contains(deleted[0], "/helper-credentials/by-creation/") {
-		t.Fatalf("compensating revoke=%v", deleted)
+	if len(create.deleted) != 1 || !strings.Contains(create.deleted[0], "/helper-credentials/by-creation/") {
+		t.Fatalf("compensating revoke=%v", create.deleted)
 	}
 }
 
@@ -802,29 +610,56 @@ func TestReservedTokenFileProtectsTheHeldHandleNotThePath(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "token")
 	reserved, err := reservePrivateTokenFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer reserved.preserve()
-	if err := state.ValidatePrivateFile(path); err != nil {
-		t.Fatalf("the reserved file is not private: %v", err)
-	}
+	noErrf(t, state.ValidatePrivateFile(path), "the reserved file is not private")
 	moved := path + ".moved"
-	if err := os.Rename(path, moved); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("replacement\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Rename(path, moved))
+	noErr(t, os.WriteFile(path, []byte("replacement\n"), 0o644))
 	// The held file keeps its protection, and the replacement does not.
-	if err := state.ValidatePrivateFile(moved); err != nil {
-		t.Fatalf("the held file lost its protection: %v", err)
-	}
-	if err := reserved.write("token-value"); err != nil {
-		t.Fatal(err)
-	}
+	noErrf(t, state.ValidatePrivateFile(moved), "the held file lost its protection")
+	noErr(t, reserved.write("token-value"))
 	content, err := os.ReadFile(moved)
 	if err != nil || string(content) != "token-value\n" {
 		t.Fatalf("held file=%q err=%v", content, err)
 	}
+}
+
+// credentialCreate is the outcome of one "helper-credential create" run.
+type credentialCreate struct {
+	err     error
+	deleted []string // paths of compensating DELETE requests
+	output  string   // the --output path
+}
+
+// runCredentialCreate runs "helper-credential create" against a fake server.
+// DELETE requests are recorded and answered with success; answer handles the
+// creation request.
+func runCredentialCreate(t *testing.T, answer func(http.ResponseWriter, checkapi.CreateCredentialInput, string)) credentialCreate {
+	t.Helper()
+	root := t.TempDir()
+	passwordFile := filepath.Join(root, "password")
+	noErr(t, os.WriteFile(passwordFile, []byte("admin-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(passwordFile, false))
+	result := credentialCreate{output: filepath.Join(root, "token")}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodDelete {
+			result.deleted = append(result.deleted, request.URL.Path)
+			_, _ = io.WriteString(writer, `{"ok":true}`)
+			return
+		}
+		body, _ := io.ReadAll(request.Body)
+		var input checkapi.CreateCredentialInput
+		_ = json.Unmarshal(body, &input)
+		answer(writer, input, result.output)
+	}))
+	defer server.Close()
+	_, result.err = captureStdout(func() error {
+		return helperCredentialCommand([]string{
+			"create", "--label", "laptop", "--output", result.output,
+			"--server", server.URL, "--accept-insecure-http", "--repository", "project", "--password-file", passwordFile,
+		})
+	})
+	return result
 }

@@ -39,18 +39,12 @@ func newFixture(t *testing.T) *fixture {
 	root := t.TempDir()
 	ctx := context.Background()
 	store, err := state.Open(ctx, filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoriesRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoriesRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoriesRoot, 0o700))
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoriesRoot}
 	env := append([]string{}, os.Environ()...)
 	env = append(env,
@@ -336,9 +330,7 @@ func TestImportPublishesBranchesAndTagsExactly(t *testing.T) {
 	// The run staging is removed. Only the two private regular files that define
 	// the prepared runtime root remain; no run directory or unknown entry does.
 	entries, err := os.ReadDir(f.service.stagingRootPath())
-	if err != nil {
-		t.Fatalf("read staging root: %v", err)
-	}
+	noErr(t, err, "read staging root")
 	expectedMetadata := map[string]bool{
 		runtimeRootMarkerName: false,
 		runtimeRootLockName:   false,
@@ -376,9 +368,7 @@ func TestImportKeepsUnrelatedLocalRefs(t *testing.T) {
 	path := f.destinationPath()
 	f.git(path, "update-ref", "refs/heads/local-only", first)
 	// Rewrite upstream so the refresh publishes a new value for main.
-	if err := os.WriteFile(filepath.Join(f.source, "file.txt"), []byte("rewritten\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(f.source, "file.txt"), []byte("rewritten\n"), 0o600))
 	f.git(f.source, "add", "file.txt")
 	f.git(f.source, "commit", "--amend", "-m", "rewritten")
 	if _, err := f.refresh(); err != nil {
@@ -450,9 +440,7 @@ func TestRefreshReplacesRewrittenTipAndRetainsHistory(t *testing.T) {
 	f.mustImport(ImportInput{})
 	// Amend the root commit so the new tip is not a descendant of the imported
 	// history. The replaced tip must survive through retention refs.
-	if err := os.WriteFile(filepath.Join(f.source, "file.txt"), []byte("rewritten\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(f.source, "file.txt"), []byte("rewritten\n"), 0o600))
 	f.git(f.source, "add", "file.txt")
 	f.git(f.source, "commit", "--amend", "-m", "rewritten root")
 	third := f.git(f.source, "rev-parse", "HEAD")
@@ -461,9 +449,7 @@ func TestRefreshReplacesRewrittenTipAndRetainsHistory(t *testing.T) {
 	}
 
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
+	noErr(t, err, "refresh")
 	if run.Status != state.ImportRunComplete || run.RefsUpdated != 1 {
 		t.Fatalf("refresh run=%+v", run)
 	}
@@ -503,18 +489,14 @@ func TestRefreshLeavesLocalAheadBranchDiverged(t *testing.T) {
 	work := filepath.Join(f.root, "work")
 	f.git("", "clone", "--quiet", f.destinationPath(), work)
 	f.git(work, "checkout", "--quiet", "dev")
-	if err := os.WriteFile(filepath.Join(work, "local.txt"), []byte("local\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "local.txt"), []byte("local\n"), 0o600))
 	f.git(work, "add", "local.txt")
 	f.git(work, "commit", "-m", "local only")
 	localTip := f.git(work, "rev-parse", "HEAD")
 	f.git(work, "push", "--quiet", "origin", "dev")
 
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
+	noErr(t, err, "refresh")
 	if run.Status != state.ImportRunComplete || run.RefsDivergent != 1 {
 		t.Fatalf("refresh run=%+v", run)
 	}
@@ -534,9 +516,7 @@ func TestRefreshDivergesWhenLocalAndSourceBothMoved(t *testing.T) {
 
 	work := filepath.Join(f.root, "work")
 	f.git("", "clone", "--quiet", f.destinationPath(), work)
-	if err := os.WriteFile(filepath.Join(work, "local.txt"), []byte("local\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "local.txt"), []byte("local\n"), 0o600))
 	f.git(work, "add", "local.txt")
 	f.git(work, "commit", "-m", "local only")
 	localTip := f.git(work, "rev-parse", "HEAD")
@@ -548,9 +528,7 @@ func TestRefreshDivergesWhenLocalAndSourceBothMoved(t *testing.T) {
 	}
 
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
+	noErr(t, err, "refresh")
 	if run.Status != state.ImportRunComplete || run.RefsDivergent != 1 || run.RefsUpdated != 0 {
 		t.Fatalf("refresh run=%+v", run)
 	}
@@ -558,9 +536,7 @@ func TestRefreshDivergesWhenLocalAndSourceBothMoved(t *testing.T) {
 		t.Fatalf("divergent local branch was overwritten: %v", refs["refs/heads/main"])
 	}
 	status, err := f.service.Status(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var divergent int
 	for _, ref := range status.Refs {
 		if ref.State == "diverged" {
@@ -580,9 +556,7 @@ func TestRefreshRetainsLocallyDeletedUpstreamRef(t *testing.T) {
 	f.git(f.source, "branch", "-D", "dev")
 
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
+	noErr(t, err, "refresh")
 	if run.RefsDeletedUpstream != 1 {
 		t.Fatalf("deleted-upstream count=%d", run.RefsDeletedUpstream)
 	}
@@ -599,9 +573,7 @@ func TestImportRequestCarriesOnlyBoundCredentials(t *testing.T) {
 		AllowPrivateNetwork: true,
 		Credentials:         &Credentials{Username: "user", Password: "secret"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(f.transport.requests) != 1 {
 		t.Fatalf("transport calls=%d", len(f.transport.requests))
 	}
@@ -707,14 +679,10 @@ func TestReconcileConfirmsOrphansUnfinishedIntent(t *testing.T) {
 		Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing,
 		StartedAt: f.now, CreatedAt: f.now,
 	}
-	if err := f.store.BeginImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.BeginImportRun(context.Background(), run))
 	run.Status = state.ImportRunInterrupted
 	run.FinishedAt = f.now
-	if err := f.store.FinishImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.FinishImportRun(context.Background(), run))
 	intent := state.ImportIntent{
 		ID: strings.Repeat("2", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: 1, AuthorityRevision: 1,
 		Status:   state.ImportIntentPlanning,
@@ -723,12 +691,8 @@ func TestReconcileConfirmsOrphansUnfinishedIntent(t *testing.T) {
 		Observed: map[string]string{"refs/heads/main": newTip, state.ImportHeadRef: (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: newTip}).encode()},
 		Retained: map[string]string{}, CreatedAt: f.now,
 	}
-	if err := f.store.CreateImportIntent(context.Background(), intent); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
+	noErr(t, f.store.CreateImportIntent(context.Background(), intent))
+	noErr(t, f.service.Reconcile(context.Background()), "reconcile")
 	stored, exists, err := f.store.ImportIntent(context.Background(), intent.ID)
 	if err != nil || !exists || stored.Status != state.ImportIntentComplete || stored.ReceiptJSON == "" || stored.ReceiptDigest == "" {
 		t.Fatalf("intent=%+v exists=%v err=%v", stored, exists, err)
@@ -752,14 +716,10 @@ func TestReconcileMarksMismatchedIntentUnresolved(t *testing.T) {
 		Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing,
 		StartedAt: f.now, CreatedAt: f.now,
 	}
-	if err := f.store.BeginImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.BeginImportRun(context.Background(), run))
 	run.Status = state.ImportRunInterrupted
 	run.FinishedAt = f.now
-	if err := f.store.FinishImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.FinishImportRun(context.Background(), run))
 	intent := state.ImportIntent{
 		ID: strings.Repeat("4", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: 1, AuthorityRevision: 1,
 		Status:   state.ImportIntentPlanning,
@@ -768,9 +728,7 @@ func TestReconcileMarksMismatchedIntentUnresolved(t *testing.T) {
 		Observed: map[string]string{"refs/heads/main": strings.Repeat("b", 40), state.ImportHeadRef: (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: strings.Repeat("b", 40)}).encode()},
 		Retained: map[string]string{}, CreatedAt: f.now,
 	}
-	if err := f.store.CreateImportIntent(context.Background(), intent); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.CreateImportIntent(context.Background(), intent))
 	if err := f.service.Reconcile(context.Background()); err == nil || problemCode(err) != CodeUnresolved {
 		t.Fatalf("mismatched intent reconciliation error=%v", err)
 	}
@@ -792,19 +750,11 @@ func TestReconcilePreservesUnownedStagingContent(t *testing.T) {
 	f.commit("one", "one\n")
 	f.mustImport(ImportInput{})
 	unknown := filepath.Join(f.service.stagingRootPath(), "dangling")
-	if err := os.Mkdir(unknown, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(unknown, "keep.txt"), []byte("keep"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(unknown, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(unknown, "keep.txt"), []byte("keep"), 0o600))
 	valid := filepath.Join(f.service.stagingRootPath(), "run-"+strings.Repeat("5", 32))
-	if err := os.Mkdir(valid, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
+	noErr(t, os.Mkdir(valid, 0o700))
+	noErr(t, f.service.Reconcile(context.Background()), "reconcile")
 	if _, err := os.Stat(filepath.Join(unknown, "keep.txt")); err != nil {
 		t.Fatalf("unowned content removed: %v", err)
 	}
@@ -826,9 +776,7 @@ func TestSchedulerRunsDueRefresh(t *testing.T) {
 	}
 	f.now = f.now.Add(2 * time.Minute)
 	scheduler := &Scheduler{Service: f.service, Interval: 10 * time.Millisecond}
-	if err := scheduler.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, scheduler.Start(context.Background()))
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -839,9 +787,7 @@ func TestSchedulerRunsDueRefresh(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		runs, _, err := f.store.ImportRuns(context.Background(), "project", 1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if len(runs) > 0 && runs[0].Kind == state.ImportKindScheduled && runs[0].Status == state.ImportRunComplete {
 			break
 		}
@@ -854,9 +800,7 @@ func TestSchedulerRunsDueRefresh(t *testing.T) {
 
 func TestImportMatchesSha256SourceFormat(t *testing.T) {
 	f := newFixture(t)
-	if err := os.RemoveAll(f.source); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.RemoveAll(f.source))
 	f.format = "sha256"
 	f.initSource()
 	f.commit("one", "one\n")

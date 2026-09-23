@@ -21,9 +21,7 @@ func TestALocalRunReportsNoMeasuredBudget(t *testing.T) {
 	runPRGit(t, "", "init", "--initial-branch=main", work)
 	runPRGit(t, work, "config", "user.name", "Budget Test")
 	runPRGit(t, work, "config", "user.email", "budget-test@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("base\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("base\n"), 0o600))
 	runPRGit(t, work, "add", ".")
 	runPRGit(t, work, "commit", "-m", "base")
 
@@ -37,9 +35,7 @@ func TestALocalRunReportsNoMeasuredBudget(t *testing.T) {
 		t.Fatalf("local run error=%v output=%s", err, output)
 	}
 	var result checkRunOutput
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(output), &result))
 
 	if !result.OK || result.Registered || result.Uploaded {
 		t.Fatalf("a local run reported server state: ok=%v registered=%v uploaded=%v",
@@ -56,9 +52,7 @@ func TestALocalRunReportsNoMeasuredBudget(t *testing.T) {
 	// The field is present in the JSON, which is why it can be misread as a
 	// measurement and why the documents have to name it.
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(output), &raw); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(output), &raw))
 	if _, ok := raw["correction_cycles_remaining"]; !ok {
 		t.Fatal("correction_cycles_remaining is absent; the documented caution describes a printed 0")
 	}
@@ -74,17 +68,13 @@ func TestALocalRunReportsNoMeasuredBudget(t *testing.T) {
 // still be told not to infer exhaustion from the local 0.
 func TestTheDocumentsWarnAboutTheUnmeasuredBudget(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for _, document := range []string{
 		"docs/CODING_TOOLS.md",
 		"integrations/skills/owngit-checks/SKILL.md",
 	} {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(document)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		// Markdown wraps these documents, so a phrase can be split across
 		// lines. Compare on collapsed whitespace, not the raw text.
 		body := strings.Join(strings.Fields(string(data)), " ")
@@ -131,9 +121,7 @@ func TestCheckRunCannotResubmitAnAttemptIdentifier(t *testing.T) {
 	runPRGit(t, "", "init", "--initial-branch=main", work)
 	runPRGit(t, work, "config", "user.name", "Budget Test")
 	runPRGit(t, work, "config", "user.email", "budget-test@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("base\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("base\n"), 0o600))
 	runPRGit(t, work, "add", ".")
 	runPRGit(t, work, "commit", "-m", "base")
 
@@ -149,9 +137,7 @@ func TestCheckRunCannotResubmitAnAttemptIdentifier(t *testing.T) {
 			t.Fatalf("local run error=%v output=%s", err, output)
 		}
 		var result checkRunOutput
-		if err := json.Unmarshal([]byte(output), &result); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, json.Unmarshal([]byte(output), &result))
 		return result
 	}
 

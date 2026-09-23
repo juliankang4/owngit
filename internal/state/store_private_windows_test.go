@@ -11,9 +11,7 @@ import (
 func assertStateStoragePrivate(t *testing.T, directory string) {
 	t.Helper()
 	user, _, err := processIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	paths := []struct {
 		path      string
 		directory bool

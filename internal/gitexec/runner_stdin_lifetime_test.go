@@ -126,9 +126,7 @@ func TestRunIgnoresEarlyStdinClose(t *testing.T) {
 	result, err := runner.RunWithLimits(context.Background(), t.TempDir(), input, CommandLimits{
 		Timeout: 2 * time.Second, Environment: []string{streamFixtureEnv + "=exit-without-reading-stdin"},
 	})
-	if err != nil {
-		t.Fatalf("early stdin close was fatal: %v", err)
-	}
+	noErr(t, err, "early stdin close was fatal")
 	if string(result.Stdout) != "closed-stdin" {
 		t.Fatalf("stdout=%q, want closed-stdin", result.Stdout)
 	}

@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -23,8 +22,7 @@ import (
 
 func TestPullRequestAPIJourneyUsesJSONAndExactRevisions(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	endpoint := server.URL + "/api/v1/repositories/project/pull-requests"
 
 	foreign := apiRequest(t, http.MethodPost, endpoint, map[string]any{
@@ -38,14 +36,10 @@ func TestPullRequestAPIJourneyUsesJSONAndExactRevisions(t *testing.T) {
 	}
 
 	formRequest, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader("title=Feature"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	formRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	formResponse, err := http.DefaultClient.Do(formRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if formResponse.StatusCode != http.StatusUnsupportedMediaType || apiErrorCode(t, formResponse) != "json_required" {
 		t.Fatalf("form mutation status=%d", formResponse.StatusCode)
 	}
@@ -121,9 +115,7 @@ func TestPullRequestAPICreationReconciliationPendingReturns503(t *testing.T) {
 		slashPath = "/" + slashPath
 	}
 	database, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: slashPath}).String())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer database.Close()
 	if _, err := database.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		t.Fatal(err)
@@ -133,8 +125,7 @@ func TestPullRequestAPICreationReconciliationPendingReturns503(t *testing.T) {
 	if _, err := database.Exec(`CREATE TRIGGER fail_activation BEFORE UPDATE ON pull_requests BEGIN SELECT RAISE(ABORT, 'injected activation failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	response := apiRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/project/pull-requests", map[string]any{
 		"title": "Pending activation", "source_branch": "feature", "target_branch": "main", "review": "skip",
 	}, "", "")
@@ -146,16 +137,11 @@ func TestPullRequestAPICreationReconciliationPendingReturns503(t *testing.T) {
 
 func TestPullRequestAPIIgnoresBrowserCookiesAndUsesGeneralPassword(t *testing.T) {
 	fixture := newAPIFixture(t, true)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
+	server := serve(t, fixture.app.Handler())
 	endpoint := server.URL + "/api/v1/repositories/project/pull-requests"
 	settings, err := fixture.store.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.CreateSession(context.Background(), "browser-session", "general", "csrf", settings.AccessSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, fixture.store.CreateSession(context.Background(), "browser-session", "general", "csrf", settings.AccessSessionVersion, time.Now().Add(time.Hour)))
 
 	body, _ := json.Marshal(map[string]any{
 		"title": "Protected feature", "source_branch": "feature", "target_branch": "main", "review": "skip",
@@ -164,9 +150,7 @@ func TestPullRequestAPIIgnoresBrowserCookiesAndUsesGeneralPassword(t *testing.T)
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(&http.Cookie{Name: generalCookie, Value: "browser-session"})
 	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if response.StatusCode != http.StatusUnauthorized || apiErrorCode(t, response) != "authentication_required" {
 		t.Fatalf("cookie-only API auth status=%d", response.StatusCode)
 	}
@@ -203,51 +187,35 @@ type apiFixture struct {
 func newAPIFixture(t *testing.T, protected bool) apiFixture {
 	t.Helper()
 	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	mode := "open"
 	accessHash := ""
 	if protected {
 		mode = "password"
 		var err error
 		accessHash, err = auth.HashPassword("shared-password")
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 	}
 	adminHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(context.Background(), repositoryRoot, mode, accessHash, adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(context.Background(), repositoryRoot, mode, accessHash, adminHash, true))
 	app.Repositories.SetRoot(repositoryRoot)
 	stored, err := app.Repositories.Create(context.Background(), "project", "API fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	remote, err := app.Repositories.Path(stored.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	work := filepath.Join(t.TempDir(), "work")
 	apiRunGit(t, "", "init", "--initial-branch=main", work)
 	apiRunGit(t, work, "config", "user.name", "API Test")
 	apiRunGit(t, work, "config", "user.email", "api-test@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("base\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("base\n"), 0o600))
 	apiRunGit(t, work, "add", ".")
 	apiRunGit(t, work, "commit", "-m", "base")
 	apiRunGit(t, work, "remote", "add", "origin", remote)
 	apiRunGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	targetOID := apiGitOutput(t, work, "rev-parse", "HEAD")
 	apiRunGit(t, work, "checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600))
 	apiRunGit(t, work, "add", ".")
 	apiRunGit(t, work, "commit", "-m", "feature")
 	apiRunGit(t, work, "push", "origin", "HEAD:refs/heads/feature")
@@ -258,43 +226,59 @@ func newAPIFixture(t *testing.T, protected bool) apiFixture {
 
 func apiRequest(t *testing.T, method, target string, value any, password, origin string) *http.Response {
 	t.Helper()
-	var body *bytes.Reader
-	if value == nil {
-		body = bytes.NewReader(nil)
-	} else {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body = bytes.NewReader(encoded)
+	return sendJSON(t, method, target, value, basicAuth("owngit", password), header("Origin", origin))
+}
+
+// sendJSON sends value as a JSON body, or no body when it is nil, after
+// applying each request edit.
+func sendJSON(t *testing.T, method, target string, value any, edits ...func(*http.Request)) *http.Response {
+	t.Helper()
+	var body []byte
+	if value != nil {
+		var err error
+		body, err = json.Marshal(value)
+		noErr(t, err)
 	}
-	request, err := http.NewRequest(method, target, body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	request, err := http.NewRequest(method, target, bytes.NewReader(body))
+	noErr(t, err)
 	if value != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	if password != "" {
-		request.SetBasicAuth("owngit", password)
-	}
-	if origin != "" {
-		request.Header.Set("Origin", origin)
+	for _, edit := range edits {
+		edit(request)
 	}
 	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return response
 }
 
+// header sets a request header when value is not empty.
+func header(name, value string) func(*http.Request) {
+	return func(request *http.Request) {
+		if value != "" {
+			request.Header.Set(name, value)
+		}
+	}
+}
+
+// basicAuth sends Basic credentials when password is not empty.
+func basicAuth(user, password string) func(*http.Request) {
+	return func(request *http.Request) {
+		if password != "" {
+			request.SetBasicAuth(user, password)
+		}
+	}
+}
+
+// adminCookieValue sends an administrator session cookie.
+func adminCookieValue(value string) func(*http.Request) {
+	return func(request *http.Request) { request.AddCookie(&http.Cookie{Name: adminCookie, Value: value}) }
+}
 func decodeAPISuccess(t *testing.T, response *http.Response) pullrequest.SuccessEnvelope {
 	t.Helper()
 	defer response.Body.Close()
 	var envelope pullrequest.SuccessEnvelope
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.NewDecoder(response.Body).Decode(&envelope))
 	if !envelope.OK {
 		t.Fatal("API success response reported ok=false")
 	}
@@ -305,23 +289,16 @@ func apiErrorCode(t *testing.T, response *http.Response) string {
 	t.Helper()
 	defer response.Body.Close()
 	var envelope pullrequest.ErrorEnvelope
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		t.Fatalf("decode API error: %v", err)
-	}
+	noErrf(t, json.NewDecoder(response.Body).Decode(&envelope), "decode API error")
 	return envelope.Error.Code
 }
 
 func apiRunGit(t *testing.T, directory string, arguments ...string) {
 	t.Helper()
-	command := exec.Command("git", arguments...)
-	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	output, err := command.CombinedOutput()
-	if err != nil {
+	if output, err := gitCombined(directory, arguments...); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(arguments, " "), err, output)
 	}
 }
-
 func apiGitOutput(t *testing.T, directory string, arguments ...string) string {
 	t.Helper()
 	command := exec.Command("git", arguments...)

@@ -25,9 +25,7 @@ func longBranchName(size int) string {
 // that state accepts, at the SHA-256 width where the derived name is longest.
 func TestLongestSelectedBranchKeepsRetentionWithinStateBound(t *testing.T) {
 	f := newFixture(t)
-	if err := os.RemoveAll(f.source); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.RemoveAll(f.source))
 	f.format = "sha256"
 	f.initSource()
 	// Windows needs long path support in the fixture's own source repository;

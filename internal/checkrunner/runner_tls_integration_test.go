@@ -38,14 +38,10 @@ func TestExternalRunnerTLSAndLifecycleBoundaries(t *testing.T) {
 			tlsServer, origin, caPEM := fixture.startPrivateTLSServer(nil)
 			defer tlsServer.Close()
 			client := fixture.client(origin)
-			if err := client.AddCertificateAuthorities(caPEM); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, client.AddCertificateAuthorities(caPEM))
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			if err := fixture.runner(client).Run(ctx); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, fixture.runner(client).Run(ctx))
 			if job := fixture.readJob(); job.Status != state.CheckJobPassed {
 				t.Fatalf("trusted private-CA job status=%s summary=%s", job.Status, job.Summary)
 			}
@@ -116,9 +112,7 @@ func TestExternalRunnerTLSAndLifecycleBoundaries(t *testing.T) {
 	t.Run("revoked credential cannot claim", func(t *testing.T) {
 		sentinel := filepath.Join(t.TempDir(), "command-ran")
 		fixture := newRunnerIntegrationFixture(t, writeRunnerSentinelCommand(sentinel))
-		if err := fixture.store.RevokeCheckRunnerToken(fixture.ctx, fixture.repository.ID, fixture.credential.ID, time.Now().UTC()); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, fixture.store.RevokeCheckRunnerToken(fixture.ctx, fixture.repository.ID, fixture.credential.ID, time.Now().UTC()))
 		httpServer, origin := fixture.startHTTPServer(nil)
 		defer httpServer.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -156,9 +150,7 @@ func TestExternalRunnerTLSAndLifecycleBoundaries(t *testing.T) {
 		}
 		select {
 		case err := <-revoked:
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 		default:
 			t.Fatal("runner never reached the start boundary")
 		}
@@ -203,9 +195,7 @@ func TestExternalRunnerTLSAndLifecycleBoundaries(t *testing.T) {
 		}
 		select {
 		case err := <-result:
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 		case <-ctx.Done():
 			t.Fatal("runner did not finish after cancellation")
 		}
@@ -238,26 +228,18 @@ func privateRunnerCertificate(t *testing.T) (tls.Certificate, []byte) {
 	t.Helper()
 	now := time.Now().UTC()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	caTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "OwnGit synthetic runner CA"},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true,
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	ca, err := x509.ParseCertificate(caDER)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	serverTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "localhost"},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
@@ -265,20 +247,14 @@ func privateRunnerCertificate(t *testing.T) (tls.Certificate, []byte) {
 		DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
 	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, ca, &serverKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	serverKeyDER, err := x509.MarshalPKCS8PrivateKey(serverKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	certificate, err := tls.X509KeyPair(
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}),
 		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: serverKeyDER}),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
 }
 

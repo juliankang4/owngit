@@ -29,9 +29,7 @@ import (
 func destinationIsPrivate(t *testing.T, path string) bool {
 	t.Helper()
 	user, err := currentUserSID()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return grantsOnlyCurrentUser(t, path, user)
 }
 
@@ -160,9 +158,7 @@ func requireInheritedOwnerOnly(t *testing.T, path string, user *windows.SID) {
 func everyoneSID(t *testing.T) *windows.SID {
 	t.Helper()
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return everyone
 }
 
@@ -181,9 +177,7 @@ func grantEveryone(t *testing.T, path string) {
 			TrusteeValue: windows.TrusteeValueFromSID(everyoneSID(t)),
 		},
 	}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION, nil, nil, acl, nil); err != nil {
 		t.Fatalf("grant Everyone on %s: %v", path, err)
@@ -235,15 +229,11 @@ func TestMaterializeDestinationOverridesAPermissiveParentACL(t *testing.T) {
 	grantEveryone(t, parent)
 
 	user, err := currentUserSID()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// Positive control: an ordinary directory here must actually inherit the
 	// Everyone grant, otherwise the regression below proves nothing.
 	control := filepath.Join(parent, "inherited")
-	if err := os.Mkdir(control, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(control, 0o700))
 	requireInheritedEveryoneGrant(t, control)
 
 	source := newFakeSource(t, map[string]string{"nested/secret.txt": "private"}, nil)
@@ -260,9 +250,7 @@ func TestMaterializeDestinationChildrenInheritOwnerOnlyAccess(t *testing.T) {
 	parent := t.TempDir()
 	grantEveryone(t, parent)
 	user, err := currentUserSID()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	source := newFakeSource(t, map[string]string{"nested/deep/secret.txt": "private"}, nil)
 	destination := filepath.Join(parent, "source")
@@ -281,18 +269,14 @@ func TestMaterializeDestinationChildrenInheritOwnerOnlyAccess(t *testing.T) {
 func TestMaterializeLeavesAnExistingDestinationSecurityDescriptorUnchanged(t *testing.T) {
 	parent := t.TempDir()
 	destination := filepath.Join(parent, "existing")
-	if err := os.Mkdir(destination, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(destination, 0o700))
 	// Make the descriptor distinctly permissive so any rewrite is visible.
 	grantEveryone(t, destination)
 
 	const securityInformation = windows.OWNER_SECURITY_INFORMATION |
 		windows.GROUP_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION
 	snapshot, err := windows.GetNamedSecurityInfo(destination, windows.SE_FILE_OBJECT, securityInformation)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	before := snapshot.String()
 	if before == "" {
 		t.Fatal("the existing destination descriptor could not be serialized")
@@ -304,9 +288,7 @@ func TestMaterializeLeavesAnExistingDestinationSecurityDescriptorUnchanged(t *te
 	}
 
 	current, err := windows.GetNamedSecurityInfo(destination, windows.SE_FILE_OBJECT, securityInformation)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if after := current.String(); after != before {
 		t.Fatalf("the existing destination descriptor changed:\nbefore %s\nafter  %s", before, after)
 	}

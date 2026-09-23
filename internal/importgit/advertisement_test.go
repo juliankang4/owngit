@@ -189,26 +189,6 @@ func TestParseEmptyRepositoryWithoutSymref(t *testing.T) {
 	}
 }
 
-func TestParseEmptyIsDistinctFromUnsupportedAndMalformed(t *testing.T) {
-	// The v2 mismatch that Main's matrix showed produces the same exit0 and
-	// zero refs from the Git CLI must be a distinct outcome here.
-	v2First := pkt("version 2") + pkt("agent=git/2.54.0") + pkt("ls-refs=unborn") + pkt("object-format=sha1") + flush
-	wantError(t, v2First, Options{}, ErrUnsupportedVersion)
-
-	v2Body := pkt("# service=git-upload-pack") + flush + pkt("version 2") + pkt("ls-refs") + flush
-	wantError(t, v2Body, Options{}, ErrUnsupportedVersion)
-
-	// A ref list truncated before its flush packet is also not emptiness.
-	wantError(t, pkt("# service=git-upload-pack")+flush+pkt("version 1"), Options{}, ErrTruncated)
-}
-
-func TestParseRejectsRefListWithoutAnyRecord(t *testing.T) {
-	// The grammar has no advertisement without a ref list; an empty repository
-	// still sends the capabilities record.
-	wantError(t, advertisement("version 1"), Options{}, ErrInvalidRecord)
-	wantError(t, advertisement(""), Options{}, ErrInvalidRecord)
-}
-
 func TestParseSHA256Advertisement(t *testing.T) {
 	result := mustParse(t, advertisement("version 1",
 		pkt(sha2A+" HEAD\x00object-format=sha256 symref=HEAD:refs/heads/main"),
@@ -230,29 +210,6 @@ func TestParseSHA256EmptySentinel(t *testing.T) {
 	if !result.Empty || result.ObjectFormat != FormatSHA256 {
 		t.Fatalf("empty=%v format=%q", result.Empty, result.ObjectFormat)
 	}
-}
-
-func TestParseRejectsIncompatibleOIDWidths(t *testing.T) {
-	// A sha256 advertisement carrying a 40-character ID, and the reverse.
-	wantError(t, advertisement("version 1",
-		pkt(sha1A+" HEAD\x00object-format=sha256"),
-	), Options{}, ErrObjectFormat)
-	wantError(t, advertisement("version 1",
-		pkt(sha1A+" HEAD\x00ofs-delta"),
-		pkt(sha2B+" refs/heads/main"),
-	), Options{}, ErrObjectFormat)
-	wantError(t, advertisement("version 1",
-		pkt(zero2+" capabilities^{}\x00ofs-delta"),
-	), Options{}, ErrObjectFormat)
-}
-
-func TestParseRejectsUnknownObjectFormat(t *testing.T) {
-	wantError(t, advertisement("version 1",
-		pkt(sha1A+" HEAD\x00object-format=sha3-256"),
-	), Options{}, ErrObjectFormat)
-	wantError(t, advertisement("version 1",
-		pkt(sha1A+" HEAD\x00object-format"),
-	), Options{}, ErrObjectFormat)
 }
 
 func TestParseUsesFirstObjectFormatValue(t *testing.T) {
@@ -315,33 +272,6 @@ func TestParsePreservesOtherNamespaces(t *testing.T) {
 	}
 }
 
-func TestParseRejectsSymrefPointingAtADifferentObject(t *testing.T) {
-	// When both the symbolic ref and its target were advertised, they name the
-	// same object by definition. Differing IDs are a contradiction the caller
-	// must not resolve by guessing which one is current.
-	head := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00symref=HEAD:refs/heads/main"),
-		pkt(sha1B+" refs/heads/main"),
-	)
-	wantError(t, head, Options{}, ErrConflictingRefs)
-
-	nonHead := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00symref=refs/remotes/origin/HEAD:refs/remotes/origin/main"),
-		pkt(sha1B+" refs/remotes/origin/HEAD"),
-		pkt(sha1C+" refs/remotes/origin/main"),
-	)
-	wantError(t, nonHead, Options{}, ErrConflictingRefs)
-
-	// Matching object IDs are the ordinary case and must still pass.
-	agreeing := mustParse(t, advertisement("version 1",
-		pkt(sha1A+" HEAD\x00symref=HEAD:refs/heads/main"),
-		pkt(sha1A+" refs/heads/main"),
-	))
-	if agreeing.Head.SymrefTarget != "refs/heads/main" {
-		t.Fatalf("head = %+v", agreeing.Head)
-	}
-}
-
 func TestParseKeepsSymrefTargetsAbsentFromTheRefList(t *testing.T) {
 	// A hidden or unborn target is a legitimate statement about a ref this
 	// response does not carry, so it must survive the consistency check.
@@ -384,76 +314,6 @@ func TestParseSymrefForNonHeadRef(t *testing.T) {
 			t.Fatal("a symref target must not become an advertised ref")
 		}
 	}
-}
-
-func TestParseRejectsConflictingRecords(t *testing.T) {
-	duplicate := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00ofs-delta"),
-		pkt(sha1A+" refs/heads/main"),
-		pkt(sha1B+" refs/heads/main"),
-	)
-	wantError(t, duplicate, Options{}, ErrConflictingRefs)
-
-	doublePeel := advertisement("version 1",
-		pkt(sha1A+" refs/tags/v1\x00ofs-delta"),
-		pkt(sha1B+" refs/tags/v1^{}"),
-		pkt(sha1C+" refs/tags/v1^{}"),
-	)
-	wantError(t, doublePeel, Options{}, ErrConflictingRefs)
-
-	conflictingSymrefs := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00symref=HEAD:refs/heads/main symref=HEAD:refs/heads/other"),
-	)
-	wantError(t, conflictingSymrefs, Options{}, ErrConflictingRefs)
-
-	repeatedSymref := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00symref=HEAD:refs/heads/main symref=HEAD:refs/heads/main"),
-	)
-	wantError(t, repeatedSymref, Options{}, ErrConflictingRefs)
-
-	sentinelThenRef := advertisement("version 1",
-		pkt(zero1+" capabilities^{}\x00ofs-delta"),
-		pkt(sha1A+" refs/heads/main"),
-	)
-	wantError(t, sentinelThenRef, Options{}, ErrConflictingRefs)
-}
-
-func TestParseRejectsMisplacedPeeledRecord(t *testing.T) {
-	notFollowing := advertisement("version 1",
-		pkt(sha1A+" refs/tags/v1\x00ofs-delta"),
-		pkt(sha1B+" refs/heads/main"),
-		pkt(sha1C+" refs/tags/v1^{}"),
-	)
-	wantError(t, notFollowing, Options{}, ErrInvalidRecord)
-
-	leading := advertisement("version 1", pkt(sha1B+" refs/tags/v1^{}\x00ofs-delta"))
-	wantError(t, leading, Options{}, ErrInvalidRecord)
-}
-
-func TestParseRejectsZeroObjectIDs(t *testing.T) {
-	ordinary := advertisement("version 1", pkt(zero1+" refs/heads/main\x00ofs-delta"))
-	wantError(t, ordinary, Options{}, ErrInvalidObjectID)
-
-	later := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00ofs-delta"),
-		pkt(zero1+" refs/heads/main"),
-	)
-	wantError(t, later, Options{}, ErrInvalidObjectID)
-
-	peeled := advertisement("version 1",
-		pkt(sha1A+" refs/tags/v1\x00ofs-delta"),
-		pkt(zero1+" refs/tags/v1^{}"),
-	)
-	wantError(t, peeled, Options{}, ErrInvalidObjectID)
-
-	sentinelWithRealOID := advertisement("version 1", pkt(sha1A+" capabilities^{}\x00ofs-delta"))
-	wantError(t, sentinelWithRealOID, Options{}, ErrInvalidRecord)
-
-	sentinelLater := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00ofs-delta"),
-		pkt(zero1+" capabilities^{}"),
-	)
-	wantError(t, sentinelLater, Options{}, ErrInvalidRecord)
 }
 
 func TestParseAcceptsUppercaseObjectIDs(t *testing.T) {
@@ -531,64 +391,6 @@ func TestParseComparesSymrefObjectIDsCaseInsensitively(t *testing.T) {
 	if mixedBoth.Refs[1].OID != lower1A {
 		t.Fatalf("target OID = %q", mixedBoth.Refs[1].OID)
 	}
-
-	// A genuine disagreement is still a conflict, whatever the case.
-	wantError(t, advertisement("version 1",
-		pkt(upper1A+" HEAD\x00symref=HEAD:refs/heads/main"),
-		pkt(upper1B+" refs/heads/main"),
-	), Options{}, ErrConflictingRefs)
-}
-
-func TestParseDetectsDuplicateRefsRegardlessOfObjectIDCase(t *testing.T) {
-	// The duplicate is the repeated name, so the differing OID case must not
-	// hide it.
-	wantError(t, advertisement("version 1",
-		pkt(upper1A+" refs/heads/main\x00ofs-delta"),
-		pkt(lower1A+" refs/heads/main"),
-	), Options{}, ErrConflictingRefs)
-}
-
-func TestParseAcceptsUppercaseShallowObjectID(t *testing.T) {
-	// A valid boundary in uppercase is still a valid boundary.
-	shallow := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00ofs-delta"),
-		pkt(sha1A+" refs/heads/main"),
-		pkt("shallow "+upper1B),
-	)
-	wantError(t, shallow, Options{}, ErrIncompleteHistory)
-
-	mixedShallow := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00ofs-delta"),
-		pkt(sha1A+" refs/heads/main"),
-		pkt("shallow "+mixed1A),
-	)
-	wantError(t, mixedShallow, Options{}, ErrIncompleteHistory)
-
-	// Width and non-hex checks still apply to an uppercase spelling.
-	wantError(t, advertisement("version 1",
-		pkt(sha1A+" HEAD\x00ofs-delta"),
-		pkt(sha1A+" refs/heads/main"),
-		pkt("shallow "+upper1B[:39]),
-	), Options{}, ErrObjectFormat)
-	// Non-hex uppercase is covered by the malformed-shallow table.
-}
-
-func TestParseRejectsInvalidObjectIDs(t *testing.T) {
-	// Case is accepted for hexadecimal digits only. A letter outside [a-fA-F]
-	// is still not an object ID in either case.
-	nonHex := advertisement("version 1", pkt(strings.Repeat("g", 40)+" refs/heads/main\x00ofs-delta"))
-	wantError(t, nonHex, Options{}, ErrInvalidObjectID)
-
-	nonHexUppercase := advertisement("version 1", pkt(strings.Repeat("G", 40)+" refs/heads/main\x00ofs-delta"))
-	wantError(t, nonHexUppercase, Options{}, ErrInvalidObjectID)
-
-	short := advertisement("version 1", pkt(sha1A[:39]+" refs/heads/main\x00ofs-delta"))
-	wantError(t, short, Options{}, ErrObjectFormat)
-
-	// A valid uppercase ID of the wrong width is a width failure, not a case
-	// failure.
-	shortUppercase := advertisement("version 1", pkt(upper1A[:39]+" refs/heads/main\x00ofs-delta"))
-	wantError(t, shortUppercase, Options{}, ErrObjectFormat)
 }
 
 func TestParseRejectsInvalidNames(t *testing.T) {
@@ -617,7 +419,7 @@ func TestParseRejectsInvalidNames(t *testing.T) {
 	for name, refName := range cases {
 		t.Run(name, func(t *testing.T) {
 			// A space would split the record instead, so it is covered by the
-			// record-structure tests.
+			// record-structure rows of TestParseRejections.
 			wantError(t, advertisement("version 1", pkt(sha1A+" "+refName+"\x00ofs-delta")), Options{}, ErrInvalidName)
 		})
 	}
@@ -642,70 +444,7 @@ func TestParseAcceptsUnusualButValidNames(t *testing.T) {
 	}
 }
 
-func TestParseRejectsInvalidSymrefNames(t *testing.T) {
-	wantError(t, advertisement("version 1",
-		pkt(sha1A+" HEAD\x00symref=HEAD:heads/main"),
-	), Options{}, ErrInvalidName)
-	wantError(t, advertisement("version 1",
-		pkt(sha1A+" HEAD\x00symref=refs/heads/..:refs/heads/main"),
-	), Options{}, ErrInvalidName)
-	wantError(t, advertisement("version 1",
-		pkt(sha1A+" HEAD\x00symref=HEAD"),
-	), Options{}, ErrInvalidCapability)
-}
-
-func TestParseRejectsInvalidRecordStructure(t *testing.T) {
-	noSpace := advertisement("version 1", pkt(sha1A+"refs/heads/main\x00ofs-delta"))
-	wantError(t, noSpace, Options{}, ErrInvalidRecord)
-
-	noCapabilitySeparator := advertisement("version 1", pkt(sha1A+" refs/heads/main"))
-	wantError(t, noCapabilitySeparator, Options{}, ErrInvalidRecord)
-
-	lateCapabilities := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00ofs-delta"),
-		pkt(sha1B+" refs/heads/main\x00ofs-delta"),
-	)
-	wantError(t, lateCapabilities, Options{}, ErrInvalidRecord)
-
-	emptyName := advertisement("version 1", pkt(sha1A+" \x00ofs-delta"))
-	wantError(t, emptyName, Options{}, ErrInvalidName)
-}
-
-func TestParseRejectsEmptyCapabilityList(t *testing.T) {
-	// cap-list is "capability *(SP capability)", so at least one capability is
-	// required. A zero-id sentinel with no capabilities must not be reported as
-	// a successful empty repository.
-	emptySentinel := advertisement("version 1", pkt(zero1+" capabilities^{}\x00"))
-	failure := wantError(t, emptySentinel, Options{}, ErrInvalidCapability)
-	if failure == nil {
-		t.Fatal("expected a *ParseError")
-	}
-
-	emptyOnRef := advertisement("version 1", pkt(sha1A+" HEAD\x00"))
-	wantError(t, emptyOnRef, Options{}, ErrInvalidCapability)
-
-	// The same applies without a version packet, so v0 is covered too.
-	wantError(t, advertisement("", pkt(zero1+" capabilities^{}\x00")), Options{}, ErrInvalidCapability)
-	wantError(t, advertisement("", pkt(sha1A+" refs/heads/main\x00")), Options{}, ErrInvalidCapability)
-
-	// One capability is enough.
-	if result := mustParse(t, advertisement("version 1", pkt(zero1+" capabilities^{}\x00a"))); !result.Empty {
-		t.Fatal("a single capability must satisfy the list requirement")
-	}
-}
-
-func TestParseRejectsInvalidCapabilities(t *testing.T) {
-	uppercase := advertisement("version 1", pkt(sha1A+" HEAD\x00Multi-Ack"))
-	wantError(t, uppercase, Options{}, ErrInvalidCapability)
-
-	doubleSpace := advertisement("version 1", pkt(sha1A+" HEAD\x00ofs-delta  thin-pack"))
-	wantError(t, doubleSpace, Options{}, ErrInvalidCapability)
-
-	controlByte := advertisement("version 1", pkt(sha1A+" HEAD\x00agent=git/2.54\x01"))
-	wantError(t, controlByte, Options{}, ErrInvalidCapability)
-}
-
-func TestParseAcceptsUnknownCapability(t *testing.T) {
+func TestParseAcceptsWellFormedCapabilities(t *testing.T) {
 	// An unknown but well-formed capability is not evidence of protocol v2.
 	result := mustParse(t, advertisement("version 1",
 		pkt(sha1A+" HEAD\x00ofs-delta future-thing future-thing-2=value ls-refs fetch"),
@@ -716,25 +455,12 @@ func TestParseAcceptsUnknownCapability(t *testing.T) {
 	if result.ProtocolVersion != 1 {
 		t.Fatalf("protocol version = %d", result.ProtocolVersion)
 	}
-}
-
-func TestParseRejectsShallowAdvertisement(t *testing.T) {
-	withBoundary := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00shallow ofs-delta"),
-		pkt(sha1A+" refs/heads/main"),
-		pkt("shallow "+sha1B),
-	)
-	wantError(t, withBoundary, Options{}, ErrIncompleteHistory)
-
-	sha256Boundary := advertisement("version 1",
-		pkt(sha2A+" HEAD\x00object-format=sha256"),
-		pkt(sha2A+" refs/heads/main"),
-		pkt("shallow "+sha2B),
-	)
-	wantError(t, sha256Boundary, Options{}, ErrIncompleteHistory)
-
-	// The shallow capability alone only offers the feature; it is not a
-	// truncated history and must stay parseable.
+	// cap-list needs one capability, and one is enough.
+	if result := mustParse(t, advertisement("version 1", pkt(zero1+" capabilities^{}\x00a"))); !result.Empty {
+		t.Fatal("a single capability must satisfy the list requirement")
+	}
+	// The shallow capability only offers the feature; it is not a truncated
+	// history and must stay parseable.
 	capabilityOnly := advertisement("version 1",
 		pkt(sha1A+" HEAD\x00shallow deepen-since ofs-delta"),
 		pkt(sha1A+" refs/heads/main"),
@@ -742,221 +468,6 @@ func TestParseRejectsShallowAdvertisement(t *testing.T) {
 	if result := mustParse(t, capabilityOnly); len(result.Refs) != 2 {
 		t.Fatalf("refs = %+v", result.Refs)
 	}
-}
-
-func TestParseRejectsMalformedShallowWithoutAssertingShallowHistory(t *testing.T) {
-	// ErrIncompleteHistory asserts that the source really is shallow. A record
-	// that only looks shallow must not carry that assertion.
-	//
-	// Object-ID case is not a malformation. An uppercase or mixed-case shallow
-	// boundary is valid and is covered by
-	// TestParseAcceptsUppercaseShallowObjectID.
-	prefix := []string{
-		pkt(sha1A + " HEAD\x00ofs-delta"),
-		pkt(sha1A + " refs/heads/main"),
-	}
-	cases := map[string]struct {
-		record string
-		want   error
-	}{
-		"no object ID":      {pkt("shallow"), ErrInvalidRecord},
-		"empty object ID":   {pkt("shallow "), ErrObjectFormat},
-		"short object ID":   {pkt("shallow " + sha1B[:39]), ErrObjectFormat},
-		"sha256 width":      {pkt("shallow " + sha2B), ErrObjectFormat},
-		"non-hex":           {pkt("shallow " + strings.Repeat("z", 40)), ErrInvalidObjectID},
-		"non-hex uppercase": {pkt("shallow " + strings.Repeat("Z", 40)), ErrInvalidObjectID},
-		"zero object ID":    {pkt("shallow " + zero1), ErrInvalidObjectID},
-		"trailing garbage":  {pkt("shallow " + sha1B + " extra"), ErrObjectFormat},
-	}
-	for name, testCase := range cases {
-		t.Run(name, func(t *testing.T) {
-			body := advertisement("version 1", append(append([]string{}, prefix...), testCase.record)...)
-			failure := wantError(t, body, Options{}, testCase.want)
-			if failure == nil {
-				t.Fatal("expected a *ParseError")
-			}
-			if errors.Is(failure, ErrIncompleteHistory) {
-				t.Fatal("a malformed shallow record must not assert incomplete history")
-			}
-		})
-	}
-}
-
-func TestParseRejectsMisplacedShallowRecord(t *testing.T) {
-	// The grammar places *shallow after the ref list, where the capability
-	// list has already been advertised.
-	leading := advertisement("version 1", pkt("shallow "+sha1B), pkt(sha1A+" HEAD\x00ofs-delta"))
-	failure := wantError(t, leading, Options{}, ErrInvalidRecord)
-	if failure != nil && errors.Is(failure, ErrIncompleteHistory) {
-		t.Fatal("a leading shallow record must not assert incomplete history")
-	}
-}
-
-func TestParseAcceptsShallowAfterTheEmptySentinel(t *testing.T) {
-	// advertised-refs is (no-refs / list-of-refs) *shallow, so a shallow
-	// record may follow the zero-OID sentinel. It is a valid boundary and must
-	// be reported as incomplete history, not as a conflict.
-	afterSentinel := advertisement("version 1",
-		pkt(zero1+" capabilities^{}\x00ofs-delta"),
-		pkt("shallow "+sha1B),
-	)
-	wantError(t, afterSentinel, Options{}, ErrIncompleteHistory)
-
-	// Validation still applies after the sentinel: a malformed record there
-	// must not assert incomplete history either.
-	malformed := advertisement("version 1",
-		pkt(zero1+" capabilities^{}\x00ofs-delta"),
-		pkt("shallow "+zero1),
-	)
-	failure := wantError(t, malformed, Options{}, ErrInvalidObjectID)
-	if failure != nil && errors.Is(failure, ErrIncompleteHistory) {
-		t.Fatal("a malformed shallow record after the sentinel must not assert incomplete history")
-	}
-
-	// An ordinary ref after the sentinel remains a conflict; only shallow is
-	// permitted there.
-	wantError(t, advertisement("version 1",
-		pkt(zero1+" capabilities^{}\x00ofs-delta"),
-		pkt(sha1A+" refs/heads/main"),
-	), Options{}, ErrConflictingRefs)
-}
-
-func TestParseRejectsMalformedService(t *testing.T) {
-	wrongService := pkt("# service=git-receive-pack") + flush + pkt(sha1A+" HEAD\x00ofs-delta") + flush
-	wantError(t, wrongService, Options{}, ErrMalformedService)
-
-	noAnnouncement := pkt(sha1A+" HEAD\x00ofs-delta") + flush
-	wantError(t, noAnnouncement, Options{}, ErrMalformedService)
-
-	noFlush := pkt("# service=git-upload-pack") + pkt(sha1A+" HEAD\x00ofs-delta") + flush
-	wantError(t, noFlush, Options{}, ErrMalformedService)
-
-	doubleFlush := pkt("# service=git-upload-pack") + flush + flush
-	wantError(t, doubleFlush, Options{}, ErrInvalidRecord)
-
-	wantError(t, "", Options{}, ErrTruncated)
-}
-
-func TestParseRejectsDumbHTTPResponse(t *testing.T) {
-	// A dumb server answers the same request with plain text. Its leading hex
-	// digits do read as a pkt-len, so the refusal comes from the framing that
-	// follows rather than from the length itself. Either way it must never be
-	// mistaken for an advertisement.
-	short := sha1A + "\trefs/heads/main\n" + sha1B + "\trefs/tags/v1.0\n"
-	wantError(t, short, Options{}, ErrTruncated)
-
-	// Padded to the length its first four digits declare, so the first packet
-	// completes and fails as a service announcement instead.
-	declared := 0x1111
-	padded := short + strings.Repeat("x", declared-len(short))
-	wantError(t, padded, Options{}, ErrMalformedService)
-
-	// A dumb body whose first four bytes are not hex is refused outright.
-	wantError(t, "not a git response\n", Options{}, ErrMalformedPacket)
-}
-
-func TestParseRejectsV2ControlPackets(t *testing.T) {
-	delimiter := pkt("# service=git-upload-pack") + flush + "0001" + flush
-	wantError(t, delimiter, Options{}, ErrUnsupportedVersion)
-
-	responseEnd := pkt("# service=git-upload-pack") + flush +
-		pkt(sha1A+" HEAD\x00ofs-delta") + "0002" + flush
-	wantError(t, responseEnd, Options{}, ErrUnsupportedVersion)
-
-	beforeService := "0001" + pkt("# service=git-upload-pack")
-	wantError(t, beforeService, Options{}, ErrUnsupportedVersion)
-}
-
-func TestParseRejectsMisplacedOrUnsupportedVersionPacket(t *testing.T) {
-	// A supported version in the wrong position is broken framing, not an
-	// unsupported version.
-	inList := advertisement("version 1",
-		pkt(sha1A+" HEAD\x00ofs-delta"),
-		pkt("version 1"),
-	)
-	wantError(t, inList, Options{}, ErrInvalidRecord)
-
-	repeated := advertisement("version 1", pkt("version 1"), pkt(sha1A+" HEAD\x00ofs-delta"))
-	wantError(t, repeated, Options{}, ErrInvalidRecord)
-
-	// "version 0" is not something a server sends, but it is not an
-	// unsupported version either: v0 is exactly the no-version-packet case.
-	wantError(t, advertisement("version 0", pkt(sha1A+" HEAD\x00ofs-delta")), Options{}, ErrInvalidRecord)
-
-	// A version this parser does not implement stays unsupported wherever it
-	// appears in the ref list.
-	version99 := advertisement("version 99", pkt(sha1A+" HEAD\x00ofs-delta"))
-	wantError(t, version99, Options{}, ErrUnsupportedVersion)
-
-	v2InBody := advertisement("version 2", pkt(sha1A+" HEAD\x00ofs-delta"))
-	wantError(t, v2InBody, Options{}, ErrUnsupportedVersion)
-
-	v2AfterRefs := advertisement("version 1", pkt(sha1A+" HEAD\x00ofs-delta"), pkt("version 2"))
-	wantError(t, v2AfterRefs, Options{}, ErrUnsupportedVersion)
-}
-
-func TestParseFirstPacketVersionClassification(t *testing.T) {
-	// smart_reply puts the service announcement first, so a leading "version 1"
-	// is a broken HTTP response from a version this parser supports. Calling it
-	// unsupported would tell the caller to give up on a v1 source.
-	v1First := pkt("version 1") + pkt(sha1A+" HEAD\x00ofs-delta") + flush
-	wantError(t, v1First, Options{}, ErrMalformedService)
-
-	v0First := pkt("version 0") + flush
-	wantError(t, v0First, Options{}, ErrMalformedService)
-
-	// A v2 or future first packet remains unsupported.
-	wantError(t, pkt("version 2")+pkt("ls-refs")+flush, Options{}, ErrUnsupportedVersion)
-	wantError(t, pkt("version 3")+flush, Options{}, ErrUnsupportedVersion)
-}
-
-func TestParseRejectsMalformedFraming(t *testing.T) {
-	badLength := pkt("# service=git-upload-pack") + flush + "zzzz" + flush
-	wantError(t, badLength, Options{}, ErrMalformedPacket)
-
-	// The case-insensitivity rule covers object IDs only. gitprotocol-http(5)
-	// states the packet length separately as "^[0-9a-f]{4}#", so an uppercase
-	// length header stays malformed.
-	uppercaseLength := "001E# service=git-upload-pack\n" + flush
-	wantError(t, uppercaseLength, Options{}, ErrMalformedPacket)
-
-	emptyDataPacket := pkt("# service=git-upload-pack") + flush + "0004" + flush
-	wantError(t, emptyDataPacket, Options{}, ErrMalformedPacket)
-
-	lengthThree := pkt("# service=git-upload-pack") + flush + "0003" + flush
-	wantError(t, lengthThree, Options{}, ErrMalformedPacket)
-
-	shortLengthHeader := "001"
-	wantError(t, shortLengthHeader, Options{}, ErrTruncated)
-
-	// A declared length beyond the protocol maximum is a violation, not a
-	// local limit, so it must not be reported as ErrLimitExceeded.
-	oversized := pkt("# service=git-upload-pack") + flush + "fff1" + strings.Repeat("x", 4)
-	failure := wantError(t, oversized, Options{}, ErrMalformedPacket)
-	if failure == nil || !strings.Contains(failure.Detail, "protocol maximum") {
-		t.Fatalf("detail = %+v", failure)
-	}
-}
-
-func TestParseRejectsTruncation(t *testing.T) {
-	midPayload := pkt("# service=git-upload-pack") + flush + pktRaw(sha1A + " refs/heads/main\x00ofs")[:20]
-	wantError(t, midPayload, Options{}, ErrTruncated)
-
-	noTerminatingFlush := pkt("# service=git-upload-pack") + flush +
-		pkt("version 1") + pkt(sha1A+" HEAD\x00ofs-delta")
-	wantError(t, noTerminatingFlush, Options{}, ErrTruncated)
-
-	serviceOnly := pkt("# service=git-upload-pack")
-	wantError(t, serviceOnly, Options{}, ErrTruncated)
-}
-
-func TestParseRejectsTrailingContent(t *testing.T) {
-	body := advertisement("version 1", pkt(sha1A+" HEAD\x00ofs-delta")) + pkt("extra")
-	wantError(t, body, Options{}, ErrTrailingContent)
-
-	// Even a single stray byte means the body was not the advertisement alone.
-	wantError(t, advertisement("version 1", pkt(sha1A+" HEAD\x00ofs-delta"))+"\n",
-		Options{}, ErrTrailingContent)
 }
 
 func TestParseReportsServerErrorPacket(t *testing.T) {
@@ -973,6 +484,169 @@ func TestParseReportsServerErrorPacket(t *testing.T) {
 	failure = wantError(t, long, Options{}, ErrRemoteError)
 	if failure == nil || !strings.HasSuffix(failure.Detail, "...") {
 		t.Fatalf("long remote text was not bounded: %+v", failure)
+	}
+}
+
+// TestParseRejections lists every refusal with the typed error a caller
+// branches on. Each refusal must be a *ParseError, and only a valid shallow
+// boundary may assert ErrIncompleteHistory, because that error claims the
+// source really is shallow.
+func TestParseRejections(t *testing.T) {
+	v1 := func(records ...string) string { return advertisement("version 1", records...) }
+	service := pkt("# service=git-upload-pack") + flush
+	head := pkt(sha1A + " HEAD\x00ofs-delta")
+	main := pkt(sha1A + " refs/heads/main")
+	sentinel := pkt(zero1 + " capabilities^{}\x00ofs-delta")
+	tag := pkt(sha1A + " refs/tags/v1\x00ofs-delta")
+	// A dumb HTTP server answers with plain text whose leading hex digits read
+	// as a pkt-len of 0x1111.
+	dumb := sha1A + "\trefs/heads/main\n" + sha1B + "\trefs/tags/v1.0\n"
+
+	cases := []struct {
+		name, body string
+		want       error
+		detail     string // required substring of ParseError.Detail
+	}{
+		// Emptiness is only the zero-ID sentinel. A v2 reply or a cut-off list
+		// yields zero refs from the Git CLI too, but must stay distinct here.
+		{"v2 first packet is not empty", pkt("version 2") + pkt("agent=git/2.54.0") + pkt("ls-refs=unborn") + pkt("object-format=sha1") + flush, ErrUnsupportedVersion, ""},
+		{"v2 after service is not empty", service + pkt("version 2") + pkt("ls-refs") + flush, ErrUnsupportedVersion, ""},
+		{"list without flush is not empty", service + pkt("version 1"), ErrTruncated, ""},
+		// An empty repository still sends the capabilities record.
+		{"v1 list without records", v1(), ErrInvalidRecord, ""},
+		{"v0 list without records", advertisement(""), ErrInvalidRecord, ""},
+
+		{"sha1 ID in sha256 advertisement", v1(pkt(sha1A + " HEAD\x00object-format=sha256")), ErrObjectFormat, ""},
+		{"sha256 ID in sha1 advertisement", v1(head, pkt(sha2B+" refs/heads/main")), ErrObjectFormat, ""},
+		{"sha256 sentinel in sha1 advertisement", v1(pkt(zero2 + " capabilities^{}\x00ofs-delta")), ErrObjectFormat, ""},
+		{"unknown object format", v1(pkt(sha1A + " HEAD\x00object-format=sha3-256")), ErrObjectFormat, ""},
+		{"object format without value", v1(pkt(sha1A + " HEAD\x00object-format")), ErrObjectFormat, ""},
+
+		// An advertised symref and its advertised target name the same object;
+		// the caller must not guess which differing ID is current.
+		{"HEAD symref names a different object", v1(pkt(sha1A+" HEAD\x00symref=HEAD:refs/heads/main"), pkt(sha1B+" refs/heads/main")), ErrConflictingRefs, ""},
+		{"non-HEAD symref names a different object", v1(pkt(sha1A+" HEAD\x00symref=refs/remotes/origin/HEAD:refs/remotes/origin/main"), pkt(sha1B+" refs/remotes/origin/HEAD"), pkt(sha1C+" refs/remotes/origin/main")), ErrConflictingRefs, ""},
+		{"symref disagreement in uppercase", v1(pkt(upper1A+" HEAD\x00symref=HEAD:refs/heads/main"), pkt(upper1B+" refs/heads/main")), ErrConflictingRefs, ""},
+		{"duplicate ref", v1(head, main, pkt(sha1B+" refs/heads/main")), ErrConflictingRefs, ""},
+		// The duplicate is the repeated name; OID case must not hide it.
+		{"duplicate ref with differing OID case", v1(pkt(upper1A+" refs/heads/main\x00ofs-delta"), pkt(lower1A+" refs/heads/main")), ErrConflictingRefs, ""},
+		{"tag peeled twice", v1(tag, pkt(sha1B+" refs/tags/v1^{}"), pkt(sha1C+" refs/tags/v1^{}")), ErrConflictingRefs, ""},
+		{"conflicting symrefs", v1(pkt(sha1A + " HEAD\x00symref=HEAD:refs/heads/main symref=HEAD:refs/heads/other")), ErrConflictingRefs, ""},
+		{"repeated symref", v1(pkt(sha1A + " HEAD\x00symref=HEAD:refs/heads/main symref=HEAD:refs/heads/main")), ErrConflictingRefs, ""},
+		// Only shallow records may follow the empty sentinel.
+		{"ref after empty sentinel", v1(sentinel, main), ErrConflictingRefs, ""},
+
+		{"peeled record not following its tag", v1(tag, pkt(sha1B+" refs/heads/main"), pkt(sha1C+" refs/tags/v1^{}")), ErrInvalidRecord, ""},
+		{"leading peeled record", v1(pkt(sha1B + " refs/tags/v1^{}\x00ofs-delta")), ErrInvalidRecord, ""},
+		{"zero ID on first ref", v1(pkt(zero1 + " refs/heads/main\x00ofs-delta")), ErrInvalidObjectID, ""},
+		{"zero ID on later ref", v1(head, pkt(zero1+" refs/heads/main")), ErrInvalidObjectID, ""},
+		{"zero peeled ID", v1(tag, pkt(zero1+" refs/tags/v1^{}")), ErrInvalidObjectID, ""},
+		{"sentinel with a real ID", v1(pkt(sha1A + " capabilities^{}\x00ofs-delta")), ErrInvalidRecord, ""},
+		{"sentinel after a ref", v1(head, pkt(zero1+" capabilities^{}")), ErrInvalidRecord, ""},
+
+		// Case is accepted for hexadecimal digits only, and width is checked
+		// before case.
+		{"non-hex ID", v1(pkt(strings.Repeat("g", 40) + " refs/heads/main\x00ofs-delta")), ErrInvalidObjectID, ""},
+		{"non-hex uppercase ID", v1(pkt(strings.Repeat("G", 40) + " refs/heads/main\x00ofs-delta")), ErrInvalidObjectID, ""},
+		{"short ID", v1(pkt(sha1A[:39] + " refs/heads/main\x00ofs-delta")), ErrObjectFormat, ""},
+		{"short uppercase ID", v1(pkt(upper1A[:39] + " refs/heads/main\x00ofs-delta")), ErrObjectFormat, ""},
+
+		{"symref target outside refs", v1(pkt(sha1A + " HEAD\x00symref=HEAD:heads/main")), ErrInvalidName, ""},
+		{"invalid symref name", v1(pkt(sha1A + " HEAD\x00symref=refs/heads/..:refs/heads/main")), ErrInvalidName, ""},
+		{"symref without target", v1(pkt(sha1A + " HEAD\x00symref=HEAD")), ErrInvalidCapability, ""},
+
+		{"record without space", v1(pkt(sha1A + "refs/heads/main\x00ofs-delta")), ErrInvalidRecord, ""},
+		{"first record without capabilities", v1(pkt(sha1A + " refs/heads/main")), ErrInvalidRecord, ""},
+		{"capabilities on a later record", v1(head, pkt(sha1B+" refs/heads/main\x00ofs-delta")), ErrInvalidRecord, ""},
+		{"empty ref name", v1(pkt(sha1A + " \x00ofs-delta")), ErrInvalidName, ""},
+
+		// cap-list requires at least one capability, in v1 and v0 alike, so an
+		// empty sentinel is not a successful empty repository.
+		{"empty capabilities on v1 sentinel", v1(pkt(zero1 + " capabilities^{}\x00")), ErrInvalidCapability, ""},
+		{"empty capabilities on v1 ref", v1(pkt(sha1A + " HEAD\x00")), ErrInvalidCapability, ""},
+		{"empty capabilities on v0 sentinel", advertisement("", pkt(zero1+" capabilities^{}\x00")), ErrInvalidCapability, ""},
+		{"empty capabilities on v0 ref", advertisement("", pkt(sha1A+" refs/heads/main\x00")), ErrInvalidCapability, ""},
+		{"uppercase capability", v1(pkt(sha1A + " HEAD\x00Multi-Ack")), ErrInvalidCapability, ""},
+		{"double space between capabilities", v1(pkt(sha1A + " HEAD\x00ofs-delta  thin-pack")), ErrInvalidCapability, ""},
+		{"control byte in capability", v1(pkt(sha1A + " HEAD\x00agent=git/2.54\x01")), ErrInvalidCapability, ""},
+
+		{"shallow boundary", v1(pkt(sha1A+" HEAD\x00shallow ofs-delta"), main, pkt("shallow "+sha1B)), ErrIncompleteHistory, ""},
+		{"sha256 shallow boundary", v1(pkt(sha2A+" HEAD\x00object-format=sha256"), pkt(sha2A+" refs/heads/main"), pkt("shallow "+sha2B)), ErrIncompleteHistory, ""},
+		{"uppercase shallow boundary", v1(head, main, pkt("shallow "+upper1B)), ErrIncompleteHistory, ""},
+		{"mixed-case shallow boundary", v1(head, main, pkt("shallow "+mixed1A)), ErrIncompleteHistory, ""},
+		// advertised-refs is (no-refs / list-of-refs) *shallow.
+		{"shallow boundary after empty sentinel", v1(sentinel, pkt("shallow "+sha1B)), ErrIncompleteHistory, ""},
+		// A record that only looks shallow must not claim shallow history.
+		{"shallow without ID", v1(head, main, pkt("shallow")), ErrInvalidRecord, ""},
+		{"shallow with empty ID", v1(head, main, pkt("shallow ")), ErrObjectFormat, ""},
+		{"shallow with short ID", v1(head, main, pkt("shallow "+sha1B[:39])), ErrObjectFormat, ""},
+		{"short uppercase shallow ID", v1(head, main, pkt("shallow "+upper1B[:39])), ErrObjectFormat, ""},
+		{"shallow with sha256 width", v1(head, main, pkt("shallow "+sha2B)), ErrObjectFormat, ""},
+		{"shallow with non-hex ID", v1(head, main, pkt("shallow "+strings.Repeat("z", 40))), ErrInvalidObjectID, ""},
+		{"shallow with non-hex uppercase ID", v1(head, main, pkt("shallow "+strings.Repeat("Z", 40))), ErrInvalidObjectID, ""},
+		{"shallow with zero ID", v1(head, main, pkt("shallow "+zero1)), ErrInvalidObjectID, ""},
+		{"shallow with trailing garbage", v1(head, main, pkt("shallow "+sha1B+" extra")), ErrObjectFormat, ""},
+		{"shallow with zero ID after sentinel", v1(sentinel, pkt("shallow "+zero1)), ErrInvalidObjectID, ""},
+		// *shallow follows the ref list, after the capabilities.
+		{"leading shallow record", v1(pkt("shallow "+sha1B), head), ErrInvalidRecord, ""},
+
+		{"receive-pack service", pkt("# service=git-receive-pack") + flush + head + flush, ErrMalformedService, ""},
+		{"no service announcement", head + flush, ErrMalformedService, ""},
+		{"service without flush", pkt("# service=git-upload-pack") + head + flush, ErrMalformedService, ""},
+		{"service followed by two flushes", service + flush, ErrInvalidRecord, ""},
+		{"empty body", "", ErrTruncated, ""},
+		// A dumb reply must never read as an advertisement: short, it is cut
+		// off; padded to its declared length, it fails as a service line.
+		{"dumb HTTP reply", dumb, ErrTruncated, ""},
+		{"dumb HTTP reply padded to its pkt-len", dumb + strings.Repeat("x", 0x1111-len(dumb)), ErrMalformedService, ""},
+		{"dumb HTTP reply without hex prefix", "not a git response\n", ErrMalformedPacket, ""},
+
+		{"v2 delimiter packet", service + "0001" + flush, ErrUnsupportedVersion, ""},
+		{"v2 response-end packet", service + head + "0002" + flush, ErrUnsupportedVersion, ""},
+		{"v2 delimiter before service", "0001" + pkt("# service=git-upload-pack"), ErrUnsupportedVersion, ""},
+		// A supported version in the wrong place is broken framing; version 0
+		// is exactly the no-version-packet case, so it is not unsupported.
+		{"version packet inside ref list", v1(head, pkt("version 1")), ErrInvalidRecord, ""},
+		{"repeated version packet", v1(pkt("version 1"), head), ErrInvalidRecord, ""},
+		{"explicit version 0", advertisement("version 0", head), ErrInvalidRecord, ""},
+		{"version 99", advertisement("version 99", head), ErrUnsupportedVersion, ""},
+		{"version 2 in body", advertisement("version 2", head), ErrUnsupportedVersion, ""},
+		{"version 2 after refs", v1(head, pkt("version 2")), ErrUnsupportedVersion, ""},
+		// The service line comes first, so a leading supported version is a
+		// broken reply; calling it unsupported would abandon a v1 source.
+		{"leading version 1", pkt("version 1") + head + flush, ErrMalformedService, ""},
+		{"leading version 0", pkt("version 0") + flush, ErrMalformedService, ""},
+		{"leading version 2", pkt("version 2") + pkt("ls-refs") + flush, ErrUnsupportedVersion, ""},
+		{"leading version 3", pkt("version 3") + flush, ErrUnsupportedVersion, ""},
+
+		{"non-hex packet length", service + "zzzz" + flush, ErrMalformedPacket, ""},
+		// gitprotocol-http(5) fixes the length as "^[0-9a-f]{4}#"; the
+		// case rule covers object IDs only.
+		{"uppercase packet length", "001E# service=git-upload-pack\n" + flush, ErrMalformedPacket, ""},
+		{"empty data packet", service + "0004" + flush, ErrMalformedPacket, ""},
+		{"packet length three", service + "0003" + flush, ErrMalformedPacket, ""},
+		{"short length header", "001", ErrTruncated, ""},
+		// Beyond the protocol maximum is a violation, not a local limit.
+		{"packet above protocol maximum", service + "fff1" + strings.Repeat("x", 4), ErrMalformedPacket, "protocol maximum"},
+		{"truncated payload", service + pktRaw(sha1A + " refs/heads/main\x00ofs")[:20], ErrTruncated, ""},
+		{"no terminating flush", service + pkt("version 1") + head, ErrTruncated, ""},
+		{"service only", pkt("# service=git-upload-pack"), ErrTruncated, ""},
+		{"trailing packet", v1(head) + pkt("extra"), ErrTrailingContent, ""},
+		{"trailing byte", v1(head) + "\n", ErrTrailingContent, ""},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			failure := wantError(t, testCase.body, Options{}, testCase.want)
+			if failure == nil {
+				t.Fatal("expected a *ParseError")
+			}
+			if testCase.want != ErrIncompleteHistory && errors.Is(failure, ErrIncompleteHistory) {
+				t.Fatal("only a valid shallow boundary may assert incomplete history")
+			}
+			if !strings.Contains(failure.Detail, testCase.detail) {
+				t.Fatalf("detail = %q, want %q", failure.Detail, testCase.detail)
+			}
+		})
 	}
 }
 

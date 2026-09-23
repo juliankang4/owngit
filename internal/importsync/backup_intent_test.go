@@ -15,9 +15,7 @@ import (
 func portableImportIntents(t *testing.T, store *state.Store, repositoryID string) []state.ImportIntent {
 	t.Helper()
 	snapshot, err := store.RecoverySnapshot(context.Background())
-	if err != nil {
-		t.Fatalf("portable snapshot: %v", err)
-	}
+	noErr(t, err, "portable snapshot")
 	var intents []state.ImportIntent
 	for _, intent := range snapshot.ImportIntents {
 		if intent.RepositoryID == repositoryID {
@@ -30,12 +28,8 @@ func portableImportIntents(t *testing.T, store *state.Store, repositoryID string
 func completeFixtureSetup(t *testing.T, f *fixture) {
 	t.Helper()
 	hash, err := auth.HashPassword("backup-admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.store.CompleteSetup(context.Background(), f.manager.RepositoryRoot(), "open", "", hash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, f.store.CompleteSetup(context.Background(), f.manager.RepositoryRoot(), "open", "", hash, true))
 }
 
 // An initial import that stopped after recording its publication intent and
@@ -55,9 +49,7 @@ func TestBackupCarriesSettledIntentOfAnInitialImportThatNeverPublished(t *testin
 	}
 	f.service.whileRefsPrepared = nil
 	// A restart reconciles what the stopped run left behind.
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.Reconcile(context.Background()))
 	if _, _, exists, err := f.manager.ExistingPath(context.Background(), "project"); err != nil || exists {
 		t.Fatalf("cancelled initial import created a repository exists=%v err=%v", exists, err)
 	}
@@ -68,17 +60,11 @@ func TestBackupCarriesSettledIntentOfAnInitialImportThatNeverPublished(t *testin
 	settled := intents[0].Status
 
 	output := filepath.Join(f.root, "backup")
-	if err := recovery.Create(context.Background(), f.store, f.manager, output); err != nil {
-		t.Fatalf("backup refused a settled intent without a repository: %v", err)
-	}
+	noErr(t, recovery.Create(context.Background(), f.store, f.manager, output), "backup refused a settled intent without a repository")
 	restoredState := filepath.Join(f.root, "restored-state")
-	if err := recovery.Restore(context.Background(), output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath); err != nil {
-		t.Fatalf("restore: %v", err)
-	}
+	noErr(t, recovery.Restore(context.Background(), output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath), "restore")
 	restored, err := state.Open(context.Background(), restoredState)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer restored.Close()
 	after := portableImportIntents(t, restored, "project")
 	if len(after) != 1 || after[0].ID != intents[0].ID || after[0].Status != settled {
@@ -107,21 +93,13 @@ func TestBackupCarriesOwnerResolvedIntent(t *testing.T) {
 		t.Fatalf("resolve result=%+v err=%v", result, err)
 	}
 	resolved, _, err := f.store.ImportIntent(ctx, result.Resolved[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	output := filepath.Join(f.root, "backup")
-	if err := recovery.Create(ctx, f.store, f.manager, output); err != nil {
-		t.Fatalf("backup with an owner-resolved intent: %v", err)
-	}
+	noErr(t, recovery.Create(ctx, f.store, f.manager, output), "backup with an owner-resolved intent")
 	restoredState := filepath.Join(f.root, "restored-state")
-	if err := recovery.Restore(ctx, output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath); err != nil {
-		t.Fatalf("restore: %v", err)
-	}
+	noErr(t, recovery.Restore(ctx, output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath), "restore")
 	restored, err := state.Open(ctx, restoredState)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer restored.Close()
 	intent, exists, err := restored.ImportIntent(ctx, resolved.ID)
 	if err != nil || !exists || intent.Status != state.ImportIntentOwnerResolved || intent.ReceiptJSON != resolved.ReceiptJSON || intent.Reason != resolved.Reason {

@@ -53,12 +53,8 @@ func TestPRCommandsUseRemoteJSONAPIAndPrivatePasswordFile(t *testing.T) {
 	}))
 	defer server.Close()
 	passwordFile := filepath.Join(t.TempDir(), "password")
-	if err := os.WriteFile(passwordFile, []byte("shared-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(passwordFile, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(passwordFile, []byte("shared-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(passwordFile, false))
 	remote := []string{"--server", server.URL, "--accept-insecure-http", "--repository", "project", "--password-file", passwordFile}
 	tests := []struct {
 		name   string
@@ -79,9 +75,7 @@ func TestPRCommandsUseRemoteJSONAPIAndPrivatePasswordFile(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			output, err := captureStdout(func() error { return prCommand(test.args) })
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if !strings.Contains(output, `"ok":true`) {
 				t.Fatalf("command output=%q", output)
 			}
@@ -105,33 +99,21 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	store, err := state.Open(ctx, stateRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	adminHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true))
 	runner, err := gitexec.New("", filepath.Join(stateRoot, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	if _, err := manager.Create(ctx, "project", "CLI integration fixture"); err != nil {
 		t.Fatal(err)
 	}
 	gitHandler, err := githttp.New(runner, manager, "", 2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	authentication := &auth.Manager{Store: store, SessionLife: time.Hour}
 	application := &server.App{
 		Store: store, Auth: authentication, Repositories: manager,
@@ -146,18 +128,14 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	runPRGit(t, "", "init", "--initial-branch=main", work)
 	runPRGit(t, work, "config", "user.name", "CLI Test")
 	runPRGit(t, work, "config", "user.email", "cli-test@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o600))
 	runPRGit(t, work, "add", ".")
 	runPRGit(t, work, "commit", "-m", "base")
 	runPRGit(t, work, "remote", "add", "origin", httpServer.URL+"/git/project.git")
 	runPRGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	targetOID := prGitOutput(t, work, "rev-parse", "HEAD")
 	runPRGit(t, work, "checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600))
 	runPRGit(t, work, "add", ".")
 	runPRGit(t, work, "commit", "-m", "feature")
 	runPRGit(t, work, "push", "origin", "HEAD:refs/heads/feature")
@@ -227,9 +205,7 @@ func TestPRCommandValidatesServerBeforeReadingPasswordFile(t *testing.T) {
 func runPRCommandJSON(t *testing.T, arguments []string) pullrequest.SuccessEnvelope {
 	t.Helper()
 	output, err := captureStdout(func() error { return prCommand(arguments) })
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var envelope pullrequest.SuccessEnvelope
 	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
 		t.Fatalf("decode CLI JSON output: %v\n%s", err, output)
@@ -288,9 +264,7 @@ func TestStructuredPRFailureContainsStableCodeWithoutCause(t *testing.T) {
 			Code string `json:"code"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal(output.Bytes(), &decoded))
 	if decoded.OK || decoded.Error.Code != "invalid_credentials" {
 		t.Fatalf("structured error=%+v", decoded)
 	}

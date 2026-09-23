@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"net/http/cookiejar"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,18 +17,12 @@ func TestCommittedSetupStartsWorkWhenSetupFileCleanupFails(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
 	started := 0
 	app.OnSetupComplete = func() { started++ }
-	if err := store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
 	// A nonempty directory at the owner file path makes its removal fail.
 	blocked := filepath.Join(store.Dir(), "owner-setup.html")
-	if err := os.MkdirAll(filepath.Join(blocked, "keep"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	noErr(t, os.MkdirAll(filepath.Join(blocked, "keep"), 0o700))
+	server := serve(t, app.Handler())
+	client, jar := newBrowserClient(t)
 	request(t, client, http.MethodGet, server.URL+"/setup", nil, "")
 	response := request(t, client, http.MethodPost, server.URL+"/setup/redeem", url.Values{
 		"csrf": {cookieValue(t, jar, server.URL, preauthCookie)}, "token": {"synthetic-owner-token"},
@@ -42,9 +34,7 @@ func TestCommittedSetupStartsWorkWhenSetupFileCleanupFails(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("setup session ok=%v err=%v", ok, err)
 	}
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	response = request(t, client, http.MethodPost, server.URL+"/setup", url.Values{
 		"csrf": {session.CSRF}, "storage_path": {repositoryRoot}, "access_mode": {"open"},
 		"admin_password": {"admin-password-one"}, "insecure_ack": {"on"},

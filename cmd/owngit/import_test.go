@@ -37,19 +37,11 @@ func TestImportCLIListsHelpAndKeepsSecretsOutOfOutput(t *testing.T) {
 	root := t.TempDir()
 	tokenPath := filepath.Join(root, "token")
 	const token = "cli-import-secret-token"
-	if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(tokenPath, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(tokenPath, []byte(token+"\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(tokenPath, false))
 	passwordPath := filepath.Join(root, "admin")
-	if err := os.WriteFile(passwordPath, []byte("admin-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(passwordPath, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(passwordPath, []byte("admin-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(passwordPath, false))
 	fixture := startImportCLIServer(t)
 	printed, err := captureStdout(func() error {
 		return importCommand([]string{
@@ -57,9 +49,7 @@ func TestImportCLIListsHelpAndKeepsSecretsOutOfOutput(t *testing.T) {
 			"--password-file", passwordPath, "--token-file", tokenPath,
 		})
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if strings.Contains(printed, token) || !strings.Contains(printed, "bearer") {
 		t.Fatalf("credential output=%q", printed)
 	}
@@ -69,19 +59,11 @@ func TestImportAddSendsTokenFileWithoutPrintingIt(t *testing.T) {
 	root := t.TempDir()
 	tokenPath := filepath.Join(root, "token")
 	const token = "add-secret-token"
-	if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(tokenPath, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(tokenPath, []byte(token+"\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(tokenPath, false))
 	passwordPath := filepath.Join(root, "admin")
-	if err := os.WriteFile(passwordPath, []byte("admin-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(passwordPath, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(passwordPath, []byte("admin-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(passwordPath, false))
 	fixture := startImportCLIServer(t)
 	printed, err := captureStdout(func() error {
 		return importCommand([]string{
@@ -89,9 +71,7 @@ func TestImportAddSendsTokenFileWithoutPrintingIt(t *testing.T) {
 			"--server", fixture.url, "--accept-insecure-http", "--password-file", passwordPath, "--token-file", tokenPath,
 		})
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if fixture.token != token || strings.Contains(printed, token) {
 		t.Fatalf("add credential token=%q output=%q", fixture.token, printed)
 	}
@@ -116,34 +96,20 @@ func startImportCLIServer(t *testing.T, fetchDelay ...time.Duration) *importCLIS
 	ctx := context.Background()
 	root := t.TempDir()
 	store, err := state.Open(ctx, filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	adminHash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true))
 	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	stored, err := manager.Create(ctx, "project", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	gitHandler, err := githttp.New(runner, manager, "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	fixture := &importCLIServer{}
 	application := &server.App{
 		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
@@ -183,12 +149,8 @@ func TestImportRefreshOutlivesTheOrdinaryClientLimit(t *testing.T) {
 	}
 	root := t.TempDir()
 	passwordPath := filepath.Join(root, "admin")
-	if err := os.WriteFile(passwordPath, []byte("admin-password\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(passwordPath, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(passwordPath, []byte("admin-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(passwordPath, false))
 	fixture := startImportCLIServer(t, apiclient.DefaultTimeout+2*time.Second)
 	started := time.Now()
 	printed, err := captureStdout(func() error {
@@ -207,12 +169,8 @@ func TestImportRefreshOutlivesTheOrdinaryClientLimit(t *testing.T) {
 
 func writePrivateTestFile(t *testing.T, path, content string) string {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(path, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(path, []byte(content), 0o600))
+	noErr(t, state.ProtectPrivatePath(path, false))
 	return path
 }
 
@@ -227,9 +185,7 @@ func TestImportCredentialsCAOnlyAndClear(t *testing.T) {
 	line := strings.Repeat("A", 64) + "\n"
 	caPEM := "-----BEGIN CERTIFICATE-----\n" + strings.Repeat(line, (200<<10)/len(line)) + "-----END CERTIFICATE-----\n"
 	caPath := filepath.Join(root, "ca.pem")
-	if err := os.WriteFile(caPath, []byte(caPEM), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(caPath, []byte(caPEM), 0o600))
 	if _, err := captureStdout(func() error {
 		return importCommand(append([]string{"credentials", fixture.repositoryID, "--ca-file", caPath}, remote...))
 	}); err != nil {
@@ -241,9 +197,7 @@ func TestImportCredentialsCAOnlyAndClear(t *testing.T) {
 	}
 
 	oversized := filepath.Join(root, "oversized.pem")
-	if err := os.WriteFile(oversized, make([]byte, state.MaxImportCABytes+1), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(oversized, make([]byte, state.MaxImportCABytes+1), 0o600))
 	if err := importCommand(append([]string{"credentials", fixture.repositoryID, "--ca-file", oversized}, remote...)); err == nil {
 		t.Fatal("a CA file above the stored bound was accepted")
 	}
@@ -299,9 +253,7 @@ func TestImportResolveAcceptsTheDestination(t *testing.T) {
 		ID: strings.Repeat("1", 32), RepositoryID: fixture.repositoryID, SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
 		Kind: state.ImportKindRefresh, Status: state.ImportRunPublishing, StartedAt: now, CreatedAt: now,
 	}
-	if err := fixture.store.BeginImportRun(ctx, run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.BeginImportRun(ctx, run))
 	desired := strings.Repeat("a", 40)
 	intent := state.ImportIntent{
 		ID: strings.Repeat("2", 32), RepositoryID: fixture.repositoryID, RunID: run.ID,
@@ -311,16 +263,10 @@ func TestImportResolveAcceptsTheDestination(t *testing.T) {
 		Observed: map[string]string{"refs/heads/main": desired, state.ImportHeadRef: "symbolic refs/heads/main " + desired},
 		Retained: map[string]string{}, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := fixture.store.CreateImportIntent(ctx, intent); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", "synthetic mixed outcome", now); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.CreateImportIntent(ctx, intent))
+	noErr(t, fixture.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", "synthetic mixed outcome", now))
 	run.Status, run.ErrorClass, run.FinishedAt = state.ImportRunUnresolved, importsync.CodeUnresolved, now
-	if err := fixture.store.FinishImportRun(ctx, run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.FinishImportRun(ctx, run))
 	status, err := captureStdout(func() error {
 		return importCommand(append([]string{"status", fixture.repositoryID}, remote...))
 	})

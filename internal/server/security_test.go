@@ -14,21 +14,16 @@ import (
 func TestStalledOrdinaryFormTimesOutAndShutdownCompletes(t *testing.T) {
 	app, _, _ := newTestApp(t)
 	app.HTTPTimeout = 75 * time.Millisecond
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	server := serve(t, app.Handler())
 	address := strings.TrimPrefix(server.URL, "http://")
 	connection, err := net.Dial("tcp", address)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer connection.Close()
 	request := "POST /setup/redeem HTTP/1.1\r\nHost: " + address + "\r\nOrigin: " + server.URL + "\r\nContent-Type: application/x-www-form-urlencoded\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n4\r\ncsrf\r\n"
 	if _, err := io.WriteString(connection, request); err != nil {
 		t.Fatal(err)
 	}
-	if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, connection.SetReadDeadline(time.Now().Add(2*time.Second)))
 	readDone := make(chan error, 1)
 	go func() {
 		_, readErr := io.ReadAll(connection)
@@ -40,9 +35,7 @@ func TestStalledOrdinaryFormTimesOutAndShutdownCompletes(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	shutdownContext, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := server.Config.Shutdown(shutdownContext); err != nil {
-		t.Fatalf("shutdown while ordinary form was stalled: %v", err)
-	}
+	noErrf(t, server.Config.Shutdown(shutdownContext), "shutdown while ordinary form was stalled")
 	readErr := <-readDone
 	if timeout, ok := readErr.(net.Error); ok && timeout.Timeout() {
 		t.Fatal("ordinary form connection did not close after its deadline")

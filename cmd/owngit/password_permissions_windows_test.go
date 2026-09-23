@@ -11,17 +11,11 @@ import (
 func makePasswordFileBroad(t *testing.T, path string) {
 	t.Helper()
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	owner, _, err := descriptor.Owner()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	world, err := windows.StringToSid("S-1-1-0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
 		{
 			AccessPermissions: windows.GENERIC_ALL,
@@ -41,9 +35,7 @@ func makePasswordFileBroad(t *testing.T, path string) {
 			},
 		},
 	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,

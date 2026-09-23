@@ -43,9 +43,7 @@ func newFakeSource(t *testing.T, files map[string]string, modes map[string]strin
 func (s *fakeSource) addBlob(t *testing.T, path, mode string, content []byte) {
 	t.Helper()
 	oid, err := blobObjectID(s.format, content)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	s.blobs[oid] = content
 	s.entries = append(s.entries, Entry{Path: path, OID: oid, Mode: mode, Type: "blob", Size: int64(len(content))})
 }
@@ -98,9 +96,7 @@ func TestMaterializeWritesExactBytesAndExecutableBits(t *testing.T) {
 	destination := destinationIn(t)
 
 	result, err := Materialize(context.Background(), source, destination, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if result.CommitOID != source.commit || result.ObjectFormat != FormatSHA1 {
 		t.Fatalf("unexpected source identity: %+v", result)
 	}
@@ -112,17 +108,13 @@ func TestMaterializeWritesExactBytesAndExecutableBits(t *testing.T) {
 		"text/crlf.txt": "one\r\ntwo\r\n",
 	} {
 		content, err := os.ReadFile(filepath.Join(destination, filepath.FromSlash(path)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if string(content) != want {
 			t.Fatalf("%s bytes changed: got %q want %q", path, content, want)
 		}
 	}
 	binary, err := os.ReadFile(filepath.Join(destination, "assets", "binary.dat"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if string(binary) != string([]byte{0x00, 0xff, 0x0a, 0x00, 0x1b}) {
 		t.Fatalf("binary bytes changed: %v", binary)
 	}
@@ -140,9 +132,7 @@ func TestMaterializeWritesExactBytesAndExecutableBits(t *testing.T) {
 		t.Fatalf("executable mode was not preserved: %+v", executable)
 	}
 	info, err := os.Stat(filepath.Join(destination, "build.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if executable.ExecutableApplied != (info.Mode()&0o100 != 0) {
 		t.Fatalf("reported execute bit %v disagrees with filesystem mode %v", executable.ExecutableApplied, info.Mode())
 	}
@@ -151,9 +141,7 @@ func TestMaterializeWritesExactBytesAndExecutableBits(t *testing.T) {
 			executable.ExecutableApplied, result.ExecutableBitsUnsupported)
 	}
 	regular, err := os.Stat(filepath.Join(destination, "text", "lf.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if executable.ExecutableApplied && regular.Mode()&0o111 != 0 {
 		t.Fatalf("regular file gained an execute bit: %v", regular.Mode())
 	}
@@ -166,9 +154,7 @@ func TestMaterializeSortsManifestAndCountsBytes(t *testing.T) {
 		"a/a.txt":   "aa",
 	}, nil)
 	result, err := Materialize(context.Background(), source, destinationIn(t), Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var paths []string
 	for _, file := range result.Files {
 		paths = append(paths, file.Path)
@@ -255,9 +241,7 @@ func TestMaterializeRefusesDuplicateAndDirectoryConflicts(t *testing.T) {
 
 func TestMaterializeFailsOnFilesystemNameCollision(t *testing.T) {
 	probe := t.TempDir()
-	if err := os.WriteFile(filepath.Join(probe, "Case.txt"), []byte("probe"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(probe, "Case.txt"), []byte("probe"), 0o600))
 	if _, err := os.Stat(filepath.Join(probe, "case.txt")); errors.Is(err, os.ErrNotExist) {
 		t.Skip("this filesystem distinguishes name case, so no collision is expected")
 	}
@@ -269,9 +253,7 @@ func TestMaterializeFailsOnFilesystemNameCollision(t *testing.T) {
 		t.Fatalf("result=%+v err=%v, want path conflict", result, err)
 	}
 	entries, readErr := os.ReadDir(destination)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
+	noErr(t, readErr)
 	if len(entries) != 1 {
 		t.Fatalf("collision left %d entries, want the single written file", len(entries))
 	}
@@ -336,9 +318,7 @@ func TestMaterializeEnforcesLimitsBeforeWriting(t *testing.T) {
 func TestMaterializeRecordsEffectiveLimits(t *testing.T) {
 	source := newFakeSource(t, map[string]string{"a.txt": "a"}, nil)
 	result, err := Materialize(context.Background(), source, destinationIn(t), Options{Limits: Limits{MaxEntries: 7}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defaults := DefaultLimits()
 	if result.EffectiveLimits.MaxEntries != 7 || result.EffectiveLimits.MaxFileBytes != defaults.MaxFileBytes {
 		t.Fatalf("effective limits were not recorded: %+v", result.EffectiveLimits)
@@ -351,17 +331,11 @@ func TestMaterializeRecordsEffectiveLimits(t *testing.T) {
 func TestMaterializeRefusesExistingDestinationAndLeavesItIntact(t *testing.T) {
 	root := t.TempDir()
 	destination := filepath.Join(root, "existing")
-	if err := os.Mkdir(destination, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(destination, 0o700))
 	sentinelPath := filepath.Join(destination, "sentinel.txt")
-	if err := os.WriteFile(sentinelPath, []byte("sentinel"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(sentinelPath, []byte("sentinel"), 0o600))
 	outsidePath := filepath.Join(root, "outside.txt")
-	if err := os.WriteFile(outsidePath, []byte("outside"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(outsidePath, []byte("outside"), 0o600))
 
 	source := newFakeSource(t, map[string]string{"sentinel.txt": "replacement"}, nil)
 	result, err := Materialize(context.Background(), source, destination, Options{})
@@ -370,9 +344,7 @@ func TestMaterializeRefusesExistingDestinationAndLeavesItIntact(t *testing.T) {
 	}
 	for path, want := range map[string]string{sentinelPath: "sentinel", outsidePath: "outside"} {
 		content, readErr := os.ReadFile(path)
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
+		noErr(t, readErr)
 		if string(content) != want {
 			t.Fatalf("%s changed to %q", path, content)
 		}
@@ -397,13 +369,9 @@ func TestMaterializeRejectsRelativeDestination(t *testing.T) {
 func TestMaterializeNeverWritesThroughASymlinkParent(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(root, "outside")
-	if err := os.Mkdir(outside, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(outside, 0o700))
 	sentinelPath := filepath.Join(outside, "sentinel.txt")
-	if err := os.WriteFile(sentinelPath, []byte("sentinel"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(sentinelPath, []byte("sentinel"), 0o600))
 	destination := filepath.Join(root, "source")
 
 	source := newFakeSource(t, nil, nil)
@@ -428,9 +396,7 @@ func TestMaterializeNeverWritesThroughASymlinkParent(t *testing.T) {
 		t.Fatalf("result=%+v err=%v, want a refusal", result, err)
 	}
 	content, readErr := os.ReadFile(sentinelPath)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
+	noErr(t, readErr)
 	if string(content) != "sentinel" {
 		t.Fatalf("the export wrote through a symlink parent: %q", content)
 	}
@@ -561,16 +527,12 @@ func TestMaterializePreservesLFSPointerBytesAndMarksThem(t *testing.T) {
 	destination := destinationIn(t)
 
 	result, err := Materialize(context.Background(), source, destination, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(result.LFSPointerPaths) != 1 || result.LFSPointerPaths[0] != "media/clip.bin" {
 		t.Fatalf("pointer detection reported %v", result.LFSPointerPaths)
 	}
 	content, err := os.ReadFile(filepath.Join(destination, "media", "clip.bin"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if string(content) != pointer {
 		t.Fatalf("pointer bytes changed: %q", content)
 	}
@@ -610,9 +572,7 @@ func TestMaterializeRejectsMalformedLFSPointers(t *testing.T) {
 	}, nil)
 
 	result, err := Materialize(context.Background(), source, destinationIn(t), Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(result.LFSPointerPaths) != 1 || result.LFSPointerPaths[0] != "valid.bin" {
 		t.Fatalf("malformed pointers were accepted: %v", result.LFSPointerPaths)
 	}
@@ -692,23 +652,13 @@ func TestCleanupWorkspaceRootRemovesOnlyAuthenticatedJobEnvelopes(t *testing.T) 
 	root := t.TempDir()
 	ownedID := strings.Repeat("a", 32)
 	workspace, err := AcquireWorkspaceRoot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	owned, source, err := workspace.PrepareJob(ownedID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(source, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(source, "tracked.txt"), []byte("content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, os.Mkdir(source, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(source, "tracked.txt"), []byte("content"), 0o600))
 	unrelated := filepath.Join(root, "keep-me")
-	if err := os.Mkdir(unrelated, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(unrelated, 0o700))
 	workspace.Close()
 
 	removed, more, err := CleanupWorkspaceRoot(root, 10)
@@ -726,13 +676,9 @@ func TestCleanupWorkspaceRootRemovesOnlyAuthenticatedJobEnvelopes(t *testing.T) 
 func TestCleanupWorkspaceRootPreservesUnownedHexDirectory(t *testing.T) {
 	root := t.TempDir()
 	unrelated := filepath.Join(root, strings.Repeat("b", 32))
-	if err := os.Mkdir(unrelated, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(unrelated, 0o700))
 	sentinel := filepath.Join(unrelated, "unrelated-fixture.txt")
-	if err := os.WriteFile(sentinel, []byte("not a check workspace"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(sentinel, []byte("not a check workspace"), 0o600))
 	removed, _, err := CleanupWorkspaceRoot(root, 10)
 	if removed != 0 || err == nil {
 		t.Fatalf("cleanup removed=%d err=%v, want a fail-closed refusal", removed, err)
@@ -745,18 +691,12 @@ func TestCleanupWorkspaceRootPreservesUnownedHexDirectory(t *testing.T) {
 func TestOwnedWorkspaceRootReportsAndPreservesUnknownHexDirectory(t *testing.T) {
 	root := t.TempDir()
 	workspace, err := AcquireWorkspaceRoot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	workspace.Close()
 	unknown := filepath.Join(root, strings.Repeat("d", 32))
-	if err := os.Mkdir(unknown, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(unknown, 0o700))
 	sentinel := filepath.Join(unknown, "sentinel")
-	if err := os.WriteFile(sentinel, []byte("preserve"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(sentinel, []byte("preserve"), 0o600))
 	removed, _, err := CleanupWorkspaceRoot(root, 10)
 	if removed != 0 || err == nil {
 		t.Fatalf("cleanup removed=%d err=%v, want an observable refusal", removed, err)
@@ -769,14 +709,10 @@ func TestOwnedWorkspaceRootReportsAndPreservesUnknownHexDirectory(t *testing.T) 
 func TestWorkspaceRootLockCoversActiveSourceLifecycle(t *testing.T) {
 	root := t.TempDir()
 	first, err := AcquireWorkspaceRoot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer first.Close()
 	_, source, err := first.PrepareJob(strings.Repeat("c", 32))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	materialized, err := Materialize(context.Background(), newFakeSource(t, map[string]string{
 		workspaceJobMarker: "repository content may use the envelope marker name",
 	}, nil), source, Options{})
@@ -793,24 +729,16 @@ func TestVerifyResultDetectsWorkspaceChanges(t *testing.T) {
 	source := newFakeSource(t, map[string]string{"nested/a.txt": "a"}, nil)
 	destination := destinationIn(t)
 	result, err := Materialize(context.Background(), source, destination, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if clean, err := VerifyResult(context.Background(), result); err != nil || !clean {
 		t.Fatalf("clean=%v err=%v", clean, err)
 	}
-	if err := os.Mkdir(filepath.Join(destination, "build"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(destination, "build", "generated.txt"), []byte("generated"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(filepath.Join(destination, "build"), 0o700))
+	noErr(t, os.WriteFile(filepath.Join(destination, "build", "generated.txt"), []byte("generated"), 0o600))
 	if clean, err := VerifyResult(context.Background(), result); err != nil || !clean {
 		t.Fatalf("generated output clean=%v err=%v", clean, err)
 	}
-	if err := os.WriteFile(filepath.Join(destination, "nested", "a.txt"), []byte("b"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(destination, "nested", "a.txt"), []byte("b"), 0o600))
 	if clean, err := VerifyResult(context.Background(), result); err != nil || clean {
 		t.Fatalf("modified clean=%v err=%v", clean, err)
 	}
@@ -820,9 +748,7 @@ func TestMaterializeAcceptsAnEmptyTree(t *testing.T) {
 	source := newFakeSource(t, nil, nil)
 	destination := destinationIn(t)
 	result, err := Materialize(context.Background(), source, destination, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(result.Files) != 0 || result.TotalBytes != 0 {
 		t.Fatalf("unexpected empty-tree result: %+v", result)
 	}

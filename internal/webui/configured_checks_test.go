@@ -246,35 +246,6 @@ func runnerPage(c Chrome, issued bool) RunnerCredentialsPage {
 // the three states are not one state
 // ---------------------------------------------------------------------------
 
-func TestPolicyConsentAndRuntimeAreSeparateStatements(t *testing.T) {
-	// Saving a policy is not turning execution on, and neither is a working
-	// runtime. A screen that merged them would let a reader believe commits
-	// are being checked when nothing can run.
-	r := newRenderer(t)
-	page := configuredChecksPage(fullChrome(LangEN), ccFixtureEnabled)
-	page.Policy.ConsentActive = false
-	out := render(t, r, page)
-
-	for _, code := range []MessageCode{MsgCCStatePolicy, MsgCCStateConsent, MsgCCStateRuntime} {
-		if !strings.Contains(out, wantText(LangEN, code)) {
-			t.Errorf("the screen does not state %q separately", code)
-		}
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgCCConsentOff)) {
-		t.Error("a saved policy without consent does not say execution is off")
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgCCPolicySaved)) {
-		t.Error("the stored policy is not reported")
-	}
-	// With consent off the screen offers enabling, never disabling.
-	if !strings.Contains(out, `value="`+ActionEnableChecks+`"`) {
-		t.Error("a policy without consent offers no way to enable execution")
-	}
-	if strings.Contains(out, `value="`+ActionDisableChecks+`"`) {
-		t.Error("execution that is already off offers a disable control")
-	}
-}
-
 func TestEveryNumericFieldShowsItsAcceptedRange(t *testing.T) {
 	// The refusal message says a value is outside "the accepted range shown
 	// with this field". That sentence is only true if the range is actually
@@ -348,157 +319,9 @@ func TestEnableFormQuotesTheWholeIdentityItDrew(t *testing.T) {
 	}
 }
 
-func TestSavingThePolicyDoesNotClaimExecutionStarted(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		c := fullChrome(lang)
-		c.Notices = []Notice{Success(MsgCCSaved)}
-		out := render(t, r, configuredChecksPage(c, ccFixtureNoPolicy))
-		if !strings.Contains(out, wantText(lang, MsgCCSaved)) {
-			t.Fatalf("%s: the save result is not shown", lang)
-		}
-		if strings.Contains(out, wantText(lang, MsgCCConsentOn)) {
-			t.Errorf("%s: a stored policy reads as enabled execution", lang)
-		}
-		// Without a stored policy there is nothing consent could bind to, and
-		// the screen says so rather than offering the control.
-		if !strings.Contains(out, wantText(lang, MsgCCEnableBlocked)) {
-			t.Errorf("%s: consent is offered before any policy exists", lang)
-		}
-	}
-}
-
-func TestClosedRuntimeIsNotAFailedCheckAndNamesTheRepair(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, configuredChecksPage(fullChrome(lang), ccFixtureRuntimeDown))
-		if !strings.Contains(out, wantText(lang, MsgCCRuntimeWork)) {
-			t.Errorf("%s: the runtime condition is not explained", lang)
-		}
-		if !strings.Contains(out, wantText(lang, MsgCCRuntimeRepair)) {
-			t.Errorf("%s: the screen does not say what to do about it", lang)
-		}
-		// Ordinary repository work is unaffected, and saying so is what keeps
-		// this from reading as an outage of the whole server.
-		if !strings.Contains(out, wantText(lang, MsgCCRuntimeSep)) {
-			t.Errorf("%s: a closed runtime is not separated from ordinary Git work", lang)
-		}
-		// Nothing here may borrow check-result words. The fixture records no
-		// job, so a failure or pass word on this page could only have come from
-		// the runtime block describing itself.
-		for _, borrowed := range []MessageCode{MsgCCJobStateFailed, MsgCCJobStateError, MsgCCJobStatePassed} {
-			if strings.Contains(out, wantText(lang, borrowed)) {
-				t.Errorf("%s: a closed runtime renders as %q", lang, Text(lang, borrowed))
-			}
-		}
-		// The bounded code itself is shown, so a condition this package has no
-		// words for still reaches the reader.
-		if !strings.Contains(out, RuntimeWorkspaceUnavailable) {
-			t.Errorf("%s: the recorded runtime code is hidden", lang)
-		}
-	}
-}
-
-func TestUnrecognisedRuntimeCodeIsShownAsRecorded(t *testing.T) {
-	r := newRenderer(t)
-	page := configuredChecksPage(fullChrome(LangEN), ccFixtureRuntimeDown)
-	page.Runtime = CheckRuntimeView{Code: "some_new_backend_condition"}
-	out := render(t, r, page)
-	if !strings.Contains(out, wantText(LangEN, MsgCCRuntimeOther)) {
-		t.Error("an unknown runtime condition is not acknowledged")
-	}
-	if !strings.Contains(out, "some_new_backend_condition") {
-		t.Error("an unknown runtime code is swallowed instead of shown")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // jobs report what was recorded
 // ---------------------------------------------------------------------------
-
-func TestJobKeepsTheModeItWasAdmittedWith(t *testing.T) {
-	// The policy selects the container mode now. A job admitted earlier ran on
-	// the host, and the row must keep saying so.
-	r := newRenderer(t)
-	out := render(t, r, configuredChecksPage(fullChrome(LangEN), ccFixtureJobDetail))
-	if !strings.Contains(out, wantText(LangEN, MsgCCExecHost)) {
-		t.Error("the job does not report the mode it actually used")
-	}
-	if !strings.Contains(out, "55d0e21") {
-		t.Error("the job does not report the commit it was pinned to")
-	}
-}
-
-func TestCancellationIsARequestNotAStop(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, configuredChecksPage(fullChrome(lang), ccFixtureEnabled))
-		if !strings.Contains(out, wantText(lang, MsgCCJobCancelAsk)) {
-			t.Errorf("%s: a recorded cancellation is not reported", lang)
-		}
-		if strings.Contains(out, wantText(lang, MsgCCJobStateCancelled)) {
-			t.Errorf("%s: a cancellation request renders as a finished cancellation", lang)
-		}
-	}
-}
-
-func TestUnfinishedJobsAreNotReportedAsResults(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, configuredChecksPage(fullChrome(LangEN), ccFixtureEnabled))
-	for _, code := range []MessageCode{MsgCCJobStateStarted, MsgCCJobStateClaimed} {
-		if !strings.Contains(out, wantText(LangEN, code)) {
-			t.Errorf("an unfinished job does not state %q", code)
-		}
-	}
-	if strings.Contains(out, wantText(LangEN, MsgCCJobStatePassed)) {
-		t.Error("a job with no result rendered as passed")
-	}
-}
-
-func TestUnreadableJobRecordsAreNotAnEmptyList(t *testing.T) {
-	// "None" would claim this repository never ran anything, which is a
-	// different fact from "the records could not be read".
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		page := configuredChecksPage(fullChrome(lang), ccFixtureEnabled)
-		page.Jobs, page.JobsUnavailable = nil, true
-		out := render(t, r, page)
-		if !strings.Contains(out, wantText(lang, MsgCCJobsUnavailable)) {
-			t.Errorf("%s: unreadable job records are not reported", lang)
-		}
-		if strings.Contains(out, wantText(lang, MsgCCJobsNone)) {
-			t.Errorf("%s: unreadable job records render as no jobs", lang)
-		}
-	}
-}
-
-func TestOnlyBackendOfferedJobActionsAreDrawn(t *testing.T) {
-	r := newRenderer(t)
-	page := configuredChecksPage(fullChrome(LangEN), ccFixtureJobDetail)
-	page.Detail.Job.Cancellable = false
-	page.Detail.Job.Rerunnable = false
-	out := render(t, r, page)
-	if strings.Contains(out, `value="`+ActionCancelCheckJob+`"`) {
-		t.Error("a job the backend will not cancel still offers cancelling")
-	}
-	if strings.Contains(out, `value="`+ActionRerunCheckJob+`"`) {
-		t.Error("a job the backend will not rerun still offers rerunning")
-	}
-}
-
-func TestJobLogSaysWhenItWasCutAndWhenItExpires(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, configuredChecksPage(fullChrome(LangEN), ccFixtureJobDetail))
-	if !strings.Contains(out, wantText(LangEN, MsgCheckOutputCut)) {
-		t.Error("output cut while the check ran is not reported")
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgCCJobLogCut)) {
-		t.Error("output cut for display is not reported")
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgCheckLogExpiresAt)) {
-		t.Error("the log expiry is not shown")
-	}
-}
 
 func TestJobLogIsRenderedAsTextNotMarkup(t *testing.T) {
 	r := newRenderer(t)
@@ -510,130 +333,6 @@ func TestJobLogIsRenderedAsTextNotMarkup(t *testing.T) {
 	}
 	if !strings.Contains(out, "&lt;img src=x") {
 		t.Error("the recorded log is not shown at all")
-	}
-}
-
-func TestMissingJobIsSaidRatherThanShownEmpty(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		page := configuredChecksPage(fullChrome(lang), ccFixtureJobDetail)
-		page.Detail = &CheckJobDetail{NotFound: true, BackURL: "/repositories/r1/configured-checks"}
-		out := render(t, r, page)
-		if !strings.Contains(out, wantText(lang, MsgCCJobNotFound)) {
-			t.Errorf("%s: an unresolved job is not reported", lang)
-		}
-	}
-}
-
-func TestAnUnreadableJobIsNotReportedAsAMissingOne(t *testing.T) {
-	// "That job does not exist here" and "its record could not be read" send a
-	// reader in opposite directions. The second must not borrow the first
-	// one's wording.
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		page := configuredChecksPage(fullChrome(lang), ccFixtureJobDetail)
-		page.Detail = &CheckJobDetail{Unreadable: true, BackURL: "/repositories/r1/configured-checks"}
-		out := render(t, r, page)
-		if !strings.Contains(out, wantText(lang, MsgCCJobUnreadable)) {
-			t.Errorf("%s: an unreadable job record is not reported", lang)
-		}
-		if strings.Contains(out, wantText(lang, MsgCCJobNotFound)) {
-			t.Errorf("%s: an unreadable job record claims the job does not exist", lang)
-		}
-		// And it is not a check result either.
-		for _, borrowed := range []MessageCode{MsgCCJobStateFailed, MsgCCJobStateError, MsgCCJobStatePassed} {
-			if strings.Contains(out, wantText(lang, borrowed)) {
-				t.Errorf("%s: an unreadable record borrows the check-result word %q", lang, borrowed)
-			}
-		}
-	}
-}
-
-func TestARegisteredRunIsNeverReportedAsNoRun(t *testing.T) {
-	// A job that names an attempt has a run registered. Whether that record
-	// can be read is a separate question, and answering it with "nothing ran"
-	// would tell the owner their commit was never checked.
-	r := newRenderer(t)
-	cases := map[string]struct {
-		apply func(*CheckJobDetail)
-		want  MessageCode
-	}{
-		"the record could not be read": {
-			func(d *CheckJobDetail) { d.Attempt, d.AttemptUnreadable = nil, true },
-			MsgCCAttemptUnread,
-		},
-		"the record is no longer stored": {
-			func(d *CheckJobDetail) { d.Attempt, d.AttemptMissing = nil, true },
-			MsgCCAttemptGone,
-		},
-	}
-	for name, test := range cases {
-		for _, lang := range Langs() {
-			page := configuredChecksPage(fullChrome(lang), ccFixtureJobDetail)
-			test.apply(page.Detail)
-			if !page.Detail.AttemptRegistered() {
-				t.Fatalf("%s: the fixture does not describe a registered run", name)
-			}
-			out := render(t, r, page)
-			if !strings.Contains(out, wantText(lang, test.want)) {
-				t.Errorf("%s/%s: the state was not reported", name, lang)
-			}
-			if strings.Contains(out, wantText(lang, MsgCCJobNoAttempt)) {
-				t.Errorf("%s/%s: a registered run renders as no run at all", name, lang)
-			}
-			// The log belongs to an attempt. Without a readable one there is
-			// no log disposition to report, and an empty panel would read as
-			// "it produced no output".
-			if strings.Contains(out, wantText(lang, MsgCCJobLog)) {
-				t.Errorf("%s/%s: a log section was drawn without a readable run", name, lang)
-			}
-		}
-	}
-}
-
-func TestUnreadableCommandsAreNotReportedAsNoCommands(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		page := configuredChecksPage(fullChrome(lang), ccFixtureJobDetail)
-		page.Detail.Checks, page.Detail.ChecksUnreadable = nil, true
-		out := render(t, r, page)
-		if !strings.Contains(out, wantText(lang, MsgCCChecksUnread)) {
-			t.Errorf("%s: unreadable commands are not reported", lang)
-		}
-
-		page = configuredChecksPage(fullChrome(lang), ccFixtureJobDetail)
-		page.Detail.Checks, page.Detail.ChecksMissing = nil, true
-		out = render(t, r, page)
-		if !strings.Contains(out, wantText(lang, MsgCCChecksGone)) {
-			t.Errorf("%s: a discarded configuration version is not reported", lang)
-		}
-		if strings.Contains(out, wantText(lang, MsgCCChecksUnread)) {
-			t.Errorf("%s: a discarded configuration reads as unreadable", lang)
-		}
-	}
-}
-
-func TestTheFullCommitIsAvailableNotOnlyItsAbbreviation(t *testing.T) {
-	// An abbreviation cannot be pasted into a Git command or compared with
-	// certainty. The full object id is on the page, and it wraps instead of
-	// being clipped so every character is readable.
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		page := configuredChecksPage(fullChrome(lang), ccFixtureJobDetail)
-		page.Detail.Job.SourceOID = "7f2c1a0bb4d3e9c81f06a25d7b9e34cc5a1d80fe"
-		page.Detail.Job.SourceShortOID = "7f2c1a0"
-		page.Detail.Job.BaseOID = "1ab4c90ff0e7d2a53b8c46190af7d25e3c0b9187"
-		page.Detail.Job.BaseShortOID = "1ab4c90"
-		out := render(t, r, page)
-		if !strings.Contains(out, page.Detail.Job.SourceOID) {
-			t.Errorf("%s: only the abbreviated commit is available", lang)
-		}
-		if !strings.Contains(out, page.Detail.Job.BaseOID) {
-			t.Errorf("%s: the base the job compared against is not shown in full", lang)
-		}
-		if !strings.Contains(out, wantText(lang, MsgCCJobFullOID)) {
-			t.Errorf("%s: the full commit is shown without saying what it is", lang)
-		}
 	}
 }
 
@@ -702,24 +401,6 @@ func TestRefusedPolicyKeepsWhatWasTypedAndNeverThePassword(t *testing.T) {
 	}
 }
 
-func TestRefusedRevocationStaysOnItsOwnRow(t *testing.T) {
-	// Every row submits the same action, so without the credential identity a
-	// refused password would mark all of them.
-	r := newRenderer(t)
-	page := runnerPage(fullChrome(LangEN), false)
-	page.PendingAction = ActionRevokeRunnerToken
-	page.PendingCredentialID = "rc1"
-	page.Chrome.Notices = []Notice{Error("admin_password", MsgAdminFailed)}
-	out := render(t, r, page)
-
-	if !strings.Contains(out, `aria-describedby="`+noteID("rc1", "admin_password")+`"`) {
-		t.Error("the refusal is not attached to the row it was typed into")
-	}
-	if strings.Contains(out, `aria-describedby="`+noteID("rc2", "admin_password")+`"`) {
-		t.Error("the refusal reached another credential's row")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // runner tokens
 // ---------------------------------------------------------------------------
@@ -746,37 +427,6 @@ func TestRunnerTokenAppearsOnceAndNeverInAURL(t *testing.T) {
 	}
 }
 
-func TestReturningToRunnerTokensShowsNoToken(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, runnerPage(fullChrome(LangEN), false))
-	if strings.Contains(out, runnerTestToken) {
-		t.Error("a token survived into a later render")
-	}
-	if strings.Contains(out, wantText(LangEN, MsgRTTokenOnce)) {
-		t.Error("the handover panel rendered without a token to hand over")
-	}
-}
-
-func TestRevokedRunnerTokensStayListedWithoutAControl(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, runnerPage(fullChrome(lang), false))
-		if !strings.Contains(out, "old-runner") {
-			t.Errorf("%s: a revoked token disappeared from the record", lang)
-		}
-		if !strings.Contains(out, wantText(lang, MsgRTRevoked)) {
-			t.Errorf("%s: a revoked token is not labelled", lang)
-		}
-		if !strings.Contains(out, wantText(lang, MsgRTNeverUsed)) {
-			t.Errorf("%s: an unused token is not identifiable", lang)
-		}
-		// Three rows, and only the two active ones offer revocation.
-		if got := strings.Count(out, `value="`+ActionRevokeRunnerToken+`"`); got != 2 {
-			t.Errorf("%s: %d revoke controls, want two", lang, got)
-		}
-	}
-}
-
 func TestRunnerCommandsCarryNoSecret(t *testing.T) {
 	r := newRenderer(t)
 	out := render(t, r, runnerPage(fullChrome(LangEN), true))
@@ -791,19 +441,6 @@ func TestRunnerCommandsCarryNoSecret(t *testing.T) {
 	}
 	if !strings.Contains(commands[1], "--token-file") {
 		t.Error("the example does not read the token from a file")
-	}
-}
-
-func TestRunnerTokenIsNotDescribedAsASignIn(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, runnerPage(fullChrome(lang), false))
-		if !strings.Contains(out, wantText(lang, MsgRTNotPassword)) {
-			t.Errorf("%s: the screen does not say what the token is not", lang)
-		}
-		if !strings.Contains(out, wantText(lang, MsgRTScope)) {
-			t.Errorf("%s: the token's scope is not stated", lang)
-		}
 	}
 }
 
@@ -840,41 +477,6 @@ func TestConfiguredCheckScreensClaimNoSandbox(t *testing.T) {
 	// raw catalog string therefore never appears verbatim in the markup.
 	if !strings.Contains(out, strings.ToLower(wantText(LangEN, MsgCCExecHostHelp))) {
 		t.Error("host mode does not state the access it grants")
-	}
-}
-
-func TestConfiguredChecksNeverPromiseToGateAMerge(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, configuredChecksPage(fullChrome(lang), ccFixtureEnabled))
-		if !strings.Contains(out, wantText(lang, MsgCCAdvisory)) {
-			t.Errorf("%s: the advisory nature of these checks is not stated", lang)
-		}
-	}
-}
-
-func TestHostModeStatesTheAccessItGrants(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, configuredChecksPage(fullChrome(lang), ccFixtureNoPolicy))
-		if !strings.Contains(out, wantText(lang, MsgCCExecHostHelp)) {
-			t.Errorf("%s: host mode does not say what access it confers", lang)
-		}
-		if !strings.Contains(out, wantText(lang, MsgCCNoFallback)) {
-			t.Errorf("%s: the screen does not say modes never fall back to one another", lang)
-		}
-	}
-}
-
-func TestManualHelperChecksStayAvailable(t *testing.T) {
-	// Configuring automatic checks does not remove the manual helper path, and
-	// the screen says so rather than implying a replacement.
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, configuredChecksPage(fullChrome(lang), ccFixtureEnabled))
-		if !strings.Contains(out, wantText(lang, MsgCCManual)) {
-			t.Errorf("%s: the manual helper path is not mentioned", lang)
-		}
 	}
 }
 
@@ -1017,4 +619,133 @@ func TestSavingAChangedPolicyDoesNotClaimExecutionWasAlreadyOff(t *testing.T) {
 			t.Errorf("%s: the changed and unchanged save results share one sentence", lang)
 		}
 	}
+}
+
+// cc is a configured-check fixture in lang after edit.
+func cc(lang Lang, fixture ccFixture, edit func(*ConfiguredChecksPage)) ConfiguredChecksPage {
+	return with(configuredChecksPage(fullChrome(lang), fixture), edit)
+}
+
+// checkResultWords are the job result words a non-result state must not borrow.
+var checkResultWords = []MessageCode{MsgCCJobStateFailed, MsgCCJobStateError, MsgCCJobStatePassed}
+
+// TestConfiguredCheckScreenStates protects the wording, not the layout: a
+// stored policy must not read as running, a closed runtime must not read as a
+// failed check, and a record that could not be read is neither a result nor
+// an absence.
+func TestConfiguredCheckScreenStates(t *testing.T) {
+	screens := []screen{
+		// Saving a policy is not turning execution on, and neither is a
+		// working runtime; with consent off only enabling is offered.
+		screen{name: "policy, consent and runtime are separate statements",
+			page:     cc(LangEN, ccFixtureEnabled, func(p *ConfiguredChecksPage) { p.Policy.ConsentActive = false }),
+			want:     []MessageCode{MsgCCStatePolicy, MsgCCStateConsent, MsgCCStateRuntime, MsgCCConsentOff, MsgCCPolicySaved},
+			markup:   []string{`value="` + ActionEnableChecks + `"`},
+			noMarkup: []string{`value="` + ActionDisableChecks + `"`}},
+		screen{name: "an unrecognised runtime code is shown as recorded",
+			page: cc(LangEN, ccFixtureRuntimeDown, func(p *ConfiguredChecksPage) {
+				p.Runtime = CheckRuntimeView{Code: "some_new_backend_condition"}
+			}),
+			want: []MessageCode{MsgCCRuntimeOther}, markup: []string{"some_new_backend_condition"}},
+		// The policy selects the container mode now; a job admitted earlier
+		// ran on the host and keeps saying so.
+		screen{name: "a job keeps the mode it was admitted with", page: cc(LangEN, ccFixtureJobDetail, unchanged),
+			want: []MessageCode{MsgCCExecHost}, markup: []string{"55d0e21"}},
+		screen{name: "unfinished jobs are not results", page: cc(LangEN, ccFixtureEnabled, unchanged),
+			want: []MessageCode{MsgCCJobStateStarted, MsgCCJobStateClaimed}, absent: []MessageCode{MsgCCJobStatePassed}},
+		screen{name: "only backend-offered job actions are drawn",
+			page: cc(LangEN, ccFixtureJobDetail, func(p *ConfiguredChecksPage) {
+				p.Detail.Job.Cancellable, p.Detail.Job.Rerunnable = false, false
+			}),
+			noMarkup: []string{`value="` + ActionCancelCheckJob + `"`, `value="` + ActionRerunCheckJob + `"`}},
+		screen{name: "the job log says when it was cut and when it expires", page: cc(LangEN, ccFixtureJobDetail, unchanged),
+			want: []MessageCode{MsgCheckOutputCut, MsgCCJobLogCut, MsgCheckLogExpiresAt}},
+		// Every row submits the same action, so without the credential
+		// identity a refused password would mark all of them.
+		screen{name: "a refused revocation stays on its own row",
+			page: with(runnerPage(fullChrome(LangEN), false), func(p *RunnerCredentialsPage) {
+				p.PendingAction, p.PendingCredentialID = ActionRevokeRunnerToken, "rc1"
+				p.Chrome.Notices = []Notice{Error("admin_password", MsgAdminFailed)}
+			}),
+			markup:   []string{`aria-describedby="` + noteID("rc1", "admin_password") + `"`},
+			noMarkup: []string{`aria-describedby="` + noteID("rc2", "admin_password") + `"`}},
+		screen{name: "returning to runner tokens shows no token", page: runnerPage(fullChrome(LangEN), false),
+			absent: []MessageCode{MsgRTTokenOnce}, noMarkup: []string{runnerTestToken}},
+	}
+	registered := map[string]struct {
+		apply func(*CheckJobDetail)
+		want  MessageCode
+	}{
+		"the record could not be read":   {func(d *CheckJobDetail) { d.Attempt, d.AttemptUnreadable = nil, true }, MsgCCAttemptUnread},
+		"the record is no longer stored": {func(d *CheckJobDetail) { d.Attempt, d.AttemptMissing = nil, true }, MsgCCAttemptGone},
+	}
+	for _, lang := range Langs() {
+		l := string(lang) + " "
+		screens = append(screens,
+			// Without a stored policy there is nothing consent could bind to.
+			screen{name: l + "saving the policy does not claim execution started", lang: lang,
+				page: configuredChecksPage(with(fullChrome(lang), func(c *Chrome) { c.Notices = []Notice{Success(MsgCCSaved)} }), ccFixtureNoPolicy),
+				want: []MessageCode{MsgCCSaved, MsgCCEnableBlocked}, absent: []MessageCode{MsgCCConsentOn}},
+			// Ordinary Git work is unaffected, the bounded code is shown, and
+			// the fixture records no job, so a result word could only come
+			// from the runtime block describing itself.
+			screen{name: l + "a closed runtime is not a failed check and names the repair", lang: lang,
+				page:   cc(lang, ccFixtureRuntimeDown, unchanged),
+				want:   []MessageCode{MsgCCRuntimeWork, MsgCCRuntimeRepair, MsgCCRuntimeSep},
+				absent: checkResultWords, markup: []string{RuntimeWorkspaceUnavailable}},
+			screen{name: l + "a cancellation is a request, not a stop", lang: lang, page: cc(lang, ccFixtureEnabled, unchanged),
+				want: []MessageCode{MsgCCJobCancelAsk}, absent: []MessageCode{MsgCCJobStateCancelled}},
+			// "None" would claim this repository never ran anything.
+			screen{name: l + "unreadable job records are not an empty list", lang: lang,
+				page: cc(lang, ccFixtureEnabled, func(p *ConfiguredChecksPage) { p.Jobs, p.JobsUnavailable = nil, true }),
+				want: []MessageCode{MsgCCJobsUnavailable}, absent: []MessageCode{MsgCCJobsNone}},
+			screen{name: l + "a missing job is said rather than shown empty", lang: lang,
+				page: cc(lang, ccFixtureJobDetail, func(p *ConfiguredChecksPage) {
+					p.Detail = &CheckJobDetail{NotFound: true, BackURL: "/repositories/r1/configured-checks"}
+				}),
+				want: []MessageCode{MsgCCJobNotFound}},
+			// "Does not exist" and "could not be read" send a reader in
+			// opposite directions, and neither is a check result.
+			screen{name: l + "an unreadable job is not a missing one", lang: lang,
+				page: cc(lang, ccFixtureJobDetail, func(p *ConfiguredChecksPage) {
+					p.Detail = &CheckJobDetail{Unreadable: true, BackURL: "/repositories/r1/configured-checks"}
+				}),
+				want: []MessageCode{MsgCCJobUnreadable}, absent: append([]MessageCode{MsgCCJobNotFound}, checkResultWords...)},
+			screen{name: l + "unreadable commands are reported", lang: lang,
+				page: cc(lang, ccFixtureJobDetail, func(p *ConfiguredChecksPage) { p.Detail.Checks, p.Detail.ChecksUnreadable = nil, true }),
+				want: []MessageCode{MsgCCChecksUnread}},
+			screen{name: l + "a discarded configuration is not unreadable", lang: lang,
+				page: cc(lang, ccFixtureJobDetail, func(p *ConfiguredChecksPage) { p.Detail.Checks, p.Detail.ChecksMissing = nil, true }),
+				want: []MessageCode{MsgCCChecksGone}, absent: []MessageCode{MsgCCChecksUnread}},
+			// An abbreviation cannot be pasted into a Git command.
+			screen{name: l + "the full commit is available", lang: lang,
+				page: cc(lang, ccFixtureJobDetail, func(p *ConfiguredChecksPage) {
+					p.Detail.Job.SourceOID, p.Detail.Job.SourceShortOID = "7f2c1a0bb4d3e9c81f06a25d7b9e34cc5a1d80fe", "7f2c1a0"
+					p.Detail.Job.BaseOID, p.Detail.Job.BaseShortOID = "1ab4c90ff0e7d2a53b8c46190af7d25e3c0b9187", "1ab4c90"
+				}),
+				want:   []MessageCode{MsgCCJobFullOID},
+				markup: []string{"7f2c1a0bb4d3e9c81f06a25d7b9e34cc5a1d80fe", "1ab4c90ff0e7d2a53b8c46190af7d25e3c0b9187"}},
+			// Three rows, and only the two active ones offer revocation.
+			screen{name: l + "revoked runner tokens stay listed without a control", lang: lang,
+				page: runnerPage(fullChrome(lang), false),
+				want: []MessageCode{MsgRTRevoked, MsgRTNeverUsed, MsgRTNotPassword, MsgRTScope}, markup: []string{"old-runner"},
+				extra: countIs(`value="`+ActionRevokeRunnerToken+`"`, 2)},
+			screen{name: l + "the policy screen states the advisory contract and the manual path", lang: lang,
+				page: cc(lang, ccFixtureEnabled, unchanged), want: []MessageCode{MsgCCAdvisory, MsgCCManual}},
+			screen{name: l + "host mode states the access it grants and no fallback", lang: lang,
+				page: cc(lang, ccFixtureNoPolicy, unchanged), want: []MessageCode{MsgCCExecHostHelp, MsgCCNoFallback}},
+		)
+		// A job that names an attempt has a run registered; whether its record
+		// can be read is a separate question, and without a readable run there
+		// is no log to report.
+		for name, test := range registered {
+			page := cc(lang, ccFixtureJobDetail, func(p *ConfiguredChecksPage) { test.apply(p.Detail) })
+			if !page.Detail.AttemptRegistered() {
+				t.Fatalf("%s: the fixture does not describe a registered run", name)
+			}
+			screens = append(screens, screen{name: l + "a registered run is never no run: " + name, lang: lang, page: page,
+				want: []MessageCode{test.want}, absent: []MessageCode{MsgCCJobNoAttempt, MsgCCJobLog}})
+		}
+	}
+	checkScreens(t, screens...)
 }

@@ -2,6 +2,7 @@ package webui
 
 import (
 	"bytes"
+	"fmt"
 	"html/template"
 	"strings"
 	"testing"
@@ -13,18 +14,14 @@ var testNow = time.Date(2026, 3, 12, 14, 32, 0, 0, time.UTC)
 func newRenderer(t *testing.T) *Renderer {
 	t.Helper()
 	r, err := New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	noErrf(t, err, "New")
 	return r
 }
 
 func render(t *testing.T, r *Renderer, page Page) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := r.Render(&buf, page); err != nil {
-		t.Fatalf("Render %T: %v", page, err)
-	}
+	noErrf(t, r.Render(&buf, page), "Render %T", page)
 	return buf.String()
 }
 
@@ -657,22 +654,6 @@ func TestEveryMessageCodeUsedByPagesExists(t *testing.T) {
 	}
 }
 
-func TestKoreanUsesStandardGitTerms(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, repoPage(fullChrome(LangKO), RepoTabOverview))
-	for _, term := range []string{"브랜치", "커밋", "태그", "저장소"} {
-		if !strings.Contains(out, term) {
-			t.Errorf("Korean repository page is missing the standard term %q", term)
-		}
-	}
-	// Decorative separators were deliberately removed from the accepted design.
-	for _, bad := range []string{"·", "—", "–"} {
-		if strings.Contains(out, bad) {
-			t.Errorf("interface text contains the decorative separator %q", bad)
-		}
-	}
-}
-
 func TestBothLanguagesAreCarriedForInPlaceSwitching(t *testing.T) {
 	// Form pages must switch language without a reload, which is why the
 	// server renders both languages onto the element.
@@ -835,22 +816,6 @@ func TestSetupWelcomeRedeemsOnlyByExplicitPost(t *testing.T) {
 	}
 }
 
-func TestStorageLocationIsHiddenFromOrdinaryVisitors(t *testing.T) {
-	r := newRenderer(t)
-	c := fullChrome(LangEN)
-	c.Storage = StorageInfo{Visible: false, Label: "Home server", Path: "/volume1/secret-git"}
-	out := render(t, r, OverviewPage{Chrome: c, Activity: sampleGraph()})
-	if strings.Contains(out, "/volume1/secret-git") || strings.Contains(out, "Home server") {
-		t.Fatal("the storage location leaked to a viewer who should not see it")
-	}
-
-	c.Storage.Visible = true
-	out = render(t, r, OverviewPage{Chrome: c, Activity: sampleGraph()})
-	if !strings.Contains(out, "/volume1/secret-git") {
-		t.Fatal("the storage location is not shown to the owner")
-	}
-}
-
 func TestCSRFTokenIsPresentOnEveryMutatingForm(t *testing.T) {
 	r := newRenderer(t)
 	for _, page := range []Page{
@@ -895,27 +860,6 @@ func TestSecuritySettingsAlwaysCollectTheAdminPassword(t *testing.T) {
 	}
 }
 
-func TestSettingsOffersTheExpectedActions(t *testing.T) {
-	r := newRenderer(t)
-
-	openOut := render(t, r, SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessOpen})
-	for _, want := range []string{ActionEnableAccessPassword, ActionChangeAdminPassword} {
-		if !strings.Contains(openOut, `value="`+want+`"`) {
-			t.Errorf("password-free mode is missing the %q action", want)
-		}
-	}
-	if strings.Contains(openOut, `value="`+ActionDisableAccessPassword+`"`) {
-		t.Error("password-free mode offers a disable action that does not apply")
-	}
-
-	passOut := render(t, r, SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessPassword})
-	for _, want := range []string{ActionChangeAccessPassword, ActionDisableAccessPassword} {
-		if !strings.Contains(passOut, `value="`+want+`"`) {
-			t.Errorf("password mode is missing the %q action", want)
-		}
-	}
-}
-
 func TestInsecureAcknowledgementIsAdministratorProtected(t *testing.T) {
 	r := newRenderer(t)
 	c := fullChrome(LangEN)
@@ -938,190 +882,9 @@ func TestInsecureAcknowledgementIsAdministratorProtected(t *testing.T) {
 	}
 }
 
-func TestAcknowledgedConnectionStopsPromptingAndShowsStatus(t *testing.T) {
-	r := newRenderer(t)
-	c := fullChrome(LangEN)
-	c.Connection = Connection{Encrypted: false, InsecureAcknowledged: true}
-	out := render(t, r, SettingsPage{Chrome: c, SubmitURL: "/settings", AccessMode: AccessOpen})
-	if strings.Contains(out, `value="`+ActionAcknowledgeInsecure+`"`) {
-		t.Error("the acknowledgement is asked again after it was already given")
-	}
-	if !strings.Contains(out, "conn--plain") {
-		t.Error("the persistent connection indicator is missing")
-	}
-}
-
-func TestConnectionIndicatorDoesNotOverclaim(t *testing.T) {
-	r := newRenderer(t)
-
-	plain := fullChrome(LangEN)
-	plain.Connection = Connection{Encrypted: false, Host: "owngit.ts.net"}
-	out := render(t, r, OverviewPage{Chrome: plain, Activity: sampleGraph()})
-	if strings.Contains(out, "conn--secure") {
-		t.Error("a plain request was reported as encrypted")
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgConnNoProof)) {
-		t.Error("the indicator does not say what the application actually knows")
-	}
-
-	secure := fullChrome(LangEN)
-	secure.Connection = Connection{Encrypted: true, Host: "owngit.ts.net"}
-	out = render(t, r, OverviewPage{Chrome: secure, Activity: sampleGraph()})
-	if !strings.Contains(out, "conn--secure") {
-		t.Error("an encrypted request was not reported as encrypted")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // honest repository and activity states
 // ---------------------------------------------------------------------------
-
-func TestEmptyRepositoryExplainsItselfInsteadOfShowingBlankHistory(t *testing.T) {
-	r := newRenderer(t)
-	page := repoPage(fullChrome(LangEN), RepoTabCommits)
-	page.Repo.Empty = true
-	out := render(t, r, page)
-	if !strings.Contains(out, wantText(LangEN, MsgRepoEmpty)) {
-		t.Error("an empty repository does not say it is empty")
-	}
-	if !strings.Contains(out, "git push") {
-		t.Error("an empty repository does not show how to fill it")
-	}
-	if strings.Contains(out, "Use stable key in pagination cursor") {
-		t.Error("an empty repository rendered commit history anyway")
-	}
-}
-
-func TestUnreadableRepositoryIsReportedNotHidden(t *testing.T) {
-	r := newRenderer(t)
-	page := repoPage(fullChrome(LangEN), RepoTabOverview)
-	page.Repo.Unreadable = true
-	page.Repo.UnreadableReason = MsgErrInternal
-	out := render(t, r, page)
-	if !strings.Contains(out, wantText(LangEN, MsgRepoUnreadable)) {
-		t.Error("an unreadable repository was not reported")
-	}
-}
-
-func TestMissingRefIsNamedRatherThanSubstituted(t *testing.T) {
-	r := newRenderer(t)
-	page := repoPage(fullChrome(LangEN), RepoTabCode)
-	page.Ref.Missing = true
-	page.Ref.Name = "deleted-branch"
-	out := render(t, r, page)
-	if !strings.Contains(out, wantText(LangEN, MsgRepoRefMissing)) {
-		t.Error("a missing ref did not say so")
-	}
-	if strings.Contains(out, "package pagination") {
-		t.Error("file content was shown for a ref that does not resolve")
-	}
-}
-
-func TestDeletedDefaultBranchIsHandledHonestly(t *testing.T) {
-	r := newRenderer(t)
-	c := fullChrome(LangEN)
-	out := render(t, r, OverviewPage{Chrome: c, TotalCount: 1, Activity: sampleGraph(),
-		Repositories: []RepositorySummary{{ID: "r1", Name: "forge-cli", URL: "/repositories/r1",
-			DefaultBranchMissing: true}}})
-	// The row states the status; the badge is one short line, so it carries
-	// the short wording rather than the full instruction.
-	if !strings.Contains(out, wantText(LangEN, MsgRepoDefaultGoneShort)) {
-		t.Error("a deleted default branch was not reported on the overview")
-	}
-}
-
-func TestRetainedHistoryIsLabelledAndOffersOnlyRealControls(t *testing.T) {
-	// Restoring from kept history is now implemented, so the control belongs
-	// here when the backend can address the entry. What must still never
-	// appear is a control for behaviour that does not exist.
-	r := newRenderer(t)
-	out := render(t, r, repoPage(fullChrome(LangEN), RepoTabOverview))
-	if !strings.Contains(out, wantText(LangEN, MsgRepoRetainTitle)) {
-		t.Fatal("retained history is not labelled")
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgRepoRetainHelp)) {
-		t.Error("retained history is not explained")
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgRestoreOpen)) {
-		t.Error("kept history does not offer the restore entry point the backend addressed")
-	}
-	for _, dead := range []string{"Run checks", "Review with AI"} {
-		if strings.Contains(out, dead) {
-			t.Errorf("a control for unimplemented behaviour is present: %q", dead)
-		}
-	}
-
-	// Without a backend-supplied URL there is still no control and no dead
-	// link, because this package never invents an address.
-	bare := repoPage(fullChrome(LangEN), RepoTabOverview)
-	bare.RestoreURL = ""
-	for i := range bare.Overview.RetainedRefs {
-		bare.Overview.RetainedRefs[i].RestoreURL = ""
-	}
-	for i := range bare.Overview.Branches {
-		bare.Overview.Branches[i].RestoreURL = ""
-	}
-	for i := range bare.Overview.Tags {
-		bare.Overview.Tags[i].RestoreURL = ""
-	}
-	out = render(t, r, bare)
-	if strings.Contains(out, wantText(LangEN, MsgRestoreOpen)) {
-		t.Error("a restore control appeared without an address behind it")
-	}
-	if strings.Contains(out, `href=""`) {
-		t.Error("a restore entry point rendered as an empty link")
-	}
-}
-
-func TestIncompleteActivityIsStatedNotShownAsZero(t *testing.T) {
-	r := newRenderer(t)
-	g := sampleGraph()
-	g.Complete = false
-	g.IncompleteReason = MsgActivityLimit
-	out := render(t, r, ActivityPage{Chrome: fullChrome(LangEN), Activity: g})
-	if !strings.Contains(out, wantText(LangEN, MsgActivityIncomplete)) {
-		t.Error("an incomplete count was presented as final")
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgActivityLimit)) {
-		t.Error("the reason for the incomplete count is missing")
-	}
-}
-
-func TestUnavailableActivityExplainsInsteadOfDrawingAnEmptyGraph(t *testing.T) {
-	r := newRenderer(t)
-	g := ActivityGraph{Year: 2026, Available: false, UnavailableReason: MsgActivityNotBuilt}
-	out := render(t, r, OverviewPage{Chrome: fullChrome(LangEN), Activity: g})
-	if !strings.Contains(out, wantText(LangEN, MsgActivityNotBuilt)) {
-		t.Error("unavailable activity did not explain itself")
-	}
-	if strings.Contains(out, `class="hm__cell"`) {
-		t.Error("an empty graph was drawn for activity that could not be computed")
-	}
-}
-
-func TestActivityDoesNotClaimChecksRan(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, OverviewPage{Chrome: fullChrome(LangEN), Activity: sampleGraph()})
-	if !strings.Contains(out, wantText(LangEN, MsgActivityNoChecks)) {
-		t.Error("the activity graph does not say what it actually measures")
-	}
-	for _, claim := range []string{"Checks passed", "All checks", "Build succeeded"} {
-		if strings.Contains(out, claim) {
-			t.Errorf("the dashboard claims check results it does not have: %q", claim)
-		}
-	}
-}
-
-func TestEmptyDashboardInvitesWithoutForcingARepository(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, OverviewPage{Chrome: fullChrome(LangEN), Activity: sampleGraph()})
-	if !strings.Contains(out, wantText(LangEN, MsgOverviewEmpty)) {
-		t.Error("the empty dashboard does not say it is empty")
-	}
-	if !strings.Contains(out, "/repositories/new") {
-		t.Error("the empty dashboard does not offer repository creation")
-	}
-}
 
 func TestNoSyntheticMockDataReachesTheInterface(t *testing.T) {
 	// The accepted mockup's sample repositories and check vocabulary must not
@@ -1148,61 +911,6 @@ func TestNoSyntheticMockDataReachesTheInterface(t *testing.T) {
 // ---------------------------------------------------------------------------
 // accessibility
 // ---------------------------------------------------------------------------
-
-func TestStatusIsNotConveyedByColourAlone(t *testing.T) {
-	r := newRenderer(t)
-	c := fullChrome(LangEN)
-	c.Notices = []Notice{
-		Error("", MsgRepoCreateFail),
-		Success(MsgSettingsSaved),
-		{Kind: NoticeWarning, Code: MsgActivityIncomplete},
-	}
-	out := render(t, r, OverviewPage{Chrome: c, Activity: sampleGraph()})
-	// Each notice carries its own text and its own icon shape.
-	for _, want := range []string{
-		wantText(LangEN, MsgRepoCreateFail),
-		wantText(LangEN, MsgSettingsSaved),
-		wantText(LangEN, MsgActivityIncomplete),
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("notice text %q is missing", want)
-		}
-	}
-	if strings.Count(out, "<svg") < 3 {
-		t.Error("notices do not carry distinct icon shapes")
-	}
-	if !strings.Contains(out, `role="alert"`) {
-		t.Error("an error notice is not announced")
-	}
-}
-
-func TestDiffLinesCarryATextMarkerNotOnlyColour(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, repoPage(fullChrome(LangEN), RepoTabCommits))
-	if !strings.Contains(out, `class="difftable__s"`) {
-		t.Fatal("diff rows have no +/- marker")
-	}
-	if !strings.Contains(out, "is-add") || !strings.Contains(out, "is-del") {
-		t.Error("added and removed rows are not distinguished")
-	}
-}
-
-func TestFieldErrorsAreLinkedToTheirInputs(t *testing.T) {
-	r := newRenderer(t)
-	c := Chrome{Lang: LangEN, Now: testNow, CSRF: "tok", Notices: []Notice{
-		Error("storage_path", MsgSetupStorageDenied),
-	}}
-	out := render(t, r, SetupPage{Chrome: c, Stage: SetupWizard, SubmitURL: "/setup"})
-	if !strings.Contains(out, `aria-invalid="true"`) {
-		t.Error("the failing input is not marked invalid")
-	}
-	if !strings.Contains(out, `aria-describedby="storage_path-note"`) {
-		t.Error("the input is not linked to its error message")
-	}
-	if !strings.Contains(out, `id="storage_path-note"`) {
-		t.Error("the error message has no matching id")
-	}
-}
 
 func TestEveryFieldErrorReachesItsScreen(t *testing.T) {
 	// A handler reporting a field error must see it rendered, in both
@@ -1287,110 +995,9 @@ func TestEveryFieldErrorReachesItsScreen(t *testing.T) {
 	}
 }
 
-func TestSkipLinkAndMainLandmarkExist(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, OverviewPage{Chrome: fullChrome(LangEN), Activity: sampleGraph()})
-	if !strings.Contains(out, `href="#main"`) || !strings.Contains(out, `id="main"`) {
-		t.Error("the skip link has no target")
-	}
-	if !strings.Contains(out, `<main id="main" class="content" tabindex="-1">`) {
-		t.Error("the main landmark is not focusable from the skip link")
-	}
-}
-
-func TestRepositoryTabsUseSemanticNavigation(t *testing.T) {
-	// The pull request and checks sections are optional, so the strip has the
-	// three tabs a caller that does not offer them supplies, and five when it
-	// does. A section without an address renders no tab rather than a link
-	// that goes nowhere.
-	r := newRenderer(t)
-	for _, tab := range []RepoTab{RepoTabOverview, RepoTabCode, RepoTabCommits} {
-		page := repoPage(fullChrome(LangEN), tab)
-		page.PullRequestsURL = ""
-		page.TasksURL = ""
-		out := render(t, r, page)
-		if got := strings.Count(out, `class="rtabs__btn"`); got != 3 {
-			t.Errorf("tab %s: %d section links, want the three always offered", tab, got)
-		}
-		if got := strings.Count(out, `class="rtabs__btn" href="/repositories/r1`); got != 3 {
-			t.Errorf("tab %s: %d section links are real URLs, want 3", tab, got)
-		}
-		if !strings.Contains(out, `aria-current="page"`) {
-			t.Errorf("tab %s: the current section is not marked", tab)
-		}
-	}
-}
-
-func TestOptionalRepositoryTabsRenderWhenOffered(t *testing.T) {
-	// The defect this covers: RepositoryPage accepted the two optional
-	// addresses and rendered neither, so the new sections were unreachable
-	// from the repository screens that are supposed to lead to them.
-	r := newRenderer(t)
-	for _, tab := range []RepoTab{RepoTabOverview, RepoTabCode, RepoTabCommits} {
-		out := render(t, r, repoPage(fullChrome(LangEN), tab))
-		if got := strings.Count(out, `class="rtabs__btn"`); got != 5 {
-			t.Errorf("tab %s: %d section links, want five when both are offered", tab, got)
-		}
-		for _, want := range []string{
-			`href="/repositories/r1/pull-requests"`,
-			`href="/repositories/r1/tasks"`,
-		} {
-			if !strings.Contains(out, want) {
-				t.Errorf("tab %s: the strip does not link to %s", tab, want)
-			}
-		}
-		if strings.Contains(out, `href=""`) {
-			t.Errorf("tab %s: an absent section rendered as an empty link", tab)
-		}
-	}
-
-	// The evidence screens share the same strip, so the reader can move
-	// between all five sections from either side.
-	for name, page := range map[string]Page{
-		"pull-requests":      pullRequestsPage(fullChrome(LangEN), false),
-		"tasks":              tasksPage(fullChrome(LangEN), false),
-		"helper-credentials": helperPage(fullChrome(LangEN), false),
-	} {
-		out := render(t, r, page)
-		if got := strings.Count(out, `class="rtabs__btn"`); got != 5 {
-			t.Errorf("%s: %d section links, want five", name, got)
-		}
-	}
-}
-
-func TestActivityGraphIsKeyboardReachableAndLabelled(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, OverviewPage{Chrome: fullChrome(LangEN), Activity: sampleGraph()})
-	if !strings.Contains(out, `role="grid"`) || !strings.Contains(out, `role="gridcell"`) {
-		t.Error("the activity graph has no grid semantics")
-	}
-	if !strings.Contains(out, `role="row"`) {
-		t.Error("the activity graph rows are not marked")
-	}
-	if !strings.Contains(out, `data-ko-aria-label="`) {
-		t.Error("graph cells do not carry a Korean accessible name")
-	}
-	if !strings.Contains(out, `role="status"`) {
-		t.Error("the graph readout is not a live region")
-	}
-	if !strings.Contains(out, `class="hm__scroll" tabindex="0"`) {
-		t.Error("the horizontally scrolling graph is not keyboard reachable")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // assets
 // ---------------------------------------------------------------------------
-
-func TestBrandRendersInBothLanguages(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range []Lang{LangEN, LangKO} {
-		out := render(t, r, OverviewPage{Chrome: fullChrome(lang), Activity: sampleGraph()})
-		if !strings.Contains(out, "OwnGit") {
-			t.Errorf("%s: the rendered page does not show the OwnGit brand", lang)
-		}
-	}
-}
 
 func TestAssetURLsChangeWithContent(t *testing.T) {
 	// Fixed asset URLs plus a long cache lifetime would keep serving the old
@@ -1445,24 +1052,9 @@ func TestFontLicenceShipsWithTheFont(t *testing.T) {
 	}
 }
 
-func TestStylesheetHasNoOutboundDependency(t *testing.T) {
-	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	css := string(data)
-	for _, outbound := range []string{"http://", "https://", "//fonts.", "@import url(http"} {
-		if strings.Contains(css, outbound) {
-			t.Errorf("the stylesheet reaches outside this installation: %q", outbound)
-		}
-	}
-}
-
 func TestScriptStoresNoSecrets(t *testing.T) {
 	data, err := assetFS.ReadFile("assets/owngit.js")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	js := string(data)
 	// The appearance preference is the only thing allowed in local storage.
 	for _, line := range strings.Split(js, "\n") {
@@ -1595,6 +1187,153 @@ func TestRenderRejectsAnUnknownPage(t *testing.T) {
 	}
 }
 
+// overview is the empty-repository overview after editing its chrome.
+func overview(edit func(*Chrome)) OverviewPage {
+	c := fullChrome(LangEN)
+	edit(&c)
+	return OverviewPage{Chrome: c, Activity: sampleGraph()}
+}
+
+// TestRepositoryAndActivityStatesAreHonest covers screens that must state an
+// empty, unreadable or incomplete state instead of drawing something that
+// reads as a result.
+func TestRepositoryAndActivityStatesAreHonest(t *testing.T) {
+	repo := func(tab RepoTab, edit func(*RepositoryPage)) RepositoryPage {
+		return with(repoPage(fullChrome(LangEN), tab), edit)
+	}
+	incomplete := sampleGraph()
+	incomplete.Complete, incomplete.IncompleteReason = false, MsgActivityLimit
+	checkScreens(t,
+		screen{name: "an empty repository explains itself instead of showing blank history",
+			page: repo(RepoTabCommits, func(p *RepositoryPage) { p.Repo.Empty = true }),
+			want: []MessageCode{MsgRepoEmpty}, markup: []string{"git push"},
+			noMarkup: []string{"Use stable key in pagination cursor"}},
+		screen{name: "an unreadable repository is reported",
+			page: repo(RepoTabOverview, func(p *RepositoryPage) { p.Repo.Unreadable, p.Repo.UnreadableReason = true, MsgErrInternal }),
+			want: []MessageCode{MsgRepoUnreadable}},
+		screen{name: "a missing ref is named rather than substituted",
+			page: repo(RepoTabCode, func(p *RepositoryPage) { p.Ref.Missing, p.Ref.Name = true, "deleted-branch" }),
+			want: []MessageCode{MsgRepoRefMissing}, noMarkup: []string{"package pagination"}},
+		// The badge is one short line, so it carries the short wording.
+		screen{name: "a deleted default branch is reported on the overview",
+			page: OverviewPage{Chrome: fullChrome(LangEN), TotalCount: 1, Activity: sampleGraph(),
+				Repositories: []RepositorySummary{{ID: "r1", Name: "forge-cli", URL: "/repositories/r1", DefaultBranchMissing: true}}},
+			want: []MessageCode{MsgRepoDefaultGoneShort}},
+		// Restoring kept history is implemented, so its control belongs here
+		// when the backend addressed the entry; no control may exist for
+		// behaviour that does not.
+		screen{name: "retained history is labelled and offers only real controls", page: repo(RepoTabOverview, unchanged),
+			want:     []MessageCode{MsgRepoRetainTitle, MsgRepoRetainHelp, MsgRestoreOpen},
+			noMarkup: []string{"Run checks", "Review with AI"}},
+		// This package never invents an address.
+		screen{name: "retained history without an address offers no control",
+			page: repo(RepoTabOverview, func(p *RepositoryPage) {
+				p.RestoreURL = ""
+				for _, refs := range [][]RefLine{p.Overview.RetainedRefs, p.Overview.Branches, p.Overview.Tags} {
+					for i := range refs {
+						refs[i].RestoreURL = ""
+					}
+				}
+			}),
+			absent: []MessageCode{MsgRestoreOpen}, noMarkup: []string{`href=""`}},
+		screen{name: "incomplete activity is stated with its reason",
+			page: ActivityPage{Chrome: fullChrome(LangEN), Activity: incomplete},
+			want: []MessageCode{MsgActivityIncomplete, MsgActivityLimit}},
+		screen{name: "unavailable activity explains instead of drawing an empty graph",
+			page: OverviewPage{Chrome: fullChrome(LangEN), Activity: ActivityGraph{Year: 2026, Available: false, UnavailableReason: MsgActivityNotBuilt}},
+			want: []MessageCode{MsgActivityNotBuilt}, noMarkup: []string{`class="hm__cell"`}},
+		screen{name: "activity does not claim checks ran", page: overview(unchanged),
+			want: []MessageCode{MsgActivityNoChecks}, noMarkup: []string{"Checks passed", "All checks", "Build succeeded"}},
+		screen{name: "the empty dashboard invites without forcing a repository", page: overview(unchanged),
+			want: []MessageCode{MsgOverviewEmpty}, markup: []string{"/repositories/new"}},
+		screen{name: "the storage location is hidden from ordinary visitors",
+			page: overview(func(c *Chrome) {
+				c.Storage = StorageInfo{Visible: false, Label: "Home server", Path: "/volume1/secret-git"}
+			}),
+			noMarkup: []string{"/volume1/secret-git", "Home server"}},
+		screen{name: "the storage location is shown to the owner",
+			page: overview(func(c *Chrome) {
+				c.Storage = StorageInfo{Visible: true, Label: "Home server", Path: "/volume1/secret-git"}
+			}),
+			markup: []string{"/volume1/secret-git"}},
+		screen{name: "a plain connection is not reported as encrypted",
+			page: overview(func(c *Chrome) { c.Connection = Connection{Encrypted: false, Host: "owngit.ts.net"} }),
+			want: []MessageCode{MsgConnNoProof}, noMarkup: []string{"conn--secure"}},
+		screen{name: "an encrypted connection is reported",
+			page:   overview(func(c *Chrome) { c.Connection = Connection{Encrypted: true, Host: "owngit.ts.net"} }),
+			markup: []string{"conn--secure"}},
+		screen{name: "an acknowledged connection stops prompting and shows status",
+			page: SettingsPage{Chrome: with(fullChrome(LangEN), func(c *Chrome) {
+				c.Connection = Connection{Encrypted: false, InsecureAcknowledged: true}
+			}), SubmitURL: "/settings", AccessMode: AccessOpen},
+			markup: []string{"conn--plain"}, noMarkup: []string{`value="` + ActionAcknowledgeInsecure + `"`}},
+		screen{name: "password-free settings offer their actions",
+			page:     SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessOpen},
+			markup:   []string{`value="` + ActionEnableAccessPassword + `"`, `value="` + ActionChangeAdminPassword + `"`},
+			noMarkup: []string{`value="` + ActionDisableAccessPassword + `"`}},
+		screen{name: "password settings offer their actions",
+			page:   SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessPassword},
+			markup: []string{`value="` + ActionChangeAccessPassword + `"`, `value="` + ActionDisableAccessPassword + `"`}},
+		// Decorative separators were deliberately removed from the accepted
+		// design.
+		screen{name: "Korean uses standard Git terms", lang: LangKO, page: repoPage(fullChrome(LangKO), RepoTabOverview),
+			markup: []string{"브랜치", "커밋", "태그", "저장소"}, noMarkup: []string{"·", "—", "–"}},
+	)
+}
+
+func TestScreensAreAccessible(t *testing.T) {
+	notices := overview(func(c *Chrome) {
+		c.Notices = []Notice{Error("", MsgRepoCreateFail), Success(MsgSettingsSaved), {Kind: NoticeWarning, Code: MsgActivityIncomplete}}
+	})
+	screens := []screen{
+		// Each notice carries its own text and its own icon shape.
+		screen{name: "status is not conveyed by colour alone", page: notices,
+			want:   []MessageCode{MsgRepoCreateFail, MsgSettingsSaved, MsgActivityIncomplete},
+			markup: []string{`role="alert"`},
+			extra: func(t *testing.T, out string) {
+				if strings.Count(out, "<svg") < 3 {
+					t.Error("notices do not carry distinct icon shapes")
+				}
+			}},
+		screen{name: "diff lines carry a text marker", page: repoPage(fullChrome(LangEN), RepoTabCommits),
+			markup: []string{`class="difftable__s"`, "is-add", "is-del"}},
+		screen{name: "field errors are linked to their inputs",
+			page: SetupPage{Chrome: Chrome{Lang: LangEN, Now: testNow, CSRF: "tok", Notices: []Notice{Error("storage_path", MsgSetupStorageDenied)}},
+				Stage: SetupWizard, SubmitURL: "/setup"},
+			markup: []string{`aria-invalid="true"`, `aria-describedby="storage_path-note"`, `id="storage_path-note"`}},
+		screen{name: "the skip link reaches a focusable main landmark", page: overview(unchanged),
+			markup: []string{`href="#main"`, `id="main"`, `<main id="main" class="content" tabindex="-1">`}},
+		screen{name: "the activity graph is keyboard reachable and labelled", page: overview(unchanged),
+			markup: []string{`role="grid"`, `role="gridcell"`, `role="row"`, `data-ko-aria-label="`, `role="status"`, `class="hm__scroll" tabindex="0"`}},
+	}
+	for _, lang := range Langs() {
+		screens = append(screens, screen{name: string(lang) + " shows the brand", lang: lang,
+			page: OverviewPage{Chrome: fullChrome(lang), Activity: sampleGraph()}, markup: []string{"OwnGit"}})
+	}
+	// The pull request and checks sections are optional: the strip has the
+	// three tabs always offered, five when both addresses are supplied, and
+	// never a link that goes nowhere. RepositoryPage once accepted the two
+	// optional addresses and rendered neither.
+	for _, tab := range []RepoTab{RepoTabOverview, RepoTabCode, RepoTabCommits} {
+		screens = append(screens,
+			screen{name: string(tab) + " tab strip without optional sections",
+				page:   with(repoPage(fullChrome(LangEN), tab), func(p *RepositoryPage) { p.PullRequestsURL, p.TasksURL = "", "" }),
+				markup: []string{`aria-current="page"`},
+				extra:  allOf(countIs(`class="rtabs__btn"`, 3), countIs(`class="rtabs__btn" href="/repositories/r1`, 3))},
+			screen{name: string(tab) + " tab strip with optional sections", page: repoPage(fullChrome(LangEN), tab),
+				markup: []string{`href="/repositories/r1/pull-requests"`, `href="/repositories/r1/tasks"`}, noMarkup: []string{`href=""`},
+				extra: countIs(`class="rtabs__btn"`, 5)})
+	}
+	for name, page := range map[string]Page{
+		"pull-requests":      pullRequestsPage(fullChrome(LangEN), false),
+		"tasks":              tasksPage(fullChrome(LangEN), false),
+		"helper-credentials": helperPage(fullChrome(LangEN), false),
+	} {
+		screens = append(screens, screen{name: name + " shares the five-tab strip", page: page, extra: countIs(`class="rtabs__btn"`, 5)})
+	}
+	checkScreens(t, screens...)
+}
+
 // uncleanTasksPage shows one attempt that passed its checks and failed to
 // clean up, with a second attempt carrying only the aggregate.
 func uncleanTasksPage(c Chrome) TasksPage {
@@ -1622,4 +1361,20 @@ func uncleanPullRequestPage(c Chrome) PullRequestPage {
 	page.Checks.CleanupFailed = true
 	page.Checks.Summary = "3 of 3 commands passed"
 	return page
+}
+
+// noErr stops the test when err is not nil.
+func noErr(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// noErrf stops the test when err is not nil, naming the failed step.
+func noErrf(t testing.TB, err error, format string, args ...any) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", fmt.Sprintf(format, args...), err)
+	}
 }

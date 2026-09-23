@@ -24,20 +24,14 @@ func TestWindowsRunnerSupportsLongProtectedRefPaths(t *testing.T) {
 	if len(lockPath) <= 260 {
 		t.Fatalf("long-path fixture is only %d characters: %s", len(lockPath), lockPath)
 	}
-	if err := os.MkdirAll(filepath.Dir(repositoryPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(filepath.Dir(repositoryPath), 0o700))
 	runner, err := New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := runner.Run(ctx, "", nil, "init", "--bare", "--initial-branch=main", repositoryPath); err != nil {
 		t.Fatal(err)
 	}
 	treeResult, err := runner.Run(ctx, "", strings.NewReader(""), "--git-dir", repositoryPath, "mktree")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	treeOID := strings.TrimSpace(string(treeResult.Stdout))
 	commitResult, err := runner.RunWithEnvironment(ctx, "", strings.NewReader("long-path probe\n"), []string{
 		"GIT_AUTHOR_NAME=OwnGit",
@@ -45,17 +39,13 @@ func TestWindowsRunnerSupportsLongProtectedRefPaths(t *testing.T) {
 		"GIT_COMMITTER_NAME=OwnGit",
 		"GIT_COMMITTER_EMAIL=owngit@localhost",
 	}, "--git-dir", repositoryPath, "commit-tree", treeOID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	commitOID := strings.TrimSpace(string(commitResult.Stdout))
 	if _, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "update-ref", ref, commitOID); err != nil {
 		t.Fatalf("write %d-character protected ref lock path: %v", len(lockPath), err)
 	}
 	readback, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "rev-parse", "--verify", ref)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if strings.TrimSpace(string(readback.Stdout)) != commitOID {
 		t.Fatalf("protected ref readback=%q, want %s", readback.Stdout, commitOID)
 	}
@@ -64,9 +54,7 @@ func TestWindowsRunnerSupportsLongProtectedRefPaths(t *testing.T) {
 		t.Fatalf("effective core.longpaths=%q err=%v", effective.Stdout, err)
 	}
 	globalConfig, err := os.ReadFile(runner.GlobalConfigPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if strings.TrimSpace(string(globalConfig)) != "" {
 		t.Fatalf("runner wrote its isolated global config: %q", globalConfig)
 	}

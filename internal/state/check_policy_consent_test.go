@@ -17,16 +17,12 @@ import (
 func TestGrantCheckConsentForRejectsAnotherGeneration(t *testing.T) {
 	fixture := newCheckJobFixture(t)
 	first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	changed := defaultPolicyInput()
 	changed.MaxTimeoutMS = 300000
 	second, err := fixture.store.SetCheckPolicy(context.Background(), changed, fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if second.Version == first.Version || second.Digest == first.Digest {
 		t.Fatalf("the policy did not change: v%d/%s to v%d/%s", first.Version, first.Digest, second.Version, second.Digest)
 	}
@@ -37,9 +33,7 @@ func TestGrantCheckConsentForRejectsAnotherGeneration(t *testing.T) {
 		t.Fatalf("stale approval error=%v, want ErrCheckPolicyStale", err)
 	}
 	current, _, err := fixture.store.CheckPolicy(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if current.ConsentActive {
 		t.Fatal("a stale approval granted consent")
 	}
@@ -67,15 +61,11 @@ func TestStaleApprovalIsRefusedEvenWhenConsentIsAlreadyActive(t *testing.T) {
 	// consent belongs to a policy the operator never read.
 	fixture := newCheckJobFixture(t)
 	first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	changed := defaultPolicyInput()
 	changed.QueueLimit = 7
 	second, err := fixture.store.SetCheckPolicy(context.Background(), changed, fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := fixture.store.GrantCheckConsentFor(context.Background(), "project",
 		ExpectedCheckPolicy{Version: second.Version, Digest: second.Digest}, fixture.now); err != nil {
 		t.Fatal(err)
@@ -175,9 +165,7 @@ func TestApprovalAndReplacementInEitherOrderNeverInheritConsent(t *testing.T) {
 	t.Run("approval lands before the replacement", func(t *testing.T) {
 		fixture := newCheckJobFixture(t)
 		first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		// The approval wins. It returns the generation it named with active
 		// consent, and that return value is the only record of the grant once
 		// the replacement clears it.
@@ -187,9 +175,7 @@ func TestApprovalAndReplacementInEitherOrderNeverInheritConsent(t *testing.T) {
 			t.Fatalf("approval on the current generation failed: %v", grantErr)
 		}
 		second, err := fixture.store.SetCheckPolicy(context.Background(), replacementInput(), fixture.now)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if second.ConsentActive {
 			t.Fatal("a replacement inherited the consent granted for the previous generation")
 		}
@@ -200,13 +186,9 @@ func TestApprovalAndReplacementInEitherOrderNeverInheritConsent(t *testing.T) {
 	t.Run("replacement lands before the approval", func(t *testing.T) {
 		fixture := newCheckJobFixture(t)
 		first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		second, err := fixture.store.SetCheckPolicy(context.Background(), replacementInput(), fixture.now)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		// The approval loses. It names a generation that is gone, so it must
 		// say so rather than land on the replacement.
 		granted, grantErr := fixture.store.GrantCheckConsentFor(context.Background(), "project",
@@ -234,9 +216,7 @@ func TestConcurrentPolicyChangeNeverInheritsConsent(t *testing.T) {
 	for attempt := 0; attempt < 24; attempt++ {
 		fixture := newCheckJobFixture(t)
 		first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		replacementInput := defaultPolicyInput()
 		replacementInput.MaxLeaseMS = 90000
 
@@ -271,9 +251,7 @@ func TestGrantCheckConsentForRequiresAWholeIdentity(t *testing.T) {
 	// into a granted consent, which is what this function exists to prevent.
 	fixture := newCheckJobFixture(t)
 	stored, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for name, expected := range map[string]ExpectedCheckPolicy{
 		"nothing at all":   {},
 		"version only":     {Version: stored.Version},
@@ -288,9 +266,7 @@ func TestGrantCheckConsentForRequiresAWholeIdentity(t *testing.T) {
 			t.Fatalf("%s: err=%v, want ErrCheckPolicyStale", name, err)
 		}
 		current, _, err := fixture.store.CheckPolicy(context.Background(), "project")
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if current.ConsentActive {
 			t.Fatalf("%s: a partial identity granted consent", name)
 		}
@@ -661,9 +637,7 @@ func TestStructuredRefusalsDoNotChangeAcceptedPolicies(t *testing.T) {
 	// The digest is computed from the normalized facts, so an unchanged
 	// resubmission must be recognised as the same policy.
 	same, err := fixture.store.SetCheckPolicy(context.Background(), input, fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if same.Version != stored.Version || same.Digest != stored.Digest {
 		t.Fatalf("an unchanged policy produced a new generation: v%d/%s then v%d/%s",
 			stored.Version, stored.Digest, same.Version, same.Digest)

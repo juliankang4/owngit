@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -22,48 +20,29 @@ import (
 )
 
 func TestRestoreHTTPPreviewApplyAndStaleConflict(t *testing.T) {
-	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
-	app.Repositories.SetRoot(canonical)
+	app := newConfiguredApp(t)
 	if _, err := app.Repositories.Create(context.Background(), "restore-http", ""); err != nil {
 		t.Fatal(err)
 	}
 	remote, _ := app.Repositories.Path("restore-http")
 	work := filepath.Join(t.TempDir(), "work")
-	runDashboardGit(t, "", "init", "--initial-branch=main", work)
-	runDashboardGit(t, work, "config", "user.name", "Restore Author")
-	runDashboardGit(t, work, "config", "user.email", "restore@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "kept.txt"), []byte("source\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "source")
-	sourceOID := dashboardGitOutput(t, work, "rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(work, "kept.txt"), []byte("target\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, "remove.txt"), []byte("target only\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "target")
-	targetOID := dashboardGitOutput(t, work, "rev-parse", "HEAD")
-	runDashboardGit(t, work, "push", remote, "HEAD:refs/heads/main")
+	apiRunGit(t, "", "init", "--initial-branch=main", work)
+	apiRunGit(t, work, "config", "user.name", "Restore Author")
+	apiRunGit(t, work, "config", "user.email", "restore@example.invalid")
+	noErr(t, os.WriteFile(filepath.Join(work, "kept.txt"), []byte("source\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "source")
+	sourceOID := apiGitOutput(t, work, "rev-parse", "HEAD")
+	noErr(t, os.WriteFile(filepath.Join(work, "kept.txt"), []byte("target\n"), 0o600))
+	noErr(t, os.WriteFile(filepath.Join(work, "remove.txt"), []byte("target only\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "target")
+	targetOID := apiGitOutput(t, work, "rev-parse", "HEAD")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
 
 	server := httptest.NewServer(app.Handler())
 	defer server.Close()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client, jar := newBrowserClient(t)
 	commitPath := server.URL + "/repositories/restore-http/commits/" + sourceOID + "?" + url.Values{"ref": {"refs/heads/main"}}.Encode()
 	commitBody, commitStatus := dashboardGET(t, client, commitPath)
 	wholeTreeLink := `href="/repositories/restore-http/restore?source=` + sourceOID + `&amp;target=main"`
@@ -88,9 +67,7 @@ func TestRestoreHTTPPreviewApplyAndStaleConflict(t *testing.T) {
 	csrf := cookieValue(t, jar, server.URL, generalCookie)
 	selection := repository.RestoreRequest{Source: sourceOID, Target: "main", Mode: repository.RestoreFiles, Paths: []string{"kept.txt", "remove.txt"}}
 	preview, err := app.Repositories.PreviewRestore(context.Background(), "restore-http", selection)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	previewBody, previewStatus := restorePOST(t, client, server.URL+"/repositories/restore-http/restore/preview", url.Values{
 		"csrf": {csrf}, "source": {sourceOID}, "target": {"main"}, "mode": {"files"}, "path": {"kept.txt", "remove.txt"},
 	}, server.URL)
@@ -105,18 +82,18 @@ func TestRestoreHTTPPreviewApplyAndStaleConflict(t *testing.T) {
 	if applyStatus != http.StatusSeeOther {
 		t.Fatalf("restore apply status=%d", applyStatus)
 	}
-	restoredOID := dashboardGitOutput(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main")
+	restoredOID := apiGitOutput(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main")
 	if restoredOID == sourceOID || restoredOID == targetOID {
 		t.Fatalf("restore did not create a new commit: %s", restoredOID)
 	}
-	if got := dashboardGitOutput(t, "", "--git-dir", remote, "show", restoredOID+":kept.txt"); got != "source" {
+	if got := apiGitOutput(t, "", "--git-dir", remote, "show", restoredOID+":kept.txt"); got != "source" {
 		t.Fatalf("restored file=%q", got)
 	}
-	if _, err := dashboardGitCombined("", "--git-dir", remote, "cat-file", "-e", restoredOID+":remove.txt"); err == nil {
+	if _, err := gitCombined("", "--git-dir", remote, "cat-file", "-e", restoredOID+":remove.txt"); err == nil {
 		t.Fatal("selected source deletion was not applied")
 	}
 
-	runDashboardGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/main", targetOID, restoredOID)
+	apiRunGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/main", targetOID, restoredOID)
 	ordinaryAllBody, ordinaryAllStatus := restorePOST(t, client, server.URL+"/repositories/restore-http/restore/preview", url.Values{
 		"csrf": {csrf}, "source": {sourceOID}, "target": {"main"}, "mode": {"all"},
 	}, server.URL)
@@ -125,9 +102,7 @@ func TestRestoreHTTPPreviewApplyAndStaleConflict(t *testing.T) {
 		t.Fatalf("ordinary whole-tree preview status=%d deletion_visible=%v", ordinaryAllStatus, ordinaryDeletionVisible)
 	}
 	allPreview, err := app.Repositories.PreviewRestore(context.Background(), "restore-http", repository.RestoreRequest{Source: sourceOID, Target: "main", Mode: repository.RestoreAll})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	leftoverBody, leftoverStatus := restorePOST(t, client, server.URL+"/repositories/restore-http/restore/preview", url.Values{
 		"csrf": {csrf}, "source": {sourceOID}, "target": {"main"}, "mode": {"all"}, "path": {"kept.txt"},
 	}, server.URL)
@@ -142,19 +117,17 @@ func TestRestoreHTTPPreviewApplyAndStaleConflict(t *testing.T) {
 	if allApplyStatus != http.StatusSeeOther {
 		t.Fatalf("whole-tree apply with stale paths status=%d", allApplyStatus)
 	}
-	allRestoredOID := dashboardGitOutput(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main")
-	if got := dashboardGitOutput(t, "", "--git-dir", remote, "show", allRestoredOID+":kept.txt"); got != "source" {
+	allRestoredOID := apiGitOutput(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main")
+	if got := apiGitOutput(t, "", "--git-dir", remote, "show", allRestoredOID+":kept.txt"); got != "source" {
 		t.Fatalf("whole-tree restored file=%q", got)
 	}
-	if _, err := dashboardGitCombined("", "--git-dir", remote, "cat-file", "-e", allRestoredOID+":remove.txt"); err == nil {
+	if _, err := gitCombined("", "--git-dir", remote, "cat-file", "-e", allRestoredOID+":remove.txt"); err == nil {
 		t.Fatal("whole-tree restore ignored source deletion when stale paths were submitted")
 	}
 
 	stale, err := app.Repositories.PreviewRestore(context.Background(), "restore-http", repository.RestoreRequest{Source: targetOID, Target: "main", Mode: repository.RestoreAll})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/main", targetOID, allRestoredOID)
+	noErr(t, err)
+	apiRunGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/main", targetOID, allRestoredOID)
 	conflictBody, conflictStatus := restorePOST(t, client, server.URL+"/repositories/restore-http/restore", url.Values{
 		"csrf": {csrf}, "source": {sourceOID}, "target": {"main"}, "mode": {"all"},
 		"expected_head": {stale.ExpectedHead}, "confirm": {"restore"},
@@ -176,7 +149,7 @@ func TestRestoreHTTPPreviewApplyAndStaleConflict(t *testing.T) {
 	if got := strings.Count(conflictBody, "autofocus"); got != 1 {
 		t.Errorf("the refusal response has %d focus targets, want 1", got)
 	}
-	if got := dashboardGitOutput(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main"); got != targetOID {
+	if got := apiGitOutput(t, "", "--git-dir", remote, "rev-parse", "refs/heads/main"); got != targetOID {
 		t.Fatalf("stale restore changed branch to %s", got)
 	}
 
@@ -192,61 +165,38 @@ func TestRestoreApplyReportsPageConstructionFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the failing Git wrapper is a Unix test fixture")
 	}
-	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
-	app.Repositories.SetRoot(canonical)
+	app := newConfiguredApp(t)
 	if _, err := app.Repositories.Create(context.Background(), "page-failure", ""); err != nil {
 		t.Fatal(err)
 	}
 	remote, _ := app.Repositories.Path("page-failure")
 	work := filepath.Join(t.TempDir(), "work")
-	runDashboardGit(t, "", "init", "--initial-branch=main", work)
-	runDashboardGit(t, work, "config", "user.name", "Restore Author")
-	runDashboardGit(t, work, "config", "user.email", "restore@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("source\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "source")
-	sourceOID := dashboardGitOutput(t, work, "rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("target\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "commit", "-am", "target")
-	runDashboardGit(t, work, "push", remote, "HEAD:refs/heads/main")
+	apiRunGit(t, "", "init", "--initial-branch=main", work)
+	apiRunGit(t, work, "config", "user.name", "Restore Author")
+	apiRunGit(t, work, "config", "user.email", "restore@example.invalid")
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("source\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "source")
+	sourceOID := apiGitOutput(t, work, "rev-parse", "HEAD")
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("target\n"), 0o600))
+	apiRunGit(t, work, "commit", "-am", "target")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
 
 	server := httptest.NewServer(app.Handler())
 	defer server.Close()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client, jar := newBrowserClient(t)
 	if _, status := dashboardGET(t, client, server.URL+"/"); status != http.StatusOK {
 		t.Fatalf("overview status=%d", status)
 	}
 	csrf := cookieValue(t, jar, server.URL, generalCookie)
 
 	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
 	wrapper := "#!/bin/sh\nfor arg in \"$@\"; do\n  if test \"$arg\" = show; then exit 97; fi\ndone\nexec " + serverShellQuote(gitPath) + " \"$@\"\n"
-	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	failing, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	app.Repositories.Git = failing
 
 	body, status := restorePOST(t, client, server.URL+"/repositories/page-failure/restore", url.Values{
@@ -266,49 +216,29 @@ func serverShellQuote(value string) string {
 }
 
 func TestRestorePageUsesPreviewBranchObservationInsteadOfStaleSummary(t *testing.T) {
-	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
-	app.Repositories.SetRoot(canonical)
+	app := newConfiguredApp(t)
 	stored, err := app.Repositories.Create(context.Background(), "branch-observation", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	remote, _ := app.Repositories.Path(stored.ID)
 	work := filepath.Join(t.TempDir(), "work")
-	runDashboardGit(t, "", "init", "--initial-branch=main", work)
-	runDashboardGit(t, work, "config", "user.name", "Restore Author")
-	runDashboardGit(t, work, "config", "user.email", "restore@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("source\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "source")
-	sourceOID := dashboardGitOutput(t, work, "rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("target\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "commit", "-am", "target")
-	targetOID := dashboardGitOutput(t, work, "rev-parse", "HEAD")
-	runDashboardGit(t, work, "push", remote, "HEAD:refs/heads/main")
+	apiRunGit(t, "", "init", "--initial-branch=main", work)
+	apiRunGit(t, work, "config", "user.name", "Restore Author")
+	apiRunGit(t, work, "config", "user.email", "restore@example.invalid")
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("source\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "source")
+	sourceOID := apiGitOutput(t, work, "rev-parse", "HEAD")
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("target\n"), 0o600))
+	apiRunGit(t, work, "commit", "-am", "target")
+	targetOID := apiGitOutput(t, work, "rev-parse", "HEAD")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
 
 	request := httptest.NewRequest(http.MethodGet, "http://localhost/repositories/branch-observation/restore", nil)
 	staleMissing := repository.Summary{DefaultBranch: "main"}
 	existingPage, err := app.restorePage(request, stored, staleMissing, webui.Chrome{}, repository.RestoreRequest{
 		Source: sourceOID, Target: "main", Mode: repository.RestoreAll,
 	}, nil, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if existingPage.CreatesBranch || existingPage.ExpectedHead != targetOID {
 		t.Fatalf("existing target used stale missing summary: creates=%v expected=%s", existingPage.CreatesBranch, existingPage.ExpectedHead)
 	}
@@ -318,9 +248,7 @@ func TestRestorePageUsesPreviewBranchObservationInsteadOfStaleSummary(t *testing
 	missingPage, err := app.restorePage(request, stored, staleExisting, webui.Chrome{}, repository.RestoreRequest{
 		Source: sourceOID, Target: "release", Mode: repository.RestoreAll,
 	}, nil, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !missingPage.CreatesBranch || missingPage.ExpectedHead != zero {
 		t.Fatalf("missing target used stale existing summary: creates=%v expected=%s", missingPage.CreatesBranch, missingPage.ExpectedHead)
 	}
@@ -328,43 +256,32 @@ func TestRestorePageUsesPreviewBranchObservationInsteadOfStaleSummary(t *testing
 
 func TestRestoreRequiresGeneralAccessButNotAdministratorSession(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, err := filepath.EvalSymlinks(repositoryRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	accessHash, _ := auth.HashPassword("shared-password")
 	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "password", accessHash, adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "password", accessHash, adminHash, true))
 	app.Repositories.SetRoot(canonical)
 	if _, err := app.Repositories.Create(context.Background(), "protected-restore", ""); err != nil {
 		t.Fatal(err)
 	}
 	remote, _ := app.Repositories.Path("protected-restore")
 	work := filepath.Join(t.TempDir(), "work")
-	runDashboardGit(t, "", "init", "--initial-branch=main", work)
-	runDashboardGit(t, work, "config", "user.name", "Restore Author")
-	runDashboardGit(t, work, "config", "user.email", "restore@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("source\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "add", ".")
-	runDashboardGit(t, work, "commit", "-m", "source")
-	sourceOID := dashboardGitOutput(t, work, "rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("target\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runDashboardGit(t, work, "commit", "-am", "target")
-	runDashboardGit(t, work, "push", remote, "HEAD:refs/heads/main")
+	apiRunGit(t, "", "init", "--initial-branch=main", work)
+	apiRunGit(t, work, "config", "user.name", "Restore Author")
+	apiRunGit(t, work, "config", "user.email", "restore@example.invalid")
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("source\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "source")
+	sourceOID := apiGitOutput(t, work, "rev-parse", "HEAD")
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("target\n"), 0o600))
+	apiRunGit(t, work, "commit", "-am", "target")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
 
 	server := httptest.NewServer(app.Handler())
 	defer server.Close()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client, jar := newBrowserClient(t)
 	restoreURL := server.URL + "/repositories/protected-restore/restore?source=" + sourceOID + "&target=main"
 	_, status := dashboardGET(t, client, restoreURL)
 	if status != http.StatusSeeOther {
@@ -401,9 +318,7 @@ func TestRestoreRequiresGeneralAccessButNotAdministratorSession(t *testing.T) {
 	preview, err := app.Repositories.PreviewRestore(context.Background(), "protected-restore", repository.RestoreRequest{
 		Source: sourceOID, Target: "main", Mode: repository.RestoreAll,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	generalToken := cookieValue(t, jar, server.URL, generalCookie)
 	generalSession, ok, err := store.Session(context.Background(), generalToken, "general", time.Now())
 	if err != nil || !ok {
@@ -420,20 +335,6 @@ func TestRestoreRequiresGeneralAccessButNotAdministratorSession(t *testing.T) {
 
 func restorePOST(t *testing.T, client *http.Client, target string, values url.Values, origin string) (string, int) {
 	t.Helper()
-	request, err := http.NewRequest(http.MethodPost, target, strings.NewReader(values.Encode()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("Origin", origin)
-	response, err := client.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	content, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(content), response.StatusCode
+	result := browserForm(t, client, target, values, origin)
+	return result.body, result.status
 }

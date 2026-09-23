@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/cookiejar"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,22 +17,15 @@ import (
 
 func TestChangingSharedPasswordRevokesGeneralSessions(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
 	accessHash, _ := auth.HashPassword("old-shared-password")
 	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "password", accessHash, adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "password", accessHash, adminHash, true))
 	app.Repositories.SetRoot(canonical)
 	settings, _ := store.Settings(context.Background())
-	if err := store.CreateSession(context.Background(), "general-token", "general", "csrf-token", settings.AccessSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
+	noErr(t, store.CreateSession(context.Background(), "general-token", "general", "csrf-token", settings.AccessSessionVersion, time.Now().Add(time.Hour)))
+	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
 	parsed, _ := url.Parse(server.URL)
 	jar.SetCookies(parsed, []*http.Cookie{{Name: generalCookie, Value: "general-token", Path: "/"}})
@@ -56,19 +48,13 @@ func TestChangingSharedPasswordRevokesGeneralSessions(t *testing.T) {
 
 func TestFreshOpenSettingsUsesStatelessCSRFForPostAndLogout(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
 	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, false))
 	app.Repositories.SetRoot(canonical)
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	server := serve(t, app.Handler())
+	client, jar := newBrowserClient(t)
 
 	body, status := dashboardGET(t, client, server.URL+"/settings")
 	if status != http.StatusOK {
@@ -100,19 +86,13 @@ func TestFreshOpenSettingsUsesStatelessCSRFForPostAndLogout(t *testing.T) {
 
 func TestInsecureAcknowledgementRequiresCurrentAdminPassword(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
 	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, false))
 	app.Repositories.SetRoot(canonical)
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	server := serve(t, app.Handler())
+	client, jar := newBrowserClient(t)
 	response := request(t, client, http.MethodGet, server.URL+"/settings", nil, "")
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("settings status=%d", response.StatusCode)

@@ -42,9 +42,7 @@ func TestAttachOwnedProcessObserverFailureTerminatesStartedProcess(t *testing.T)
 	waitHandled := false
 	var owner *ProcessOwner
 	ConfigureOwnedProcess(cmd)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, cmd.Start())
 	t.Cleanup(func() {
 		var cleanupErr error
 		if owner != nil {
@@ -86,9 +84,7 @@ func TestAttachOwnedProcessObserverFailureTerminatesStartedProcess(t *testing.T)
 
 	waitErr, exited, cleanupErr := awaitWindowsTestProcess(cmd.Process, wait, 5*time.Second)
 	waitHandled = true
-	if cleanupErr != nil {
-		t.Fatalf("observer failure process cleanup: %v", cleanupErr)
-	}
+	noErr(t, cleanupErr, "observer failure process cleanup")
 	if !exited {
 		t.Fatal("long-lived fixture remained alive after observer failure cleanup")
 	}
@@ -117,9 +113,7 @@ func TestTerminateOwnedProcessStillTerminatesAfterCaptureDeadline(t *testing.T) 
 	waitHandled := false
 	var owner *ProcessOwner
 	ConfigureOwnedProcess(cmd)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, cmd.Start())
 	t.Cleanup(func() {
 		var cleanupErr error
 		if owner != nil {
@@ -144,16 +138,12 @@ func TestTerminateOwnedProcessStillTerminatesAfterCaptureDeadline(t *testing.T) 
 
 	var err error
 	owner, err = AttachOwnedProcess(cmd)
-	if err != nil {
-		t.Fatalf("attach long-lived fixture: %v", err)
-	}
+	noErr(t, err, "attach long-lived fixture")
 	if !waitForWindowsTestFile(ready, 5*time.Second) {
 		t.Fatal("long-lived fixture did not report ready")
 	}
 	running, err := windowsTestProcessRunning(cmd.Process)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !running {
 		t.Fatal("long-lived fixture exited before deadline test")
 	}

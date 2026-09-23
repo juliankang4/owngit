@@ -31,9 +31,7 @@ func TestShutdownDrainsInFlightRunBeforeReturning(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := f.service.Shutdown(ctx); err != nil {
-		t.Fatalf("shutdown: %v", err)
-	}
+	noErr(t, f.service.Shutdown(ctx), "shutdown")
 	// Shutdown returned, so the run is already terminal in durable state.
 	run := f.lastRun()
 	if run.Status != state.ImportRunCancelled || !strings.Contains(run.Message, ErrShuttingDown.Error()) {

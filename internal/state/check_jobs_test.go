@@ -22,12 +22,8 @@ func newCheckJobFixture(t *testing.T) *checkJobFixture {
 	store := openTestStore(t)
 	completeTestSetup(t, store)
 	now := time.Unix(1_800_000_000, 0)
-	if err := store.AddRepository(context.Background(), Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.AddRepository(context.Background(), Repository{ID: "other", Name: "Other", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(context.Background(), Repository{ID: "project", Name: "Project", CreatedAt: now}))
+	noErr(t, store.AddRepository(context.Background(), Repository{ID: "other", Name: "Other", CreatedAt: now}))
 	return &checkJobFixture{store: store, now: now}
 }
 
@@ -229,9 +225,7 @@ func TestContainerPolicyRequiresImmutableImageAndCapturesRestrictions(t *testing
 	}
 	input.Execution.ContainerImage = "sha256:" + strings.Repeat("a", 64)
 	policy, err := fixture.store.SetCheckPolicy(context.Background(), input, fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if policy.Execution.ContainerRuntime != "docker-local" || policy.Execution.ContainerNetwork != ContainerNetworkNone ||
 		policy.Execution.ContainerCPUMillis == 0 || policy.Execution.ContainerMemoryBytes == 0 ||
 		policy.Execution.ContainerPIDs == 0 || policy.Execution.ContainerScratchBytes == 0 {
@@ -253,12 +247,8 @@ func TestContainerRuntimeOwnershipUsesExactJobContainerAndDaemon(t *testing.T) {
 	}
 	authority := CheckJobCompletionAuthority{JobID: job.ID, LeaseID: claimed.LeaseID, CredentialID: claimed.CredentialID, CredentialGeneration: claimed.CredentialGeneration}
 	containerID := strings.Repeat("b", 64)
-	if err := fixture.store.PlanCheckContainer(context.Background(), authority, "owngit-check-test", "daemon-one", fixture.now); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.ConfirmCheckContainer(context.Background(), job.ID, "owngit-check-test", containerID, "daemon-one"); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.PlanCheckContainer(context.Background(), authority, "owngit-check-test", "daemon-one", fixture.now))
+	noErr(t, fixture.store.ConfirmCheckContainer(context.Background(), job.ID, "owngit-check-test", containerID, "daemon-one"))
 	ownership, err := fixture.store.ActiveCheckContainers(context.Background(), 10)
 	if err != nil || len(ownership) != 1 || ownership[0].ContainerName != "owngit-check-test" || ownership[0].ContainerID != containerID || ownership[0].DaemonID != "daemon-one" {
 		t.Fatalf("runtime ownership=%+v err=%v", ownership, err)
@@ -266,9 +256,7 @@ func TestContainerRuntimeOwnershipUsesExactJobContainerAndDaemon(t *testing.T) {
 	if err := fixture.store.ClearCheckContainer(context.Background(), job.ID, containerID, "other-daemon"); !errors.Is(err, ErrCheckJobRuntimeOwned) {
 		t.Fatalf("foreign daemon clear error=%v", err)
 	}
-	if err := fixture.store.ClearCheckContainer(context.Background(), job.ID, containerID, "daemon-one"); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.ClearCheckContainer(context.Background(), job.ID, containerID, "daemon-one"))
 }
 
 func TestAdmitCheckJobDeduplicatesAndTightensLimits(t *testing.T) {
@@ -415,9 +403,7 @@ func TestAdmitCheckJobEnforcesQueueAndConcurrency(t *testing.T) {
 	successes := 0
 	admitted.Range(func(_, _ any) bool { successes++; return true })
 	jobs, err := fixture.store.CheckJobs(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if successes != 3 || failures != 9 || len(jobs) != 3 {
 		t.Fatalf("jobs=%d successes=%d failures=%d", len(jobs), successes, failures)
 	}
@@ -453,9 +439,7 @@ func TestConcurrentAdmissionDeduplicatesOneJob(t *testing.T) {
 	}
 	wait.Wait()
 	jobs, err := fixture.store.CheckJobs(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(jobs) != 1 {
 		t.Fatalf("dedup created %d jobs", len(jobs))
 	}
@@ -539,16 +523,7 @@ func TestJobOriginCannotBeForgedByHelperFacts(t *testing.T) {
 	job := fixture.admit(t, pushJobRequest())
 	runner, _ := fixture.issueRunner(t)
 	ctx := context.Background()
-	claimed, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
-		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation, Protection: ProtectionRunnerReported,
-	}, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	fixture.claimAndStart(t, job, runner, ProtectionRunnerReported)
 	attempt := CheckAttempt{
 		ID: attemptID("spoof", fixture.now), TaskID: job.TaskID, RepositoryID: "project",
 		RevisionOID: job.SourceOID, WorktreeState: WorktreeClean, StartedAt: fixture.now, CreatedAt: fixture.now,
@@ -575,9 +550,7 @@ func TestJobOriginCannotBeForgedByHelperFacts(t *testing.T) {
 		t.Fatalf("replay sequence=%d err=%v", replayed.Sequence, err)
 	}
 	otherTask, err := fixture.store.CreateTask(ctx, "project", "Other", fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// A second different attempt cannot bind the same job.
 	bound := attempt
 	bound.ID = attemptID("bound", fixture.now)
@@ -602,20 +575,9 @@ func TestJobAttemptFactsAndCompletionAuthorityAreExact(t *testing.T) {
 	job := fixture.admit(t, pushJobRequest())
 	runner, _ := fixture.issueRunner(t)
 	ctx := context.Background()
-	claimed, found, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
-	if err != nil || !found {
-		t.Fatalf("claim found=%v err=%v", found, err)
-	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
-		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
-	}, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	claimed := fixture.claimAndStart(t, job, runner, "")
 	otherTask, err := fixture.store.CreateTask(ctx, "project", "Other", fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	base := CheckAttempt{
 		ID: attemptID("exact", fixture.now), TaskID: job.TaskID, RepositoryID: "project",
 		RevisionOID: job.SourceOID, WorktreeState: WorktreeClean, StartedAt: fixture.now, CreatedAt: fixture.now,
@@ -643,9 +605,7 @@ func TestJobAttemptFactsAndCompletionAuthorityAreExact(t *testing.T) {
 		})
 	}
 	_, attempt, err := fixture.store.RegisterCheckAttempt(ctx, base)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	exit := 0
 	completion := CheckCompletion{
 		AttemptID: attempt.ID, RepositoryID: attempt.RepositoryID, TaskID: attempt.TaskID,
@@ -688,9 +648,7 @@ func TestStartReplayNeverGrantsExecution(t *testing.T) {
 		{
 			name: "credential revoked",
 			invalidate: func(t *testing.T, fixture *checkJobFixture, runner RunnerCredential) time.Time {
-				if err := fixture.store.RevokeCheckRunnerToken(context.Background(), "project", runner.ID, fixture.now.Add(time.Second)); err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, fixture.store.RevokeCheckRunnerToken(context.Background(), "project", runner.ID, fixture.now.Add(time.Second)))
 				return fixture.now.Add(2 * time.Second)
 			},
 			wantStatus: CheckJobStarted,
@@ -734,9 +692,7 @@ func TestStartReplayNeverGrantsExecution(t *testing.T) {
 				CredentialID: runner.ID, CredentialGeneration: runner.Generation, Protection: ProtectionRunnerReported,
 			}
 			first, err := fixture.store.StartCheckJob(ctx, request, fixture.now)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			replayAt := test.invalidate(t, fixture, runner)
 			if _, err := fixture.store.StartCheckJob(ctx, request, replayAt); !errors.Is(err, ErrCheckJobStartReplay) {
 				t.Fatalf("start replay error=%v", err)
@@ -758,16 +714,7 @@ func TestLeaseExpiryIsAmbiguousAndNeedsExplicitRerun(t *testing.T) {
 	job := fixture.admit(t, request)
 	runner, _ := fixture.issueRunner(t)
 	ctx := context.Background()
-	claimed, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
-		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
-	}, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	fixture.claimAndStart(t, job, runner, "")
 	expiredAt := fixture.now.Add(2 * time.Minute)
 	expired, err := fixture.store.ExpireCheckJobLeases(ctx, expiredAt)
 	if err != nil || expired != 1 {
@@ -805,16 +752,7 @@ func TestLateCompletionAfterLeaseLossRecordsVerdict(t *testing.T) {
 	job := fixture.admit(t, pushJobRequest())
 	runner, _ := fixture.issueRunner(t)
 	ctx := context.Background()
-	claimed, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
-		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
-	}, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	claimed := fixture.claimAndStart(t, job, runner, "")
 	attempt := fixture.registerJobAttempt(t, claimed, runner)
 	if _, err := fixture.store.ExpireCheckJobLeases(ctx, fixture.now.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
@@ -833,20 +771,9 @@ func TestRevokedCredentialCannotCompleteStartedJob(t *testing.T) {
 	job := fixture.admit(t, pushJobRequest())
 	runner, _ := fixture.issueRunner(t)
 	ctx := context.Background()
-	claimed, found, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
-	if err != nil || !found {
-		t.Fatalf("claim found=%v err=%v", found, err)
-	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
-		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
-	}, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	claimed := fixture.claimAndStart(t, job, runner, "")
 	attempt := fixture.registerJobAttempt(t, claimed, runner)
-	if err := fixture.store.RevokeCheckRunnerToken(ctx, "project", runner.ID, fixture.now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.RevokeCheckRunnerToken(ctx, "project", runner.ID, fixture.now.Add(time.Second)))
 	exit := 0
 	completion := CheckCompletion{
 		AttemptID: attempt.ID, RepositoryID: attempt.RepositoryID, TaskID: attempt.TaskID,
@@ -969,16 +896,7 @@ func TestJobCancellationSemantics(t *testing.T) {
 	request.SourceOID = strings.Repeat("d", 40)
 	job := fixture.admit(t, request)
 	runner, _ := fixture.issueRunner(t)
-	claimed, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
-		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
-	}, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	claimed := fixture.claimAndStart(t, job, runner, "")
 	if _, err := fixture.store.CancelCheckJob(ctx, "project", job.ID, fixture.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -1033,9 +951,7 @@ func TestRunnerCredentialRevocationAndScope(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("claim claimed=%v err=%v", found, err)
 	}
-	if err := fixture.store.RevokeCheckRunnerToken(ctx, "project", runner.ID, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.RevokeCheckRunnerToken(ctx, "project", runner.ID, fixture.now))
 	if err := fixture.store.RevokeCheckRunnerToken(ctx, "project", runner.ID, fixture.now); !errors.Is(err, ErrCheckRunnerRevoked) {
 		t.Fatalf("double revoke error=%v", err)
 	}
@@ -1088,9 +1004,7 @@ func TestRunnerCredentialCreationIsIdempotent(t *testing.T) {
 	if _, _, _, err := fixture.store.IssueCheckRunnerToken(ctx, "project", "other", creation, fixture.now); !errors.Is(err, ErrCheckRunnerCreationConflict) {
 		t.Fatalf("conflicting creation error=%v", err)
 	}
-	if err := fixture.store.RevokeCheckRunnerTokenByCreation(ctx, "project", creation, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.RevokeCheckRunnerTokenByCreation(ctx, "project", creation, fixture.now))
 	retired, replayToken, created, err := fixture.store.IssueCheckRunnerToken(ctx, "project", "laptop", creation, fixture.now)
 	if err != nil || created || replayToken != "" || retired.ID != first.ID || retired.RevokedAt == nil {
 		t.Fatalf("revoked creation replay=%+v created=%v token=%t err=%v", retired, created, replayToken != "", err)
@@ -1106,9 +1020,7 @@ func TestObservationsAreBoundedAndUpserted(t *testing.T) {
 	for index := 0; index < MaximumCheckObservations+6; index++ {
 		ref := fmt.Sprintf("refs/heads/branch-%02d", index)
 		oid := fmt.Sprintf("%040d", index)
-		if err := fixture.store.RecordCheckObservation(ctx, "project", ref, oid, fixture.now.Add(time.Duration(index)*time.Second)); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, fixture.store.RecordCheckObservation(ctx, "project", ref, oid, fixture.now.Add(time.Duration(index)*time.Second)))
 	}
 	observations, err := fixture.store.CheckObservations(ctx, "project")
 	if err != nil || len(observations) != MaximumCheckObservations {
@@ -1118,9 +1030,7 @@ func TestObservationsAreBoundedAndUpserted(t *testing.T) {
 		t.Fatalf("newest observation=%+v", observations[0])
 	}
 	updated := strings.Repeat("e", 40)
-	if err := fixture.store.RecordCheckObservation(ctx, "project", "refs/heads/branch-63", updated, fixture.now.Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.RecordCheckObservation(ctx, "project", "refs/heads/branch-63", updated, fixture.now.Add(time.Hour)))
 	refreshed, err := fixture.store.CheckObservations(ctx, "project")
 	if err != nil || refreshed[0].OID != updated || len(refreshed) != MaximumCheckObservations {
 		t.Fatalf("upserted observation=%+v err=%v", refreshed[0], err)
@@ -1220,4 +1130,21 @@ func TestRerunAdmissionDeduplicatesUnderConcurrency(t *testing.T) {
 	if err != nil || len(jobs) != 2 {
 		t.Fatalf("jobs=%d err=%v", len(jobs), err)
 	}
+}
+
+// claimAndStart claims job with runner and starts it with protection.
+func (fixture *checkJobFixture) claimAndStart(t *testing.T, job CheckJob, runner RunnerCredential, protection string) CheckJob {
+	t.Helper()
+	ctx := context.Background()
+	claimed, found, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
+	if err != nil || !found || claimed.ID != job.ID {
+		t.Fatalf("claim job=%+v found=%v err=%v", claimed, found, err)
+	}
+	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
+		CredentialID: runner.ID, CredentialGeneration: runner.Generation, Protection: protection,
+	}, fixture.now); err != nil {
+		t.Fatalf("start job: %v", err)
+	}
+	return claimed
 }

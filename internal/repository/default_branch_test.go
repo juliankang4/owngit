@@ -13,9 +13,7 @@ func TestDeletingDefaultAndLastBranchIsReportedWithoutRecreation(t *testing.T) {
 	runGit(t, work, "push", "origin", ":refs/heads/main")
 
 	summary, err := manager.Summary(context.Background(), "sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if summary.DefaultBranch != "main" || summary.DefaultOID != "" || summary.Empty {
 		t.Fatalf("deleted default branch was misreported: %+v", summary)
 	}

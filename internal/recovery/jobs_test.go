@@ -8,15 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
 
-// TestBackupEightRoundTripsJobsAndInvalidatesAuthority covers the portable
+// TestBackupRoundTripsJobsAndInvalidatesAuthority covers the portable
 // automatic-check facts and the machine-local authority a restore invalidates.
-func TestBackupEightRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
+func TestBackupRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	store, manager := newBackupStore(t, root)
@@ -31,9 +30,7 @@ func TestBackupEightRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push", "pull_request"},
 		MaxTimeoutMS: 120000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
 	}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := store.GrantCheckConsent(ctx, "project", now); err != nil {
 		t.Fatal(err)
 	}
@@ -51,9 +48,7 @@ func TestBackupEightRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 		t.Fatalf("admit deduped=%v err=%v", deduped, err)
 	}
 	claimed, _, err := store.ClaimCheckJob(ctx, "project", runner.ID, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := store.StartCheckJob(ctx, state.CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
@@ -90,18 +85,12 @@ func TestBackupEightRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 	if err != nil || deduped {
 		t.Fatalf("second admission deduped=%v err=%v", deduped, err)
 	}
-	if err := store.RecordCheckObservation(ctx, "project", "refs/heads/main", sourceOID, now); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.RecordCheckObservation(ctx, "project", "refs/heads/main", sourceOID, now))
 
 	backup := filepath.Join(root, "backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, store, manager, backup))
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if manifest.Version != backupVersion || len(manifest.CheckPolicies) != 1 || len(manifest.CheckJobs) != 2 {
 		t.Fatalf("backup version=%d policies=%d jobs=%d", manifest.Version, len(manifest.CheckPolicies), len(manifest.CheckJobs))
 	}
@@ -118,22 +107,16 @@ func TestBackupEightRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 		t.Fatalf("backup terminal job=%+v", terminal)
 	}
 	content, err := os.ReadFile(filepath.Join(backup, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if strings.Contains(string(content), rawToken) {
 		t.Fatal("backup manifest contains the raw runner token")
 	}
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
-	if err := Restore(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
 	restored, err := state.Open(ctx, restoredState)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer restored.Close()
 	restoredPolicy, exists, err := restored.CheckPolicy(ctx, "project")
 	if err != nil || !exists || restoredPolicy.Version != policy.Version || restoredPolicy.ConsentActive || restoredPolicy.RunnerGeneration != 1 {
@@ -170,13 +153,9 @@ func TestBackupEightRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 
 	restoredManager := &repository.Manager{Store: restored, Git: restoredRunner(t, restoredState), Locks: gitexec.NewLocks(), Root: restoredRepositories}
 	rebackup := filepath.Join(root, "rebackup")
-	if err := Create(ctx, restored, restoredManager, rebackup); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, Create(ctx, restored, restoredManager, rebackup))
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if rebacked.Version != backupVersion || len(rebacked.CheckJobs) != 2 {
 		t.Fatalf("rebackup version=%d jobs=%d", rebacked.Version, len(rebacked.CheckJobs))
 	}
@@ -185,78 +164,6 @@ func TestBackupEightRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 func restoredRunner(t *testing.T, stateRoot string) *gitexec.Runner {
 	t.Helper()
 	runner, err := gitexec.New("", filepath.Join(stateRoot, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return runner
-}
-
-func TestLegacyBackupSixStillRestoresWithoutJobMetadata(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	input := filepath.Join("testdata", "legacy-backup-v6")
-	statePath := canonicalTestTarget(t, filepath.Join(root, "state"))
-	repositoryPath := canonicalTestTarget(t, filepath.Join(root, "repositories"))
-	if err := Restore(ctx, input, statePath, repositoryPath, ""); err != nil {
-		t.Fatal(err)
-	}
-	store, err := state.Open(ctx, statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if jobs, err := store.CheckJobs(ctx, "project"); err != nil || len(jobs) != 0 {
-		t.Fatalf("legacy jobs=%+v err=%v", jobs, err)
-	}
-	if _, exists, err := store.CheckPolicy(ctx, "project"); err != nil || exists {
-		t.Fatalf("legacy policy exists=%v err=%v", exists, err)
-	}
-	before, err := readManifest(filepath.Join(input, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before.Version != directReviewBackupVersion {
-		t.Fatalf("legacy fixture version=%d", before.Version)
-	}
-	if err := validateManifest(before); err != nil {
-		t.Fatalf("legacy v6 validation: %v", err)
-	}
-}
-
-func TestBackupEightRejectsJobMetadataInOlderFormats(t *testing.T) {
-	hash, err := auth.HashPassword("admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := Manifest{
-		Format: backupFormat, Version: directReviewBackupVersion, CreatedAt: time.Now().UTC(),
-		AccessMode: "open", AdminHash: hash,
-	}
-	cases := []struct {
-		name   string
-		mutate func(*Manifest)
-		want   string
-	}{
-		{name: "policy", mutate: func(manifest *Manifest) { manifest.CheckPolicies = []CheckPolicyManifest{{RepositoryID: "project"}} }, want: "unsupported automatic check metadata"},
-		{name: "job", mutate: func(manifest *Manifest) { manifest.CheckJobs = []CheckJobManifest{{ID: strings.Repeat("1", 32)}} }, want: "unsupported automatic check metadata"},
-		{name: "job identity", mutate: func(manifest *Manifest) {
-			manifest.Tasks = []TaskManifest{{ID: strings.Repeat("2", 32), RepositoryID: "project"}}
-			manifest.CheckAttempts = []CheckAttemptManifest{{ID: strings.Repeat("3", 32), JobID: strings.Repeat("4", 32)}}
-		}, want: "unsupported check job identity"},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			manifest := base
-			test.mutate(&manifest)
-			path := filepath.Join(t.TempDir(), manifestName)
-			writeManifestFile(t, path, manifest)
-			read, err := readManifest(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := validateManifest(read); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("older format accepted %s: %v", test.name, err)
-			}
-		})
-	}
 }

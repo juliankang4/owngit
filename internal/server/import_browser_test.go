@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -16,8 +15,7 @@ import (
 
 func TestImportBrowserFormsWorkInBothLanguages(t *testing.T) {
 	fixture := newImportAPIFixture(t)
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "import-browser")
 	english := browserGET(t, client, server.URL+"/repositories/project/import")
@@ -66,8 +64,7 @@ func TestNewImportKeepsCAWhenCredentialFormIsNone(t *testing.T) {
 		gotCA = string(request.RootCAPEM)
 		return &importfetch.Result{Advertisement: &importgit.Advertisement{Service: "git-upload-pack", ObjectFormat: importgit.FormatSHA1, Empty: true}}, nil
 	}
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "ca-admin")
 	result := browserForm(t, client, server.URL+"/repositories/new-import", url.Values{
@@ -84,8 +81,7 @@ func TestImportPageShowsPasswordAndFailureCauses(t *testing.T) {
 	fixture.app.Imports.Fetch = func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
 		return nil, &importfetch.Error{Op: "connect", Kind: importfetch.ErrConnection}
 	}
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "notice-admin")
 	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{
@@ -135,8 +131,7 @@ func TestCancelledImportsDoNotReportSuccess(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cancel-admin")
 	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{

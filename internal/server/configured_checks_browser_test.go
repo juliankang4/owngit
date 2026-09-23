@@ -4,7 +4,6 @@ import (
 	"context"
 	"html/template"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -56,13 +55,9 @@ func noticeRegion(t *testing.T, body string) string {
 func browserAdminSessionFor(t *testing.T, fixture apiFixture, serverURL string, jar http.CookieJar, name string) string {
 	t.Helper()
 	settings, err := fixture.store.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	token, csrf := name+"-session", name+"-csrf"
-	if err := fixture.store.CreateSession(context.Background(), token, "admin", csrf, settings.AdminSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.CreateSession(context.Background(), token, "admin", csrf, settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	parsed, _ := url.Parse(serverURL)
 	jar.SetCookies(parsed, []*http.Cookie{{Name: adminCookie, Value: token, Path: "/"}})
 	return csrf
@@ -94,12 +89,7 @@ func validPolicyValues(csrf string) url.Values {
 
 func TestBrowserConfiguredChecksRequireAdminSessionAndPasswordPerChange(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 
 	policyURL := server.URL + configuredChecksURL("project")
 	// A general visitor never reaches the screen, and the refusal happens
@@ -142,12 +132,7 @@ func TestBrowserPolicySaveDoesNotEnableExecution(t *testing.T) {
 	// Saving settings and granting permission to run are separate decisions,
 	// and a saved policy must never arrive with consent already attached.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-consent")
 	policyURL := server.URL + configuredChecksURL("project")
 
@@ -211,9 +196,7 @@ func TestBrowserPolicySaveDoesNotEnableExecution(t *testing.T) {
 		t.Fatalf("policy change status=%d", result.status)
 	}
 	after, _, err := fixture.store.CheckPolicy(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if after.ConsentActive {
 		t.Fatal("a changed policy kept the consent granted for the previous one")
 	}
@@ -223,12 +206,7 @@ func TestBrowserSaveResultDoesNotClaimExecutionIsOffWhenItIsOn(t *testing.T) {
 	// Resubmitting an unchanged policy leaves consent exactly as it was. The
 	// result must not tell an owner with running checks that execution is off.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-resave")
 	policyURL := server.URL + configuredChecksURL("project")
 
@@ -236,9 +214,7 @@ func TestBrowserSaveResultDoesNotClaimExecutionIsOffWhenItIsOn(t *testing.T) {
 		t.Fatalf("first save status=%d", result.status)
 	}
 	policy, _, err := fixture.store.CheckPolicy(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	enable := url.Values{
 		"csrf": {csrf}, "action": {webui.ActionEnableChecks},
 		"admin_password": {"admin-password"},
@@ -278,12 +254,7 @@ func TestBrowserEveryCheckResultReachesTheScreen(t *testing.T) {
 	// the table is dropped silently, leaving the owner with no statement about
 	// what their submission did.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	browserAdminSessionFor(t, fixture, server.URL, jar, "cc-notice")
 
 	for key, code := range map[string]webui.MessageCode{
@@ -315,21 +286,14 @@ func TestBrowserFailedConsentChangeKeepsTheSavedPolicyOnScreen(t *testing.T) {
 	// them must not repaint the editor from that empty submission and blank
 	// every saved setting the owner is looking at.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-keep")
 	policyURL := server.URL + configuredChecksURL("project")
 	if result := browserForm(t, client, policyURL, validPolicyValues(csrf), server.URL); result.status != http.StatusSeeOther {
 		t.Fatalf("policy save status=%d", result.status)
 	}
 	policy, _, err := fixture.store.CheckPolicy(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	wrongPassword := url.Values{
 		"csrf": {csrf}, "action": {webui.ActionEnableChecks},
@@ -363,12 +327,7 @@ func TestTheDisplayedRangeIsTheRangeTheBackendEnforces(t *testing.T) {
 	// behaviour: the boundary is accepted and one step outside it is refused.
 	// If someone later changes a bound in only one place, this fails.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-ranges")
 	policyURL := server.URL + configuredChecksURL("project")
 
@@ -427,12 +386,7 @@ func TestBrowserPolicyRefusalNamesTheFieldTheBackendRefused(t *testing.T) {
 	// answer beside the control it belongs to, with the invalid state and the
 	// description link a reader who cannot see the colour depends on.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-fields")
 	policyURL := server.URL + configuredChecksURL("project")
 
@@ -487,12 +441,7 @@ func TestBrowserPolicyRefusalNamesTheFieldTheBackendRefused(t *testing.T) {
 
 func TestBrowserRefusedPolicyIsNotStoredAndKeepsTheSubmittedValues(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-refuse")
 	policyURL := server.URL + configuredChecksURL("project")
 
@@ -533,12 +482,7 @@ func TestBrowserRefusedPolicyIsNotStoredAndKeepsTheSubmittedValues(t *testing.T)
 
 func TestBrowserRunnerTokensDeliverTheValueOnceAndRevokeIt(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "rt-admin")
 	tokenURL := server.URL + runnerTokensURL("project")
 
@@ -636,12 +580,7 @@ func TestBrowserRunnerTokensDeliverTheValueOnceAndRevokeIt(t *testing.T) {
 
 func TestBrowserRunnerTokensAreScopedToTheirRepository(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "rt-scope")
 	if result := browserForm(t, client, server.URL+configuredChecksURL("project"), validPolicyValues(csrf), server.URL); result.status != http.StatusSeeOther {
 		t.Fatalf("policy save status=%d", result.status)
@@ -654,9 +593,7 @@ func TestBrowserRunnerTokensAreScopedToTheirRepository(t *testing.T) {
 	// The store requires a 32-character hex creation identity, the same rule
 	// the browser applies before submitting one.
 	credential, _, _, err := fixture.store.IssueCheckRunnerToken(context.Background(), "project", scopedLabel, strings.Repeat("c", 32), time.Now().UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := fixture.app.Repositories.Create(context.Background(), "other", "Other repository"); err != nil {
 		t.Fatal(err)
 	}
@@ -700,12 +637,7 @@ func TestBrowserRunnerTokensAreScopedToTheirRepository(t *testing.T) {
 
 func TestBrowserJobActionsAreRefusedForAnotherRepository(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-job")
 	if _, err := fixture.app.Repositories.Create(context.Background(), "other", "Other repository"); err != nil {
 		t.Fatal(err)
@@ -727,12 +659,7 @@ func TestBrowserConfiguredCheckScreensReportAClosedRuntimeWithoutBlockingGit(t *
 	// result, and it must not stop ordinary repository work.
 	fixture.app.CheckRuntimeUnavailableCode = webui.RuntimeWorkspaceUnavailable
 	fixture.app.CheckRuntimeUnavailableReason = "The check workspace root could not be prepared."
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	browserAdminSessionFor(t, fixture, server.URL, jar, "cc-runtime")
 
 	page := browserGET(t, client, server.URL+configuredChecksURL("project"))
@@ -752,20 +679,13 @@ func TestBrowserConfiguredCheckScreensReportAClosedRuntimeWithoutBlockingGit(t *
 
 func TestBrowserPolicyScreenShowsRecordedJobsWithTheirOwnFacts(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-jobs")
 	if result := browserForm(t, client, server.URL+configuredChecksURL("project"), validPolicyValues(csrf), server.URL); result.status != http.StatusSeeOther {
 		t.Fatalf("policy save status=%d", result.status)
 	}
 	policy, _, err := fixture.store.CheckPolicy(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	// The approval quotes the whole identity the screen renders, version and
 	// digest, because that is what the store compares.
 	enable := url.Values{
@@ -837,9 +757,7 @@ func admitEnabledJob(t *testing.T, fixture apiFixture, serverURL string, client 
 		t.Fatalf("policy save status=%d", result.status)
 	}
 	policy, _, err := fixture.store.CheckPolicy(context.Background(), "project")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	enable := url.Values{
 		"csrf": {csrf}, "action": {webui.ActionEnableChecks},
 		"admin_password": {"admin-password"},
@@ -887,9 +805,7 @@ func runJobToAttempt(t *testing.T, fixture apiFixture, job state.CheckJob, attem
 		CredentialID: claimed.CredentialID, CredentialGeneration: claimed.CredentialGeneration,
 		Protection: protection,
 	}, fixture.app.now())
-	if err != nil {
-		t.Fatalf("start job: %v", err)
-	}
+	noErrf(t, err, "start job")
 	configuration, exists, err := fixture.store.CheckConfiguration(ctx, started.RepositoryID, started.ConfigurationVersion)
 	if err != nil || !exists {
 		t.Fatalf("read job configuration: err=%v exists=%v", err, exists)
@@ -900,9 +816,7 @@ func runJobToAttempt(t *testing.T, fixture apiFixture, job state.CheckJob, attem
 		JobID: started.ID, CredentialID: started.CredentialID, Checks: configuration.Checks,
 		StartedAt: *started.StartedAt, CreatedAt: fixture.app.now(),
 	})
-	if err != nil {
-		t.Fatalf("register job attempt: %v", err)
-	}
+	noErrf(t, err, "register job attempt")
 	exit := 0
 	_, stored, err := fixture.store.CompleteCheckJobAttempt(ctx, state.CheckCompletion{
 		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
@@ -915,9 +829,7 @@ func runJobToAttempt(t *testing.T, fixture apiFixture, job state.CheckJob, attem
 		JobID: started.ID, LeaseID: started.LeaseID,
 		CredentialID: started.CredentialID, CredentialGeneration: started.CredentialGeneration,
 	}, fixture.app.now())
-	if err != nil {
-		t.Fatalf("complete job attempt: %v", err)
-	}
+	noErrf(t, err, "complete job attempt")
 	if stored.JobID != started.ID {
 		t.Fatalf("the stored attempt lost its job link: %q", stored.JobID)
 	}
@@ -929,12 +841,7 @@ func TestBrowserCancelIsOfferedOnlyWhileWorkCanStillBeStopped(t *testing.T) {
 	// can still be stopped. Cancel belongs to work that has not reached a
 	// result.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	_, job := admitEnabledJob(t, fixture, server.URL, client, jar, "cc-cancel-offer",
 		jobFacts{ref: "main", sourceOID: strings.Repeat("a", 40)})
 
@@ -956,9 +863,7 @@ func TestBrowserCancelIsOfferedOnlyWhileWorkCanStillBeStopped(t *testing.T) {
 		JobID: claimed.ID, LeaseID: claimed.LeaseID,
 		CredentialID: claimed.CredentialID, CredentialGeneration: claimed.CredentialGeneration,
 	}, state.CheckJobError, "The run ended before execution began.", fixture.app.now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if finished.FinishedAt == nil {
 		t.Fatal("the job did not reach a terminal state")
 	}
@@ -982,12 +887,7 @@ func TestBrowserCancelThatLosesToACompletionSaysNothingChanged(t *testing.T) {
 	// request, and the wrong thing to report as a cancellation: the reader
 	// would expect the outcome to change.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	csrf, job := admitEnabledJob(t, fixture, server.URL, client, jar, "cc-cancel-race",
 		jobFacts{ref: "main", sourceOID: strings.Repeat("a", 40)})
 
@@ -1189,12 +1089,7 @@ func TestBrowserAutomaticJobDetailNamesTheServerNotTheOperator(t *testing.T) {
 	// names the wrong machine and the wrong authority. This drives the real
 	// screens over a real admitted job rather than the adapters alone.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	// The admission names the branch the commit actually belongs to, so the
 	// pull request below reads evidence for its own source revision.
 	_, job := admitEnabledJob(t, fixture, server.URL, client, jar, "cc-origin",
@@ -1240,13 +1135,9 @@ func TestBrowserAutomaticJobDetailNamesTheServerNotTheOperator(t *testing.T) {
 		Repository: "project", Title: "Automatic evidence", SourceBranch: "feature", TargetBranch: "main",
 		SourceOID: fixture.sourceOID, TargetOID: fixture.targetOID,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	view, err := fixture.app.PullRequests.Show(context.Background(), "project", created.Number)
-	if err != nil {
-		t.Fatalf("show pull request: %v", err)
-	}
+	noErrf(t, err, "show pull request")
 	if view.Checks.JobID != job.ID {
 		t.Fatalf("the pull request projection lost the job link: %q", view.Checks.JobID)
 	}
@@ -1264,9 +1155,7 @@ func TestBrowserAutomaticJobDetailNamesTheServerNotTheOperator(t *testing.T) {
 	// A manual helper attempt on the same repository still reads as manual,
 	// which is the compatibility this repair must not cost.
 	manualTask, err := fixture.store.CreateTask(context.Background(), "project", "Manual helper run", fixture.app.now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	recordBrowserAttempt(t, fixture.store, manualTask.ID, fixture.targetOID,
 		strings.Repeat("8", 32), state.WorktreeClean, "", true)
 	manual := browserGET(t, client, server.URL+tasksURL("project", manualTask.ID))
@@ -1288,12 +1177,7 @@ func TestBrowserOpenedJobStatesItsOwnAddressForTheLanguageLinks(t *testing.T) {
 	// /configured-checks?lang=ko, so the address bar lost the job and the next
 	// reload returned the reader to the policy screen.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	_, job := admitEnabledJob(t, fixture, server.URL, client, jar, "cc-lang",
 		jobFacts{ref: "main", sourceOID: strings.Repeat("a", 40)})
 
@@ -1349,12 +1233,7 @@ func TestBrowserJobQueryIsEscapedInTheAddressesTheScreenRenders(t *testing.T) {
 	// states is escaped rather than trusted. An unusable identifier renders as
 	// not found at that same address instead of breaking the markup.
 	fixture := newAPIFixture(t, false)
-	server := httptest.NewServer(fixture.app.Handler())
-	defer server.Close()
-	client, jar := newBrowserClient(t)
-	if result := browserGET(t, client, server.URL+"/repositories/project"); result.status != http.StatusOK {
-		t.Fatalf("repository status=%d", result.status)
-	}
+	server, client, jar := openBrowser(t, fixture)
 	browserAdminSessionFor(t, fixture, server.URL, jar, "cc-lang-escape")
 
 	page := browserGET(t, client, server.URL+configuredChecksURL("project")+"?job=a%26b%3Cscript%3E")

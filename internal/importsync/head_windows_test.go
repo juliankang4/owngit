@@ -22,9 +22,7 @@ func makeJunction(t *testing.T, junction, target string) {
 		t.Skipf("junction creation unavailable: %v: %s", err, output)
 	}
 	name, err := windows.UTF16PtrFromString(junction)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attributes, err := windows.GetFileAttributes(name)
 	if err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
 		t.Fatalf("junction attributes=%#x err=%v", attributes, err)
@@ -39,9 +37,7 @@ func TestWindowsJunctionRepositoryRootIsRefusedForHEADLock(t *testing.T) {
 	junction := filepath.Join(f.root, "root-junction")
 	makeJunction(t, junction, path)
 	info, err := os.Lstat(junction)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if directDirectory(junction, info) {
 		t.Fatal("junction root passed the direct directory guard")
 	}
@@ -60,9 +56,7 @@ func TestWindowsJunctionHEADLockPathIsPreserved(t *testing.T) {
 	f.mustImport(ImportInput{})
 	path := f.destinationPath()
 	target := filepath.Join(f.root, "lock-target")
-	if err := os.Mkdir(target, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(target, 0o700))
 	lockPath := filepath.Join(path, "HEAD.lock")
 	makeJunction(t, lockPath, target)
 	expected := headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: oid}
@@ -73,9 +67,7 @@ func TestWindowsJunctionHEADLockPathIsPreserved(t *testing.T) {
 		t.Fatal("cleanup removed a junction it never created")
 	}
 	name, err := windows.UTF16PtrFromString(lockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attributes, err := windows.GetFileAttributes(name)
 	if err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
 		t.Fatalf("junction lock changed: attributes=%#x err=%v", attributes, err)

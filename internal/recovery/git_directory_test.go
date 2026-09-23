@@ -20,29 +20,19 @@ func TestRecoveryUsesBareRepositoryWorkingDirectoryAtWindowsGitBoundaries(t *tes
 	sourceRoot := recoveryRepositoryRootAtLength(t, 221, "project")
 	stateDirectory := filepath.Join(t.TempDir(), "state")
 	store, err := state.Open(ctx, stateDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	adminHash, err := auth.HashPassword("synthetic-admin-password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, sourceRoot, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(ctx, sourceRoot, "open", "", adminHash, true))
 	runner, err := gitexec.New("", filepath.Join(stateDirectory, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: sourceRoot}
 	repositoryPath := filepath.Join(sourceRoot, "project.git")
 	if len(repositoryPath) != 221 {
 		t.Fatalf("source bare path length=%d want=221", len(repositoryPath))
 	}
-	if err := os.Mkdir(repositoryPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryPath, 0o700))
 	if _, err := runner.Run(ctx, repositoryPath, nil, "init", "--bare", "--initial-branch=main", "."); err != nil {
 		t.Fatal(err)
 	}
@@ -52,46 +42,32 @@ func TestRecoveryUsesBareRepositoryWorkingDirectoryAtWindowsGitBoundaries(t *tes
 		}
 	}
 	blob, err := runner.Run(ctx, repositoryPath, strings.NewReader("boundary\n"), "--git-dir", ".", "hash-object", "-w", "--stdin")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	blobOID := strings.TrimSpace(string(blob.Stdout))
 	treeInput := "100644 blob " + blobOID + "\tfile.txt\n"
 	tree, err := runner.Run(ctx, repositoryPath, strings.NewReader(treeInput), "--git-dir", ".", "mktree")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	commit, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "commit-tree", strings.TrimSpace(string(tree.Stdout)), "-m", "boundary")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	commitOID := strings.TrimSpace(string(commit.Stdout))
 	if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "update-ref", "refs/heads/main", commitOID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AddRepository(ctx, state.Repository{ID: "project", Name: "project", Description: "Long bare path fixture", CreatedAt: time.Now().UTC().Truncate(time.Second)}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(ctx, state.Repository{ID: "project", Name: "project", Description: "Long bare path fixture", CreatedAt: time.Now().UTC().Truncate(time.Second)}))
 
 	backupRunner := &recordingRecoveryRunner{delegate: runner}
 	backup := filepath.Join(t.TempDir(), "backup")
-	if err := create(ctx, store, manager, backupRunner, backup); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, create(ctx, store, manager, backupRunner, backup))
 	assertRecoveryBareCalls(t, backupRunner.calls, repositoryPath)
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(manifest.Repositories) != 1 || manifest.Repositories[0].Empty {
 		t.Fatalf("manifest repositories=%+v", manifest.Repositories)
 	}
 
 	repositoryStage := recoveryRepositoryRootAtLength(t, 250, "project")
 	restoreRunner := &recordingRecoveryRunner{delegate: runner}
-	if err := restoreRepository(ctx, restoreRunner, backup, repositoryStage, manifest.Repositories[0]); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, restoreRepository(ctx, restoreRunner, backup, repositoryStage, manifest.Repositories[0]))
 	restoredPath := filepath.Join(repositoryStage, "project.git")
 	if len(restoredPath) != 250 {
 		t.Fatalf("restored bare path length=%d want=250", len(restoredPath))
@@ -123,9 +99,7 @@ func recoveryRepositoryRootAtLength(t *testing.T, target int, repositoryID strin
 		t.Fatalf("cannot construct %d-byte repository path below %q", target, base)
 	}
 	root := filepath.Join(base, strings.Repeat("r", componentLength))
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(root, 0o700))
 	if got := len(filepath.Join(root, repositoryID+".git")); got != target {
 		t.Fatalf("constructed repository path length=%d want=%d", got, target)
 	}

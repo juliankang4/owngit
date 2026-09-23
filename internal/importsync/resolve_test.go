@@ -32,9 +32,7 @@ func unresolvedHEADRefresh(t *testing.T) (*fixture, state.ImportRun, string) {
 	if err == nil || problemCode(err) != CodeUnresolved || run.Status != state.ImportRunUnresolved {
 		t.Fatalf("mixed outcome run=%+v err=%v", run, err)
 	}
-	if err := f.store.Exec(context.Background(), `DROP TRIGGER fail_applied`); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.Exec(context.Background(), `DROP TRIGGER fail_applied`))
 	return f, run, newDev
 }
 
@@ -62,9 +60,7 @@ func TestOwnerResolutionLetsTheNextRefreshPlanFromTheDestination(t *testing.T) {
 		t.Fatalf("resolved intent=%+v exists=%v err=%v", intent, exists, err)
 	}
 	var receipt map[string]string
-	if err := json.Unmarshal([]byte(intent.ReceiptJSON), &receipt); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(intent.ReceiptJSON), &receipt))
 	if receipt["refs/heads/dev"] != newDev || !strings.HasPrefix(receipt[state.ImportHeadRef], "symbolic refs/heads/main ") || intent.ReceiptDigest != state.ImportReceiptDigest(intent.ReceiptJSON) {
 		t.Fatalf("owner receipt=%v", receipt)
 	}
@@ -104,9 +100,7 @@ func TestOwnerResolutionLetsTheNextRefreshPlanFromTheDestination(t *testing.T) {
 	if intent.Status != state.ImportIntentOwnerResolved {
 		t.Fatalf("owner-resolved intent became %s", intent.Status)
 	}
-	if err := f.service.Reconcile(ctx); err != nil {
-		t.Fatalf("reconcile after owner resolution: %v", err)
-	}
+	noErr(t, f.service.Reconcile(ctx), "reconcile after owner resolution")
 }
 
 func TestOwnerResolutionRefusals(t *testing.T) {
@@ -154,16 +148,10 @@ func TestOwnerResolutionRefusals(t *testing.T) {
 		f, _, _ := unresolvedHEADRefresh(t)
 		headPath := filepath.Join(f.destinationPath(), "HEAD")
 		original, err := os.ReadFile(headPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(headPath, []byte("ref: refs/tags/not-a-branch\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
+		noErr(t, os.WriteFile(headPath, []byte("ref: refs/tags/not-a-branch\n"), 0o644))
 		_, resolveErr := f.service.ResolveUnresolved(ctx, "project")
-		if err := os.WriteFile(headPath, original, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(headPath, original, 0o644))
 		if resolveErr == nil {
 			t.Fatal("resolution accepted an unreadable destination HEAD")
 		}

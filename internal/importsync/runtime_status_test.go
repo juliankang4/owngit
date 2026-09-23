@@ -20,28 +20,18 @@ func TestStatusReportsSchedulerAvailability(t *testing.T) {
 		t.Fatalf("status before any scheduler runtime=%+v err=%v", status.Runtime, err)
 	}
 	scheduler := &Scheduler{Service: f.service}
-	if err := scheduler.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, scheduler.Start(ctx))
 	status, err = f.service.Status(ctx, "project")
 	if err != nil || !status.Runtime.SchedulerRunning || status.Runtime.Code != "" {
 		t.Fatalf("status with a running scheduler runtime=%+v err=%v", status.Runtime, err)
 	}
-	if err := scheduler.Stop(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, scheduler.Stop(ctx))
+	noErr(t, f.service.Close())
 
 	// A second process-like service on a blocked staging root cannot prepare.
 	blocked := newFixture(t)
-	if err := os.MkdirAll(filepath.Join(blocked.store.Dir(), "runtime"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(blocked.store.Dir(), "runtime", "import-staging"), []byte("not a directory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(filepath.Join(blocked.store.Dir(), "runtime"), 0o700))
+	noErr(t, os.WriteFile(filepath.Join(blocked.store.Dir(), "runtime", "import-staging"), []byte("not a directory"), 0o600))
 	failed := &Scheduler{Service: blocked.service}
 	if err := failed.Start(ctx); err == nil {
 		t.Fatal("scheduler started on a blocked staging root")

@@ -82,30 +82,22 @@ func (instance *servedInstance) stop() {
 func completeSetupOverHTTP(t *testing.T, store *state.Store, base, repositoryRoot, adminPassword string) {
 	t.Helper()
 	const token = "lifetime-owner-setup-token"
-	if err := store.PutBootstrap(context.Background(), token, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.PutBootstrap(context.Background(), token, time.Now().Add(time.Hour)))
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	post := func(path string, values url.Values) int {
 		request, err := http.NewRequest(http.MethodPost, base+path, strings.NewReader(values.Encode()))
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		request.Header.Set("Origin", base)
 		response, err := client.Do(request)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		_, _ = io.Copy(io.Discard, response.Body)
 		response.Body.Close()
 		return response.StatusCode
 	}
 	response, err := client.Get(base + "/setup")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	response.Body.Close()
 	cookie := func(name string) string {
 		parsed, _ := url.Parse(base)
@@ -135,14 +127,10 @@ func completeSetupOverHTTP(t *testing.T, store *state.Store, base, repositoryRoo
 func importRuntimeStatus(t *testing.T, base, repositoryID, adminPassword string) (bool, string) {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet, base+"/api/v1/repositories/"+repositoryID+"/import", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	request.SetBasicAuth("admin", adminPassword)
 	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer response.Body.Close()
 	var envelope struct {
 		Status struct {
@@ -168,16 +156,12 @@ func TestSchedulerStartsWhenSetupCompletesWhileServing(t *testing.T) {
 	base := t.TempDir()
 	stateDir := filepath.Join(base, "state")
 	root := filepath.Join(base, "repositories")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(root, 0o700))
 	served := startServed(t, stateDir)
 	defer served.stop()
 	ctx := context.Background()
 	store, err := state.Open(ctx, stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	const adminPassword = "lifetime-admin-password"
 	completeSetupOverHTTP(t, store, served.url, root, adminPassword)
@@ -190,9 +174,7 @@ func TestSchedulerStartsWhenSetupCompletesWhileServing(t *testing.T) {
 		t.Fatalf("git init: %v %s", err, output)
 	}
 	now := time.Now().UTC()
-	if err := store.AddRepository(ctx, state.Repository{ID: "demo", Name: "demo", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(ctx, state.Repository{ID: "demo", Name: "demo", CreatedAt: now}))
 	// An unreachable source keeps the scheduled run short and offline.
 	if _, err := store.ConfigureImportSource(ctx, state.ImportSourceInput{RepositoryID: "demo", URL: "https://127.0.0.1:9/demo.git", Mode: "standalone", Now: now}); err != nil {
 		t.Fatal(err)
@@ -206,9 +188,7 @@ func TestSchedulerStartsWhenSetupCompletesWhileServing(t *testing.T) {
 	deadline := time.Now().Add(45 * time.Second)
 	for {
 		schedule, _, err := store.ImportSchedule(ctx, "demo")
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if schedule.LastStartedAt != nil {
 			break
 		}

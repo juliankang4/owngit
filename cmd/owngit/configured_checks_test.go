@@ -44,12 +44,8 @@ func TestConfiguredCheckCLIEndToEnd(t *testing.T) {
 		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 10_000,
 	}
 	policyJSON, err := json.Marshal(policyInput)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(policyFile, policyJSON, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, os.WriteFile(policyFile, policyJSON, 0o600))
 
 	set := fixture.runPolicy(t, "set", "--policy-file", policyFile)
 	assertConfiguredCheckRuntime(t, set)
@@ -162,13 +158,9 @@ func newConfiguredCheckCLIFixture(t *testing.T) *configuredCheckCLIFixture {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	repositoryRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	store, err := state.Open(ctx, stateRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() {
 		if err := store.Close(); err != nil {
 			t.Error(err)
@@ -176,41 +168,27 @@ func newConfiguredCheckCLIFixture(t *testing.T) *configuredCheckCLIFixture {
 	})
 	const adminPassword = "synthetic-admin-password"
 	adminHash, err := auth.HashPassword(adminPassword)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true))
 	git, err := gitexec.New("", filepath.Join(stateRoot, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: git, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	stored, err := manager.Create(ctx, "configured-check-cli", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoryPath, err := manager.Path(stored.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	work := filepath.Join(root, "source")
 	runPRGit(t, "", "init", "--initial-branch=main", work)
 	runPRGit(t, work, "config", "user.name", "Configured Check CLI Test")
 	runPRGit(t, work, "config", "user.email", "configured-check@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "source.txt"), []byte("exact CLI runner source\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "source.txt"), []byte("exact CLI runner source\n"), 0o600))
 	runPRGit(t, work, "add", "source.txt")
 	runPRGit(t, work, "commit", "-m", "configured check CLI source")
 	runPRGit(t, work, "push", repositoryPath, "HEAD:refs/heads/main")
 	sourceOID := prGitOutput(t, work, "rev-parse", "HEAD")
 
 	gitHandler, err := githttp.New(git, manager, "", 2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	hosts := server.NewHostPolicy()
 	application := &server.App{
 		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
@@ -221,12 +199,8 @@ func newConfiguredCheckCLIFixture(t *testing.T) *configuredCheckCLIFixture {
 	httpServer := httptest.NewServer(application.Handler())
 	t.Cleanup(httpServer.Close)
 	adminPasswordFile := filepath.Join(root, "admin-password")
-	if err := os.WriteFile(adminPasswordFile, []byte(adminPassword+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ProtectPrivatePath(adminPasswordFile, false); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(adminPasswordFile, []byte(adminPassword+"\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(adminPasswordFile, false))
 	return &configuredCheckCLIFixture{
 		ctx: ctx, root: root, store: store, repository: stored, sourceOID: sourceOID,
 		adminPassword: adminPasswordFile, httpServer: httpServer,
@@ -285,9 +259,7 @@ func (fixture *configuredCheckCLIFixture) readJob(t *testing.T, jobID string) st
 func configuredCheckCLIOutput(t *testing.T, command func() error) string {
 	t.Helper()
 	output, err := captureStdout(command)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return output
 }
 

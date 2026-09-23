@@ -94,15 +94,11 @@ func TestEveryCountedNounInTemplatesIsDeclared(t *testing.T) {
 	found := map[string]bool{}
 
 	entries, err := templateFS.ReadDir("templates")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	var read func(dir string)
 	read = func(dir string) {
 		items, err := templateFS.ReadDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		for _, item := range items {
 			path := dir + "/" + item.Name()
 			if item.IsDir() {
@@ -110,9 +106,7 @@ func TestEveryCountedNounInTemplatesIsDeclared(t *testing.T) {
 				continue
 			}
 			data, err := templateFS.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			for _, m := range pattern.FindAllStringSubmatch(string(data), -1) {
 				found[m[1]] = true
 			}

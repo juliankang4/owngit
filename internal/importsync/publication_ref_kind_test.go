@@ -64,9 +64,7 @@ func TestDanglingSymbolicDestinationRefsFailClosed(t *testing.T) {
 			}
 			path := filepath.Join(f.destinationPath(), filepath.FromSlash(test.ref))
 			const target = "refs/heads/dangling-local-target"
-			if err := os.WriteFile(path, []byte("ref: "+target+"\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(path, []byte("ref: "+target+"\n"), 0o600))
 			run, err := f.refresh()
 			if err == nil || run.Status != state.ImportRunFailed {
 				t.Fatalf("dangling alias run=%+v err=%v", run, err)
@@ -86,9 +84,7 @@ func TestInvalidLooseRefContentFailsClosed(t *testing.T) {
 	f.mustImport(ImportInput{})
 	f.git(f.source, "tag", "-f", "-a", "v1", "-m", "second annotation")
 	path := filepath.Join(f.destinationPath(), "refs", "tags", "v1")
-	if err := os.WriteFile(path, []byte("not-an-object-id\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(path, []byte("not-an-object-id\n"), 0o600))
 	if run, err := f.refresh(); err == nil || run.Status != state.ImportRunFailed {
 		t.Fatalf("invalid loose ref run=%+v err=%v", run, err)
 	}
@@ -104,12 +100,8 @@ func TestNonRegularLooseRefPathFailsClosed(t *testing.T) {
 	f.mustImport(ImportInput{})
 	f.git(f.source, "tag", "-f", "-a", "v1", "-m", "second annotation")
 	path := filepath.Join(f.destinationPath(), "refs", "tags", "v1")
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(path, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Remove(path))
+	noErr(t, os.Mkdir(path, 0o700))
 	if run, err := f.refresh(); err == nil || run.Status != state.ImportRunFailed {
 		t.Fatalf("nonregular loose ref run=%+v err=%v", run, err)
 	}
@@ -132,12 +124,8 @@ func TestUnsafeLooseRefPathFailsClosed(t *testing.T) {
 	const protected = "refs/owngit/manual/symlink-target"
 	f.git(root, "--git-dir", ".", "update-ref", protected, old)
 	refPath := filepath.Join(root, "refs", "tags", "v1")
-	if err := os.Remove(refPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(root, filepath.FromSlash(protected)), refPath); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Remove(refPath))
+	noErr(t, os.Symlink(filepath.Join(root, filepath.FromSlash(protected)), refPath))
 	if run, err := f.refresh(); err == nil || run.Status != state.ImportRunFailed {
 		t.Fatalf("unsafe loose ref run=%+v err=%v", run, err)
 	}
@@ -158,12 +146,8 @@ func TestCyclicSymbolicDestinationRefFailsClosed(t *testing.T) {
 	root := f.destinationPath()
 	v1 := filepath.Join(root, "refs", "tags", "v1")
 	v2 := filepath.Join(root, "refs", "tags", "v2")
-	if err := os.WriteFile(v1, []byte("ref: refs/tags/v2\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(v2, []byte("ref: refs/tags/v1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(v1, []byte("ref: refs/tags/v2\n"), 0o600))
+	noErr(t, os.WriteFile(v2, []byte("ref: refs/tags/v1\n"), 0o600))
 	if run, err := f.refresh(); err == nil || run.Status != state.ImportRunFailed {
 		t.Fatalf("cyclic alias run=%+v err=%v", run, err)
 	}
@@ -391,12 +375,8 @@ func TestHEADCommitWithoutPersistedProofDoesNotGrantOwnership(t *testing.T) {
 	if queryErr != nil || len(intents) != 1 || intents[0].HeadOwned {
 		t.Fatalf("failed ownership proof became authority: intents=%+v err=%v", intents, queryErr)
 	}
-	if err := f.store.Exec(context.Background(), `DROP TRIGGER fail_head_owned`); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.Exec(context.Background(), `DROP TRIGGER fail_head_owned`))
+	noErr(t, f.service.Reconcile(context.Background()))
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/future-next")
 	if _, err := f.refresh(); err != nil {
 		t.Fatal(err)
@@ -420,17 +400,11 @@ func TestDiagnosticTextCannotGrantHEADOwnership(t *testing.T) {
 	// ownership. The update below clears that field. Diagnostic text must not
 	// put it back.
 	reason := "read /synthetic/destination HEAD ownership proven by an applied publication/repository: permission denied"
-	if err := f.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", reason, f.now); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", reason, f.now))
 	run.Status = state.ImportRunUnresolved
 	run.ErrorClass = CodeUnresolved
-	if err := f.store.FinishImportRun(ctx, run); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.FinishImportRun(ctx, run))
+	noErr(t, f.service.Reconcile(ctx))
 	f.git(f.source, "branch", "source-next", oid)
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/source-next")
 	if _, err := f.refresh(); err != nil {

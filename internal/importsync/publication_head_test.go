@@ -23,16 +23,12 @@ func markHEADOwnedForTest(t *testing.T, f *fixture, runID string) {
 	desiredHEAD, desiredExists := intent.Desired[state.ImportHeadRef]
 	observedHEAD, observedExists := intent.Observed[state.ImportHeadRef]
 	var receipt map[string]string
-	if err := json.Unmarshal([]byte(intent.ReceiptJSON), &receipt); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal([]byte(intent.ReceiptJSON), &receipt))
 	if !desiredExists || !observedExists || receipt[state.ImportHeadRef] != desiredHEAD {
 		t.Fatalf("synthetic ownership seed lacks consistent HEAD facts: desired=%q observed=%q receipt=%q", desiredHEAD, observedHEAD, receipt[state.ImportHeadRef])
 	}
 	desired, err := decodeHeadIdentity(desiredHEAD)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	observed, err := decodeHeadIdentity(observedHEAD)
 	if err != nil || !sameHEADIdentity(desired, observed) {
 		t.Fatalf("synthetic ownership seed HEAD mismatch: desired=%q observed=%q err=%v", desiredHEAD, observedHEAD, err)
@@ -52,9 +48,7 @@ func TestRefreshPreservesLocallyRetargetedHEADAndReportsDivergence(t *testing.T)
 	path := f.destinationPath()
 	f.git(path, "symbolic-ref", "HEAD", "refs/heads/dev")
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if run.RefsDivergent != 1 {
 		t.Fatalf("HEAD divergence count=%d run=%+v", run.RefsDivergent, run)
 	}
@@ -72,9 +66,7 @@ func TestRefreshPreservesSameOIDCrossKindLocalHEAD(t *testing.T) {
 	f.git(path, "update-ref", "--no-deref", "HEAD", oid)
 
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if run.RefsDivergent != 1 {
 		t.Fatalf("cross-kind HEAD divergence count=%d run=%+v", run.RefsDivergent, run)
 	}
@@ -148,9 +140,7 @@ func TestOwnedUnresolvedSymbolicHEADIsNotTreatedAsAbsent(t *testing.T) {
 		t.Fatalf("unresolved symbolic HEAD symref=%q oid=%q err=%v", symref, oid, err)
 	}
 	observations, err := f.store.ImportObservations(context.Background(), "project", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for _, observation := range observations {
 		if observation.RefName == state.ImportHeadRef && observation.SymrefTarget == "refs/heads/future" && observation.OID == "" {
 			return
@@ -264,9 +254,7 @@ func TestPublicationRecordsImmediateSymbolicHEAD(t *testing.T) {
 	f.git(path, "--git-dir", ".", "symbolic-ref", "HEAD", localTarget)
 	f.commit("second", "second bytes\n")
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatalf("preserving local symbolic HEAD should allow other owned refs to refresh: %v", err)
-	}
+	noErr(t, err, "preserving local symbolic HEAD should allow other owned refs to refresh")
 	if got := f.git(path, "--git-dir", ".", "symbolic-ref", "--no-recurse", "HEAD"); got != localTarget {
 		t.Fatalf("local immediate HEAD changed: got=%s want=%s", got, localTarget)
 	}
@@ -333,31 +321,19 @@ func TestHEADCommitPreservesReplacedLock(t *testing.T) {
 	path := f.destinationPath()
 	headPath := filepath.Join(path, "HEAD")
 	before, err := os.ReadFile(headPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	expected, err := readRawHEAD(headPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	lock, err := f.service.acquireHEADLock(context.Background(), &runState{limits: DefaultLimits()}, path, expected)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer lock.rollback()
 	if runtime.GOOS == "windows" {
-		if err := lock.file.Close(); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, lock.file.Close())
 		lock.file = nil
 	}
-	if err := os.Rename(lock.path, lock.path+".original-owned"); err != nil {
-		t.Fatalf("replacement fixture cannot move the owned lock: %v", err)
-	}
+	noErr(t, os.Rename(lock.path, lock.path+".original-owned"), "replacement fixture cannot move the owned lock")
 	foreign := []byte("ref: refs/heads/foreign-writer\n")
-	if err := os.WriteFile(lock.path, foreign, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(lock.path, foreign, 0o600))
 	if runtime.GOOS == "windows" {
 		if err := lock.checkLockIdentity(); err == nil {
 			t.Fatal("closed HEAD lock accepted a replacement pathname")
@@ -389,12 +365,8 @@ func TestHEADPreflightReplacementStopsBeforeRefWrites(t *testing.T) {
 	lockPath := filepath.Join(path, "HEAD.lock")
 	f.service.beforeHEADPreflightRelease = func() {
 		f.service.beforeHEADPreflightRelease = nil
-		if err := os.Rename(lockPath, lockPath+".original-owned"); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(lockPath, []byte("foreign preflight lock\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.Rename(lockPath, lockPath+".original-owned"))
+		noErr(t, os.WriteFile(lockPath, []byte("foreign preflight lock\n"), 0o600))
 	}
 	run, err := f.refresh()
 	if err == nil || problemCode(err) != CodePublishFailed || run.Status != state.ImportRunFailed {
@@ -441,9 +413,7 @@ func TestBetweenHEADLocksRacesPreserveIndependentWriterAndRefOutcome(t *testing.
 		{
 			name: "foreign lock",
 			mutateHEAD: func(t *testing.T, _ *fixture, path, _ string) {
-				if err := os.WriteFile(filepath.Join(path, "HEAD.lock"), []byte("foreign final lock\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, os.WriteFile(filepath.Join(path, "HEAD.lock"), []byte("foreign final lock\n"), 0o600))
 			},
 			assertHEAD: func(t *testing.T, f *fixture, path, _ string) {
 				if got := f.git(path, "--git-dir", ".", "symbolic-ref", "--no-recurse", "HEAD"); got != "refs/heads/main" {
@@ -489,9 +459,7 @@ func TestExistingHEADLockIsPreservedAndPreventsPublication(t *testing.T) {
 	f.git(f.source, "checkout", "--quiet", "dev")
 	path := f.destinationPath()
 	lockPath := filepath.Join(path, "HEAD.lock")
-	if err := os.WriteFile(lockPath, []byte("independent writer\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(lockPath, []byte("independent writer\n"), 0o600))
 	run, err := f.refresh()
 	if err == nil || problemCode(err) != CodeDestinationChanged || run.Status != state.ImportRunFailed {
 		t.Fatalf("lock contention run=%+v err=%v", run, err)
@@ -518,15 +486,9 @@ func TestHEADSymlinkIsRefusedWithoutWritingThroughIt(t *testing.T) {
 	path := f.destinationPath()
 	headPath := filepath.Join(path, "HEAD")
 	sentinel := filepath.Join(f.root, "head-sentinel")
-	if err := os.WriteFile(sentinel, []byte("ref: refs/heads/main\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(headPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(sentinel, headPath); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(sentinel, []byte("ref: refs/heads/main\n"), 0o600))
+	noErr(t, os.Remove(headPath))
+	noErr(t, os.Symlink(sentinel, headPath))
 	run, err := f.refresh()
 	if err == nil || run.Status != state.ImportRunFailed {
 		t.Fatalf("symlink HEAD run=%+v err=%v", run, err)
@@ -552,9 +514,7 @@ func TestFailedRefTransactionDoesNotWriteHEAD(t *testing.T) {
 	f.commit("dev next", "next\n")
 	path := f.destinationPath()
 	refLock := filepath.Join(path, "refs", "heads", "dev.lock")
-	if err := os.WriteFile(refLock, []byte("independent ref writer\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(refLock, []byte("independent ref writer\n"), 0o600))
 	run, err := f.refresh()
 	if err == nil || problemCode(err) != CodePublishFailed || run.Status != state.ImportRunFailed {
 		t.Fatalf("ref failure run=%+v err=%v", run, err)
@@ -579,22 +539,16 @@ func TestRealGitHEADWriterContendsWithOwnedLock(t *testing.T) {
 	f.git(f.source, "branch", "dev")
 	f.mustImport(ImportInput{})
 	limits, err := (Limits{}).effective()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	run := &runState{limits: limits}
 	expected := headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: oid}
 	lock, err := f.service.acquireHEADLock(context.Background(), run, f.destinationPath(), expected)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if _, err := f.manager.Git.Run(context.Background(), f.destinationPath(), nil, "--git-dir", ".", "symbolic-ref", "HEAD", "refs/heads/dev"); err == nil {
 		_ = lock.rollback()
 		t.Fatal("real Git writer ignored HEAD.lock")
 	}
-	if err := lock.rollback(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, lock.rollback())
 	f.git(f.destinationPath(), "symbolic-ref", "HEAD", "refs/heads/dev")
 }
 
@@ -625,9 +579,7 @@ func TestAppliedStateFailureClassifiesMixedRefAndHEADOutcome(t *testing.T) {
 	if queryErr != nil || len(intents) != 1 || intents[0].Status != state.ImportIntentUnresolved {
 		t.Fatalf("mixed intent=%+v err=%v", intents, queryErr)
 	}
-	if err := f.store.Exec(context.Background(), `DROP TRIGGER fail_applied`); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.Exec(context.Background(), `DROP TRIGGER fail_applied`))
 	if err := f.service.Reconcile(context.Background()); err == nil || problemCode(err) != CodeUnresolved {
 		t.Fatalf("mixed outcome was silently promoted: %v", err)
 	}
@@ -672,9 +624,7 @@ func TestPublicationBookkeepingFailuresRemainRecoverable(t *testing.T) {
 			f.commit("initial", "initial\n")
 			f.mustImport(ImportInput{})
 			test.change(f)
-			if err := f.store.Exec(context.Background(), test.trigger); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, f.store.Exec(context.Background(), test.trigger))
 			run, err := f.refresh()
 			if err == nil || problemCode(err) != CodeStateUnavailable || run.Status != state.ImportRunFailed {
 				t.Fatalf("failed bookkeeping run=%+v err=%v", run, err)
@@ -683,12 +633,8 @@ func TestPublicationBookkeepingFailuresRemainRecoverable(t *testing.T) {
 			if queryErr != nil || len(intents) != 1 || intents[0].Status == state.ImportIntentComplete {
 				t.Fatalf("recoverable intents=%+v err=%v", intents, queryErr)
 			}
-			if err := f.store.Exec(context.Background(), `DROP TRIGGER fail_publication`); err != nil {
-				t.Fatal(err)
-			}
-			if err := f.service.Reconcile(context.Background()); err != nil {
-				t.Fatalf("reconcile durable outcome: %v", err)
-			}
+			noErr(t, f.store.Exec(context.Background(), `DROP TRIGGER fail_publication`))
+			noErr(t, f.service.Reconcile(context.Background()), "reconcile durable outcome")
 			stored, exists, queryErr := f.store.ImportRun(context.Background(), run.ID)
 			if queryErr != nil || !exists || stored.Status != state.ImportRunComplete {
 				t.Fatalf("reconciled run=%+v exists=%v err=%v", stored, exists, queryErr)
@@ -724,14 +670,10 @@ func TestCompleteReceiptWithUnfinishedRunIsReconciled(t *testing.T) {
 		ID: strings.Repeat("c", 32), RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1,
 		Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing, StartedAt: now, CreatedAt: now,
 	}
-	if err := f.store.BeginImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.BeginImportRun(context.Background(), run))
 	run.Status = state.ImportRunInterrupted
 	run.FinishedAt = now
-	if err := f.store.FinishImportRun(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.FinishImportRun(context.Background(), run))
 	head := (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: oid}).encode()
 	intent := state.ImportIntent{
 		ID: strings.Repeat("d", 32), RepositoryID: "project", RunID: run.ID,
@@ -741,16 +683,10 @@ func TestCompleteReceiptWithUnfinishedRunIsReconciled(t *testing.T) {
 		Observed: map[string]string{"refs/heads/main": oid, state.ImportHeadRef: head},
 		Retained: map[string]string{}, CreatedAt: now,
 	}
-	if err := f.store.CreateImportIntent(context.Background(), intent); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.CreateImportIntent(context.Background(), intent))
 	receipt := `{"HEAD":"` + head + `","refs/heads/main":"` + oid + `"}`
-	if err := f.store.UpdateImportIntent(context.Background(), intent.ID, state.ImportIntentComplete, receipt, state.ImportReceiptDigest(receipt), "synthetic old sequence", now); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.store.UpdateImportIntent(context.Background(), intent.ID, state.ImportIntentComplete, receipt, state.ImportReceiptDigest(receipt), "synthetic old sequence", now))
+	noErr(t, f.service.Reconcile(context.Background()))
 	stored, exists, err := f.store.ImportRun(context.Background(), run.ID)
 	if err != nil || !exists || stored.Status != state.ImportRunComplete {
 		t.Fatalf("recovered run=%+v exists=%v err=%v", stored, exists, err)

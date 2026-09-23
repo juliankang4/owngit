@@ -22,9 +22,7 @@ var (
 func palette(t *testing.T, selector string) map[string]string {
 	t.Helper()
 	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	css := string(data)
 	start := strings.Index(css, selector)
 	if start < 0 {
@@ -209,9 +207,7 @@ func TestFadedPanelsStillMeetContrast(t *testing.T) {
 	// project requires. Any rule that fades text has to be checked against the
 	// colour it actually produces.
 	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	css := string(data)
 
 	// Text colours that can appear inside a faded container, with the surface
@@ -274,9 +270,7 @@ func TestRestoreInactivePanelKeepsItsTextReadable(t *testing.T) {
 	// text rather than by fading. Check the state exists, that it says so in
 	// words, and that the words on its surface are readable.
 	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	css := string(data)
 
 	start := strings.Index(css, ".restore__files[data-restore-dimmed]")

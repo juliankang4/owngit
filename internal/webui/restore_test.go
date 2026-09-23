@@ -138,27 +138,6 @@ func TestRestoreExpectedHeadIsCarriedForAnAbsentBranch(t *testing.T) {
 // two deliberate steps
 // ---------------------------------------------------------------------------
 
-func TestRestoreHasNoApplyControlBeforeAPreview(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, restorePage(fullChrome(LangEN), false))
-
-	if strings.Contains(out, `action="/repositories/r1/restore"`) {
-		t.Error("the apply endpoint is reachable before anything was previewed")
-	}
-	if strings.Contains(out, `name="confirm"`) {
-		t.Error("a confirmation control exists before there is a result to confirm")
-	}
-	if strings.Contains(out, wantText(LangEN, MsgRestoreConfirmLabel)) {
-		t.Error("a restore confirmation is offered before the changes were shown")
-	}
-	if strings.Contains(out, wantText(LangEN, MsgRestorePreviewTitle)) {
-		t.Error("a changes section is shown before anything was previewed")
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgRestorePreviewSubmit)) {
-		t.Error("the first step does not offer a preview")
-	}
-}
-
 func TestRestorePreviewOffersNoControlThatCanContradictIt(t *testing.T) {
 	// Regression. The selection form used to stay editable beside the preview
 	// while the apply form carried the previewed values in hidden fields. A
@@ -306,23 +285,6 @@ func TestRestoreCannotBeAppliedWhenTheBackendSaysSo(t *testing.T) {
 // deletions are never inferred
 // ---------------------------------------------------------------------------
 
-func TestRestoreSelectionListsDeletionsAsTheirOwnRows(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, restorePage(fullChrome(LangEN), false))
-
-	if !strings.Contains(out, "internal/retry/legacy.go") {
-		t.Fatal("a path that restoring would delete is missing from the list")
-	}
-	if !strings.Contains(out, wantText(LangEN, MsgRestoreStatusDeleted)) {
-		t.Error("a deletion is not labelled as a deletion in the selection list")
-	}
-	for _, code := range []MessageCode{MsgRestoreStatusAdded, MsgRestoreStatusModified} {
-		if !strings.Contains(out, wantText(LangEN, code)) {
-			t.Errorf("the selection list does not state the %q outcome", code)
-		}
-	}
-}
-
 func TestRestorePreviewNamesDeletedFilesSeparately(t *testing.T) {
 	r := newRenderer(t)
 	out := render(t, r, restorePage(fullChrome(LangEN), true))
@@ -339,45 +301,6 @@ func TestRestorePreviewNamesDeletedFilesSeparately(t *testing.T) {
 	}
 	if strings.Contains(deletes, "internal/retry/limits.go") {
 		t.Error("an added file was listed as a deletion")
-	}
-}
-
-func TestRestorePreviewShowsEveryChangedPathIncludingUntouchedText(t *testing.T) {
-	// A file whose text diff was not loaded still has to appear as a changed
-	// path, otherwise the list would understate what the commit does.
-	r := newRenderer(t)
-	out := render(t, r, restorePage(fullChrome(LangEN), true))
-	for _, path := range []string{
-		"internal/retry/backoff.go",
-		"internal/retry/limits.go",
-		"internal/retry/legacy.go",
-	} {
-		if !strings.Contains(out, path) {
-			t.Errorf("changed path %q is missing from the preview", path)
-		}
-	}
-}
-
-func TestRestoreTruncatedDiffSaysWhatIsIncomplete(t *testing.T) {
-	// The cut is in the line by line view, never in the path list, and the
-	// sentence has to say which one, or an incomplete screen would read as a
-	// fully reviewed one.
-	r := newRenderer(t)
-	page := restorePage(fullChrome(LangEN), true)
-	page.DiffTruncated = true
-	out := render(t, r, page)
-
-	if !strings.Contains(out, wantText(LangEN, MsgRestoreDiffTruncated)) {
-		t.Fatal("a truncated diff is not reported")
-	}
-	notice := Text(LangEN, MsgRestoreDiffTruncated)
-	if !strings.Contains(notice, "list of changed files is complete") {
-		t.Errorf("the truncation notice does not distinguish the two lists: %q", notice)
-	}
-	for _, path := range []string{"internal/retry/limits.go", "internal/retry/legacy.go"} {
-		if !strings.Contains(out, path) {
-			t.Errorf("%q disappeared from a truncated preview", path)
-		}
 	}
 }
 
@@ -704,39 +627,6 @@ func focusedMessage(t *testing.T, out string, lang Lang) MessageCode {
 	return found
 }
 
-func TestRestoreSelectionErrorsStayWithTheirInput(t *testing.T) {
-	// Step one does have inputs, so its notices are announced through them.
-	// Giving those a role as well would read the same message twice.
-	r := newRenderer(t)
-	c := fullChrome(LangEN)
-	c.Notices = []Notice{Error("target", MsgRestoreInvalid)}
-	out := render(t, r, restorePage(c, false))
-
-	if !strings.Contains(out, `aria-describedby="`+noteID(nil, "target")+`"`) {
-		t.Error("the control does not point at its error")
-	}
-	if strings.Contains(out, `role="alert"`) {
-		t.Error("the error is announced twice: once by the control and once by itself")
-	}
-}
-
-func TestFieldNoticesElsewhereAreUnchanged(t *testing.T) {
-	// The announcement was added for summaries with no control. Ordinary forms
-	// must keep describing their errors through the input, so this change
-	// cannot start duplicating announcements across the rest of the interface.
-	r := newRenderer(t)
-	c := fullChrome(LangEN)
-	c.Notices = []Notice{Error("name", MsgRepoNameTaken)}
-	out := render(t, r, NewRepositoryPage{Chrome: c, SubmitURL: "/repositories"})
-
-	if !strings.Contains(out, `aria-describedby="`+noteID(nil, "name")+`"`) {
-		t.Error("an ordinary form no longer links its error to the input")
-	}
-	if strings.Contains(out, `role="alert"`) {
-		t.Error("an ordinary form's field error is now announced twice")
-	}
-}
-
 func TestRestoreFieldErrorsAreAttachedToTheirControls(t *testing.T) {
 	r := newRenderer(t)
 	cases := []struct {
@@ -916,43 +806,6 @@ func TestRestoreTargetIsPrefilledWithTheCurrentChoice(t *testing.T) {
 	}
 }
 
-func TestRestoreNewBranchCopyFollowsTheBackendNotTheSuggestions(t *testing.T) {
-	// Whether restoring creates the branch is observed by the backend together
-	// with the tip the preview was computed against. The suggestion list is
-	// read separately and can be out of date, so deriving the answer from it
-	// would let the page describe a different plan than the one that will run.
-	//
-	// Both directions of that disagreement are checked.
-	r := newRenderer(t)
-
-	// A name absent from the suggestions, but the branch exists: it was
-	// created after the list was read. Nothing is being created here.
-	existing := restorePage(fullChrome(LangEN), true)
-	existing.TargetBranch = "added/after-the-list"
-	existing.CreatesBranch = false
-	if out := render(t, r, existing); strings.Contains(out, wantText(LangEN, MsgRestoreTargetNew)) {
-		t.Error("a branch the backend found is described as one that would be created")
-	}
-
-	// A name that is in the suggestions, but the branch is gone: it was
-	// deleted after the list was read. Restoring creates it.
-	gone := restorePage(fullChrome(LangEN), true)
-	gone.TargetBranch = "main"
-	gone.CreatesBranch = true
-	if !strings.Contains(render(t, r, gone), wantText(LangEN, MsgRestoreTargetNew)) {
-		t.Error("a branch the backend did not find is not flagged as one that would be created")
-	}
-
-	// It stays a suggestion either way; the list does not decide anything, and
-	// it does not change with the branch's state.
-	selecting := restorePage(fullChrome(LangEN), false)
-	selecting.TargetBranch = "main"
-	selecting.CreatesBranch = true
-	if out := render(t, r, selecting); !strings.Contains(out, `<option value="main">`) {
-		t.Error("the suggestion list changed because of the branch's state")
-	}
-}
-
 func TestRestoreSelectionStageMakesNoClaimTheReaderCanInvalidate(t *testing.T) {
 	// Observed in real use (A11Y-UI-01): the screen was opened with a target
 	// that did not exist, so the backend reported CreatesBranch and step one
@@ -1038,27 +891,6 @@ func TestRestoreSelectionStageMakesNoClaimTheReaderCanInvalidate(t *testing.T) {
 	}
 }
 
-func TestRestoreDoesNotGuessBranchStateFromTheExpectedTip(t *testing.T) {
-	// The zero OID is what the backend submits for an absent branch, but it is
-	// a value in a form field, not a signal this page interprets. Reading it
-	// here would be a second policy that could disagree with CreatesBranch.
-	r := newRenderer(t)
-	const zero = "0000000000000000000000000000000000000000"
-
-	page := restorePage(fullChrome(LangEN), true)
-	page.ExpectedHead = zero
-	page.CreatesBranch = false
-	if strings.Contains(render(t, r, page), wantText(LangEN, MsgRestoreTargetNew)) {
-		t.Error("the page inferred a new branch from the zero tip")
-	}
-
-	// And the tip is still submitted unchanged, whatever it is.
-	out := render(t, r, page)
-	if !strings.Contains(out, `name="expected_head" value="`+zero+`"`) {
-		t.Error("the observed tip was not submitted")
-	}
-}
-
 func TestRestoreTypedTargetSurvivesTheRoundTrip(t *testing.T) {
 	// A reader who typed a new name must not lose it by switching language or
 	// by stepping back from the preview to change something else.
@@ -1119,26 +951,6 @@ func TestRestoreTargetNameIsNotJudgedHere(t *testing.T) {
 	}
 }
 
-func TestRestoreStatesThatOtherComputersAreNotTouched(t *testing.T) {
-	// This is the boundary a reader is most likely to get wrong, so it sits
-	// beside the branch choice rather than only in the result message.
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, restorePage(fullChrome(lang), false))
-		if !strings.Contains(out, wantText(lang, MsgRestoreTargetHelp)) {
-			t.Errorf("%s: the page does not say what happens to other computers", lang)
-		}
-	}
-	en := Text(LangEN, MsgRestoreTargetHelp)
-	if !strings.Contains(en, "other computers are not touched") {
-		t.Errorf("the branch help no longer states the boundary: %q", en)
-	}
-	keep := Text(LangEN, MsgRestoreConfirmHelp)
-	if !strings.Contains(keep, "does not remove or rewrite") {
-		t.Errorf("the confirmation no longer promises the existing history is kept: %q", keep)
-	}
-}
-
 func TestRestoreGenericCopyDoesNotPromiseACommitThatMayNotExist(t *testing.T) {
 	// The two targets do different things. Restoring onto an existing branch
 	// writes a commit whose parent is that branch's tip. Restoring to a name
@@ -1193,59 +1005,9 @@ func TestRestoreGenericCopyDoesNotPromiseACommitThatMayNotExist(t *testing.T) {
 	}
 }
 
-func TestRestoreCopyIsShownForBothTargetKinds(t *testing.T) {
-	// Both explanations have to reach the screen, in both languages, in the
-	// case they describe.
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		// Choosing is where both outcomes are described, because either is
-		// still reachable from the field.
-		existing := render(t, r, restorePage(fullChrome(lang), false))
-		if !strings.Contains(existing, wantText(lang, MsgRestoreTargetChoose)) {
-			t.Errorf("%s: the branch choice is not explained", lang)
-		}
-		if strings.Contains(existing, wantText(lang, MsgRestoreTargetNew)) {
-			t.Errorf("%s: an existing branch is described as one that would be created", lang)
-		}
-
-		// Confirming is where the one that applies is named.
-		absent := restorePage(fullChrome(lang), true)
-		absent.TargetBranch = "recovered-9a8b154"
-		absent.CreatesBranch = true
-		if out := render(t, r, absent); !strings.Contains(out, wantText(lang, MsgRestoreTargetNew)) {
-			t.Errorf("%s: a branch that does not exist is not flagged before the write", lang)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // entry points
 // ---------------------------------------------------------------------------
-
-func TestRestoreIsReachableFromTheViewsThatShowLostWork(t *testing.T) {
-	r := newRenderer(t)
-
-	overview := render(t, r, repoPage(fullChrome(LangEN), RepoTabOverview))
-	if !strings.Contains(overview, `href="/repositories/r1/restore"`) {
-		t.Error("the repository overview has no restore entry point")
-	}
-	if !strings.Contains(overview, `href="/repositories/r1/restore?source=7f2c1a0bb"`) {
-		t.Error("kept history does not open restore with its commit preselected")
-	}
-
-	code := render(t, r, repoPage(fullChrome(LangEN), RepoTabCode))
-	if !strings.Contains(code, "/repositories/r1/restore?path=") {
-		t.Error("an opened file has no restore entry point")
-	}
-	if !strings.Contains(code, wantText(LangEN, MsgRestoreOpenFile)) {
-		t.Error("the file entry point does not say it restores that file")
-	}
-
-	commits := render(t, r, repoPage(fullChrome(LangEN), RepoTabCommits))
-	if !strings.Contains(commits, `href="/repositories/r1/restore?source=a41c9e2ff"`) {
-		t.Error("an opened commit has no restore entry point")
-	}
-}
 
 func TestRestoreLinksAreOptionalForExistingCallers(t *testing.T) {
 	// The fields were added to existing page types. A caller that never sets
@@ -1391,29 +1153,6 @@ func TestRestoreWorksAsPlainHTML(t *testing.T) {
 	}
 }
 
-func TestRestoreScopeHintIsPresentationOnly(t *testing.T) {
-	// The script dims the file list while the whole project is selected. It
-	// must not disable or clear the inputs, or a reader would lose their ticks
-	// and the backend would receive a selection nobody made.
-	js := scriptSource(t)
-	idx := strings.Index(js, "data-restore-files")
-	if idx < 0 {
-		t.Fatal("the restore scope hint is missing from the script")
-	}
-	block := js[idx:]
-	if end := strings.Index(block, "})();"); end >= 0 {
-		block = block[:end]
-	}
-	for _, destructive := range []string{"checked = false", "disabled", "remove()"} {
-		if strings.Contains(block, destructive) {
-			t.Errorf("the scope hint changes the submitted selection: %q", destructive)
-		}
-	}
-	if !strings.Contains(block, "data-restore-dimmed") {
-		t.Error("the scope hint does not use the presentation attribute")
-	}
-}
-
 func TestRestoreStatusIsNotCarriedByColourAlone(t *testing.T) {
 	r := newRenderer(t)
 	out := render(t, r, restorePage(fullChrome(LangEN), false))
@@ -1429,28 +1168,6 @@ func TestRestoreStatusIsNotCarriedByColourAlone(t *testing.T) {
 	for _, code := range []MessageCode{MsgRestoreStatusAdded, MsgRestoreStatusModified, MsgRestoreStatusDeleted} {
 		if !strings.Contains(rows, wantText(LangEN, code)) {
 			t.Errorf("the status %q is not stated in words", code)
-		}
-	}
-}
-
-func TestRestoreControlsAreLabelledInBothLanguages(t *testing.T) {
-	r := newRenderer(t)
-
-	choose := render(t, r, restorePage(fullChrome(LangEN), false))
-	if !strings.Contains(choose, `<label for="restore-target"`) {
-		t.Error("the target picker has no label")
-	}
-	if !strings.Contains(choose, "<legend>") {
-		t.Error("the scope group has no legend")
-	}
-
-	for _, previewed := range []bool{false, true} {
-		out := render(t, r, restorePage(fullChrome(LangEN), previewed))
-		if !strings.Contains(out, `data-ko="`) || !strings.Contains(out, `data-en="`) {
-			t.Error("the restore page cannot switch language in place")
-		}
-		if !strings.Contains(out, `data-title-ko="`) {
-			t.Error("the restore page title is not switchable")
 		}
 	}
 }
@@ -1652,30 +1369,22 @@ func clickLanguage(t *testing.T, out, currentURL string) (address string, lang s
 	}
 
 	script, err := filepath.Abs("assets/owngit.js")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	input, err := json.Marshal(map[string]any{
 		"script": script, "currentURL": currentURL, "links": links,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	cmd := exec.Command(node, "testdata/langclick.mjs", string(input))
 	cmd.Stderr = os.Stderr
 	stdout, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("running the shipped script: %v", err)
-	}
+	noErrf(t, err, "running the shipped script")
 	var result struct {
 		Address   string `json:"address"`
 		Prevented bool   `json:"prevented"`
 		Lang      string `json:"lang"`
 	}
-	if err := json.Unmarshal(stdout, &result); err != nil {
-		t.Fatalf("reading the script's result: %v", err)
-	}
+	noErrf(t, json.Unmarshal(stdout, &result), "reading the script's result")
 	if !result.Prevented {
 		t.Fatal("the language click was not intercepted")
 	}
@@ -1754,17 +1463,87 @@ func TestRestoreTitleNamesTheRepository(t *testing.T) {
 	}
 }
 
-func TestRestoreKoreanUsesStandardGitTerms(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, restorePage(fullChrome(LangKO), true))
-	for _, term := range []string{"브랜치", "커밋", "저장소"} {
-		if !strings.Contains(out, term) {
-			t.Errorf("the Korean restore page is missing the standard term %q", term)
-		}
+func TestRestoreScreenStates(t *testing.T) {
+	// The truncation cut is in the line by line view, never in the path list,
+	// and the sentence has to say which one.
+	if notice := Text(LangEN, MsgRestoreDiffTruncated); !strings.Contains(notice, "list of changed files is complete") {
+		t.Errorf("the truncation notice does not distinguish the two lists: %q", notice)
 	}
-	for _, bad := range []string{"·", "—", "–", "오운깃"} {
-		if strings.Contains(out, bad) {
-			t.Errorf("the restore page contains %q", bad)
-		}
+	if en := Text(LangEN, MsgRestoreTargetHelp); !strings.Contains(en, "other computers are not touched") {
+		t.Errorf("the branch help no longer states the boundary: %q", en)
 	}
+	if keep := Text(LangEN, MsgRestoreConfirmHelp); !strings.Contains(keep, "does not remove or rewrite") {
+		t.Errorf("the confirmation no longer promises the existing history is kept: %q", keep)
+	}
+	restore := func(lang Lang, previewed bool, edit func(*RestorePage)) RestorePage {
+		return with(restorePage(fullChrome(lang), previewed), edit)
+	}
+	withNotice := func(field string, code MessageCode) Chrome {
+		c := fullChrome(LangEN)
+		c.Notices = []Notice{Error(field, code)}
+		return c
+	}
+	branch := func(name string, creates bool) func(*RestorePage) {
+		return func(p *RestorePage) { p.TargetBranch, p.CreatesBranch = name, creates }
+	}
+	const zero = "0000000000000000000000000000000000000000"
+	screens := []screen{
+		screen{name: "no apply control before a preview", page: restore(LangEN, false, unchanged),
+			want:     []MessageCode{MsgRestorePreviewSubmit},
+			absent:   []MessageCode{MsgRestoreConfirmLabel, MsgRestorePreviewTitle},
+			noMarkup: []string{`action="/repositories/r1/restore"`, `name="confirm"`}},
+		screen{name: "the selection lists deletions as their own rows", page: restore(LangEN, false, unchanged),
+			want:   []MessageCode{MsgRestoreStatusDeleted, MsgRestoreStatusAdded, MsgRestoreStatusModified},
+			markup: []string{"internal/retry/legacy.go"}},
+		// A file whose text diff was not loaded is still a changed path.
+		screen{name: "the preview shows every changed path", page: restore(LangEN, true, unchanged),
+			markup: []string{"internal/retry/backoff.go", "internal/retry/limits.go", "internal/retry/legacy.go"}},
+		screen{name: "a truncated diff keeps the path list",
+			page: restore(LangEN, true, func(p *RestorePage) { p.DiffTruncated = true }),
+			want: []MessageCode{MsgRestoreDiffTruncated}, markup: []string{"internal/retry/limits.go", "internal/retry/legacy.go"}},
+		// Step one has inputs that carry the message; a role as well would
+		// read it twice. Ordinary forms elsewhere keep the same rule.
+		screen{name: "selection errors stay with their input",
+			page:   restorePage(withNotice("target", MsgRestoreInvalid), false),
+			markup: []string{`aria-describedby="` + noteID(nil, "target") + `"`}, noMarkup: []string{`role="alert"`}},
+		screen{name: "field notices elsewhere stay with their input",
+			page:   NewRepositoryPage{Chrome: withNotice("name", MsgRepoNameTaken), SubmitURL: "/repositories"},
+			markup: []string{`aria-describedby="` + noteID(nil, "name") + `"`}, noMarkup: []string{`role="alert"`}},
+		// The zero OID is a submitted value, not a signal this page reads.
+		screen{name: "the expected tip does not imply a new branch",
+			page:   restore(LangEN, true, func(p *RestorePage) { p.ExpectedHead, p.CreatesBranch = zero, false }),
+			absent: []MessageCode{MsgRestoreTargetNew}, markup: []string{`name="expected_head" value="` + zero + `"`}},
+		// Whether restoring creates the branch is the backend's observation;
+		// the separately read suggestion list can be out of date either way.
+		screen{name: "a branch the backend found is not described as created",
+			page: restore(LangEN, true, branch("added/after-the-list", false)), absent: []MessageCode{MsgRestoreTargetNew}},
+		screen{name: "a suggested branch the backend did not find is created",
+			page: restore(LangEN, true, branch("main", true)), want: []MessageCode{MsgRestoreTargetNew}},
+		screen{name: "the suggestion list does not follow branch state",
+			page: restore(LangEN, false, branch("main", true)), markup: []string{`<option value="main">`}},
+		screen{name: "the overview offers restore entry points", page: repoPage(fullChrome(LangEN), RepoTabOverview),
+			markup: []string{`href="/repositories/r1/restore"`, `href="/repositories/r1/restore?source=7f2c1a0bb"`}},
+		screen{name: "an opened file offers restore", page: repoPage(fullChrome(LangEN), RepoTabCode),
+			want: []MessageCode{MsgRestoreOpenFile}, markup: []string{"/repositories/r1/restore?path="}},
+		screen{name: "an opened commit offers restore", page: repoPage(fullChrome(LangEN), RepoTabCommits),
+			markup: []string{`href="/repositories/r1/restore?source=a41c9e2ff"`}},
+		screen{name: "the target picker and scope are labelled", page: restore(LangEN, false, unchanged),
+			markup: []string{`<label for="restore-target"`, "<legend>"}},
+		screen{name: "the Korean restore page uses standard Git terms", lang: LangKO, page: restore(LangKO, true, unchanged),
+			markup: []string{"브랜치", "커밋", "저장소"}, noMarkup: []string{"·", "—", "–", "오운깃"}},
+	}
+	for _, previewed := range []bool{false, true} {
+		screens = append(screens, screen{name: "the restore page switches language in place",
+			page: restore(LangEN, previewed, unchanged), markup: []string{`data-ko="`, `data-en="`, `data-title-ko="`}})
+	}
+	for _, lang := range Langs() {
+		screens = append(screens,
+			// Choosing is where both outcomes are described, together with the
+			// boundary a reader is most likely to get wrong.
+			screen{name: string(lang) + " the branch choice is explained", lang: lang, page: restore(lang, false, unchanged),
+				want: []MessageCode{MsgRestoreTargetChoose, MsgRestoreTargetHelp}, absent: []MessageCode{MsgRestoreTargetNew}},
+			screen{name: string(lang) + " a missing branch is flagged before the write", lang: lang,
+				page: restore(lang, true, branch("recovered-9a8b154", true)), want: []MessageCode{MsgRestoreTargetNew}})
+	}
+	checkScreens(t, screens...)
 }

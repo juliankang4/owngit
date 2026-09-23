@@ -13,9 +13,7 @@ import (
 func TestWindowsReservedTokenFileDeniesReplacementAndStaysPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token")
 	reserved, err := reservePrivateTokenFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if err := os.Rename(path, path+".moved"); err == nil {
 		_ = reserved.preserve()
 		t.Fatal("reserved token file allowed path replacement")
@@ -24,12 +22,8 @@ func TestWindowsReservedTokenFileDeniesReplacementAndStaysPrivate(t *testing.T) 
 		_ = reserved.preserve()
 		t.Fatal(err)
 	}
-	if err := reserved.preserve(); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ValidatePrivateFile(path); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, reserved.preserve())
+	noErr(t, state.ValidatePrivateFile(path))
 	content, err := os.ReadFile(path)
 	if err != nil || string(content) != "token-value\n" {
 		t.Fatalf("token file=%q err=%v", content, err)

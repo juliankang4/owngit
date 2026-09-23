@@ -24,9 +24,7 @@ func TestWindowsLegacyLogsJunctionRemainsUntouched(t *testing.T) {
 		".pending.staging-1": []byte("legacy staging bytes"),
 	}
 	for name, content := range legacyFiles {
-		if err := os.WriteFile(filepath.Join(target, name), content, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(filepath.Join(target, name), content, 0o600))
 	}
 	junction := filepath.Join(store.dir, "logs")
 	command := exec.Command("cmd.exe", "/d", "/c", "mklink", "/J", junction, target)
@@ -34,21 +32,15 @@ func TestWindowsLegacyLogsJunctionRemainsUntouched(t *testing.T) {
 		t.Fatalf("create logs junction: %v: %s", err, output)
 	}
 	junctionName, err := windows.UTF16PtrFromString(junction)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attributes, err := windows.GetFileAttributes(junctionName)
 	if err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
 		t.Fatalf("logs junction attributes=%#x err=%v", attributes, err)
 	}
 
-	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}))
 	task, err := store.CreateTask(ctx, "project", "Ignore a legacy logs junction", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("7", 40), now, AttemptFailed)
 	_, stored := recordAttemptWithLog(t, store, attempt, "database bytes")
 	if stored.LogID != attempt.ID || stored.LogError != "" {

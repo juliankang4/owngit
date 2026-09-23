@@ -133,7 +133,7 @@ A change must keep the following behavior.
 Git refs and objects are the authoritative repository data. SQLite (`owngit.sqlite` in the state directory) holds pull request, review, task, check, and import records. OwnGit's own refs live under `refs/owngit/`. They are hidden from clients, and client pushes are accepted only for `refs/heads/*` and `refs/tags/*`.
 
 - The state schema version is recorded in the database (`currentSchemaVersion` in `internal/state/store.go`). A schema change needs a migration from each accepted earlier catalog. OwnGit refuses unknown, altered, or newer databases without changing their files.
-- The offline backup format version is `backupVersion` in `internal/recovery/recovery.go`. When you add durable records, add them to the backup and to restore validation, raise the version, keep older versions readable, and reject newer versions before decoding so records are never dropped silently.
+- The offline backup format version is `backupVersion` in `internal/recovery/recovery.go`. When you add durable records, add them to the backup and to restore validation, raise the version, keep released versions readable, and reject newer versions before decoding so records are never dropped silently.
 - Machine-local authority (credentials, consent, schedules, sessions) must not be exported or restored.
 
 ## Releases

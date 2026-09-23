@@ -73,9 +73,7 @@ func TestRetainedRefsBatchPeelsAndLoadsMetadataWithoutDiffProcesses(t *testing.T
 
 	runner := &countingRetainedRunner{delegate: manager.Git}
 	retained, err := retainedRefs(context.Background(), runner, remote)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(retained) != len(oids) {
 		t.Fatalf("retained refs=%d, want %d", len(retained), len(oids))
 	}
@@ -136,9 +134,7 @@ func TestRetainedRefsBatchPeelsNestedAnnotatedTag(t *testing.T) {
 	oldOuter := gitOutput(t, work, "rev-parse", "refs/tags/outer")
 	runGit(t, work, "push", "origin", "refs/tags/outer")
 	peeled, err := batchPeelRetainedTags(context.Background(), manager.Git, remote, []string{oldOuter})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if peeled[oldOuter].oid != commitOID || peeled[oldOuter].objectType != "commit" {
 		t.Fatalf("batch peel=%+v, want terminal commit %s", peeled[oldOuter], commitOID)
 	}
@@ -146,9 +142,7 @@ func TestRetainedRefsBatchPeelsNestedAnnotatedTag(t *testing.T) {
 	runGit(t, work, "push", "--force", "origin", "refs/tags/outer")
 
 	retained, err := manager.RetainedRefs(context.Background(), "sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	for _, ref := range retained {
 		if ref.OID == oldOuter {
 			if ref.CommitOID != commitOID || ref.Commit.OID != commitOID || ref.Commit.Subject != "nested target" {
@@ -177,9 +171,7 @@ func TestRepositoryDisablesAutomaticMaintenanceOnCreateAndRestart(t *testing.T) 
 	} {
 		runGit(t, "", "--git-dir", remote, "config", "--local", key, value)
 	}
-	if err := manager.PrepareExisting(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, manager.PrepareExisting(context.Background()))
 	for key, want := range wantSettings {
 		if got := gitOutput(t, "", "--git-dir", remote, "config", "--local", "--get", key); got != want {
 			t.Fatalf("repaired %s = %q, want %q", key, got, want)
@@ -229,12 +221,8 @@ func TestRetentionSurvivesRewritesDeletionAndGC(t *testing.T) {
 
 	blobOnePath := filepath.Join(work, "blob-one.bin")
 	blobTwoPath := filepath.Join(work, "blob-two.bin")
-	if err := os.WriteFile(blobOnePath, []byte("first standalone blob"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(blobTwoPath, []byte("second standalone blob"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(blobOnePath, []byte("first standalone blob"), 0o600))
+	noErr(t, os.WriteFile(blobTwoPath, []byte("second standalone blob"), 0o600))
 	blobOne := gitOutput(t, work, "hash-object", "-w", blobOnePath)
 	blobTwo := gitOutput(t, work, "hash-object", "-w", blobTwoPath)
 	runGit(t, work, "tag", "-a", "blob-target", "-m", "standalone blob", blobOne)
@@ -271,9 +259,7 @@ func TestRetentionSurvivesRewritesDeletionAndGC(t *testing.T) {
 	}
 
 	restartedRunner, err := gitexec.New("", filepath.Join(filepath.Dir(remote), "..", "runtime-after-restart"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	restarted := &Manager{Store: manager.Store, Git: restartedRunner, Locks: gitexec.NewLocks(), Root: filepath.Dir(remote)}
 	retainedAfterRestart, err := restarted.RetainedRefs(context.Background(), "sample")
 	if err != nil || len(retainedAfterRestart) == 0 {
@@ -292,9 +278,7 @@ func TestRetentionSurvivesRewritesDeletionAndGC(t *testing.T) {
 		t.Fatalf("retained blob tags were exposed as recoverable commits: %+v", retainedAfterRestart)
 	}
 	activity, err := restarted.Activity(context.Background(), "sample", 100)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if activity.Commits < 3 || activity.Incomplete {
 		t.Fatalf("unexpected retained activity: %+v", activity)
 	}
@@ -321,9 +305,7 @@ func TestRetentionFailureRejectsPublicUpdate(t *testing.T) {
 	commitFile(t, work, "three", "three", "2024-01-03T00:00:00Z")
 
 	blockedNamespace := filepath.Join(remote, "refs", "owngit")
-	if err := os.WriteFile(blockedNamespace, []byte("synthetic retention failure"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(blockedNamespace, []byte("synthetic retention failure"), 0o600))
 	if output, err := gitCombined(work, "push", "origin", "HEAD:refs/heads/main"); err == nil {
 		t.Fatalf("push succeeded despite retention failure: %s", output)
 	}
@@ -460,9 +442,7 @@ func TestFailedAtomicDestructivePushPreservesObjectWithoutClaimingRewrite(t *tes
 	runGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
 	assertRef(t, remote, "refs/owngit/retained/heads/"+old, old)
 	retained, err = manager.RetainedRefs(context.Background(), "sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(retained) != 1 || retained[0].OID != old || retained[0].Kind != "branch" {
 		t.Fatalf("retained refs = %+v, want one destructive branch tip", retained)
 	}
@@ -488,13 +468,9 @@ func TestInterruptedRetentionIsClassifiedFromPublicRefAfterRestart(t *testing.T)
 	legacyPending := "refs/owngit/pending/retained/heads/main/" + old
 	runGit(t, "", "--git-dir", remote, "update-ref", legacyPending, old)
 	restartedRunner, err := gitexec.New("", filepath.Join(filepath.Dir(remote), "..", "runtime-interruption-restart"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	restarted := &Manager{Store: manager.Store, Git: restartedRunner, Locks: gitexec.NewLocks(), Root: filepath.Dir(remote)}
-	if err := restarted.PrepareExisting(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, restarted.PrepareExisting(context.Background()))
 	retained, err := restarted.RetainedRefs(context.Background(), "sample")
 	if err != nil || len(retained) != 0 {
 		t.Fatalf("before-public interruption was called historical: refs=%+v err=%v", retained, err)
@@ -506,17 +482,13 @@ func TestInterruptedRetentionIsClassifiedFromPublicRefAfterRestart(t *testing.T)
 	// classification now truthfully reports the old main as historical.
 	runGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/main", replacement, old)
 	runGit(t, "", "--git-dir", remote, "update-ref", "-d", "refs/heads/staging", replacement)
-	if err := restarted.PrepareExisting(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, restarted.PrepareExisting(context.Background()))
 	retained, err = restarted.RetainedRefs(context.Background(), "sample")
 	if err != nil || len(retained) != 1 || retained[0].OID != old || retained[0].Kind != "branch" {
 		t.Fatalf("after-public interruption classification = %+v err=%v", retained, err)
 	}
 	activity, err := restarted.Activity(context.Background(), "sample", 100)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	foundHistorical := false
 	for _, record := range activity.Records {
 		if record.OID == old && record.Retained && record.Source == "refs/heads/main" {
@@ -583,26 +555,18 @@ func newTestRepository(t *testing.T) (*Manager, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoriesRoot := filepath.Join(root, "repositories")
-	if err := os.Mkdir(repositoriesRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(repositoriesRoot, 0o700))
 	manager := &Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoriesRoot}
 	if _, err := manager.Create(context.Background(), "sample", "test repository"); err != nil {
 		t.Fatal(err)
 	}
 	remote, err := manager.Path("sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	work := filepath.Join(root, "work")
 	runGit(t, "", "init", "--initial-branch=main", work)
 	runGit(t, work, "config", "user.name", "Test Author")
@@ -613,9 +577,7 @@ func newTestRepository(t *testing.T) (*Manager, string, string) {
 
 func commitFile(t *testing.T, directory, content, message, authored string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(directory, "file.txt"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(directory, "file.txt"), []byte(content), 0o600))
 	runGit(t, directory, "add", "file.txt")
 	command := exec.Command("git", "commit", "-m", message)
 	command.Dir = directory

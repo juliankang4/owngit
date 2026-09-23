@@ -19,14 +19,10 @@ import (
 func TestStreamCancellationAfterStdoutEOFStillReapsProcess(t *testing.T) {
 	root := t.TempDir()
 	runner, err := New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	runner.TerminationGrace = 25 * time.Millisecond
 	script := filepath.Join(root, "backend")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec 1>&-\nsleep 60\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(script, []byte("#!/bin/sh\nexec 1>&-\nsleep 60\n"), 0o700))
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()
 	started := time.Now()
@@ -45,16 +41,12 @@ func TestStreamCancellationAfterStdoutEOFStillReapsProcess(t *testing.T) {
 func TestStreamCancellationTerminatesOwnedProcessGroup(t *testing.T) {
 	root := t.TempDir()
 	runner, err := New("", filepath.Join(root, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	runner.TerminationGrace = 25 * time.Millisecond
 	pidFile := filepath.Join(root, "child.pid")
 	script := filepath.Join(root, "backend")
 	content := "#!/bin/sh\nsleep 60 &\nchild=$!\nprintf '%s' \"$child\" > " + shellEscape(pidFile) + "\nwait \"$child\"\n"
-	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(script, []byte(content), 0o700))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
@@ -123,13 +115,9 @@ func TestTerminateOwnedProcessReportsRealFailures(t *testing.T) {
 	// A real owned group is terminated, reaped, and confirmed gone.
 	cmd := exec.Command("sleep", "30")
 	ConfigureOwnedProcess(cmd)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, cmd.Start())
 	owner, err := AttachOwnedProcess(cmd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
 	waited := false

@@ -125,9 +125,7 @@ func openFaultStore(t *testing.T) (*Store, *rowFault) {
 			t.Fatal(err)
 		}
 	}
-	if err := store.db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.db.Close())
 	store.db = db
 	return store, fault
 }
@@ -147,30 +145,19 @@ func TestRecoverySnapshotFailsOnIterationError(t *testing.T) {
 	ctx := context.Background()
 	// Two repositories make the repositories case fail after one delivered row.
 	for _, id := range []string{"alpha", "beta"} {
-		if err := store.AddRepository(ctx, Repository{ID: id, Name: id, CreatedAt: time.Unix(1_800_000_000, 0)}); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, store.AddRepository(ctx, Repository{ID: id, Name: id, CreatedAt: time.Unix(1_800_000_000, 0)}))
 	}
 	if snapshot, err := store.RecoverySnapshot(ctx); err != nil || len(snapshot.Repositories) != 2 {
 		t.Fatalf("baseline snapshot repositories=%d err=%v", len(snapshot.Repositories), err)
 	}
 	cases := map[string]func(string) bool{
 		"metadata": func(query string) bool { return strings.Contains(query, "FROM metadata WHERE key IN") },
-		// Reconciliation before the snapshot rewrites nonterminal requests and
-		// probes; a failed read there must not look like "nothing to settle".
-		"direct_review_requests reconcile": func(query string) bool {
-			return strings.Contains(query, "FROM direct_review_requests WHERE phase!='terminal'")
-		},
-		"direct_review_probes reconcile": func(query string) bool {
-			return strings.Contains(query, "FROM direct_review_probes WHERE phase!='terminal'")
-		},
 	}
 	for _, table := range []string{
 		"passwords", "repositories",
 		"pull_requests", "pull_request_revisions", "pull_request_reviews", "pull_request_merge_intents",
 		"tasks", "check_configurations", "check_cycles", "check_attempts", "check_results",
 		"check_policies", "check_jobs",
-		"direct_review_repository_settings", "direct_review_task_contexts", "direct_review_requests",
 		"import_sources", "import_runs", "import_ref_observations", "import_publication_intents",
 	} {
 		cases[table] = fullTableRead(table)
@@ -198,9 +185,7 @@ func TestInterruptStalePendingCheckJobsFailsOnIterationError(t *testing.T) {
 	store, fault := openFaultStore(t)
 	ctx := context.Background()
 	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer tx.Rollback()
 	fault.set(func(query string) bool {
 		return strings.Contains(query, "FROM check_jobs WHERE repository_id=? AND status IN")

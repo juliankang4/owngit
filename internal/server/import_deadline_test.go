@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -22,8 +21,7 @@ func TestImportRunDeadlineResultReachesTheClient(t *testing.T) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	var observed time.Duration
 	fixture.app.requestObserver = func(request *http.Request) {
 		if deadline, ok := request.Context().Deadline(); ok {
@@ -36,9 +34,7 @@ func TestImportRunDeadlineResultReachesTheClient(t *testing.T) {
 	}, "admin-password", "", "")
 	content, err := io.ReadAll(response.Body)
 	response.Body.Close()
-	if err != nil {
-		t.Fatalf("run response could not be read after %s: %v", time.Since(started), err)
-	}
+	noErrf(t, err, "run response could not be read after %s", time.Since(started))
 	var envelope struct {
 		OK    bool `json:"ok"`
 		Error struct {

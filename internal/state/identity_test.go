@@ -30,34 +30,24 @@ func TestLstatIdentityIsFixedAtTheCheck(t *testing.T) {
 				} else {
 					err = os.Mkdir(name, 0o700)
 				}
-				if err != nil {
-					t.Fatal(err)
-				}
+				noErr(t, err)
 			}
 			create(path)
 			inspected, err := LstatIdentity(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if kind == "file" && !inspected.Mode().IsRegular() || kind == "directory" && !inspected.IsDir() {
 				t.Fatalf("inspected mode is %v", inspected.Mode())
 			}
-			if err := os.Rename(path, moved); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.Rename(path, moved))
 			create(path)
 
 			replacement, err := os.Lstat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if os.SameFile(inspected, replacement) {
 				t.Fatal("the replacement was compared as the inspected object")
 			}
 			original, err := os.Lstat(moved)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			if !os.SameFile(inspected, original) {
 				t.Fatal("the recorded identity does not describe the inspected object")
 			}
@@ -67,24 +57,18 @@ func TestLstatIdentityIsFixedAtTheCheck(t *testing.T) {
 	t.Run("a final link is not followed", func(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(dir, "target")
-		if err := os.WriteFile(target, []byte("target\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, os.WriteFile(target, []byte("target\n"), 0o600))
 		link := filepath.Join(dir, "link")
 		if err := os.Symlink(target, link); err != nil {
 			t.Skipf("symbolic links are unavailable: %v", err)
 		}
 		info, err := LstatIdentity(link)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if info.Mode()&os.ModeSymlink == 0 {
 			t.Fatalf("link mode is %v, want a symbolic link", info.Mode())
 		}
 		targetInfo, err := os.Lstat(target)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if os.SameFile(info, targetInfo) {
 			t.Fatal("the link was resolved to its target")
 		}

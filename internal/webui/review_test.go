@@ -4,7 +4,6 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -30,29 +29,10 @@ func elementAt(t *testing.T, out, marker string) string {
 	return tag
 }
 
-// 1. A stylesheet must not defeat the hidden attribute
+// 1. The welcome page shows exactly one setup-code state
 //
-// The browser's own rule is `[hidden] { display: none }`. A class rule such as
-// `.fieldnote { display: flex }` has higher specificity and silently wins, so
-// an element the script had hidden stayed on screen. On the real welcome page
-// that showed "the code is held" and "there is no setup code" at once.
-
-func TestHiddenAttributeIsNotDefeatedByAnyRule(t *testing.T) {
-	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	css := string(data)
-
-	// Look for the declaration itself, not a mention of it in a comment.
-	rule := regexp.MustCompile(`(?m)^\[hidden\]\s*\{([^}]*)\}`).FindStringSubmatch(css)
-	if rule == nil {
-		t.Fatal("the stylesheet never restates the hidden attribute, so any display rule overrides it")
-	}
-	if !strings.Contains(rule[1], "display: none") || !strings.Contains(rule[1], "!important") {
-		t.Errorf("the hidden rule cannot win against a later display rule: %q", rule[0])
-	}
-}
+// The [hidden] rule and the script that toggles the states are pinned in
+// asset_pins_test.go.
 
 func TestWelcomePageClaimsNothingAboutACodeItCannotSee(t *testing.T) {
 	// The one-time code lives in the URL fragment, which a browser never
@@ -86,22 +66,6 @@ func TestWelcomePageClaimsNothingAboutACodeItCannotSee(t *testing.T) {
 		if !strings.Contains(out, wantText(lang, MsgSetupNeedsScript)) {
 			t.Errorf("%s: the noscript message does not explain the reason", lang)
 		}
-	}
-}
-
-func TestScriptShowsExactlyOneWelcomeState(t *testing.T) {
-	js := scriptSource(t)
-	for _, required := range []string{
-		"held.hidden = !haveToken",
-		"missing.hidden = haveToken",
-	} {
-		if !strings.Contains(js, required) {
-			t.Errorf("the welcome states are not made exclusive (missing %q)", required)
-		}
-	}
-	// The button is enabled only when a code is actually held.
-	if !strings.Contains(js, "if (haveToken)") {
-		t.Error("the start button is not tied to actually holding a code")
 	}
 }
 
@@ -257,41 +221,6 @@ func graphWithDayLinks() ActivityGraph {
 	return graph
 }
 
-func TestEachActivityDayLinksToItsFilteredList(t *testing.T) {
-	r := newRenderer(t)
-	out := render(t, r, OverviewPage{Chrome: fullChrome(LangEN), Activity: graphWithDayLinks()})
-
-	if !strings.Contains(out, `href="/activity?date=`) {
-		t.Error("no day can be opened; the backend's day URLs are dropped")
-	}
-	// The element carrying the day must be the link itself, so a click and a
-	// keyboard Enter do the same thing without scripting.
-	tag := elementAt(t, out, "data-day")
-	if !strings.HasPrefix(tag, "<a ") {
-		t.Errorf("a day is not a link, so it cannot be reached without scripting: %s", tag)
-	}
-	if !strings.Contains(tag, "href=") {
-		t.Errorf("the day control has no destination: %s", tag)
-	}
-}
-
-func TestDaysWithoutAnAddressAreNotFakeControls(t *testing.T) {
-	// If the backend cannot address a day, it must not look clickable.
-	r := newRenderer(t)
-	graph := sampleGraph()
-	for i := range graph.Days {
-		graph.Days[i].URL = ""
-	}
-	out := render(t, r, OverviewPage{Chrome: fullChrome(LangEN), Activity: graph})
-
-	if strings.Contains(out, `href=""`) {
-		t.Error("a day with no address rendered as an empty link")
-	}
-	if tag := elementAt(t, out, "data-day"); strings.HasPrefix(tag, "<a ") {
-		t.Errorf("a day with no address is still a link: %s", tag)
-	}
-}
-
 func TestGraphReadoutIsInsideTheBehaviourScope(t *testing.T) {
 	// The script looks the readout up inside the element marked data-graph.
 	// With the readout outside it, the lookup returns null and the live region
@@ -327,47 +256,11 @@ func TestGraphReadoutIsInsideTheBehaviourScope(t *testing.T) {
 	}
 }
 
-func TestGraphKeyboardAndReadoutStayWiredTogether(t *testing.T) {
-	js := scriptSource(t)
-
-	if !strings.Contains(js, "graph.querySelector('[data-graph-readout]')") {
-		t.Error("the script no longer looks up the readout inside the graph scope")
-	}
-	if !strings.Contains(js, "announce(cell)") {
-		t.Error("moving between days announces nothing")
-	}
-	// Enter must not be intercepted: the day is a link and the browser follows
-	// it.
-	if strings.Contains(js, "case 'Enter':") {
-		t.Error("the script intercepts Enter instead of letting the day link work")
-	}
-}
-
 // 4. A missing ref must not be blamed on the default branch
 //
 // Ref.Missing is also true when a reader asks for a branch that never existed.
 // Labelling every such case "the default branch is gone" was wrong, and the
 // backend already sends a notice naming the real reason, so it was duplicated.
-
-func TestMissingRefIsNotAlwaysBlamedOnTheDefaultBranch(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		c := fullChrome(lang)
-		c.Notices = []Notice{{Kind: NoticeWarning, Code: MsgRepoRefMissing}}
-		page := repoPage(c, RepoTabOverview)
-		page.Ref.Missing = true
-		page.Ref.Name = "no-such-branch"
-
-		out := render(t, r, page)
-
-		if strings.Contains(out, wantText(lang, MsgRepoDefaultGone)) {
-			t.Errorf("%s: asking for an unknown branch is reported as the default branch being gone", lang)
-		}
-		if !strings.Contains(out, wantText(lang, MsgRepoRefMissing)) {
-			t.Errorf("%s: the backend's actual reason is not shown", lang)
-		}
-	}
-}
 
 func TestBackendReasonForAMissingRefIsShownOnce(t *testing.T) {
 	// When the default branch really is gone the backend says so. It must
@@ -383,24 +276,6 @@ func TestBackendReasonForAMissingRefIsShownOnce(t *testing.T) {
 	// wording once in a data-en attribute and once as visible text.
 	if n := strings.Count(out, `data-en="`+wantText(LangEN, MsgRepoDefaultGone)+`"`); n != 1 {
 		t.Errorf("the reason for the missing branch appears in %d elements, want one", n)
-	}
-}
-
-func TestGenericMissingRefStatesStayHonest(t *testing.T) {
-	// The code and commits tabs still say plainly that the ref does not
-	// resolve, without naming a cause they cannot know.
-	r := newRenderer(t)
-	for _, tab := range []RepoTab{RepoTabCode, RepoTabCommits} {
-		page := repoPage(fullChrome(LangEN), tab)
-		page.Ref.Missing = true
-		out := render(t, r, page)
-
-		if !strings.Contains(out, wantText(LangEN, MsgRepoRefMissing)) {
-			t.Errorf("%s: a missing ref is not reported", tab)
-		}
-		if strings.Contains(out, wantText(LangEN, MsgRepoDefaultGone)) {
-			t.Errorf("%s: a missing ref is blamed on the default branch", tab)
-		}
 	}
 }
 
@@ -825,79 +700,6 @@ func TestMissingRefIsStatedOnceOnTheCodeTab(t *testing.T) {
 	}
 }
 
-func TestPathNotFoundStillExplainsItselfWhenTheRefResolves(t *testing.T) {
-	// Removing the duplicate must not take the other empty states with it.
-	r := newRenderer(t)
-	page := repoPage(fullChrome(LangEN), RepoTabCode)
-	page.Code.NotFound = true
-	page.Code.Path = "cmd/missing"
-
-	out := render(t, r, page)
-	if !strings.Contains(out, wantText(LangEN, MsgCodePathMissing)) {
-		t.Error("the missing-path empty state is gone")
-	}
-}
-
-// The status badge must survive a long ref name
-//
-// A dashboard capture at 1440px showed "보관된 기록" cut off at the right edge
-// of the source column on every retained row: the branch "feature/docs" plus
-// the badge did not fit, and the column truncated the badge rather than the
-// name. A reader saw a clipped fragment where a status should be.
-//
-// The ref name is the only part that may be shortened. The badge is a short,
-// fixed status and the icon is fixed width, so neither shrinks.
-
-func cssBlock(t *testing.T, selector string) string {
-	t.Helper()
-	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	css := string(data)
-	idx := strings.Index(css, "\n"+selector+" {")
-	if idx < 0 {
-		t.Fatalf("%s is not defined", selector)
-	}
-	block := css[idx:]
-	if end := strings.Index(block, "}"); end >= 0 {
-		block = block[:end]
-	}
-	return block
-}
-
-func TestRetainedBadgeIsNotClippedByALongRefName(t *testing.T) {
-	// Only the name truncates.
-	name := cssBlock(t, ".row__refname")
-	for _, want := range []string{"text-overflow: ellipsis", "overflow: hidden", "min-width: 0"} {
-		if !strings.Contains(name, want) {
-			t.Errorf(".row__refname does not shorten itself (%s missing): %q", want, name)
-		}
-	}
-
-	// The row itself must not be the thing that truncates, or it clips
-	// whatever sits last, which is the badge.
-	row := cssBlock(t, ".row__ref")
-	if strings.Contains(row, "text-overflow") {
-		t.Error(".row__ref truncates its own contents, which cuts off the trailing badge")
-	}
-
-	// The badge and icon keep their full width.
-	data, err := assetFS.ReadFile("assets/owngit.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !regexp.MustCompile(`\.row__ref > \.pill\s*\{[^}]*flex:\s*none`).MatchString(string(data)) &&
-		!regexp.MustCompile(`\.row__ref > svg,\s*\n?\.row__ref > \.pill\s*\{[^}]*flex:\s*none`).MatchString(string(data)) {
-		t.Error("the status badge can shrink inside the source column")
-	}
-
-	// The badge itself still refuses to wrap or shrink its text.
-	if pill := cssBlock(t, ".pill"); !strings.Contains(pill, "white-space: nowrap") {
-		t.Error("the badge no longer keeps its text on one line")
-	}
-}
-
 func TestLongRefNameStaysAvailableInFull(t *testing.T) {
 	// Shortening is visual only. The full name stays in the markup and in the
 	// title, so it is never the only copy that was cut.
@@ -941,27 +743,6 @@ func TestLongRefNameStaysAvailableInFull(t *testing.T) {
 		if !strings.Contains(out, wantText(lang, MsgRepoRetainTitle)) {
 			t.Errorf("%s: the retained badge text is missing", lang)
 		}
-	}
-}
-
-func TestOverviewBranchNameShortensSeparatelyToo(t *testing.T) {
-	// The repository list uses the same column and would clip the same way.
-	r := newRenderer(t)
-	page := OverviewPage{
-		Chrome: fullChrome(LangEN),
-		Repositories: []RepositorySummary{{
-			Name: "hello-owngit", URL: "/repositories/r1",
-			DefaultBranch: "feature/a-rather-long-branch-name",
-		}},
-		Activity: sampleGraph(),
-	}
-
-	out := render(t, r, page)
-	if !strings.Contains(out, `class="row__refname"`) {
-		t.Error("the overview branch name cannot shorten separately")
-	}
-	if !strings.Contains(out, `title="feature/a-rather-long-branch-name"`) {
-		t.Error("the complete branch name is not available when shortened")
 	}
 }
 
@@ -1021,93 +802,6 @@ func TestOverviewDefaultBranchBadgeIsShortEnoughToRead(t *testing.T) {
 	}
 }
 
-func TestRepositoryPagesKeepTheFullDefaultBranchExplanation(t *testing.T) {
-	// Shortening the row must not remove the explanation from where a reader
-	// acts on it. The backend sends the full code as a page notice.
-	r := newRenderer(t)
-
-	for _, lang := range Langs() {
-		page := repoPage(fullChrome(lang), RepoTabCode)
-		page.Chrome.Notices = []Notice{{Kind: NoticeWarning, Code: MsgRepoDefaultGone}}
-
-		out := render(t, r, page)
-		if !strings.Contains(out, wantText(lang, MsgRepoDefaultGone)) {
-			t.Errorf("%s: the full default-branch explanation is gone from the repository page", lang)
-		}
-		// The full wording still tells the reader what to do.
-		for _, part := range map[Lang][]string{
-			LangEN: {"Choose another branch", "push one with this name again"},
-			LangKO: {"다른 브랜치를 고르거나", "다시 푸시하세요"},
-		}[lang] {
-			if !strings.Contains(Text(lang, MsgRepoDefaultGone), part) {
-				t.Errorf("%s: the full warning no longer says %q", lang, part)
-			}
-		}
-	}
-
-	// The two wordings must stay distinct, or the row is back to the long one.
-	for _, lang := range Langs() {
-		if Text(lang, MsgRepoDefaultGoneShort) == Text(lang, MsgRepoDefaultGone) {
-			t.Errorf("%s: the row and the page share one wording again", lang)
-		}
-	}
-}
-
-// A status badge is prose, not an identifier
-//
-// Measuring the built page showed "Default branch missing" running 4.078px past
-// the end of the source column. The cause was not the wording: the badge sat
-// inside .row__ref, which sets the monospace stack for branch and tag names,
-// so ordinary words were being set in fixed-width glyphs. The same string in
-// the interface font fits with room to spare.
-//
-// Branch and tag names stay monospace, because there the exact characters
-// matter and alignment helps. A badge says something in words, so it is set in
-// the interface font like every other piece of prose.
-
-func TestStatusBadgesUseTheInterfaceFontNotTheRefFont(t *testing.T) {
-	pill := cssBlock(t, ".pill")
-	if !strings.Contains(pill, "font-family: var(--font)") {
-		t.Errorf(".pill does not state the interface font, so inside a ref row it inherits monospace: %q", pill)
-	}
-	if strings.Contains(pill, "var(--mono)") {
-		t.Error(".pill is set in the monospace stack, which is for identifiers")
-	}
-
-	// The ref name keeps monospace: that is an identifier.
-	row := cssBlock(t, ".row__ref")
-	if !strings.Contains(row, "font-family: var(--mono)") {
-		t.Errorf("ref names are no longer monospace: %q", row)
-	}
-
-	// The badge must not be made to fit by shrinking its text instead.
-	size := regexp.MustCompile(`font-size:\s*([0-9.]+)px`).FindStringSubmatch(pill)
-	if size == nil {
-		t.Fatalf(".pill has no font size: %q", pill)
-	}
-	if got, err := strconv.ParseFloat(size[1], 64); err != nil || got < 10 {
-		t.Errorf(".pill text was shrunk to %spx, below a readable size", size[1])
-	}
-}
-
-func TestDefaultBranchBadgeWordingSurvivedTheFontFix(t *testing.T) {
-	// The overflow was fixed by the font, so the clear wording stays.
-	if got := Text(LangEN, MsgRepoDefaultGoneShort); got != "Default branch missing" {
-		t.Errorf("the English badge wording changed to %q", got)
-	}
-	if got := Text(LangKO, MsgRepoDefaultGoneShort); got != "기본 브랜치 없음" {
-		t.Errorf("the Korean badge wording changed to %q", got)
-	}
-
-	// And the full explanation is still on the repository page.
-	r := newRenderer(t)
-	page := repoPage(fullChrome(LangEN), RepoTabCode)
-	page.Chrome.Notices = []Notice{{Kind: NoticeWarning, Code: MsgRepoDefaultGone}}
-	if out := render(t, r, page); !strings.Contains(out, wantText(LangEN, MsgRepoDefaultGone)) {
-		t.Error("the full default-branch explanation was removed")
-	}
-}
-
 // Room for a badge in a repository row, and a rough width for its text.
 //
 // The numbers come from measuring the built page: .row__ref is 170px wide and
@@ -1133,18 +827,86 @@ func badgeWidth(text string) float64 {
 	return width
 }
 
-func TestBadgeWidthEstimateMatchesTheMeasuredPage(t *testing.T) {
-	// The estimate is only useful if it agrees with the real measurement, so
-	// it is checked against the figure taken from the built page: the English
-	// badge came to 123.406px in the interface font.
-	got := badgeWidth("Default branch missing")
-	if diff := got - 123.406; diff < -12 || diff > 12 {
-		t.Errorf("the width estimate (%.1fpx) disagrees with the measured 123.406px; "+
-			"the advances need re-measuring before they can guard anything", got)
+func TestRepositoryReviewScreenStates(t *testing.T) {
+	// The full default-branch warning still tells the reader what to do, and
+	// the row keeps a distinct short wording.
+	for lang, parts := range map[Lang][]string{
+		LangEN: {"Choose another branch", "push one with this name again"},
+		LangKO: {"다른 브랜치를 고르거나", "다시 푸시하세요"},
+	} {
+		for _, part := range parts {
+			if !strings.Contains(Text(lang, MsgRepoDefaultGone), part) {
+				t.Errorf("%s: the full warning no longer says %q", lang, part)
+			}
+		}
+		if Text(lang, MsgRepoDefaultGoneShort) == Text(lang, MsgRepoDefaultGone) {
+			t.Errorf("%s: the row and the page share one wording again", lang)
+		}
 	}
-	// And it must reject the string that actually overflowed, had it stayed
-	// monospace. That stack measured 155.078px against 151px of room.
-	if 155.078 <= rowBadgeRoom {
-		t.Error("the recorded monospace width no longer exceeds the available room; the fixture is wrong")
+	dayLinks := func(address bool) OverviewPage {
+		graph := graphWithDayLinks()
+		if !address {
+			for i := range graph.Days {
+				graph.Days[i].URL = ""
+			}
+		}
+		return OverviewPage{Chrome: fullChrome(LangEN), Activity: graph}
 	}
+	missing := func(tab RepoTab) RepositoryPage {
+		return with(repoPage(fullChrome(LangEN), tab), func(p *RepositoryPage) { p.Ref.Missing = true })
+	}
+	screens := []screen{
+		// A day is the link itself, so a click and Enter do the same thing
+		// without scripting; a day the backend cannot address is no control.
+		screen{name: "each activity day links to its filtered list", page: dayLinks(true),
+			markup: []string{`href="/activity?date=`},
+			extra: func(t *testing.T, out string) {
+				if tag := elementAt(t, out, "data-day"); !strings.HasPrefix(tag, "<a ") || !strings.Contains(tag, "href=") {
+					t.Errorf("a day is not a link with a destination: %s", tag)
+				}
+			}},
+		screen{name: "days without an address are not fake controls", page: dayLinks(false),
+			noMarkup: []string{`href=""`},
+			extra: func(t *testing.T, out string) {
+				if tag := elementAt(t, out, "data-day"); strings.HasPrefix(tag, "<a ") {
+					t.Errorf("a day with no address is still a link: %s", tag)
+				}
+			}},
+		// The code and commits tabs say the ref does not resolve without
+		// naming a cause they cannot know.
+		screen{name: "a missing ref on the code tab is not blamed on the default branch", page: missing(RepoTabCode),
+			want: []MessageCode{MsgRepoRefMissing}, absent: []MessageCode{MsgRepoDefaultGone}},
+		screen{name: "a missing ref on the commits tab is not blamed on the default branch", page: missing(RepoTabCommits),
+			want: []MessageCode{MsgRepoRefMissing}, absent: []MessageCode{MsgRepoDefaultGone}},
+		screen{name: "a missing path explains itself when the ref resolves",
+			page: with(repoPage(fullChrome(LangEN), RepoTabCode), func(p *RepositoryPage) {
+				p.Code.NotFound, p.Code.Path = true, "cmd/missing"
+			}),
+			want: []MessageCode{MsgCodePathMissing}},
+		// The repository list uses the same column as the activity rows.
+		screen{name: "the overview branch name shortens separately",
+			page: OverviewPage{Chrome: fullChrome(LangEN), Activity: sampleGraph(), Repositories: []RepositorySummary{{
+				Name: "hello-owngit", URL: "/repositories/r1", DefaultBranch: "feature/a-rather-long-branch-name",
+			}}},
+			markup: []string{`class="row__refname"`, `title="feature/a-rather-long-branch-name"`}},
+	}
+	for _, lang := range Langs() {
+		screens = append(screens,
+			// Ref.Missing is also true for a branch that never existed, and
+			// the backend's notice names the real reason.
+			screen{name: string(lang) + " an unknown branch is not blamed on the default branch", lang: lang,
+				page: with(repoPage(fullChrome(lang), RepoTabOverview), func(p *RepositoryPage) {
+					p.Chrome.Notices = []Notice{{Kind: NoticeWarning, Code: MsgRepoRefMissing}}
+					p.Ref.Missing, p.Ref.Name = true, "no-such-branch"
+				}),
+				want: []MessageCode{MsgRepoRefMissing}, absent: []MessageCode{MsgRepoDefaultGone}},
+			// Shortening the row must not remove the explanation from where a
+			// reader acts on it.
+			screen{name: string(lang) + " repository pages keep the full default branch explanation", lang: lang,
+				page: with(repoPage(fullChrome(lang), RepoTabCode), func(p *RepositoryPage) {
+					p.Chrome.Notices = []Notice{{Kind: NoticeWarning, Code: MsgRepoDefaultGone}}
+				}),
+				want: []MessageCode{MsgRepoDefaultGone}})
+	}
+	checkScreens(t, screens...)
 }

@@ -2,35 +2,32 @@ package state
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 )
 
 type RecoveryState struct {
-	AccessMode               string
-	AccessPasswordHash       string
-	AdminPasswordHash        string
-	Repositories             []Repository
-	PullRequests             []PullRequest
-	PullRequestRevisions     []PullRequestRevision
-	PullRequestReviews       []PullRequestReview
-	PullRequestMergeIntents  []PullRequestMergeIntent
-	Tasks                    []RecoveryTask
-	CheckPolicies            []CheckPolicy
-	CheckJobs                []CheckJob
-	CheckConfigurations      []CheckConfiguration
-	CheckCycles              []RecoveryCheckCycle
-	CheckAttempts            []CheckAttempt
-	CheckResults             []CheckResultRecord
-	DirectReviewSettings     []DirectReviewSettings
-	DirectReviewTaskContexts []DirectReviewTaskContext
-	DirectReviewRequests     []DirectReviewRequest
-	ImportSources            []ImportSource
-	ImportRuns               []ImportRun
-	ImportRunOrderKnown      bool
-	ImportObservations       []ImportObservation
-	ImportIntents            []ImportIntent
+	AccessMode              string
+	AccessPasswordHash      string
+	AdminPasswordHash       string
+	Repositories            []Repository
+	PullRequests            []PullRequest
+	PullRequestRevisions    []PullRequestRevision
+	PullRequestReviews      []PullRequestReview
+	PullRequestMergeIntents []PullRequestMergeIntent
+	Tasks                   []RecoveryTask
+	CheckPolicies           []CheckPolicy
+	CheckJobs               []CheckJob
+	CheckConfigurations     []CheckConfiguration
+	CheckCycles             []RecoveryCheckCycle
+	CheckAttempts           []CheckAttempt
+	CheckResults            []CheckResultRecord
+	ImportSources           []ImportSource
+	ImportRuns              []ImportRun
+	ImportObservations      []ImportObservation
+	ImportIntents           []ImportIntent
 	// ImportSchedules and ImportInitialDestinations are machine-local. A
 	// portable snapshot leaves them empty. Validation rejects a schedule that
 	// does not reference a source and any initial-destination row.
@@ -70,9 +67,6 @@ type CheckResultRecord struct {
 // Raw check logs, sessions, setup capabilities, login attempts, trusted hosts,
 // repository-root paths, and insecure-transport consent are excluded.
 func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
-	if err := s.ReconcileDirectReviewInterruptions(ctx, time.Now().UTC()); err != nil {
-		return RecoveryState{}, fmt.Errorf("reconcile direct review state before snapshot: %w", err)
-	}
 	// Active import runs and unconfirmed publication intents are not portable
 	// authority. Record them as interrupted before the snapshot is taken so the
 	// manifest never claims a run finished while a process stopped mid-flight.
@@ -157,7 +151,7 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 	if err := readCheckRecovery(ctx, tx, &snapshot); err != nil {
 		return RecoveryState{}, err
 	}
-	if err := readDirectReviewRecovery(ctx, tx, &snapshot); err != nil {
+	if err := refuseDirectReviewRecords(ctx, tx); err != nil {
 		return RecoveryState{}, err
 	}
 	if err := readImportRecovery(ctx, tx, &snapshot); err != nil {
@@ -169,9 +163,6 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 	if err := ValidateCheckRecovery(snapshot); err != nil {
 		return RecoveryState{}, fmt.Errorf("portable check state is invalid: %w", err)
 	}
-	if err := ValidateDirectReviewRecovery(snapshot); err != nil {
-		return RecoveryState{}, fmt.Errorf("portable direct review state is invalid: %w", err)
-	}
 	if err := ValidateImportRecovery(snapshot); err != nil {
 		return RecoveryState{}, fmt.Errorf("portable import state is invalid: %w", err)
 	}
@@ -179,6 +170,25 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 		return RecoveryState{}, err
 	}
 	return snapshot, nil
+}
+
+// ErrDirectReviewRecords refuses a backup of a database that still holds
+// records of the removed built-in review. Only unreleased development builds
+// wrote them, and a backup never drops records silently.
+var ErrDirectReviewRecords = errors.New("state contains direct-review records written by an unreleased development build; this build cannot back them up")
+
+// refuseDirectReviewRecords checks the portable direct-review tables. The
+// schema keeps them, but nothing reads or writes their rows any more.
+func refuseDirectReviewRecords(ctx context.Context, tx *sql.Tx) error {
+	var present bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM direct_review_repository_settings)
+		OR EXISTS(SELECT 1 FROM direct_review_task_contexts) OR EXISTS(SELECT 1 FROM direct_review_requests)`).Scan(&present); err != nil {
+		return fmt.Errorf("inspect direct-review records: %w", err)
+	}
+	if present {
+		return ErrDirectReviewRecords
+	}
+	return nil
 }
 
 // RestoreRecoveryState replaces a new store's portable state in one
@@ -198,9 +208,6 @@ func (s *Store) RestoreRecoveryState(ctx context.Context, repositoryRoot string,
 	}
 	if err := ValidateCheckRecovery(snapshot); err != nil {
 		return fmt.Errorf("invalid recovered check state: %w", err)
-	}
-	if err := ValidateDirectReviewRecovery(snapshot); err != nil {
-		return fmt.Errorf("invalid recovered direct review state: %w", err)
 	}
 	if err := ValidateImportRecovery(snapshot); err != nil {
 		return fmt.Errorf("invalid recovered import state: %w", err)
@@ -271,9 +278,6 @@ func (s *Store) RestoreRecoveryState(ctx context.Context, repositoryRoot string,
 		return err
 	}
 	if err := restoreCheckRecovery(ctx, tx, snapshot); err != nil {
-		return err
-	}
-	if err := restoreDirectReviewRecovery(ctx, tx, snapshot); err != nil {
 		return err
 	}
 	if err := restoreImportRecovery(ctx, tx, snapshot); err != nil {

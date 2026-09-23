@@ -18,23 +18,17 @@ func TestPullRequestChecksFallBackOnlyToItsOwnRevisions(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	ctx := context.Background()
 	task, err := fixture.store.CreateTask(ctx, "project", "Evidence scope", time.Now().UTC().Add(-time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	recordBrowserAttempt(t, fixture.store, task.ID, fixture.targetOID, "44444444444444444444444444444444", state.WorktreeClean, "", true)
 	created, err := fixture.app.PullRequests.Create(ctx, pullrequest.CreateInput{
 		Repository: "project", Title: "Scoped evidence", SourceBranch: "feature", TargetBranch: "main",
 		SourceOID: fixture.sourceOID, TargetOID: fixture.targetOID,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	show := func() pullrequest.Checks {
 		t.Helper()
 		view, err := fixture.app.PullRequests.Show(ctx, "project", created.Number)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		return view.Checks
 	}
 	if checks := show(); checks.Status != "absent" || checks.Stale || checks.RevisionOID != "" {
@@ -42,9 +36,7 @@ func TestPullRequestChecksFallBackOnlyToItsOwnRevisions(t *testing.T) {
 	}
 
 	recordBrowserAttempt(t, fixture.store, task.ID, fixture.sourceOID, "55555555555555555555555555555555", state.WorktreeClean, "", true)
-	if err := os.WriteFile(filepath.Join(fixture.work, "later.txt"), []byte("later\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(fixture.work, "later.txt"), []byte("later\n"), 0o600))
 	apiRunGit(t, fixture.work, "add", ".")
 	apiRunGit(t, fixture.work, "commit", "-m", "later")
 	apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/feature")

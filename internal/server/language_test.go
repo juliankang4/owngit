@@ -1,34 +1,16 @@
 package server
 
 import (
-	"context"
 	"net/http"
-	"net/http/cookiejar"
-	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"owngit/internal/auth"
 )
 
 func TestValidatedLanguageQueryRendersWithoutRedirectAndPersistsPreference(t *testing.T) {
-	app, store, repositoryRoot := newTestApp(t)
-	if err := os.MkdirAll(repositoryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
-	adminHash, _ := auth.HashPassword("admin-password")
-	if err := store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true); err != nil {
-		t.Fatal(err)
-	}
-	app.Repositories.SetRoot(canonical)
-	server := httptest.NewServer(app.Handler())
-	defer server.Close()
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	app := newConfiguredApp(t)
+	server := serve(t, app.Handler())
+	client, jar := newBrowserClient(t)
 	body, status := dashboardGET(t, client, server.URL+"/?lang=ko")
 	if status != http.StatusOK || !strings.Contains(body, "저장소") {
 		t.Fatalf("Korean request status=%d did not render Korean", status)

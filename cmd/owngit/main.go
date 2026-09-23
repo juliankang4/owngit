@@ -179,11 +179,6 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		if err := pullRequests.ReconcileAll(ctx); err != nil {
 			return err
 		}
-		// Stored review rows belong to no running process any more, so a row
-		// left nonterminal by a stopped server gets its honest outcome here.
-		if err := store.ReconcileDirectReviewInterruptions(ctx, time.Now().UTC()); err != nil {
-			return err
-		}
 	}
 	if _, err := store.PruneCheckLogs(ctx, time.Now()); err != nil {
 		log.Printf("could not prune expired check logs: %v", err)

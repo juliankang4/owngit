@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 )
 
 // Portable import recovery.
@@ -59,8 +58,6 @@ func readImportRecovery(ctx context.Context, tx *sql.Tx, snapshot *RecoveryState
 	if err := closeRows(rows); err != nil {
 		return err
 	}
-	// The evidence is meaningful only when there is run order to preserve.
-	snapshot.ImportRunOrderKnown = len(snapshot.ImportRuns) > 0
 
 	rows, err = tx.QueryContext(ctx, `SELECT repository_id,source_generation,ref_name,oid,symref_target,observed_at,run_id
 		FROM import_ref_observations ORDER BY repository_id,source_generation,ref_name`)
@@ -108,7 +105,7 @@ func restoreImportRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoverySta
 			return fmt.Errorf("restore import source %q: %w", source.RepositoryID, err)
 		}
 	}
-	for _, run := range importRunsForRestore(snapshot) {
+	for _, run := range snapshot.ImportRuns {
 		status := run.Status
 		finished := run.FinishedAt
 		message := run.Message
@@ -178,43 +175,6 @@ func restoreImportRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoverySta
 		}
 	}
 	return nil
-}
-
-// importRunsForRestore preserves explicit admission order in current archives.
-// Format 9 archives created before that evidence existed sorted equal-time runs
-// by random ID. For those archives, keep every run unchanged but insert tied
-// successful runs from least to most conservative content status. Non-successful
-// attempts remain after successful ties so they stay visible as the last attempt.
-func importRunsForRestore(snapshot RecoveryState) []ImportRun {
-	if snapshot.ImportRunOrderKnown || len(snapshot.ImportRuns) < 2 {
-		return snapshot.ImportRuns
-	}
-	runs := append([]ImportRun(nil), snapshot.ImportRuns...)
-	sort.SliceStable(runs, func(left, right int) bool {
-		if runs[left].RepositoryID != runs[right].RepositoryID {
-			return runs[left].RepositoryID < runs[right].RepositoryID
-		}
-		leftStarted := runs[left].StartedAt.Unix()
-		rightStarted := runs[right].StartedAt.Unix()
-		if leftStarted != rightStarted {
-			return leftStarted < rightStarted
-		}
-		return legacyImportContentRank(runs[left]) < legacyImportContentRank(runs[right])
-	})
-	return runs
-}
-
-func legacyImportContentRank(run ImportRun) int {
-	if run.Status != ImportRunComplete {
-		return 3
-	}
-	if !run.LFSInspectionDone {
-		return 2
-	}
-	if run.LFSDetected > 0 {
-		return 1
-	}
-	return 0
 }
 
 // ValidateImportRecovery checks a complete snapshot's import state, including

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -23,16 +22,12 @@ func recordUnresolvedPublication(t *testing.T, fixture apiFixture) string {
 	source, err := fixture.store.ConfigureImportSource(ctx, state.ImportSourceInput{
 		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: state.ImportModeStandalone, Now: now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	run := state.ImportRun{
 		ID: strings.Repeat("1", 32), RepositoryID: "project", SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
 		Kind: state.ImportKindRefresh, Status: state.ImportRunPublishing, StartedAt: now, CreatedAt: now,
 	}
-	if err := fixture.store.BeginImportRun(ctx, run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.BeginImportRun(ctx, run))
 	intent := state.ImportIntent{
 		ID: strings.Repeat("2", 32), RepositoryID: "project", RunID: run.ID,
 		SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision, Status: state.ImportIntentPlanning,
@@ -41,26 +36,19 @@ func recordUnresolvedPublication(t *testing.T, fixture apiFixture) string {
 		Observed: map[string]string{"refs/heads/main": fixture.sourceOID, state.ImportHeadRef: "symbolic refs/heads/main " + fixture.sourceOID},
 		Retained: map[string]string{}, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := fixture.store.CreateImportIntent(ctx, intent); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", "synthetic mixed outcome", now); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.CreateImportIntent(ctx, intent))
+	noErr(t, fixture.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", "synthetic mixed outcome", now))
 	run.Status = state.ImportRunUnresolved
 	run.ErrorClass = importsync.CodeUnresolved
 	run.FinishedAt = now
-	if err := fixture.store.FinishImportRun(ctx, run); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, fixture.store.FinishImportRun(ctx, run))
 	return intent.ID
 }
 
 func TestImportResolveAPIRequiresOwnerAndRecordsTheDecision(t *testing.T) {
 	fixture := newImportAPIFixture(t)
 	intentID := recordUnresolvedPublication(t, fixture)
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	target := server.URL + "/api/v1/repositories/project/import/resolve"
 
 	if response := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "", "", ""); response.StatusCode != http.StatusUnauthorized {
@@ -70,12 +58,8 @@ func TestImportResolveAPIRequiresOwnerAndRecordsTheDecision(t *testing.T) {
 		response.Body.Close()
 	}
 	settings, err := fixture.store.Settings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.store.CreateSession(context.Background(), "import-admin", "admin", "import-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
+	noErr(t, fixture.store.CreateSession(context.Background(), "import-admin", "admin", "import-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	if response := importSessionRequest(t, http.MethodPost, target, map[string]any{}, "wrong-csrf", "admin-password"); response.StatusCode != http.StatusForbidden {
 		response.Body.Close()
 		t.Fatalf("wrong CSRF resolve status=%d", response.StatusCode)
@@ -104,8 +88,7 @@ func TestImportResolveAPIRequiresOwnerAndRecordsTheDecision(t *testing.T) {
 func TestImportPageOffersOwnerResolutionInBothLanguages(t *testing.T) {
 	fixture := newImportAPIFixture(t)
 	intentID := recordUnresolvedPublication(t, fixture)
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "resolve-admin")
 	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {

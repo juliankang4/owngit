@@ -19,26 +19,16 @@ func TestWindowsLongRepositoryRootSupportsPullRequestMerge(t *testing.T) {
 	repositoryRoot := windowsLongPullRequestRepositoryRoot(t, "project")
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	store, err := state.Open(ctx, stateRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	if err := store.CompleteSetup(ctx, repositoryRoot, "open", "", "synthetic-admin-hash", true); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", "synthetic-admin-hash", true))
 	runner, err := gitexec.New("", filepath.Join(stateRoot, "runtime"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	stored, err := manager.Create(ctx, "project", "long pull request repository")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	repositoryPath, err := manager.Path(stored.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if got := len(repositoryPath); got != 229 {
 		t.Fatalf("bare repository path length=%d, want 229: %s", got, repositoryPath)
 	}
@@ -47,22 +37,16 @@ func TestWindowsLongRepositoryRootSupportsPullRequestMerge(t *testing.T) {
 	runFixtureGit(t, "", "init", "--initial-branch=main", work)
 	runFixtureGit(t, work, "config", "user.name", "Long PR Test")
 	runFixtureGit(t, work, "config", "user.email", "long-pr@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "base.txt"), []byte("base\n"), 0o600))
 	runFixtureGit(t, work, "add", ".")
 	runFixtureGit(t, work, "commit", "-m", "base")
 	runFixtureGit(t, work, "checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "feature.txt"), []byte("feature\n"), 0o600))
 	runFixtureGit(t, work, "add", ".")
 	runFixtureGit(t, work, "commit", "-m", "feature")
 	sourceOID := fixtureGitResultOutput(t, work, "rev-parse", "HEAD").Stdout
 	runFixtureGit(t, work, "checkout", "main")
-	if err := os.WriteFile(filepath.Join(work, "target.txt"), []byte("target\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "target.txt"), []byte("target\n"), 0o600))
 	runFixtureGit(t, work, "add", ".")
 	runFixtureGit(t, work, "commit", "-m", "target")
 	targetOID := fixtureGitResultOutput(t, work, "rev-parse", "HEAD").Stdout
@@ -76,20 +60,14 @@ func TestWindowsLongRepositoryRootSupportsPullRequestMerge(t *testing.T) {
 	created, err := service.Create(ctx, CreateInput{
 		Repository: stored.ID, Title: "Long root merge", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	merged, err := service.Merge(ctx, stored.ID, created.Number, RevisionInput{SourceOID: sourceOID, TargetOID: targetOID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if merged.Merge == nil || merged.Merge.Mode != "merge_commit" || merged.Merge.OID == "" {
 		t.Fatalf("long-root merge=%+v", merged.Merge)
 	}
 	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "refs/heads/main")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if strings.TrimSpace(string(result.Stdout)) != merged.Merge.OID {
 		t.Fatalf("long-root target=%q, want %s", result.Stdout, merged.Merge.OID)
 	}
@@ -108,8 +86,6 @@ func windowsLongPullRequestRepositoryRoot(t *testing.T, repositoryID string) str
 	if got := len(filepath.Join(root, bareName)); got != targetLength {
 		t.Fatalf("constructed bare repository path length=%d, want %d", got, targetLength)
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.MkdirAll(root, 0o700))
 	return root
 }

@@ -66,13 +66,9 @@ func (body *stalledRequestBody) Close() error {
 func TestStalledChunkedBodyTimesOutAndReapsOperation(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	backend, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	handler.BackendPath = backend
 	handler.Authorize = func(*http.Request) bool { return true }
 	handler.OperationTimeout = 75 * time.Millisecond
@@ -102,21 +98,15 @@ func TestStalledChunkedBodyTimesOutAndReapsOperation(t *testing.T) {
 	}
 	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := handler.Wait(waitContext); err != nil {
-		t.Fatalf("Wait after timed-out request: %v", err)
-	}
+	noErr(t, handler.Wait(waitContext), "Wait after timed-out request")
 }
 
 func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	backend, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	handler.BackendPath = backend
 	handler.Authorize = func(*http.Request) bool { return true }
 	handler.OperationTimeout = 75 * time.Millisecond
@@ -124,9 +114,7 @@ func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) 
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	connection, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer connection.Close()
 	if _, err := io.WriteString(connection, "GET /git/sample.git/info/refs?service=git-upload-pack HTTP/1.1\r\nHost: example.test\r\n\r\n"); err != nil {
 		t.Fatal(err)
@@ -147,17 +135,13 @@ func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) 
 	}
 	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := handler.Wait(waitContext); err != nil {
-		t.Fatalf("Wait after stalled response: %v", err)
-	}
+	noErr(t, handler.Wait(waitContext), "Wait after stalled response")
 }
 
 func TestUploadLimitRejectsPushWithoutChangingRef(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	handler.Authorize = func(*http.Request) bool { return true }
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -165,9 +149,7 @@ func TestUploadLimitRejectsPushWithoutChangingRef(t *testing.T) {
 	runHTTPGit(t, "", "init", "--initial-branch=main", work)
 	runHTTPGit(t, work, "config", "user.name", "Limit Test")
 	runHTTPGit(t, work, "config", "user.email", "limit@example.invalid")
-	if err := os.WriteFile(filepath.Join(work, "small"), []byte("small"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "small"), []byte("small"), 0o600))
 	runHTTPGit(t, work, "add", ".")
 	runHTTPGit(t, work, "commit", "-m", "small")
 	remoteURL := server.URL + "/git/sample.git"
@@ -180,18 +162,14 @@ func TestUploadLimitRejectsPushWithoutChangingRef(t *testing.T) {
 	if _, err := rand.Read(payload); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(work, "large.bin"), payload, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(filepath.Join(work, "large.bin"), payload, 0o600))
 	runHTTPGit(t, work, "add", ".")
 	runHTTPGit(t, work, "commit", "-m", "too large")
 	if output, err := httpGitCombined(work, "-c", "http.postBuffer=1", "push", "origin", "HEAD:refs/heads/main"); err == nil {
 		t.Fatalf("oversized push succeeded: %s", output)
 	}
 	remotePath, err := manager.Path("sample")
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	got := httpGitOutput(t, "", "--git-dir", remotePath, "rev-parse", "refs/heads/main")
 	if got != old {
 		t.Fatalf("oversized push changed public ref to %s, want %s", got, old)

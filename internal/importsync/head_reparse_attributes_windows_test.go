@@ -70,9 +70,7 @@ func TestDirectPathGuardsCheckWindowsReparseAttributes(t *testing.T) {
 func lstatAttributes(t *testing.T, path string) syscall.Win32FileAttributeData {
 	t.Helper()
 	info, err := os.Lstat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	attributes, ok := info.Sys().(*syscall.Win32FileAttributeData)
 	if !ok || attributes == nil {
 		t.Fatalf("Lstat(%s) attributes type %T", path, info.Sys())

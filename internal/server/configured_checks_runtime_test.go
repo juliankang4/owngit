@@ -17,14 +17,10 @@ import (
 func TestConfiguredCheckPolicyReportsUnavailableRuntimeAndRunnerIsClosed(t *testing.T) {
 	ctx := context.Background()
 	store, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	defer store.Close()
 	now := time.Unix(1_900_000_000, 0).UTC()
-	if err := store.AddRepository(ctx, state.Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, store.AddRepository(ctx, state.Repository{ID: "project", Name: "Project", CreatedAt: now}))
 	if _, err := store.SetCheckPolicy(ctx, state.CheckPolicyInput{
 		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner,
 		AllowedEvents: []string{"push"}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
@@ -49,9 +45,7 @@ func TestConfiguredCheckPolicyReportsUnavailableRuntimeAndRunnerIsClosed(t *test
 		t.Fatalf("policy status=%d body=%s", policyResponse.Code, policyResponse.Body.String())
 	}
 	var decoded checkapi.PolicyResponse
-	if err := json.Unmarshal(policyResponse.Body.Bytes(), &decoded); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, json.Unmarshal(policyResponse.Body.Bytes(), &decoded))
 	if decoded.Policy == nil || decoded.Runtime.Available || decoded.Runtime.UnavailableCode != "workspace_unavailable" || !strings.Contains(decoded.Runtime.UnavailableReason, "restart OwnGit") {
 		t.Fatalf("policy runtime=%+v policy=%+v", decoded.Runtime, decoded.Policy)
 	}

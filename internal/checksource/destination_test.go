@@ -20,9 +20,7 @@ func TestMaterializeCreatesAPrivateDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(destination)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if !info.IsDir() {
 		t.Fatal("the destination is not a directory")
 	}
@@ -86,21 +84,15 @@ func TestMaterializeFailsWhenTheNewDestinationIsNotEmpty(t *testing.T) {
 func TestMaterializeDoesNotProtectADestinationItDidNotCreate(t *testing.T) {
 	root := t.TempDir()
 	destination := filepath.Join(root, "existing")
-	if err := os.Mkdir(destination, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.Mkdir(destination, 0o755))
 	before, err := os.Stat(destination)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	source := newFakeSource(t, map[string]string{"a.txt": "a"}, nil)
 	if _, err := Materialize(context.Background(), source, destination, Options{}); !errors.Is(err, ErrDestinationExists) {
 		t.Fatalf("err=%v, want existing destination", err)
 	}
 	after, err := os.Stat(destination)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if before.Mode() != after.Mode() {
 		t.Fatalf("the existing destination was re-permissioned from %v to %v", before.Mode(), after.Mode())
 	}

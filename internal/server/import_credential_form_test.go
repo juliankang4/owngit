@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -20,8 +19,7 @@ import (
 // refused and changes nothing.
 func TestImportPageStoresACAOnlyCredential(t *testing.T) {
 	fixture := newImportAPIFixture(t)
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "ca-form-admin")
 	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{
@@ -95,8 +93,7 @@ func credentialFormOptions(t *testing.T, body string) map[string]string {
 // actions remove the credential.
 func TestImportCredentialSaveNeverClears(t *testing.T) {
 	fixture := newImportAPIFixture(t)
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "save-admin")
 	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{
@@ -174,8 +171,7 @@ func TestNewImportWithEmptyNoneHasNoCredential(t *testing.T) {
 		request = got
 		return &importfetch.Result{Advertisement: &importgit.Advertisement{Service: "git-upload-pack", ObjectFormat: importgit.FormatSHA1, Empty: true}}, nil
 	}
-	server := httptest.NewServer(fixture.app.Handler())
-	t.Cleanup(server.Close)
+	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "empty-new-admin")
 	result := browserForm(t, client, server.URL+"/repositories/new-import", url.Values{

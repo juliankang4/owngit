@@ -18,9 +18,7 @@ import (
 func destinationIsPrivate(t *testing.T, path string) bool {
 	t.Helper()
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	return info.Mode().Perm()&0o077 == 0
 }
 
@@ -43,9 +41,7 @@ func TestMaterializeDestinationIgnoresAPermissiveUmask(t *testing.T) {
 		filepath.Join(destination, "nested", "deep", "file.txt"),
 	} {
 		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		noErr(t, err)
 		if info.Mode().Perm()&0o077 != 0 {
 			t.Fatalf("%s is %v under a permissive umask, want owner-only", path, info.Mode())
 		}

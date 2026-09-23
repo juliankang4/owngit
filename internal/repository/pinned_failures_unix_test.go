@@ -22,9 +22,7 @@ func TestPinnedBlobPrefixLimitDoesNotClaimGitIOBound(t *testing.T) {
 	oid := gitOutput(t, work, "rev-parse", "HEAD")
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	pinned, err := manager.PinRepository(context.Background(), "sample", oid, oid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
 	dir := t.TempDir()
@@ -49,23 +47,15 @@ fi
 exec %s "$@"
 `, quote(manager.Git.GitPath), quote(capture), quote(capture), quote(marker), quote(capture), quote(manager.Git.GitPath))
 	wrapper := filepath.Join(dir, "git-fixture")
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
 	manager.Git.GitPath = wrapper
 
 	blob, err := pinned.ReadBlob(context.Background(), PinnedHead, "file.txt", 0, 4096, 16, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	producedRaw, err := os.ReadFile(marker)
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	produced, err := strconv.Atoi(strings.TrimSpace(string(producedRaw)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, err)
 	if len(blob.Content) != 16 || string(blob.Content) != content[:16] || blob.Size != blobBytes || !blob.HasMore {
 		t.Fatalf("returned blob chunk=%+v", blob)
 	}
@@ -84,9 +74,7 @@ func TestPinnedChangeRejectsLimitPlusExecutionFailure(t *testing.T) {
 			head := gitOutput(t, work, "rev-parse", "HEAD")
 			runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 			pinned, err := manager.PinRepository(context.Background(), "sample", base, head)
-			if err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, err)
 			quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
 			dir := t.TempDir()
 			marker := filepath.Join(dir, "emitted")
@@ -98,9 +86,7 @@ func TestPinnedChangeRejectsLimitPlusExecutionFailure(t *testing.T) {
 			}
 			script := fmt.Sprintf("#!/bin/sh\nfor arg do\n if [ \"$arg\" = diff ]; then\n  printf '0123456789abcdef0123456789abcdef'\n  printf emitted > %s\n  %s\n fi\ndone\nexec %s \"$@\"\n", quote(marker), ending, quote(manager.Git.GitPath))
 			wrapper := filepath.Join(dir, "git-fixture")
-			if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-				t.Fatal(err)
-			}
+			noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
 			manager.Git.GitPath = wrapper
 			change, err := pinned.ReadChange(context.Background(), 8)
 			if _, markerErr := os.Stat(marker); markerErr != nil {
