@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -108,9 +109,9 @@ func (m *Manager) ApplyRestore(ctx context.Context, id string, request RestoreRe
 		if request.Mode == RestoreAll {
 			message = "Restore tree from " + shortObjectID(plan.preview.SourceOID)
 		}
-		commit, err := m.Git.Run(ctx, "", strings.NewReader(message+"\n"),
+		commit, err := m.Git.Run(ctx, repositoryPath, strings.NewReader(message+"\n"),
 			"-c", "user.name=OwnGit", "-c", "user.email=owngit@localhost",
-			"--git-dir", repositoryPath, "commit-tree", plan.preview.ResultTree, "-p", plan.currentOID, "-F", "-")
+			"--git-dir", ".", "commit-tree", plan.preview.ResultTree, "-p", plan.currentOID, "-F", "-")
 		if err != nil {
 			return RestoreResult{}, fmt.Errorf("create restore commit: %w", err)
 		}
@@ -127,6 +128,9 @@ func (m *Manager) ApplyRestore(ctx context.Context, id string, request RestoreRe
 		current, exists, readErr := m.readBranch(verificationCtx, repositoryPath, plan.preview.TargetRef)
 		switch {
 		case readErr == nil && exists && current == newOID:
+			if m.OnChange != nil {
+				m.OnChange(id)
+			}
 			return RestoreResult{CommitOID: newOID, Created: created}, nil
 		case readErr == nil && exists == plan.currentExists && current == plan.currentOID:
 			return RestoreResult{}, fmt.Errorf("publish restore commit: %w", err)
@@ -136,6 +140,9 @@ func (m *Manager) ApplyRestore(ctx context.Context, id string, request RestoreRe
 			return RestoreResult{}, fmt.Errorf("publish restore commit and verify its result: %v; verification failed: %w", err, readErr)
 		}
 	}
+	if m.OnChange != nil {
+		m.OnChange(id)
+	}
 	return RestoreResult{CommitOID: newOID, Created: created}, nil
 }
 
@@ -143,7 +150,7 @@ func (m *Manager) publishRestoreRef(ctx context.Context, repositoryPath, targetR
 	if m.restorePublisher != nil {
 		return m.restorePublisher(ctx, repositoryPath, targetRef, newOID, expected)
 	}
-	_, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "update-ref", targetRef, newOID, expected)
+	_, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "update-ref", targetRef, newOID, expected)
 	return err
 }
 
@@ -176,7 +183,7 @@ func (m *Manager) prepareRestore(ctx context.Context, repositoryPath string, req
 		if len(request.Paths) != 0 {
 			return restorePlan{}, fmt.Errorf("%w: whole-tree restore cannot include paths", ErrRestoreInvalid)
 		}
-		result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "rev-parse", "--verify", sourceOID+"^{tree}")
+		result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", sourceOID+"^{tree}")
 		if err != nil {
 			return restorePlan{}, fmt.Errorf("resolve source tree: %w", err)
 		}
@@ -198,7 +205,7 @@ func (m *Manager) prepareRestore(ctx context.Context, repositoryPath string, req
 		return restorePlan{}, err
 	}
 	if currentExists {
-		result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "rev-parse", "--verify", currentOID+"^{tree}")
+		result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", currentOID+"^{tree}")
 		if err != nil {
 			return restorePlan{}, fmt.Errorf("resolve target tree: %w", err)
 		}
@@ -224,11 +231,11 @@ func (m *Manager) restoreSourceCommit(ctx context.Context, repositoryPath, sourc
 	if !isOID(source) {
 		return "", fmt.Errorf("%w: source must be a full object ID", ErrRestoreInvalid)
 	}
-	objectType, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "cat-file", "-t", source)
+	objectType, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-t", source)
 	if err != nil || strings.TrimSpace(string(objectType.Stdout)) != "commit" {
 		return "", fmt.Errorf("%w: source is not a commit", ErrRestoreInvalid)
 	}
-	resolved, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "rev-parse", "--verify", source+"^{commit}")
+	resolved, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", source+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("%w: source commit is unavailable", ErrRestoreInvalid)
 	}
@@ -240,14 +247,14 @@ func (m *Manager) restoreSourceCommit(ctx context.Context, repositoryPath, sourc
 }
 
 func (m *Manager) readBranch(ctx context.Context, repositoryPath, targetRef string) (string, bool, error) {
-	_, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "show-ref", "--verify", "--quiet", targetRef)
+	_, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show-ref", "--verify", "--quiet", targetRef)
 	if err != nil {
 		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("read target branch: %w", err)
 	}
-	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "rev-parse", "--verify", targetRef)
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", targetRef)
 	if err != nil {
 		return "", false, fmt.Errorf("resolve target branch: %w", err)
 	}
@@ -310,7 +317,12 @@ func (m *Manager) selectedRestoreTree(ctx context.Context, repositoryPath, sourc
 	if err != nil {
 		return "", nil, fmt.Errorf("create private restore index: %w", err)
 	}
-	indexPath := indexFile.Name()
+	indexPath, err := filepath.Abs(indexFile.Name())
+	if err != nil {
+		closeErr := indexFile.Close()
+		removeErr := os.Remove(indexFile.Name())
+		return "", nil, errors.Join(fmt.Errorf("resolve private restore index: %w", err), closeErr, removeErr)
+	}
 	if err := indexFile.Close(); err != nil {
 		return "", nil, err
 	}
@@ -319,7 +331,7 @@ func (m *Manager) selectedRestoreTree(ctx context.Context, repositoryPath, sourc
 	}
 	defer os.Remove(indexPath)
 	environment := []string{"GIT_INDEX_FILE=" + indexPath}
-	if _, err := m.Git.RunWithEnvironment(ctx, "", nil, environment, "--git-dir", repositoryPath, "read-tree", targetOID); err != nil {
+	if _, err := m.Git.RunWithEnvironment(ctx, repositoryPath, nil, environment, "--git-dir", ".", "read-tree", targetOID); err != nil {
 		return "", nil, fmt.Errorf("read target into private index: %w", err)
 	}
 	zero := strings.Repeat("0", len(sourceOID))
@@ -330,7 +342,7 @@ func (m *Manager) selectedRestoreTree(ctx context.Context, repositoryPath, sourc
 		}
 	}
 	if removals.Len() != 0 {
-		if _, err := m.Git.RunWithEnvironment(ctx, "", &removals, environment, "--git-dir", repositoryPath, "update-index", "-z", "--index-info"); err != nil {
+		if _, err := m.Git.RunWithEnvironment(ctx, repositoryPath, &removals, environment, "--git-dir", ".", "update-index", "-z", "--index-info"); err != nil {
 			return "", nil, fmt.Errorf("remove selected paths from private index: %w", err)
 		}
 	}
@@ -341,11 +353,11 @@ func (m *Manager) selectedRestoreTree(ctx context.Context, repositoryPath, sourc
 		}
 	}
 	if additions.Len() != 0 {
-		if _, err := m.Git.RunWithEnvironment(ctx, "", &additions, environment, "--git-dir", repositoryPath, "update-index", "-z", "--index-info"); err != nil {
+		if _, err := m.Git.RunWithEnvironment(ctx, repositoryPath, &additions, environment, "--git-dir", ".", "update-index", "-z", "--index-info"); err != nil {
 			return "", nil, fmt.Errorf("add source paths to private index: %w", err)
 		}
 	}
-	written, err := m.Git.RunWithEnvironment(ctx, "", nil, environment, "--git-dir", repositoryPath, "write-tree")
+	written, err := m.Git.RunWithEnvironment(ctx, repositoryPath, nil, environment, "--git-dir", ".", "write-tree")
 	if err != nil {
 		return "", nil, fmt.Errorf("write selected restore tree: %w", err)
 	}
@@ -353,7 +365,7 @@ func (m *Manager) selectedRestoreTree(ctx context.Context, repositoryPath, sourc
 }
 
 func (m *Manager) restoreTreeEntries(ctx context.Context, repositoryPath, commitOID string) (map[string]restoreTreeEntry, error) {
-	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "ls-tree", "-r", "-z", "--full-tree", commitOID)
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "ls-tree", "-r", "-z", "--full-tree", commitOID)
 	if err != nil {
 		return nil, fmt.Errorf("read restore tree: %w", err)
 	}
@@ -373,7 +385,7 @@ func (m *Manager) restoreTreeEntries(ctx context.Context, repositoryPath, commit
 }
 
 func (m *Manager) emptyTree(ctx context.Context, repositoryPath string) (string, error) {
-	result, err := m.Git.Run(ctx, "", strings.NewReader(""), "--git-dir", repositoryPath, "mktree")
+	result, err := m.Git.Run(ctx, repositoryPath, strings.NewReader(""), "--git-dir", ".", "mktree")
 	if err != nil {
 		return "", fmt.Errorf("create empty comparison tree: %w", err)
 	}
@@ -381,7 +393,7 @@ func (m *Manager) emptyTree(ctx context.Context, repositoryPath string) (string,
 }
 
 func (m *Manager) restoreChanges(ctx context.Context, repositoryPath, oldTree, newTree string) ([]ChangedFile, error) {
-	statusResult, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "diff-tree", "--no-commit-id", "--name-status", "--no-renames", "-r", "-z", oldTree, newTree)
+	statusResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--no-commit-id", "--name-status", "--no-renames", "-r", "-z", oldTree, newTree)
 	if err != nil {
 		return nil, fmt.Errorf("read restore changes: %w", err)
 	}
@@ -394,7 +406,7 @@ func (m *Manager) restoreChanges(ctx context.Context, repositoryPath, oldTree, n
 		}
 		changes = append(changes, ChangedFile{Path: string(tokens[index+1]), Status: changedStatus(status[0])})
 	}
-	numResult, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "diff-tree", "--no-commit-id", "--numstat", "--no-renames", "-r", "-z", oldTree, newTree)
+	numResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--no-commit-id", "--numstat", "--no-renames", "-r", "-z", oldTree, newTree)
 	if err != nil {
 		return nil, fmt.Errorf("read restore change sizes: %w", err)
 	}
@@ -419,8 +431,8 @@ func (m *Manager) restorePatches(ctx context.Context, repositoryPath, oldTree, n
 		if change.Binary {
 			continue
 		}
-		result, err := m.Git.RunWithOutputLimit(ctx, "", nil, 256<<10,
-			"--git-dir", repositoryPath, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3", oldTree, newTree, "--", ":(top,literal)"+change.Path)
+		result, err := m.Git.RunWithOutputLimit(ctx, repositoryPath, nil, 256<<10,
+			"--git-dir", ".", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3", oldTree, newTree, "--", ":(top,literal)"+change.Path)
 		if err != nil {
 			var limitErr *gitexec.LimitError
 			if !errors.As(err, &limitErr) {

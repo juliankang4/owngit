@@ -47,6 +47,14 @@ func (app *App) cookieSession(request *http.Request, kind, cookieName string) (s
 	return session, true
 }
 
+// browserAdminSession returns the administrator session on a page that was
+// authorized with general authority. Unlike requireBrowserAdmin it never
+// redirects, and it reports the selected session so a page can decide what to
+// offer rather than what to allow.
+func (app *App) browserAdminSession(request *http.Request) (state.Session, bool) {
+	return app.cookieSession(request, "admin", adminCookie)
+}
+
 func (app *App) validCSRF(request *http.Request, submitted string) bool {
 	if submitted == "" {
 		return false
@@ -139,7 +147,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		accessMode = webui.AccessPassword
 	}
 	chrome := webui.Chrome{
-		Lang: lang, Now: app.now(), CurrentURL: request.URL.RequestURI(), CSRF: csrf,
+		Lang: lang, Now: app.now(), CurrentURL: request.URL.RequestURI(), CSRF: csrf, Version: app.Version,
 		Viewer: webui.Viewer{
 			AccessMode: accessMode, GeneralUnlocked: settings.AccessMode == "open" || generalOK,
 			AdminConfirmed: adminOK, SetupComplete: settings.Initialized,
@@ -158,7 +166,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		query := strings.TrimSpace(request.URL.Query().Get("q"))
 		nav := webui.Nav{
 			Section: section, ActiveRepoID: activeRepository, Total: len(repositories), Query: query,
-			OverviewURL: "/", ActivityURL: "/activity", SettingsURL: "/settings", NewRepoURL: "/repositories/new",
+			OverviewURL: "/", ActivityURL: "/activity", SettingsURL: "/settings", NewRepoURL: "/repositories/new", NewImportURL: "/repositories/new-import",
 			AdminLoginURL: "/admin/login?next=" + url.QueryEscape(request.URL.RequestURI()),
 		}
 		if generalOK && settings.AccessMode == "password" {
@@ -222,6 +230,63 @@ func noticeFromQuery(request *http.Request) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgAdminEnded)}
 	case "restore_success":
 		return []webui.Notice{webui.Success(webui.MsgRestoreSuccess)}
+	case "pull_request_created":
+		return []webui.Notice{webui.Success(webui.MsgPRCreated)}
+	case "review_requested":
+		return []webui.Notice{webui.Success(webui.MsgPRReviewAsked)}
+	case "review_skipped":
+		return []webui.Notice{webui.Success(webui.MsgPRReviewSkipped)}
+	case "pull_request_merged":
+		return []webui.Notice{webui.Success(webui.MsgPRMerged)}
+	case "helper_credential_revoked":
+		return []webui.Notice{webui.Success(webui.MsgHelperRevokedDone)}
+	case "import_saved":
+		return []webui.Notice{webui.Success(webui.MsgImportSaved)}
+	case "import_refreshed":
+		return []webui.Notice{webui.Success(webui.MsgImportRefreshed)}
+	case "import_cancelled":
+		return []webui.Notice{webui.Success(webui.MsgImportCancelled)}
+	case "import_resolved":
+		return []webui.Notice{webui.Success(webui.MsgImportResolved)}
+	case "import_run_cancelled":
+		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgImportRunCancelled}}
+	case "import_cancel_none":
+		return []webui.Notice{webui.Success(webui.MsgImportCancelNone)}
+	case "import_credentials_saved":
+		return []webui.Notice{webui.Success(webui.MsgImportCredentialsSaved)}
+	case "import_credentials_cleared":
+		return []webui.Notice{webui.Success(webui.MsgImportCredentialsCleared)}
+	case "import_schedule_saved":
+		return []webui.Notice{webui.Success(webui.MsgImportScheduleSaved)}
+	case "import_started":
+		return []webui.Notice{webui.Success(webui.MsgImportStarted)}
+	case "import_failed":
+		return []webui.Notice{webui.Error("", webui.MsgImportFailed)}
+	// Configured checks. Every redirect this package issues has to resolve
+	// here; a key with no case falls through to nil and the operator is told
+	// nothing about what their submission did.
+	case "check_policy_saved":
+		return []webui.Notice{webui.Success(webui.MsgCCSaved)}
+	case "check_policy_saved_enabled":
+		return []webui.Notice{webui.Success(webui.MsgCCSavedEnabled)}
+	case "checks_enabled":
+		return []webui.Notice{webui.Success(webui.MsgCCEnabled)}
+	case "checks_disabled":
+		return []webui.Notice{webui.Success(webui.MsgCCDisabled)}
+	case "check_job_cancelled":
+		return []webui.Notice{webui.Success(webui.MsgCCJobCancelled)}
+	case "check_job_already_finished":
+		// Not a success: the request was recorded, but the job had already
+		// reached its own result and nothing was stopped or changed.
+		return []webui.Notice{webui.Info(webui.MsgCCJobAlreadyFinished)}
+	case "check_job_rerun":
+		return []webui.Notice{webui.Success(webui.MsgCCJobRerunQueued)}
+	case "check_job_rerun_existing":
+		// Not a second success: nothing new was queued, and saying otherwise
+		// would suggest a fresh run exists.
+		return []webui.Notice{webui.Info(webui.MsgCCJobRerunExisting)}
+	case "runner_token_revoked":
+		return []webui.Notice{webui.Success(webui.MsgRTRevokedDone)}
 	default:
 		return nil
 	}

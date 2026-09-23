@@ -20,10 +20,14 @@ const (
 	ReviewApproved         = "approved"
 	ReviewChangesRequested = "changes_requested"
 	ReviewSkipped          = "skipped"
+	// ReviewNotRequested is the default when creation omits a review choice.
+	// It is not a waiting state: merge never requires a later decision.
+	ReviewNotRequested = "not_requested"
 
 	ReviewProvenanceRequest      = "review_request"
 	ReviewProvenanceSkip         = "explicit_skip"
 	ReviewProvenanceExternalTool = "supplied_external_tool"
+	ReviewProvenanceDefault      = "default"
 
 	MergeIntentPreparing = "preparing"
 	MergeIntentPlanned   = "planned"
@@ -64,7 +68,11 @@ type PullRequestReview struct {
 	Status            string
 	ReviewerLabel     string
 	Provenance        string
-	CreatedAt         time.Time
+	// ReviewEventID is an optional identity for a pending review request, so a
+	// retransmitted request is recognisable. Manual and default rows leave it
+	// empty, and a stored value is still validated as a record fact.
+	ReviewEventID string
+	CreatedAt     time.Time
 }
 
 type PullRequestMergeIntent struct {
@@ -90,7 +98,7 @@ func (s *Store) CreatePullRequest(ctx context.Context, repositoryID, title, sour
 }
 
 func (s *Store) BeginPullRequestCreation(ctx context.Context, repositoryID, title, sourceBranch, targetBranch, sourceOID, targetOID, initialReview string, now time.Time) (PullRequest, error) {
-	if initialReview != ReviewPending && initialReview != ReviewSkipped {
+	if initialReview != ReviewPending && initialReview != ReviewSkipped && initialReview != ReviewNotRequested {
 		return PullRequest{}, errors.New("invalid initial review choice")
 	}
 	record := PullRequest{
@@ -99,10 +107,13 @@ func (s *Store) BeginPullRequestCreation(ctx context.Context, repositoryID, titl
 	}
 	revision := PullRequestRevision{RepositoryID: repositoryID, SourceOID: sourceOID, TargetOID: targetOID, RecordedAt: now}
 	review := PullRequestReview{RepositoryID: repositoryID, SourceOID: sourceOID, TargetOID: targetOID, Status: initialReview, CreatedAt: now}
-	if initialReview == ReviewPending {
+	switch initialReview {
+	case ReviewPending:
 		review.Provenance = ReviewProvenanceRequest
-	} else {
+	case ReviewSkipped:
 		review.Provenance = ReviewProvenanceSkip
+	default:
+		review.Provenance = ReviewProvenanceDefault
 	}
 	if err := validatePullRequestRecord(record); err != nil {
 		return PullRequest{}, err
@@ -133,8 +144,8 @@ func (s *Store) BeginPullRequestCreation(ctx context.Context, repositoryID, titl
 	review.PullRequestNumber = record.Number
 	review.Sequence = 1
 	if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(
-		repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at
-	) VALUES(?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.CreatedAt.Unix()); err != nil {
+		repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,review_event_id,created_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.ReviewEventID, review.CreatedAt.Unix()); err != nil {
 		return PullRequest{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -214,6 +225,66 @@ func (s *Store) PullRequest(ctx context.Context, repositoryID string, number int
 	return record, err == nil, err
 }
 
+// OpenPullRequests returns a bounded newest-first set for automatic revision
+// observation after Git writes.
+func (s *Store) OpenPullRequests(ctx context.Context, repositoryID string, limit int) ([]PullRequest, bool, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, false, errors.New("invalid open pull request limit")
+	}
+	rows, err := s.db.QueryContext(ctx, pullRequestSelect+` WHERE repository_id=? AND status=? ORDER BY number DESC LIMIT ?`, repositoryID, PullRequestOpen, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	var records []PullRequest
+	for rows.Next() {
+		record, err := scanPullRequest(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(records) > limit
+	if more {
+		records = records[:limit]
+	}
+	return records, more, nil
+}
+
+// OpenPullRequestsAfter returns one bounded circular page in ascending number
+// order. Advancing the cursor to the last returned number gives every open
+// request fair progress without deleting revision history.
+func (s *Store) OpenPullRequestsAfter(ctx context.Context, repositoryID string, after int64, limit int) ([]PullRequest, bool, error) {
+	if after < 0 || limit < 1 || limit > 1000 {
+		return nil, false, errors.New("invalid open pull request page")
+	}
+	rows, err := s.db.QueryContext(ctx, pullRequestSelect+` WHERE repository_id=? AND status=?
+		ORDER BY CASE WHEN number>? THEN 0 ELSE 1 END,number ASC LIMIT ?`, repositoryID, PullRequestOpen, after, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	var records []PullRequest
+	for rows.Next() {
+		record, err := scanPullRequest(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(records) > limit
+	if more {
+		records = records[:limit]
+	}
+	return records, more, nil
+}
+
 func (s *Store) PullRequests(ctx context.Context, repositoryID string) ([]PullRequest, error) {
 	rows, err := s.db.QueryContext(ctx, pullRequestSelect+` WHERE repository_id=? AND status!='creating' ORDER BY number`, repositoryID)
 	if err != nil {
@@ -257,6 +328,16 @@ func scanPullRequest(scanner rowScanner) (PullRequest, error) {
 	return record, nil
 }
 
+func (s *Store) HasPullRequestRevision(ctx context.Context, repositoryID string, number int64, sourceOID, targetOID string) (bool, error) {
+	var present int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM pull_request_revisions WHERE repository_id=? AND pull_request_number=? AND source_oid=? AND target_oid=?`,
+		repositoryID, number, sourceOID, targetOID).Scan(&present)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *Store) RecordPullRequestRevision(ctx context.Context, revision PullRequestRevision) error {
 	if !validObjectID(revision.SourceOID) || !validObjectID(revision.TargetOID) || revision.RecordedAt.IsZero() {
 		return errors.New("invalid pull request revision")
@@ -265,6 +346,34 @@ func (s *Store) RecordPullRequestRevision(ctx context.Context, revision PullRequ
 		repository_id,pull_request_number,source_oid,target_oid,recorded_at
 	) VALUES(?,?,?,?,?)`, revision.RepositoryID, revision.PullRequestNumber, revision.SourceOID, revision.TargetOID, revision.RecordedAt.Unix())
 	return err
+}
+
+// LatestPullRequestRevisions returns a bounded newest-first set for automatic
+// event reconciliation. The full recovery reader remains separate.
+func (s *Store) LatestPullRequestRevisions(ctx context.Context, repositoryID string, limit int) ([]PullRequestRevision, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, errors.New("invalid pull request revision limit")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT revisions.repository_id,revisions.pull_request_number,revisions.source_oid,revisions.target_oid,revisions.recorded_at
+		FROM pull_request_revisions revisions
+		JOIN pull_requests requests ON requests.repository_id=revisions.repository_id AND requests.number=revisions.pull_request_number
+		WHERE revisions.repository_id=? AND requests.status!='creating'
+		ORDER BY revisions.recorded_at DESC,revisions.pull_request_number DESC,revisions.source_oid DESC,revisions.target_oid DESC LIMIT ?`, repositoryID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var revisions []PullRequestRevision
+	for rows.Next() {
+		var revision PullRequestRevision
+		var recordedAt int64
+		if err := rows.Scan(&revision.RepositoryID, &revision.PullRequestNumber, &revision.SourceOID, &revision.TargetOID, &recordedAt); err != nil {
+			return nil, err
+		}
+		revision.RecordedAt = unixTime(recordedAt)
+		revisions = append(revisions, revision)
+	}
+	return revisions, rows.Err()
 }
 
 func (s *Store) PullRequestRevisions(ctx context.Context, repositoryID string) ([]PullRequestRevision, error) {
@@ -330,8 +439,8 @@ func (s *Store) AppendPullRequestReview(ctx context.Context, review PullRequestR
 		return PullRequestReview{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(
-		repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at
-	) VALUES(?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.CreatedAt.Unix()); err != nil {
+		repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,review_event_id,created_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.ReviewEventID, review.CreatedAt.Unix()); err != nil {
 		return PullRequestReview{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE pull_requests SET updated_at=? WHERE repository_id=? AND number=?`, review.CreatedAt.Unix(), review.RepositoryID, review.PullRequestNumber); err != nil {
@@ -344,7 +453,7 @@ func (s *Store) AppendPullRequestReview(ctx context.Context, review PullRequestR
 }
 
 func (s *Store) PullRequestReviewForRevision(ctx context.Context, repositoryID string, number int64, sourceOID, targetOID string) (PullRequestReview, bool, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at
+	row := s.db.QueryRowContext(ctx, `SELECT repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,review_event_id,created_at
 		FROM pull_request_reviews WHERE repository_id=? AND pull_request_number=? AND source_oid=? AND target_oid=? ORDER BY sequence DESC LIMIT 1`, repositoryID, number, sourceOID, targetOID)
 	review, err := scanPullRequestReview(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -356,7 +465,7 @@ func (s *Store) PullRequestReviewForRevision(ctx context.Context, repositoryID s
 func scanPullRequestReview(scanner rowScanner) (PullRequestReview, error) {
 	var review PullRequestReview
 	var createdAt int64
-	if err := scanner.Scan(&review.RepositoryID, &review.PullRequestNumber, &review.Sequence, &review.SourceOID, &review.TargetOID, &review.Status, &review.ReviewerLabel, &review.Provenance, &createdAt); err != nil {
+	if err := scanner.Scan(&review.RepositoryID, &review.PullRequestNumber, &review.Sequence, &review.SourceOID, &review.TargetOID, &review.Status, &review.ReviewerLabel, &review.Provenance, &review.ReviewEventID, &createdAt); err != nil {
 		return PullRequestReview{}, err
 	}
 	review.CreatedAt = unixTime(createdAt)
@@ -509,7 +618,7 @@ func readPullRequestRecovery(ctx context.Context, tx *sql.Tx, snapshot *Recovery
 		}
 		snapshot.PullRequests = append(snapshot.PullRequests, record)
 	}
-	if err := rows.Close(); err != nil {
+	if err := closeRows(rows); err != nil {
 		return err
 	}
 
@@ -527,11 +636,11 @@ func readPullRequestRecovery(ctx context.Context, tx *sql.Tx, snapshot *Recovery
 		revision.RecordedAt = unixTime(recordedAt)
 		snapshot.PullRequestRevisions = append(snapshot.PullRequestRevisions, revision)
 	}
-	if err := rows.Close(); err != nil {
+	if err := closeRows(rows); err != nil {
 		return err
 	}
 
-	rows, err = tx.QueryContext(ctx, `SELECT repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at FROM pull_request_reviews ORDER BY repository_id,pull_request_number,sequence`)
+	rows, err = tx.QueryContext(ctx, `SELECT repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,review_event_id,created_at FROM pull_request_reviews ORDER BY repository_id,pull_request_number,sequence`)
 	if err != nil {
 		return err
 	}
@@ -543,7 +652,7 @@ func readPullRequestRecovery(ctx context.Context, tx *sql.Tx, snapshot *Recovery
 		}
 		snapshot.PullRequestReviews = append(snapshot.PullRequestReviews, review)
 	}
-	if err := rows.Close(); err != nil {
+	if err := closeRows(rows); err != nil {
 		return err
 	}
 
@@ -559,7 +668,7 @@ func readPullRequestRecovery(ctx context.Context, tx *sql.Tx, snapshot *Recovery
 		}
 		snapshot.PullRequestMergeIntents = append(snapshot.PullRequestMergeIntents, intent)
 	}
-	return rows.Close()
+	return closeRows(rows)
 }
 
 func restorePullRequestRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoveryState) error {
@@ -580,7 +689,7 @@ func restorePullRequestRecovery(ctx context.Context, tx *sql.Tx, snapshot Recove
 		}
 	}
 	for _, review := range snapshot.PullRequestReviews {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.CreatedAt.Unix()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,review_event_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.ReviewEventID, review.CreatedAt.Unix()); err != nil {
 			return fmt.Errorf("restore pull request review: %w", err)
 		}
 	}
@@ -634,6 +743,7 @@ func ValidatePullRequestRecovery(snapshot RecoveryState) error {
 		}
 	}
 	reviews := make(map[string]bool, len(snapshot.PullRequestReviews))
+	reviewEvents := make(map[string]bool)
 	reviewCounts := make(map[string]int)
 	for _, review := range snapshot.PullRequestReviews {
 		if _, exists := requests[pullRequestKey(review.RepositoryID, review.PullRequestNumber)]; !exists || !revisions[revisionKey(review.RepositoryID, review.PullRequestNumber, review.SourceOID, review.TargetOID)] {
@@ -647,6 +757,13 @@ func ValidatePullRequestRecovery(snapshot RecoveryState) error {
 			return errors.New("duplicate pull request review sequence")
 		}
 		reviews[key] = true
+		if review.ReviewEventID != "" {
+			eventKey := review.RepositoryID + "/" + review.ReviewEventID
+			if reviewEvents[eventKey] {
+				return errors.New("duplicate pull request review event identity")
+			}
+			reviewEvents[eventKey] = true
+		}
 		reviewCounts[pullRequestKey(review.RepositoryID, review.PullRequestNumber)]++
 	}
 	for key := range requests {
@@ -711,16 +828,32 @@ func validateReviewRecord(review PullRequestReview, requireSequence bool) error 
 	if review.RepositoryID == "" || review.PullRequestNumber <= 0 || (requireSequence && review.Sequence <= 0) || !validObjectID(review.SourceOID) || !validObjectID(review.TargetOID) || review.CreatedAt.IsZero() {
 		return errors.New("invalid pull request review metadata")
 	}
+	if review.ReviewEventID != "" && !validDirectReviewID(review.ReviewEventID) {
+		return errors.New("invalid pull request review event identity")
+	}
 	switch review.Status {
 	case ReviewPending:
 		if review.ReviewerLabel != "" || review.Provenance != ReviewProvenanceRequest {
 			return errors.New("invalid pending review provenance")
 		}
 	case ReviewSkipped:
+		if review.ReviewEventID != "" {
+			return errors.New("only pending review requests can carry an event identity")
+		}
 		if review.ReviewerLabel != "" || review.Provenance != ReviewProvenanceSkip {
 			return errors.New("invalid skipped review provenance")
 		}
+	case ReviewNotRequested:
+		if review.ReviewEventID != "" {
+			return errors.New("only pending review requests can carry an event identity")
+		}
+		if review.ReviewerLabel != "" || review.Provenance != ReviewProvenanceDefault {
+			return errors.New("invalid default review provenance")
+		}
 	case ReviewApproved, ReviewChangesRequested:
+		if review.ReviewEventID != "" {
+			return errors.New("only pending review requests can carry an event identity")
+		}
 		if !validText(review.ReviewerLabel, 200) || review.Provenance != ReviewProvenanceExternalTool {
 			return errors.New("invalid submitted review provenance")
 		}

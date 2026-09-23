@@ -1,0 +1,134 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}
+
+<p class="backline"><a class="back" href="{{$p.CancelURL}}">{{icon "back"}}{{bi $lang "pr.title"}}</a></p>
+
+<div class="phead">
+  <h1>{{bi $lang "pr.new.title"}}</h1>
+  <p>{{bi $lang "pr.new.intro"}}</p>
+</div>
+
+{{/* Choosing branches is step one and it is an ordinary GET, so the address
+     bar holds the choice and a language switch or a reload keeps it.
+
+     The two steps are separate for a reason that matters here: the create
+     request carries the commit ids OwnGit read for this exact pair, and the
+     backend refuses the request if either branch has moved since. A single
+     form with a picker would submit the ids rendered for the first pair
+     alongside whatever branch was chosen afterwards, which without scripting
+     is simply the wrong commit. Reading the pair on the server keeps the ids
+     and the branch names describing one observation. */}}
+{{if not $p.Branches}}
+  <div class="card">
+    <p class="empty__lead">{{bi $lang "pr.new.no_branches"}}</p>
+  </div>
+{{else}}
+<form class="form form--wide" method="get" action="{{$p.SelectURL}}">
+  <div class="card">
+    <div class="restore__pair">
+      <div class="restore__from">
+        <div class="f">
+          <label for="pr-source">{{bi $lang "pr.new.source"}}</label>
+          <select id="pr-source" name="source"
+                  {{template "fieldInvalid" dict "Notices" $n "Field" "source_branch"}}>
+            {{range $p.Branches}}
+              <option value="{{.Name}}"{{if eq .Name $p.Source.Branch}} selected{{end}}>{{.Name}}</option>
+            {{end}}
+          </select>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "source_branch"}}
+        </div>
+      </div>
+
+      <div class="restore__to">
+        <div class="f">
+          <label for="pr-target">{{bi $lang "pr.new.target"}}</label>
+          <select id="pr-target" name="target"
+                  {{template "fieldInvalid" dict "Notices" $n "Field" "target_branch"}}>
+            {{range $p.Branches}}
+              <option value="{{.Name}}"{{if eq .Name $p.Target.Branch}} selected{{end}}>{{.Name}}</option>
+            {{end}}
+          </select>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "target_branch"}}
+        </div>
+      </div>
+    </div>
+
+    <input type="hidden" name="lang" value="{{$lang}}">
+    <div class="actions">
+      <button type="submit" class="btn{{if not $p.Observed}} btn--primary{{end}}">{{bi $lang "pr.new.compare"}}</button>
+      <a class="btn" href="{{$p.CancelURL}}">{{bi $lang "app.cancel"}}</a>
+    </div>
+    <p class="f__help">{{bi $lang "pr.new.compare_help"}}</p>
+  </div>
+</form>
+{{end}}
+
+{{/* Step two exists only once the backend has read both tips. Until then
+     there is nothing to create from. */}}
+{{if $p.Observed}}
+<div class="card">
+  <div class="prpair">
+    {{template "revisionLine" dict "Lang" $lang "R" $p.Source "Label" "pr.source"}}
+    {{template "revisionLine" dict "Lang" $lang "R" $p.Target "Label" "pr.target"}}
+  </div>
+
+  {{if not $p.Comparable}}
+    <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "pr.new.no_commit"}}</span></p>
+  {{else}}
+    <p class="f__help">{{bi $lang "pr.new.observed_tips"}}</p>
+
+    <form class="form form--wide" method="post" action="{{$p.SubmitURL}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      {{/* The branch names and the ids travel together, exactly as read. The
+           backend revalidates the pair inside its repository lock, so a tip
+           that moved fails rather than being merged into silently. */}}
+      <input type="hidden" name="source_branch" value="{{$p.Source.Branch}}">
+      <input type="hidden" name="target_branch" value="{{$p.Target.Branch}}">
+      <input type="hidden" name="source_oid" value="{{$p.Source.OID}}">
+      <input type="hidden" name="target_oid" value="{{$p.Target.OID}}">
+
+      <div class="f">
+        <label for="pr-title">{{bi $lang "pr.new.title_field"}}</label>
+        <input id="pr-title" name="title" type="text" required maxlength="500" value="{{$p.Title}}"
+               {{template "fieldInvalid" dict "Notices" $n "Field" "title"}}>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "title"}}
+        <p class="f__help">{{bi $lang "pr.new.title_help"}}</p>
+      </div>
+
+      <fieldset class="fset">
+        <legend>{{bi $lang "pr.new.review"}}</legend>
+        {{/* Leaving review undecided is a real choice, so it is offered as
+             one. It must not become a waiting state that has to be cleared
+             later with an explicit skip. */}}
+        <label class="choice">
+          <input type="radio" name="review" value=""{{if not $p.ReviewChoice}} checked{{end}}>
+          <span class="choice__t">{{bi $lang "pr.new.review_none"}}</span>
+          <span class="choice__d">{{bi $lang "pr.new.review_none_help"}}</span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="review" value="request"{{if eq $p.ReviewChoice "request"}} checked{{end}}>
+          <span class="choice__t">{{bi $lang "pr.new.review_request"}}</span>
+          <span class="choice__d">{{bi $lang "pr.new.review_request_help"}}</span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="review" value="skip"{{if eq $p.ReviewChoice "skip"}} checked{{end}}>
+          <span class="choice__t">{{bi $lang "pr.new.review_skip"}}</span>
+          <span class="choice__d">{{bi $lang "pr.new.review_skip_help"}}</span>
+        </label>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "review"}}
+      </fieldset>
+      {{/* Requesting or skipping records a decision. Saying so here keeps the
+           control from implying a review is about to be produced. */}}
+      <p class="f__help">{{bi $lang "evidence.review.request_intent"}}</p>
+
+      <div class="actions">
+        <button type="submit" class="btn btn--primary">{{bi $lang "pr.new.submit"}}</button>
+        <a class="btn" href="{{prSelectionURL $p}}">{{bi $lang "pr.new.change_branches"}}</a>
+      </div>
+    </form>
+  {{end}}
+</div>
+
+{{template "changeList" dict "Lang" $lang "Files" $p.Changes "Truncated" $p.DiffTruncated "Unavailable" $p.ChangesUnavailable "Reason" $p.ChangesReason}}
+{{end}}
+{{end}}

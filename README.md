@@ -7,11 +7,12 @@ OwnGit is Git for HomeLab & Local. It keeps private repositories and their histo
 ## What it does
 
 - Supports clone, fetch, and push over Smart HTTP from standard Git clients.
-- Creates, inspects, reviews, and merges pull requests through structured CLI commands. Ordinary `git push` remains available without a pull request.
-- Shows repositories, branches, tags, files, commits, diffs, and author-date activity in the browser.
-- Retains replaced or deleted branch and tag history in hidden refs.
-- Restores a whole repository tree or selected files in the browser after showing additions, changes, and deletions.
-- Creates and restores offline backups containing repository refs, objects, pull request records, and portable OwnGit settings.
+- Shows repositories, branches, tags, files, commits, diffs, author-date activity, pull requests, and revision-bound check evidence in the browser.
+- Creates and merges pull requests in the browser at the exact revisions it displays. JSON CLI commands can also create, inspect, review, and merge them. Ordinary `git push` works without a pull request, and review is optional.
+- Records checks that a helper runs in your own environment. Configured checks that the owner enables can run on the host, in restricted local Docker, or on a separate runner. Checks and reviews are advisory and never hold a merge.
+- Imports a repository from another HTTPS Git host and refreshes it on demand or on a schedule, without writing to the source.
+- Keeps replaced or deleted branch and tag history in hidden refs. The browser restores a whole tree or selected files after previewing every change.
+- Creates and restores offline backups of repository refs and objects, pull request, check, and import records, and portable settings.
 - Runs as one Go executable with a host-local SQLite database. No Node, Python, or database service is required at runtime.
 - Provides English and Korean interfaces with Light, Dark, and System appearance modes.
 
@@ -26,28 +27,30 @@ go build -o bin/owngit ./cmd/owngit
 ./bin/owngit serve --no-open
 ```
 
-On first run, OwnGit writes an owner-readable setup file inside the state directory. Open that file in the installation owner's browser and follow the setup. The secret is never printed or passed as a browser argument. The default address is `http://127.0.0.1:7654`.
+On first run, OwnGit writes an owner-readable setup file inside the state directory. Open that file in the installation owner's browser and follow the steps. The setup secret is never printed or passed as a browser argument. The default address is `http://127.0.0.1:7654`.
 
-See [Operations](docs/OPERATIONS.md) for access from another device, Host approval, recovery, and storage details.
+Create a repository from the dashboard, then use its clone address, for example `http://127.0.0.1:7654/git/project.git`, with any Git client. [Operations](docs/OPERATIONS.md) covers access from other devices, moving existing repositories, recovery, and backups.
 
 ## Access and security
 
-- The server is local-only by default. General repository access may be password-free or protected by one shared password; there are no individual accounts.
-- A separate administrator password protects security settings. Every security change requires entering the current administrator password again.
-- Plain HTTP does not encrypt transport. Prefer Tailscale when connecting from another device, but do not infer transport protection from a host name alone. OwnGit has no built-in TLS, and public Internet hosting is out of scope.
+- The server is local-only by default. General repository access can be password-free or protected by one shared password. There are no individual accounts.
+- A separate administrator password protects security settings, and every security change asks for it again.
+- OwnGit serves plain HTTP, which is not encrypted, and has no built-in TLS. Prefer Tailscale or your own VPN for connections from another device. Public Internet hosting is out of scope.
 
 ## Status and limits
 
-OwnGit is an initial implementation with no release download. Build it from source as shown above. Runtime checks have passed on macOS, Windows 11, Ubuntu Linux, and Debian with Git 2.39.5 in an isolated container on NAS hardware. Command-driven pull request journeys, cross-device Git use, and offline recovery have also been exercised. Repositories on a mounted SMB share and on NFS passed fetch, push, retention, restart, and offline backup with one writer at a time. A snapshot-based upgrade check from the first commit to a later build preserved repository records, though compatibility with future releases is untested. Release packaging, production deployment, and primary-storage migration remain unverified.
+No release has been published yet, so build from source as shown above.
 
-History retention has no permanent-delete interface and is not a backup by itself. OwnGit provides browser restore and host-owner offline backup commands. Pull request commands use optional review: the external coding tool supplies a labelled result or explicitly skips review. OwnGit does not launch a reviewer or claim that a supplied result is independent. Project checks are not configured in this release and appear as `not_configured`, never as passed. The browser has no pull request interface yet. Pull request merge requires Git 2.38 or newer, while clone, fetch, push, and browsing do not depend on that merge capability.
+OwnGit cannot delete retained history, so a force-push or branch deletion does not remove a committed secret from OwnGit or its backups; rotate any secret you push by mistake. Retained history is not a backup, and backups run only when you start them. Host and runner check commands run with their account's permissions and are not sandboxes. OwnGit records review labels and check results that other tools supply, but it never runs reviewers or coding agents. Git LFS objects are not hosted or imported. Pull request merge requires Git 2.38 or newer on the OwnGit host.
 
-A dedicated import interface, automatic backup schedules, Git LFS hosting, project check execution, and OwnGit-hosted coding-agent execution are not implemented.
+## License
 
-No software license has been selected, so the source must not be treated as licensed yet.
+OwnGit's source is available under the [MIT License](LICENSE). Notices for the third-party code and assets built into the executable are in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES/README.md).
 
 ## Documentation
 
-- [Operations](docs/OPERATIONS.md): setup, access, recovery, storage, and backups
-- [Development](docs/DEVELOPMENT.md): architecture, dependencies, checks, and security boundaries
-- [Product boundaries](docs/PRODUCT_BOUNDARIES.md): durable product design constraints
+- [Operations](docs/OPERATIONS.md): setup, access, recovery, moving repositories, imports, pull requests, checks, storage, and backups
+- [Automatic checks](docs/AUTOMATIC_CHECKS.md): checks that run on the host, in restricted Docker, or on a separate runner
+- [Coding tools](docs/CODING_TOOLS.md): running project checks from a coding tool, and the shared skill
+- [Contributing](CONTRIBUTING.md): building, testing, and changing OwnGit
+- [Changelog](CHANGELOG.md): notable changes in each version

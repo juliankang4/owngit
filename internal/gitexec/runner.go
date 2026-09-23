@@ -6,16 +6,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 const defaultOutputLimit = 8 << 20
+
+// Stream cleanup seams. Tests replace these to inject termination and owner
+// close failures; production uses the real implementations.
+var (
+	streamTerminateOwnedProcess = TerminateOwnedProcess
+	streamCloseOwnedProcess     = CloseOwnedProcess
+)
 
 // Runner executes Git with an app-owned configuration and environment.
 type Runner struct {
@@ -26,6 +35,16 @@ type Runner struct {
 	Timeout          time.Duration
 	OutputLimit      int64
 	TerminationGrace time.Duration
+
+	// processSeam optionally injects the attachment-failure cleanup operations.
+	// Tests set it; production leaves it nil for the real operations.
+	processSeam *processCleanupSeam
+
+	// stdoutCopyTap and stderrCopyTap, when set by tests, observe bytes as they
+	// are copied into the output buffers. Production leaves them nil, and then
+	// the command writers are the buffers themselves.
+	stdoutCopyTap io.Writer
+	stderrCopyTap io.Writer
 }
 
 type Result struct {
@@ -123,21 +142,40 @@ func (r *Runner) Environment(extra ...string) []string {
 }
 
 func (r *Runner) Run(ctx context.Context, dir string, stdin io.Reader, args ...string) (Result, error) {
-	return r.run(ctx, dir, stdin, r.OutputLimit, nil, args...)
+	return r.run(ctx, dir, stdin, r.OutputLimit, nil, 0, args...)
+}
+
+// CommandLimits override the runner defaults for one owned command. A zero
+// field keeps the runner value. Environment entries are appended to the
+// isolated environment and never inherit the host environment.
+type CommandLimits struct {
+	Timeout     time.Duration
+	OutputLimit int64
+	Environment []string
+}
+
+// RunWithLimits executes Git with per-command bounds. Import work uses it for
+// long but finite indexing, verification and inspection commands.
+func (r *Runner) RunWithLimits(ctx context.Context, dir string, stdin io.Reader, limits CommandLimits, args ...string) (Result, error) {
+	limit := r.OutputLimit
+	if limits.OutputLimit > 0 {
+		limit = limits.OutputLimit
+	}
+	return r.run(ctx, dir, stdin, limit, limits.Environment, limits.Timeout, args...)
 }
 
 // RunWithEnvironment executes Git with the runner's isolated environment plus
 // the supplied variables. Callers use this for Git-owned controls such as a
 // private index path, never to inherit the host environment.
 func (r *Runner) RunWithEnvironment(ctx context.Context, dir string, stdin io.Reader, extraEnv []string, args ...string) (Result, error) {
-	return r.run(ctx, dir, stdin, r.OutputLimit, extraEnv, args...)
+	return r.run(ctx, dir, stdin, r.OutputLimit, extraEnv, 0, args...)
 }
 
 func (r *Runner) RunWithOutputLimit(ctx context.Context, dir string, stdin io.Reader, limit int64, args ...string) (Result, error) {
-	return r.run(ctx, dir, stdin, limit, nil, args...)
+	return r.run(ctx, dir, stdin, limit, nil, 0, args...)
 }
 
-func (r *Runner) run(ctx context.Context, dir string, stdin io.Reader, limit int64, extraEnv []string, args ...string) (Result, error) {
+func (r *Runner) run(ctx context.Context, dir string, stdin io.Reader, limit int64, extraEnv []string, commandTimeout time.Duration, args ...string) (Result, error) {
 	if limit <= 0 {
 		limit = defaultOutputLimit
 	}
@@ -147,30 +185,52 @@ func (r *Runner) run(ctx context.Context, dir string, stdin io.Reader, limit int
 	cmd := exec.Command(r.GitPath, args...)
 	cmd.Dir = dir
 	cmd.Env = r.Environment(extraEnv...)
-	cmd.Stdin = stdin
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stdout = observedCommandWriter(&stdout, r.stdoutCopyTap)
+	cmd.Stderr = observedCommandWriter(&stderr, r.stderrCopyTap)
+	// Copy caller stdin only after attachment succeeds. Assigning cmd.Stdin
+	// would let os/exec read the caller at Start, before attachment, and that
+	// copy can outlive a bounded attachment-failure return.
+	var stdinPipe io.WriteCloser
+	if stdin != nil {
+		var pipeErr error
+		stdinPipe, pipeErr = cmd.StdinPipe()
+		if pipeErr != nil {
+			return Result{}, fmt.Errorf("git %s: %w", commandName(args), pipeErr)
+		}
+	}
 
 	timeout := r.Timeout
+	if commandTimeout > 0 {
+		timeout = commandTimeout
+	}
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	err := runOwnedProcess(runCtx, cmd, r.TerminationGrace)
+	waited, err := runOwnedProcess(runCtx, cmd, r.TerminationGrace, r.processSeam, stdin, stdinPipe)
+	if !waited {
+		// Attachment cleanup returned while the delayed Wait still owns the
+		// output buffers, so copied output is not stable. Caller stdin is not
+		// read on this path.
+		return Result{}, fmt.Errorf("git %s: %w", commandName(args), err)
+	}
 	result := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
-	if stdout.exceeded {
-		return result, &LimitError{Stream: "stdout", Limit: limit}
-	}
-	if stderr.exceeded {
-		return result, &LimitError{Stream: "stderr", Limit: limit}
-	}
+	// A limit describes only a command that completed successfully. Process
+	// failure and timeout remain authoritative even when captured output also
+	// reached its bound.
 	if err != nil {
 		message := strings.TrimSpace(string(result.Stderr))
 		if message != "" {
 			return result, fmt.Errorf("git %s: %w: %s", commandName(args), err, message)
 		}
 		return result, fmt.Errorf("git %s: %w", commandName(args), err)
+	}
+	if stdout.exceeded {
+		return result, &LimitError{Stream: "stdout", Limit: limit}
+	}
+	if stderr.exceeded {
+		return result, &LimitError{Stream: "stderr", Limit: limit}
 	}
 	return result, nil
 }
@@ -210,22 +270,19 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 		_ = stdinPipe.Close()
 		return nil, fmt.Errorf("open Git backend output: %w", err)
 	}
-	configureOwnedProcess(cmd)
+	ConfigureOwnedProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = stdinPipe.Close()
 		_ = stdout.Close()
 		return nil, fmt.Errorf("start Git backend: %w", err)
 	}
-	owner, err := attachOwnedProcess(cmd)
+	owner, err := r.processSeam.attach(cmd)
 	if err != nil {
 		_ = stdinPipe.Close()
 		_ = stdout.Close()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return nil, fmt.Errorf("contain Git backend process: %w", err)
+		_, cleanupErr := cleanupUnattachedStartedProcess(cmd, r.TerminationGrace, err, r.processSeam)
+		return nil, fmt.Errorf("contain Git backend process: %w", cleanupErr)
 	}
-	defer closeOwnedProcess(owner)
-
 	inputCh := make(chan error, 1)
 	if stdin == nil {
 		_ = stdinPipe.Close()
@@ -247,21 +304,46 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 	if grace <= 0 {
 		grace = 2 * time.Second
 	}
+	// Wait starts exactly once. Abort paths close stdout first so Wait never
+	// truncates a read the consumer still needs, and they start Wait before
+	// terminating so the group leader is reaped while its group is signaled.
+	var waitOnce sync.Once
+	waitCh := make(chan error, 1)
+	startWait := func() {
+		waitOnce.Do(func() {
+			go func() { waitCh <- cmd.Wait() }()
+		})
+	}
+	var cleanupErr error
+	terminated := false
+	terminate := func() {
+		if terminated {
+			return
+		}
+		terminated = true
+		if err := streamTerminateOwnedProcess(owner, grace); err != nil {
+			cleanupErr = errors.Join(cleanupErr, err)
+		}
+	}
+
 	var consumeErr error
 	select {
 	case consumeErr = <-consumeCh:
 		// StdoutPipe must be completely consumed before Wait. An error means
-		// the consumer stopped early, so terminate the writer before reaping.
+		// the consumer stopped early, so close stdout and reap the writer
+		// before terminating its group.
 		if consumeErr != nil {
 			_ = stdout.Close()
-			terminateOwnedProcess(owner, grace)
+			startWait()
+			terminate()
 		}
 	case <-ctx.Done():
 		consumeErr = ctx.Err()
 		closeInput(stdin)
 		_ = stdinPipe.Close()
 		_ = stdout.Close()
-		terminateOwnedProcess(owner, grace)
+		startWait()
+		terminate()
 		if err := <-consumeCh; consumeErr == nil {
 			consumeErr = err
 		}
@@ -271,8 +353,7 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 	// source here releases a blocked network-body read before process cleanup.
 	closeInput(stdin)
 	_ = stdinPipe.Close()
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- cmd.Wait() }()
+	startWait()
 	var waitErr error
 	select {
 	case waitErr = <-waitCh:
@@ -281,27 +362,36 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 			consumeErr = ctx.Err()
 		}
 		_ = stdout.Close()
-		terminateOwnedProcess(owner, grace)
+		terminate()
 		waitErr = <-waitCh
 	}
 	inputErr := <-inputCh
-	if stderr.exceeded {
-		return stderr.Bytes(), &LimitError{Stream: "stderr", Limit: stderr.limit}
+	if err := streamCloseOwnedProcess(owner); err != nil {
+		cleanupErr = errors.Join(cleanupErr, err)
 	}
-	if consumeErr != nil {
-		return stderr.Bytes(), consumeErr
-	}
-	if waitErr != nil {
+	var primary error
+	switch {
+	case stderr.exceeded:
+		primary = &LimitError{Stream: "stderr", Limit: stderr.limit}
+	case consumeErr != nil:
+		primary = consumeErr
+	case waitErr != nil:
 		message := strings.TrimSpace(string(stderr.Bytes()))
 		if message != "" {
-			return stderr.Bytes(), fmt.Errorf("Git backend: %w: %s", waitErr, message)
+			primary = fmt.Errorf("Git backend: %w: %s", waitErr, message)
+		} else {
+			primary = fmt.Errorf("Git backend: %w", waitErr)
 		}
-		return stderr.Bytes(), fmt.Errorf("Git backend: %w", waitErr)
+	case inputErr != nil && !errors.Is(inputErr, os.ErrClosed) && !errors.Is(inputErr, io.ErrClosedPipe):
+		primary = fmt.Errorf("stream Git backend input: %w", inputErr)
 	}
-	if inputErr != nil && !errors.Is(inputErr, os.ErrClosed) && !errors.Is(inputErr, io.ErrClosedPipe) {
-		return stderr.Bytes(), fmt.Errorf("stream Git backend input: %w", inputErr)
+	if cleanupErr != nil {
+		if primary == nil {
+			return stderr.Bytes(), cleanupErr
+		}
+		return stderr.Bytes(), errors.Join(primary, cleanupErr)
 	}
-	return stderr.Bytes(), nil
+	return stderr.Bytes(), primary
 }
 
 func closeInput(reader io.ReadCloser) {
@@ -310,28 +400,95 @@ func closeInput(reader io.ReadCloser) {
 	}
 }
 
-func runOwnedProcess(ctx context.Context, cmd *exec.Cmd, grace time.Duration) error {
-	configureOwnedProcess(cmd)
+func observedCommandWriter(primary, tap io.Writer) io.Writer {
+	if tap == nil {
+		return primary
+	}
+	return io.MultiWriter(primary, tap)
+}
+
+func closeOwnedStdin(pipe io.WriteCloser) {
+	if pipe != nil {
+		_ = pipe.Close()
+	}
+}
+
+// skipOwnedStdinCopyError reports copy errors that os/exec treats as non-fatal
+// when a child closes stdin early. A caller read error is not skipped.
+func skipOwnedStdinCopyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.ErrClosedPipe) {
+		return true
+	}
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) || pathErr.Op != "write" || pathErr.Path != "|1" {
+		return false
+	}
+	if errors.Is(pathErr.Err, syscall.EPIPE) || errors.Is(pathErr.Err, os.ErrClosed) {
+		return true
+	}
+	// os/exec ignores Windows ERROR_BROKEN_PIPE (109) and ERROR_NO_DATA (232).
+	return runtime.GOOS == "windows" && windowsStdinPipeErrno(pathErr.Err)
+}
+
+func windowsStdinPipeErrno(err error) bool {
+	errno, ok := err.(syscall.Errno)
+	return ok && (errno == 109 || errno == 232)
+}
+
+// runOwnedProcess starts cmd and waits for it. Caller stdin is copied only
+// after attachment succeeds, and that copy finishes before a successful
+// return. Attachment failure closes the child pipe and does not read the
+// caller. waited is false only when attachment cleanup returns with Wait
+// still pending.
+func runOwnedProcess(ctx context.Context, cmd *exec.Cmd, grace time.Duration, seam *processCleanupSeam, stdin io.Reader, stdinPipe io.WriteCloser) (bool, error) {
+	ConfigureOwnedProcess(cmd)
 	if err := cmd.Start(); err != nil {
-		return err
+		closeOwnedStdin(stdinPipe)
+		return true, err
 	}
-	owner, err := attachOwnedProcess(cmd)
+	owner, err := seam.attach(cmd)
 	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return err
+		closeOwnedStdin(stdinPipe)
+		return cleanupUnattachedStartedProcess(cmd, grace, err, seam)
 	}
-	defer closeOwnedProcess(owner)
+	defer CloseOwnedProcess(owner)
+
+	copyDone := make(chan struct{})
+	var copyErr error
+	if stdin != nil && stdinPipe != nil {
+		go func() {
+			defer close(copyDone)
+			_, err := io.Copy(stdinPipe, stdin)
+			closeErr := stdinPipe.Close()
+			if skipOwnedStdinCopyError(err) {
+				err = nil
+			}
+			if err == nil && closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+				err = closeErr
+			}
+			copyErr = err
+		}()
+	} else {
+		close(copyDone)
+	}
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
 	select {
-	case err := <-waitCh:
-		return err
+	case waitErr := <-waitCh:
+		<-copyDone
+		if waitErr == nil {
+			waitErr = copyErr
+		}
+		return true, waitErr
 	case <-ctx.Done():
-		terminateOwnedProcess(owner, grace)
+		TerminateOwnedProcess(owner, grace)
 		<-waitCh
-		return ctx.Err()
+		<-copyDone
+		return true, ctx.Err()
 	}
 }
 

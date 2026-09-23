@@ -1,0 +1,383 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"net/url"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"text/template"
+)
+
+// packagingData is the template input for the Homebrew and WinGet files. The
+// two formats have independent readiness, because they need different inputs.
+type packagingData struct {
+	Version         string
+	BaseURL         string
+	Homepage        string
+	Tap             string
+	PackageID       string
+	Publisher       string
+	PublisherURL    string
+	HomebrewUnready string
+	WingetUnready   string
+	DarwinArm64     artifactRef
+	LinuxAMD64      artifactRef
+	LinuxARM64      artifactRef
+	WindowsAMD64    artifactRef
+}
+
+type artifactRef struct {
+	Name        string
+	SHA256      string
+	SHA256Upper string
+	Size        int64
+}
+
+// placeholder values are used only when the matching input is absent. Every
+// file that uses one carries an UNREADY header naming the missing input.
+const (
+	placeholderURL       = "https://example.invalid"
+	placeholderPackageID = "OwnGit.Owngit"
+	placeholderPublisher = "OwnGit"
+)
+
+var (
+	tapPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	packageIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z0-9][A-Za-z0-9._-]*$`)
+)
+
+func packagingCommand(arguments []string) error {
+	set := flag.NewFlagSet("packaging", flag.ContinueOnError)
+	source := set.String("source", ".", "module root holding the packaging templates")
+	manifestPath := set.String("manifest", "dist/manifest.json", "artifact manifest written by \"release build\"")
+	out := set.String("out", "dist/packaging", "output directory")
+	formats := set.String("formats", "all", "comma-separated formats to render: homebrew, winget, or all")
+	baseURL := set.String("base-url", "", "release download base URL, for example https://host/owner/owngit/releases/download/v1.0.0")
+	homepage := set.String("homepage", "", "project homepage URL")
+	tap := set.String("tap", "", "Homebrew tap repository, for example owner/homebrew-owngit")
+	packageID := set.String("package-id", "", "WinGet package identifier, for example Owner.Owngit")
+	publisher := set.String("publisher", "", "WinGet publisher display name")
+	publisherURL := set.String("publisher-url", "", "WinGet publisher URL")
+	strict := set.Bool("strict", false, "fail when a selected format is missing an input instead of marking it unready")
+	if err := parseFlags(set, arguments); err != nil {
+		return err
+	}
+
+	root, err := moduleRoot(*source)
+	if err != nil {
+		return err
+	}
+	selected, err := selectFormats(*formats)
+	if err != nil {
+		return err
+	}
+	document, err := readManifest(*manifestPath)
+	if err != nil {
+		return err
+	}
+	sourceVersion, err := versionFromSource(root)
+	if err != nil {
+		return err
+	}
+	if document.Version != sourceVersion {
+		return fmt.Errorf("manifest version %q does not match the source version %q", document.Version, sourceVersion)
+	}
+
+	data := packagingData{Version: document.Version}
+	shared := []string{}
+	homebrewMissing := []string{}
+	wingetMissing := []string{}
+	check := func(name, value string, target *string, validate func(string) error, missing *[]string) error {
+		if strings.TrimSpace(value) == "" {
+			*missing = append(*missing, name)
+			return nil
+		}
+		if err := validate(value); err != nil {
+			return fmt.Errorf("-%s: %w", name, err)
+		}
+		*target = value
+		return nil
+	}
+	if err := check("base-url", *baseURL, &data.BaseURL, validateURL, &shared); err != nil {
+		return err
+	}
+	if err := check("homepage", *homepage, &data.Homepage, validateURL, &shared); err != nil {
+		return err
+	}
+	homebrewMissing = append(homebrewMissing, shared...)
+	wingetMissing = append(wingetMissing, shared...)
+	if err := check("tap", *tap, &data.Tap, validateTap, &homebrewMissing); err != nil {
+		return err
+	}
+	if err := check("package-id", *packageID, &data.PackageID, validatePackageID, &wingetMissing); err != nil {
+		return err
+	}
+	if err := check("publisher", *publisher, &data.Publisher, validateNonEmpty, &wingetMissing); err != nil {
+		return err
+	}
+	if err := check("publisher-url", *publisherURL, &data.PublisherURL, validateURL, &wingetMissing); err != nil {
+		return err
+	}
+
+	var missing []string
+	if selected["homebrew"] {
+		missing = append(missing, homebrewMissing...)
+	}
+	if selected["winget"] {
+		missing = append(missing, wingetMissing...)
+	}
+	missing = uniqueSorted(missing)
+	if len(missing) > 0 && *strict {
+		return fmt.Errorf("missing required inputs: %s", strings.Join(missing, ", "))
+	}
+
+	if data.BaseURL == "" {
+		data.BaseURL = placeholderURL
+	}
+	if data.Homepage == "" {
+		data.Homepage = placeholderURL
+	}
+	if data.PublisherURL == "" {
+		data.PublisherURL = placeholderURL
+	}
+	if data.PackageID == "" {
+		data.PackageID = placeholderPackageID
+	}
+	if data.Publisher == "" {
+		data.Publisher = placeholderPublisher
+	}
+	if selected["homebrew"] && len(homebrewMissing) > 0 {
+		data.HomebrewUnready = unreadyText(homebrewMissing)
+	}
+	if selected["winget"] && len(wingetMissing) > 0 {
+		data.WingetUnready = unreadyText(wingetMissing)
+	}
+
+	refs := map[string]*artifactRef{
+		"darwin/arm64":  &data.DarwinArm64,
+		"linux/amd64":   &data.LinuxAMD64,
+		"linux/arm64":   &data.LinuxARM64,
+		"windows/amd64": &data.WindowsAMD64,
+	}
+	for _, built := range document.Artifacts {
+		ref, ok := refs[built.Target]
+		if !ok {
+			continue
+		}
+		*ref = artifactRef{Name: built.Name, SHA256: built.SHA256, SHA256Upper: strings.ToUpper(built.SHA256), Size: built.Size}
+	}
+	for _, name := range []string{"darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64"} {
+		if refs[name].Name == "" {
+			return fmt.Errorf("manifest has no %s artifact; build every release target before rendering packaging", name)
+		}
+	}
+
+	outDir, err := filepath.Abs(*out)
+	if err != nil {
+		return err
+	}
+	rendered := []struct {
+		format       string
+		templatePath string
+		outputPath   string
+	}{
+		{"homebrew", filepath.Join(root, "packaging", "homebrew", "owngit.rb.tmpl"), filepath.Join(outDir, "owngit.rb")},
+		{"winget", filepath.Join(root, "packaging", "winget", "version.yaml.tmpl"), filepath.Join(outDir, data.PackageID+".yaml")},
+		{"winget", filepath.Join(root, "packaging", "winget", "installer.yaml.tmpl"), filepath.Join(outDir, data.PackageID+".installer.yaml")},
+		{"winget", filepath.Join(root, "packaging", "winget", "locale.en-US.yaml.tmpl"), filepath.Join(outDir, data.PackageID+".locale.en-US.yaml")},
+	}
+	for _, item := range rendered {
+		if !selected[item.format] {
+			continue
+		}
+		body, err := renderTemplate(item.templatePath, data)
+		if err != nil {
+			return err
+		}
+		if _, err := writeFile(item.outputPath, body, 0o644); err != nil {
+			return err
+		}
+		fmt.Printf("rendered %s\n", item.outputPath)
+	}
+	for _, format := range []string{"homebrew", "winget"} {
+		if !selected[format] {
+			continue
+		}
+		formatMissing := homebrewMissing
+		if format == "winget" {
+			formatMissing = wingetMissing
+		}
+		if len(formatMissing) > 0 {
+			fmt.Printf("UNREADY %s: missing %s\n", format, strings.Join(uniqueSorted(formatMissing), ", "))
+		} else {
+			fmt.Printf("ready %s: every input was supplied\n", format)
+		}
+	}
+	return nil
+}
+
+func unreadyText(missing []string) string {
+	return "missing input(s): " + strings.Join(uniqueSorted(missing), ", ") + "; placeholder values are marked below"
+}
+
+func uniqueSorted(values []string) []string {
+	seen := map[string]bool{}
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		unique = append(unique, value)
+	}
+	sort.Strings(unique)
+	return unique
+}
+
+func selectFormats(list string) (map[string]bool, error) {
+	selected := map[string]bool{}
+	for _, item := range strings.Split(list, ",") {
+		switch strings.TrimSpace(item) {
+		case "":
+		case "all":
+			selected["homebrew"] = true
+			selected["winget"] = true
+		case "homebrew", "winget":
+			selected[strings.TrimSpace(item)] = true
+		default:
+			return nil, fmt.Errorf("unknown format %q; use homebrew, winget, or all", strings.TrimSpace(item))
+		}
+	}
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("no format selected")
+	}
+	return selected, nil
+}
+
+func renderTemplate(path string, data packagingData) ([]byte, error) {
+	parsed, err := template.New(filepath.Base(path)).Funcs(template.FuncMap{
+		"ruby": rubyString,
+		"yaml": yamlString,
+	}).ParseFiles(path)
+	if err != nil {
+		return nil, err
+	}
+	var buffer strings.Builder
+	if err := parsed.Execute(&buffer, data); err != nil {
+		return nil, err
+	}
+	return []byte(buffer.String()), nil
+}
+
+// rubyString escapes a value for the body of a Ruby double-quoted string. Ruby
+// interpolates #{...}, #$global, and #@instance, so every # is escaped.
+func rubyString(value string) string {
+	var builder strings.Builder
+	for _, r := range value {
+		switch r {
+		case '\\':
+			builder.WriteString(`\\`)
+		case '"':
+			builder.WriteString(`\"`)
+		case '#':
+			builder.WriteString(`\#`)
+		default:
+			writeEscapedRune(&builder, r)
+		}
+	}
+	return builder.String()
+}
+
+// yamlString renders a double-quoted YAML scalar.
+func yamlString(value string) string {
+	var builder strings.Builder
+	builder.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '\\':
+			builder.WriteString(`\\`)
+		case '"':
+			builder.WriteString(`\"`)
+		default:
+			writeEscapedRune(&builder, r)
+		}
+	}
+	builder.WriteByte('"')
+	return builder.String()
+}
+
+func writeEscapedRune(builder *strings.Builder, r rune) {
+	if r < 0x20 || r == 0x7f {
+		fmt.Fprintf(builder, `\u%04X`, r)
+		return
+	}
+	builder.WriteRune(r)
+}
+
+func validateURL(value string) error {
+	if err := validateNoControl(value); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("%q must use http or https", value)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("%q has no host", value)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("%q must not carry credentials", value)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("%q must not carry a query or fragment", value)
+	}
+	if strings.HasSuffix(value, "/") {
+		return fmt.Errorf("%q must not end with a slash", value)
+	}
+	return nil
+}
+
+func validateTap(value string) error {
+	if err := validateNoControl(value); err != nil {
+		return err
+	}
+	if !tapPattern.MatchString(value) {
+		return fmt.Errorf("%q must look like owner/repository", value)
+	}
+	return nil
+}
+
+func validatePackageID(value string) error {
+	if err := validateNoControl(value); err != nil {
+		return err
+	}
+	if !packageIDPattern.MatchString(value) {
+		return fmt.Errorf("%q must look like Publisher.Package", value)
+	}
+	return nil
+}
+
+func validateNonEmpty(value string) error {
+	if err := validateNoControl(value); err != nil {
+		return err
+	}
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	return nil
+}
+
+func validateNoControl(value string) error {
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("%q contains a control character", value)
+		}
+	}
+	return nil
+}

@@ -1,0 +1,220 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}
+
+<p class="backline"><a class="back" href="{{.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
+
+<div class="rhead">
+  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+</div>
+
+{{template "repoTabs" dict "Lang" $lang "T" $p.Tabs}}
+
+<div class="rpane">
+<div class="phead">
+  <h1>{{bi $lang "import.title"}}</h1>
+  <p>{{bi $lang "import.intro"}}</p>
+</div>
+
+{{if not $p.Available}}
+<p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "import.unavailable"}}</span></p>
+{{else}}
+
+{{if $p.SchedulerFailed}}
+<p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "import.scheduler_failed"}}</span></p>
+{{else if $p.ReconcileFailed}}
+<p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "import.reconcile_failed"}}</span></p>
+{{end}}
+{{if $p.Unresolved}}
+<p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "import.unresolved"}} {{$p.Unresolved}}</span></p>
+<div class="card">
+  <p>{{bi $lang "import.resolve_help"}}</p>
+  <form class="form" method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="action" value="import_resolve">
+    <label for="import-resolve-password">{{bi $lang "import.password_each_time"}}</label>
+    <input id="import-resolve-password" name="admin_password" type="password" required autocomplete="current-password">
+    <button type="submit" class="btn">{{bi $lang "import.resolve"}}</button>
+  </form>
+</div>
+{{end}}
+{{if $p.StagingIssues}}
+<p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "import.staging"}} {{$p.StagingIssues}}</span></p>
+{{end}}
+{{if $p.ContentIncomplete}}
+<p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "import.incomplete"}}</span></p>
+{{end}}
+
+<section class="sec">
+  <h2>{{bi $lang "import.last_run"}}</h2>
+  {{if $p.Active}}
+    <p>{{bi $lang "import.active_run"}} <span class="pill pill--kept">{{importToken $lang $p.Active.Status}}</span> <span class="mono">{{$p.Active.ID}}</span></p>
+  {{end}}
+  {{if $p.Last}}
+    <p><span class="pill">{{importToken $lang $p.Last.Kind}}</span> <span class="pill pill--off">{{importToken $lang $p.Last.Status}}</span> <span class="mono">{{$p.Last.ID}}</span></p>
+    {{with $p.Last.ErrorClass}}<p>{{importError $lang .}}</p>{{end}}
+    {{with $p.Last.Message}}<details><summary>{{bi $lang "import.technical_details"}}</summary><p class="mono">{{.}}</p></details>{{end}}
+  {{else}}
+    <p>{{bi $lang "import.no_run"}}</p>
+  {{end}}
+</section>
+
+{{if $p.Configured}}
+<section class="sec">
+  <h2>{{bi $lang "import.refs"}}</h2>
+  {{if $p.Refs}}
+  <ul>
+    {{range $p.Refs}}
+      <li><span class="mono">{{.Name}}</span> <span class="pill pill--off">{{importToken $lang .State}}</span></li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p>{{bi $lang "import.no_run"}}</p>
+  {{end}}
+  {{if $p.RefsTruncated}}
+  <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "import.refs_truncated"}}</span></p>
+  {{end}}
+</section>
+
+<section class="sec">
+  <h2>{{bi $lang "import.history"}}</h2>
+  {{if $p.History}}
+  <ul>
+    {{range $p.History}}
+      <li><span class="mono">{{.ID}}</span> <span class="pill pill--off">{{importToken $lang .Status}}</span> {{importToken $lang .Kind}}</li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p>{{bi $lang "import.no_run"}}</p>
+  {{end}}
+  {{with $p.OlderURL}}<p><a href="{{.}}">{{bi $lang "import.older"}}</a></p>{{end}}
+</section>
+
+<div class="actions">
+  <form method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="action" value="import_refresh">
+    <label for="import-refresh-password">{{bi $lang "import.password_each_time"}}</label>
+    <input id="import-refresh-password" name="admin_password" type="password" required autocomplete="current-password">
+    <button type="submit" class="btn btn--primary">{{bi $lang "import.refresh"}}</button>
+  </form>
+  <form method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="action" value="import_cancel">
+    <label for="import-cancel-password">{{bi $lang "import.password_each_time"}}</label>
+    <input id="import-cancel-password" name="admin_password" type="password" required autocomplete="current-password">
+    <button type="submit" class="btn">{{bi $lang "import.cancel"}}</button>
+  </form>
+</div>
+{{else}}
+<p>{{bi $lang "import.not_configured"}}</p>
+{{end}}
+
+<div class="card">
+  <h2 class="setblock__h">{{bi $lang "import.save_source"}}</h2>
+  <form class="form" method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="action" value="import_configure">
+    <div class="f">
+      <label for="import-url">{{bi $lang "import.url"}}</label>
+      <input id="import-url" name="url" type="url" required spellcheck="false" autocomplete="off" value="{{$p.URL}}">
+    </div>
+    <div class="f">
+      <label for="import-mode">{{bi $lang "import.mode"}}</label>
+      <select id="import-mode" name="mode">
+        <option value="standalone"{{if eq $p.Mode "standalone"}} selected{{end}}>{{bi $lang "import.mode.standalone"}}</option>
+        <option value="coexistence"{{if eq $p.Mode "coexistence"}} selected{{end}}>{{bi $lang "import.mode.coexistence"}}</option>
+      </select>
+    </div>
+    <div class="f">
+      <label><input type="checkbox" name="git_only_consent" value="1"{{if $p.GitOnlyConsent}} checked{{end}}> {{bi $lang "import.git_only"}}</label>
+      <p class="f__help">{{bi $lang "import.git_only_help"}}</p>
+    </div>
+    <div class="f">
+      <label><input type="checkbox" name="allow_private_network" value="1"{{if $p.PrivateNetwork}} checked{{end}}> {{bi $lang "import.private_network"}}</label>
+      <p class="f__help">{{bi $lang "import.private_network_help"}}</p>
+    </div>
+    <div class="f">
+      <label for="import-configure-password">{{bi $lang "admin.field"}}</label>
+      <input id="import-configure-password" name="admin_password" type="password" required autocomplete="current-password">
+    </div>
+    <button type="submit" class="btn btn--primary">{{bi $lang "import.save_source"}}</button>
+  </form>
+</div>
+
+{{if $p.Configured}}
+<div class="card">
+  <h2 class="setblock__h">{{bi $lang "import.credentials"}}</h2>
+  <p>{{bi $lang "import.credentials_help"}}</p>
+  {{if $p.CredentialBound}}<p>{{bi $lang "import.bound"}} <span class="pill pill--off">{{importToken $lang $p.CredentialForm}}</span></p>{{else}}<p>{{bi $lang "import.unbound"}}</p>{{end}}
+  {{if $p.CAPresent}}<p>{{bi $lang "import.ca_present"}}</p>{{end}}
+  <form class="form" method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="action" value="import_credentials">
+    <div class="f">
+      <label for="import-credential-form">{{bi $lang "import.credential_form"}}</label>
+      <select id="import-credential-form" name="credential_form">
+        {{$bound := ""}}{{if $p.CredentialBound}}{{$bound = $p.CredentialForm}}{{end}}
+        <option value="basic"{{if eq $bound "basic"}} selected{{end}}>{{bi $lang "import.credential_basic"}}</option>
+        <option value="bearer"{{if eq $bound "bearer"}} selected{{end}}>{{bi $lang "import.credential_bearer"}}</option>
+        <option value="none"{{if eq $bound "none"}} selected{{end}}>{{bi $lang "import.credential_none"}}</option>
+      </select>
+    </div>
+    <div class="f">
+      <label for="import-username">{{bi $lang "import.username"}}</label>
+      <input id="import-username" name="username" type="text" autocomplete="off">
+    </div>
+    <div class="f">
+      <label for="import-password">{{bi $lang "import.password"}}</label>
+      <input id="import-password" name="password" type="password" autocomplete="new-password">
+    </div>
+    <div class="f">
+      <label for="import-token">{{bi $lang "import.token"}}</label>
+      <input id="import-token" name="token" type="password" autocomplete="new-password">
+    </div>
+    <div class="f">
+      <label for="import-ca">{{bi $lang "import.ca"}}</label>
+      <textarea id="import-ca" name="ca_pem" rows="4" autocomplete="off"></textarea>
+    </div>
+    <div class="f">
+      <label for="import-credential-admin">{{bi $lang "admin.field"}}</label>
+      <input id="import-credential-admin" name="admin_password" type="password" required autocomplete="current-password">
+    </div>
+    <button type="submit" class="btn btn--primary">{{bi $lang "import.save_credentials"}}</button>
+  </form>
+  <form method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="action" value="import_clear_credentials">
+    <label for="import-clear-password">{{bi $lang "admin.field"}}</label>
+    <input id="import-clear-password" name="admin_password" type="password" required autocomplete="current-password">
+    <button type="submit" class="btn">{{bi $lang "import.clear_credentials"}}</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 class="setblock__h">{{bi $lang "import.schedule"}}</h2>
+  <form class="form" method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="action" value="import_schedule">
+    <div class="f">
+      <label for="import-enabled">{{bi $lang "import.schedule"}}</label>
+      <select id="import-enabled" name="enabled">
+        <option value="1"{{if $p.ScheduleEnabled}} selected{{end}}>{{bi $lang "import.schedule_enabled"}}</option>
+        <option value="0"{{if not $p.ScheduleEnabled}} selected{{end}}>{{bi $lang "import.schedule_disabled"}}</option>
+      </select>
+    </div>
+    <div class="f">
+      <label for="import-interval">{{bi $lang "import.interval"}}</label>
+      <input id="import-interval" name="interval" type="text" required value="{{if $p.ScheduleInterval}}{{$p.ScheduleInterval}}{{else}}1h{{end}}">
+      <p class="f__help">{{bi $lang "import.interval_help"}}</p>
+    </div>
+    <div class="f">
+      <label for="import-schedule-password">{{bi $lang "admin.field"}}</label>
+      <input id="import-schedule-password" name="admin_password" type="password" required autocomplete="current-password">
+    </div>
+    <button type="submit" class="btn btn--primary">{{bi $lang "import.save_schedule"}}</button>
+  </form>
+</div>
+{{end}}
+{{end}}
+</div>
+{{end}}

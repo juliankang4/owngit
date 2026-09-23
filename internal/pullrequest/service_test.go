@@ -37,11 +37,11 @@ func TestReviewBoundMergeCreatesExactMergeCommitAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Review.Status != state.ReviewPending || created.MergeEligibility.Eligible || created.Checks.Status != "not_configured" || created.Checks.Configured || created.Checks.Passed || created.Checks.Blocking {
+	if created.Review.Status != state.ReviewPending || !created.MergeEligibility.Eligible || created.Checks.Status != "absent" || created.Checks.Configured || created.Checks.Passed || created.Checks.Blocking || !created.Checks.Advisory {
 		t.Fatalf("unexpected created pull request: %+v", created)
 	}
-	if got := blockerCode(created); got != "review_pending" {
-		t.Fatalf("blocker=%q, want review_pending", got)
+	if got := len(created.MergeEligibility.Blockers); got != 0 {
+		t.Fatalf("pending review produced %d blockers, want none", got)
 	}
 	approved, err := fixture.service.SubmitReview(fixture.ctx, fixture.repositoryID, created.Number, ReviewSubmitInput{
 		SourceOID: sourceOID, TargetOID: targetOID, Decision: state.ReviewApproved, ReviewerLabel: "existing-tool: synthetic-reviewer",
@@ -95,6 +95,44 @@ func TestReviewBoundMergeCreatesExactMergeCommitAndIsIdempotent(t *testing.T) {
 	}
 	if repeated.Merge == nil || repeated.Merge.OID != merged.Merge.OID || fixture.ref("refs/heads/main") != merged.Merge.OID {
 		t.Fatalf("repeated merge changed its result: first=%+v repeated=%+v", merged.Merge, repeated.Merge)
+	}
+}
+
+func TestObserveCurrentRevisionsBindsSourcePushWithoutViewRead(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.commitFile("base.txt", "base\n", "base")
+	fixture.push("HEAD:refs/heads/main")
+	fixture.git("checkout", "-b", "feature")
+	fixture.commitFile("feature.txt", "first\n", "feature one")
+	fixture.push("HEAD:refs/heads/feature")
+	created, err := fixture.service.Create(fixture.ctx, CreateInput{
+		Repository: fixture.repositoryID, Title: "Observe source pushes", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSource := fixture.commitFile("feature.txt", "second\n", "feature two")
+	fixture.push("HEAD:refs/heads/feature")
+
+	observed, more, err := fixture.service.ObserveCurrentRevisions(fixture.ctx, fixture.repositoryID, 64)
+	if err != nil || more || observed != 1 {
+		t.Fatalf("observed=%d more=%v err=%v", observed, more, err)
+	}
+	revisions, err := fixture.store.LatestPullRequestRevisions(fixture.ctx, fixture.repositoryID, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, revision := range revisions {
+		if revision.PullRequestNumber == created.Number && revision.SourceOID == newSource {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("new source revision %s was not durably observed: %+v", newSource, revisions)
+	}
+	if observed, _, err := fixture.service.ObserveCurrentRevisions(fixture.ctx, fixture.repositoryID, 64); err != nil || observed != 0 {
+		t.Fatalf("repeated observation count=%d err=%v", observed, err)
 	}
 }
 
@@ -353,7 +391,7 @@ func newMovedHeadFixture(t *testing.T) (*serviceFixture, int64, string, string) 
 	return fixture, created.Number, newSource, targetOID
 }
 
-func TestHeadMovementInvalidatesSkipAndChangesRequestedBlocksCurrentRevision(t *testing.T) {
+func TestHeadMovementInvalidatesSkipAndAdvisoryReviewDoesNotBlock(t *testing.T) {
 	fixture := newServiceFixture(t)
 	fixture.commitFile("file.txt", "base\n", "base")
 	fixture.push("HEAD:refs/heads/main")
@@ -377,7 +415,7 @@ func TestHeadMovementInvalidatesSkipAndChangesRequestedBlocksCurrentRevision(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if moved.Source.OID != newSource || moved.Review.Status != "decision_required" || blockerCode(moved) != "review_decision_required" {
+	if moved.Source.OID != newSource || moved.Review.Status != "decision_required" || len(moved.MergeEligibility.Blockers) != 0 {
 		t.Fatalf("head movement did not invalidate skip: %+v", moved)
 	}
 	oldSourceRef, oldTargetRef := RevisionRefNames(created.Number, oldSource, targetOID)
@@ -393,18 +431,12 @@ func TestHeadMovementInvalidatesSkipAndChangesRequestedBlocksCurrentRevision(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.MergeEligibility.Eligible || blockerCode(changed) != "changes_requested" {
-		t.Fatalf("changes-requested review did not block merge: %+v", changed)
-	}
-	if _, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: newSource, TargetOID: targetOID}); problemCode(err) != "merge_blocked" {
-		t.Fatalf("blocked merge error=%v code=%q", err, problemCode(err))
-	}
-	if _, err := fixture.service.SkipReview(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: newSource, TargetOID: targetOID}); err != nil {
-		t.Fatal(err)
+	if !changed.MergeEligibility.Eligible || len(changed.MergeEligibility.Blockers) != 0 {
+		t.Fatalf("changes-requested review blocked merge: %+v", changed)
 	}
 	merged, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: newSource, TargetOID: targetOID})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("advisory changes-requested review blocked merge: %v", err)
 	}
 	if merged.Merge == nil || merged.Merge.Mode != "fast_forward" || merged.Merge.OID != newSource || fixture.ref("refs/heads/main") != newSource {
 		t.Fatalf("fast-forward merge result=%+v", merged)

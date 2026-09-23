@@ -274,7 +274,7 @@ a:hover { text-decoration: underline; }
 .field input {
   font-size: 12.5px;
   width: 200px;
-  max-width: 40vw;
+  max-width: 18vw;
   height: 26px;
   padding: 0 10px;
   background: var(--bg-content);
@@ -297,8 +297,17 @@ a:hover { text-decoration: underline; }
 }
 .conn--secure { color: var(--ok); background: var(--ok-soft); }
 .conn--plain { color: var(--warn); background: var(--warn-soft); }
-.toolbar .conn { margin-left: auto; }
-.toolbar .field + .conn { margin-left: 0; }
+
+/* Keep connection, appearance and language on the same row. */
+.toolbar__controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+.toolbar .field ~ .toolbar__controls { margin-left: 0; }
 
 /* Segmented controls: one shape vocabulary for appearance and language. */
 .appear, .lang {
@@ -483,6 +492,9 @@ a:hover { text-decoration: underline; }
 .f { display: grid; gap: 5px; }
 .f > label, .f__label { font-size: 12.5px; font-weight: 560; }
 .f__help { font-size: 11.5px; color: var(--text-3); max-width: 64ch; }
+/* The accepted range sits directly under its field. Tabular figures so the
+   numbers in a column of limits line up and can be compared at a glance. */
+.f__range { font-variant-numeric: tabular-nums; }
 .f input[type="text"],
 .f input[type="password"],
 .f input[type="search"],
@@ -818,16 +830,41 @@ span.hm__cell { cursor: default; }
 .rhead__name { font-size: 20px; font-weight: 640; letter-spacing: -0.02em; }
 .rhead__desc { font-size: 12.5px; color: var(--text-3); max-width: 70ch; }
 
-.rtabs { display: flex; gap: 2px; margin: 14px 0 0; border-bottom: 1px solid var(--sep); }
+/* Tab labels are destination names, so they are never wrapped, truncated, or
+   shrunk. Each tab keeps its content width and the strip scrolls sideways.
+
+   The scrollport clips vertically as well as horizontally, so the line under
+   the strip is an inset shadow rather than a border the active tab reaches
+   into with a negative margin. Nothing the tabs paint lands in clipped space. */
+.rtabs {
+  display: flex;
+  gap: 2px;
+  margin: 14px 0 0;
+  box-shadow: inset 0 -1px 0 var(--sep);
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Keeps a tab scrolled into view clear of the edge. */
+  scroll-padding-inline: 14px;
+  overscroll-behavior-x: contain;
+}
 .rtabs__btn {
   border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
   padding: 7px 12px;
   font-size: 13px;
   color: var(--text-2);
   text-decoration: none;
+  white-space: nowrap;
+  flex: none;
+  scroll-margin-inline: 14px;
 }
 .rtabs__btn:hover { color: var(--text-1); text-decoration: none; }
+/* Inset, because the scrollport clips the shared outset ring at the top and
+   bottom. Same colour and width as that ring. */
+.rtabs__btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+  border-radius: var(--r-s);
+}
 .rtabs__btn[aria-current="page"] {
   color: var(--accent);
   border-bottom-color: var(--accent-line);
@@ -1328,12 +1365,15 @@ span.hm__cell { cursor: default; }
 @media (max-width: 620px) {
   .content { padding: 14px 12px 36px; }
   .app--bare .content { padding: 18px 14px 40px; }
+  /* Keep visual order aligned with the DOM and let search fill its row. */
   .toolbar { min-height: auto; padding: 8px 12px; flex-wrap: wrap; gap: 8px 12px; }
-  .field { margin-left: 0; width: 100%; order: 3; }
+  /* min-width 0 lets a long storage path shrink and ellipsise instead of
+     forcing the row wider. */
+  .toolbar__id { order: 1; flex: 1 1 auto; min-width: 0; }
+  .toolbar__controls { order: 3; margin-left: auto; flex: none; }
+  .toolbar .field ~ .toolbar__controls { margin-left: auto; }
+  .field { order: 2; margin-left: 0; flex: 1 0 100%; }
   .field input { width: 100%; max-width: none; }
-  .conn { margin-left: auto; }
-  .toolbar .field + .conn { margin-left: auto; }
-  .lang { margin-left: 0; }
   .hm__bar { flex-wrap: wrap; }
   .hm__years { margin-left: 0; }
   .refline { grid-template-columns: minmax(0, 1fr) auto; }
@@ -1346,4 +1386,460 @@ span.hm__cell { cursor: default; }
   .row, .btn, .sb__item, .hm__year, .lang__btn, .appear__btn, .tree__row, .clist__row, .fchip {
     transition: background-color 110ms ease;
   }
+}
+
+/* ---------- evidence ---------- */
+
+/* These screens exist to answer one question honestly: what is actually known
+   about this code, and how much is that worth. So the states are told apart by
+   their words and their outlines first. Tone only repeats what those already
+   say, which is what keeps a failure legible in monochrome, in Dark, and to a
+   reader who does not separate red from green. */
+
+.ev__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--sep);
+  font-size: 11.5px;
+  font-weight: 540;
+  white-space: nowrap;
+}
+.ev__chip .icon { flex: none; }
+.ev__chip--ok { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+.ev__chip--bad { color: var(--bad); background: var(--bad-soft); border-color: transparent; }
+.ev__chip--warn { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+/* An absent result is quiet rather than reassuring. Nothing was measured, so
+   nothing is coloured. */
+.ev__chip--quiet { color: var(--text-2); background: var(--bg-fill); border-color: transparent; }
+
+.evpair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 22px;
+  align-items: start;
+}
+.ev { display: grid; gap: 9px; align-content: start; }
+.ev__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ev__h { font-size: 13.5px; font-weight: 590; letter-spacing: -0.01em; }
+.ev__summary { font-size: 12.5px; color: var(--text-1); }
+.ev__note { font-size: 11.5px; color: var(--text-2); max-width: 64ch; }
+.ev__sub { color: var(--text-3); }
+.ev__more { font-size: 12px; }
+
+/* The qualifying facts under a result. They are the reason a green word is or
+   is not worth trusting, so they are listed rather than hidden behind a
+   disclosure. */
+.ev__notes { list-style: none; display: grid; gap: 4px; }
+.ev__notes li {
+  position: relative;
+  padding-left: 13px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  max-width: 64ch;
+}
+.ev__notes li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--sep-strong);
+}
+
+.ev__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 9px 16px;
+}
+.ev__facts dt { font-size: 11px; color: var(--text-3); }
+.ev__facts dd { margin-top: 1px; font-size: 12px; word-break: break-all; }
+.ev__facts dd .ev__sub { display: block; font-size: 11px; }
+
+.ev__warn {
+  display: flex;
+  gap: 7px;
+  align-items: start;
+  padding: 8px 11px;
+  border-radius: var(--r-m);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 11.5px;
+  max-width: 68ch;
+}
+.ev__warn .icon { flex: none; margin-top: 1px; }
+
+/* ---------- pull requests ---------- */
+
+.prlist { display: grid; }
+.prrow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "id title state"
+    "id branches when"
+    "id evidence evidence";
+  gap: 3px 12px;
+  padding: 12px 10px;
+  border-top: 1px solid var(--sep);
+  color: inherit;
+  align-items: center;
+}
+.prrow:last-child { border-bottom: 1px solid var(--sep); }
+.prrow:hover { background: var(--bg-fill); text-decoration: none; }
+.prrow__id { grid-area: id; color: var(--text-3); align-self: start; padding-top: 2px; }
+.prrow__t { grid-area: title; font-size: 13.5px; font-weight: 560; letter-spacing: -0.01em; }
+.prrow__s { grid-area: state; justify-self: end; }
+.prrow__b { grid-area: branches; font-size: 11.5px; color: var(--text-2); display: flex; gap: 6px; flex-wrap: wrap; }
+.prrow__into { color: var(--text-3); }
+.prrow__w { grid-area: when; justify-self: end; font-size: 11.5px; color: var(--text-3); }
+/* Each kind of evidence keeps its own chip. Collapsing them into one summary
+   would let an absent review disappear behind a passing check. */
+.prrow__e { grid-area: evidence; display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+
+.prhead__id { color: var(--text-3); font-size: 0.8em; }
+.prhead__meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 11.5px; color: var(--text-3); }
+
+.prpair { display: grid; gap: 10px; }
+.revline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
+.revline__l { min-width: 110px; font-size: 11px; color: var(--text-3); }
+.revline__b { display: inline-flex; gap: 5px; align-items: center; }
+.revline__o { color: var(--text-3); }
+
+/* The pull request's direction, on one line under the title. A merge decision
+   needs to know where the change goes; the object ids behind it are record and
+   live with the rest of the record. */
+.prdir { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12.5px; }
+.prdir__i { color: var(--text-3); }
+
+/* The evidence summary: one row per kind, each with a state word, a short
+   qualifying line and the revision it describes.
+
+   The relevance label is the reason this is a row rather than a paragraph. It
+   has to be readable at a glance, in the same place on every row, because a
+   result about an earlier revision and a record that could not be read are
+   different subjects rather than weaker versions of the same answer. Tone only
+   repeats what the word and the shape already say. */
+.evsum { display: grid; margin-top: 4px; }
+.evrow {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr) auto auto;
+  gap: 2px 12px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid var(--sep);
+}
+.evrow:first-child { border-top: 0; padding-top: 2px; }
+.evrow__k { font-size: 12px; font-weight: 550; }
+.evrow__s { font-size: 12.5px; color: var(--text-2); }
+.evrow__c { justify-self: end; }
+.evrow__r {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: end;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.evrow__r--warn { color: var(--warn); font-weight: 550; }
+
+/* The advisory line and the actions share one row, so the reader does not
+   scroll past a second instruction card to reach the merge control. */
+.evfoot {
+  display: flex;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--sep);
+}
+.evfoot .ev__note { flex: 1 1 24ch; }
+.prmerge { display: contents; }
+
+/* The disclosure holding the qualifying facts. It is a native details element,
+   so it needs no scripting and answers to Enter and Space like any other
+   control. */
+.disc { margin-top: 10px; }
+.disc > summary {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--accent);
+  list-style: none;
+}
+.disc > summary::-webkit-details-marker { display: none; }
+.disc > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+.disc[open] > summary::before { transform: rotate(90deg) translateX(-1px); }
+.disc__body { margin-top: 12px; display: grid; gap: 14px; }
+/* The secondary record-keeping controls. They sit outside the summary card,
+   so the disclosure carries its own frame rather than a card's. */
+.disc--act {
+  margin-top: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--sep);
+  border-radius: var(--r-l);
+  background: var(--bg-content);
+}
+.disc--act .disc__body { gap: 10px; }
+
+/* The merge explanation sits under the control it describes. */
+.evfoot__h { margin-top: 8px; }
+
+.pract { display: grid; gap: 12px; margin-top: 10px; }
+.pract form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+/* The refusal list. These are Git and repository reasons: a conflict, a branch
+   that moved, a pull request already merged. A failed check never appears
+   here, because a check does not refuse a merge. */
+.blockers { list-style: none; display: grid; gap: 7px; margin: 10px 0; }
+.blocker {
+  display: flex;
+  gap: 7px;
+  align-items: start;
+  font-size: 12px;
+  color: var(--text-1);
+  max-width: 68ch;
+}
+.blocker .icon { flex: none; margin-top: 1px; color: var(--bad); }
+.blocker .mono { color: var(--text-3); }
+
+/* ---------- tasks and runs ---------- */
+
+.tasklist { display: grid; }
+.taskrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title state"
+    "evidence when"
+    "budget budget";
+  gap: 3px 12px;
+  padding: 12px 10px;
+  border-top: 1px solid var(--sep);
+  color: inherit;
+}
+.taskrow:last-child { border-bottom: 1px solid var(--sep); }
+.taskrow:hover { background: var(--bg-fill); text-decoration: none; }
+.taskrow__t { grid-area: title; font-size: 13px; font-weight: 550; }
+.taskrow__s { grid-area: state; justify-self: end; }
+.taskrow__e { grid-area: evidence; display: flex; gap: 7px; align-items: center; flex-wrap: wrap; margin-top: 3px; }
+.taskrow__w { grid-area: when; justify-self: end; font-size: 11.5px; color: var(--text-3); align-self: center; }
+.taskrow__b { grid-area: budget; font-size: 11.5px; color: var(--text-3); margin-top: 3px; }
+
+.attempts { display: grid; gap: 14px; }
+.attempt {
+  border: 1px solid var(--sep);
+  border-radius: var(--r-l);
+  padding: 14px 16px;
+  background: var(--bg-content);
+  display: grid;
+  gap: 9px;
+}
+.attempt__head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.attempt__rev { color: var(--text-3); }
+.attempt__when { margin-left: auto; font-size: 11.5px; color: var(--text-3); }
+.attempt__sum { font-size: 12.5px; }
+
+.results { display: grid; gap: 10px; margin-top: 2px; }
+.results__h { font-size: 11px; color: var(--text-3); }
+.result {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--r-m);
+  background: var(--bg-fill);
+}
+.result__head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.result__n { font-size: 12.5px; font-weight: 550; }
+.result__x, .result__t { font-size: 11.5px; color: var(--text-3); }
+.result__t { margin-left: auto; }
+.result__cmd { color: var(--text-2); word-break: break-all; }
+.result__out { font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; word-break: break-word; }
+
+/* A cleanup reason sits beside the output rather than in it, and the recorded
+   text can be long, so it wraps on its own line. */
+.result .ev__warn .ev__sub { display: block; word-break: break-word; }
+.codebox--short { max-height: 220px; overflow: auto; }
+
+.checks { display: grid; gap: 7px; margin-top: 8px; }
+.checkdef {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  gap: 4px 14px;
+  padding: 9px 11px;
+  border-radius: var(--r-m);
+  background: var(--bg-fill);
+  align-items: baseline;
+}
+.checkdef__n { font-size: 12.5px; font-weight: 550; }
+.checkdef__c { color: var(--text-2); word-break: break-all; }
+
+/* ---------- helper credentials ---------- */
+
+/* The one-time secret. It is called out because this response is the only
+   place it exists: OwnGit stores a hash, and reloading this screen is a plain
+   GET that does not carry the value. */
+.card--accent { border-color: var(--accent); border-width: 2px; }
+.card--accent .setblock__h { display: flex; gap: 7px; align-items: center; color: var(--accent); }
+
+.tokenbox {
+  width: 100%;
+  resize: vertical;
+  min-height: 2.6em;
+  padding: 9px 11px;
+  border: 1px solid var(--sep-strong);
+  border-radius: var(--r-m);
+  background: var(--code-bg);
+  color: var(--text-1);
+  word-break: break-all;
+}
+
+.creds { display: grid; gap: 12px; margin-top: 10px; }
+.cred {
+  border: 1px solid var(--sep);
+  border-radius: var(--r-l);
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+}
+/* A revoked credential stays on the page. Its border quiets down, but its
+   text does not fade: the record of what once had access has to stay
+   readable. */
+.cred--off { border-style: dashed; background: var(--bg-fill); }
+.cred__top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.cred__l { font-size: 13px; font-weight: 560; }
+.kv--tight { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px 14px; }
+.pill--on { background: var(--ok-soft); color: var(--ok); }
+.pill--off { background: var(--bg-fill-2); color: var(--text-2); }
+.f__sub { color: var(--text-3); font-weight: 400; }
+.form--inline { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.form--inline .f { flex: 1 1 200px; }
+
+/* ---------- configured checks ---------- */
+
+/* Saved policy, current permission and observed runtime read as three
+   separate answers, because collapsing them would let a stored policy look
+   like running work. Each row keeps its own label beside its own chip. */
+.ccstate { display: grid; gap: 8px; margin-top: 4px; }
+.ccstate__row {
+  display: grid;
+  grid-template-columns: minmax(120px, 190px) minmax(0, 1fr);
+  gap: 6px 12px;
+  align-items: center;
+}
+.ccstate__k { font-size: 12px; font-weight: 550; }
+
+/* Numeric policy fields. They pack two to a row on a wide screen and fall to
+   one on a narrow one without any field shrinking below a readable width. */
+.ccgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px 18px;
+}
+
+.jobacts { display: grid; gap: 12px; margin-top: 12px; }
+
+.joblist { display: grid; }
+.jobrow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-areas:
+    "state title mode when open"
+    "state ref  ref  ref  ref"
+    "state note note note note";
+  gap: 3px 12px;
+  align-items: center;
+  padding: 11px 4px;
+  border-top: 1px solid var(--sep);
+}
+.jobrow:last-child { border-bottom: 1px solid var(--sep); }
+.jobrow__s { grid-area: state; align-self: start; }
+.jobrow__t { grid-area: title; font-size: 12.5px; display: flex; gap: 7px; flex-wrap: wrap; align-items: baseline; }
+.jobrow__m { grid-area: mode; font-size: 11.5px; color: var(--text-2); }
+/* A long ref wraps inside its own track instead of widening the row. */
+.jobrow__r { grid-area: ref; font-size: 11.5px; color: var(--text-3); overflow-wrap: anywhere; }
+.jobrow__w { grid-area: when; justify-self: end; font-size: 11.5px; color: var(--text-3); }
+.jobrow__o { grid-area: open; justify-self: end; font-size: 12px; }
+.jobrow__n {
+  grid-area: note;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--warn);
+}
+
+/* The full object id beside its abbreviation. It wraps rather than clipping,
+   because a commit id that is cut off cannot be compared or copied, and it
+   takes a focus ring so a keyboard reader can select it like any other text. */
+.oidfull {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.oidfull:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.toolbar__ver { color: var(--text-3); font-size: 11px; }
+
+@media (max-width: 720px) {
+  .prrow {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "id title"
+      "id state"
+      "id branches"
+      "id evidence"
+      "id when";
+  }
+  .prrow__s, .prrow__w { justify-self: start; }
+  .evpair { gap: 18px; }
+
+  /* The key and the chip share the first line, the qualifying line takes the
+     next, and the relevance label sits with it. Nothing is dropped: the
+     narrow screen still shows which revision each result describes. */
+  .evrow { grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; }
+  .evrow__k { grid-column: 1; grid-row: 1; }
+  .evrow__c { grid-column: 2; grid-row: 1; }
+  .evrow__s { grid-column: 1 / -1; }
+  .evrow__r { grid-column: 1 / -1; justify-self: start; white-space: normal; }
+  .evfoot .btn, .evfoot .prmerge button { flex: 1 1 auto; justify-content: center; }
+
+  /* The job row stacks rather than squeezing. Nothing is dropped: the mode,
+     the ref and the cancellation note all keep their own line. */
+  .jobrow {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "state title"
+      "state mode"
+      "state ref"
+      "state when"
+      "state open"
+      "state note";
+  }
+  .jobrow__w, .jobrow__o { justify-self: start; }
+
+  .ccstate__row { grid-template-columns: minmax(0, 1fr); }
 }

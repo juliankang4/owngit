@@ -11,11 +11,11 @@ go build -o bin/owngit ./cmd/owngit
 
 On first run, OwnGit writes an owner-readable setup file inside the state directory. Open that file in the installation owner's browser. The setup secret is not printed or passed in a browser command argument.
 
-The default address is `http://127.0.0.1:7654`. Setup configures repository storage, optional shared-password protection for general access, and a separate administrator password. Every later security-setting change requires entering the current administrator password. Setup finishes at an empty dashboard.
+The default address is `http://127.0.0.1:7654`. Setup configures repository storage, optional shared-password protection for general access, and a separate administrator password. Every later security-setting change asks for the current administrator password. Setup finishes at an empty dashboard, where New repository creates a repository. Its clone address has the form `http://HOST:7654/git/PROJECT.git`.
 
 ## Reaching the server from another device
 
-OwnGit serves plain HTTP, so the connection is not encrypted. Use Tailscale or your own VPN to reach its private-network address. A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP is supported after a one-time warning before passwords are accepted, and the interface keeps the connection status visible. OwnGit has no built-in TLS and does not support public Internet hosting.
+OwnGit serves plain HTTP, so the connection is not encrypted, and it has no built-in TLS. Use Tailscale or your own VPN to reach its private-network address. A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP also works: OwnGit shows a one-time warning before it accepts passwords, and the interface keeps the connection status visible. Do not expose OwnGit to the public Internet.
 
 To use a LAN name:
 
@@ -27,7 +27,7 @@ To use a LAN name:
   --no-open
 ```
 
-`--allowed-host` is repeatable. The server accepts only requests whose Host matches an approved address. Approve another Host name from the installation host, then restart the server:
+The server accepts only requests whose Host is `localhost`, `127.0.0.1`, `::1`, or an approved name. `--allowed-host` is repeatable. To approve another name permanently, run this on the installation host and restart the server:
 
 ```sh
 ./bin/owngit approve-host gitbox.internal
@@ -41,27 +41,27 @@ Before setup is complete, issue a replacement setup link with:
 ./bin/owngit setup-link --base-url http://127.0.0.1:7654 --no-open
 ```
 
-To reset a forgotten administrator password, provide it through an owner-readable file:
+To reset a forgotten administrator password, put the new password in an owner-readable file:
 
 ```sh
 ./bin/owngit reset-admin --password-file /path/to/owner-only-password-file
 ```
 
-The password file must be a regular file. On Unix-like systems, it must not be readable by group or other users. OwnGit never accepts its contents as a command-line value. Resetting the administrator password revokes administrator sessions and leaves repositories unchanged.
+The password file must be a regular file. On Unix-like systems, it must not be readable by group or other users. OwnGit never accepts a password as a command-line value. Resetting the administrator password signs out administrator sessions and leaves repositories unchanged.
 
-OwnGit has no email or account recovery. Both recovery procedures require access to the installation host.
+OwnGit has no email or account recovery. Both procedures require access to the installation host.
 
 ## Restoring repository files
 
-Open Restore from a repository, commit, or file page. Choose a source commit and target branch, then preview the complete list of additions, changes, and deletions. OwnGit applies the reviewed tree only when the target branch still has the previewed tip.
+Open Restore from a repository, commit, or file page. Choose a source commit and target branch, then preview the complete list of additions, changes, and deletions. OwnGit applies the reviewed tree only if the target branch still has the previewed tip.
 
-An existing target receives a new commit whose parent is its previous tip. A deleted branch is recreated at the selected source commit. Selected-file restore preserves unselected files, file modes, binary blobs, and symbolic-link blobs without following links on the host. Selected submodules and path replacements that would remove unselected descendants are refused.
+An existing branch receives a new commit whose parent is its previous tip. A deleted branch is recreated at the selected commit. Selected-file restore keeps unselected files, file modes, binary files, and symbolic links as they are, and never follows links on the host. OwnGit refuses to restore a selected submodule, or a path whose replacement would remove unselected files beneath it.
 
-Browser restore changes Git-tracked content in OwnGit. It does not modify another computer's working tree or its uncommitted files.
+Restore changes Git-tracked content in OwnGit only. It does not touch another computer's working tree or its uncommitted files.
 
-## Importing an existing repository
+## Moving an existing repository into OwnGit
 
-Add the OwnGit repository as a remote, then send branches and tags as two separate operations:
+Create an empty repository in the dashboard. From a clone of the existing repository, add OwnGit as a remote and push branches and tags:
 
 ```sh
 git remote add owngit http://HOST:7654/git/PROJECT.git
@@ -69,18 +69,133 @@ git push owngit --all
 git push owngit --tags
 ```
 
-Compare the final branch and tag refs before treating the import as complete:
+OwnGit accepts pushes only to branches (`refs/heads/*`) and tags (`refs/tags/*`). A `git push --mirror` from a mirror clone of another host therefore fails for other refs, such as `refs/pull/*`.
+
+Compare the branch and tag refs before you treat the move as complete:
 
 ```sh
 git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
 git ls-remote --heads --tags owngit
 ```
 
-This normal Git import does not carry OwnGit's hidden retention refs or repository metadata. Use an offline OwnGit backup when those records must move too.
+Pushing between two OwnGit installations does not carry retained history or repository records. Use an offline backup when those must move too. To keep pulling changes from a host that stays in use, see [Importing from another Git host](#importing-from-another-git-host).
+
+## Keeping a copy on another host
+
+OwnGit does not push to other hosts itself, but ordinary Git can keep a copy elsewhere.
+
+To copy every branch and tag from OwnGit to another host, work from a mirror clone:
+
+```sh
+git clone --mirror http://HOST:7654/git/PROJECT.git
+cd PROJECT.git
+git push --mirror https://git.example.test/team/project.git
+```
+
+To update the copy later, run `git fetch --prune` and `git push --mirror` again in the same directory. `--mirror` makes the other host match the copy exactly: it overwrites refs there and deletes refs that the copy does not have. OwnGit does not share its retained history, so that history stays in OwnGit.
+
+To update both hosts with every push from a working clone, give its remote two push URLs:
+
+```sh
+git remote set-url --add --push origin http://HOST:7654/git/PROJECT.git
+git remote set-url --add --push origin https://git.example.test/team/project.git
+```
+
+Once a remote has a push URL, Git pushes only to its push URLs, so list OwnGit as well. Fetches still use the original URL. Git pushes to each URL in turn, and a rejection by one host does not undo the push to the other.
+
+## Importing from another Git host
+
+An import copies a repository from another Git host over HTTPS into a new OwnGit repository and can refresh it later. Imports are inbound only: OwnGit never writes to the source. Git LFS objects are not fetched or hosted.
+
+Each import has a mode. In `standalone` mode, OwnGit becomes the primary copy. In `coexistence` mode, the other host stays authoritative and OwnGit keeps a refreshed copy.
+
+In the browser, the administrator uses Import a repository on the dashboard to start an import, and the repository's Import tab to change its source and credentials, refresh, cancel, view history, and set a schedule. Every change asks for the current administrator password. Saving the credential form never clears a stored credential; only Clear credentials removes it. The browser form is limited to 1 MiB in total, so store a CA bundle close to that size with the command line.
+
+The same operations are available from the command line. Import commands read the administrator password from a file with the same checks as `reset-admin`, and read a source token or Basic credential from a private file or an interactive prompt. They never accept a secret as an argument or environment variable.
+
+```sh
+./bin/owngit import add PROJECT https://example.invalid/team/project.git \
+  --mode standalone \
+  --token-file /path/to/owner-only-token \
+  --ca-file /path/to/source-ca.pem \
+  --server http://HOST:7654 --accept-insecure-http \
+  --password-file /path/to/owner-only-admin-password
+```
+
+Every import command takes the same `--server`, `--accept-insecure-http`, and `--password-file` flags; they are omitted below:
+
+```sh
+./bin/owngit import refresh PROJECT
+./bin/owngit import status PROJECT
+./bin/owngit import history PROJECT --limit 20
+./bin/owngit import cancel PROJECT
+./bin/owngit import schedule PROJECT --enable --interval 6h
+./bin/owngit import schedule PROJECT --disable
+./bin/owngit import credentials PROJECT --token-file /path/to/owner-only-token
+./bin/owngit import credentials PROJECT --ca-file /path/to/source-ca.pem
+./bin/owngit import credentials PROJECT --clear
+./bin/owngit import resolve PROJECT
+```
+
+- `--basic-file` replaces `--token-file` for a Basic credential; the file holds the username and password on separate lines. `--ca-file` alone stores only a source certificate authority, up to 1 MiB. `--clear` removes the stored credential and CA.
+- `--allow-private-network` permits a source on a private LAN, CGNAT or Tailnet, or loopback address.
+- `--git-only-consent` accepts a repository with Git LFS pointers; see [Git LFS](#git-lfs).
+- `--accept-insecure-http` consents to reaching OwnGit over plain HTTP for that command only. The import source itself must use HTTPS.
+- Output shows the credential type and whether one is stored, never the token, password, or CA.
+- `import add` and `import refresh` wait for the whole run, up to about 62 minutes by default.
+- A schedule interval is between 60 seconds and 7 days. Scheduled refreshes run only while `owngit serve` is running.
+
+### Source connections
+
+The source URL must use HTTPS with TLS 1.2 or newer and must not contain a username, password, query, or fragment. Hostnames must be ASCII, and IPv6 zone identifiers are not supported. OwnGit does not follow redirects and ignores proxy environment variables, cookies, and Git credential helpers.
+
+OwnGit resolves the hostname once and checks every returned address before it connects. Public addresses are allowed. Private LAN, CGNAT, Tailnet, and loopback addresses need `--allow-private-network`, including when a DNS answer mixes public and private addresses. Other special-purpose addresses are always refused. A custom CA adds to the system roots and never disables certificate or hostname checks.
+
+### What an import publishes
+
+Each run fetches a full copy into a private staging area and checks it before anything reaches the repository: every advertised branch, tag, and HEAD must be present with the advertised object and a complete object graph. A new repository appears only when it is complete.
+
+OwnGit publishes only branches and tags. Other refs, such as notes, replace refs, and pull request refs, are skipped. A source whose HEAD points outside `refs/heads/` is refused.
+
+A refresh never overwrites local work. For each ref:
+
+- a missing ref is created, and an identical ref is left alone;
+- a branch follows the source only when it still holds the value OwnGit last saw from this source URL, or when it only moved forward from that value and the new source value includes it;
+- a tag changes only when it is still the exact tag OwnGit last saw;
+- anything else is divergent: the local ref is kept and the run reports it.
+
+A source branch or tag whose name differs only by case from an existing local ref is not created and is reported as divergent; rename or remove one of the two if you want the source ref imported.
+
+A branch or tag deleted at the source is never removed locally. Every replaced value is kept in retained history. After you change the source URL, OwnGit has not yet seen the new source's refs, so refs that differ are reported as divergent instead of being replaced.
+
+A refresh changes the repository's HEAD only when OwnGit set that HEAD on an earlier import from the same source and nothing changed it since. Otherwise HEAD stays as it is and is reported as divergent.
+
+Repository hooks and configuration are not copied. A source with a different object format (SHA-1 or SHA-256) than the repository fails, and ref names that differ only by case are refused. A source whose branch, tag, or HEAD target name is longer than 417 bytes fails with `unsupported_refs` before anything is published; shorten that name at the source to import it.
+
+### Git LFS
+
+OwnGit scans the fetched objects for Git LFS pointer files, up to 200,000 objects, 100,000 candidate files, and 32 MiB of candidate content. If it finds a pointer, or cannot finish the scan within those limits, the run stops with `git_lfs_required`. With Git-only consent, the import proceeds, the pointer files are kept as they are, and the status says the content is incomplete. LFS objects themselves are never downloaded. OwnGit does not read `.gitattributes`, so a clean scan does not prove that a repository does not use LFS.
+
+### Failures and cancellation
+
+Only one run per repository is active at a time; another request returns `busy`. A run is limited to 60 minutes by default. A cancelled run is recorded as `cancelled`, and a run that reaches its time limit as `limit`. Other conflicts return `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved`, or `nothing_to_resolve`.
+
+When `owngit serve` stops, it cancels running imports and waits up to 45 seconds for each to record its outcome. At the next start, OwnGit marks interrupted runs, checks any publication that was in progress against the repository, and records what it finds. It never repeats or rolls back a write. If the import service cannot start, the Import page and `import status` say so, and ordinary Git service continues.
+
+### Unresolved publications
+
+A publication is unresolved when OwnGit cannot prove how it ended, for example when refs were written and HEAD was not. Refreshes are refused until the owner accepts the repository as it is:
+
+1. Check the repository's branches, tags, and HEAD, and the reason on the last run. Fix anything you do not want to keep with ordinary Git operations.
+2. Make sure no import is running. Resolution is refused with `busy` while a run or another Git operation holds the repository, and with `nothing_to_resolve` when nothing is unresolved.
+3. Resolve with `owngit import resolve PROJECT` or the button on the Import tab. OwnGit records the current refs and HEAD as the accepted state. It writes nothing to Git and does not change the earlier run's history.
+4. Refresh. Refs that match the source stay, refs that still hold the last confirmed source value follow the source, and anything else stays divergent.
+
+If an initial import is unresolved and its repository does not exist yet, `import resolve` refuses it. Restart OwnGit. If the problem remains, move that import's `.owngit-create-*` directory out of the repository folder and restart again.
 
 ## Command-line pull requests
 
-A normal push does not create a pull request. After pushing distinct source and target branches, create one with an explicit review choice:
+A normal push does not create a pull request. After pushing distinct source and target branches, create one. `--review` is optional:
 
 ```sh
 ./bin/owngit pr create \
@@ -94,69 +209,82 @@ A normal push does not create a pull request. After pushing distinct source and 
   --password-file /path/to/owner-only-shared-password-file
 ```
 
-Use `--review skip` when review is intentionally omitted. A skip is recorded as skipped, not approved. Omit `--password-file` when general access is open. This file contains the shared general-access password, never the administrator password. It uses the same owner-only file checks as `reset-admin`. OwnGit does not accept a password in an argument, environment variable, JSON field, or interactive standard input.
+Use `--review skip` when you intentionally omit review. A skip is recorded as skipped, not approved. Without `--review`, no review is requested, and `pr review request` can still be run later. Omit `--password-file` when general access is open. The file contains the shared general-access password, never the administrator password, and has the same owner-only checks as `reset-admin`.
 
-Plain HTTP exposes the password and pull request metadata to the network path. `--accept-insecure-http` records informed consent for that command invocation. The CLI validates the server origin before reading the password file, rejects embedded URL credentials, and does not follow redirects. Omit this flag for HTTPS.
+Plain HTTP exposes the password and pull request details to the network. `--accept-insecure-http` records your consent for that command only; omit it for HTTPS. The CLI rejects credentials embedded in the URL and does not follow redirects.
 
-List or inspect pull requests with:
-
-```sh
-./bin/owngit pr list \
-  --server http://HOST:7654 --accept-insecure-http \
-  --repository PROJECT --password-file /path/to/password-file
-
-./bin/owngit pr show \
-  --server http://HOST:7654 --accept-insecure-http \
-  --repository PROJECT --number 1 \
-  --password-file /path/to/password-file
-```
-
-`show` reports the exact current source and target object IDs. Supply both IDs when recording a review decision or merging:
+The other `pr` commands take the same `--server`, `--accept-insecure-http`, `--repository`, and `--password-file` flags; they are omitted below. `pr show` reports the current source and target object IDs, and every review decision and merge must supply both:
 
 ```sh
-./bin/owngit pr review request \
-  --server http://HOST:7654 --accept-insecure-http \
-  --repository PROJECT --number 1 \
-  --source-oid SOURCE_OID --target-oid TARGET_OID \
-  --password-file /path/to/password-file
-
-./bin/owngit pr review submit \
-  --server http://HOST:7654 --accept-insecure-http \
-  --repository PROJECT --number 1 \
-  --source-oid SOURCE_OID --target-oid TARGET_OID \
-  --decision approved --reviewer "existing-tool: reviewer label" \
-  --password-file /path/to/password-file
-
-./bin/owngit pr review skip \
-  --server http://HOST:7654 --accept-insecure-http \
-  --repository PROJECT --number 1 \
-  --source-oid SOURCE_OID --target-oid TARGET_OID \
-  --password-file /path/to/password-file
-
-./bin/owngit pr merge \
-  --server http://HOST:7654 --accept-insecure-http \
-  --repository PROJECT --number 1 \
-  --source-oid SOURCE_OID --target-oid TARGET_OID \
-  --password-file /path/to/password-file
+./bin/owngit pr list
+./bin/owngit pr show --number 1
+./bin/owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+./bin/owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
+  --decision approved --reviewer "existing-tool: reviewer label"
+./bin/owngit pr review skip --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+./bin/owngit pr merge --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
 ```
 
-A submitted review accepts `approved` or `changes_requested`. Its reviewer label records supplied provenance. It does not claim reviewer independence or executed checks. A requested review remains pending until a result or explicit skip is recorded. Any source or target movement invalidates review and skip decisions for the older pair. Inspect the pull request again and make a decision for the new object IDs. `changes_requested` blocks merge until a fresh approval or explicit skip is recorded.
+A submitted review is `approved` or `changes_requested`. The reviewer label records who supplied the review; it does not claim independence or that checks ran. A pending or changes-requested review does not hold a merge. When the source or target moves, earlier review and skip decisions no longer apply, so inspect the pull request again and decide for the new object IDs.
 
-Check execution is not configured. JSON results report `checks.status` as `not_configured` and do not treat it as passed. Missing checks alone do not block this optional-review workflow. Every command writes a JSON result. Failures include a stable `error.code` and return a nonzero process status.
+Every command writes a JSON result. Failures include a stable `error.code` and a nonzero exit status. `checks` in a pull request result reports the evidence recorded for the current source revision, or `absent`. A failed, stale, dirty, or incomplete check is advisory and never blocks a merge.
 
-Merge supports a fast-forward or a new merge commit with the old target as first parent and the exact source as second parent. OwnGit writes merge commits as `OwnGit <owngit@localhost>` and includes the pull request number and title in the message. It does not squash, rebase, force-update, delete the source branch, or modify a user working tree. Merge requires Git 2.38 or newer. An older Git version returns `unsupported_git` for merge while ordinary Git storage remains available.
+Merge makes a fast-forward or a new merge commit with the old target as first parent and the source as second parent, authored as `OwnGit <owngit@localhost>` with the pull request number and title in the message. It does not squash, rebase, force-update, delete the source branch, or change anyone's working tree. Merge requires Git 2.38 or newer on the OwnGit host; with an older Git it returns `unsupported_git`, and other Git use keeps working. A retried or interrupted merge never creates a second merge commit.
 
-OwnGit records a durable merge intent before publication. One Git ref transaction verifies both branch revisions, updates the target from its expected old object ID, and creates a protected receipt. A retry reconciles a matching receipt instead of creating another merge commit.
+## Project checks
 
-## Storage and offline backups
+OwnGit records manual helper checks and runs owner-enabled automatic checks.
 
-- The host-local state directory is the platform config directory joined with `owngit`, or `~/.owngit` when no config directory is available. It contains `owngit.sqlite` and must not be placed on a network share opened by other computers.
-- Setup lets you choose a repository folder, including one on a separate disk. A folder local to the OwnGit host may reside on NAS hardware. Mounted SMB and NFS repository folders have passed single-writer use, including retention, restart, and offline backup. Setup still warns when the folder appears to be on a network share. The state database always remains on host-local storage; the checks also kept credentials and backups local. The SMB and NFS checks did not cover power loss or concurrent writers.
-- OwnGit leaves existing files in the chosen repository folder unchanged and creates repositories there as ordinary bare repositories ending in `.git`.
-- Repository names cannot end in `.git` or use Windows device basenames such as `CON`, `AUX`, `NUL`, `COM1`, or `LPT1`, including those basenames before an extension. These portable rules apply on every platform.
-- Retention refs preserve history replaced by force-push or deletion, but retention alone is not a backup.
+A manual helper runs in your working environment and uploads evidence tied to a revision. It inherits your environment and permissions, so it is not a sandbox: a check can read files and credentials your account can reach. OwnGit records the worktree state with every attempt and never reports a dirty or unknown worktree as a tested commit.
 
-Stop OwnGit before creating an offline backup. The output directory must not exist:
+Automatic checks run as the OwnGit account, in a restricted local Docker container, or on a separately connected runner. They need a committed `.owngit/checks.json`, an owner policy, and current consent. See [Automatic checks](AUTOMATIC_CHECKS.md).
+
+Create a repository-scoped helper credential with the administrator password. The token is written only to the owner-readable `--output` file and stored on the server only as a hash:
+
+```sh
+./bin/owngit helper-credential create \
+  --server http://HOST:7654 --accept-insecure-http \
+  --repository PROJECT --label laptop \
+  --password-file /path/to/admin-password-file \
+  --output ~/.owngit-helper-token
+```
+
+An existing file or symbolic link at `--output` is reported, not replaced. If creation or delivery fails, OwnGit leaves the output file in place instead of risking the removal of someone else's file; inspect and remove it before you retry. If the response is lost, the command revokes the new credential; if it cannot confirm the revoke, it prints the creation identity (never the token) so you can revoke it. `helper-credential list` and `helper-credential revoke --id ID` manage credentials, and a revoked token stops working immediately. An administrator can also issue and revoke helper credentials from the Helper credentials link on the repository's Checks tab. Issuing and revoking always ask for the administrator password, even in a signed-in browser.
+
+Create a stable task, then run checks:
+
+```sh
+./bin/owngit check task new \
+  --server http://HOST:7654 --accept-insecure-http \
+  --repository PROJECT --credential-file ~/.owngit-helper-token \
+  --title "Fix the failing build"
+
+./bin/owngit check run \
+  --server http://HOST:7654 --accept-insecure-http \
+  --repository PROJECT --credential-file ~/.owngit-helper-token \
+  --task TASK_ID --check "unit=go test ./..." --check "lint=go vet ./..."
+```
+
+[Coding tools](CODING_TOOLS.md) is the reference for these commands, correction rounds, result fields, and exit codes. On Windows, `cmd.exe` returns exit code 1 for an unknown command, so OwnGit records that result as `failed`.
+
+Raw check logs are stored in `owngit.sqlite`, limited to 256 KiB each, and kept for 30 days by default. Task and attempt records stay after a log expires. Reading an expired log returns `log_expired`, and a log that is missing earlier returns `log_missing`. A log that fails its integrity check is refused, and a truncated log is reported as truncated. If the database is full or reports an I/O error while storing a result, OwnGit stores the result without its raw log and records a log error on the attempt.
+
+## Storage
+
+- The state directory is the platform config directory joined with `owngit`, or `~/.owngit` when no config directory is available. It holds `owngit.sqlite` and, while the database is in use, its `-wal` and `-shm` files. Keep it on local storage, never on a network share used by other computers. Windows network (UNC) paths are refused.
+- Choose the repository folder during setup. It can be on a separate disk or a mounted SMB or NFS share, with one OwnGit writer at a time. OwnGit leaves existing files in the folder alone and creates repositories there as bare repositories ending in `.git`.
+- A new repository is written under a temporary `.owngit-create-*` name and then renamed into place. On Windows, antivirus or search indexing can briefly lock the new directory. OwnGit retries for about 2 seconds; if the error persists, try again.
+- Repository names cannot end in `.git` or use Windows device names such as `CON`, `AUX`, `NUL`, `COM1`, or `LPT1`, with or without an extension. `new` and `new-import` are reserved. These rules apply on every platform.
+- Expired logs free space inside the database for reuse, but the file does not shrink, the old bytes are not securely erased, and there is no overall size limit. OwnGit does not run `VACUUM`.
+- When a `-wal` or `-shm` file is present at startup, OwnGit copies the database and its WAL to a private temporary directory to inspect them. The temporary volume needs about that much free space.
+- On start, OwnGit upgrades a database from an earlier version in place. It refuses a database from a newer or unknown version and leaves its files unchanged. An older build refuses a database that a newer build has upgraded, so back up before you replace the executable.
+- OwnGit does not read or remove a `logs/` directory left by older versions. Remove it yourself once no older OwnGit process uses it.
+- Removing the `owngit` executable leaves the state directory and repositories in place. Delete them yourself only when you no longer need them.
+- Databases from builds that had built-in AI review may still contain provider tokens. OwnGit never reads them, and they are excluded from backups, but upgrading does not erase their bytes.
+
+## Offline backups
+
+Retained history protects against force-pushes and deletions, but it is not a backup. OwnGit has no way to delete it: a secret that was ever pushed stays visible in the browser and is included in every later backup, even after a force-push or branch deletion. Rotate any secret you push by mistake. OwnGit does not schedule backups. Stop OwnGit before creating one. The output directory must not exist:
 
 ```sh
 ./bin/owngit backup \
@@ -164,11 +292,20 @@ Stop OwnGit before creating an offline backup. The output directory must not exi
   --output /path/to/new-backup
 ```
 
-The backup contains a versioned manifest and one Git bundle for each nonempty repository. Format version 2 records all refs, including hidden retention, pull request revision, provenance, and merge receipt refs. It also records each repository's HEAD and metadata, open and merged pull requests, review and skip decisions, revision bindings, merge intents, access mode, and password hashes. Empty repositories retain their metadata and unborn default branch. Keep the backup private because password hashes are sensitive.
+A backup holds a manifest and one Git bundle per nonempty repository. It includes:
 
-Current OwnGit accepts validated version 1 and version 2 backups. Version 1 has no pull request metadata. A version 1 manifest that contains version 2 fields is rejected. Older OwnGit builds that only understand version 1 reject a version 2 backup instead of restoring repositories while dropping pull request records.
+- every ref, including OwnGit's retained history, and each repository's HEAD and metadata;
+- pull requests, reviews, merge records, tasks, check configurations, check results, and automatic-check policies and jobs;
+- import sources, run history, and publication records;
+- the access mode and password hashes.
 
-Restore into new paths that do not exist:
+Raw logs, credentials and tokens of every kind, import schedules, and consent are not included. Keep backups private, because password hashes are sensitive.
+
+Backup refuses to run when an import publication is still unsettled for a repository that does not exist yet. Start and stop OwnGit once so it can settle the record, then back up again. If the error remains, move the import's `.owngit-create-*` directory out of the repository folder, then start and stop OwnGit again and back up.
+
+The manifest is limited to 64 MiB. A backup that would exceed it fails without writing output and never drops records to fit. Creating a backup holds the whole export in memory.
+
+OwnGit restores backup versions 1, 2, 5, 6, 7, 8, and 9 and refuses others. Older builds refuse a newer backup instead of dropping records they do not know. Restore into new paths that do not exist:
 
 ```sh
 ./bin/owngit restore \
@@ -177,10 +314,17 @@ Restore into new paths that do not exist:
   --repository-root /path/to/new-repositories
 ```
 
-Restore verifies fixed bundle paths, SHA-256 hashes, refs, objects, and pull request bindings before publishing the new state. The hashes detect corruption but do not authenticate a backup that an attacker has replaced together with its manifest. Restore rebuilds host-specific hooks, binds the database to the new repository root, and reconciles any merge receipt written before an interrupted SQLite update. Sessions, setup links, trusted Hosts, login-attempt state, and consent to insecure HTTP are not restored. The server must be started again with the restored state before use.
+Restore checks every bundle, ref, object, and record before it publishes the new state. The SHA-256 hashes detect corruption but cannot detect a backup that someone replaced along with its manifest.
 
-Backup and restore preserve Git filenames exactly. A name accepted by Git, such as one containing a literal backslash, may be impossible to materialize in a Windows working tree. Use a bare Git client to inspect such a repository, or rename the path from a compatible working tree before checking it out on Windows. Ordinary portable filenames can be checked out normally.
+After a restore:
 
-If restore reports an interruption or terminates without an error message, do not start OwnGit from either requested target and do not remove any `.owngit-restore-pending` marker. Preserve both requested targets and any sibling paths named like `TARGET.owngit-restore-...`. Move every existing artifact to a separate quarantine name without merging or overwriting anything, then retry with new, versioned target paths that do not exist. If backup terminates before publication, its requested output remains absent; after confirming that no backup process is running, preserve or quarantine its hidden `.OUTPUT.owngit-backup-...` sibling.
+- sign-in sessions, setup links, approved Hosts, credentials, schedules, and every consent are gone;
+- create new helper and runner credentials, and store import credentials again before refreshing an import that needs them;
+- automatic checks stay off until the owner enables them again, and unfinished check jobs are marked `interrupted` instead of rerunning;
+- unsettled import publications are closed without being applied;
+- raw logs are absent, so a log reads as missing until its expiry and expired afterward;
+- start `owngit serve` with the restored state before you use it in other ways, so that startup can settle interrupted records.
 
-Automatic backup scheduling is not included.
+Backup and restore keep Git filenames exactly. A name Git accepts, such as one containing a backslash, may not check out on Windows. Rename it from a compatible working tree, or inspect the repository with a bare clone.
+
+If restore is interrupted, do not start OwnGit from either target, and do not remove a `.owngit-restore-pending` marker. Move both targets and any `TARGET.owngit-restore-...` siblings to a separate quarantine location without merging or overwriting anything, then restore again into new paths. If a backup stops before finishing, its output directory does not exist; once no backup process is running, keep or quarantine its hidden `.OUTPUT.owngit-backup-...` sibling.

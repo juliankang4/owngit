@@ -1,0 +1,155 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}
+
+<p class="backline"><a class="back" href="{{.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
+
+<div class="rhead">
+  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+  {{with $p.Repo.Description}}<p class="rhead__desc">{{.}}</p>{{end}}
+</div>
+
+{{template "repoTabs" dict "Lang" $lang "T" $p.Tabs}}
+
+<div class="rpane">
+{{if $p.Detail}}
+  {{/* One opened task. Its budget belongs to the task rather than to any
+       revision, so moving to new code does not buy more attempts. */}}
+  {{with $p.Detail}}
+  <p class="backline"><a class="back" href="{{$p.ListURL}}">{{icon "back"}}{{bi $lang "tasks.back_to_list"}}</a></p>
+
+  <div class="card">
+    <div class="ev__head">
+      <h2 class="setblock__h">{{.Task.Title}}</h2>
+      {{template "stateChip" dict "Lang" $lang "S" (taskState .Task.Status)}}
+    </div>
+
+    <dl class="kv">
+      <div>
+        <dt>{{bi $lang "tasks.budget"}}</dt>
+        <dd>{{biText $lang (budget "en" .Task.CyclesUsed .Task.CycleLimit) (budget "ko" .Task.CyclesUsed .Task.CycleLimit)}}</dd>
+      </div>
+      {{if notZero .Task.CreatedAt}}<div><dt>{{bi $lang "tasks.created_at"}}</dt><dd>{{biDateTime $lang .Task.CreatedAt}}</dd></div>{{end}}
+      {{if notZero .Task.UpdatedAt}}<div><dt>{{bi $lang "tasks.updated_at"}}</dt><dd>{{biDateTime $lang .Task.UpdatedAt}}</dd></div>{{end}}
+      {{with .Task.ShortID}}<div><dt>{{bi $lang "tasks.identifier"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
+    </dl>
+    <p class="f__help">{{bi $lang "tasks.budget_help"}}</p>
+    <p class="f__help">{{bi $lang "tasks.rounds_help"}}</p>
+    <p class="f__help">{{bi $lang "tasks.manual_rerun"}}</p>
+
+    {{/* Until the first check is recorded, zero rounds used means the work has
+         not been measured. Without this it reads as "passed without needing
+         any correction", which is the opposite claim. */}}
+    {{if not .Task.InitialCheckDone}}
+      <p class="ev__note">{{bi $lang "tasks.initial_check_none"}}</p>
+    {{end}}
+
+    {{/* An exhausted budget stops automatic correction and nothing else. It
+         does not restrict Git or remove submitted work, and saying so keeps
+         it from reading as a lockout. */}}
+    {{if eq .Task.Status "exhausted"}}
+      <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "tasks.exhausted_help"}}</span></p>
+    {{end}}
+  </div>
+
+  <section class="sec">
+    <div class="sec__bar">
+      <h2>{{bi $lang "tasks.attempts.title"}}</h2>
+      <span class="sec__n">{{biCount $lang "item" (len .Attempts)}}</span>
+    </div>
+
+    {{if .Attempts}}
+      <div class="attempts">
+        {{range .Attempts}}
+          {{template "attemptRecord" dict "Lang" $lang "A" .}}
+        {{end}}
+      </div>
+      {{if .AttemptsTruncated}}
+        <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "tasks.attempts.truncated"}}</span></p>
+      {{end}}
+    {{else}}
+      <p class="empty">{{bi $lang "tasks.attempts.none"}}</p>
+    {{end}}
+  </section>
+  {{end}}
+
+{{else}}
+  <div class="phead">
+    <h1>{{bi $lang "tasks.title"}}</h1>
+    <p>{{bi $lang "tasks.intro"}}</p>
+  </div>
+
+  {{if $p.NotFound}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "tasks.not_found"}}</p>
+      <a class="btn" href="{{$p.ListURL}}">{{bi $lang "tasks.back_to_list"}}</a>
+    </div>
+  {{end}}
+
+  <section class="sec">
+    <div class="sec__bar">
+      <h2>{{bi $lang "tasks.config.title"}}</h2>
+      {{with $p.HelperURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "helper.open"}}</a></span>{{end}}
+      {{/* Manual helper checks and repository-configured checks are separate
+           paths, so both are reachable and neither replaces the other. */}}
+      {{with $p.ConfiguredChecksURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "cc.open"}}</a></span>{{end}}
+    </div>
+
+    {{/* No configuration means nothing here reports on this repository's
+         code. That is stated rather than left as an empty table. */}}
+    {{if $p.Configuration.Configured}}
+      <p class="ev__note">{{bi $lang "tasks.config.version"}} <span class="mono">v{{$p.Configuration.Version}}</span>{{if notZero $p.Configuration.RecordedAt}} <span class="ev__sub">{{bi $lang "tasks.config.recorded_at"}} {{biDateTime $lang $p.Configuration.RecordedAt}}</span>{{end}}</p>
+      <div class="checks">
+        {{range $p.Configuration.Checks}}
+          <div class="checkdef">
+            <span class="checkdef__n">{{.Name}}</span>
+            <span class="checkdef__c mono">{{.Command}}</span>
+          </div>
+        {{end}}
+      </div>
+    {{else}}
+      <div class="empty">
+        <p class="empty__lead">{{bi $lang "tasks.config.none"}}</p>
+        <p>{{bi $lang "tasks.config.none_help"}}</p>
+      </div>
+    {{end}}
+  </section>
+
+  <section class="sec">
+    <div class="sec__bar">
+      <h2>{{bi $lang "tasks.attempts.title"}}</h2>
+      {{if not $p.Unavailable}}<span class="sec__n">{{biCount $lang "item" (len $p.Tasks)}}</span>{{end}}
+    </div>
+
+    {{if $p.Unavailable}}
+      <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "tasks.unavailable"}}{{with $p.UnavailableReason}} {{bi $lang .}}{{end}}</span></p>
+    {{else if $p.Tasks}}
+      <div class="tasklist">
+        {{range $p.Tasks}}
+          <a class="taskrow" href="{{.URL}}">
+            <span class="taskrow__t">{{.Title}}</span>
+            <span class="taskrow__s">{{template "stateChip" dict "Lang" $lang "S" (taskState .Status)}}</span>
+            {{/* A task with no run yet shows the absence rather than an
+                 empty slot that could be read as a pass. */}}
+            <span class="taskrow__e">
+              {{if .HasAttempt}}
+                {{template "stateChip" dict "Lang" $lang "S" (recordState .Latest)}}
+                <span class="mono">{{.Latest.RevisionShortOID}}</span>
+              {{else}}
+                {{template "stateChip" dict "Lang" $lang "S" (attemptState "absent")}}
+              {{end}}
+            </span>
+            <span class="taskrow__b">{{biText $lang (budget "en" .CyclesUsed .CycleLimit) (budget "ko" .CyclesUsed .CycleLimit)}}</span>
+            <span class="taskrow__w">{{biRelative $lang $now .UpdatedAt}}</span>
+          </a>
+        {{end}}
+      </div>
+    {{else}}
+      <div class="empty">
+        <p class="empty__lead">{{bi $lang "tasks.empty"}}</p>
+        <p>{{bi $lang "tasks.empty_help"}}</p>
+      </div>
+    {{end}}
+  </section>
+{{end}}
+</div>
+{{end}}

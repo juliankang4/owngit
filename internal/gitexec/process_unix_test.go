@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -103,4 +104,64 @@ func TestStreamCancellationTerminatesOwnedProcessGroup(t *testing.T) {
 
 func shellEscape(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+// TestTerminateOwnedProcessReportsRealFailures covers the cleanup contract. An
+// already-exited group is not a failure, and a real group is confirmed gone.
+func TestTerminateOwnedProcessReportsRealFailures(t *testing.T) {
+	// A group that never existed is already gone.
+	if err := TerminateOwnedProcess(&ProcessOwner{pgid: 1 << 20}, 0); err != nil {
+		t.Fatalf("already-exited group error=%v", err)
+	}
+	// A missing owner is not a failure.
+	if err := TerminateOwnedProcess(nil, 0); err != nil {
+		t.Fatalf("nil owner error=%v", err)
+	}
+	if err := CloseOwnedProcess(nil); err != nil {
+		t.Fatalf("nil close error=%v", err)
+	}
+	// A real owned group is terminated, reaped, and confirmed gone.
+	cmd := exec.Command("sleep", "30")
+	ConfigureOwnedProcess(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := AttachOwnedProcess(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	waited := false
+	t.Cleanup(func() {
+		if waited {
+			return
+		}
+		_ = cmd.Process.Kill()
+		select {
+		case <-waitCh:
+		case <-time.After(2 * time.Second):
+			t.Error("owned sleep did not finish during test cleanup")
+		}
+	})
+	if err := TerminateOwnedProcess(owner, 2*time.Second); err != nil {
+		t.Fatalf("terminate error=%v", err)
+	}
+	var waitErr error
+	select {
+	case waitErr = <-waitCh:
+		waited = true
+	case <-time.After(2 * time.Second):
+		t.Fatal("terminated process was not reaped")
+	}
+	if waitErr == nil {
+		t.Fatal("the terminated process reported success")
+	}
+	if err := syscall.Kill(-owner.pgid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("owned process group still exists after Wait: %v", err)
+	}
+	t.Logf("owned sleep was reaped with %v and its process group disappeared", waitErr)
+	if err := CloseOwnedProcess(owner); err != nil {
+		t.Fatalf("close error=%v", err)
+	}
 }

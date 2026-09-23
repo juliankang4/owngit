@@ -265,7 +265,7 @@ func TestGraphCaptionSaysWhoseTimeZoneIsUsed(t *testing.T) {
 
 		for _, part := range map[Lang][]string{
 			LangEN: {"author date", "time zone the author recorded", "checks ran or passed"},
-			LangKO: {"작성 날짜", "작성자가 기록한 시간대", "검사를 실행했거나 통과했다는 뜻은 아닙니다"},
+			LangKO: {"작성 날짜", "작성자가 기록한 시간대", "체크를 실행했거나 통과했다는 뜻은 아닙니다"},
 		}[lang] {
 			if !strings.Contains(caption, part) {
 				t.Errorf("%s: the caption never says %q: %q", lang, part, caption)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -54,13 +55,90 @@ func captureStdout(handle func() error) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	type readResult struct {
+		content []byte
+		err     error
+	}
+	readDone := make(chan readResult, 1)
+	go func() {
+		content, readErr := io.ReadAll(reader)
+		readDone <- readResult{content: content, err: readErr}
+	}()
 	os.Stdout = writer
 	runErr := handle()
 	os.Stdout = original
-	writer.Close()
-	content, _ := io.ReadAll(reader)
-	reader.Close()
-	return string(content), runErr
+	writeCloseErr := writer.Close()
+	captured := <-readDone
+	readCloseErr := reader.Close()
+	return string(captured.content), errors.Join(runErr, writeCloseErr, captured.err, readCloseErr)
+}
+
+func TestCaptureStdoutDrainsLargeOutputWhileItIsWritten(t *testing.T) {
+	payload := strings.Repeat("x", 256<<10)
+	output, err := captureStdout(func() error {
+		_, err := io.WriteString(os.Stdout, payload)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != payload {
+		t.Fatalf("captured %d bytes, want %d", len(output), len(payload))
+	}
+}
+
+func TestServeRejectsContradictoryOpenFlagsBeforeLaunching(t *testing.T) {
+	opened := false
+	err := serveWithOpener([]string{"--open", "--no-open"}, func(string) error {
+		opened = true
+		return nil
+	}, func(string, ...any) {})
+	if err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("contradictory flags error=%v", err)
+	}
+	if opened {
+		t.Fatal("contradictory flags launched a browser")
+	}
+}
+
+func TestServeOpenTargetPreservesFirstRunAndRequiresInitializedOptIn(t *testing.T) {
+	const setupPath = "/private/owner-setup.html"
+	const origin = "http://127.0.0.1:7654"
+	tests := []struct {
+		name                     string
+		initialized, open, quiet bool
+		want                     string
+	}{
+		{name: "first run default", want: setupPath},
+		{name: "first run explicit open", open: true, want: setupPath},
+		{name: "first run no open", quiet: true},
+		{name: "initialized default", initialized: true},
+		{name: "initialized explicit open", initialized: true, open: true, want: origin},
+		{name: "initialized no open", initialized: true, quiet: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := serveOpenTarget(test.initialized, test.open, test.quiet, setupPath, origin); got != test.want {
+				t.Fatalf("open target=%q want=%q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestServeBrowserOpenFailureIsAdvisory(t *testing.T) {
+	var opened, logged string
+	openServeTarget("http://127.0.0.1:7654", "owner URL", func(target string) error {
+		opened = target
+		return errors.New("synthetic opener failure")
+	}, func(format string, values ...any) {
+		logged = fmt.Sprintf(format, values...)
+	})
+	if opened != "http://127.0.0.1:7654" {
+		t.Fatalf("opened target=%q", opened)
+	}
+	if !strings.Contains(logged, "synthetic opener failure") || !strings.Contains(logged, "owner URL") {
+		t.Fatalf("advisory log=%q", logged)
+	}
 }
 
 func TestResetAdminPreservesRepositoryDataAndRevokesSession(t *testing.T) {

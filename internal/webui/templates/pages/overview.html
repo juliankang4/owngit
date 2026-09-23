@@ -10,6 +10,9 @@
     {{with .Chrome.Nav.NewRepoURL}}
       <span class="sec__hint"><a href="{{.}}">{{bi $lang "repo.new.title"}}</a></span>
     {{end}}
+    {{with .Chrome.Nav.NewImportURL}}
+      <span class="sec__hint"><a href="{{.}}">{{bi $lang "import.list_link"}}</a></span>
+    {{end}}
   </div>
 
   {{if $p.Repositories}}

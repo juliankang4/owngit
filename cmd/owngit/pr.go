@@ -12,7 +12,7 @@ import (
 	"os"
 	"strconv"
 
-	"owngit/internal/prclient"
+	"owngit/internal/apiclient"
 	"owngit/internal/pullrequest"
 )
 
@@ -53,12 +53,12 @@ func prCreate(arguments []string) error {
 	title := flags.String("title", "", "pull request title")
 	source := flags.String("source", "", "source branch")
 	target := flags.String("target", "", "target branch")
-	review := flags.String("review", "", "review choice: request or skip")
+	review := flags.String("review", "", "optional review choice: request or skip")
 	if err := parsePRFlags(flags, arguments); err != nil {
 		return err
 	}
-	if *title == "" || *source == "" || *target == "" || *review == "" {
-		return cliProblem("invalid_arguments", "pr create requires --title, --source, --target, and --review.")
+	if *title == "" || *source == "" || *target == "" {
+		return cliProblem("invalid_arguments", "pr create requires --title, --source, and --target. --review is optional.")
 	}
 	client, err := remote.client()
 	if err != nil {
@@ -186,11 +186,11 @@ func parsePRFlags(flags *flag.FlagSet, arguments []string) error {
 	return nil
 }
 
-func (remote *prRemoteFlags) client() (*prclient.Client, error) {
+func (remote *prRemoteFlags) client() (*apiclient.Client, error) {
 	if remote.server == "" || remote.repository == "" {
 		return nil, cliProblem("invalid_arguments", "--server and --repository are required.")
 	}
-	parsed, err := prclient.ValidateServer(remote.server, remote.acceptInsecureHTTP)
+	parsed, err := apiclient.ValidateServer(remote.server, remote.acceptInsecureHTTP)
 	if err != nil {
 		return nil, err
 	}
@@ -198,10 +198,10 @@ func (remote *prRemoteFlags) client() (*prclient.Client, error) {
 	if remote.passwordFile != "" {
 		password, err = readPrivatePassword(remote.passwordFile)
 		if err != nil {
-			return nil, &prclient.Error{Code: "invalid_password_file", Message: "The shared password file is unavailable or is not private.", Cause: err}
+			return nil, &apiclient.Error{Code: "invalid_password_file", Message: "The shared password file is unavailable or is not private.", Cause: err}
 		}
 	}
-	return prclient.New(parsed, password), nil
+	return apiclient.New(parsed, password), nil
 }
 
 func (remote *prRemoteFlags) collectionPath() string {
@@ -212,13 +212,13 @@ func (remote *prRemoteFlags) itemPath(number int64) string {
 	return remote.collectionPath() + "/" + strconv.FormatInt(number, 10)
 }
 
-func executePRRequest(client *prclient.Client, method, path string, input any) error {
+func executePRRequest(client *apiclient.Client, method, path string, input any) error {
 	content, err := client.Do(context.Background(), method, path, input)
 	if err != nil {
 		return err
 	}
 	if _, err := os.Stdout.Write(content); err != nil {
-		return &prclient.Error{Code: "output_failed", Message: "The JSON result could not be written.", Cause: err}
+		return &apiclient.Error{Code: "output_failed", Message: "The JSON result could not be written.", Cause: err}
 	}
 	if len(content) == 0 || content[len(content)-1] != '\n' {
 		_, _ = fmt.Fprintln(os.Stdout)
@@ -227,7 +227,7 @@ func executePRRequest(client *prclient.Client, method, path string, input any) e
 }
 
 func cliProblem(code, message string) error {
-	return &prclient.Error{Code: code, Message: message}
+	return &apiclient.Error{Code: code, Message: message}
 }
 
 func writeStructuredCommandError(writer io.Writer, err error) bool {

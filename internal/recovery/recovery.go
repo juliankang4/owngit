@@ -26,27 +26,211 @@ import (
 	"owngit/internal/state"
 )
 
+var errManifestTooLarge = errors.New("backup manifest is too large")
+
 const (
 	manifestName        = "manifest.json"
 	backupFormat        = "owngit-offline-backup"
 	legacyBackupVersion = 1
-	backupVersion       = 2
-	maximumManifest     = 8 << 20
+	// pullRequestBackupVersion added durable pull request records.
+	pullRequestBackupVersion = 2
+	// checkBackupVersion is the first released check-evidence format. The
+	// unreleased development formats 3 and 4 remain refused.
+	checkBackupVersion = 5
+	// directReviewBackupVersion adds canonical direct-review history and
+	// nonsecret configuration. A 64 MiB cap bounds publication and restore
+	// reads while leaving room for several bounded 1 MiB review results.
+	directReviewBackupVersion = 6
+	// automaticCheckBackupVersion added durable automatic-check policy and job
+	// facts. executionBackupVersion binds effective execution settings and
+	// executor roles while preserving version 7 digest meanings on restore.
+	automaticCheckBackupVersion = 7
+	executionBackupVersion      = 8
+	// importBackupVersion adds portable import sources, refresh history,
+	// reference observations, and publication intents. Machine-local transport
+	// consent, schedules, and raw credentials are deliberately absent.
+	importBackupVersion = 9
+	backupVersion       = 9
+	maximumManifest     = 64 << 20
 	pendingRestoreName  = state.IncompleteRestoreMarkerName
 )
 
 type Manifest struct {
-	Format                  string                        `json:"format"`
-	Version                 int                           `json:"version"`
-	CreatedAt               time.Time                     `json:"created_at"`
-	AccessMode              string                        `json:"access_mode"`
-	AccessHash              string                        `json:"access_password_hash,omitempty"`
-	AdminHash               string                        `json:"admin_password_hash"`
-	Repositories            []RepositoryManifest          `json:"repositories"`
-	PullRequests            []PullRequestManifest         `json:"pull_requests,omitempty"`
-	PullRequestRevisions    []PullRequestRevisionManifest `json:"pull_request_revisions,omitempty"`
-	PullRequestReviews      []PullRequestReviewManifest   `json:"pull_request_reviews,omitempty"`
-	PullRequestMergeIntents []PullRequestMergeManifest    `json:"pull_request_merge_intents,omitempty"`
+	Format                     string                            `json:"format"`
+	Version                    int                               `json:"version"`
+	CreatedAt                  time.Time                         `json:"created_at"`
+	AccessMode                 string                            `json:"access_mode"`
+	AccessHash                 string                            `json:"access_password_hash,omitempty"`
+	AdminHash                  string                            `json:"admin_password_hash"`
+	Repositories               []RepositoryManifest              `json:"repositories"`
+	PullRequests               []PullRequestManifest             `json:"pull_requests,omitempty"`
+	PullRequestRevisions       []PullRequestRevisionManifest     `json:"pull_request_revisions,omitempty"`
+	PullRequestReviews         []PullRequestReviewManifest       `json:"pull_request_reviews,omitempty"`
+	PullRequestMergeIntents    []PullRequestMergeManifest        `json:"pull_request_merge_intents,omitempty"`
+	Tasks                      []TaskManifest                    `json:"tasks,omitempty"`
+	CheckConfigurations        []CheckConfigurationManifest      `json:"check_configurations,omitempty"`
+	CheckCycles                []CheckCycleManifest              `json:"check_cycles,omitempty"`
+	CheckAttempts              []CheckAttemptManifest            `json:"check_attempts,omitempty"`
+	CheckResults               []CheckResultManifest             `json:"check_results,omitempty"`
+	CheckPolicies              []CheckPolicyManifest             `json:"check_policies,omitempty"`
+	CheckJobs                  []CheckJobManifest                `json:"check_jobs,omitempty"`
+	DirectReviewSettings       []DirectReviewSettingsManifest    `json:"direct_review_settings,omitempty"`
+	DirectReviewTaskContexts   []DirectReviewTaskContextManifest `json:"direct_review_task_contexts,omitempty"`
+	DirectReviewRequests       []DirectReviewRequestManifest     `json:"direct_review_requests,omitempty"`
+	ImportSources              []ImportSourceManifest            `json:"import_sources,omitempty"`
+	ImportRuns                 []ImportRunManifest               `json:"import_runs,omitempty"`
+	ImportRunOrderKnown        bool                              `json:"import_run_order_known,omitempty"`
+	ImportHEADOwnershipVersion int                               `json:"import_head_ownership_version,omitempty"`
+	ImportObservations         []ImportObservationManifest       `json:"import_observations,omitempty"`
+	ImportIntents              []ImportIntentManifest            `json:"import_intents,omitempty"`
+}
+
+type TaskManifest struct {
+	ID           string    `json:"id"`
+	RepositoryID string    `json:"repository_id"`
+	Title        string    `json:"title"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type CheckCycleManifest struct {
+	ID           string    `json:"id"`
+	TaskID       string    `json:"task_id"`
+	RepositoryID string    `json:"repository_id"`
+	Sequence     int64     `json:"sequence"`
+	ReservedAt   time.Time `json:"reserved_at"`
+	// ReservedAfterSequence is the repository attempt counter observed inside
+	// the reservation transaction.
+	ReservedAfterSequence int64 `json:"reserved_after_sequence"`
+}
+
+type CheckConfigurationManifest struct {
+	RepositoryID string                    `json:"repository_id"`
+	Version      int64                     `json:"version"`
+	ConfigHash   string                    `json:"config_hash"`
+	Checks       []CheckDefinitionManifest `json:"checks"`
+	CreatedAt    time.Time                 `json:"created_at"`
+}
+
+type CheckDefinitionManifest struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+}
+
+type CheckAttemptManifest struct {
+	ID                   string    `json:"id"`
+	TaskID               string    `json:"task_id"`
+	RepositoryID         string    `json:"repository_id"`
+	RevisionOID          string    `json:"revision_oid"`
+	WorktreeState        string    `json:"worktree_state"`
+	SubmittedWorktree    string    `json:"submitted_worktree_state,omitempty"`
+	ConfigurationVersion int64     `json:"configuration_version"`
+	Status               string    `json:"status"`
+	ExitCode             *int      `json:"exit_code,omitempty"`
+	StartedAt            time.Time `json:"started_at"`
+	FinishedAt           time.Time `json:"finished_at"`
+	DurationMS           int64     `json:"duration_ms"`
+	Summary              string    `json:"summary"`
+	Protection           string    `json:"protection,omitempty"`
+	ExecutionScope       string    `json:"execution_scope,omitempty"`
+	CredentialID         string    `json:"credential_id,omitempty"`
+	// JobID links a server-owned automatic job. Empty preserves the exact
+	// historical helper facts and digest.
+	JobID            string     `json:"job_id,omitempty"`
+	TimeoutMS        int64      `json:"timeout_ms,omitempty"`
+	OutputLimitBytes int64      `json:"output_limit_bytes,omitempty"`
+	LogID            string     `json:"log_id,omitempty"`
+	LogExpiresAt     *time.Time `json:"log_expires_at,omitempty"`
+	LogTruncated     bool       `json:"log_truncated,omitempty"`
+	LogError         string     `json:"log_error,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	// Sequence is the server-issued repository-wide order. The digests make a
+	// retransmit idempotent without touching an accepted log.
+	Sequence           int64  `json:"sequence,omitempty"`
+	CycleID            string `json:"cycle_id,omitempty"`
+	RegistrationDigest string `json:"registration_digest,omitempty"`
+	CompletionDigest   string `json:"completion_digest,omitempty"`
+	SubmittedLogDigest string `json:"submitted_log_digest,omitempty"`
+	SubmittedTruncated bool   `json:"submitted_truncated,omitempty"`
+	SubmittedCancelled bool   `json:"submitted_cancelled,omitempty"`
+	LogDigest          string `json:"log_digest,omitempty"`
+}
+
+type CheckResultManifest struct {
+	AttemptID     string `json:"attempt_id"`
+	Position      int    `json:"position"`
+	Name          string `json:"name"`
+	Command       string `json:"command"`
+	Status        string `json:"status"`
+	ExitCode      *int   `json:"exit_code,omitempty"`
+	DurationMS    int64  `json:"duration_ms"`
+	OutputExcerpt string `json:"output_excerpt,omitempty"`
+	Truncated     bool   `json:"truncated,omitempty"`
+	CleanupError  string `json:"cleanup_error,omitempty"`
+}
+
+type CheckPolicyManifest struct {
+	RepositoryID        string                       `json:"repository_id"`
+	PolicyVersion       int64                        `json:"policy_version"`
+	PolicyDigest        string                       `json:"policy_digest"`
+	Executor            string                       `json:"executor"`
+	AllowedEvents       []string                     `json:"allowed_events"`
+	MaxTimeoutMS        int64                        `json:"max_timeout_ms"`
+	MaxOutputLimitBytes int64                        `json:"max_output_limit_bytes"`
+	QueueLimit          int                          `json:"queue_limit"`
+	MaxActiveJobs       int                          `json:"max_active_jobs"`
+	MaxLeaseMS          int64                        `json:"max_lease_ms"`
+	Execution           state.CheckExecutionSettings `json:"execution"`
+	ConsentVersion      int64                        `json:"consent_version,omitempty"`
+	ConsentDigest       string                       `json:"consent_digest,omitempty"`
+	RunnerGeneration    int64                        `json:"runner_generation,omitempty"`
+	CreatedAt           time.Time                    `json:"created_at"`
+	UpdatedAt           time.Time                    `json:"updated_at"`
+}
+
+type CheckJobLimitsManifest struct {
+	TimeoutMS        int64 `json:"timeout_ms"`
+	OutputLimitBytes int64 `json:"output_limit_bytes"`
+}
+
+type CheckJobManifest struct {
+	ID                   string                       `json:"id"`
+	RepositoryID         string                       `json:"repository_id"`
+	TaskID               string                       `json:"task_id"`
+	Trigger              string                       `json:"trigger"`
+	EventKey             string                       `json:"event_key"`
+	SourceOID            string                       `json:"source_oid"`
+	BaseOID              string                       `json:"base_oid,omitempty"`
+	PullRequestNumber    int64                        `json:"pull_request_number,omitempty"`
+	TriggerRef           string                       `json:"trigger_ref"`
+	WorkflowPath         string                       `json:"workflow_path"`
+	WorkflowOID          string                       `json:"workflow_oid,omitempty"`
+	WorkflowDigest       string                       `json:"workflow_digest"`
+	ConfigurationVersion int64                        `json:"configuration_version"`
+	Executor             string                       `json:"executor"`
+	PolicyVersion        int64                        `json:"policy_version"`
+	ConsentVersion       int64                        `json:"consent_version"`
+	Limits               CheckJobLimitsManifest       `json:"limits"`
+	Execution            state.CheckExecutionSettings `json:"execution"`
+	DedupDigest          string                       `json:"dedup_digest"`
+	RerunRoot            string                       `json:"rerun_root,omitempty"`
+	RerunGeneration      int64                        `json:"rerun_generation,omitempty"`
+	Status               string                       `json:"status"`
+	AttemptID            string                       `json:"attempt_id,omitempty"`
+	LeaseID              string                       `json:"lease_id,omitempty"`
+	LeaseExpiresAt       *time.Time                   `json:"lease_expires_at,omitempty"`
+	CredentialID         string                       `json:"credential_id,omitempty"`
+	CredentialGeneration int64                        `json:"credential_generation,omitempty"`
+	CredentialRole       string                       `json:"credential_role,omitempty"`
+	Protection           string                       `json:"protection,omitempty"`
+	AdmittedAt           time.Time                    `json:"admitted_at"`
+	ClaimedAt            *time.Time                   `json:"claimed_at,omitempty"`
+	StartedAt            *time.Time                   `json:"started_at,omitempty"`
+	FinishedAt           *time.Time                   `json:"finished_at,omitempty"`
+	LeaseLostAt          *time.Time                   `json:"lease_lost_at,omitempty"`
+	CancelRequestedAt    *time.Time                   `json:"cancel_requested_at,omitempty"`
+	InterruptedAt        *time.Time                   `json:"interrupted_at,omitempty"`
+	Summary              string                       `json:"summary,omitempty"`
 }
 
 type RepositoryManifest struct {
@@ -54,11 +238,14 @@ type RepositoryManifest struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
-	Head        Head      `json:"head"`
-	Refs        []Ref     `json:"refs"`
-	Empty       bool      `json:"empty"`
-	Bundle      string    `json:"bundle,omitempty"`
-	SHA256      string    `json:"sha256,omitempty"`
+	// AttemptSequence is the repository-wide counter that issues attempt
+	// sequences, so a restore keeps issuing higher sequences.
+	AttemptSequence int64  `json:"attempt_sequence,omitempty"`
+	Head            Head   `json:"head"`
+	Refs            []Ref  `json:"refs"`
+	Empty           bool   `json:"empty"`
+	Bundle          string `json:"bundle,omitempty"`
+	SHA256          string `json:"sha256,omitempty"`
 }
 
 type Head struct {
@@ -104,8 +291,27 @@ type PullRequestReviewManifest struct {
 	Status            string    `json:"status"`
 	ReviewerLabel     string    `json:"reviewer_label,omitempty"`
 	Provenance        string    `json:"provenance"`
+	ReviewEventID     string    `json:"review_event_id,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 }
+
+type DirectReviewSettingsManifest struct {
+	RepositoryID         string                             `json:"repository_id"`
+	ConfigurationVersion int64                              `json:"configuration_version"`
+	Protocol             string                             `json:"protocol"`
+	Endpoint             string                             `json:"endpoint"`
+	Model                string                             `json:"model"`
+	AuthenticationMode   string                             `json:"authentication_mode"`
+	ProviderLimits       state.DirectReviewProviderLimits   `json:"provider_limits"`
+	RepositoryLimits     state.DirectReviewRepositoryLimits `json:"repository_limits"`
+	InstructionVersion   string                             `json:"instruction_version"`
+	ConnectionVersion    int64                              `json:"connection_version"`
+	CreatedAt            time.Time                          `json:"created_at"`
+	UpdatedAt            time.Time                          `json:"updated_at"`
+}
+
+type DirectReviewTaskContextManifest state.DirectReviewTaskContext
+type DirectReviewRequestManifest state.DirectReviewRequest
 
 type PullRequestMergeManifest struct {
 	RepositoryID      string    `json:"repository_id"`
@@ -189,6 +395,9 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 		AccessMode: snapshot.AccessMode, AccessHash: snapshot.AccessPasswordHash, AdminHash: snapshot.AdminPasswordHash,
 	}
 	addPullRequestState(&manifest, snapshot)
+	addCheckState(&manifest, snapshot)
+	addDirectReviewState(&manifest, snapshot)
+	addImportState(&manifest, snapshot)
 	for _, stored := range snapshot.Repositories {
 		if err := repository.ValidateID(stored.ID); err != nil {
 			return fmt.Errorf("repository %q has an unsupported ID: %w", stored.ID, err)
@@ -207,11 +416,11 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 		if !item.Empty {
 			item.Bundle = path.Join("repositories", stored.ID+".bundle")
 			bundlePath := filepath.Join(stage, filepath.FromSlash(item.Bundle))
-			arguments := []string{"--git-dir", repositoryPath, "bundle", "create", bundlePath, "--all"}
+			arguments := []string{"--git-dir", ".", "bundle", "create", bundlePath, "--all"}
 			if item.Head.OID != "" {
 				arguments = append(arguments, "HEAD")
 			}
-			if _, err := runner.Run(ctx, "", nil, arguments...); err != nil {
+			if _, err := runner.Run(ctx, repositoryPath, nil, arguments...); err != nil {
 				return fmt.Errorf("bundle repository %q: %w", stored.ID, err)
 			}
 			if err := os.Chmod(bundlePath, 0o600); err != nil {
@@ -238,9 +447,7 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if err != nil {
 		return err
 	}
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(manifest); err != nil {
+	if err := writeManifest(file, manifest, maximumManifest); err != nil {
 		file.Close()
 		return err
 	}
@@ -378,7 +585,10 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	}
 	snapshot := recoveryState(manifest)
 	for _, item := range manifest.Repositories {
-		snapshot.Repositories = append(snapshot.Repositories, state.Repository{ID: item.ID, Name: item.Name, Description: item.Description, CreatedAt: item.CreatedAt})
+		snapshot.Repositories = append(snapshot.Repositories, state.Repository{
+			ID: item.ID, Name: item.Name, Description: item.Description, CreatedAt: item.CreatedAt,
+			AttemptSequence: item.AttemptSequence,
+		})
 	}
 	if err := store.RestoreRecoveryState(ctx, repositoryTarget, snapshot); err != nil {
 		store.Close()
@@ -482,17 +692,20 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 }
 
 func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath string, stored state.Repository) (RepositoryManifest, error) {
-	item := RepositoryManifest{ID: stored.ID, Name: stored.Name, Description: stored.Description, CreatedAt: stored.CreatedAt}
+	item := RepositoryManifest{
+		ID: stored.ID, Name: stored.Name, Description: stored.Description, CreatedAt: stored.CreatedAt,
+		AttemptSequence: stored.AttemptSequence,
+	}
 	refs, err := readRefs(ctx, runner, repositoryPath)
 	if err != nil {
 		return RepositoryManifest{}, err
 	}
 	item.Refs = refs
-	symbolic, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "symbolic-ref", "--quiet", "HEAD")
+	symbolic, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--quiet", "HEAD")
 	if err == nil {
 		item.Head.Symbolic = strings.TrimSpace(string(symbolic.Stdout))
 	} else {
-		detached, detachedErr := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "rev-parse", "--verify", "HEAD")
+		detached, detachedErr := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "HEAD")
 		if detachedErr == nil {
 			item.Head.OID = strings.TrimSpace(string(detached.Stdout))
 		} else if len(refs) != 0 {
@@ -504,7 +717,7 @@ func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath
 }
 
 func readRefs(ctx context.Context, runner commandRunner, repositoryPath string) ([]Ref, error) {
-	result, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "for-each-ref", "--format=%(refname)%00%(objectname)")
+	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)")
 	if err != nil {
 		return nil, err
 	}
@@ -529,7 +742,7 @@ func restoreRepository(ctx context.Context, runner commandRunner, inputRoot, rep
 	}
 	if !item.Empty {
 		bundlePath := filepath.Join(inputRoot, filepath.FromSlash(item.Bundle))
-		if _, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "bundle", "verify", bundlePath); err != nil {
+		if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "bundle", "verify", bundlePath); err != nil {
 			return fmt.Errorf("verify bundle: %w", err)
 		}
 		heads, err := runner.Run(ctx, "", nil, "bundle", "list-heads", bundlePath)
@@ -543,23 +756,23 @@ func restoreRepository(ctx context.Context, runner commandRunner, inputRoot, rep
 		if !sameRefs(listed, item.Refs) || (item.Head.OID != "" && bundledHead != item.Head.OID) {
 			return errors.New("bundle refs do not match the manifest")
 		}
-		arguments := []string{"--git-dir", repositoryPath, "fetch", "--no-tags", "--no-write-fetch-head", bundlePath}
+		arguments := []string{"--git-dir", ".", "fetch", "--no-tags", "--no-write-fetch-head", bundlePath}
 		for _, ref := range item.Refs {
 			arguments = append(arguments, ref.Name+":"+ref.Name)
 		}
 		if item.Head.OID != "" {
 			arguments = append(arguments, "HEAD")
 		}
-		if _, err := runner.Run(ctx, "", nil, arguments...); err != nil {
+		if _, err := runner.Run(ctx, repositoryPath, nil, arguments...); err != nil {
 			return fmt.Errorf("import bundle: %w", err)
 		}
 	}
 	if item.Head.Symbolic != "" {
-		if _, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "symbolic-ref", "HEAD", item.Head.Symbolic); err != nil {
+		if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "HEAD", item.Head.Symbolic); err != nil {
 			return err
 		}
 	} else if item.Head.OID != "" {
-		if _, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "update-ref", "--no-deref", "HEAD", item.Head.OID); err != nil {
+		if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "update-ref", "--no-deref", "HEAD", item.Head.OID); err != nil {
 			return err
 		}
 	}
@@ -571,7 +784,7 @@ func restoreRepository(ctx context.Context, runner commandRunner, inputRoot, rep
 		return errors.New("restored refs do not match the manifest")
 	}
 	for _, ref := range item.Refs {
-		if _, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "cat-file", "-e", ref.OID+"^{object}"); err != nil {
+		if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-e", ref.OID+"^{object}"); err != nil {
 			return fmt.Errorf("restored object %s is missing: %w", ref.OID, err)
 		}
 	}
@@ -698,6 +911,55 @@ func syncDirectory(directory string) error {
 	return closeErr
 }
 
+type manifestLimitWriter struct {
+	writer    io.Writer
+	remaining int64
+}
+
+func (writer *manifestLimitWriter) Write(content []byte) (int, error) {
+	if writer.remaining <= 0 {
+		return 0, errManifestTooLarge
+	}
+	allowed := content
+	tooLarge := int64(len(content)) > writer.remaining
+	if tooLarge {
+		allowed = content[:writer.remaining]
+	}
+	written, err := writer.writer.Write(allowed)
+	writer.remaining -= int64(written)
+	if err != nil {
+		return written, err
+	}
+	if written != len(allowed) {
+		return written, io.ErrShortWrite
+	}
+	if tooLarge {
+		return written, errManifestTooLarge
+	}
+	return written, nil
+}
+
+func writeManifest(destination io.Writer, manifest Manifest, maximum int64) error {
+	limited := &manifestLimitWriter{writer: destination, remaining: maximum}
+	encoder := json.NewEncoder(limited)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(manifest); err != nil {
+		return fmt.Errorf("encode backup manifest: %w", err)
+	}
+	return nil
+}
+
+func readManifestContent(source io.Reader, maximum int64) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(source, maximum+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(content)) > maximum {
+		return nil, errManifestTooLarge
+	}
+	return content, nil
+}
+
 func readManifest(manifestPath string) (Manifest, error) {
 	if err := requireRegularFile(manifestPath); err != nil {
 		return Manifest{}, err
@@ -706,8 +968,31 @@ func readManifest(manifestPath string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	defer file.Close()
-	decoder := json.NewDecoder(io.LimitReader(file, maximumManifest+1))
+	content, readErr := readManifestContent(file, maximumManifest)
+	closeErr := file.Close()
+	if readErr != nil {
+		return Manifest{}, readErr
+	}
+	if closeErr != nil {
+		return Manifest{}, closeErr
+	}
+	// Probe the version before strict decoding so a backup written by a newer
+	// OwnGit is rejected with a clear message instead of an unknown-field
+	// error, and never silently loses new records.
+	var probe struct {
+		Format  string `json:"format"`
+		Version int    `json:"version"`
+	}
+	if err := json.Unmarshal(content, &probe); err != nil {
+		return Manifest{}, fmt.Errorf("decode backup manifest: %w", err)
+	}
+	if probe.Format != backupFormat {
+		return Manifest{}, errors.New("unsupported backup format")
+	}
+	if err := validateBackupVersion(probe.Version); err != nil {
+		return Manifest{}, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	var manifest Manifest
 	if err := decoder.Decode(&manifest); err != nil {
@@ -739,7 +1024,7 @@ func addPullRequestState(manifest *Manifest, snapshot state.RecoveryState) {
 		manifest.PullRequestReviews = append(manifest.PullRequestReviews, PullRequestReviewManifest{
 			RepositoryID: review.RepositoryID, PullRequestNumber: review.PullRequestNumber, Sequence: review.Sequence,
 			SourceOID: review.SourceOID, TargetOID: review.TargetOID, Status: review.Status,
-			ReviewerLabel: review.ReviewerLabel, Provenance: review.Provenance, CreatedAt: review.CreatedAt,
+			ReviewerLabel: review.ReviewerLabel, Provenance: review.Provenance, ReviewEventID: review.ReviewEventID, CreatedAt: review.CreatedAt,
 		})
 	}
 	for _, intent := range snapshot.PullRequestMergeIntents {
@@ -752,10 +1037,102 @@ func addPullRequestState(manifest *Manifest, snapshot state.RecoveryState) {
 	}
 }
 
+func addCheckState(manifest *Manifest, snapshot state.RecoveryState) {
+	for _, task := range snapshot.Tasks {
+		manifest.Tasks = append(manifest.Tasks, TaskManifest{
+			ID: task.ID, RepositoryID: task.RepositoryID, Title: task.Title,
+			CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
+		})
+	}
+	for _, configuration := range snapshot.CheckConfigurations {
+		item := CheckConfigurationManifest{
+			RepositoryID: configuration.RepositoryID, Version: configuration.Version,
+			ConfigHash: configuration.ConfigHash, CreatedAt: configuration.CreatedAt,
+		}
+		for _, check := range configuration.Checks {
+			item.Checks = append(item.Checks, CheckDefinitionManifest{Name: check.Name, Command: check.Command})
+		}
+		manifest.CheckConfigurations = append(manifest.CheckConfigurations, item)
+	}
+	for _, cycle := range snapshot.CheckCycles {
+		manifest.CheckCycles = append(manifest.CheckCycles, CheckCycleManifest{
+			ID: cycle.ID, TaskID: cycle.TaskID, RepositoryID: cycle.RepositoryID,
+			Sequence: cycle.Sequence, ReservedAt: cycle.ReservedAt, ReservedAfterSequence: cycle.ReservedAfterSequence,
+		})
+	}
+	for _, attempt := range snapshot.CheckAttempts {
+		manifest.CheckAttempts = append(manifest.CheckAttempts, CheckAttemptManifest{
+			ID: attempt.ID, TaskID: attempt.TaskID, RepositoryID: attempt.RepositoryID, RevisionOID: attempt.RevisionOID,
+			WorktreeState: attempt.WorktreeState, SubmittedWorktree: attempt.SubmittedWorktreeState,
+			ConfigurationVersion: attempt.ConfigurationVersion, Status: attempt.Status,
+			ExitCode: attempt.ExitCode, StartedAt: attempt.StartedAt, FinishedAt: attempt.FinishedAt, DurationMS: attempt.DurationMS,
+			Summary: attempt.Summary, Protection: attempt.Protection, ExecutionScope: attempt.ExecutionScope,
+			CredentialID: attempt.CredentialID, JobID: attempt.JobID, TimeoutMS: attempt.TimeoutMS, OutputLimitBytes: attempt.OutputLimitBytes,
+			LogID: attempt.LogID, LogExpiresAt: attempt.LogExpiresAt, LogTruncated: attempt.LogTruncated,
+			LogError: attempt.LogError, CreatedAt: attempt.CreatedAt,
+			Sequence: attempt.Sequence, CycleID: attempt.CycleID, RegistrationDigest: attempt.RegistrationDigest,
+			CompletionDigest: attempt.CompletionDigest, SubmittedLogDigest: attempt.SubmittedLogDigest,
+			SubmittedTruncated: attempt.SubmittedTruncated, SubmittedCancelled: attempt.SubmittedCancelled,
+			LogDigest: attempt.LogDigest,
+		})
+	}
+	for _, result := range snapshot.CheckResults {
+		manifest.CheckResults = append(manifest.CheckResults, CheckResultManifest{
+			AttemptID: result.AttemptID, Position: result.Position, Name: result.Name, Command: result.Command,
+			Status: result.Status, ExitCode: result.ExitCode, DurationMS: result.DurationMS,
+			OutputExcerpt: result.OutputExcerpt, Truncated: result.Truncated, CleanupError: result.CleanupError,
+		})
+	}
+	for _, policy := range snapshot.CheckPolicies {
+		manifest.CheckPolicies = append(manifest.CheckPolicies, CheckPolicyManifest{
+			RepositoryID: policy.RepositoryID, PolicyVersion: policy.Version, PolicyDigest: policy.Digest,
+			Executor: policy.Executor, AllowedEvents: policy.AllowedEvents, MaxTimeoutMS: policy.MaxTimeoutMS,
+			MaxOutputLimitBytes: policy.MaxOutputLimitBytes, QueueLimit: policy.QueueLimit, MaxActiveJobs: policy.MaxActiveJobs,
+			MaxLeaseMS: policy.MaxLeaseMS, Execution: policy.Execution, ConsentVersion: policy.ConsentVersion, ConsentDigest: policy.ConsentDigest,
+			RunnerGeneration: policy.RunnerGeneration, CreatedAt: policy.CreatedAt, UpdatedAt: policy.UpdatedAt,
+		})
+	}
+	for _, job := range snapshot.CheckJobs {
+		manifest.CheckJobs = append(manifest.CheckJobs, CheckJobManifest{
+			ID: job.ID, RepositoryID: job.RepositoryID, TaskID: job.TaskID, Trigger: job.Trigger, EventKey: job.EventKey,
+			SourceOID: job.SourceOID, BaseOID: job.BaseOID, PullRequestNumber: job.PullRequestNumber, TriggerRef: job.TriggerRef,
+			WorkflowPath: job.WorkflowPath, WorkflowOID: job.WorkflowOID, WorkflowDigest: job.WorkflowDigest,
+			ConfigurationVersion: job.ConfigurationVersion, Executor: job.Executor, PolicyVersion: job.PolicyVersion,
+			ConsentVersion: job.ConsentVersion,
+			Limits:         CheckJobLimitsManifest{TimeoutMS: job.Limits.TimeoutMS, OutputLimitBytes: job.Limits.OutputLimitBytes},
+			Execution:      job.Execution,
+			DedupDigest:    job.DedupDigest, RerunRoot: job.RerunRoot, RerunGeneration: job.RerunGeneration, Status: job.Status,
+			AttemptID: job.AttemptID, LeaseID: job.LeaseID, LeaseExpiresAt: job.LeaseExpiresAt, CredentialID: job.CredentialID,
+			CredentialGeneration: job.CredentialGeneration, CredentialRole: job.CredentialRole, Protection: job.Protection, AdmittedAt: job.AdmittedAt,
+			ClaimedAt: job.ClaimedAt, StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, LeaseLostAt: job.LeaseLostAt,
+			CancelRequestedAt: job.CancelRequestedAt, InterruptedAt: job.InterruptedAt, Summary: job.Summary,
+		})
+	}
+}
+
+func addDirectReviewState(manifest *Manifest, snapshot state.RecoveryState) {
+	for _, settings := range snapshot.DirectReviewSettings {
+		manifest.DirectReviewSettings = append(manifest.DirectReviewSettings, DirectReviewSettingsManifest{
+			RepositoryID: settings.RepositoryID, ConfigurationVersion: settings.ConfigurationVersion,
+			Protocol: settings.Protocol, Endpoint: settings.Endpoint, Model: settings.Model,
+			AuthenticationMode: settings.AuthenticationMode, ProviderLimits: settings.ProviderLimits,
+			RepositoryLimits: settings.RepositoryLimits, InstructionVersion: settings.InstructionVersion,
+			ConnectionVersion: settings.ConnectionVersion, CreatedAt: settings.CreatedAt, UpdatedAt: settings.UpdatedAt,
+		})
+	}
+	for _, contextRecord := range snapshot.DirectReviewTaskContexts {
+		manifest.DirectReviewTaskContexts = append(manifest.DirectReviewTaskContexts, DirectReviewTaskContextManifest(contextRecord))
+	}
+	for _, request := range snapshot.DirectReviewRequests {
+		manifest.DirectReviewRequests = append(manifest.DirectReviewRequests, DirectReviewRequestManifest(request))
+	}
+}
+
 func recoveryState(manifest Manifest) state.RecoveryState {
 	snapshot := state.RecoveryState{
 		AccessMode: manifest.AccessMode, AccessPasswordHash: manifest.AccessHash, AdminPasswordHash: manifest.AdminHash,
 	}
+	attachImportState(&snapshot, manifest)
 	for _, record := range manifest.PullRequests {
 		snapshot.PullRequests = append(snapshot.PullRequests, state.PullRequest{
 			RepositoryID: record.RepositoryID, Number: record.Number, Title: record.Title,
@@ -775,7 +1152,7 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 		snapshot.PullRequestReviews = append(snapshot.PullRequestReviews, state.PullRequestReview{
 			RepositoryID: review.RepositoryID, PullRequestNumber: review.PullRequestNumber, Sequence: review.Sequence,
 			SourceOID: review.SourceOID, TargetOID: review.TargetOID, Status: review.Status,
-			ReviewerLabel: review.ReviewerLabel, Provenance: review.Provenance, CreatedAt: review.CreatedAt,
+			ReviewerLabel: review.ReviewerLabel, Provenance: review.Provenance, ReviewEventID: review.ReviewEventID, CreatedAt: review.CreatedAt,
 		})
 	}
 	for _, intent := range manifest.PullRequestMergeIntents {
@@ -786,12 +1163,153 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 			Status: intent.Status, CreatedAt: intent.CreatedAt, UpdatedAt: intent.UpdatedAt,
 		})
 	}
+	for _, task := range manifest.Tasks {
+		snapshot.Tasks = append(snapshot.Tasks, state.RecoveryTask{
+			ID: task.ID, RepositoryID: task.RepositoryID, Title: task.Title,
+			CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
+		})
+	}
+	for _, configuration := range manifest.CheckConfigurations {
+		item := state.CheckConfiguration{
+			RepositoryID: configuration.RepositoryID, Version: configuration.Version,
+			ConfigHash: configuration.ConfigHash, CreatedAt: configuration.CreatedAt,
+		}
+		for _, check := range configuration.Checks {
+			item.Checks = append(item.Checks, state.CheckDefinition{Name: check.Name, Command: check.Command})
+		}
+		snapshot.CheckConfigurations = append(snapshot.CheckConfigurations, item)
+	}
+	for _, cycle := range manifest.CheckCycles {
+		snapshot.CheckCycles = append(snapshot.CheckCycles, state.RecoveryCheckCycle{
+			ID: cycle.ID, TaskID: cycle.TaskID, RepositoryID: cycle.RepositoryID,
+			Sequence: cycle.Sequence, ReservedAt: cycle.ReservedAt, ReservedAfterSequence: cycle.ReservedAfterSequence,
+		})
+	}
+	for _, attempt := range manifest.CheckAttempts {
+		protection, scope := attempt.Protection, attempt.ExecutionScope
+		if protection == "" {
+			protection = state.ProtectionUnknown
+		}
+		if scope == "" {
+			scope = state.ExecutionScopeInherited
+		}
+		snapshot.CheckAttempts = append(snapshot.CheckAttempts, state.CheckAttempt{
+			ID: attempt.ID, TaskID: attempt.TaskID, RepositoryID: attempt.RepositoryID, RevisionOID: attempt.RevisionOID,
+			WorktreeState: attempt.WorktreeState, SubmittedWorktreeState: attempt.SubmittedWorktree,
+			ConfigurationVersion: attempt.ConfigurationVersion, Status: attempt.Status,
+			ExitCode: attempt.ExitCode, StartedAt: attempt.StartedAt, FinishedAt: attempt.FinishedAt, DurationMS: attempt.DurationMS,
+			Summary: attempt.Summary, Protection: protection, ExecutionScope: scope,
+			CredentialID: attempt.CredentialID, JobID: attempt.JobID, TimeoutMS: attempt.TimeoutMS, OutputLimitBytes: attempt.OutputLimitBytes,
+			LogID: attempt.LogID, LogExpiresAt: attempt.LogExpiresAt, LogTruncated: attempt.LogTruncated,
+			LogError: attempt.LogError, CreatedAt: attempt.CreatedAt,
+			Sequence: attempt.Sequence, CycleID: attempt.CycleID, RegistrationDigest: attempt.RegistrationDigest,
+			CompletionDigest: attempt.CompletionDigest, SubmittedLogDigest: attempt.SubmittedLogDigest,
+			SubmittedTruncated: attempt.SubmittedTruncated, SubmittedCancelled: attempt.SubmittedCancelled,
+			LogDigest: attempt.LogDigest,
+		})
+	}
+	for _, result := range manifest.CheckResults {
+		snapshot.CheckResults = append(snapshot.CheckResults, state.CheckResultRecord{
+			AttemptID: result.AttemptID,
+			CheckResult: state.CheckResult{
+				Position: result.Position, Name: result.Name, Command: result.Command, Status: result.Status,
+				ExitCode: result.ExitCode, DurationMS: result.DurationMS, OutputExcerpt: result.OutputExcerpt,
+				Truncated: result.Truncated, CleanupError: result.CleanupError,
+			},
+		})
+	}
+	for _, policy := range manifest.CheckPolicies {
+		execution := policy.Execution
+		if manifest.Version == automaticCheckBackupVersion {
+			execution = state.CheckExecutionSettings{Legacy: true}
+		}
+		snapshot.CheckPolicies = append(snapshot.CheckPolicies, state.CheckPolicy{
+			RepositoryID: policy.RepositoryID, Version: policy.PolicyVersion, Digest: policy.PolicyDigest,
+			Executor: policy.Executor, AllowedEvents: policy.AllowedEvents, MaxTimeoutMS: policy.MaxTimeoutMS,
+			MaxOutputLimitBytes: policy.MaxOutputLimitBytes, QueueLimit: policy.QueueLimit, MaxActiveJobs: policy.MaxActiveJobs,
+			MaxLeaseMS: policy.MaxLeaseMS, Execution: execution, ConsentVersion: policy.ConsentVersion, ConsentDigest: policy.ConsentDigest,
+			RunnerGeneration: policy.RunnerGeneration, CreatedAt: policy.CreatedAt, UpdatedAt: policy.UpdatedAt,
+		})
+	}
+	for _, job := range manifest.CheckJobs {
+		execution := job.Execution
+		if manifest.Version == automaticCheckBackupVersion {
+			execution = state.CheckExecutionSettings{Legacy: true}
+		}
+		snapshot.CheckJobs = append(snapshot.CheckJobs, state.CheckJob{
+			ID: job.ID, RepositoryID: job.RepositoryID, TaskID: job.TaskID, Trigger: job.Trigger, EventKey: job.EventKey,
+			SourceOID: job.SourceOID, BaseOID: job.BaseOID, PullRequestNumber: job.PullRequestNumber, TriggerRef: job.TriggerRef,
+			WorkflowPath: job.WorkflowPath, WorkflowOID: job.WorkflowOID, WorkflowDigest: job.WorkflowDigest,
+			ConfigurationVersion: job.ConfigurationVersion, Executor: job.Executor, PolicyVersion: job.PolicyVersion,
+			ConsentVersion: job.ConsentVersion,
+			Limits:         state.CheckJobLimits{TimeoutMS: job.Limits.TimeoutMS, OutputLimitBytes: job.Limits.OutputLimitBytes},
+			Execution:      execution,
+			DedupDigest:    job.DedupDigest, RerunRoot: job.RerunRoot, RerunGeneration: job.RerunGeneration, Status: job.Status,
+			AttemptID: job.AttemptID, LeaseID: job.LeaseID, LeaseExpiresAt: job.LeaseExpiresAt, CredentialID: job.CredentialID,
+			CredentialGeneration: job.CredentialGeneration, CredentialRole: job.CredentialRole, Protection: job.Protection, AdmittedAt: job.AdmittedAt,
+			ClaimedAt: job.ClaimedAt, StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, LeaseLostAt: job.LeaseLostAt,
+			CancelRequestedAt: job.CancelRequestedAt, InterruptedAt: job.InterruptedAt, Summary: job.Summary,
+		})
+	}
+	for _, settings := range manifest.DirectReviewSettings {
+		snapshot.DirectReviewSettings = append(snapshot.DirectReviewSettings, state.DirectReviewSettings{
+			RepositoryID: settings.RepositoryID, ConfigurationVersion: settings.ConfigurationVersion,
+			Protocol: settings.Protocol, Endpoint: settings.Endpoint, Model: settings.Model,
+			AuthenticationMode: settings.AuthenticationMode, ProviderLimits: settings.ProviderLimits,
+			RepositoryLimits: settings.RepositoryLimits, InstructionVersion: settings.InstructionVersion,
+			ConnectionVersion: settings.ConnectionVersion, CreatedAt: settings.CreatedAt, UpdatedAt: settings.UpdatedAt,
+		})
+	}
+	for _, contextRecord := range manifest.DirectReviewTaskContexts {
+		snapshot.DirectReviewTaskContexts = append(snapshot.DirectReviewTaskContexts, state.DirectReviewTaskContext(contextRecord))
+	}
+	for _, request := range manifest.DirectReviewRequests {
+		snapshot.DirectReviewRequests = append(snapshot.DirectReviewRequests, state.DirectReviewRequest(request))
+	}
 	return snapshot
 }
 
+// validateBackupVersion accepts released formats and refuses the unreleased
+// development formats 3 and 4 instead of inventing missing source facts.
+func validateBackupVersion(version int) error {
+	switch {
+	case version == legacyBackupVersion || version == pullRequestBackupVersion || version == checkBackupVersion || version == directReviewBackupVersion || version == automaticCheckBackupVersion || version == executionBackupVersion || version == importBackupVersion || version == backupVersion:
+		return nil
+	case version > backupVersion:
+		return fmt.Errorf("unsupported backup version %d: this build supports versions %s", version, supportedBackupVersions())
+	default:
+		return fmt.Errorf("backup uses the unreleased development format %d; this build supports versions %s", version, supportedBackupVersions())
+	}
+}
+
+// supportedBackupVersions describes the released formats without repeating a
+// version when two constants name the same format.
+func supportedBackupVersions() string {
+	versions := []int{
+		legacyBackupVersion, pullRequestBackupVersion, checkBackupVersion, directReviewBackupVersion,
+		automaticCheckBackupVersion, executionBackupVersion, importBackupVersion, backupVersion,
+	}
+	parts := make([]string, 0, len(versions))
+	last := 0
+	for _, version := range versions {
+		if version == last {
+			continue
+		}
+		last = version
+		parts = append(parts, fmt.Sprintf("%d", version))
+	}
+	if len(parts) > 1 {
+		parts[len(parts)-1] = "and " + parts[len(parts)-1]
+	}
+	return strings.Join(parts, ", ")
+}
+
 func validateManifest(manifest Manifest) error {
-	if manifest.Format != backupFormat || (manifest.Version != legacyBackupVersion && manifest.Version != backupVersion) {
-		return errors.New("unsupported backup format or version")
+	if manifest.Format != backupFormat {
+		return errors.New("unsupported backup format")
+	}
+	if err := validateBackupVersion(manifest.Version); err != nil {
+		return err
 	}
 	if manifest.CreatedAt.IsZero() || auth.ValidatePasswordHash(manifest.AdminHash) != nil {
 		return errors.New("backup manifest metadata is incomplete")
@@ -850,11 +1368,58 @@ func validateManifest(manifest Manifest) error {
 		if len(manifest.PullRequests) != 0 || len(manifest.PullRequestRevisions) != 0 || len(manifest.PullRequestReviews) != 0 || len(manifest.PullRequestMergeIntents) != 0 {
 			return errors.New("version 1 backup contains unsupported pull request metadata")
 		}
-		return nil
+		if len(manifest.Tasks) != 0 || len(manifest.CheckConfigurations) != 0 || len(manifest.CheckCycles) != 0 || len(manifest.CheckAttempts) != 0 || len(manifest.CheckResults) != 0 {
+			return errors.New("version 1 backup contains unsupported check metadata")
+		}
+	}
+	if manifest.Version == pullRequestBackupVersion {
+		if len(manifest.Tasks) != 0 || len(manifest.CheckConfigurations) != 0 || len(manifest.CheckCycles) != 0 || len(manifest.CheckAttempts) != 0 || len(manifest.CheckResults) != 0 {
+			return errors.New("version 2 backup contains unsupported check metadata")
+		}
+	}
+	if manifest.Version < directReviewBackupVersion {
+		if len(manifest.DirectReviewSettings) != 0 || len(manifest.DirectReviewTaskContexts) != 0 || len(manifest.DirectReviewRequests) != 0 {
+			return errors.New("older backup contains unsupported direct review metadata")
+		}
+		for _, review := range manifest.PullRequestReviews {
+			if review.ReviewEventID != "" {
+				return errors.New("older backup contains an unsupported review event identity")
+			}
+		}
+	}
+	if manifest.Version < automaticCheckBackupVersion {
+		if len(manifest.CheckPolicies) != 0 || len(manifest.CheckJobs) != 0 {
+			return errors.New("older backup contains unsupported automatic check metadata")
+		}
+		for _, attempt := range manifest.CheckAttempts {
+			if attempt.JobID != "" {
+				return errors.New("older backup contains an unsupported check job identity")
+			}
+		}
+	}
+	if manifest.Version < executionBackupVersion {
+		for _, policy := range manifest.CheckPolicies {
+			if policy.Execution != (state.CheckExecutionSettings{}) {
+				return errors.New("older backup contains unsupported execution settings")
+			}
+		}
+		for _, job := range manifest.CheckJobs {
+			if job.Execution != (state.CheckExecutionSettings{}) || job.CredentialRole != "" {
+				return errors.New("older backup contains unsupported execution authority")
+			}
+		}
+	}
+	if manifest.Version < importBackupVersion {
+		if len(manifest.ImportSources) != 0 || len(manifest.ImportRuns) != 0 || manifest.ImportRunOrderKnown || manifest.ImportHEADOwnershipVersion != 0 || len(manifest.ImportObservations) != 0 || len(manifest.ImportIntents) != 0 {
+			return errors.New("older backup contains unsupported import metadata")
+		}
 	}
 	snapshot := recoveryState(manifest)
 	for _, item := range manifest.Repositories {
-		snapshot.Repositories = append(snapshot.Repositories, state.Repository{ID: item.ID, Name: item.Name, Description: item.Description, CreatedAt: item.CreatedAt})
+		snapshot.Repositories = append(snapshot.Repositories, state.Repository{
+			ID: item.ID, Name: item.Name, Description: item.Description, CreatedAt: item.CreatedAt,
+			AttemptSequence: item.AttemptSequence,
+		})
 	}
 	if err := state.ValidatePullRequestRecovery(snapshot); err != nil {
 		return fmt.Errorf("backup pull request metadata is invalid: %w", err)
@@ -887,6 +1452,15 @@ func validateManifest(manifest Manifest) error {
 		if intent.Status == state.MergeIntentComplete && !exists {
 			return errors.New("completed backup merge is missing its protected receipt")
 		}
+	}
+	if err := state.ValidateCheckRecovery(snapshot); err != nil {
+		return fmt.Errorf("backup check metadata is invalid: %w", err)
+	}
+	if err := state.ValidateDirectReviewRecovery(snapshot); err != nil {
+		return fmt.Errorf("backup direct review metadata is invalid: %w", err)
+	}
+	if err := validateImportManifest(manifest); err != nil {
+		return err
 	}
 	return nil
 }

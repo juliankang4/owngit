@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/apiclient"
 	"owngit/internal/auth"
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
-	"owngit/internal/prclient"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/server"
@@ -68,6 +68,7 @@ func TestPRCommandsUseRemoteJSONAPIAndPrivatePasswordFile(t *testing.T) {
 		field  string
 	}{
 		{"create", append([]string{"create", "--title", "Feature", "--source", "feature", "--target", "main", "--review", "request"}, remote...), http.MethodPost, "/api/v1/repositories/project/pull-requests", "title"},
+		{"create without review", append([]string{"create", "--title", "Feature", "--source", "feature", "--target", "main"}, remote...), http.MethodPost, "/api/v1/repositories/project/pull-requests", "title"},
 		{"list", append([]string{"list"}, remote...), http.MethodGet, "/api/v1/repositories/project/pull-requests", ""},
 		{"show", append([]string{"show", "--number", "1"}, remote...), http.MethodGet, "/api/v1/repositories/project/pull-requests/1", ""},
 		{"review request", append([]string{"review", "request", "--number", "1", "--source-oid", strings.Repeat("a", 40), "--target-oid", strings.Repeat("b", 40)}, remote...), http.MethodPost, "/api/v1/repositories/project/pull-requests/1/review/request", "source_oid"},
@@ -188,8 +189,8 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 		"review", "submit", "--number", number, "--source-oid", sourceOID, "--target-oid", targetOID,
 		"--decision", "changes_requested", "--reviewer", "existing-tool: cli-test",
 	}, remoteFlags...))
-	if changed.PullRequest == nil || changed.PullRequest.MergeEligibility.Eligible {
-		t.Fatal("changes_requested did not block the CLI pull request")
+	if changed.PullRequest == nil || !changed.PullRequest.MergeEligibility.Eligible || len(changed.PullRequest.MergeEligibility.Blockers) != 0 {
+		t.Fatal("advisory changes_requested blocked the CLI pull request")
 	}
 	runPRCommandJSON(t, append([]string{
 		"review", "skip", "--number", number, "--source-oid", sourceOID, "--target-oid", targetOID,
@@ -265,7 +266,7 @@ func prGitOutput(t *testing.T, directory string, arguments ...string) string {
 }
 
 func commandErrorCode(err error) string {
-	var problem *prclient.Error
+	var problem *apiclient.Error
 	if errors.As(err, &problem) {
 		return problem.Code
 	}
@@ -273,7 +274,7 @@ func commandErrorCode(err error) string {
 }
 
 func TestStructuredPRFailureContainsStableCodeWithoutCause(t *testing.T) {
-	problem := &prclient.Error{Code: "invalid_credentials", Message: "The password is invalid.", Cause: errors.New("synthetic secret detail")}
+	problem := &apiclient.Error{Code: "invalid_credentials", Message: "The password is invalid.", Cause: errors.New("synthetic secret detail")}
 	var output bytes.Buffer
 	if !writeStructuredCommandError(&output, problem) {
 		t.Fatal("coded PR error was not handled")

@@ -29,15 +29,38 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		writeAPIError(writer, http.StatusConflict, "setup_incomplete", "OwnGit setup is not complete.", nil)
 		return
 	}
+	repositoryID, resource, remainder, repositoryRoute := parseRepositoryAPIRoute(request.URL.Path)
+	if request.URL.RawQuery != "" && !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
+		return
+	}
+	if repositoryRoute {
+		switch resource {
+		case "runner":
+			app.handleRunnerAPI(writer, request, repositoryID, remainder)
+			return
+		case "check-policy", "check-jobs", "runner-credentials":
+			app.handleConfiguredCheckOwnerAPI(writer, request, repositoryID, resource, remainder)
+			return
+		case "tasks", "check-configurations":
+			app.handleCheckAPI(writer, request, repositoryID, resource, remainder)
+			return
+		case "check-attempts":
+			app.handleCheckAttemptLog(writer, request, repositoryID, remainder)
+			return
+		case "helper-credentials":
+			app.handleHelperCredentialAPI(writer, request, repositoryID, remainder)
+			return
+		case "import":
+			app.handleImportAPI(writer, request, repositoryID, remainder)
+			return
+		}
+	}
 	if app.PullRequests == nil {
 		writeAPIError(writer, http.StatusServiceUnavailable, "service_unavailable", "The pull request service is unavailable.", nil)
 		return
 	}
 	if !app.authorizeAPI(writer, request, settings) {
-		return
-	}
-	if request.URL.RawQuery != "" {
-		writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
 		return
 	}
 
@@ -172,6 +195,23 @@ func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, 
 	return true
 }
 
+func parseRepositoryAPIRoute(requestPath string) (string, string, string, bool) {
+	const prefix = "/api/v1/repositories/"
+	if !strings.HasPrefix(requestPath, prefix) {
+		return "", "", "", false
+	}
+	rest := strings.TrimPrefix(requestPath, prefix)
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", "", false
+	}
+	resource, remainder := parts[1], ""
+	if index := strings.Index(parts[1], "/"); index >= 0 {
+		resource, remainder = parts[1][:index], parts[1][index+1:]
+	}
+	return parts[0], resource, remainder, true
+}
+
 func parsePullRequestAPIRoute(requestPath string) (string, int64, string, bool) {
 	const prefix = "/api/v1/repositories/"
 	if !strings.HasPrefix(requestPath, prefix) {
@@ -208,12 +248,16 @@ func parsePullRequestAPIRoute(requestPath string) (string, int64, string, bool) 
 }
 
 func decodeAPIJSON(writer http.ResponseWriter, request *http.Request, destination any) bool {
+	return decodeAPIJSONLimit(writer, request, destination, maximumAPIRequest)
+}
+
+func decodeAPIJSONLimit(writer http.ResponseWriter, request *http.Request, destination any, limit int64) bool {
 	mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" || len(parameters) != 0 {
 		writeAPIError(writer, http.StatusUnsupportedMediaType, "json_required", "Mutating API requests require Content-Type application/json.", nil)
 		return false
 	}
-	request.Body = http.MaxBytesReader(writer, request.Body, maximumAPIRequest)
+	request.Body = http.MaxBytesReader(writer, request.Body, limit)
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
@@ -266,12 +310,19 @@ func writeAPIJSON(writer http.ResponseWriter, status int, value any) {
 
 func apiStatus(code string) int {
 	switch code {
-	case "invalid_repository", "invalid_pull_request_number", "invalid_title", "invalid_branch", "reserved_ref", "same_branch", "invalid_review_choice", "invalid_review_decision", "invalid_reviewer_label", "invalid_revision":
+	case "invalid_repository", "invalid_pull_request_number", "invalid_title", "invalid_branch", "reserved_ref", "same_branch", "invalid_review_choice", "invalid_review_decision", "invalid_reviewer_label", "invalid_revision",
+		"invalid_task", "invalid_credential", "invalid_attempt", "invalid_attempt_id", "invalid_check_definition", "invalid_worktree_state", "invalid_revision_oid", "invalid_cycle_id":
 		return http.StatusUnprocessableEntity
-	case "repository_not_found", "pull_request_not_found":
+	case "repository_not_found", "pull_request_not_found", "task_not_found", "configuration_not_found", "attempt_not_found", "log_not_recorded", "cycle_not_found":
 		return http.StatusNotFound
-	case "stale_revision", "merge_conflict", "merge_blocked", "pull_request_not_open", "git_update_failed":
+	case "stale_revision", "merge_conflict", "merge_blocked", "pull_request_not_open", "git_update_failed", "credential_not_found", "attempt_conflict", "cycle_conflict", "correction_budget_exhausted":
 		return http.StatusConflict
+	case "helper_authentication_required", "invalid_helper_credential", "admin_authentication_required", "invalid_admin_credentials", "admin_password_required":
+		return http.StatusUnauthorized
+	case "helper_credential_scope", "csrf_required":
+		return http.StatusForbidden
+	case "log_expired":
+		return http.StatusGone
 	case "unsupported_git":
 		return http.StatusNotImplemented
 	case "result_too_large":

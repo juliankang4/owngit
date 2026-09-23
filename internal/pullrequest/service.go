@@ -2,6 +2,7 @@ package pullrequest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,14 +12,27 @@ import (
 	"owngit/internal/state"
 )
 
+type CurrentRevision struct {
+	PullRequest   state.PullRequest
+	SourceOID     string
+	TargetOID     string
+	NewlyObserved bool
+}
+
 type Service struct {
 	Store         *state.Store
 	Repositories  *repository.Manager
 	Now           func() time.Time
 	CompleteMerge func(context.Context, state.PullRequestMergeIntent, time.Time) error
+	// OnChange wakes advisory check reconciliation. It must not block or run
+	// repository commands because mutations may still hold the repository lock.
+	OnChange func(string)
 }
 
 func (service *Service) Create(ctx context.Context, input CreateInput) (*View, error) {
+	if service.OnChange != nil {
+		defer service.OnChange(input.Repository)
+	}
 	if err := repository.ValidateID(input.Repository); err != nil {
 		return nil, NewProblem("invalid_repository", "The repository identifier is invalid.")
 	}
@@ -43,8 +57,12 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 		reviewStatus = state.ReviewPending
 	case "skip":
 		reviewStatus = state.ReviewSkipped
+	case "":
+		// Review is optional. Omitting it must not create a hidden waiting
+		// state that forces an explicit skip later.
+		reviewStatus = state.ReviewNotRequested
 	default:
-		return nil, NewProblem("invalid_review_choice", "Review must be explicitly requested or skipped.")
+		return nil, NewProblem("invalid_review_choice", "Review must be request, skip, or omitted.")
 	}
 	repositoryPath, err := service.repositoryPath(ctx, input.Repository)
 	if err != nil {
@@ -66,6 +84,12 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 	}
 	if err := requireCommitHead("target", targetHead); err != nil {
 		return nil, err
+	}
+	// An expected head is checked inside the lock, so a branch that moved
+	// between the form render and the submit is reported instead of silently
+	// creating a pull request for a different revision.
+	if (input.SourceOID != "" && input.SourceOID != sourceHead.OID) || (input.TargetOID != "" && input.TargetOID != targetHead.OID) {
+		return nil, staleRevisionProblem(sourceHead.OID, targetHead.OID)
 	}
 	return service.createForHeadsLocked(ctx, input.Repository, title, source, target, reviewStatus, repositoryPath, sourceHead, targetHead)
 }
@@ -247,6 +271,9 @@ func (service *Service) recordReview(ctx context.Context, repositoryID string, n
 }
 
 func (service *Service) Merge(ctx context.Context, repositoryID string, number int64, input RevisionInput) (*View, error) {
+	if service.OnChange != nil {
+		defer service.OnChange(repositoryID)
+	}
 	if err := validateExpectedRevision(input.SourceOID, input.TargetOID); err != nil {
 		return nil, err
 	}
@@ -378,6 +405,66 @@ func (service *Service) Merge(ctx context.Context, repositoryID string, number i
 	return service.readViewLocked(ctx, repositoryPath, record)
 }
 
+// ObserveCurrentRevisions preserves the original count-only API.
+func (service *Service) ObserveCurrentRevisions(ctx context.Context, repositoryID string, limit int) (int, bool, error) {
+	revisions, more, err := service.ObserveCurrentRevisionsAfter(ctx, repositoryID, 0, limit)
+	if err != nil {
+		return 0, more, err
+	}
+	observed := 0
+	for _, revision := range revisions {
+		if revision.NewlyObserved {
+			observed++
+		}
+	}
+	return observed, more, nil
+}
+
+// ObserveCurrentRevisionsAfter durably binds one bounded circular page of
+// current open pull-request head pairs and returns those exact current pairs.
+// Advancing after to the last returned request prevents a busy request or the
+// newest fixed page from permanently starving older open requests.
+func (service *Service) ObserveCurrentRevisionsAfter(ctx context.Context, repositoryID string, after int64, limit int) ([]CurrentRevision, bool, error) {
+	if service == nil || service.Store == nil || service.Repositories == nil {
+		return nil, false, errors.New("pull request service is unavailable")
+	}
+	repositoryPath, err := service.repositoryPath(ctx, repositoryID)
+	if err != nil {
+		return nil, false, err
+	}
+	lock := service.Repositories.Locks.For(repositoryID)
+	lock.Lock()
+	defer lock.Unlock()
+	records, more, err := service.Store.OpenPullRequestsAfter(ctx, repositoryID, after, limit)
+	if err != nil {
+		return nil, false, &Problem{Code: "state_unavailable", Message: "Open pull requests could not be read for revision observation.", Cause: err}
+	}
+	revisions := make([]CurrentRevision, 0, len(records))
+	for _, record := range records {
+		source, target, err := service.readHeads(ctx, repositoryPath, record)
+		if err != nil {
+			return revisions, more, err
+		}
+		if source.Status != "commit" || target.Status != "commit" {
+			revisions = append(revisions, CurrentRevision{PullRequest: record})
+			continue
+		}
+		exists, err := service.Store.HasPullRequestRevision(ctx, repositoryID, record.Number, source.OID, target.OID)
+		if err != nil {
+			return revisions, more, &Problem{Code: "state_unavailable", Message: "Pull request revision history could not be read.", Cause: err}
+		}
+		if !exists {
+			if err := service.bindRevision(ctx, repositoryPath, record, source.OID, target.OID); err != nil {
+				return revisions, more, err
+			}
+		}
+		revisions = append(revisions, CurrentRevision{
+			PullRequest: record, SourceOID: source.OID, TargetOID: target.OID, NewlyObserved: !exists,
+		})
+	}
+	return revisions, more, nil
+}
+
 func (service *Service) ReconcileAll(ctx context.Context) error {
 	repositories, err := service.Store.Repositories(ctx)
 	if err != nil {
@@ -506,15 +593,19 @@ func (service *Service) viewForHeads(ctx context.Context, repositoryPath string,
 		Repository: record.RepositoryID, Number: record.Number, Title: record.Title, State: record.Status,
 		Source:    Revision{Branch: record.SourceBranch, OID: source.OID, Status: source.Status},
 		Target:    Revision{Branch: record.TargetBranch, OID: target.OID, Status: target.Status},
-		Checks:    Checks{Status: "not_configured", Blocking: false},
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
+	// Checks and review are advisory, so an advisory read failure is reported
+	// in the view instead of failing the whole operation, including a merge.
+	view.Checks = service.checksForRevision(ctx, record, source)
 	if source.Status == "commit" && target.Status == "commit" {
 		review, exists, err := service.Store.PullRequestReviewForRevision(ctx, record.RepositoryID, record.Number, source.OID, target.OID)
 		if err != nil {
-			return nil, &Problem{Code: "state_unavailable", Message: "The review state could not be read.", Cause: err}
-		}
-		if exists {
+			view.Review = Review{
+				Independent: false, ExecutedChecks: false,
+				ReadFailure: &ReadFailure{Code: ReadFailureReviewEvidence},
+			}
+		} else if exists {
 			submitted := review.CreatedAt
 			view.Review = Review{
 				Status: review.Status, SourceOID: review.SourceOID, TargetOID: review.TargetOID,
@@ -527,7 +618,7 @@ func (service *Service) viewForHeads(ctx context.Context, repositoryPath string,
 	} else {
 		view.Review = Review{Status: "decision_required", Independent: false, ExecutedChecks: false}
 	}
-	view.MergeEligibility = evaluateEligibility(record.Status, source, target, view.Review)
+	view.MergeEligibility = evaluateEligibility(record.Status, source, target)
 	if record.Status == state.PullRequestMerged {
 		intent, ok, err := service.Store.PullRequestMergeIntent(ctx, record.RepositoryID, record.Number, record.MergeSourceOID, record.MergeTargetOID)
 		if err != nil {
@@ -542,7 +633,93 @@ func (service *Service) viewForHeads(ctx context.Context, repositoryPath string,
 	return view, nil
 }
 
-func evaluateEligibility(requestStatus string, source, target branchHead, review Review) Eligibility {
+// checksForRevision reports the real evidence bound to the current source
+// revision. When only an older source revision recorded for this pull request
+// has evidence, or the applicable configuration changed, the result is stale
+// rather than a reused success. Evidence for other branches is never shown.
+// Checks are advisory: they never block a merge, and an advisory read failure
+// is reported as unavailable instead of failing the caller.
+func (service *Service) checksForRevision(ctx context.Context, record state.PullRequest, source branchHead) Checks {
+	repositoryID := record.RepositoryID
+	checks := Checks{Status: "absent", Advisory: true}
+	configuration, configured, err := service.Store.LatestCheckConfiguration(ctx, repositoryID)
+	if err != nil {
+		checks.Status = ""
+		checks.ReadFailure = &ReadFailure{Code: ReadFailureCheckConfiguration}
+		return checks
+	}
+	if configured {
+		checks.Configured = true
+	}
+	if source.Status != "commit" {
+		return checks
+	}
+	attempt, exists, err := service.Store.LatestCheckAttemptForRevision(ctx, repositoryID, source.OID)
+	if err != nil {
+		checks.Status = ""
+		checks.ReadFailure = &ReadFailure{Code: ReadFailureCheckEvidence}
+		return checks
+	}
+	if !exists {
+		latest, hasLatest, err := service.Store.LatestCheckAttemptForPullRequestHistory(ctx, repositoryID, record.Number)
+		if err != nil {
+			checks.Status = ""
+			checks.ReadFailure = &ReadFailure{Code: ReadFailureCheckEvidence}
+			return checks
+		}
+		if hasLatest {
+			checks = service.checksFromAttempt(latest, source.OID)
+			checks.Status = "stale"
+			checks.Stale = true
+			checks.Summary = "Latest check ran for " + shortOID(latest.RevisionOID) + " (" + latest.Status + ")"
+		}
+		return checks
+	}
+	checks = service.checksFromAttempt(attempt, source.OID)
+	if configured && attempt.ConfigurationVersion != configuration.Version {
+		checks.Status = "stale"
+		checks.Stale = true
+		checks.Summary = attempt.Summary + "; the check configuration changed"
+	}
+	return checks
+}
+
+func (service *Service) checksFromAttempt(attempt state.CheckAttempt, sourceOID string) Checks {
+	worktreeState := attempt.EffectiveWorktreeState()
+	registered := attempt.CreatedAt
+	checks := Checks{
+		Status: attempt.Status, Advisory: true, Configured: true,
+		RevisionOID: attempt.RevisionOID, WorktreeState: worktreeState,
+		AttemptID: attempt.ID, TaskID: attempt.TaskID, ConfigurationVersion: attempt.ConfigurationVersion,
+		Summary: attempt.Summary, Protection: attempt.Protection, ExecutionScope: attempt.ExecutionScope,
+		CredentialID: attempt.CredentialID, JobID: attempt.JobID,
+		LogTruncated: attempt.LogTruncated, LogError: attempt.LogError,
+		RegisteredAt: &registered, CleanupFailed: attempt.CleanupFailed(),
+	}
+	if attempt.Status != state.AttemptPending {
+		finished := attempt.FinishedAt
+		if !finished.IsZero() {
+			checks.FinishedAt = &finished
+		}
+		checks.LogStatus = service.Store.CheckLogState(attempt.LogID, attempt.LogExpiresAt, service.now())
+		checks.LogExpiresAt = attempt.LogExpiresAt
+	}
+	checks.Passed = attempt.Status == state.AttemptPassed
+	checks.TestedCommit = attempt.Status != state.AttemptPending && attempt.RevisionOID == sourceOID && worktreeState == state.WorktreeClean && !checks.CleanupFailed
+	return checks
+}
+
+func shortOID(oid string) string {
+	if len(oid) > 10 {
+		return oid[:10]
+	}
+	return oid
+}
+
+// evaluateEligibility keeps only hard Git and state blockers. Review and check
+// results are advisory, so a pending or changes-requested review no longer
+// holds a merge.
+func evaluateEligibility(requestStatus string, source, target branchHead) Eligibility {
 	eligibility := Eligibility{}
 	if requestStatus == state.PullRequestMerged {
 		eligibility.Blockers = append(eligibility.Blockers, Blocker{Code: "already_merged", Message: "The pull request is already merged."})
@@ -557,17 +734,6 @@ func evaluateEligibility(requestStatus string, source, target branchHead, review
 			eligibility.Blockers = append(eligibility.Blockers, Blocker{Code: head.name + "_branch_missing", Message: "The " + head.name + " branch no longer exists."})
 		case "not_commit":
 			eligibility.Blockers = append(eligibility.Blockers, Blocker{Code: head.name + "_not_commit", Message: "The " + head.name + " branch does not point to a commit."})
-		}
-	}
-	if source.Status == "commit" && target.Status == "commit" {
-		switch review.Status {
-		case state.ReviewApproved, state.ReviewSkipped:
-		case state.ReviewPending:
-			eligibility.Blockers = append(eligibility.Blockers, Blocker{Code: "review_pending", Message: "The requested review has no current result."})
-		case state.ReviewChangesRequested:
-			eligibility.Blockers = append(eligibility.Blockers, Blocker{Code: "changes_requested", Message: "The current review requests changes. Submit a fresh result or explicitly skip review."})
-		default:
-			eligibility.Blockers = append(eligibility.Blockers, Blocker{Code: "review_decision_required", Message: "The source or target revision changed. Request, submit, or skip review for the current revisions."})
 		}
 	}
 	eligibility.Eligible = len(eligibility.Blockers) == 0

@@ -24,10 +24,13 @@ import (
 )
 
 type Handler struct {
-	Git              *gitexec.Runner
-	Repositories     *repository.Manager
-	BackendPath      string
-	Authorize        func(*http.Request) bool
+	Git          *gitexec.Runner
+	Repositories *repository.Manager
+	BackendPath  string
+	Authorize    func(*http.Request) bool
+	// OnReceive wakes check reconciliation after git-receive-pack exits. It is
+	// advisory and must never change the already completed Git response.
+	OnReceive        func(string)
 	MaximumRequest   int64
 	MaximumResponse  int64
 	OperationTimeout time.Duration
@@ -156,6 +159,9 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	_, err = h.Git.Stream(request.Context(), h.BackendPath, repositoryPath, body, extraEnvironment, func(stdout io.Reader) error {
 		return h.copyCGIResponse(committed, stdout)
 	})
+	if err == nil && route.service == "git-receive-pack" && h.OnReceive != nil {
+		h.OnReceive(route.repositoryID)
+	}
 	if err != nil && !committed.wroteHeader {
 		status := http.StatusBadGateway
 		var maxErr *http.MaxBytesError

@@ -46,6 +46,9 @@ func fullChrome(lang Lang) Chrome {
 			GeneralUnlocked: true,
 			SetupComplete:   true,
 		},
+		// A running version the backend supplied. The renderer has no version
+		// of its own, so this is the only place one can come from.
+		Version:    "9.9.9-test",
 		Connection: Connection{Encrypted: false, Host: "owngit.local:8080"},
 		Nav: Nav{
 			Section:      SectionOverview,
@@ -149,8 +152,356 @@ func allPages(lang Lang) map[string]Page {
 		"new-repository":    NewRepositoryPage{Chrome: c, SubmitURL: "/repositories"},
 		"restore-choose":    restorePage(c, false),
 		"restore-previewed": restorePage(c, true),
-		"error":             ErrorPage{Chrome: c, Status: 404, Code: MsgErrNotFound, Detail: "/nope", RetryURL: "/"},
+		// The evidence screens appear in every state that has to render
+		// honestly, because the sweeps below check all of them: a list with
+		// records and one whose records could not be read, a create screen
+		// before and after the branch tips were observed, a pull request with
+		// failing evidence and one refused by Git, a task list and one task's
+		// runs, and a credential screen with and without a one-time secret.
+		"pull-requests":          pullRequestsPage(c, false),
+		"pull-requests-empty":    PullRequestsPage{Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabPullRequests), NewURL: "/repositories/r1/pull-requests/new"},
+		"pull-requests-unavail":  pullRequestsPage(c, true),
+		"new-pull-request":       newPullRequestPage(c, false),
+		"new-pull-request-cmp":   newPullRequestPage(c, true),
+		"pull-request":           pullRequestPage(c, prFixtureFailing),
+		"pull-request-blocked":   pullRequestPage(c, prFixtureBlocked),
+		"pull-request-merged":    pullRequestPage(c, prFixtureMerged),
+		"pull-request-unknown":   pullRequestPage(c, prFixtureUnknown),
+		"tasks":                  tasksPage(c, false),
+		"tasks-detail":           tasksPage(c, true),
+		"pull-request-pending":   pullRequestPage(c, prFixturePending),
+		"tasks-empty":            TasksPage{Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabChecks), ListURL: "/repositories/r1/tasks", HelperURL: "/repositories/r1/helper-credentials"},
+		"tasks-unclean":          uncleanTasksPage(c),
+		"pull-request-unclean":   uncleanPullRequestPage(c),
+		"helper-credentials":     helperPage(c, false),
+		"helper-credentials-new": helperPage(c, true),
+
+		// The configured-check screens appear in the states that have to
+		// render honestly: a repository with no policy at all, one with a
+		// saved and enabled policy plus recorded jobs, one opened job, a
+		// closed runtime, and the runner tokens with and without a one-time
+		// token.
+		"configured-checks":      configuredChecksPage(c, ccFixtureEnabled),
+		"configured-checks-none": configuredChecksPage(c, ccFixtureNoPolicy),
+		"configured-checks-down": configuredChecksPage(c, ccFixtureRuntimeDown),
+		"configured-checks-job":  configuredChecksPage(c, ccFixtureJobDetail),
+		"configured-checks-bad":  configuredChecksPage(c, ccFixtureJobUnreadable),
+		"runner-credentials":     runnerPage(c, false),
+		"runner-credentials-new": runnerPage(c, true),
+		"import": ImportPage{
+			Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabImport), SubmitURL: "/repositories/r1/import",
+			SelfURL: "/repositories/r1/import", Available: true, Configured: true, URL: "https://example.invalid/team/project.git",
+			Mode: "standalone", CredentialForm: "none", History: []ImportRunRow{{ID: "abc", Kind: "refresh", Status: "complete"}},
+		},
+		"new-import": NewImportPage{Chrome: c, SubmitURL: "/repositories/new-import", Name: "project"},
+
+		"error": ErrorPage{Chrome: c, Status: 404, Code: MsgErrNotFound, Detail: "/nope", RetryURL: "/"},
 	}
+}
+
+// ---------------------------------------------------------------------------
+// evidence screen fixtures
+// ---------------------------------------------------------------------------
+
+func evidenceRepo() RepositoryHeader {
+	return RepositoryHeader{ID: "r1", Name: "forge-cli", Description: "Command line tool",
+		URL: "/repositories/r1", CloneURL: "http://owngit.local:8080/git/forge-cli.git"}
+}
+
+func evidenceTabs(active RepoTab) RepoTabs {
+	return RepoTabs{
+		OverviewURL:     "/repositories/r1",
+		CodeURL:         "/repositories/r1/code",
+		CommitsURL:      "/repositories/r1/commits",
+		PullRequestsURL: "/repositories/r1/pull-requests",
+		TasksURL:        "/repositories/r1/tasks",
+		Active:          active,
+	}
+}
+
+func sourceRevision() RevisionState {
+	return RevisionState{Branch: "fix/cursor", OID: "7f2c1a0bb", ShortOID: "7f2c1a0", Status: RevisionCommit}
+}
+
+func targetRevision() RevisionState {
+	return RevisionState{Branch: "main", OID: "a41c9e2ff", ShortOID: "a41c9e2", Status: RevisionCommit}
+}
+
+// failedChecks is a real failure on the current revision: the commit was
+// tested, the tree was clean, and the commands did not pass.
+func failedChecks() CheckEvidence {
+	return CheckEvidence{
+		Status: CheckFailed, Configured: true, Advisory: true,
+		Summary:              "2 of 3 commands failed",
+		RevisionOID:          "7f2c1a0bb",
+		RevisionShortOID:     "7f2c1a0",
+		WorktreeState:        WorktreeClean,
+		TestedCommit:         true,
+		FinishedAt:           testNow.Add(-40 * time.Minute),
+		ConfigurationVersion: 4,
+		LogStatus:            LogAvailable,
+		LogExpiresAt:         testNow.AddDate(0, 0, 30),
+		AttemptID:            "att_9f31c0d4e7a2",
+		AttemptShortID:       "att_9f31c0d4",
+		Protection:           ProtectionInherited,
+		CredentialProvenance: ProvenanceAuthenticatedHelper,
+		AttemptURL:           "/repositories/r1/tasks?task=t1",
+	}
+}
+
+func diffFixture() []DiffFile {
+	return []DiffFile{
+		{Path: "internal/retry/backoff.go", Status: "modified", Additions: 4, Deletions: 2,
+			Hunks: []DiffHunk{{Header: "@@ -12,7 +12,9 @@ func Backoff", Lines: []DiffLine{
+				{Kind: "context", OldLine: 12, NewLine: 12, Text: "// Backoff caps the delay"},
+				{Kind: "add", NewLine: 13, Text: "const maxDelay = 30 * time.Second"},
+				{Kind: "del", OldLine: 13, Text: "const maxDelay = time.Hour"},
+			}}}},
+		{Path: "internal/retry/limits.go", Status: "added", Additions: 18},
+	}
+}
+
+func pullRequestsPage(c Chrome, unavailable bool) PullRequestsPage {
+	page := PullRequestsPage{
+		Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabPullRequests),
+		NewURL: "/repositories/r1/pull-requests/new",
+	}
+	if unavailable {
+		// Records that could not be read. The list must not render as empty,
+		// which would claim this repository has no pull requests.
+		page.Unavailable = true
+		page.UnavailableReason = MsgPRFailed
+		return page
+	}
+	page.Items = []PullRequestRow{
+		{Number: 12, Title: "Cap retry delays", State: PullRequestOpen,
+			URL: "/repositories/r1/pull-requests/12", UpdatedAt: testNow.Add(-2 * time.Hour),
+			Source: sourceRevision(), Target: targetRevision(),
+			Checks: failedChecks(),
+			Review: ReviewEvidence{Status: ReviewPending, SourceOID: "7f2c1a0bb", BoundToCurrentRevision: true,
+				Provenance: ReviewFromRequest, SubmittedAt: testNow.Add(-90 * time.Minute)}},
+		// A pull request with no check and no review. Both absences have to
+		// read as absences rather than as a clean result.
+		{Number: 11, Title: "Use stable key in pagination cursor", State: PullRequestOpen,
+			URL: "/repositories/r1/pull-requests/11", UpdatedAt: testNow.Add(-26 * time.Hour),
+			Source: RevisionState{Branch: "feat/cursor", OID: "3b91e7c00", ShortOID: "3b91e7c", Status: RevisionCommit},
+			Target: targetRevision(),
+			Checks: CheckEvidence{Status: CheckAbsent, Configured: true, Advisory: true}},
+		{Number: 9, Title: "Document the restore screen", State: PullRequestMerged,
+			URL: "/repositories/r1/pull-requests/9", UpdatedAt: testNow.AddDate(0, 0, -5),
+			Source: RevisionState{Branch: "docs/restore", Status: RevisionMissing},
+			Target: targetRevision(),
+			Checks: CheckEvidence{Status: CheckPassed, Configured: true, Advisory: true, TestedCommit: true,
+				WorktreeState: WorktreeClean, RevisionShortOID: "5d0aa13", FinishedAt: testNow.AddDate(0, 0, -5),
+				LogStatus: LogExpired},
+			Review: ReviewEvidence{Status: ReviewApproved, BoundToCurrentRevision: true, ReviewerLabel: "codex",
+				Provenance: ReviewFromExternalTool, SubmittedAt: testNow.AddDate(0, 0, -5)}},
+	}
+	return page
+}
+
+// newPullRequestPage is the create screen before and after the backend read
+// both branch tips. The create form exists only in the second state, because
+// there is nothing to create from until the tips are known.
+func newPullRequestPage(c Chrome, observed bool) NewPullRequestPage {
+	page := NewPullRequestPage{
+		Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabPullRequests),
+		SelectURL: "/repositories/r1/pull-requests/new",
+		SubmitURL: "/repositories/r1/pull-requests",
+		CancelURL: "/repositories/r1/pull-requests",
+		Branches: []RefOption{
+			{Name: "main", IsDefault: true},
+			{Name: "fix/cursor"},
+			{Name: "feat/cursor"},
+		},
+		Source: RevisionState{Branch: "fix/cursor"},
+		Target: RevisionState{Branch: "main"},
+	}
+	if !observed {
+		return page
+	}
+	page.Observed = true
+	page.Source = sourceRevision()
+	page.Target = targetRevision()
+	page.Title = "Cap retry delays"
+	page.ReviewChoice = ReviewChoiceRequest
+	page.Changes = diffFixture()
+	return page
+}
+
+type prFixture int
+
+const (
+	// prFixtureFailing has a failed check and a review for an earlier
+	// revision. Merging stays available: neither is a gate.
+	prFixtureFailing prFixture = iota
+	// prFixtureBlocked is refused by Git, which is the only thing that
+	// disables the merge control.
+	prFixtureBlocked
+	prFixtureMerged
+	// prFixtureUnknown carries statuses this package does not recognise, to
+	// prove an unknown value never renders as a pass.
+	prFixtureUnknown
+	// prFixturePending is an attempt registered before it ran, which has a
+	// record but no outcome.
+	prFixturePending
+)
+
+func pullRequestPage(c Chrome, kind prFixture) PullRequestPage {
+	page := PullRequestPage{
+		Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabPullRequests),
+		Number: 12, Title: "Cap retry delays", State: PullRequestOpen,
+		UpdatedAt: testNow.Add(-2 * time.Hour),
+		Source:    sourceRevision(), Target: targetRevision(),
+		Checks:           failedChecks(),
+		Changes:          diffFixture(),
+		SelfURL:          "/repositories/r1/pull-requests/12",
+		ListURL:          "/repositories/r1/pull-requests",
+		TasksURL:         "/repositories/r1/tasks",
+		ReviewRequestURL: "/repositories/r1/pull-requests/12/review/request",
+		ReviewSkipURL:    "/repositories/r1/pull-requests/12/review/skip",
+		MergeURL:         "/repositories/r1/pull-requests/12/merge",
+		Merge:            MergeAvailability{Eligible: true},
+	}
+	switch kind {
+	case prFixtureFailing:
+		// Approved, but for a commit that is no longer the tip. It must not
+		// read as current approval.
+		page.Review = ReviewEvidence{Status: ReviewApproved, SourceOID: "5d0aa1399", ShortSourceOID: "5d0aa13",
+			ReviewerLabel: "codex", Provenance: ReviewFromExternalTool, SubmittedAt: testNow.AddDate(0, 0, -1)}
+	case prFixtureBlocked:
+		page.Merge = MergeAvailability{Blockers: []MergeBlocker{
+			{Code: "merge_conflict", Detail: "internal/retry/backoff.go"},
+			{Code: "some_new_backend_reason"},
+		}}
+		page.Review = ReviewEvidence{Status: ReviewUnavailable, BoundToCurrentRevision: true,
+			Provenance: ReviewFromRequest, Detail: "provider returned 503", SubmittedAt: testNow.Add(-30 * time.Minute)}
+	case prFixtureMerged:
+		page.State = PullRequestMerged
+		page.Merge = MergeAvailability{Blockers: []MergeBlocker{{Code: "already_merged"}}}
+		page.Merged = &MergeRecord{Mode: "merge-commit", OID: "c07f4ab21", ShortOID: "c07f4ab",
+			ReceiptRef: "refs/owngit/merges/12", MergedAt: testNow.Add(-10 * time.Minute)}
+		page.Review = ReviewEvidence{Status: ReviewSkipped, BoundToCurrentRevision: true, Provenance: ReviewFromSkip,
+			SubmittedAt: testNow.Add(-20 * time.Minute)}
+	case prFixtureUnknown:
+		page.Checks = CheckEvidence{Status: "quantum_superposition", Configured: true, Advisory: true,
+			RevisionShortOID: "7f2c1a0", WorktreeState: "teleported", LogStatus: "shredded",
+			Protection: "sandboxed", FinishedAt: testNow.Add(-5 * time.Minute)}
+		page.Review = ReviewEvidence{Status: "vibes_ok", BoundToCurrentRevision: true, SubmittedAt: testNow}
+	case prFixturePending:
+		page.Checks = CheckEvidence{Status: CheckPending, Configured: true, Advisory: true,
+			RevisionOID: "7f2c1a0bb", RevisionShortOID: "7f2c1a0", WorktreeState: WorktreeClean,
+			RegisteredAt: testNow.Add(-2 * time.Minute), AttemptID: "att_pending01",
+			AttemptShortID: "att_pending01", ConfigurationVersion: 4,
+			Protection: ProtectionInherited, CredentialProvenance: ProvenanceAuthenticatedHelper}
+		page.Review = ReviewEvidence{Status: ReviewPending, BoundToCurrentRevision: true,
+			Provenance: ReviewFromRequest, SubmittedAt: testNow.Add(-2 * time.Minute)}
+	}
+	return page
+}
+
+func attemptFixture() AttemptRecord {
+	return AttemptRecord{
+		ID: "att_9f31c0d4e7a2", ShortID: "att_9f31c0d4", Status: CheckFailed,
+		Summary:     "2 of 3 commands failed",
+		RevisionOID: "7f2c1a0bb", RevisionShortOID: "7f2c1a0",
+		WorktreeState: WorktreeClean, FinishedAt: testNow.Add(-40 * time.Minute),
+		DurationMS: 94210, ConfigurationVersion: 4,
+		LogStatus: LogAvailable, LogExpiresAt: testNow.AddDate(0, 0, 30),
+		Protection: ProtectionInherited, CredentialProvenance: ProvenanceAuthenticatedHelper,
+		Sequence: 3, CycleID: "cyc_2", TimeoutMS: 600000, OutputLimitBytes: 2 << 20,
+		Results: []CheckResultLine{
+			{Name: "build", Command: "go build ./...", Status: CheckPassed, ExitCode: 0, HasExitCode: true, DurationMS: 8120},
+			{Name: "test", Command: "go test ./...", Status: CheckFailed, ExitCode: 1, HasExitCode: true,
+				DurationMS: 81400, OutputExcerpt: "--- FAIL: TestBackoffCap\n    backoff_test.go:41: want 30s, got 1h", Truncated: true},
+			// A command whose environment was missing. It is not a failure and
+			// not a pass, and it kept no output.
+			{Name: "lint", Command: "golangci-lint run", Status: CheckUnavailable, DurationMS: 90},
+		},
+	}
+}
+
+// uncleanAttemptFixture is a run whose checks passed and whose cleanup did
+// not, which is the combination that must never read as a plain pass.
+func uncleanAttemptFixture() AttemptRecord {
+	attempt := attemptFixture()
+	attempt.Status = CheckPassed
+	attempt.Summary = "3 of 3 commands passed"
+	attempt.Sequence = 47
+	attempt.Results = []CheckResultLine{
+		{Name: "build", Command: "go build ./...", Status: CheckPassed, ExitCode: 0, HasExitCode: true, DurationMS: 8120},
+		{Name: "test", Command: "go test ./...", Status: CheckPassed, ExitCode: 0, HasExitCode: true,
+			DurationMS: 81400, OutputExcerpt: "ok  owngit/internal/retry 0.4s",
+			CleanupError: `killpg 40211: operation not permitted <&"'>`},
+	}
+	return attempt
+}
+
+func tasksPage(c Chrome, detail bool) TasksPage {
+	page := TasksPage{
+		Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabChecks),
+		ListURL:   "/repositories/r1/tasks",
+		HelperURL: "/repositories/r1/helper-credentials",
+		Configuration: CheckConfigurationView{
+			Configured: true, Version: 4, RecordedAt: testNow.AddDate(0, 0, -3),
+			Checks: []CheckDefinitionLine{
+				{Name: "build", Command: "go build ./..."},
+				{Name: "test", Command: "go test ./..."},
+				{Name: "lint", Command: "golangci-lint run"},
+			},
+		},
+	}
+	if detail {
+		// One task's runs. Its budget is the task's, so a new commit does not
+		// grant more attempts.
+		page.Detail = &TaskDetail{
+			Task: TaskSummary{ID: "t1", ShortID: "t1", Title: "Cap retry delays", Status: TaskExhausted,
+				CyclesUsed: 3, CycleLimit: 3, CreatedAt: testNow.AddDate(0, 0, -1), UpdatedAt: testNow.Add(-40 * time.Minute),
+				InitialCheckDone: true, URL: "/repositories/r1/tasks?task=t1"},
+			Attempts:          []AttemptRecord{attemptFixture()},
+			AttemptsTruncated: true,
+		}
+		return page
+	}
+	page.Tasks = []TaskSummary{
+		{ID: "t1", ShortID: "t1", Title: "Cap retry delays", Status: TaskExhausted,
+			CyclesUsed: 3, CycleLimit: 3, CreatedAt: testNow.AddDate(0, 0, -1),
+			UpdatedAt: testNow.Add(-40 * time.Minute), URL: "/repositories/r1/tasks?task=t1",
+			InitialCheckDone: true, Latest: attemptFixture()},
+		// A task with no run yet. The absence has to be visible.
+		{ID: "t2", ShortID: "t2", Title: "Use stable key in pagination cursor", Status: TaskActive,
+			CyclesUsed: 0, CycleLimit: 3, CreatedAt: testNow.Add(-3 * time.Hour),
+			UpdatedAt: testNow.Add(-3 * time.Hour), URL: "/repositories/r1/tasks?task=t2"},
+	}
+	return page
+}
+
+// helperTestToken is the fixture secret. It is a synthetic value, never a real
+// credential, and TestIssuedTokenIsNotPersisted checks where it may appear.
+const helperTestToken = "ogh_FIXTUREvalue0000000000000000000000000000"
+
+func helperPage(c Chrome, issued bool) HelperCredentialsPage {
+	page := HelperCredentialsPage{
+		Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabChecks),
+		SelfURL:   "/repositories/r1/helper-credentials",
+		SubmitURL: "/repositories/r1/helper-credentials",
+		Credentials: []HelperCredentialRow{
+			{ID: "hc1", Label: "dev-mini", CreatedAt: testNow.AddDate(0, 0, -9),
+				LastUsedAt: testNow.Add(-40 * time.Minute)},
+			// Issued and never used, which is how an unused credential is
+			// spotted and revoked.
+			{ID: "hc2", Label: "laptop", CreatedAt: testNow.AddDate(0, 0, -2)},
+			// Revoked credentials stay listed as a record.
+			{ID: "hc0", Label: "old-ci", CreatedAt: testNow.AddDate(0, 0, -60),
+				LastUsedAt: testNow.AddDate(0, 0, -30), RevokedAt: testNow.AddDate(0, 0, -20), Revoked: true},
+		},
+	}
+	if issued {
+		page.Issued = HelperCredentialRow{ID: "hc3", Label: "build-box", CreatedAt: testNow}
+		page.IssuedToken = helperTestToken
+		page.Credentials = append(page.Credentials, page.Issued)
+	}
+	return page
 }
 
 // restorePage is the restore screen before and after a preview. Previewed is
@@ -205,6 +556,7 @@ func repoPage(c Chrome, tab RepoTab) RepositoryPage {
 		Repo: RepositoryHeader{ID: "r1", Name: "forge-cli", Description: "Command line tool",
 			URL: "/repositories/r1", CloneURL: "http://owngit.local:8080/git/forge-cli.git"},
 		OverviewURL: "/repositories/r1", CodeURL: "/repositories/r1/code", CommitsURL: "/repositories/r1/commits",
+		PullRequestsURL: "/repositories/r1/pull-requests", TasksURL: "/repositories/r1/tasks",
 		RestoreURL: "/repositories/r1/restore",
 		Ref: RefSelection{
 			Name: "main", Kind: "branch", IsDefault: true, Revision: "a41c9e2ff", ShortRevision: "a41c9e2",
@@ -947,17 +1299,61 @@ func TestSkipLinkAndMainLandmarkExist(t *testing.T) {
 }
 
 func TestRepositoryTabsUseSemanticNavigation(t *testing.T) {
+	// The pull request and checks sections are optional, so the strip has the
+	// three tabs a caller that does not offer them supplies, and five when it
+	// does. A section without an address renders no tab rather than a link
+	// that goes nowhere.
 	r := newRenderer(t)
 	for _, tab := range []RepoTab{RepoTabOverview, RepoTabCode, RepoTabCommits} {
-		out := render(t, r, repoPage(fullChrome(LangEN), tab))
-		if strings.Count(out, `class="rtabs__btn"`) != 3 {
-			t.Errorf("tab %s: expected three section links", tab)
+		page := repoPage(fullChrome(LangEN), tab)
+		page.PullRequestsURL = ""
+		page.TasksURL = ""
+		out := render(t, r, page)
+		if got := strings.Count(out, `class="rtabs__btn"`); got != 3 {
+			t.Errorf("tab %s: %d section links, want the three always offered", tab, got)
 		}
-		if strings.Count(out, `class="rtabs__btn" href="/repositories/r1`) != 3 {
-			t.Errorf("tab %s: section links are not real URLs", tab)
+		if got := strings.Count(out, `class="rtabs__btn" href="/repositories/r1`); got != 3 {
+			t.Errorf("tab %s: %d section links are real URLs, want 3", tab, got)
 		}
 		if !strings.Contains(out, `aria-current="page"`) {
 			t.Errorf("tab %s: the current section is not marked", tab)
+		}
+	}
+}
+
+func TestOptionalRepositoryTabsRenderWhenOffered(t *testing.T) {
+	// The defect this covers: RepositoryPage accepted the two optional
+	// addresses and rendered neither, so the new sections were unreachable
+	// from the repository screens that are supposed to lead to them.
+	r := newRenderer(t)
+	for _, tab := range []RepoTab{RepoTabOverview, RepoTabCode, RepoTabCommits} {
+		out := render(t, r, repoPage(fullChrome(LangEN), tab))
+		if got := strings.Count(out, `class="rtabs__btn"`); got != 5 {
+			t.Errorf("tab %s: %d section links, want five when both are offered", tab, got)
+		}
+		for _, want := range []string{
+			`href="/repositories/r1/pull-requests"`,
+			`href="/repositories/r1/tasks"`,
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("tab %s: the strip does not link to %s", tab, want)
+			}
+		}
+		if strings.Contains(out, `href=""`) {
+			t.Errorf("tab %s: an absent section rendered as an empty link", tab)
+		}
+	}
+
+	// The evidence screens share the same strip, so the reader can move
+	// between all five sections from either side.
+	for name, page := range map[string]Page{
+		"pull-requests":      pullRequestsPage(fullChrome(LangEN), false),
+		"tasks":              tasksPage(fullChrome(LangEN), false),
+		"helper-credentials": helperPage(fullChrome(LangEN), false),
+	} {
+		out := render(t, r, page)
+		if got := strings.Count(out, `class="rtabs__btn"`); got != 5 {
+			t.Errorf("%s: %d section links, want five", name, got)
 		}
 	}
 }
@@ -1197,4 +1593,33 @@ func TestRenderRejectsAnUnknownPage(t *testing.T) {
 	if err := r.Render(&buf, nil); err == nil {
 		t.Error("rendering a nil page succeeded")
 	}
+}
+
+// uncleanTasksPage shows one attempt that passed its checks and failed to
+// clean up, with a second attempt carrying only the aggregate.
+func uncleanTasksPage(c Chrome) TasksPage {
+	page := tasksPage(c, true)
+	aggregateOnly := uncleanAttemptFixture()
+	aggregateOnly.ID = "att_1b0c77ae"
+	aggregateOnly.ShortID = "att_1b0c77a"
+	aggregateOnly.Sequence = 46
+	aggregateOnly.Results = nil
+	aggregateOnly.CleanupFailed = true
+	page.Detail.Attempts = []AttemptRecord{uncleanAttemptFixture(), aggregateOnly}
+	return page
+}
+
+// uncleanPullRequestPage shows check evidence whose status says passed while
+// the cleanup aggregate says a process was left behind.
+func uncleanPullRequestPage(c Chrome) PullRequestPage {
+	page := pullRequestPage(c, prFixtureFailing)
+	page.Checks.Status = CheckPassed
+	page.Checks.Passed = true
+	page.Checks.TestedCommit = true
+	page.Checks.WorktreeState = WorktreeClean
+	page.Checks.Stale = false
+	page.Checks.ReadFailure = nil
+	page.Checks.CleanupFailed = true
+	page.Checks.Summary = "3 of 3 commands passed"
+	return page
 }

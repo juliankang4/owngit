@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/publishdir"
 	"owngit/internal/state"
 )
 
@@ -23,6 +24,7 @@ var (
 	ErrInvalidName        = errors.New("invalid repository name")
 	ErrInvalidDescription = errors.New("invalid repository description")
 	ErrNameTaken          = errors.New("repository name is already in use")
+	ErrUnsupportedFormat  = errors.New("unsupported repository object format")
 )
 
 type Manager struct {
@@ -31,7 +33,10 @@ type Manager struct {
 	Locks            *gitexec.Locks
 	Root             string
 	restorePublisher func(context.Context, string, string, string, string) error
-	mu               sync.RWMutex
+	// OnChange wakes advisory check reconciliation after a repository ref write.
+	// It must be nonblocking and must not execute repository commands.
+	OnChange func(string)
+	mu       sync.RWMutex
 }
 
 func (m *Manager) SetRoot(root string) {
@@ -46,18 +51,58 @@ func (m *Manager) RepositoryRoot() string {
 	return m.Root
 }
 
-func (m *Manager) Create(ctx context.Context, name, description string) (state.Repository, error) {
-	name = strings.TrimSpace(name)
-	if !validName.MatchString(name) || name == "." || name == ".." || strings.HasSuffix(strings.ToLower(name), ".git") {
-		return state.Repository{}, fmt.Errorf("%w: use 1-100 letters, numbers, dots, underscores, or hyphens and do not end in .git", ErrInvalidName)
+// CreateOptions configure repository creation. ObjectFormat selects the
+// repository hash algorithm: an empty value keeps the Git default (SHA-1),
+// and "sha256" requires a Git that supports it.
+type CreateOptions struct {
+	ObjectFormat string
+}
+
+// ValidateName applies the repository name and description rules used by
+// Create, so an importer can reject a name before starting network work.
+func ValidateName(name, description string) error {
+	trimmed := strings.TrimSpace(name)
+	if !validName.MatchString(trimmed) || trimmed == "." || trimmed == ".." || strings.HasSuffix(strings.ToLower(trimmed), ".git") {
+		return fmt.Errorf("%w: use 1-100 letters, numbers, dots, underscores, or hyphens and do not end in .git", ErrInvalidName)
+	}
+	switch strings.ToLower(trimmed) {
+	case "new", "new-import":
+		return fmt.Errorf("%w: %q is reserved for a repository form", ErrInvalidName, trimmed)
 	}
 	if len(description) > 500 {
-		return state.Repository{}, ErrInvalidDescription
+		return ErrInvalidDescription
+	}
+	return nil
+}
+
+func (m *Manager) Create(ctx context.Context, name, description string) (state.Repository, error) {
+	return m.CreateWithOptions(ctx, name, description, CreateOptions{})
+}
+
+// CreateWithOptions creates, configures and records a new bare repository.
+// The directory is visible at its final path before this method returns, so an
+// initial import uses InitBareRepository and records the repository row only
+// after refs and HEAD are ready.
+func (m *Manager) CreateWithOptions(ctx context.Context, name, description string, options CreateOptions) (state.Repository, error) {
+	if options.ObjectFormat != "" && options.ObjectFormat != ObjectFormatSHA1 && options.ObjectFormat != ObjectFormatSHA256 {
+		return state.Repository{}, fmt.Errorf("%w: %q", ErrUnsupportedFormat, options.ObjectFormat)
+	}
+	name = strings.TrimSpace(name)
+	if err := ValidateName(name, description); err != nil {
+		return state.Repository{}, err
 	}
 	id := strings.ToLower(name)
 	if err := ValidateID(id); err != nil {
 		return state.Repository{}, fmt.Errorf("%w: %v", ErrInvalidName, err)
 	}
+	if m.Locks == nil {
+		return state.Repository{}, errors.New("repository locks are unavailable")
+	}
+	// Hold the repository lock from the existence check through the row write so
+	// an initial import cannot configure this id between those steps.
+	lock := m.Locks.For(id)
+	lock.Lock()
+	defer lock.Unlock()
 	if _, exists, err := m.Store.Repository(ctx, id); err != nil {
 		return state.Repository{}, err
 	} else if exists {
@@ -89,19 +134,10 @@ func (m *Manager) Create(ctx context.Context, name, description string) (state.R
 		}
 	}()
 
-	if _, err := m.Git.Run(ctx, root, nil, "init", "--bare", "--initial-branch=main", temporaryPath); err != nil {
+	if err := m.InitBareRepository(ctx, temporaryPath, options); err != nil {
 		return state.Repository{}, err
 	}
-	config := repositoryConfig()
-	for _, setting := range config {
-		if _, err := m.Git.Run(ctx, root, nil, "--git-dir", temporaryPath, "config", "--local", setting[0], setting[1]); err != nil {
-			return state.Repository{}, err
-		}
-	}
-	if err := writeRetentionHook(temporaryPath, m.Git); err != nil {
-		return state.Repository{}, err
-	}
-	if err := os.Rename(temporaryPath, finalPath); err != nil {
+	if err := publishdir.Rename(ctx, temporaryPath, finalPath); err != nil {
 		return state.Repository{}, fmt.Errorf("publish repository directory: %w", err)
 	}
 	created = true
@@ -110,6 +146,42 @@ func (m *Manager) Create(ctx context.Context, name, description string) (state.R
 		return state.Repository{}, fmt.Errorf("record repository (the new bare repository remains at %s for owner recovery): %w", finalPath, err)
 	}
 	return repository, nil
+}
+
+// InitBareRepository initializes a bare repository at directory. It does not
+// rename the directory or record a repository row.
+func (m *Manager) InitBareRepository(ctx context.Context, directory string, options CreateOptions) error {
+	if options.ObjectFormat != "" && options.ObjectFormat != ObjectFormatSHA1 && options.ObjectFormat != ObjectFormatSHA256 {
+		return fmt.Errorf("%w: %q", ErrUnsupportedFormat, options.ObjectFormat)
+	}
+	initArguments := []string{"init", "--bare", "--initial-branch=main"}
+	if options.ObjectFormat == ObjectFormatSHA256 {
+		initArguments = append(initArguments, "--object-format=sha256")
+	}
+	initArguments = append(initArguments, ".")
+	if _, err := m.Git.Run(ctx, directory, nil, initArguments...); err != nil {
+		return err
+	}
+	if options.ObjectFormat != "" {
+		format, err := m.ObjectFormat(ctx, directory)
+		if err != nil {
+			return err
+		}
+		if format != options.ObjectFormat {
+			return fmt.Errorf("Git created a %s repository instead of %s", format, options.ObjectFormat)
+		}
+	}
+	for _, setting := range repositoryConfig() {
+		if _, err := m.Git.Run(ctx, directory, nil, "--git-dir", ".", "config", "--local", setting[0], setting[1]); err != nil {
+			return err
+		}
+	}
+	return writeRetentionHook(directory, m.Git)
+}
+
+// CanonicalStorageRoot returns the cleaned repository storage root.
+func (m *Manager) CanonicalStorageRoot() (string, error) {
+	return canonicalRoot(m.RepositoryRoot())
 }
 
 func (m *Manager) Path(id string) (string, error) {
@@ -229,7 +301,7 @@ func (m *Manager) prepareExisting(ctx context.Context, hookRuntime *gitexec.Runn
 		lock := m.Locks.For(stored.ID)
 		lock.Lock()
 		for _, setting := range repositoryConfig() {
-			_, err = m.Git.Run(ctx, "", nil, "--git-dir", path, "config", "--local", setting[0], setting[1])
+			_, err = m.Git.Run(ctx, path, nil, "--git-dir", ".", "config", "--local", setting[0], setting[1])
 			if err != nil {
 				break
 			}

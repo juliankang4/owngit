@@ -14,23 +14,33 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"owngit/internal/auth"
 	"owngit/internal/bootstrap"
+	"owngit/internal/checkrun"
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
+	"owngit/internal/importsync"
 	"owngit/internal/pullrequest"
 	"owngit/internal/recovery"
 	"owngit/internal/repository"
 	"owngit/internal/server"
 	"owngit/internal/state"
+	"owngit/internal/version"
 	"owngit/internal/webui"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		// A completed check run already wrote its JSON result and only needs
+		// its conventional exit code.
+		var exit *checkExit
+		if errors.As(err, &exit) {
+			os.Exit(exit.code)
+		}
 		if !writeStructuredCommandError(os.Stdout, err) {
 			log.Printf("error: %v", err)
 		}
@@ -42,9 +52,17 @@ func run(arguments []string) error {
 	// Global help must be handled before command dispatch: the flag package
 	// treats -h/--help as a request for help, and without this check those
 	// flags fall into "serve" and make it exit with a flag error.
-	if len(arguments) > 0 && (arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help") {
-		printUsage(os.Stdout)
-		return nil
+	if len(arguments) > 0 {
+		switch arguments[0] {
+		case "help", "-h", "--help":
+			printUsage(os.Stdout)
+			return nil
+		case "version", "--version", "-version":
+			// Version output must not open storage: it is useful before setup
+			// and on a host whose state directory is unavailable.
+			fmt.Printf("owngit %s\n", version.Version)
+			return nil
+		}
 	}
 	command := "serve"
 	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
@@ -65,6 +83,20 @@ func run(arguments []string) error {
 		return restoreState(arguments)
 	case "pr":
 		return prCommand(arguments)
+	case "check":
+		return checkCommand(arguments)
+	case "helper-credential":
+		return helperCredentialCommand(arguments)
+	case "check-policy":
+		return checkPolicyCommand(arguments)
+	case "check-job":
+		return checkJobCommand(arguments)
+	case "runner-credential":
+		return runnerCredentialCommand(arguments)
+	case "runner":
+		return runnerCommand(arguments)
+	case "import":
+		return importCommand(arguments)
 	default:
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", command)
@@ -72,12 +104,23 @@ func run(arguments []string) error {
 }
 
 func serve(arguments []string) error {
+	return serveWithOpener(arguments, bootstrap.Open, log.Printf)
+}
+
+func serveWithOpener(arguments []string, opener func(string) error, logf func(string, ...any)) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return serveWithContext(ctx, arguments, opener, logf)
+}
+
+func serveWithContext(ctx context.Context, arguments []string, opener func(string) error, logf func(string, ...any)) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	listenAddress := flags.String("listen", "127.0.0.1:7654", "HTTP listen address")
 	baseURL := flags.String("base-url", "", "owner-facing HTTP origin")
 	gitPath := flags.String("git", "", "Git executable path")
+	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
 	var allowedHosts stringList
 	flags.Var(&allowedHosts, "allowed-host", "additional accepted Host name (repeatable)")
@@ -87,18 +130,26 @@ func serve(arguments []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("serve does not accept positional arguments")
 	}
+	if *openOwner && *noOpen {
+		return errors.New("serve --open and --no-open cannot be used together")
+	}
 
-	ctx := context.Background()
+	// The offline lock is taken before the state is opened, so a migration
+	// cannot race another owner that is already serving the same directory.
+	// The directory is created first because the lock file lives inside it.
+	if err := os.MkdirAll(*stateDir, 0o700); err != nil {
+		return fmt.Errorf("create state directory: %w", err)
+	}
+	unlock, err := state.AcquireOfflineLock(*stateDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	store, err := state.Open(ctx, *stateDir)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	unlock, err := state.AcquireOfflineLock(store.Dir())
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))
 	if err != nil {
 		return err
@@ -128,6 +179,14 @@ func serve(arguments []string) error {
 		if err := pullRequests.ReconcileAll(ctx); err != nil {
 			return err
 		}
+		// Stored review rows belong to no running process any more, so a row
+		// left nonterminal by a stopped server gets its honest outcome here.
+		if err := store.ReconcileDirectReviewInterruptions(ctx, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
+	if _, err := store.PruneCheckLogs(ctx, time.Now()); err != nil {
+		log.Printf("could not prune expired check logs: %v", err)
 	}
 	gitHandler, err := githttp.New(runner, repositories, backendPath, 4)
 	if err != nil {
@@ -169,61 +228,164 @@ func serve(arguments []string) error {
 	}
 
 	home, _ := os.UserHomeDir()
+	checkCoordinator := &checkrun.Coordinator{Store: store, Repositories: repositories, PullRequests: pullRequests, Logf: logf}
+	imports := &importsync.Service{Store: store, Repositories: repositories, Logf: logf}
+	repositories.OnChange = checkCoordinator.Wake
+	// Registered after the store is opened, so in-flight imports record their
+	// outcome before the store closes.
+	importRuntime := &importLifetime{ctx: ctx, service: imports, logf: logf}
+	defer importRuntime.stop()
+	if settings.Initialized {
+		importRuntime.start()
+	}
 	application := &server.App{
 		Store: store, Auth: authentication, Repositories: repositories, PullRequests: pullRequests, GitHTTP: gitHandler,
 		Renderer: renderer, Hosts: policy, SuggestedRepositoryRoot: filepath.Join(home, "OwnGit-Repositories"),
-		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true,
+		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true, Version: version.Version,
+		WakeChecks: checkCoordinator.Wake, Imports: imports,
+		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
+		// First-run setup inside this process starts the same import runtime
+		// that an initialized startup starts above.
+		OnSetupComplete: importRuntime.start,
 	}
 	gitHandler.Authorize = application.AuthorizeGit
+	gitHandler.OnReceive = checkCoordinator.Wake
+	pullRequests.OnChange = checkCoordinator.Wake
+	checkContext, cancelChecks := context.WithCancel(ctx)
+	defer cancelChecks()
+	if err := checkCoordinator.Start(checkContext); err != nil {
+		var unavailable *checkrun.RuntimeUnavailableError
+		if !errors.As(err, &unavailable) {
+			return err
+		}
+		application.CheckRuntimeUnavailableCode = unavailable.Code
+		application.CheckRuntimeUnavailableReason = checkRuntimeUnavailableReason(unavailable.Code)
+		logf("configured check runtime unavailable; ordinary Git service remains available and OwnGit must be restarted after repair: %v", err)
+	} else {
+		defer func() {
+			stopContext, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			if err := checkCoordinator.Stop(stopContext); err != nil {
+				logf("configured check shutdown: %v", err)
+			}
+		}()
+	}
 
 	if !settings.Initialized {
 		path, err := (&bootstrap.Issuer{Store: store, BaseURL: origin}).Issue(ctx)
 		if err != nil {
 			return err
 		}
-		log.Printf("owner setup file: %s", path)
-		if !*noOpen {
-			if err := bootstrap.Open(path); err != nil {
-				log.Printf("could not open setup file automatically: %v", err)
-			}
+		logf("owner setup file: %s", path)
+		if target := serveOpenTarget(false, *openOwner, *noOpen, path, origin); target != "" {
+			openServeTarget(target, "setup file", opener, logf)
 		}
 	}
 
 	httpServer := &http.Server{
 		Handler: application.Handler(), ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second,
+		ReadTimeout: 30 * time.Second, WriteTimeout: server.ImportRunRequestTimeout(importsync.DefaultLimits().RunTimeout),
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
-	log.Printf("OwnGit listening on %s", listener.Addr())
+	logf("OwnGit listening on %s", listener.Addr())
+	// An initialized installation opens only on explicit request, after the
+	// listener exists and the HTTP server has started. First-run opening above
+	// continues to use the private setup file exactly once.
+	if target := serveOpenTarget(settings.Initialized, *openOwner, *noOpen, "", origin); target != "" {
+		openServeTarget(target, "owner URL", opener, logf)
+	}
 
-	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	select {
-	case err := <-errCh:
+	case serveErr := <-errCh:
 		_ = httpServer.Close()
-		if waitErr := gitHandler.Wait(context.Background()); waitErr != nil {
-			return waitErr
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		gitErr := gitHandler.Wait(shutdownContext)
+		cancel()
+		if gitErr != nil {
+			return fmt.Errorf("wait for Git process cleanup: %w", gitErr)
 		}
-		if !errors.Is(err, http.ErrServerClosed) {
-			return err
+		if !errors.Is(serveErr, http.ErrServerClosed) {
+			return serveErr
 		}
 		return nil
-	case <-signalContext.Done():
+	case <-ctx.Done():
+		// Stop import runs first, so their handlers return promptly with the
+		// recorded outcome instead of outliving the HTTP shutdown window.
+		importRuntime.stop()
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		shutdownErr := httpServer.Shutdown(shutdownContext)
-		cancel()
 		if shutdownErr != nil {
 			_ = httpServer.Close()
 		}
-		if err := gitHandler.Wait(context.Background()); err != nil {
-			return fmt.Errorf("wait for Git process cleanup: %w", err)
+		gitErr := gitHandler.Wait(shutdownContext)
+		if gitErr != nil {
+			return fmt.Errorf("wait for Git process cleanup: %w", gitErr)
 		}
 		if shutdownErr != nil {
 			return fmt.Errorf("graceful shutdown: %w", shutdownErr)
 		}
 		return nil
+	}
+}
+
+// importLifetime owns import reconciliation, the scheduler, and import
+// shutdown for one serving process. start runs at most once, either when an
+// initialized installation starts serving or when first-run setup completes
+// while serving; both share the serve context and the same shutdown.
+type importLifetime struct {
+	ctx       context.Context
+	service   *importsync.Service
+	logf      func(string, ...any)
+	mu        sync.Mutex
+	started   bool
+	stopped   bool
+	scheduler *importsync.Scheduler
+}
+
+func (lifetime *importLifetime) start() {
+	lifetime.mu.Lock()
+	defer lifetime.mu.Unlock()
+	if lifetime.started || lifetime.stopped {
+		return
+	}
+	lifetime.started = true
+	if err := lifetime.service.Reconcile(lifetime.ctx); err != nil {
+		lifetime.logf("import reconciliation failed; ordinary Git service remains available: %v", err)
+		lifetime.service.NoteStartupFailure(err)
+	}
+	scheduler := &importsync.Scheduler{Service: lifetime.service, Logf: lifetime.logf}
+	if err := scheduler.Start(lifetime.ctx); err != nil {
+		lifetime.logf("import scheduler did not start; ordinary Git service remains available: %v", err)
+		return
+	}
+	lifetime.scheduler = scheduler
+}
+
+// importShutdownTimeout bounds how long serve waits for scheduled and manual
+// import runs to record their outcome after cancellation.
+const importShutdownTimeout = 45 * time.Second
+
+// stop stops the scheduler, then cancels and drains manual runs, bounded,
+// and releases the import runtime lease. It is idempotent.
+func (lifetime *importLifetime) stop() {
+	lifetime.mu.Lock()
+	defer lifetime.mu.Unlock()
+	if lifetime.stopped {
+		return
+	}
+	lifetime.stopped = true
+	stopContext, cancel := context.WithTimeout(context.Background(), importShutdownTimeout)
+	defer cancel()
+	if lifetime.scheduler != nil {
+		if err := lifetime.scheduler.Stop(stopContext); err != nil {
+			lifetime.logf("import scheduler shutdown: %v", err)
+		}
+	}
+	if err := lifetime.service.Shutdown(stopContext); err != nil {
+		lifetime.logf("import shutdown: %v; the next start reconciles unfinished runs", err)
 	}
 }
 
@@ -418,6 +580,36 @@ func readPrivatePassword(path string) (string, error) {
 	return password, nil
 }
 
+func checkRuntimeUnavailableReason(code string) string {
+	switch code {
+	case checkrun.RuntimeUnavailableWorkspace:
+		return "Configured checks are unavailable because the private workspace could not be acquired. Repair the workspace and restart OwnGit."
+	case checkrun.RuntimeUnavailableRecovery:
+		return "Configured checks are unavailable because restart authority reconciliation failed. Repair check state and restart OwnGit."
+	default:
+		return "Configured checks are unavailable. Repair the check runtime and restart OwnGit."
+	}
+}
+
+func serveOpenTarget(initialized, explicitlyOpen, noOpen bool, setupPath, origin string) string {
+	if !initialized {
+		if noOpen {
+			return ""
+		}
+		return setupPath
+	}
+	if explicitlyOpen {
+		return origin
+	}
+	return ""
+}
+
+func openServeTarget(target, label string, opener func(string) error, logf func(string, ...any)) {
+	if err := opener(target); err != nil {
+		logf("could not open %s automatically: %v", label, err)
+	}
+}
+
 func ownerOrigin(configured, listenAddress string) (string, error) {
 	if configured == "" {
 		host, port, err := net.SplitHostPort(listenAddress)
@@ -452,7 +644,7 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|backup|restore|pr] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|backup|restore|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|version] [options]")
 }
 
 type stringList []string

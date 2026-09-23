@@ -50,7 +50,7 @@ func (service *Service) resolveBranch(ctx context.Context, repositoryPath, branc
 	if !exists {
 		return branchHead{Branch: branch, Ref: ref, Status: "missing"}, nil
 	}
-	result, err := service.Repositories.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "cat-file", "-t", oid)
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-t", oid)
 	if err != nil {
 		return branchHead{}, &Problem{Code: "repository_unavailable", Message: "The branch object could not be inspected.", Cause: err}
 	}
@@ -61,7 +61,7 @@ func (service *Service) resolveBranch(ctx context.Context, repositoryPath, branc
 }
 
 func (service *Service) readRef(ctx context.Context, repositoryPath, ref string) (string, bool, error) {
-	result, err := service.Repositories.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "rev-parse", "--verify", "--quiet", "--end-of-options", ref)
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "--quiet", "--end-of-options", ref)
 	if err != nil {
 		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
 			return "", false, nil
@@ -100,7 +100,7 @@ func (service *Service) ensureRevisionRefs(ctx context.Context, repositoryPath s
 		"prepare", "commit",
 	)
 	input := strings.NewReader(strings.Join(commands, "\n") + "\n")
-	if _, err := service.Repositories.Git.Run(ctx, "", input, "--git-dir", repositoryPath, "update-ref", "--stdin"); err != nil {
+	if _, err := service.Repositories.Git.Run(ctx, repositoryPath, input, "--git-dir", ".", "update-ref", "--stdin"); err != nil {
 		source, sourceErr := service.resolveBranch(ctx, repositoryPath, record.SourceBranch)
 		target, targetErr := service.resolveBranch(ctx, repositoryPath, record.TargetBranch)
 		if sourceErr == nil && targetErr == nil && (source.OID != sourceOID || target.OID != targetOID) {
@@ -128,7 +128,7 @@ func (service *Service) ensureStoredRevisionRefs(ctx context.Context, repository
 			}
 			continue
 		}
-		if _, err := service.Repositories.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "cat-file", "-e", binding.oid+"^{commit}"); err != nil {
+		if _, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-e", binding.oid+"^{commit}"); err != nil {
 			return &Problem{Code: "repository_integrity_error", Message: "A recorded pull request revision object is unavailable.", Cause: err}
 		}
 		commands = append(commands, "create "+binding.name+" "+binding.oid)
@@ -137,14 +137,14 @@ func (service *Service) ensureStoredRevisionRefs(ctx context.Context, repository
 		return nil
 	}
 	commands = append(commands, "prepare", "commit")
-	if _, err := service.Repositories.Git.Run(ctx, "", strings.NewReader(strings.Join(commands, "\n")+"\n"), "--git-dir", repositoryPath, "update-ref", "--stdin"); err != nil {
+	if _, err := service.Repositories.Git.Run(ctx, repositoryPath, strings.NewReader(strings.Join(commands, "\n")+"\n"), "--git-dir", ".", "update-ref", "--stdin"); err != nil {
 		return &Problem{Code: "repository_unavailable", Message: "Recorded pull request revision refs could not be repaired.", Cause: err}
 	}
 	return nil
 }
 
 func (service *Service) ensureProtectedMergeRef(ctx context.Context, repositoryPath, ref, oid, objectType string, record *state.PullRequest, intent state.PullRequestMergeIntent) error {
-	result, err := service.Repositories.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "cat-file", "-t", oid)
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-t", oid)
 	if err != nil {
 		return &Problem{Code: "repository_integrity_error", Message: "A planned merge object is unavailable.", Cause: err}
 	}
@@ -169,7 +169,7 @@ func (service *Service) ensureProtectedMergeRef(ctx context.Context, repositoryP
 		)
 	}
 	commands = append(commands, "create "+ref+" "+oid, "prepare", "commit")
-	if _, err := service.Repositories.Git.Run(ctx, "", strings.NewReader(strings.Join(commands, "\n")+"\n"), "--git-dir", repositoryPath, "update-ref", "--stdin"); err != nil {
+	if _, err := service.Repositories.Git.Run(ctx, repositoryPath, strings.NewReader(strings.Join(commands, "\n")+"\n"), "--git-dir", ".", "update-ref", "--stdin"); err != nil {
 		actual, exists, readErr := service.readRef(ctx, repositoryPath, ref)
 		if readErr == nil && exists && actual == oid {
 			return nil
@@ -268,7 +268,7 @@ func (service *Service) planMerge(ctx context.Context, repositoryPath string, in
 }
 
 func (service *Service) calculateMergeTree(ctx context.Context, repositoryPath, targetOID, sourceOID string) (string, error) {
-	result, err := service.Repositories.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "merge-tree", "--write-tree", targetOID, sourceOID)
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "merge-tree", "--write-tree", targetOID, sourceOID)
 	if err != nil {
 		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
 			return "", NewProblem("merge_conflict", "The source and target branches have merge conflicts.")
@@ -297,8 +297,8 @@ func (service *Service) createMergeCommit(ctx context.Context, repositoryPath st
 		"GIT_COMMITTER_DATE=" + identityDate,
 	}
 	message := fmt.Sprintf("Merge pull request #%d: %s\n", record.Number, record.Title)
-	result, err := service.Repositories.Git.RunWithEnvironment(ctx, "", strings.NewReader(message), environment,
-		"--git-dir", repositoryPath, "commit-tree", intent.TreeOID, "-p", intent.TargetOID, "-p", intent.SourceOID)
+	result, err := service.Repositories.Git.RunWithEnvironment(ctx, repositoryPath, strings.NewReader(message), environment,
+		"--git-dir", ".", "commit-tree", intent.TreeOID, "-p", intent.TargetOID, "-p", intent.SourceOID)
 	if err != nil {
 		return "", &Problem{Code: "repository_unavailable", Message: "Git could not create the merge commit.", Cause: err}
 	}
@@ -321,7 +321,7 @@ func (service *Service) publishMerge(ctx context.Context, repositoryPath string,
 		"prepare",
 		"commit",
 	}, "\n") + "\n"
-	_, err := service.Repositories.Git.Run(ctx, "", strings.NewReader(commands), "--git-dir", repositoryPath, "update-ref", "--stdin")
+	_, err := service.Repositories.Git.Run(ctx, repositoryPath, strings.NewReader(commands), "--git-dir", ".", "update-ref", "--stdin")
 	return err
 }
 
@@ -417,7 +417,7 @@ func (service *Service) validateProtectedObjectRef(ctx context.Context, reposito
 }
 
 func (service *Service) validateObjectType(ctx context.Context, repositoryPath, oid, expectedType string) error {
-	result, err := service.Repositories.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "cat-file", "-t", oid)
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-t", oid)
 	if err != nil {
 		return &Problem{Code: "repository_integrity_error", Message: "A protected merge object is unavailable.", Cause: err}
 	}
@@ -428,7 +428,7 @@ func (service *Service) validateObjectType(ctx context.Context, repositoryPath, 
 }
 
 func (service *Service) validateMergeCommitObject(ctx context.Context, repositoryPath, resultOID string, intent state.PullRequestMergeIntent) error {
-	result, err := service.Repositories.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "cat-file", "-p", resultOID)
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-p", resultOID)
 	if err != nil {
 		return &Problem{Code: "repository_integrity_error", Message: "The planned merge commit is unavailable.", Cause: err}
 	}
@@ -452,7 +452,7 @@ func (service *Service) validateMergeCommitObject(ctx context.Context, repositor
 }
 
 func (service *Service) isAncestor(ctx context.Context, repositoryPath, ancestor, descendant string) (bool, error) {
-	_, err := service.Repositories.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "merge-base", "--is-ancestor", ancestor, descendant)
+	_, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "merge-base", "--is-ancestor", ancestor, descendant)
 	if err == nil {
 		return true, nil
 	}
@@ -463,7 +463,7 @@ func (service *Service) isAncestor(ctx context.Context, repositoryPath, ancestor
 }
 
 func (service *Service) hasMergeBase(ctx context.Context, repositoryPath, left, right string) (bool, error) {
-	_, err := service.Repositories.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "merge-base", left, right)
+	_, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "merge-base", left, right)
 	if err == nil {
 		return true, nil
 	}

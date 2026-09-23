@@ -170,11 +170,17 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		app.renderError(writer, request, http.StatusConflict, webui.MsgSetupRaceLost, "")
 		return
 	}
+	// Setup is committed, so this process serves it even when removing the
+	// obsolete owner setup files failed. The failure is still reported, and
+	// the next capability issue removes those files.
+	app.Repositories.SetRoot(canonical)
+	if app.OnSetupComplete != nil {
+		app.OnSetupComplete()
+	}
 	if cleanupErr != nil {
 		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
 		return
 	}
-	app.Repositories.SetRoot(canonical)
 	app.clearCookie(writer, request, setupCookie, true)
 	http.Redirect(writer, request, "/?notice=setup_completed", http.StatusSeeOther)
 }

@@ -50,6 +50,77 @@ func TestWindowsFullFileAccessAcceptsCanonicalMasksOnly(t *testing.T) {
 	}
 }
 
+func TestWindowsCreatePrivateFileProtectsTheHeldObject(t *testing.T) {
+	directory := t.TempDir()
+	ordinaryPath := filepath.Join(directory, "ordinary")
+	ordinaryName, err := windows.UTF16PtrFromString(ordinaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinaryHandle, err := windows.CreateFile(ordinaryName, windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinary := os.NewFile(uintptr(ordinaryHandle), ordinaryPath)
+	ordinaryMoved := ordinaryPath + ".moved"
+	if err := os.Rename(ordinaryPath, ordinaryMoved); err != nil {
+		_ = ordinary.Close()
+		t.Fatalf("replacement positive control failed: %v", err)
+	}
+	if err := ordinary.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(directory, "private")
+	file, err := CreatePrivateFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, _, err := processIdentity()
+	if err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := validateOwnerOnlyHandle(windows.Handle(file.Fd()), user, false); err != nil {
+		_ = file.Close()
+		t.Fatalf("creation descriptor: %v", err)
+	}
+	if err := ProtectPrivateHandle(file, false); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := validateOwnerOnlyHandle(windows.Handle(file.Fd()), user, false); err != nil {
+		_ = file.Close()
+		t.Fatalf("protected descriptor: %v", err)
+	}
+	if err := os.Rename(path, path+".moved"); err == nil {
+		_ = file.Close()
+		t.Fatal("private handle allowed path replacement")
+	}
+	if _, err := file.WriteString("private\n"); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidatePrivateFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if duplicate, err := CreatePrivateFile(path); !os.IsExist(err) {
+		if duplicate != nil {
+			_ = duplicate.Close()
+		}
+		t.Fatalf("exclusive create error=%v, want an existing-file error", err)
+	}
+}
+
 func TestWindowsStateTargetResolutionAndOwnerOnlyACL(t *testing.T) {
 	directory := t.TempDir()
 	resolved, err := finalWindowsPath(directory)

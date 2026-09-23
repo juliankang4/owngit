@@ -66,7 +66,7 @@ func (m *Manager) Activity(ctx context.Context, id string, maximumCommits int) (
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	refsResult, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/owngit/retained/heads")
+	refsResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)", "refs/heads", "refs/owngit/retained/heads")
 	if err != nil {
 		return Activity{}, err
 	}
@@ -134,8 +134,8 @@ func (m *Manager) activityLog(ctx context.Context, repositoryPath string, roots,
 	}
 	input := activityRevisionInput(roots, excluded)
 	format := "%H%x00%S%x00%aI%x00%an%x00%s"
-	args := []string{"--git-dir", repositoryPath, "log", "--stdin", "-z", "--source", "--no-decorate", "--max-count=" + strconv.Itoa(maximum+1), "--format=" + format}
-	result, err := m.Git.RunWithOutputLimit(ctx, "", strings.NewReader(input), 64<<20, args...)
+	args := []string{"--git-dir", ".", "log", "--stdin", "-z", "--source", "--no-decorate", "--max-count=" + strconv.Itoa(maximum+1), "--format=" + format}
+	result, err := m.Git.RunWithOutputLimit(ctx, repositoryPath, strings.NewReader(input), 64<<20, args...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -187,7 +187,7 @@ func retainedProvenance(ctx context.Context, runner retainedRunner, repositoryPa
 		return nil, errors.New("invalid retained ref kind")
 	}
 	prefix := "refs/owngit/provenance/" + kind + "/"
-	result, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "for-each-ref", "--format=%(objectname)%00%(refname)", strings.TrimSuffix(prefix, "/"))
+	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(objectname)%00%(refname)", strings.TrimSuffix(prefix, "/"))
 	if err != nil {
 		return nil, err
 	}
@@ -229,11 +229,11 @@ func (m *Manager) RetainedRefs(ctx context.Context, id string) ([]RetainedRef, e
 
 func retainedRefs(ctx context.Context, runner retainedRunner, repositoryPath string) ([]RetainedRef, error) {
 	format := "%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)"
-	result, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "for-each-ref", "--format="+format, "refs/owngit/retained")
+	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format="+format, "refs/owngit/retained")
 	if err != nil {
 		return nil, err
 	}
-	currentResult, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/tags")
+	currentResult, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/tags")
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +304,7 @@ func retainedRefs(ctx context.Context, runner retainedRunner, repositoryPath str
 
 	unmerged := make(map[string]map[string]bool, len(currentBranchOIDs))
 	for currentOID := range currentBranchOIDs {
-		unmergedResult, err := runner.Run(ctx, "", nil, "--git-dir", repositoryPath, "for-each-ref", "--no-merged="+currentOID, "--format=%(objectname)", "refs/owngit/retained/heads")
+		unmergedResult, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--no-merged="+currentOID, "--format=%(objectname)", "refs/owngit/retained/heads")
 		if err != nil {
 			return nil, err
 		}
@@ -360,7 +360,7 @@ func batchPeelRetainedTags(ctx context.Context, runner retainedRunner, repositor
 		input.WriteString(oid)
 		input.WriteString("^{}\n")
 	}
-	result, err := runner.Run(ctx, "", strings.NewReader(input.String()), "--git-dir", repositoryPath, "cat-file", "--batch-check=%(objectname) %(objecttype)")
+	result, err := runner.Run(ctx, repositoryPath, strings.NewReader(input.String()), "--git-dir", ".", "cat-file", "--batch-check=%(objectname) %(objecttype)")
 	if err != nil {
 		return nil, fmt.Errorf("peel retained tags: %w", err)
 	}

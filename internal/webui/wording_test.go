@@ -20,6 +20,36 @@ import (
 //
 // The owner is told what the application does and does not do, and decides.
 
+func TestKoreanDeveloperTermsUseFamiliarWording(t *testing.T) {
+	expected := map[MessageCode]string{
+		MsgRepoTabsLabel:          "저장소 메뉴",
+		MsgPrereqHTTPMiss:         "Git의 HTTP 서비스를 찾지 못했습니다. HTTP로 클론하거나 푸시할 수 없습니다.",
+		MsgSettingsCloneTitle:     "클론 주소",
+		MsgSettingsCloneHelp:      "클론할 때 이 주소 뒤에 저장소 이름을 붙이세요.",
+		MsgRepoNameRules:          "영문자, 숫자, 점, 하이픈, 밑줄을 사용합니다. 이 이름이 클론 주소가 됩니다.",
+		MsgRepoNameInvalid:        "영문자, 숫자, 점, 하이픈, 밑줄만 사용하세요.",
+		MsgRepoCloneTitle:         "클론 주소",
+		MsgRepoDetached:           "브랜치가 아니라 특정 커밋을 보고 있습니다.",
+		MsgCodePathMissing:        "이 커밋에는 그 경로가 없습니다.",
+		MsgActivityNoChecks:       "활동은 커밋의 작성 날짜를 작성자가 기록한 시간대 기준으로 집계합니다. 체크를 실행했거나 통과했다는 뜻은 아닙니다.",
+		MsgImportKindInitial:      "처음 가져오기",
+		MsgImportKindRefresh:      "새로고침",
+		MsgImportStatusComplete:   "완료",
+		MsgImportStatusFailed:     "실패",
+		MsgImportStatusCancelled:  "취소됨",
+		MsgImportRefTracked:       "원본과 같음",
+		MsgImportRefDiverged:      "달라짐",
+		MsgImportCredentialBasic:  "사용자 이름과 비밀번호",
+		MsgImportCredentialBearer: "액세스 토큰",
+		MsgImportCredentialNone:   "없음",
+	}
+	for code, want := range expected {
+		if got := Text(LangKO, code); got != want {
+			t.Errorf("%s Korean text=%q, want %q", code, got, want)
+		}
+	}
+}
+
 func connectionMessages() []MessageCode {
 	return []MessageCode{
 		MsgSetupInsecureLabel, MsgSetupInsecureHelp, MsgSetupInsecureNeed,

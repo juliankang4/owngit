@@ -269,7 +269,8 @@ func traceGitCommands(t *testing.T, app *App) string {
 }
 
 // traceActivityLogs replaces the app's Git runner with a wrapper that records
-// one tab-separated line per invocation as "<git-dir>\t<subcommand>\t<kind>".
+// one tab-separated line per invocation as "<effective-git-dir>\t<subcommand>\t<kind>".
+// A relative Git directory is resolved from the process working directory.
 // History walks are recorded as "current" or "retained" from the revision
 // input on stdin, so a test can count real walks per repository instead of
 // inferring them from another command's absence.
@@ -299,6 +300,7 @@ func traceActivityLogs(t *testing.T, app *App) string {
 		"  if [ \"$prev\" = \"--git-dir\" ]; then dir=\"$a\"; fi\n" +
 		"  prev=\"$a\"\n" +
 		"done\n" +
+		"if [ \"$dir\" = \".\" ]; then dir=$(pwd -P) || exit 1; fi\n" +
 		"activity=0\n" +
 		"for a in \"$@\"; do\n" +
 		"  if [ \"$a\" = \"--source\" ]; then activity=1; fi\n" +

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=OwnGit
+Comment=Private Git storage and browser dashboard
+Exec=/usr/bin/owngit serve --open
+Terminal=true
+Categories=Development;Network;
+StartupNotify=false

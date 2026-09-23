@@ -1,0 +1,60 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}
+
+<p class="backline"><a class="back" href="{{.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
+
+<div class="rhead">
+  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+  {{with $p.Repo.Description}}<p class="rhead__desc">{{.}}</p>{{end}}
+</div>
+
+{{template "repoTabs" dict "Lang" $lang "T" $p.Tabs}}
+
+<div class="rpane">
+<section class="sec">
+  <div class="sec__bar">
+    <h2>{{bi $lang "pr.title"}}</h2>
+    {{if not $p.Unavailable}}<span class="sec__n">{{biCount $lang "item" (len $p.Items)}}</span>{{end}}
+    {{with $p.NewURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "pr.new.title"}}</a></span>{{end}}
+  </div>
+
+  {{/* Records that could not be read are missing, not absent. An empty list
+       here would say this repository has no pull requests, which is a
+       different and possibly false claim. */}}
+  {{if $p.Unavailable}}
+    <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "pr.list.unavailable"}}{{with $p.UnavailableReason}} {{bi $lang .}}{{end}}</span></p>
+  {{else if $p.Items}}
+    <div class="prlist">
+      {{range $p.Items}}
+        <a class="prrow" href="{{.URL}}">
+          <span class="prrow__id mono">{{prNumber .Number}}</span>
+          <span class="prrow__t">{{.Title}}</span>
+          <span class="prrow__s">{{template "stateChip" dict "Lang" $lang "S" (prState .State)}}</span>
+          <span class="prrow__b">
+            <span class="mono">{{.Source.Branch}}</span>
+            <span class="prrow__into">{{bi $lang "pr.branch_flow"}}</span>
+            <span class="mono">{{.Target.Branch}}</span>
+          </span>
+          {{/* The row states each kind of evidence as its own chip. A pull
+               request with no check and no review reads as two absences
+               rather than as a clean one. */}}
+          <span class="prrow__e">
+            {{template "stateChip" dict "Lang" $lang "S" (checkState .Checks)}}
+            {{template "stateChip" dict "Lang" $lang "S" (reviewState .Review)}}
+          </span>
+          <span class="prrow__w">{{biRelative $lang $now .UpdatedAt}}</span>
+        </a>
+      {{end}}
+    </div>
+  {{else}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "pr.list.empty"}}</p>
+      <p>{{bi $lang "pr.list.start"}}</p>
+      {{with $p.NewURL}}
+        <a class="btn btn--primary" href="{{.}}">{{icon "plus"}}{{bi $lang "pr.new.title"}}</a>
+      {{end}}
+    </div>
+  {{end}}
+</section>
+</div>
+{{end}}

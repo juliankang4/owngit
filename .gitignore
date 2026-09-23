@@ -32,3 +32,15 @@ Desktop.ini
 /dist/
 /coverage/
 /coverage.out
+
+# Go binaries built at the repository root, test binaries and profiles
+/owngit
+/owngit.exe
+/release
+/release.exe
+*.test
+*.test.exe
+*.prof
+
+# Scratch directory for comparing regenerated notices (see CONTRIBUTING.md)
+/THIRD_PARTY_NOTICES.new/

@@ -8,20 +8,77 @@ import (
 )
 
 type RecoveryState struct {
-	AccessMode              string
-	AccessPasswordHash      string
-	AdminPasswordHash       string
-	Repositories            []Repository
-	PullRequests            []PullRequest
-	PullRequestRevisions    []PullRequestRevision
-	PullRequestReviews      []PullRequestReview
-	PullRequestMergeIntents []PullRequestMergeIntent
+	AccessMode               string
+	AccessPasswordHash       string
+	AdminPasswordHash        string
+	Repositories             []Repository
+	PullRequests             []PullRequest
+	PullRequestRevisions     []PullRequestRevision
+	PullRequestReviews       []PullRequestReview
+	PullRequestMergeIntents  []PullRequestMergeIntent
+	Tasks                    []RecoveryTask
+	CheckPolicies            []CheckPolicy
+	CheckJobs                []CheckJob
+	CheckConfigurations      []CheckConfiguration
+	CheckCycles              []RecoveryCheckCycle
+	CheckAttempts            []CheckAttempt
+	CheckResults             []CheckResultRecord
+	DirectReviewSettings     []DirectReviewSettings
+	DirectReviewTaskContexts []DirectReviewTaskContext
+	DirectReviewRequests     []DirectReviewRequest
+	ImportSources            []ImportSource
+	ImportRuns               []ImportRun
+	ImportRunOrderKnown      bool
+	ImportObservations       []ImportObservation
+	ImportIntents            []ImportIntent
+	// ImportSchedules and ImportInitialDestinations are machine-local. A
+	// portable snapshot leaves them empty. Validation rejects a schedule that
+	// does not reference a source and any initial-destination row.
+	ImportSchedules           []ImportSchedule
+	ImportInitialDestinations []ImportInitialDestination
+}
+
+// RecoveryTask contains only the task facts stored in the tasks table.
+// Runtime presentation fields are derived from attempts and reservations.
+type RecoveryTask struct {
+	ID           string
+	RepositoryID string
+	Title        string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// RecoveryCheckCycle contains one reservation. Its displayed attempt is
+// reconstructed from attempts that refer to the cycle.
+type RecoveryCheckCycle struct {
+	ID                    string
+	TaskID                string
+	RepositoryID          string
+	Sequence              int64
+	ReservedAt            time.Time
+	ReservedAfterSequence int64
+}
+
+// CheckResultRecord is one portable per-check result row. It carries the
+// attempt identifier because results are stored separately from attempts.
+type CheckResultRecord struct {
+	AttemptID string
+	CheckResult
 }
 
 // RecoverySnapshot reads all portable state in one database transaction.
-// Sessions, setup capabilities, login attempts, trusted hosts, repository-root
-// paths, and insecure-transport consent are intentionally excluded.
+// Raw check logs, sessions, setup capabilities, login attempts, trusted hosts,
+// repository-root paths, and insecure-transport consent are excluded.
 func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
+	if err := s.ReconcileDirectReviewInterruptions(ctx, time.Now().UTC()); err != nil {
+		return RecoveryState{}, fmt.Errorf("reconcile direct review state before snapshot: %w", err)
+	}
+	// Active import runs and unconfirmed publication intents are not portable
+	// authority. Record them as interrupted before the snapshot is taken so the
+	// manifest never claims a run finished while a process stopped mid-flight.
+	if _, _, err := s.InterruptImportAuthority(ctx, time.Now().UTC()); err != nil {
+		return RecoveryState{}, fmt.Errorf("interrupt import authority before snapshot: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return RecoveryState{}, err
@@ -41,7 +98,7 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 		}
 		values[key] = value
 	}
-	if err := rows.Close(); err != nil {
+	if err := closeRows(rows); err != nil {
 		return RecoveryState{}, err
 	}
 	if values["initialized"] != "true" {
@@ -66,25 +123,26 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 			snapshot.AdminPasswordHash = encoded
 		}
 	}
-	if err := passwords.Close(); err != nil {
+	if err := closeRows(passwords); err != nil {
 		return RecoveryState{}, err
 	}
 
-	repositories, err := tx.QueryContext(ctx, `SELECT id,name,description,created_at FROM repositories ORDER BY id`)
+	repositories, err := tx.QueryContext(ctx, `SELECT r.id,r.name,r.description,r.created_at,COALESCE(c.attempt_sequence,0)
+		FROM repositories r LEFT JOIN repository_attempt_counters c ON c.repository_id=r.id ORDER BY r.id`)
 	if err != nil {
 		return RecoveryState{}, err
 	}
 	for repositories.Next() {
 		var repository Repository
 		var createdAt int64
-		if err := repositories.Scan(&repository.ID, &repository.Name, &repository.Description, &createdAt); err != nil {
+		if err := repositories.Scan(&repository.ID, &repository.Name, &repository.Description, &createdAt, &repository.AttemptSequence); err != nil {
 			repositories.Close()
 			return RecoveryState{}, err
 		}
 		repository.CreatedAt = unixTime(createdAt)
 		snapshot.Repositories = append(snapshot.Repositories, repository)
 	}
-	if err := repositories.Close(); err != nil {
+	if err := closeRows(repositories); err != nil {
 		return RecoveryState{}, err
 	}
 	if snapshot.AdminPasswordHash == "" || (snapshot.AccessMode == "password" && snapshot.AccessPasswordHash == "") {
@@ -96,8 +154,26 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 	if err := readPullRequestRecovery(ctx, tx, &snapshot); err != nil {
 		return RecoveryState{}, err
 	}
+	if err := readCheckRecovery(ctx, tx, &snapshot); err != nil {
+		return RecoveryState{}, err
+	}
+	if err := readDirectReviewRecovery(ctx, tx, &snapshot); err != nil {
+		return RecoveryState{}, err
+	}
+	if err := readImportRecovery(ctx, tx, &snapshot); err != nil {
+		return RecoveryState{}, err
+	}
 	if err := ValidatePullRequestRecovery(snapshot); err != nil {
 		return RecoveryState{}, fmt.Errorf("portable pull request state is invalid: %w", err)
+	}
+	if err := ValidateCheckRecovery(snapshot); err != nil {
+		return RecoveryState{}, fmt.Errorf("portable check state is invalid: %w", err)
+	}
+	if err := ValidateDirectReviewRecovery(snapshot); err != nil {
+		return RecoveryState{}, fmt.Errorf("portable direct review state is invalid: %w", err)
+	}
+	if err := ValidateImportRecovery(snapshot); err != nil {
+		return RecoveryState{}, fmt.Errorf("portable import state is invalid: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return RecoveryState{}, err
@@ -119,6 +195,23 @@ func (s *Store) RestoreRecoveryState(ctx context.Context, repositoryRoot string,
 	}
 	if err := ValidatePullRequestRecovery(snapshot); err != nil {
 		return fmt.Errorf("invalid recovered pull request state: %w", err)
+	}
+	if err := ValidateCheckRecovery(snapshot); err != nil {
+		return fmt.Errorf("invalid recovered check state: %w", err)
+	}
+	if err := ValidateDirectReviewRecovery(snapshot); err != nil {
+		return fmt.Errorf("invalid recovered direct review state: %w", err)
+	}
+	if err := ValidateImportRecovery(snapshot); err != nil {
+		return fmt.Errorf("invalid recovered import state: %w", err)
+	}
+	s.credentialRestoreMu.Lock()
+	defer s.credentialRestoreMu.Unlock()
+	for _, source := range snapshot.ImportSources {
+		s.beginImportCredentialMutationLocked(source.RepositoryID)
+		if err := s.removeImportCredentialFile(source.RepositoryID); err != nil {
+			return fmt.Errorf("invalidate recovered import credential %q: %w", source.RepositoryID, err)
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -150,7 +243,7 @@ func (s *Store) RestoreRecoveryState(ctx context.Context, repositoryRoot string,
 			return err
 		}
 	}
-	for _, table := range []string{"pull_request_merge_intents", "pull_request_reviews", "pull_request_revisions", "pull_requests", "sessions", "bootstrap", "login_attempts", "trusted_hosts", "passwords", "repositories"} {
+	for _, table := range []string{"import_initial_destinations", "import_stagings", "import_schedules", "import_publication_intents", "import_ref_observations", "import_runs", "import_sources", "check_observations", "check_runner_credentials", "check_jobs", "check_policies", "direct_review_requests", "direct_review_task_contexts", "direct_review_probes", "direct_review_repository_settings", "direct_review_credentials", "check_raw_logs", "check_results", "check_attempts", "check_cycles", "check_configurations", "tasks", "repository_attempt_counters", "pull_request_merge_intents", "pull_request_reviews", "pull_request_revisions", "pull_requests", "sessions", "bootstrap", "login_attempts", "trusted_hosts", "passwords", "repositories"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 			return err
 		}
@@ -170,13 +263,36 @@ func (s *Store) RestoreRecoveryState(ctx context.Context, repositoryRoot string,
 		if _, err := tx.ExecContext(ctx, `INSERT INTO repositories(id,name,description,created_at) VALUES(?,?,?,?)`, repository.ID, repository.Name, repository.Description, repository.CreatedAt.Unix()); err != nil {
 			return fmt.Errorf("restore repository %q metadata: %w", repository.ID, err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO repository_attempt_counters(repository_id,attempt_sequence) VALUES(?,?)`, repository.ID, repository.AttemptSequence); err != nil {
+			return fmt.Errorf("restore repository %q attempt counter: %w", repository.ID, err)
+		}
 	}
 	if err := restorePullRequestRecovery(ctx, tx, snapshot); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := restoreCheckRecovery(ctx, tx, snapshot); err != nil {
+		return err
+	}
+	if err := restoreDirectReviewRecovery(ctx, tx, snapshot); err != nil {
+		return err
+	}
+	if err := restoreImportRecovery(ctx, tx, snapshot); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, source := range snapshot.ImportSources {
+		s.completeImportCredentialMutationLocked(source.RepositoryID)
+	}
+	return nil
 }
 
 func unixTime(seconds int64) time.Time {
 	return time.Unix(seconds, 0)
+}
+
+// unixNanoTime reads the sub-second attempt ordering columns.
+func unixNanoTime(nanoseconds int64) time.Time {
+	return time.Unix(0, nanoseconds)
 }

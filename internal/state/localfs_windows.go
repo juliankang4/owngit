@@ -94,14 +94,64 @@ func windowsNetworkPath(path string) bool {
 // still retain GENERIC_ALL for child objects.
 const fileAllAccess windows.ACCESS_MASK = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1ff
 
-func ProtectPrivatePath(path string, directory bool) error {
-	user, defaultOwner, err := processIdentity()
+// CreatePrivateFile creates a new file with its final owner-only descriptor and
+// keeps delete sharing disabled while the returned handle is open.
+func CreatePrivateFile(path string) (*os.File, error) {
+	user, _, err := processIdentity()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := validateProcessOwned(path, user, defaultOwner); err != nil {
-		return err
+	descriptor, err := ownerOnlySecurityDescriptor(user)
+	if err != nil {
+		return nil, err
 	}
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	attributes := &windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: descriptor,
+	}
+	access := uint32(windows.GENERIC_WRITE | windows.READ_CONTROL | windows.WRITE_DAC | windows.WRITE_OWNER)
+	handle, err := windows.CreateFile(name, access, 0, attributes, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	file := os.NewFile(uintptr(handle), path)
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, &os.PathError{Op: "open", Path: path, Err: errors.New("create private file handle")}
+	}
+	return file, nil
+}
+
+func ownerOnlySecurityDescriptor(user *windows.SID) (*windows.SECURITY_DESCRIPTOR, error) {
+	acl, err := ownerOnlyACL(user, false)
+	if err != nil {
+		return nil, err
+	}
+	descriptor, err := windows.NewSecurityDescriptor()
+	if err != nil {
+		return nil, fmt.Errorf("create owner-only security descriptor: %w", err)
+	}
+	if err := descriptor.SetOwner(user, false); err != nil {
+		return nil, fmt.Errorf("set private-file owner: %w", err)
+	}
+	if err := descriptor.SetDACL(acl, true, false); err != nil {
+		return nil, fmt.Errorf("set private-file ACL: %w", err)
+	}
+	if err := descriptor.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED); err != nil {
+		return nil, fmt.Errorf("protect private-file ACL: %w", err)
+	}
+	relative, err := descriptor.ToSelfRelative()
+	if err != nil {
+		return nil, fmt.Errorf("encode owner-only security descriptor: %w", err)
+	}
+	return relative, nil
+}
+
+func ownerOnlyACL(user *windows.SID, directory bool) (*windows.ACL, error) {
 	inheritance := uint32(windows.NO_INHERITANCE)
 	if directory {
 		inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
@@ -117,7 +167,22 @@ func ProtectPrivatePath(path string, directory bool) error {
 		},
 	}}, nil)
 	if err != nil {
-		return fmt.Errorf("build owner-only ACL: %w", err)
+		return nil, fmt.Errorf("build owner-only ACL: %w", err)
+	}
+	return acl, nil
+}
+
+func ProtectPrivatePath(path string, directory bool) error {
+	user, defaultOwner, err := processIdentity()
+	if err != nil {
+		return err
+	}
+	if err := validateProcessOwned(path, user, defaultOwner); err != nil {
+		return err
+	}
+	acl, err := ownerOnlyACL(user, directory)
+	if err != nil {
+		return err
 	}
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
@@ -125,6 +190,35 @@ func ProtectPrivatePath(path string, directory bool) error {
 		return fmt.Errorf("set owner-only ACL: %w", err)
 	}
 	return validateOwnerOnly(path, user, directory)
+}
+
+// ProtectPrivateHandle applies and verifies the owner-only ACL through the held
+// handle, so a pathname replacement cannot change what was protected.
+func ProtectPrivateHandle(file *os.File, directory bool) error {
+	user, _, err := processIdentity()
+	if err != nil {
+		return err
+	}
+	acl, err := ownerOnlyACL(user, directory)
+	if err != nil {
+		return err
+	}
+	handle := windows.Handle(file.Fd())
+	if err := windows.SetSecurityInfo(handle, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		user, nil, acl, nil); err != nil {
+		return fmt.Errorf("set owner-only ACL on handle: %w", err)
+	}
+	return validateOwnerOnlyHandle(handle, user, directory)
+}
+
+func validateOwnerOnlyHandle(handle windows.Handle, user *windows.SID, directory bool) error {
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read private-handle ACL: %w", err)
+	}
+	return validateOwnerOnlyDescriptor(descriptor, user, directory)
 }
 
 func ValidatePrivateFile(path string) error {
@@ -140,6 +234,22 @@ func ValidatePrivateFile(path string) error {
 		return err
 	}
 	return validateOwnerOnly(path, user, false)
+}
+
+// ValidatePrivateFileHandle validates the open file without reopening its path.
+func ValidatePrivateFileHandle(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("private input must be a regular file")
+	}
+	user, _, err := processIdentity()
+	if err != nil {
+		return err
+	}
+	return validateOwnerOnlyHandle(windows.Handle(file.Fd()), user, false)
 }
 
 type tokenOwner struct {
@@ -181,6 +291,9 @@ func validateProcessOwned(path string, user, defaultOwner *windows.SID) error {
 	if err != nil {
 		return fmt.Errorf("read private-file owner: %w", err)
 	}
+	if descriptor == nil {
+		return errors.New("private file has no security descriptor")
+	}
 	owner, _, err := descriptor.Owner()
 	if err != nil || !ownerMatchesProcess(owner, user, defaultOwner) {
 		return errors.New("private file must be owned by the current Windows user or its token owner")
@@ -197,6 +310,13 @@ func validateOwnerOnly(path string, user *windows.SID, directory bool) error {
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return fmt.Errorf("read private-file ACL: %w", err)
+	}
+	return validateOwnerOnlyDescriptor(descriptor, user, directory)
+}
+
+func validateOwnerOnlyDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, directory bool) error {
+	if descriptor == nil {
+		return errors.New("private file has no security descriptor")
 	}
 	owner, _, err := descriptor.Owner()
 	if err != nil || owner == nil || !owner.Equals(user) {

@@ -28,18 +28,21 @@ func TestActivityRevisionInputAvoidsOptionsInStdin(t *testing.T) {
 }
 
 type countingRetainedRunner struct {
-	delegate *gitexec.Runner
-	commands [][]string
-	inputs   []string
+	delegate    *gitexec.Runner
+	commands    [][]string
+	directories []string
+	inputs      []string
 }
 
 func (runner *countingRetainedRunner) Run(ctx context.Context, directory string, stdin io.Reader, arguments ...string) (gitexec.Result, error) {
 	runner.commands = append(runner.commands, append([]string(nil), arguments...))
+	runner.directories = append(runner.directories, directory)
 	return runner.delegate.Run(ctx, directory, stdin, arguments...)
 }
 
 func (runner *countingRetainedRunner) RunWithOutputLimit(ctx context.Context, directory string, stdin io.Reader, limit int64, arguments ...string) (gitexec.Result, error) {
 	runner.commands = append(runner.commands, append([]string(nil), arguments...))
+	runner.directories = append(runner.directories, directory)
 	if stdin != nil {
 		content, err := io.ReadAll(stdin)
 		if err != nil {
@@ -79,9 +82,18 @@ func TestRetainedRefsBatchPeelsAndLoadsMetadataWithoutDiffProcesses(t *testing.T
 	if len(runner.commands) != 6 {
 		t.Fatalf("retained overview used %d Git processes for %d branch refs, want 6", len(runner.commands), len(oids))
 	}
+	if len(runner.directories) != len(runner.commands) {
+		t.Fatalf("recorded directories=%d commands=%d", len(runner.directories), len(runner.commands))
+	}
 	metadataProcesses := 0
 	ancestryProcesses := 0
-	for _, arguments := range runner.commands {
+	for index, arguments := range runner.commands {
+		if runner.directories[index] != remote {
+			t.Fatalf("Git command %d directory=%q, want repository %q", index, runner.directories[index], remote)
+		}
+		if len(arguments) < 2 || arguments[0] != "--git-dir" || arguments[1] != "." {
+			t.Fatalf("Git command %d did not use a relative Git directory: %v", index, arguments)
+		}
 		command := strings.Join(arguments, " ")
 		if strings.Contains(command, " cat-file ") || strings.Contains(command, " rev-parse ") || strings.Contains(command, " merge-base ") || strings.Contains(command, " show ") || strings.Contains(command, " diff") {
 			t.Fatalf("retained overview invoked object-by-object or diff command: %s", command)

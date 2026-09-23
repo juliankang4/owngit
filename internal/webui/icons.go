@@ -23,6 +23,15 @@ var iconPaths = map[string]string{
 	"error":    `<rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.6"/><path d="M8 5.2v3.4" stroke-linecap="round"/><path d="M8 11.1h.01" stroke-width="2.1" stroke-linecap="round"/>`,
 	"kept":     `<path d="M3.2 4.2h9.6v8.4H3.2z" stroke-linejoin="round"/><path d="M3.2 6.8h9.6M6.4 3v1.2M9.6 3v1.2" stroke-linecap="round"/>`,
 	"plus":     `<path d="M8 3.4v9.2M3.4 8h9.2" stroke-linecap="round"/>`,
+	// Evidence states. Each shape differs from the others, so a state is never
+	// carried by colour alone: a stopped run, an unavailable one, a stale one
+	// and an absent one are four distinct outlines.
+	"stop":     `<rect x="2.6" y="2.6" width="10.8" height="10.8" rx="2.4"/><path d="M6.1 6.1h3.8v3.8H6.1z" stroke-linejoin="round"/>`,
+	"slash":    `<circle cx="8" cy="8" r="5.7"/><path d="M4.3 11.7L11.7 4.3" stroke-linecap="round"/>`,
+	"clock":    `<circle cx="8" cy="8" r="5.7"/><path d="M8 4.8V8l2.4 1.6" stroke-linecap="round" stroke-linejoin="round"/>`,
+	"minus":    `<circle cx="8" cy="8" r="5.7"/><path d="M5.4 8h5.2" stroke-linecap="round"/>`,
+	"merge":    `<circle cx="4.5" cy="3.8" r="1.9"/><circle cx="4.5" cy="12.2" r="1.9"/><circle cx="11.5" cy="8" r="1.9"/><path d="M4.5 5.7v4.6M6.4 3.8h1.2a2 2 0 012 2v.3" stroke-linecap="round"/>`,
+	"key":      `<circle cx="5.6" cy="10.4" r="2.6"/><path d="M7.5 8.5l5-5M10.6 3.2h2.6v2.6" stroke-linecap="round" stroke-linejoin="round"/>`,
 	"search":   `<circle cx="7.2" cy="7.2" r="4.3"/><path d="M10.4 10.4l3 3" stroke-linecap="round"/>`,
 	"settings": `<circle cx="8" cy="8" r="2.2"/><path d="M8 1.9v1.6M8 12.5v1.6M1.9 8h1.6M12.5 8h1.6M3.7 3.7l1.1 1.1M11.2 11.2l1.1 1.1M12.3 3.7l-1.1 1.1M4.8 11.2l-1.1 1.1" stroke-linecap="round"/>`,
 	"back":     `<path d="M9.6 3.6L5.2 8l4.4 4.4" stroke-linecap="round" stroke-linejoin="round"/>`,

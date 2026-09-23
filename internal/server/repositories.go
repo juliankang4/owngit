@@ -161,14 +161,24 @@ func (app *App) handleActivity(writer http.ResponseWriter, request *http.Request
 }
 
 func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
-	session, ok := app.requireGeneral(writer, request, settings)
-	if !ok {
-		return
-	}
 	remainder := strings.TrimPrefix(request.URL.Path, "/repositories/")
 	parts := strings.Split(remainder, "/")
 	if len(parts) == 0 || parts[0] == "" {
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgRepoNotFound, "")
+		return
+	}
+	var session state.Session
+	var ok bool
+	// The helper credential, execution policy, and runner token screens are
+	// administrator only, and that is decided here by route rather than by
+	// which controls a page would draw. Hiding a button is presentation; this
+	// is the authorization.
+	if len(parts) == 2 && administratorRepositoryScreen(parts[1]) {
+		session, ok = app.requireBrowserAdmin(writer, request)
+	} else {
+		session, ok = app.requireGeneral(writer, request, settings)
+	}
+	if !ok {
 		return
 	}
 	id := parts[0]
@@ -188,6 +198,57 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		page.Repo.Unreadable = true
 		page.Repo.UnreadableReason = webui.MsgRepoUnreadable
 		app.render(writer, http.StatusServiceUnavailable, page)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "pull-requests" {
+		switch request.Method {
+		case http.MethodGet:
+			app.handlePullRequestsGet(writer, request, stored, summary, chrome)
+		case http.MethodPost:
+			app.handleCreatePullRequest(writer, request, stored, summary, chrome)
+		}
+		return
+	}
+	if len(parts) == 3 && parts[1] == "pull-requests" && parts[2] == "new" && request.Method == http.MethodGet {
+		app.handleNewPullRequestGet(writer, request, stored, summary, chrome)
+		return
+	}
+	if len(parts) >= 3 && parts[1] == "pull-requests" {
+		if number, valid := parsePullRequestNumber(parts[2]); valid {
+			switch {
+			case len(parts) == 3 && request.Method == http.MethodGet:
+				app.handlePullRequestGet(writer, request, stored, summary, chrome, number)
+				return
+			case len(parts) == 5 && parts[3] == "review" && parts[4] == "request" && request.Method == http.MethodPost:
+				app.handlePullRequestAction(writer, request, stored, summary, chrome, number, "review_request")
+				return
+			case len(parts) == 5 && parts[3] == "review" && parts[4] == "skip" && request.Method == http.MethodPost:
+				app.handlePullRequestAction(writer, request, stored, summary, chrome, number, "review_skip")
+				return
+			case len(parts) == 4 && parts[3] == "merge" && request.Method == http.MethodPost:
+				app.handlePullRequestAction(writer, request, stored, summary, chrome, number, "merge")
+				return
+			}
+		}
+	}
+	if len(parts) == 2 && parts[1] == "tasks" && request.Method == http.MethodGet {
+		app.handleTasksGet(writer, request, stored, summary, chrome)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "helper-credentials" {
+		app.handleHelperCredentials(writer, request, stored, summary, chrome)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "configured-checks" {
+		app.handleConfiguredChecks(writer, request, stored, summary, chrome)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "runner-tokens" {
+		app.handleRunnerTokens(writer, request, stored, summary, chrome)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "import" {
+		app.handleImportPage(writer, request, stored, summary, chrome)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "restore" && request.Method == http.MethodGet {
@@ -228,6 +289,18 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	app.render(writer, http.StatusOK, page)
 }
 
+// administratorRepositoryScreen names the repository screens that require an
+// administrator session before anything is read. They all read or change
+// execution authority, so a general session must not reach them at all.
+func administratorRepositoryScreen(segment string) bool {
+	switch segment {
+	case "helper-credentials", "configured-checks", "runner-tokens", "import":
+		return true
+	default:
+		return false
+	}
+}
+
 func (app *App) baseRepositoryPage(request *http.Request, chrome webui.Chrome, stored state.Repository, summary repository.Summary) webui.RepositoryPage {
 	base := "/repositories/" + url.PathEscape(stored.ID)
 	clone := app.baseURL(request) + "/git/" + url.PathEscape(stored.ID) + ".git"
@@ -235,7 +308,10 @@ func (app *App) baseRepositoryPage(request *http.Request, chrome webui.Chrome, s
 		Chrome:      chrome,
 		Repo:        webui.RepositoryHeader{ID: stored.ID, Name: stored.Name, Description: stored.Description, URL: base, CloneURL: clone, Empty: summary.Empty},
 		OverviewURL: base, CodeURL: base + "/code", CommitsURL: base + "/commits",
-		RestoreURL: restoreURL(stored.ID, summary.DefaultOID, summary.DefaultBranch, ""),
+		RestoreURL:      restoreURL(stored.ID, summary.DefaultOID, summary.DefaultBranch, ""),
+		PullRequestsURL: base + "/pull-requests",
+		TasksURL:        base + "/tasks",
+		ImportsURL:      base + "/import",
 	}
 	return page
 }

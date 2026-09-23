@@ -309,7 +309,27 @@ const (
 	RepoTabOverview RepoTab = "overview"
 	RepoTabCode     RepoTab = "code"
 	RepoTabCommits  RepoTab = "commits"
+	// RepoTabPullRequests and RepoTabChecks are rendered by their own page
+	// types, which share this repository's tab strip.
+	RepoTabPullRequests RepoTab = "pull-requests"
+	RepoTabChecks       RepoTab = "checks"
 )
+
+// RepoTabs are the addresses of a repository's sections.
+//
+// Every screen that belongs to one repository carries them so the strip stays
+// identical wherever the reader is. A section with no URL is not rendered,
+// which is how a caller that does not offer one avoids a dead tab.
+type RepoTabs struct {
+	OverviewURL     string
+	CodeURL         string
+	CommitsURL      string
+	PullRequestsURL string
+	TasksURL        string
+	ImportsURL      string
+	// Active marks the current section.
+	Active RepoTab
+}
 
 // RepositoryPage renders every /repositories/{id} screen. Tab selects which
 // panel is filled; the other panels are links, not hidden content.
@@ -324,6 +344,11 @@ type RepositoryPage struct {
 	// RestoreURL opens the restore screen for this repository. Empty means no
 	// link, which is what an older caller that never sets it gets.
 	RestoreURL string
+	// PullRequestsURL, TasksURL, and ImportsURL add sections to the tab strip.
+	// A caller that does not set one renders no dead link for it.
+	PullRequestsURL string
+	TasksURL        string
+	ImportsURL      string
 
 	// Ref is the currently selected branch, tag, or revision.
 	Ref RefSelection

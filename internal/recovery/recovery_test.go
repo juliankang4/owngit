@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -242,6 +243,10 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 		store.Close()
 		t.Fatalf("backup manifest pull request state: version=%d prs=%d reviews=%d intents=%d", manifest.Version, len(manifest.PullRequests), len(manifest.PullRequestReviews), len(manifest.PullRequestMergeIntents))
 	}
+	// Format 2 is the released pull request backup. Rewriting only the format
+	// marker yields the records that reader must continue to accept.
+	manifest.Version = pullRequestBackupVersion
+	writeManifestFile(t, filepath.Join(backup, manifestName), manifest)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -292,6 +297,17 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	}
 	if merged, err := restoredService.Show(ctx, "project", mergedPR.Number); err != nil || merged.Merge == nil || merged.Merge.OID != mergedView.Merge.OID {
 		t.Fatalf("restored merged pull request=%+v err=%v", merged, err)
+	}
+	rebackup := filepath.Join(root, "pr-backup-current")
+	if err := Create(ctx, restoredStore, restoredManager, rebackup); err != nil {
+		t.Fatalf("re-backup after format 2 restore: %v", err)
+	}
+	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebacked.Version != backupVersion || !reflect.DeepEqual(rebacked.PullRequests, manifest.PullRequests) || !reflect.DeepEqual(rebacked.PullRequestRevisions, manifest.PullRequestRevisions) || !reflect.DeepEqual(rebacked.PullRequestReviews, manifest.PullRequestReviews) || !reflect.DeepEqual(rebacked.PullRequestMergeIntents, manifest.PullRequestMergeIntents) {
+		t.Fatalf("format 2 re-backup changed pull request history: %+v", rebacked)
 	}
 }
 
@@ -608,8 +624,35 @@ func TestRestoreAcceptsStrictLegacyV1AndRejectsV1PullRequestFields(t *testing.T)
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := Restore(ctx, backup, canonicalTestTarget(t, filepath.Join(root, "legacy-state")), canonicalTestTarget(t, filepath.Join(root, "legacy-repositories")), ""); err != nil {
+	legacyState := canonicalTestTarget(t, filepath.Join(root, "legacy-state"))
+	legacyRepositories := canonicalTestTarget(t, filepath.Join(root, "legacy-repositories"))
+	if err := Restore(ctx, backup, legacyState, legacyRepositories, ""); err != nil {
 		t.Fatalf("strict version 1 backup was rejected: %v", err)
+	}
+	restored, err := state.Open(ctx, legacyState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredRunner, err := gitexec.New("", filepath.Join(legacyState, "runtime-test"))
+	if err != nil {
+		restored.Close()
+		t.Fatal(err)
+	}
+	restoredManager := &repository.Manager{Store: restored, Git: restoredRunner, Locks: gitexec.NewLocks(), Root: legacyRepositories}
+	rebackup := filepath.Join(root, "legacy-rebackup")
+	if err := Create(ctx, restored, restoredManager, rebackup); err != nil {
+		restored.Close()
+		t.Fatalf("re-backup after format 1 restore: %v", err)
+	}
+	if err := restored.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebacked.Version != backupVersion || len(rebacked.PullRequests) != 0 || len(rebacked.Tasks) != 0 {
+		t.Fatalf("format 1 re-backup=%+v", rebacked)
 	}
 
 	manifest.PullRequests = []PullRequestManifest{{RepositoryID: "project", Number: 1}}
@@ -1148,6 +1191,8 @@ func newBackupStore(t *testing.T, root string) (*state.Store, *repository.Manage
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Windows cannot remove the open database file during TempDir cleanup.
+	t.Cleanup(func() { _ = store.Close() })
 	adminHash, _ := auth.HashPassword("admin-password")
 	if err := store.CompleteSetup(ctx, repositoriesRoot, "open", "", adminHash, false); err != nil {
 		t.Fatal(err)

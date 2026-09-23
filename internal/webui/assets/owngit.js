@@ -27,6 +27,55 @@
     return Array.prototype.slice.call((scope || document).querySelectorAll(selector));
   }
 
+  /* Repository tab strip: keep the tab that matters visible inside it.
+   *
+   * The strip scrolls sideways on a narrow viewport, and a container's scroll
+   * position cannot be set in CSS. At 320px the active tab sat past the right
+   * edge with scrollLeft 0, so the page gave no sign of where the reader was.
+   *
+   * Only the strip's scrollLeft moves, so the document does not move and focus
+   * does not change. scrollIntoView is avoided because it scrolls every
+   * scrollable ancestor. One helper serves the initial render, an in-place
+   * language change, a resize, and keyboard focus, so those cannot drift
+   * apart. Without this file the tabs are links the reader can scroll by hand. */
+
+  var TAB_PAD = 14; // matches scroll-padding-inline in the stylesheet
+
+  function revealTab(strip, tab) {
+    if (!strip || !tab || strip.scrollWidth <= strip.clientWidth) { return; }
+
+    var stripLeft = strip.getBoundingClientRect().left;
+    var stripRight = stripLeft + strip.clientWidth;
+    var box = tab.getBoundingClientRect();
+
+    /* Scroll only when part of the tab is actually outside, so a tab that is
+     * already whole on screen is never nudged. When it does scroll, it lands
+     * clear of the edge by the same padding the stylesheet uses.
+     *
+     * A tab wider than the strip cannot fit either way, so its start is shown
+     * and the label reads from its first word. */
+    if (box.left < stripLeft || box.width > strip.clientWidth) {
+      strip.scrollLeft -= stripLeft + TAB_PAD - box.left;
+    } else if (box.right > stripRight) {
+      strip.scrollLeft += box.right - (stripRight - TAB_PAD);
+    }
+  }
+
+  /* The tab to keep visible is whichever one the reader is working with: the
+   * focused tab if focus is inside this strip, otherwise the current page. */
+  function revealTabOfInterest(strip) {
+    var focused = document.activeElement;
+    if (focused && focused !== document.body && strip.contains(focused)) {
+      revealTab(strip, focused.closest('.rtabs__btn') || focused);
+      return;
+    }
+    revealTab(strip, strip.querySelector('.rtabs__btn[aria-current="page"]'));
+  }
+
+  function revealTabsOfInterest() {
+    all('.rtabs').forEach(revealTabOfInterest);
+  }
+
   function readCookie(name) {
     var parts = document.cookie ? document.cookie.split('; ') : [];
     for (var i = 0; i < parts.length; i++) {
@@ -178,6 +227,11 @@
     }
 
     writeCookie(root.getAttribute('data-lang-cookie') || 'owngit_lang', lang);
+
+    /* Switching language rewrites every label, so the tabs change width and
+     * the one that was visible can end up outside the strip. No resize fires
+     * for this, so the same reveal runs here. */
+    revealTabsOfInterest();
     void other;
   }
 
@@ -400,4 +454,50 @@
 
     sync();
   });
+
+  /* Select a one-time secret when it is focused, so it can be copied in one
+   * gesture. The value is already on the page and stays selectable by hand
+   * without this; nothing here stores, sends, or logs it. */
+
+  all('[data-select-on-focus]').forEach(function (field) {
+    field.addEventListener('focus', function () {
+      if (field.select) { field.select(); }
+    });
+  });
+
+  /* Tab strips: reveal on load, on keyboard focus, and on resize.
+   *
+   * Tabbing to a partly visible link does not reliably bring the whole link
+   * into view, so a focused tab can sit half outside the strip with no way to
+   * read its label. focusin is used because focus does not bubble; the handler
+   * is bound to the strip, so no other scroll region is affected. */
+
+  var tabStrips = all('.rtabs');
+  if (tabStrips.length) {
+    tabStrips.forEach(revealTabOfInterest);
+
+    tabStrips.forEach(function (strip) {
+      strip.addEventListener('focusin', function (event) {
+        var tab = event.target.closest && event.target.closest('.rtabs__btn');
+        if (tab) { revealTab(strip, tab); }
+      });
+    });
+
+    /* A resize changes how much fits and can push the tab of interest back out
+     * of view. A few measurements, so no observer is needed. */
+    var resizeQueued = false;
+    window.addEventListener('resize', function () {
+      if (resizeQueued) { return; }
+      resizeQueued = true;
+      var run = function () {
+        resizeQueued = false;
+        revealTabsOfInterest();
+      };
+      if (window.requestAnimationFrame) {
+        window.requestAnimationFrame(run);
+      } else {
+        window.setTimeout(run, 60);
+      }
+    });
+  }
 })();

@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -27,7 +28,16 @@ var pageNames = []string{
 	"activity",
 	"repository",
 	"new-repository",
+	"new-import",
+	"import",
 	"restore",
+	"pull-requests",
+	"new-pull-request",
+	"pull-request",
+	"tasks",
+	"helper-credentials",
+	"configured-checks",
+	"runner-credentials",
 	"error",
 }
 
@@ -220,9 +230,45 @@ func chromeOf(page Page) (Chrome, bool) {
 		return p.Chrome, true
 	case *NewRepositoryPage:
 		return p.Chrome, true
+	case NewImportPage:
+		return p.Chrome, true
+	case *NewImportPage:
+		return p.Chrome, true
+	case ImportPage:
+		return p.Chrome, true
+	case *ImportPage:
+		return p.Chrome, true
 	case RestorePage:
 		return p.Chrome, true
 	case *RestorePage:
+		return p.Chrome, true
+	case PullRequestsPage:
+		return p.Chrome, true
+	case *PullRequestsPage:
+		return p.Chrome, true
+	case NewPullRequestPage:
+		return p.Chrome, true
+	case *NewPullRequestPage:
+		return p.Chrome, true
+	case PullRequestPage:
+		return p.Chrome, true
+	case *PullRequestPage:
+		return p.Chrome, true
+	case TasksPage:
+		return p.Chrome, true
+	case *TasksPage:
+		return p.Chrome, true
+	case HelperCredentialsPage:
+		return p.Chrome, true
+	case *HelperCredentialsPage:
+		return p.Chrome, true
+	case ConfiguredChecksPage:
+		return p.Chrome, true
+	case *ConfiguredChecksPage:
+		return p.Chrome, true
+	case RunnerCredentialsPage:
+		return p.Chrome, true
+	case *RunnerCredentialsPage:
 		return p.Chrome, true
 	case ErrorPage:
 		return p.Chrome, true
@@ -262,6 +308,14 @@ func documentTitle(page Page, lang Lang) string {
 		section = Text(lang, MsgRepoNewTitle)
 	case *NewRepositoryPage:
 		section = Text(lang, MsgRepoNewTitle)
+	case NewImportPage:
+		section = Text(lang, MsgImportNewTitle)
+	case *NewImportPage:
+		section = Text(lang, MsgImportNewTitle)
+	case ImportPage:
+		section = scopedTitle(lang, MsgImportTitle, p.Repo.Name)
+	case *ImportPage:
+		section = scopedTitle(lang, MsgImportTitle, p.Repo.Name)
 	// The restore title names the repository as well as the action, because
 	// this page writes to that repository and a tab strip full of "Restore"
 	// would not say which one.
@@ -269,6 +323,38 @@ func documentTitle(page Page, lang Lang) string {
 		section = restoreTitle(lang, p.Repo.Name)
 	case *RestorePage:
 		section = restoreTitle(lang, p.Repo.Name)
+	// The pull request and evidence screens name their repository for the same
+	// reason restore does: several of them can be open at once, and a tab strip
+	// reading "Pull requests" four times would not say which project each one
+	// belongs to.
+	case PullRequestsPage:
+		section = scopedTitle(lang, MsgPRTitle, p.Repo.Name)
+	case *PullRequestsPage:
+		section = scopedTitle(lang, MsgPRTitle, p.Repo.Name)
+	case NewPullRequestPage:
+		section = scopedTitle(lang, MsgPRNewTitle, p.Repo.Name)
+	case *NewPullRequestPage:
+		section = scopedTitle(lang, MsgPRNewTitle, p.Repo.Name)
+	case PullRequestPage:
+		section = pullRequestTitle(p)
+	case *PullRequestPage:
+		section = pullRequestTitle(*p)
+	case TasksPage:
+		section = scopedTitle(lang, MsgTasksTitle, p.Repo.Name)
+	case *TasksPage:
+		section = scopedTitle(lang, MsgTasksTitle, p.Repo.Name)
+	case HelperCredentialsPage:
+		section = scopedTitle(lang, MsgHelperTitle, p.Repo.Name)
+	case *HelperCredentialsPage:
+		section = scopedTitle(lang, MsgHelperTitle, p.Repo.Name)
+	case ConfiguredChecksPage:
+		section = scopedTitle(lang, MsgCCTitle, p.Repo.Name)
+	case *ConfiguredChecksPage:
+		section = scopedTitle(lang, MsgCCTitle, p.Repo.Name)
+	case RunnerCredentialsPage:
+		section = scopedTitle(lang, MsgRTTitle, p.Repo.Name)
+	case *RunnerCredentialsPage:
+		section = scopedTitle(lang, MsgRTTitle, p.Repo.Name)
 	case ErrorPage:
 		section = Text(lang, p.Code)
 	case *ErrorPage:
@@ -312,16 +398,74 @@ func canonicalURL(page Page, chrome Chrome) string {
 		return restoreSelectionURL(p)
 	case *RestorePage:
 		return restoreSelectionURL(*p)
+	// The create screen is rendered both from its own GET and from a refused
+	// POST. Its selection URL is the GET that reaches the same branch pair.
+	case NewPullRequestPage:
+		return pullRequestSelectionURL(p)
+	case *NewPullRequestPage:
+		return pullRequestSelectionURL(*p)
+	// A refused review or merge answers on the POST route, which no browser
+	// can follow with a GET. SelfURL is where this pull request lives.
+	case PullRequestPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case *PullRequestPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case HelperCredentialsPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case *HelperCredentialsPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	// The configured-check and runner-token screens answer their forms on the
+	// POST route for the same reason, and the runner response that shows a new
+	// token must never hand that value to a followable link.
+	case ConfiguredChecksPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case *ConfiguredChecksPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case RunnerCredentialsPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case *RunnerCredentialsPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case ImportPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case *ImportPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case NewImportPage:
+		return firstURL(p.SubmitURL, chrome.CurrentURL)
+	case *NewImportPage:
+		return firstURL(p.SubmitURL, chrome.CurrentURL)
 	}
 	return chrome.CurrentURL
 }
 
+// firstURL prefers a page's stated GET address over the request URL.
+func firstURL(stated, current string) string {
+	if stated != "" {
+		return stated
+	}
+	return current
+}
+
 func restoreTitle(lang Lang, repo string) string {
-	title := Text(lang, MsgRestoreTitle)
+	return scopedTitle(lang, MsgRestoreTitle, repo)
+}
+
+// scopedTitle names a screen and the repository it acts on.
+func scopedTitle(lang Lang, code MessageCode, repo string) string {
+	title := Text(lang, code)
 	if repo == "" {
 		return title
 	}
 	return title + " " + repo
+}
+
+// pullRequestTitle identifies one pull request by its number and title, which
+// is what distinguishes two tabs on the same repository.
+func pullRequestTitle(p PullRequestPage) string {
+	number := "#" + strconv.FormatInt(p.Number, 10)
+	if p.Title == "" {
+		return number + " " + p.Repo.Name
+	}
+	return number + " " + p.Title
 }
 
 func authTitle(lang Lang, scope AuthScope) string {

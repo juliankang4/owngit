@@ -88,7 +88,7 @@ func (m *Manager) Summary(ctx context.Context, id string) (Summary, error) {
 	lock.RLock()
 	defer lock.RUnlock()
 
-	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", "refs/heads", "refs/tags", "refs/owngit/retained")
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", "refs/heads", "refs/tags", "refs/owngit/retained")
 	if err != nil {
 		return Summary{}, err
 	}
@@ -113,7 +113,7 @@ func (m *Manager) Summary(ctx context.Context, id string) (Summary, error) {
 		}
 	}
 	summary.Empty = len(summary.Branches) == 0 && len(summary.Tags) == 0 && !hasRetained
-	head, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "symbolic-ref", "--quiet", "HEAD")
+	head, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--quiet", "HEAD")
 	if err == nil {
 		full := strings.TrimSpace(string(head.Stdout))
 		if strings.HasPrefix(full, "refs/heads/") {
@@ -138,7 +138,7 @@ func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string,
 		return "", "", err
 	}
 	if requested == "" {
-		result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "symbolic-ref", "--quiet", "HEAD")
+		result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--quiet", "HEAD")
 		if err != nil {
 			return "", "", errors.New("repository has no default branch")
 		}
@@ -152,7 +152,7 @@ func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string,
 		if err := validateShortRef(short); err != nil {
 			return "", "", err
 		}
-		result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "rev-parse", "--verify", requested+"^{commit}")
+		result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", requested+"^{commit}")
 		if err == nil {
 			return requested, strings.TrimSpace(string(result.Stdout)), nil
 		}
@@ -165,7 +165,7 @@ func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string,
 	// precedence. Newly generated URLs always carry the full ref identity.
 	for _, namespace := range []string{"refs/heads/", "refs/tags/"} {
 		full := namespace + requested
-		result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "rev-parse", "--verify", full+"^{commit}")
+		result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", full+"^{commit}")
 		if err == nil {
 			return full, strings.TrimSpace(string(result.Stdout)), nil
 		}
@@ -184,7 +184,7 @@ func (m *Manager) CommitReachableFrom(ctx context.Context, id, rootOID, commitOI
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	_, err = m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "merge-base", "--is-ancestor", commitOID, rootOID)
+	_, err = m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "merge-base", "--is-ancestor", commitOID, rootOID)
 	if err == nil {
 		return true, nil
 	}
@@ -233,7 +233,7 @@ func (m *Manager) lookupTreeEntry(ctx context.Context, repositoryPath, rootOID, 
 	}
 	// The explicit magic prefix was verified with Git for Windows. It keeps the
 	// repository path literal without disabling pathspec magic parsing globally.
-	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "ls-tree", "-z", "-l", rootOID, "--", ":(top,literal)"+filePath)
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "ls-tree", "-z", "-l", rootOID, "--", ":(top,literal)"+filePath)
 	if err != nil {
 		return TreeEntry{}, err
 	}
@@ -264,7 +264,7 @@ func (m *Manager) listTree(ctx context.Context, repositoryPath, treeOID, prefix 
 	}
 	// Listing a tree object without a pathspec avoids host path normalization.
 	// Runner output limits keep each untrusted tree listing bounded.
-	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "ls-tree", "-z", "-l", treeOID)
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "ls-tree", "-z", "-l", treeOID)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +334,7 @@ func (m *Manager) ReadBlob(ctx context.Context, id, requestedRef, filePath strin
 	if limit <= 0 {
 		limit = 2 << 20
 	}
-	result, runErr := m.Git.RunWithOutputLimit(ctx, "", nil, limit+1, "--git-dir", repositoryPath, "cat-file", "blob", entry.OID)
+	result, runErr := m.Git.RunWithOutputLimit(ctx, repositoryPath, nil, limit+1, "--git-dir", ".", "cat-file", "blob", entry.OID)
 	blob := Blob{Path: filePath, OID: entry.OID, Content: result.Stdout, Binary: bytes.IndexByte(result.Stdout, 0) >= 0}
 	var limitErr *gitexec.LimitError
 	if runErr != nil {
@@ -370,7 +370,7 @@ func (m *Manager) Commits(ctx context.Context, id, requestedRef string, limit in
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "log", "-z", "--no-decorate", "--max-count="+strconv.Itoa(limit), "--format="+commitLogFormat, commitOID)
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "log", "-z", "--no-decorate", "--max-count="+strconv.Itoa(limit), "--format="+commitLogFormat, commitOID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -452,8 +452,8 @@ func commitMetadataByOID(ctx context.Context, runner retainedRunner, repositoryP
 			unique = append(unique, oid)
 		}
 	}
-	result, err := runner.RunWithOutputLimit(ctx, "", strings.NewReader(strings.Join(unique, "\n")+"\n"), 64<<20,
-		"--git-dir", repositoryPath, "log", "--no-walk", "--stdin", "-z", "--no-decorate", "--format="+commitLogFormat)
+	result, err := runner.RunWithOutputLimit(ctx, repositoryPath, strings.NewReader(strings.Join(unique, "\n")+"\n"), 64<<20,
+		"--git-dir", ".", "log", "--no-walk", "--stdin", "-z", "--no-decorate", "--format="+commitLogFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +488,7 @@ func (m *Manager) Commit(ctx context.Context, id, oid, filePath string) (CommitD
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	result, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "show", "-z", "--quiet", "--format="+commitLogFormat, oid)
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show", "-z", "--quiet", "--format="+commitLogFormat, oid)
 	if err != nil {
 		return CommitDetail{}, errors.New("commit not found")
 	}
@@ -496,11 +496,11 @@ func (m *Manager) Commit(ctx context.Context, id, oid, filePath string) (CommitD
 	if err != nil || len(commits) != 1 {
 		return CommitDetail{}, errors.New("Git returned malformed commit metadata")
 	}
-	args := []string{"--git-dir", repositoryPath, "show", "--format=", "--no-ext-diff", "--no-textconv", "--find-renames=50%", "--unified=3", oid}
+	args := []string{"--git-dir", ".", "show", "--format=", "--no-ext-diff", "--no-textconv", "--find-renames=50%", "--unified=3", oid}
 	if filePath != "" {
 		args = append(args, "--", ":(top,literal)"+filePath)
 	}
-	diffResult, diffErr := m.Git.Run(ctx, "", nil, args...)
+	diffResult, diffErr := m.Git.Run(ctx, repositoryPath, nil, args...)
 	detail := CommitDetail{Commit: commits[0], Diff: string(diffResult.Stdout)}
 	if diffErr != nil {
 		var limitErr *gitexec.LimitError
@@ -524,7 +524,7 @@ func (m *Manager) ChangedFiles(ctx context.Context, id, oid string) ([]ChangedFi
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	statusResult, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", oid)
+	statusResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", oid)
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +551,7 @@ func (m *Manager) ChangedFiles(ctx context.Context, id, oid string) ([]ChangedFi
 		}
 		files = append(files, file)
 	}
-	numResult, err := m.Git.Run(ctx, "", nil, "--git-dir", repositoryPath, "diff-tree", "--root", "--no-commit-id", "--numstat", "-r", "-z", oid)
+	numResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--root", "--no-commit-id", "--numstat", "-r", "-z", oid)
 	if err != nil {
 		return nil, err
 	}

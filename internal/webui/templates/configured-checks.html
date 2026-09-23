@@ -1,0 +1,157 @@
+{{/* Shared configured-check partials.
+
+     The same rule as the evidence partials governs these: the screen states
+     what was recorded and nothing else. A saved policy, a current permission
+     and an observed runtime are three facts with three separate lines, so a
+     stored policy never reads as "running" and a closed runtime never reads
+     as a failed check. */}}
+
+{{/* One number field of the policy form.
+
+     Every field keeps the value that was submitted, including one the backend
+     refused, so a rejected form does not quietly replace what was typed. The
+     note is scoped by the action because several forms on this screen collect
+     the same field names.
+
+     Call as: {{template "policyNumber" dict "Lang" $lang "Notices" $fn
+                 "Scope" $act "Field" "max_timeout_ms" "ID" "cc-timeout"
+                 "Label" "cc.policy.timeout" "Help" "cc.policy.timeout_help"
+                 "Value" $f.MaxTimeoutMS}} */}}
+{{define "policyNumber"}}
+{{$lang := .Lang}}
+{{/* The accepted range is printed from the numbers the backend publishes, not
+     from a copy kept here. A refusal beside this field says the value is
+     outside the range shown, and this is the range it means. */}}
+{{$range := fieldRange $lang .Ranges .Field}}
+<div class="f">
+  <label for="{{.ID}}">{{bi $lang (code .Label)}}</label>
+  <input id="{{.ID}}" name="{{.Field}}" type="text" inputmode="numeric" autocomplete="off"
+         value="{{.Value}}"
+         {{template "fieldInvalid" dict "Notices" .Notices "Scope" .Scope "Field" .Field}}>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Scope "Field" .Field}}
+  {{with $range}}<p class="f__help f__range">{{.}}</p>{{end}}
+  {{with .Help}}<p class="f__help">{{bi $lang (code .)}}</p>{{end}}
+</div>
+{{end}}
+
+{{/* The administrator password field one form collects.
+
+     Holding a signed-in session is not consent to change execution authority,
+     so every form here asks again and scopes its own notice.
+
+     Call as: {{template "adminField" dict "Lang" $lang "Notices" $fn
+                 "Scope" $act "ID" "cc-save-password"}} */}}
+{{define "adminField"}}
+{{$lang := .Lang}}
+<div class="f">
+  <label for="{{.ID}}">{{bi $lang "admin.field"}}</label>
+  <input id="{{.ID}}" name="admin_password" type="password" required autocomplete="current-password"
+         {{template "fieldInvalid" dict "Notices" .Notices "Scope" .Scope "Field" "admin_password"}}>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Scope "Field" "admin_password"}}
+</div>
+{{end}}
+
+{{/* One job's identity and outcome as recorded.
+
+     The commit and the mode are the job's own captured facts, not the
+     policy's current selection, so an old job keeps describing what actually
+     applied to it.
+
+     Call as: {{template "jobFacts" dict "Lang" $lang "J" $job}} */}}
+{{define "jobFacts"}}
+{{$lang := .Lang}}{{$j := .J}}
+<dl class="kv">
+  <div>
+    <dt>{{bi $lang "cc.job.trigger"}}</dt>
+    <dd>{{bi $lang (triggerName $j.Trigger)}}</dd>
+  </div>
+  {{with $j.TriggerRef}}
+    <div><dt>{{bi $lang "cc.job.ref"}}</dt><dd class="mono">{{.}}</dd></div>
+  {{end}}
+  {{/* The abbreviation reads well, but only the full object id can be copied
+       into a Git command or compared with certainty, so both are present and
+       the full value wraps instead of being clipped. */}}
+  {{with $j.SourceOID}}
+    <div>
+      <dt>{{bi $lang "cc.job.source"}}</dt>
+      <dd>
+        <span class="mono">{{$j.SourceShortOID}}</span>
+        <span class="oidfull mono" tabindex="0" {{biAttr $lang "aria-label" "cc.job.source_full"}}>{{.}}</span>
+      </dd>
+    </div>
+  {{end}}
+  {{with $j.BaseOID}}
+    <div>
+      <dt>{{bi $lang "cc.job.base"}}</dt>
+      <dd>
+        <span class="mono">{{$j.BaseShortOID}}</span>
+        <span class="oidfull mono" tabindex="0" {{biAttr $lang "aria-label" "cc.job.base"}}>{{.}}</span>
+      </dd>
+    </div>
+  {{end}}
+  <div>
+    <dt>{{bi $lang "cc.job.executor"}}</dt>
+    <dd>{{bi $lang (executorName $j.Executor)}}</dd>
+  </div>
+  {{with $j.WorkflowPath}}
+    <div><dt>{{bi $lang "cc.job.workflow"}}</dt><dd class="mono">{{.}}</dd></div>
+  {{end}}
+  {{if $j.ConfigurationVersion}}
+    <div><dt>{{bi $lang "cc.job.configuration"}}</dt><dd class="mono">v{{$j.ConfigurationVersion}}</dd></div>
+  {{end}}
+  {{if $j.PolicyVersion}}
+    <div><dt>{{bi $lang "cc.job.policy_version"}}</dt><dd class="mono">v{{$j.PolicyVersion}}</dd></div>
+  {{end}}
+  {{if notZero $j.AdmittedAt}}
+    <div><dt>{{bi $lang "cc.job.admitted_at"}}</dt><dd>{{biDateTime $lang $j.AdmittedAt}}</dd></div>
+  {{end}}
+  {{if notZero $j.StartedAt}}
+    <div><dt>{{bi $lang "cc.job.started_at"}}</dt><dd>{{biDateTime $lang $j.StartedAt}}</dd></div>
+  {{end}}
+  {{if notZero $j.FinishedAt}}
+    <div><dt>{{bi $lang "cc.job.finished_at"}}</dt><dd>{{biDateTime $lang $j.FinishedAt}}</dd></div>
+  {{end}}
+  {{with $j.ShortID}}
+    <div><dt>{{bi $lang "cc.job.identifier"}}</dt><dd class="mono">{{.}}</dd></div>
+  {{end}}
+</dl>
+{{end}}
+
+{{/* The cancel and rerun controls for one job.
+
+     Only the actions the backend actually offers are drawn. A control this
+     screen hides is a control the backend refused to offer; the authority is
+     still enforced there.
+
+     Call as: {{template "jobActions" dict "Lang" $lang "J" $job
+                 "URL" $p.SubmitURL "CSRF" $csrf "Pending" $pending
+                 "Notices" $n}} */}}
+{{define "jobActions"}}
+{{$lang := .Lang}}{{$j := .J}}{{$csrf := .CSRF}}{{$url := .URL}}{{$pending := .Pending}}{{$n := .Notices}}
+{{if or $j.Cancellable $j.Rerunnable}}
+<div class="jobacts">
+  {{if $j.Cancellable}}
+    {{$act := cancelJobAction}}{{$fn := forAction $pending $act $n}}
+    <form class="form form--inline" method="post" action="{{$url}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <input type="hidden" name="action" value="{{$act}}">
+      <input type="hidden" name="job_id" value="{{$j.ID}}">
+      {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" (printf "cancel-pw-%s" $j.ID)}}
+      <button type="submit" class="btn btn--danger">{{bi $lang "cc.job.cancel"}}</button>
+      <span class="f__help">{{bi $lang "cc.job.cancel_help"}}</span>
+    </form>
+  {{end}}
+  {{if $j.Rerunnable}}
+    {{$act := rerunJobAction}}{{$fn := forAction $pending $act $n}}
+    <form class="form form--inline" method="post" action="{{$url}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <input type="hidden" name="action" value="{{$act}}">
+      <input type="hidden" name="job_id" value="{{$j.ID}}">
+      {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" (printf "rerun-pw-%s" $j.ID)}}
+      <button type="submit" class="btn">{{bi $lang "cc.job.rerun"}}</button>
+      <span class="f__help">{{bi $lang "cc.job.rerun_help"}}</span>
+    </form>
+  {{end}}
+</div>
+{{end}}
+{{end}}

@@ -64,7 +64,7 @@ func TestPullRequestAPIJourneyUsesJSONAndExactRevisions(t *testing.T) {
 		t.Fatalf("create status=%d error=%q", createdResponse.StatusCode, apiErrorCode(t, createdResponse))
 	}
 	created := decodeAPISuccess(t, createdResponse)
-	if created.PullRequest == nil || created.PullRequest.Review.Status != state.ReviewPending || created.PullRequest.Checks.Status != "not_configured" {
+	if created.PullRequest == nil || created.PullRequest.Review.Status != state.ReviewPending || created.PullRequest.Checks.Status != "absent" || !created.PullRequest.Checks.Advisory {
 		t.Fatalf("create response=%+v", created.PullRequest)
 	}
 	number := created.PullRequest.Number
@@ -195,6 +195,7 @@ type apiFixture struct {
 	app       *App
 	store     *state.Store
 	remote    string
+	work      string
 	sourceOID string
 	targetOID string
 }
@@ -252,7 +253,7 @@ func newAPIFixture(t *testing.T, protected bool) apiFixture {
 	apiRunGit(t, work, "push", "origin", "HEAD:refs/heads/feature")
 	sourceOID := apiGitOutput(t, work, "rev-parse", "HEAD")
 	app.PullRequests = &pullrequest.Service{Store: store, Repositories: app.Repositories}
-	return apiFixture{app: app, store: store, remote: remote, sourceOID: sourceOID, targetOID: targetOID}
+	return apiFixture{app: app, store: store, remote: remote, work: work, sourceOID: sourceOID, targetOID: targetOID}
 }
 
 func apiRequest(t *testing.T, method, target string, value any, password, origin string) *http.Response {

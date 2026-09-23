@@ -1,7 +1,6 @@
 package webui
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -12,14 +11,15 @@ import (
 func TestEveryScreenWorksWithoutScripting(t *testing.T) {
 	r := newRenderer(t)
 	// A control that only responds to a script would be dead without it.
-	inlineHandler := regexp.MustCompile(`\son(click|change|submit|input|load)=`)
+	// inlineEventHandler catches any on* attribute in any case, quoted or
+	// not, and ignores escaped code in page text.
 
 	for _, lang := range Langs() {
 		for name, page := range allPages(lang) {
 			out := render(t, r, page)
 
-			if loc := inlineHandler.FindString(out); loc != "" {
-				t.Errorf("%s/%s: control depends on an inline handler (%s)", lang, name, strings.TrimSpace(loc))
+			if loc := inlineEventHandler(out); loc != "" {
+				t.Errorf("%s/%s: control depends on an inline handler (%s)", lang, name, loc)
 			}
 			if strings.Contains(out, `href="#"`) || strings.Contains(out, `href="javascript:`) {
 				t.Errorf("%s/%s: a link goes nowhere without scripting", lang, name)

@@ -11,14 +11,9 @@
   {{end}}
 </div>
 
-{{/* Semantic tabs: these are real navigation between URLs, so they are links
-     marked with aria-current rather than ARIA tab widgets that would promise
-     in-page panels. */}}
-<nav class="rtabs" {{biAttr $lang "aria-label" "app.repo_tabs_label"}}>
-  <a class="rtabs__btn" href="{{$p.OverviewURL}}"{{if eq $p.Tab "overview"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.overview"}}</a>
-  <a class="rtabs__btn" href="{{$p.CodeURL}}"{{if eq $p.Tab "code"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.code"}}</a>
-  <a class="rtabs__btn" href="{{$p.CommitsURL}}"{{if eq $p.Tab "commits"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.commits"}}</a>
-</nav>
+{{/* One tab strip serves every screen that belongs to a repository, so the
+     strip does not change shape as the reader moves between them. */}}
+{{template "repoTabs" dict "Lang" $lang "T" (repoTabsOf $p)}}
 {{end}}
 
 {{/* The ref picker plus an honest statement about the selected ref.

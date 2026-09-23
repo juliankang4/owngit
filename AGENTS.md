@@ -2,7 +2,7 @@
 
 ## Audience and scope
 
-These instructions govern agents changing OwnGit's source. They do not govern end users or projects hosted in OwnGit. Read [Product Boundaries](docs/PRODUCT_BOUNDARIES.md) before changing product behavior.
+These instructions govern agents changing OwnGit's source. They do not govern end users or projects hosted in OwnGit. Read [Product principles in CONTRIBUTING.md](CONTRIBUTING.md#product-principles) before changing product behavior.
 
 - These rules apply across the repository. Read any applicable directory-level `AGENTS.md` before changing a file.
 - Keep durable rules here. Put detailed procedures in public development documentation and link them from the relevant rule. Public instructions must not depend on private planning files, a contributor's machine configuration, or a particular coding-agent setup.
@@ -40,7 +40,7 @@ These instructions govern agents changing OwnGit's source. They do not govern en
 
 ## Public documentation and interface
 
-- Write instructions, technical documentation, and code comments in concise English. Explain user-facing behavior plainly and define necessary terms. Keep public documentation in `docs/`, and keep private notes and operational material out of public files and Git history. Public instructions must not depend on ignored local files.
+- Write instructions, technical documentation, and code comments in concise English. Explain user-facing behavior plainly and define necessary terms. Keep public documentation in `README.md`, `CONTRIBUTING.md` and `docs/`, and keep private notes and operational material out of public files and Git history. Public instructions must not depend on ignored local files.
 - Never include credentials, private keys, private repository contents, personal machine details, or sensitive logs in public examples, documentation, or captures. Use synthetic fixtures and preserve attribution and license notices.
 - Keep documentation aligned with observable behavior. Record changing status separately from durable rules, and do not present planned features or untested platforms as supported.
 - Preserve English-default and Korean product support, established Git terminology, and keyboard and assistive-technology access. Keep Light, Dark, and System appearance usable across the interface, preserve state during appearance changes, and do not use color as the only status indicator. Do not translate code identifiers, commands, paths, or commit hashes as interface prose.

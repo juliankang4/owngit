@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -18,6 +20,43 @@ import (
 const (
 	databaseName                = "owngit.sqlite"
 	IncompleteRestoreMarkerName = ".owngit-restore-pending"
+
+	// currentSchemaVersion is the schema this build writes. The committed
+	// baseline wrote no version marker. Numbered development schemas 1 through
+	// 5 are refused instead of being converted.
+	currentSchemaVersion = 14
+	// These SHA-256 fingerprints cover normalized, non-internal sqlite_master
+	// entries. The baseline was emitted by commit
+	// 37b54e394a3292bc94383a0e7e1d19af85f9ab52. Only the exact accepted schema
+	// 6 through schema 13 catalogs have numbered migration paths.
+	committedBaselineSchemaFingerprint = "0b1acb0288e7a64da492d7a2a768538052492f887c3b5e6ec2efc7a42b465600"
+	schemaSixFingerprint               = "65686ebd119549d65748682365fa49cb2117ed644e044082c8f2f7ac00ce1154"
+	schemaSevenFingerprint             = "d39f721d07d4c23a9405fb3e9ede9118685f732cd84e333d6e51a7e024746e68"
+	// schemaEightFingerprint is the catalog emitted by the pre-removal source.
+	// The AI removal deleted code and no table, so the genuine pre-removal
+	// database and a matched catalog both classify as this exact schema 8.
+	schemaEightFingerprint = "684514623e9c47c9e784922c9dc2e148d6ad11977231036ce2a1498ae84ddab2"
+	schemaEightObjects     = 36
+	// schemaNineFingerprint is the authoritative catalog emitted by the
+	// accepted frozen schema 9 executable.
+	schemaNineFingerprint = "c422373c5a738f3512c17158d92cac5fff30c1a7d3fb717b7bb73b752ed5f55d"
+	schemaNineObjects     = 47
+	// schemaTenFingerprint is the authoritative catalog emitted by the accepted
+	// pre-import executable. It is the genuine predecessor of the inbound
+	// import tables.
+	schemaTenFingerprint = "d4f49a6da4344eedd1436d1d6f75ea196bf36de33308a47cbdb983a101a38e88"
+	schemaTenObjects     = 48
+	// schemaElevenFingerprint is the exact frozen parent13 importer catalog.
+	schemaElevenFingerprint = "bfe848b56e2ac9ce1d28125311c57920b42773be2427761481d20b6ed41ab68c"
+	schemaElevenObjects     = 59
+	// schemaTwelveFingerprint is the catalog this build emitted before
+	// unpublished initial-destination ownership was added.
+	schemaTwelveFingerprint = "2da2ccd30c01c81b079caadb6da5615a58a5d44216c5dfdc9104232462ef3c04"
+	schemaTwelveObjects     = 59
+	// schemaThirteenFingerprint is the catalog this build emitted before
+	// owner resolution of unresolved publication intents was added.
+	schemaThirteenFingerprint = "ef47d7a1f41a3c1f652843709093199ebf12267c0c36eb8345398796a6e8bfdd"
+	schemaThirteenObjects     = 61
 )
 
 var ErrSetupComplete = errors.New("setup is already complete")
@@ -25,6 +64,13 @@ var ErrSetupComplete = errors.New("setup is already complete")
 type Store struct {
 	db  *sql.DB
 	dir string
+
+	// Credential transitions are repository-scoped. credentialRestoreMu stops
+	// all of them only while a whole-store restore replaces portable state.
+	credentialRegistryMu sync.Mutex
+	credentialLocks      map[string]*sync.Mutex
+	credentialRestoreMu  sync.RWMutex
+	credentialAuthority  sync.Map
 }
 
 type Settings struct {
@@ -34,6 +80,9 @@ type Settings struct {
 	AccessSessionVersion int64
 	AdminSessionVersion  int64
 	InsecureHTTPAccepted bool
+	// CheckLogRetentionDays bounds disposable raw check logs. Durable task and
+	// attempt records are never removed by log retention.
+	CheckLogRetentionDays int
 }
 
 type Session struct {
@@ -48,6 +97,9 @@ type Repository struct {
 	Name        string
 	Description string
 	CreatedAt   time.Time
+	// AttemptSequence is the repository-wide counter that issues check attempt
+	// sequences. It is portable so a restore keeps issuing higher sequences.
+	AttemptSequence int64
 }
 
 type BootstrapSnapshot struct {
@@ -56,7 +108,7 @@ type BootstrapSnapshot struct {
 	ExpiresAt int64  `json:"expires_at,omitempty"`
 }
 
-func Open(ctx context.Context, dir string) (*Store, error) {
+func Open(ctx context.Context, dir string) (result *Store, err error) {
 	absolute, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve state directory: %w", err)
@@ -85,26 +137,50 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("inspect incomplete restore marker: %w", err)
 	}
-	if err := ProtectPrivatePath(absolute, true); err != nil {
-		return nil, fmt.Errorf("protect state directory: %w", err)
-	}
 	if err := ensureLocalStateFilesystem(absolute); err != nil {
 		return nil, fmt.Errorf("validate state directory: %w", err)
 	}
+	// An existing database is classified before any permission change or
+	// read-write SQLite access, so a refused database keeps its bytes, entries
+	// and modes. The inspection holds the source handles until acceptance and
+	// releases them before SQLite opens the same files. A release failure
+	// blocks the writable open because the bound objects are no longer
+	// reliably known.
+	inspected, err := inspectState(ctx, absolute)
+	if err != nil {
+		return nil, err
+	}
+	// Keep the release guard until acceptance finishes normally, so an
+	// interrupted acceptance cannot leave source handles open.
+	defer func() {
+		if inspected != nil {
+			err = errors.Join(err, inspected.release())
+			if err != nil {
+				result = nil
+			}
+		}
+	}()
+	if err := inspected.accept(ctx, absolute); err != nil {
+		return nil, err
+	}
+	class := inspected.class
+	if err := inspected.release(); err != nil {
+		return nil, err
+	}
+	inspected = nil
 	path := filepath.Join(absolute, databaseName)
-	dsn := sqliteFileURI(path)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", sqliteFileURI(path))
 	if err != nil {
 		return nil, fmt.Errorf("open state database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	store := &Store{db: db, dir: absolute}
-	if err := store.initialize(ctx); err != nil {
+	if err := store.initialize(ctx, class); err != nil {
 		db.Close()
 		return nil, err
 	}
-	for _, protectedPath := range []string{path, path + "-wal", path + "-shm"} {
-		if err := ProtectPrivatePath(protectedPath, false); err != nil && !os.IsNotExist(err) {
+	for _, protectedPath := range []string{path, path + walSuffix, path + shmSuffix} {
+		if err := ProtectPrivatePath(protectedPath, false); err != nil && !errors.Is(err, os.ErrNotExist) {
 			db.Close()
 			return nil, fmt.Errorf("protect state database file: %w", err)
 		}
@@ -113,19 +189,264 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 }
 
 func sqliteFileURI(path string) string {
+	return sqliteURI(path, "_txlock=immediate")
+}
+
+func sqliteURI(path, query string) string {
 	slashPath := filepath.ToSlash(path)
 	if len(slashPath) >= 3 && slashPath[1] == ':' && slashPath[2] == '/' &&
 		(('a' <= slashPath[0] && slashPath[0] <= 'z') || ('A' <= slashPath[0] && slashPath[0] <= 'Z')) {
 		slashPath = "/" + slashPath
 	}
-	return (&url.URL{Scheme: "file", Path: slashPath}).String()
+	return (&url.URL{Scheme: "file", Path: slashPath, RawQuery: query}).String()
 }
 
-func (s *Store) initialize(ctx context.Context) error {
-	statements := []string{
-		`PRAGMA journal_mode=WAL`,
+// initialize prepares the accepted database. The inspection result selects
+// the path, but the real connection reclassifies before every persistent
+// write. A migration candidate is reclassified again inside the immediate
+// write transaction that applies the authorized schema steps.
+func (s *Store) initialize(ctx context.Context, expected schemaClass) error {
+	// Connection settings first, because they are not persistent writes.
+	for _, pragma := range []string{
 		`PRAGMA foreign_keys=ON`,
 		`PRAGMA busy_timeout=5000`,
+	} {
+		if _, err := s.db.ExecContext(ctx, pragma); err != nil {
+			return fmt.Errorf("initialize state database: %w", err)
+		}
+	}
+	class, err := classifySchema(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	if class != schemaCurrent && class != expected {
+		return unstable("state database changed between inspection and open")
+	}
+	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode=WAL`); err != nil {
+		return fmt.Errorf("initialize state database: %w", err)
+	}
+	if class == schemaCurrent {
+		// Another accepted opener may have completed the migration first, so
+		// a current database is served without repeating its statements.
+		return nil
+	}
+	return s.migrate(ctx, expected)
+}
+
+// queryRower is the read surface shared by a connection and a transaction.
+type queryRower interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// closeRows ends a row loop and reports why iteration stopped. When a step
+// fails mid-scan, database/sql closes the rows itself and keeps the error only
+// in Err, so a later Close returns nil and a truncated read would look
+// complete.
+func closeRows(rows *sql.Rows) error {
+	return errors.Join(rows.Err(), rows.Close())
+}
+
+// classifySchema returns the accepted class of the visible schema or the
+// compatibility error that refuses it.
+func classifySchema(ctx context.Context, db queryRower) (schemaClass, error) {
+	version, versioned, err := readSchemaVersion(ctx, db)
+	if err != nil {
+		return 0, err
+	}
+	if !versioned {
+		return validateUnversionedSchema(ctx, db)
+	}
+	switch {
+	case version == currentSchemaVersion:
+		return schemaCurrent, nil
+	case version == 6 || version == 7 || version == 8 || version == 9 || version == 10 || version == 11 || version == 12 || version == 13:
+		fingerprint, objects, err := schemaFingerprint(ctx, db)
+		if err != nil {
+			return 0, err
+		}
+		expected := schemaSixFingerprint
+		class := schemaSix
+		switch version {
+		case 7:
+			expected = schemaSevenFingerprint
+			class = schemaSeven
+		case 8:
+			expected = schemaEightFingerprint
+			class = schemaEight
+		case 9:
+			expected = schemaNineFingerprint
+			class = schemaNine
+		case 10:
+			expected = schemaTenFingerprint
+			class = schemaTen
+		case 11:
+			expected = schemaElevenFingerprint
+			class = schemaEleven
+		case 12:
+			expected = schemaTwelveFingerprint
+			class = schemaTwelve
+		case 13:
+			expected = schemaThirteenFingerprint
+			class = schemaThirteen
+		}
+		expectedObjects := map[int]int{9: schemaNineObjects, 10: schemaTenObjects, 11: schemaElevenObjects, 12: schemaTwelveObjects, 13: schemaThirteenObjects}
+		if fingerprint != expected || (expectedObjects[version] != 0 && objects != expectedObjects[version]) {
+			return 0, fmt.Errorf("state database schema version %d does not match the supported schema %d catalog", version, version)
+		}
+		return class, nil
+	case version > currentSchemaVersion:
+		return 0, fmt.Errorf("state database schema version %d is newer than this OwnGit build supports (%d)", version, currentSchemaVersion)
+	case version >= 1:
+		return 0, fmt.Errorf("state database uses the unreleased development schema %d; this build supports the committed baseline and schemas 6, 7, 8, 9, 10, 11, 12, 13, and %d", version, currentSchemaVersion)
+	default:
+		return 0, fmt.Errorf("unsupported state database schema version %d", version)
+	}
+}
+
+func (s *Store) schemaVersion(ctx context.Context) (int, error) {
+	version, _, err := readSchemaVersion(ctx, s.db)
+	return version, err
+}
+
+func readSchemaVersion(ctx context.Context, db queryRower) (int, bool, error) {
+	var tables int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='metadata'`).Scan(&tables); err != nil {
+		return 0, false, fmt.Errorf("inspect state database: %w", err)
+	}
+	if tables == 0 {
+		return 0, false, nil
+	}
+	var value string
+	err := db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='schema_version'`).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("read state schema version: %w", err)
+	}
+	version, err := strconv.Atoi(value)
+	if err != nil || version < 0 {
+		return 0, false, fmt.Errorf("invalid state schema version %q", value)
+	}
+	return version, true, nil
+}
+
+// validateUnversionedSchema accepts an empty database or the exact committed
+// baseline catalog.
+func validateUnversionedSchema(ctx context.Context, db queryRower) (schemaClass, error) {
+	fingerprint, objects, err := schemaFingerprint(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("inspect unversioned state database: %w", err)
+	}
+	if objects == 0 {
+		return schemaEmpty, nil
+	}
+	if fingerprint == committedBaselineSchemaFingerprint {
+		return schemaBaseline, nil
+	}
+	return 0, errors.New("state database has no schema version and does not match the committed baseline")
+}
+
+func schemaFingerprint(ctx context.Context, db queryRower) (string, int, error) {
+	rows, err := db.QueryContext(ctx, `SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name`)
+	if err != nil {
+		return "", 0, err
+	}
+	defer rows.Close()
+	digest := sha256.New()
+	objects := 0
+	for rows.Next() {
+		var objectType, name string
+		var statement sql.NullString
+		if err := rows.Scan(&objectType, &name, &statement); err != nil {
+			return "", 0, err
+		}
+		normalized := ""
+		if statement.Valid {
+			normalized = strings.Join(strings.Fields(statement.String), " ")
+		}
+		for _, field := range []string{objectType, name, normalized} {
+			_, _ = fmt.Fprintf(digest, "%d:", len(field))
+			_, _ = digest.Write([]byte(field))
+		}
+		objects++
+	}
+	if err := rows.Err(); err != nil {
+		return "", 0, err
+	}
+	return fmt.Sprintf("%x", digest.Sum(nil)), objects, nil
+}
+
+// migrate applies every authorized step in one immediate transaction. The
+// classification inside that transaction is the migration authority. A
+// completed concurrent migration is accepted, while any other owner change is
+// refused before a migration statement runs.
+func (s *Store) migrate(ctx context.Context, expected schemaClass) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	class, err := classifySchema(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if class == schemaCurrent {
+		return nil
+	}
+	if class != expected {
+		return unstable("state database changed before schema migration")
+	}
+	versions := []int{14}
+	switch class {
+	case schemaEmpty, schemaBaseline:
+		versions = []int{6, 7, 8, 9, 10, 11, 12, 13, 14}
+	case schemaSix:
+		versions = []int{7, 8, 9, 10, 11, 12, 13, 14}
+	case schemaSeven:
+		versions = []int{8, 9, 10, 11, 12, 13, 14}
+	case schemaEight:
+		versions = []int{9, 10, 11, 12, 13, 14}
+	case schemaNine:
+		versions = []int{10, 11, 12, 13, 14}
+	case schemaTen:
+		versions = []int{11, 12, 13, 14}
+	case schemaEleven:
+		versions = []int{12, 13, 14}
+	case schemaTwelve:
+		versions = []int{13, 14}
+	case schemaThirteen:
+		versions = []int{14}
+	}
+	for _, version := range versions {
+		statements, ok := migrations[version]
+		if !ok {
+			return fmt.Errorf("missing state schema migration %d", version)
+		}
+		for _, statement := range statements {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("apply state schema migration %d: %w", version, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, strconv.Itoa(version)); err != nil {
+			return fmt.Errorf("record state schema migration %d: %w", version, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// migrations maps each accepted upgrade target to its statements. Version 6
+// upgrades the committed baseline, version 7 adds local raw check logs, version
+// 8 adds durable direct-review state, version 9 adds the automatic-check
+// foundation, version 10 binds executable settings and executor roles, version
+// 11 adds inbound import state, version 12 records structured HEAD ownership,
+// version 13 records machine-local ownership of unpublished initial
+// destinations, and version 14 admits the owner_resolved intent status.
+// Schema 12 has no ownership rows. A missing row never authorizes removal or
+// publication of a look-alike directory.
+var migrations = map[int][]string{
+	6: {
 		`CREATE TABLE IF NOT EXISTS metadata (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
@@ -192,7 +513,7 @@ func (s *Store) initialize(ctx context.Context) error {
 			sequence INTEGER NOT NULL CHECK (sequence > 0),
 			source_oid TEXT NOT NULL,
 			target_oid TEXT NOT NULL,
-			status TEXT NOT NULL CHECK (status IN ('pending','approved','changes_requested','skipped')),
+			status TEXT NOT NULL CHECK (status IN ('pending','approved','changes_requested','skipped','not_requested')),
 			reviewer_label TEXT NOT NULL,
 			provenance TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
@@ -224,17 +545,645 @@ func (s *Store) initialize(ctx context.Context) error {
 			('access_session_version','1'),
 			('admin_session_version','1'),
 			('insecure_http_accepted','false')`,
-	}
-	for _, statement := range statements {
-		if _, err := s.db.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("initialize state database: %w", err)
-		}
-	}
-	return nil
+		// Tasks keep only authoritative identity, title, and server-observed
+		// timestamps. Status, budget, applied attempt, and pending attempt are
+		// derived from attempts and reservations.
+		`CREATE TABLE IF NOT EXISTS tasks (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		// One repository-wide counter issues attempt sequences. It advances
+		// only with a new accepted registration.
+		`CREATE TABLE IF NOT EXISTS repository_attempt_counters (
+			repository_id TEXT PRIMARY KEY,
+			attempt_sequence INTEGER NOT NULL DEFAULT 0,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS check_configurations (
+			repository_id TEXT NOT NULL,
+			version INTEGER NOT NULL CHECK (version > 0),
+			config_hash TEXT NOT NULL,
+			checks_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (repository_id, version),
+			UNIQUE (repository_id, config_hash),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		// The registration worktree observation and the submitted completion
+		// observation are stored separately, so a clean registration followed
+		// by a dirty completion stays verifiable.
+		`CREATE TABLE IF NOT EXISTS check_attempts (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			repository_id TEXT NOT NULL,
+			revision_oid TEXT NOT NULL,
+			registration_worktree_state TEXT NOT NULL CHECK (registration_worktree_state IN ('clean','dirty','unknown')),
+			submitted_worktree_state TEXT NOT NULL DEFAULT '' CHECK (submitted_worktree_state IN ('','clean','dirty','unknown')),
+			configuration_version INTEGER NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('pending','passed','failed','error','cancelled','incomplete','unavailable')),
+			exit_code INTEGER,
+			started_at INTEGER NOT NULL,
+			finished_at INTEGER NOT NULL DEFAULT 0,
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			summary TEXT NOT NULL DEFAULT '',
+			protection TEXT NOT NULL DEFAULT 'unknown',
+			execution_scope TEXT NOT NULL DEFAULT 'inherited',
+			credential_id TEXT NOT NULL DEFAULT '',
+			timeout_ms INTEGER NOT NULL DEFAULT 0,
+			output_limit_bytes INTEGER NOT NULL DEFAULT 0,
+			log_id TEXT NOT NULL DEFAULT '',
+			log_expires_at INTEGER,
+			log_truncated INTEGER NOT NULL DEFAULT 0,
+			log_error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			sequence INTEGER NOT NULL,
+			cycle_id TEXT NOT NULL DEFAULT '',
+			registration_digest TEXT NOT NULL,
+			completion_digest TEXT NOT NULL DEFAULT '',
+			submitted_log_digest TEXT NOT NULL DEFAULT '',
+			submitted_truncated INTEGER NOT NULL DEFAULT 0,
+			submitted_cancelled INTEGER NOT NULL DEFAULT 0,
+			log_digest TEXT NOT NULL DEFAULT '',
+			FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS check_results (
+			attempt_id TEXT NOT NULL,
+			position INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			command TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('passed','failed','error','cancelled','incomplete','unavailable')),
+			exit_code INTEGER,
+			duration_ms INTEGER NOT NULL,
+			output_excerpt TEXT NOT NULL,
+			truncated INTEGER NOT NULL DEFAULT 0,
+			cleanup_error TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (attempt_id, position),
+			FOREIGN KEY (attempt_id) REFERENCES check_attempts(id) ON DELETE CASCADE
+		)`,
+		// A cycle records the repository attempt counter observed inside its
+		// reservation transaction. The boundary is immutable, so a
+		// pre-reservation attempt finishing later cannot certify the round.
+		`CREATE TABLE IF NOT EXISTS check_cycles (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			repository_id TEXT NOT NULL,
+			sequence INTEGER NOT NULL CHECK (sequence > 0),
+			reserved_at INTEGER NOT NULL,
+			reserved_after_sequence INTEGER NOT NULL,
+			UNIQUE (task_id, sequence),
+			FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS helper_credentials (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			label TEXT NOT NULL,
+			creation_id TEXT NOT NULL DEFAULT '',
+			token_hash BLOB NOT NULL,
+			created_at INTEGER NOT NULL,
+			revoked_at INTEGER,
+			last_used_at INTEGER,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS helper_credentials_creation ON helper_credentials(repository_id, creation_id) WHERE creation_id != ''`,
+		`CREATE INDEX IF NOT EXISTS check_attempts_revision ON check_attempts(repository_id, revision_oid, sequence)`,
+		`CREATE INDEX IF NOT EXISTS check_attempts_task ON check_attempts(task_id, sequence)`,
+		`CREATE INDEX IF NOT EXISTS check_attempts_pending ON check_attempts(task_id, status, sequence)`,
+		`CREATE INDEX IF NOT EXISTS check_cycles_task ON check_cycles(task_id, sequence)`,
+		// The committed baseline review table predates the optional review
+		// status, and SQLite cannot alter a CHECK constraint in place.
+		`CREATE TABLE pull_request_reviews_v6 (
+			repository_id TEXT NOT NULL,
+			pull_request_number INTEGER NOT NULL,
+			sequence INTEGER NOT NULL CHECK (sequence > 0),
+			source_oid TEXT NOT NULL,
+			target_oid TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('pending','approved','changes_requested','skipped','not_requested')),
+			reviewer_label TEXT NOT NULL,
+			provenance TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (repository_id, pull_request_number, sequence),
+			FOREIGN KEY (repository_id, pull_request_number) REFERENCES pull_requests(repository_id, number) ON DELETE CASCADE
+		)`,
+		`INSERT INTO pull_request_reviews_v6(repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at)
+			SELECT repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at FROM pull_request_reviews`,
+		`DROP TABLE pull_request_reviews`,
+		`ALTER TABLE pull_request_reviews_v6 RENAME TO pull_request_reviews`,
+	},
+	7: {
+		`CREATE TABLE check_raw_logs (
+			attempt_id TEXT PRIMARY KEY,
+			content BLOB NOT NULL CHECK (length(content) <= 262144),
+			expires_at INTEGER NOT NULL,
+			FOREIGN KEY (attempt_id) REFERENCES check_attempts(id) ON DELETE CASCADE
+		) WITHOUT ROWID`,
+		`CREATE INDEX check_raw_logs_expiry ON check_raw_logs(expires_at,attempt_id)`,
+	},
+	8: {
+		`ALTER TABLE pull_request_reviews ADD COLUMN review_event_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE UNIQUE INDEX pull_request_reviews_event ON pull_request_reviews(repository_id,review_event_id) WHERE review_event_id != ''`,
+		`CREATE TABLE direct_review_credentials (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL UNIQUE,
+			label TEXT NOT NULL CHECK (length(CAST(label AS BLOB)) BETWEEN 1 AND 100),
+			value TEXT NOT NULL CHECK (length(CAST(value AS BLOB)) BETWEEN 1 AND 16384),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE direct_review_repository_settings (
+			repository_id TEXT PRIMARY KEY,
+			configuration_version INTEGER NOT NULL CHECK (configuration_version > 0),
+			protocol TEXT NOT NULL CHECK (protocol IN ('openai_responses','anthropic_messages','compatible_chat_completions')),
+			endpoint TEXT NOT NULL CHECK (length(CAST(endpoint AS BLOB)) BETWEEN 1 AND 2048),
+			model TEXT NOT NULL CHECK (length(CAST(model AS BLOB)) BETWEEN 1 AND 200),
+			authentication_mode TEXT NOT NULL CHECK (authentication_mode IN ('stored_credential','none')),
+			provider_limits_json TEXT NOT NULL CHECK (length(CAST(provider_limits_json AS BLOB)) BETWEEN 2 AND 4096),
+			repository_limits_json TEXT NOT NULL CHECK (length(CAST(repository_limits_json AS BLOB)) BETWEEN 2 AND 4096),
+			instruction_version TEXT NOT NULL CHECK (length(CAST(instruction_version AS BLOB)) BETWEEN 1 AND 100),
+			credential_id TEXT NOT NULL DEFAULT '',
+			connection_version INTEGER NOT NULL DEFAULT 0 CHECK (connection_version >= 0),
+			authority_epoch TEXT NOT NULL CHECK (length(authority_epoch) = 32),
+			probe_fingerprint TEXT NOT NULL DEFAULT '',
+			probe_request_id TEXT NOT NULL DEFAULT '',
+			probe_updated_at INTEGER NOT NULL DEFAULT 0,
+			automatic_pr_enabled INTEGER NOT NULL DEFAULT 0 CHECK (automatic_pr_enabled IN (0,1)),
+			automatic_task_enabled INTEGER NOT NULL DEFAULT 0 CHECK (automatic_task_enabled IN (0,1)),
+			automatic_consent_version INTEGER NOT NULL DEFAULT 0 CHECK (automatic_consent_version >= 0),
+			automatic_consent_digest TEXT NOT NULL DEFAULT '',
+			automatic_consent_active INTEGER NOT NULL DEFAULT 0 CHECK (automatic_consent_active IN (0,1)),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE direct_review_probes (
+			request_id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			registration_digest TEXT NOT NULL,
+			capability_fingerprint TEXT NOT NULL,
+			configuration_version INTEGER NOT NULL CHECK (configuration_version > 0),
+			connection_version INTEGER NOT NULL CHECK (connection_version >= 0),
+			connection_fingerprint TEXT NOT NULL,
+			protocol TEXT NOT NULL,
+			endpoint TEXT NOT NULL,
+			model TEXT NOT NULL,
+			authentication_mode TEXT NOT NULL,
+			provider_limits_json TEXT NOT NULL CHECK (length(CAST(provider_limits_json AS BLOB)) BETWEEN 2 AND 4096),
+			disclosure_version TEXT NOT NULL,
+			disclosure_digest TEXT NOT NULL,
+			phase TEXT NOT NULL CHECK (phase IN ('preparing','running','terminal')),
+			cancel_requested_at INTEGER,
+			created_at INTEGER NOT NULL,
+			running_at INTEGER,
+			terminal_at INTEGER,
+			result_json TEXT NOT NULL DEFAULT '' CHECK (length(CAST(result_json AS BLOB)) <= 1048576),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX direct_review_probes_repository ON direct_review_probes(repository_id,created_at,request_id)`,
+		`CREATE TABLE direct_review_task_contexts (
+			context_id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			attempt_id TEXT NOT NULL UNIQUE,
+			credential_id TEXT NOT NULL,
+			base_oid TEXT NOT NULL,
+			head_oid TEXT NOT NULL,
+			pull_request_number INTEGER NOT NULL DEFAULT 0 CHECK (pull_request_number >= 0),
+			observed_source_oid TEXT NOT NULL DEFAULT '',
+			observed_target_oid TEXT NOT NULL DEFAULT '',
+			registration_digest TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+			FOREIGN KEY (attempt_id) REFERENCES check_attempts(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX direct_review_task_contexts_task ON direct_review_task_contexts(repository_id,task_id,created_at,context_id)`,
+		`CREATE TABLE direct_review_requests (
+			sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+			request_id TEXT NOT NULL UNIQUE,
+			repository_id TEXT NOT NULL,
+			trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('manual','automatic_pr','automatic_task')),
+			source_event_key TEXT NOT NULL DEFAULT '',
+			pull_request_number INTEGER NOT NULL DEFAULT 0 CHECK (pull_request_number >= 0),
+			task_id TEXT NOT NULL DEFAULT '',
+			attempt_id TEXT NOT NULL DEFAULT '',
+			observed_source_oid TEXT NOT NULL DEFAULT '',
+			observed_target_oid TEXT NOT NULL DEFAULT '',
+			effective_base_oid TEXT NOT NULL DEFAULT '',
+			effective_head_oid TEXT NOT NULL DEFAULT '',
+			diff_mode TEXT NOT NULL DEFAULT '' CHECK (diff_mode IN ('','two_commit')),
+			configuration_version INTEGER NOT NULL CHECK (configuration_version > 0),
+			connection_version INTEGER NOT NULL CHECK (connection_version >= 0),
+			connection_fingerprint TEXT NOT NULL,
+			protocol TEXT NOT NULL,
+			endpoint TEXT NOT NULL,
+			model TEXT NOT NULL,
+			authentication_mode TEXT NOT NULL,
+			provider_limits_json TEXT NOT NULL CHECK (length(CAST(provider_limits_json AS BLOB)) BETWEEN 2 AND 4096),
+			repository_limits_json TEXT NOT NULL CHECK (length(CAST(repository_limits_json AS BLOB)) BETWEEN 2 AND 4096),
+			instruction_version TEXT NOT NULL,
+			consent_version TEXT NOT NULL DEFAULT '',
+			consent_digest TEXT NOT NULL DEFAULT '',
+			disclosure_version TEXT NOT NULL,
+			disclosure_digest TEXT NOT NULL,
+			registration_digest TEXT NOT NULL,
+			phase TEXT NOT NULL CHECK (phase IN ('observed','preparing','running','terminal')),
+			cancel_requested_at INTEGER,
+			created_at INTEGER NOT NULL,
+			preparing_at INTEGER,
+			running_at INTEGER,
+			terminal_at INTEGER,
+			initial_context_bytes INTEGER NOT NULL DEFAULT 0 CHECK (initial_context_bytes >= 0),
+			initial_context_truncated INTEGER NOT NULL DEFAULT 0 CHECK (initial_context_truncated IN (0,1)),
+			result_json TEXT NOT NULL DEFAULT '' CHECK (length(CAST(result_json AS BLOB)) <= 1048576),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE UNIQUE INDEX direct_review_requests_source_event ON direct_review_requests(repository_id,trigger_kind,source_event_key) WHERE source_event_key != ''`,
+		`CREATE INDEX direct_review_requests_pull_request ON direct_review_requests(repository_id,pull_request_number,sequence) WHERE pull_request_number > 0`,
+		`CREATE INDEX direct_review_requests_task ON direct_review_requests(repository_id,task_id,sequence) WHERE task_id != ''`,
+	},
+	9: {
+		// Attempts gain a server-owned job link. Empty keeps the exact helper
+		// behavior and every historical digest shape.
+		`ALTER TABLE check_attempts ADD COLUMN job_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX check_attempts_job ON check_attempts(job_id) WHERE job_id != ''`,
+		// One current policy row per repository. It holds the operator-selected
+		// executor, the limits that cap workflow requests, the local consent
+		// generation, and the local authority epoch. Queue and lease management
+		// are server-owned and are not visible to the committed workflow.
+		`CREATE TABLE check_policies (
+			repository_id TEXT PRIMARY KEY,
+			policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+			policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64),
+			executor TEXT NOT NULL CHECK (executor IN ('host','container','external_runner')),
+			allowed_events TEXT NOT NULL CHECK (length(CAST(allowed_events AS BLOB)) BETWEEN 2 AND 100),
+			max_timeout_ms INTEGER NOT NULL CHECK (max_timeout_ms > 0),
+			max_output_limit_bytes INTEGER NOT NULL CHECK (max_output_limit_bytes > 0),
+			queue_limit INTEGER NOT NULL CHECK (queue_limit > 0),
+			max_active_jobs INTEGER NOT NULL CHECK (max_active_jobs > 0),
+			max_lease_ms INTEGER NOT NULL CHECK (max_lease_ms > 0),
+			consent_version INTEGER NOT NULL DEFAULT 0 CHECK (consent_version >= 0),
+			consent_digest TEXT NOT NULL DEFAULT '' CHECK (consent_digest = '' OR length(consent_digest) = 64),
+			consent_active INTEGER NOT NULL DEFAULT 0 CHECK (consent_active IN (0,1)),
+			runner_generation INTEGER NOT NULL DEFAULT 0 CHECK (runner_generation >= 0),
+			authority_epoch TEXT NOT NULL CHECK (length(authority_epoch) = 32),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		// One durable job per effective execution condition. The dedup digest
+		// covers the source, workflow, checks, limits, executor, policy, consent,
+		// and rerun generation, so a repeated observation cannot double-run and an
+		// uncertain loss requires an explicit rerun.
+		`CREATE TABLE check_jobs (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('push','pull_request')),
+			event_key TEXT NOT NULL CHECK (length(CAST(event_key AS BLOB)) BETWEEN 1 AND 200),
+			source_oid TEXT NOT NULL,
+			base_oid TEXT NOT NULL DEFAULT '',
+			pull_request_number INTEGER NOT NULL DEFAULT 0 CHECK (pull_request_number >= 0),
+			trigger_ref TEXT NOT NULL CHECK (length(CAST(trigger_ref AS BLOB)) BETWEEN 1 AND 200),
+			workflow_path TEXT NOT NULL,
+			workflow_oid TEXT NOT NULL DEFAULT '',
+			workflow_digest TEXT NOT NULL CHECK (length(workflow_digest) = 64),
+			configuration_version INTEGER NOT NULL CHECK (configuration_version > 0),
+			executor TEXT NOT NULL CHECK (executor IN ('host','container','external_runner')),
+			policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+			consent_version INTEGER NOT NULL CHECK (consent_version > 0),
+			limits_json TEXT NOT NULL CHECK (length(CAST(limits_json AS BLOB)) BETWEEN 2 AND 4096),
+			dedup_digest TEXT NOT NULL CHECK (length(dedup_digest) = 64),
+			rerun_root TEXT NOT NULL DEFAULT '',
+			rerun_generation INTEGER NOT NULL DEFAULT 0 CHECK (rerun_generation >= 0),
+			status TEXT NOT NULL CHECK (status IN ('pending','claimed','started','passed','failed','error','cancelled','incomplete','unavailable','ambiguous','interrupted')),
+			attempt_id TEXT NOT NULL DEFAULT '',
+			lease_id TEXT NOT NULL DEFAULT '',
+			lease_expires_at INTEGER,
+			credential_id TEXT NOT NULL DEFAULT '',
+			credential_generation INTEGER NOT NULL DEFAULT 0 CHECK (credential_generation >= 0),
+			protection TEXT NOT NULL DEFAULT 'unknown' CHECK (protection IN ('unknown','host','container','runner_reported')),
+			admitted_at INTEGER NOT NULL,
+			claimed_at INTEGER,
+			started_at INTEGER,
+			finished_at INTEGER,
+			lease_lost_at INTEGER,
+			cancel_requested_at INTEGER,
+			interrupted_at INTEGER,
+			summary TEXT NOT NULL DEFAULT '' CHECK (length(CAST(summary AS BLOB)) <= 500),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+		)`,
+		`CREATE UNIQUE INDEX check_jobs_dedup ON check_jobs(repository_id,dedup_digest)`,
+		`CREATE INDEX check_jobs_queue ON check_jobs(repository_id,status,admitted_at,id)`,
+		`CREATE INDEX check_jobs_attempt ON check_jobs(attempt_id) WHERE attempt_id != ''`,
+		// Dedicated revocable runner authority. Only the verifier is stored. The
+		// issued token carries its local epoch, identity, and generation, so a
+		// pre-restore bearer cannot become valid under new local authority.
+		`CREATE TABLE check_runner_credentials (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			label TEXT NOT NULL CHECK (length(CAST(label AS BLOB)) BETWEEN 1 AND 100),
+			creation_id TEXT NOT NULL DEFAULT '',
+			generation INTEGER NOT NULL CHECK (generation > 0),
+			token_hash BLOB NOT NULL,
+			created_at INTEGER NOT NULL,
+			revoked_at INTEGER,
+			last_used_at INTEGER,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE UNIQUE INDEX check_runner_credentials_creation ON check_runner_credentials(repository_id,creation_id) WHERE creation_id != ''`,
+		`CREATE UNIQUE INDEX check_runner_credentials_hash ON check_runner_credentials(repository_id,token_hash) WHERE revoked_at IS NULL`,
+		// Latest observed refs per repository. Observations are machine-local
+		// capture evidence, so a restore starts without them.
+		`CREATE TABLE check_observations (
+			repository_id TEXT NOT NULL,
+			ref_name TEXT NOT NULL CHECK (length(CAST(ref_name AS BLOB)) BETWEEN 1 AND 500),
+			oid TEXT NOT NULL,
+			observed_at INTEGER NOT NULL,
+			PRIMARY KEY (repository_id,ref_name),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX check_observations_recent ON check_observations(repository_id,observed_at,ref_name)`,
+	},
+	10: {
+		// Schema 9 did not persist source/container bounds. Its rows remain valid
+		// history under their original v1 digests, but consent is cleared and the
+		// operator must save a complete v2 policy before new execution.
+		`ALTER TABLE check_policies ADD COLUMN execution_json TEXT NOT NULL DEFAULT '{"legacy":true}' CHECK (length(CAST(execution_json AS BLOB)) BETWEEN 2 AND 4096)`,
+		`UPDATE check_policies SET consent_active=0`,
+		// Rebuild the job table to add captured execution authority and to widen
+		// the accepted trigger set with the released merge event. Exact schema 9
+		// classification makes this copy shape deterministic.
+		`ALTER TABLE check_jobs RENAME TO check_jobs_v9`,
+		`CREATE TABLE check_jobs (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('push','pull_request')),
+			event_key TEXT NOT NULL CHECK (length(CAST(event_key AS BLOB)) BETWEEN 1 AND 200),
+			source_oid TEXT NOT NULL,
+			base_oid TEXT NOT NULL DEFAULT '',
+			pull_request_number INTEGER NOT NULL DEFAULT 0 CHECK (pull_request_number >= 0),
+			trigger_ref TEXT NOT NULL CHECK (length(CAST(trigger_ref AS BLOB)) BETWEEN 1 AND 200),
+			workflow_path TEXT NOT NULL,
+			workflow_oid TEXT NOT NULL DEFAULT '',
+			workflow_digest TEXT NOT NULL CHECK (length(workflow_digest) = 64),
+			configuration_version INTEGER NOT NULL CHECK (configuration_version > 0),
+			executor TEXT NOT NULL CHECK (executor IN ('host','container','external_runner')),
+			policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+			consent_version INTEGER NOT NULL CHECK (consent_version > 0),
+			limits_json TEXT NOT NULL CHECK (length(CAST(limits_json AS BLOB)) BETWEEN 2 AND 4096),
+			execution_json TEXT NOT NULL CHECK (length(CAST(execution_json AS BLOB)) BETWEEN 2 AND 4096),
+			dedup_digest TEXT NOT NULL CHECK (length(dedup_digest) = 64),
+			rerun_root TEXT NOT NULL DEFAULT '',
+			rerun_generation INTEGER NOT NULL DEFAULT 0 CHECK (rerun_generation >= 0),
+			status TEXT NOT NULL CHECK (status IN ('pending','claimed','started','passed','failed','error','cancelled','incomplete','unavailable','ambiguous','interrupted')),
+			attempt_id TEXT NOT NULL DEFAULT '',
+			lease_id TEXT NOT NULL DEFAULT '',
+			lease_expires_at INTEGER,
+			credential_id TEXT NOT NULL DEFAULT '',
+			credential_generation INTEGER NOT NULL DEFAULT 0 CHECK (credential_generation >= 0),
+			credential_role TEXT NOT NULL DEFAULT '' CHECK (credential_role IN ('','server','external_runner')),
+			protection TEXT NOT NULL DEFAULT 'unknown' CHECK (protection IN ('unknown','host','container','runner_reported')),
+			admitted_at INTEGER NOT NULL,
+			claimed_at INTEGER,
+			started_at INTEGER,
+			finished_at INTEGER,
+			lease_lost_at INTEGER,
+			cancel_requested_at INTEGER,
+			interrupted_at INTEGER,
+			summary TEXT NOT NULL DEFAULT '' CHECK (length(CAST(summary AS BLOB)) <= 500),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO check_jobs(
+			id,repository_id,task_id,trigger_kind,event_key,source_oid,base_oid,pull_request_number,trigger_ref,workflow_path,
+			workflow_oid,workflow_digest,configuration_version,executor,policy_version,consent_version,limits_json,execution_json,
+			dedup_digest,rerun_root,rerun_generation,status,attempt_id,lease_id,lease_expires_at,credential_id,credential_generation,credential_role,
+			protection,admitted_at,claimed_at,started_at,finished_at,lease_lost_at,cancel_requested_at,interrupted_at,summary
+		) SELECT
+			id,repository_id,task_id,trigger_kind,event_key,source_oid,base_oid,pull_request_number,trigger_ref,workflow_path,
+			workflow_oid,workflow_digest,configuration_version,executor,policy_version,consent_version,limits_json,'{"legacy":true}',
+			dedup_digest,rerun_root,rerun_generation,status,attempt_id,lease_id,lease_expires_at,credential_id,credential_generation,'',
+			protection,admitted_at,claimed_at,started_at,finished_at,lease_lost_at,cancel_requested_at,interrupted_at,summary
+		FROM check_jobs_v9`,
+		`DROP TABLE check_jobs_v9`,
+		`CREATE UNIQUE INDEX check_jobs_dedup ON check_jobs(repository_id,dedup_digest)`,
+		`CREATE INDEX check_jobs_queue ON check_jobs(repository_id,status,admitted_at,id)`,
+		`CREATE INDEX check_jobs_attempt ON check_jobs(attempt_id) WHERE attempt_id != ''`,
+		// Every schema 9 runner credential was external authority. Server-local
+		// execution uses the policy epoch directly and never receives a bearer.
+		`ALTER TABLE check_runner_credentials ADD COLUMN role TEXT NOT NULL DEFAULT 'external_runner' CHECK (role IN ('server','external_runner'))`,
+		// Active container identity is machine-local cleanup authority and never
+		// enters backup manifests. The daemon ID prevents cleanup against a
+		// different mutable local Docker context after restart.
+		`CREATE TABLE check_job_runtime_ownership (
+			job_id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			container_name TEXT NOT NULL CHECK (length(CAST(container_name AS BLOB)) BETWEEN 1 AND 200),
+			container_id TEXT NOT NULL CHECK (length(container_id)=0 OR length(container_id) BETWEEN 12 AND 64),
+			daemon_id TEXT NOT NULL CHECK (length(CAST(daemon_id AS BLOB)) BETWEEN 1 AND 200),
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (job_id) REFERENCES check_jobs(id) ON DELETE CASCADE,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+	},
+	11: {
+		// One inbound import source per repository. No foreign key is declared
+		// because a configured source can precede the repository row: the
+		// destination object format is only known after the first advertisement.
+		// allow_private_network is machine-local transport consent, so a restore
+		// clears it while source identity and mode stay portable.
+		`CREATE TABLE import_sources (
+			repository_id TEXT PRIMARY KEY,
+			url TEXT NOT NULL CHECK (length(CAST(url AS BLOB)) BETWEEN 1 AND 8192),
+			source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+			authority_revision INTEGER NOT NULL CHECK (authority_revision > 0),
+			credential_generation TEXT NOT NULL DEFAULT '' CHECK (length(credential_generation) IN (0,32)),
+			mode TEXT NOT NULL CHECK (mode IN ('standalone','coexistence')),
+			git_only_consent INTEGER NOT NULL DEFAULT 0 CHECK (git_only_consent IN (0,1)),
+			allow_private_network INTEGER NOT NULL DEFAULT 0 CHECK (allow_private_network IN (0,1)),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		// Append-only refresh history. Counts and inspection facts describe what
+		// actually happened, including divergence and truncation.
+		`CREATE TABLE import_runs (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+			authority_revision INTEGER NOT NULL CHECK (authority_revision > 0),
+			kind TEXT NOT NULL CHECK (kind IN ('initial','refresh','scheduled')),
+			status TEXT NOT NULL CHECK (status IN ('preparing','fetching','indexing','inspecting','publishing','complete','failed','cancelled','superseded','interrupted','unresolved')),
+			started_at INTEGER NOT NULL,
+			finished_at INTEGER NOT NULL DEFAULT 0,
+			cancel_requested_at INTEGER,
+			object_format TEXT NOT NULL DEFAULT '' CHECK (object_format IN ('','sha1','sha256')),
+			refs_seen INTEGER NOT NULL DEFAULT 0 CHECK (refs_seen >= 0),
+			refs_created INTEGER NOT NULL DEFAULT 0 CHECK (refs_created >= 0),
+			refs_updated INTEGER NOT NULL DEFAULT 0 CHECK (refs_updated >= 0),
+			refs_unchanged INTEGER NOT NULL DEFAULT 0 CHECK (refs_unchanged >= 0),
+			refs_divergent INTEGER NOT NULL DEFAULT 0 CHECK (refs_divergent >= 0),
+			refs_deleted_upstream INTEGER NOT NULL DEFAULT 0 CHECK (refs_deleted_upstream >= 0),
+			refs_skipped INTEGER NOT NULL DEFAULT 0 CHECK (refs_skipped >= 0),
+			pack_bytes INTEGER NOT NULL DEFAULT 0 CHECK (pack_bytes >= 0),
+			http_body_bytes INTEGER NOT NULL DEFAULT 0 CHECK (http_body_bytes >= 0),
+			head_advertised INTEGER NOT NULL DEFAULT 0 CHECK (head_advertised IN (0,1)),
+			head_symref TEXT NOT NULL DEFAULT '' CHECK (length(CAST(head_symref AS BLOB)) <= 500),
+			error_class TEXT NOT NULL DEFAULT '' CHECK (length(CAST(error_class AS BLOB)) <= 100),
+			message TEXT NOT NULL DEFAULT '' CHECK (length(CAST(message AS BLOB)) <= 500),
+			lfs_detected INTEGER NOT NULL DEFAULT 0 CHECK (lfs_detected >= 0),
+			lfs_inspection_complete INTEGER NOT NULL DEFAULT 0 CHECK (lfs_inspection_complete IN (0,1)),
+			lfs_scanned_blobs INTEGER NOT NULL DEFAULT 0 CHECK (lfs_scanned_blobs >= 0),
+			lfs_scanned_bytes INTEGER NOT NULL DEFAULT 0 CHECK (lfs_scanned_bytes >= 0),
+			staging_name TEXT NOT NULL DEFAULT '' CHECK (length(CAST(staging_name AS BLOB)) <= 100),
+			cleanup_error TEXT NOT NULL DEFAULT '' CHECK (length(CAST(cleanup_error AS BLOB)) <= 500),
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX import_runs_repository ON import_runs(repository_id,started_at,id)`,
+		// Last source fact per ref and generation. The observation baseline is
+		// bound to the source generation so a new URL cannot inherit authority
+		// over refs published by the previous URL.
+		`CREATE TABLE import_ref_observations (
+			repository_id TEXT NOT NULL,
+			source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+			ref_name TEXT NOT NULL CHECK (length(CAST(ref_name AS BLOB)) BETWEEN 1 AND 500),
+			oid TEXT NOT NULL DEFAULT '' CHECK (oid = '' OR length(oid) IN (40,64)),
+			symref_target TEXT NOT NULL DEFAULT '' CHECK (length(CAST(symref_target AS BLOB)) <= 500),
+			observed_at INTEGER NOT NULL,
+			run_id TEXT NOT NULL DEFAULT '' CHECK (length(CAST(run_id AS BLOB)) <= 64),
+			PRIMARY KEY (repository_id, source_generation, ref_name)
+		)`,
+		`CREATE INDEX import_ref_observations_recent ON import_ref_observations(repository_id,observed_at,ref_name)`,
+		// Durable publication intent and receipt. expected/desired/retained are
+		// JSON objects of ref to object ID, so reconciliation can verify actual
+		// refs instead of trusting a receipt.
+		`CREATE TABLE import_publication_intents (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			run_id TEXT NOT NULL,
+			source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+			authority_revision INTEGER NOT NULL CHECK (authority_revision > 0),
+			status TEXT NOT NULL CHECK (status IN ('planning','applied','complete','not_applied','abandoned','unresolved','invalidated')),
+			expected_json TEXT NOT NULL CHECK (length(CAST(expected_json AS BLOB)) BETWEEN 2 AND 8388608),
+			desired_json TEXT NOT NULL CHECK (length(CAST(desired_json AS BLOB)) BETWEEN 2 AND 8388608),
+			observed_json TEXT NOT NULL CHECK (length(CAST(observed_json AS BLOB)) BETWEEN 2 AND 8388608),
+			retained_json TEXT NOT NULL CHECK (length(CAST(retained_json AS BLOB)) BETWEEN 2 AND 8388608),
+			head_symref TEXT NOT NULL DEFAULT '' CHECK (length(CAST(head_symref AS BLOB)) <= 500),
+			head_detach TEXT NOT NULL DEFAULT '' CHECK (length(CAST(head_detach AS BLOB)) <= 64),
+			receipt_json TEXT NOT NULL DEFAULT '' CHECK (length(CAST(receipt_json AS BLOB)) <= 8388608),
+			receipt_digest TEXT NOT NULL DEFAULT '' CHECK (receipt_digest = '' OR length(receipt_digest) = 64),
+			reason TEXT NOT NULL DEFAULT '' CHECK (length(CAST(reason AS BLOB)) <= 500),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX import_publication_intents_repository ON import_publication_intents(repository_id,created_at,id)`,
+		// Task-owned staging ownership. The on-disk marker must agree with this
+		// row before cleanup deletes anything, so a name alone is not proof.
+		`CREATE TABLE import_stagings (
+			name TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			run_id TEXT NOT NULL,
+			token TEXT NOT NULL CHECK (length(token) BETWEEN 16 AND 64),
+			state TEXT NOT NULL CHECK (state IN ('active','released','cleanup_failed','unknown')),
+			issue TEXT NOT NULL DEFAULT '' CHECK (length(CAST(issue AS BLOB)) <= 500),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX import_stagings_run ON import_stagings(run_id)`,
+		// Machine-local opt-in schedule. A restore drops these rows.
+		`CREATE TABLE import_schedules (
+			repository_id TEXT PRIMARY KEY,
+			enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0,1)),
+			interval_seconds INTEGER NOT NULL CHECK (interval_seconds BETWEEN 60 AND 604800),
+			last_started_at INTEGER,
+			last_finished_at INTEGER,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX import_schedules_due ON import_schedules(enabled,last_started_at,repository_id)`,
+	},
+	12: {
+		`ALTER TABLE import_publication_intents ADD COLUMN head_owned INTEGER NOT NULL DEFAULT 0 CHECK (head_owned IN (0,1))`,
+	},
+	13: {
+		`CREATE TABLE import_initial_destinations (
+			name TEXT PRIMARY KEY CHECK (length(name) BETWEEN 1 AND 80),
+			repository_id TEXT NOT NULL CHECK (length(repository_id) <= 100),
+			run_id TEXT NOT NULL CHECK (length(run_id) <= 64),
+			root_id TEXT NOT NULL CHECK (length(root_id) = 32),
+			token TEXT NOT NULL CHECK (length(token) BETWEEN 16 AND 64),
+			display_name TEXT NOT NULL DEFAULT '' CHECK (length(display_name) <= 100),
+			description TEXT NOT NULL DEFAULT '' CHECK (length(CAST(description AS BLOB)) <= 500),
+			state TEXT NOT NULL CHECK (state IN ('preparing','ready','published','released','cleanup_failed','unknown')),
+			issue TEXT NOT NULL DEFAULT '' CHECK (length(CAST(issue AS BLOB)) <= 500),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX import_initial_destinations_run ON import_initial_destinations(run_id)`,
+	},
+	// SQLite cannot change a CHECK constraint in place, so the intent table is
+	// rebuilt with every row and column kept. owner_resolved is terminal: the
+	// owner accepted the destination as found after an unresolved outcome.
+	14: {
+		`CREATE TABLE import_publication_intents_v14 (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			run_id TEXT NOT NULL,
+			source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+			authority_revision INTEGER NOT NULL CHECK (authority_revision > 0),
+			status TEXT NOT NULL CHECK (status IN ('planning','applied','complete','not_applied','abandoned','unresolved','invalidated','owner_resolved')),
+			expected_json TEXT NOT NULL CHECK (length(CAST(expected_json AS BLOB)) BETWEEN 2 AND 8388608),
+			desired_json TEXT NOT NULL CHECK (length(CAST(desired_json AS BLOB)) BETWEEN 2 AND 8388608),
+			observed_json TEXT NOT NULL CHECK (length(CAST(observed_json AS BLOB)) BETWEEN 2 AND 8388608),
+			retained_json TEXT NOT NULL CHECK (length(CAST(retained_json AS BLOB)) BETWEEN 2 AND 8388608),
+			head_symref TEXT NOT NULL DEFAULT '' CHECK (length(CAST(head_symref AS BLOB)) <= 500),
+			head_detach TEXT NOT NULL DEFAULT '' CHECK (length(CAST(head_detach AS BLOB)) <= 64),
+			receipt_json TEXT NOT NULL DEFAULT '' CHECK (length(CAST(receipt_json AS BLOB)) <= 8388608),
+			receipt_digest TEXT NOT NULL DEFAULT '' CHECK (receipt_digest = '' OR length(receipt_digest) = 64),
+			reason TEXT NOT NULL DEFAULT '' CHECK (length(CAST(reason AS BLOB)) <= 500),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			head_owned INTEGER NOT NULL DEFAULT 0 CHECK (head_owned IN (0,1))
+		)`,
+		// rowid order is the pending-intent page order, so it is copied too.
+		`INSERT INTO import_publication_intents_v14(rowid,id,repository_id,run_id,source_generation,authority_revision,status,expected_json,desired_json,observed_json,retained_json,
+			head_symref,head_detach,receipt_json,receipt_digest,reason,created_at,updated_at,head_owned)
+			SELECT rowid,id,repository_id,run_id,source_generation,authority_revision,status,expected_json,desired_json,observed_json,retained_json,
+			head_symref,head_detach,receipt_json,receipt_digest,reason,created_at,updated_at,head_owned FROM import_publication_intents`,
+		`DROP TABLE import_publication_intents`,
+		`ALTER TABLE import_publication_intents_v14 RENAME TO import_publication_intents`,
+		`CREATE INDEX import_publication_intents_repository ON import_publication_intents(repository_id,created_at,id)`,
+	},
+}
+
+// Exec runs one statement against the state database. It is used for targeted
+// repair and for tests that need to break one read on purpose.
+func (s *Store) Exec(ctx context.Context, statement string, args ...any) error {
+	_, err := s.db.ExecContext(ctx, statement, args...)
+	return err
 }
 
 func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) Dir() string  { return s.dir }
+
+// TableRowCount reports the row count of an existing table. It covers narrow
+// checks that have no dedicated accessor, such as confirming an unrelated
+// feature left no state behind. A missing table is reported as an error so
+// callers can skip tables from later migrations.
+func (s *Store) TableRowCount(ctx context.Context, table string) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM "`+table+`"`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
 
 func RequireExisting(directory string) error {
 	absolute, err := filepath.Abs(directory)
@@ -279,13 +1228,22 @@ func (s *Store) Settings(ctx context.Context) (Settings, error) {
 	if err != nil {
 		return Settings{}, fmt.Errorf("invalid admin session version: %w", err)
 	}
+	retentionDays := DefaultCheckLogRetentionDays
+	if raw := values["check_log_retention_days"]; raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 || parsed > 3650 {
+			return Settings{}, fmt.Errorf("invalid check log retention days %q", raw)
+		}
+		retentionDays = parsed
+	}
 	return Settings{
-		Initialized:          values["initialized"] == "true",
-		RepositoryRoot:       values["repository_root"],
-		AccessMode:           values["access_mode"],
-		AccessSessionVersion: accessVersion,
-		AdminSessionVersion:  adminVersion,
-		InsecureHTTPAccepted: values["insecure_http_accepted"] == "true",
+		Initialized:           values["initialized"] == "true",
+		RepositoryRoot:        values["repository_root"],
+		AccessMode:            values["access_mode"],
+		AccessSessionVersion:  accessVersion,
+		AdminSessionVersion:   adminVersion,
+		InsecureHTTPAccepted:  values["insecure_http_accepted"] == "true",
+		CheckLogRetentionDays: retentionDays,
 	}, nil
 }
 

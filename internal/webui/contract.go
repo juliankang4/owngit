@@ -92,6 +92,13 @@ type Chrome struct {
 	Notices []Notice
 	// Storage is shown only to the owner or a confirmed administrator.
 	Storage StorageInfo
+	// Version is the version of the application that served this request.
+	//
+	// The backend reads it from the one authoritative version source compiled
+	// into the binary. It is not a stored value, not a latest-available value,
+	// and this package supplies no fallback: an empty Version renders nothing
+	// rather than a number that could be wrong.
+	Version string
 }
 
 // Viewer is the request's access state. It is presentation input only; the
@@ -144,10 +151,11 @@ type Nav struct {
 	// Query is the current repository search text, echoed into the field.
 	Query string
 
-	OverviewURL string
-	ActivityURL string
-	SettingsURL string
-	NewRepoURL  string
+	OverviewURL  string
+	ActivityURL  string
+	SettingsURL  string
+	NewRepoURL   string
+	NewImportURL string
 	// AdminLoginURL is offered when an action needs administrator confirmation.
 	AdminLoginURL string
 	// LogoutURL is non-empty only when a general session can be ended.

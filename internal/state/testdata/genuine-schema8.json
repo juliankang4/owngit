@@ -1,0 +1,186 @@
+{
+  "schema_version": 8,
+  "catalog_fingerprint": "684514623e9c47c9e784922c9dc2e148d6ad11977231036ce2a1498ae84ddab2",
+  "objects": [
+    {
+      "type": "index",
+      "name": "check_attempts_pending",
+      "sql": "CREATE INDEX check_attempts_pending ON check_attempts(task_id, status, sequence)"
+    },
+    {
+      "type": "index",
+      "name": "check_attempts_revision",
+      "sql": "CREATE INDEX check_attempts_revision ON check_attempts(repository_id, revision_oid, sequence)"
+    },
+    {
+      "type": "index",
+      "name": "check_attempts_task",
+      "sql": "CREATE INDEX check_attempts_task ON check_attempts(task_id, sequence)"
+    },
+    {
+      "type": "index",
+      "name": "check_cycles_task",
+      "sql": "CREATE INDEX check_cycles_task ON check_cycles(task_id, sequence)"
+    },
+    {
+      "type": "index",
+      "name": "check_raw_logs_expiry",
+      "sql": "CREATE INDEX check_raw_logs_expiry ON check_raw_logs(expires_at,attempt_id)"
+    },
+    {
+      "type": "index",
+      "name": "direct_review_probes_repository",
+      "sql": "CREATE INDEX direct_review_probes_repository ON direct_review_probes(repository_id,created_at,request_id)"
+    },
+    {
+      "type": "index",
+      "name": "direct_review_requests_pull_request",
+      "sql": "CREATE INDEX direct_review_requests_pull_request ON direct_review_requests(repository_id,pull_request_number,sequence) WHERE pull_request_number > 0"
+    },
+    {
+      "type": "index",
+      "name": "direct_review_requests_source_event",
+      "sql": "CREATE UNIQUE INDEX direct_review_requests_source_event ON direct_review_requests(repository_id,trigger_kind,source_event_key) WHERE source_event_key != ''"
+    },
+    {
+      "type": "index",
+      "name": "direct_review_requests_task",
+      "sql": "CREATE INDEX direct_review_requests_task ON direct_review_requests(repository_id,task_id,sequence) WHERE task_id != ''"
+    },
+    {
+      "type": "index",
+      "name": "direct_review_task_contexts_task",
+      "sql": "CREATE INDEX direct_review_task_contexts_task ON direct_review_task_contexts(repository_id,task_id,created_at,context_id)"
+    },
+    {
+      "type": "index",
+      "name": "helper_credentials_creation",
+      "sql": "CREATE UNIQUE INDEX helper_credentials_creation ON helper_credentials(repository_id, creation_id) WHERE creation_id != ''"
+    },
+    {
+      "type": "index",
+      "name": "pull_request_reviews_event",
+      "sql": "CREATE UNIQUE INDEX pull_request_reviews_event ON pull_request_reviews(repository_id,review_event_id) WHERE review_event_id != ''"
+    },
+    {
+      "type": "table",
+      "name": "bootstrap",
+      "sql": "CREATE TABLE bootstrap (\n\t\t\tsingleton INTEGER PRIMARY KEY CHECK (singleton = 1),\n\t\t\ttoken_hash BLOB NOT NULL,\n\t\t\texpires_at INTEGER NOT NULL\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "check_attempts",
+      "sql": "CREATE TABLE check_attempts (\n\t\t\tid TEXT PRIMARY KEY,\n\t\t\ttask_id TEXT NOT NULL,\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\trevision_oid TEXT NOT NULL,\n\t\t\tregistration_worktree_state TEXT NOT NULL CHECK (registration_worktree_state IN ('clean','dirty','unknown')),\n\t\t\tsubmitted_worktree_state TEXT NOT NULL DEFAULT '' CHECK (submitted_worktree_state IN ('','clean','dirty','unknown')),\n\t\t\tconfiguration_version INTEGER NOT NULL,\n\t\t\tstatus TEXT NOT NULL CHECK (status IN ('pending','passed','failed','error','cancelled','incomplete','unavailable')),\n\t\t\texit_code INTEGER,\n\t\t\tstarted_at INTEGER NOT NULL,\n\t\t\tfinished_at INTEGER NOT NULL DEFAULT 0,\n\t\t\tduration_ms INTEGER NOT NULL DEFAULT 0,\n\t\t\tsummary TEXT NOT NULL DEFAULT '',\n\t\t\tprotection TEXT NOT NULL DEFAULT 'unknown',\n\t\t\texecution_scope TEXT NOT NULL DEFAULT 'inherited',\n\t\t\tcredential_id TEXT NOT NULL DEFAULT '',\n\t\t\ttimeout_ms INTEGER NOT NULL DEFAULT 0,\n\t\t\toutput_limit_bytes INTEGER NOT NULL DEFAULT 0,\n\t\t\tlog_id TEXT NOT NULL DEFAULT '',\n\t\t\tlog_expires_at INTEGER,\n\t\t\tlog_truncated INTEGER NOT NULL DEFAULT 0,\n\t\t\tlog_error TEXT NOT NULL DEFAULT '',\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tsequence INTEGER NOT NULL,\n\t\t\tcycle_id TEXT NOT NULL DEFAULT '',\n\t\t\tregistration_digest TEXT NOT NULL,\n\t\t\tcompletion_digest TEXT NOT NULL DEFAULT '',\n\t\t\tsubmitted_log_digest TEXT NOT NULL DEFAULT '',\n\t\t\tsubmitted_truncated INTEGER NOT NULL DEFAULT 0,\n\t\t\tsubmitted_cancelled INTEGER NOT NULL DEFAULT 0,\n\t\t\tlog_digest TEXT NOT NULL DEFAULT '',\n\t\t\tFOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "check_configurations",
+      "sql": "CREATE TABLE check_configurations (\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\tversion INTEGER NOT NULL CHECK (version > 0),\n\t\t\tconfig_hash TEXT NOT NULL,\n\t\t\tchecks_json TEXT NOT NULL,\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tPRIMARY KEY (repository_id, version),\n\t\t\tUNIQUE (repository_id, config_hash),\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "check_cycles",
+      "sql": "CREATE TABLE check_cycles (\n\t\t\tid TEXT PRIMARY KEY,\n\t\t\ttask_id TEXT NOT NULL,\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\tsequence INTEGER NOT NULL CHECK (sequence > 0),\n\t\t\treserved_at INTEGER NOT NULL,\n\t\t\treserved_after_sequence INTEGER NOT NULL,\n\t\t\tUNIQUE (task_id, sequence),\n\t\t\tFOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "check_raw_logs",
+      "sql": "CREATE TABLE check_raw_logs (\n\t\t\tattempt_id TEXT PRIMARY KEY,\n\t\t\tcontent BLOB NOT NULL CHECK (length(content) <= 262144),\n\t\t\texpires_at INTEGER NOT NULL,\n\t\t\tFOREIGN KEY (attempt_id) REFERENCES check_attempts(id) ON DELETE CASCADE\n\t\t) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "check_results",
+      "sql": "CREATE TABLE check_results (\n\t\t\tattempt_id TEXT NOT NULL,\n\t\t\tposition INTEGER NOT NULL,\n\t\t\tname TEXT NOT NULL,\n\t\t\tcommand TEXT NOT NULL,\n\t\t\tstatus TEXT NOT NULL CHECK (status IN ('passed','failed','error','cancelled','incomplete','unavailable')),\n\t\t\texit_code INTEGER,\n\t\t\tduration_ms INTEGER NOT NULL,\n\t\t\toutput_excerpt TEXT NOT NULL,\n\t\t\ttruncated INTEGER NOT NULL DEFAULT 0,\n\t\t\tcleanup_error TEXT NOT NULL DEFAULT '',\n\t\t\tPRIMARY KEY (attempt_id, position),\n\t\t\tFOREIGN KEY (attempt_id) REFERENCES check_attempts(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "direct_review_credentials",
+      "sql": "CREATE TABLE direct_review_credentials (\n\t\t\tid TEXT PRIMARY KEY,\n\t\t\trepository_id TEXT NOT NULL UNIQUE,\n\t\t\tlabel TEXT NOT NULL CHECK (length(CAST(label AS BLOB)) BETWEEN 1 AND 100),\n\t\t\tvalue TEXT NOT NULL CHECK (length(CAST(value AS BLOB)) BETWEEN 1 AND 16384),\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tupdated_at INTEGER NOT NULL,\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "direct_review_probes",
+      "sql": "CREATE TABLE direct_review_probes (\n\t\t\trequest_id TEXT PRIMARY KEY,\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\tregistration_digest TEXT NOT NULL,\n\t\t\tcapability_fingerprint TEXT NOT NULL,\n\t\t\tconfiguration_version INTEGER NOT NULL CHECK (configuration_version > 0),\n\t\t\tconnection_version INTEGER NOT NULL CHECK (connection_version >= 0),\n\t\t\tconnection_fingerprint TEXT NOT NULL,\n\t\t\tprotocol TEXT NOT NULL,\n\t\t\tendpoint TEXT NOT NULL,\n\t\t\tmodel TEXT NOT NULL,\n\t\t\tauthentication_mode TEXT NOT NULL,\n\t\t\tprovider_limits_json TEXT NOT NULL CHECK (length(CAST(provider_limits_json AS BLOB)) BETWEEN 2 AND 4096),\n\t\t\tdisclosure_version TEXT NOT NULL,\n\t\t\tdisclosure_digest TEXT NOT NULL,\n\t\t\tphase TEXT NOT NULL CHECK (phase IN ('preparing','running','terminal')),\n\t\t\tcancel_requested_at INTEGER,\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\trunning_at INTEGER,\n\t\t\tterminal_at INTEGER,\n\t\t\tresult_json TEXT NOT NULL DEFAULT '' CHECK (length(CAST(result_json AS BLOB)) <= 1048576),\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "direct_review_repository_settings",
+      "sql": "CREATE TABLE direct_review_repository_settings (\n\t\t\trepository_id TEXT PRIMARY KEY,\n\t\t\tconfiguration_version INTEGER NOT NULL CHECK (configuration_version > 0),\n\t\t\tprotocol TEXT NOT NULL CHECK (protocol IN ('openai_responses','anthropic_messages','compatible_chat_completions')),\n\t\t\tendpoint TEXT NOT NULL CHECK (length(CAST(endpoint AS BLOB)) BETWEEN 1 AND 2048),\n\t\t\tmodel TEXT NOT NULL CHECK (length(CAST(model AS BLOB)) BETWEEN 1 AND 200),\n\t\t\tauthentication_mode TEXT NOT NULL CHECK (authentication_mode IN ('stored_credential','none')),\n\t\t\tprovider_limits_json TEXT NOT NULL CHECK (length(CAST(provider_limits_json AS BLOB)) BETWEEN 2 AND 4096),\n\t\t\trepository_limits_json TEXT NOT NULL CHECK (length(CAST(repository_limits_json AS BLOB)) BETWEEN 2 AND 4096),\n\t\t\tinstruction_version TEXT NOT NULL CHECK (length(CAST(instruction_version AS BLOB)) BETWEEN 1 AND 100),\n\t\t\tcredential_id TEXT NOT NULL DEFAULT '',\n\t\t\tconnection_version INTEGER NOT NULL DEFAULT 0 CHECK (connection_version >= 0),\n\t\t\tauthority_epoch TEXT NOT NULL CHECK (length(authority_epoch) = 32),\n\t\t\tprobe_fingerprint TEXT NOT NULL DEFAULT '',\n\t\t\tprobe_request_id TEXT NOT NULL DEFAULT '',\n\t\t\tprobe_updated_at INTEGER NOT NULL DEFAULT 0,\n\t\t\tautomatic_pr_enabled INTEGER NOT NULL DEFAULT 0 CHECK (automatic_pr_enabled IN (0,1)),\n\t\t\tautomatic_task_enabled INTEGER NOT NULL DEFAULT 0 CHECK (automatic_task_enabled IN (0,1)),\n\t\t\tautomatic_consent_version INTEGER NOT NULL DEFAULT 0 CHECK (automatic_consent_version >= 0),\n\t\t\tautomatic_consent_digest TEXT NOT NULL DEFAULT '',\n\t\t\tautomatic_consent_active INTEGER NOT NULL DEFAULT 0 CHECK (automatic_consent_active IN (0,1)),\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tupdated_at INTEGER NOT NULL,\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "direct_review_requests",
+      "sql": "CREATE TABLE direct_review_requests (\n\t\t\tsequence INTEGER PRIMARY KEY AUTOINCREMENT,\n\t\t\trequest_id TEXT NOT NULL UNIQUE,\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\ttrigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('manual','automatic_pr','automatic_task')),\n\t\t\tsource_event_key TEXT NOT NULL DEFAULT '',\n\t\t\tpull_request_number INTEGER NOT NULL DEFAULT 0 CHECK (pull_request_number >= 0),\n\t\t\ttask_id TEXT NOT NULL DEFAULT '',\n\t\t\tattempt_id TEXT NOT NULL DEFAULT '',\n\t\t\tobserved_source_oid TEXT NOT NULL DEFAULT '',\n\t\t\tobserved_target_oid TEXT NOT NULL DEFAULT '',\n\t\t\teffective_base_oid TEXT NOT NULL DEFAULT '',\n\t\t\teffective_head_oid TEXT NOT NULL DEFAULT '',\n\t\t\tdiff_mode TEXT NOT NULL DEFAULT '' CHECK (diff_mode IN ('','two_commit')),\n\t\t\tconfiguration_version INTEGER NOT NULL CHECK (configuration_version > 0),\n\t\t\tconnection_version INTEGER NOT NULL CHECK (connection_version >= 0),\n\t\t\tconnection_fingerprint TEXT NOT NULL,\n\t\t\tprotocol TEXT NOT NULL,\n\t\t\tendpoint TEXT NOT NULL,\n\t\t\tmodel TEXT NOT NULL,\n\t\t\tauthentication_mode TEXT NOT NULL,\n\t\t\tprovider_limits_json TEXT NOT NULL CHECK (length(CAST(provider_limits_json AS BLOB)) BETWEEN 2 AND 4096),\n\t\t\trepository_limits_json TEXT NOT NULL CHECK (length(CAST(repository_limits_json AS BLOB)) BETWEEN 2 AND 4096),\n\t\t\tinstruction_version TEXT NOT NULL,\n\t\t\tconsent_version TEXT NOT NULL DEFAULT '',\n\t\t\tconsent_digest TEXT NOT NULL DEFAULT '',\n\t\t\tdisclosure_version TEXT NOT NULL,\n\t\t\tdisclosure_digest TEXT NOT NULL,\n\t\t\tregistration_digest TEXT NOT NULL,\n\t\t\tphase TEXT NOT NULL CHECK (phase IN ('observed','preparing','running','terminal')),\n\t\t\tcancel_requested_at INTEGER,\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tpreparing_at INTEGER,\n\t\t\trunning_at INTEGER,\n\t\t\tterminal_at INTEGER,\n\t\t\tinitial_context_bytes INTEGER NOT NULL DEFAULT 0 CHECK (initial_context_bytes >= 0),\n\t\t\tinitial_context_truncated INTEGER NOT NULL DEFAULT 0 CHECK (initial_context_truncated IN (0,1)),\n\t\t\tresult_json TEXT NOT NULL DEFAULT '' CHECK (length(CAST(result_json AS BLOB)) <= 1048576),\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "direct_review_task_contexts",
+      "sql": "CREATE TABLE direct_review_task_contexts (\n\t\t\tcontext_id TEXT PRIMARY KEY,\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\ttask_id TEXT NOT NULL,\n\t\t\tattempt_id TEXT NOT NULL UNIQUE,\n\t\t\tcredential_id TEXT NOT NULL,\n\t\t\tbase_oid TEXT NOT NULL,\n\t\t\thead_oid TEXT NOT NULL,\n\t\t\tpull_request_number INTEGER NOT NULL DEFAULT 0 CHECK (pull_request_number >= 0),\n\t\t\tobserved_source_oid TEXT NOT NULL DEFAULT '',\n\t\t\tobserved_target_oid TEXT NOT NULL DEFAULT '',\n\t\t\tregistration_digest TEXT NOT NULL,\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE,\n\t\t\tFOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,\n\t\t\tFOREIGN KEY (attempt_id) REFERENCES check_attempts(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "helper_credentials",
+      "sql": "CREATE TABLE helper_credentials (\n\t\t\tid TEXT PRIMARY KEY,\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\tlabel TEXT NOT NULL,\n\t\t\tcreation_id TEXT NOT NULL DEFAULT '',\n\t\t\ttoken_hash BLOB NOT NULL,\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\trevoked_at INTEGER,\n\t\t\tlast_used_at INTEGER,\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "login_attempts",
+      "sql": "CREATE TABLE login_attempts (\n\t\t\tkind TEXT NOT NULL,\n\t\t\taddress TEXT NOT NULL,\n\t\t\twindow_started_at INTEGER NOT NULL,\n\t\t\tattempts INTEGER NOT NULL,\n\t\t\tblocked_until INTEGER NOT NULL,\n\t\t\tPRIMARY KEY (kind, address)\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "metadata",
+      "sql": "CREATE TABLE metadata (\n\t\t\tkey TEXT PRIMARY KEY,\n\t\t\tvalue TEXT NOT NULL\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "passwords",
+      "sql": "CREATE TABLE passwords (\n\t\t\tkind TEXT PRIMARY KEY CHECK (kind IN ('access','admin')),\n\t\t\tencoded TEXT NOT NULL\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "pull_request_merge_intents",
+      "sql": "CREATE TABLE pull_request_merge_intents (\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\tpull_request_number INTEGER NOT NULL,\n\t\t\tsource_oid TEXT NOT NULL,\n\t\t\ttarget_oid TEXT NOT NULL,\n\t\t\tmode TEXT NOT NULL,\n\t\t\ttree_oid TEXT NOT NULL,\n\t\t\tresult_oid TEXT NOT NULL,\n\t\t\treceipt_ref TEXT NOT NULL,\n\t\t\tstatus TEXT NOT NULL CHECK (status IN ('preparing','planned','ready','complete')),\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tupdated_at INTEGER NOT NULL,\n\t\t\tPRIMARY KEY (repository_id, pull_request_number, source_oid, target_oid),\n\t\t\tFOREIGN KEY (repository_id, pull_request_number) REFERENCES pull_requests(repository_id, number) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "pull_request_reviews",
+      "sql": "CREATE TABLE \"pull_request_reviews\" (\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\tpull_request_number INTEGER NOT NULL,\n\t\t\tsequence INTEGER NOT NULL CHECK (sequence > 0),\n\t\t\tsource_oid TEXT NOT NULL,\n\t\t\ttarget_oid TEXT NOT NULL,\n\t\t\tstatus TEXT NOT NULL CHECK (status IN ('pending','approved','changes_requested','skipped','not_requested')),\n\t\t\treviewer_label TEXT NOT NULL,\n\t\t\tprovenance TEXT NOT NULL,\n\t\t\tcreated_at INTEGER NOT NULL, review_event_id TEXT NOT NULL DEFAULT '',\n\t\t\tPRIMARY KEY (repository_id, pull_request_number, sequence),\n\t\t\tFOREIGN KEY (repository_id, pull_request_number) REFERENCES pull_requests(repository_id, number) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "pull_request_revisions",
+      "sql": "CREATE TABLE pull_request_revisions (\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\tpull_request_number INTEGER NOT NULL,\n\t\t\tsource_oid TEXT NOT NULL,\n\t\t\ttarget_oid TEXT NOT NULL,\n\t\t\trecorded_at INTEGER NOT NULL,\n\t\t\tPRIMARY KEY (repository_id, pull_request_number, source_oid, target_oid),\n\t\t\tFOREIGN KEY (repository_id, pull_request_number) REFERENCES pull_requests(repository_id, number) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "pull_requests",
+      "sql": "CREATE TABLE pull_requests (\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\tnumber INTEGER NOT NULL CHECK (number > 0),\n\t\t\ttitle TEXT NOT NULL,\n\t\t\tsource_branch TEXT NOT NULL,\n\t\t\ttarget_branch TEXT NOT NULL,\n\t\t\tstatus TEXT NOT NULL CHECK (status IN ('creating','open','merged')),\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tupdated_at INTEGER NOT NULL,\n\t\t\tmerge_source_oid TEXT NOT NULL DEFAULT '',\n\t\t\tmerge_target_oid TEXT NOT NULL DEFAULT '',\n\t\t\tmerge_oid TEXT NOT NULL DEFAULT '',\n\t\t\tmerge_receipt_ref TEXT NOT NULL DEFAULT '',\n\t\t\tmerged_at INTEGER,\n\t\t\tPRIMARY KEY (repository_id, number),\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "repositories",
+      "sql": "CREATE TABLE repositories (\n\t\t\tid TEXT PRIMARY KEY,\n\t\t\tname TEXT NOT NULL UNIQUE,\n\t\t\tdescription TEXT NOT NULL,\n\t\t\tcreated_at INTEGER NOT NULL\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "repository_attempt_counters",
+      "sql": "CREATE TABLE repository_attempt_counters (\n\t\t\trepository_id TEXT PRIMARY KEY,\n\t\t\tattempt_sequence INTEGER NOT NULL DEFAULT 0,\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "sessions",
+      "sql": "CREATE TABLE sessions (\n\t\t\ttoken_hash BLOB PRIMARY KEY,\n\t\t\tkind TEXT NOT NULL CHECK (kind IN ('setup','general','admin')),\n\t\t\tcsrf TEXT NOT NULL,\n\t\t\tversion INTEGER NOT NULL,\n\t\t\texpires_at INTEGER NOT NULL\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "tasks",
+      "sql": "CREATE TABLE tasks (\n\t\t\tid TEXT PRIMARY KEY,\n\t\t\trepository_id TEXT NOT NULL,\n\t\t\ttitle TEXT NOT NULL,\n\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\tupdated_at INTEGER NOT NULL,\n\t\t\tFOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE\n\t\t)"
+    },
+    {
+      "type": "table",
+      "name": "trusted_hosts",
+      "sql": "CREATE TABLE trusted_hosts (\n\t\t\thost TEXT PRIMARY KEY,\n\t\t\tcreated_at INTEGER NOT NULL\n\t\t)"
+    }
+  ]
+}

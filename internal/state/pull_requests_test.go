@@ -2,76 +2,55 @@ package state
 
 import (
 	"context"
-	"database/sql"
-	"os"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestOpenUpgradesAcceptedPrePullRequestStateWithoutLosingData(t *testing.T) {
+func TestOpenPullRequestPagesMakeFairProgressPastFirstPageAndBusyHistory(t *testing.T) {
 	ctx := context.Background()
-	directory := filepath.Join(t.TempDir(), "legacy-state")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	database, err := sql.Open("sqlite", sqliteFileURI(filepath.Join(directory, databaseName)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	statements := []string{
-		`CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
-		`CREATE TABLE passwords (kind TEXT PRIMARY KEY CHECK (kind IN ('access','admin')), encoded TEXT NOT NULL)`,
-		`CREATE TABLE sessions (token_hash BLOB PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('setup','general','admin')), csrf TEXT NOT NULL, version INTEGER NOT NULL, expires_at INTEGER NOT NULL)`,
-		`CREATE TABLE bootstrap (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), token_hash BLOB NOT NULL, expires_at INTEGER NOT NULL)`,
-		`CREATE TABLE login_attempts (kind TEXT NOT NULL, address TEXT NOT NULL, window_started_at INTEGER NOT NULL, attempts INTEGER NOT NULL, blocked_until INTEGER NOT NULL, PRIMARY KEY (kind,address))`,
-		`CREATE TABLE repositories (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL, created_at INTEGER NOT NULL)`,
-		`CREATE TABLE trusted_hosts (host TEXT PRIMARY KEY, created_at INTEGER NOT NULL)`,
-		`INSERT INTO metadata(key,value) VALUES ('initialized','true'),('repository_root','/accepted/repositories'),('access_mode','open'),('access_session_version','4'),('admin_session_version','7'),('insecure_http_accepted','false')`,
-		`INSERT INTO passwords(kind,encoded) VALUES ('admin','accepted-admin-hash')`,
-		`INSERT INTO repositories(id,name,description,created_at) VALUES ('legacy','Legacy repository','preserve me',1800000000)`,
-	}
-	for _, statement := range statements {
-		if _, err := database.ExecContext(ctx, statement); err != nil {
-			database.Close()
-			t.Fatal(err)
-		}
-	}
-	if err := database.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := Open(ctx, directory)
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	settings, err := store.Settings(ctx)
-	if err != nil {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	if err := store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if !settings.Initialized || settings.RepositoryRoot != "/accepted/repositories" || settings.AccessSessionVersion != 4 || settings.AdminSessionVersion != 7 {
-		t.Fatalf("upgraded settings=%+v", settings)
+	for index := 0; index < 130; index++ {
+		if _, err := store.CreatePullRequest(ctx, "project", fmt.Sprintf("Request %03d", index), fmt.Sprintf("feature-%03d", index), "main", strings.Repeat("a", 40), strings.Repeat("b", 40), ReviewSkipped, now.Add(time.Duration(index)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	repositories, err := store.Repositories(ctx)
-	if err != nil {
-		t.Fatal(err)
+	for index := 1; index <= 100; index++ {
+		if err := store.RecordPullRequestRevision(ctx, PullRequestRevision{
+			RepositoryID: "project", PullRequestNumber: 1,
+			SourceOID: fmt.Sprintf("%040x", index), TargetOID: strings.Repeat("c", 40),
+			RecordedAt: now.Add(time.Duration(200+index) * time.Second),
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if len(repositories) != 1 || repositories[0].ID != "legacy" || repositories[0].Description != "preserve me" {
-		t.Fatalf("upgraded repositories=%+v", repositories)
+	seen := make(map[int64]bool)
+	var after int64
+	for pass := 0; pass < 3; pass++ {
+		records, more, err := store.OpenPullRequestsAfter(ctx, "project", after, 64)
+		if err != nil || !more || len(records) != 64 {
+			t.Fatalf("pass %d records=%d more=%v err=%v", pass, len(records), more, err)
+		}
+		for _, record := range records {
+			seen[record.Number] = true
+		}
+		after = records[len(records)-1].Number
 	}
-	now := time.Unix(1_900_000_000, 0).UTC()
-	provisional, err := store.BeginPullRequestCreation(ctx, "legacy", "First pull request", "feature", "main", strings.Repeat("a", 40), strings.Repeat("b", 40), ReviewSkipped, now)
-	if err != nil {
-		t.Fatalf("create provisional pull request after upgrade: %v", err)
+	if len(seen) != 130 {
+		t.Fatalf("fair pages reached %d/130 open pull requests", len(seen))
 	}
-	activated, err := store.ActivatePullRequestCreation(ctx, "legacy", provisional.Number, now)
-	if err != nil {
-		t.Fatalf("activate pull request after upgrade: %v", err)
-	}
-	if activated.Number != 1 || activated.Status != PullRequestOpen {
-		t.Fatalf("pull request after upgrade=%+v", activated)
+	if revisions, err := store.PullRequestRevisions(ctx, "project"); err != nil || len(revisions) != 230 {
+		t.Fatalf("historical revisions=%d err=%v", len(revisions), err)
 	}
 }
 

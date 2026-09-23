@@ -367,7 +367,7 @@ var catalog = map[MessageCode]message{
 	MsgRepoTabOver:    {en: "Overview", ko: "개요"},
 	MsgRepoTabCode:    {en: "Code", ko: "코드"},
 	MsgRepoTabCommits: {en: "Commits", ko: "커밋"},
-	MsgRepoTabsLabel:  {en: "Repository sections", ko: "저장소 구역"},
+	MsgRepoTabsLabel:  {en: "Repository sections", ko: "저장소 메뉴"},
 	MsgBranchLabel:    {en: "Branch", ko: "브랜치"},
 	// The picker lists branches and tags together, and its closed state shows
 	// only the chosen short name, so the label cannot promise a branch. This
@@ -605,7 +605,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgPrereqHTTPMiss: {
 		en: "Git's HTTP service was not found, so cloning and pushing over HTTP will not work.",
-		ko: "Git의 HTTP 서비스를 찾지 못했습니다. HTTP로 복제하거나 푸시할 수 없습니다.",
+		ko: "Git의 HTTP 서비스를 찾지 못했습니다. HTTP로 클론하거나 푸시할 수 없습니다.",
 	},
 
 	// -- authentication ------------------------------------------------
@@ -777,11 +777,11 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSettingsCloneTitle: {
 		en: "Clone address",
-		ko: "복제 주소",
+		ko: "클론 주소",
 	},
 	MsgSettingsCloneHelp: {
 		en: "Add the repository name to this address when cloning.",
-		ko: "복제할 때 이 주소 뒤에 저장소 이름을 붙이세요.",
+		ko: "클론할 때 이 주소 뒤에 저장소 이름을 붙이세요.",
 	},
 	MsgSettingsConnTitle: {
 		en: "Connection",
@@ -839,7 +839,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgRepoNameRules: {
 		en: "Letters, numbers, dots, dashes, and underscores. This becomes the clone address.",
-		ko: "영문자, 숫자, 점, 붙임표, 밑줄을 사용합니다. 이 이름이 복제 주소가 됩니다.",
+		ko: "영문자, 숫자, 점, 하이픈, 밑줄을 사용합니다. 이 이름이 클론 주소가 됩니다.",
 	},
 	MsgRepoDescLabel: {
 		en: "Description",
@@ -859,7 +859,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgRepoNameInvalid: {
 		en: "Use letters, numbers, dots, dashes, and underscores only.",
-		ko: "영문자, 숫자, 점, 붙임표, 밑줄만 사용하세요.",
+		ko: "영문자, 숫자, 점, 하이픈, 밑줄만 사용하세요.",
 	},
 	MsgRepoNameTaken: {
 		en: "A repository with that name already exists.",
@@ -887,7 +887,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgRepoCloneTitle: {
 		en: "Clone address",
-		ko: "복제 주소",
+		ko: "클론 주소",
 	},
 	MsgRepoUnreadable: {
 		en: "This repository's Git data could not be read.",
@@ -924,7 +924,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgRepoDetached: {
 		en: "Showing a specific revision, not a branch.",
-		ko: "브랜치가 아니라 특정 리비전을 보고 있습니다.",
+		ko: "브랜치가 아니라 특정 커밋을 보고 있습니다.",
 	},
 	MsgRepoRetainTitle: {
 		en: "Kept history",
@@ -949,7 +949,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgCodePathMissing: {
 		en: "That path does not exist at this revision.",
-		ko: "이 리비전에는 그 경로가 없습니다.",
+		ko: "이 커밋에는 그 경로가 없습니다.",
 	},
 	MsgCodeBinary: {
 		en: "This file is not text, so it is not shown here.",
@@ -1264,7 +1264,7 @@ var catalog = map[MessageCode]message{
 	// rather than moving to the server's calendar.
 	MsgActivityNoChecks: {
 		en: "Activity counts commits by their author date, in the time zone the author recorded. It does not mean checks ran or passed.",
-		ko: "활동은 커밋의 작성 날짜를 작성자가 기록한 시간대 기준으로 집계합니다. 검사를 실행했거나 통과했다는 뜻은 아닙니다.",
+		ko: "활동은 커밋의 작성 날짜를 작성자가 기록한 시간대 기준으로 집계합니다. 체크를 실행했거나 통과했다는 뜻은 아닙니다.",
 	},
 
 	// -- errors --------------------------------------------------------

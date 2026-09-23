@@ -1,0 +1,40 @@
+OwnGit {{.Version}} macOS prototype
+
+This unsigned local prototype is not a public release. It has no
+publisher-signed app or DMG and has not been notarized or installed through a
+completed native acceptance run. An ad hoc signature added to a Mach-O file by
+Apple's linker is not a publisher signature.
+
+Install
+  Copy OwnGit.app to your own ~/Applications folder with Finder. Installation
+  does not start OwnGit or add a Login Item.
+
+Start and stop
+  Open OwnGit.app manually. The app starts the bundled OwnGit server with
+  browser opening enabled. Before setup is complete, it opens the private
+  setup file. After setup, it opens the dashboard after the server starts. Use
+  Quit OwnGit from the application menu to request a graceful stop.
+
+Upgrade
+  Quit OwnGit, retain the previous verified app until the new build starts,
+  and replace OwnGit.app. Replacing the app does not remove state or
+  repositories. An older app is not promised to read state after a completed
+  schema migration.
+
+Remove
+  Quit OwnGit and move OwnGit.app to Trash. Remove a Login Item separately if
+  you created one. State and repositories are retained.
+
+Requirements
+  Git must already be installed. Pull request merge requires Git 2.38 or newer.
+
+Coding tool integration
+  OwnGit.app/Contents/Resources/docs/CODING_TOOLS.md
+  OwnGit.app/Contents/Resources/integrations/skills/owngit-checks/SKILL.md
+  Copy the skill yourself if you want a coding tool to load it. The helper
+  binary is at OwnGit.app/Contents/Resources/bin/owngit and is not on PATH.
+
+Public readiness
+  Public distribution additionally requires an authorized Developer ID
+  signature, hardened runtime, notarization, stapling, and observed Gatekeeper
+  behavior. No protection should be bypassed to run this prototype.

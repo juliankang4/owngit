@@ -1,0 +1,44 @@
+OwnGit {{.Version}}
+Portable archive for {{.Target}}
+
+OwnGit keeps private Git repositories and a browser dashboard on a computer you
+control. This archive is a portable build. Unpacking it does not register a
+service, add anything to PATH, or write outside the directory you unpack it in.
+Running it writes host-local state, described under Data below.
+
+Requirements
+  Git must be on PATH. OwnGit uses the installed Git for repository storage
+  and Smart HTTP. Pull request merge requires Git 2.38 or newer, and an older
+  Git refuses the merge instead of guessing.
+
+Start
+  {{.Invocation}} serve
+  The first run writes a one-time owner setup file and opens it in a browser.
+  The path is also logged. Add -no-open to print the path without opening it.
+  The dashboard listens on 127.0.0.1:7654 by default.
+
+Data
+  Host-local state lives in the platform configuration directory under
+  "owngit", or in ~/.owngit when no configuration directory is available.
+  Repositories live in the storage directory chosen during setup.
+
+Remove
+  Delete this directory. Repositories and state are kept unless you delete
+  them yourself.
+
+Version
+  {{.Invocation}} version
+
+Coding tool integration
+  docs/CODING_TOOLS.md  running project checks from a coding tool
+  integrations/skills/owngit-checks/SKILL.md
+                        a shared Agent Skill you can copy into a coding tool
+  Copying the skill is your choice. Nothing here installs it for you.
+  {{.Invocation}} is a relative invocation that works while your shell is in
+  this unpacked directory. Unpacking adds nothing to PATH, so from anywhere
+  else supply the actual absolute path of the {{.Binary}} file in this
+  directory.
+
+Licenses
+  LICENSE               OwnGit's MIT license
+  THIRD_PARTY_NOTICES/  dependency, embedded asset, and Go runtime notices

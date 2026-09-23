@@ -1,0 +1,370 @@
+{{/* Shared evidence partials.
+
+     One rule governs everything here: the screen states what was actually
+     recorded and nothing more. An absent, cancelled, unavailable, incomplete
+     or stale result is its own state with its own words and its own shape, and
+     none of them is drawn as a pass. A status this package does not recognise
+     says so rather than falling through to something reassuring. */}}
+
+{{/* The repository tab strip, shared by every screen that belongs to one
+     repository so the strip does not move or change shape between them.
+     A section without a URL is not rendered at all.
+
+     Call as: {{template "repoTabs" dict "Lang" $lang "T" $p.Tabs}} */}}
+{{define "repoTabs"}}
+{{$lang := .Lang}}{{$t := .T}}
+<nav class="rtabs" {{biAttr $lang "aria-label" "app.repo_tabs_label"}}>
+  {{with $t.OverviewURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "overview"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.overview"}}</a>{{end}}
+  {{with $t.CodeURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "code"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.code"}}</a>{{end}}
+  {{with $t.CommitsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "commits"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.commits"}}</a>{{end}}
+  {{with $t.PullRequestsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "pull-requests"}} aria-current="page"{{end}}>{{bi $lang "pr.tab"}}</a>{{end}}
+  {{with $t.TasksURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "checks"}} aria-current="page"{{end}}>{{bi $lang "tasks.tab"}}</a>{{end}}
+  {{with $t.ImportsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "import"}} aria-current="page"{{end}}>{{bi $lang "import.tab"}}</a>{{end}}
+</nav>
+{{end}}
+
+{{/* One state as a word, a shape and a tone. The tone only repeats what the
+     word and the shape already say, so nothing depends on colour.
+
+     Call as: {{template "stateChip" dict "Lang" $lang "S" (checkState $e)}} */}}
+{{define "stateChip"}}
+{{$lang := .Lang}}{{$s := .S}}
+<span class="ev__chip ev__chip--{{$s.Tone}}">{{icon $s.Icon}}<span>{{bi $lang $s.Code}}</span></span>
+{{end}}
+
+{{/* One row of the pull request summary.
+
+     Three facts on one line: which kind of evidence this is, what it says,
+     and which revision it describes. The relevance label is not optional and
+     never moves into a disclosure, because a result about an earlier revision
+     and a record that could not be read are different subjects rather than
+     weaker versions of the same answer.
+
+     Summary is recorded text and may be empty, in which case the state word
+     is the whole answer.
+
+     Call as: {{template "evidenceRow" dict "Lang" $lang "Key" "..."
+                 "State" (checkState $p.Checks) "Relevance" (checkRelevance $p.Checks)
+                 "Summary" (prCheckSummary $p.Checks)}} */}}
+{{define "evidenceRow"}}
+{{$lang := .Lang}}{{$r := .Relevance}}
+<div class="evrow">
+  <span class="evrow__k">{{bi $lang (code .Key)}}</span>
+  <span class="evrow__s">{{with .Summary}}{{bi $lang .}}{{end}}</span>
+  {{/* The relevance label answers which revision a record describes. With
+       nothing recorded there is no record to place, and the state beside it
+       already says "for this revision", so repeating the emptiness a second
+       time only crowded the row. Current, earlier and undeterminable still
+       carry their own label. */}}
+  {{if ne $r.Code (code "evidence.relevance.none")}}
+    <span class="evrow__r evrow__r--{{$r.Tone}}">{{icon $r.Icon}}<span>{{bi $lang $r.Code}}</span></span>
+  {{end}}
+  <span class="evrow__c">{{template "stateChip" dict "Lang" $lang "S" .State}}</span>
+</div>
+{{end}}
+
+{{/* A check result with everything that qualifies it.
+
+     Call as: {{template "checkEvidence" dict "Lang" $lang "E" $p.Checks "Now" $now}} */}}
+{{define "checkEvidence"}}
+{{$lang := .Lang}}{{$e := .E}}{{$now := .Now}}
+<div class="ev">
+  <div class="ev__head">
+    <h3 class="ev__h">{{bi $lang "evidence.checks.title"}}</h3>
+    {{template "stateChip" dict "Lang" $lang "S" (checkState $e)}}
+  </div>
+
+  {{/* Checks never hold a merge. Saying so beside the result is what keeps a
+       failure from reading as a gate the reader has to argue with. */}}
+  {{if $e.Advisory}}<p class="ev__note">{{bi $lang "evidence.advisory"}}</p>{{end}}
+
+  {{/* A failed configuration read leaves configuration presence unknown. It
+       must not turn into a claim that no checks are configured. */}}
+  {{if and (not $e.Configured) (not $e.ReadFailure)}}
+    <p class="ev__note">{{bi $lang "evidence.checks.not_configured"}}</p>
+  {{end}}
+
+  {{/* Being unable to read OwnGit's record is not a run reporting an
+       unavailable environment, and not an absence of runs. The server maps
+       the structured failure code to localized interface text. */}}
+  {{with $e.ReadFailure}}
+    <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang .Message}}</span></p>
+  {{end}}
+
+  {{if $e.Recorded}}
+    {{/* A stale result is evidence about other code. It is named as such
+         before anything else, because every fact below it describes that
+         other revision rather than the change on screen. */}}
+    {{if $e.EffectivelyStale}}
+      <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "evidence.checks.stale_detail"}}</span></p>
+    {{end}}
+
+    {{/* A leftover process is a fact about the machine, so it is a warning
+         rather than a line in the notes list. The checks may well have
+         passed; what cannot be said is that the run cleaned up after itself. */}}
+    {{if $e.CleanupFailed}}
+      <p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "evidence.checks.cleanup_failed"}}</span></p>
+    {{end}}
+
+    {{/* A pending attempt has a registration and nothing else, so the summary
+         and outcome facts below are simply absent rather than blank. */}}
+    {{if not $e.Pending}}{{with $e.Summary}}<p class="ev__summary">{{.}}</p>{{end}}{{end}}
+
+    <ul class="ev__notes">
+      {{range checkNotes $e}}<li>{{bi $lang .}}</li>{{end}}
+    </ul>
+
+    <dl class="ev__facts">
+      {{with $e.RevisionShortOID}}
+        <div><dt>{{bi $lang "evidence.checks.revision"}}</dt><dd class="mono">{{.}}</dd></div>
+      {{end}}
+      {{if notZero $e.FinishedAt}}
+        <div><dt>{{bi $lang "evidence.checks.ran_at"}}</dt><dd>{{biDateTime $lang $e.FinishedAt}}</dd></div>
+      {{end}}
+      {{if and $e.Pending (notZero $e.RegisteredAt)}}
+        <div><dt>{{bi $lang "evidence.checks.registered_at"}}</dt><dd>{{biDateTime $lang $e.RegisteredAt}}</dd></div>
+      {{end}}
+      {{if $e.ConfigurationVersion}}
+        <div><dt>{{bi $lang "evidence.checks.configuration"}}</dt><dd class="mono">v{{$e.ConfigurationVersion}}</dd></div>
+      {{end}}
+      {{with $e.AttemptShortID}}
+        <div><dt>{{bi $lang "evidence.checks.attempt"}}</dt><dd class="mono">{{.}}</dd></div>
+      {{end}}
+      {{/* The raw log is disposable and the durable record outlives it, so
+           "not recorded", "expired" and "not stated" are three different
+           answers rather than one blank. */}}
+      <div>
+        <dt>{{bi $lang "evidence.log.title"}}</dt>
+        <dd>
+          {{bi $lang (logState $e.LogStatus)}}
+          {{if notZero $e.LogExpiresAt}}
+            <span class="ev__sub">{{bi $lang "evidence.log.expires_at"}} {{biDateTime $lang $e.LogExpiresAt}}</span>
+          {{end}}
+          {{with $e.LogError}}<span class="ev__sub mono">{{.}}</span>{{end}}
+        </dd>
+      </div>
+    </dl>
+
+    {{with $e.AttemptURL}}
+      <p class="ev__more"><a href="{{.}}">{{bi $lang "evidence.checks.open_task"}}</a></p>
+    {{end}}
+  {{end}}
+</div>
+{{end}}
+
+{{/* A review result with what OwnGit did and did not establish about it.
+
+     Call as: {{template "reviewEvidence" dict "Lang" $lang "E" $p.Review}} */}}
+{{define "reviewEvidence"}}
+{{$lang := .Lang}}{{$e := .E}}
+<div class="ev">
+  <div class="ev__head">
+    <h3 class="ev__h">{{bi $lang "evidence.review.title"}}</h3>
+    {{template "stateChip" dict "Lang" $lang "S" (reviewState $e)}}
+  </div>
+
+  {{with $e.ReadFailure}}
+    <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang .Message}}</span></p>
+  {{end}}
+
+  {{/* A read failure says nothing about whether a review record exists. */}}
+  {{if and (not $e.ReadFailure) $e.Recorded}}
+    {{if not $e.BoundToCurrentRevision}}
+      <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "evidence.review.other_revision"}}</span></p>
+    {{end}}
+
+    {{with reviewOrigin $e.Provenance}}<p class="ev__note">{{bi $lang .}}</p>{{end}}
+    {{/* Partial coverage is recorded content, not a translated sentence. */}}
+    {{with $e.Coverage}}
+      <p class="ev__note">{{bi $lang "evidence.review.coverage"}} <span class="mono">{{.}}</span></p>
+    {{end}}
+    {{with $e.Detail}}<p class="ev__note mono">{{.}}</p>{{end}}
+
+    <ul class="ev__notes">
+      {{range reviewNotes $e}}<li>{{bi $lang .}}</li>{{end}}
+    </ul>
+
+    <dl class="ev__facts">
+      {{with $e.ReviewerLabel}}
+        <div><dt>{{bi $lang "evidence.review.reviewer"}}</dt><dd>{{.}}</dd></div>
+      {{end}}
+      {{with $e.ShortSourceOID}}
+        <div><dt>{{bi $lang "evidence.checks.revision"}}</dt><dd class="mono">{{.}}</dd></div>
+      {{end}}
+      {{if notZero $e.SubmittedAt}}
+        <div><dt>{{bi $lang "evidence.review.submitted_at"}}</dt><dd>{{biDateTime $lang $e.SubmittedAt}}</dd></div>
+      {{end}}
+    </dl>
+  {{end}}
+</div>
+{{end}}
+
+{{/* One branch tip as the backend observed it. A tip that is not a commit is
+     named rather than left blank.
+
+     Call as: {{template "revisionLine" dict "Lang" $lang "R" $p.Source "Label" "pr.source"}} */}}
+{{define "revisionLine"}}
+{{$lang := .Lang}}{{$r := .R}}
+<div class="revline">
+  <span class="revline__l">{{bi $lang (code .Label)}}</span>
+  <span class="revline__b">{{icon "branch"}}<span class="mono">{{$r.Branch}}</span></span>
+  {{if $r.Resolved}}
+    <span class="revline__o mono">{{$r.ShortOID}}</span>
+  {{else}}
+    {{with revisionNote $r}}
+      <span class="pill pill--missing">{{icon "warning"}}{{bi $lang .}}</span>
+    {{end}}
+  {{end}}
+</div>
+{{end}}
+
+{{/* The change list shared by the create screen and the detail screen.
+
+     Call as: {{template "changeList" dict "Lang" $lang "Files" $p.Changes
+                 "Truncated" $p.DiffTruncated "Unavailable" $p.ChangesUnavailable
+                 "Reason" $p.ChangesReason}} */}}
+{{define "changeList"}}
+{{$lang := .Lang}}{{$files := .Files}}
+<section class="sec">
+  <div class="sec__bar">
+    <h2>{{bi $lang "pr.changes.title"}}</h2>
+    {{if not .Unavailable}}<span class="sec__n">{{biCount $lang "file" (len $files)}}</span>{{end}}
+  </div>
+
+  {{/* A comparison that could not be produced is missing, not empty. Showing
+       "no changes" here would claim the branches agree. */}}
+  {{if .Unavailable}}
+    <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "pr.changes.unavailable"}}{{with .Reason}} {{bi $lang .}}{{end}}</span></p>
+  {{else if $files}}
+    <div class="fchips">
+      {{range $files}}
+        {{$status := .Status}}
+        <span class="fchip fchip--static">
+          <span class="fchip__p">{{.Path}}</span>
+          <span class="fchip__n">
+            {{/* The status is a word and a shape, so a deletion is readable
+                 without relying on the tint beside it. */}}
+            {{with prChangeStatus $status}}<span class="rpath__s rpath__s--{{$status}}">{{bi $lang .}}</span>{{end}}
+            {{if .Binary}}<span>{{bi $lang "pr.changes.binary_file"}}</span>
+            {{else}}<span class="add">+{{.Additions}}</span><span class="del">-{{.Deletions}}</span>{{end}}
+          </span>
+        </span>
+      {{end}}
+    </div>
+
+    {{/* The same diff partial the commit and restore screens use, so one
+         rendering serves every place a change is read. */}}
+    {{range $files}}
+      {{template "diffFile" dict "Lang" $lang "F" .}}
+    {{end}}
+
+    {{if .Truncated}}
+      <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "pr.changes.truncated"}}</span></p>
+    {{end}}
+  {{else}}
+    <p class="empty">{{bi $lang "pr.changes.none"}}</p>
+  {{end}}
+</section>
+{{end}}
+
+{{/* One recorded run, with the facts that decide what it is worth.
+
+     Call as: {{template "attemptRecord" dict "Lang" $lang "A" $attempt}} */}}
+{{define "attemptRecord"}}
+{{$lang := .Lang}}{{$a := .A}}
+<article class="attempt">
+  <div class="attempt__head">
+    {{template "stateChip" dict "Lang" $lang "S" (recordState $a)}}
+    <span class="attempt__rev mono">{{$a.RevisionShortOID}}</span>
+    {{if notZero $a.FinishedAt}}<span class="attempt__when">{{biDateTime $lang $a.FinishedAt}}</span>{{end}}
+  </div>
+
+  {{if not $a.Pending}}{{with $a.Summary}}<p class="attempt__sum">{{.}}</p>{{end}}{{end}}
+
+  <ul class="ev__notes">
+    {{range attemptNotes $a}}<li>{{bi $lang .}}</li>{{end}}
+  </ul>
+
+  {{/* Stated once for the attempt, from the aggregate or from any row, so an
+       attempt rendered without its rows still shows the failure. Each row
+       below adds the reason it recorded. */}}
+  {{if $a.CleanupUnclean}}
+    <p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "evidence.checks.cleanup_failed"}}</span></p>
+  {{end}}
+
+  <dl class="ev__facts">
+    {{/* A pending attempt has no duration to state. */}}
+    {{if not $a.Pending}}
+      <div><dt>{{bi $lang "tasks.attempts.duration"}}</dt><dd>{{biText $lang (duration "en" $a.DurationMS) (duration "ko" $a.DurationMS)}}</dd></div>
+    {{end}}
+    {{if $a.ConfigurationVersion}}
+      <div><dt>{{bi $lang "evidence.checks.configuration"}}</dt><dd class="mono">v{{$a.ConfigurationVersion}}</dd></div>
+    {{end}}
+    {{with $a.ShortID}}
+      <div><dt>{{bi $lang "evidence.checks.attempt"}}</dt><dd class="mono">{{.}}</dd></div>
+    {{end}}
+    {{/* Registration order across the repository, not a count of this task's
+         runs, so the gap is explained where the number appears. */}}
+    {{if $a.Sequence}}
+      <div>
+        <dt>{{bi $lang "tasks.attempts.order"}}</dt>
+        <dd>
+          <span class="mono">{{$a.Sequence}}</span>
+          <span class="ev__sub">{{bi $lang "tasks.attempts.order_gap"}}</span>
+        </dd>
+      </div>
+    {{end}}
+    <div>
+      <dt>{{bi $lang "evidence.log.title"}}</dt>
+      <dd>
+        {{bi $lang (logState $a.LogStatus)}}
+        {{if notZero $a.LogExpiresAt}}
+          <span class="ev__sub">{{bi $lang "evidence.log.expires_at"}} {{biDateTime $lang $a.LogExpiresAt}}</span>
+        {{end}}
+        {{with $a.LogError}}<span class="ev__sub mono">{{.}}</span>{{end}}
+      </dd>
+    </div>
+  </dl>
+
+  {{if and $a.Pending (not $a.Results)}}
+    {{/* Nothing to list yet. The registration is the whole record. */}}
+  {{else if $a.Results}}
+  <div class="results">
+    <p class="results__h">{{bi $lang "tasks.attempts.checks"}}</p>
+    {{range $a.Results}}
+      <div class="result">
+        <div class="result__head">
+          {{template "stateChip" dict "Lang" $lang "S" (resultState .)}}
+          <span class="result__n">{{.Name}}</span>
+          {{with exitCode .}}<span class="result__x">{{bi $lang "tasks.attempts.exit_code"}} <span class="mono">{{.}}</span></span>{{end}}
+          <span class="result__t">{{biText $lang (duration "en" .DurationMS) (duration "ko" .DurationMS)}}</span>
+        </div>
+        {{/* The command is recorded data. It is shown as text so a reader can
+             see exactly what ran, and it is never treated as markup. */}}
+        <p class="result__cmd mono">{{.Command}}</p>
+        {{if .OutputExcerpt}}
+          <div class="codebox codebox--short" tabindex="0" role="region" aria-label="{{.Name}}">
+            <pre class="result__out">{{.OutputExcerpt}}</pre>
+          </div>
+          {{if .Truncated}}<p class="ev__note">{{bi $lang "evidence.log.output_truncated"}}</p>{{end}}
+        {{else}}
+          <p class="ev__note">{{bi $lang "tasks.attempts.no_output"}}</p>
+        {{end}}
+        {{/* A leftover process is its own fact, kept out of the output box so
+             it cannot be read as something the check printed. The reason is
+             recorded text and is escaped like any other. */}}
+        {{if .CleanupFailed}}
+          <p class="ev__warn">
+            {{icon "warning"}}
+            <span>
+              {{bi $lang "evidence.checks.cleanup_row"}}
+              <span class="ev__sub mono">{{.CleanupError}}</span>
+            </span>
+          </p>
+        {{end}}
+      </div>
+    {{end}}
+  </div>
+  {{end}}
+</article>
+{{end}}

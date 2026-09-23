@@ -3,12 +3,15 @@ package server
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"owngit/internal/auth"
 	"owngit/internal/githttp"
+	"owngit/internal/importsync"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -28,15 +31,36 @@ type App struct {
 	Auth                    *auth.Manager
 	Repositories            *repository.Manager
 	PullRequests            *pullrequest.Service
+	Imports                 *importsync.Service
 	GitHTTP                 *githttp.Handler
 	Renderer                *webui.Renderer
 	Hosts                   *HostPolicy
 	SuggestedRepositoryRoot string
 	GitVersion              string
 	HTTPBackendFound        bool
-	HTTPTimeout             time.Duration
-	ActivityLimit           int
-	Now                     func() time.Time
+	// Version is the running application version. It comes from the single
+	// version source and is never read from storage or a remote value.
+	Version     string
+	HTTPTimeout time.Duration
+	// ImportRunTimeout is the deadline of an import run started by this
+	// server. The request itself keeps ImportResponseMargin more, so a run
+	// that reaches its deadline still returns its result. Zero uses the import
+	// service default. It is not a second hard-coded limit.
+	ImportRunTimeout time.Duration
+	ActivityLimit    int
+	Now              func() time.Time
+	// requestObserver runs after the per-request deadline is installed. Tests
+	// use it to observe that deadline. Production leaves it nil.
+	requestObserver func(*http.Request)
+	// OnSetupComplete runs once after first-run setup succeeds in this
+	// process, so work that an initialized startup begins can begin now.
+	OnSetupComplete func()
+	// WakeChecks is an advisory nonblocking reconciliation signal.
+	WakeChecks func(repositoryID string)
+	// CheckRuntimeUnavailableCode and CheckRuntimeUnavailableReason expose a
+	// sanitized owner-visible startup status. Empty code means available.
+	CheckRuntimeUnavailableCode   string
+	CheckRuntimeUnavailableReason string
 }
 
 func (app *App) Handler() http.Handler {
@@ -55,23 +79,100 @@ func (app *App) AuthorizeGit(request *http.Request) bool {
 	return ok && app.Auth.VerifyCredential(request.Context(), "general", password, request.RemoteAddr) == nil
 }
 
+// ImportResponseMargin is how long an import run request outlives the run's
+// own deadline. A run that reaches its deadline still records its outcome and
+// delivers the result to the client inside this margin.
+const ImportResponseMargin = time.Minute
+
+// ImportRunRequestTimeout is the request and response deadline for an import
+// run whose own deadline is runTimeout.
+func ImportRunRequestTimeout(runTimeout time.Duration) time.Duration {
+	return runTimeout + ImportResponseMargin
+}
+
+// importRunTimeout is the run deadline the service applies to runs started by
+// this server.
+func (app *App) importRunTimeout() time.Duration {
+	if app.ImportRunTimeout > 0 {
+		return app.ImportRunTimeout
+	}
+	return importsync.DefaultLimits().RunTimeout
+}
+
+// importRunLimits pins the run deadline so the run ends before its request.
+func (app *App) importRunLimits() importsync.Limits {
+	return importsync.Limits{RunTimeout: app.importRunTimeout()}
+}
+
+func (app *App) requestTimeout(request *http.Request) time.Duration {
+	if importRunRequest(request) {
+		return ImportRunRequestTimeout(app.importRunTimeout())
+	}
+	if app.HTTPTimeout > 0 {
+		return app.HTTPTimeout
+	}
+	return 30 * time.Second
+}
+
+func importRunRequest(request *http.Request) bool {
+	if request == nil || request.Method != http.MethodPost {
+		return false
+	}
+	path := request.URL.Path
+	if path == "/repositories/new-import" {
+		return true
+	}
+	const apiPrefix = "/api/v1/repositories/"
+	if strings.HasPrefix(path, apiPrefix) && strings.HasSuffix(path, "/import/run") {
+		id := strings.TrimSuffix(strings.TrimPrefix(path, apiPrefix), "/import/run")
+		return id != "" && !strings.Contains(id, "/")
+	}
+	const repoPrefix = "/repositories/"
+	if strings.HasPrefix(path, repoPrefix) && strings.HasSuffix(path, "/import") {
+		id := strings.TrimSuffix(strings.TrimPrefix(path, repoPrefix), "/import")
+		if id == "" || strings.Contains(id, "/") {
+			return false
+		}
+		return peekFormAction(request) == webui.ActionImportRefresh
+	}
+	return false
+}
+
+func peekFormAction(request *http.Request) string {
+	if request.Body == nil {
+		return ""
+	}
+	content, err := io.ReadAll(io.LimitReader(request.Body, 1<<20+1))
+	request.Body = io.NopCloser(bytes.NewReader(content))
+	request.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(content)), nil
+	}
+	if err != nil || len(content) > 1<<20 {
+		return ""
+	}
+	values, err := url.ParseQuery(string(content))
+	if err != nil {
+		return ""
+	}
+	return values.Get("action")
+}
+
 func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	if strings.HasPrefix(request.URL.Path, "/git/") {
 		app.GitHTTP.ServeHTTP(writer, request)
 		return
 	}
 
-	timeout := app.HTTPTimeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(app.requestTimeout(request))
 	requestContext, cancel := context.WithDeadline(request.Context(), deadline)
 	defer cancel()
 	request = request.WithContext(requestContext)
 	controller := http.NewResponseController(writer)
 	_ = controller.SetReadDeadline(deadline)
 	_ = controller.SetWriteDeadline(deadline)
+	if app.requestObserver != nil {
+		app.requestObserver(request)
+	}
 	defer func() {
 		if time.Now().Before(deadline) {
 			_ = controller.SetReadDeadline(time.Time{})
@@ -134,6 +235,8 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleSettingsPost(writer, request, settings)
 	case request.URL.Path == "/repositories/new" && request.Method == http.MethodGet:
 		app.handleNewRepositoryGet(writer, request, settings, "", "", nil)
+	case request.URL.Path == "/repositories/new-import" && (request.Method == http.MethodGet || request.Method == http.MethodPost):
+		app.handleNewImport(writer, request, settings)
 	case request.URL.Path == "/repositories" && request.Method == http.MethodPost:
 		app.handleCreateRepository(writer, request, settings)
 	case request.URL.Path == "/activity" && request.Method == http.MethodGet:
@@ -167,6 +270,12 @@ func (app *App) writePlainError(writer http.ResponseWriter, status int) {
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.WriteHeader(status)
 	_, _ = writer.Write([]byte(http.StatusText(status) + "\n"))
+}
+
+func (app *App) wakeChecks(repositoryID string) {
+	if app.WakeChecks != nil {
+		app.WakeChecks(repositoryID)
+	}
 }
 
 func (app *App) now() time.Time {

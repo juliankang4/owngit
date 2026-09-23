@@ -1,0 +1,204 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}
+{{$actionable := and (eq $p.State "open") $p.Source.Resolved $p.Target.Resolved}}
+
+{{/* The default screen answers three questions and stops: what changed, what
+     is known about it, and can it be merged.
+
+     Two things never move behind a disclosure. Which revision a result
+     describes stays on its row, because a result about other code is a
+     different subject rather than a weaker one. Whether a result exists at
+     all stays on its row too, because an unreadable record is not an
+     absence. The findings, the failure detail and the measured execution
+     record are what a reader asks for afterwards, so those are disclosed on
+     demand or kept on their own screens. */}}
+
+<p class="backline"><a class="back" href="{{$p.ListURL}}">{{icon "back"}}{{bi $lang "pr.title"}}</a></p>
+
+<div class="phead">
+  <h1><span class="mono prhead__id">{{prNumber $p.Number}}</span> {{$p.Title}}</h1>
+
+  {{/* Direction on one line. A merge decision needs to know where the change
+       goes; the object ids behind it are record and live with the rest of
+       the record. An unresolved tip is named here rather than left blank,
+       because a branch that is missing or is not a commit changes what the
+       whole screen is about. */}}
+  {{/* Source, then direction, then target, using the same marker the pull
+       request list uses. Korean puts the particle after the target, so a
+       phrase placed between the two branch names read as nonsense; the arrow
+       is correct in both languages and keeps the branch names intact. */}}
+  <p class="prdir">
+    {{icon "branch"}}<span class="mono">{{$p.Source.Branch}}</span>
+    {{if not $p.Source.Resolved}}{{with revisionNote $p.Source}}<span class="pill pill--missing">{{icon "warning"}}{{bi $lang .}}</span>{{end}}{{end}}
+    <span class="prdir__i">{{bi $lang "pr.branch_flow"}}</span>
+    {{icon "branch"}}<span class="mono">{{$p.Target.Branch}}</span>
+    {{if not $p.Target.Resolved}}{{with revisionNote $p.Target}}<span class="pill pill--missing">{{icon "warning"}}{{bi $lang .}}</span>{{end}}{{end}}
+  </p>
+
+  <p class="prhead__meta">
+    {{template "stateChip" dict "Lang" $lang "S" (prState $p.State)}}
+    <span>{{bi $lang "pr.updated_at"}} {{biRelative $lang $now $p.UpdatedAt}}</span>
+  </p>
+</div>
+
+{{/* Two kinds of evidence, one compact row each. They are not merged into
+     one verdict: a check run and an opinion submitted by a reviewer answer
+     different questions, and the one with nothing to say must not disappear
+     behind the one that does. Neither gates the merge control below. */}}
+<div class="card">
+  <h2 class="setblock__h">{{bi $lang "pr.summary.title"}}</h2>
+
+  <div class="evsum">
+    {{template "evidenceRow" dict "Lang" $lang
+        "Key" "evidence.checks.title"
+        "State" (checkState $p.Checks)
+        "Relevance" (checkRelevance $p.Checks)
+        "Summary" (prCheckSummary $p.Checks)}}
+
+    {{/* "Review" rather than "human review". OwnGit records who a reviewer
+         says they are, not that a person wrote it, and the notes under the
+         disclosure say what was and was not established. */}}
+    {{template "evidenceRow" dict "Lang" $lang
+        "Key" "evidence.review.title"
+        "State" (reviewState $p.Review)
+        "Relevance" (reviewRelevance $p.Review)
+        "Summary" (prReviewSummary $p.Review)}}
+  </div>
+
+  {{/* Everything that qualifies the two rows, disclosed on demand.
+
+       The qualifying facts are rendered in full here rather than summarised:
+       the revision each result belongs to, what the record does and does not
+       establish, the log disposition, a cleanup failure, the reviewer's own
+       words. They are in the document and reachable by keyboard, so no fact
+       is lost by folding them, and the same partials serve the screens that
+       show this material on its own. */}}
+  <details class="disc">
+    <summary>{{bi $lang "pr.summary.details"}}</summary>
+    <div class="disc__body">
+      <div class="evpair">
+        {{template "checkEvidence" dict "Lang" $lang "E" $p.Checks "Now" $now}}
+        {{template "reviewEvidence" dict "Lang" $lang "E" $p.Review}}
+      </div>
+    </div>
+  </details>
+
+  {{/* The advisory point beside the merge control, once.
+
+       Which sentence depends on whether merging is on offer at all. The
+       stronger wording promises the reader they can merge anyway, which is
+       false on a closed or refused request, so it is used only where the
+       merge control is actually offered. The neutral wording states what the
+       results are without claiming eligibility. Neither changes what the
+       backend permits. */}}
+  <div class="evfoot">
+    {{if and $actionable $p.Merge.Offered}}
+      <p class="ev__note">{{bi $lang "pr.actions.merge_despite"}}</p>
+    {{else}}
+      <p class="ev__note">{{bi $lang "evidence.advisory"}}</p>
+    {{end}}
+
+    {{if and $actionable $p.MergeURL}}
+    <form class="prmerge" method="post" action="{{$p.MergeURL}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      {{/* Every action resubmits the tips this page was rendered from, so a
+           branch that moved in the meantime fails instead of being
+           overwritten. */}}
+      <input type="hidden" name="source_oid" value="{{$p.Source.OID}}">
+      <input type="hidden" name="target_oid" value="{{$p.Target.OID}}">
+      <button type="submit" class="btn btn--primary"{{if not $p.Merge.Offered}} disabled{{end}}>
+        {{icon "merge"}}{{bi $lang "pr.actions.merge"}}
+      </button>
+    </form>
+    {{end}}
+  </div>
+
+  {{/* What the merge control actually does, beside the control itself. */}}
+  {{if and $actionable $p.MergeURL}}
+    <p class="f__help evfoot__h">{{bi $lang "pr.actions.merge_help"}}</p>
+  {{end}}
+
+  {{/* A refusal is not a detail. It is the answer to "can I merge this", so
+       it stays on the default screen with its reasons. */}}
+  {{if and $actionable (not $p.Merge.Offered)}}
+    <p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "pr.actions.merge_refused"}}</span></p>
+    {{if $p.Merge.Unexplained}}
+      {{/* A refusal with no reason recorded. Saying the explanation is
+           missing is honest; a heading above an empty list would promise
+           one. */}}
+      <p class="ev__note">{{bi $lang "pr.blocked.unexplained"}}</p>
+    {{else}}
+      <ul class="blockers">
+        {{range $p.Merge.ExplainedBlockers}}
+          <li class="blocker">
+            {{icon "error"}}
+            <span>
+              {{bi $lang (blockerNote .)}}
+              {{/* A reason this interface has no words for still reaches the
+                   reader as the code the backend recorded. */}}
+              {{if unknownBlocker .}}<span class="mono">{{.Code}}</span>{{end}}
+              {{with .Detail}}<span class="mono">{{.}}</span>{{end}}
+            </span>
+          </li>
+        {{end}}
+      </ul>
+    {{end}}
+  {{end}}
+  {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "merge"}}
+</div>
+
+{{if $p.Merged}}
+<div class="card">
+  <h2 class="setblock__h">{{bi $lang "pr.merged.title"}}</h2>
+  <dl class="kv">
+    {{with $p.Merged.Mode}}<div><dt>{{bi $lang "pr.merged.mode"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
+    {{with $p.Merged.ShortOID}}<div><dt>{{bi $lang "pr.merged.commit"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
+    {{with $p.Merged.ReceiptRef}}<div><dt>{{bi $lang "pr.merged.receipt"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
+    {{if notZero $p.Merged.MergedAt}}<div><dt>{{bi $lang "pr.merged.at"}}</dt><dd>{{biDateTime $lang $p.Merged.MergedAt}}</dd></div>{{end}}
+  </dl>
+</div>
+{{end}}
+
+{{/* Recording a review request or a skip is secondary to the decision this
+     screen is for, and neither changes the evidence above. They were a
+     second expanded card that restated the advisory point and the merge
+     explanation the summary already makes, so they fold into one compact
+     disclosure. The forms, their CSRF tokens, the revision they bind to and
+     the note that no model is called are unchanged. */}}
+{{if and $actionable (or $p.ReviewRequestURL $p.ReviewSkipURL)}}
+<details class="disc disc--act">
+  <summary>{{bi $lang "pr.actions.title"}}</summary>
+  <div class="disc__body">
+    <div class="pract">
+      {{with $p.ReviewRequestURL}}
+      <form method="post" action="{{.}}">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="source_oid" value="{{$p.Source.OID}}">
+        <input type="hidden" name="target_oid" value="{{$p.Target.OID}}">
+        <button type="submit" class="btn">{{bi $lang "pr.actions.request_review"}}</button>
+        <span class="f__help">{{bi $lang "pr.actions.request_review_help"}}</span>
+      </form>
+      {{end}}
+
+      {{with $p.ReviewSkipURL}}
+      <form method="post" action="{{.}}">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="source_oid" value="{{$p.Source.OID}}">
+        <input type="hidden" name="target_oid" value="{{$p.Target.OID}}">
+        <button type="submit" class="btn">{{bi $lang "pr.actions.skip_review"}}</button>
+        <span class="f__help">{{bi $lang "pr.actions.skip_review_help"}}</span>
+      </form>
+      {{end}}
+    </div>
+    {{/* Recording a request is not asking a model to review. */}}
+    <p class="f__help">{{bi $lang "evidence.review.request_intent"}}</p>
+  </div>
+</details>
+{{end}}
+
+{{template "changeList" dict "Lang" $lang "Files" $p.Changes "Truncated" $p.DiffTruncated "Unavailable" $p.ChangesUnavailable "Reason" $p.ChangesReason}}
+
+{{with $p.TasksURL}}
+<p class="ev__more"><a href="{{.}}">{{bi $lang "tasks.title"}}</a></p>
+{{end}}
+{{end}}

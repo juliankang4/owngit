@@ -142,10 +142,10 @@ func TestOnlyOneConcurrentSetupCompletionWins(t *testing.T) {
 }
 
 func TestSQLiteFileURIKeepsWindowsDriveInThePathAndEscapesReservedBytes(t *testing.T) {
-	if got, want := sqliteFileURI("C:/OwnGit state/#?%.sqlite"), "file:///C:/OwnGit%20state/%23%3F%25.sqlite"; got != want {
+	if got, want := sqliteFileURI("C:/OwnGit state/#?%.sqlite"), "file:///C:/OwnGit%20state/%23%3F%25.sqlite?_txlock=immediate"; got != want {
 		t.Fatalf("Windows SQLite URI = %q, want %q", got, want)
 	}
-	if got, want := sqliteFileURI("/tmp/OwnGit state/#?%.sqlite"), "file:///tmp/OwnGit%20state/%23%3F%25.sqlite"; got != want {
+	if got, want := sqliteFileURI("/tmp/OwnGit state/#?%.sqlite"), "file:///tmp/OwnGit%20state/%23%3F%25.sqlite?_txlock=immediate"; got != want {
 		t.Fatalf("Unix SQLite URI = %q, want %q", got, want)
 	}
 }
