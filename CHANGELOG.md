@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - An import refresh request can no longer make OwnGit read up to 1 MiB of the request before the password is checked. OwnGit now reads at most 4 KiB.
-- The page to return to after signing in refuses control characters.
+- The page to return to after signing in refuses addresses with control characters. A sign-in link such as `/login?next=/%09/example.com` could otherwise send you to another site after you signed in.
 
 ## [1.0.1] - 2026-09-24
 

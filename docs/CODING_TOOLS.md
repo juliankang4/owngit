@@ -262,9 +262,9 @@ run carries a `task` object.
 
 ## Installed locations
 
-No release artifact has been published. The release tool's portable archives
-keep the resources at their source-relative paths, so the guide's link to the
-skill resolves in an unpacked archive:
+The portable archives on GitHub Releases keep the resources at their
+source-relative paths, so the guide's link to the skill resolves in an unpacked
+archive:
 
 - `docs/CODING_TOOLS.md`
 - `integrations/skills/owngit-checks/SKILL.md`
@@ -272,6 +272,10 @@ skill resolves in an unpacked archive:
 The unsigned macOS app prototype holds them under
 `OwnGit.app/Contents/Resources/` at the same relative paths, and the Debian
 prototype package installs them under `/usr/share/doc/owngit/`.
+
+The Homebrew and npm packages install only the `owngit` command, the license
+and the notices, not this guide or the skill. With those installs, copy the
+skill from a source checkout or an unpacked release archive.
 
 Copy the skill from whichever layout you have. For example, from an unpacked
 portable archive:

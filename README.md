@@ -62,7 +62,7 @@ go build -o bin/owngit ./cmd/owngit
 owngit serve
 ```
 
-On first run, OwnGit writes an owner-readable setup file inside the state directory and opens it in your browser. Follow the steps there. The setup secret is never printed or passed as a browser argument. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. The default address is `http://127.0.0.1:7654`.
+From a source build, run `./bin/owngit serve`; from an unpacked archive, `./owngit serve`. On first run, OwnGit writes an owner-readable setup file inside the state directory and opens it in your browser. Follow the steps there. The setup secret is never printed or passed as a browser argument. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. The default address is `http://127.0.0.1:7654`.
 
 To start OwnGit at login with Homebrew, run `brew services start owngit`. Its log, including the setup file path on first start, is `$(brew --prefix)/var/log/owngit.log`.
 

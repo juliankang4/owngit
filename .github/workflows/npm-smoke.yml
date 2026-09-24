@@ -37,8 +37,16 @@ jobs:
         run: npm install -g "$SPEC"
 
       - name: Version and exit status
+        env:
+          REQUESTED: ${{ inputs.version }}
         run: |
-          owngit version
+          installed="$(npm ls -g owngit --depth=0 --json | node -p 'JSON.parse(require("fs").readFileSync(0)).dependencies.owngit.version')"
+          echo "installed owngit $installed"
+          owngit version | tee "$RUNNER_TEMP/version.txt"
+          grep -F "$installed" "$RUNNER_TEMP/version.txt"
+          case "$REQUESTED" in
+            [0-9]*) [ "$installed" = "$REQUESTED" ] ;;
+          esac
           if owngit no-such-command; then
             echo "an unknown command succeeded" >&2
             exit 1
@@ -47,6 +55,7 @@ jobs:
       - name: Serve and stop
         run: |
           state="$RUNNER_TEMP/owngit-state"
+          trap 'cat "$RUNNER_TEMP/serve.log"' EXIT
           owngit serve --state-dir "$state" --listen 127.0.0.1:17654 --no-open > "$RUNNER_TEMP/serve.log" 2>&1 &
           launcher=$!
           for _ in $(seq 60); do
@@ -55,7 +64,8 @@ jobs:
           done
           curl -fsS -o /dev/null http://127.0.0.1:17654/
           if [ "$RUNNER_OS" = Windows ]; then
-            # Windows has no SIGTERM; stop the server the way a service would.
+            # Windows has no SIGTERM. End the executable directly; the
+            # launcher then exits with its exit status.
             taskkill //F //IM owngit.exe
           else
             kill -TERM "$launcher"
@@ -65,4 +75,3 @@ jobs:
             echo "the server is still running" >&2
             exit 1
           fi
-          cat "$RUNNER_TEMP/serve.log"
