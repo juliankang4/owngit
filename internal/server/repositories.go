@@ -324,13 +324,11 @@ func (app *App) baseRepositoryPage(request *http.Request, chrome webui.Chrome, s
 		TasksURL:        base + "/tasks",
 		ImportsURL:      base + "/import",
 	}
-	// The administrator sections are offered only to an administrator
-	// session. The chrome already read that session, so no second lookup is
-	// needed; the routes still check it themselves.
-	if chrome.Viewer.AdminConfirmed {
-		page.SettingsURL = base + "/settings"
-		page.DeleteURL = base + "/delete"
-	}
+	// The administrator sections are offered to every viewer. Their routes
+	// send a viewer without an administrator session to the login, which
+	// returns to the section afterwards.
+	page.SettingsURL = base + "/settings"
+	page.DeleteURL = base + "/delete"
 	return page
 }
 

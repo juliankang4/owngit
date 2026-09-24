@@ -45,40 +45,132 @@ func assertRepositoryIntact(t *testing.T, fixture apiFixture, context string) {
 	}
 }
 
-func TestRepositoryAdminTabsAppearOnlyForAdministrator(t *testing.T) {
+// tabStrip returns the repository tab strip of a rendered page.
+func tabStrip(t *testing.T, path, body string) string {
+	t.Helper()
+	at := strings.Index(body, `<nav class="rtabs"`)
+	if at < 0 {
+		t.Fatalf("%s has no tab strip", path)
+	}
+	strip := body[at:]
+	return strip[:strings.Index(strip, "</nav>")]
+}
+
+func TestRepositoryAdminTabsAreShownToEveryone(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)
+	// The lock carries a tooltip, and its hidden words start with a space so
+	// the spoken name reads "Settings (asks ...)", not "Settings(asks ...)".
+	const lock = `<span class="adminlock" title="Asks for the administrator password"`
+	paths := []string{"/repositories/project", "/repositories/project/code", "/repositories/project/commits",
+		"/repositories/project/pull-requests", "/repositories/project/tasks"}
 
-	for _, path := range []string{"/repositories/project", "/repositories/project/pull-requests", "/repositories/project/tasks"} {
-		visitor := browserGET(t, client, server.URL+path)
-		if visitor.status != http.StatusOK {
-			t.Fatalf("%s visitor status=%d", path, visitor.status)
+	check := func(viewer, path string, locked bool) {
+		t.Helper()
+		page := browserGET(t, client, server.URL+path)
+		if page.status != http.StatusOK {
+			t.Fatalf("%s %s status=%d", viewer, path, page.status)
 		}
-		for _, hidden := range []string{`href="/repositories/project/settings"`, `href="/repositories/project/delete"`, "rtabs__btn--danger"} {
-			if strings.Contains(visitor.body, hidden) {
-				t.Fatalf("%s shows %q to a visitor without an administrator session", path, hidden)
-			}
-		}
-	}
-
-	signInAdmin(t, fixture, server.URL, jar)
-	for _, path := range []string{"/repositories/project", "/repositories/project/pull-requests", "/repositories/project/tasks", "/repositories/project/settings"} {
-		admin := browserGET(t, client, server.URL+path)
-		if admin.status != http.StatusOK {
-			t.Fatalf("%s admin status=%d", path, admin.status)
-		}
-		strip := admin.body[strings.Index(admin.body, `<nav class="rtabs"`):]
-		strip = strip[:strings.Index(strip, "</nav>")]
+		strip := tabStrip(t, path, page.body)
 		// Settings follows Import in the normal order; Delete comes last.
 		importAt := strings.Index(strip, `href="/repositories/project/import"`)
 		settingsAt := strings.Index(strip, `href="/repositories/project/settings"`)
 		deleteAt := strings.Index(strip, `class="rtabs__btn rtabs__btn--danger" href="/repositories/project/delete"`)
 		if importAt < 0 || settingsAt < importAt || deleteAt < settingsAt {
-			t.Fatalf("%s tab order import=%d settings=%d delete=%d:\n%s", path, importAt, settingsAt, deleteAt, strip)
+			t.Fatalf("%s %s tab order import=%d settings=%d delete=%d:\n%s", viewer, path, importAt, settingsAt, deleteAt, strip)
 		}
 		// The danger control names itself in words, not only in colour.
 		if !strings.Contains(strip[deleteAt:], "Delete repository") || !strings.Contains(strip[deleteAt:], "<svg") {
-			t.Fatalf("%s delete control lacks its word or shape:\n%s", path, strip[deleteAt:])
+			t.Fatalf("%s %s delete control lacks its word or shape:\n%s", viewer, path, strip[deleteAt:])
+		}
+		// Without an administrator session both entries carry the lock and
+		// the words that say the password is asked first; with one, neither.
+		settings, remove := strip[settingsAt:deleteAt], strip[deleteAt:]
+		for name, entry := range map[string]string{"settings": settings, "delete": remove} {
+			marked := strings.Contains(entry, lock) && strings.Contains(entry, `<span class="visually-hidden"> <span data-en="(asks for the administrator password)"`)
+			if marked != locked {
+				t.Fatalf("%s %s %s entry lock=%v, want %v:\n%s", viewer, path, name, marked, locked, entry)
+			}
+		}
+	}
+	for _, path := range paths {
+		check("visitor", path, true)
+	}
+	signInAdmin(t, fixture, server.URL, jar)
+	for _, path := range append(paths, "/repositories/project/settings") {
+		check("admin", path, false)
+	}
+}
+
+func TestChecksPageOffersTheAdministratorLinksToEveryone(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	for _, viewer := range []string{"visitor", "admin"} {
+		if viewer == "admin" {
+			signInAdmin(t, fixture, server.URL, jar)
+		}
+		page := browserGET(t, client, server.URL+"/repositories/project/tasks")
+		if page.status != http.StatusOK {
+			t.Fatalf("%s tasks status=%d", viewer, page.status)
+		}
+		for _, link := range []string{"/repositories/project/helper-credentials", "/repositories/project/configured-checks"} {
+			at := strings.Index(page.body, `<a href="`+link+`">`)
+			if at < 0 {
+				t.Fatalf("%s tasks page lacks the %s link", viewer, link)
+			}
+			entry := page.body[at : at+strings.Index(page.body[at:], "</a>")]
+			if locked := strings.Contains(entry, `<span class="adminlock" `); locked != (viewer == "visitor") {
+				t.Fatalf("%s %s link lock=%v:\n%s", viewer, link, locked, entry)
+			}
+		}
+	}
+}
+
+// A login link can carry any next value. One with a control character is
+// refused at the form and at the POST, because a browser drops tab, CR and
+// LF inside a URL and "/\t/host" would otherwise redirect to another host.
+func TestAdminLoginRefusesNextWithControlCharacters(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	for _, next := range []string{"/\t/example.invalid", "/\n/example.invalid", "/\x1b/example.invalid"} {
+		login := browserGET(t, client, server.URL+"/admin/login?next="+url.QueryEscape(next))
+		if login.status != http.StatusOK || !strings.Contains(login.body, `name="next" value="/"`) {
+			t.Fatalf("login form for next=%q status=%d does not fall back to /", next, login.status)
+		}
+		result := browserForm(t, client, server.URL+"/admin/login", url.Values{
+			"csrf": {cookieValue(t, jar, server.URL, preauthCookie)}, "admin_password": {"admin-password"}, "next": {next},
+		}, server.URL)
+		if result.status != http.StatusSeeOther || result.header.Get("Location") != "/" {
+			t.Fatalf("login with next=%q status=%d location=%q", next, result.status, result.header.Get("Location"))
+		}
+	}
+}
+
+// Following an administrator entry point without a session opens the
+// administrator login, and logging in returns to the entry that was followed.
+func TestRepositoryAdminEntryReturnsAfterLogin(t *testing.T) {
+	for _, path := range []string{"/repositories/project/settings", "/repositories/project/delete?lang=ko",
+		"/repositories/project/configured-checks", "/repositories/project/helper-credentials", "/repositories/project/import"} {
+		fixture := newAPIFixture(t, false)
+		server, client, jar := openBrowser(t, fixture)
+		entry := browserGET(t, client, server.URL+path)
+		wantLogin := "/admin/login?next=" + url.QueryEscape(path)
+		if entry.status != http.StatusSeeOther || entry.header.Get("Location") != wantLogin {
+			t.Fatalf("GET %s status=%d location=%q, want %q", path, entry.status, entry.header.Get("Location"), wantLogin)
+		}
+		login := browserGET(t, client, server.URL+wantLogin)
+		if login.status != http.StatusOK || !strings.Contains(login.body, `name="next" value="`+path+`"`) {
+			t.Fatalf("admin login for %s status=%d does not carry next", path, login.status)
+		}
+		loginCSRF := cookieValue(t, jar, server.URL, preauthCookie)
+		result := browserForm(t, client, server.URL+"/admin/login", url.Values{
+			"csrf": {loginCSRF}, "admin_password": {"admin-password"}, "next": {path},
+		}, server.URL)
+		if result.status != http.StatusSeeOther || result.header.Get("Location") != path {
+			t.Fatalf("admin login for %s status=%d location=%q", path, result.status, result.header.Get("Location"))
+		}
+		if back := browserGET(t, client, server.URL+path); back.status != http.StatusOK {
+			t.Fatalf("GET %s after login status=%d", path, back.status)
 		}
 	}
 }
@@ -88,7 +180,7 @@ func TestRepositoryAdminRoutesRequireAdministratorSession(t *testing.T) {
 	server, client, _ := openBrowser(t, fixture)
 	for _, path := range []string{"/repositories/project/settings", "/repositories/project/delete"} {
 		result := browserGET(t, client, server.URL+path)
-		if result.status != http.StatusSeeOther || !strings.HasPrefix(result.header.Get("Location"), "/admin/login?next=") {
+		if result.status != http.StatusSeeOther || result.header.Get("Location") != "/admin/login?next="+url.QueryEscape(path) {
 			t.Fatalf("GET %s without admin status=%d location=%q", path, result.status, result.header.Get("Location"))
 		}
 	}

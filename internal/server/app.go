@@ -310,8 +310,15 @@ func localNext(value, fallback string) string {
 	if value == "" {
 		return fallback
 	}
-	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\\\r\n") {
+	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.Contains(value, "\\") {
 		return fallback
+	}
+	// Browsers drop tab, CR and LF inside a URL, so "/\t/host" would become
+	// "//host" and leave this server. Every control character is refused.
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return fallback
+		}
 	}
 	return value
 }

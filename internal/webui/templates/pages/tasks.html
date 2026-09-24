@@ -88,10 +88,11 @@
   <section class="sec">
     <div class="sec__bar">
       <h2>{{bi $lang "tasks.config.title"}}</h2>
-      {{with $p.HelperURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "helper.open"}}</a></span>{{end}}
+      {{$locked := not $p.Chrome.Viewer.AdminConfirmed}}
+      {{with $p.HelperURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "helper.open"}}{{template "adminLock" dict "Lang" $lang "Locked" $locked}}</a></span>{{end}}
       {{/* Manual helper checks and repository-configured checks are separate
            paths, so both are reachable and neither replaces the other. */}}
-      {{with $p.ConfiguredChecksURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "cc.open"}}</a></span>{{end}}
+      {{with $p.ConfiguredChecksURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "cc.open"}}{{template "adminLock" dict "Lang" $lang "Locked" $locked}}</a></span>{{end}}
     </div>
 
     {{/* No configuration means nothing here reports on this repository's

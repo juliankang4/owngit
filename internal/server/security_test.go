@@ -55,7 +55,8 @@ func TestUnknownHostIsRejectedBeforeApplication(t *testing.T) {
 }
 
 func TestLocalNextRejectsExternalAndBackslashRedirects(t *testing.T) {
-	for _, value := range []string{"//example.invalid", `/\\example.invalid`, "https://example.invalid", "/safe\r\nLocation: x"} {
+	for _, value := range []string{"//example.invalid", `/\\example.invalid`, "https://example.invalid", "/safe\r\nLocation: x",
+		"/\t/example.invalid", "/\n/example.invalid", "/\r/example.invalid", "/\x00x", "/\x1b/example.invalid", "/\x7f/example.invalid"} {
 		if got := localNext(value, "/fallback"); got != "/fallback" {
 			t.Errorf("localNext(%q)=%q, want fallback", value, got)
 		}

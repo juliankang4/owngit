@@ -339,6 +339,7 @@ func repoTabsOf(p RepositoryPage) RepoTabs {
 		ImportsURL:      p.ImportsURL,
 		SettingsURL:     p.SettingsURL,
 		DeleteURL:       p.DeleteURL,
+		AdminLocked:     !p.Chrome.Viewer.AdminConfirmed,
 		Active:          p.Tab,
 	}
 }

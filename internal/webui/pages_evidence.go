@@ -193,12 +193,11 @@ type TasksPage struct {
 	Configuration CheckConfigurationView
 	// ListURL is this screen without a selected task.
 	ListURL string
-	// HelperURL opens helper credential management. Empty for a viewer who
-	// cannot manage them.
-	HelperURL string
-	// ConfiguredChecksURL opens the repository's configured-check execution
-	// policy. Empty for a viewer who cannot manage it, which is how this page
-	// offers the link without deciding the authority behind it.
+	// HelperURL opens helper credential management, and ConfiguredChecksURL
+	// the repository's configured-check execution policy. Both are
+	// administrator screens offered to every viewer; the page marks them
+	// with a lock for a viewer without an administrator session.
+	HelperURL           string
 	ConfiguredChecksURL string
 	// NotFound is true when a requested task id does not resolve.
 	NotFound bool

@@ -328,11 +328,16 @@ type RepoTabs struct {
 	PullRequestsURL string
 	TasksURL        string
 	ImportsURL      string
-	// SettingsURL and DeleteURL are set only for an administrator session.
-	// Settings sits in the normal tab order; Delete is the right-aligned
-	// control that opens the confirmation page.
+	// SettingsURL and DeleteURL are set for every viewer. Settings sits in
+	// the normal tab order; Delete is the right-aligned control that opens
+	// the confirmation page. Both routes ask a viewer without an
+	// administrator session to log in first.
 	SettingsURL string
 	DeleteURL   string
+	// AdminLocked is true when the viewer has no administrator session, so
+	// the administrator entries carry a lock shape and words that say the
+	// link opens the administrator login first.
+	AdminLocked bool
 	// Active marks the current section.
 	Active RepoTab
 }
@@ -355,9 +360,9 @@ type RepositoryPage struct {
 	PullRequestsURL string
 	TasksURL        string
 	ImportsURL      string
-	// SettingsURL and DeleteURL are the administrator-only sections. The
-	// backend sets them only when the viewer holds an administrator session;
-	// the routes check that session themselves.
+	// SettingsURL and DeleteURL are the administrator sections. They are
+	// offered to every viewer; the routes ask for the administrator login
+	// themselves and return to the page afterwards.
 	SettingsURL string
 	DeleteURL   string
 

@@ -8,7 +8,9 @@
 
 {{/* The repository tab strip, shared by every screen that belongs to one
      repository so the strip does not move or change shape between them.
-     A section without a URL is not rendered at all.
+     A section without a URL is not rendered at all. The administrator
+     sections are shown to everyone; without an administrator session they
+     carry the "adminLock" mark, and their routes open the login first.
 
      Call as: {{template "repoTabs" dict "Lang" $lang "T" $p.Tabs}} */}}
 {{define "repoTabs"}}
@@ -20,13 +22,22 @@
   {{with $t.PullRequestsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "pull-requests"}} aria-current="page"{{end}}>{{bi $lang "pr.tab"}}</a>{{end}}
   {{with $t.TasksURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "checks"}} aria-current="page"{{end}}>{{bi $lang "tasks.tab"}}</a>{{end}}
   {{with $t.ImportsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "import"}} aria-current="page"{{end}}>{{bi $lang "import.tab"}}</a>{{end}}
-  {{with $t.SettingsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "settings"}} aria-current="page"{{end}}>{{bi $lang "repoadmin.settings_tab"}}</a>{{end}}
+  {{with $t.SettingsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "settings"}} aria-current="page"{{end}}>{{bi $lang "repoadmin.settings_tab"}}{{template "adminLock" dict "Lang" $lang "Locked" $t.AdminLocked}}</a>{{end}}
   {{/* The delete control sits apart at the right end. It is a plain link to
        a confirmation page, never an action by itself, and it reads as
        dangerous through its word and trash shape as well as its colour. */}}
-  {{with $t.DeleteURL}}<a class="rtabs__btn rtabs__btn--danger" href="{{.}}"{{if eq $t.Active "delete"}} aria-current="page"{{end}}>{{icon "trash"}}<span>{{bi $lang "repoadmin.delete_tab"}}</span></a>{{end}}
+  {{with $t.DeleteURL}}<a class="rtabs__btn rtabs__btn--danger" href="{{.}}"{{if eq $t.Active "delete"}} aria-current="page"{{end}}>{{icon "trash"}}<span>{{bi $lang "repoadmin.delete_tab"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" $t.AdminLocked}}</a>{{end}}
 </nav>
 {{end}}
+
+{{/* The mark on an administrator entry point for a viewer without an
+     administrator session: a lock shape for the eye and words for a screen
+     reader, so the link says it asks for the password before it opens. The
+     title repeats it as a tooltip for a pointer. The leading space keeps the
+     link's spoken name from running the two words together.
+
+     Call as: {{template "adminLock" dict "Lang" $lang "Locked" true}} */}}
+{{define "adminLock"}}{{if .Locked}}<span class="adminlock" {{biAttr .Lang "title" "repoadmin.admin_needed_hint"}}>{{icon "lock"}}<span class="visually-hidden"> {{bi .Lang "repoadmin.admin_needed"}}</span></span>{{end}}{{end}}
 
 {{/* One state as a word, a shape and a tone. The tone only repeats what the
      word and the shape already say, so nothing depends on colour.

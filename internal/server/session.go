@@ -47,14 +47,6 @@ func (app *App) cookieSession(request *http.Request, kind, cookieName string) (s
 	return session, true
 }
 
-// browserAdminSession returns the administrator session on a page that was
-// authorized with general authority. Unlike requireBrowserAdmin it never
-// redirects, and it reports the selected session so a page can decide what to
-// offer rather than what to allow.
-func (app *App) browserAdminSession(request *http.Request) (state.Session, bool) {
-	return app.cookieSession(request, "admin", adminCookie)
-}
-
 func (app *App) validCSRF(request *http.Request, submitted string) bool {
 	if submitted == "" {
 		return false

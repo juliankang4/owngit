@@ -510,6 +510,7 @@ func repositoryTabs(page webui.RepositoryPage, active webui.RepoTab) webui.RepoT
 		ImportsURL:      page.ImportsURL,
 		SettingsURL:     page.SettingsURL,
 		DeleteURL:       page.DeleteURL,
+		AdminLocked:     !page.Chrome.Viewer.AdminConfirmed,
 		Active:          active,
 	}
 }

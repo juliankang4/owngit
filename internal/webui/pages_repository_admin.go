@@ -1,9 +1,10 @@
 package webui
 
-// Administrator-only repository screens: the Settings tab and the delete
-// confirmation. Both are reached from the repository tab strip, which offers
-// them only in an administrator session. The routes enforce that session
-// themselves; hiding the tabs is presentation, not authorization.
+// Administrator repository screens: the Settings tab and the delete
+// confirmation. The repository tab strip offers both to every viewer, with a
+// lock mark for a viewer without an administrator session. The routes require
+// that session and send anyone else to the administrator login, which returns
+// to the screen afterwards.
 
 const (
 	RepoTabSettings RepoTab = "settings"

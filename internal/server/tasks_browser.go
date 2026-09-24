@@ -19,12 +19,11 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 		Tabs:    repositoryTabs(basePage, webui.RepoTabChecks),
 		ListURL: basePage.TasksURL,
 	}
-	// Both links are administrator only, matching the routes they open. An
-	// ordinary visitor gets no link rather than a link that refuses them.
-	if _, ok := app.browserAdminSession(request); ok {
-		page.HelperURL = basePage.Repo.URL + "/helper-credentials"
-		page.ConfiguredChecksURL = configuredChecksURL(stored.ID)
-	}
+	// Both links are offered to every viewer. The routes they open are
+	// administrator only and send anyone else to the login, which returns
+	// to the linked page afterwards.
+	page.HelperURL = basePage.Repo.URL + "/helper-credentials"
+	page.ConfiguredChecksURL = configuredChecksURL(stored.ID)
 
 	configuration, configured, err := app.Store.LatestCheckConfiguration(request.Context(), stored.ID)
 	if err != nil {

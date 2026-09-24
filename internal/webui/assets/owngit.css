@@ -2071,6 +2071,14 @@ span.hm__cell { cursor: default; }
 .rtabs__btn--danger { display: inline-flex; gap: 5px; align-items: center; margin-left: auto; color: var(--bad); }
 .rtabs__btn--danger:hover { color: var(--bad); }
 .rtabs__btn--danger[aria-current="page"] { color: var(--bad); border-bottom-color: var(--bad); }
+/* The lock on an administrator entry point for a viewer without an
+   administrator session. It is a shape, with hidden words beside it, so it
+   does not depend on colour; it takes the link's own colour. */
+/* position: relative keeps the hidden words inside the tab strip's scroll
+   area; an unanchored absolute box would widen the whole page on a phone. */
+.adminlock { position: relative; display: inline-flex; align-items: center; margin-left: 4px; vertical-align: -2px; }
+.adminlock .icon { width: 12px; height: 12px; }
+.rtabs__btn--danger .adminlock { margin-left: 0; }
 
 .ov-graph { margin-top: 16px; }
 

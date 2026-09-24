@@ -8,6 +8,10 @@ const (
 	// Tab strip.
 	MsgRepoSettingsTab MessageCode = "repoadmin.settings_tab"
 	MsgRepoDeleteTab   MessageCode = "repoadmin.delete_tab"
+	// MsgRepoAdminNeeded is the hidden words beside the lock shape on an
+	// entry point that opens the administrator login first.
+	MsgRepoAdminNeeded     MessageCode = "repoadmin.admin_needed"
+	MsgRepoAdminNeededHint MessageCode = "repoadmin.admin_needed_hint"
 
 	// Overview.
 	MsgRepoCloneAddress   MessageCode = "repo.overview.clone_address"
@@ -91,8 +95,10 @@ const (
 )
 
 var repositoryAdminCatalog = map[MessageCode]message{
-	MsgRepoSettingsTab: {en: "Settings", ko: "설정"},
-	MsgRepoDeleteTab:   {en: "Delete repository", ko: "저장소 삭제"},
+	MsgRepoSettingsTab:     {en: "Settings", ko: "설정"},
+	MsgRepoDeleteTab:       {en: "Delete repository", ko: "저장소 삭제"},
+	MsgRepoAdminNeeded:     {en: "(asks for the administrator password)", ko: "(관리자 비밀번호를 묻습니다)"},
+	MsgRepoAdminNeededHint: {en: "Asks for the administrator password", ko: "관리자 비밀번호를 묻습니다"},
 
 	MsgRepoCloneAddress:   {en: "Clone address", ko: "클론 주소"},
 	MsgRepoCopy:           {en: "Copy", ko: "복사"},
