@@ -138,7 +138,7 @@ Git refs and objects are the authoritative repository data. SQLite (`owngit.sqli
 
 ## Releases
 
-No release has been published. `tools/release` builds and checks release artifacts using the Go toolchain and the standard library. It does not sign or publish anything.
+Releases are published on [GitHub Releases](https://github.com/juliankang4/owngit/releases), with a Homebrew tap and npm packages built from the same archives. `tools/release` builds and checks release artifacts using the Go toolchain and the standard library. It does not sign or publish anything.
 
 ```sh
 go run ./tools/release notices -check
@@ -174,6 +174,7 @@ go run ./tools/release packaging \
 
 - `README.md`: what OwnGit is and how to start.
 - `README.ko.md`: the Korean translation of `README.md`. Change both in the same change.
+- `SECURITY.md`: how to report a vulnerability privately.
 - `docs/OPERATIONS.md`: setup, access, recovery, imports, pull requests, checks, storage, and backups.
 - `docs/AUTOMATIC_CHECKS.md`: configured checks and runners.
 - `docs/CODING_TOOLS.md`: the coding-tool workflow. Its path is fixed by the release tool, and `cmd/owngit/check_budget_test.go` requires certain phrases in it and in the skill. Keep the guide and `integrations/skills/owngit-checks/SKILL.md` consistent.

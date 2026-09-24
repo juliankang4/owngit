@@ -1,6 +1,6 @@
 # Packaging templates
 
-The files here are inputs for `tools/release`. They produce portable archives, unsigned native prototypes, and package-manager files. None of them is a published package. [CONTRIBUTING.md](../CONTRIBUTING.md#releases) shows how to run the release tool.
+The files here are inputs for `tools/release`. They produce portable archives, unsigned native prototypes, and package-manager files. `packaging` output is what gets published to the Homebrew tap and npm; the native prototypes are not published. [CONTRIBUTING.md](../CONTRIBUTING.md#releases) shows how to run the release tool.
 
 ## Layout
 

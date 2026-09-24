@@ -5,7 +5,7 @@
 <h1 align="center">OwnGit</h1>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.1-0A62C9?style=flat&colorA=222222" alt="Version 1.0.1"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.2-0A62C9?style=flat&colorA=222222" alt="Version 1.0.2"></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-keep-E05735?style=flat&colorA=222222" alt="Changelog"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-58A6FF?style=flat&colorA=222222" alt="MIT License"></a>
   <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-00ADD8?style=flat&colorA=222222&logo=go&logoColor=white" alt="Go"></a>
@@ -14,7 +14,7 @@
 
 <p align="center"><b>English</b> | <a href="README.ko.md">한국어</a></p>
 
-OwnGit is Git for HomeLab & Local. It keeps private repositories and their history on your own computer, NAS, or home server, with a browser dashboard for everyday use. Repositories remain ordinary bare Git repositories served by the Git installation on the host. No cloud Git account or subscription is required.
+OwnGit is a self-hosted Git server for home labs and local machines. It keeps private repositories and their history on your own computer, NAS, or home server, with a browser dashboard for everyday use. Repositories remain ordinary bare Git repositories served by the Git installation on the host. No cloud Git account or subscription is required.
 
 ![OwnGit showing an example repository.](docs/images/overview.png)
 
@@ -30,18 +30,41 @@ OwnGit is Git for HomeLab & Local. It keeps private repositories and their histo
 - Runs as one Go executable with a host-local SQLite database. No Node, Python, or database service is required at runtime.
 - Provides English and Korean interfaces with Light, Dark, and System appearance modes.
 
-## Quickstart
+## Install
 
-Prerequisites: Go 1.27 or newer, and Git with an executable `git-http-backend`.
+Every install route needs Git with an executable `git-http-backend` on the host. Homebrew installs Git for you.
 
-From the source checkout:
+With [Homebrew](https://brew.sh) on macOS (Apple silicon) or Linux (x64, ARM64):
 
 ```sh
-go build -o bin/owngit ./cmd/owngit
-./bin/owngit serve --no-open
+brew install juliankang4/tap/owngit
 ```
 
-On first run, OwnGit writes an owner-readable setup file inside the state directory. Open that file in the installation owner's browser and follow the steps. The setup secret is never printed or passed as a browser argument. The default address is `http://127.0.0.1:7654`.
+With [npm](https://www.npmjs.com/package/owngit) on macOS (Apple silicon), Linux (x64, ARM64), or Windows (x64). This route needs Node.js to install and to start OwnGit:
+
+```sh
+npm install -g owngit
+```
+
+Or download the archive for your platform from [GitHub Releases](https://github.com/juliankang4/owngit/releases) and check it against `SHA256SUMS`. The binaries are not signed. If macOS refuses to run a binary you downloaded with a browser, run `xattr -d com.apple.quarantine owngit` once.
+
+To build from source with Go 1.27 or newer:
+
+```sh
+git clone https://github.com/juliankang4/owngit.git
+cd owngit
+go build -o bin/owngit ./cmd/owngit
+```
+
+## Quickstart
+
+```sh
+owngit serve
+```
+
+On first run, OwnGit writes an owner-readable setup file inside the state directory and opens it in your browser. Follow the steps there. The setup secret is never printed or passed as a browser argument. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. The default address is `http://127.0.0.1:7654`.
+
+To start OwnGit at login with Homebrew, run `brew services start owngit`. Its log, including the setup file path on first start, is `$(brew --prefix)/var/log/owngit.log`.
 
 Create a repository from the dashboard, then use its clone address, for example `http://127.0.0.1:7654/git/project.git`, with any Git client. [Operations](docs/OPERATIONS.md) covers access from other devices, moving existing repositories, recovery, and backups.
 
@@ -52,8 +75,6 @@ Create a repository from the dashboard, then use its clone address, for example 
 - OwnGit serves plain HTTP, which is not encrypted, and has no built-in TLS. Prefer Tailscale or your own VPN for connections from another device. Public Internet hosting is out of scope.
 
 ## Status and limits
-
-No release has been published yet, so build from source as shown above.
 
 A force-push or branch deletion keeps the old commits in retained history, so a committed secret stays in OwnGit and its backups. Deleting the whole repository with its files is the only way to remove that history, and earlier backups still contain it; rotate any secret you push by mistake. Retained history is not a backup, and backups run only when you start them. Host and runner check commands run with their account's permissions and are not sandboxes. OwnGit records review labels and check results that other tools supply, but it never runs reviewers or coding agents. Git LFS objects are not hosted or imported. Pull request merge requires Git 2.38 or newer on the OwnGit host.
 
@@ -68,3 +89,4 @@ OwnGit's source is available under the [MIT License](LICENSE). Notices for the t
 - [Coding tools](docs/CODING_TOOLS.md): running project checks from a coding tool, and the shared skill
 - [Contributing](CONTRIBUTING.md): building, testing, and changing OwnGit
 - [Changelog](CHANGELOG.md): notable changes in each version
+- [Security policy](SECURITY.md): reporting a vulnerability privately

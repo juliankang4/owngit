@@ -37,8 +37,12 @@ class Owngit < Formula
     prefix.install "THIRD_PARTY_NOTICES"
   end
 
+  # The first start writes the setup file path to this log.
   service do
     run [opt_bin/"owngit", "serve", "-no-open"]
+    keep_alive true
+    log_path var/"log/owngit.log"
+    error_log_path var/"log/owngit.log"
   end
 
   test do
