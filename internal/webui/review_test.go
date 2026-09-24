@@ -464,7 +464,8 @@ func TestRefPickerLabelCoversBranchesAndTags(t *testing.T) {
 
 		out := render(t, r, page)
 
-		idx := strings.Index(out, `class="refbar__label"`)
+		// The code tab keeps the label for assistive technology only.
+		idx := strings.Index(out, `class="refbar__label`)
 		if idx < 0 {
 			t.Fatalf("%s: the picker has no label", lang)
 		}

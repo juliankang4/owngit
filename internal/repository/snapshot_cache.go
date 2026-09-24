@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	"owngit/internal/gitexec"
 )
@@ -64,6 +65,21 @@ func (m *Manager) RefSnapshot(ctx context.Context, id string) (RefSnapshot, erro
 		m.snapshots.store(id, repositoryPath, lock, generation, snapshot)
 	}
 	return snapshot, nil
+}
+
+// CachedHeadDate returns the author date of the default branch tip from the
+// last ref snapshot read for id. It runs no Git process and does not wait for
+// the repository lock, so a page can use it for every repository. ok is false
+// when no snapshot was read since OwnGit started or the default branch had no
+// commit. The date may be older than the refs after an outside write.
+func (m *Manager) CachedHeadDate(id string) (time.Time, bool) {
+	m.snapshots.mu.Lock()
+	defer m.snapshots.mu.Unlock()
+	entry, ok := m.snapshots.entries[id]
+	if !ok || !entry.snapshot.HeadFound || entry.snapshot.Head.AuthoredAt.IsZero() {
+		return time.Time{}, false
+	}
+	return entry.snapshot.Head.AuthoredAt, true
 }
 
 // ForgetRefSnapshots drops cached snapshots of repositories not in present.

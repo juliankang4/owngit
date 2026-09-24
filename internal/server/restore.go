@@ -141,6 +141,8 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 		Source: app.commitSummary(stored.ID, "", sourceDetail.Commit), TargetBranch: selection.Target,
 		CreatesBranch: branchPreview.CreatesBranch, Mode: selection.Mode, Previewed: previewed,
 		PreviewURL: base + "/restore/preview", ApplyURL: base + "/restore", CancelURL: base,
+		// No section is current: restoring is reached from several of them.
+		Tabs: repositoryTabs(app.baseRepositoryPage(request, chrome, stored, summary), ""),
 	}
 	for _, branch := range summary.Branches {
 		page.Branches = append(page.Branches, webui.RefOption{Name: branch.Name, Selected: branch.Name == selection.Target})

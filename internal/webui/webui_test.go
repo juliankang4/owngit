@@ -1059,12 +1059,13 @@ func TestScriptStoresNoSecrets(t *testing.T) {
 	data, err := assetFS.ReadFile("assets/owngit.js")
 	noErr(t, err)
 	js := string(data)
-	// The appearance preference is the only thing allowed in local storage.
+	// The appearance and line-wrap preferences are the only things allowed
+	// in local storage.
 	for _, line := range strings.Split(js, "\n") {
 		if !strings.Contains(line, "localStorage") && !strings.Contains(line, "sessionStorage") {
 			continue
 		}
-		if strings.Contains(line, "APPEARANCE_KEY") || strings.Contains(line, "//") || strings.Contains(line, "* ") {
+		if strings.Contains(line, "APPEARANCE_KEY") || strings.Contains(line, "WRAP_KEY") || strings.Contains(line, "//") || strings.Contains(line, "* ") {
 			continue
 		}
 		t.Errorf("browser storage is used for something other than appearance: %s", strings.TrimSpace(line))
@@ -1311,26 +1312,28 @@ func TestScreensAreAccessible(t *testing.T) {
 		screens = append(screens, screen{name: string(lang) + " shows the brand", lang: lang,
 			page: OverviewPage{Chrome: fullChrome(lang), Activity: sampleGraph()}, markup: []string{"OwnGit"}})
 	}
-	// The pull request and checks sections are optional: the strip has the
-	// three tabs always offered, five when both addresses are supplied, and
-	// never a link that goes nowhere. RepositoryPage once accepted the two
-	// optional addresses and rendered neither.
+	// The pull request and checks sections are optional: the repository
+	// sidebar has the three sections always offered, five when both
+	// addresses are supplied, and never a link that goes nowhere.
+	// RepositoryPage once accepted the two optional addresses and rendered
+	// neither.
 	for _, tab := range []RepoTab{RepoTabOverview, RepoTabCode, RepoTabCommits} {
 		screens = append(screens,
-			screen{name: string(tab) + " tab strip without optional sections",
+			screen{name: string(tab) + " sidebar without optional sections",
 				page:   with(repoPage(fullChrome(LangEN), tab), func(p *RepositoryPage) { p.PullRequestsURL, p.TasksURL = "", "" }),
 				markup: []string{`aria-current="page"`},
-				extra:  allOf(countIs(`class="rtabs__btn"`, 3), countIs(`class="rtabs__btn" href="/repositories/r1`, 3))},
-			screen{name: string(tab) + " tab strip with optional sections", page: repoPage(fullChrome(LangEN), tab),
+				extra:  allOf(countIs(`class="sb__item" href="`, 3), countIs(`class="sb__item" href="/repositories/r1`, 3))},
+			screen{name: string(tab) + " sidebar with optional sections", page: repoPage(fullChrome(LangEN), tab),
 				markup: []string{`href="/repositories/r1/pull-requests"`, `href="/repositories/r1/tasks"`}, noMarkup: []string{`href=""`},
-				extra: countIs(`class="rtabs__btn"`, 5)})
+				extra: countIs(`class="sb__item" href="`, 5)})
 	}
 	for name, page := range map[string]Page{
 		"pull-requests":      pullRequestsPage(fullChrome(LangEN), false),
 		"tasks":              tasksPage(fullChrome(LangEN), false),
 		"helper-credentials": helperPage(fullChrome(LangEN), false),
 	} {
-		screens = append(screens, screen{name: name + " shares the five-tab strip", page: page, extra: countIs(`class="rtabs__btn"`, 5)})
+		screens = append(screens, screen{name: name + " shares the five-section sidebar", page: page,
+			extra: countIs(`class="sb__item" href="`, 5), noMarkup: []string{`class="rtabs`, `class="backline"><a class="back" href="/"`}})
 	}
 	checkScreens(t, screens...)
 }

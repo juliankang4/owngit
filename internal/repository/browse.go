@@ -74,6 +74,9 @@ type CommitDetail struct {
 	Commit
 	Diff      string
 	Truncated bool
+	// Deferred lists the paths CommitAllFiles left out of Diff because one
+	// side of the file is larger than its per-file limit.
+	Deferred []string
 }
 
 func (m *Manager) Summary(ctx context.Context, id string) (Summary, error) {
@@ -488,20 +491,16 @@ func (m *Manager) Commit(ctx context.Context, id, oid, filePath string) (CommitD
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show", "-z", "--quiet", "--format="+commitLogFormat, oid)
+	commit, err := m.readCommit(ctx, repositoryPath, oid)
 	if err != nil {
-		return CommitDetail{}, errors.New("commit not found")
-	}
-	commits, err := parseCommits(result.Stdout)
-	if err != nil || len(commits) != 1 {
-		return CommitDetail{}, errors.New("Git returned malformed commit metadata")
+		return CommitDetail{}, err
 	}
 	args := []string{"--git-dir", ".", "show", "--format=", "--no-ext-diff", "--no-textconv", "--find-renames=50%", "--unified=3", oid}
 	if filePath != "" {
 		args = append(args, "--", ":(top,literal)"+filePath)
 	}
 	diffResult, diffErr := m.Git.Run(ctx, repositoryPath, nil, args...)
-	detail := CommitDetail{Commit: commits[0], Diff: string(diffResult.Stdout)}
+	detail := CommitDetail{Commit: commit, Diff: string(diffResult.Stdout)}
 	if diffErr != nil {
 		var limitErr *gitexec.LimitError
 		if errors.As(diffErr, &limitErr) {
@@ -511,6 +510,130 @@ func (m *Manager) Commit(ctx context.Context, id, oid, filePath string) (CommitD
 		return CommitDetail{}, diffErr
 	}
 	return detail, nil
+}
+
+// CommitAllFiles is Commit for every changed file at once, read with one Git
+// diff. Renames are not detected, as in ChangedFiles, so each changed path
+// has its own section in Diff. A file with a side larger than fileLimit bytes
+// is left out and listed in Deferred, so one large file cannot use up the
+// whole limit and hide the smaller files after it. Output past limit is cut
+// and Truncated is set; the last section may then be incomplete. A merge
+// commit has an empty Diff.
+func (m *Manager) CommitAllFiles(ctx context.Context, id, oid string, limit, fileLimit int64) (CommitDetail, error) {
+	if !isOID(oid) {
+		return CommitDetail{}, errors.New("invalid commit ID")
+	}
+	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
+	if err != nil || !exists {
+		return CommitDetail{}, errors.New("repository not found")
+	}
+	lock := m.Locks.For(id)
+	lock.RLock()
+	defer lock.RUnlock()
+	commit, err := m.readCommit(ctx, repositoryPath, oid)
+	if err != nil {
+		return CommitDetail{}, err
+	}
+	detail := CommitDetail{Commit: commit}
+	if len(commit.Parents) > 1 {
+		return detail, nil
+	}
+	detail.Deferred, err = m.largeChangedFiles(ctx, repositoryPath, oid, fileLimit)
+	if err != nil {
+		return CommitDetail{}, err
+	}
+	args := []string{"--git-dir", ".", "diff-tree", "-p", "--root", "--no-commit-id", "-r", "--no-renames",
+		"--no-ext-diff", "--no-textconv", "--unified=3", oid}
+	if len(detail.Deferred) > 0 {
+		args = append(args, "--")
+		for _, filePath := range detail.Deferred {
+			args = append(args, ":(exclude,top,literal)"+filePath)
+		}
+	}
+	result, diffErr := m.Git.RunWithOutputLimit(ctx, repositoryPath, nil, limit, args...)
+	detail.Diff = string(result.Stdout)
+	if diffErr != nil {
+		var limitErr *gitexec.LimitError
+		if errors.As(diffErr, &limitErr) {
+			detail.Truncated = true
+			return detail, nil
+		}
+		return CommitDetail{}, diffErr
+	}
+	return detail, nil
+}
+
+// maximumDeferredFiles bounds how many large files one commit diff leaves
+// out by name, which keeps the Git command line short. Large files past it
+// stay in the diff, where the total limit still applies.
+const maximumDeferredFiles = 100
+
+// largeChangedFiles returns the paths a commit changes whose old or new blob
+// is larger than limit bytes. It reads the changed blobs' IDs, then their
+// sizes, without reading any content.
+func (m *Manager) largeChangedFiles(ctx context.Context, repositoryPath, oid string, limit int64) ([]string, error) {
+	raw, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--root", "--no-commit-id", "-r", "--no-renames", "--raw", "-z", oid)
+	if err != nil {
+		return nil, err
+	}
+	// Each entry is ":oldmode newmode oldoid newoid status", NUL, path, NUL.
+	tokens := strings.Split(string(raw.Stdout), "\x00")
+	pathsByBlob := map[string][]string{}
+	var blobs []string
+	for index := 0; index+1 < len(tokens); index += 2 {
+		fields := strings.Fields(tokens[index])
+		if len(fields) != 5 || !strings.HasPrefix(fields[0], ":") {
+			return nil, errors.New("Git returned malformed changed-file entries")
+		}
+		for side, mode := range []string{strings.TrimPrefix(fields[0], ":"), fields[1]} {
+			blob := fields[2+side]
+			// A submodule entry names a commit, and an absent side is all zeros.
+			if mode == "160000" || strings.Trim(blob, "0") == "" {
+				continue
+			}
+			if _, seen := pathsByBlob[blob]; !seen {
+				blobs = append(blobs, blob)
+			}
+			pathsByBlob[blob] = append(pathsByBlob[blob], tokens[index+1])
+		}
+	}
+	if len(blobs) == 0 {
+		return nil, nil
+	}
+	sizes, err := m.Git.RunWithOutputLimit(ctx, repositoryPath, strings.NewReader(strings.Join(blobs, "\n")+"\n"), 64<<20,
+		"--git-dir", ".", "cat-file", "--batch-check=%(objectname) %(objectsize)")
+	if err != nil {
+		return nil, err
+	}
+	var large []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(sizes.Stdout)), "\n") {
+		blob, sizeText, ok := strings.Cut(line, " ")
+		size, parseErr := strconv.ParseInt(sizeText, 10, 64)
+		if !ok || parseErr != nil || size <= limit {
+			continue
+		}
+		for _, filePath := range pathsByBlob[blob] {
+			if !seen[filePath] && len(large) < maximumDeferredFiles {
+				seen[filePath] = true
+				large = append(large, filePath)
+			}
+		}
+	}
+	return large, nil
+}
+
+// readCommit reads one commit's metadata. The caller holds the read lock.
+func (m *Manager) readCommit(ctx context.Context, repositoryPath, oid string) (Commit, error) {
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show", "-z", "--quiet", "--format="+commitLogFormat, oid)
+	if err != nil {
+		return Commit{}, errors.New("commit not found")
+	}
+	commits, err := parseCommits(result.Stdout)
+	if err != nil || len(commits) != 1 {
+		return Commit{}, errors.New("Git returned malformed commit metadata")
+	}
+	return commits[0], nil
 }
 
 func (m *Manager) ChangedFiles(ctx context.Context, id, oid string) ([]ChangedFile, error) {

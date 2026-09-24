@@ -651,6 +651,7 @@ func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, s
 	for index := range files {
 		if index >= maximumBrowserDiffFiles {
 			truncated = true
+			files[index].NotLoaded = !files[index].Binary
 			continue
 		}
 		if files[index].Binary {

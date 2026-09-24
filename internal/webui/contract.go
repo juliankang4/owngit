@@ -141,11 +141,16 @@ type StorageInfo struct {
 
 // Nav is the sidebar. Repositories are already ordered and filtered by the
 // backend.
+//
+// Outside a repository the sidebar lists places (Home, All activity,
+// Settings) and then the repositories. Inside one it shows that repository's
+// sections instead; the renderer takes those from the page's RepoTabs, so Nav
+// needs no second copy of them.
 type Nav struct {
 	Section      NavSection
 	ActiveRepoID string
 	Repositories []NavRepository
-	// Total is the repository count shown next to "All".
+	// Total is the repository count shown beside the Repositories heading.
 	Total int
 	// Query is the current repository search text, echoed into the field.
 	Query string
@@ -172,6 +177,10 @@ type NavRepository struct {
 	// uncomputed count never renders as zero.
 	CommitCount int
 	CountKnown  bool
+	// LastActivity is the author date of the default branch tip, when the
+	// backend already knows it. Zero shows no time. The backend orders
+	// Repositories by it, newest first.
+	LastActivity time.Time
 }
 
 // NoticeKind selects the visual treatment and the accessible role of a notice.

@@ -6,30 +6,6 @@
      none of them is drawn as a pass. A status this package does not recognise
      says so rather than falling through to something reassuring. */}}
 
-{{/* The repository tab strip, shared by every screen that belongs to one
-     repository so the strip does not move or change shape between them.
-     A section without a URL is not rendered at all. The administrator
-     sections are shown to everyone; without an administrator session they
-     carry the "adminLock" mark, and their routes open the login first.
-
-     Call as: {{template "repoTabs" dict "Lang" $lang "T" $p.Tabs}} */}}
-{{define "repoTabs"}}
-{{$lang := .Lang}}{{$t := .T}}
-<nav class="rtabs" {{biAttr $lang "aria-label" "app.repo_tabs_label"}}>
-  {{with $t.OverviewURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "overview"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.overview"}}</a>{{end}}
-  {{with $t.CodeURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "code"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.code"}}</a>{{end}}
-  {{with $t.CommitsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "commits"}} aria-current="page"{{end}}>{{bi $lang "app.repo_tab.commits"}}</a>{{end}}
-  {{with $t.PullRequestsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "pull-requests"}} aria-current="page"{{end}}>{{bi $lang "pr.tab"}}</a>{{end}}
-  {{with $t.TasksURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "checks"}} aria-current="page"{{end}}>{{bi $lang "tasks.tab"}}</a>{{end}}
-  {{with $t.ImportsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "import"}} aria-current="page"{{end}}>{{bi $lang "import.tab"}}</a>{{end}}
-  {{with $t.SettingsURL}}<a class="rtabs__btn" href="{{.}}"{{if eq $t.Active "settings"}} aria-current="page"{{end}}>{{bi $lang "repoadmin.settings_tab"}}{{template "adminLock" dict "Lang" $lang "Locked" $t.AdminLocked}}</a>{{end}}
-  {{/* The delete control sits apart at the right end. It is a plain link to
-       a confirmation page, never an action by itself, and it reads as
-       dangerous through its word and trash shape as well as its colour. */}}
-  {{with $t.DeleteURL}}<a class="rtabs__btn rtabs__btn--danger" href="{{.}}"{{if eq $t.Active "delete"}} aria-current="page"{{end}}>{{icon "trash"}}<span>{{bi $lang "repoadmin.delete_tab"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" $t.AdminLocked}}</a>{{end}}
-</nav>
-{{end}}
-
 {{/* The mark on an administrator entry point for a viewer without an
      administrator session: a lock shape for the eye and words for a screen
      reader, so the link says it asks for the password before it opens. The
@@ -242,38 +218,20 @@
 {{define "changeList"}}
 {{$lang := .Lang}}{{$files := .Files}}
 <section class="sec">
+  {{if or .Unavailable (not $files)}}
   <div class="sec__bar">
     <h2>{{bi $lang "pr.changes.title"}}</h2>
-    {{if not .Unavailable}}<span class="sec__n">{{biCount $lang "file" (len $files)}}</span>{{end}}
   </div>
+  {{end}}
 
   {{/* A comparison that could not be produced is missing, not empty. Showing
        "no changes" here would claim the branches agree. */}}
   {{if .Unavailable}}
     <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "pr.changes.unavailable"}}{{with .Reason}} {{bi $lang .}}{{end}}</span></p>
   {{else if $files}}
-    <div class="fchips">
-      {{range $files}}
-        {{$status := .Status}}
-        <span class="fchip fchip--static">
-          <span class="fchip__p">{{.Path}}</span>
-          <span class="fchip__n">
-            {{/* The status is a word and a shape, so a deletion is readable
-                 without relying on the tint beside it. */}}
-            {{with prChangeStatus $status}}<span class="rpath__s rpath__s--{{$status}}">{{bi $lang .}}</span>{{end}}
-            {{if .Binary}}<span>{{bi $lang "pr.changes.binary_file"}}</span>
-            {{else}}<span class="add">+{{.Additions}}</span><span class="del">-{{.Deletions}}</span>{{end}}
-          </span>
-        </span>
-      {{end}}
-    </div>
-
-    {{/* The same diff partial the commit and restore screens use, so one
-         rendering serves every place a change is read. */}}
-    {{range $files}}
-      {{template "diffFile" dict "Lang" $lang "F" .}}
-    {{end}}
-
+    {{/* The same diff partials the commit screen uses, so one rendering
+         serves every place a change is read. */}}
+    {{template "diffFiles" dict "Lang" $lang "Files" $files "Title" "pr.changes.title"}}
     {{if .Truncated}}
       <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "pr.changes.truncated"}}</span></p>
     {{end}}

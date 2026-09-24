@@ -1,15 +1,18 @@
-{{/* Shared repository partials: header, tabs, ref picker, clone block. */}}
+{{/* Shared repository partials: header, ref picker, clone block. The
+     repository's sections are in the sidebar. */}}
 
 {{define "repoHead"}}
 {{$lang := .Lang}}{{$p := .P}}
-<p class="backline"><a class="back" href="{{$p.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
-
 {{/* The overview carries the clone address beside the name, where it is
      found without scrolling. It is a read-only field, so without the script
      it is still selectable text; the script only adds the copy button. An
      empty or unreadable repository shows its own clone and push block. */}}
 {{$clone := and (eq $p.Tab "overview") $p.Repo.CloneURL (not $p.Repo.Empty) (not $p.Repo.Unreadable)}}
-<div class="rhead{{if $clone}} rhead--clone{{end}}">
+{{/* On the code tab the sidebar and the path already name the repository,
+     so the heading is kept for assistive technology only and the file starts
+     higher on the page. */}}
+{{$quiet := eq $p.Tab "code"}}
+<div class="rhead{{if $clone}} rhead--clone{{end}}{{if $quiet}} visually-hidden{{end}}">
   <div class="rhead__id">
     <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
     {{if $p.Repo.Description}}
@@ -18,10 +21,6 @@
   </div>
   {{if $clone}}{{template "clonefield" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL}}{{end}}
 </div>
-
-{{/* One tab strip serves every screen that belongs to a repository, so the
-     strip does not change shape as the reader moves between them. */}}
-{{template "repoTabs" dict "Lang" $lang "T" (repoTabsOf $p)}}
 {{end}}
 
 {{/* The ref picker plus an honest statement about the selected ref.
@@ -29,13 +28,13 @@
      silently substitutes a different branch. */}}
 {{define "refbar"}}
 {{$lang := .Lang}}{{$ref := .Ref}}
-<div class="refbar">
+<div class="refbar{{if .Compact}} refbar--compact{{end}}">
   {{if or $ref.Branches $ref.Tags}}
   <form class="refbar__pick" method="get" action="{{.Action}}">
     {{/* The picker holds branches and tags, and when it is closed only the
          chosen short name is visible, so the label must not say "Branch"
          while a tag is selected. */}}
-    <label class="refbar__label" for="ref-select">{{bi $lang "app.ref_label"}}</label>
+    <label class="refbar__label{{if $.Compact}} visually-hidden{{end}}" for="ref-select">{{bi $lang "app.ref_label"}}</label>
     {{/* The button submits without JavaScript; the shared script submits on
          change so the picker feels immediate when scripting is available. */}}
     {{/* A branch and a tag can share one short name. The option shows the

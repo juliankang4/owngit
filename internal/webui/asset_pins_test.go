@@ -1,8 +1,6 @@
 package webui
 
 import (
-	"encoding/json"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -42,63 +40,39 @@ func TestAssetPins(t *testing.T) {
 	jsFrom := func(from, to string) func(*testing.T) string {
 		return func(t *testing.T) string { return section(t, scriptSource(t), from, to) }
 	}
-	tabs := func(t *testing.T) string { return tabScript(t) }
 
 	pins := []assetPin{
-		// The 390px tab strip defect: "Pull requests" wrapped, moving the
-		// active underline off its word. Labels stay whole on one line at one
-		// size, and the strip scrolls sideways within itself.
-		{name: "tab labels stay whole on one line", src: rule(".rtabs__btn"),
-			has: []string{"white-space: nowrap", "flex: none", "font-size: 13px", "border-bottom: 2px solid transparent", "scroll-margin-inline"},
-			// A negative margin would put the underline in clipped space.
-			lacks: []string{"flex-shrink: 1", "flex: 1", "min-width: 0", "text-overflow: ellipsis", "overflow: hidden", "max-width", "margin-bottom: -"}},
-		{name: "no override changes the tab size", src: sheet, extra: func(t *testing.T, css string) {
-			for _, override := range regexp.MustCompile(`\.rtabs__btn[^{]*\{[^}]*\}`).FindAllString(css, -1) {
-				if strings.Contains(override, "font-size") && !strings.Contains(override, "font-size: 13px") {
-					t.Errorf("a rule sets a different tab font size: %s", strings.TrimSpace(override))
-				}
-			}
-		}},
-		{name: "the tab strip is one row that scrolls within itself", src: rule(".rtabs"),
-			has:   []string{"overflow-x: auto", "overscroll-behavior-x: contain", "display: flex", "inset 0 -1px 0 var(--sep)", "scroll-padding-inline"},
-			lacks: []string{"flex-wrap: wrap"}},
-		{name: "the active tab keeps its underline", src: rule(`.rtabs__btn[aria-current="page"]`),
-			has: []string{"border-bottom-color: var(--accent-line)"}},
-		// The shared ring is outset, which the scrollport would clip.
-		{name: "the tab focus ring is inset", src: rule(".rtabs__btn:focus-visible"),
-			has: []string{"outline: 2px solid var(--focus)", "outline-offset: -2px"}},
+		// The sidebar replaced the repository tab strip. Below 900px the
+		// script folds it behind one button; the fold rule lives only in the
+		// narrow layout, so a wide window and a page without the script
+		// always show the whole menu.
+		{name: "the sidebar folds only in the narrow layout", src: func(t *testing.T) string {
+			return mediaBlock(t, readSheet(t), "@media (max-width: 900px)")
+		}, has: []string{".sidebar--folds:not(.is-open) .sidebar__inner { display: none; }", ".sb__toggle:not([hidden])"}},
+		{name: "the menu button is hidden on a wide window", src: rule(".sb__toggle"), has: []string{"display: none"}},
+		{name: "the current place is marked by more than colour", src: rule(`.sb__item[aria-current="page"]`),
+			has: []string{"box-shadow: inset 3px 0 0", "font-weight: 600"}},
+		{name: "the sidebar script only folds, filters and closes", src: jsFrom("var sidebar = document.querySelector('[data-sidebar]')", "/* File list drawer."),
+			has:   []string{"sideToggle.hidden = false", "sidebar.classList.add('sidebar--folds')", "'Escape'", "sideToggle.focus()", "row.hidden = !hit", "sideFilter.hidden = false"},
+			lacks: []string{"innerHTML", "textContent", ".value =", "scrollIntoView", "window.scrollTo"}},
 
-		// The script that brings the current tab into view moves only the
-		// strip, never the page or focus, and leaves other scroll regions
-		// alone. scrollIntoView would scroll every ancestor.
-		{name: "the tab reveal moves only its own strip", src: tabs,
-			has: []string{`.rtabs__btn[aria-current="page"]`, "strip.scrollLeft", "strip.scrollWidth <= strip.clientWidth",
-				`addEventListener('resize'`, "requestAnimationFrame", "all('.rtabs')", "strip.addEventListener('focusin'", "strip.contains(focused)"},
-			lacks: []string{"scrollIntoView", "window.scrollTo", "window.scrollBy", "document.documentElement.scrollTop",
-				".focus()", ".blur()", "autofocus", "focus({", "document.addEventListener('focusin'", "document.body.contains",
-				".hm__scroll", ".clone__cmds", ".sidebar", ".codebox", "[style*=overflow]", "*'", `querySelectorAll('*')`},
-			// Resize and language share one chooser, so a resize while focus
-			// is in the strip does not scroll the focused tab away.
-			extra: func(t *testing.T, src string) {
-				if strings.Count(src, "revealTabsOfInterest") < 2 {
-					t.Error("resize does not reuse the shared chooser")
-				}
-			}},
+		// A file and a diff flow with the page, and long lines scroll inside
+		// them until the reader turns wrapping on.
+		{name: "code and diff panels have no height of their own", src: sheetFrom(".codebox, .diffbox"),
+			lacks: []string{"max-height", "overflow-y"}},
+		{name: "lines do not wrap by default", src: sheet,
+			has: []string{".codetable__t, .difftable__t { padding: 0 10px; white-space: pre;",
+				`[data-wrap="1"] .codetable__t, [data-wrap="1"] .difftable__t { white-space: pre-wrap;`}},
+		{name: "the wrap switch is remembered per browser and starts off", src: jsFrom("var WRAP_KEY", "/* Diff files fold"),
+			has:   []string{"var WRAP_KEY = 'owngit_wrap';", "applyWrap(storedWrap === '1')", "button.hidden = false"},
+			lacks: []string{"document.cookie", "writeCookie"}},
+		{name: "diff files keep their markers and edge bars", src: sheet,
+			has: []string{".dfile .difftable__s { width: 1ch; margin-right: 1ch; font-weight: 700;",
+				".dfile .difftable__r.is-add .difftable__n:first-child { box-shadow: inset 3px 0 0 var(--ok); }",
+				".dfile .difftable__r.is-del .difftable__n:first-child { box-shadow: inset 3px 0 0 var(--bad); }"}},
+		{name: "a diff file header stays in view", src: rule(".dfile__h"), has: []string{"position: sticky", "top: 0"}},
 		{name: "the script adds no observers or external code", src: js,
 			lacks: []string{"IntersectionObserver", "ResizeObserver", "MutationObserver", "import ", "require(", "fetch(", "XMLHttpRequest", "<script"}},
-		// An in-place language change rewrites every label and fires no
-		// resize, so the switch asks for the reveal itself.
-		{name: "switching language keeps the tab visible", src: jsFrom("function applyLanguage(", "\n  }\n"),
-			has:   []string{"revealTabsOfInterest()"},
-			lacks: []string{"scrollIntoView", "window.scrollTo", ".focus()"}},
-		{name: "the reveal helpers are defined once", src: js,
-			extra: func(t *testing.T, src string) {
-				for _, helper := range []string{"function revealTab(", "function revealTabOfInterest("} {
-					if n := strings.Count(src, helper); n != 1 {
-						t.Errorf("%s is defined %d times", helper, n)
-					}
-				}
-			}},
 
 		// The 390px toolbar defect: the language picker dropped onto its own
 		// row. The controls travel as one group, and the narrow header wraps
@@ -206,82 +180,6 @@ func TestAssetPins(t *testing.T) {
 	}
 }
 
-// TestTabsStillWorkWithoutTheScript checks that the tab strip is a list of
-// plain links: the script improves them and is never needed to use them.
-func TestTabsStillWorkWithoutTheScript(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		for name, page := range map[string]Page{
-			"pull requests": pullRequestsPage(fullChrome(lang), false),
-			"tasks":         tasksPage(fullChrome(lang), false),
-		} {
-			out := render(t, r, page)
-			strip := out[strings.Index(out, `<nav class="rtabs"`):]
-			strip = strip[:strings.Index(strip, "</nav>")]
-
-			tabs := strings.Split(strip, "<a ")[1:]
-			if len(tabs) == 0 || !strings.Contains(strip, `class="rtabs__btn"`) {
-				t.Fatalf("%s %s: no tabs rendered", lang, name)
-			}
-			for _, tab := range tabs {
-				if !strings.Contains(tab, "href=") || strings.Contains(tab, `href=""`) {
-					t.Errorf("%s %s: a tab is not a followable link: %s", lang, name, strings.TrimSpace(tab))
-				}
-			}
-			if strings.Contains(strip, `tabindex="-1"`) {
-				t.Errorf("%s %s: a tab was taken out of the keyboard order", lang, name)
-			}
-			if !strings.Contains(strip, `aria-current="page"`) {
-				t.Errorf("%s %s: no tab is marked current, so the script has nothing to reveal", lang, name)
-			}
-			// A real tab list, not an ARIA tab widget that needs the script
-			// to be operable.
-			for _, widget := range []string{`role="tab"`, `role="tablist"`, `role="tabpanel"`} {
-				if strings.Contains(strip, widget) {
-					t.Errorf("%s %s: the strip uses %s, which needs script-driven keyboard handling", lang, name, widget)
-				}
-			}
-		}
-	}
-}
-
-// TestTabRevealGeometry runs the shipped revealTab against geometry measured in
-// a real browser at 320px, including the two reported cases: the active tab
-// hidden at load, and a focused tab left partly outside by native Tab.
-//
-// The pins above check what the script says; this checks what it computes. It
-// needs a JavaScript runtime and is skipped without one, so it adds no
-// dependency.
-func TestTabRevealGeometry(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("no JavaScript runtime available to exercise the script")
-	}
-
-	out, err := exec.Command(node, "testdata/tabreveal.js", "assets/owngit.js").CombinedOutput()
-	var cases []struct {
-		Name         string  `json:"name"`
-		OK           bool    `json:"ok"`
-		ScrollLeft   float64 `json:"scrollLeft"`
-		Left         float64 `json:"left"`
-		Right        float64 `json:"right"`
-		FullyVisible bool    `json:"fullyVisible"`
-		Error        string  `json:"error"`
-	}
-	if jsonErr := json.Unmarshal(out, &cases); jsonErr != nil {
-		t.Fatalf("the geometry harness produced no report: %v\n%s", err, out)
-	}
-	for _, c := range cases {
-		if !c.OK {
-			t.Errorf("%s: scrollLeft %.1f left %.1f right %.1f fullyVisible %v %s",
-				c.Name, c.ScrollLeft, c.Left, c.Right, c.FullyVisible, c.Error)
-		}
-	}
-	if err != nil && !t.Failed() {
-		t.Fatalf("the geometry harness failed without reporting a case: %v\n%s", err, out)
-	}
-}
-
 // readSheet returns the embedded stylesheet.
 func readSheet(t *testing.T) string {
 	t.Helper()
@@ -300,8 +198,8 @@ func scriptSource(t *testing.T) string {
 }
 
 // cssRule returns the declarations of the first top-level rule for selector.
-// It matches the selector as a whole rule head so ".rtabs" does not also find
-// ".rtabs__btn".
+// It matches the selector as a whole rule head so ".sb__item" does not also
+// find ".sb__item--danger".
 func cssRule(t *testing.T, selector string) string {
 	t.Helper()
 	pattern := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(selector) + `\s*\{([^}]*)\}`)
@@ -324,16 +222,6 @@ func section(t *testing.T, source, from, to string) string {
 		t.Fatalf("the part starting at %q never ends", from)
 	}
 	return source[start : start+end]
-}
-
-// tabScript returns the shared reveal helper and the block that wires it to
-// the tab strips. Slicing to these keeps the pins off unrelated code such as
-// the activity graph's roving tab stop, which legitimately moves focus.
-func tabScript(t *testing.T) string {
-	t.Helper()
-	source := scriptSource(t)
-	return section(t, source, "var TAB_PAD", "function readCookie(") + "\n" +
-		section(t, source, "var tabStrips = all('.rtabs')", "})();")
 }
 
 // mediaBlock returns the body of one media query.

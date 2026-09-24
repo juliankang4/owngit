@@ -15,7 +15,7 @@
 <body>
 <a class="skip" href="#main">{{bi .Lang "app.skip_to_content"}}</a>
 
-<div class="app{{if not .Chrome.Nav.OverviewURL}} app--bare{{end}}">
+<div class="app{{if not .Chrome.Nav.OverviewURL}} app--bare{{end}}{{if .Wide}} app--wide{{end}}">
   {{template "toolbar" .}}
 
   <div class="app__body">
@@ -95,57 +95,95 @@
 {{end}}
 
 {{define "sidebar"}}
-{{$nav := .Chrome.Nav}}
-<nav class="sidebar" {{biAttr .Lang "aria-label" "app.nav.primary"}}>
-  <div class="sidebar__inner">
-    <p class="sb__label">{{bi .Lang "app.nav.repositories"}}</p>
-    <a class="sb__item" href="{{$nav.OverviewURL}}"{{if and (eq $nav.Section "overview") (not $nav.ActiveRepoID)}} aria-current="page"{{end}}>
-      <span class="sb__name">{{bi .Lang "app.nav.all"}}</span>
-      <span class="sb__count">{{number $nav.Total}}</span>
-    </a>
-    {{range $nav.Repositories}}
-      <a class="sb__item" href="{{.URL}}"{{if eq .ID $nav.ActiveRepoID}} aria-current="page"{{end}}>
-        <span class="sb__name">{{.Name}}</span>
-        {{/* An uncomputed count stays blank rather than rendering as zero. */}}
-        {{if .CountKnown}}<span class="sb__count">{{number .CommitCount}}</span>{{end}}
-      </a>
-    {{else}}
-      <p class="sb__none">{{bi $.Lang "app.nav.no_repositories"}}</p>
-    {{end}}
+{{$nav := .Chrome.Nav}}{{$sb := .Sidebar}}{{$lang := .Lang}}
+{{/* One sidebar, two contents. Outside a repository it lists places and then
+     the repositories; inside one it lists that repository's sections, so the
+     page itself needs no tab strip.
 
-    <hr class="sb__rule">
-
-    <a class="sb__item" href="{{$nav.ActivityURL}}"{{if eq $nav.Section "activity"}} aria-current="page"{{end}}>
-      <span class="sb__name">{{bi .Lang "activity.title"}}</span>
-    </a>
-    {{with $nav.NewRepoURL}}
-      <a class="sb__item" href="{{.}}">
-        {{icon "plus"}}<span class="sb__name">{{bi $.Lang "repo.new.title"}}</span>
-      </a>
-    {{end}}
-    {{with $nav.NewImportURL}}
-      <a class="sb__item" href="{{.}}">
-        {{icon "plus"}}<span class="sb__name">{{bi $.Lang "import.list_link"}}</span>
-      </a>
-    {{end}}
-    {{with $nav.SettingsURL}}
-      <a class="sb__item" href="{{.}}"{{if eq $nav.Section "settings"}} aria-current="page"{{end}}>
-        {{icon "settings"}}<span class="sb__name">{{bi $.Lang "settings.title"}}</span>
-      </a>
-    {{end}}
+     Below 900px the script folds the menu behind one button that names the
+     current place. The button starts hidden, so without the script the menu
+     is simply shown in full. */}}
+<nav class="sidebar" {{biAttr $lang "aria-label" "app.nav.primary"}} data-sidebar>
+  <button type="button" class="sb__toggle" aria-expanded="false" aria-controls="sb-menu" data-sidebar-toggle hidden>
+    {{icon "menu"}}<span class="sb__toggle-l">{{bi $lang "app.nav.menu"}}:</span>
+    <span class="sb__toggle-cur">{{if $sb.InRepo}}{{$sb.RepoName}}{{with $sb.Current}}, {{bi $lang .}}{{end}}{{else}}{{with $sb.Current}}{{bi $lang .}}{{end}}{{end}}</span>
+    <span class="sb__toggle-chev">{{icon "chevron"}}</span>
+  </button>
+  <div class="sidebar__inner" id="sb-menu">
+  {{if $sb.InRepo}}
+    {{$t := $sb.Tabs}}
+    <a class="sb__back" href="{{$nav.OverviewURL}}">{{icon "back"}}<span>{{bi $lang "app.nav.all_repositories"}}</span></a>
+    <div class="sb__sec">
+      <p class="sb__repo">{{icon "repo"}}<span class="sb__repo-n">{{$sb.RepoName}}</span></p>
+      <div class="sb__list">
+        {{with $t.OverviewURL}}<a class="sb__item" href="{{.}}"{{if eq $t.Active "overview"}} aria-current="page"{{end}}>{{icon "home"}}<span class="sb__name">{{bi $lang "app.repo_tab.overview"}}</span></a>{{end}}
+        {{with $t.CodeURL}}<a class="sb__item" href="{{.}}"{{if eq $t.Active "code"}} aria-current="page"{{end}}>{{icon "file"}}<span class="sb__name">{{bi $lang "app.repo_tab.code"}}</span></a>{{end}}
+        {{with $t.CommitsURL}}<a class="sb__item" href="{{.}}"{{if eq $t.Active "commits"}} aria-current="page"{{end}}>{{icon "commit"}}<span class="sb__name">{{bi $lang "app.repo_tab.commits"}}</span></a>{{end}}
+        {{with $t.PullRequestsURL}}<a class="sb__item" href="{{.}}"{{if eq $t.Active "pull-requests"}} aria-current="page"{{end}}>{{icon "pr"}}<span class="sb__name">{{bi $lang "pr.tab"}}</span></a>{{end}}
+        {{with $t.TasksURL}}<a class="sb__item" href="{{.}}"{{if eq $t.Active "checks"}} aria-current="page"{{end}}>{{icon "check"}}<span class="sb__name">{{bi $lang "tasks.tab"}}</span></a>{{end}}
+        {{with $t.ImportsURL}}<a class="sb__item" href="{{.}}"{{if eq $t.Active "import"}} aria-current="page"{{end}}>{{icon "import"}}<span class="sb__name">{{bi $lang "import.tab"}}</span></a>{{end}}
+        {{/* "Repository settings", so it is not mistaken for OwnGit's own
+             Settings. Both administrator entries are shown to everyone and
+             carry the lock mark when the password will be asked first. */}}
+        {{with $t.SettingsURL}}<a class="sb__item" href="{{.}}"{{if eq $t.Active "settings"}} aria-current="page"{{end}}>{{icon "settings"}}<span class="sb__name">{{bi $lang "app.nav.repo_settings"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" $t.AdminLocked}}</a>{{end}}
+      </div>
+      {{/* Deleting sits apart and reads as dangerous through its word and
+           trash shape as well as its colour. It opens a confirmation page. */}}
+      {{with $t.DeleteURL}}
+      <hr class="sb__rule">
+      <a class="sb__item sb__item--danger" href="{{.}}"{{if eq $t.Active "delete"}} aria-current="page"{{end}}>{{icon "trash"}}<span class="sb__name">{{bi $lang "repoadmin.delete_tab"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" $t.AdminLocked}}</a>
+      {{end}}
+    </div>
+  {{else}}
+    <div class="sb__list">
+      <a class="sb__item" href="{{$nav.OverviewURL}}"{{if eq $sb.Place "home"}} aria-current="page"{{end}}>{{icon "home"}}<span class="sb__name">{{bi $lang "app.nav.home"}}</span></a>
+      {{with $nav.ActivityURL}}<a class="sb__item" href="{{.}}"{{if eq $sb.Place "activity"}} aria-current="page"{{end}}>{{icon "activity"}}<span class="sb__name">{{bi $lang "activity.title"}}</span></a>{{end}}
+      {{with $nav.SettingsURL}}<a class="sb__item" href="{{.}}"{{if eq $sb.Place "settings"}} aria-current="page"{{end}}>{{icon "settings"}}<span class="sb__name">{{bi $lang "settings.title"}}</span></a>{{end}}
+    </div>
+    <div class="sb__sec" data-sb-repos>
+      <div class="sb__head">
+        <h2 class="sb__title" id="sb-repos-h">{{bi $lang "app.nav.repositories"}}</h2>
+        <span class="sb__total">{{number $nav.Total}}</span>
+      </div>
+      {{if or $nav.NewRepoURL $nav.NewImportURL}}
+      <div class="sb__acts">
+        {{with $nav.NewRepoURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "new"}} aria-current="page"{{end}}>{{icon "plus"}}<span>{{bi $lang "repo.new.title"}}</span></a>{{end}}
+        {{with $nav.NewImportURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "import"}} aria-current="page"{{end}} {{biAttr $lang "title" "import.list_link"}}>{{icon "import"}}<span>{{bi $lang "app.nav.import"}}</span></a>{{end}}
+      </div>
+      {{end}}
+      {{/* The filter only hides rows already on the page; it starts hidden
+           and the script shows it, so it never appears without working. */}}
+      {{if gt (len $nav.Repositories) 8}}
+      <input class="sb__filter" type="search" autocomplete="off" spellcheck="false" data-sb-filter hidden
+             {{biAttr $lang "placeholder" "app.nav.filter"}} {{biAttr $lang "aria-label" "app.nav.filter"}}>
+      {{end}}
+      <div class="sb__list" aria-labelledby="sb-repos-h" role="group">
+        {{range $nav.Repositories}}
+          <a class="sb__item" href="{{.URL}}" data-sb-name="{{.Name}}"{{if eq .ID $nav.ActiveRepoID}} aria-current="page"{{end}}>
+            {{icon "repo"}}<span class="sb__name">{{.Name}}</span>
+            {{if not .LastActivity.IsZero}}<span class="sb__when">{{biRelative $lang $.Chrome.Now .LastActivity}}</span>{{end}}
+          </a>
+        {{else}}
+          <p class="sb__none">{{bi $lang "app.nav.no_repositories"}}</p>
+        {{end}}
+        <p class="sb__none" data-sb-nomatch role="status" hidden>{{bi $lang "app.nav.no_match"}}</p>
+      </div>
+    </div>
+  {{end}}
 
     {{if or $nav.LogoutURL $nav.AdminLogoutURL}}
       <div class="sb__out">
         {{with $nav.AdminLogoutURL}}
-        <form method="post" action="{{.}}">
+        <form class="sb__admin" method="post" action="{{.}}">
           <input type="hidden" name="csrf" value="{{$.Chrome.CSRF}}">
-          <button type="submit" class="linkbtn">{{bi $.Lang "app.end_admin"}}</button>
+          <span class="sb__admin-t">{{icon "unlocked"}}<span>{{bi $lang "app.nav.admin_on"}}</span></span>
+          <button type="submit" class="linkbtn" {{biAttr $lang "aria-label" "app.end_admin"}}>{{bi $lang "app.nav.admin_end"}}</button>
         </form>
         {{end}}
         {{with $nav.LogoutURL}}
         <form method="post" action="{{.}}">
           <input type="hidden" name="csrf" value="{{$.Chrome.CSRF}}">
-          <button type="submit" class="linkbtn">{{bi $.Lang "app.sign_out"}}</button>
+          <button type="submit" class="linkbtn">{{bi $lang "app.sign_out"}}</button>
         </form>
         {{end}}
       </div>

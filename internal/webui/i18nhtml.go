@@ -110,6 +110,12 @@ func biCount(lang Lang, kind string, n int) template.HTML {
 	return biText(lang, formatCount(LangEN, kind, n), formatCount(LangKO, kind, n))
 }
 
+// biN renders a sentence with one number in it, such as "Show 26 more
+// files". The message holds a single %d.
+func biN(lang Lang, code MessageCode, n int) template.HTML {
+	return biText(lang, fmt.Sprintf(Text(LangEN, code), n), fmt.Sprintf(Text(LangKO, code), n))
+}
+
 // biRelease renders the new-release sentence in both languages. The versions
 // are strict X.Y.Z strings chosen by the backend and are escaped like any
 // other text.

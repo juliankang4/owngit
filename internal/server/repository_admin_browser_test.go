@@ -45,15 +45,15 @@ func assertRepositoryIntact(t *testing.T, fixture apiFixture, context string) {
 	}
 }
 
-// tabStrip returns the repository tab strip of a rendered page.
-func tabStrip(t *testing.T, path, body string) string {
+// repositoryMenu returns the repository sidebar of a rendered page.
+func repositoryMenu(t *testing.T, path, body string) string {
 	t.Helper()
-	at := strings.Index(body, `<nav class="rtabs"`)
-	if at < 0 {
-		t.Fatalf("%s has no tab strip", path)
+	at := strings.Index(body, `<nav class="sidebar"`)
+	if at < 0 || !strings.Contains(body[at:], `class="sb__repo"`) {
+		t.Fatalf("%s has no repository sidebar", path)
 	}
-	strip := body[at:]
-	return strip[:strings.Index(strip, "</nav>")]
+	menu := body[at:]
+	return menu[:strings.Index(menu, "</nav>")]
 }
 
 func TestRepositoryAdminTabsAreShownToEveryone(t *testing.T) {
@@ -71,13 +71,13 @@ func TestRepositoryAdminTabsAreShownToEveryone(t *testing.T) {
 		if page.status != http.StatusOK {
 			t.Fatalf("%s %s status=%d", viewer, path, page.status)
 		}
-		strip := tabStrip(t, path, page.body)
+		strip := repositoryMenu(t, path, page.body)
 		// Settings follows Import in the normal order; Delete comes last.
 		importAt := strings.Index(strip, `href="/repositories/project/import"`)
 		settingsAt := strings.Index(strip, `href="/repositories/project/settings"`)
-		deleteAt := strings.Index(strip, `class="rtabs__btn rtabs__btn--danger" href="/repositories/project/delete"`)
+		deleteAt := strings.Index(strip, `class="sb__item sb__item--danger" href="/repositories/project/delete"`)
 		if importAt < 0 || settingsAt < importAt || deleteAt < settingsAt {
-			t.Fatalf("%s %s tab order import=%d settings=%d delete=%d:\n%s", viewer, path, importAt, settingsAt, deleteAt, strip)
+			t.Fatalf("%s %s section order import=%d settings=%d delete=%d:\n%s", viewer, path, importAt, settingsAt, deleteAt, strip)
 		}
 		// The danger control names itself in words, not only in colour.
 		if !strings.Contains(strip[deleteAt:], "Delete repository") || !strings.Contains(strip[deleteAt:], "<svg") {

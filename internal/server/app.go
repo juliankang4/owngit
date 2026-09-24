@@ -287,6 +287,10 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleActivity(writer, request, settings)
 	case strings.HasPrefix(request.URL.Path, "/repositories/") && (request.Method == http.MethodGet || request.Method == http.MethodPost):
 		app.handleRepositoryRoute(writer, request, settings)
+	case strings.HasPrefix(request.URL.Path, "/repositories/") && strings.HasSuffix(request.URL.Path, "/raw") && request.Method == http.MethodHead:
+		// Download tools ask for a file's headers first. Only the raw route
+		// answers HEAD; the route still applies the same access checks.
+		app.handleRepositoryRoute(writer, request, settings)
 	default:
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 	}

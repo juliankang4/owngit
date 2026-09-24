@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"owngit/internal/markdown"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -310,6 +311,10 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	}
 	if len(parts) == 2 && parts[1] == "restore" && request.Method == http.MethodPost {
 		app.handleRestoreApply(writer, request, stored, summary, chrome)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "raw" && (request.Method == http.MethodGet || request.Method == http.MethodHead) {
+		app.handleRaw(writer, request, stored)
 		return
 	}
 	if request.Method != http.MethodGet {
@@ -640,26 +645,44 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 			if strings.HasPrefix(selectedRef, "refs/heads/") {
 				target = strings.TrimPrefix(selectedRef, "refs/heads/")
 			}
+			parent := path.Dir(requestedPath)
+			if parent == "." {
+				parent = ""
+			}
 			file := &webui.FileView{
 				Path: requestedPath, Size: int64(len(blob.Content)), Binary: binary, Truncated: blob.Truncated,
+				RawURL:     rawURL(page.Repo.ID, selectedRef, requestedPath),
 				RestoreURL: restoreURL(page.Repo.ID, page.Ref.Revision, target, requestedPath),
 			}
 			if !binary {
 				content := strings.ReplaceAll(string(blob.Content), "\r\n", "\n")
 				file.Lines = strings.Split(strings.TrimSuffix(content, "\n"), "\n")
 			}
-			parent := path.Dir(requestedPath)
-			if parent == "." {
-				parent = ""
+			if !binary && markdown.IsDocument(requestedPath) {
+				file.Document = true
+				file.ShowSource = request.URL.Query().Get("view") == "source"
+				file.PreviewURL = codeURL(page.Repo.ID, selectedRef, requestedPath)
+				file.SourceURL = file.PreviewURL + "&view=source"
+				// A cut-off document would render a broken ending, so only a
+				// whole file is rendered. The source view is always offered.
+				if blob.Truncated {
+					file.NotRendered = webui.MsgCodeNotShown
+				} else if !file.ShowSource {
+					file.Rendered, file.NotRendered = app.renderMarkdown(request.Context(), page.Repo.ID, selectedRef, parent, blob.Content)
+				}
 			}
 			_, siblings, _ := app.Repositories.Tree(request.Context(), page.Repo.ID, selectedRef, parent)
-			view := webui.CodeView{Path: requestedPath, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.ID, selectedRef, siblings)}
-			view.UpURL = codeURL(page.Repo.ID, selectedRef, parent)
+			view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.ID, selectedRef, siblings)}
+			// The drawer lists the file's folder, so "up" leaves that folder.
+			if parent != "" {
+				view.UpURL = codeURL(page.Repo.ID, selectedRef, path.Dir(parent))
+			}
 			for _, sibling := range siblings {
 				if sibling.Path == requestedPath && sibling.Size >= 0 {
 					file.Size = sibling.Size
 				}
 			}
+			file.RawTooLarge = file.Size > maximumRawBytes
 			page.Code = view
 			return
 		}
@@ -669,11 +692,12 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
 		return
 	}
-	view := webui.CodeView{Path: requestedPath, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
+	view := webui.CodeView{Path: requestedPath, Dir: requestedPath, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
 	if requestedPath != "" {
 		view.UpURL = codeURL(page.Repo.ID, selectedRef, path.Dir(requestedPath))
 	}
 	view.Entries = treeViewEntries(page.Repo.ID, selectedRef, entries)
+	view.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, requestedPath, entries)
 	page.Code = view
 }
 
@@ -717,23 +741,29 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		page.Commits.NotFound = true
 		return
 	}
+	// A commit opens with every file's diff. An address naming one file, as
+	// the note on a file left out of a large commit does, loads that file's
+	// diff alone.
 	requestedPath := request.URL.Query().Get("path")
-	selected := requestedPath
-	if selected == "" && len(files) != 0 {
-		selected = files[0].Path
-	}
-	found := selected == "" && len(files) == 0
-	for _, file := range files {
-		if file.Path == selected {
-			found = true
-			break
+	if requestedPath != "" {
+		found := false
+		for _, file := range files {
+			if file.Path == requestedPath {
+				found = true
+				break
+			}
+		}
+		if !found {
+			page.Commits.NotFound = true
+			return
 		}
 	}
-	if !found {
-		page.Commits.NotFound = true
-		return
+	var detail repository.CommitDetail
+	if requestedPath != "" {
+		detail, err = app.Repositories.Commit(request.Context(), page.Repo.ID, openedOID, requestedPath)
+	} else {
+		detail, err = app.Repositories.CommitAllFiles(request.Context(), page.Repo.ID, openedOID, maximumCommitPatchBytes, maximumCommitFileBytes)
 	}
-	detail, err := app.Repositories.Commit(request.Context(), page.Repo.ID, openedOID, selected)
 	if err != nil {
 		page.Commits.NotFound = true
 		return
@@ -748,8 +778,11 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	view := webui.CommitDetail{
 		Commit: app.commitSummary(page.Repo.ID, selectedRef, detail.Commit), Body: detail.Body,
 		CommitterName: detail.CommitterName, CommitterDate: detail.CommittedAt,
-		SelectedPath: selected, Truncated: detail.Truncated,
+		SelectedPath: requestedPath, Truncated: detail.Truncated,
 		RestoreURL: restoreURL(page.Repo.ID, detail.OID, target, requestedPath),
+	}
+	if requestedPath != "" {
+		view.AllFilesURL = commitURL(page.Repo.ID, selectedRef, openedOID, "")
 	}
 	if len(detail.Parents) > 1 {
 		view.Unavailable = true
@@ -758,17 +791,115 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	for _, parentOID := range detail.Parents {
 		view.Parents = append(view.Parents, webui.CommitSummary{OID: parentOID, ShortOID: shortOID(parentOID), URL: commitURL(page.Repo.ID, selectedRef, parentOID, "")})
 	}
+	sections := map[string]string{}
+	deferred := map[string]bool{}
+	shownLines := 0
+	if requestedPath == "" {
+		sections = splitPatchByFile(detail.Diff, detail.Truncated)
+		for _, filePath := range detail.Deferred {
+			deferred[filePath] = true
+		}
+	}
 	for _, file := range files {
+		if requestedPath != "" && file.Path != requestedPath {
+			continue
+		}
 		item := webui.DiffFile{
 			Path: file.Path, OldPath: file.OldPath, Status: file.Status, Additions: file.Additions, Deletions: file.Deletions,
-			Binary: file.Binary, URL: commitURL(page.Repo.ID, selectedRef, openedOID, file.Path), Selected: file.Path == selected,
+			Binary: file.Binary, URL: commitURL(page.Repo.ID, selectedRef, openedOID, file.Path), Selected: file.Path == requestedPath,
 		}
-		if item.Selected && !item.Binary {
+		switch {
+		case item.Binary:
+		case requestedPath != "":
 			item.Hunks = parsePatch(detail.Diff)
+		default:
+			section, ok := sections[file.Path]
+			lines := strings.Count(section, "\n")
+			switch {
+			case ok && shownLines+lines <= maximumCommitDiffLines:
+				item.Hunks = parsePatch(section)
+				shownLines += lines
+			case ok || deferred[file.Path] || detail.Truncated && file.Additions+file.Deletions > 0:
+				item.NotLoaded = true
+			}
 		}
 		view.Files = append(view.Files, item)
 	}
 	page.Commits.Detail = &view
+}
+
+// A commit shown with all of its files reads at most maximumCommitPatchBytes
+// of diff text and shows at most maximumCommitDiffLines diff lines, because
+// each line becomes a table row and short lines would otherwise make a page
+// many times larger than the diff. A file with a side above
+// maximumCommitFileBytes is not read with the others, so the files after it
+// still load. Files left out for any of these reasons are listed with a link
+// to their diff alone.
+const (
+	maximumCommitPatchBytes = 1 << 20
+	maximumCommitFileBytes  = 256 << 10
+	maximumCommitDiffLines  = 10000
+)
+
+// splitPatchByFile splits a whole-commit patch read without rename detection
+// into each file's part, keyed by the file's path. A path is read from the
+// "diff --git" line itself, since only that line is present for every kind of
+// change. A change of file type yields two parts with one path, which are
+// joined. When truncated, the last part may be cut short, so it is left out.
+func splitPatchByFile(patch string, truncated bool) map[string]string {
+	sections := map[string]string{}
+	var order []string
+	var current string
+	var body strings.Builder
+	flush := func() {
+		if current != "" {
+			sections[current] += body.String()
+		}
+		body.Reset()
+	}
+	for _, line := range strings.SplitAfter(patch, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			flush()
+			current = patchHeaderPath(strings.TrimSuffix(strings.TrimPrefix(line, "diff --git "), "\n"))
+			if current != "" {
+				order = append(order, current)
+			}
+			continue
+		}
+		body.WriteString(line)
+	}
+	flush()
+	if truncated && len(order) != 0 {
+		delete(sections, order[len(order)-1])
+	}
+	return sections
+}
+
+// patchHeaderPath reads the new path from the rest of a "diff --git" line
+// written without rename detection, where both sides name the same path. Git
+// quotes a path with unusual bytes in C style, on both sides alike, and
+// strconv.Unquote reads that style. An unquoted pair is split at its middle,
+// since both halves match.
+func patchHeaderPath(rest string) string {
+	if strings.HasPrefix(rest, "\"") {
+		first, err := strconv.QuotedPrefix(rest)
+		if err != nil {
+			return ""
+		}
+		second, err := strconv.Unquote(strings.TrimPrefix(rest[len(first):], " "))
+		if err != nil {
+			return ""
+		}
+		return strings.TrimPrefix(second, "b/")
+	}
+	if len(rest) < 5 || (len(rest)-5)%2 != 0 {
+		return ""
+	}
+	half := (len(rest) - 5) / 2
+	if rest[:2] != "a/" || rest[2+half:2+half+3] != " b/" || rest[2:2+half] != rest[5+half:] {
+		return ""
+	}
+	return rest[5+half:]
 }
 
 func (app *App) repositorySummary(request *http.Request, stored state.Repository, snapshot repository.RefSnapshot) webui.RepositorySummary {

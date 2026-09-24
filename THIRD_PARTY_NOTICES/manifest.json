@@ -63,6 +63,18 @@
       ]
     },
     {
+      "module": "github.com/yuin/goldmark",
+      "version": "v1.8.6",
+      "files": [
+        {
+          "path": "LICENSE",
+          "mode": "0644",
+          "size": 1071,
+          "sha256": "c1d6f653c38c80294dc7994647ba0dcc508ce64a86996303c804efa2f7982bff"
+        }
+      ]
+    },
+    {
       "module": "golang.org/x/crypto",
       "version": "v0.57.0",
       "files": [

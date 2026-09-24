@@ -39,20 +39,21 @@ func TestDeleteControlIsSeparateAndNotColourOnly(t *testing.T) {
 	r := newRenderer(t)
 	for _, lang := range Langs() {
 		out := render(t, r, repositoryDeletePage(fullChrome(lang)))
-		strip := out[strings.Index(out, `<nav class="rtabs"`):]
-		strip = strip[:strings.Index(strip, "</nav>")]
-		settings := strings.Index(strip, `href="/repositories/r1/settings"`)
-		danger := strings.Index(strip, `class="rtabs__btn rtabs__btn--danger" href="/repositories/r1/delete" aria-current="page"`)
-		if settings < strings.Index(strip, `href="/repositories/r1/import"`) || danger < settings {
-			t.Fatalf("%s: settings must follow import and delete must come last:\n%s", lang, strip)
+		menu := out[strings.Index(out, `<nav class="sidebar"`):]
+		menu = menu[:strings.Index(menu, "</nav>")]
+		settings := strings.Index(menu, `href="/repositories/r1/settings"`)
+		rule := strings.Index(menu, `<hr class="sb__rule">`)
+		danger := strings.Index(menu, `class="sb__item sb__item--danger" href="/repositories/r1/delete" aria-current="page"`)
+		if settings < strings.Index(menu, `href="/repositories/r1/import"`) || rule < settings || danger < rule {
+			t.Fatalf("%s: settings must follow import, and delete must come last behind a rule:\n%s", lang, menu)
 		}
-		if !strings.Contains(strip[danger:], `<svg class="icon"`) || !strings.Contains(strip[danger:], Text(lang, MsgRepoDeleteTab)) {
+		if !strings.Contains(menu[danger:], `<svg class="icon"`) || !strings.Contains(menu[danger:], Text(lang, MsgRepoDeleteTab)) {
 			t.Errorf("%s: the delete control relies on colour alone", lang)
 		}
-	}
-	rule := cssRule(t, ".rtabs__btn--danger")
-	if !strings.Contains(rule, "margin-left: auto") {
-		t.Error("the delete control is not pushed to the right end of the strip")
+		// Inside a repository its settings say whose settings they are.
+		if !strings.Contains(menu, Text(lang, MsgNavRepoSettings)) {
+			t.Errorf("%s: the repository settings entry is not named as such", lang)
+		}
 	}
 }
 

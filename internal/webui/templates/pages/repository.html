@@ -141,184 +141,210 @@
   </div>
 
 {{else if eq $p.Tab "code"}}
-  {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CodeURL "Path" $p.Code.Path}}
+  {{$c := $p.Code}}{{$f := $c.File}}
+  {{/* One compact row above the content: the file list, the ref picker, the
+       path, and for a file its facts and switches. */}}
+  <div class="codebar">
+    {{if and $f (not $p.Ref.Missing)}}
+    {{/* The file list is a details element, so it opens without the script;
+         the script adds Escape and a click outside to close it. */}}
+    <details class="drawer" data-drawer>
+      <summary class="btn drawer__btn">{{icon "panel"}}<span>{{bi $lang "code.files"}}</span></summary>
+      <div class="drawer__panel">
+        {{template "codeTree" dict "Lang" $lang "C" $c}}
+      </div>
+    </details>
+    {{end}}
+    {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CodeURL "Path" $c.Path "Compact" true}}
+    {{if and (not $p.Ref.Missing) (not $c.NotFound)}}
+    <nav class="crumbs" {{biAttr $lang "aria-label" "code.location"}}>
+      {{range $i, $cr := $c.Crumbs}}
+        {{if $i}}<span class="crumbs__sep" aria-hidden="true">/</span>{{end}}
+        {{if or $cr.Current (not $cr.URL)}}
+          <span class="crumbs__here" aria-current="page">{{$cr.Name}}</span>
+        {{else}}
+          <a href="{{$cr.URL}}">{{$cr.Name}}</a>
+        {{end}}
+      {{end}}
+    </nav>
+    {{end}}
+    {{with $f}}
+    <div class="codebar__tools">
+      {{if not .Binary}}<span class="codebar__fact">{{biCount $lang "line" (len .Lines)}}</span>{{end}}
+      <span class="codebar__fact">{{bytes .Size}}</span>
+      {{/* The source view renders nothing, so it offers the switch unless the
+           backend already knows the preview cannot be shown. */}}
+      {{if and .Document (or .Rendered (and .ShowSource (not .NotRendered)))}}
+      <nav class="seg" {{biAttr $lang "aria-label" "code.view_as"}}>
+        <a class="seg__btn" href="{{.PreviewURL}}"{{if not .ShowSource}} aria-current="true"{{end}}>{{bi $lang "code.preview"}}</a>
+        <a class="seg__btn" href="{{.SourceURL}}"{{if .ShowSource}} aria-current="true"{{end}}>{{bi $lang "code.source"}}</a>
+      </nav>
+      {{end}}
+      {{if and (not .Binary) (or (not .Document) .ShowSource (not .Rendered))}}
+      <button type="button" class="seg__btn seg__btn--solo" data-wrap-toggle aria-pressed="false" hidden>{{icon "wrap"}}<span>{{bi $lang "code.wrap"}}</span></button>
+      {{end}}
+      {{if not .RawTooLarge}}{{with .RawURL}}<a class="codebar__link" href="{{.}}">{{bi $lang "code.raw_link"}}</a>{{end}}{{end}}
+      {{with .RestoreURL}}<a class="codebar__link" href="{{.}}">{{bi $lang "restore.open_file"}}</a>{{end}}
+    </div>
+    {{end}}
+  </div>
 
   {{/* A missing ref has no tree to show. The refbar above already carries the
        warning, and the backend's page notice names the actual reason, so the
        panel stays quiet rather than printing the same generic sentence a
        second line below the first. */}}
   {{if $p.Ref.Missing}}
-  {{else if $p.Code.NotFound}}
+  {{else if $c.NotFound}}
     <div class="empty">
       <p class="empty__lead">{{bi $lang "code.path_missing"}}</p>
-      <p class="mono">{{$p.Code.Path}}</p>
+      <p class="mono">{{$c.Path}}</p>
       <a class="btn" href="{{$p.CodeURL}}">{{bi $lang "app.root_folder"}}</a>
     </div>
-  {{else}}
-    <nav class="crumbs" {{biAttr $lang "aria-label" "app.root_folder"}}>
-      {{range $i, $c := $p.Code.Crumbs}}
-        {{if $i}}<span class="crumbs__sep" aria-hidden="true">/</span>{{end}}
-        {{if or $c.Current (not $c.URL)}}
-          <span class="crumbs__here" aria-current="page">{{$c.Name}}</span>
-        {{else}}
-          <a href="{{$c.URL}}">{{$c.Name}}</a>
-        {{end}}
-      {{end}}
-    </nav>
-
-    <div class="code__split">
-      <nav class="tree" {{biAttr $lang "aria-label" "app.files_label"}}>
-        <p class="tree__h mono">{{if $p.Code.Path}}{{$p.Code.Path}}{{else}}/{{end}}</p>
-        <ul class="tree__list">
-          {{with $p.Code.UpURL}}
-            <li><a class="tree__row tree__row--up" href="{{.}}">{{icon "up"}}<span class="tree__name">{{bi $lang "app.up_one_level"}}</span></a></li>
-          {{end}}
-          {{range $p.Code.Entries}}
-            <li>
-              <a class="tree__row" href="{{.URL}}"{{if and $p.Code.File (eq .Path $p.Code.File.Path)}} aria-current="page"{{end}}>
-                {{if eq .Kind "dir"}}{{icon "folder"}}
-                {{else if eq .Kind "symlink"}}{{icon "symlink"}}
-                {{else if eq .Kind "submodule"}}{{icon "module"}}
-                {{else}}{{icon "file"}}{{end}}
-                <span class="tree__name">{{.Name}}</span>
-                {{if eq .Kind "file"}}<span class="tree__n">{{bytes .Size}}</span>{{end}}
-              </a>
-            </li>
-          {{else}}
-            {{if not $p.Code.File}}<li class="tree__empty">{{bi $lang "code.empty_directory"}}</li>{{end}}
-          {{end}}
-        </ul>
-      </nav>
-
-      <div class="filepane">
-        {{with $p.Code.File}}
-          <div class="filepane__bar">
-            <p class="filepane__path mono">{{.Path}}</p>
-            <p class="filepane__meta">
-              <span>{{biCount $lang "line" (len .Lines)}}</span>
-              <span>{{bytes .Size}}</span>
-              {{with .RawURL}}<a href="{{.}}">{{bi $lang "code.raw_link"}}</a>{{end}}
-              {{with .RestoreURL}}<a href="{{.}}">{{bi $lang "restore.open_file"}}</a>{{end}}
-            </p>
-          </div>
-
-          {{if .Binary}}
-            <p class="empty">{{bi $lang "code.binary"}}</p>
-          {{else}}
-            {{/* Repository content is rendered as text through the template's
-                 escaping. It is never inserted as markup. */}}
-            <div class="codebox" tabindex="0" role="region" aria-label="{{.Path}}">
-              <table class="codetable">
-                <tbody>
-                  {{range $i, $line := .Lines}}
-                    <tr>
-                      <td class="codetable__n">{{add $i 1}}</td>
-                      <td class="codetable__t">{{$line}}</td>
-                    </tr>
-                  {{end}}
-                </tbody>
-              </table>
-            </div>
-            {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "code.truncated"}}</span></p>{{end}}
-          {{end}}
-        {{else}}
-          {{if not $p.Code.Entries}}
-            <p class="empty">{{bi $lang "code.empty_directory"}}</p>
-          {{end}}
-        {{end}}
+  {{else if $f}}
+    {{with $f}}
+    {{if .Binary}}
+      <p class="empty">{{bi $lang "code.binary"}}</p>
+    {{else if and .Document (not .ShowSource) .Rendered}}
+      {{/* Rendered by internal/markdown: raw HTML from the file is never
+           passed through, and every address was resolved by OwnGit. */}}
+      <article class="md">{{.Rendered}}</article>
+    {{else}}
+      {{if and .Document (not .Rendered) (not .ShowSource) .NotRendered}}<p class="hm__note">{{bi $lang .NotRendered}}</p>{{end}}
+      {{/* Repository content is rendered as text through the template's
+           escaping. It is never inserted as markup. */}}
+      <div class="codebox" tabindex="0" role="region" aria-label="{{.Path}}">
+        <table class="codetable">
+          <tbody>
+            {{range $i, $line := .Lines}}
+              <tr>
+                <td class="codetable__n">{{add $i 1}}</td>
+                <td class="codetable__t">{{$line}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
       </div>
-    </div>
+      {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "code.truncated"}}</span></p>{{end}}
+    {{end}}
+    {{if .RawTooLarge}}<p class="hm__note">{{bi $lang "code.raw_too_large"}}</p>{{end}}
+    {{end}}
+  {{else}}
+    {{/* A folder: its listing, then its README. */}}
+    <nav class="flist" {{biAttr $lang "aria-label" "app.files_label"}}>
+      <ul>
+        {{with $c.UpURL}}<li><a class="flist__row" href="{{.}}">{{icon "up"}}<span class="flist__name">{{bi $lang "app.up_one_level"}}</span></a></li>{{end}}
+        {{range $c.Entries}}
+          <li><a class="flist__row" href="{{.URL}}">{{template "entryIcon" .}}<span class="flist__name">{{.Name}}</span>{{if eq .Kind "file"}}<span class="flist__n">{{bytes .Size}}</span>{{end}}</a></li>
+        {{end}}
+      </ul>
+      {{if not $c.Entries}}<p class="empty">{{bi $lang "code.empty_directory"}}</p>{{end}}
+    </nav>
+    {{with $c.Readme}}
+      <section class="readme" aria-labelledby="readme-h">
+        <h2 class="readme__h" id="readme-h">{{icon "file"}}<a href="{{.URL}}">{{.Path}}</a></h2>
+        {{if .Rendered}}<article class="md">{{.Rendered}}</article>{{else}}<p class="hm__note">{{bi $lang .Note}}</p>{{end}}
+      </section>
+    {{end}}
   {{end}}
 
 {{else}}
-  {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CommitsURL}}
+  {{if not $p.Commits.Detail}}{{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CommitsURL}}{{end}}
 
   {{if $p.Commits.NotFound}}
     <div class="empty">
       <p class="empty__lead">{{bi $lang "commits.not_found"}}</p>
       <a class="btn" href="{{$p.CommitsURL}}">{{bi $lang "app.commit_history"}}</a>
     </div>
+  {{else if $p.Commits.Detail}}
+    {{/* One commit uses the full width: its message, then every changed
+         file. The list of commits is one link away. */}}
+    {{with $p.Commits.Detail}}
+    <p class="backline"><a class="back" href="{{$p.CommitsURL}}">{{icon "back"}}{{bi $lang "commits.back_to_list"}}</a></p>
+    {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CommitsURL}}
+    <div class="chead">
+      <h2 class="chead__msg">{{.Commit.Subject}}</h2>
+      {{with .Body}}<p class="cdetail__body">{{.}}</p>{{end}}
+      <p class="cdetail__meta">
+        <span class="mono">{{.Commit.ShortOID}}</span>
+        <span>{{.Commit.AuthorName}}</span>
+        <span>{{biDateTime $lang .Commit.AuthorDate}}</span>
+        {{range .Parents}}<a class="mono" href="{{.URL}}">{{.ShortOID}}</a>{{end}}
+      </p>
+      {{/* Git records an author and a committer. When they differ, the
+           author line alone would be a partial account, so the committer
+           is shown beside it as a plain fact. What the difference means
+           is the reader's call. The name is repeated only when it is
+           someone else's. */}}
+      {{if .HasDistinctCommitter}}
+        <p class="cdetail__meta cdetail__committer">
+          <span>{{bi $lang "commits.committer"}}</span>
+          <span>{{.CommitterName}}</span>
+          {{if not .CommitterDate.IsZero}}<span>{{biDateTime $lang .CommitterDate}}</span>{{end}}
+        </p>
+      {{end}}
+      {{with .RestoreURL}}
+        <p class="cdetail__act"><a class="btn" href="{{.}}">{{icon "kept"}}{{bi $lang "restore.open"}}</a></p>
+      {{end}}
+    </div>
+
+    {{if .Unavailable}}
+      <p class="empty">{{bi $lang .UnavailableReason}}</p>
+    {{else if .Files}}
+      {{/* Every file's diff in turn. A commit opened for one file by address
+           shows that file alone and says so. */}}
+      {{with .AllFilesURL}}<p class="dnote">{{icon "info"}}<span>{{bi $lang "diff.one_file"}} <a href="{{.}}">{{bi $lang "diff.show_all"}}</a></span></p>{{end}}
+      {{template "diffFiles" dict "Lang" $lang "Files" .Files "Title" "app.changed_files"}}
+      {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "commits.diff_truncated"}}</span></p>{{end}}
+    {{end}}
+    {{end}}
   {{else if not $p.Commits.List}}
     <div class="empty"><p class="empty__lead">{{bi $lang "commits.empty"}}</p></div>
   {{else}}
-    <div class="commits__split">
-      <nav class="clist" {{biAttr $lang "aria-label" "app.commit_history"}}>
-        <div class="clist__list">
-          {{range $p.Commits.List}}
-            <a class="clist__row" href="{{.URL}}"{{if and $p.Commits.Detail (eq .OID $p.Commits.Detail.Commit.OID)}} aria-current="page"{{end}}>
-              <span class="clist__msg">{{.Subject}}</span>
-              <span class="clist__meta"><span>{{.ShortOID}}</span><span>{{biRelative $lang $now .AuthorDate}}</span></span>
-            </a>
-          {{end}}
-        </div>
-        {{if or $p.Commits.NewerURL $p.Commits.OlderURL}}
-          <nav class="pager" style="padding:8px">
-            {{with $p.Commits.NewerURL}}<a class="btn" href="{{.}}">{{bi $lang "app.newer"}}</a>{{end}}
-            {{with $p.Commits.OlderURL}}<a class="btn" href="{{.}}">{{bi $lang "app.older"}}</a>{{end}}
-          </nav>
-        {{end}}
-      </nav>
-
-      <div class="cdetail">
-        {{with $p.Commits.Detail}}
-          <div class="cdetail__head">
-            <h2 class="cdetail__msg">{{.Commit.Subject}}</h2>
-            {{with .Body}}<p class="cdetail__body">{{.}}</p>{{end}}
-            <p class="cdetail__meta">
-              <span class="mono">{{.Commit.ShortOID}}</span>
-              <span>{{.Commit.AuthorName}}</span>
-              <span>{{biDateTime $lang .Commit.AuthorDate}}</span>
-              {{range .Parents}}<a class="mono" href="{{.URL}}">{{.ShortOID}}</a>{{end}}
-            </p>
-            {{with .RestoreURL}}
-              <p class="cdetail__act"><a class="btn" href="{{.}}">{{icon "kept"}}{{bi $lang "restore.open"}}</a></p>
-            {{end}}
-            {{/* Git records an author and a committer. When they differ, the
-                 author line alone would be a partial account, so the committer
-                 is shown beside it as a plain fact. What the difference means
-                 is the reader's call. The name is repeated only when it is
-                 someone else's. */}}
-            {{if .HasDistinctCommitter}}
-              <p class="cdetail__meta cdetail__committer">
-                <span>{{bi $lang "commits.committer"}}</span>
-                <span>{{.CommitterName}}</span>
-                {{if not .CommitterDate.IsZero}}<span>{{biDateTime $lang .CommitterDate}}</span>{{end}}
-              </p>
-            {{end}}
-          </div>
-
-          {{if .Unavailable}}
-            <p class="empty">{{bi $lang .UnavailableReason}}</p>
-          {{else}}
-            {{if .Files}}
-              <div class="fchips">
-                {{range .Files}}
-                  <a class="fchip" href="{{.URL}}"{{if .Selected}} aria-current="page"{{end}}>
-                    <span class="fchip__p">{{.Path}}</span>
-                    <span class="fchip__n">
-                      {{if .Binary}}<span>{{bi $lang "commits.binary_file"}}</span>
-                      {{else}}<span class="add">+{{.Additions}}</span><span class="del">-{{.Deletions}}</span>{{end}}
-                    </span>
-                  </a>
-                {{end}}
-              </div>
-            {{end}}
-
-            {{/* The same partial the restore preview uses, so one diff
-                 rendering serves both screens. */}}
-            {{range .Files}}
-              {{if .Selected}}{{template "diffFile" dict "Lang" $lang "F" .}}{{end}}
-            {{end}}
-
-            {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "commits.diff_truncated"}}</span></p>{{end}}
-          {{end}}
+    <nav class="clist clist--page" {{biAttr $lang "aria-label" "app.commit_history"}}>
+      <div class="clist__list">
+        {{range $p.Commits.List}}
+          <a class="clist__row" href="{{.URL}}">
+            <span class="clist__msg">{{.Subject}}</span>
+            <span class="clist__meta"><span>{{.ShortOID}}</span><span>{{.AuthorName}}</span><span>{{biRelative $lang $now .AuthorDate}}</span></span>
+          </a>
         {{end}}
       </div>
-    </div>
+    </nav>
+    {{if or $p.Commits.NewerURL $p.Commits.OlderURL}}
+      <nav class="pager">
+        {{with $p.Commits.NewerURL}}<a class="btn" href="{{.}}">{{bi $lang "app.newer"}}</a>{{end}}
+        {{with $p.Commits.OlderURL}}<a class="btn" href="{{.}}">{{bi $lang "app.older"}}</a>{{end}}
+      </nav>
+    {{end}}
   {{end}}
 {{end}}
 </div>
 {{end}}
+
+{{/* The file list inside the code drawer: the open file's folder, with a
+     link to its parent. */}}
+{{define "codeTree"}}
+{{$lang := .Lang}}{{$c := .C}}
+<nav class="tree" {{biAttr $lang "aria-label" "app.files_label"}}>
+  <p class="tree__h mono">/{{$c.Dir}}</p>
+  <ul class="tree__list">
+    {{with $c.UpURL}}
+      <li><a class="tree__row tree__row--up" href="{{.}}">{{icon "up"}}<span class="tree__name">{{bi $lang "app.up_one_level"}}</span></a></li>
+    {{end}}
+    {{range $c.Entries}}
+      <li>
+        <a class="tree__row" href="{{.URL}}"{{if and $c.File (eq .Path $c.File.Path)}} aria-current="page"{{end}}>
+          {{template "entryIcon" .}}
+          <span class="tree__name">{{.Name}}</span>
+          {{if eq .Kind "file"}}<span class="tree__n">{{bytes .Size}}</span>{{end}}
+        </a>
+      </li>
+    {{end}}
+  </ul>
+</nav>
+{{end}}
+
+{{define "entryIcon"}}{{if eq .Kind "dir"}}{{icon "folder"}}{{else if eq .Kind "symlink"}}{{icon "symlink"}}{{else if eq .Kind "submodule"}}{{icon "module"}}{{else}}{{icon "file"}}{{end}}{{end}}
 
 {{/* One compact ref row for the overview side column: name and marks, time,
      then the tip subject and restore on their own line. */}}

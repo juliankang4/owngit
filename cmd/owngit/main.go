@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +25,7 @@ import (
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
 	"owngit/internal/importsync"
+	"owngit/internal/markdown"
 	"owngit/internal/pullrequest"
 	"owngit/internal/recovery"
 	"owngit/internal/releasecheck"
@@ -35,6 +37,13 @@ import (
 )
 
 func main() {
+	// A rendering child process does only that, before anything else.
+	if markdown.IsChild(os.Args) {
+		os.Exit(markdown.RunChild(os.Stdin, os.Stdout))
+	}
+	if executable, err := renderHelperPath(); err == nil {
+		markdown.SetHelper(executable)
+	}
 	if err := run(os.Args[1:]); err != nil {
 		// A completed check run already wrote its JSON result and only needs
 		// its conventional exit code.
@@ -112,6 +121,18 @@ func runCommand(command string, arguments []string) error {
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", command)
 	}
+}
+
+// renderHelperPath is the binary that renders Markdown documents in a child
+// process: this one. On Linux the running image is used even after an
+// upgrade replaced the file on disk.
+func renderHelperPath() (string, error) {
+	if runtime.GOOS == "linux" {
+		if _, err := os.Stat("/proc/self/exe"); err == nil {
+			return "/proc/self/exe", nil
+		}
+	}
+	return os.Executable()
 }
 
 // releaseCheckEndpoint and releaseCheckDelay are variables only so tests can

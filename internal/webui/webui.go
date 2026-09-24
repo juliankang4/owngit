@@ -127,6 +127,11 @@ type viewData struct {
 	LangLinks []LangLink
 	// PageNotices are the notices not attached to a form field.
 	PageNotices []Notice
+	// Sidebar selects the general or the repository sidebar.
+	Sidebar Sidebar
+	// Wide lets the page use a wide window: code, commits, and a pull
+	// request's changes.
+	Wide bool
 	// Title is the document title; TitleEN and TitleKO let the client-side
 	// language switch update it without a reload.
 	Title   string
@@ -176,6 +181,8 @@ func newViewData(page Page, prints fingerprints) (*viewData, error) {
 		Name:        page.page(),
 		LangLinks:   languageLinks(chrome, canonicalURL(page, chrome)),
 		PageNotices: pageNotices,
+		Sidebar:     sidebarOf(page),
+		Wide:        wideOf(page),
 		Title:       title,
 		TitleEN:     titleEN,
 		TitleKO:     titleKO,

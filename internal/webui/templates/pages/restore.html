@@ -259,7 +259,7 @@
     {{/* A file the backend did not load hunks for renders nothing here. It is
          still listed above as a changed path, so the list stays complete. */}}
     {{range $p.Changes}}
-      {{template "diffFile" dict "Lang" $lang "F" .}}
+      {{if .Hunks}}{{template "diffFile" dict "Lang" $lang "F" .}}{{end}}
     {{end}}
 
     {{if $p.DiffTruncated}}

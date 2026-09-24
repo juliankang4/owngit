@@ -4,12 +4,16 @@
  * server renders the chosen language. The script only improves what a reload
  * would otherwise cost, and never invents text of its own.
  *
- * It does four things:
+ * It does five things:
  *   1. Appearance: Light, Dark, or System, remembered per browser.
  *   2. Language: switch in place so typing in a form is not lost.
  *   3. Activity graph: arrow-key movement and a spoken day readout.
  *   4. Setup link: hold the one-time code in memory, clear it from the URL,
  *      and submit it only when the owner presses the start button.
+ *   5. Sidebar, file view and diffs: fold the narrow-window menu, filter the
+ *      repository list, close the file drawer, wrap long lines, fold every
+ *      file of a diff at once, and follow a heading address written for
+ *      GitHub to the matching heading of a rendered document.
  *
  * It never stores a password, a setup code, or any other secret.
  */
@@ -25,55 +29,6 @@
 
   function all(selector, scope) {
     return Array.prototype.slice.call((scope || document).querySelectorAll(selector));
-  }
-
-  /* Repository tab strip: keep the tab that matters visible inside it.
-   *
-   * The strip scrolls sideways on a narrow viewport, and a container's scroll
-   * position cannot be set in CSS. At 320px the active tab sat past the right
-   * edge with scrollLeft 0, so the page gave no sign of where the reader was.
-   *
-   * Only the strip's scrollLeft moves, so the document does not move and focus
-   * does not change. scrollIntoView is avoided because it scrolls every
-   * scrollable ancestor. One helper serves the initial render, an in-place
-   * language change, a resize, and keyboard focus, so those cannot drift
-   * apart. Without this file the tabs are links the reader can scroll by hand. */
-
-  var TAB_PAD = 14; // matches scroll-padding-inline in the stylesheet
-
-  function revealTab(strip, tab) {
-    if (!strip || !tab || strip.scrollWidth <= strip.clientWidth) { return; }
-
-    var stripLeft = strip.getBoundingClientRect().left;
-    var stripRight = stripLeft + strip.clientWidth;
-    var box = tab.getBoundingClientRect();
-
-    /* Scroll only when part of the tab is actually outside, so a tab that is
-     * already whole on screen is never nudged. When it does scroll, it lands
-     * clear of the edge by the same padding the stylesheet uses.
-     *
-     * A tab wider than the strip cannot fit either way, so its start is shown
-     * and the label reads from its first word. */
-    if (box.left < stripLeft || box.width > strip.clientWidth) {
-      strip.scrollLeft -= stripLeft + TAB_PAD - box.left;
-    } else if (box.right > stripRight) {
-      strip.scrollLeft += box.right - (stripRight - TAB_PAD);
-    }
-  }
-
-  /* The tab to keep visible is whichever one the reader is working with: the
-   * focused tab if focus is inside this strip, otherwise the current page. */
-  function revealTabOfInterest(strip) {
-    var focused = document.activeElement;
-    if (focused && focused !== document.body && strip.contains(focused)) {
-      revealTab(strip, focused.closest('.rtabs__btn') || focused);
-      return;
-    }
-    revealTab(strip, strip.querySelector('.rtabs__btn[aria-current="page"]'));
-  }
-
-  function revealTabsOfInterest() {
-    all('.rtabs').forEach(revealTabOfInterest);
   }
 
   function readCookie(name) {
@@ -227,11 +182,6 @@
     }
 
     writeCookie(root.getAttribute('data-lang-cookie') || 'owngit_lang', lang);
-
-    /* Switching language rewrites every label, so the tabs change width and
-     * the one that was visible can end up outside the strip. No resize fires
-     * for this, so the same reveal runs here. */
-    revealTabsOfInterest();
     void other;
   }
 
@@ -567,39 +517,167 @@
     }
   }
 
-  /* Tab strips: reveal on load, on keyboard focus, and on resize.
-   *
-   * Tabbing to a partly visible link does not reliably bring the whole link
-   * into view, so a focused tab can sit half outside the strip with no way to
-   * read its label. focusin is used because focus does not bubble; the handler
-   * is bound to the strip, so no other scroll region is affected. */
+  /* ------------------------------------------------------------------ */
+  /* 5. sidebar, file view and diffs                                     */
+  /* ------------------------------------------------------------------ */
 
-  var tabStrips = all('.rtabs');
-  if (tabStrips.length) {
-    tabStrips.forEach(revealTabOfInterest);
+  /* Narrow window: fold the sidebar behind its menu button. The button is
+   * rendered hidden and the menu open, so without this file the menu is
+   * simply shown in full. The fold itself only applies below 900px. */
 
-    tabStrips.forEach(function (strip) {
-      strip.addEventListener('focusin', function (event) {
-        var tab = event.target.closest && event.target.closest('.rtabs__btn');
-        if (tab) { revealTab(strip, tab); }
+  var sidebar = document.querySelector('[data-sidebar]');
+  var sideToggle = sidebar && sidebar.querySelector('[data-sidebar-toggle]');
+  if (sideToggle) {
+    var setSideOpen = function (open) {
+      sidebar.classList.toggle('is-open', open);
+      sideToggle.setAttribute('aria-expanded', String(open));
+    };
+    sidebar.classList.add('sidebar--folds');
+    sideToggle.hidden = false;
+    sideToggle.addEventListener('click', function () {
+      setSideOpen(!sidebar.classList.contains('is-open'));
+    });
+    sidebar.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape' || !sidebar.classList.contains('is-open')) { return; }
+      if (sideToggle.offsetParent === null) { return; } // wide window: nothing is folded
+      setSideOpen(false);
+      sideToggle.focus();
+    });
+  }
+
+  /* Repository filter. It only hides rows already on the page, so nothing is
+   * written into the field or the list while the reader types, which keeps
+   * an input method's composition intact. */
+
+  var sideFilter = document.querySelector('[data-sb-filter]');
+  if (sideFilter) {
+    var sideRows = all('[data-sb-name]');
+    var noMatch = document.querySelector('[data-sb-nomatch]');
+    sideFilter.hidden = false;
+    sideFilter.addEventListener('input', function () {
+      var wanted = sideFilter.value.trim().toLowerCase();
+      var shown = 0;
+      sideRows.forEach(function (row) {
+        var hit = !wanted || row.getAttribute('data-sb-name').toLowerCase().indexOf(wanted) !== -1;
+        row.hidden = !hit;
+        if (hit) { shown++; }
+      });
+      if (noMatch) { noMatch.hidden = shown !== 0; }
+    });
+  }
+
+  /* File list drawer. It is a details element, so it opens and closes
+   * without this file. Escape and a click elsewhere close it too, and focus
+   * goes back to its button when it was inside. */
+
+  all('[data-drawer]').forEach(function (drawer) {
+    var summary = drawer.querySelector('summary');
+    drawer.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape' || !drawer.open) { return; }
+      drawer.open = false;
+      if (summary) { summary.focus(); }
+    });
+    document.addEventListener('click', function (event) {
+      if (drawer.open && !drawer.contains(event.target)) { drawer.open = false; }
+    });
+  });
+
+  /* Wrap switch for code and diffs. Long lines scroll sideways by default;
+   * the switch wraps them, and the choice is remembered in this browser. The
+   * button is rendered hidden, because without this file it could not work. */
+
+  var WRAP_KEY = 'owngit_wrap';
+  var wrapButtons = all('[data-wrap-toggle]');
+  if (wrapButtons.length) {
+    var applyWrap = function (on) {
+      if (on) { root.setAttribute('data-wrap', '1'); } else { root.removeAttribute('data-wrap'); }
+      wrapButtons.forEach(function (button) { button.setAttribute('aria-pressed', String(on)); });
+    };
+    var storedWrap = '';
+    try { storedWrap = window.localStorage.getItem(WRAP_KEY) || ''; } catch (e) { storedWrap = ''; }
+    applyWrap(storedWrap === '1');
+    wrapButtons.forEach(function (button) {
+      button.hidden = false;
+      button.addEventListener('click', function () {
+        var on = root.getAttribute('data-wrap') !== '1';
+        try { window.localStorage.setItem(WRAP_KEY, on ? '1' : '0'); } catch (e) { /* private mode */ }
+        applyWrap(on);
+      });
+    });
+  }
+
+  /* Diff files fold one at a time or all at once. The fold buttons are
+   * rendered hidden, so without this file every diff is simply open. Following
+   * a link to a folded file from the file list opens it again. */
+
+  function setFolded(file, folded) {
+    var button = file.querySelector('[data-diff-fold]');
+    file.classList.toggle('is-folded', folded);
+    if (button) { button.setAttribute('aria-expanded', String(!folded)); }
+  }
+
+  all('[data-diff]').forEach(function (scope) {
+    var files = all('.dfile', scope);
+    var toggleAll = scope.querySelector('[data-diff-all]');
+    var collapse = toggleAll && toggleAll.querySelector('[data-diff-collapse]');
+    var expand = toggleAll && toggleAll.querySelector('[data-diff-expand]');
+    var anyOpen = function () {
+      return files.some(function (file) { return !file.classList.contains('is-folded'); });
+    };
+    var sync = function () {
+      var open = anyOpen();
+      if (collapse) { collapse.hidden = !open; }
+      if (expand) { expand.hidden = open; }
+    };
+
+    files.forEach(function (file) {
+      var button = file.querySelector('[data-diff-fold]');
+      if (!button) { return; }
+      button.hidden = false;
+      button.addEventListener('click', function () {
+        setFolded(file, !file.classList.contains('is-folded'));
+        sync();
       });
     });
 
-    /* A resize changes how much fits and can push the tab of interest back out
-     * of view. A few measurements, so no observer is needed. */
-    var resizeQueued = false;
-    window.addEventListener('resize', function () {
-      if (resizeQueued) { return; }
-      resizeQueued = true;
-      var run = function () {
-        resizeQueued = false;
-        revealTabsOfInterest();
-      };
-      if (window.requestAnimationFrame) {
-        window.requestAnimationFrame(run);
-      } else {
-        window.setTimeout(run, 60);
-      }
+    if (toggleAll && files.length) {
+      toggleAll.hidden = false;
+      sync();
+      toggleAll.addEventListener('click', function () {
+        var fold = anyOpen();
+        files.forEach(function (file) { setFolded(file, fold); });
+        sync();
+      });
+    }
+
+    scope.addEventListener('click', function (event) {
+      var link = event.target.closest && event.target.closest('.dlist__row');
+      if (!link) { return; }
+      var target = document.getElementById((link.getAttribute('href') || '').slice(1));
+      if (!target || !target.classList.contains('is-folded')) { return; }
+      setFolded(target, false);
+      sync();
     });
+  });
+
+  // A rendered document's heading anchors carry an "md-" prefix, so they
+  // never take an id of the page itself. An address copied from GitHub names
+  // the bare, possibly capitalised anchor; find the prefixed heading instead.
+  function revealHeading() {
+    var id;
+    try { id = decodeURIComponent(window.location.hash.slice(1)); } catch (e) { return; }
+    if (!id || document.getElementById(id)) { return; }
+    id = id.toLowerCase();
+    // A heading whose own anchor starts with "md-" has the prefix twice, so
+    // the prefixed form is tried first and the address as written second.
+    var heading = document.getElementById('md-' + id) || document.getElementById(id);
+    if (heading && heading.closest('.md')) { heading.scrollIntoView(); }
+  }
+  if (document.querySelector('.md')) {
+    revealHeading();
+    // Fonts and images that finish loading move the heading, so it is
+    // aligned again once the page has loaded.
+    window.addEventListener('load', revealHeading);
+    window.addEventListener('hashchange', revealHeading);
   }
 })();

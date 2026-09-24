@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -170,10 +171,24 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			if query != "" && !strings.Contains(strings.ToLower(repository.Name), strings.ToLower(query)) {
 				continue
 			}
-			nav.Repositories = append(nav.Repositories, webui.NavRepository{
+			item := webui.NavRepository{
 				ID: repository.ID, Name: repository.Name, URL: "/repositories/" + url.PathEscape(repository.ID), CountKnown: false,
-			})
+			}
+			if app.Repositories != nil {
+				item.LastActivity, _ = app.Repositories.CachedHeadDate(repository.ID)
+			}
+			nav.Repositories = append(nav.Repositories, item)
 		}
+		// Most recently active first. The dates come from snapshots already
+		// read, so building the sidebar starts no Git process; a repository
+		// without a known date keeps the store's order after the dated ones.
+		sort.SliceStable(nav.Repositories, func(left, right int) bool {
+			a, b := nav.Repositories[left].LastActivity, nav.Repositories[right].LastActivity
+			if a.IsZero() != b.IsZero() {
+				return !a.IsZero()
+			}
+			return a.After(b)
+		})
 		chrome.Nav = nav
 	}
 	chrome.Notices = noticeFromQuery(request)

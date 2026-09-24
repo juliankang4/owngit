@@ -1,38 +1,104 @@
-{{/* One changed file: its header bar and, when the backend loaded them, its
-     hunks. A commit detail and a restore preview show the same thing, so they
-     render it through this one partial.
+{{/* Diffs. A commit, a pull request and a restore preview all show changes
+     through these partials, so every place a change is read looks the same.
 
      Repository content reaches the page as text through the template's
      escaping. It is never inserted as markup, and a symlink is drawn as the
-     data it stores rather than followed.
+     data it stores rather than followed. */}}
 
-     Call as: {{template "diffFile" dict "Lang" $lang "F" $file}} */}}
+{{/* Every changed file of one change: a bar with totals and switches, a
+     compact list of the files that links to each one, then each file's diff
+     in turn. A long list shows its first 20 rows and keeps the rest behind a
+     disclosure, which opens without the script.
+
+     Call as: {{template "diffFiles" dict "Lang" $lang "Files" $files "Title" "pr.changes.title"}} */}}
+{{define "diffFiles"}}
+{{$lang := .Lang}}{{$files := .Files}}{{$sum := diffTotals $files}}
+<div class="diffs" data-diff>
+  <div class="diffs__bar">
+    <h2 class="diffs__h">{{bi $lang (code .Title)}}</h2>
+    <span class="diffs__sum">{{biCount $lang "file" (len $files)}}{{if $sum.Text}} <span class="add">+{{number $sum.Additions}}</span> <span class="del">-{{number $sum.Deletions}}</span>{{end}}</span>
+    <span class="diffs__tools">
+      {{/* Both switches start hidden: they only work with the script. */}}
+      <button type="button" class="seg__btn seg__btn--solo" data-wrap-toggle aria-pressed="false" hidden>{{icon "wrap"}}<span>{{bi $lang "code.wrap"}}</span></button>
+      <button type="button" class="seg__btn seg__btn--solo" data-diff-all hidden><span data-diff-collapse>{{bi $lang "diff.collapse_all"}}</span><span data-diff-expand hidden>{{bi $lang "diff.expand_all"}}</span></button>
+    </span>
+  </div>
+  <nav class="dlist" {{biAttr $lang "aria-label" "diff.files"}}>
+    <ol class="dlist__rows">
+      {{range $i, $f := $files}}{{if lt $i 20}}{{template "diffListRow" dict "Lang" $lang "F" $f "I" $i}}{{end}}{{end}}
+    </ol>
+    {{if gt (len $files) 20}}
+    <details class="dlist__more">
+      <summary>{{biN $lang "diff.more_files" (sub (len $files) 20)}}</summary>
+      <ol class="dlist__rows" start="21">
+        {{range $i, $f := $files}}{{if ge $i 20}}{{template "diffListRow" dict "Lang" $lang "F" $f "I" $i}}{{end}}{{end}}
+      </ol>
+    </details>
+    {{end}}
+  </nav>
+  {{range $i, $f := $files}}{{template "diffFile" dict "Lang" $lang "F" $f "ID" (printf "f-%d" $i)}}{{end}}
+</div>
+{{end}}
+
+{{define "diffListRow"}}
+{{$lang := .Lang}}{{with .F}}
+<li><a class="dlist__row" href="#f-{{$.I}}">
+  {{template "diffStatus" dict "Lang" $lang "F" .}}
+  <span class="dlist__p" title="{{.Path}}"><bdi>{{.Path}}</bdi></span>
+  <span class="dlist__n">{{template "diffCounts" dict "Lang" $lang "F" .}}</span>
+</a></li>
+{{end}}
+{{end}}
+
+{{/* The status is a word inside an outline, so it reads without colour. */}}
+{{define "diffStatus"}}{{with .F}}{{with prChangeStatus .Status}}<span class="dstat dstat--{{$.F.Status}}">{{bi $.Lang .}}</span>{{end}}{{end}}{{end}}
+
+{{define "diffCounts"}}{{with .F}}{{if .Binary}}<span class="dfile__bin">{{bi $.Lang "pr.changes.binary_file"}}</span>{{else}}<span class="add">+{{.Additions}}</span> <span class="del">-{{.Deletions}}</span>{{end}}{{end}}{{end}}
+
+{{/* One changed file: a header that stays at the top of the window while its
+     diff scrolls past, and the diff itself. The fold button starts hidden and
+     the script shows it. "ID" is the anchor the file list links to; without
+     it the file has none.
+
+     Call as: {{template "diffFile" dict "Lang" $lang "F" $file "ID" "f-0"}} */}}
 {{define "diffFile"}}
-{{$lang := .Lang}}{{with .F}}{{if .Hunks}}
-<div class="filepane__bar">
-  <p class="filepane__path mono">{{.Path}}</p>
-  <p class="filepane__meta">
-    {{if .OldPath}}<span class="mono">{{.OldPath}}</span>{{end}}
-    <span class="add">+{{.Additions}}</span><span class="del">-{{.Deletions}}</span>
-  </p>
-</div>
-<div class="diffbox" tabindex="0" role="region" aria-label="{{.Path}}">
-  <table class="difftable">
-    <tbody>
-      {{range .Hunks}}
-        <tr class="difftable__hunk"><td colspan="3">{{.Header}}</td></tr>
-        {{range .Lines}}
-          <tr class="difftable__r{{if eq .Kind "add"}} is-add{{else if eq .Kind "del"}} is-del{{end}}">
-            <td class="difftable__n">{{if .OldLine}}{{.OldLine}}{{end}}</td>
-            <td class="difftable__n">{{if .NewLine}}{{.NewLine}}{{end}}</td>
-            {{/* The marker is a separate span, so the change is readable
-                 without relying on the row colour. */}}
-            <td class="difftable__t"><span class="difftable__s" aria-hidden="true">{{if eq .Kind "add"}}+{{else if eq .Kind "del"}}-{{else}} {{end}}</span>{{.Text}}</td>
-          </tr>
-        {{end}}
-      {{end}}
-    </tbody>
-  </table>
-</div>
-{{end}}{{end}}
+{{$lang := .Lang}}{{$id := .ID}}{{with .F}}
+<section class="dfile"{{with $id}} id="{{.}}"{{end}} aria-label="{{.Path}}">
+  <div class="dfile__h">
+    {{with $id}}<button type="button" class="dfile__fold" aria-expanded="true" aria-controls="{{.}}-b" data-diff-fold hidden>{{icon "chevron"}}<span class="visually-hidden">{{$.F.Path}}</span></button>{{end}}
+    {{template "diffStatus" dict "Lang" $lang "F" .}}
+    <span class="dfile__p">{{.Path}}</span>
+    {{with .OldPath}}<span class="dfile__old">{{bi $lang "diff.renamed_from"}}: <span class="mono">{{.}}</span></span>{{end}}
+    <span class="dfile__n">{{template "diffCounts" dict "Lang" $lang "F" .}}</span>
+  </div>
+  <div class="dfile__b"{{with $id}} id="{{.}}-b"{{end}}>
+    {{if .Hunks}}
+    <div class="diffbox" tabindex="0" role="region" aria-label="{{.Path}}">
+      <table class="difftable">
+        <tbody>
+          {{range .Hunks}}
+            <tr class="difftable__hunk"><td colspan="3">{{.Header}}</td></tr>
+            {{range .Lines}}
+              <tr class="difftable__r{{if eq .Kind "add"}} is-add{{else if eq .Kind "del"}} is-del{{end}}">
+                <td class="difftable__n">{{if .OldLine}}{{.OldLine}}{{end}}</td>
+                <td class="difftable__n">{{if .NewLine}}{{.NewLine}}{{end}}</td>
+                {{/* The marker is a separate span, so the change is readable
+                     without relying on the row colour. */}}
+                <td class="difftable__t"><span class="difftable__s" aria-hidden="true">{{if eq .Kind "add"}}+{{else if eq .Kind "del"}}-{{else}} {{end}}</span>{{.Text}}</td>
+              </tr>
+            {{end}}
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else if .NotLoaded}}
+    <p class="dfile__note">{{icon "info"}}<span>{{bi $lang "diff.not_loaded"}}{{with .URL}} <a href="{{.}}">{{bi $lang "diff.open_one"}}</a>{{end}}</span></p>
+    {{else if .Binary}}
+    <p class="dfile__note">{{bi $lang "commits.binary_file"}}</p>
+    {{else}}
+    <p class="dfile__note">{{bi $lang "diff.no_lines"}}</p>
+    {{end}}
+  </div>
+</section>
+{{end}}
 {{end}}

@@ -1,6 +1,9 @@
 package webui
 
-import "time"
+import (
+	"html/template"
+	"time"
+)
 
 // Page is one renderable screen. Every page type in this package implements it.
 // The method reports the template name the renderer executes, which keeps the
@@ -539,12 +542,19 @@ type CodeView struct {
 	Path string
 	// Crumbs are the navigable path segments, root first.
 	Crumbs []Crumb
-	// UpURL leaves the current directory. Empty at the root.
+	// UpURL leaves the listed folder for its parent. Empty when the listed
+	// folder is the root.
 	UpURL string
+	// Dir is the folder Entries list: Path for a folder, and the file's
+	// folder when a file is open. Empty at the root.
+	Dir string
 	// Entries are the directory listing, already sorted.
 	Entries []TreeEntry
 	// File is set when Path names a file.
 	File *FileView
+	// Readme is the folder's rendered README. Nil when the folder has none or
+	// a file is open.
+	Readme *ReadmeView
 	// NotFound is true when Path does not exist at the selected ref.
 	NotFound bool
 }
@@ -569,7 +579,8 @@ type TreeEntry struct {
 }
 
 // FileView is one file's displayed content. The renderer escapes every line;
-// repository content is never treated as markup.
+// repository content is never treated as markup. The one exception is
+// Rendered, which is HTML the backend produced with internal/markdown.
 type FileView struct {
 	Path string
 	Size int64
@@ -581,9 +592,38 @@ type FileView struct {
 	Truncated bool
 	// RawURL downloads the file. Empty when the backend does not offer it.
 	RawURL string
+	// RawTooLarge is true when the file is above the download limit; the
+	// page then says so instead of offering RawURL.
+	RawTooLarge bool
 	// RestoreURL opens the restore screen with this file preselected. Empty
 	// means no link.
 	RestoreURL string
+
+	// Document is true for a Markdown file. PreviewURL and SourceURL switch
+	// between the rendered document and its source lines; ShowSource says
+	// which one this page shows. Rendered is empty when the file could not
+	// be rendered; the page then shows the source without the switch, with
+	// NotRendered saying why.
+	Document    bool
+	NotRendered MessageCode
+	ShowSource  bool
+	PreviewURL  string
+	SourceURL   string
+	// Rendered is the document as HTML. The backend produces it with
+	// internal/markdown, which never passes raw HTML from the file through
+	// and resolves every link and image itself.
+	Rendered template.HTML
+}
+
+// ReadmeView is a folder's README, rendered below the folder listing.
+type ReadmeView struct {
+	// Path is the README's repository path; URL opens it in the file view.
+	Path string
+	URL  string
+	// Rendered is produced like FileView.Rendered. When it is empty, Note
+	// says why and the page links to the file instead.
+	Rendered template.HTML
+	Note     MessageCode
 }
 
 // CommitsView is the commit history panel.
@@ -626,9 +666,10 @@ type CommitDetail struct {
 	Parents []CommitSummary
 	// Files are the changed paths.
 	Files []DiffFile
-	// SelectedPath is the currently opened file in the diff. Empty shows the
-	// first file.
+	// SelectedPath is set when the commit was opened for one file: Files
+	// then holds only that file, and AllFilesURL shows every file again.
 	SelectedPath string
+	AllFilesURL  string
 	// Truncated is true when the diff was too large to load completely.
 	Truncated bool
 	// Unavailable is true when the diff could not be produced, for example for
@@ -681,12 +722,25 @@ type DiffFile struct {
 	Deletions int
 	// Binary is true when no text diff exists.
 	Binary bool
-	// URL selects this file within the commit.
+	// URL shows this file's changes alone, for example within a commit.
 	URL string
-	// Selected marks the currently displayed file.
+	// Selected marks the file a single-file commit view was opened for.
 	Selected bool
-	// Hunks hold the diff body. Filled only for the selected file.
+	// Hunks hold the diff body.
 	Hunks []DiffHunk
+	// NotLoaded is true when the file's text changes were left out because
+	// the whole change was too large for one page. A non-empty URL then
+	// shows them.
+	NotLoaded bool
+}
+
+// DiffTotals sums the line counts of a list of changed files.
+type DiffTotals struct {
+	Additions int
+	Deletions int
+	// Text is true when at least one file has line counts, so a list of
+	// binary files shows no misleading "+0 -0".
+	Text bool
 }
 
 // DiffHunk is one @@ section.
@@ -761,6 +815,8 @@ const RestoreConfirm = "restore"
 type RestorePage struct {
 	Chrome Chrome
 	Repo   RepositoryHeader
+	// Tabs are the repository's sections, shown in the sidebar.
+	Tabs RepoTabs
 	// Source is the commit the files come from, already resolved by the
 	// backend. Its OID is submitted in the "source" field.
 	Source CommitSummary

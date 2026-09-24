@@ -324,11 +324,11 @@ func prChangeStatus(status string) MessageCode {
 // conversion for those call sites.
 func code(s string) MessageCode { return MessageCode(s) }
 
-// repoTabsOf builds a repository page's tab strip.
+// repoTabsOf lists a repository page's sections for the sidebar.
 //
 // The pull request and checks sections are optional: a caller that does not
-// supply their addresses renders the three tabs it always had, and one that
-// does renders five. Empty URLs produce no tab rather than a dead link.
+// supply their addresses gets the three sections it always had. Empty URLs
+// produce no entry rather than a dead link.
 func repoTabsOf(p RepositoryPage) RepoTabs {
 	return RepoTabs{
 		OverviewURL:     p.OverviewURL,

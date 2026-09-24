@@ -26,6 +26,7 @@ The entries fall into two groups:
 - `github.com/mattn/go-isatty` v0.0.24: LICENSE
 - `github.com/ncruces/go-strftime` v1.0.0: LICENSE
 - `github.com/remyoudompheng/bigfft` v0.0.0-20230129092748-24d4a6f8daec: LICENSE
+- `github.com/yuin/goldmark` v1.8.6: LICENSE
 - `golang.org/x/crypto` v0.57.0: LICENSE, PATENTS
 - `golang.org/x/sys` v0.48.0: LICENSE, PATENTS
 - `modernc.org/libc` v1.75.7: LICENSE, LICENSE-3RD-PARTY.md

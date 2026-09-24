@@ -25,6 +25,8 @@ func templateFuncs() template.FuncMap {
 		"biCount":      biCount,
 		"biNotice":     biNotice,
 		"biRelease":    biRelease,
+		"biN":          biN,
+		"diffTotals":   diffTotals,
 		"icon":         icon,
 		"statusIcon":   statusIcon,
 		"themeIcon":    themeIcon,
@@ -88,7 +90,6 @@ func templateFuncs() template.FuncMap {
 		"tokenLines":      tokenLines,
 		"code":            code,
 		"prChangeStatus":  prChangeStatus,
-		"repoTabsOf":      repoTabsOf,
 		"issueAction":     issueAction,
 		"revokeAction":    revokeAction,
 		"forCredential":   forCredential,
@@ -738,4 +739,18 @@ func weekdayLabels(lang Lang) []string {
 		out[i] = weekdayLabel(lang, i)
 	}
 	return out
+}
+
+// diffTotals sums the line counts of the changed files.
+func diffTotals(files []DiffFile) DiffTotals {
+	var totals DiffTotals
+	for _, file := range files {
+		if file.Binary {
+			continue
+		}
+		totals.Text = true
+		totals.Additions += file.Additions
+		totals.Deletions += file.Deletions
+	}
+	return totals
 }

@@ -23,6 +23,16 @@ var iconPaths = map[string]string{
 	"error":    `<rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.6"/><path d="M8 5.2v3.4" stroke-linecap="round"/><path d="M8 11.1h.01" stroke-width="2.1" stroke-linecap="round"/>`,
 	"kept":     `<path d="M3.2 4.2h9.6v8.4H3.2z" stroke-linejoin="round"/><path d="M3.2 6.8h9.6M6.4 3v1.2M9.6 3v1.2" stroke-linecap="round"/>`,
 	"plus":     `<path d="M8 3.4v9.2M3.4 8h9.2" stroke-linecap="round"/>`,
+	// Navigation.
+	"home":     `<path d="M2.6 7.4L8 2.8l5.4 4.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.2 6.4v6.8h7.6V6.4" stroke-linejoin="round"/>`,
+	"activity": `<path d="M1.8 8.4h2.6l1.7-4 3.2 8 1.7-4h3.2" stroke-linecap="round" stroke-linejoin="round"/>`,
+	"repo":     `<path d="M3.6 2.6h8.6v10.2H4.9a1.3 1.3 0 01-1.3-1.3z" stroke-linejoin="round"/><path d="M3.6 11.5a1.3 1.3 0 011.3-1.3h7.3" stroke-linejoin="round"/>`,
+	"pr":       `<circle cx="4.5" cy="3.8" r="1.9"/><circle cx="4.5" cy="12.2" r="1.9"/><circle cx="11.5" cy="12.2" r="1.9"/><path d="M4.5 5.7v4.6M11.5 10.3V6.4a2 2 0 00-2-2H8" stroke-linecap="round"/>`,
+	"import":   `<path d="M8 2.4v7.2M5 6.8L8 9.8l3-3M2.8 11.2v2h10.4v-2" stroke-linecap="round" stroke-linejoin="round"/>`,
+	"menu":     `<path d="M2.8 4.4h10.4M2.8 8h10.4M2.8 11.6h10.4" stroke-linecap="round"/>`,
+	"chevron":  `<path d="M4.4 6.2L8 9.8l3.6-3.6" stroke-linecap="round" stroke-linejoin="round"/>`,
+	"panel":    `<rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.4"/><path d="M6.2 2.8v10.4"/>`,
+	"wrap":     `<path d="M2.4 4h11.2M2.4 8h9a2 2 0 010 4H8.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 10.6L8.6 12l1.4 1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.4 12h3.4" stroke-linecap="round"/>`,
 	"copy":     `<rect x="5.4" y="5.4" width="8" height="8" rx="1.4"/><path d="M10.6 5.2V3.8a1.2 1.2 0 00-1.2-1.2H3.8a1.2 1.2 0 00-1.2 1.2v5.6a1.2 1.2 0 001.2 1.2h1.4" stroke-linecap="round"/>`,
 	"trash":    `<path d="M2.8 4.4h10.4M6.4 4.2V2.8h3.2v1.4M4.2 4.4l.7 9h6.2l.7-9" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.8 7v4M9.2 7v4" stroke-linecap="round"/>`,
 	// Evidence states. Each shape differs from the others, so a state is never

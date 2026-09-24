@@ -67,7 +67,7 @@ When the test is enabled, a missing prerequisite fails the test instead of skipp
 - `integrations/skills/owngit-checks/`: the shared Agent Skill for coding tools.
 - `THIRD_PARTY_NOTICES/`: generated notices for linked modules, the Go runtime, and embedded assets.
 
-Runtime dependencies are `modernc.org/sqlite` (SQLite without a C compiler), `golang.org/x/crypto` (Argon2id), and `golang.org/x/sys` (Windows process and file APIs).
+Runtime dependencies are `modernc.org/sqlite` (SQLite without a C compiler), `golang.org/x/crypto` (Argon2id), `golang.org/x/sys` (Windows process and file APIs), and `github.com/yuin/goldmark` (Markdown files shown as documents, with raw HTML turned off).
 
 ## Product principles
 

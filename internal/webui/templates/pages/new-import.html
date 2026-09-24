@@ -1,8 +1,6 @@
 {{define "body"}}
 {{$p := .Page}}{{$lang := .Lang}}{{$csrf := .Chrome.CSRF}}
 
-<p class="backline"><a class="back" href="{{.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
-
 <div class="card">
   <div class="phead">
     <h1>{{bi $lang "import.new.title"}}</h1>

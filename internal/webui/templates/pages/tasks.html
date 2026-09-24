@@ -1,14 +1,10 @@
 {{define "body"}}
 {{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}
 
-<p class="backline"><a class="back" href="{{.Chrome.Nav.OverviewURL}}">{{icon "back"}}{{bi $lang "app.back_to_repositories"}}</a></p>
-
 <div class="rhead">
   <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
   {{with $p.Repo.Description}}<p class="rhead__desc">{{.}}</p>{{end}}
 </div>
-
-{{template "repoTabs" dict "Lang" $lang "T" $p.Tabs}}
 
 <div class="rpane">
 {{if $p.Detail}}
