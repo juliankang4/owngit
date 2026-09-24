@@ -14,6 +14,7 @@ import (
 	"owngit/internal/githttp"
 	"owngit/internal/importsync"
 	"owngit/internal/pullrequest"
+	"owngit/internal/releasecheck"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -25,6 +26,9 @@ const (
 	setupCookie    = "owngit_setup"
 	preauthCookie  = "owngit_preauth"
 	languageCookie = "owngit_lang"
+	// releaseDismissCookie holds the release version whose dashboard notice
+	// this browser dismissed. It is a preference, not a credential.
+	releaseDismissCookie = "owngit_release_dismissed"
 )
 
 type App struct {
@@ -41,7 +45,10 @@ type App struct {
 	HTTPBackendFound        bool
 	// Version is the running application version. It comes from the single
 	// version source and is never read from storage or a remote value.
-	Version     string
+	Version string
+	// Releases is the new-release check. Nil means the server started with
+	// --no-update-check, which overrides the saved setting.
+	Releases    *releasecheck.Checker
 	HTTPTimeout time.Duration
 	// ImportRunTimeout is the deadline of an import run started by this
 	// server. The request itself keeps ImportResponseMargin more, so a run
@@ -274,6 +281,8 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleNewImport(writer, request, settings)
 	case request.URL.Path == "/repositories" && request.Method == http.MethodPost:
 		app.handleCreateRepository(writer, request, settings)
+	case request.URL.Path == releaseDismissPath && request.Method == http.MethodPost:
+		app.handleReleaseDismiss(writer, request, settings)
 	case request.URL.Path == "/activity" && request.Method == http.MethodGet:
 		app.handleActivity(writer, request, settings)
 	case strings.HasPrefix(request.URL.Path, "/repositories/") && (request.Method == http.MethodGet || request.Method == http.MethodPost):

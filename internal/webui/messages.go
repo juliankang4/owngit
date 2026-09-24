@@ -62,6 +62,18 @@ const (
 	MsgNoMatches      MessageCode = "app.no_matches"
 	MsgClearSearch    MessageCode = "app.clear_search"
 	MsgShow           MessageCode = "app.show"
+	MsgAppHome        MessageCode = "app.home"
+)
+
+// New-release notice on the dashboard. OwnGit announces a release; it never
+// updates itself.
+const (
+	// MsgReleaseAvailable carries two %s: the new version, then the running one.
+	MsgReleaseAvailable MessageCode = "release.available"
+	MsgReleaseRegion    MessageCode = "release.region"
+	MsgReleaseNotes     MessageCode = "release.notes"
+	MsgReleaseHowTo     MessageCode = "release.how_to_update"
+	MsgReleaseDismiss   MessageCode = "release.dismiss"
 )
 
 // Setup and bootstrap.
@@ -184,6 +196,16 @@ const (
 	MsgSettingsAckSubmit  MessageCode = "settings.connection.acknowledge"
 	MsgSettingsAckDone    MessageCode = "settings.connection.acknowledged"
 	MsgSettingsUnknownAct MessageCode = "settings.unknown_action"
+
+	MsgSettingsUpdateTitle    MessageCode = "settings.update.title"
+	MsgSettingsUpdateOnNow    MessageCode = "settings.update.on_now"
+	MsgSettingsUpdateOffNow   MessageCode = "settings.update.off_now"
+	MsgSettingsUpdateForced   MessageCode = "settings.update.forced_off"
+	MsgSettingsUpdateSavedOn  MessageCode = "settings.update.saved_on"
+	MsgSettingsUpdateSavedOff MessageCode = "settings.update.saved_off"
+	MsgSettingsUpdateHelp     MessageCode = "settings.update.help"
+	MsgSettingsUpdateTurnOff  MessageCode = "settings.update.turn_off"
+	MsgSettingsUpdateTurnOn   MessageCode = "settings.update.turn_on"
 )
 
 // Connection indicator.
@@ -347,6 +369,7 @@ var catalog = map[MessageCode]message{
 	// -- chrome --------------------------------------------------------
 	MsgAppName:        {en: "OwnGit", ko: "OwnGit"},
 	MsgSkipToContent:  {en: "Skip to content", ko: "본문으로 건너뛰기"},
+	MsgAppHome:        {en: "OwnGit home", ko: "OwnGit 홈"},
 	MsgNavPrimary:     {en: "Primary", ko: "주 메뉴"},
 	MsgNavRepos:       {en: "Repositories", ko: "저장소"},
 	MsgNavAll:         {en: "All", ko: "전체"},
@@ -802,12 +825,49 @@ var catalog = map[MessageCode]message{
 	// the indicator stays visible.
 	MsgSettingsAckDone: {
 		en: "Noted. Nothing about the connection changed; the header keeps showing its status instead of asking again.",
-		ko: "확인했습니다. 연결 자체가 바뀜지지는 않으며, 다시 묻지 않고 상단에 상태만 계속 표시합니다.",
+		ko: "확인했습니다. 연결 자체가 바뀌지는 않으며, 다시 묻지 않고 상단에 상태만 계속 표시합니다.",
 	},
 	MsgSettingsUnknownAct: {
 		en: "That action is not available.",
 		ko: "사용할 수 없는 동작입니다.",
 	},
+	MsgSettingsUpdateTitle: {en: "Update check", ko: "업데이트 확인"},
+	MsgSettingsUpdateOnNow: {
+		en: "On. OwnGit asks GitHub once a day whether a newer release exists.",
+		ko: "켜짐. OwnGit이 하루에 한 번 GitHub에 새 릴리스가 있는지 확인합니다.",
+	},
+	MsgSettingsUpdateOffNow: {
+		en: "Off. OwnGit does not check GitHub for new releases.",
+		ko: "꺼짐. OwnGit이 GitHub에서 새 릴리스를 확인하지 않습니다.",
+	},
+	MsgSettingsUpdateForced: {
+		en: "Off by the server start option --no-update-check. OwnGit does not check for new releases, whatever is saved here.",
+		ko: "서버 시작 옵션 --no-update-check로 꺼져 있습니다. 여기 저장된 설정과 관계없이 OwnGit이 새 릴리스를 확인하지 않습니다.",
+	},
+	MsgSettingsUpdateSavedOn: {
+		en: "Saved setting: on. It applies when OwnGit starts without that option.",
+		ko: "저장된 설정: 켜짐. 그 옵션 없이 시작하면 이 설정을 따릅니다.",
+	},
+	MsgSettingsUpdateSavedOff: {
+		en: "Saved setting: off. It applies when OwnGit starts without that option.",
+		ko: "저장된 설정: 꺼짐. 그 옵션 없이 시작하면 이 설정을 따릅니다.",
+	},
+	MsgSettingsUpdateHelp: {
+		en: "The request carries only the OwnGit version, and GitHub sees this server's network address. No repository data is sent. A newer release is announced on the dashboard. OwnGit never updates itself.",
+		ko: "요청에는 OwnGit 버전만 담기고, GitHub는 이 서버의 네트워크 주소를 볼 수 있습니다. 저장소 데이터는 보내지 않습니다. 새 릴리스가 나오면 대시보드에 알려 주며, OwnGit이 스스로 업데이트하지는 않습니다.",
+	},
+	MsgSettingsUpdateTurnOff: {en: "Turn off update check", ko: "업데이트 확인 끄기"},
+	MsgSettingsUpdateTurnOn:  {en: "Turn on update check", ko: "업데이트 확인 켜기"},
+
+	// -- new release ---------------------------------------------------
+	MsgReleaseAvailable: {
+		en: "OwnGit %s is available. You are running %s.",
+		ko: "OwnGit %s 버전이 나왔습니다. 지금 쓰는 버전은 %s입니다.",
+	},
+	MsgReleaseRegion:  {en: "New OwnGit release", ko: "OwnGit 새 릴리스"},
+	MsgReleaseNotes:   {en: "Release notes", ko: "릴리스 노트"},
+	MsgReleaseHowTo:   {en: "How to update", ko: "업데이트 방법"},
+	MsgReleaseDismiss: {en: "Dismiss", ko: "알림 닫기"},
 
 	// -- connection ----------------------------------------------------
 	// The indicator describes this request's transport only. Encrypted means

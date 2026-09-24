@@ -144,6 +144,9 @@ const (
 	// ActionAcknowledgeInsecure records the informed choice to keep using
 	// plain HTTP. Field: insecure_ack.
 	ActionAcknowledgeInsecure = "acknowledge_insecure"
+	// ActionSetUpdateCheck turns the new-release check on or off.
+	// Fields: admin_password, update_check ("on" or "off").
+	ActionSetUpdateCheck = "set_update_check"
 )
 
 // SettingsPage renders /settings.
@@ -166,6 +169,17 @@ type SettingsPage struct {
 	// CloneHint shows the base Git clone URL, for example
 	// "http://host:port/git/". Empty when the backend cannot determine it.
 	CloneHint string
+	// UpdateCheck is the new-release check setting.
+	UpdateCheck UpdateCheckInfo
+}
+
+// UpdateCheckInfo describes the new-release check on the Settings page.
+type UpdateCheckInfo struct {
+	// Enabled is the saved setting.
+	Enabled bool
+	// ForcedOff is true when the server started with --no-update-check,
+	// which overrides the saved setting.
+	ForcedOff bool
 }
 
 func (SettingsPage) page() string { return "settings" }
@@ -188,9 +202,26 @@ type OverviewPage struct {
 	RecentMoreURL string
 	// TotalCount is the number of repositories before search filtering.
 	TotalCount int
+	// Release announces a newer OwnGit release. Nil shows nothing.
+	Release *ReleaseNotice
 }
 
 func (OverviewPage) page() string { return "overview" }
+
+// ReleaseNotice is the dashboard notice for a newer OwnGit release. Every
+// URL is set by the backend; NotesURL is built from the checked version.
+type ReleaseNotice struct {
+	// Version is the newer release, "X.Y.Z".
+	Version string
+	// Current is the running version.
+	Current string
+	// NotesURL is the release page.
+	NotesURL string
+	// GuideURL explains how to update.
+	GuideURL string
+	// DismissURL takes a POST with csrf and version.
+	DismissURL string
+}
 
 // ActivityPage renders "/activity": the chronological list across every
 // repository.

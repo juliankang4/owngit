@@ -74,6 +74,7 @@ Create a repository from the dashboard, then use its clone address, for example 
 
 - The server is local-only by default. General repository access can be password-free or protected by one shared password. There are no individual accounts.
 - A separate administrator password protects security settings, and every security change asks for it again.
+- After setup, OwnGit asks GitHub once a day whether a newer release exists and shows a notice on the dashboard. It sends no repository data and never updates itself. Turn it off in Settings, or start with `--no-update-check` so it never checks. See [New-release notice](docs/OPERATIONS.md#new-release-notice).
 - OwnGit serves plain HTTP, which is not encrypted, and has no built-in TLS. Prefer Tailscale or your own VPN for connections from another device. Public Internet hosting is out of scope.
 
 ## Status and limits

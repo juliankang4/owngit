@@ -32,8 +32,12 @@
 {{define "toolbar"}}
 <header class="toolbar">
   <div class="toolbar__id">
-    <img class="toolbar__logo" src="{{.Asset "logo.svg"}}" alt="" width="27" height="27">
-    <span class="toolbar__name">OwnGit</span>
+    {{/* The identity leads to the dashboard from every screen. Before setup or
+         sign-in the server answers "/" with the step that is still due. */}}
+    <a class="toolbar__home" href="{{or .Chrome.Nav.OverviewURL "/"}}" {{biAttr .Lang "aria-label" "app.home"}}>
+      <img class="toolbar__logo" src="{{.Asset "logo.svg"}}" alt="" width="27" height="27">
+      <span class="toolbar__name">OwnGit</span>
+    </a>
     {{/* The running version, so "which OwnGit am I looking at" is answerable
          from any screen without a terminal. It is what the backend passed
          from the binary's own version, and an empty value renders nothing

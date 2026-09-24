@@ -191,7 +191,7 @@ func TestAcknowledgementDoesNotClaimToFixTheConnection(t *testing.T) {
 	if !strings.Contains(Text(LangEN, MsgSettingsAckDone), "Nothing about the connection changed") {
 		t.Error("the English confirmation does not say the connection is unchanged")
 	}
-	if !strings.Contains(Text(LangKO, MsgSettingsAckDone), "\ubc14\ub01c\uc9c0\uc9c0\ub294 \uc54a") {
+	if !strings.Contains(Text(LangKO, MsgSettingsAckDone), "\ubc14\ub00c\uc9c0\ub294 \uc54a") {
 		t.Error("the Korean confirmation does not say the connection is unchanged")
 	}
 }

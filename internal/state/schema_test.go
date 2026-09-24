@@ -223,7 +223,7 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 		t.Fatalf("upgraded schema fingerprint=%s objects=%d err=%v", fingerprint, objects, err)
 	}
 	settings, err := store.Settings(ctx)
-	if err != nil || !settings.Initialized || settings.RepositoryRoot != repositoryRoot || settings.AccessMode != "open" || settings.AccessSessionVersion != 3 || settings.AdminSessionVersion != 4 || !settings.InsecureHTTPAccepted {
+	if err != nil || !settings.Initialized || settings.RepositoryRoot != repositoryRoot || settings.AccessMode != "open" || settings.AccessSessionVersion != 3 || settings.AdminSessionVersion != 4 || !settings.InsecureHTTPAccepted || !settings.UpdateCheck {
 		t.Fatalf("upgraded settings=%+v err=%v", settings, err)
 	}
 	if hash, err := store.PasswordHash(ctx, "admin"); err != nil || hash != "synthetic-admin-hash" {

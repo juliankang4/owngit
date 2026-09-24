@@ -106,6 +106,7 @@ var settingsActions = []struct {
 	{ActionChangeAccessPassword, AccessPassword},
 	{ActionChangeAdminPassword, AccessOpen},
 	{ActionAcknowledgeInsecure, AccessOpen},
+	{ActionSetUpdateCheck, AccessOpen},
 }
 
 func TestWrongAdminPasswordIsShownInTheFormThatWasSubmitted(t *testing.T) {

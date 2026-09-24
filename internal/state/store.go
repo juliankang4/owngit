@@ -56,6 +56,9 @@ type Settings struct {
 	// CheckLogRetentionDays bounds disposable raw check logs. Durable task and
 	// attempt records are never removed by log retention.
 	CheckLogRetentionDays int
+	// UpdateCheck allows the daily new-release check. It is machine-local:
+	// a missing key (older state, a restored backup) means on.
+	UpdateCheck bool
 }
 
 type Session struct {
@@ -1157,6 +1160,14 @@ func (s *Store) Settings(ctx context.Context) (Settings, error) {
 		}
 		retentionDays = parsed
 	}
+	updateCheck := true
+	switch raw := values[updateCheckKey]; raw {
+	case "", "on":
+	case "off":
+		updateCheck = false
+	default:
+		return Settings{}, fmt.Errorf("invalid update check setting %q", raw)
+	}
 	return Settings{
 		Initialized:           values["initialized"] == "true",
 		RepositoryRoot:        values["repository_root"],
@@ -1165,7 +1176,22 @@ func (s *Store) Settings(ctx context.Context) (Settings, error) {
 		AdminSessionVersion:   adminVersion,
 		InsecureHTTPAccepted:  values["insecure_http_accepted"] == "true",
 		CheckLogRetentionDays: retentionDays,
+		UpdateCheck:           updateCheck,
 	}, nil
+}
+
+// updateCheckKey is an optional metadata key, so the setting needs no schema
+// change and older OwnGit builds ignore it.
+const updateCheckKey = "update_check"
+
+// SetUpdateCheck saves whether the new-release check may run.
+func (s *Store) SetUpdateCheck(ctx context.Context, enabled bool) error {
+	value := "off"
+	if enabled {
+		value = "on"
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, updateCheckKey, value)
+	return err
 }
 
 func (s *Store) CompleteSetup(ctx context.Context, repositoryRoot, accessMode, accessHash, adminHash string, insecureAccepted bool) error {

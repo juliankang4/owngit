@@ -152,6 +152,42 @@
     {{end}}
   </div>
 
+  {{/* Apart from imports, which reach only the source hosts an owner
+       configures, the new-release check is OwnGit's only outbound
+       connection. Changing it is an
+       administrator action like every other setting here. The start option
+       --no-update-check overrides the saved value, which stays editable so
+       it is ready for a start without that option. */}}
+  {{$u := $p.UpdateCheck}}
+  <div class="setblock">
+    <h2 class="setblock__h">{{bi $lang "settings.update.title"}}</h2>
+    <p class="setblock__now">
+      {{if $u.ForcedOff}}{{icon "slash"}}{{bi $lang "settings.update.forced_off"}}
+      {{else if $u.Enabled}}{{icon "check"}}{{bi $lang "settings.update.on_now"}}
+      {{else}}{{icon "slash"}}{{bi $lang "settings.update.off_now"}}{{end}}
+    </p>
+    {{if $u.ForcedOff}}
+      <p class="setblock__d">{{if $u.Enabled}}{{bi $lang "settings.update.saved_on"}}{{else}}{{bi $lang "settings.update.saved_off"}}{{end}}</p>
+    {{end}}
+    <p class="setblock__d">{{bi $lang "settings.update.help"}}</p>
+    {{$act := "set_update_check"}}{{$fn := forAction $pending $act $n}}
+    <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
+      <summary class="btn">{{if $u.Enabled}}{{bi $lang "settings.update.turn_off"}}{{else}}{{bi $lang "settings.update.turn_on"}}{{end}}</summary>
+      <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="action" value="{{$act}}">
+        <input type="hidden" name="update_check" value="{{if $u.Enabled}}off{{else}}on{{end}}">
+        <div class="f">
+          <label for="upd-admin">{{bi $lang "admin.field"}}</label>
+          <input id="upd-admin" name="admin_password" type="password" autocomplete="current-password" required
+                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+        </div>
+        <div class="actions"><button type="submit" class="btn">{{if $u.Enabled}}{{bi $lang "settings.update.turn_off"}}{{else}}{{bi $lang "settings.update.turn_on"}}{{end}}</button></div>
+      </form>
+    </details>
+  </div>
+
   {{/* Storage location and clone address are administrator information. The
        backend clears them for an ordinary visitor. */}}
   {{if $p.Storage.Visible}}

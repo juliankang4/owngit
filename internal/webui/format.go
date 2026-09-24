@@ -24,6 +24,7 @@ func templateFuncs() template.FuncMap {
 		"biDayHeading": biDayHeading,
 		"biCount":      biCount,
 		"biNotice":     biNotice,
+		"biRelease":    biRelease,
 		"icon":         icon,
 		"statusIcon":   statusIcon,
 		"themeIcon":    themeIcon,

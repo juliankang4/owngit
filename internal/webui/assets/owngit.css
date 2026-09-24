@@ -260,6 +260,17 @@ a:hover { text-decoration: underline; }
 .toolbar__id { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .toolbar__logo { display: block; width: 27px; height: 27px; flex: none; }
 .toolbar__name { font-size: 14px; font-weight: 640; letter-spacing: -0.01em; }
+/* The identity is the way home. It keeps the plain look of a title, and
+   the shared focus ring shows where the keyboard is. */
+.toolbar__home {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--text-1);
+}
+.toolbar__home:hover { text-decoration: none; }
+.toolbar__home:hover .toolbar__name { color: var(--accent); }
 
 .field { margin-left: auto; flex: none; }
 .field input {
@@ -465,6 +476,16 @@ a:hover { text-decoration: underline; }
 .notice--success .icon { color: var(--ok); }
 .notice--info { border-left-color: var(--accent); }
 .notice--info .icon { color: var(--accent); }
+
+/* New-release notice above the activity graph. The dismiss control sits at
+   the end of the row and moves under the text when the row is narrow. */
+.relnote { flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.relnote > .icon { align-self: flex-start; margin-top: 3px; }
+.relnote__body { flex: 1 1 16em; min-width: 0; display: grid; gap: 3px; }
+.relnote__t { font-weight: 560; }
+.relnote__links { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.relnote__form { margin-left: auto; }
+.relnote__dismiss { padding: 4px 12px; }
 
 /* The hidden attribute must win over any display this stylesheet sets.
    The browser's own rule is `[hidden] { display: none }`, which a later

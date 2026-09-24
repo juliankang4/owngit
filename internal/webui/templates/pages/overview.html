@@ -1,6 +1,28 @@
 {{define "body"}}
 {{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}
 
+{{/* A newer release is announced, never installed. Dismissing is an ordinary
+     form, so it works with or without scripting: the server remembers the
+     version in this browser and reloads the dashboard, and a later version
+     shows the notice again. */}}
+{{with $p.Release}}
+<section class="notice notice--info relnote" {{biAttr $lang "aria-label" "release.region"}} data-release-notice>
+  {{icon "info"}}
+  <div class="relnote__body">
+    <p class="relnote__t">{{biRelease $lang .}}</p>
+    <p class="relnote__links">
+      <a href="{{.NotesURL}}" rel="noreferrer">{{bi $lang "release.notes"}}</a>
+      <a href="{{.GuideURL}}" rel="noreferrer">{{bi $lang "release.how_to_update"}}</a>
+    </p>
+  </div>
+  <form class="relnote__form" method="post" action="{{.DismissURL}}">
+    <input type="hidden" name="csrf" value="{{$.Chrome.CSRF}}">
+    <input type="hidden" name="version" value="{{.Version}}">
+    <button type="submit" class="btn relnote__dismiss">{{bi $lang "release.dismiss"}}</button>
+  </form>
+</section>
+{{end}}
+
 {{template "graph" dict "Lang" $lang "G" $p.Activity}}
 
 <section class="sec">

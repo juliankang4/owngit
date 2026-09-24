@@ -33,6 +33,20 @@ The server accepts only requests whose Host is `localhost`, `127.0.0.1`, `::1`, 
 ./bin/owngit approve-host gitbox.internal
 ```
 
+## New-release notice
+
+After setup, OwnGit asks GitHub once a day whether a newer release exists. The first check runs about 30 seconds after the server starts, or right after setup is finished on a new installation. It sends one HTTPS request to `https://api.github.com/repos/juliankang4/owngit/releases/latest` with a User-Agent that names OwnGit and its version. No repository data is sent, and GitHub sees the server's network address. Drafts and prereleases are ignored. Apart from [imports](#importing-from-another-git-host), which connect only to the source hosts you configure (including their scheduled refreshes), this is the only connection OwnGit opens to another host. The update-check setting and `--no-update-check` do not affect imports.
+
+When a newer version exists, the dashboard shows a notice above the activity graph with links to the release notes and to the [Install](../README.md#install) section, which explains how to update. OwnGit never downloads or installs anything itself. Dismiss hides the notice for that version in the current browser; a later version shows it again. The result is kept in memory only, so a restart checks again. A failed check (no network, a rate limit, or an unexpected answer) shows nothing, writes at most one log line until a check succeeds again, and never affects Git or the pages.
+
+To turn the check off, open Settings and use Update check, which asks for the administrator password. Turning it off stops further release checks and hides the notice at once; turning it on checks again within a few seconds. The setting belongs to this installation host: an offline backup does not carry it, and a restored installation starts with the check on.
+
+For a deployment that must never check for new releases, start the server with `--no-update-check`. OwnGit then makes no release-check request whatever the saved setting says, and Settings reports that the start option disabled the check:
+
+```sh
+./bin/owngit serve --no-update-check
+```
+
 ## Host-owner recovery
 
 Before setup is complete, issue a replacement setup link with:
@@ -350,7 +364,7 @@ A backup holds a manifest and one Git bundle per nonempty repository. It include
 - import sources, run history, and publication records;
 - the access mode and password hashes.
 
-Raw logs, credentials and tokens of every kind, import schedules, and consent are not included. Keep backups private, because password hashes are sensitive.
+Raw logs, credentials and tokens of every kind, import schedules, consent, and the [update check](#new-release-notice) setting are not included. Keep backups private, because password hashes are sensitive.
 
 Backup refuses to run when an import publication is still unsettled for a repository that does not exist yet. Start and stop OwnGit once so it can settle the record, then back up again. If the error remains, move the import's `.owngit-create-*` directory out of the repository folder, then start and stop OwnGit again and back up.
 

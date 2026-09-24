@@ -26,6 +26,7 @@ import (
 	"owngit/internal/importsync"
 	"owngit/internal/pullrequest"
 	"owngit/internal/recovery"
+	"owngit/internal/releasecheck"
 	"owngit/internal/repository"
 	"owngit/internal/server"
 	"owngit/internal/state"
@@ -113,6 +114,13 @@ func runCommand(command string, arguments []string) error {
 	}
 }
 
+// releaseCheckEndpoint and releaseCheckDelay are variables only so tests can
+// point the check at a local server; tests never contact GitHub.
+var (
+	releaseCheckEndpoint = releasecheck.LatestURL
+	releaseCheckDelay    = releasecheck.DefaultInitialDelay
+)
+
 // preparationGrace bounds how long startup waits for repository preparation
 // before it starts serving the repositories that are ready.
 const preparationGrace = 10 * time.Second
@@ -136,6 +144,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	gitPath := flags.String("git", "", "Git executable path")
 	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
+	noUpdateCheck := flags.Bool("no-update-check", false, "never contact GitHub to check for a newer OwnGit release, whatever the Settings page says")
 	var allowedHosts stringList
 	flags.Var(&allowedHosts, "allowed-host", "additional accepted `host` name (repeatable)")
 	if err := parseFlags(flags, arguments); err != nil {
@@ -265,15 +274,37 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if settings.Initialized {
 		importRuntime.start()
 	}
+	// Apart from imports, which reach only the source hosts an owner
+	// configures, the new-release check is OwnGit's only outbound
+	// connection. It waits
+	// for setup, reads the saved setting before every request, and
+	// --no-update-check removes it entirely.
+	var releases *releasecheck.Checker
+	if !*noUpdateCheck {
+		releases = &releasecheck.Checker{
+			Current: version.Version, URL: releaseCheckEndpoint, InitialDelay: releaseCheckDelay, Logf: logf,
+			Enabled: func(ctx context.Context) (bool, error) {
+				current, err := store.Settings(ctx)
+				return current.Initialized && current.UpdateCheck, err
+			},
+		}
+	}
 	application := &server.App{
 		Store: store, Auth: authentication, Repositories: repositories, PullRequests: pullRequests, GitHTTP: gitHandler,
 		Renderer: renderer, Hosts: policy, SuggestedRepositoryRoot: filepath.Join(home, "OwnGit-Repositories"),
 		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true, Version: version.Version,
 		WakeChecks: checkCoordinator.Wake, Imports: imports,
 		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
+		Releases:         releases,
 		// First-run setup inside this process starts the same import runtime
-		// that an initialized startup starts above.
-		OnSetupComplete: importRuntime.start,
+		// that an initialized startup starts above, and lets the release
+		// check run without waiting a day.
+		OnSetupComplete: func() {
+			importRuntime.start()
+			if releases != nil {
+				releases.Wake()
+			}
+		},
 	}
 	gitHandler.Authorize = application.AuthorizeGit
 	gitHandler.OnReceive = checkCoordinator.Wake
@@ -281,6 +312,18 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// startup does not wait for it and the dashboard finds it ready.
 	application.StartBackground(ctx)
 	defer application.StopBackground()
+	if releases != nil {
+		releaseContext, cancelReleases := context.WithCancel(ctx)
+		releaseDone := make(chan struct{})
+		go func() {
+			defer close(releaseDone)
+			releases.Run(releaseContext)
+		}()
+		defer func() {
+			cancelReleases()
+			<-releaseDone
+		}()
+	}
 	pullRequests.OnChange = checkCoordinator.Wake
 	checkContext, cancelChecks := context.WithCancel(ctx)
 	defer cancelChecks()

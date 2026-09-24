@@ -122,3 +122,97 @@ func TestInsecureAcknowledgementRequiresCurrentAdminPassword(t *testing.T) {
 		t.Fatal("confirmed insecure HTTP acknowledgement was not persisted")
 	}
 }
+
+// Every Settings change redirects to /settings?notice=settings_saved. The
+// page used to replace the notice from the address with the form's own
+// (empty) notices, so a successful change was never confirmed.
+func TestSettingsChangesConfirmTheSave(t *testing.T) {
+	app, store, repositoryRoot := newTestApp(t)
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
+	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
+	adminHash, _ := auth.HashPassword("admin-password")
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, false))
+	app.Repositories.SetRoot(canonical)
+	server := serve(t, app.Handler())
+	client, jar := newBrowserClient(t)
+	if _, status := dashboardGET(t, client, server.URL+"/settings"); status != http.StatusOK {
+		t.Fatalf("settings status=%d", status)
+	}
+	token := cookieValue(t, jar, server.URL, generalCookie)
+	saved := webui.Text(webui.LangEN, webui.MsgSettingsSaved)
+	if body, _ := dashboardGET(t, client, server.URL+"/settings"); strings.Contains(body, saved) {
+		t.Fatal("a plain visit claims that settings were saved")
+	}
+
+	admin := "admin-password"
+	for _, values := range []url.Values{
+		{"action": {webui.ActionAcknowledgeInsecure}, "insecure_ack": {"1"}},
+		{"action": {webui.ActionSetUpdateCheck}, "update_check": {"off"}},
+		{"action": {webui.ActionChangeAdminPassword}, "new_admin_password": {"new-admin-password"}},
+	} {
+		values.Set("csrf", token)
+		values.Set("admin_password", admin)
+		response := request(t, client, http.MethodPost, server.URL+"/settings", values, server.URL)
+		location := response.Header.Get("Location")
+		if response.StatusCode != http.StatusSeeOther || location != "/settings?notice=settings_saved" {
+			t.Fatalf("%s: status=%d location=%q", values.Get("action"), response.StatusCode, location)
+		}
+		body, status := dashboardGET(t, client, server.URL+location)
+		if status != http.StatusOK || !strings.Contains(body, saved) {
+			t.Errorf("%s: the saved change is not confirmed (status %d)", values.Get("action"), status)
+		}
+		if values.Get("action") == webui.ActionChangeAdminPassword {
+			admin = "new-admin-password"
+		}
+	}
+
+	// Korean readers get the same confirmation.
+	body, _ := dashboardGET(t, client, server.URL+"/settings?notice=settings_saved&lang=ko")
+	if !strings.Contains(body, webui.Text(webui.LangKO, webui.MsgSettingsSaved)) {
+		t.Error("the Korean page does not confirm the save")
+	}
+}
+
+// Turning the shared password off keeps the reader on Settings, so the save is
+// confirmed there too. Turning it on or changing it ends the current session
+// by design, so the reader signs in again instead.
+func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
+	app, store, repositoryRoot := newTestApp(t)
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
+	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
+	accessHash, _ := auth.HashPassword("shared-password")
+	adminHash, _ := auth.HashPassword("admin-password")
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "password", accessHash, adminHash, false))
+	app.Repositories.SetRoot(canonical)
+	settings, _ := store.Settings(context.Background())
+	noErr(t, store.CreateSession(context.Background(), "general-token", "general", "csrf-token", settings.AccessSessionVersion, time.Now().Add(time.Hour)))
+	server := serve(t, app.Handler())
+	client, jar := newBrowserClient(t)
+	parsed, _ := url.Parse(server.URL)
+	jar.SetCookies(parsed, []*http.Cookie{{Name: generalCookie, Value: "general-token", Path: "/"}})
+	saved := webui.Text(webui.LangEN, webui.MsgSettingsSaved)
+
+	response := request(t, client, http.MethodPost, server.URL+"/settings", url.Values{
+		"csrf": {"csrf-token"}, "action": {webui.ActionDisableAccessPassword}, "admin_password": {"admin-password"},
+	}, server.URL)
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("disable status=%d", response.StatusCode)
+	}
+	body, status := dashboardGET(t, client, server.URL+response.Header.Get("Location"))
+	if status != http.StatusOK || !strings.Contains(body, saved) {
+		t.Fatalf("disabling the shared password is not confirmed (status %d)", status)
+	}
+
+	token := cookieValue(t, jar, server.URL, generalCookie)
+	response = request(t, client, http.MethodPost, server.URL+"/settings", url.Values{
+		"csrf": {token}, "action": {webui.ActionEnableAccessPassword}, "admin_password": {"admin-password"},
+		"access_password": {"another-shared-password"},
+	}, server.URL)
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("enable status=%d", response.StatusCode)
+	}
+	follow := request(t, client, http.MethodGet, server.URL+response.Header.Get("Location"), nil, "")
+	if follow.StatusCode != http.StatusSeeOther || !strings.HasPrefix(follow.Header.Get("Location"), "/login") {
+		t.Fatalf("after enabling the shared password status=%d location=%q, want sign-in", follow.StatusCode, follow.Header.Get("Location"))
+	}
+}

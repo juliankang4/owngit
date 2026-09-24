@@ -189,3 +189,37 @@ func newProjectTask(t *testing.T, store *Store, ctx context.Context, now time.Ti
 	noErr(t, err)
 	return task
 }
+
+// The update check is on unless it was turned off, survives a restart, and a
+// state written before the setting existed reads as on.
+func TestUpdateCheckSettingDefaultsOnAndPersists(t *testing.T) {
+	ctx := context.Background()
+	directory := filepath.Join(t.TempDir(), "state")
+	store, err := Open(ctx, directory)
+	noErr(t, err)
+	settings, err := store.Settings(ctx)
+	noErr(t, err)
+	if !settings.UpdateCheck {
+		t.Fatal("a state without the setting reads as off")
+	}
+	noErr(t, store.SetUpdateCheck(ctx, false))
+	noErr(t, store.Close())
+
+	store, err = Open(ctx, directory)
+	noErr(t, err)
+	defer store.Close()
+	if settings, err := store.Settings(ctx); err != nil || settings.UpdateCheck {
+		t.Fatalf("after restart settings=%+v err=%v, want the check off", settings, err)
+	}
+	noErr(t, store.SetUpdateCheck(ctx, true))
+	if settings, err := store.Settings(ctx); err != nil || !settings.UpdateCheck {
+		t.Fatalf("settings=%+v err=%v, want the check on", settings, err)
+	}
+
+	// A value this build did not write is refused rather than guessed.
+	_, err = store.db.ExecContext(ctx, `UPDATE metadata SET value='maybe' WHERE key=?`, updateCheckKey)
+	noErr(t, err)
+	if _, err := store.Settings(ctx); err == nil {
+		t.Fatal("an unknown update check value was accepted")
+	}
+}

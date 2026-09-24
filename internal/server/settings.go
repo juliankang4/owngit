@@ -84,6 +84,19 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			return
 		}
 		err = app.Store.AcknowledgeInsecureHTTP(request.Context())
+	case webui.ActionSetUpdateCheck:
+		value := postValue(request, "update_check")
+		if value != "on" && value != "off" {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+			return
+		}
+		err = app.Store.SetUpdateCheck(request.Context(), value == "on")
+		// Turning the check on asks for an answer soon instead of waiting
+		// for the daily interval. Turning it off takes effect at once,
+		// because the dashboard and the checker both read the saved value.
+		if err == nil && value == "on" && app.Releases != nil {
+			app.Releases.Wake()
+		}
 	default:
 		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
 		return
@@ -116,7 +129,11 @@ func (app *App) renderSettings(writer http.ResponseWriter, request *http.Request
 		app.writePlainError(writer, http.StatusServiceUnavailable)
 		return
 	}
-	chrome.Notices = notices
+	// A failed form brings its own notices. Otherwise keep the page notice
+	// from the address, such as the confirmation after a saved change.
+	if notices != nil {
+		chrome.Notices = notices
+	}
 	storage := webui.StorageInfo{}
 	if chrome.Viewer.AdminConfirmed {
 		storage = webui.StorageInfo{Visible: true, Path: settings.RepositoryRoot}
@@ -128,6 +145,7 @@ func (app *App) renderSettings(writer http.ResponseWriter, request *http.Request
 	app.render(writer, status, webui.SettingsPage{
 		Chrome: chrome, SubmitURL: "/settings", AccessMode: mode, AdminRequired: true,
 		PendingAction: pending, Storage: storage, CloneHint: app.baseURL(request) + "/git/",
+		UpdateCheck: webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil},
 	})
 }
 

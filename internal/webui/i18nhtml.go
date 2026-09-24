@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"fmt"
 	"html/template"
 	"strings"
 	"time"
@@ -107,6 +108,15 @@ func biDayHeading(lang Lang, now, t time.Time) template.HTML {
 // biCount renders a counted noun such as "7 repositories" in both languages.
 func biCount(lang Lang, kind string, n int) template.HTML {
 	return biText(lang, formatCount(LangEN, kind, n), formatCount(LangKO, kind, n))
+}
+
+// biRelease renders the new-release sentence in both languages. The versions
+// are strict X.Y.Z strings chosen by the backend and are escaped like any
+// other text.
+func biRelease(lang Lang, n ReleaseNotice) template.HTML {
+	return biText(lang,
+		fmt.Sprintf(Text(LangEN, MsgReleaseAvailable), n.Version, n.Current),
+		fmt.Sprintf(Text(LangKO, MsgReleaseAvailable), n.Version, n.Current))
 }
 
 // biNotice renders a notice sentence with its untranslated detail kept out of

@@ -78,6 +78,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	app.render(writer, http.StatusOK, webui.OverviewPage{
 		Chrome: chrome, Activity: graph, Repositories: summaries, Recent: recent,
 		RecentMoreURL: "/activity", TotalCount: len(repositories),
+		Release: app.releaseNotice(request, settings),
 	})
 }
 
