@@ -45,6 +45,9 @@ type activityCache struct {
 	runs    sync.WaitGroup
 	slots   chan struct{}
 	entries map[string]*activityEntry
+	// paused counts, per repository, the pauses in effect. No count starts
+	// for a paused repository; see pause.
+	paused map[string]int
 	// records counts cached records. The least recently used observations are
 	// dropped above capacity, twice the page-wide activity limit, so memory
 	// stays bounded by the budget that bounds one page.
@@ -65,7 +68,7 @@ type activityEntry struct {
 	failedKey string
 	used      uint64
 	running   chan struct{}
-	// cancel ends the running computation early, for drop.
+	// cancel ends the running computation early, for pause.
 	cancel context.CancelFunc
 }
 
@@ -83,6 +86,7 @@ type activityPart struct {
 func (cache *activityCache) initLocked() {
 	if cache.entries == nil {
 		cache.entries = make(map[string]*activityEntry)
+		cache.paused = make(map[string]int)
 		cache.slots = make(chan struct{}, activityConcurrency)
 	}
 	if cache.root == nil {
@@ -124,8 +128,11 @@ func (cache *activityCache) entryLocked(id string) *activityEntry {
 
 // scheduleLocked starts one computation for id with the given budget unless
 // one is already running, and returns a channel that closes when the running
-// computation ends. It returns nil after stop.
+// computation ends. It returns nil after stop and while id is paused.
 func (cache *activityCache) scheduleLocked(manager *repository.Manager, id, key string, limit int) <-chan struct{} {
+	if cache.paused[id] > 0 {
+		return nil
+	}
 	entry := cache.entryLocked(id)
 	if entry.running != nil {
 		return entry.running
@@ -220,12 +227,13 @@ func (cache *activityCache) planLocked(manager *repository.Manager, ids, keys []
 			part.err = errRefsUnlisted
 			continue
 		}
-		if cache.entries[id] == nil && attempted[id] {
-			// Dropped after this observation scheduled it, for a deletion or a
-			// default-branch change. It takes no share of the budget and does
-			// not hold back the repositories after it. The page says it is
-			// still being counted rather than showing it as empty, because the
-			// repository may still exist when that change was refused.
+		if entry := cache.entries[id]; (entry == nil && attempted[id]) || (cache.paused[id] > 0 && (entry == nil || !entry.computed)) {
+			// Dropped after this observation scheduled it, or paused, for a
+			// deletion or a default-branch change, with nothing counted to
+			// show. It takes no share of the budget and does not hold back the
+			// repositories after it. The page says it is still being counted
+			// rather than showing it as empty, because the repository may
+			// still exist when that change was refused.
 			part.pending = true
 			continue
 		}
@@ -303,25 +311,33 @@ func (cache *activityCache) finalPlan(manager *repository.Manager, ids, keys []s
 	return parts
 }
 
-// drop cancels a running computation for id and forgets its observation. The
-// deletion of a repository calls it first, so a background history walk does
-// not keep holding the repository's read lock while the deletion waits briefly
-// for the write lock, and calls it again afterwards, so nothing of the removed
-// repository stays cached.
-func (cache *activityCache) drop(id string) {
+// pause stops counting id until the returned resume is called. A deletion or
+// a default-branch change waits only briefly for the repository's write lock,
+// while a count holds the read lock for as long as its history walk takes. So
+// pause cancels and forgets a running count, and until resume no page or
+// background observation starts a new one; they report id as still being
+// counted. Without the second part, a page opened between the cancellation
+// and the write lock would start a count that makes the change report the
+// repository in use. keepFinished keeps a finished observation, which a
+// default-branch change leaves valid; a deletion forgets it. Calling resume
+// again has no effect, so it never ends another caller's pause.
+func (cache *activityCache) pause(id string, keepFinished bool) (resume func()) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	cache.dropLocked(id)
-}
-
-// dropIfCounting drops id only while a computation for it runs. A
-// default-branch change calls it for the same lock reason as a deletion, but
-// the change leaves a finished observation valid, so that one is kept.
-func (cache *activityCache) dropIfCounting(id string) {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	if entry := cache.entries[id]; entry != nil && entry.running != nil {
+	cache.initLocked()
+	cache.paused[id]++
+	if entry := cache.entries[id]; entry != nil && (entry.running != nil || !keepFinished) {
 		cache.dropLocked(id)
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			cache.mu.Lock()
+			defer cache.mu.Unlock()
+			if cache.paused[id]--; cache.paused[id] <= 0 {
+				delete(cache.paused, id)
+			}
+		})
 	}
 }
 

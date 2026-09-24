@@ -102,10 +102,15 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 	}
 	// The change waits only briefly for the write lock, and a background
 	// activity count may hold the read lock far longer. The count does not
-	// depend on the default branch and is redone on the next page, so a
-	// running one is stopped rather than reported as another Git operation.
-	app.activity.dropIfCounting(stored.ID)
-	if err := app.Repositories.SetDefaultBranch(request.Context(), stored.ID, branch); err != nil {
+	// depend on the default branch and is redone on a later page, so counting
+	// pauses for the change rather than being reported as another Git
+	// operation.
+	// The pause ends in a deferred call, so a panic cannot leave it behind.
+	err := func() error {
+		defer app.activity.pause(stored.ID, true)()
+		return app.Repositories.SetDefaultBranch(request.Context(), stored.ID, branch)
+	}()
+	if err != nil {
 		switch {
 		case errors.Is(err, repository.ErrBranchNotFound):
 			chrome.Notices = append(chrome.Notices, webui.Error("branch", webui.MsgRepoDefaultBranchUnknown))
@@ -214,17 +219,16 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 	}
 
 	// A background activity count holds the repository's read lock for as long
-	// as its history walk takes, so it is stopped first, and whatever it left
-	// in the cache is dropped once the repository is gone.
-	app.activity.drop(stored.ID)
-	// Once confirmed, the deletion must not stop half way because the
-	// administrator closed the tab: the records go first, and a cancelled
-	// context would leave the file step for the next start.
-	result, err := app.Repositories.Delete(context.WithoutCancel(request.Context()), stored.ID, repository.DeleteMode(mode))
-	// A page opened meanwhile may have started a new count, which failed or
-	// is failing on the removed folder; drop it too. Without this the next
-	// dashboard's forget would clear it, so this only frees it sooner.
-	app.activity.drop(stored.ID)
+	// as its history walk takes, so counting pauses for the deletion, and the
+	// pause forgets what was counted before. The pause ends in a deferred
+	// call, so a panic cannot leave it behind.
+	result, err := func() (repository.DeleteResult, error) {
+		defer app.activity.pause(stored.ID, false)()
+		// Once confirmed, the deletion must not stop half way because the
+		// administrator closed the tab: the records go first, and a
+		// cancelled context would leave the file step for the next start.
+		return app.Repositories.Delete(context.WithoutCancel(request.Context()), stored.ID, repository.DeleteMode(mode))
+	}()
 	if err != nil && !errors.Is(err, repository.ErrRepositoryBusy) {
 		// The cause can name storage paths and the deletion token, so it goes
 		// to the server log, which the pages point the administrator to, and

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -217,10 +219,11 @@ func TestDeletionDuringBackgroundCountLeavesLaterRepositoriesCounted(t *testing.
 	app.StartBackground(context.Background())
 	waitForActivity(t, app, "alpha", func(entry *activityEntry) bool { return entry.running != nil })
 
-	app.activity.drop("alpha")
+	// As the deletion page does.
+	resume := app.activity.pause("alpha", false)
 	_, err := app.Repositories.Delete(t.Context(), "alpha", repository.DeleteFiles)
+	resume()
 	noErr(t, err)
-	app.activity.drop("alpha")
 
 	for _, name := range []string{"beta", "gamma"} {
 		waitForActivity(t, app, name, func(entry *activityEntry) bool { return entry.computed })
@@ -272,6 +275,68 @@ func TestDefaultBranchChangeStopsActivityCounting(t *testing.T) {
 	}, server.URL)
 	if result.status != http.StatusSeeOther {
 		t.Fatalf("change during a background count status=%d body=%s", result.status, result.body)
+	}
+	summary, err := fixture.app.Repositories.Summary(t.Context(), "project")
+	if err != nil || summary.DefaultBranch != "feature" {
+		t.Fatalf("default branch=%q err=%v", summary.DefaultBranch, err)
+	}
+}
+
+// TestPageDuringDefaultBranchChangeStartsNoCount proves that a page opened
+// after a default-branch change stopped the running count, but before the
+// change took the write lock, does not start a new count whose read lock would
+// make the change report the repository in use.
+func TestPageDuringDefaultBranchChangeStartsNoCount(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the gating wrapper is a Unix test fixture")
+	}
+	fixture := newAPIFixture(t, false)
+	dir := t.TempDir()
+	reached, gate := filepath.Join(dir, "reached"), filepath.Join(dir, "gate")
+	noErr(t, os.WriteFile(gate, nil, 0o600))
+	// Every history walk stalls for 20 s. The change runs check-ref-format
+	// after it stopped counting and before it takes the write lock, so the
+	// gate holds the change in exactly that gap.
+	useGitWrapper(t, fixture.app, `for a in "$@"; do case "$a" in
+--source) exec /bin/sleep 20;;
+check-ref-format) : >`+serverShellQuote(reached)+`; while test -e `+serverShellQuote(gate)+`; do /bin/sleep 0.02; done;;
+esac; done`)
+	server, client, jar := openBrowser(t, fixture)
+	signInAdmin(t, fixture, server.URL, jar)
+
+	// A second browser opens the overview inside the gap, as a dashboard in
+	// another tab would, and then lets the change continue. It must not call
+	// t.Fatal, so it reports through the channel.
+	page := make(chan error, 1)
+	go func() {
+		defer os.Remove(gate)
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if _, err := os.Stat(reached); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				page <- errors.New("the change never reached check-ref-format")
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		response, err := http.Get(server.URL + "/repositories/project")
+		if err == nil {
+			response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				err = fmt.Errorf("overview during the change status=%d", response.StatusCode)
+			}
+		}
+		page <- err
+	}()
+
+	result := browserForm(t, client, server.URL+"/repositories/project/settings/default-branch", url.Values{
+		"csrf": {adminTestCSRF}, "branch": {"feature"},
+	}, server.URL)
+	noErr(t, <-page)
+	if result.status != http.StatusSeeOther {
+		t.Fatalf("change with a page opened meanwhile status=%d body=%s", result.status, result.body)
 	}
 	summary, err := fixture.app.Repositories.Summary(t.Context(), "project")
 	if err != nil || summary.DefaultBranch != "feature" {

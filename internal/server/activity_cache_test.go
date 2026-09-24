@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/repository"
 )
 
 const stillCounting = "Some repositories are still being counted"
@@ -233,9 +234,9 @@ func useGitWrapper(t *testing.T, app *App, prelude string) {
 	app.Repositories.Git = runner
 }
 
-// TestDropKeepsRecordAccounting proves that dropping a counted repository
-// subtracts its records, so the cache's count keeps matching what it holds
-// and later evictions stay correct.
+// TestDropKeepsRecordAccounting proves that dropping a counted repository, as
+// a pause for a deletion does, subtracts its records, so the cache's count
+// keeps matching what it holds and later evictions stay correct.
 func TestDropKeepsRecordAccounting(t *testing.T) {
 	app := newConfiguredApp(t)
 	for _, name := range []string{"one", "two"} {
@@ -249,7 +250,7 @@ func TestDropKeepsRecordAccounting(t *testing.T) {
 			t.Fatalf("repository %s status=%d", name, status)
 		}
 	}
-	app.activity.drop("one")
+	app.activity.pause("one", false)()
 	app.activity.mu.Lock()
 	defer app.activity.mu.Unlock()
 	cached := 0
@@ -326,6 +327,51 @@ func waitUntil(t *testing.T, condition func() bool) {
 			t.Fatal("condition not reached within 10 seconds")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestPausedRepositoryIsNotCounted proves that a pause for a deletion forgets
+// the finished observation, one for a default-branch change keeps it, neither
+// lets planning schedule a count or recreate an entry, and counting stays
+// paused until the last overlapping pause resumes, even when one resume is
+// called twice.
+func TestPausedRepositoryIsNotCounted(t *testing.T) {
+	cache := &activityCache{}
+	cache.mu.Lock()
+	cache.initLocked()
+	for _, id := range []string{"deleted", "renamed"} {
+		entry := cache.entryLocked(id)
+		entry.activity = repository.Activity{Key: "key", Records: []repository.ActivityRecord{{OID: id}}}
+		entry.limit, entry.computed = 10, true
+		cache.records++
+	}
+	cache.mu.Unlock()
+
+	resumeDeleted := cache.pause("deleted", false)
+	resumeRenamed := cache.pause("renamed", true)
+	resumeAgain := cache.pause("renamed", true)
+	cache.mu.Lock()
+	parts, pending := cache.planLocked(nil, []string{"deleted", "renamed"}, []string{"key", "other-key"}, 10, map[string]bool{})
+	_, recreated := cache.entries["deleted"]
+	cache.mu.Unlock()
+	if !parts[0].pending || len(parts[0].records) != 0 || recreated {
+		t.Fatalf("paused deletion part=%+v entry recreated=%v", parts[0], recreated)
+	}
+	// The kept observation is shown while it is still pending, because its
+	// key no longer matches, but no count starts for it.
+	if !parts[1].pending || len(parts[1].records) != 1 || len(pending) != 0 || cache.records != 1 {
+		t.Fatalf("paused change part=%+v pending=%d records=%d", parts[1], len(pending), cache.records)
+	}
+
+	resumeDeleted()
+	resumeRenamed()
+	resumeRenamed()
+	cache.mu.Lock()
+	still := cache.paused["renamed"]
+	cache.mu.Unlock()
+	resumeAgain()
+	if still != 1 || len(cache.paused) != 0 {
+		t.Fatalf("paused after one resume=%d, after all=%v", still, cache.paused)
 	}
 }
 
