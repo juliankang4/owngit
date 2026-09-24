@@ -17,7 +17,7 @@ const (
 	// CommittedBaselineStateCommit is the revision from which the DDL below was
 	// copied. Keeping the DDL here makes compatibility tests independent of Git
 	// history and shallow clones.
-	CommittedBaselineStateCommit = "37b54e394a3292bc94383a0e7e1d19af85f9ab52"
+	CommittedBaselineStateCommit = "8fdefd1bf10bd4a41b7261131efc119d46666260"
 	BaselineRepositoryID         = "project"
 	BaselinePullRequestNumber    = int64(1)
 	BaselineSessionToken         = "synthetic-baseline-session"
@@ -35,7 +35,7 @@ type BaselineStateOptions struct {
 }
 
 // CreateCommittedBaselineState writes the exact unversioned table definitions
-// emitted by OwnGit commit 37b54e394a3292bc94383a0e7e1d19af85f9ab52. The
+// emitted by OwnGit commit 8fdefd1bf10bd4a41b7261131efc119d46666260. The
 // fixture includes settings, authority, a repository, and pull request history.
 func CreateCommittedBaselineState(ctx context.Context, directory string, options BaselineStateOptions) error {
 	if options.RepositoryRoot == "" || options.AdminPasswordHash == "" {

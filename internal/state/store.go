@@ -28,7 +28,7 @@ const (
 	currentSchemaVersion = 14
 	// This SHA-256 fingerprint covers normalized, non-internal sqlite_master
 	// entries of the baseline emitted by commit
-	// 37b54e394a3292bc94383a0e7e1d19af85f9ab52.
+	// 8fdefd1bf10bd4a41b7261131efc119d46666260.
 	committedBaselineSchemaFingerprint = "0b1acb0288e7a64da492d7a2a768538052492f887c3b5e6ec2efc7a42b465600"
 )
 
