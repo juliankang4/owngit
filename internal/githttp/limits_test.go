@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,8 +27,15 @@ func TestMain(m *testing.M) {
 
 func runPortableFakeBackend() {
 	if os.Getenv("REQUEST_METHOD") == http.MethodPost {
-		_, _ = io.Copy(io.Discard, os.Stdin)
-		_, _ = io.WriteString(os.Stdout, "Content-Type: application/x-git-receive-pack-result\r\n\r\n0000")
+		// Report what the backend received so tests can check request decoding.
+		read, _ := io.Copy(io.Discard, os.Stdin)
+		contentLength, present := os.LookupEnv("CONTENT_LENGTH")
+		if !present {
+			contentLength = "absent"
+		}
+		_, _ = io.WriteString(os.Stdout, "Content-Type: application/x-git-receive-pack-result\r\n"+
+			"X-Test-Stdin-Bytes: "+strconv.FormatInt(read, 10)+"\r\n"+
+			"X-Test-Content-Length: "+contentLength+"\r\n\r\n0000")
 		return
 	}
 	_, _ = io.WriteString(os.Stdout, "Content-Type: application/x-git-upload-pack-advertisement\r\n\r\n")

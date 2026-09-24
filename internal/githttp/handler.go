@@ -2,15 +2,18 @@ package githttp
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net"
 	"net/http"
 	"net/textproto"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -87,6 +90,13 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.NotFound(writer, request)
 		return
 	}
+	gzipped, ok := requestBodyEncoding(request)
+	if !ok {
+		// RFC 7694: name the accepted request encoding in the refusal.
+		writer.Header().Set("Accept-Encoding", "gzip")
+		http.Error(writer, "unsupported Content-Encoding; send gzip or an uncompressed body", http.StatusUnsupportedMediaType)
+		return
+	}
 	repositoryPath, _, exists, err := h.Repositories.ExistingPath(request.Context(), route.repositoryID)
 	if errors.Is(err, repository.ErrRepositoryPreparing) {
 		writer.Header().Set("Retry-After", "30")
@@ -155,26 +165,195 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		// returned MaxBytesError after both owned streams have stopped instead.
 		body = http.MaxBytesReader(nil, request.Body, h.MaximumRequest)
 	}
-	extraEnvironment, err := h.cgiEnvironment(request, route)
+	contentLength := request.ContentLength
+	streamContext, cancelStream := context.WithCancelCause(request.Context())
+	defer cancelStream(nil)
+	if gzipped {
+		// Git clients gzip upload-pack requests over 1 KiB. Inflate here so the
+		// same MaximumRequest also bounds the inflated bytes the backend reads.
+		// git-http-backend's own inflation has no output bound.
+		source := &observedBody{ReadCloser: body}
+		inflated, err := gzip.NewReader(source)
+		if err != nil {
+			_ = body.Close()
+			status, reason := http.StatusBadRequest, "could not read the request body"
+			var maxErr *http.MaxBytesError
+			if source.firstError() == nil {
+				reason = errInvalidGzip.Error()
+				logGitFailure(route, request.Method, reason)
+			} else if errors.As(source.firstError(), &maxErr) {
+				status, reason = http.StatusRequestEntityTooLarge, "request body exceeded the size limit"
+			}
+			http.Error(writer, reason, status)
+			return
+		}
+		inflated.Multistream(false)
+		body = &gzipBody{inflated: inflated, source: source, cancel: cancelStream}
+		if h.MaximumRequest > 0 {
+			body = http.MaxBytesReader(nil, body, h.MaximumRequest)
+		}
+		contentLength = -1
+	}
+	input := &observedBody{ReadCloser: body}
+	extraEnvironment, err := h.cgiEnvironment(request, route, contentLength)
 	if err != nil {
+		_ = input.Close()
 		http.Error(writer, "invalid Git protocol request", http.StatusBadRequest)
 		return
 	}
 	committed := &responseState{ResponseWriter: writer}
-	_, err = h.Git.Stream(request.Context(), h.BackendPath, repositoryPath, body, extraEnvironment, func(stdout io.Reader) error {
+	stderr, err := h.Git.Stream(streamContext, h.BackendPath, repositoryPath, input, extraEnvironment, func(stdout io.Reader) error {
 		return h.copyCGIResponse(committed, stdout)
 	})
 	if err == nil && route.service == "git-receive-pack" && h.OnReceive != nil {
 		h.OnReceive(route.repositoryID)
 	}
+	if err == nil && len(stderr) == 0 {
+		return
+	}
+	// The backend usually fails after a request-body error cut its input
+	// short, so the body error explains the failure better than the exit.
+	// git-http-backend also reports some failures only on stderr and exits 0.
+	inputErr := input.firstError()
+	var maxErr *http.MaxBytesError
+	tooLarge := errors.As(err, &maxErr) || errors.As(inputErr, &maxErr)
+	invalidGzip := errors.Is(context.Cause(streamContext), errInvalidGzip)
+	if reason := failureReason(err, stderr, tooLarge, invalidGzip); reason != "" {
+		logGitFailure(route, request.Method, reason)
+	}
 	if err != nil && !committed.wroteHeader {
 		status := http.StatusBadGateway
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
+		if tooLarge {
 			status = http.StatusRequestEntityTooLarge
+		} else if invalidGzip {
+			status = http.StatusBadRequest
 		}
 		http.Error(writer, http.StatusText(status), status)
 	}
+}
+
+// requestBodyEncoding reports whether a Smart HTTP request body is gzip. It
+// returns ok=false for any other non-identity Content-Encoding, including a
+// list of several encodings.
+func requestBodyEncoding(request *http.Request) (gzipped bool, ok bool) {
+	if request.Method != http.MethodPost {
+		return false, true
+	}
+	var codings []string
+	for _, value := range request.Header.Values("Content-Encoding") {
+		for _, coding := range strings.Split(value, ",") {
+			coding = strings.ToLower(strings.TrimSpace(coding))
+			if coding != "" && coding != "identity" {
+				codings = append(codings, coding)
+			}
+		}
+	}
+	switch {
+	case len(codings) == 0:
+		return false, true
+	case len(codings) == 1 && (codings[0] == "gzip" || codings[0] == "x-gzip"):
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+var errInvalidGzip = errors.New("request body is not valid gzip")
+
+// gzipBody inflates a request body. When the network body ended cleanly but
+// the gzip stream is corrupt, truncated or fails its checksum, Read cancels
+// the operation so the backend is terminated rather than treating the end of
+// its input as a complete request. Errors of the network body itself, such
+// as a disconnect or the size limit, keep their existing handling.
+type gzipBody struct {
+	inflated *gzip.Reader
+	source   *observedBody
+	cancel   context.CancelCauseFunc
+}
+
+func (body *gzipBody) Read(buffer []byte) (int, error) {
+	n, err := body.inflated.Read(buffer)
+	if err != nil && err != io.EOF && body.source.firstError() == nil {
+		body.cancel(errInvalidGzip)
+		// Withhold bytes decoded together with the error.
+		return 0, err
+	}
+	return n, err
+}
+
+// Close closes only the network body: the backend stream calls Close
+// concurrently with Read to release a blocked read, which the network body
+// allows and gzip.Reader does not. gzip.Reader holds nothing to release.
+func (body *gzipBody) Close() error {
+	return body.source.Close()
+}
+
+// observedBody records the first read error of the backend input, which the
+// backend stream does not report when the backend itself also fails.
+type observedBody struct {
+	io.ReadCloser
+	mu  sync.Mutex
+	err error
+}
+
+func (body *observedBody) Read(buffer []byte) (int, error) {
+	n, err := body.ReadCloser.Read(buffer)
+	if err != nil && err != io.EOF {
+		body.mu.Lock()
+		if body.err == nil {
+			body.err = err
+		}
+		body.mu.Unlock()
+	}
+	return n, err
+}
+
+func (body *observedBody) firstError() error {
+	body.mu.Lock()
+	defer body.mu.Unlock()
+	return body.err
+}
+
+// failureReason classifies a failed Smart HTTP operation for the server log.
+// It returns "" for successful operations, client disconnects and response
+// write failures. An invalid gzip body comes before cancellation because the
+// handler cancels the backend for it. Backend diagnostics come before the
+// exit status because a backend that stops reading early also makes the input
+// copy fail. It never includes backend output, which can echo request bytes.
+func failureReason(err error, stderr []byte, tooLarge, invalidGzip bool) string {
+	message := string(stderr)
+	var exitErr *exec.ExitError
+	switch {
+	case tooLarge:
+		return "request body exceeded the size limit"
+	case invalidGzip:
+		return errInvalidGzip.Error()
+	case errors.Is(err, context.Canceled):
+		return ""
+	case errors.Is(err, context.DeadlineExceeded):
+		return "operation timed out"
+	case strings.Contains(message, "protocol error"):
+		return "Git protocol error"
+	case strings.Contains(message, "request was larger than our maximum size"):
+		return "request exceeded the Git backend request buffer"
+	case errors.As(err, &exitErr):
+		return fmt.Sprintf("Git backend exited with status %d", exitErr.ExitCode())
+	case err == nil && strings.Contains(message, "fatal:"):
+		return "Git backend reported a fatal error"
+	default:
+		return ""
+	}
+}
+
+func logGitFailure(route route, method string, reason string) {
+	kind := "fetch"
+	if route.service == "git-receive-pack" {
+		kind = "push"
+	}
+	if method == http.MethodGet {
+		kind += " ref advertisement"
+	}
+	log.Printf("Git %s request for repository %q failed: %s", kind, route.repositoryID, reason)
 }
 
 func (h *Handler) Active() int64 { return h.active.Load() }
@@ -252,7 +431,10 @@ func validID(id string) bool {
 	return true
 }
 
-func (h *Handler) cgiEnvironment(request *http.Request, route route) ([]string, error) {
+// cgiEnvironment describes the request to git-http-backend. contentLength is
+// the length of the body the backend reads, or -1 when unknown (chunked or
+// inflated here), so the backend reads until end of input.
+func (h *Handler) cgiEnvironment(request *http.Request, route route, contentLength int64) ([]string, error) {
 	host, port, err := net.SplitHostPort(request.Host)
 	if err != nil {
 		host = request.Host
@@ -283,8 +465,8 @@ func (h *Handler) cgiEnvironment(request *http.Request, route route) ([]string, 
 		"SERVER_PROTOCOL=" + request.Proto,
 		"SCRIPT_NAME=/git",
 	}
-	if request.ContentLength >= 0 {
-		environment = append(environment, "CONTENT_LENGTH="+strconv.FormatInt(request.ContentLength, 10))
+	if contentLength >= 0 {
+		environment = append(environment, "CONTENT_LENGTH="+strconv.FormatInt(contentLength, 10))
 	}
 	if protocol != "" {
 		environment = append(environment, "HTTP_GIT_PROTOCOL="+protocol)
