@@ -52,6 +52,11 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 		}
 	}
 	app.activity.forget(repositories)
+	present := make([]string, len(repositories))
+	for index, stored := range repositories {
+		present[index] = stored.ID
+	}
+	app.Repositories.ForgetRefSnapshots(present)
 	observation := app.observeActivity(ctx, repositories, activityKeysFrom(snapshots, snapshotErrs), app.activityLimit())
 	recent := observation.entries
 	sortActivityEntries(recent)

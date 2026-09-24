@@ -14,7 +14,8 @@ import (
 
 // RefSnapshot summarizes a repository from one ref listing. A page that lists
 // many repositories uses it instead of Summary plus a commit read, so it starts
-// one Git process per repository rather than four.
+// one Git process per repository rather than four, and none while the cached
+// snapshot is current (see snapshot_cache.go).
 type RefSnapshot struct {
 	Summary Summary
 	// Head holds the OID, author name, author date, and subject of the default
@@ -30,23 +31,25 @@ type RefSnapshot struct {
 // commit fields the dashboard shows.
 const snapshotFormat = "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(HEAD)%(if)%(HEAD)%(then)%00%(authorname)%00%(authordate:iso-strict)%00%(subject)%(end)"
 
-func (m *Manager) RefSnapshot(ctx context.Context, id string) (RefSnapshot, error) {
-	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
-	if err != nil || !exists {
-		if err == nil {
-			err = errors.New("repository not found")
-		}
-		return RefSnapshot{}, err
-	}
-	lock := m.Locks.For(id)
-	lock.RLock()
-	defer lock.RUnlock()
+// readRefSnapshot lists the refs of the repository at repositoryPath. The
+// caller holds the repository's read lock.
+//
+// complete is false when a follow-up read failed: the git log read of the
+// default branch tip, or the symbolic-ref read of HEAD. The snapshot is then
+// returned without those fields, as before, but must not be cached, since the
+// failure may be transient (a canceled request, a deadline, a network share
+// hiccup). symbolic-ref --quiet exiting with status 1 while ctx is still live
+// is a definitive answer that HEAD is not a symbolic ref (a detached HEAD),
+// so that result is complete. Any other symbolic-ref failure, including a
+// canceled or expired ctx, another exit status, or a failure to start Git,
+// makes the result incomplete.
+func (m *Manager) readRefSnapshot(ctx context.Context, repositoryPath string) (snapshot RefSnapshot, complete bool, err error) {
 	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", snapshotFormat,
 		"refs/heads", "refs/tags", "refs/owngit/retained", "refs/owngit/provenance/heads")
 	if err != nil {
-		return RefSnapshot{}, err
+		return RefSnapshot{}, false, err
 	}
-	snapshot := RefSnapshot{}
+	complete = true
 	summary := &snapshot.Summary
 	hasRetained := false
 	var keyed []activityKeyRef
@@ -56,7 +59,7 @@ func (m *Manager) RefSnapshot(ctx context.Context, id string) (RefSnapshot, erro
 		}
 		parts := bytes.SplitN(line, []byte{0}, 7)
 		if len(parts) != 4 && len(parts) != 7 {
-			return RefSnapshot{}, errors.New("Git returned a malformed ref record")
+			return RefSnapshot{}, false, errors.New("Git returned a malformed ref record")
 		}
 		name, oid, objectType := string(parts[0]), string(parts[1]), string(parts[2])
 		if activityKeyRefName(name) {
@@ -84,6 +87,7 @@ func (m *Manager) RefSnapshot(ctx context.Context, id string) (RefSnapshot, erro
 	if snapshot.HeadFound && !sameAsLog(snapshot.Head) {
 		metadata, err := commitMetadataByOID(ctx, m.Git, repositoryPath, []string{snapshot.Head.OID})
 		snapshot.Head, snapshot.HeadFound = metadata[snapshot.Head.OID], err == nil
+		complete = err == nil
 	}
 	if summary.DefaultBranch == "" {
 		// HEAD names no existing branch. Read it only in this case, so a
@@ -92,8 +96,11 @@ func (m *Manager) RefSnapshot(ctx context.Context, id string) (RefSnapshot, erro
 		if full := strings.TrimSpace(string(head.Stdout)); err == nil && strings.HasPrefix(full, "refs/heads/") {
 			summary.DefaultBranch = strings.TrimPrefix(full, "refs/heads/")
 		}
+		if err != nil && !gitAnsweredNo(ctx, err) {
+			complete = false
+		}
 	}
-	return snapshot, nil
+	return snapshot, complete, nil
 }
 
 type activityKeyRef struct {

@@ -37,6 +37,8 @@ type Manager struct {
 	// It must be nonblocking and must not execute repository commands.
 	OnChange func(string)
 	mu       sync.RWMutex
+	// snapshots caches RefSnapshot results between ref writes.
+	snapshots snapshotCache
 
 	// deletionClock and deletionHook let tests fix the kept-folder time and
 	// stop a deletion after a durable step, as a crash would.

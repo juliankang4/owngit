@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
-	"sync"
 	"time"
 
+	"owngit/internal/gitexec"
 	"owngit/internal/state"
 )
 
@@ -66,7 +66,7 @@ func (s *Service) ResolveUnresolved(ctx context.Context, repositoryID string) (R
 // lockBeforeDeadline takes the repository write lock unless ctx ends first,
 // so a long writer such as a push cannot hold an owner request past its
 // deadline.
-func lockBeforeDeadline(ctx context.Context, lock *sync.RWMutex) error {
+func lockBeforeDeadline(ctx context.Context, lock *gitexec.RepositoryLock) error {
 	for !lock.TryLock() {
 		timer := time.NewTimer(20 * time.Millisecond)
 		select {

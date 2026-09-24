@@ -28,8 +28,10 @@ var errRefsUnlisted = errors.New("repository refs could not be listed")
 // activityCache keeps one activity observation per repository. Each
 // observation carries repository.Activity.Key, a digest of the refs it was
 // computed from, and is reused only while RefSnapshot reports the same key.
-// A push, restore, merge, import, or any other ref change therefore selects a
-// new computation without an explicit invalidation call.
+// A push, restore, merge, import, or any other ref change made through OwnGit
+// therefore selects a new computation without an explicit invalidation call.
+// RefSnapshot itself is cached between OwnGit writes; see
+// repository.Manager.RefSnapshot.
 //
 // Computations run in the background, so a slow repository delays its own
 // numbers instead of the page. They keep the page-wide budget: a repository
@@ -382,7 +384,8 @@ func (app *App) StopBackground() {
 }
 
 // refSnapshots reads every repository's ref snapshot with bounded
-// concurrency. errs[i] reports a failure for repositories[i].
+// concurrency. A repository unchanged since its previous snapshot starts no
+// Git process. errs[i] reports a failure for repositories[i].
 func (app *App) refSnapshots(ctx context.Context, repositories []state.Repository) ([]repository.RefSnapshot, []error) {
 	snapshots := make([]repository.RefSnapshot, len(repositories))
 	errs := make([]error, len(repositories))

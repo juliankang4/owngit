@@ -18,12 +18,13 @@ import (
 const stillCounting = "Some repositories are still being counted"
 
 // TestActivityCacheFollowsRefChanges proves that pages reuse one observation
-// while the counted refs are unchanged and count again after a push.
+// while the counted refs are unchanged and count again after a push through
+// Smart HTTP.
 func TestActivityCacheFollowsRefChanges(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the command-counting wrapper is a Unix test fixture")
 	}
-	app, remote, work := newActivityFixture(t, "cached", 2)
+	app, _, work := newActivityFixture(t, "cached", 2)
 	tracePath := traceActivityLogs(t, app)
 	server := serve(t, app.Handler())
 	jar, _ := cookiejar.New(nil)
@@ -42,6 +43,7 @@ func TestActivityCacheFollowsRefChanges(t *testing.T) {
 	}
 
 	apiRunGit(t, work, "tag", "uncounted")
+	remote := server.URL + "/git/cached.git"
 	apiRunGit(t, work, "push", remote, "refs/tags/uncounted")
 	dashboardGET(t, client, server.URL+"/")
 	if got := walks(); got != 1 {

@@ -27,6 +27,7 @@ func TestRefSnapshotMatchesSummaryAndHeadCommit(t *testing.T) {
 	commitFile(t, work, "one", "first line\nstill the subject\n\nbody", "2024-03-04T05:06:07+09:00")
 	runGit(t, work, "tag", "-a", "annotated", "-m", "annotated")
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/main", "HEAD:refs/heads/side", "refs/tags/annotated")
+	wroteRefs(manager, "sample")
 	snapshot, err := manager.RefSnapshot(ctx, "sample")
 	noErr(t, err)
 	summary, err := manager.Summary(ctx, "sample")
@@ -59,6 +60,7 @@ func TestRefSnapshotMatchesSummaryAndHeadCommit(t *testing.T) {
 	} {
 		oid := hashCommit(t, remote, "tree "+tree+"\nparent "+parent+"\n"+message.header+"\n"+message.body)
 		runGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/main", oid)
+		wroteRefs(manager, "sample")
 		snapshot, err := manager.RefSnapshot(ctx, "sample")
 		noErr(t, err)
 		_, commits, err := manager.Commits(ctx, "sample", "refs/heads/main", 1)
@@ -75,6 +77,7 @@ func TestRefSnapshotMatchesSummaryAndHeadCommit(t *testing.T) {
 
 	// A deleted default branch is still named, as Summary names it.
 	runGit(t, work, "push", "origin", ":refs/heads/main")
+	wroteRefs(manager, "sample")
 	missing, err := manager.RefSnapshot(ctx, "sample")
 	noErr(t, err)
 	missingSummary, err := manager.Summary(ctx, "sample")
@@ -93,6 +96,7 @@ func TestActivityKeyFollowsEveryActivityInput(t *testing.T) {
 	ctx := context.Background()
 	check := func(step string) string {
 		t.Helper()
+		wroteRefs(manager, "sample")
 		snapshot, err := manager.RefSnapshot(ctx, "sample")
 		noErr(t, err)
 		activity, err := manager.Activity(ctx, "sample", 100)
@@ -217,6 +221,7 @@ func TestRefSnapshotMatchesSummaryForHeadStates(t *testing.T) {
 	ctx := context.Background()
 	compare := func(step string) RefSnapshot {
 		t.Helper()
+		wroteRefs(manager, "sample")
 		snapshot, err := manager.RefSnapshot(ctx, "sample")
 		noErr(t, err)
 		summary, err := manager.Summary(ctx, "sample")

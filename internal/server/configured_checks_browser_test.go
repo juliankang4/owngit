@@ -1385,7 +1385,7 @@ func TestBrowserCheckFileStatusReadsTheDefaultBranch(t *testing.T) {
 		noErr(t, os.WriteFile(filepath.Join(fixture.work, ".owngit", "checks.json"), []byte(content), 0o600))
 		apiRunGit(t, fixture.work, "add", ".")
 		apiRunGit(t, fixture.work, "commit", "-m", "checks")
-		apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/main")
+		apiRunGit(t, fixture.work, "push", server.URL+"/git/project.git", "HEAD:refs/heads/main")
 	}
 
 	// The example the page offers is a file the real parser accepts.

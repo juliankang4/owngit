@@ -13,9 +13,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"owngit/internal/gitexec"
 	"owngit/internal/publishdir"
 	"owngit/internal/state"
 )
@@ -184,6 +184,7 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 	incomplete := func(err error) (DeleteResult, error) {
 		return DeleteResult{}, fmt.Errorf("%w: %v", ErrDeleteIncomplete, err)
 	}
+	m.snapshots.drop(deletion.RepositoryID)
 	if deletion.Root != root {
 		return incomplete(fmt.Errorf("the repository folder changed from %s since the deletion began; its directory is left in place", deletion.Root))
 	}
@@ -475,7 +476,7 @@ func deletionBusyError(err error) error {
 }
 
 // lockWithin takes the write lock unless wait or ctx ends first.
-func lockWithin(ctx context.Context, lock *sync.RWMutex, wait time.Duration) error {
+func lockWithin(ctx context.Context, lock *gitexec.RepositoryLock, wait time.Duration) error {
 	deadline := time.Now().Add(wait)
 	for !lock.TryLock() {
 		if time.Now().After(deadline) {
