@@ -12,15 +12,18 @@ import (
 // Coding-tool resources shipped beside the binary.
 //
 // An installed user needs the skill and its guide without cloning the source,
-// so both travel in every artifact. They are declared here by name rather than
+// so they travel in every artifact. The guide ships in English and Korean,
+// and each version links to the other. They are declared here by name rather than
 // discovered by walking a directory, for the same reason the notice set is:
 // packaging must not silently gain or lose a file.
 //
 // The archive keeps each resource at its source-relative path. The guide links
 // to the skill with a relative path, and preserving the layout keeps that link
-// working in the installed tree without maintaining a rewritten copy.
+// working in the installed tree without maintaining a rewritten copy. The same
+// holds for the link between the two language versions of the guide.
 var releaseResources = []string{
 	"docs/CODING_TOOLS.md",
+	"docs/CODING_TOOLS.ko.md",
 	"integrations/skills/owngit-checks/SKILL.md",
 }
 

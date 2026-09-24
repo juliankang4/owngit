@@ -413,7 +413,7 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgCheckProtectionRunner: {
 		en: "On an external runner. The protection is what that runner reported, and OwnGit did not verify it.",
-		ko: "외부 러너에서 실행되었습니다. 보호 수준은 해당 러너가 보고한 내용이며 OwnGit가 확인한 것이 아닙니다.",
+		ko: "외부 러너에서 실행되었습니다. 보호 수준은 해당 러너가 보고한 내용이며 OwnGit이 확인한 것이 아닙니다.",
 	},
 	MsgCheckProvenanceHelper: {
 		en: "Reported by the check helper using its own repository credential.",
@@ -421,7 +421,7 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgCheckProvenanceAutomatic: {
 		en: "Run by OwnGit for a job it admitted under the saved policy.",
-		ko: "OwnGit가 저장된 정책에 따라 받아들인 작업을 직접 실행했습니다.",
+		ko: "OwnGit이 저장된 정책에 따라 받아들인 작업을 직접 실행했습니다.",
 	},
 	MsgCheckProvenanceRunner: {
 		en: "Claimed and reported by an external runner using a repository runner token.",

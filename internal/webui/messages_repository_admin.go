@@ -137,7 +137,7 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoDefaultBranchTitle: {en: "Default branch", ko: "기본 브랜치"},
 	MsgRepoDefaultBranchHelp: {
 		en: "OwnGit shows this branch first, and a new clone checks it out. Only existing branches can be chosen.",
-		ko: "OwnGit가 먼저 보여 주고, 새로 클론하면 받게 되는 브랜치입니다. 이미 있는 브랜치만 고를 수 있습니다.",
+		ko: "OwnGit이 먼저 보여 주고, 새로 클론하면 받게 되는 브랜치입니다. 이미 있는 브랜치만 고를 수 있습니다.",
 	},
 	MsgRepoDefaultBranchLabel:   {en: "Branch", ko: "브랜치"},
 	MsgRepoDefaultBranchCurrent: {en: "Now:", ko: "지금:"},
@@ -187,7 +187,7 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoAdminPagesTitle: {en: "Other administrator pages", ko: "다른 관리자 화면"},
 	MsgRepoAdminChecksLine: {
 		en: "Decide whether OwnGit runs this repository's checks, and how.",
-		ko: "OwnGit가 이 저장소의 체크를 실행할지, 어떻게 실행할지 정합니다.",
+		ko: "OwnGit이 이 저장소의 체크를 실행할지, 어떻게 실행할지 정합니다.",
 	},
 	MsgRepoAdminRunnersLine: {
 		en: "Tokens for a runner on another machine that takes this repository's check work.",
@@ -263,7 +263,7 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	},
 	MsgRepoRemovedKeptWhere: {
 		en: "Run this on the computer where OwnGit runs, because the folder is on that computer.",
-		ko: "이 명령은 OwnGit가 실행 중인 컴퓨터에서 실행하세요. 폴더가 그 컴퓨터에 있습니다.",
+		ko: "이 명령은 OwnGit이 실행 중인 컴퓨터에서 실행하세요. 폴더가 그 컴퓨터에 있습니다.",
 	},
 	MsgRepoRemovedDeleted: {en: "Deleted with its files:", ko: "파일까지 삭제했습니다:"},
 	MsgRepoRemovedIncomplete: {
@@ -272,7 +272,7 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	},
 	MsgRepoRemovedCleanupLater: {
 		en: "The file cleanup finishes at the next start of OwnGit. Until then, a new repository cannot use this name.",
-		ko: "파일 정리는 OwnGit를 다음에 시작할 때 끝납니다. 그때까지는 이 이름으로 새 저장소를 만들 수 없습니다.",
+		ko: "파일 정리는 OwnGit을 다음에 시작할 때 끝납니다. 그때까지는 이 이름으로 새 저장소를 만들 수 없습니다.",
 	},
 	MsgRepoRemovedGeneric: {en: "The repository was removed.", ko: "저장소를 제거했습니다."},
 }

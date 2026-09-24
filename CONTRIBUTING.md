@@ -150,7 +150,7 @@ go run ./tools/release verify -dir dist/portable
 - `build` compiles each target with `-trimpath -buildvcs=false` and `CGO_ENABLED=0`, writes deterministic archives, `SHA256SUMS`, and `manifest.json`, and then runs `verify`. `-targets` selects a comma-separated subset.
 - `verify` re-checks archive digests, contents, embedded build metadata, and the notice set, and rejects private or build files such as `.git/`, `.local/`, `*.sqlite`, and `*.test`. It runs only the binary built for the host. Every archive carries the notices for all release targets, so `verify` refuses a notice entry that no target links only when the directory holds every release target.
 
-Build targets are `darwin/arm64` (macOS on Apple silicon), `linux/amd64`, `linux/arm64`, and `windows/amd64`. Each archive holds the `owngit` executable, `LICENSE`, `THIRD_PARTY_NOTICES/`, `README.txt`, `docs/CODING_TOOLS.md`, and `integrations/skills/owngit-checks/SKILL.md`. `tools/release/resources.go` declares the last two by path, so moving them requires changing the release tool and its tests.
+Build targets are `darwin/arm64` (macOS on Apple silicon), `linux/amd64`, `linux/arm64`, and `windows/amd64`. Each archive holds the `owngit` executable, `LICENSE`, `THIRD_PARTY_NOTICES/`, `README.txt`, `docs/CODING_TOOLS.md`, `docs/CODING_TOOLS.ko.md`, and `integrations/skills/owngit-checks/SKILL.md`. `tools/release/resources.go` declares the last three by path, so moving them requires changing the release tool and its tests.
 
 The application version is `internal/version.Version`. Every artifact name, manifest, and package file takes its version from that one value. 1.0.0 is the first version and has no changelog entry. Each later release adds a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` that matches `internal/version.Version`, with notable changes grouped under `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, and `Security`, and breaking changes and removals stated explicitly.
 
@@ -179,8 +179,9 @@ The npm packages are published by the `npm publish` workflow ([`.github/workflow
 - `SECURITY.md`: how to report a vulnerability privately.
 - `docs/OPERATIONS.md`: setup, access, recovery, imports, pull requests, checks, storage, and backups.
 - `docs/AUTOMATIC_CHECKS.md`: configured checks and runners.
-- `docs/CODING_TOOLS.md`: the coding-tool workflow. Its path is fixed by the release tool, and `cmd/owngit/check_budget_test.go` requires certain phrases in it and in the skill. Keep the guide and `integrations/skills/owngit-checks/SKILL.md` consistent.
+- `docs/CODING_TOOLS.md`: the coding-tool workflow. Its path and the path of its Korean version `docs/CODING_TOOLS.ko.md` are fixed by the release tool, and `cmd/owngit/check_budget_test.go` requires certain phrases in it and in the skill. Keep the guide and `integrations/skills/owngit-checks/SKILL.md` consistent.
+- `SECURITY.ko.md`, `docs/OPERATIONS.ko.md`, `docs/AUTOMATIC_CHECKS.ko.md`, and `docs/CODING_TOOLS.ko.md`: Korean versions of the documents above.
 - `CONTRIBUTING.md`: this guide.
 - `CHANGELOG.md`: notable changes per version, in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-Update the documentation in the same change as the behavior it describes. Describe what exists, and do not document planned features or unverified platforms as supported.
+Update the documentation in the same change as the behavior it describes. When a document has a Korean version (`README.ko.md` or another `*.ko.md` file), a change to either one updates the other in the same change. Describe what exists, and do not document planned features or unverified platforms as supported.

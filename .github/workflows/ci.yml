@@ -17,6 +17,7 @@ on:
       - "!**.md"
       - "!docs/images/**"
       - "docs/CODING_TOOLS.md"
+      - "docs/CODING_TOOLS.ko.md"
       - "integrations/**"
       - "THIRD_PARTY_NOTICES/**"
   workflow_dispatch:

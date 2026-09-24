@@ -1,5 +1,7 @@
 # Coding tool integration
 
+<p align="center"><b>English</b> | <a href="CODING_TOOLS.ko.md">한국어</a></p>
+
 OwnGit exposes project checks to coding tools through a versioned JSON command
 line interface and a shared Agent Skill. The integration does not require MCP,
 a daemon, or a session launcher. The coding tool runs the `owngit` binary in
@@ -51,7 +53,8 @@ user's behalf.
 
 The shared skill is
 [integrations/skills/owngit-checks/SKILL.md](../integrations/skills/owngit-checks/SKILL.md).
-Artifacts built by the release tool carry the same two files; see
+Artifacts built by the release tool carry the skill and this guide in both
+languages; see
 [Installed locations](#installed-locations). Nothing installs a skill for you:
 copy it yourself, or point the coding tool at its path.
 
@@ -267,6 +270,7 @@ source-relative paths, so the guide's link to the skill resolves in an unpacked
 archive:
 
 - `docs/CODING_TOOLS.md`
+- `docs/CODING_TOOLS.ko.md`
 - `integrations/skills/owngit-checks/SKILL.md`
 
 The unsigned macOS app prototype holds them under

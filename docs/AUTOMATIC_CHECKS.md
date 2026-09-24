@@ -1,5 +1,7 @@
 # Automatic checks
 
+<p align="center"><b>English</b> | <a href="AUTOMATIC_CHECKS.ko.md">한국어</a></p>
+
 OwnGit can run checks that a repository configures, after the owner saves an
 execution policy and explicitly enables it. Checks run as the OwnGit account on
 the host, in a restricted local Docker container, or on a separately connected
@@ -120,7 +122,7 @@ A job page shows the commit, executor, workflow path, configuration and policy
 versions, and timestamps captured when the job was admitted, so an older job
 shows what applied to it. Cancel is available while a job is pending, claimed,
 or running, and a recorded cancellation is a request, not proof that the
-process stopped. Rerun is available once a job has finished. Each attempt says
+process stopped. Run again is available once a job has finished. Each attempt says
 whether it was a manual helper run in someone's own environment or an
 automatic job, and neither is described as a sandbox. The screen distinguishes
 a missing record from one that could not be read.

@@ -38,7 +38,7 @@ func TestKoreanDeveloperTermsUseFamiliarWording(t *testing.T) {
 		MsgImportStatusFailed:     "실패",
 		MsgImportStatusCancelled:  "취소됨",
 		MsgImportRefTracked:       "원본과 같음",
-		MsgImportRefDiverged:      "달라짐",
+		MsgImportRefDiverged:      "원본과 다름",
 		MsgImportCredentialBasic:  "사용자 이름과 비밀번호",
 		MsgImportCredentialBearer: "액세스 토큰",
 		MsgImportCredentialNone:   "없음",

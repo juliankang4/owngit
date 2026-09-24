@@ -1,5 +1,7 @@
 # Operations
 
+<p align="center"><b>English</b> | <a href="OPERATIONS.ko.md">한국어</a></p>
+
 ## First-time setup
 
 From the source checkout:
@@ -67,7 +69,7 @@ OwnGit has no email or account recovery. Both procedures require access to the i
 
 ## Restoring repository files
 
-Open Restore from a repository, commit, or file page. Choose a source commit and target branch, then preview the complete list of additions, changes, and deletions. OwnGit applies the reviewed tree only if the target branch still has the previewed tip.
+Start a restore from the repository's Overview (Start a restore, under Restore files), from a branch, tag, or kept-history line on the Overview or a commit page (Restore files from here), or from a file page (Restore this file). Choose a source commit and target branch, then preview the complete list of additions, changes, and deletions. OwnGit applies the reviewed tree only if the target branch still has the previewed tip.
 
 An existing branch receives a new commit whose parent is its previous tip. A deleted branch is recreated at the selected commit. Selected-file restore keeps unselected files, file modes, binary files, and symbolic links as they are, and never follows links on the host. OwnGit refuses to restore a selected submodule, or a path whose replacement would remove unselected files beneath it.
 
@@ -75,14 +77,14 @@ Restore changes Git-tracked content in OwnGit only. It does not touch another co
 
 ## Changing the default branch
 
-The default branch is the branch that OwnGit and `git clone` open first (the repository's `HEAD`). An imported repository whose only branch is `master` shows no default branch until you choose one. An administrator picks any existing branch in the repository's Settings tab. Changing it creates no branch and leaves every ref and retained history as it was.
+The default branch is the branch that OwnGit and `git clone` open first (the repository's `HEAD`). An imported repository whose only branch is `master` shows no default branch until you choose one. An administrator picks any existing branch in the repository's Settings tab. Changing it creates no branch and leaves every ref and kept history as it was.
 
 ## Deleting a repository
 
 Deleting a repository removes it from OwnGit together with its pull requests, reviews, tasks, check settings, jobs and results, runner and helper credentials, import settings, run history and stored import credentials. Queued check jobs are dropped. An administrator deletes a repository with Delete repository, at the end of the repository's tabs, by typing its name and the administrator password. When the deletion finishes, the name is free for a new repository. You choose what happens to the files:
 
-- Keep files moves the bare repository, unchanged, to `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git` inside the repository folder. `ID` is the repository name in lowercase, as in its Git URL, and the time is UTC; a number is added if that name is taken. Its branches, tags and retained history stay in that folder until you remove it yourself.
-- Delete files deletes the bare repository, including its retained history.
+- Remove from OwnGit and keep the files moves the bare repository, unchanged, to `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git` inside the repository folder. `ID` is the repository name in lowercase, as in its Git URL, and the time is UTC; a number is added if that name is taken. Its branches, tags and kept history stay in that folder until you remove it yourself.
+- Delete the files too deletes the bare repository, including its kept history.
 
 OwnGit refuses to delete a repository while an import is running, while a check job is claimed or running, while a check container still waits for OwnGit to confirm its removal, or while another Git operation (a push, clone, restore or merge) still holds the repository after a short wait. Try again once it finishes. A container cleanup that failed is retried when OwnGit starts, so restart OwnGit after Docker is available again. If the server log says the job belongs to another Docker daemon (for example after Docker was reset or reinstalled), OwnGit cannot confirm the cleanup, and it also skips removing old check workspaces at startup. Remove any leftover container labeled `com.owngit.check-job=JOB` on the daemon that ran it, or make sure that daemon no longer exists. Then release the record on the OwnGit computer:
 
@@ -98,13 +100,13 @@ While a deletion is unfinished, the repository folder also holds a small `.owngi
 
 Earlier backups still contain a deleted repository, and the database space its records used is freed but not securely erased. Folders under `.owngit-removed` are never listed as repositories and are not included in backups.
 
-After a Keep files deletion, the dashboard shows the kept folder and this command once. To bring back a kept repository, create a new empty repository in the dashboard, then push the branches and tags from the kept folder:
+After a deletion that kept the files, the dashboard shows the kept folder once, with a command that pushes its branches and tags to a new repository with the same name. Run it on the computer where OwnGit runs, because the folder is there. To bring the repository back, create an empty repository with the same name in the dashboard, then run the command. If the dashboard cannot confirm the kept folder, it shows no command; push from the folder yourself. To push into a repository with another name, use its URL:
 
 ```sh
 git --git-dir /path/to/repositories/.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git push http://HOST:7654/git/NEW-NAME.git 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
 ```
 
-Retained history is not transferred. Commits that only retained history holds stay in the kept folder, and the new repository starts its own retained history. Pull requests, checks and other records do not come back either. If the kept repository's main branch is not `main`, change the default branch afterwards.
+Kept history is not transferred. Commits that only kept history holds stay in the kept folder, and the new repository starts its own kept history. Pull requests, checks and other records do not come back either. If the kept repository's main branch is not `main`, change the default branch afterwards.
 
 ## Moving an existing repository into OwnGit
 
@@ -125,7 +127,7 @@ git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
 git ls-remote --heads --tags owngit
 ```
 
-Pushing between two OwnGit installations does not carry retained history or repository records. Use an offline backup when those must move too. To keep pulling changes from a host that stays in use, see [Importing from another Git host](#importing-from-another-git-host).
+Pushing between two OwnGit installations does not carry kept history or repository records. Use an offline backup when those must move too. To keep pulling changes from a host that stays in use, see [Importing from another Git host](#importing-from-another-git-host).
 
 ## Keeping a copy on another host
 
@@ -139,7 +141,7 @@ cd PROJECT.git
 git push --mirror https://git.example.test/team/project.git
 ```
 
-To update the copy later, run `git fetch --prune` and `git push --mirror` again in the same directory. `--mirror` makes the other host match the copy exactly: it overwrites refs there and deletes refs that the copy does not have. OwnGit does not share its retained history, so that history stays in OwnGit.
+To update the copy later, run `git fetch --prune` and `git push --mirror` again in the same directory. `--mirror` makes the other host match the copy exactly: it overwrites refs there and deletes refs that the copy does not have. OwnGit does not share its kept history, so that history stays in OwnGit.
 
 To update both hosts with every push from a working clone, give its remote two push URLs:
 
@@ -213,7 +215,7 @@ A refresh never overwrites local work. For each ref:
 
 A source branch or tag whose name differs only by case from an existing local ref is not created and is reported as divergent; rename or remove one of the two if you want the source ref imported.
 
-A branch or tag deleted at the source is never removed locally. Every replaced value is kept in retained history. After you change the source URL, OwnGit has not yet seen the new source's refs, so refs that differ are reported as divergent instead of being replaced.
+A branch or tag deleted at the source is never removed locally. Every replaced value stays in kept history. After you change the source URL, OwnGit has not yet seen the new source's refs, so refs that differ are reported as divergent instead of being replaced.
 
 A refresh changes the repository's HEAD only when OwnGit set that HEAD on an earlier import from the same source and nothing changed it since. Otherwise HEAD stays as it is and is reported as divergent.
 
@@ -349,7 +351,7 @@ If OwnGit cannot read the list of repositories from its state database, it still
 
 ## Offline backups
 
-Retained history protects against force-pushes and deletions, but it is not a backup. A secret that was ever pushed stays visible in the browser and is included in every later backup, even after a force-push or branch deletion. Only [deleting the repository](#deleting-a-repository) with its files removes that history, and earlier backups still contain it. Rotate any secret you push by mistake. OwnGit does not schedule backups. Stop OwnGit before creating one. The output directory must not exist:
+Kept history protects against force-pushes and deletions, but it is not a backup. A secret that was ever pushed stays visible in the browser and is included in every later backup, even after a force-push or branch deletion. Only [deleting the repository](#deleting-a-repository) with its files removes that history, and earlier backups still contain it. Rotate any secret you push by mistake. OwnGit does not schedule backups. Stop OwnGit before creating one. The output directory must not exist:
 
 ```sh
 ./bin/owngit backup \
@@ -359,7 +361,7 @@ Retained history protects against force-pushes and deletions, but it is not a ba
 
 A backup holds a manifest and one Git bundle per nonempty repository. It includes:
 
-- every ref, including OwnGit's retained history, and each repository's HEAD and metadata;
+- every ref, including OwnGit's kept history, and each repository's HEAD and metadata;
 - pull requests, reviews, merge records, tasks, check configurations, check results, and automatic-check policies and jobs;
 - import sources, run history, and publication records;
 - the access mode and password hashes.

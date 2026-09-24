@@ -1,5 +1,7 @@
 # Security policy
 
+<p align="center"><b>English</b> | <a href="SECURITY.ko.md">한국어</a></p>
+
 ## Reporting a vulnerability
 
 Please report security problems privately through GitHub: open the repository's **Security** tab and choose **Report a vulnerability**. Do not open a public issue for them.

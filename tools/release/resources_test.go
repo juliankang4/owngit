@@ -49,16 +49,28 @@ func TestResourcesTravelInThePortableArchive(t *testing.T) {
 		}
 	}
 
-	// The guide links to the skill by relative path. Keeping the source
-	// layout is what makes that link resolve in an unpacked archive.
-	guide := string(byName["docs/CODING_TOOLS.md"].data)
-	link := "../integrations/skills/owngit-checks/SKILL.md"
-	if !strings.Contains(guide, link) {
-		t.Fatalf("the guide no longer links to the skill with %s", link)
-	}
-	resolved := filepath.Join(filepath.Dir("docs/CODING_TOOLS.md"), filepath.FromSlash(link))
-	if _, ok := byName[filepath.ToSlash(filepath.Clean(resolved))]; !ok {
-		t.Errorf("the guide's relative link does not resolve inside the archive")
+	// Each language version of the guide links to the skill and to the other
+	// version by relative path. Keeping the source layout is what makes those
+	// links resolve in an unpacked archive.
+	for guideName, links := range map[string][]string{
+		"docs/CODING_TOOLS.md":    {"../integrations/skills/owngit-checks/SKILL.md", "CODING_TOOLS.ko.md"},
+		"docs/CODING_TOOLS.ko.md": {"../integrations/skills/owngit-checks/SKILL.md", "CODING_TOOLS.md"},
+	} {
+		entry, ok := byName[guideName]
+		if !ok {
+			t.Errorf("the archive does not carry %s", guideName)
+			continue
+		}
+		guide := string(entry.data)
+		for _, link := range links {
+			if !strings.Contains(guide, "("+link+")") && !strings.Contains(guide, `"`+link+`"`) {
+				t.Fatalf("%s no longer links to %s", guideName, link)
+			}
+			resolved := filepath.Join(filepath.Dir(guideName), filepath.FromSlash(link))
+			if _, ok := byName[filepath.ToSlash(filepath.Clean(resolved))]; !ok {
+				t.Errorf("the link from %s to %s does not resolve inside the archive", guideName, link)
+			}
+		}
 	}
 
 	// The skill is the reviewed one, not an edited copy.

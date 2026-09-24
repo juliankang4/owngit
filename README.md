@@ -79,7 +79,7 @@ Create a repository from the dashboard, then use its clone address, for example 
 
 ## Status and limits
 
-A force-push or branch deletion keeps the old commits in retained history, so a committed secret stays in OwnGit and its backups. Deleting the whole repository with its files is the only way to remove that history, and earlier backups still contain it; rotate any secret you push by mistake. Retained history is not a backup, and backups run only when you start them. Host and runner check commands run with their account's permissions and are not sandboxes. OwnGit records review labels and check results that other tools supply, but it never runs reviewers or coding agents. Git LFS objects are not hosted or imported. Pull request merge requires Git 2.38 or newer on the OwnGit host.
+A force-push or branch deletion leaves the old commits in kept history, so a committed secret stays in OwnGit and its backups. Deleting the whole repository with its files is the only way to remove that history, and earlier backups still contain it; rotate any secret you push by mistake. Kept history is not a backup, and backups run only when you start them. Host and runner check commands run with their account's permissions and are not sandboxes. OwnGit records review labels and check results that other tools supply, but it never runs reviewers or coding agents. Git LFS objects are not hosted or imported. Pull request merge requires Git 2.38 or newer on the OwnGit host.
 
 ## License
 
