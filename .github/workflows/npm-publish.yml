@@ -37,7 +37,11 @@ defaults:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    # Release archives are built on an Apple silicon Mac, which records that
+    # it ran only the darwin/arm64 executable. tools/release packaging checks
+    # the executable of its own host against that record, so this job runs on
+    # an Apple silicon runner.
+    runs-on: macos-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -125,7 +129,7 @@ jobs:
             echo "SHA256SUMS lists $count archives, not 4" >&2
             exit 1
           fi
-          sha256sum --check --strict SHA256SUMS
+          shasum -a 256 --check --strict SHA256SUMS
 
       - name: Render the npm packages
         run: |
