@@ -188,7 +188,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		inflated.Multistream(false)
-		body = &gzipBody{inflated: inflated, source: source, cancel: cancelStream}
+		body = &gzipBody{inflated: inflated, source: source, cancel: cancelStream, closed: make(chan struct{})}
 		if h.MaximumRequest > 0 {
 			body = http.MaxBytesReader(nil, body, h.MaximumRequest)
 		}
@@ -262,29 +262,35 @@ var errInvalidGzip = errors.New("request body is not valid gzip")
 
 // gzipBody inflates a request body. When the network body ended cleanly but
 // the gzip stream is corrupt, truncated or fails its checksum, Read cancels
-// the operation so the backend is terminated rather than treating the end of
-// its input as a complete request. Errors of the network body itself, such
-// as a disconnect or the size limit, keep their existing handling.
+// the operation and blocks until the backend stream closes the body. The
+// stream terminates the backend before that close, so the backend never sees
+// the end of its input and cannot take a partial request as complete. Errors
+// of the network body itself, such as a disconnect or the size limit, keep
+// their existing handling.
 type gzipBody struct {
-	inflated *gzip.Reader
-	source   *observedBody
-	cancel   context.CancelCauseFunc
+	inflated  *gzip.Reader
+	source    *observedBody
+	cancel    context.CancelCauseFunc
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 func (body *gzipBody) Read(buffer []byte) (int, error) {
 	n, err := body.inflated.Read(buffer)
 	if err != nil && err != io.EOF && body.source.firstError() == nil {
 		body.cancel(errInvalidGzip)
+		<-body.closed
 		// Withhold bytes decoded together with the error.
 		return 0, err
 	}
 	return n, err
 }
 
-// Close closes only the network body: the backend stream calls Close
-// concurrently with Read to release a blocked read, which the network body
-// allows and gzip.Reader does not. gzip.Reader holds nothing to release.
+// Close releases a blocked Read and closes only the network body: the backend
+// stream calls Close concurrently with Read, which the network body allows
+// and gzip.Reader does not. gzip.Reader holds nothing to release.
 func (body *gzipBody) Close() error {
+	body.closeOnce.Do(func() { close(body.closed) })
 	return body.source.Close()
 }
 

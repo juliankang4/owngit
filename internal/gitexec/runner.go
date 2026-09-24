@@ -251,6 +251,10 @@ func commandName(args []string) string {
 // return until the process and its owned descendants have been reaped. It owns
 // both subprocess pipes: cancellation closes the request reader and pipes so a
 // stalled upload cannot keep a copy goroutine or child process alive.
+//
+// Cancellation terminates the process before it closes stdin, so a cancelled
+// process never sees a clean end of its input. A stdin reader that must not
+// end the input cleanly can cancel ctx and block in Read until Close.
 func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
 	var stderr limitedBuffer
 	stderr.limit = r.OutputLimit
@@ -339,11 +343,13 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 		}
 	case <-ctx.Done():
 		consumeErr = ctx.Err()
-		closeInput(stdin)
-		_ = stdinPipe.Close()
 		_ = stdout.Close()
 		startWait()
 		terminate()
+		// Only now release a blocked request read and end the input: the
+		// process is gone and cannot mistake the close for a complete request.
+		closeInput(stdin)
+		_ = stdinPipe.Close()
 		if err := <-consumeCh; consumeErr == nil {
 			consumeErr = err
 		}
@@ -351,6 +357,11 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 
 	// A backend may exit without consuming its complete request. Closing the
 	// source here releases a blocked network-body read before process cleanup.
+	// If the output ended while ctx was cancelled, terminate first, as above.
+	if ctx.Err() != nil {
+		startWait()
+		terminate()
+	}
 	closeInput(stdin)
 	_ = stdinPipe.Close()
 	startWait()

@@ -227,11 +227,11 @@ func TestRunReapsBackgroundDescendantsOnWindows(t *testing.T) {
 	if err := positive.Run(); err != nil {
 		t.Fatalf("positive control did not start: %v", err)
 	}
-	if !waitForWindowsMarker(positiveMarker, 4*time.Second) {
+	// The marker exists as soon as the descendant creates it, while the
+	// descendant may still hold it open, so wait for the complete content
+	// and leave the file in place: removing it would race that handle's close.
+	if !waitForWindowsMarkerContent(positiveMarker, "done\n", 4*time.Second) {
 		t.Fatal("positive control descendant did not survive its launcher")
-	}
-	if err := os.Remove(positiveMarker); err != nil {
-		t.Fatal(err)
 	}
 
 	marker := filepath.Join(directory, "owned")
@@ -444,6 +444,17 @@ func readWindowsProcessReceipt(path string, timeout time.Duration) (windowsProce
 		time.Sleep(20 * time.Millisecond)
 	}
 	return windowsProcessReceipt{}, fmt.Errorf("read child receipt: %w", lastErr)
+}
+
+func waitForWindowsMarkerContent(path, want string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if content, err := os.ReadFile(path); err == nil && string(content) == want {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
 }
 
 func waitForWindowsMarker(path string, timeout time.Duration) bool {

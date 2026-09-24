@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -20,6 +21,7 @@ import (
 const (
 	streamFixtureEnv     = "OWNGIT_GITEXEC_STREAM_FIXTURE"
 	streamFixturePIDFile = "OWNGIT_GITEXEC_STREAM_FIXTURE_PID"
+	streamFixtureMarker  = "OWNGIT_GITEXEC_STREAM_FIXTURE_MARKER"
 )
 
 func init() {
@@ -49,6 +51,11 @@ func runStreamFixture(mode string) {
 		_, _ = io.Copy(os.Stdout, os.Stdin)
 	case "exit-without-reading-stdin":
 		fmt.Fprint(os.Stdout, "closed-stdin")
+	case "mark-stdin-eof":
+		// Records that the process saw a clean end of its input.
+		if _, err := io.Copy(io.Discard, os.Stdin); err == nil {
+			_ = os.WriteFile(os.Getenv(streamFixtureMarker), []byte("eof"), 0o600)
+		}
 	default:
 		os.Exit(94)
 	}
@@ -280,5 +287,83 @@ func TestStreamPreservesCancellationWithCleanupFailures(t *testing.T) {
 	}
 	if seams.terminateErr != nil || seams.closeErr != nil {
 		t.Fatalf("real cleanup failed: terminate=%v close=%v", seams.terminateErr, seams.closeErr)
+	}
+}
+
+// cancelOnSecondRead delivers one chunk, then cancels the stream and blocks
+// until Stream closes it, like a request decoder that finds the rest invalid.
+type cancelOnSecondRead struct {
+	cancel context.CancelFunc
+	reads  int
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (input *cancelOnSecondRead) Read(p []byte) (int, error) {
+	input.reads++
+	if input.reads == 1 {
+		return copy(p, "partial request"), nil
+	}
+	input.cancel()
+	<-input.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (input *cancelOnSecondRead) Close() error {
+	input.once.Do(func() { close(input.closed) })
+	return nil
+}
+
+// A cancelled Stream must terminate the process before it closes stdin, so
+// the process never sees a clean end of a request that was cut short. The
+// termination seam is delayed to give a process that did see the end of its
+// input ample time to record it.
+func TestStreamCancellationTerminatesBeforeClosingStdin(t *testing.T) {
+	root := t.TempDir()
+	runner := streamTestRunner(t, root)
+	originalTerminate := streamTerminateOwnedProcess
+	streamTerminateOwnedProcess = func(owner *ProcessOwner, grace time.Duration) error {
+		time.Sleep(300 * time.Millisecond)
+		return originalTerminate(owner, grace)
+	}
+	t.Cleanup(func() { streamTerminateOwnedProcess = originalTerminate })
+
+	run := func(stdin io.ReadCloser, ctx context.Context, marker string) error {
+		_, err := runner.Stream(ctx, runner.GitPath, root, stdin,
+			[]string{streamFixtureEnv + "=mark-stdin-eof", streamFixtureMarker + "=" + marker},
+			func(reader io.Reader) error {
+				_, err := io.Copy(io.Discard, reader)
+				return err
+			})
+		return err
+	}
+
+	control := filepath.Join(root, "control-eof")
+	noErr(t, run(io.NopCloser(strings.NewReader("complete request")), context.Background(), control), "control Stream")
+	if _, err := os.Stat(control); err != nil {
+		t.Fatalf("fixture did not record a clean end of input: %v", err)
+	}
+
+	cancelled := filepath.Join(root, "cancelled-eof")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	input := &cancelOnSecondRead{cancel: cancel, closed: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() { done <- run(input, ctx, cancelled) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Stream error=%v, want context cancellation", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stream did not return after cancellation")
+	}
+	if _, err := os.Stat(cancelled); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled process saw a clean end of its input (marker stat: %v)", err)
+	}
+	select {
+	case <-input.closed:
+	default:
+		t.Fatal("Stream did not close the blocked stdin reader")
 	}
 }
