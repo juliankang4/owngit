@@ -3,11 +3,28 @@ name: CI
 # Runs the checks from CONTRIBUTING.md on every pull request and on pushes to
 # main. macOS is not in the matrix; contributors run the checks there locally.
 # Tests are split into shards so the slowest packages run in parallel.
+#
+# A change to documents alone runs nothing. The documents that tests read or
+# that release archives carry still run the checks.
 
 on:
   pull_request:
+    paths:
+      - "**"
+      - "!**.md"
+      - "!docs/images/**"
+      - "docs/CODING_TOOLS.md"
+      - "integrations/**"
+      - "THIRD_PARTY_NOTICES/**"
   push:
     branches: [main]
+    paths:
+      - "**"
+      - "!**.md"
+      - "!docs/images/**"
+      - "docs/CODING_TOOLS.md"
+      - "integrations/**"
+      - "THIRD_PARTY_NOTICES/**"
 
 permissions:
   contents: read
