@@ -11,6 +11,8 @@ class Owngit < Formula
   version "{{ruby .Version}}"
   license "MIT"
 
+  depends_on "git"
+
   on_macos do
     on_arm do
       url "{{ruby .BaseURL}}/{{ruby .DarwinArm64.Name}}"
@@ -28,8 +30,6 @@ class Owngit < Formula
       sha256 "{{ruby .LinuxARM64.SHA256}}"
     end
   end
-
-  depends_on "git"
 
   def install
     bin.install "owngit"
