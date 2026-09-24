@@ -1,0 +1,88 @@
+#!/usr/bin/env node
+// OwnGit npm launcher. tools/release renders this file from
+// packaging/npm/owngit.js.tmpl; edit the template, not a generated copy.
+//
+// It starts the OwnGit executable from the platform package that npm
+// installed with this package, passes the arguments and standard streams
+// through, and ends the way the executable ended.
+"use strict";
+
+const { spawn } = require("child_process");
+const { constants } = require("os");
+const path = require("path");
+
+const platforms = {{.Platforms}};
+const homepage = {{.Homepage}};
+
+function stop(message) {
+  process.stderr.write("owngit: " + message + "\n");
+  process.exit(1);
+}
+
+function executablePath() {
+  const key = process.platform + "-" + process.arch;
+  const advice =
+    "The owngit npm package supports " + Object.keys(platforms).join(", ") + ". " +
+    "See " + homepage + " for other ways to install OwnGit.";
+  const platform = platforms[key];
+  if (!platform) {
+    stop("there is no OwnGit executable for " + key + ". " + advice);
+  }
+  let packageJSON;
+  try {
+    packageJSON = require.resolve(platform.package + "/package.json");
+  } catch {
+    stop(
+      "the platform package " + platform.package + " is not installed. " +
+      "npm leaves it out when optional dependencies are omitted, for example with --omit=optional in a project install. " +
+      "Reinstall owngit without omitting optional dependencies. " + advice
+    );
+  }
+  return path.join(path.dirname(packageJSON), platform.binary);
+}
+
+const executable = executablePath();
+let child;
+
+// A terminal delivers Ctrl+C and Ctrl+\ (Ctrl+C and Ctrl+Break on Windows) to
+// the whole foreground process group, or to every process on the console, so
+// the executable already receives them. The launcher only outlives them and
+// does not send a copy, so OwnGit sees each key press once.
+const survived = process.platform === "win32" ? ["SIGINT", "SIGBREAK", "SIGHUP"] : ["SIGINT", "SIGQUIT"];
+// A service manager stops the launcher alone, and a closing terminal may
+// signal it alone, so these are passed on unchanged. If the executable also
+// received the signal directly, it sees the same signal again: during a
+// shutdown OwnGit ignores a repeat, and SIGHUP already ended it.
+const forwarded = process.platform === "win32" ? [] : ["SIGTERM", "SIGHUP"];
+
+const listeners = [];
+for (const signal of survived) {
+  listeners.push([signal, () => {}]);
+}
+for (const signal of forwarded) {
+  listeners.push([signal, () => child.kill(signal)]);
+}
+// The listeners are in place before the executable starts, so an early
+// SIGTERM cannot end the launcher and leave the executable running. They run
+// in a later event loop turn, after spawn has set child.
+for (const [signal, listener] of listeners) {
+  process.on(signal, listener);
+}
+child = spawn(executable, process.argv.slice(2), { stdio: "inherit" });
+
+child.on("error", (error) => {
+  stop("cannot start " + executable + ": " + error.message);
+});
+
+child.on("exit", (code, signal) => {
+  if (signal) {
+    // End with the same signal, so a shell or service manager sees what it
+    // would see without the launcher.
+    for (const [name, listener] of listeners) {
+      process.removeListener(name, listener);
+    }
+    process.kill(process.pid, signal);
+    process.exit(128 + (constants.signals[signal] || 0));
+  }
+  process.exit(code === null ? 1 : code);
+});

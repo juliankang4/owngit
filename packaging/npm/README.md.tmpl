@@ -1,0 +1,20 @@
+# OwnGit
+
+OwnGit is Git for HomeLab & Local. It keeps private repositories and their history on your own computer, NAS, or home server, with a browser dashboard for everyday use. Repositories remain ordinary bare Git repositories served by the Git installation on the host.
+
+This package installs OwnGit {{.Version}} and the `owngit` command. It supports {{.Platforms}}.
+
+```sh
+npm install -g owngit
+owngit serve
+```
+
+The host also needs Git with an executable `git-http-backend`.
+
+The OwnGit executable comes from a platform package that npm installs as an optional dependency, such as `{{.Example}}`. If npm left it out, for example with `--omit=optional` in a project install, or if your platform has no package, the `owngit` command reports this and lists the supported platforms.
+
+Node.js {{.Node}} is needed to install this package and to start the `owngit` command, a small launcher that runs the OwnGit executable with the same arguments. OwnGit itself does not use Node. The other installation routes, such as Homebrew or the portable archives, need no Node.
+
+Two limits apply to the launcher. A server started with `nohup owngit serve &` still stops when the terminal or SSH session closes. A `SIGINT` sent only to the launcher, for example Ctrl+C in `docker run` without `-t`, does not stop the server; `SIGTERM` does. To keep a server running, use a service manager such as launchd or systemd, install with Homebrew and use `brew services`, or run the executable from the platform package or a release archive directly.
+
+See the [project README]({{.Homepage}}) for setup, access, and the other installation routes.

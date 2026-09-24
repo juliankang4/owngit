@@ -168,7 +168,7 @@ go run ./tools/release packaging \
   -out dist/packaging
 ```
 
-`native -formats all` also builds the macOS app and DMG on an Apple silicon Mac. `packaging` renders the Homebrew formula and WinGet manifests. It marks a file `UNREADY` when a download URL or publisher input is missing, or fails with `-strict`. [packaging/README.md](packaging/README.md) describes the templates and prototype contents.
+`native -formats all` also builds the macOS app and DMG on an Apple silicon Mac. `packaging` renders the Homebrew formula, the WinGet manifests, and the npm packages; `-formats` selects `homebrew`, `winget`, `npm`, or `all`. It marks the output `UNREADY` when a download URL, homepage, repository URL, or publisher input is missing, or fails with `-strict`. The npm packages are written to `<out>/npm/`, which must not exist yet. They are built from a verified snapshot of the portable output, so the npm executables are the ones in the release archives. Check them with `npm pack` in each package directory; `packaging` never publishes. The npm route needs Node.js to install and to start the `owngit` launcher, and the other routes need no Node. [packaging/README.md](packaging/README.md) describes the templates and package contents.
 
 ## Documentation
 

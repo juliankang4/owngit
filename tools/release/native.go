@@ -121,7 +121,7 @@ func nativeCommand(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	outDir, err := createFreshNativeOutput(*out)
+	outDir, err := createFreshOutput("native", *out)
 	if err != nil {
 		return err
 	}
@@ -193,42 +193,28 @@ func loadNativeInputs(root, manifestPath, baseline, goTool, xcrun, hdiutil strin
 	return loadNativeInputsWithCleanup(root, manifestPath, baseline, goTool, xcrun, hdiutil, selected, os.RemoveAll)
 }
 
-func loadNativeInputsWithCleanup(root, manifestPath, baseline, goTool, xcrun, hdiutil string, selected map[string]bool, cleanup func(string) error) (result nativeInputs, resultErr error) {
-	absoluteManifest, err := filepath.Abs(manifestPath)
-	if err != nil {
-		return nativeInputs{}, err
-	}
-	if filepath.Base(absoluteManifest) != "manifest.json" {
-		return nativeInputs{}, errors.New("portable manifest must be named manifest.json so its complete output directory can be verified")
-	}
+func loadNativeInputsWithCleanup(root, manifestPath, baseline, goTool, xcrun, hdiutil string, selected map[string]bool, cleanup func(string) error) (nativeInputs, error) {
 	appVersion, err := versionFromSource(root)
 	if err != nil {
 		return nativeInputs{}, err
 	}
-	snapshot, err := snapshotPortableInputsWithCleanup(absoluteManifest, cleanup)
-	if err != nil {
-		return nativeInputs{}, err
-	}
-	defer func() {
-		if cleanupErr := removePortableInputSnapshot(snapshot.dir, cleanup); cleanupErr != nil {
-			result = nativeInputs{}
-			resultErr = errors.Join(resultErr, cleanupErr)
-		}
-	}()
-	if snapshot.manifest.Version != appVersion {
-		return nativeInputs{}, fmt.Errorf("portable manifest version %q does not match source version %q", snapshot.manifest.Version, appVersion)
-	}
-	if err := verifyDir(snapshot.dir, goTool); err != nil {
-		return nativeInputs{}, fmt.Errorf("portable baseline: %w", err)
-	}
-	inputs := nativeInputs{
-		root: root, manifest: snapshot.manifest,
-		manifestSHA256: snapshot.manifestSHA256, baseline: baseline, payloads: map[string]portablePayload{},
-		goTool: goTool, xcrun: xcrun, hdiutil: hdiutil, selected: selected,
-	}
 	required := []string{}
 	if selected["macos"] {
 		required = append(required, "darwin/arm64")
+	}
+	if selected["deb"] {
+		required = append(required, "linux/amd64", "linux/arm64")
+	}
+	portable, err := loadVerifiedPortable(manifestPath, appVersion, goTool, required, cleanup)
+	if err != nil {
+		return nativeInputs{}, err
+	}
+	inputs := nativeInputs{
+		root: root, manifest: portable.manifest,
+		manifestSHA256: portable.manifestSHA256, baseline: baseline, payloads: portable.payloads,
+		goTool: goTool, xcrun: xcrun, hdiutil: hdiutil, selected: selected,
+	}
+	if selected["macos"] {
 		toolchain, err := commandOutput(xcrun, "swiftc", "--version")
 		if err != nil {
 			return nativeInputs{}, fmt.Errorf("inspect Swift toolchain: %w", err)
@@ -249,7 +235,6 @@ func loadNativeInputsWithCleanup(root, manifestPath, baseline, goTool, xcrun, hd
 		}
 	}
 	if selected["deb"] {
-		required = append(required, "linux/amd64", "linux/arm64")
 		for _, relative := range []string{
 			filepath.Join("packaging", "linux", "control.tmpl"),
 			filepath.Join("packaging", "linux", "owngit.desktop"),
@@ -260,17 +245,61 @@ func loadNativeInputsWithCleanup(root, manifestPath, baseline, goTool, xcrun, hd
 			}
 		}
 	}
-	for _, name := range required {
-		if _, exists := inputs.payloads[name]; exists {
+	return inputs, nil
+}
+
+// verifiedPortable is one portable output generation that passed
+// verification, with the payloads of the requested targets read from the same
+// private snapshot that was verified.
+type verifiedPortable struct {
+	manifest       manifest
+	manifestSHA256 string
+	payloads       map[string]portablePayload
+}
+
+// loadVerifiedPortable snapshots the portable output named by manifestPath,
+// verifies the snapshot, and loads the payloads of the named targets from it.
+// The snapshot is removed with cleanup before returning, and a cleanup failure
+// discards the result.
+func loadVerifiedPortable(manifestPath, appVersion, goTool string, targets []string, cleanup func(string) error) (result verifiedPortable, resultErr error) {
+	absoluteManifest, err := filepath.Abs(manifestPath)
+	if err != nil {
+		return verifiedPortable{}, err
+	}
+	if filepath.Base(absoluteManifest) != "manifest.json" {
+		return verifiedPortable{}, errors.New("portable manifest must be named manifest.json so its complete output directory can be verified")
+	}
+	snapshot, err := snapshotPortableInputsWithCleanup(absoluteManifest, cleanup)
+	if err != nil {
+		return verifiedPortable{}, err
+	}
+	defer func() {
+		if cleanupErr := removePortableInputSnapshot(snapshot.dir, cleanup); cleanupErr != nil {
+			result = verifiedPortable{}
+			resultErr = errors.Join(resultErr, cleanupErr)
+		}
+	}()
+	if snapshot.manifest.Version != appVersion {
+		return verifiedPortable{}, fmt.Errorf("portable manifest version %q does not match source version %q", snapshot.manifest.Version, appVersion)
+	}
+	if err := verifyDir(snapshot.dir, goTool); err != nil {
+		return verifiedPortable{}, fmt.Errorf("portable baseline: %w", err)
+	}
+	portable := verifiedPortable{
+		manifest: snapshot.manifest, manifestSHA256: snapshot.manifestSHA256,
+		payloads: map[string]portablePayload{},
+	}
+	for _, name := range targets {
+		if _, exists := portable.payloads[name]; exists {
 			continue
 		}
 		payload, err := loadPortablePayload(snapshot.dir, snapshot.manifest, name)
 		if err != nil {
-			return nativeInputs{}, err
+			return verifiedPortable{}, err
 		}
-		inputs.payloads[name] = payload
+		portable.payloads[name] = payload
 	}
-	return inputs, nil
+	return portable, nil
 }
 
 // portableInputSnapshot owns a private copy of one manifest generation. The
@@ -396,13 +425,15 @@ func loadPortablePayload(dir string, document manifest, name string) (portablePa
 	return portablePayload{target: current, built: *built, entries: byName, binary: binary}, nil
 }
 
-func createFreshNativeOutput(path string) (string, error) {
+// createFreshOutput creates an output directory that must not exist yet, so
+// no file from an earlier run can be packaged with the new output.
+func createFreshOutput(kind, path string) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 	if _, err := os.Lstat(absolute); err == nil {
-		return "", fmt.Errorf("native output %s already exists; choose a fresh path", absolute)
+		return "", fmt.Errorf("%s output %s already exists; choose a fresh path", kind, absolute)
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}

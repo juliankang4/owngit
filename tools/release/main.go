@@ -11,7 +11,7 @@
 //	release build     build every release target, archive it, and write checksums
 //	release verify    re-check an existing output directory against its manifest
 //	release notices   collect or verify third-party notices from the build inputs
-//	release packaging render the Homebrew and WinGet preparation files
+//	release packaging render the Homebrew, WinGet, and npm preparation files
 //	release native    build unsigned local macOS and Debian prototypes
 package main
 
@@ -78,7 +78,7 @@ Commands:
   build      build every release target, archive it, and write checksums
   verify     re-check an output directory against its manifest
   notices    collect or verify third-party notices from the build inputs
-  packaging  render the Homebrew and WinGet preparation files
+  packaging  render the Homebrew, WinGet, and npm preparation files
   native     build unsigned local macOS and Debian prototypes
 
 Run "release <command> -h" for the options of one command.

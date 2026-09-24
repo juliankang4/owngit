@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -54,14 +55,16 @@ func packagingCommand(arguments []string) error {
 	source := set.String("source", ".", "module root holding the packaging templates")
 	manifestPath := set.String("manifest", "dist/manifest.json", "artifact manifest written by \"release build\"")
 	out := set.String("out", "dist/packaging", "output directory")
-	formats := set.String("formats", "all", "comma-separated formats to render: homebrew, winget, or all")
+	formats := set.String("formats", "all", "comma-separated formats to render: homebrew, winget, npm, or all")
 	baseURL := set.String("base-url", "", "release download base URL, for example https://host/owner/owngit/releases/download/v1.0.0")
 	homepage := set.String("homepage", "", "project homepage URL")
+	repositoryURL := set.String("repository-url", "", "npm Git repository URL, for example https://host/owner/owngit.git")
 	tap := set.String("tap", "", "Homebrew tap repository, for example owner/homebrew-owngit")
 	packageID := set.String("package-id", "", "WinGet package identifier, for example Owner.Owngit")
 	publisher := set.String("publisher", "", "WinGet publisher display name")
 	publisherURL := set.String("publisher-url", "", "WinGet publisher URL")
 	strict := set.Bool("strict", false, "fail when a selected format is missing an input instead of marking it unready")
+	goTool := set.String("go", "go", "Go toolchain command used to verify the portable output for npm")
 	if err := parseFlags(set, arguments); err != nil {
 		return err
 	}
@@ -87,9 +90,9 @@ func packagingCommand(arguments []string) error {
 	}
 
 	data := packagingData{Version: document.Version}
-	shared := []string{}
-	homebrewMissing := []string{}
-	wingetMissing := []string{}
+	downloadMissing := []string{}
+	homepageMissing := []string{}
+	repository := ""
 	check := func(name, value string, target *string, validate func(string) error, missing *[]string) error {
 		if strings.TrimSpace(value) == "" {
 			*missing = append(*missing, name)
@@ -101,14 +104,18 @@ func packagingCommand(arguments []string) error {
 		*target = value
 		return nil
 	}
-	if err := check("base-url", *baseURL, &data.BaseURL, validateURL, &shared); err != nil {
+	if err := check("base-url", *baseURL, &data.BaseURL, validateURL, &downloadMissing); err != nil {
 		return err
 	}
-	if err := check("homepage", *homepage, &data.Homepage, validateURL, &shared); err != nil {
+	if err := check("homepage", *homepage, &data.Homepage, validateURL, &homepageMissing); err != nil {
 		return err
 	}
-	homebrewMissing = append(homebrewMissing, shared...)
-	wingetMissing = append(wingetMissing, shared...)
+	homebrewMissing := append(append([]string{}, downloadMissing...), homepageMissing...)
+	wingetMissing := append(append([]string{}, downloadMissing...), homepageMissing...)
+	npmMissing := append([]string{}, homepageMissing...)
+	if err := check("repository-url", *repositoryURL, &repository, validateURL, &npmMissing); err != nil {
+		return err
+	}
 	if err := check("tap", *tap, &data.Tap, validateTap, &homebrewMissing); err != nil {
 		return err
 	}
@@ -129,6 +136,9 @@ func packagingCommand(arguments []string) error {
 	if selected["winget"] {
 		missing = append(missing, wingetMissing...)
 	}
+	if selected["npm"] {
+		missing = append(missing, npmMissing...)
+	}
 	missing = uniqueSorted(missing)
 	if len(missing) > 0 && *strict {
 		return fmt.Errorf("missing required inputs: %s", strings.Join(missing, ", "))
@@ -139,6 +149,9 @@ func packagingCommand(arguments []string) error {
 	}
 	if data.Homepage == "" {
 		data.Homepage = placeholderURL
+	}
+	if repository == "" {
+		repository = placeholderURL + "/owngit.git"
 	}
 	if data.PublisherURL == "" {
 		data.PublisherURL = placeholderURL
@@ -179,6 +192,31 @@ func packagingCommand(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	// npm packages embed the executables, so they are built only from a
+	// verified snapshot of the portable output, and only into a fresh
+	// directory. Both are checked before any format writes a file.
+	var npm npmInputs
+	var npmDir string
+	if selected["npm"] {
+		if npmDir, err = npmOutputDir(outDir); err != nil {
+			return err
+		}
+		targets := make([]string, 0, len(releaseTargets))
+		for _, current := range releaseTargets {
+			targets = append(targets, current.String())
+		}
+		portable, err := loadVerifiedPortable(*manifestPath, sourceVersion, *goTool, targets, os.RemoveAll)
+		if err != nil {
+			return err
+		}
+		npm = npmInputs{
+			root: root, version: portable.manifest.Version, homepage: data.Homepage,
+			repositoryURL: repository, payloads: portable.payloads,
+		}
+		if len(npmMissing) > 0 {
+			npm.unready = unreadyInputs(npmMissing)
+		}
+	}
 	rendered := []struct {
 		format       string
 		templatePath string
@@ -202,14 +240,20 @@ func packagingCommand(arguments []string) error {
 		}
 		fmt.Printf("rendered %s\n", item.outputPath)
 	}
-	for _, format := range []string{"homebrew", "winget"} {
+	if selected["npm"] {
+		if _, err := createFreshOutput("npm", npmDir); err != nil {
+			return err
+		}
+		if err := renderNPM(npmDir, npm); err != nil {
+			return fmt.Errorf("npm packages: %w; partial output remains at %s", err, npmDir)
+		}
+		fmt.Printf("rendered %s\n", npmDir)
+	}
+	for _, format := range []string{"homebrew", "winget", "npm"} {
 		if !selected[format] {
 			continue
 		}
-		formatMissing := homebrewMissing
-		if format == "winget" {
-			formatMissing = wingetMissing
-		}
+		formatMissing := map[string][]string{"homebrew": homebrewMissing, "winget": wingetMissing, "npm": npmMissing}[format]
 		if len(formatMissing) > 0 {
 			fmt.Printf("UNREADY %s: missing %s\n", format, strings.Join(uniqueSorted(formatMissing), ", "))
 		} else {
@@ -220,7 +264,11 @@ func packagingCommand(arguments []string) error {
 }
 
 func unreadyText(missing []string) string {
-	return "missing input(s): " + strings.Join(uniqueSorted(missing), ", ") + "; placeholder values are marked below"
+	return unreadyInputs(missing) + "; placeholder values are marked below"
+}
+
+func unreadyInputs(missing []string) string {
+	return "missing input(s): " + strings.Join(uniqueSorted(missing), ", ")
 }
 
 func uniqueSorted(values []string) []string {
@@ -245,10 +293,11 @@ func selectFormats(list string) (map[string]bool, error) {
 		case "all":
 			selected["homebrew"] = true
 			selected["winget"] = true
-		case "homebrew", "winget":
+			selected["npm"] = true
+		case "homebrew", "winget", "npm":
 			selected[strings.TrimSpace(item)] = true
 		default:
-			return nil, fmt.Errorf("unknown format %q; use homebrew, winget, or all", strings.TrimSpace(item))
+			return nil, fmt.Errorf("unknown format %q; use homebrew, winget, npm, or all", strings.TrimSpace(item))
 		}
 	}
 	if len(selected) == 0 {

@@ -802,6 +802,9 @@ func TestPackagingRendering(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(unready, "OwnGit.Owngit.installer.yaml")); err != nil {
 		t.Fatalf("default package identifier was not used: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(unready, "npm", "owngit", "package.json")); err != nil {
+		t.Fatalf("the default formats did not render the npm packages: %v", err)
+	}
 
 	ready := t.TempDir()
 	readyArguments := []string{
@@ -891,8 +894,8 @@ func TestPackagingRendering(t *testing.T) {
 		if !strings.Contains(winget, "UNREADY") {
 			t.Fatal("the WinGet manifest is ready although its inputs are missing")
 		}
-		if strings.Contains(winget, "tap") {
-			t.Fatal("the WinGet readiness list mentions a homebrew-only input")
+		if strings.Contains(winget, "tap") || strings.Contains(winget, "repository-url") {
+			t.Fatal("the WinGet readiness list mentions an input of another format")
 		}
 	})
 
@@ -919,7 +922,8 @@ func TestPackagingRendering(t *testing.T) {
 		{"control character", []string{"-publisher", "Acme\nInc"}, "control character"},
 		{"tap without owner", []string{"-tap", "owngit"}, "owner/repository"},
 		{"package id without publisher", []string{"-package-id", "Owngit"}, "Publisher.Package"},
-		{"unknown format", []string{"-formats", "npm"}, "unknown format"},
+		{"unknown format", []string{"-formats", "snap"}, "unknown format"},
+		{"repository URL scheme", []string{"-repository-url", "ssh://git@example.test/owngit.git"}, "must use http or https"},
 	}
 	for _, rejection := range rejections {
 		t.Run(rejection.name, func(t *testing.T) {
