@@ -286,10 +286,14 @@ func TestPrepareExistingRepairsEverySettingAndHook(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(remote, "hooks", "pre-receive")); !os.IsNotExist(err) {
 		t.Error("an obsolete hook was kept")
 	}
-	noErr(t, os.Chmod(hook, 0o755))
-	noErr(t, manager.PrepareExisting(ctx))
-	if info, err := os.Stat(hook); err != nil || info.Mode().Perm() != 0o700 {
-		t.Errorf("hook mode was not repaired: %v %v", info, err)
+	// Windows keeps only a read-only attribute, so a file mode such as 0700
+	// cannot be set or observed there.
+	if runtime.GOOS != "windows" {
+		noErr(t, os.Chmod(hook, 0o755))
+		noErr(t, manager.PrepareExisting(ctx))
+		if info, err := os.Stat(hook); err != nil || info.Mode().Perm() != 0o700 {
+			t.Errorf("hook mode was not repaired: %v %v", info, err)
+		}
 	}
 	noErr(t, os.Remove(hook))
 	noErr(t, manager.PrepareExisting(ctx))

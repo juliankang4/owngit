@@ -119,7 +119,9 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	if document.Artifacts[0].ExecutedOutput != "owngit "+document.Version+"\n" {
 		t.Fatalf("recorded execution output is %q", document.Artifacts[0].ExecutedOutput)
 	}
-	entries, err := readArchive(filepath.Join(dir, document.Artifacts[0].Name), "tar.gz")
+	host, err := targetFor(native)
+	noErr(t, err)
+	entries, err := readArchive(filepath.Join(dir, document.Artifacts[0].Name), host.format)
 	noErr(t, err)
 	font := false
 	for _, entry := range entries {
@@ -189,14 +191,6 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 		expectVerifyError(t, copied, "the notice set has no entry")
 	})
 
-	t.Run("stale notice entry no target links", func(t *testing.T) {
-		copied := copyDist(t, dir)
-		rewriteDist(t, copied, true, func(files []memFile) []memFile {
-			return addNoticeEntry(t, files, "example.invalid/stale", "v9.9.9")
-		})
-		expectVerifyError(t, copied, "that no target links")
-	})
-
 	t.Run("non executable binary", func(t *testing.T) {
 		copied := copyDist(t, dir)
 		rewriteDist(t, copied, true, func(files []memFile) []memFile {
@@ -237,6 +231,7 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	})
 
 	t.Run("symlink archive entry", func(t *testing.T) {
+		skipUnlessTar(t, host)
 		copied := copyDist(t, dir)
 		rewriteTar(t, copied, func(archive *tar.Writer, files []memFile) error {
 			return archive.WriteHeader(&tar.Header{
@@ -248,6 +243,7 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	})
 
 	t.Run("directory archive entry", func(t *testing.T) {
+		skipUnlessTar(t, host)
 		copied := copyDist(t, dir)
 		rewriteTar(t, copied, func(archive *tar.Writer, files []memFile) error {
 			return archive.WriteHeader(&tar.Header{
@@ -288,6 +284,35 @@ func TestRehashedTargetSubstitution(t *testing.T) {
 	writeManifest(t, dir, document)
 	noErr(t, writeChecksums(dir, document.Artifacts))
 	expectVerifyError(t, dir, "embedded build setting GOOS")
+}
+
+// TestNoticeStalenessNeedsEveryTarget checks both sides of the stale notice
+// rule. Every archive ships the notice set for all release targets, so a build
+// of one target carries entries that only other targets link and must still
+// verify. A full build has every target's links, so an entry that none of them
+// links is stale and is refused.
+func TestNoticeStalenessNeedsEveryTarget(t *testing.T) {
+	full := sharedDist(t)
+	document, err := readManifest(filepath.Join(full, "manifest.json"))
+	noErr(t, err)
+	for _, built := range document.Artifacts {
+		t.Run("only "+built.Target, func(t *testing.T) {
+			dir := copyDist(t, full)
+			subset := document
+			subset.Artifacts = []artifact{built}
+			writeManifest(t, dir, subset)
+			noErr(t, writeChecksums(dir, subset.Artifacts))
+			noErrf(t, verifyDir(dir, "go"), "verify rejected a build of only %s", built.Target)
+		})
+	}
+
+	t.Run("stale notice entry no target links", func(t *testing.T) {
+		dir := copyDist(t, full)
+		rewriteArtifact(t, dir, "linux/amd64", true, func(files []memFile) []memFile {
+			return addNoticeEntry(t, files, "example.invalid/stale", "v9.9.9")
+		})
+		expectVerifyError(t, dir, "that no target links")
+	})
 }
 
 // TestNoticesFreshDestination proves the fresh-destination-only design: a
@@ -1074,7 +1099,24 @@ func rewriteDist(t *testing.T, dir string, syncFiles bool, mutate func([]memFile
 	if len(document.Artifacts) != 1 {
 		t.Fatalf("rewriteDist expects one artifact, found %d", len(document.Artifacts))
 	}
-	built := &document.Artifacts[0]
+	rewriteArtifact(t, dir, document.Artifacts[0].Target, syncFiles, mutate)
+}
+
+// rewriteArtifact is rewriteDist for the artifact of one target in a
+// directory that may hold several.
+func rewriteArtifact(t *testing.T, dir, name string, syncFiles bool, mutate func([]memFile) []memFile) {
+	t.Helper()
+	document, err := readManifest(filepath.Join(dir, "manifest.json"))
+	noErr(t, err)
+	var built *artifact
+	for index := range document.Artifacts {
+		if document.Artifacts[index].Target == name {
+			built = &document.Artifacts[index]
+		}
+	}
+	if built == nil {
+		t.Fatalf("the manifest has no %s artifact", name)
+	}
 	current, err := targetFor(built.Target)
 	noErr(t, err)
 	entries, err := readArchive(filepath.Join(dir, built.Name), current.format)
@@ -1116,6 +1158,15 @@ func rewriteDist(t *testing.T, dir string, syncFiles bool, mutate func([]memFile
 	}
 	writeManifest(t, dir, document)
 	noErr(t, writeChecksums(dir, document.Artifacts))
+}
+
+// skipUnlessTar skips a subtest that writes tar-only members when the native
+// archive is a zip.
+func skipUnlessTar(t *testing.T, native target) {
+	t.Helper()
+	if native.format != "tar.gz" {
+		t.Skipf("tar-only counterexample; the native archive is %s", native.format)
+	}
 }
 
 // rewriteTar rewrites the single artifact's tar with an extra header written

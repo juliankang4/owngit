@@ -148,7 +148,7 @@ go run ./tools/release verify -dir dist/portable
 
 - `notices -check` compares `THIRD_PARTY_NOTICES/` with the current build inputs. Run it after changing dependencies. To regenerate, write into a new empty directory and compare: `go run ./tools/release notices -out THIRD_PARTY_NOTICES.new`, then `diff -r THIRD_PARTY_NOTICES THIRD_PARTY_NOTICES.new`. Edit `packaging/notices/README.md.tmpl`, not the generated `README.md`.
 - `build` compiles each target with `-trimpath -buildvcs=false` and `CGO_ENABLED=0`, writes deterministic archives, `SHA256SUMS`, and `manifest.json`, and then runs `verify`. `-targets` selects a comma-separated subset.
-- `verify` re-checks archive digests, contents, embedded build metadata, and the notice set, and rejects private or build files such as `.git/`, `.local/`, `*.sqlite`, and `*.test`. It runs only the binary built for the host.
+- `verify` re-checks archive digests, contents, embedded build metadata, and the notice set, and rejects private or build files such as `.git/`, `.local/`, `*.sqlite`, and `*.test`. It runs only the binary built for the host. Every archive carries the notices for all release targets, so `verify` refuses a notice entry that no target links only when the directory holds every release target.
 
 Build targets are `darwin/arm64` (macOS on Apple silicon), `linux/amd64`, `linux/arm64`, and `windows/amd64`. Each archive holds the `owngit` executable, `LICENSE`, `THIRD_PARTY_NOTICES/`, `README.txt`, `docs/CODING_TOOLS.md`, and `integrations/skills/owngit-checks/SKILL.md`. `tools/release/resources.go` declares the last two by path, so moving them requires changing the release tool and its tests.
 

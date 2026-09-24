@@ -2,6 +2,7 @@ name: CI
 
 # Runs the checks from CONTRIBUTING.md on every pull request and on pushes to
 # main. macOS is not in the matrix; contributors run the checks there locally.
+# Tests are split into shards so the slowest packages run in parallel.
 
 on:
   pull_request:
@@ -20,14 +21,40 @@ defaults:
     shell: bash
 
 jobs:
+  lint:
+    name: gofmt and go vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet (linux, windows, darwin)
+        run: |
+          go vet ./...
+          GOOS=windows go vet ./...
+          GOOS=darwin go vet ./...
+
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        shard: [importsync, server-release, rest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       # Keep LF line endings on Windows so gofmt and byte-exact fixtures match.
       - name: Keep line endings
@@ -44,22 +71,24 @@ jobs:
           go version
           git --version
 
-      - name: gofmt
+      - name: Select packages
         run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "$unformatted"
-            exit 1
-          fi
+          heavy='^owngit/(internal/importsync|internal/server|tools/release)$'
+          case "${{ matrix.shard }}" in
+            importsync) packages="owngit/internal/importsync" ;;
+            server-release) packages="owngit/internal/server owngit/tools/release" ;;
+            rest) packages="$(go list ./... | grep -Ev "$heavy" | tr '\n' ' ')" ;;
+          esac
+          echo "PACKAGES=$packages" >> "$GITHUB_ENV"
+          echo "$packages"
 
-      - name: go vet
-        run: go vet ./...
-
+      # A slow runner can take more than Go's default 10 minutes for one
+      # package, so the limit is raised.
       - name: go test
         if: runner.os != 'Linux'
-        run: go test ./...
+        run: go test -timeout 30m $PACKAGES
 
       # The race detector also runs every test, so Linux runs only this one.
       - name: go test -race
         if: runner.os == 'Linux'
-        run: go test -race ./...
+        run: go test -race -timeout 30m $PACKAGES

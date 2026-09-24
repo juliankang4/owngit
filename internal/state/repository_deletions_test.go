@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +16,15 @@ func testDeletion(repositoryID, mode string) RepositoryDeletion {
 	if mode == RepositoryDeletionKeepFiles {
 		moved = ".owngit-removed/" + repositoryID + "-20270115T080000Z.git"
 	}
+	// The root is only recorded, never opened. On Windows a path that starts
+	// with a separator has no volume and is not absolute, so Abs adds one.
+	root, err := filepath.Abs(string(os.PathSeparator) + "owngit-test-root")
+	if err != nil {
+		panic(err)
+	}
 	return RepositoryDeletion{
 		RepositoryID: repositoryID, Mode: mode, Phase: RepositoryDeletionPending,
-		Root: string(os.PathSeparator) + "owngit-test-root", Moved: moved, Marker: strings.Repeat("b", 32), CreatedAt: time.Unix(1_800_000_000, 0),
+		Root: root, Moved: moved, Marker: strings.Repeat("b", 32), CreatedAt: time.Unix(1_800_000_000, 0),
 	}
 }
 

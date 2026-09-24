@@ -118,14 +118,19 @@ func verifyDir(dir, goTool string) error {
 			notices[module] = true
 		}
 	}
-	// The notice set is the union across targets, so an entry only has to be
-	// linked by some target. An entry no target links is stale.
-	for module := range notices {
-		if strings.HasPrefix(module, bundledNoticePrefix) {
-			continue
-		}
-		if !linked[module] {
-			return fmt.Errorf("the notice set has an entry for %s that no target links", module)
+	// The notice set is the union across every release target, so an entry only
+	// has to be linked by some target, and only a manifest holding every
+	// release target can show that an entry no target links is stale. A build
+	// of fewer targets ships entries for the absent ones; build compares the
+	// checked-in notices with every target's inputs before it packages them.
+	if len(seen) == len(releaseTargets) {
+		for module := range notices {
+			if strings.HasPrefix(module, bundledNoticePrefix) {
+				continue
+			}
+			if !linked[module] {
+				return fmt.Errorf("the notice set has an entry for %s that no target links", module)
+			}
 		}
 	}
 	if err := verifyChecksums(dir, document.Artifacts); err != nil {
