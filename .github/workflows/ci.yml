@@ -1,7 +1,10 @@
 name: CI
 
-# Runs the checks from CONTRIBUTING.md on every pull request and on pushes to
-# main. macOS is not in the matrix; contributors run the checks there locally.
+# Runs the checks from CONTRIBUTING.md on every pull request. Pull requests
+# merge by fast-forward, so main receives the commits that already passed here
+# and pushes to main do not run the checks again; run them by hand from the
+# Actions tab when needed. macOS is not in the matrix; contributors run the
+# checks there locally.
 # Tests are split into shards so the slowest packages run in parallel.
 #
 # A change to documents alone runs nothing. The documents that tests read or
@@ -16,22 +19,14 @@ on:
       - "docs/CODING_TOOLS.md"
       - "integrations/**"
       - "THIRD_PARTY_NOTICES/**"
-  push:
-    branches: [main]
-    paths:
-      - "**"
-      - "!**.md"
-      - "!docs/images/**"
-      - "docs/CODING_TOOLS.md"
-      - "integrations/**"
-      - "THIRD_PARTY_NOTICES/**"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Cancel superseded pull request runs; every push to main keeps its run.
+  # Cancel superseded pull request runs; a manual run keeps going.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
