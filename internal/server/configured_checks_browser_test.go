@@ -907,10 +907,9 @@ func TestBrowserCancelIsOfferedOnlyWhileWorkCanStillBeStopped(t *testing.T) {
 }
 
 func TestBrowserCancelThatLosesToACompletionSaysNothingChanged(t *testing.T) {
-	// The backend accepts a cancel on a finished job and records the intent
-	// without reversing the result. That is the right contract for a racing
-	// request, and the wrong thing to report as a cancellation: the reader
-	// would expect the outcome to change.
+	// The backend accepts a cancel on a finished job without reversing the
+	// result or recording a cancel intent. Reporting it as a cancellation
+	// would be wrong: the reader would expect the outcome to change.
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)
 	csrf, job := admitEnabledJob(t, fixture, server.URL, client, jar, "cc-cancel-race",
@@ -945,9 +944,7 @@ func TestBrowserCancelThatLosesToACompletionSaysNothingChanged(t *testing.T) {
 	if page.status != http.StatusOK {
 		t.Fatalf("redirect status=%d", page.status)
 	}
-	// Only the notice region reports what this request achieved. The job list
-	// elsewhere on the page truthfully marks the recorded cancel intent, and
-	// that history stays.
+	// Only the notice region reports what this request achieved.
 	notices := noticeRegion(t, page.body)
 	if !strings.Contains(notices, browserText(webui.MsgCCJobAlreadyFinished)) {
 		t.Errorf("a cancel that lost to a completion does not say the result was unchanged: %q", notices)
@@ -962,7 +959,7 @@ func TestBrowserCancelThatLosesToACompletionSaysNothingChanged(t *testing.T) {
 	}
 
 	// The recorded result is untouched: the backend kept its own status and
-	// only noted the intent.
+	// recorded no cancel intent on a job that had already finished.
 	stored, exists, err := fixture.store.CheckJob(context.Background(), "project", job.ID)
 	if err != nil || !exists {
 		t.Fatalf("read job: err=%v exists=%v", err, exists)
@@ -970,8 +967,13 @@ func TestBrowserCancelThatLosesToACompletionSaysNothingChanged(t *testing.T) {
 	if stored.Status != state.CheckJobError {
 		t.Errorf("the job status became %q, want the result it already had", stored.Status)
 	}
-	if stored.CancelRequestedAt == nil {
-		t.Error("the cancel intent was not recorded")
+	if stored.CancelRequestedAt != nil {
+		t.Error("a cancel intent was recorded on a finished job")
+	}
+	// The API and CLI refuse it with a clear code instead of reporting success.
+	apiCancel := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/project/check-jobs/"+job.ID+"/cancel", map[string]any{}, "admin-password", "", "")
+	if apiCancel.StatusCode != http.StatusConflict || importAPICode(t, apiCancel) != "check_job_finished" {
+		t.Errorf("API cancel of a finished job status=%d", apiCancel.StatusCode)
 	}
 
 	// A cancel on work that has not finished still reports a cancellation.

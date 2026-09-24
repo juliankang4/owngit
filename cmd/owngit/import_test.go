@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -282,5 +284,49 @@ func TestImportResolveAcceptsTheDestination(t *testing.T) {
 	stored, _, err := fixture.store.ImportIntent(ctx, intent.ID)
 	if err != nil || stored.Status != state.ImportIntentOwnerResolved {
 		t.Fatalf("resolved intent status=%s err=%v", stored.Status, err)
+	}
+}
+
+// A finished run that kept refs differing from the source names them and
+// exits with the distinct divergence status; import status lists them too.
+func TestImportOutputReportsRefsThatDifferFromTheSource(t *testing.T) {
+	runResult := `{"ok":true,"run":{"status":"complete","refs_divergent":2,"refs_deleted_upstream":1},
+		"status":{"refs":[{"name":"refs/heads/main","state":"diverged"},{"name":"refs/tags/v1","state":"deleted_at_source"},{"name":"refs/tags/v2","state":"tracked"}]}}`
+	output, err := captureStdout(func() error { return printImportRun("project", []byte(runResult)) })
+	var exit *checkExit
+	if !errors.As(err, &exit) || exit.code != importDivergedExit {
+		t.Fatalf("divergent run err=%v", err)
+	}
+	for _, want := range []string{"finished: complete", "1 ref was deleted at the source", "2 refs differ from the source", "  refs/heads/main\n", "1 more not listed by name"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("run output lacks %q: %q", want, output)
+		}
+	}
+	clean := `{"ok":true,"run":{"status":"complete","refs_divergent":0},"status":{"refs":[]}}`
+	if output, err := captureStdout(func() error { return printImportRun("project", []byte(clean)) }); err != nil || output != "Import for project finished: complete.\n" {
+		t.Fatalf("clean run output=%q err=%v", output, err)
+	}
+
+	statusResult := `{"ok":true,"status":{"configured":true,"url":"https://example.invalid/team/project.git","mode":"standalone","credential_form":"none",
+		"last_run":{"kind":"refresh","status":"complete","refs_divergent":1},"active_run":{"kind":"refresh","status":"fetching"},
+		"refs":[{"name":"refs/heads/main","state":"diverged"},{"name":"refs/tags/v1","state":"deleted_at_source"},{"name":"refs/tags/v2","state":"tracked"}]}}`
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(statusResult))
+	}))
+	defer server.Close()
+	passwordPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "admin"), "admin-password\n")
+	output, err = captureStdout(func() error {
+		return importCommand([]string{"status", "project", "--server", server.URL, "--accept-insecure-http", "--password-file", passwordPath})
+	})
+	noErr(t, err)
+	for _, want := range []string{"Active run: refresh, fetching", "Last run: refresh, complete, 1 ref differs from the source",
+		"Refs that do not match the source: 2", "refs/heads/main: differs from the source", "refs/tags/v1: deleted at the source"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("status output lacks %q: %q", want, output)
+		}
+	}
+	if strings.Contains(output, "refs/tags/v2") {
+		t.Errorf("status listed a tracked ref: %q", output)
 	}
 }

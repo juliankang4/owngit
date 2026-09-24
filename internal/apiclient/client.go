@@ -28,11 +28,27 @@ const (
 
 var errRedirectRefused = errors.New("redirect refused")
 
+// connectionFailed reports a request that got no usable response. The message
+// names the transport cause, such as a refused connection or a TLS failure.
+// The request URL is left out: the cause alone explains the failure, and the
+// URL is already known to the caller.
+func connectionFailed(err error) *Error {
+	cause := err
+	var urlError *url.Error
+	if errors.As(err, &urlError) && urlError.Err != nil {
+		cause = urlError.Err
+	}
+	return &Error{Code: "connection_failed", Message: "The OwnGit server request failed: " + cause.Error(), Cause: err}
+}
+
 type Error struct {
 	Code    string
 	Message string
 	Details json.RawMessage
 	Cause   error
+	// Status is the HTTP status of an error response from the server, or 0
+	// when no valid error response was received.
+	Status int
 }
 
 func (problem *Error) Error() string {
@@ -221,7 +237,7 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 		if errors.Is(err, errRedirectRefused) {
 			return nil, &Error{Code: "redirect_refused", Message: "The OwnGit API returned a redirect. Credentials were not sent to the redirect target.", Cause: err}
 		}
-		return nil, &Error{Code: "connection_failed", Message: "The OwnGit server request failed.", Cause: err}
+		return nil, connectionFailed(err)
 	}
 	defer response.Body.Close()
 	responseLimit := client.MaximumResponse
@@ -245,7 +261,7 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 		if err := json.Unmarshal(content, &envelope); err != nil || envelope.OK || envelope.Error.Code == "" || envelope.Error.Message == "" {
 			return nil, &Error{Code: "invalid_response", Message: fmt.Sprintf("The OwnGit API returned HTTP %d without a valid error object.", response.StatusCode)}
 		}
-		return nil, &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details}
+		return nil, &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details, Status: response.StatusCode}
 	}
 	var success struct {
 		OK bool `json:"ok"`
@@ -281,7 +297,7 @@ func (client *Client) GetBytes(ctx context.Context, apiPath string, headers map[
 		if response != nil {
 			response.Body.Close()
 		}
-		return nil, nil, &Error{Code: "connection_failed", Message: "The OwnGit server request failed.", Cause: err}
+		return nil, nil, connectionFailed(err)
 	}
 	defer response.Body.Close()
 	content, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
@@ -291,7 +307,7 @@ func (client *Client) GetBytes(ctx context.Context, apiPath string, headers map[
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var envelope pullrequest.ErrorEnvelope
 		if err := json.Unmarshal(content, &envelope); err == nil && !envelope.OK && envelope.Error.Code != "" {
-			return nil, nil, &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details}
+			return nil, nil, &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details, Status: response.StatusCode}
 		}
 		return nil, nil, &Error{Code: "invalid_response", Message: fmt.Sprintf("The OwnGit API returned HTTP %d for a source blob.", response.StatusCode)}
 	}

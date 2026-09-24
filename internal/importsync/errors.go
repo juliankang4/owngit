@@ -2,6 +2,8 @@ package importsync
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 
@@ -184,6 +186,9 @@ func classifyFetchError(err error) *Problem {
 	case errors.Is(fetchError, importfetch.ErrAddressPolicy):
 		return newProblem(CodeNetwork, "a resolved source address is forbidden; private-network consent may be required", err)
 	case errors.Is(fetchError, importfetch.ErrConnection):
+		if message := tlsFailureMessage(err); message != "" {
+			return newProblem(CodeNetwork, message, err)
+		}
 		return newProblem(CodeNetwork, "source connection or response body failed", err)
 	case errors.Is(fetchError, importfetch.ErrRedirect):
 		return newProblem(CodeProtocol, "source redirect was refused", err)
@@ -216,6 +221,27 @@ func classifyFetchError(err error) *Problem {
 	default:
 		return newProblem(CodeNetwork, "source request failed", err)
 	}
+}
+
+// tlsFailureMessage names a TLS certificate or handshake failure, which is
+// otherwise indistinguishable from a network outage. It returns "" for other
+// errors.
+func tlsFailureMessage(err error) string {
+	var unknownAuthority x509.UnknownAuthorityError
+	var verification *tls.CertificateVerificationError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	var alert tls.AlertError
+	var record tls.RecordHeaderError
+	switch {
+	case errors.As(err, &hostname):
+		return "source TLS certificate does not match the source host name"
+	case errors.As(err, &unknownAuthority), errors.As(err, &invalid), errors.As(err, &verification):
+		return "source TLS certificate could not be verified; if the source uses a private CA, store that CA with the credentials"
+	case errors.As(err, &alert), errors.As(err, &record):
+		return "source TLS handshake failed"
+	}
+	return ""
 }
 
 // localFetchCause returns the local cause of a transport error, if one was

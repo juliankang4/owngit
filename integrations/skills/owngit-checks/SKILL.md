@@ -36,9 +36,11 @@ the user must accept that risk for the private connection.
      --title "TITLE"
    ```
 
-2. Run the checks. Prefer the recorded configuration by omitting `--check`.
-   Pass explicit `--check name=command` values only when the user asks for a
-   specific command or no configuration is recorded yet.
+2. Run the checks. Prefer the project's committed configuration by omitting
+   `--check`: the helper then runs only the checks in the `.owngit/checks.json`
+   committed in the revision being tested. Pass explicit `--check name=command`
+   values only when the user asks for a specific command or the revision has no
+   committed configuration (`checks_not_configured`).
 
    ```sh
    owngit check run \
@@ -70,7 +72,9 @@ the user must accept that risk for the private connection.
    ```
 
 5. Read durable state with `check status --task TASK_ID`,
-   `check log --attempt ATTEMPT_ID`, and `check config show`.
+   `check log --attempt ATTEMPT_ID`, and `check cycle list --task TASK_ID`.
+   `check config show` shows the configuration recorded most recently from any
+   branch; it is not what `check run` uses.
 
 ## Reading the result
 
@@ -81,6 +85,12 @@ the user must accept that risk for the private connection.
 - `1`: at least one check did not pass.
 - `2`: this client could not confirm that the attempt was recorded.
 - `130`: the run was cancelled.
+
+An error object (`{"ok":false,"error":{...}}`) with exit code `1` instead of a
+result means nothing ran and nothing was recorded: an argument was invalid, the
+committed configuration is missing or invalid, or the server refused the
+registration, for example an unreserved `--cycle`. Report the error code; do
+not read it as a failed check.
 
 Fields to report:
 
@@ -140,7 +150,7 @@ not change the status. An empty configured set is `unavailable`, never `passed`.
   is exhausted, stop automatic continuation and report the unresolved task; a
   manual check can still be recorded.
 - Do not retry a failed check blindly, and do not weaken or replace the
-  recorded configuration to make a check pass.
+  committed check configuration to make a check pass.
 - Do not launch or resume a coding session, change a model, grant tools to a
   read-only reviewer, reload a team, or inspect authentication files or
   transcripts.

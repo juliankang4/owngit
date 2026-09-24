@@ -89,8 +89,13 @@ owngit check task new \
   --title "Fix the failing build"
 ```
 
-Run the checks. Omitting `--check` reuses the latest recorded configuration.
-Passing `--check name=command` records that set for this attempt.
+Run the checks. Omitting `--check` runs the checks in the `.owngit/checks.json`
+committed in the revision being tested, the `HEAD` of `--workdir`. The working
+tree copy and configurations recorded on the server for other revisions are
+never used, so a command from another branch cannot run on your machine. If
+the revision has no such file, or the file is invalid, the command stops before
+running anything. Passing `--check name=command` runs and records exactly that
+set instead.
 
 ```sh
 owngit check run \
@@ -145,14 +150,16 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 `check run` executes checks and, unless `--no-upload` is set, records the
 attempt. Flags: `--task` (required), `--cycle`, `--workdir` (default `.`),
 `--timeout` (default 10 minutes), `--output-limit` (default 65536 bytes per
-check), `--no-upload`, and repeatable `--check name=command`. The remote flags
-are required unless `--no-upload` is combined with at least one `--check`.
+check), `--no-upload`, and repeatable `--check name=command`. `--timeout` and
+`--output-limit` must be positive. The remote flags are required unless
+`--no-upload` is set.
 
 `check cycle reserve` reserves one correction round. Flags: `--task` (required)
 and the remote flags. `check cycle list` lists the reserved rounds.
 
 `check status` reads the task and its latest attempt. `check log` reads one raw
-log by `--attempt`. `check config show` reads the latest recorded configuration.
+log by `--attempt`. `check config show` reads the configuration recorded most
+recently in the repository, from any branch; `check run` does not use it.
 
 `helper-credential create` issues a credential. Flags: `--label`, `--output`
 (required), `--server`, `--repository`, `--password-file`,
@@ -168,6 +175,13 @@ log by `--attempt`. `check config show` reads the latest recorded configuration.
 - `1`: at least one check did not pass.
 - `2`: this client could not confirm that the attempt was recorded.
 - `130`: the run was cancelled.
+
+If `check run` stops before running any check, it prints an error object,
+`{"ok":false,"error":{"code":...,"message":...}}`, instead of a result and
+exits 1. This happens for invalid arguments, a missing or invalid committed
+configuration (`checks_not_configured`, `invalid_check_configuration`), and a
+registration the server refused, such as an unreserved `--cycle`. Nothing ran
+and nothing was recorded.
 
 The JSON object carries `ok`, `registered`, `uploaded`, `attempt_id`,
 `cycle_id`, `task`, `attempt`, `correction_cycles_remaining`, `results`, and
@@ -190,6 +204,9 @@ completion. A lost response can leave an accepted registration or completion on
 the server, so inspect `check status` before repeating a reservation or a run,
 and do not claim the attempt is absent. It is not the same as a recorded failed
 check. A recorded failed check has a durable attempt with a `failed` result.
+When the server cannot be reached at all, the checks still run, the command
+exits 2, and `upload_error` names the cause, such as a refused connection or a
+TLS error.
 
 ### The top-level correction count is not always a measurement
 
@@ -253,7 +270,7 @@ run carries a `task` object.
   top-level `correction_cycles_remaining` of `0` is an unread field, not a
   measured budget.
 - Do not retry a failed check blindly, and do not weaken or replace the
-  recorded configuration to make a check pass.
+  committed check configuration to make a check pass.
 - Do not launch or resume a coding session, change a model, grant tools to a
   read-only reviewer, reload a team, or inspect authentication files or
   transcripts.

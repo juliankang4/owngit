@@ -829,3 +829,52 @@ func TestClaimImportStagingDoesNotAdoptAnotherRun(t *testing.T) {
 		t.Fatalf("foreign row was changed: %+v exists=%v err=%v", row, exists, err)
 	}
 }
+
+// Forgetting an unpublished import removes the binding and keeps the run
+// history, and it refuses while recovery or a repository still needs it.
+func TestForgetUnpublishedImportKeepsHistoryAndRespectsBlockers(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	configure := func(repositoryID string) ImportSource {
+		t.Helper()
+		source, err := store.ConfigureImportSource(ctx, ImportSourceInput{
+			RepositoryID: repositoryID, URL: "https://example.invalid/team/" + repositoryID + ".git", Mode: ImportModeStandalone, Now: testImportNow(),
+		})
+		noErr(t, err)
+		_, err = store.SaveImportCredentials(ctx, ImportCredentials{
+			RepositoryID: repositoryID, URL: source.URL, SourceGeneration: source.SourceGeneration,
+			ExpectedAuthorityRevision: source.AuthorityRevision, BearerToken: "synthetic-token",
+		}, testImportNow())
+		noErr(t, err)
+		return source
+	}
+
+	configure("failed")
+	noErr(t, store.BeginImportRun(ctx, testImportRun(t, strings.Repeat("a", 32), "failed", 1, ImportKindInitial, ImportRunPreparing)))
+	if err := store.ForgetUnpublishedImport(ctx, "failed"); !errors.Is(err, ErrImportNotForgettable) {
+		t.Fatalf("forget during an active run err=%v", err)
+	}
+	run := testImportRun(t, strings.Repeat("a", 32), "failed", 1, ImportKindInitial, ImportRunFailed)
+	run.FinishedAt = testImportNow()
+	run.ErrorClass = "network"
+	noErr(t, store.FinishImportRun(ctx, run))
+	noErr(t, store.ForgetUnpublishedImport(ctx, "failed"))
+	if _, exists, err := store.ImportSource(ctx, "failed"); err != nil || exists {
+		t.Fatalf("forgotten source exists=%v err=%v", exists, err)
+	}
+	if _, exists, err := store.LoadImportCredentials(ctx, "failed"); err != nil || exists {
+		t.Fatalf("forgotten credential exists=%v err=%v", exists, err)
+	}
+	if runs, _, err := store.ImportRuns(ctx, "failed", 10); err != nil || len(runs) != 1 {
+		t.Fatalf("run history after forgetting=%d err=%v", len(runs), err)
+	}
+
+	configure("existing")
+	noErr(t, store.AddRepository(ctx, Repository{ID: "existing", Name: "existing", CreatedAt: testImportNow()}))
+	if err := store.ForgetUnpublishedImport(ctx, "existing"); !errors.Is(err, ErrImportNotForgettable) {
+		t.Fatalf("forget of an existing repository err=%v", err)
+	}
+	if _, exists, err := store.LoadImportCredentials(ctx, "existing"); err != nil || !exists {
+		t.Fatalf("an existing repository lost its credential exists=%v err=%v", exists, err)
+	}
+}

@@ -156,11 +156,11 @@ Once a remote has a push URL, Git pushes only to its push URLs, so list OwnGit a
 
 An import copies a repository from another Git host over HTTPS into a new OwnGit repository and can refresh it later. Imports are inbound only: OwnGit never writes to the source. Git LFS objects are not fetched or hosted.
 
-Each import has a mode. In `standalone` mode, OwnGit becomes the primary copy. In `coexistence` mode, the other host stays authoritative and OwnGit keeps a refreshed copy.
+Each import records a mode, `standalone` (**Standalone**) or `coexistence` (**Coexistence**), to note how you intend to use the copy: as the primary copy, or as a refreshed copy while the other host stays authoritative. The mode is only a label. It does not change how an import or refresh behaves: both modes follow the same [refresh rules](#what-an-import-publishes), and neither overwrites local work.
 
-In the browser, the administrator uses Import a repository on the dashboard to start an import, and the repository's Import tab to change its source and credentials, refresh, cancel, view history, and set a schedule. Every change asks for the current administrator password. Saving the credential form never clears a stored credential; only Clear credentials removes it. The browser form is limited to 1 MiB in total, so store a CA bundle close to that size with the command line.
+In the browser, the administrator uses Import a repository on the dashboard to start an import, and the repository's Import tab to change its source and credentials, refresh, cancel, view history, and set a schedule. Every change asks for the current administrator password. Saving the credential form changes only what you enter: a new token or Basic credential keeps a stored source CA, and a CA alone keeps the stored token or Basic credential. Only Clear credentials removes them. The browser form is limited to 1 MiB in total, so store a CA bundle close to that size with the command line.
 
-The same operations are available from the command line. Import commands read the administrator password from a file with the same checks as `reset-admin`, and read a source token or Basic credential from a private file or an interactive prompt. They never accept a secret as an argument or environment variable.
+The same operations are available from the command line, except changing the source URL or options of an existing import, which only the Import tab does. Import commands read the administrator password from a file with the same checks as `reset-admin`, and read a source token or Basic credential from a private file or an interactive prompt. They never accept a secret as an argument or environment variable.
 
 ```sh
 ./bin/owngit import add PROJECT https://example.invalid/team/project.git \
@@ -186,19 +186,21 @@ Every import command takes the same `--server`, `--accept-insecure-http`, and `-
 ./bin/owngit import resolve PROJECT
 ```
 
-- `--basic-file` replaces `--token-file` for a Basic credential; the file holds the username and password on separate lines. `--ca-file` alone stores only a source certificate authority, up to 1 MiB. `--clear` removes the stored credential and CA.
+- `--basic-file` replaces `--token-file` for a Basic credential; the file holds the username and password on separate lines. `--ca-file` stores a source certificate authority, up to 1 MiB. `import credentials` changes only what you pass: `--ca-file` alone keeps the stored token or Basic credential, and `--token-file` or `--basic-file` alone keeps the stored CA. `--clear` removes the stored credential and CA.
 - `--allow-private-network` permits a source on a private LAN, CGNAT or Tailnet, or loopback address.
 - `--git-only-consent` accepts a repository with Git LFS pointers; see [Git LFS](#git-lfs).
 - `--accept-insecure-http` consents to reaching OwnGit over plain HTTP for that command only. The import source itself must use HTTPS.
 - Output shows the credential type and whether one is stored, never the token, password, or CA.
-- `import add` and `import refresh` wait for the whole run, up to about 62 minutes by default.
+- `import add` creates a new repository. For a repository that already exists it refuses with `repository_taken` and changes nothing; use `import refresh` to update it from its stored source.
+- `import add` and `import refresh` wait for the whole run, up to about 62 minutes by default. When a finished run kept local refs that differ from the source, the command lists them and exits with status 3 instead of 0; other failures exit with 1. `import status` lists the last and active runs and every observed branch or tag that does not match the source, with its state.
+- If the first import of a new repository fails, OwnGit removes the source and credentials it stored for that name, and the command result still reports the failed run. If OwnGit stopped during that import, for example after a crash, it removes them at its next start. A retry uses only what you supply. Creating a repository with that name also removes leftover import settings, or is refused while an earlier import for the name is still running or needs recovery. `import credentials NAME --clear` removes them for a name that has no repository.
 - A schedule interval is between 60 seconds and 7 days. Scheduled refreshes run only while `owngit serve` is running.
 
 ### Source connections
 
 The source URL must use HTTPS with TLS 1.2 or newer and must not contain a username, password, query, or fragment. Hostnames must be ASCII, and IPv6 zone identifiers are not supported. OwnGit does not follow redirects and ignores proxy environment variables, cookies, and Git credential helpers.
 
-OwnGit resolves the hostname once and checks every returned address before it connects. Public addresses are allowed. Private LAN, CGNAT, Tailnet, and loopback addresses need `--allow-private-network`, including when a DNS answer mixes public and private addresses. Other special-purpose addresses are always refused. A custom CA adds to the system roots and never disables certificate or hostname checks.
+OwnGit resolves the hostname once and checks every returned address before it connects. Public addresses are allowed. Private LAN, CGNAT, Tailnet, and loopback addresses need `--allow-private-network`, including when a DNS answer mixes public and private addresses. Other special-purpose addresses are always refused. A custom CA adds to the system roots and never disables certificate or hostname checks. A run that fails because the source certificate is not trusted, does not match the host name, or fails the TLS handshake says so in its error message.
 
 ### What an import publishes
 
@@ -215,7 +217,7 @@ A refresh never overwrites local work. For each ref:
 
 A source branch or tag whose name differs only by case from an existing local ref is not created and is reported as divergent; rename or remove one of the two if you want the source ref imported.
 
-A branch or tag deleted at the source is never removed locally. Every replaced value stays in kept history. After you change the source URL, OwnGit has not yet seen the new source's refs, so refs that differ are reported as divergent instead of being replaced.
+A branch or tag deleted at the source is never removed locally; the Import tab and `import status` show it as **Deleted at source**. Every replaced value stays in kept history. After you change the source URL, OwnGit has not yet seen the new source's refs, so refs that differ are reported as divergent instead of being replaced.
 
 A refresh changes the repository's HEAD only when OwnGit set that HEAD on an earlier import from the same source and nothing changed it since. Otherwise HEAD stays as it is and is reported as divergent.
 
@@ -276,7 +278,7 @@ The other `pr` commands take the same `--server`, `--accept-insecure-http`, `--r
 
 A submitted review is `approved` or `changes_requested`. The reviewer label records who supplied the review; it does not claim independence or that checks ran. A pending or changes-requested review does not hold a merge. When the source or target moves, earlier review and skip decisions no longer apply, so inspect the pull request again and decide for the new object IDs.
 
-Every command writes a JSON result. Failures include a stable `error.code` and a nonzero exit status. `checks` in a pull request result reports the evidence recorded for the current source revision, or `absent`. A failed, stale, dirty, or incomplete check is advisory and never blocks a merge.
+Every command writes a JSON result. Failures include a stable `error.code` and a nonzero exit status. When the server cannot be reached, `connection_failed` names the cause, such as a refused connection or a TLS error. `checks` in a pull request result reports the evidence recorded for the current source revision, or `absent`. That evidence is `stale` when it ran other checks than those in the `.owngit/checks.json` committed in the source revision; configurations recorded for other branches do not affect it. A failed, stale, dirty, or incomplete check is advisory and never blocks a merge.
 
 Merge makes a fast-forward or a new merge commit with the old target as first parent and the source as second parent, authored as `OwnGit <owngit@localhost>` with the pull request number and title in the message. It does not squash, rebase, force-update, delete the source branch, or change anyone's working tree. Merge requires Git 2.38 or newer on the OwnGit host; with an older Git it returns `unsupported_git`, and other Git use keeps working. A retried or interrupted merge never creates a second merge commit.
 
@@ -336,6 +338,7 @@ If OwnGit cannot read the list of repositories from its state database, it still
 ## Storage
 
 - The state directory is the platform config directory joined with `owngit`, or `~/.owngit` when no config directory is available. It holds `owngit.sqlite` and, while the database is in use, its `-wal` and `-shm` files. Keep it on local storage, never on a network share used by other computers. Windows network (UNC) paths are refused.
+- Import source credentials (tokens, Basic passwords, and source CAs) are stored unencrypted as JSON in `import-credentials/NAME.json` inside the state directory, one file per repository. OwnGit restricts that folder and its files to the account that runs OwnGit, and backups never include them. Anyone who can read the state directory as that account can read these secrets, so protect it like the credentials themselves.
 - Choose the repository folder during setup. It can be on a separate disk or a mounted SMB or NFS share, with one OwnGit writer at a time. OwnGit leaves existing files in the folder alone and creates repositories there as bare repositories ending in `.git`.
 - The activity graph and recent activity are counted in the background when the server starts, and again when a page is opened after a branch changes. Counts are reused until the branches change. On a slow share the dashboard can appear before counting finishes; it then says that some repositories are still being counted, and reloading shows the full count.
 - OwnGit remembers each repository's branches and tags between writes, so the dashboard does not read every repository on the share again at each visit. A push, merge, import, restore, deletion, or default-branch change made through OwnGit shows on the next page. If refs are changed directly in the repository folder without OwnGit, pages show the change after OwnGit next writes to that repository or restarts.

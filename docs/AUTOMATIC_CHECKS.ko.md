@@ -6,7 +6,7 @@
 
 ## 워크플로 파일
 
-저장소는 `.owngit/checks.json`을 커밋해 자동 체크를 쓰겠다고 알립니다. OwnGit은 체크하는 바로 그 커밋에서 이 파일을 읽습니다. 잘못된 UTF-8, 알 수 없는 필드, 중복 키, 빠진 필수 필드, 형식이 틀린 브랜치 패턴, 64 KiB를 넘는 파일은 거부합니다.
+저장소는 `.owngit/checks.json`을 커밋해 자동 체크를 쓰겠다고 알립니다. OwnGit은 체크하는 바로 그 커밋에서 이 파일을 읽습니다. `--check` 없이 직접 실행하는 체크 에이전트도 테스트하는 리비전에 커밋된 이 파일의 체크를 실행합니다. [코딩 도구 연동](CODING_TOOLS.ko.md)을 보세요. 잘못된 UTF-8, 알 수 없는 필드, 중복 키, 빠진 필수 필드, 형식이 틀린 브랜치 패턴, 64 KiB를 넘는 파일은 거부합니다.
 
 ```json
 {
@@ -90,7 +90,7 @@ owngit check-job cancel --server https://git.example.test --repository project -
 owngit check-job rerun --server https://git.example.test --repository project --password-file ./admin-password --job JOB_ID
 ```
 
-`check-job list`는 가장 최근 작업 100개를 돌려줍니다. `check-job log`는 원본 로그를 읽습니다. 로그는 만료되지만 작업 결과는 그 뒤에도 남습니다.
+`check-job list`는 가장 최근 작업 100개를 돌려줍니다. `check-job log`는 원본 로그를 읽습니다. 로그는 만료되지만 작업 결과는 그 뒤에도 남습니다. 이미 끝난 작업에 `check-job cancel`을 쓰면 아무것도 바뀌지 않고 취소도 기록되지 않으며, `check_job_finished`로 실패합니다.
 
 시작 전에 실패하면 `unavailable`, `error`, `interrupted`로 기록합니다. 명령이 실행된 뒤 OwnGit은 추적되는 파일을 모두 다시 확인합니다. 새로 생긴 추적되지 않은 파일은 괜찮지만, 추적되는 파일이 바뀌거나 지워지거나 모드가 바뀌면 깨끗한 결과가 되지 않습니다. OwnGit이 작업의 프로세스나 컨테이너가 정리되었는지 확인하지 못하면 작업은 통과하지 않습니다.
 

@@ -25,7 +25,11 @@ import (
 )
 
 func checkPolicyCommand(arguments []string) error {
-	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
+	if len(arguments) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: owngit check-policy <show|set|enable|disable> [options]")
+		return cliProblem("invalid_arguments", "check-policy requires show, set, enable, or disable.")
+	}
+	if isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, "Usage: owngit check-policy <show|set|enable|disable> [options]")
 		return nil
 	}
@@ -73,7 +77,11 @@ func checkPolicyCommand(arguments []string) error {
 }
 
 func checkJobCommand(arguments []string) error {
-	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
+	if len(arguments) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: owngit check-job <list|show|log|cancel|rerun> [options]")
+		return cliProblem("invalid_arguments", "check-job requires list, show, log, cancel, or rerun.")
+	}
+	if isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, "Usage: owngit check-job <list|show|log|cancel|rerun> [options]")
 		return nil
 	}
@@ -118,7 +126,11 @@ func checkJobCommand(arguments []string) error {
 }
 
 func runnerCredentialCommand(arguments []string) error {
-	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
+	if len(arguments) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: owngit runner-credential <issue|list|revoke> [options]")
+		return cliProblem("invalid_arguments", "runner-credential requires issue, list, or revoke.")
+	}
+	if isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, "Usage: owngit runner-credential <issue|list|revoke> [options]")
 		return nil
 	}

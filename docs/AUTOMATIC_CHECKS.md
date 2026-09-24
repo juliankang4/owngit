@@ -10,7 +10,9 @@ runner. Results are advisory and never hold a merge.
 ## Workflow file
 
 A repository opts in with a committed `.owngit/checks.json`. OwnGit reads it
-from the exact commit being checked. Invalid UTF-8, unknown fields, duplicate
+from the exact commit being checked. A manual helper run without `--check`
+also runs the checks from the file committed in the revision it tests; see
+[Coding tools](CODING_TOOLS.md). Invalid UTF-8, unknown fields, duplicate
 keys, missing required fields, malformed branch patterns, and files over 64 KiB
 are refused.
 
@@ -154,7 +156,9 @@ owngit check-job rerun --server https://git.example.test --repository project --
 ```
 
 `check-job list` returns the newest 100 jobs. `check-job log` reads the raw
-log, which expires; the job's result stays after that.
+log, which expires; the job's result stays after that. `check-job cancel` on a
+job that already finished changes nothing, records no cancellation, and fails
+with `check_job_finished`.
 
 A failure before start is recorded as `unavailable`, `error`, or
 `interrupted`. After the commands run, OwnGit checks every tracked file again.

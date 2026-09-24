@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -621,7 +622,7 @@ func (service *Service) viewForHeads(ctx context.Context, repositoryPath string,
 	}
 	// Checks and review are advisory, so an advisory read failure is reported
 	// in the view instead of failing the whole operation, including a merge.
-	view.Checks = service.checksForRevision(ctx, record, source)
+	view.Checks = service.checksForRevision(ctx, repositoryPath, record, source)
 	if source.Status == "commit" && target.Status == "commit" {
 		review, exists, err := service.Store.PullRequestReviewForRevision(ctx, record.RepositoryID, record.Number, source.OID, target.OID)
 		if err != nil {
@@ -653,20 +654,21 @@ func (service *Service) viewForHeads(ctx context.Context, repositoryPath string,
 		}
 		view.Merge = &MergeResult{Mode: intent.Mode, OID: record.MergeOID, ReceiptRef: record.MergeReceipt, MergedAt: *record.MergedAt}
 	}
-	_ = repositoryPath
 	return view, nil
 }
 
 // checksForRevision reports the real evidence bound to the current source
 // revision. When only an older source revision recorded for this pull request
-// has evidence, or the applicable configuration changed, the result is stale
-// rather than a reused success. Evidence for other branches is never shown.
-// Checks are advisory: they never block a merge, and an advisory read failure
-// is reported as unavailable instead of failing the caller.
-func (service *Service) checksForRevision(ctx context.Context, record state.PullRequest, source branchHead) Checks {
+// has evidence, or the evidence ran checks other than those committed in the
+// source revision's workflow file, the result is stale rather than a reused
+// success. Configurations recorded for other branches do not apply. Evidence
+// for other branches is never shown. Checks are advisory: they never block a
+// merge, and an advisory read failure is reported as unavailable instead of
+// failing the caller.
+func (service *Service) checksForRevision(ctx context.Context, repositoryPath string, record state.PullRequest, source branchHead) Checks {
 	repositoryID := record.RepositoryID
 	checks := Checks{Status: "absent", Advisory: true}
-	configuration, configured, err := service.Store.LatestCheckConfiguration(ctx, repositoryID)
+	_, configured, err := service.Store.LatestCheckConfiguration(ctx, repositoryID)
 	if err != nil {
 		checks.Status = ""
 		checks.ReadFailure = &ReadFailure{Code: ReadFailureCheckConfiguration}
@@ -700,7 +702,21 @@ func (service *Service) checksForRevision(ctx context.Context, record state.Pull
 		return checks
 	}
 	checks = service.checksFromAttempt(attempt, source.OID)
-	if configured && attempt.ConfigurationVersion != configuration.Version {
+	// The configuration that applies is the one committed in the source
+	// revision. Without one, the evidence ran explicitly chosen checks and
+	// nothing newer can replace them.
+	committed, hasCommitted, err := service.committedChecks(ctx, repositoryPath, source.OID)
+	if err != nil {
+		return Checks{Advisory: true, Configured: true, ReadFailure: &ReadFailure{Code: ReadFailureCheckConfiguration}}
+	}
+	if !hasCommitted {
+		return checks
+	}
+	used, exists, err := service.Store.CheckConfiguration(ctx, repositoryID, attempt.ConfigurationVersion)
+	if err != nil {
+		return Checks{Advisory: true, Configured: true, ReadFailure: &ReadFailure{Code: ReadFailureCheckConfiguration}}
+	}
+	if !exists || !slices.Equal(used.Checks, committed) {
 		checks.Status = "stale"
 		checks.Stale = true
 		checks.Summary = attempt.Summary + "; the check configuration changed"

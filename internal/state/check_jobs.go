@@ -1664,7 +1664,8 @@ func (s *Store) FailCheckJobBeforeStart(ctx context.Context, authority CheckJobC
 
 // CancelCheckJob terminalizes pending and claimed work before execution.
 // Started or ambiguous work keeps its evidence and records only cancel intent
-// until a cancelled completion arrives. A terminal job is never reversed.
+// until a cancelled completion arrives. A finished job is returned unchanged:
+// it is never reversed, and no cancel intent is recorded on it.
 func (s *Store) CancelCheckJob(ctx context.Context, repositoryID, jobID string, now time.Time) (CheckJob, error) {
 	if repositoryID == "" || !validAttemptID(jobID) || now.IsZero() {
 		return CheckJob{}, fmt.Errorf("%w: invalid cancellation", ErrInvalidCheckJob)
@@ -1704,8 +1705,8 @@ func (s *Store) CancelCheckJob(ctx context.Context, repositoryID, jobID string, 
 		job.Status = CheckJobCancelled
 		job.CancelRequestedAt = &cancelledAt
 		job.FinishedAt = &cancelledAt
-	} else if job.CancelRequestedAt == nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET cancel_requested_at=? WHERE id=?`, cancelledAt.UnixNano(), job.ID); err != nil {
+	} else if (job.Status == CheckJobStarted || job.Status == CheckJobAmbiguous) && job.CancelRequestedAt == nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET cancel_requested_at=? WHERE id=? AND status=?`, cancelledAt.UnixNano(), job.ID, job.Status); err != nil {
 			return CheckJob{}, err
 		}
 		job.CancelRequestedAt = &cancelledAt

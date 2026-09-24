@@ -322,6 +322,23 @@ func (s *Service) SetCredentials(ctx context.Context, repositoryID string, crede
 			record.Basic = &state.ImportBasicAuth{Username: credential.Username, Password: credential.Password}
 		}
 		record.BearerToken = credential.BearerToken
+		// Saving changes only the parts supplied: a new token or Basic pair
+		// keeps the stored CA, and a CA alone keeps the stored secret. Only an
+		// explicit clear removes them. Material bound to an earlier source
+		// configuration is never carried over.
+		current, stored, loadErr := s.Store.LoadImportCredentials(ctx, repositoryID)
+		if loadErr != nil {
+			lock.Unlock()
+			return newProblem(CodeStateUnavailable, "stored import credential could not be read", loadErr)
+		}
+		if stored && current.Bound(source) {
+			if record.Basic == nil && record.BearerToken == "" {
+				record.Basic, record.BearerToken = current.Basic, current.BearerToken
+			}
+			if len(record.RootCAPEM) == 0 {
+				record.RootCAPEM = current.RootCAPEM
+			}
+		}
 		if validateErr := record.Validate(); validateErr != nil {
 			lock.Unlock()
 			return newProblem(CodeInvalidSource, validateErr.Error(), validateErr)
@@ -437,7 +454,90 @@ func (s *Service) Import(ctx context.Context, input ImportInput) (ImportResult, 
 		return ImportResult{}, err
 	}
 	run, runErr := s.execute(ctx, repositoryID, name, input.Description, kind, input.Limits, true, snapshot, written)
-	return ImportResult{RepositoryID: repositoryID, Run: run, Status: s.mustStatus(ctx, repositoryID)}, runErr
+	status := s.mustStatus(ctx, repositoryID)
+	if runErr != nil {
+		s.forgetFailedNewImport(context.WithoutCancel(ctx), repositoryID, written)
+	}
+	return ImportResult{RepositoryID: repositoryID, Run: run, Status: status}, runErr
+}
+
+// forgetFailedNewImport removes the source binding and credentials that a
+// failed first import wrote, so no secret stays behind for a repository that
+// does not exist, and neither a retry nor a later repository with the same
+// name inherits them. The run history stays. It leaves everything in place
+// when another run or change took over the binding. A refusal or failure is
+// not reported: the run's own error is what the caller reports, and the next
+// start sweeps what is left.
+func (s *Service) forgetFailedNewImport(ctx context.Context, repositoryID string, written state.ImportSource) {
+	_, _ = s.forgetOrphanImport(ctx, repositoryID, func() bool {
+		current, exists, err := s.Store.ImportSource(ctx, repositoryID)
+		return err == nil && importBindingStillWritten(exists, current, written)
+	})
+}
+
+// ForgetOrphanImport removes the import source and credentials stored for a
+// name that has no repository, for example after a first import was
+// interrupted. It reports false when nothing is stored. It refuses with
+// repository_taken when the repository exists and with busy while a run or
+// recovery still needs the state.
+func (s *Service) ForgetOrphanImport(ctx context.Context, repositoryID string) (bool, error) {
+	return s.forgetOrphanImport(ctx, repositoryID, nil)
+}
+
+func (s *Service) forgetOrphanImport(ctx context.Context, repositoryID string, stillApplies func() bool) (bool, error) {
+	if s.Store == nil || s.Repositories == nil || s.Repositories.Locks == nil {
+		return false, newProblem(CodeRuntimeUnavailable, "import configuration runtime is unavailable", nil)
+	}
+	mutex := s.repositoryLock(repositoryID)
+	if !mutex.TryLock() {
+		return false, newProblem(CodeBusy, "an import is already running for this repository", ErrBusy)
+	}
+	defer mutex.Unlock()
+	lock := s.Repositories.Locks.For(repositoryID)
+	lock.Lock()
+	defer lock.Unlock()
+	binding, err := s.Store.ReadImportBinding(ctx, repositoryID)
+	if err != nil {
+		return false, newProblem(CodeStateUnavailable, "import binding could not be read", err)
+	}
+	if !binding.SourceExists && !binding.CredentialExists {
+		return false, nil
+	}
+	if stillApplies != nil && !stillApplies() {
+		return false, nil
+	}
+	if taken, err := s.destinationTaken(ctx, repositoryID); err != nil {
+		return false, err
+	} else if taken {
+		return false, newProblem(CodeRepositoryTaken, "repository destination already exists", nil)
+	}
+	if err := s.Store.ForgetUnpublishedImport(ctx, repositoryID); errors.Is(err, state.ErrImportNotForgettable) {
+		return false, newProblem(CodeBusy, "an earlier import for this name is still running or needs recovery; restart OwnGit or try again later", err)
+	} else if err != nil {
+		return false, newProblem(CodeStateUnavailable, "import settings could not be removed", err)
+	}
+	return true, nil
+}
+
+// forgetOrphanImports runs after startup recovery settled interrupted runs. It
+// removes the import settings and credentials of every name that has no
+// repository, such as a first import that a crash interrupted. A name that
+// still needs recovery is kept and logged.
+func (s *Service) forgetOrphanImports(ctx context.Context) error {
+	names, err := s.Store.OrphanImportBindings(ctx)
+	if err != nil {
+		return fmt.Errorf("read orphan import settings: %w", err)
+	}
+	for _, name := range names {
+		forgotten, err := s.ForgetOrphanImport(ctx, name)
+		switch {
+		case err != nil && problemCode(err) != CodeRepositoryTaken:
+			s.logf("import settings for %s, which has no repository, were kept: %v", name, err)
+		case forgotten:
+			s.logf("removed import settings and credentials for %s, which has no repository", name)
+		}
+	}
+	return nil
 }
 
 // bindNewImport snapshots any existing source and credential binding under the
@@ -497,6 +597,14 @@ func (s *Service) bindNewImport(ctx context.Context, input ConfigureInput, crede
 		if err != nil {
 			lock.Unlock()
 			return nil, state.ImportSource{}, newProblem(CodeStateUnavailable, "import credentials could not be recorded", err)
+		}
+	} else if snapshot.CredentialExists {
+		// A new import uses only the credentials supplied with it, never a
+		// secret left by an earlier attempt under the same name.
+		source, err = s.Store.DeleteImportCredentials(ctx, input.RepositoryID, now)
+		if err != nil {
+			lock.Unlock()
+			return nil, state.ImportSource{}, newProblem(CodeStateUnavailable, "stale import credentials could not be removed", err)
 		}
 	}
 	lock.Unlock()
@@ -843,6 +951,15 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 		observations = observations[:statusRefLimit]
 		status.RefsTruncated = true
 	}
+	// Every completed publication records HEAD and each ref the source then
+	// advertised under that run's identity. A ref kept from an older run of
+	// the same source was no longer advertised: it was deleted at the source.
+	latestRunID := ""
+	for _, observation := range observations {
+		if observation.RefName == state.ImportHeadRef && observation.SourceGeneration == source.SourceGeneration {
+			latestRunID = observation.RunID
+		}
+	}
 	for _, observation := range observations {
 		if observation.RefName == state.ImportHeadRef {
 			continue
@@ -851,6 +968,11 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 		switch {
 		case observation.SourceGeneration != source.SourceGeneration:
 			ref.State = "earlier_source"
+		case latestRunID != "" && observation.RunID != latestRunID:
+			ref.State = "deleted_at_source"
+			if local, present := destination[observation.RefName]; present {
+				ref.LocalOID = local
+			}
 		case destination == nil:
 			ref.State = "unknown_local"
 		default:
@@ -1039,6 +1161,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	}
 	if _, err := s.currentRuntime(generation); err != nil {
 		return err
+	}
+	if err := s.forgetOrphanImports(ctx); err != nil {
+		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
 }

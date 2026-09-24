@@ -60,7 +60,7 @@ owngit check task new \
   --title "Fix the failing build"
 ```
 
-체크를 실행합니다. `--check`를 빼면 가장 최근에 기록된 구성을 다시 씁니다. `--check name=command`를 넘기면 이번 시도에 그 구성을 기록합니다.
+체크를 실행합니다. `--check`를 빼면 테스트하는 리비전, 곧 `--workdir`의 `HEAD`에 커밋된 `.owngit/checks.json`의 체크를 실행합니다. 워킹 트리의 사본이나 다른 리비전에서 서버에 기록된 구성은 쓰지 않으므로, 다른 브랜치의 명령이 내 컴퓨터에서 실행될 일은 없습니다. 그 리비전에 이 파일이 없거나 파일이 올바르지 않으면 아무것도 실행하기 전에 멈춥니다. `--check name=command`를 넘기면 대신 바로 그 체크들을 실행하고 기록합니다.
 
 ```sh
 owngit check run \
@@ -103,11 +103,11 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 
 `check task new`는 작업을 만듭니다. 플래그는 `--title`, `--server`, `--repository`, `--credential-file`, `--accept-insecure-http`입니다.
 
-`check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값은 체크당 65536바이트), `--no-upload`, 그리고 여러 번 쓸 수 있는 `--check name=command`입니다. `--no-upload`와 `--check`를 하나 이상 함께 쓰는 경우가 아니면 원격 플래그가 필요합니다.
+`check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값은 체크당 65536바이트), `--no-upload`, 그리고 여러 번 쓸 수 있는 `--check name=command`입니다. `--timeout`과 `--output-limit`은 0보다 커야 합니다. `--no-upload`를 쓰지 않으면 원격 플래그가 필요합니다.
 
 `check cycle reserve`는 수정 라운드 하나를 예약합니다. 플래그는 `--task`(필수)와 원격 플래그입니다. `check cycle list`는 예약한 라운드 목록을 보여 줍니다.
 
-`check status`는 작업과 가장 최근 시도를 읽습니다. `check log`는 `--attempt`로 지정한 원본 로그 하나를 읽습니다. `check config show`는 가장 최근에 기록된 구성을 읽습니다.
+`check status`는 작업과 가장 최근 시도를 읽습니다. `check log`는 `--attempt`로 지정한 원본 로그 하나를 읽습니다. `check config show`는 브랜치와 관계없이 저장소에 가장 최근에 기록된 구성을 읽습니다. `check run`은 이 구성을 쓰지 않습니다.
 
 `helper-credential create`는 토큰을 발급합니다. 플래그는 `--label`, `--output`(필수), `--server`, `--repository`, `--password-file`, `--accept-insecure-http`입니다. `helper-credential list`와 `helper-credential revoke --id ID`로 기존 토큰을 관리합니다.
 
@@ -120,11 +120,13 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 - `2`: 이 클라이언트가 시도가 기록되었는지 확인하지 못했습니다.
 - `130`: 실행이 취소되었습니다.
 
+`check run`이 체크를 하나도 실행하기 전에 멈추면, 결과 대신 오류 객체 `{"ok":false,"error":{"code":...,"message":...}}`를 출력하고 1로 끝납니다. 인수가 잘못되었을 때, 커밋된 구성이 없거나 올바르지 않을 때(`checks_not_configured`, `invalid_check_configuration`), 그리고 예약하지 않은 `--cycle`처럼 서버가 등록을 거부했을 때입니다. 이때는 아무것도 실행되지 않았고 아무것도 기록되지 않았습니다.
+
 JSON 객체에는 `ok`, `registered`, `uploaded`, `attempt_id`, `cycle_id`, `task`, `attempt`, `correction_cycles_remaining`, `results`, `upload_error`가 들어 있습니다. `attempt` 객체에는 `status`, `revision_oid`, `worktree_state`, `summary`, `cleanup_failed`, `log_truncated`와 실행 한도가 들어 있습니다. `results`의 각 항목에는 `name`, `command`, `status`, `exit_code`, `duration_ms`, `output_excerpt`, `truncated`, `cleanup_error`가 들어 있습니다.
 
 체크별 상태는 `passed`, `failed`, `error`, `cancelled`, `incomplete`, `unavailable`입니다. 서버는 체크 에이전트가 보낸 종합 결과를 믿지 않고, 개별 결과로 시도 상태를 다시 계산합니다. 정리 오류가 있으면 명령의 종료 코드가 보이더라도 결과는 `error`입니다. 출력이 체크의 출력 한도를 넘으면 결과는 `incomplete`입니다. 줄인 발췌나 로그는 잘렸다고 표시하며 상태는 바꾸지 않습니다. 구성된 체크가 하나도 없으면 `passed`가 아니라 `unavailable`입니다. 등록된 뒤 완료를 보고하지 않은 시도는 `pending`으로 계속 보입니다.
 
-`upload_error`는 이 클라이언트가 등록이나 완료를 확인하지 못했다는 뜻입니다. 응답을 받지 못했더라도 서버에는 등록이나 완료가 받아들여져 있을 수 있습니다. 그러니 예약이나 실행을 되풀이하기 전에 `check status`를 확인하고, 시도가 없다고 단정하지 마세요. 이는 기록된 실패 체크와 다릅니다. 기록된 실패 체크에는 `failed` 결과를 가진 저장된 시도가 있습니다.
+`upload_error`는 이 클라이언트가 등록이나 완료를 확인하지 못했다는 뜻입니다. 응답을 받지 못했더라도 서버에는 등록이나 완료가 받아들여져 있을 수 있습니다. 그러니 예약이나 실행을 되풀이하기 전에 `check status`를 확인하고, 시도가 없다고 단정하지 마세요. 이는 기록된 실패 체크와 다릅니다. 기록된 실패 체크에는 `failed` 결과를 가진 저장된 시도가 있습니다. 서버에 아예 연결하지 못해도 체크는 실행되고, 명령은 2로 끝나며, `upload_error`에 연결 거부나 TLS 오류 같은 원인이 나옵니다.
 
 ### 최상위 수정 횟수가 항상 측정값은 아닙니다
 
@@ -149,7 +151,7 @@ JSON 객체에는 `ok`, `registered`, `uploaded`, `attempt_id`, `cycle_id`, `tas
 - 체크 에이전트는 사용자의 환경과 권한을 물려받습니다. 샌드박스가 아니며, 체크는 사용자 계정이 접근할 수 있는 파일과 인증 정보를 읽을 수 있습니다.
 - 변경이 있거나 상태를 알 수 없는 워킹 트리는 테스트한 커밋이 아닙니다. 그 리비전을 테스트했다고 말하지 말고 기록된 워킹 트리 상태를 보고하세요.
 - `--no-upload`는 로컬에서 실행되며 서버에 기록되지 않습니다. 서버에 기록된 근거라고 설명하지 마세요. 출력에 `task` 객체가 없으며, 최상위 `correction_cycles_remaining`의 `0`은 측정한 한도가 아니라 읽지 않은 필드입니다.
-- 실패한 체크를 무작정 다시 시도하지 말고, 체크를 통과시키려고 기록된 구성을 약하게 바꾸거나 다른 것으로 바꾸지 마세요.
+- 실패한 체크를 무작정 다시 시도하지 말고, 체크를 통과시키려고 커밋된 체크 구성을 약하게 바꾸거나 다른 것으로 바꾸지 마세요.
 - 코딩 세션을 시작하거나 재개하지 말고, 모델을 바꾸거나, 읽기 전용 리뷰어에게 도구를 주거나, 팀을 다시 불러오거나, 인증 파일이나 대화 기록을 살펴보지 마세요.
 - 스킬이 반드시 로드되어 쓰인다는 보장은 없습니다. 직접 호출과 이 안내의 수동 명령이 확실한 방법입니다.
 - 읽기 전용 권한만 있는 리뷰어는 체크를 실행할 수 없습니다. 실행 권한이 있고 승인된 참여자가 체크를 실행해 그 출처와 함께 결과를 전달합니다. 이것이 도구를 주거나, 역할을 바꾸거나, 팀 정책을 정하는 것은 아닙니다.

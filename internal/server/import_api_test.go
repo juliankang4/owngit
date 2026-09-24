@@ -15,6 +15,7 @@ import (
 	"owngit/internal/importgit"
 	"owngit/internal/importsync"
 	"owngit/internal/repository"
+	"owngit/internal/state"
 )
 
 func TestImportAPIRequiresOwnerAndRejectsCSRF(t *testing.T) {
@@ -90,6 +91,42 @@ func TestImportAPIMapsNotConfiguredAndImportsNewRepository(t *testing.T) {
 	rejected := importAPIRequest(t, http.MethodGet, server.URL+"/api/v1/repositories/fresh/import?cursor=1", nil, "admin-password", "", "")
 	if rejected.StatusCode != http.StatusBadRequest {
 		t.Fatalf("query on status status=%d", rejected.StatusCode)
+	}
+}
+
+// An add request for a repository that already exists is refused. It must not
+// silently refresh the stored source instead of importing the given one.
+func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	server := serve(t, fixture.app.Handler())
+	base := server.URL + "/api/v1/repositories/fresh/import"
+	created := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{
+		"name": "fresh", "url": "https://example.invalid/team/fresh.git", "mode": "coexistence",
+	}, "admin-password", "", "")
+	if created.StatusCode != http.StatusOK {
+		t.Fatalf("initial import status=%d body=%s", created.StatusCode, importAPIBody(t, created))
+	}
+	for _, body := range []map[string]any{
+		{"name": "fresh", "url": "https://example.invalid/team/other.git", "mode": "standalone"},
+		{"url": "https://example.invalid/team/fresh.git"},
+	} {
+		again := importAPIRequest(t, http.MethodPost, base+"/run", body, "admin-password", "", "")
+		if again.StatusCode != http.StatusConflict || importAPICode(t, again) != importsync.CodeRepositoryTaken {
+			t.Fatalf("add on an existing repository status=%d", again.StatusCode)
+		}
+	}
+	runs, _, err := fixture.app.Imports.History(context.Background(), "fresh", 10)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("a refused add started a run: runs=%d err=%v", len(runs), err)
+	}
+	status, err := fixture.app.Imports.Status(context.Background(), "fresh")
+	if err != nil || status.URL != "https://example.invalid/team/fresh.git" || status.Mode != "coexistence" {
+		t.Fatalf("a refused add changed the source: %+v err=%v", status, err)
+	}
+	// A plain refresh still runs.
+	refreshed := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{}, "admin-password", "", "")
+	if refreshed.StatusCode != http.StatusOK {
+		t.Fatalf("refresh status=%d body=%s", refreshed.StatusCode, importAPIBody(t, refreshed))
 	}
 }
 
@@ -249,4 +286,36 @@ func importAPIBody(t *testing.T, response *http.Response) string {
 	content, err := io.ReadAll(response.Body)
 	noErr(t, err)
 	return string(content)
+}
+
+// Clearing credentials works for a name whose first import never created the
+// repository, and a name with nothing stored is still not found.
+func TestImportCredentialsClearWorksWithoutARepository(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	server := serve(t, fixture.app.Handler())
+	ctx := context.Background()
+	source, err := fixture.store.ConfigureImportSource(ctx, state.ImportSourceInput{
+		RepositoryID: "orphan", URL: "https://example.invalid/team/orphan.git", Mode: "standalone", Now: time.Now(),
+	})
+	noErr(t, err)
+	_, err = fixture.store.SaveImportCredentials(ctx, state.ImportCredentials{
+		RepositoryID: "orphan", URL: source.URL, SourceGeneration: source.SourceGeneration,
+		ExpectedAuthorityRevision: source.AuthorityRevision, BearerToken: "orphan-token",
+	}, time.Now())
+	noErr(t, err)
+
+	cleared := importAPIRequest(t, http.MethodDelete, server.URL+"/api/v1/repositories/orphan/import/credentials", nil, "admin-password", "", "")
+	if body := importAPIBody(t, cleared); cleared.StatusCode != http.StatusOK || !strings.Contains(body, `"credential_form":"none"`) {
+		t.Fatalf("clear without a repository status=%d body=%s", cleared.StatusCode, body)
+	}
+	if _, exists, err := fixture.store.LoadImportCredentials(ctx, "orphan"); err != nil || exists {
+		t.Fatalf("the credential stayed exists=%v err=%v", exists, err)
+	}
+	if _, exists, err := fixture.store.ImportSource(ctx, "orphan"); err != nil || exists {
+		t.Fatalf("the source stayed exists=%v err=%v", exists, err)
+	}
+	again := importAPIRequest(t, http.MethodDelete, server.URL+"/api/v1/repositories/orphan/import/credentials", nil, "admin-password", "", "")
+	if again.StatusCode != http.StatusNotFound || importAPICode(t, again) != "repository_not_found" {
+		t.Fatalf("clear with nothing stored status=%d", again.StatusCode)
+	}
 }

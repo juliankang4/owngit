@@ -200,6 +200,12 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 			writeConfiguredJobError(writer, err)
 			return
 		}
+		if parts[1] == "cancel" && job.Status != state.CheckJobCancelled && job.CancelRequestedAt == nil {
+			// The job had already finished, so nothing was cancelled or
+			// recorded. Reporting success would suggest work was stopped.
+			writeAPIError(writer, http.StatusConflict, "check_job_finished", "The configured-check job already finished as "+job.Status+"; no cancellation was recorded.", nil)
+			return
+		}
 		app.wakeChecks(repositoryID)
 		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: app.jobJSON(request, job, true)})
 		return

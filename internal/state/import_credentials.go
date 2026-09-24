@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -377,6 +378,54 @@ func (s *Store) removeImportCredentialFile(repositoryID string) error {
 		return err
 	}
 	return nil
+}
+
+// OrphanImportBindings lists names that have an import source or a stored
+// import credential file but no repository row, in name order.
+func (s *Store) OrphanImportBindings(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT repository_id FROM import_sources WHERE repository_id NOT IN (SELECT id FROM repositories)`)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		names[name] = true
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(s.dir, importCredentialDir))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	for _, entry := range entries {
+		name, isJSON := strings.CutSuffix(entry.Name(), ".json")
+		if !isJSON || strings.HasPrefix(name, ".") || !entry.Type().IsRegular() {
+			continue
+		}
+		if _, err := s.importCredentialPath(name); err != nil {
+			continue
+		}
+		if _, exists, err := s.Repository(ctx, name); err != nil {
+			return nil, err
+		} else if !exists {
+			names[name] = true
+		}
+	}
+	sorted := make([]string, 0, len(names))
+	for name := range names {
+		sorted = append(sorted, name)
+	}
+	sort.Strings(sorted)
+	return sorted, nil
 }
 
 // ImportBindingSnapshot is the source row and credential file that existed

@@ -924,6 +924,34 @@ func TestJobCancellationSemantics(t *testing.T) {
 	}
 }
 
+// A cancel that arrives after a job finished changes nothing and records no
+// cancel intent, so the history does not suggest someone stopped the job.
+func TestCancelLeavesAFinishedJobUnchanged(t *testing.T) {
+	fixture := newCheckJobFixture(t)
+	fixture.setPolicy(t, nil)
+	fixture.grantConsent(t)
+	ctx := context.Background()
+	job := fixture.admit(t, pushJobRequest())
+	runner, _ := fixture.issueRunner(t)
+	claimed, found, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
+	if err != nil || !found {
+		t.Fatalf("claim found=%v err=%v", found, err)
+	}
+	if _, err := fixture.store.FailCheckJobBeforeStart(ctx, CheckJobCompletionAuthority{
+		JobID: claimed.ID, LeaseID: claimed.LeaseID, CredentialID: runner.ID, CredentialGeneration: runner.Generation,
+	}, CheckJobError, "The run ended before execution began.", fixture.now); err != nil {
+		t.Fatal(err)
+	}
+	returned, err := fixture.store.CancelCheckJob(ctx, "project", job.ID, fixture.now.Add(time.Second))
+	if err != nil || returned.Status != CheckJobError || returned.CancelRequestedAt != nil {
+		t.Fatalf("cancel of a finished job returned=%+v err=%v", returned, err)
+	}
+	stored, _, err := fixture.store.CheckJob(ctx, "project", job.ID)
+	if err != nil || stored.Status != CheckJobError || stored.CancelRequestedAt != nil {
+		t.Fatalf("finished job after cancel=%+v err=%v", stored, err)
+	}
+}
+
 func mustRunner(t *testing.T, fixture *checkJobFixture) RunnerCredential {
 	t.Helper()
 	runner, _ := fixture.issueRunner(t)

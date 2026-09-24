@@ -79,3 +79,17 @@ func TestFlagErrorsStillFail(t *testing.T) {
 		}
 	}
 }
+
+// A command group run without an action is an error, like any other missing
+// argument, and the group help names every action it accepts.
+func TestCommandGroupsWithoutAnActionFail(t *testing.T) {
+	for _, group := range []string{"pr", "check", "helper-credential", "check-policy", "check-job", "runner-credential", "import"} {
+		if _, err := captureStdout(func() error { return run([]string{group}) }); err == nil {
+			t.Errorf("owngit %s without an action succeeded", group)
+		}
+	}
+	output, err := captureStdout(func() error { return run([]string{"check", "--help"}) })
+	if err != nil || !strings.Contains(output, "cycle list") {
+		t.Errorf("owngit check --help=%q err=%v, want cycle list", output, err)
+	}
+}

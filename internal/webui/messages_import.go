@@ -117,6 +117,7 @@ const (
 	MsgImportRefAbsent         MessageCode = "import.ref.absent_locally"
 	MsgImportRefEarlier        MessageCode = "import.ref.earlier_source"
 	MsgImportRefUnknown        MessageCode = "import.ref.unknown_local"
+	MsgImportRefDeleted        MessageCode = "import.ref.deleted_at_source"
 )
 
 var importCatalog = map[MessageCode]message{
@@ -234,6 +235,7 @@ var importCatalog = map[MessageCode]message{
 	MsgImportRefAbsent:          {en: "Absent locally", ko: "OwnGit에 없음"},
 	MsgImportRefEarlier:         {en: "Earlier source", ko: "예전 원본 기록"},
 	MsgImportRefUnknown:         {en: "Local unknown", ko: "OwnGit 쪽 확인 못 함"},
+	MsgImportRefDeleted:         {en: "Deleted at source", ko: "원본에서 삭제됨"},
 }
 
 func importToken(lang Lang, token string) string {
@@ -342,6 +344,8 @@ func importTokenCode(token string) (MessageCode, bool) {
 		return MsgImportRefEarlier, true
 	case "unknown_local":
 		return MsgImportRefUnknown, true
+	case "deleted_at_source":
+		return MsgImportRefDeleted, true
 	case "basic":
 		return MsgImportCredentialBasic, true
 	case "bearer":

@@ -121,6 +121,12 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if exists {
+		// A request that names a source is a new import. It must not turn into
+		// a refresh of whatever source the existing repository has.
+		if input.URL != "" || input.Name != "" || input.Mode != "" || input.Description != "" || input.GitOnlyConsent || input.AllowPrivateNetwork {
+			writeAPIError(writer, http.StatusConflict, importsync.CodeRepositoryTaken, "The repository already exists, so nothing was imported. Use refresh to update it from its stored source, or change the source on the repository's Import tab.", nil)
+			return
+		}
 		if importCredentialFieldsPresent(input.CredentialForm, input.Username, input.Password, input.Token, input.CAPEM) {
 			writeAPIError(writer, http.StatusUnprocessableEntity, importsync.CodeInvalidSource, "Refresh does not accept credentials. Save them with the credentials endpoint first.", nil)
 			return
@@ -307,6 +313,9 @@ func (app *App) handleImportScheduleAPI(writer http.ResponseWriter, request *htt
 }
 
 func (app *App) handleImportCredentialsAPI(writer http.ResponseWriter, request *http.Request, repositoryID string) {
+	if request.Method == http.MethodDelete && app.clearOrphanImportCredentials(writer, request, repositoryID) {
+		return
+	}
 	if !app.importRepositoryExists(writer, request, repositoryID) {
 		return
 	}
@@ -341,6 +350,39 @@ func (app *App) handleImportCredentialsAPI(writer http.ResponseWriter, request *
 	default:
 		writeAPIMethodError(writer, http.MethodPut+", "+http.MethodDelete)
 	}
+}
+
+// clearOrphanImportCredentials handles a clear for a name without a
+// repository, such as one left by an interrupted first import: it removes the
+// stored source and credentials. It reports false when the repository exists,
+// so the ordinary clear applies.
+func (app *App) clearOrphanImportCredentials(writer http.ResponseWriter, request *http.Request, repositoryID string) bool {
+	_, exists, err := app.Store.Repository(request.Context(), repositoryID)
+	if err != nil {
+		writeAPIError(writer, http.StatusServiceUnavailable, importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
+		return true
+	}
+	if exists {
+		return false
+	}
+	forgotten, err := app.Imports.ForgetOrphanImport(request.Context(), repositoryID)
+	if importsyncProblemCode(err) == importsync.CodeRepositoryTaken {
+		return false
+	}
+	if err != nil {
+		writeImportProblem(writer, err)
+		return true
+	}
+	if !forgotten {
+		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
+		return true
+	}
+	writeAPIJSON(writer, http.StatusOK, struct {
+		OK              bool   `json:"ok"`
+		CredentialForm  string `json:"credential_form"`
+		CredentialBound bool   `json:"credential_bound"`
+	}{OK: true, CredentialForm: "none", CredentialBound: false})
+	return true
 }
 
 func (app *App) writeImportCredentialState(writer http.ResponseWriter, request *http.Request, repositoryID string) {

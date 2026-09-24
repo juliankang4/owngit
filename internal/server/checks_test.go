@@ -527,7 +527,11 @@ func TestExpiredLogIsReportedWhileTheAttemptRemains(t *testing.T) {
 	}
 }
 
-func TestCheckEvidenceIsStaleWhenTheConfigurationChanges(t *testing.T) {
+// The configuration that applies to a pull request is the one committed in its
+// source revision. A configuration recorded for another branch never makes the
+// head's evidence stale; evidence that ran other checks than the committed
+// ones is stale.
+func TestCheckEvidenceIsStaleOnlyAgainstTheSourceRevisionConfiguration(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	base, token := helperAPI(t, fixture, "laptop", time.Now())
 	prEndpoint := base + "/pull-requests"
@@ -536,31 +540,57 @@ func TestCheckEvidenceIsStaleWhenTheConfigurationChanges(t *testing.T) {
 	}, "", "")
 	view := decodeAPISuccess(t, created)
 	number := itoa(view.PullRequest.Number)
+	showChecks := func() pullrequest.Checks {
+		t.Helper()
+		shown := apiRequest(t, http.MethodGet, prEndpoint+"/"+number, nil, "", "")
+		return decodeAPISuccess(t, shown).PullRequest.Checks
+	}
 
 	task := checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": "Configuration change"}, token)
 	var taskResponse checkapi.TaskResponse
 	decodeCheckJSON(t, task, &taskResponse)
-	recorded := recordAttempt(t, base, taskResponse.Task.ID, token, attemptUploadBody(fixture.sourceOID, "clean", "passed"))
-	if recorded.StatusCode != http.StatusOK {
-		t.Fatalf("record attempt status=%d", recorded.StatusCode)
+	record := func(revision, attemptID, name, command string) {
+		t.Helper()
+		body := attemptUploadBodyWithID(revision, "clean", "passed", attemptID)
+		body["checks"] = []map[string]string{{"name": name, "command": command}}
+		body["results"] = []map[string]any{{
+			"name": name, "command": command, "status": "passed", "exit_code": 0,
+			"duration_ms": 1000, "output_excerpt": "ok",
+		}}
+		if response := recordAttempt(t, base, taskResponse.Task.ID, token, body); response.StatusCode != http.StatusOK {
+			t.Fatalf("record attempt status=%d error=%q", response.StatusCode, apiErrorCode(t, response))
+		}
 	}
 
-	// A different configuration recorded for another revision makes the older
-	// evidence stale even though the revision still matches.
-	changed := attemptUploadBodyWithID(strings.Repeat("c", 40), "clean", "passed", "ffffffffffffffffffffffffffffffff")
-	changed["checks"] = []map[string]string{{"name": "lint", "command": "go vet ./..."}}
-	changed["results"] = []map[string]any{{
-		"name": "lint", "command": "go vet ./...", "status": "passed", "exit_code": 0,
-		"duration_ms": 1000, "output_excerpt": "ok",
-	}}
-	if response := recordAttempt(t, base, taskResponse.Task.ID, token, changed); response.StatusCode != http.StatusOK {
-		t.Fatalf("changed configuration status=%d error=%q", response.StatusCode, apiErrorCode(t, response))
+	// The head has no committed configuration, so the explicitly chosen checks
+	// stand, even after a newer configuration is recorded for another branch.
+	record(fixture.sourceOID, strings.Repeat("1", 32), "unit", "go test ./...")
+	record(strings.Repeat("c", 40), strings.Repeat("2", 32), "lint", "go vet ./...")
+	if checks := showChecks(); checks.Status != "passed" || checks.Stale || !checks.Passed {
+		t.Fatalf("another branch's configuration made the evidence stale: %+v", checks)
 	}
 
-	shown := apiRequest(t, http.MethodGet, prEndpoint+"/"+number, nil, "", "")
-	checks := decodeAPISuccess(t, shown).PullRequest.Checks
-	if checks.Status != "stale" || !checks.Stale || checks.ConfigurationVersion != 1 || !checks.Passed {
-		t.Fatalf("configuration change did not mark the evidence stale: %+v", checks)
+	// Commit a configuration on the pull request head.
+	noErr(t, os.MkdirAll(filepath.Join(fixture.work, ".owngit"), 0o700))
+	noErr(t, os.WriteFile(filepath.Join(fixture.work, ".owngit", "checks.json"),
+		[]byte(`{"version":1,"events":{"push":{}},"checks":[{"name":"lint","command":"go vet ./..."}]}`), 0o600))
+	apiRunGit(t, fixture.work, "add", ".")
+	apiRunGit(t, fixture.work, "commit", "-m", "checks")
+	apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/feature")
+	head := apiGitOutput(t, fixture.work, "rev-parse", "HEAD")
+
+	// Evidence that ran other checks than the committed ones is stale.
+	record(head, strings.Repeat("3", 32), "unit", "go test ./...")
+	if checks := showChecks(); checks.Status != "stale" || !checks.Stale || checks.RevisionOID != head || !checks.Passed {
+		t.Fatalf("evidence for other checks than the committed ones was not stale: %+v", checks)
+	}
+
+	// Evidence that ran the committed checks is current, and a configuration
+	// recorded later for another branch does not change that.
+	record(head, strings.Repeat("4", 32), "lint", "go vet ./...")
+	record(strings.Repeat("d", 40), strings.Repeat("5", 32), "other", "true")
+	if checks := showChecks(); checks.Status != "passed" || checks.Stale || checks.RevisionOID != head {
+		t.Fatalf("evidence for the committed checks was not current: %+v", checks)
 	}
 }
 

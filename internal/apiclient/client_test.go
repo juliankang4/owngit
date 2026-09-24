@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -95,4 +96,46 @@ func errorCode(err error) string {
 		return problem.Code
 	}
 	return ""
+}
+
+// A request that gets no response names the transport cause, never the
+// credential or the request URL.
+func TestConnectionFailureNamesTheCause(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	address := server.URL
+	server.Close()
+	origin, err := ValidateServer(address, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := New(origin, "synthetic-secret-password")
+	_, err = client.Do(context.Background(), http.MethodGet, "/api/v1/repositories/project/pull-requests", nil)
+	var problem *Error
+	if !errors.As(err, &problem) || problem.Code != "connection_failed" || problem.Status != 0 {
+		t.Fatalf("closed server error=%v", err)
+	}
+	if !strings.HasPrefix(problem.Message, "The OwnGit server request failed: ") || len(problem.Message) <= len("The OwnGit server request failed: ") {
+		t.Fatalf("message does not name the cause: %q", problem.Message)
+	}
+	if strings.Contains(problem.Message, "synthetic-secret-password") || strings.Contains(problem.Message, "/api/v1/") {
+		t.Fatalf("message carries the credential or the request path: %q", problem.Message)
+	}
+
+	// An error response records its HTTP status.
+	refusing := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(writer).Encode(pullrequest.ErrorEnvelope{
+			OK: false, Error: pullrequest.ErrorDescription{Code: "conflict", Message: "refused"},
+		})
+	}))
+	defer refusing.Close()
+	origin, err = ValidateServer(refusing.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(origin, "password").Do(context.Background(), http.MethodGet, "/api/v1/x", nil)
+	if !errors.As(err, &problem) || problem.Status != http.StatusConflict {
+		t.Fatalf("refusal error=%v", err)
+	}
 }

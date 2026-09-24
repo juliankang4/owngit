@@ -71,6 +71,11 @@ func (m *Manager) RepositoryRoot() string {
 // and "sha256" requires a Git that supports it.
 type CreateOptions struct {
 	ObjectFormat string
+
+	// forgetImport removes import settings and credentials left for this
+	// name by an import that never created its repository. Plain creation
+	// sets it; an import's own creation does not.
+	forgetImport bool
 }
 
 // ValidateName applies the repository name and description rules used by
@@ -91,7 +96,7 @@ func ValidateName(name, description string) error {
 }
 
 func (m *Manager) Create(ctx context.Context, name, description string) (state.Repository, error) {
-	return m.CreateWithOptions(ctx, name, description, CreateOptions{})
+	return m.CreateWithOptions(ctx, name, description, CreateOptions{forgetImport: true})
 }
 
 // CreateWithOptions creates, configures and records a new bare repository.
@@ -137,6 +142,15 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		return state.Repository{}, fmt.Errorf("%w: repository path already exists (%s)", ErrNameTaken, info.Name())
 	} else if !os.IsNotExist(err) {
 		return state.Repository{}, fmt.Errorf("inspect repository path: %w", err)
+	}
+	// A new repository must not inherit the source or credentials of an
+	// earlier import that never created it.
+	if options.forgetImport {
+		if err := m.Store.ForgetUnpublishedImport(ctx, id); errors.Is(err, state.ErrImportNotForgettable) {
+			return state.Repository{}, fmt.Errorf("%w: an earlier import with this name is still running or needs recovery; restart OwnGit or try again later", ErrNameTaken)
+		} else if err != nil {
+			return state.Repository{}, fmt.Errorf("clear earlier import settings: %w", err)
+		}
 	}
 
 	suffix := make([]byte, 8)

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"owngit/internal/checkworkflow"
 	"owngit/internal/gitexec"
 	"owngit/internal/state"
 )
@@ -39,6 +40,40 @@ func mergeRevisionKey(sourceOID, targetOID string) string {
 
 func MergeReceiptRef(number int64) string {
 	return "refs/owngit/pull-requests/" + strconv.FormatInt(number, 10) + "/merge-receipt"
+}
+
+// committedChecks reads the checks from the workflow file committed in the
+// commit oid. A revision without a readable, valid regular workflow file has no
+// committed configuration, so exists is false and err is nil.
+func (service *Service) committedChecks(ctx context.Context, repositoryPath, oid string) ([]state.CheckDefinition, bool, error) {
+	listing, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "ls-tree", "-z", "-l", "--full-tree", oid, "--", checkworkflow.Path)
+	if err != nil {
+		return nil, false, err
+	}
+	metadata, _, found := strings.Cut(strings.TrimSuffix(string(listing.Stdout), "\x00"), "\t")
+	if !found {
+		return nil, false, nil
+	}
+	fields := strings.Fields(metadata)
+	if len(fields) != 4 || fields[1] != "blob" || (fields[0] != "100644" && fields[0] != "100755") || !validOID(fields[2]) {
+		return nil, false, nil
+	}
+	if size, err := strconv.ParseInt(fields[3], 10, 64); err != nil || size > checkworkflow.MaximumBytes {
+		return nil, false, nil
+	}
+	blob, err := service.Repositories.Git.RunWithOutputLimit(ctx, repositoryPath, nil, checkworkflow.MaximumBytes+1, "--git-dir", ".", "cat-file", "blob", fields[2])
+	if err != nil {
+		return nil, false, err
+	}
+	document, err := checkworkflow.Parse(blob.Stdout)
+	if err != nil {
+		return nil, false, nil
+	}
+	checks := make([]state.CheckDefinition, 0, len(document.Checks))
+	for _, check := range document.Checks {
+		checks = append(checks, state.CheckDefinition{Name: check.Name, Command: check.Command})
+	}
+	return checks, true, nil
 }
 
 func (service *Service) resolveBranch(ctx context.Context, repositoryPath, branch string) (branchHead, error) {

@@ -432,6 +432,67 @@ func (s *Store) DeleteImportSource(ctx context.Context, repositoryID string) err
 	return nil
 }
 
+// ErrImportNotForgettable reports import state that must stay because a
+// repository exists or an import may still need recovery.
+var ErrImportNotForgettable = errors.New("import state is still needed")
+
+// ForgetUnpublishedImport removes the source binding of a repository that was
+// never created: its source, credential file, observations, and schedule. A
+// failed first import then leaves no secret behind, and neither a retry nor a
+// later repository with the same name inherits the binding. Run history and
+// publication intents stay as history, as DeleteImportSource keeps them. It
+// refuses with ErrImportNotForgettable while the repository exists, a run is
+// active or unresolved, a publication intent is not settled, or an unpublished
+// destination or staging directory may still need cleanup or recovery. The
+// caller holds the repository lock and has confirmed that no final directory
+// exists.
+func (s *Store) ForgetUnpublishedImport(ctx context.Context, repositoryID string) error {
+	releaseCredentialAuthority := s.LockImportCredentialAuthority(repositoryID)
+	defer releaseCredentialAuthority()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var blockers int
+	if err := tx.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM repositories WHERE id=?) +
+		(SELECT COUNT(*) FROM import_runs WHERE repository_id=? AND status IN (?,?,?,?,?,?)) +
+		(SELECT COUNT(*) FROM import_publication_intents WHERE repository_id=? AND status IN (?,?,?)) +
+		(SELECT COUNT(*) FROM import_initial_destinations WHERE repository_id=? AND state<>?) +
+		(SELECT COUNT(*) FROM import_stagings WHERE repository_id=? AND state<>?)`,
+		repositoryID,
+		repositoryID, ImportRunPreparing, ImportRunFetching, ImportRunIndexing, ImportRunInspecting, ImportRunPublishing, ImportRunUnresolved,
+		repositoryID, ImportIntentPlanning, ImportIntentApplied, ImportIntentUnresolved,
+		repositoryID, ImportInitialReleased,
+		repositoryID, ImportStagingReleased).Scan(&blockers); err != nil {
+		return err
+	}
+	if blockers > 0 {
+		return ErrImportNotForgettable
+	}
+	// Invalidate captured credentials before touching the private file, as
+	// DeleteImportSource does.
+	s.beginImportCredentialMutationLocked(repositoryID)
+	if err := s.removeImportCredentialFile(repositoryID); err != nil {
+		return err
+	}
+	for _, statement := range []string{
+		`DELETE FROM import_ref_observations WHERE repository_id=?`,
+		`DELETE FROM import_schedules WHERE repository_id=?`,
+		`DELETE FROM import_sources WHERE repository_id=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, repositoryID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.completeImportCredentialMutationLocked(repositoryID)
+	return nil
+}
+
 // BeginImportRun atomically refuses a second active run for the repository and
 // records the run. A scheduled run also stamps its schedule's start so a slow
 // repository cannot starve later ones.

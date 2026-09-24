@@ -23,7 +23,11 @@ import (
 )
 
 func importCommand(arguments []string) error {
-	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
+	if len(arguments) == 0 {
+		printImportUsage(os.Stderr)
+		return cliProblem("invalid_arguments", "import requires add, refresh, status, history, cancel, schedule, credentials, or resolve.")
+	}
+	if isHelpArgument(arguments[0]) {
 		printImportUsage(os.Stdout)
 		return nil
 	}
@@ -207,6 +211,12 @@ func importStatus(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	type runSummary struct {
+		Kind                string `json:"kind"`
+		Status              string `json:"status"`
+		RefsDivergent       int64  `json:"refs_divergent"`
+		RefsDeletedUpstream int64  `json:"refs_deleted_upstream"`
+	}
 	var status struct {
 		Configured      bool   `json:"configured"`
 		URL             string `json:"url"`
@@ -224,6 +234,10 @@ func importStatus(arguments []string) error {
 			Code             string `json:"code"`
 			Reason           string `json:"reason"`
 		} `json:"runtime"`
+		Refs          []importRefView `json:"refs"`
+		RefsTruncated bool            `json:"refs_truncated"`
+		LastRun       *runSummary     `json:"last_run"`
+		ActiveRun     *runSummary     `json:"active_run"`
 	}
 	var envelope struct {
 		Status json.RawMessage `json:"status"`
@@ -256,6 +270,35 @@ func importStatus(arguments []string) error {
 	}
 	if status.StagingIssues > 0 {
 		fmt.Printf("Staging issues: %d\n", status.StagingIssues)
+	}
+	if status.ActiveRun != nil {
+		fmt.Printf("Active run: %s, %s\n", status.ActiveRun.Kind, status.ActiveRun.Status)
+	}
+	if status.LastRun != nil {
+		fmt.Printf("Last run: %s, %s", status.LastRun.Kind, status.LastRun.Status)
+		if status.LastRun.RefsDivergent > 0 {
+			fmt.Printf(", %d %s from the source", status.LastRun.RefsDivergent, plural(status.LastRun.RefsDivergent, "ref differs", "refs differ"))
+		}
+		fmt.Println()
+	}
+	var differing []importRefView
+	for _, ref := range status.Refs {
+		if ref.State != "tracked" {
+			differing = append(differing, ref)
+		}
+	}
+	if len(differing) == 0 {
+		if len(status.Refs) > 0 {
+			fmt.Println("Every observed branch and tag matches the source.")
+		}
+	} else {
+		fmt.Printf("Refs that do not match the source: %d\n", len(differing))
+		for _, ref := range differing {
+			fmt.Printf("  %s: %s\n", ref.Name, importRefStateText(ref.State))
+		}
+	}
+	if status.RefsTruncated {
+		fmt.Println("The ref list is truncated.")
 	}
 	return nil
 }
@@ -695,12 +738,26 @@ func readPrivateImportSecret(path string) (string, error) {
 	return strings.TrimRight(string(content), "\r\n"), nil
 }
 
+// importDivergedExit is the exit status of a finished import or refresh that
+// kept at least one local ref that differs from the source.
+const importDivergedExit = 3
+
+type importRefView struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
 func printImportRun(name string, content []byte) error {
 	var response struct {
 		Code string `json:"code"`
 		Run  struct {
-			Status string `json:"status"`
+			Status              string `json:"status"`
+			RefsDivergent       int64  `json:"refs_divergent"`
+			RefsDeletedUpstream int64  `json:"refs_deleted_upstream"`
 		} `json:"run"`
+		Status struct {
+			Refs []importRefView `json:"refs"`
+		} `json:"status"`
 	}
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import run result could not be read.")
@@ -710,5 +767,48 @@ func printImportRun(name string, content []byte) error {
 		return nil
 	}
 	fmt.Printf("Import for %s finished: %s.\n", name, response.Run.Status)
-	return nil
+	if deleted := response.Run.RefsDeletedUpstream; deleted > 0 {
+		fmt.Printf("%d %s deleted at the source and kept here.\n", deleted, plural(deleted, "ref was", "refs were"))
+	}
+	divergent := response.Run.RefsDivergent
+	if divergent == 0 {
+		return nil
+	}
+	fmt.Printf("%d %s from the source and %s left unchanged here:\n", divergent, plural(divergent, "ref differs", "refs differ"), plural(divergent, "was", "were"))
+	listed := int64(0)
+	for _, ref := range response.Status.Refs {
+		if ref.State == "diverged" {
+			fmt.Printf("  %s\n", ref.Name)
+			listed++
+		}
+	}
+	if divergent > listed {
+		fmt.Printf("  %d more not listed by name, such as HEAD or a name that differs only by case.\n", divergent-listed)
+	}
+	return &checkExit{code: importDivergedExit, err: errors.New("refs differ from the import source")}
+}
+
+func plural(count int64, one, many string) string {
+	if count == 1 {
+		return one
+	}
+	return many
+}
+
+// importRefStateText describes a ref state from import status in words.
+func importRefStateText(state string) string {
+	switch state {
+	case "diverged":
+		return "differs from the source"
+	case "deleted_at_source":
+		return "deleted at the source, kept here"
+	case "absent_locally":
+		return "missing in OwnGit"
+	case "earlier_source":
+		return "recorded from an earlier source URL"
+	case "unknown_local":
+		return "OwnGit side could not be read"
+	default:
+		return state
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,11 +19,13 @@ import (
 	"owngit/internal/apiclient"
 	"owngit/internal/checkapi"
 	"owngit/internal/checkexec"
+	"owngit/internal/checkworkflow"
 	"owngit/internal/state"
 )
 
-// checkExit carries the process exit code for a completed check run. The JSON
-// result is already written to stdout when it is returned.
+// checkExit carries the process exit code for a completed check run, or for
+// an import run that kept refs differing from the source. The result is
+// already written to stdout when it is returned.
 type checkExit struct {
 	code int
 	err  error
@@ -87,7 +90,7 @@ func checkTaskCommand(arguments []string) error {
 // following check succeeds or fails, and reused by retries inside the round.
 func checkCycleCommand(arguments []string) error {
 	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
-		fmt.Fprintln(os.Stdout, "Usage: owngit check cycle reserve --task ID --server URL --repository ID --credential-file PATH")
+		fmt.Fprintln(os.Stdout, "Usage: owngit check cycle <reserve|list> --task ID --server URL --repository ID --credential-file PATH")
 		fmt.Fprintln(os.Stdout, "A reserved round is consumed once. The initial check and manual reruns consume none.")
 		return nil
 	}
@@ -246,21 +249,22 @@ func checkRun(arguments []string) error {
 	if *cycleID != "" && !validHexID(*cycleID) {
 		return cliProblem("invalid_arguments", "--cycle must be a 32 character lowercase hex identifier.")
 	}
+	// Zero or negative limits would run without a bound locally and are
+	// refused by the server anyway, so they are refused before anything runs.
+	if *timeout <= 0 {
+		return cliProblem("invalid_arguments", "--timeout must be a positive duration.")
+	}
+	if *outputLimit <= 0 {
+		return cliProblem("invalid_arguments", "--output-limit must be a positive number of bytes.")
+	}
 	definitions, err := parseCheckDefinitions(checks)
 	if err != nil {
 		return err
 	}
-	// A local-only run with explicit checks does not need a server, but
-	// reading the recorded configuration and uploading both do.
+	// A local-only run does not need a server; uploading does.
 	var client *apiclient.Client
-	if !*noUpload || len(definitions) == 0 {
+	if !*noUpload {
 		client, err = remote.helperClient()
-		if err != nil {
-			return err
-		}
-	}
-	if len(definitions) == 0 {
-		definitions, err = fetchCheckDefinitions(client, remote.repositoryPath())
 		if err != nil {
 			return err
 		}
@@ -268,6 +272,15 @@ func checkRun(arguments []string) error {
 	revision, worktree, err := inspectWorktree(*workdir)
 	if err != nil {
 		return err
+	}
+	if len(definitions) == 0 {
+		// Without explicit checks, only the configuration committed in the
+		// revision under test may run. A configuration recorded on the server
+		// can come from any branch, so it never selects commands here.
+		definitions, err = committedCheckDefinitions(*workdir, revision)
+		if err != nil {
+			return err
+		}
 	}
 	// The identity is generated before execution, so the server can issue a
 	// repository-wide sequence and a retransmitted registration stays idempotent.
@@ -284,6 +297,11 @@ func checkRun(arguments []string) error {
 	registered := false
 	if !*noUpload {
 		content, registerErr := postWithRetry(client, remote.repositoryPath()+"/tasks/"+url.PathEscape(*taskID)+"/attempts", registration)
+		if definiteRefusal(registerErr) {
+			// The server answered and refused, so nothing was recorded and
+			// no check runs. Only an unconfirmed registration runs anyway.
+			return registerErr
+		}
 		if registerErr != nil {
 			output.UploadError = registerErr.Error()
 		} else {
@@ -400,17 +418,46 @@ func parseCheckDefinitions(values []string) ([]checkexec.Definition, error) {
 	return definitions, nil
 }
 
-func fetchCheckDefinitions(client *apiclient.Client, repositoryPath string) ([]checkexec.Definition, error) {
-	content, err := client.Do(context.Background(), "GET", repositoryPath+"/check-configurations/latest", nil)
+// definiteRefusal reports whether the server answered a request with a client
+// error. Such a request was not applied, unlike a lost or failed response.
+func definiteRefusal(err error) bool {
+	var problem *apiclient.Error
+	return errors.As(err, &problem) && problem.Status >= 400 && problem.Status < 500
+}
+
+// committedCheckDefinitions reads the checks from the workflow file committed
+// in revision. The working tree copy is ignored, so an uncommitted edit cannot
+// change what runs for the recorded revision.
+func committedCheckDefinitions(directory, revision string) ([]checkexec.Definition, error) {
+	listing, err := runGit(directory, "ls-tree", "-z", "-l", "--full-tree", revision, "--", checkworkflow.Path)
 	if err != nil {
-		return nil, err
+		return nil, cliProblem("revision_unavailable", "The committed check configuration could not be read: "+err.Error())
 	}
-	var response checkapi.ConfigurationResponse
-	if err := json.Unmarshal(content, &response); err != nil || !response.OK || response.Configuration == nil {
-		return nil, cliProblem("invalid_response", "The server returned an invalid check configuration.")
+	listing = strings.TrimSuffix(listing, "\x00")
+	if listing == "" {
+		return nil, cliProblem("checks_not_configured", "Revision "+revision+" has no committed "+checkworkflow.Path+". Commit one, or pass --check name=command.")
 	}
-	definitions := make([]checkexec.Definition, 0, len(response.Configuration.Checks))
-	for _, check := range response.Configuration.Checks {
+	metadata, _, _ := strings.Cut(listing, "\t")
+	fields := strings.Fields(metadata)
+	if len(fields) != 4 || fields[1] != "blob" || (fields[0] != "100644" && fields[0] != "100755") {
+		return nil, cliProblem("invalid_check_configuration", checkworkflow.Path+" in revision "+revision+" is not a regular file.")
+	}
+	if size, err := strconv.ParseInt(fields[3], 10, 64); err != nil || size > checkworkflow.MaximumBytes {
+		return nil, cliProblem("invalid_check_configuration", checkworkflow.Path+" in revision "+revision+" is larger than 64 KiB.")
+	}
+	command := exec.Command("git", "cat-file", "blob", fields[2])
+	command.Dir = directory
+	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	content, err := command.Output()
+	if err != nil {
+		return nil, cliProblem("revision_unavailable", "The committed check configuration could not be read: "+err.Error())
+	}
+	document, err := checkworkflow.Parse(content)
+	if err != nil {
+		return nil, cliProblem("invalid_check_configuration", checkworkflow.Path+" in revision "+revision+" is invalid: "+err.Error())
+	}
+	definitions := make([]checkexec.Definition, 0, len(document.Checks))
+	for _, check := range document.Checks {
 		definitions = append(definitions, checkexec.Definition{Name: check.Name, Command: check.Command})
 	}
 	return definitions, nil
@@ -633,7 +680,7 @@ func writeJSONValue(value any) error {
 }
 
 func printCheckUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit check <task new|cycle reserve|run|status|log|config show> [options]")
+	fmt.Fprintln(writer, "Usage: owngit check <task new|cycle reserve|cycle list|run|status|log|config show> [options]")
 	fmt.Fprintln(writer, "The helper registers an attempt before execution, runs checks in the current environment, and reports revision-bound evidence.")
 	fmt.Fprintln(writer, "A reserved correction cycle is consumed once. The initial check and manual reruns consume none.")
 }
