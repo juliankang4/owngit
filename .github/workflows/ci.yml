@@ -1,0 +1,65 @@
+name: CI
+
+# Runs the checks from CONTRIBUTING.md on every pull request and on pushes to
+# main. macOS is not in the matrix; contributors run the checks there locally.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      # Keep LF line endings on Windows so gofmt and byte-exact fixtures match.
+      - name: Keep line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Tool versions
+        run: |
+          go version
+          git --version
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        if: runner.os != 'Linux'
+        run: go test ./...
+
+      # The race detector also runs every test, so Linux runs only this one.
+      - name: go test -race
+        if: runner.os == 'Linux'
+        run: go test -race ./...
