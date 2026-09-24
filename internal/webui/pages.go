@@ -160,7 +160,8 @@ type SettingsPage struct {
 	// PendingAction is the action whose form should be expanded after a
 	// validation failure.
 	PendingAction string
-	// Storage repeats the owner-only storage location.
+	// Storage is the owner-only storage location. Only an administrator's
+	// settings page shows it.
 	Storage StorageInfo
 	// CloneHint shows the base Git clone URL, for example
 	// "http://host:port/git/". Empty when the backend cannot determine it.

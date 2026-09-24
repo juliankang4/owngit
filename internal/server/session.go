@@ -148,7 +148,6 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 	}
 	if adminOK {
 		chrome.Viewer.AdminExpiresAt = admin.Expires
-		chrome.Storage = webui.StorageInfo{Visible: true, Path: settings.RepositoryRoot}
 	}
 	if settings.Initialized && (chrome.Viewer.GeneralUnlocked || adminOK) {
 		repositories, err := app.Store.Repositories(request.Context())

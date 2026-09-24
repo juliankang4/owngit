@@ -73,6 +73,8 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 			// Nothing to show on a repository page: keep the form and explain.
 			if cancelled {
 				chrome.Notices = []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgImportCancelledNoRepo}}
+			} else if errors.Is(err, repository.ErrReservedName) {
+				chrome.Notices = []webui.Notice{webui.Error("", webui.MsgRepoNameReserved)}
 			} else {
 				chrome.Notices = []webui.Notice{importFailureNotice(err, result.Run.ErrorClass)}
 			}

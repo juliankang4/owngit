@@ -1302,6 +1302,40 @@ func TestBrowserPolicyLimitsAreEnteredInReadableUnits(t *testing.T) {
 		t.Fatalf("a refused form stored a policy: exists=%v err=%v", exists, err)
 	}
 
+	// A number too long for any stored value is out of range, and the page
+	// says so beside the field whose accepted range it prints.
+	tooLong := validPolicyValues(csrf)
+	tooLong.Set("queue_limit", strings.Repeat("9", 41))
+	refused = browserForm(t, client, policyURL, tooLong, server.URL)
+	if refused.status != http.StatusUnprocessableEntity && refused.status != http.StatusBadRequest {
+		t.Fatalf("41-digit amount status=%d", refused.status)
+	}
+	if strings.Contains(refused.body, browserText(webui.MsgCCNumberInvalid)) {
+		t.Fatal("the 41-digit amount was reported as not a number")
+	}
+	// The message and the queue limit's own range sit together in that
+	// field's block, and the field points at the message.
+	noteID := policyNoteID("queue_limit")
+	if !strings.Contains(refused.body, `aria-describedby="`+noteID+`"`) {
+		t.Fatal("the queue limit field does not point at its message")
+	}
+	start := strings.Index(refused.body, `id="`+noteID+`"`)
+	if start < 0 {
+		t.Fatal("the 41-digit amount was not refused on the queue limit field")
+	}
+	block := refused.body[start:]
+	if end := strings.Index(block, `class="f cclimit"`); end >= 0 {
+		block = block[:end]
+	}
+	bounds, known := state.CheckPolicyBoundsFor(state.FieldQueueLimit)
+	if !known {
+		t.Fatal("the queue limit publishes no range")
+	}
+	allowed := "Allowed: " + webui.LimitText(webui.LangEN, state.FieldQueueLimit, bounds.Min) + " to " + webui.LimitText(webui.LangEN, state.FieldQueueLimit, bounds.Max)
+	if !strings.Contains(block, browserText(webui.MsgCCFieldRange)) || !strings.Contains(block, allowed) {
+		t.Fatalf("the queue limit block lacks the range message or %q: %q", allowed, block)
+	}
+
 	values := validPolicyValues(csrf)
 	for field, input := range map[string]webui.LimitInput{
 		"max_timeout_ms":         {Amount: "1.5", Unit: webui.UnitMinutes},

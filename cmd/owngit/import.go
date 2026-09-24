@@ -9,7 +9,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"owngit/internal/apiclient"
@@ -589,8 +592,7 @@ func readImportCredential(tokenFile, basicFile string) (form, username, password
 	form = strings.TrimSpace(form)
 	switch form {
 	case "bearer":
-		fmt.Fprint(os.Stderr, "Token: ")
-		token, err = reader.ReadString('\n')
+		token, err = readHiddenLine(reader, "Token: ")
 		if err != nil {
 			return "", "", "", "", err
 		}
@@ -605,13 +607,12 @@ func readImportCredential(tokenFile, basicFile string) (form, username, password
 		if err != nil {
 			return "", "", "", "", err
 		}
-		fmt.Fprint(os.Stderr, "Password: ")
-		password, err = reader.ReadString('\n')
+		password, err = readHiddenLine(reader, "Password: ")
 		if err != nil {
 			return "", "", "", "", err
 		}
 		username = strings.TrimSpace(username)
-		password = strings.TrimRight(password, "\n")
+		password = strings.TrimRight(password, "\r\n")
 		if username == "" || password == "" {
 			return "", "", "", "", cliProblem("invalid_arguments", "A username and password are required.")
 		}
@@ -619,6 +620,64 @@ func readImportCredential(tokenFile, basicFile string) (form, username, password
 	default:
 		return "", "", "", "", cliProblem("invalid_arguments", "Credential form must be bearer or basic.")
 	}
+}
+
+// disableEcho turns off stdin echo and returns the restore function. Tests
+// replace it to observe restoration without a terminal.
+var disableEcho = disableStdinEcho
+
+// readHiddenLine prompts and reads one line from the stdin terminal without
+// echoing it. Echo is off before the prompt appears, so fast typing is hidden
+// too. The signals that can end the process are caught before echo goes off,
+// and every exit path restores echo, so the terminal is never left without it.
+// Input that cannot be hidden is refused instead of being shown.
+func readHiddenLine(reader *bufio.Reader, prompt string) (string, error) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, hiddenInputSignals...)
+	restore, err := disableEcho()
+	if err != nil {
+		signal.Stop(signals)
+		return "", cliProblem("invalid_arguments", "Input could not be hidden on this terminal. Use --token-file or --basic-file.")
+	}
+	var restoreOnce sync.Once
+	var restoreErr error
+	restoreEcho := func() { restoreOnce.Do(func() { restoreErr = restore() }) }
+	handled := make(chan struct{})
+	go func() {
+		defer close(handled)
+		if received, ok := <-signals; ok {
+			restoreEcho()
+			fmt.Fprintln(os.Stderr)
+			os.Exit(128 + signalNumber(received))
+		}
+	}()
+	fmt.Fprint(os.Stderr, prompt)
+	line, readErr := reader.ReadString('\n')
+	// Restore echo while the signals are still caught, so no signal can end
+	// the process between the read and the restore.
+	restoreEcho()
+	// After Stop no signal is sent, so closing the channel lets the watcher
+	// act on a signal that arrived meanwhile and otherwise finish.
+	signal.Stop(signals)
+	close(signals)
+	<-handled
+	// The Enter key was not echoed either, so end the prompt line here.
+	fmt.Fprintln(os.Stderr)
+	if readErr != nil {
+		return "", readErr
+	}
+	if restoreErr != nil {
+		return "", fmt.Errorf("restore terminal echo: %w", restoreErr)
+	}
+	return line, nil
+}
+
+// signalNumber is the conventional exit status offset of a signal.
+func signalNumber(received os.Signal) int {
+	if number, ok := received.(syscall.Signal); ok {
+		return int(number)
+	}
+	return 1
 }
 
 func readPrivateImportSecret(path string) (string, error) {

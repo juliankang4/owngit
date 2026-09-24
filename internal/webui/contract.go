@@ -90,8 +90,6 @@ type Chrome struct {
 	Nav Nav
 	// Notices are page-level results such as "Settings saved".
 	Notices []Notice
-	// Storage is shown only to the owner or a confirmed administrator.
-	Storage StorageInfo
 	// Version is the version of the application that served this request.
 	//
 	// The backend reads it from the one authoritative version source compiled
@@ -130,8 +128,9 @@ type Connection struct {
 	InsecureAcknowledged bool
 }
 
-// StorageInfo is the repository storage location. Visible must be false for
-// general visitors so the overview never leaks the host's filesystem layout.
+// StorageInfo is the repository storage location shown on the Settings page.
+// Visible must be false for general visitors so the page never leaks the
+// host's filesystem layout.
 type StorageInfo struct {
 	Visible bool
 	// Label is an optional installation name, for example "Home server".

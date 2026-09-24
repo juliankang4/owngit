@@ -1250,14 +1250,12 @@ func TestRepositoryAndActivityStatesAreHonest(t *testing.T) {
 		screen{name: "the empty dashboard invites without forcing a repository", page: overview(unchanged),
 			want: []MessageCode{MsgOverviewEmpty}, markup: []string{"/repositories/new"}},
 		screen{name: "the storage location is hidden from ordinary visitors",
-			page: overview(func(c *Chrome) {
-				c.Storage = StorageInfo{Visible: false, Label: "Home server", Path: "/volume1/secret-git"}
-			}),
+			page: SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessOpen,
+				Storage: StorageInfo{Visible: false, Label: "Home server", Path: "/volume1/secret-git"}},
 			noMarkup: []string{"/volume1/secret-git", "Home server"}},
-		screen{name: "the storage location is shown to the owner",
-			page: overview(func(c *Chrome) {
-				c.Storage = StorageInfo{Visible: true, Label: "Home server", Path: "/volume1/secret-git"}
-			}),
+		screen{name: "the storage location is shown to the administrator on Settings",
+			page: SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessOpen,
+				Storage: StorageInfo{Visible: true, Path: "/volume1/secret-git"}},
 			markup: []string{"/volume1/secret-git"}},
 		screen{name: "a plain connection is not reported as encrypted",
 			page: overview(func(c *Chrome) { c.Connection = Connection{Encrypted: false, Host: "owngit.ts.net"} }),

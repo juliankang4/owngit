@@ -20,8 +20,10 @@ import (
 )
 
 var (
-	validName             = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
-	ErrInvalidName        = errors.New("invalid repository name")
+	validName      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
+	ErrInvalidName = errors.New("invalid repository name")
+	// ErrReservedName wraps ErrInvalidName for names that address a form page.
+	ErrReservedName       = fmt.Errorf("%w: reserved name", ErrInvalidName)
 	ErrInvalidDescription = errors.New("invalid repository description")
 	ErrNameTaken          = errors.New("repository name is already in use")
 	ErrUnsupportedFormat  = errors.New("unsupported repository object format")
@@ -74,7 +76,7 @@ func ValidateName(name, description string) error {
 	}
 	switch strings.ToLower(trimmed) {
 	case "new", "new-import":
-		return fmt.Errorf("%w: %q is reserved for a repository form", ErrInvalidName, trimmed)
+		return fmt.Errorf("%w: %q is used by a repository form", ErrReservedName, trimmed)
 	}
 	if len(description) > 500 {
 		return ErrInvalidDescription

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -150,16 +151,32 @@ func importRunRequest(request *http.Request) bool {
 	return false
 }
 
+// maxRefreshFormBytes bounds what peekFormAction reads before authentication.
+// The refresh form carries csrf, action and admin_password. A password is at
+// most 1024 bytes, which URL-encodes to at most 3072 bytes, so every valid
+// refresh form fits. A larger body is handled as an ordinary request.
+const maxRefreshFormBytes = 4 << 10
+
+// peekFormAction reads at most maxRefreshFormBytes of a URL-encoded form to
+// find its action. The handler still receives the complete body, including
+// any unread remainder and any read error.
 func peekFormAction(request *http.Request) string {
-	if request.Body == nil {
+	if request.Body == nil || request.ContentLength > maxRefreshFormBytes {
 		return ""
 	}
-	content, err := io.ReadAll(io.LimitReader(request.Body, 1<<20+1))
-	request.Body = io.NopCloser(bytes.NewReader(content))
-	request.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(content)), nil
+	if mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type")); err != nil || mediaType != "application/x-www-form-urlencoded" {
+		return ""
 	}
-	if err != nil || len(content) > 1<<20 {
+	content, err := io.ReadAll(io.LimitReader(request.Body, maxRefreshFormBytes+1))
+	var rest io.Reader = request.Body
+	if err != nil {
+		rest = failedReader{err}
+	}
+	request.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(content), rest), request.Body}
+	if err != nil || len(content) > maxRefreshFormBytes {
 		return ""
 	}
 	values, err := url.ParseQuery(string(content))
@@ -168,6 +185,11 @@ func peekFormAction(request *http.Request) string {
 	}
 	return values.Get("action")
 }
+
+// failedReader repeats a body read error for the handler.
+type failedReader struct{ err error }
+
+func (reader failedReader) Read([]byte) (int, error) { return 0, reader.err }
 
 func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	if strings.HasPrefix(request.URL.Path, "/git/") {

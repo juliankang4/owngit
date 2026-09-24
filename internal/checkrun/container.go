@@ -346,6 +346,46 @@ func (coordinator *Coordinator) cleanupRecordedContainer(ctx context.Context, do
 	return nil
 }
 
+var (
+	// ErrNoContainerRecord means the job has no container cleanup record.
+	ErrNoContainerRecord = errors.New("no container cleanup is recorded for this job")
+	// ErrContainerOnCurrentDaemon means the recorded container belongs to the
+	// Docker daemon that is running now, so a start of OwnGit removes it.
+	ErrContainerOnCurrentDaemon = errors.New("the recorded container belongs to the current Docker daemon; start OwnGit to remove it")
+)
+
+// ForgottenContainer is a cleanup record that ForgetForeignContainer removed.
+type ForgottenContainer struct {
+	Record state.CheckContainerOwnership
+	// DockerUnavailable says why the current daemon could not be identified.
+	// It is nil when Docker answered with another daemon identity.
+	DockerUnavailable error
+}
+
+// ForgetForeignContainer removes the cleanup record of one job whose container
+// OwnGit cannot reach: it was created on another Docker daemon, or Docker is
+// unavailable. The caller has the owner's confirmation that the container is
+// gone. No container is removed here. A record of the current daemon is
+// refused, because the next start proves and removes that container itself,
+// and so is the record of an unfinished job, which a running server may still
+// clean up.
+func (coordinator *Coordinator) ForgetForeignContainer(ctx context.Context, jobID string) (ForgottenContainer, error) {
+	record, exists, err := coordinator.Store.CheckContainerOwnershipForJob(ctx, jobID)
+	if err != nil {
+		return ForgottenContainer{}, err
+	}
+	if !exists {
+		return ForgottenContainer{}, ErrNoContainerRecord
+	}
+	forgotten := ForgottenContainer{Record: record}
+	_, _, daemonID, dockerErr := coordinator.containerRuntimeIdentity(ctx, false)
+	if dockerErr == nil && daemonID == record.DaemonID {
+		return forgotten, ErrContainerOnCurrentDaemon
+	}
+	forgotten.DockerUnavailable = dockerErr
+	return forgotten, coordinator.Store.ForgetCheckContainer(ctx, record)
+}
+
 func (coordinator *Coordinator) reconcileContainers(ctx context.Context) error {
 	ownership, err := coordinator.Store.ActiveCheckContainers(ctx, 1000)
 	if err != nil || len(ownership) == 0 {

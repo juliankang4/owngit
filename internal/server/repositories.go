@@ -109,6 +109,8 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 		switch {
 		case errors.Is(err, repository.ErrNameTaken):
 			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("name", webui.MsgRepoNameTaken)})
+		case errors.Is(err, repository.ErrReservedName):
+			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("name", webui.MsgRepoNameReserved)})
 		case errors.Is(err, repository.ErrInvalidName):
 			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("name", webui.MsgRepoNameInvalid)})
 		case errors.Is(err, repository.ErrInvalidDescription):

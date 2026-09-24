@@ -2,8 +2,10 @@ package importsync
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -191,6 +193,67 @@ func TestStatusAndHistoryUseBoundedPages(t *testing.T) {
 	next, _, err := f.service.HistoryBefore(ctx, "project", 10000, page[0].RowID)
 	if err != nil || len(next) == 0 || next[0].RowID >= page[0].RowID || len(next) > maxHistoryPage {
 		t.Fatalf("history cursor did not move older: next=%+v err=%v", next, err)
+	}
+}
+
+// History above one page must return every run exactly once, newest first,
+// when a caller follows the cursor with a limit larger than maxHistoryPage.
+func TestHistoryPagingReturnsEveryRunBeyondOnePage(t *testing.T) {
+	f := newFixture(t)
+	f.mustImport(ImportInput{})
+	ctx := context.Background()
+	existing, more, err := f.service.History(ctx, "project", maxHistoryPage)
+	if err != nil || more {
+		t.Fatalf("initial history=%+v more=%v err=%v", existing, more, err)
+	}
+	const added = 2*maxHistoryPage + 37
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	want := make([]string, 0, added+len(existing))
+	for index := 0; index < added; index++ {
+		run := state.ImportRun{
+			ID: fmt.Sprintf("%032x", index+1), RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1,
+			Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing, StartedAt: now.Add(time.Duration(index) * time.Second),
+		}
+		noErr(t, f.store.BeginImportRun(ctx, run))
+		run.Status = state.ImportRunFailed
+		run.FinishedAt = run.StartedAt
+		run.LFSInspectionDone = true
+		run.ErrorClass = CodeRuntimeUnavailable
+		run.Message = "failed"
+		noErr(t, f.store.FinishImportRun(ctx, run))
+		want = append([]string{run.ID}, want...)
+	}
+	for _, run := range existing {
+		want = append(want, run.ID)
+	}
+
+	var got []string
+	var pages []int
+	var cursor int64
+	for {
+		page, more, err := f.service.HistoryBefore(ctx, "project", 10000, cursor)
+		noErr(t, err)
+		if len(page) == 0 || len(page) > maxHistoryPage {
+			t.Fatalf("page %d has %d runs", len(pages), len(page))
+		}
+		pages = append(pages, len(page))
+		for _, run := range page {
+			if cursor != 0 && run.RowID >= cursor {
+				t.Fatalf("run %s rowid %d is not older than cursor %d", run.ID, run.RowID, cursor)
+			}
+			cursor = run.RowID
+			got = append(got, run.ID)
+		}
+		if !more {
+			break
+		}
+	}
+	wantPages := []int{maxHistoryPage, maxHistoryPage, len(want) - 2*maxHistoryPage}
+	if !slices.Equal(pages, wantPages) {
+		t.Fatalf("page sizes=%v, want %v", pages, wantPages)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("paged history has %d runs, want %d in newest-first order without duplicates or gaps", len(got), len(want))
 	}
 }
 

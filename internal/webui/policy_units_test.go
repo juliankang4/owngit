@@ -53,18 +53,29 @@ func TestLimitParsingRefusesWhatItWouldHaveToGuess(t *testing.T) {
 		{LimitCount, LimitInput{".", ""}, ErrLimitSyntax},
 		{LimitDuration, LimitInput{"5", UnitMB}, ErrLimitSyntax},
 		{LimitSize, LimitInput{"99999999999999", UnitGB}, ErrLimitOverflow},
-		// An amount longer than any stored value needs is refused before any
-		// arithmetic, so a huge post costs nothing.
-		{LimitCount, LimitInput{strings.Repeat("1", 41), ""}, ErrLimitSyntax},
+		// A whole part longer than any stored value is out of range, not
+		// unreadable, and is refused before any arithmetic.
+		{LimitCount, LimitInput{strings.Repeat("1", 41), ""}, ErrLimitOverflow},
+		{LimitDuration, LimitInput{strings.Repeat("9", 20), UnitSeconds}, ErrLimitOverflow},
+		{LimitCount, LimitInput{strings.Repeat("1", 41) + "x", ""}, ErrLimitSyntax},
+		// Too many significant decimal places cannot be stored exactly.
+		{LimitSize, LimitInput{"1." + strings.Repeat("1", 41), UnitMB}, ErrLimitFraction},
 		{LimitCores, LimitInput{"1.2345", UnitCores}, ErrLimitFraction},
 	} {
 		if _, err := ParseLimit(tc.kind, tc.input); !errors.Is(err, tc.want) {
 			t.Errorf("ParseLimit(%s, %+v) error = %v, want %v", tc.kind, tc.input, err, tc.want)
 		}
 	}
-	// The bound is on length only: a padded amount within it still converts.
-	if value, err := ParseLimit(LimitCount, LimitInput{strings.Repeat("0", 39) + "7", ""}); value != 7 || err != nil {
-		t.Errorf("a 40-character amount = %d, %v", value, err)
+	// The bounds count significant digits only: zero padding still converts.
+	if value, err := ParseLimit(LimitCount, LimitInput{strings.Repeat("0", 60) + "7." + strings.Repeat("0", 60), ""}); value != 7 || err != nil {
+		t.Errorf("a zero-padded amount = %d, %v", value, err)
+	}
+	if value, err := ParseLimit(LimitCount, LimitInput{"000.000", ""}); value != 0 || err != nil {
+		t.Errorf("a zero amount = %d, %v", value, err)
+	}
+	// An out-of-range amount points at the range shown with the field.
+	if _, err := ParseLimit(LimitCount, LimitInput{strings.Repeat("1", 41), ""}); LimitNoticeCode(LimitCount, err) != MsgCCFieldRange {
+		t.Errorf("a 41-digit amount gets %q, want the range message", LimitNoticeCode(LimitCount, err))
 	}
 	// An empty amount is "use the default", in any unit.
 	if value, err := ParseLimit(LimitSize, LimitInput{"", UnitMB}); value != 0 || err != nil {

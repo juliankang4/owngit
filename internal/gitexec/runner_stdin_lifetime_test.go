@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"os/exec"
 	"runtime"
 	"sync"
@@ -149,10 +151,35 @@ func TestRunReportsCallerStdinReadError(t *testing.T) {
 	}
 }
 
+// A caller reader that fails with io.ErrClosedPipe truncated the input. The
+// child may still exit successfully, so the copy error must be reported.
+func TestRunReportsCallerClosedPipeReadError(t *testing.T) {
+	runner := streamTestRunner(t, t.TempDir())
+	sent := false
+	_, err := runner.RunWithLimits(context.Background(), t.TempDir(), readerFunc(func(p []byte) (int, error) {
+		if !sent {
+			sent = true
+			return copy(p, "partial"), nil
+		}
+		return 0, io.ErrClosedPipe
+	}), CommandLimits{
+		Timeout: 2 * time.Second, Environment: []string{streamFixtureEnv + "=echo-stdin"},
+	})
+	if !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("caller closed-pipe read error lost: %v", err)
+	}
+}
+
 func TestSkipOwnedStdinCopyErrorMatchesExecSemantics(t *testing.T) {
 	writePipe := &fs.PathError{Op: "write", Path: "|1", Err: syscall.EPIPE}
 	if !skipOwnedStdinCopyError(writePipe) {
 		t.Fatal("EPIPE write was fatal")
+	}
+	if !skipOwnedStdinCopyError(&fs.PathError{Op: "write", Path: "|1", Err: os.ErrClosed}) {
+		t.Fatal("write after Wait closed the stdin pipe was fatal")
+	}
+	if skipOwnedStdinCopyError(fmt.Errorf("caller: %w", writePipe)) {
+		t.Fatal("wrapped EPIPE from a caller was ignored")
 	}
 	for _, errno := range []syscall.Errno{109, 232} {
 		if !windowsStdinPipeErrno(errno) {
@@ -166,8 +193,11 @@ func TestSkipOwnedStdinCopyErrorMatchesExecSemantics(t *testing.T) {
 			t.Fatalf("Windows pipe errno %d was ignored on %s", errno, runtime.GOOS)
 		}
 	}
-	if !skipOwnedStdinCopyError(io.ErrClosedPipe) {
-		t.Fatal("closed pipe was fatal")
+	if skipOwnedStdinCopyError(io.ErrClosedPipe) {
+		t.Fatal("caller closed-pipe error was ignored")
+	}
+	if skipOwnedStdinCopyError(fmt.Errorf("read body: %w", io.ErrClosedPipe)) {
+		t.Fatal("wrapped caller closed-pipe error was ignored")
 	}
 	if skipOwnedStdinCopyError(&fs.PathError{Op: "read", Path: "|1", Err: syscall.EPIPE}) {
 		t.Fatal("reader EPIPE was ignored")

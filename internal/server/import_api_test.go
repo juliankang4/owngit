@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -172,20 +173,35 @@ func TestReservedRepositoryNamesStayOnForms(t *testing.T) {
 	ctx := context.Background()
 	for _, name := range []string{"new", "new-import", "New-Import"} {
 		_, err := fixture.app.Repositories.Create(ctx, name, "")
-		if !errors.Is(err, repository.ErrInvalidName) {
+		if !errors.Is(err, repository.ErrReservedName) || !errors.Is(err, repository.ErrInvalidName) {
 			t.Fatalf("create %s error=%v", name, err)
 		}
 		_, err = fixture.app.Imports.Import(ctx, importsync.ImportInput{Name: name, URL: "https://example.invalid/team/reserved.git"})
-		if !errors.Is(err, repository.ErrInvalidName) {
+		if !errors.Is(err, repository.ErrReservedName) || !errors.Is(err, repository.ErrInvalidName) {
 			t.Fatalf("import %s error=%v", name, err)
 		}
 	}
+	if _, err := fixture.app.Repositories.Create(ctx, "bad name", ""); !errors.Is(err, repository.ErrInvalidName) || errors.Is(err, repository.ErrReservedName) {
+		t.Fatalf("invalid name reported as reserved: %v", err)
+	}
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
-	_ = browserAdminSessionFor(t, fixture, server.URL, jar, "reserved-admin")
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "reserved-admin")
 	form := browserGET(t, client, server.URL+"/repositories/new-import")
 	if form.status != http.StatusOK || !strings.Contains(form.body, `name="url"`) {
 		t.Fatalf("new-import form status=%d", form.status)
+	}
+	const reserved = "The names new and new-import are reserved."
+	created := browserForm(t, client, server.URL+"/repositories", url.Values{"csrf": {csrf}, "name": {"new"}}, server.URL)
+	if created.status != http.StatusUnprocessableEntity || !strings.Contains(created.body, reserved) {
+		t.Fatalf("create form did not explain the reserved name: status=%d", created.status)
+	}
+	imported := browserForm(t, client, server.URL+"/repositories/new-import", url.Values{
+		"csrf": {csrf}, "name": {"new-import"}, "url": {"https://example.invalid/team/reserved.git"},
+		"mode": {"standalone"}, "credential_form": {"none"}, "admin_password": {"admin-password"},
+	}, server.URL)
+	if imported.status != http.StatusUnprocessableEntity || !strings.Contains(imported.body, reserved) {
+		t.Fatalf("import form did not explain the reserved name: status=%d", imported.status)
 	}
 }
 

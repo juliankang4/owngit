@@ -172,8 +172,8 @@ var repositoryAdminCatalog = map[MessageCode]message{
 		ko: "이 저장소의 체크가 실행 중입니다. 끝날 때까지 기다리거나 취소한 뒤 다시 시도하세요.",
 	},
 	MsgRepoBusyCheckCleanup: {
-		en: "A check's container cleanup is still pending for this repository. Try again after it finishes, or after the next start of OwnGit.",
-		ko: "이 저장소의 체크 컨테이너 정리가 아직 끝나지 않았습니다. 정리가 끝난 뒤나 OwnGit를 다음에 시작한 뒤 다시 시도하세요.",
+		en: "A check's container cleanup is still pending for this repository. Try again after it finishes, or after the next start of OwnGit. If the server log says the job belongs to another Docker daemon, remove its leftover container and run owngit forget-check-container on the OwnGit computer.",
+		ko: "이 저장소의 체크 컨테이너 정리가 아직 끝나지 않았습니다. 정리가 끝난 뒤나 OwnGit을 다음에 시작한 뒤 다시 시도하세요. 서버 로그에 이 작업이 다른 Docker 데몬에 속한다고 나오면 남은 컨테이너를 지운 뒤 OwnGit이 실행되는 컴퓨터에서 owngit forget-check-container를 실행하세요.",
 	},
 	MsgRepoBusyInUse: {
 		en: "Another Git operation, such as a push or a clone, is using the repository. Try again in a moment.",

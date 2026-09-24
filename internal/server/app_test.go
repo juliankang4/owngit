@@ -113,6 +113,10 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 	if settingsStatus != http.StatusOK || !strings.Contains(settingsBody, canonicalRoot) {
 		t.Fatalf("confirmed administrator could not see storage path: status=%d", settingsStatus)
 	}
+	// The path appears only on Settings, not in the header of other pages.
+	if dashboardBody, dashboardStatus := dashboardGET(t, client, server.URL+"/"); dashboardStatus != http.StatusOK || strings.Contains(dashboardBody, canonicalRoot) {
+		t.Fatalf("administrator dashboard showed the storage path: status=%d", dashboardStatus)
+	}
 	response = request(t, client, http.MethodPost, server.URL+"/repositories", url.Values{
 		"csrf": {generalCSRF}, "name": {"Project-One"}, "description": {"actual data"},
 	}, server.URL)

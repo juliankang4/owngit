@@ -414,16 +414,12 @@ func closeOwnedStdin(pipe io.WriteCloser) {
 }
 
 // skipOwnedStdinCopyError reports copy errors that os/exec treats as non-fatal
-// when a child closes stdin early. A caller read error is not skipped.
+// when a child closes stdin early: a direct write error on the child's stdin
+// pipe. os.ErrClosed is included because Wait closes a StdinPipe after the
+// child exits. Any caller read error, including io.ErrClosedPipe, is reported.
 func skipOwnedStdinCopyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, io.ErrClosedPipe) {
-		return true
-	}
-	var pathErr *fs.PathError
-	if !errors.As(err, &pathErr) || pathErr.Op != "write" || pathErr.Path != "|1" {
+	pathErr, ok := err.(*fs.PathError)
+	if !ok || pathErr.Op != "write" || pathErr.Path != "|1" {
 		return false
 	}
 	if errors.Is(pathErr.Err, syscall.EPIPE) || errors.Is(pathErr.Err, os.ErrClosed) {

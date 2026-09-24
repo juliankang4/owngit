@@ -197,18 +197,19 @@ const (
 
 // Repositories.
 const (
-	MsgRepoNewTitle    MessageCode = "repo.new.title"
-	MsgRepoNameLabel   MessageCode = "repo.new.name"
-	MsgRepoNameRules   MessageCode = "repo.new.name_rules"
-	MsgRepoDescLabel   MessageCode = "repo.new.description"
-	MsgRepoDescHelp    MessageCode = "repo.new.description_help"
-	MsgRepoCreate      MessageCode = "repo.new.submit"
-	MsgRepoNameEmpty   MessageCode = "repo.new.name_empty"
-	MsgRepoNameInvalid MessageCode = "repo.new.name_invalid"
-	MsgRepoNameTaken   MessageCode = "repo.new.name_taken"
-	MsgRepoNameLong    MessageCode = "repo.new.name_long"
-	MsgRepoCreateFail  MessageCode = "repo.new.failed"
-	MsgRepoCreated     MessageCode = "repo.new.created"
+	MsgRepoNewTitle     MessageCode = "repo.new.title"
+	MsgRepoNameLabel    MessageCode = "repo.new.name"
+	MsgRepoNameRules    MessageCode = "repo.new.name_rules"
+	MsgRepoDescLabel    MessageCode = "repo.new.description"
+	MsgRepoDescHelp     MessageCode = "repo.new.description_help"
+	MsgRepoCreate       MessageCode = "repo.new.submit"
+	MsgRepoNameEmpty    MessageCode = "repo.new.name_empty"
+	MsgRepoNameInvalid  MessageCode = "repo.new.name_invalid"
+	MsgRepoNameReserved MessageCode = "repo.new.name_reserved"
+	MsgRepoNameTaken    MessageCode = "repo.new.name_taken"
+	MsgRepoNameLong     MessageCode = "repo.new.name_long"
+	MsgRepoCreateFail   MessageCode = "repo.new.failed"
+	MsgRepoCreated      MessageCode = "repo.new.created"
 
 	MsgRepoEmpty            MessageCode = "repo.empty"
 	MsgRepoEmptyPush        MessageCode = "repo.empty.push_hint"
@@ -862,6 +863,10 @@ var catalog = map[MessageCode]message{
 	MsgRepoNameInvalid: {
 		en: "Use letters, numbers, dots, dashes, and underscores only.",
 		ko: "영문자, 숫자, 점, 하이픈, 밑줄만 사용하세요.",
+	},
+	MsgRepoNameReserved: {
+		en: "The names new and new-import are reserved. Choose another name.",
+		ko: "new와 new-import는 예약된 이름입니다. 다른 이름을 입력하세요.",
 	},
 	MsgRepoNameTaken: {
 		en: "A repository with that name already exists.",

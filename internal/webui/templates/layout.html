@@ -39,14 +39,6 @@
          from the binary's own version, and an empty value renders nothing
          rather than a guess. */}}
     {{with .Chrome.Version}}<span class="toolbar__ver mono">{{.}}</span>{{end}}
-    {{/* Storage location is owner and administrator information, so the
-         backend clears Visible for an ordinary visitor. */}}
-    {{if .Chrome.Storage.Visible}}
-      <span class="toolbar__host">
-        {{with .Chrome.Storage.Label}}<span>{{.}}</span>{{end}}
-        {{with .Chrome.Storage.Path}}<span class="mono">{{.}}</span>{{end}}
-      </span>
-    {{end}}
   </div>
 
   {{if .Chrome.Nav.OverviewURL}}

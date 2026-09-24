@@ -180,10 +180,13 @@ var (
 	ErrLimitOverflow = errors.New("limit is too large")
 )
 
-// maximumLimitAmountLength bounds the text ParseLimit accepts. The largest
-// stored value has 19 digits; the rest allows for a decimal point and
-// fraction digits a person might type.
-const maximumLimitAmountLength = 40
+// The largest stored value has 19 digits, and no unit factor is below one, so
+// a whole part with more significant digits is out of range. Fraction digits
+// are bounded so that the exact arithmetic below stays cheap for any input.
+const (
+	maximumLimitWholeDigits    = 19
+	maximumLimitFractionDigits = 40
+)
 
 // ParseLimit converts an amount and unit into the stored value.
 //
@@ -196,11 +199,6 @@ func ParseLimit(kind LimitKind, input LimitInput) (int64, error) {
 	if amount == "" {
 		return 0, nil
 	}
-	// No stored value needs more than a few dozen characters, and refusing a
-	// longer amount keeps the exact arithmetic below cheap for any input.
-	if len(amount) > maximumLimitAmountLength {
-		return 0, ErrLimitSyntax
-	}
 	unit, known := kind.unit(strings.TrimSpace(input.Unit))
 	if !known {
 		return 0, ErrLimitSyntax
@@ -208,6 +206,19 @@ func ParseLimit(kind LimitKind, input LimitInput) (int64, error) {
 	whole, fraction, _ := strings.Cut(amount, ".")
 	if (whole == "" && fraction == "") || !allDigits(whole) || !allDigits(fraction) {
 		return 0, ErrLimitSyntax
+	}
+	// Only significant digits count toward the bounds, so padding with zeros
+	// never changes the result. A long number is out of range, not unreadable.
+	whole = strings.TrimLeft(whole, "0")
+	fraction = strings.TrimRight(fraction, "0")
+	if len(whole) > maximumLimitWholeDigits {
+		return 0, ErrLimitOverflow
+	}
+	if len(fraction) > maximumLimitFractionDigits {
+		return 0, ErrLimitFraction
+	}
+	if whole == "" && fraction == "" {
+		return 0, nil
 	}
 	digits, ok := new(big.Int).SetString(whole+fraction, 10)
 	if !ok {
