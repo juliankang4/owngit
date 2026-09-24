@@ -1,0 +1,68 @@
+name: npm smoke test
+
+# Installs a published OwnGit npm version on every platform it ships for and
+# checks that the launcher runs the executable. Run it by hand after
+# publishing, before moving the "latest" dist-tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version or dist-tag to install, for example 1.0.2 or next
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      SPEC: owngit@${{ inputs.version }}
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: lts/*
+
+      - name: Install
+        run: npm install -g "$SPEC"
+
+      - name: Version and exit status
+        run: |
+          owngit version
+          if owngit no-such-command; then
+            echo "an unknown command succeeded" >&2
+            exit 1
+          fi
+
+      - name: Serve and stop
+        run: |
+          state="$RUNNER_TEMP/owngit-state"
+          owngit serve --state-dir "$state" --listen 127.0.0.1:17654 --no-open > "$RUNNER_TEMP/serve.log" 2>&1 &
+          launcher=$!
+          for _ in $(seq 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:17654/; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:17654/
+          if [ "$RUNNER_OS" = Windows ]; then
+            # Windows has no SIGTERM; stop the server the way a service would.
+            taskkill //F //IM owngit.exe
+          else
+            kill -TERM "$launcher"
+          fi
+          wait "$launcher" || echo "launcher exit status $?"
+          if curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:17654/; then
+            echo "the server is still running" >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/serve.log"
