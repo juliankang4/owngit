@@ -35,7 +35,7 @@ func checkCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		return cliProblem("invalid_arguments", "check requires task, cycle, run, status, log, or config.")
 	}
-	if arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help" {
+	if isHelpArgument(arguments[0]) {
 		printCheckUsage(os.Stdout)
 		return nil
 	}
@@ -58,7 +58,7 @@ func checkCommand(arguments []string) error {
 }
 
 func checkTaskCommand(arguments []string) error {
-	if len(arguments) == 0 || arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help" {
+	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, "Usage: owngit check task new --server URL --repository ID --credential-file PATH [--title TITLE]")
 		return nil
 	}
@@ -86,7 +86,7 @@ func checkTaskCommand(arguments []string) error {
 // reserved before an agent is asked to correct, counted once whether the
 // following check succeeds or fails, and reused by retries inside the round.
 func checkCycleCommand(arguments []string) error {
-	if len(arguments) == 0 || arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help" {
+	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, "Usage: owngit check cycle reserve --task ID --server URL --repository ID --credential-file PATH")
 		fmt.Fprintln(os.Stdout, "A reserved round is consumed once. The initial check and manual reruns consume none.")
 		return nil
@@ -190,7 +190,7 @@ func checkLog(arguments []string) error {
 }
 
 func checkConfigCommand(arguments []string) error {
-	if len(arguments) == 0 || arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help" {
+	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, "Usage: owngit check config show --server URL --repository ID --credential-file PATH")
 		return nil
 	}
@@ -236,7 +236,7 @@ func checkRun(arguments []string) error {
 	outputLimit := flags.Int64("output-limit", checkexec.DefaultOutputLimit(), "captured output bytes per check")
 	noUpload := flags.Bool("no-upload", false, "run locally without registering the attempt")
 	var checks stringList
-	flags.Var(&checks, "check", "check as name=command (repeatable)")
+	flags.Var(&checks, "check", "check as `name=command` (repeatable)")
 	if err := parseCheckFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -602,9 +602,9 @@ func newCheckFlagSet(name string) *flag.FlagSet {
 }
 
 func parseCheckFlags(flags *flag.FlagSet, arguments []string) error {
-	if err := flags.Parse(arguments); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return cliProblem("invalid_arguments", "Use owngit check help for command usage.")
+	if err := parseFlags(flags, arguments); err != nil {
+		if errors.Is(err, errUsageShown) {
+			return err
 		}
 		return cliProblem("invalid_arguments", err.Error())
 	}

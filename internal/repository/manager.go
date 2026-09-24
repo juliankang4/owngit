@@ -41,6 +41,12 @@ type Manager struct {
 	mu       sync.RWMutex
 	// snapshots caches RefSnapshot results between ref writes.
 	snapshots snapshotCache
+	// preparation records the repositories that are still being prepared
+	// after startup; see StartPreparation.
+	preparation preparationState
+	// PreparationRetry replaces the 30-second first wait after a failed
+	// preparation attempt. Tests shorten it; zero keeps the default.
+	PreparationRetry time.Duration
 
 	// deletionClock and deletionHook let tests fix the kept-folder time and
 	// stop a deletion after a durable step, as a crash would.
@@ -214,7 +220,19 @@ func (m *Manager) Path(id string) (string, error) {
 	return path, nil
 }
 
+// ExistingPath returns the storage path of a recorded repository. It refuses a
+// repository that is still being prepared with ErrRepositoryPreparing, before
+// touching the state or the filesystem.
 func (m *Manager) ExistingPath(ctx context.Context, id string) (string, state.Repository, bool, error) {
+	if m.Preparing(id) {
+		return "", state.Repository{}, false, ErrRepositoryPreparing
+	}
+	return m.existingPath(ctx, id)
+}
+
+// existingPath is ExistingPath without the preparation check, for preparation
+// itself and for deletion.
+func (m *Manager) existingPath(ctx context.Context, id string) (string, state.Repository, bool, error) {
 	repository, exists, err := m.Store.Repository(ctx, id)
 	if err != nil || !exists {
 		return "", state.Repository{}, exists, err
@@ -330,10 +348,8 @@ func (m *Manager) prepareExisting(ctx context.Context, hookRuntime *gitexec.Runn
 	return nil
 }
 
-// prepareRepository reads the local configuration once and writes only the
-// settings that differ, then refreshes the retention hook.
 func (m *Manager) prepareRepository(ctx context.Context, id string, hookRuntime *gitexec.Runner) error {
-	path, _, exists, err := m.ExistingPath(ctx, id)
+	path, _, exists, err := m.existingPath(ctx, id)
 	if err != nil || !exists {
 		if err == nil {
 			err = errors.New("repository not found")
@@ -343,6 +359,13 @@ func (m *Manager) prepareRepository(ctx context.Context, id string, hookRuntime 
 	lock := m.Locks.For(id)
 	lock.Lock()
 	defer lock.Unlock()
+	return m.configureLocked(ctx, path, hookRuntime)
+}
+
+// configureLocked reads the local configuration once and writes only the
+// settings that differ, then refreshes the retention hook. The caller holds
+// the repository write lock.
+func (m *Manager) configureLocked(ctx context.Context, path string, hookRuntime *gitexec.Runner) error {
 	current, err := m.localConfig(ctx, path)
 	if err != nil {
 		return err

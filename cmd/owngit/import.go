@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,7 +23,7 @@ import (
 )
 
 func importCommand(arguments []string) error {
-	if len(arguments) == 0 || arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help" {
+	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
 		printImportUsage(os.Stdout)
 		return nil
 	}
@@ -518,7 +519,10 @@ func parseNamedImport(name string, arguments []string) (string, *importFlags, er
 
 func parseImportFlags(flags *flag.FlagSet, arguments []string) error {
 	positionals, flagArgs := splitImportArgs(arguments)
-	if err := flags.Parse(append(flagArgs, positionals...)); err != nil {
+	if err := parseFlags(flags, append(flagArgs, positionals...)); err != nil {
+		if errors.Is(err, errUsageShown) {
+			return err
+		}
 		return cliProblem("invalid_arguments", err.Error())
 	}
 	return nil

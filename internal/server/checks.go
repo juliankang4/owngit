@@ -35,6 +35,9 @@ func (app *App) handleCheckAPI(writer http.ResponseWriter, request *http.Request
 		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
 		return
 	}
+	if app.refusePreparingAPI(writer, repositoryID) {
+		return
+	}
 	parts := strings.Split(remainder, "/")
 	switch {
 	case resource == "tasks" && remainder == "":
@@ -261,6 +264,9 @@ func (app *App) latestCheckConfiguration(writer http.ResponseWriter, request *ht
 // outlives both states.
 func (app *App) handleCheckAttemptLog(writer http.ResponseWriter, request *http.Request, repositoryID, remainder string) {
 	if _, ok := app.authorizeHelper(writer, request, repositoryID); !ok {
+		return
+	}
+	if app.refusePreparingAPI(writer, repositoryID) {
 		return
 	}
 	parts := strings.Split(remainder, "/")

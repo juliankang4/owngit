@@ -212,6 +212,11 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// A repository still being prepared after startup is reconciled once
+		// it is ready; its preparation wakes the coordinator.
+		if coordinator.Repositories.Preparing(stored.ID) {
+			continue
+		}
 		policy, exists, err := coordinator.Store.CheckPolicy(ctx, stored.ID)
 		if err != nil {
 			return err
@@ -393,6 +398,9 @@ func (coordinator *Coordinator) runOneLocal(ctx context.Context) error {
 		return err
 	}
 	for _, stored := range repositories {
+		if coordinator.Repositories.Preparing(stored.ID) {
+			continue
+		}
 		job, claimed, err := coordinator.Store.ClaimLocalCheckJob(ctx, stored.ID, time.Now().UTC())
 		if err != nil {
 			return err

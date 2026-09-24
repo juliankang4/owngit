@@ -68,6 +68,14 @@ func run(arguments []string) error {
 	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
 		command, arguments = arguments[0], arguments[1:]
 	}
+	err := runCommand(command, arguments)
+	if errors.Is(err, errUsageShown) {
+		return nil
+	}
+	return err
+}
+
+func runCommand(command string, arguments []string) error {
 	switch command {
 	case "serve":
 		return serve(arguments)
@@ -105,6 +113,10 @@ func run(arguments []string) error {
 	}
 }
 
+// preparationGrace bounds how long startup waits for repository preparation
+// before it starts serving the repositories that are ready.
+const preparationGrace = 10 * time.Second
+
 func serve(arguments []string) error {
 	return serveWithOpener(arguments, bootstrap.Open, log.Printf)
 }
@@ -125,8 +137,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
 	var allowedHosts stringList
-	flags.Var(&allowedHosts, "allowed-host", "additional accepted Host name (repeatable)")
-	if err := flags.Parse(arguments); err != nil {
+	flags.Var(&allowedHosts, "allowed-host", "additional accepted `host` name (repeatable)")
+	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
@@ -174,16 +186,31 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	repositories := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: settings.RepositoryRoot}
 	pullRequests := &pullrequest.Service{Store: store, Repositories: repositories}
+	// A repository that becomes ready in the background wakes check
+	// reconciliation, so the hook is set before preparation starts. Wake does
+	// nothing until the coordinator starts.
+	checkCoordinator := &checkrun.Coordinator{Store: store, Repositories: repositories, PullRequests: pullRequests, Logf: logf}
+	repositories.OnChange = checkCoordinator.Wake
 	if settings.Initialized {
 		// Deleted repositories have no rows, so an unfinished deletion never
 		// blocks startup; it is reported and retried at the next start.
 		if err := repositories.ReconcileDeletions(ctx); err != nil {
 			logf("unfinished repository deletion was not completed: %v", err)
 		}
-		if err := repositories.PrepareExisting(ctx); err != nil {
-			return err
-		}
-		if err := pullRequests.ReconcileAll(ctx); err != nil {
+		// Each repository is prepared on its own: safety configuration,
+		// retention hook, and pull request recovery. One that fails or hangs
+		// stays locked and is retried in the background while the others are
+		// served. Startup waits at most preparationGrace for the first attempts.
+		// The stop is registered first, so a signal during the startup wait
+		// also cancels and awaits the attempts before the store closes.
+		defer func() {
+			stopContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := repositories.StopPreparation(stopContext); err != nil {
+				logf("%v", err)
+			}
+		}()
+		if err := repositories.StartPreparation(ctx, pullRequests.RecoverRepositoryLocked, preparationGrace, logf); err != nil {
 			return err
 		}
 	}
@@ -230,9 +257,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 
 	home, _ := os.UserHomeDir()
-	checkCoordinator := &checkrun.Coordinator{Store: store, Repositories: repositories, PullRequests: pullRequests, Logf: logf}
 	imports := &importsync.Service{Store: store, Repositories: repositories, Logf: logf}
-	repositories.OnChange = checkCoordinator.Wake
 	// Registered after the store is opened, so in-flight imports record their
 	// outcome before the store closes.
 	importRuntime := &importLifetime{ctx: ctx, service: imports, logf: logf}
@@ -401,7 +426,7 @@ func setupLink(arguments []string) error {
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	baseURL := flags.String("base-url", "http://127.0.0.1:7654", "owner-facing HTTP origin")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
-	if err := flags.Parse(arguments); err != nil {
+	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
 	store, err := state.Open(context.Background(), *stateDir)
@@ -432,7 +457,7 @@ func resetAdmin(arguments []string) error {
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	passwordFile := flags.String("password-file", "", "owner-readable file containing the new password")
-	if err := flags.Parse(arguments); err != nil {
+	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
 	if *passwordFile == "" {
@@ -476,7 +501,7 @@ func approveHost(arguments []string) error {
 	flags := flag.NewFlagSet("approve-host", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
-	if err := flags.Parse(arguments); err != nil {
+	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 1 {
@@ -511,7 +536,7 @@ func forgetCheckContainer(arguments []string) error {
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	jobID := flags.String("job", "", "configured-check job identifier")
 	confirmed := flags.Bool("confirm-container-removed", false, "confirm that the job's container was removed or its Docker daemon no longer exists")
-	if err := flags.Parse(arguments); err != nil {
+	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
@@ -553,7 +578,7 @@ func backupState(arguments []string) error {
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	output := flags.String("output", "", "new backup directory")
 	gitPath := flags.String("git", "", "Git executable path")
-	if err := flags.Parse(arguments); err != nil {
+	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *output == "" {
@@ -598,7 +623,7 @@ func restoreState(arguments []string) error {
 	input := flags.String("input", "", "offline backup directory")
 	repositoryRoot := flags.String("repository-root", "", "new repository storage directory")
 	gitPath := flags.String("git", "", "Git executable path")
-	if err := flags.Parse(arguments); err != nil {
+	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *input == "" || *repositoryRoot == "" {
@@ -699,6 +724,66 @@ func defaultStatePath(configured, home string) string {
 
 func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|forget-check-container|backup|restore|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|version] [options]")
+	fmt.Fprintln(writer, "Run owngit <command> --help for the options of a command.")
+}
+
+// errUsageShown ends a command that printed its usage because -h or --help
+// was given. run turns it into success.
+var errUsageShown = errors.New("usage shown")
+
+// isHelpArgument reports whether a command group's first argument asks for
+// its usage.
+func isHelpArgument(argument string) bool {
+	return argument == "help" || argument == "-h" || argument == "--help"
+}
+
+// commandOperands names the positional operands of the commands that take
+// them, keyed by flag set name, for the usage line.
+var commandOperands = map[string]string{
+	"approve-host":       "<host>",
+	"import add":         "<name> <url>",
+	"import refresh":     "<name>",
+	"import status":      "<name>",
+	"import history":     "<name>",
+	"import cancel":      "<name>",
+	"import schedule":    "<name>",
+	"import credentials": "<name>",
+	"import resolve":     "<name>",
+}
+
+// parseFlags parses a command's flags. On -h or --help it prints the
+// command's usage and options to stdout and returns errUsageShown, so the
+// command stops without doing anything and the process exits 0.
+func parseFlags(flags *flag.FlagSet, arguments []string) error {
+	err := flags.Parse(arguments)
+	if errors.Is(err, flag.ErrHelp) {
+		printFlagUsage(os.Stdout, flags)
+		return errUsageShown
+	}
+	return err
+}
+
+func printFlagUsage(writer io.Writer, flags *flag.FlagSet) {
+	synopsis := "owngit " + flags.Name()
+	if operands := commandOperands[flags.Name()]; operands != "" {
+		synopsis += " " + operands
+	}
+	fmt.Fprintf(writer, "Usage: %s [options]\n\nOptions:\n", synopsis)
+	flags.VisitAll(func(entry *flag.Flag) {
+		kind, usage := flag.UnquoteUsage(entry)
+		name := "--" + entry.Name
+		if kind != "" {
+			name += " " + kind
+		}
+		switch {
+		case entry.DefValue == "" || entry.DefValue == "false" || entry.DefValue == "0" || entry.DefValue == "0s":
+		case kind == "string":
+			usage += fmt.Sprintf(" (default %q)", entry.DefValue)
+		default:
+			usage += fmt.Sprintf(" (default %s)", entry.DefValue)
+		}
+		fmt.Fprintf(writer, "  %s\n        %s\n", name, usage)
+	})
 }
 
 type stringList []string

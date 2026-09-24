@@ -276,6 +276,19 @@ func decodeAPIJSONLimit(writer http.ResponseWriter, request *http.Request, desti
 	return true
 }
 
+// refusePreparingAPI answers a request for a repository that is still being
+// prepared after startup with a fixed 503 and reports whether it did. Call it
+// after authorization, so the answer does not reveal the repository to an
+// unauthenticated caller.
+func (app *App) refusePreparingAPI(writer http.ResponseWriter, repositoryID string) bool {
+	if app.Repositories == nil || !app.Repositories.Preparing(repositoryID) {
+		return false
+	}
+	writer.Header().Set("Retry-After", "30")
+	writeAPIError(writer, http.StatusServiceUnavailable, "repository_preparing", "The repository is being prepared after startup. Try again later.", nil)
+	return true
+}
+
 func writeAPIMethodError(writer http.ResponseWriter, allowed string) {
 	writer.Header().Set("Allow", allowed)
 	writeAPIError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "The HTTP method is not allowed for this API endpoint.", nil)
@@ -327,7 +340,7 @@ func apiStatus(code string) int {
 		return http.StatusNotImplemented
 	case "result_too_large":
 		return http.StatusRequestEntityTooLarge
-	case "state_unavailable", "repository_unavailable", "merge_reconciliation_pending", "pull_request_creation_reconciliation_pending":
+	case "state_unavailable", "repository_unavailable", "repository_preparing", "merge_reconciliation_pending", "pull_request_creation_reconciliation_pending":
 		return http.StatusServiceUnavailable
 	case "repository_integrity_error":
 		return http.StatusInternalServerError

@@ -24,7 +24,9 @@
             {{/* A badge is one short line, so the row names the status only.
                  The repository's own pages carry the full explanation and
                  what to do about it. */}}
-            {{if .DefaultBranchMissing}}
+            {{if .Preparing}}
+              {{icon "info"}}<span class="pill pill--kept">{{bi $lang "repo.preparing.short"}}</span>
+            {{else if .DefaultBranchMissing}}
               {{icon "warning"}}<span class="pill pill--missing">{{bi $lang "repo.default_branch_missing.short"}}</span>
             {{else if .DefaultBranch}}
               {{icon "branch"}}<span class="row__refname" title="{{.DefaultBranch}}">{{.DefaultBranch}}</span>
@@ -33,12 +35,13 @@
           {{/* An empty repository says so instead of showing a blank row that
                looks like missing data. */}}
           <span class="row__msg">
-            {{if .Empty}}{{bi $lang "repo.empty"}}
+            {{if .Preparing}}{{bi $lang "repo.preparing"}}
+            {{else if .Empty}}{{bi $lang "repo.empty"}}
             {{else if .Head.Subject}}{{.Head.Subject}}
             {{else if .Description}}{{.Description}}{{end}}
           </span>
           <span class="row__when">
-            {{if not .Empty}}{{biRelative $lang $now .Head.AuthorDate}}{{end}}
+            {{if not (or .Empty .Preparing)}}{{biRelative $lang $now .Head.AuthorDate}}{{end}}
           </span>
         </a>
       {{end}}

@@ -228,6 +228,84 @@ func TestPassivePullRequestReadsInvokeNoUpdateRef(t *testing.T) {
 	}
 }
 
+// The check poller observes revisions every interval. A poll that binds
+// nothing must keep the cached ref snapshot valid; a poll that binds, or tries
+// to and fails, must invalidate it. The fixture pushes without OwnGit's lock,
+// so a cached snapshot does not see those pushes until a writer releases the
+// lock through Unlock.
+func TestRevisionObservationInvalidatesTheRefSnapshotOnlyWhenBinding(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.commitFile("base.txt", "base\n", "base")
+	fixture.push("HEAD:refs/heads/main")
+	fixture.git("checkout", "-b", "feature")
+	fixture.commitFile("feature.txt", "first\n", "feature one")
+	fixture.push("HEAD:refs/heads/feature")
+	_, err := fixture.service.Create(fixture.ctx, CreateInput{
+		Repository: fixture.repositoryID, Title: "Observe snapshots", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
+	})
+	noErr(t, err)
+	hasBranch := func(name string) bool {
+		t.Helper()
+		snapshot, err := fixture.manager.RefSnapshot(fixture.ctx, fixture.repositoryID)
+		noErr(t, err)
+		for _, branch := range snapshot.Summary.Branches {
+			if branch.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	observe := func() (int, error) {
+		observed, _, err := fixture.service.ObserveCurrentRevisions(fixture.ctx, fixture.repositoryID, 64)
+		return observed, err
+	}
+	if hasBranch("unrelated") {
+		t.Fatal("fixture already has the unrelated branch")
+	}
+
+	fixture.push("HEAD:refs/heads/unrelated")
+	if observed, err := observe(); err != nil || observed != 0 {
+		t.Fatalf("poll with nothing to bind: observed=%d err=%v", observed, err)
+	}
+	if hasBranch("unrelated") {
+		t.Fatal("a poll that bound nothing invalidated the cached ref snapshot")
+	}
+
+	fixture.commitFile("feature.txt", "second\n", "feature two")
+	fixture.push("HEAD:refs/heads/feature")
+	if observed, err := observe(); err != nil || observed != 1 {
+		t.Fatalf("poll that binds: observed=%d err=%v", observed, err)
+	}
+	if !hasBranch("unrelated") {
+		t.Fatal("a poll that bound a revision left the cached ref snapshot valid")
+	}
+
+	if runtime.GOOS == "windows" {
+		return // the failing Git wrapper below is a POSIX shell script
+	}
+	gitPath, err := exec.LookPath("git")
+	noErr(t, err)
+	directory := t.TempDir()
+	wrapperPath := filepath.Join(directory, "git-wrapper")
+	wrapper := "#!/bin/sh\ncase \" $* \" in *\" update-ref \"*) exit 1 ;; esac\nexec " + shellQuote(gitPath) + " \"$@\"\n"
+	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
+	failing, err := gitexec.New(wrapperPath, filepath.Join(directory, "runtime"))
+	noErr(t, err)
+	fixture.manager.Git = failing
+	fixture.push("HEAD:refs/heads/second-unrelated")
+	if hasBranch("second-unrelated") {
+		t.Fatal("the cached snapshot saw an unlocked push before any writer")
+	}
+	fixture.commitFile("feature.txt", "third\n", "feature three")
+	fixture.push("HEAD:refs/heads/feature")
+	if _, err := observe(); err == nil {
+		t.Fatal("binding succeeded although update-ref failed")
+	}
+	if !hasBranch("second-unrelated") {
+		t.Fatal("a poll whose bind failed left the cached ref snapshot valid")
+	}
+}
+
 // TestPassivePullRequestReadsHoldTheSharedLock blocks a read inside Git and
 // inspects the repository lock while the read is in flight. A shared holder
 // lets another reader in and keeps writers out; an exclusive holder would
@@ -625,6 +703,21 @@ func TestReconcileRejectsMismatchedDurableMergeObjects(t *testing.T) {
 			noErr(t, err)
 			if err := fixture.service.ReconcileAll(fixture.ctx); problemCode(err) != "repository_integrity_error" {
 				t.Fatalf("reconcile error=%v code=%q", err, problemCode(err))
+			}
+			// A serving process recovers the same state while preparing the
+			// repository, and the failure keeps the repository locked.
+			preparation, stopPreparation := context.WithCancel(fixture.ctx)
+			defer func() {
+				stopPreparation()
+				noErr(t, fixture.manager.StopPreparation(fixture.ctx))
+			}()
+			fixture.manager.PreparationRetry = time.Hour
+			noErr(t, fixture.manager.StartPreparation(preparation, fixture.service.RecoverRepositoryLocked, 10*time.Second, nil))
+			if !fixture.manager.Preparing(fixture.repositoryID) {
+				t.Fatal("a repository whose pull request recovery failed is served")
+			}
+			if _, err := fixture.service.List(fixture.ctx, fixture.repositoryID); problemCode(err) != "repository_preparing" {
+				t.Fatalf("list during preparation error=%v code=%q", err, problemCode(err))
 			}
 			after, ok, err := fixture.store.PullRequestMergeIntent(fixture.ctx, fixture.repositoryID, created.Number, sourceOID, targetOID)
 			if err != nil || !ok {

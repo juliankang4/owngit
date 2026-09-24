@@ -43,12 +43,22 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	query := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("q")))
 	var summaries []webui.RepositorySummary
 	for index, stored := range repositories {
-		if snapshotErrs[index] != nil {
+		// A repository still being prepared after startup is listed with its
+		// status; the other repositories are shown as usual.
+		preparing := errors.Is(snapshotErrs[index], repository.ErrRepositoryPreparing)
+		if snapshotErrs[index] != nil && !preparing {
 			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoUnreadable, stored.Name)
 			return
 		}
 		if query == "" || strings.Contains(strings.ToLower(stored.Name), query) || strings.Contains(strings.ToLower(stored.Description), query) {
-			summaries = append(summaries, app.repositorySummary(request, stored, snapshots[index]))
+			summary := app.repositorySummary(request, stored, snapshots[index])
+			if preparing {
+				summary = webui.RepositorySummary{
+					ID: stored.ID, Name: stored.Name, Description: stored.Description,
+					URL: summary.URL, CloneURL: summary.CloneURL, CreatedAt: stored.CreatedAt, Preparing: true,
+				}
+			}
+			summaries = append(summaries, summary)
 		}
 	}
 	app.activity.forget(repositories)
@@ -198,6 +208,20 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.handleRepositoryDelete(writer, request, stored, chrome, session)
 		return
 	}
+	// The credential screens read and change only the state database. While
+	// the repository is being prepared they are routed before the Git read,
+	// with an empty summary, so an administrator can still revoke a
+	// credential, as the API allows.
+	if len(parts) == 2 && app.Repositories.Preparing(id) {
+		switch parts[1] {
+		case "helper-credentials":
+			app.handleHelperCredentials(writer, request, stored, repository.Summary{}, chrome)
+			return
+		case "runner-tokens":
+			app.handleRunnerTokens(writer, request, stored, repository.Summary{}, chrome)
+			return
+		}
+	}
 	// One ref listing gives the summary every tab needs and the activity key
 	// the overview's graph needs, where Summary alone would start two Git
 	// processes and the graph a third.
@@ -207,6 +231,12 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		page := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
 		page.Repo.Unreadable = true
 		page.Repo.UnreadableReason = webui.MsgRepoUnreadable
+		if errors.Is(err, repository.ErrRepositoryPreparing) {
+			// The notice is fixed; the cause is only in the server log.
+			page.Repo.Preparing = true
+			page.Repo.UnreadableReason = webui.MsgRepoPreparing
+			writer.Header().Set("Retry-After", "30")
+		}
 		app.render(writer, http.StatusServiceUnavailable, page)
 		return
 	}
@@ -769,6 +799,9 @@ type activityObservation struct {
 	available bool
 	// counting is true while some repository is still being counted.
 	counting bool
+	// preparing is true when some repository was skipped because it is
+	// still being prepared after startup.
+	preparing bool
 }
 
 // observeActivity gathers one bounded, current-history-first observation per
@@ -784,6 +817,11 @@ func (app *App) observeActivity(ctx context.Context, repositories []state.Reposi
 	}
 	parts := app.activity.observe(ctx, app.Repositories, ids, keys, maximum, activityWait)
 	for index, part := range parts {
+		if errors.Is(part.err, errRefsUnlisted) && app.Repositories.Preparing(ids[index]) {
+			// Its refs were not read, by design; the others are still shown.
+			observation.complete, observation.preparing = false, true
+			continue
+		}
 		if part.err != nil {
 			observation.available = false
 			observation.complete = false
@@ -809,6 +847,8 @@ func (observation activityObservation) describe(graph *webui.ActivityGraph) {
 	switch {
 	case observation.counting:
 		graph.IncompleteReason = webui.MsgActivityCounting
+	case observation.preparing:
+		graph.IncompleteReason = webui.MsgActivityPreparing
 	case !observation.complete:
 		graph.IncompleteReason = webui.MsgActivityLimit
 	}

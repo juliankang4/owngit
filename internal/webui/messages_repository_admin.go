@@ -54,6 +54,7 @@ const (
 	MsgRepoBusyCheck            MessageCode = "repoadmin.busy.check"
 	MsgRepoBusyCheckCleanup     MessageCode = "repoadmin.busy.check_cleanup"
 	MsgRepoBusyInUse            MessageCode = "repoadmin.busy.in_use"
+	MsgRepoBusyPreparing        MessageCode = "repoadmin.busy.preparing"
 	MsgRepoAdminPagesTitle      MessageCode = "repoadmin.pages.title"
 	MsgRepoAdminChecksLine      MessageCode = "repoadmin.pages.checks"
 	MsgRepoAdminRunnersLine     MessageCode = "repoadmin.pages.runners"
@@ -178,6 +179,10 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoBusyInUse: {
 		en: "Another Git operation, such as a push or a clone, is using the repository. Try again in a moment.",
 		ko: "푸시나 클론 같은 다른 Git 작업이 이 저장소를 쓰고 있습니다. 잠시 뒤 다시 시도하세요.",
+	},
+	MsgRepoBusyPreparing: {
+		en: "OwnGit is preparing this repository right now. Try again in a moment. Between preparation attempts the repository can be deleted.",
+		ko: "OwnGit이 지금 이 저장소를 준비하고 있습니다. 잠시 뒤 다시 시도하세요. 준비 시도 사이에는 저장소를 삭제할 수 있습니다.",
 	},
 	MsgRepoAdminPagesTitle: {en: "Other administrator pages", ko: "다른 관리자 화면"},
 	MsgRepoAdminChecksLine: {

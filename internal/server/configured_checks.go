@@ -29,6 +29,11 @@ func (app *App) handleConfiguredCheckOwnerAPI(writer http.ResponseWriter, reques
 		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
 		return
 	}
+	// Runner credentials are credential management, not repository use, so
+	// they stay manageable (and revocable) while the repository is locked.
+	if resource != "runner-credentials" && app.refusePreparingAPI(writer, repositoryID) {
+		return
+	}
 	switch resource {
 	case "check-policy":
 		app.handleCheckPolicy(writer, request, repositoryID, remainder)
@@ -256,6 +261,9 @@ func (app *App) handleRunnerCredentials(writer http.ResponseWriter, request *htt
 func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Request, repositoryID, remainder string) {
 	credential, ok := app.authorizeRunner(writer, request, repositoryID)
 	if !ok {
+		return
+	}
+	if app.refusePreparingAPI(writer, repositoryID) {
 		return
 	}
 	status := app.checkRuntimeStatus()

@@ -14,10 +14,12 @@ type Locks struct {
 // RepositoryLock is one repository's reader and writer lock. Every release of
 // the write lock advances its generation, so a reader that saw the same
 // generation earlier knows that no OwnGit writer has changed the repository
-// since. A release that changed nothing also advances it.
+// since. Unlock advances it even when nothing changed; only a holder that
+// provably changed no ref releases through UnlockWithoutRefChanges.
 //
-// Always release the write lock through this type's Unlock. Unlocking the
-// embedded RWMutex directly would skip the generation step.
+// Always release the write lock through this type's Unlock or
+// UnlockWithoutRefChanges. Unlocking the embedded RWMutex directly would skip
+// that decision.
 type RepositoryLock struct {
 	sync.RWMutex
 	generation atomic.Uint64
@@ -31,7 +33,16 @@ func (l *RepositoryLock) Unlock() {
 	l.RWMutex.Unlock()
 }
 
-// Generation reports how many times the write lock has been released. It is
+// UnlockWithoutRefChanges releases the write lock without advancing the
+// generation, so cached ref snapshots stay valid. Use it only when the holder
+// ran no Git command or file operation that can change refs, HEAD, or the
+// repository's objects since it took the lock. When in doubt, use Unlock.
+func (l *RepositoryLock) UnlockWithoutRefChanges() {
+	l.RWMutex.Unlock()
+}
+
+// Generation reports how many times the write lock has been released through
+// Unlock. It is
 // stable while the caller holds the read lock.
 func (l *RepositoryLock) Generation() uint64 {
 	return l.generation.Load()

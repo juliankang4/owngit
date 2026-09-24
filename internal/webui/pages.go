@@ -298,6 +298,9 @@ type RepositorySummary struct {
 	TagCount      int
 	RetainedCount int
 	Counted       bool
+	// Preparing is true while OwnGit prepares the repository after startup.
+	// Nothing was read from Git, so only the name and description are known.
+	Preparing bool
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +399,9 @@ type RepositoryHeader struct {
 	Unreadable bool
 	// UnreadableReason explains why. Used only when Unreadable is true.
 	UnreadableReason MessageCode
+	// Preparing is true while OwnGit prepares the repository after startup.
+	// Unreadable is then true as well, and the page explains the wait.
+	Preparing bool
 }
 
 // RefSelection describes the selected ref and the alternatives.

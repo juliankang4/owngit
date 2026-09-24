@@ -434,7 +434,18 @@ func (service *Service) ObserveCurrentRevisionsAfter(ctx context.Context, reposi
 	}
 	lock := service.Repositories.Locks.For(repositoryID)
 	lock.Lock()
-	defer lock.Unlock()
+	// The configured-check poller calls this every interval and after every
+	// push to any repository. A call that binds nothing changes no ref, so it
+	// releases the lock without invalidating the cached ref snapshot. The mark
+	// is set before binding starts, so a failed or partial bind still does.
+	mayChangeRefs := false
+	defer func() {
+		if mayChangeRefs {
+			lock.Unlock()
+		} else {
+			lock.UnlockWithoutRefChanges()
+		}
+	}()
 	records, more, err := service.Store.OpenPullRequestsAfter(ctx, repositoryID, after, limit)
 	if err != nil {
 		return nil, false, &Problem{Code: "state_unavailable", Message: "Open pull requests could not be read for revision observation.", Cause: err}
@@ -454,6 +465,7 @@ func (service *Service) ObserveCurrentRevisionsAfter(ctx context.Context, reposi
 			return revisions, more, &Problem{Code: "state_unavailable", Message: "Pull request revision history could not be read.", Cause: err}
 		}
 		if !exists {
+			mayChangeRefs = true
 			if err := service.bindRevision(ctx, repositoryPath, record, source.OID, target.OID); err != nil {
 				return revisions, more, err
 			}
@@ -465,49 +477,60 @@ func (service *Service) ObserveCurrentRevisionsAfter(ctx context.Context, reposi
 	return revisions, more, nil
 }
 
+// ReconcileAll recovers the pull request state of every repository. Offline
+// backup and restore use it; a serving process recovers each repository as
+// part of its preparation instead (see RecoverRepositoryLocked).
 func (service *Service) ReconcileAll(ctx context.Context) error {
 	repositories, err := service.Store.Repositories(ctx)
 	if err != nil {
 		return fmt.Errorf("read repositories for pull request reconciliation: %w", err)
 	}
 	for _, stored := range repositories {
-		provisional, err := service.Store.ProvisionalPullRequests(ctx, stored.ID)
-		if err != nil {
-			return fmt.Errorf("read provisional pull requests for %s: %w", stored.ID, err)
-		}
-		revisions, err := service.Store.PullRequestRevisions(ctx, stored.ID)
-		if err != nil {
-			return fmt.Errorf("read pull request revisions for %s: %w", stored.ID, err)
-		}
-		if len(provisional) == 0 && len(revisions) == 0 {
-			continue
-		}
 		repositoryPath, err := service.repositoryPath(ctx, stored.ID)
 		if err != nil {
 			return err
 		}
 		lock := service.Repositories.Locks.For(stored.ID)
 		lock.Lock()
-		// One listing under the lock answers every pull request ref read
-		// below, instead of one Git process per ref.
+		err = service.RecoverRepositoryLocked(ctx, stored.ID, repositoryPath)
+		lock.Unlock()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RecoverRepositoryLocked recovers one repository's pull request state:
+// provisional creations, protected revision refs, and unfinished merges. The
+// caller holds the repository write lock and supplies the repository path,
+// so repository preparation can run it before the repository is served.
+func (service *Service) RecoverRepositoryLocked(ctx context.Context, repositoryID, repositoryPath string) error {
+	provisional, err := service.Store.ProvisionalPullRequests(ctx, repositoryID)
+	if err != nil {
+		return fmt.Errorf("read provisional pull requests for %s: %w", repositoryID, err)
+	}
+	revisions, err := service.Store.PullRequestRevisions(ctx, repositoryID)
+	if err != nil {
+		return fmt.Errorf("read pull request revisions for %s: %w", repositoryID, err)
+	}
+	if len(provisional) != 0 || len(revisions) != 0 {
+		// One listing answers every pull request ref read below, instead of
+		// one Git process per ref.
 		known, err := service.listPullRequestRefs(ctx, repositoryPath)
 		if err != nil {
-			lock.Unlock()
-			return fmt.Errorf("read pull request refs for %s: %w", stored.ID, err)
+			return fmt.Errorf("read pull request refs for %s: %w", repositoryID, err)
 		}
 		for _, record := range provisional {
 			if _, _, err := service.reconcileProvisionalCreationLocked(ctx, repositoryPath, record, known.read); err != nil {
-				lock.Unlock()
-				return fmt.Errorf("reconcile pull request creation %s#%d: %w", stored.ID, record.Number, err)
+				return fmt.Errorf("reconcile pull request creation %s#%d: %w", repositoryID, record.Number, err)
 			}
 		}
 		for _, revision := range revisions {
 			if err := service.ensureStoredRevisionRefs(ctx, repositoryPath, revision, known.read); err != nil {
-				lock.Unlock()
-				return fmt.Errorf("repair pull request revision %s#%d: %w", stored.ID, revision.PullRequestNumber, err)
+				return fmt.Errorf("repair pull request revision %s#%d: %w", repositoryID, revision.PullRequestNumber, err)
 			}
 		}
-		lock.Unlock()
 	}
 
 	intents, err := service.Store.PullRequestMergeIntents(ctx, true)
@@ -515,7 +538,7 @@ func (service *Service) ReconcileAll(ctx context.Context) error {
 		return fmt.Errorf("read incomplete pull request merges: %w", err)
 	}
 	for _, intent := range intents {
-		if intent.Status == state.MergeIntentPreparing {
+		if intent.RepositoryID != repositoryID || intent.Status == state.MergeIntentPreparing {
 			continue
 		}
 		_, ok, err := service.Store.PullRequest(ctx, intent.RepositoryID, intent.PullRequestNumber)
@@ -525,20 +548,14 @@ func (service *Service) ReconcileAll(ctx context.Context) error {
 		if !ok {
 			return fmt.Errorf("merge intent refers to missing pull request %s#%d", intent.RepositoryID, intent.PullRequestNumber)
 		}
-		repositoryPath, err := service.repositoryPath(ctx, intent.RepositoryID)
-		if err != nil {
-			return err
-		}
-		lock := service.Repositories.Locks.For(intent.RepositoryID)
-		lock.Lock()
-		if intent.Status == state.MergeIntentReady {
+		switch intent.Status {
+		case state.MergeIntentReady:
 			_, err = service.reconcileIntentLocked(ctx, repositoryPath, intent)
-		} else if intent.Status == state.MergeIntentPlanned {
+		case state.MergeIntentPlanned:
 			err = service.validateProtectedMergeObjects(ctx, repositoryPath, intent)
-		} else {
+		default:
 			err = NewProblem("repository_integrity_error", "The merge intent is in an unexpected state.")
 		}
-		lock.Unlock()
 		if err != nil {
 			return fmt.Errorf("reconcile pull request %s#%d: %w", intent.RepositoryID, intent.PullRequestNumber, err)
 		}
@@ -804,6 +821,9 @@ func (service *Service) repositoryPath(ctx context.Context, repositoryID string)
 		return "", NewProblem("invalid_repository", "The repository identifier is invalid.")
 	}
 	path, _, exists, err := service.Repositories.ExistingPath(ctx, repositoryID)
+	if errors.Is(err, repository.ErrRepositoryPreparing) {
+		return "", &Problem{Code: "repository_preparing", Message: "The repository is being prepared after startup. Try again later.", Cause: err}
+	}
 	if err != nil {
 		return "", &Problem{Code: "repository_unavailable", Message: "The repository storage is unavailable.", Cause: err}
 	}

@@ -27,7 +27,7 @@ func prCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		return cliProblem("invalid_arguments", "pr requires create, list, show, review, or merge.")
 	}
-	if arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help" {
+	if isHelpArgument(arguments[0]) {
 		printPRUsage(os.Stdout)
 		return nil
 	}
@@ -103,6 +103,10 @@ func prReview(arguments []string) error {
 	if len(arguments) == 0 {
 		return cliProblem("invalid_arguments", "pr review requires request, submit, or skip.")
 	}
+	if isHelpArgument(arguments[0]) {
+		fmt.Fprintln(os.Stdout, "Usage: owngit pr review <request|submit|skip> [options]")
+		return nil
+	}
 	action := arguments[0]
 	if action != "request" && action != "submit" && action != "skip" {
 		return cliProblem("invalid_arguments", "pr review requires request, submit, or skip.")
@@ -174,9 +178,9 @@ func addPRRemoteFlags(flags *flag.FlagSet) *prRemoteFlags {
 }
 
 func parsePRFlags(flags *flag.FlagSet, arguments []string) error {
-	if err := flags.Parse(arguments); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return cliProblem("invalid_arguments", "Use owngit pr help for command usage.")
+	if err := parseFlags(flags, arguments); err != nil {
+		if errors.Is(err, errUsageShown) {
+			return err
 		}
 		return cliProblem("invalid_arguments", err.Error())
 	}

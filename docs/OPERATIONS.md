@@ -302,6 +302,21 @@ Create a stable task, then run checks:
 
 Raw check logs are stored in `owngit.sqlite`, limited to 256 KiB each, and kept for 30 days by default. Task and attempt records stay after a log expires. Reading an expired log returns `log_expired`, and a log that is missing earlier returns `log_missing`. A log that fails its integrity check is refused, and a truncated log is reported as truncated. If the database is full or reports an I/O error while storing a result, OwnGit stores the result without its raw log and records a log error on the attempt.
 
+## Repositories being prepared at startup
+
+When `owngit serve` starts, it prepares each repository before serving it. It checks the repository's safety settings and retention hook and finishes pull request work that a previous run left unfinished. Up to 8 repositories are prepared at a time. Startup waits at most 10 seconds for this. Repositories that are not ready by then are served as soon as they are.
+
+A repository whose preparation fails or does not finish stays locked, and the other repositories are served normally. While it is locked:
+
+- Git clones, fetches and pushes get HTTP 503 with the message `repository is being prepared after startup; try again later`.
+- Its pages show that the repository is being prepared, and the API answers with the error code `repository_preparing`. The dashboard lists it with a Preparing label and leaves it out of the activity count.
+- Scheduled imports and project checks for it wait. Nothing is recorded as failed, and they run once it is ready.
+- An administrator can still delete it (except while a preparation attempt is running), and can still issue and revoke its helper credentials and runner tokens.
+
+OwnGit retries a failed preparation by itself: 30 seconds after the attempt ended, then after twice the previous wait, up to 10 minutes. An attempt that does not return is never overlapped by another. The server log names the repository and the cause of each failure, and says when the repository is served again. The pages do not show the cause. Fix the cause (for example a disk that is not mounted, file permissions, or a conflicting Git setting that the log quotes) and wait for the next retry, or restart OwnGit to retry at once.
+
+If OwnGit cannot read the list of repositories from its state database, it still refuses to start.
+
 ## Storage
 
 - The state directory is the platform config directory joined with `owngit`, or `~/.owngit` when no config directory is available. It holds `owngit.sqlite` and, while the database is in use, its `-wal` and `-shm` files. Keep it on local storage, never on a network share used by other computers. Windows network (UNC) paths are refused.

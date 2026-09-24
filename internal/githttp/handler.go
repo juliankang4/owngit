@@ -88,6 +88,11 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	repositoryPath, _, exists, err := h.Repositories.ExistingPath(request.Context(), route.repositoryID)
+	if errors.Is(err, repository.ErrRepositoryPreparing) {
+		writer.Header().Set("Retry-After", "30")
+		http.Error(writer, "repository is being prepared after startup; try again later", http.StatusServiceUnavailable)
+		return
+	}
 	if err != nil {
 		http.Error(writer, "repository storage is unavailable", http.StatusServiceUnavailable)
 		return

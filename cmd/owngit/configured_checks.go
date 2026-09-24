@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -24,11 +25,14 @@ import (
 )
 
 func checkPolicyCommand(arguments []string) error {
-	if len(arguments) == 0 || arguments[0] == "help" {
+	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, "Usage: owngit check-policy <show|set|enable|disable> [options]")
 		return nil
 	}
 	action, arguments := arguments[0], arguments[1:]
+	if !slices.Contains([]string{"show", "set", "enable", "disable"}, action) {
+		return cliProblem("invalid_arguments", "Unknown check-policy action.")
+	}
 	flags := newCheckFlagSet("check-policy " + action)
 	admin := addHelperAdminFlags(flags)
 	policyFile := flags.String("policy-file", "", "JSON file containing the complete configured-check policy")
@@ -69,11 +73,14 @@ func checkPolicyCommand(arguments []string) error {
 }
 
 func checkJobCommand(arguments []string) error {
-	if len(arguments) == 0 || arguments[0] == "help" {
+	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, "Usage: owngit check-job <list|show|log|cancel|rerun> [options]")
 		return nil
 	}
 	action, arguments := arguments[0], arguments[1:]
+	if !slices.Contains([]string{"list", "show", "log", "cancel", "rerun"}, action) {
+		return cliProblem("invalid_arguments", "Unknown check-job action.")
+	}
 	flags := newCheckFlagSet("check-job " + action)
 	admin := addHelperAdminFlags(flags)
 	jobID := flags.String("job", "", "configured-check job identifier")
@@ -111,11 +118,14 @@ func checkJobCommand(arguments []string) error {
 }
 
 func runnerCredentialCommand(arguments []string) error {
-	if len(arguments) == 0 || arguments[0] == "help" {
+	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, "Usage: owngit runner-credential <issue|list|revoke> [options]")
 		return nil
 	}
 	action, arguments := arguments[0], arguments[1:]
+	if !slices.Contains([]string{"issue", "list", "revoke"}, action) {
+		return cliProblem("invalid_arguments", "Unknown runner-credential action.")
+	}
 	flags := newCheckFlagSet("runner-credential " + action)
 	admin := addHelperAdminFlags(flags)
 	label := flags.String("label", "", "runner credential label")

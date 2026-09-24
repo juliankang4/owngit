@@ -116,7 +116,9 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 			return result, err
 		}
 	}
-	if _, _, exists, err := m.ExistingPath(ctx, id); err != nil {
+	// A repository that is still being prepared can be deleted, so this
+	// lookup skips the preparation check.
+	if _, _, exists, err := m.existingPath(ctx, id); err != nil {
 		return DeleteResult{}, err
 	} else if !exists {
 		return DeleteResult{}, ErrRepositoryNotFound
@@ -146,6 +148,10 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 		}
 		return DeleteResult{}, deletionBusyError(err)
 	}
+	// The repository is gone from OwnGit, so its preparation, if any, stops
+	// here under the repository lock and cannot touch a later repository
+	// with the same ID.
+	m.CancelPreparation(id)
 	if err := m.deletionStep("recorded"); err != nil {
 		return DeleteResult{}, fmt.Errorf("%w: %v", ErrDeleteIncomplete, err)
 	}

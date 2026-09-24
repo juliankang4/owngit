@@ -19,7 +19,7 @@ func helperCredentialCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		return cliProblem("invalid_arguments", "helper-credential requires create, list, or revoke.")
 	}
-	if arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help" {
+	if isHelpArgument(arguments[0]) {
 		printHelperCredentialUsage(os.Stdout)
 		return nil
 	}

@@ -31,6 +31,10 @@ func (app *App) handleImportAPI(writer http.ResponseWriter, request *http.Reques
 	if !app.authorizeAdminAPI(writer, request, request.Method != http.MethodGet) {
 		return
 	}
+	// Cancelling needs no repository data and stays available.
+	if remainder != "cancel" && app.refusePreparingAPI(writer, repositoryID) {
+		return
+	}
 	switch remainder {
 	case "":
 		app.handleImportSourceAPI(writer, request, repositoryID)

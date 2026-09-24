@@ -127,7 +127,12 @@
      blank history that looks like a failure. */}}
 {{define "repoState"}}
 {{$lang := .Lang}}{{$repo := .Repo}}
-{{if $repo.Unreadable}}
+{{if $repo.Preparing}}
+  <div class="empty">
+    <p class="empty__lead">{{bi $lang "repo.preparing"}}</p>
+    <p>{{bi $lang "repo.preparing.detail"}}</p>
+  </div>
+{{else if $repo.Unreadable}}
   <div class="empty">
     <p class="empty__lead">{{bi $lang "repo.unreadable"}}</p>
     {{if $repo.UnreadableReason}}<p>{{bi $lang $repo.UnreadableReason}}</p>{{end}}

@@ -1166,6 +1166,12 @@ func (s *Service) StartDue(ctx context.Context, limit int) (int, error) {
 		if err := ctx.Err(); err != nil {
 			return started, err
 		}
+		// A repository still being prepared after startup is skipped before
+		// the claim, so no run, failure, or schedule change is recorded; the
+		// schedule stays due and runs once the repository is ready.
+		if s.Repositories != nil && s.Repositories.Preparing(schedule.RepositoryID) {
+			continue
+		}
 		claimed, err := s.Store.ClaimDueImportSchedule(ctx, schedule.RepositoryID, now)
 		if err != nil {
 			return started, newProblem(CodeStateUnavailable, "due import schedule could not be claimed", err)

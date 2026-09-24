@@ -540,6 +540,11 @@ func (s *Service) reconcileOneInitialDestination(ctx context.Context, generation
 		}
 		return 1, nil
 	}
+	// As in reconcileLandedInitialDestination, a repository being prepared
+	// is left for the next start instead of waiting for its lock.
+	if s.Repositories.Preparing(row.RepositoryID) {
+		return 1, nil
+	}
 	lock := s.Repositories.Locks.For(row.RepositoryID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -753,6 +758,12 @@ func (s *Service) reconcileLandedInitialDestination(ctx context.Context, generat
 	if !intentExists {
 		return 1, nil
 	}
+	// A registered repository still being prepared after startup may have a
+	// hung preparation attempt holding its lock. Startup recovery does not
+	// wait for it; the destination stays unresolved until the next start.
+	if s.Repositories.Preparing(row.RepositoryID) {
+		return 1, nil
+	}
 	lock := s.Repositories.Locks.For(row.RepositoryID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -774,8 +785,13 @@ func (s *Service) recordInitialRepository(ctx context.Context, row state.ImportI
 	if _, exists, err := s.Store.Repository(ctx, row.RepositoryID); err != nil {
 		return err
 	} else if !exists {
+		// The directory was configured by an earlier process, possibly for
+		// another runtime. The repository is served only after preparation
+		// for the current runtime succeeds, so it is marked first.
+		s.Repositories.PrepareRegistered(row.RepositoryID)
 		record := state.Repository{ID: row.RepositoryID, Name: row.DisplayName, Description: row.Description, CreatedAt: row.CreatedAt}
 		if err := s.Store.AddRepository(ctx, record); err != nil {
+			s.Repositories.CancelPreparation(row.RepositoryID)
 			_ = s.Store.SetImportInitialDestinationState(ctx, row.Name, state.ImportInitialReady, boundedImportMessage(ownerRecoveryMessage(finalPath)), now)
 			return err
 		}

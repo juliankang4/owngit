@@ -248,6 +248,11 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		code, status := webui.MsgRepoDeleteFailed, http.StatusInternalServerError
 		if busy, ok := busyNotice(err); ok {
 			code, status = busy, http.StatusConflict
+			// While the repository is being prepared, no other Git operation
+			// can reach it, so the holder is the preparation attempt.
+			if busy == webui.MsgRepoBusyInUse && app.Repositories.Preparing(stored.ID) {
+				code = webui.MsgRepoBusyPreparing
+			}
 		} else if errors.Is(err, repository.ErrRepositoryNotFound) {
 			code, status = webui.MsgRepoDeleteGone, http.StatusNotFound
 		}

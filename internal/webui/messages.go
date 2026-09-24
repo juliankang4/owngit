@@ -215,6 +215,10 @@ const (
 	MsgRepoEmptyPush        MessageCode = "repo.empty.push_hint"
 	MsgRepoCloneTitle       MessageCode = "repo.clone.title"
 	MsgRepoUnreadable       MessageCode = "repo.unreadable"
+	MsgRepoPreparing        MessageCode = "repo.preparing"
+	MsgRepoPreparingDetail  MessageCode = "repo.preparing.detail"
+	MsgRepoPreparingShort   MessageCode = "repo.preparing.short"
+	MsgActivityPreparing    MessageCode = "activity.preparing"
 	MsgRepoNoBranches       MessageCode = "repo.no_branches"
 	MsgRepoNoTags           MessageCode = "repo.no_tags"
 	MsgRepoDefaultGone      MessageCode = "repo.default_branch_missing"
@@ -900,6 +904,18 @@ var catalog = map[MessageCode]message{
 		en: "This repository's Git data could not be read.",
 		ko: "이 저장소의 Git 데이터를 읽지 못했습니다.",
 	},
+	MsgRepoPreparing: {
+		en: "This repository is being prepared.",
+		ko: "이 저장소를 준비하는 중입니다.",
+	},
+	MsgRepoPreparingDetail: {
+		en: "After starting, OwnGit checks each repository's safety settings before serving it. This one is not ready yet, so pushes, clones, and changes are refused for now. OwnGit keeps retrying on its own. The server log explains what went wrong.",
+		ko: "OwnGit은 시작할 때 저장소마다 안전 설정을 확인한 뒤에 제공합니다. 이 저장소는 아직 준비되지 않아 지금은 푸시, 클론, 변경을 받지 않습니다. OwnGit이 알아서 계속 다시 시도합니다. 원인은 서버 로그에 있습니다.",
+	},
+	MsgRepoPreparingShort: {
+		en: "Preparing",
+		ko: "준비 중",
+	},
 	MsgRepoNoBranches: {
 		en: "No branches.",
 		ko: "브랜치가 없습니다.",
@@ -1260,6 +1276,10 @@ var catalog = map[MessageCode]message{
 	MsgActivityCountRepo: {
 		en: "This repository is still being counted. Reload the page to see the full count.",
 		ko: "이 저장소를 아직 집계하고 있습니다. 전체 집계를 보려면 페이지를 새로 고치세요.",
+	},
+	MsgActivityPreparing: {
+		en: "Repositories that are still being prepared are not counted yet.",
+		ko: "아직 준비 중인 저장소는 집계하지 않았습니다.",
 	},
 	MsgActivityScanFail: {
 		en: "Some repositories could not be read while counting.",
