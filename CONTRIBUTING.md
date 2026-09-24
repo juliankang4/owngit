@@ -173,6 +173,7 @@ go run ./tools/release packaging \
 ## Documentation
 
 - `README.md`: what OwnGit is and how to start.
+- `README.ko.md`: the Korean translation of `README.md`. Change both in the same change.
 - `docs/OPERATIONS.md`: setup, access, recovery, imports, pull requests, checks, storage, and backups.
 - `docs/AUTOMATIC_CHECKS.md`: configured checks and runners.
 - `docs/CODING_TOOLS.md`: the coding-tool workflow. Its path is fixed by the release tool, and `cmd/owngit/check_budget_test.go` requires certain phrases in it and in the skill. Keep the guide and `integrations/skills/owngit-checks/SKILL.md` consistent.

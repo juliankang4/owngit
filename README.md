@@ -12,6 +12,8 @@
   <a href="https://www.sqlite.org"><img src="https://img.shields.io/badge/SQLite-003B57?style=flat&colorA=222222&logo=sqlite&logoColor=white" alt="SQLite"></a>
 </p>
 
+<p align="center"><b>English</b> | <a href="README.ko.md">한국어</a></p>
+
 OwnGit is Git for HomeLab & Local. It keeps private repositories and their history on your own computer, NAS, or home server, with a browser dashboard for everyday use. Repositories remain ordinary bare Git repositories served by the Git installation on the host. No cloud Git account or subscription is required.
 
 ![OwnGit showing an example repository.](docs/images/overview.png)
