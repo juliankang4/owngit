@@ -3,7 +3,9 @@
 package state
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -230,4 +232,108 @@ func TestWindowsHandMadePrivateFileIsAccepted(t *testing.T) {
 	noErr(t, err)
 	defer file.Close()
 	noErr(t, ValidatePrivateFileHandle(file))
+}
+
+// testDescriptorWith builds a protected descriptor from explicit entries.
+func testDescriptorWith(t *testing.T, owner *windows.SID, entries []windows.EXPLICIT_ACCESS) *windows.SECURITY_DESCRIPTOR {
+	t.Helper()
+	acl, err := windows.ACLFromEntries(entries, nil)
+	noErr(t, err)
+	descriptor, err := windows.NewSecurityDescriptor()
+	noErr(t, err)
+	noErr(t, descriptor.SetOwner(owner, false))
+	noErr(t, descriptor.SetDACL(acl, true, false))
+	noErr(t, descriptor.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED))
+	return descriptor
+}
+
+func testEntry(sid *windows.SID, mode windows.ACCESS_MODE, mask windows.ACCESS_MASK) windows.EXPLICIT_ACCESS {
+	return windows.EXPLICIT_ACCESS{
+		AccessPermissions: mask, AccessMode: mode, Inheritance: windows.NO_INHERITANCE,
+		Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_UNKNOWN, TrusteeValue: windows.TrusteeValueFromSID(sid)},
+	}
+}
+
+// A refused secret file is explained: the owner, inherited entries, the other
+// accounts that can access it, or a missing or partial grant to the current
+// user, with the icacls command that fixes it.
+func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
+	user, _, err := processIdentity()
+	noErr(t, err)
+	users, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
+	noErr(t, err)
+	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	noErr(t, err)
+	const path = `C:\secrets\password.txt`
+	trustee := `"*` + user.String() + `"`
+	grant := `icacls "` + path + `" /inheritance:r /grant:r "*` + user.String() + `:F"`
+	for _, test := range []struct {
+		name       string
+		descriptor *windows.SECURITY_DESCRIPTOR
+		problem    string
+		fix        string
+	}{
+		{"foreign owner", testDescriptor(t, users, true, user),
+			"its owner is " + accountName(users) + ", not your account or Administrators",
+			`icacls "` + path + `" /setowner ` + trustee},
+		{"inherited entries", testDescriptor(t, user, false, user),
+			"it inherits access entries from its folder", grant},
+		{"another account", testDescriptor(t, user, true, user, everyone),
+			accountName(everyone) + " can also access it", grant + ` /remove "*` + everyone.String() + `"`},
+		{"two other accounts and a foreign owner", testDescriptor(t, users, true, user, everyone, users),
+			"its owner is " + accountName(users) + ", not your account or Administrators; " + accountName(everyone) + ", " + accountName(users) + " can also access it",
+			`icacls "` + path + `" /setowner ` + trustee + "; " + grant + ` /remove "*` + everyone.String() + `" "*` + users.String() + `"`},
+		{"read only", testDescriptorWith(t, user, []windows.EXPLICIT_ACCESS{testEntry(user, windows.GRANT_ACCESS, windows.GENERIC_READ)}),
+			"your account does not have full control of it", grant},
+		{"denied", testDescriptorWith(t, user, []windows.EXPLICIT_ACCESS{testEntry(user, windows.DENY_ACCESS, windows.FILE_WRITE_DATA), testEntry(user, windows.GRANT_ACCESS, fileAllAccess)}),
+			"it denies your account some access",
+			`icacls "` + path + `" /inheritance:r /remove:d ` + trustee + ` /grant:r "*` + user.String() + `:F"`},
+	} {
+		err := validatePrivateInput(test.descriptor, user, path)
+		var notPrivate *NotPrivateError
+		if !errors.As(err, &notPrivate) {
+			t.Errorf("%s: err=%v, want *NotPrivateError", test.name, err)
+			continue
+		}
+		if notPrivate.Problem != test.problem || notPrivate.Fix != test.fix {
+			t.Errorf("%s:\n problem %q\n want    %q\n fix     %q\n want    %q", test.name, notPrivate.Problem, test.problem, notPrivate.Fix, test.fix)
+		}
+	}
+	if err := validatePrivateInput(testDescriptor(t, user, true, user), user, path); err != nil {
+		t.Fatalf("a private descriptor was refused: %v", err)
+	}
+}
+
+// The fix OwnGit prints makes a hand-made file private: running it in
+// PowerShell is enough for the file to be accepted.
+func TestWindowsNotPrivateFixWorks(t *testing.T) {
+	user, _, err := processIdentity()
+	noErr(t, err)
+	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	noErr(t, err)
+	directory := t.TempDir()
+	inherited := filepath.Join(directory, "inherited password")
+	noErr(t, os.WriteFile(inherited, []byte("valid-password\n"), 0o600))
+	shared := filepath.Join(directory, "shared password")
+	noErr(t, os.WriteFile(shared, []byte("valid-password\n"), 0o600))
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		testEntry(user, windows.GRANT_ACCESS, fileAllAccess),
+		testEntry(everyone, windows.GRANT_ACCESS, windows.GENERIC_READ),
+	}, nil)
+	noErr(t, err)
+	noErr(t, windows.SetNamedSecurityInfo(shared, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
+	for _, path := range []string{inherited, shared} {
+		err := ValidatePrivateFile(path)
+		var notPrivate *NotPrivateError
+		if !errors.As(err, &notPrivate) {
+			t.Fatalf("%s: err=%v, want *NotPrivateError", path, err)
+		}
+		t.Logf("%s: %s; fix: %s", filepath.Base(path), notPrivate.Problem, notPrivate.Fix)
+		output, err := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", notPrivate.Fix).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: the fix failed: %v\n%s", path, err, output)
+		}
+		noErr(t, ValidatePrivateFile(path))
+	}
 }

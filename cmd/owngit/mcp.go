@@ -183,7 +183,7 @@ func newMCPServer(ctx context.Context, options mcpOptions) (*mcpServer, error) {
 		calls:       map[string]*mcpCall{},
 	}
 	if options.passwordFile != "" {
-		password, err := readServerPassword(options.passwordFile, resolved.server, resolved.inferredServer, "The shared password file is unavailable or is not private.")
+		password, err := readServerPassword(options.passwordFile, resolved.server, resolved.inferredServer, "The shared password file")
 		if err != nil {
 			return nil, err
 		}

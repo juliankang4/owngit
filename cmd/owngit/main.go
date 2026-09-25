@@ -865,6 +865,10 @@ func restoreState(arguments []string) error {
 // no server. A server line, if present, is accepted and not used.
 func readPrivatePassword(path string) (string, error) {
 	file, err := readPasswordFile(path)
+	var notPrivate *state.NotPrivateError
+	if errors.As(err, &notPrivate) {
+		return "", errors.New(secretFileMessage("The password file", err))
+	}
 	return file.secret, err
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -245,7 +246,7 @@ func ValidatePrivateFile(path string) error {
 	if err != nil {
 		return err
 	}
-	return validatePrivateInputDescriptor(descriptor, user)
+	return validatePrivateInput(descriptor, user, path)
 }
 
 // ValidatePrivateFileHandle validates the open file without reopening its path.
@@ -265,7 +266,7 @@ func ValidatePrivateFileHandle(file *os.File) error {
 	if err != nil {
 		return err
 	}
-	return validatePrivateInputDescriptor(descriptor, user)
+	return validatePrivateInput(descriptor, user, file.Name())
 }
 
 type tokenOwner struct {
@@ -366,6 +367,142 @@ func validatePrivateInputDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, use
 		return errors.New("private file must be owned by the current Windows user or the Administrators group")
 	}
 	return validateUserOnlyDACL(descriptor, user, false)
+}
+
+// validatePrivateInput checks a file OwnGit reads and, when it is refused,
+// explains why in a *NotPrivateError.
+func validatePrivateInput(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, path string) error {
+	refused := validatePrivateInputDescriptor(descriptor, user)
+	if refused == nil || descriptor == nil {
+		return refused
+	}
+	return describeNotPrivate(descriptor, user, path, refused)
+}
+
+// describeNotPrivate explains why validatePrivateInputDescriptor refused a
+// file: an owner other than the current user or Administrators, inherited
+// entries, other accounts that can access it, or a missing or partial grant
+// to the current user. It also builds the icacls command that fixes it. It
+// only reports; the decision stays with validatePrivateInputDescriptor.
+func describeNotPrivate(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, path string, refused error) *NotPrivateError {
+	var problems, fixes []string
+	userTrustee := `"*` + user.String() + `"`
+	quoted := `"` + path + `"`
+	if owner, _, err := descriptor.Owner(); err != nil || !privateInputOwner(owner, user) {
+		name := "unknown"
+		if err == nil && owner != nil {
+			name = accountName(owner)
+		}
+		problems = append(problems, "its owner is "+name+", not your account or Administrators")
+		fixes = append(fixes, "icacls "+quoted+" /setowner "+userTrustee)
+	}
+	if validateUserOnlyDACL(descriptor, user, false) != nil {
+		aclProblems, fix := describeACL(descriptor, user, quoted, userTrustee)
+		problems = append(problems, aclProblems...)
+		fixes = append(fixes, fix)
+	}
+	if len(problems) == 0 {
+		problems = append(problems, refused.Error())
+	}
+	return &NotPrivateError{Problem: strings.Join(problems, "; "), Fix: strings.Join(fixes, "; ")}
+}
+
+// describeACL names what makes the file's access list more than one full
+// grant to user, and returns the icacls command that leaves only that grant.
+func describeACL(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, quoted, userTrustee string) ([]string, string) {
+	var problems, others, explicitOthers []string
+	userDenied, userFull, userFlags, unknownEntries := false, false, false, false
+	control, _, _ := descriptor.Control()
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		problems = append(problems, "it inherits access entries from its folder")
+	}
+	dacl, _, err := descriptor.DACL()
+	switch {
+	case err != nil || dacl == nil:
+		problems = append(problems, "it has no access list, so every account can access it")
+	default:
+		for index := uint16(0); index < dacl.AceCount; index++ {
+			var ace *windows.ACCESS_ALLOWED_ACE
+			if err := windows.GetAce(dacl, uint32(index), &ace); err != nil || ace == nil {
+				unknownEntries = true
+				continue
+			}
+			if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE && ace.Header.AceType != windows.ACCESS_DENIED_ACE_TYPE {
+				unknownEntries = true
+				continue
+			}
+			sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+			inherited := ace.Header.AceFlags&windows.INHERITED_ACE != 0
+			if sid.Equals(user) {
+				switch {
+				case ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE:
+					userDenied = true
+				case !inherited && ace.Header.AceFlags != 0:
+					userFlags = true
+				case ace.Header.AceFlags&windows.INHERIT_ONLY_ACE == 0 && hasFullFileAccess(ace.Mask):
+					userFull = true
+				}
+				continue
+			}
+			if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE && !inherited {
+				// A deny entry for another account takes access away, but
+				// the file should still name only the current user.
+				explicitOthers = appendNew(explicitOthers, `"*`+sid.String()+`"`)
+				continue
+			}
+			if ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE {
+				others = appendNew(others, accountName(sid))
+			}
+			if !inherited {
+				explicitOthers = appendNew(explicitOthers, `"*`+sid.String()+`"`)
+			}
+		}
+	}
+	if len(others) != 0 {
+		problems = append(problems, strings.Join(others, ", ")+" can also access it")
+	}
+	if userDenied {
+		problems = append(problems, "it denies your account some access")
+	}
+	if userFlags {
+		problems = append(problems, "its entry for your account has inheritance flags meant for folders")
+	}
+	if !userFull {
+		problems = append(problems, "your account does not have full control of it")
+	}
+	if unknownEntries {
+		problems = append(problems, "its access list has entries OwnGit cannot check")
+	}
+	fix := "icacls " + quoted + " /inheritance:r"
+	if userDenied {
+		fix += " /remove:d " + userTrustee
+	}
+	fix += " /grant:r " + strings.TrimSuffix(userTrustee, `"`) + `:F"`
+	if len(explicitOthers) != 0 {
+		fix += " /remove " + strings.Join(explicitOthers, " ")
+	}
+	return problems, fix
+}
+
+func appendNew(list []string, item string) []string {
+	if slices.Contains(list, item) {
+		return list
+	}
+	return append(list, item)
+}
+
+// accountName names sid as DOMAINccount, or by the SID string when it
+// cannot be looked up.
+func accountName(sid *windows.SID) string {
+	account, domain, _, err := sid.LookupAccount("")
+	switch {
+	case err != nil || account == "":
+		return sid.String()
+	case domain == "":
+		return account
+	default:
+		return domain + `\` + account
+	}
 }
 
 func privateInputOwner(owner, user *windows.SID) bool {

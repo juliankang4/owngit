@@ -60,7 +60,7 @@ func (admin *helperAdminFlags) client() (*apiclient.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	password, err := readServerPassword(admin.passwordFile, parsed, false, "The administrator password file is unavailable or is not private.")
+	password, err := readServerPassword(admin.passwordFile, parsed, false, "The administrator password file")
 	if err != nil {
 		return nil, err
 	}

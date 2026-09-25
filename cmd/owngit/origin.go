@@ -307,7 +307,7 @@ func readPasswordFile(path string) (secretFile, error) {
 // permissions and the optional server line.
 func readTokenFile(path string) (secretFile, error) {
 	if err := state.ValidatePrivateFile(path); err != nil {
-		return secretFile{}, &apiclient.Error{Code: "invalid_credential_file", Message: "The helper credential file is unavailable or is not private.", Cause: err}
+		return secretFile{}, &apiclient.Error{Code: "invalid_credential_file", Message: secretFileMessage("The helper credential file", err), Cause: err}
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -347,21 +347,38 @@ func (file secretFile) secretFor(server *url.URL, inferred bool) (string, error)
 	return file.secret, nil
 }
 
-// passwordFileProblem reports an unreadable password file with the caller's
-// message, and keeps a malformed server line's own code.
-func passwordFileProblem(err error, message string) error {
+// privateFileGuide names the documentation that shows how to make a private
+// password or token file.
+const privateFileGuide = `"Password and token files" in docs/OPERATIONS.md`
+
+// secretFileMessage describes a refused password or credential file named
+// what, such as "The shared password file". A file that is not private gets
+// what is wrong and a one-line fix; any other failure gets the general
+// sentence. Neither includes the file's content.
+func secretFileMessage(what string, err error) string {
+	var notPrivate *state.NotPrivateError
+	if errors.As(err, &notPrivate) {
+		return what + " is not private: " + notPrivate.Problem + ". To fix it, run: " + notPrivate.Fix + " (see " + privateFileGuide + ")."
+	}
+	return what + " is unavailable or is not private."
+}
+
+// passwordFileProblem reports an unreadable password file named what, and
+// keeps a malformed server line's own code.
+func passwordFileProblem(err error, what string) error {
 	var problem *apiclient.Error
 	if errors.As(err, &problem) {
 		return problem
 	}
-	return &apiclient.Error{Code: "invalid_password_file", Message: message, Cause: err}
+	return &apiclient.Error{Code: "invalid_password_file", Message: secretFileMessage(what, err), Cause: err}
 }
 
-// readServerPassword reads a password file for a request to server.
-func readServerPassword(path string, server *url.URL, inferred bool, unavailable string) (string, error) {
+// readServerPassword reads a password file named what, such as "The shared
+// password file", for a request to server.
+func readServerPassword(path string, server *url.URL, inferred bool, what string) (string, error) {
 	file, err := readPasswordFile(path)
 	if err != nil {
-		return "", passwordFileProblem(err, unavailable)
+		return "", passwordFileProblem(err, what)
 	}
 	return file.secretFor(server, inferred)
 }

@@ -300,13 +300,17 @@ To reset a forgotten administrator password, put the new password in an owner-re
 ./bin/owngit reset-admin --password-file /path/to/owner-only-password-file
 ```
 
-The password file must be a regular file. On Unix-like systems, it must not be readable by group or other users. On Windows, it must not inherit access entries from its folder and must give access only to your account (see [Password files on Windows](#password-files-on-windows)). OwnGit never accepts a password as a command-line value. Resetting the administrator password signs out administrator sessions and leaves repositories unchanged.
+The password file must be a regular file. On Unix-like systems, it must not be readable by group or other users. On Windows, it must not inherit access entries from its folder and must give access only to your account (see [Password and token files](#password-and-token-files)). OwnGit never accepts a password as a command-line value. Resetting the administrator password signs out administrator sessions and leaves repositories unchanged.
 
 OwnGit has no email or account recovery. Both procedures require access to the installation host.
 
-### Password files on Windows
+### Password and token files
 
-Every command that reads a password or token file you wrote yourself checks it this way, including `reset-admin`, `import`, `pr` and `repo`. A file made with Notepad or `echo` inherits its folder's access entries, which usually let other accounts read it, so OwnGit refuses it as not private. In PowerShell, create the file, limit it to your account, and only then write the password into it:
+Every command that reads a password or token file you wrote yourself checks it this way, including `reset-admin`, `import`, `pr` and `repo`. When it refuses a file as not private, it says what is wrong, for example which accounts can also read the file, and gives a command that fixes it.
+
+On macOS and Linux, the file must not give its group or other users any access. Create it while `umask 077` is in effect, or fix an existing file with `chmod 600 FILE`.
+
+On Windows, a file made with Notepad or `echo` inherits its folder's access entries, which usually let other accounts read it. In PowerShell, create the file, limit it to your account, and only then write the password into it:
 
 ```powershell
 $file = "$HOME\owngit-password.txt"

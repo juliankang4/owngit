@@ -89,7 +89,7 @@ func (remote *importFlags) client() (*apiclient.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	password, err := readServerPassword(remote.passwordFile, parsed, false, "The administrator password file is unavailable or is not private.")
+	password, err := readServerPassword(remote.passwordFile, parsed, false, "The administrator password file")
 	if err != nil {
 		return nil, err
 	}
@@ -727,9 +727,19 @@ func signalNumber(received os.Signal) int {
 	return 1
 }
 
+// importSecretFileMessage describes a refused import credential file. Other
+// failures keep their cause, which names the path but never the content.
+func importSecretFileMessage(err error) string {
+	var notPrivate *state.NotPrivateError
+	if errors.As(err, &notPrivate) {
+		return secretFileMessage("The credential file", err)
+	}
+	return "The credential file is unavailable or is not private: " + err.Error()
+}
+
 func readPrivateImportSecret(path string) (string, error) {
 	if err := state.ValidatePrivateFile(path); err != nil {
-		return "", &apiclient.Error{Code: "invalid_credential_file", Message: "The credential file is unavailable or is not private: " + err.Error(), Cause: err}
+		return "", &apiclient.Error{Code: "invalid_credential_file", Message: importSecretFileMessage(err), Cause: err}
 	}
 	content, err := readBoundedFile(path, 1<<20)
 	if err != nil {

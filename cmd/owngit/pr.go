@@ -331,7 +331,7 @@ func (remote *generalRemoteFlags) connection() (connection, error) {
 	}
 	target := connection{server: resolved.server, repository: resolved.repository, credential: credential{kind: credentialNone}}
 	if remote.passwordFile != "" {
-		password, err := readServerPassword(remote.passwordFile, resolved.server, resolved.inferredServer, "The shared password file is unavailable or is not private.")
+		password, err := readServerPassword(remote.passwordFile, resolved.server, resolved.inferredServer, "The shared password file")
 		if err != nil {
 			return connection{}, err
 		}

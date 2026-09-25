@@ -4,7 +4,9 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 )
 
 // CreatePrivateFile creates a new owner-only file and keeps its handle open.
@@ -35,7 +37,7 @@ func ValidatePrivateFile(path string) error {
 	if err != nil {
 		return err
 	}
-	return validatePrivateFileInfo(info)
+	return validatePrivateFileInfo(path, info)
 }
 
 // ValidatePrivateFileHandle validates the open file rather than reopening its
@@ -45,15 +47,33 @@ func ValidatePrivateFileHandle(file *os.File) error {
 	if err != nil {
 		return err
 	}
-	return validatePrivateFileInfo(info)
+	return validatePrivateFileInfo(file.Name(), info)
 }
 
-func validatePrivateFileInfo(info os.FileInfo) error {
+// validatePrivateFileInfo refuses a file that its group or other users can
+// access, with a *NotPrivateError that names the mode and the chmod command.
+func validatePrivateFileInfo(path string, info os.FileInfo) error {
 	if !info.Mode().IsRegular() {
 		return errors.New("private input must be a regular file")
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return errors.New("private input must not be readable by group or others")
+	permissions := info.Mode().Perm()
+	if permissions&0o077 == 0 {
+		return nil
 	}
-	return nil
+	var who []string
+	if permissions&0o070 != 0 {
+		who = append(who, "its group")
+	}
+	if permissions&0o007 != 0 {
+		who = append(who, "all other users")
+	}
+	return &NotPrivateError{
+		Problem: fmt.Sprintf("its mode %04o gives access to %s", permissions, strings.Join(who, " and ")),
+		Fix:     "chmod 600 " + shellQuote(path),
+	}
+}
+
+// shellQuote quotes path for a POSIX shell.
+func shellQuote(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }
