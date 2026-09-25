@@ -89,11 +89,13 @@
 {{define "connection"}}
 {{$c := .Chrome.Connection}}
 {{/* Report only what this request shows. A host name is not proof of
-     encryption, and the application cannot see the rest of the network. */}}
+     encryption, and the application cannot see the rest of the network. A
+     request through the Tailscale Serve endpoint OwnGit set up was
+     encrypted by Tailscale on this computer, so it says that instead. */}}
 <p class="conn{{if $c.Encrypted}} conn--secure{{else}} conn--plain{{end}}"
-   {{if $c.Encrypted}}{{biAttr .Lang "title" "connection.encrypted"}}{{else}}{{biAttrText .Lang "title" (printf "%s %s" (t "en" "connection.plain_detail") (t "en" "connection.no_proof")) (printf "%s %s" (t "ko" "connection.plain_detail") (t "ko" "connection.no_proof"))}}{{end}}>
+   {{if $c.Tailscale}}{{biAttr .Lang "title" "connection.encrypted_tailscale"}}{{else if $c.Encrypted}}{{biAttr .Lang "title" "connection.encrypted"}}{{else}}{{biAttrText .Lang "title" (printf "%s %s" (t "en" "connection.plain_detail") (t "en" "connection.no_proof")) (printf "%s %s" (t "ko" "connection.plain_detail") (t "ko" "connection.no_proof"))}}{{end}}>
   {{if $c.Encrypted}}{{icon "lock"}}{{else}}{{icon "unlocked"}}{{end}}
-  <span class="conn__t">{{if $c.Encrypted}}{{bi .Lang "connection.encrypted"}}{{else}}{{bi .Lang "connection.plain"}}{{end}}</span>
+  <span class="conn__t">{{if $c.Tailscale}}{{bi .Lang "connection.encrypted_tailscale"}}{{else if $c.Encrypted}}{{bi .Lang "connection.encrypted"}}{{else}}{{bi .Lang "connection.plain"}}{{end}}</span>
 </p>
 {{end}}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -494,6 +495,28 @@ func (sharing *Tailscale) Off(ctx context.Context) (TailscaleChange, string, err
 	}
 	change.Listen = nextListen(saved)
 	return change, update.Settings.BaseURL, nil
+}
+
+// throughTailscale reports whether a request came through this server's
+// Tailscale Serve endpoint: HTTPS as forwarded by a trusted proxy at the
+// loopback address, for the Tailscale name the server shares. The
+// connection indicator then says that Tailscale on this computer encrypted
+// it.
+func (app *App) throughTailscale(request *http.Request) bool {
+	if app.Network == nil {
+		return false
+	}
+	name := app.Network.TailscaleName()
+	info := requestctx.Of(request)
+	if name == "" || !info.Secure() || !info.Proxied {
+		return false
+	}
+	host, err := NormalizeHost(info.Host)
+	if err != nil || host != name {
+		return false
+	}
+	peer, _, err := net.SplitHostPort(info.Peer)
+	return err == nil && peer == loopbackProxy
 }
 
 // turnTailscaleOn turns sharing on and makes this running server use it at

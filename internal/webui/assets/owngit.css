@@ -1505,6 +1505,29 @@ span.hm__cell { cursor: default; }
 .netnote { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--text-2); max-width: 66ch; }
 .netnote .icon { margin-top: 2px; color: var(--warn); }
 .netreset { justify-self: start; max-width: 100%; }
+.netnote--info .icon { color: var(--text-3); }
+
+/* Sharing on the tailnet. The HTTPS address is the one thing a reader
+   copies, so it reuses the clone field. The certificate log notice sits
+   beside the switch as a quiet aside with a rule, because it informs
+   rather than warns; what blocks sharing uses the warning notes above. */
+.tsaddr { width: min(520px, 100%); }
+.tswait { display: grid; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.tsfound { display: grid; gap: 2px; margin: 4px 0 0; padding-left: 18px; }
+.tsfound li { font-size: 12px; word-break: break-all; }
+.tslog {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 66ch;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--bg-fill);
+  border-left: 2px solid var(--sep);
+  border-radius: 0 var(--r-s) var(--r-s) 0;
+}
+.tslog .icon { flex: none; margin-top: 2px; color: var(--text-3); }
 
 /* ---------- error page ---------- */
 

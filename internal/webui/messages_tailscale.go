@@ -151,7 +151,91 @@ var tailscaleCatalog = map[MessageCode]message{
 	},
 }
 
+// Strings of the Tailscale block of the Settings page.
+const (
+	MsgTSTitle         MessageCode = "settings.tailscale.title"
+	MsgTSIntro         MessageCode = "settings.tailscale.intro"
+	MsgTSOff           MessageCode = "settings.tailscale.off"
+	MsgTSReady         MessageCode = "settings.tailscale.ready"
+	MsgTSWaiting       MessageCode = "settings.tailscale.waiting"
+	MsgTSAddress       MessageCode = "settings.tailscale.address"
+	MsgTSCloneHint     MessageCode = "settings.tailscale.clone_hint"
+	MsgTSTaken         MessageCode = "settings.tailscale.taken"
+	MsgTSChanged       MessageCode = "settings.tailscale.changed"
+	MsgTSTurnOn        MessageCode = "settings.tailscale.turn_on"
+	MsgTSTurnOnButton  MessageCode = "settings.tailscale.turn_on_button"
+	MsgTSTurnOff       MessageCode = "settings.tailscale.turn_off"
+	MsgTSTurnOffBtn    MessageCode = "settings.tailscale.turn_off_button"
+	MsgTSCertLog       MessageCode = "settings.tailscale.certificate_log"
+	MsgTSHome          MessageCode = "settings.tailscale.home_network"
+	MsgTSHomeHelp      MessageCode = "settings.tailscale.home_network_help"
+	MsgTSOnNote        MessageCode = "settings.tailscale.on_note"
+	MsgTSOffNote       MessageCode = "settings.tailscale.off_note"
+	MsgTSTurnedOn      MessageCode = "settings.tailscale.turned_on"
+	MsgTSTurnedOff     MessageCode = "settings.tailscale.turned_off"
+	MsgConnTailscaleOn MessageCode = "connection.encrypted_tailscale"
+)
+
+var tailscaleBlockCatalog = map[MessageCode]message{
+	MsgTSTitle: {en: "Share on your tailnet over HTTPS", ko: "tailnet에서 HTTPS로 공유"},
+	MsgTSIntro: {
+		en: "Other devices signed in to your tailnet can open OwnGit and clone over HTTPS at this computer's Tailscale name. Tailscale on this computer holds the certificate and encrypts the connection.",
+		ko: "tailnet에 로그인한 다른 기기에서 이 컴퓨터의 Tailscale 이름으로 OwnGit을 열고 HTTPS로 클론할 수 있습니다. 인증서는 이 컴퓨터의 Tailscale이 관리하고, 연결도 Tailscale이 암호화합니다.",
+	},
+	MsgTSOff:     {en: "Off.", ko: "꺼져 있습니다."},
+	MsgTSReady:   {en: "On. Encrypted by Tailscale on this computer.", ko: "켜져 있습니다. 이 컴퓨터의 Tailscale이 암호화합니다."},
+	MsgTSWaiting: {en: "On, but the address does not work yet.", ko: "켜져 있지만 주소가 아직 동작하지 않습니다."},
+	MsgTSAddress: {en: "HTTPS address", ko: "HTTPS 주소"},
+	// Value: the HTTPS address.
+	MsgTSCloneHint: {
+		en: "Clone addresses start with it, such as %sgit/project.git.",
+		ko: "클론 주소는 %sgit/project.git처럼 이 주소로 시작합니다.",
+	},
+	MsgTSTaken: {
+		en: "Tailscale's HTTPS port 443 on this computer already serves something else, so sharing cannot be turned on. If you no longer need it, remove it with \"tailscale serve\". On the port now:",
+		ko: "이 컴퓨터에서 Tailscale의 HTTPS 포트 443이 이미 다른 것을 제공하고 있어 공유를 켤 수 없습니다. 더 이상 필요 없다면 \"tailscale serve\"로 지우세요. 지금 이 포트의 설정:",
+	},
+	MsgTSChanged: {
+		en: "Tailscale's HTTPS port 443 on this computer now has something other than the address OwnGit made:",
+		ko: "이 컴퓨터에서 Tailscale의 HTTPS 포트 443에 OwnGit이 만든 주소 대신 다른 설정이 있습니다:",
+	},
+	MsgTSTurnOn:       {en: "Turn on", ko: "켜기"},
+	MsgTSTurnOnButton: {en: "Turn on sharing", ko: "공유 켜기"},
+	MsgTSTurnOff:      {en: "Turn off", ko: "끄기"},
+	MsgTSTurnOffBtn:   {en: "Turn off sharing", ko: "공유 끄기"},
+	// Value: this computer's MagicDNS name.
+	MsgTSCertLog: {
+		en: "When Tailscale issues the certificate for this address, the names of this computer and your tailnet, as in %s, are recorded in a public certificate log. Only the fact that the address was opened is recorded, not your code, repositories, passwords or other content. You can change this computer's name in the Tailscale admin console before you turn this on.",
+		ko: "Tailscale이 이 주소의 인증서를 발급하면 %s처럼 이 컴퓨터와 tailnet의 이름이 공개 인증서 로그에 기록됩니다. 주소를 열었다는 기록만 남을 뿐 코드, 저장소, 비밀번호 같은 내용은 기록되지 않습니다. 켜기 전에 Tailscale 관리 콘솔에서 이 컴퓨터의 이름을 바꿀 수 있습니다.",
+	},
+	MsgTSHome: {en: "Also allow on the home network (not encrypted)", ko: "홈 네트워크에서도 허용 (암호화되지 않음)"},
+	// Values: the listen address with the home network, then without it.
+	MsgTSHomeHelp: {
+		en: "Ticked, OwnGit listens at %s, and devices on your home network can also connect over plain HTTP. Unticked, it listens at %s, on this computer only, and other devices use the HTTPS address. A different listen address applies the next time OwnGit starts.",
+		ko: "선택하면 OwnGit이 %s에서 연결을 받아 홈 네트워크의 기기도 일반 HTTP로 접속할 수 있습니다. 선택하지 않으면 %s에서 이 컴퓨터의 연결만 받고, 다른 기기는 HTTPS 주소를 씁니다. 연결을 받는 주소가 바뀌면 OwnGit을 다음에 시작할 때 적용됩니다.",
+	},
+	MsgTSOnNote: {
+		en: "OwnGit asks Tailscale on this computer to answer HTTPS for this computer's name and pass the requests to OwnGit, and saves that address as the address other devices use. If Tailscale already uses port 443 for something else, nothing changes.",
+		ko: "OwnGit이 이 컴퓨터의 Tailscale에 이 컴퓨터 이름으로 오는 HTTPS 요청을 받아 OwnGit에 넘기도록 요청하고, 그 주소를 다른 기기가 쓰는 주소로 저장합니다. Tailscale이 포트 443을 이미 다른 용도로 쓰고 있으면 아무것도 바꾸지 않습니다.",
+	},
+	MsgTSOffNote: {
+		en: "Turning off removes the Tailscale address that OwnGit made, if it is still as OwnGit made it, and takes back the address, name and proxy that sharing added. The listen address stays as it is.",
+		ko: "끄면 OwnGit이 만든 Tailscale 주소를 만든 그대로일 때만 지우고, 공유가 추가한 주소, 이름, 프록시를 되돌립니다. 연결을 받는 주소는 그대로 둡니다.",
+	},
+	MsgTSTurnedOn:  {en: "Sharing on the tailnet is on.", ko: "tailnet 공유를 켰습니다."},
+	MsgTSTurnedOff: {en: "Sharing on the tailnet is off.", ko: "tailnet 공유를 껐습니다."},
+	// The connection indicator for a request through OwnGit's Tailscale
+	// Serve endpoint: Tailscale, not OwnGit, encrypted it.
+	MsgConnTailscaleOn: {en: "Encrypted by Tailscale on this computer", ko: "이 컴퓨터의 Tailscale이 암호화함"},
+}
+
 func init() {
+	for code, entry := range tailscaleBlockCatalog {
+		if _, exists := catalog[code]; exists {
+			panic("webui: duplicate message code " + string(code))
+		}
+		catalog[code] = entry
+	}
 	for code, entry := range tailscaleCatalog {
 		if _, exists := catalog[code]; exists {
 			panic("webui: duplicate message code " + string(code))

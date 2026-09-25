@@ -221,7 +221,10 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			AccessMode: accessMode, GeneralUnlocked: settings.AccessMode == "open" || generalOK,
 			AdminConfirmed: adminOK, SetupComplete: settings.Initialized,
 		},
-		Connection: webui.Connection{Encrypted: requestctx.Of(request).Secure(), Host: requestctx.Of(request).Host, InsecureAcknowledged: settings.InsecureHTTPAccepted},
+		Connection: webui.Connection{
+			Encrypted: requestctx.Of(request).Secure(), Tailscale: app.throughTailscale(request),
+			Host: requestctx.Of(request).Host, InsecureAcknowledged: settings.InsecureHTTPAccepted,
+		},
 	}
 	if adminOK {
 		chrome.Viewer.AdminExpiresAt = admin.Expires
@@ -359,6 +362,10 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgSettingsSaved)}
 	case "network_saved":
 		return []webui.Notice{webui.Success(webui.MsgNetSaved)}
+	case "tailscale_on":
+		return []webui.Notice{webui.Success(webui.MsgTSTurnedOn)}
+	case "tailscale_off":
+		return []webui.Notice{webui.Success(webui.MsgTSTurnedOff)}
 	case "access_password_saved":
 		return []webui.Notice{webui.Success(webui.MsgSettingsAccessSaved)}
 	case "logout":

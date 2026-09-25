@@ -119,33 +119,33 @@ func TestForwardedHeadersFromTrustedProxies(t *testing.T) {
 	}{
 		{"all three headers", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-For", "203.0.113.9"}, {"X-Forwarded-Proto", "https"}, {"X-Forwarded-Host", "gitbox.test"}},
-			Info{"https", "gitbox.test", "203.0.113.9", "192.0.2.10:5000"}},
+			Info{"https", "gitbox.test", "203.0.113.9", "192.0.2.10:5000", true}},
 		{"proxy in a trusted range", "10.1.200.3:5000",
 			[][2]string{{"X-Forwarded-For", "198.51.100.4"}, {"X-Forwarded-Proto", "https"}},
-			Info{"https", "127.0.0.1:7654", "198.51.100.4", "10.1.200.3:5000"}},
+			Info{"https", "127.0.0.1:7654", "198.51.100.4", "10.1.200.3:5000", true}},
 		{"IPv6 proxy with a zone", "[fd00::10%en0]:5000",
 			[][2]string{{"X-Forwarded-For", "2001:db8::7"}, {"X-Forwarded-Proto", "http"}},
-			Info{"http", "127.0.0.1:7654", "2001:db8::7", "[fd00::10%en0]:5000"}},
+			Info{"http", "127.0.0.1:7654", "2001:db8::7", "[fd00::10%en0]:5000", true}},
 		{"IPv4-mapped peer", "[::ffff:192.0.2.10]:5000",
 			[][2]string{{"X-Forwarded-For", "203.0.113.9"}},
-			Info{"http", "127.0.0.1:7654", "203.0.113.9", "[::ffff:192.0.2.10]:5000"}},
+			Info{"http", "127.0.0.1:7654", "203.0.113.9", "[::ffff:192.0.2.10]:5000", false}},
 		{"peer without a port", "192.0.2.10",
 			[][2]string{{"X-Forwarded-Proto", "https"}},
-			Info{"https", "127.0.0.1:7654", "192.0.2.10", "192.0.2.10"}},
+			Info{"https", "127.0.0.1:7654", "192.0.2.10", "192.0.2.10", true}},
 		{"client-supplied entries left of the proxy's are ignored", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-For", "127.0.0.1, 10.0.0.1, 203.0.113.9"}},
-			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000"}},
+			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", false}},
 		{"repeated header lines form one list", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-For", "127.0.0.1"}, {"X-Forwarded-For", "203.0.113.9"}},
-			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000"}},
+			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", false}},
 		{"forwarded address in IPv4-mapped form", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-For", "::ffff:203.0.113.9"}},
-			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000"}},
+			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", false}},
 		{"Host with a port", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-Host", "gitbox.test:8443"}, {"X-Forwarded-Proto", "https"}},
-			Info{"https", "gitbox.test:8443", "192.0.2.10", "192.0.2.10:5000"}},
+			Info{"https", "gitbox.test:8443", "192.0.2.10", "192.0.2.10:5000", true}},
 		{"no forwarded headers", "192.0.2.10:5000", nil,
-			Info{"http", "127.0.0.1:7654", "192.0.2.10", "192.0.2.10:5000"}},
+			Info{"http", "127.0.0.1:7654", "192.0.2.10", "192.0.2.10:5000", false}},
 	} {
 		if got := resolver.Resolve(proxyRequest(test.peer, test.headers)); got != test.want {
 			t.Errorf("%s: %#v, want %#v", test.name, got, test.want)
@@ -223,7 +223,7 @@ func TestMiddlewareAttachesTheProxyView(t *testing.T) {
 	resolver.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, inner *http.Request) {
 		attached = Of(inner)
 	})).ServeHTTP(httptest.NewRecorder(), request)
-	if want := (Info{"https", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000"}); attached != want {
+	if want := (Info{"https", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", true}); attached != want {
 		t.Fatalf("attached %#v, want %#v", attached, want)
 	}
 	// A request that skipped the middleware never trusts forwarded headers.

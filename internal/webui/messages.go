@@ -1021,8 +1021,8 @@ var catalog = map[MessageCode]message{
 		ko: "이 페이지는 일반 HTTP로 전달되었으며 OwnGit이 암호화하지 않습니다.",
 	},
 	MsgConnTailscale: {
-		en: "Tailscale is a straightforward way to protect access from another device. OwnGit does not detect or configure it for you.",
-		ko: "다른 기기에서 접속할 때는 Tailscale로 보호하는 방법이 간단합니다. OwnGit이 자동으로 감지하거나 설정하지는 않습니다.",
+		en: "Tailscale is a straightforward way to protect access from another device. When Tailscale runs on this computer, the administrator can share OwnGit on the tailnet over HTTPS in Settings.",
+		ko: "다른 기기에서 접속할 때는 Tailscale로 보호하는 방법이 간단합니다. 이 컴퓨터에서 Tailscale이 실행되고 있다면 관리자가 설정에서 OwnGit을 tailnet에 HTTPS로 공유할 수 있습니다.",
 	},
 	// A host name is not evidence. A Tailscale-style name can be served over
 	// plain HTTP, and a plain name can sit inside a protected network.

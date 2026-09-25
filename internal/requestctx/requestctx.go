@@ -34,6 +34,9 @@ type Info struct {
 	// Peer is the raw network address of the connection's other end, which
 	// is the proxy's address for a proxied request.
 	Peer string
+	// Proxied is true when Scheme came from a trusted proxy's
+	// X-Forwarded-Proto rather than from the connection.
+	Proxied bool
 }
 
 // Secure reports whether the client reached the server over HTTPS.
@@ -78,7 +81,7 @@ func (resolver Resolver) Resolve(request *http.Request) Info {
 		return info
 	}
 	if proto, ok := singleValue(request.Header, "X-Forwarded-Proto"); ok && (proto == "http" || proto == "https") {
-		info.Scheme = proto
+		info.Scheme, info.Proxied = proto, true
 	}
 	if client, ok := lastForwardedFor(request.Header); ok {
 		info.ClientAddress = client

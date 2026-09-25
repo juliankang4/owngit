@@ -111,7 +111,8 @@
   <div class="setblock">
     <h2 class="setblock__h">{{bi $lang "settings.connection.title"}}</h2>
     <p class="setblock__now">
-      {{if .Chrome.Connection.Encrypted}}{{icon "lock"}}{{bi $lang "connection.encrypted"}}
+      {{if .Chrome.Connection.Tailscale}}{{icon "lock"}}{{bi $lang "connection.encrypted_tailscale"}}
+      {{else if .Chrome.Connection.Encrypted}}{{icon "lock"}}{{bi $lang "connection.encrypted"}}
       {{else}}{{icon "unlocked"}}{{bi $lang "connection.plain"}}{{end}}
     </p>
     {{/* Explain the situation first, then the limit of what OwnGit can
@@ -243,6 +244,100 @@
     </details>
     <p class="f__help">{{biF $lang "settings.network.reset" $net.DefaultListen}}</p>
     <pre class="clone__cmds netreset">owngit network reset</pre>
+  </div>
+
+  {{/* Sharing on the tailnet over HTTPS with Tailscale Serve. Every viewer
+       sees the state and the address; turning it on or off asks for the
+       administrator password and applies to the running server at once. The
+       certificate log notice stands next to the switch, and the home network
+       stays closed unless the owner ticks it. */}}
+  {{$ts := $p.Tailscale}}
+  <div class="setblock" id="tailscale">
+    <h2 class="setblock__h">{{bi $lang "settings.tailscale.title"}}</h2>
+    <p class="setblock__d">{{bi $lang "settings.tailscale.intro"}}</p>
+    <p class="setblock__now">
+      {{if and $ts.On $ts.Ready}}{{icon "lock"}}{{bi $lang "settings.tailscale.ready"}}
+      {{else if $ts.On}}{{icon "clock"}}{{bi $lang "settings.tailscale.waiting"}}
+      {{else}}{{icon "slash"}}{{bi $lang "settings.tailscale.off"}}{{end}}
+    </p>
+    {{/* Why turning sharing on or off did nothing. It stands outside the
+         forms, because the state it reports can hide the form it came from. */}}
+    {{$fn := forAction $pending "tailscale_on" $n}}
+    {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $fn "Scope" "tailscale_on" "Field" "tailscale" "Focus" (firstAlert $fn "tailscale")}}
+    {{$fn := forAction $pending "tailscale_off" $n}}
+    {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $fn "Scope" "tailscale_off" "Field" "tailscale" "Focus" (firstAlert $fn "tailscale")}}
+    {{with $ts.Problem}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang .}}{{with $ts.ProblemDetail}} <span class="mono">{{.}}</span>{{end}}</span></p>{{end}}
+    {{if and $ts.On (not $ts.Ready)}}
+      <ul class="tswait">
+        {{range $ts.Waiting}}<li class="netnote">{{icon "clock"}}<span>{{bi $lang .}}</span></li>{{end}}
+      </ul>
+    {{end}}
+    {{if $ts.On}}
+      <div class="clonefield tsaddr" data-clone>
+        <label class="clonefield__l" for="ts-url">{{bi $lang "settings.tailscale.address"}}</label>
+        <div class="clonefield__row">
+          <input id="ts-url" class="clonefield__v mono" type="text" readonly value="{{$ts.URL}}"
+                 spellcheck="false" autocomplete="off" data-select-on-focus aria-describedby="ts-url-help">
+          <button type="button" class="btn clonefield__copy" data-copy="ts-url" hidden>{{icon "copy"}}<span>{{bi $lang "repo.overview.copy"}}</span></button>
+        </div>
+        <p class="clonefield__note" role="status">
+          <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
+          <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
+        </p>
+        <p class="f__help" id="ts-url-help">{{biF $lang "settings.tailscale.clone_hint" $ts.URL}}</p>
+      </div>
+    {{end}}
+    {{/* After a refusal the alert above already lists what is on the port. */}}
+    {{$refused := or (ge (firstAlert (forAction $pending "tailscale_on" $n) "tailscale") 0) (ge (firstAlert (forAction $pending "tailscale_off" $n) "tailscale") 0)}}
+    {{if and $ts.Found (not $refused)}}
+      <div class="netnote">{{icon "warning"}}<div><span>{{bi $lang $ts.FoundNote}}</span>
+        <ul class="tsfound">{{range $ts.Found}}<li class="mono">{{.}}</li>{{end}}</ul></div></div>
+    {{end}}
+    {{if $ts.MacApp}}<p class="netnote netnote--info">{{icon "info"}}<span>{{bi $lang "tailscale.mac_app"}}</span></p>{{end}}
+
+    {{if $ts.On}}
+      {{$act := "tailscale_off"}}{{$fn := forAction $pending $act $n}}
+      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
+        <summary class="btn">{{bi $lang "settings.tailscale.turn_off"}}</summary>
+        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="action" value="{{$act}}">
+          <p class="setblock__d">{{bi $lang "settings.tailscale.off_note"}}</p>
+          <div class="f">
+            <label for="ts-off-admin">{{bi $lang "admin.field"}}</label>
+            <input id="ts-off-admin" name="admin_password" type="password" autocomplete="current-password" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}{{if ge (firstAlert $fn "admin_password") 0}} autofocus{{end}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+          </div>
+          <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "settings.tailscale.turn_off_button"}}</button></div>
+        </form>
+      </details>
+    {{else if $ts.CanTurnOn}}
+      {{$act := "tailscale_on"}}{{$fn := forAction $pending $act $n}}
+      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
+        <summary class="btn">{{bi $lang "settings.tailscale.turn_on"}}</summary>
+        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="action" value="{{$act}}">
+          <p class="setblock__d">{{bi $lang "settings.tailscale.on_note"}}</p>
+          <p class="tslog" id="ts-log">{{icon "info"}}<span>{{biF $lang "settings.tailscale.certificate_log" $ts.Name}}</span></p>
+          <div>
+            <label class="check">
+              <input type="checkbox" name="home_network" value="1"{{if $ts.HomeNetwork}} checked{{end}} aria-describedby="ts-home-help">
+              <span class="check__t">{{bi $lang "settings.tailscale.home_network"}}</span>
+              <span class="check__d" id="ts-home-help">{{biF $lang "settings.tailscale.home_network_help" $ts.HomeListen $ts.LocalListen}}</span>
+            </label>
+          </div>
+          <div class="f">
+            <label for="ts-on-admin">{{bi $lang "admin.field"}}</label>
+            <input id="ts-on-admin" name="admin_password" type="password" autocomplete="current-password" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}{{if ge (firstAlert $fn "admin_password") 0}} autofocus{{end}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+          </div>
+          <div class="actions"><button type="submit" class="btn btn--primary" aria-describedby="ts-log">{{bi $lang "settings.tailscale.turn_on_button"}}</button></div>
+        </form>
+      </details>
+    {{end}}
   </div>
 
   {{/* Apart from imports, which reach only the source hosts an owner

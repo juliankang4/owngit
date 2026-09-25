@@ -109,6 +109,9 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	case webui.ActionSaveNetwork:
 		app.saveNetwork(writer, request, settings, csrf)
 		return
+	case webui.ActionTailscaleOn, webui.ActionTailscaleOff:
+		app.changeTailscale(writer, request, settings, csrf, action)
+		return
 	default:
 		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
 		return
@@ -194,6 +197,6 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 		Chrome: chrome, SubmitURL: "/settings", AccessMode: mode, AdminRequired: true,
 		PendingAction: pending, Storage: storage, CloneHint: app.serverOrigin(request) + "/git/",
 		UpdateCheck: webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil},
-		Network:     networkBlock,
+		Network:     networkBlock, Tailscale: app.tailscaleBlock(request.Context()),
 	})
 }

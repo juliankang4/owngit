@@ -140,6 +140,19 @@ func allPages(lang Lang) map[string]Page {
 				Revision: "0123abcd", PlainHTTP: true, FromOption: true, HTTPSWithoutProxy: true,
 				DefaultListen: "localhost:7654", EveryNetwork: "[::]:7654", ProxyExample: "fd00:ab::/48",
 			},
+			Tailscale: TailscaleInfo{
+				CanTurnOn: true, Name: "owngit.tail0000.ts.net", MacApp: true,
+				HomeListen: "[::]:8080", LocalListen: "localhost:8080",
+			},
+		},
+		"settings-tailscale": SettingsPage{
+			Chrome: c, SubmitURL: "/settings", AccessMode: AccessOpen,
+			Tailscale: TailscaleInfo{
+				On: true, URL: "https://owngit.tail0000.ts.net/", Name: "owngit.tail0000.ts.net",
+				Problem: TailscaleProblemCode("logged_out"),
+				Waiting: []MessageCode{TailscaleWaitCode("restart"), TailscaleWaitCode("endpoint")},
+				Found:   []string{"https://owngit.tail0000.ts.net:443/ to http://localhost:3000"}, FoundNote: MsgTSChanged,
+			},
 		},
 		"overview": OverviewPage{
 			Chrome: c, Activity: sampleGraph(), TotalCount: 2,

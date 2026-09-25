@@ -207,6 +207,8 @@ type SettingsPage struct {
 	UpdateCheck UpdateCheckInfo
 	// Network is the network settings block. See NetworkInfo.
 	Network NetworkInfo
+	// Tailscale is the block for sharing on the tailnet. See TailscaleInfo.
+	Tailscale TailscaleInfo
 }
 
 // UpdateCheckInfo describes the new-release check on the Settings page.

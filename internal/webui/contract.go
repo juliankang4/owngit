@@ -144,6 +144,10 @@ type Viewer struct {
 type Connection struct {
 	// Encrypted is true when this request arrived over TLS.
 	Encrypted bool
+	// Tailscale is true when the request arrived through the Tailscale Serve
+	// endpoint of this computer, which OwnGit set up: Tailscale on this
+	// computer encrypted it, not OwnGit.
+	Tailscale bool
 	// Host is the host name the browser used.
 	Host string
 	// InsecureAcknowledged is true once the owner accepted plain HTTP, which
