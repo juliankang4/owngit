@@ -5,6 +5,7 @@ package state
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -35,4 +36,22 @@ func TestUnixNotPrivateNamesTheModeAndTheFix(t *testing.T) {
 		}
 		noErr(t, file.Close())
 	}
+}
+
+// The printed fix works for a relative path that starts with "-", which chmod
+// would otherwise read as options.
+func TestUnixNotPrivateFixKeepsADashPathAnOperand(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	const name = "-Rf secret"
+	noErr(t, os.WriteFile(name, []byte("secret\n"), 0o644))
+	var notPrivate *NotPrivateError
+	if err := ValidatePrivateFile(name); !errors.As(err, &notPrivate) || notPrivate.Fix != `chmod 600 './-Rf secret'` || notPrivate.Shell != "" {
+		t.Fatalf("err=%v fix=%+v", err, notPrivate)
+	}
+	output, err := exec.Command("sh", "-c", notPrivate.Fix).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the fix failed: %v\n%s", err, output)
+	}
+	noErr(t, ValidatePrivateFile(name))
 }

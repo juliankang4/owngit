@@ -76,8 +76,18 @@ func validatePrivateFileInfo(path string, info os.FileInfo) error {
 	}
 	return &NotPrivateError{
 		Problem: fmt.Sprintf("its mode %04o gives access to %s", permissions, strings.Join(who, " and ")),
-		Fix:     "chmod 600 " + shellQuote(path),
+		Fix:     "chmod 600 " + shellQuote(operandPath(path)),
 	}
+}
+
+// operandPath keeps a relative path that starts with "-" from being read as
+// options. "chmod 600 -- PATH" would not do: BSD chmod on macOS stops reading
+// options at the mode, so it takes "--" as a file name.
+func operandPath(path string) string {
+	if strings.HasPrefix(path, "-") {
+		return "./" + path
+	}
+	return path
 }
 
 // shellQuote quotes path for a POSIX shell.
