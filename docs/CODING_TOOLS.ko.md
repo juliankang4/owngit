@@ -39,9 +39,15 @@ owngit helper-credential create \
 
 ## 스킬 찾기
 
-공용 스킬은 [integrations/skills/owngit-checks/SKILL.md](../integrations/skills/owngit-checks/SKILL.md)에 있습니다. 릴리스 도구로 만든 결과물에도 스킬과 이 안내 문서(영어판과 한국어판)가 들어 있습니다. [설치 위치](#설치-위치)를 보세요. 스킬을 대신 설치해 주는 것은 없습니다. 직접 복사하거나 코딩 도구에 그 경로를 알려 주세요.
+공용 스킬은 [integrations/skills/owngit-checks/SKILL.md](../integrations/skills/owngit-checks/SKILL.md)에 있습니다. 릴리스 도구로 만든 결과물에도 스킬과 이 안내 문서(영어판과 한국어판)가 들어 있습니다. [설치 위치](#설치-위치)를 보세요. 모든 `owngit` 실행 파일에는 함께 배포된 스킬이 들어 있으므로, 어떤 방법으로 설치했든 스킬을 설치할 수 있습니다.
 
-`owngit-checks` 디렉터리를 링크하지 말고 복사해서, 코딩 도구가 찾아보는 위치에 두세요.
+```sh
+owngit skill --install ~/.agents/skills
+```
+
+`--install DIR`는 `DIR/owngit-checks/SKILL.md`를 쓰고 JSON 결과를 출력합니다. `status`는 `installed`, 파일에 이미 같은 바이트가 있으면 `already_current`, 교체했으면 `replaced`입니다. 파일이 이미 있는데 내용이 다르면 사용자가 고친 내용일 수 있으므로 아무것도 바꾸지 않고 `skill_modified`로 실패합니다. 배포된 스킬을 출력하는 `owngit skill --print`로 비교해 보세요. 그다음 `--replace`를 붙이면 지금 파일을 옆에 `SKILL.md.previous-TIMESTAMP`로 남긴 뒤 배포된 스킬을 설치하고, 남긴 파일은 `previous`에 적습니다. `SKILL.md`가 심볼릭 링크이거나 일반 파일이 아니면 `skill_target_invalid`로 거부합니다. 이 명령을 실행하거나 직접 복사하지 않으면 스킬은 설치되지 않습니다.
+
+`owngit-checks` 디렉터리를 링크하지 말고 설치하거나 복사해서, 코딩 도구가 찾아보는 위치에 두세요.
 
 - Codex: 저장소의 `.agents/skills/owngit-checks`, 또는 사용자 전체에 쓰려면 `~/.agents/skills/owngit-checks`. Codex는 현재 디렉터리부터 저장소 루트까지 `.agents/skills`를 찾습니다.
 - Pi: 프로젝트의 `.agents/skills/owngit-checks`나 `.pi/skills/owngit-checks`, 또는 사용자 전체에 쓰려면 `~/.agents/skills/owngit-checks`나 `~/.pi/agent/skills/owngit-checks`.
@@ -211,9 +217,9 @@ GitHub Releases의 포터블 압축 파일은 이 자료를 소스 기준 상대
 
 서명되지 않은 macOS 앱 프로토타입은 같은 상대 경로로 `OwnGit.app/Contents/Resources/` 아래에 담고 있고, Debian 프로토타입 패키지는 `/usr/share/doc/owngit/` 아래에 설치합니다.
 
-Homebrew와 npm 패키지는 `owngit` 명령, 라이선스, 고지 사항만 설치하며 이 안내 문서와 스킬은 설치하지 않습니다. 이 방법으로 설치했다면 소스 체크아웃이나 압축을 푼 릴리스 압축 파일에서 스킬을 복사하세요.
+Homebrew와 npm 패키지는 `owngit` 명령, 라이선스, 고지 사항만 설치하며 이 안내 문서와 스킬 파일은 설치하지 않습니다. 이 방법으로 설치했다면 `owngit skill --install DIR`를 실행하세요. 명령 안에 스킬이 들어 있습니다.
 
-가지고 있는 구성에서 스킬을 복사하세요. 예를 들어 압축을 푼 포터블 압축 파일에서는 다음과 같습니다.
+압축을 푼 포터블 압축 파일에서는 복사할 수도 있습니다.
 
 ```sh
 mkdir -p ~/.agents/skills

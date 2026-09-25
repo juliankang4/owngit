@@ -66,7 +66,7 @@ When the test is enabled, a missing prerequisite fails the test instead of skipp
   - `version`: the single application version literal.
 - `tools/release`: the release tool (see [Releases](#releases)).
 - `packaging/`: templates for archives, native prototypes, and package-manager files. See [packaging/README.md](packaging/README.md).
-- `integrations/skills/owngit-checks/`: the shared Agent Skill for coding tools.
+- `integrations/skills/owngit-checks/`: the shared Agent Skill for coding tools, and a small Go package that embeds it so `owngit skill` can install it from any build.
 - `THIRD_PARTY_NOTICES/`: generated notices for linked modules, the Go runtime, and embedded assets.
 
 Runtime dependencies are `modernc.org/sqlite` (SQLite without a C compiler), `golang.org/x/crypto` (Argon2id), `golang.org/x/sys` (Windows process and file APIs), and `github.com/yuin/goldmark` (Markdown files shown as documents, with raw HTML turned off).

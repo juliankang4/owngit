@@ -58,11 +58,26 @@ The shared skill is
 [integrations/skills/owngit-checks/SKILL.md](../integrations/skills/owngit-checks/SKILL.md).
 Artifacts built by the release tool carry the skill and this guide in both
 languages; see
-[Installed locations](#installed-locations). Nothing installs a skill for you:
-copy it yourself, or point the coding tool at its path.
+[Installed locations](#installed-locations). Every `owngit` binary also
+carries the skill it shipped with, so any install can put it in place:
 
-Copy the `owngit-checks` directory, rather than linking to it, into a location
-the coding tool scans:
+```sh
+owngit skill --install ~/.agents/skills
+```
+
+`--install DIR` writes `DIR/owngit-checks/SKILL.md` and prints a JSON result
+whose `status` is `installed`, `already_current` when the file already holds
+the same bytes, or `replaced`. When the file exists with other content, it may
+hold your edits, so the command changes nothing and fails with
+`skill_modified`. Compare it with `owngit skill --print`, which prints the
+shipped skill. `--replace` then installs the shipped skill after keeping the
+current file beside it as `SKILL.md.previous-TIMESTAMP`, named in `previous`.
+A symbolic link or other non-regular `SKILL.md` is refused with
+`skill_target_invalid`. Nothing installs the skill unless you run the command
+or copy it yourself.
+
+Install or copy the `owngit-checks` directory, rather than linking to it, into
+a location the coding tool scans:
 
 - Codex: `.agents/skills/owngit-checks` in the repository, or
   `~/.agents/skills/owngit-checks` for the user. Codex scans `.agents/skills`
@@ -390,11 +405,10 @@ The unsigned macOS app prototype holds them under
 prototype package installs them under `/usr/share/doc/owngit/`.
 
 The Homebrew and npm packages install only the `owngit` command, the license
-and the notices, not this guide or the skill. With those installs, copy the
-skill from a source checkout or an unpacked release archive.
+and the notices, not this guide or the skill file. With those installs, run
+`owngit skill --install DIR`; the command carries the skill.
 
-Copy the skill from whichever layout you have. For example, from an unpacked
-portable archive:
+From an unpacked portable archive you can also copy it:
 
 ```sh
 mkdir -p ~/.agents/skills
