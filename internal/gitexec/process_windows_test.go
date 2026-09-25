@@ -220,3 +220,180 @@ func waitForWindowsTestFile(path string, timeout time.Duration) bool {
 	}
 	return false
 }
+
+// jobReplay replays what a job reports to cleanup, one entry per query, and
+// then repeats the last entry.
+type jobReplay struct {
+	accounting      []windowsJobAccounting
+	lists           [][]uint32
+	listErrs        []error
+	accountingCalls int
+	listCalls       int
+}
+
+func (replay *jobReplay) install(t *testing.T) {
+	t.Helper()
+	originalAccounting, originalList := jobAccountingQuery, jobProcessIDsQuery
+	t.Cleanup(func() { jobAccountingQuery, jobProcessIDsQuery = originalAccounting, originalList })
+	jobAccountingQuery = func(windows.Handle) (windowsJobAccounting, error) {
+		index := min(replay.accountingCalls, len(replay.accounting)-1)
+		replay.accountingCalls++
+		return replay.accounting[index], nil
+	}
+	jobProcessIDsQuery = func(windows.Handle, uint32) ([]uint32, error) {
+		index := min(replay.listCalls, len(replay.lists)-1)
+		replay.listCalls++
+		return replay.lists[index], replay.listErrs[index]
+	}
+}
+
+func jobCounts(total, active uint32) windowsJobAccounting {
+	return windowsJobAccounting{totalProcesses: total, activeProcesses: active}
+}
+
+// QA-004: a main process that exited and was waited can still be counted, or
+// counted but not listed, while cleanup captures the job. These are the forms
+// the Windows lab recorded; cleanup must wait for them to settle instead of
+// reporting a passing command's cleanup as failed.
+func TestTerminateOwnedProcessSettlesExitedProcessDepartures(t *testing.T) {
+	listChanged := errors.New("owned job process list changed during capture: assigned=1 listed=0")
+	tests := []struct {
+		name   string
+		replay jobReplay
+	}{
+		{
+			name: "counted but not listed",
+			replay: jobReplay{
+				accounting: []windowsJobAccounting{jobCounts(1, 1), jobCounts(1, 1), jobCounts(1, 0)},
+				lists:      [][]uint32{nil, nil},
+				listErrs:   []error{listChanged, nil},
+			},
+		},
+		{
+			name: "active count falls during capture",
+			replay: jobReplay{
+				accounting: []windowsJobAccounting{jobCounts(1, 1), jobCounts(1, 0)},
+				lists:      [][]uint32{nil},
+				listErrs:   []error{nil},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			owner, err := newWindowsProcessOwner()
+			noErr(t, err, "create job")
+			t.Cleanup(func() { noErr(t, CloseOwnedProcess(owner), "close job") })
+			replay := test.replay
+			replay.install(t)
+			if err := terminateWindowsOwnedProcess(owner, time.Now().Add(2*time.Second)); err != nil {
+				t.Fatalf("termination error=%v, want departures of an exited process to settle", err)
+			}
+			if replay.listCalls < 2 {
+				t.Fatalf("capture ran %d times, want a retry after the inconsistent capture", replay.listCalls)
+			}
+		})
+	}
+}
+
+// Departures are the only inconsistency cleanup waits out: a process that
+// joined during capture, or a count that never settles, is still reported.
+func TestTerminateOwnedProcessReportsGrowthAndUnsettledCapture(t *testing.T) {
+	t.Run("growth", func(t *testing.T) {
+		owner, err := newWindowsProcessOwner()
+		noErr(t, err, "create job")
+		t.Cleanup(func() { noErr(t, CloseOwnedProcess(owner), "close job") })
+		replay := jobReplay{
+			accounting: []windowsJobAccounting{jobCounts(1, 1), jobCounts(2, 2), jobCounts(2, 0)},
+			lists:      [][]uint32{nil},
+			listErrs:   []error{nil},
+		}
+		replay.install(t)
+		err = terminateWindowsOwnedProcess(owner, time.Now().Add(2*time.Second))
+		if err == nil || !strings.Contains(err.Error(), "membership changed during process capture: total=1/2") {
+			t.Fatalf("termination error=%v, want reported membership growth", err)
+		}
+		if replay.listCalls != 1 {
+			t.Fatalf("capture ran %d times, want growth reported without a retry", replay.listCalls)
+		}
+	})
+	t.Run("never settles", func(t *testing.T) {
+		owner, err := newWindowsProcessOwner()
+		noErr(t, err, "create job")
+		t.Cleanup(func() { noErr(t, CloseOwnedProcess(owner), "close job") })
+		replay := jobReplay{
+			accounting: []windowsJobAccounting{jobCounts(1, 1)},
+			lists:      [][]uint32{nil},
+			listErrs:   []error{nil},
+		}
+		replay.install(t)
+		started := time.Now()
+		err = terminateWindowsOwnedProcess(owner, started.Add(300*time.Millisecond))
+		elapsed := time.Since(started)
+		for _, want := range []string{
+			"owned job process list is incomplete: unique=0 active=1",
+			"owned job still reports 1 active processes after termination",
+		} {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("termination error=%v, want %q", err, want)
+			}
+		}
+		if replay.listCalls < 2 {
+			t.Fatalf("capture ran %d times, want retries before reporting", replay.listCalls)
+		}
+		if elapsed > 2*time.Second {
+			t.Fatalf("termination took %s, want it bounded by the cleanup deadline", elapsed)
+		}
+	})
+}
+
+// A terminated process can stay counted by its job for a moment after its
+// handle is signaled. Cleanup waits for the count to reach zero instead of
+// reporting the process as a survivor.
+func TestTerminateOwnedProcessWaitsForTerminatedProcessToLeaveTheJob(t *testing.T) {
+	ready := filepath.Join(t.TempDir(), "ready")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestWindowsOwnedProcessFailureFixture$")
+	cmd.Env = append(os.Environ(),
+		windowsOwnerFailureFixture+"=1",
+		windowsOwnerFailureReady+"="+ready,
+	)
+	ConfigureOwnedProcess(cmd)
+	noErr(t, cmd.Start())
+	wait := make(chan error, 1)
+	go func() { wait <- cmd.Wait() }()
+	owner, err := AttachOwnedProcess(cmd)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		<-wait
+		t.Fatalf("attach fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = TerminateOwnedProcess(owner, time.Second)
+		_ = CloseOwnedProcess(owner)
+		if _, exited, cleanupErr := awaitWindowsTestProcess(cmd.Process, wait, 5*time.Second); !exited || cleanupErr != nil {
+			t.Errorf("fixture cleanup: exited=%v err=%v", exited, cleanupErr)
+		}
+	})
+	if !waitForWindowsTestFile(ready, 5*time.Second) {
+		t.Fatal("fixture did not report ready")
+	}
+
+	// The capture reads the real job twice. The first read after termination
+	// still counts the killed process; later reads are real.
+	originalAccounting := jobAccountingQuery
+	t.Cleanup(func() { jobAccountingQuery = originalAccounting })
+	calls := 0
+	jobAccountingQuery = func(job windows.Handle) (windowsJobAccounting, error) {
+		accounting, err := originalAccounting(job)
+		calls++
+		if calls == 3 && err == nil && accounting.activeProcesses == 0 {
+			accounting.activeProcesses = 1
+		}
+		return accounting, err
+	}
+	if err := terminateWindowsOwnedProcess(owner, time.Now().Add(2*time.Second)); err != nil {
+		t.Fatalf("termination error=%v, want the lagging count to settle", err)
+	}
+	if calls < 4 {
+		t.Fatalf("job accounting read %d times, want a read after the lagging count", calls)
+	}
+}

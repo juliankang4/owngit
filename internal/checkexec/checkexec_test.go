@@ -284,6 +284,39 @@ func TestRunReportsCleanupFailureOnEveryPath(t *testing.T) {
 	}
 }
 
+// QA-004: after a command exits and is waited, its main process is gone and
+// Windows reports EINVAL for a kill. Cleanup must not attempt it or report its
+// failure; only the owner termination failure explains the error.
+func TestRunDoesNotKillAWaitedMainProcess(t *testing.T) {
+	originalTerminate, originalKill := terminateOwnedProcess, killMainProcess
+	t.Cleanup(func() { terminateOwnedProcess, killMainProcess = originalTerminate, originalKill })
+	failFirstTermination := true
+	terminateOwnedProcess = func(owner *gitexec.ProcessOwner, grace time.Duration) error {
+		if failFirstTermination {
+			failFirstTermination = false
+			return errors.New("forced first termination failure")
+		}
+		return originalTerminate(owner, grace)
+	}
+	kills := 0
+	killMainProcess = func(*os.Process) error {
+		kills++
+		return errors.New("kill main process: invalid argument")
+	}
+
+	results, cancelled := Run(context.Background(), []Definition{{Name: "success", Command: "echo ok"}}, Options{Timeout: 10 * time.Second})
+	result := results[0]
+	if cancelled || result.ExitCode == nil || *result.ExitCode != 0 {
+		t.Fatalf("result=%+v cancelled=%v, want a normal exit", result, cancelled)
+	}
+	if kills != 0 || strings.Contains(result.CleanupError, "kill main process") {
+		t.Fatalf("kills=%d cleanup=%q, want no kill of the waited main process", kills, result.CleanupError)
+	}
+	if !strings.Contains(result.CleanupError, "forced first termination failure") || result.Status != StatusError {
+		t.Fatalf("result=%+v, want the termination failure reported", result)
+	}
+}
+
 func exitCodeValue(code *int) any {
 	if code == nil {
 		return nil

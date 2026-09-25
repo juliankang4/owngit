@@ -241,6 +241,20 @@ func (wait *processWait) finish(err error) {
 	wait.err = err
 }
 
+// returned reports without blocking whether Wait has returned.
+func (wait *processWait) returned() bool {
+	if wait.done {
+		return true
+	}
+	select {
+	case err := <-wait.ch:
+		wait.finish(err)
+		return true
+	default:
+		return false
+	}
+}
+
 func (wait *processWait) await(limit time.Duration) bool {
 	if wait.done {
 		return true
@@ -281,8 +295,13 @@ func cleanupAttachedProcess(process *os.Process, owner *gitexec.ProcessOwner, wa
 	terminationErr := terminateOwnedProcess(owner, terminationGrace)
 	if terminationErr != nil {
 		cleanupErr = errors.Join(cleanupErr, terminationErr)
-		if err := killMainProcess(process); err != nil {
-			cleanupErr = errors.Join(cleanupErr, err)
+		// Once Wait has returned, the main process is gone and its handle is
+		// released: there is nothing to kill, and Windows would report EINVAL.
+		// Descendants are left to the owner-termination retry below.
+		if !wait.returned() {
+			if err := killMainProcess(process); err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
+			}
 		}
 	}
 	if interrupted || terminationErr != nil {

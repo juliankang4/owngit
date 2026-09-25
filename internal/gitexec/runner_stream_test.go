@@ -290,6 +290,60 @@ func TestStreamPreservesCancellationWithCleanupFailures(t *testing.T) {
 	}
 }
 
+// QA-051: cancellation must terminate the process while the consumer's read
+// of its output is still pending. Closing stdout first ends that read on Unix
+// and can block on Windows until the silent process exits by itself, so the
+// read must still be pending when termination starts.
+func TestStreamCancellationTerminatesBeforeClosingStdout(t *testing.T) {
+	root := t.TempDir()
+	runner := streamTestRunner(t, root)
+	consumerReturned := make(chan struct{})
+	readPendingAtTermination := false
+	originalTerminate := streamTerminateOwnedProcess
+	streamTerminateOwnedProcess = func(owner *ProcessOwner, grace time.Duration) error {
+		select {
+		case <-consumerReturned:
+		case <-time.After(200 * time.Millisecond):
+			readPendingAtTermination = true
+		}
+		return originalTerminate(owner, grace)
+	}
+	t.Cleanup(func() { streamTerminateOwnedProcess = originalTerminate })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	consumerStarted := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := runner.Stream(ctx, runner.GitPath, root, nil,
+			[]string{streamFixtureEnv + "=hold-stdout"},
+			func(reader io.Reader) error {
+				defer close(consumerReturned)
+				buffer := make([]byte, len("ready\n"))
+				if _, err := io.ReadFull(reader, buffer); err != nil {
+					return err
+				}
+				close(consumerStarted)
+				_, err := io.Copy(io.Discard, reader)
+				return err
+			})
+		done <- err
+	}()
+	awaitStreamConsumerStart(t, consumerStarted, done, cancel)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Stream error=%v, want context cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stream did not return after cancellation")
+	}
+	if !readPendingAtTermination {
+		t.Fatal("the consumer's read had ended before termination started; stdout was closed first")
+	}
+}
+
 // cancelOnSecondRead delivers one chunk, then cancels the stream and blocks
 // until Stream closes it, like a request decoder that finds the rest invalid.
 type cancelOnSecondRead struct {

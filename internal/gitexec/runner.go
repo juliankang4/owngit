@@ -343,9 +343,12 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 	if grace <= 0 {
 		grace = 2 * time.Second
 	}
-	// Wait starts exactly once. Abort paths close stdout first so Wait never
-	// truncates a read the consumer still needs, and they start Wait before
-	// terminating so the group leader is reaped while its group is signaled.
+	// Wait starts exactly once. Abort paths start Wait before terminating so
+	// the group leader is reaped while its group is signaled. When the
+	// consumer stopped early, stdout is closed first so Wait never truncates a
+	// read it still needs. Cancellation discards the output and terminates
+	// before closing stdout: on Windows, closing a pipe waits for a pending
+	// read, which a silent process would hold until it exits by itself.
 	var waitOnce sync.Once
 	waitCh := make(chan error, 1)
 	startWait := func() {
@@ -378,9 +381,9 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 		}
 	case <-ctx.Done():
 		consumeErr = ctx.Err()
-		_ = stdout.Close()
 		startWait()
 		terminate()
+		_ = stdout.Close()
 		// Only now close the input, which ends the stdin copy: the process
 		// is gone and cannot mistake the close for a complete request.
 		closeInput(stdin)
@@ -408,8 +411,8 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 		if consumeErr == nil {
 			consumeErr = ctx.Err()
 		}
-		_ = stdout.Close()
 		terminate()
+		_ = stdout.Close()
 		waitErr = <-waitCh
 	}
 	inputErr := <-inputCh
