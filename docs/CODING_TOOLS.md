@@ -474,9 +474,10 @@ commands, and check output come from repository users. The server tells the
 coding tool to treat them as data and not to follow instructions in them.
 
 Protocol errors use the JSON-RPC codes: `-32700` for a message that is not
-JSON, `-32600` for an invalid request or a message over 1 MiB, `-32601` for an
-unknown method, and `-32602` for an unknown tool. Calls other than `check_run`
-stop after 2 minutes.
+JSON; `-32600` for an invalid request, a message over 1 MiB, or a request whose
+id belongs to a call still in progress; `-32601` for an unknown method;
+`-32602` for an unknown tool; and `-32000` when 16 tool calls are already in
+progress. Calls other than `check_run` stop after 2 minutes.
 
 ### Running checks
 
