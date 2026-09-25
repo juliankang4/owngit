@@ -89,18 +89,24 @@ func TestBusyRepositoryDoesNotStallPagesPastTheirDeadline(t *testing.T) {
 	release()
 
 	// A current listing needs no lock, but the page's other reads do: the
-	// page still explains the wait instead of showing missing data.
+	// page still explains the wait instead of showing missing data. A page
+	// whose Git reads are all cached by object ID needs no lock either and
+	// shows the refs from before the running operation.
 	if status, _, _, _ = get("/repositories/busy/code"); status != http.StatusOK {
 		t.Fatalf("code page status=%d", status)
 	}
 	hold()
-	status, body, _, elapsed = get("/repositories/busy/code")
+	status, body, _, elapsed = get("/repositories/busy/commits")
 	if status != http.StatusServiceUnavailable || !strings.Contains(body, "is using the repository") || elapsed > app.HTTPTimeout {
-		t.Fatalf("code page of a busy repository status=%d in %s", status, elapsed)
+		t.Fatalf("commits page of a busy repository status=%d in %s", status, elapsed)
+	}
+	status, _, _, elapsed = get("/repositories/busy/code")
+	if status != http.StatusOK || elapsed > 2*time.Second {
+		t.Fatalf("cached code page of a busy repository status=%d in %s", status, elapsed)
 	}
 	release()
-	if status, _, _, _ = get("/repositories/busy/code"); status != http.StatusOK {
-		t.Fatalf("code page after the operation status=%d", status)
+	if status, _, _, _ = get("/repositories/busy/commits"); status != http.StatusOK {
+		t.Fatalf("commits page after the operation status=%d", status)
 	}
 }
 

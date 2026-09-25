@@ -110,7 +110,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 }
 
 func (app *App) restorePage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selection repository.RestoreRequest, selectedPreview *repository.RestorePreview, previewed bool) (webui.RestorePage, error) {
-	sourceDetail, err := app.Repositories.Commit(request.Context(), stored.ID, selection.Source, "")
+	sourceCommit, _, err := app.Repositories.CommitFiles(request.Context(), stored.ID, selection.Source)
 	if err != nil {
 		return webui.RestorePage{}, repository.ErrRestoreInvalid
 	}
@@ -138,7 +138,7 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 			ID: stored.ID, Name: stored.Name, Description: stored.Description, URL: base,
 			CloneURL: app.baseURL(request) + "/git/" + url.PathEscape(stored.ID) + ".git", Empty: summary.Empty,
 		},
-		Source: app.commitSummary(stored.ID, "", sourceDetail.Commit), TargetBranch: selection.Target,
+		Source: app.commitSummary(stored.ID, "", sourceCommit), TargetBranch: selection.Target,
 		CreatesBranch: branchPreview.CreatesBranch, Mode: selection.Mode, Previewed: previewed,
 		PreviewURL: base + "/restore/preview", ApplyURL: base + "/restore", CancelURL: base,
 		// No section is current: restoring is reached from several of them.

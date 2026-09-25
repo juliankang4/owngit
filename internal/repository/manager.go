@@ -46,6 +46,8 @@ type Manager struct {
 	snapshots snapshotCache
 	// languages caches the newest language count of each repository.
 	languages languageCache
+	// objects caches Git reads fixed by object IDs; see object_cache.go.
+	objects objectCache
 	// preparation records the repositories that are still being prepared
 	// after startup; see StartPreparation.
 	preparation preparationState
@@ -141,6 +143,10 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	} else if exists {
 		return state.Repository{}, ErrNameTaken
 	}
+	// Results cached for an earlier repository with this name, which an
+	// older build or a folder moved by hand may have left, never answer for
+	// the new one.
+	m.objects.drop(id)
 	if _, pending, err := m.Store.RepositoryDeletion(ctx, id); err != nil {
 		return state.Repository{}, err
 	} else if pending {

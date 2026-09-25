@@ -218,7 +218,7 @@
 </div>
 {{end}}
 
-{{template "changeList" dict "Lang" $lang "Files" $p.Changes "Truncated" $p.DiffTruncated "Unavailable" $p.ChangesUnavailable "Reason" $p.ChangesReason}}
+{{template "changeList" dict "Lang" $lang "Files" $p.Changes "Base" $p.ChangesBase "Truncated" $p.DiffTruncated "FilesTruncated" $p.FilesTruncated "Unavailable" $p.ChangesUnavailable "Reason" $p.ChangesReason}}
 
 {{with $p.TasksURL}}
 <p class="ev__more"><a href="{{.}}">{{bi $lang "tasks.title"}}</a></p>

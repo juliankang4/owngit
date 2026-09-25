@@ -51,10 +51,11 @@ func TestWindowsLongRepositoryRootSupportsBrowserPullRequestDiff(t *testing.T) {
 	}
 
 	app := &App{Repositories: manager}
-	files, truncated, err := app.comparePullRequestRevisions(ctx, stored.ID, sourceOID, targetOID)
+	changes, err := app.comparePullRequestRevisions(ctx, stored.ID, sourceOID, targetOID)
 	noErr(t, err)
-	if truncated || len(files) != 1 || files[0].Path != "feature.txt" || files[0].Status != "added" || len(files[0].Hunks) == 0 {
-		t.Fatalf("long-root pull request diff files=%+v truncated=%v", files, truncated)
+	files := changes.Files
+	if changes.PatchesIncomplete || changes.FilesIncomplete || changes.Base != targetOID || len(files) != 1 || files[0].Path != "feature.txt" || files[0].Status != "added" || len(files[0].Hunks) == 0 {
+		t.Fatalf("long-root pull request diff changes=%+v", changes)
 	}
 }
 

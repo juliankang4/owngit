@@ -95,6 +95,42 @@ func (service *Service) resolveBranch(ctx context.Context, repositoryPath, branc
 	return branchHead{Branch: branch, Ref: ref, OID: oid, Status: "commit"}, nil
 }
 
+// branchHeads reads every branch head with one Git process, for views that
+// show pull requests. Each head reports what resolveBranch reports: the
+// branch's object and whether it is a commit. Merge and review do not use it;
+// they read their two heads again with resolveBranch under the write lock.
+func (service *Service) branchHeads(ctx context.Context, repositoryPath string) (map[string]branchHead, error) {
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", "refs/heads")
+	if err != nil {
+		return nil, &Problem{Code: "repository_unavailable", Message: "The branch heads could not be read.", Cause: err}
+	}
+	heads := make(map[string]branchHead)
+	for _, line := range strings.Split(string(result.Stdout), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\x00")
+		if len(fields) != 3 || !strings.HasPrefix(fields[0], "refs/heads/") || !validOID(fields[1]) {
+			return nil, NewProblem("repository_integrity_error", "Git returned an invalid branch head.")
+		}
+		branch := strings.TrimPrefix(fields[0], "refs/heads/")
+		status := "not_commit"
+		if fields[2] == "commit" {
+			status = "commit"
+		}
+		heads[branch] = branchHead{Branch: branch, Ref: fields[0], OID: fields[1], Status: status}
+	}
+	return heads, nil
+}
+
+// headOf returns branch's head from heads, or a missing head.
+func headOf(heads map[string]branchHead, branch string) branchHead {
+	if head, ok := heads[branch]; ok {
+		return head
+	}
+	return branchHead{Branch: branch, Ref: "refs/heads/" + branch, Status: "missing"}
+}
+
 func (service *Service) readRef(ctx context.Context, repositoryPath, ref string) (string, bool, error) {
 	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "--quiet", "--end-of-options", ref)
 	if err != nil {

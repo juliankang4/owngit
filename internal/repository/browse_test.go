@@ -94,15 +94,18 @@ func TestBrowseRealTreeBlobCommitAndDiff(t *testing.T) {
 	if len(commits) != 1 || commits[0].OID != oid || !strings.Contains(commits[0].Body, string(rune(0x1e))) {
 		t.Fatalf("commit metadata lost untrusted control data: %+v", commits)
 	}
-	files, err := manager.ChangedFiles(context.Background(), "sample", oid)
+	commit, files, err := manager.CommitFiles(context.Background(), "sample", oid)
 	noErr(t, err)
 	if len(files) != 1 || files[0].Path != filePath || files[0].Status != "added" || files[0].Additions != 2 {
 		t.Fatalf("unexpected changed files: %+v", files)
 	}
-	detail, err := manager.Commit(context.Background(), "sample", oid, files[0].Path)
+	if commit.OID != oid || commit.CommitterName == "" || !strings.Contains(commit.Body, string(rune(0x1e))) {
+		t.Fatalf("unexpected commit metadata: %+v", commit)
+	}
+	patch, truncated, err := manager.CommitPatch(context.Background(), "sample", oid, files[0].Path, nil, 1<<20)
 	noErr(t, err)
-	if !strings.Contains(detail.Diff, "+<script>alert('not markup')</script>") || detail.CommitterName == "" {
-		t.Fatalf("unexpected commit detail: %+v", detail)
+	if truncated || !strings.Contains(patch, "+<script>alert('not markup')</script>") {
+		t.Fatalf("unexpected commit patch: truncated=%v %q", truncated, patch)
 	}
 	activity, err := manager.Activity(context.Background(), "sample", 100)
 	if err != nil || activity.Incomplete || len(activity.Records) != 1 || activity.Records[0].OID != oid || activity.Records[0].Source != "refs/heads/main" {
@@ -157,8 +160,8 @@ func TestDeepTreeLookupUsesBoundedGitProcesses(t *testing.T) {
 	if err != nil || len(entries) != 1 || entries[0].Path != filePath {
 		t.Fatalf("deep Tree entries=%+v err=%v", entries, err)
 	}
-	if calls := lsTreeCalls(); calls != 2 {
-		t.Fatalf("deep Tree used %d ls-tree processes, want 2", calls)
+	if calls := lsTreeCalls(); calls != 1 {
+		t.Fatalf("deep Tree used %d ls-tree processes, want 1", calls)
 	}
 
 	resetTrace()

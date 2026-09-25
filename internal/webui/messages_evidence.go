@@ -151,10 +151,18 @@ const (
 	MsgPRChangesNone    MessageCode = "pr.changes.none"
 	MsgPRChangesUnavail MessageCode = "pr.changes.unavailable"
 	MsgPRChangesCut     MessageCode = "pr.changes.truncated"
-	MsgPRChangesBinary  MessageCode = "pr.changes.binary_file"
-	MsgPRChangeAdded    MessageCode = "pr.changes.added"
-	MsgPRChangeModified MessageCode = "pr.changes.modified"
-	MsgPRChangeDeleted  MessageCode = "pr.changes.deleted"
+	// MsgPRChangesFilesCut says the list of changed files itself was cut.
+	MsgPRChangesFilesCut MessageCode = "pr.changes.files_truncated"
+	// MsgPRChangesBase introduces the merge base the changes are counted from.
+	MsgPRChangesBase MessageCode = "pr.changes.base"
+	// MsgPRChangesNoBase and MsgPRChangesManyBases explain a comparison that
+	// is not shown because the branches have no merge base, or several.
+	MsgPRChangesNoBase    MessageCode = "pr.changes.no_base"
+	MsgPRChangesManyBases MessageCode = "pr.changes.many_bases"
+	MsgPRChangesBinary    MessageCode = "pr.changes.binary_file"
+	MsgPRChangeAdded      MessageCode = "pr.changes.added"
+	MsgPRChangeModified   MessageCode = "pr.changes.modified"
+	MsgPRChangeDeleted    MessageCode = "pr.changes.deleted"
 
 	MsgPRSourceLabel     MessageCode = "pr.source"
 	MsgPRTargetLabel     MessageCode = "pr.target"
@@ -558,16 +566,32 @@ var evidenceCatalog = map[MessageCode]message{
 
 	MsgPRChangesTitle: {en: "Changes", ko: "변경 내용"},
 	MsgPRChangesNone: {
-		en: "These branches have the same content.",
-		ko: "두 브랜치의 내용이 같습니다.",
+		en: "The source branch has no changes that the target does not already have.",
+		ko: "원본 브랜치에 대상 브랜치로 가져올 새 변경 내용이 없습니다.",
 	},
 	MsgPRChangesUnavail: {
 		en: "The comparison could not be produced, so the change list is missing rather than empty.",
 		ko: "비교를 만들지 못했습니다. 변경 목록이 비어 있는 것이 아니라 없는 상태입니다.",
 	},
 	MsgPRChangesCut: {
-		en: "Some file contents were too large to show in full. Every changed path is still listed.",
-		ko: "일부 파일 내용이 너무 커서 전부 보여 주지 못했습니다. 변경된 경로는 모두 표시됩니다.",
+		en: "This comparison is incomplete: some files' changes were too large to show. Every changed file is still listed.",
+		ko: "이 비교는 일부만 보여 줍니다. 일부 파일은 변경 내용이 너무 커서 표시하지 않았고, 변경된 파일 목록은 모두 표시됩니다.",
+	},
+	MsgPRChangesFilesCut: {
+		en: "This comparison is incomplete: it was too large to read in full, so some changed files are missing from the list.",
+		ko: "이 비교는 일부만 보여 줍니다. 비교할 내용이 너무 커서 끝까지 읽지 못했기 때문에 목록에서 빠진 변경 파일이 있습니다.",
+	},
+	MsgPRChangesBase: {
+		en: "Changes the source branch made since it branched off the target. Merge base:",
+		ko: "원본 브랜치가 대상 브랜치에서 갈라진 뒤에 바꾼 내용입니다. 병합 기준 커밋:",
+	},
+	MsgPRChangesNoBase: {
+		en: "The source and target branches have no commit in common, so their changes cannot be compared.",
+		ko: "원본 브랜치와 대상 브랜치에 공통 커밋이 없어 변경 내용을 비교할 수 없습니다.",
+	},
+	MsgPRChangesManyBases: {
+		en: "The branches have more than one merge base, so where the source branched off is ambiguous. OwnGit does not pick one, so no change list is shown.",
+		ko: "두 브랜치의 병합 기준 커밋이 여러 개라서 원본 브랜치가 어디서 갈라졌는지 하나로 정할 수 없습니다. OwnGit은 그중 하나를 임의로 고르지 않으므로 변경 목록을 표시하지 않습니다.",
 	},
 	MsgPRChangesBinary: {en: "Binary file", ko: "바이너리 파일"},
 

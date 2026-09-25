@@ -210,10 +210,13 @@
 </div>
 {{end}}
 
-{{/* The change list shared by the create screen and the detail screen.
+{{/* The change list shared by the create screen and the detail screen. It
+     shows what the source adds since it branched from the target, counted
+     from their merge base.
 
      Call as: {{template "changeList" dict "Lang" $lang "Files" $p.Changes
-                 "Truncated" $p.DiffTruncated "Unavailable" $p.ChangesUnavailable
+                 "Base" $p.ChangesBase "Truncated" $p.DiffTruncated
+                 "FilesTruncated" $p.FilesTruncated "Unavailable" $p.ChangesUnavailable
                  "Reason" $p.ChangesReason}} */}}
 {{define "changeList"}}
 {{$lang := .Lang}}{{$files := .Files}}
@@ -228,15 +231,22 @@
        "no changes" here would claim the branches agree. */}}
   {{if .Unavailable}}
     <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "pr.changes.unavailable"}}{{with .Reason}} {{bi $lang .}}{{end}}</span></p>
-  {{else if $files}}
-    {{/* The same diff partials the commit screen uses, so one rendering
-         serves every place a change is read. */}}
-    {{template "diffFiles" dict "Lang" $lang "Files" $files "Title" "pr.changes.title"}}
-    {{if .Truncated}}
+  {{else}}
+    {{with .Base}}<p class="dnote">{{icon "info"}}<span>{{bi $lang "pr.changes.base"}} <span class="mono" title="{{.}}">{{printf "%.10s" .}}</span></span></p>{{end}}
+    {{/* An incomplete comparison says so before the changes, so it is never
+         read as the whole change. */}}
+    {{if .FilesTruncated}}
+      <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "pr.changes.files_truncated"}}</span></p>
+    {{else if .Truncated}}
       <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "pr.changes.truncated"}}</span></p>
     {{end}}
-  {{else}}
-    <p class="empty">{{bi $lang "pr.changes.none"}}</p>
+    {{if $files}}
+      {{/* The same diff partials the commit screen uses, so one rendering
+           serves every place a change is read. */}}
+      {{template "diffFiles" dict "Lang" $lang "Files" $files "Title" "pr.changes.title"}}
+    {{else if not .FilesTruncated}}
+      <p class="empty">{{bi $lang "pr.changes.none"}}</p>
+    {{end}}
   {{end}}
 </section>
 {{end}}

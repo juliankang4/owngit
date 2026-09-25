@@ -112,11 +112,12 @@ func (m *Manager) CachedHeadDate(id string) (time.Time, bool) {
 	return entry.snapshot.Head.AuthoredAt, true
 }
 
-// ForgetRefSnapshots drops cached snapshots and language counts of
-// repositories not in present.
+// ForgetRefSnapshots drops cached snapshots, language counts and object
+// reads of repositories not in present.
 func (m *Manager) ForgetRefSnapshots(present []string) {
 	m.snapshots.forget(present)
 	m.languages.forget(present)
+	m.objects.forget(present)
 }
 
 func (cache *snapshotCache) lookup(id, path string, lock *gitexec.RepositoryLock) (RefSnapshot, bool) {

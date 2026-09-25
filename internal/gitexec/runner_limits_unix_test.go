@@ -60,6 +60,38 @@ func TestRunnerPreservesInternalTimeoutBeforeOutputLimit(t *testing.T) {
 	}
 }
 
+// StopAtOutputLimit ends a command that keeps running once its output passes
+// the limit, and reports the limit with the output up to it. Without it the
+// same command runs until its timeout.
+func TestRunnerStopsAtOutputLimitWhenAsked(t *testing.T) {
+	runner := outputFixtureRunner(t)
+	runner.Timeout = 5 * time.Second
+	started := time.Now()
+	result, err := runner.RunWithLimits(context.Background(), "", nil, CommandLimits{OutputLimit: 8, StopAtOutputLimit: true}, "timeout-stdout")
+	var limitErr *LimitError
+	if !errors.As(err, &limitErr) || limitErr.Stream != "stdout" || string(result.Stdout) != "01234567" || time.Since(started) > 3*time.Second {
+		t.Fatalf("result=%q err=%v after %s, want a prompt stdout LimitError", result.Stdout, err, time.Since(started))
+	}
+	result, err = runner.RunWithLimits(context.Background(), "", nil, CommandLimits{OutputLimit: 8, StopAtOutputLimit: true}, "success-stdout")
+	if !errors.As(err, &limitErr) || string(result.Stdout) != "01234567" {
+		t.Fatalf("a finished command: result=%q err=%v", result.Stdout, err)
+	}
+	result, err = runner.RunWithLimits(context.Background(), "", nil, CommandLimits{OutputLimit: 64, StopAtOutputLimit: true}, "success-stdout")
+	if err != nil || string(result.Stdout) != "0123456789abcdef" {
+		t.Fatalf("output within the limit: result=%q err=%v", result.Stdout, err)
+	}
+	// The caller's own cancellation stays a cancellation.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := runner.RunWithLimits(ctx, "", nil, CommandLimits{OutputLimit: 8, StopAtOutputLimit: true}, "timeout-stdout"); errors.As(err, &limitErr) || err == nil {
+		t.Fatalf("a canceled caller got %v", err)
+	}
+	runner.Timeout = 300 * time.Millisecond
+	if _, err := runner.RunWithLimits(context.Background(), "", nil, CommandLimits{OutputLimit: 8}, "timeout-stdout"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("without StopAtOutputLimit: err=%v, want the timeout", err)
+	}
+}
+
 func outputFixtureRunner(t *testing.T) *Runner {
 	t.Helper()
 	root := t.TempDir()

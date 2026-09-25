@@ -179,9 +179,17 @@ func (service *Service) List(ctx context.Context, repositoryID string) ([]*View,
 	if len(records) > MaximumListResults {
 		return nil, NewProblem("result_too_large", "The pull request list exceeds the supported response limit. Use show with a pull request number.")
 	}
+	// One ref listing serves every pull request, so the list starts the same
+	// number of ref reads however many pull requests it shows.
+	var heads map[string]branchHead
 	views := make([]*View, 0, len(records))
 	for _, record := range records {
-		view, err := service.readViewLocked(ctx, repositoryPath, record)
+		if heads == nil && record.Status != state.PullRequestMerged {
+			if heads, err = service.branchHeads(ctx, repositoryPath); err != nil {
+				return nil, err
+			}
+		}
+		view, err := service.viewFromHeadsLocked(ctx, repositoryPath, record, heads)
 		if err != nil {
 			return nil, err
 		}
@@ -735,16 +743,26 @@ func (service *Service) validateReceipt(ctx context.Context, repositoryPath stri
 // revision pair. Callers that record a decision or a merge bind the pair
 // explicitly, so passive reads stay read-only.
 func (service *Service) readViewLocked(ctx context.Context, repositoryPath string, record state.PullRequest) (*View, error) {
+	var heads map[string]branchHead
+	if record.Status != state.PullRequestMerged {
+		var err error
+		if heads, err = service.branchHeads(ctx, repositoryPath); err != nil {
+			return nil, err
+		}
+	}
+	return service.viewFromHeadsLocked(ctx, repositoryPath, record, heads)
+}
+
+// viewFromHeadsLocked is readViewLocked with the branch heads already read
+// by branchHeads. A merged pull request shows its recorded merge revisions
+// and needs no heads.
+func (service *Service) viewFromHeadsLocked(ctx context.Context, repositoryPath string, record state.PullRequest, heads map[string]branchHead) (*View, error) {
 	if record.Status == state.PullRequestMerged {
 		source := branchHead{Branch: record.SourceBranch, OID: record.MergeSourceOID, Status: "commit"}
 		target := branchHead{Branch: record.TargetBranch, OID: record.MergeTargetOID, Status: "commit"}
 		return service.viewForHeads(ctx, repositoryPath, record, source, target)
 	}
-	source, target, err := service.readHeads(ctx, repositoryPath, record)
-	if err != nil {
-		return nil, err
-	}
-	return service.viewForHeads(ctx, repositoryPath, record, source, target)
+	return service.viewForHeads(ctx, repositoryPath, record, headOf(heads, record.SourceBranch), headOf(heads, record.TargetBranch))
 }
 
 func (service *Service) viewForHeads(ctx context.Context, repositoryPath string, record state.PullRequest, source, target branchHead) (*View, error) {

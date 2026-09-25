@@ -86,12 +86,17 @@ type NewPullRequestPage struct {
 	// leaving review unrequested. An omitted choice is a real option, not a
 	// hidden waiting state.
 	ReviewChoice string
-	// Changes are the differences between the two observed tips. The list is
+	// Changes are what the observed source adds since it branched from the
+	// observed target, counted from their merge base. The list is
 	// informational; the backend recomputes the merge.
 	Changes []DiffFile
-	// DiffTruncated is true when a file's text diff was too large to show in
-	// full. The changed paths are still listed completely.
+	// ChangesBase is the merge base the changes are counted from.
+	ChangesBase string
+	// DiffTruncated is true when some file's text diff is not shown. The
+	// changed paths are still listed completely unless FilesTruncated.
 	DiffTruncated bool
+	// FilesTruncated is true when the list of changed files was cut off.
+	FilesTruncated bool
 	// ChangesUnavailable is true when the comparison could not be produced.
 	ChangesUnavailable bool
 	// ChangesReason explains an unavailable comparison.
@@ -142,11 +147,16 @@ type PullRequestPage struct {
 	// Merged describes a completed merge. Nil while the request is open.
 	Merged *MergeRecord
 
-	// Changes are the differences between the two current tips.
+	// Changes are what the current source adds since it branched from the
+	// current target, counted from their merge base.
 	Changes []DiffFile
-	// DiffTruncated is true when a file's text diff was too large to show in
-	// full. The changed paths are still listed completely.
+	// ChangesBase is the merge base the changes are counted from.
+	ChangesBase string
+	// DiffTruncated is true when some file's text diff is not shown. The
+	// changed paths are still listed completely unless FilesTruncated.
 	DiffTruncated bool
+	// FilesTruncated is true when the list of changed files was cut off.
+	FilesTruncated bool
 	// ChangesUnavailable is true when the comparison could not be produced.
 	ChangesUnavailable bool
 	// ChangesReason explains an unavailable comparison.

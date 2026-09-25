@@ -84,7 +84,8 @@ func (app *App) folderReadme(request *http.Request, repositoryID, ref, dir strin
 	if found.Size > markdown.MaxSource {
 		return view
 	}
-	_, blob, err := app.Repositories.ReadBlob(request.Context(), repositoryID, ref, found.Path, markdown.MaxSource)
+	// The listing already names the README's object, so it is read directly.
+	blob, err := app.Repositories.BlobAt(request.Context(), repositoryID, *found, markdown.MaxSource)
 	if err != nil || blob.Binary {
 		return nil
 	}

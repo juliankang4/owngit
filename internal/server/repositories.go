@@ -595,7 +595,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	page.Overview.Languages = app.overviewLanguages(request, page.Repo.ID, summary.DefaultOID)
 	if resolved {
 		// One extra commit says whether older history exists without counting it.
-		_, commits, err := app.Repositories.Commits(request.Context(), page.Repo.ID, selectedRef, overviewRecentCommits+1)
+		commits, err := app.Repositories.CommitsAt(request.Context(), page.Repo.ID, page.Ref.Revision, overviewRecentCommits+1)
 		if err == nil && len(commits) > 0 {
 			if len(commits) > overviewRecentCommits {
 				page.Overview.RecentMore = true
@@ -608,7 +608,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		}
 		// The README answers what the repository is. It is found and
 		// rendered exactly as the code view does for the top folder.
-		if _, entries, err := app.Repositories.Tree(request.Context(), page.Repo.ID, selectedRef, ""); err == nil {
+		if entries, err := app.Repositories.TreeAt(request.Context(), page.Repo.ID, page.Ref.Revision, ""); err == nil {
 			page.Overview.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, "", entries)
 		}
 	}
@@ -767,72 +767,73 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		}
 		return
 	}
-	if requestedPath != "" {
-		_, blob, err := app.Repositories.ReadBlob(request.Context(), page.Repo.ID, selectedRef, requestedPath, 2<<20)
-		if err == nil {
-			binary := blob.Binary || !utf8.Valid(blob.Content)
-			target := summary.DefaultBranch
-			if strings.HasPrefix(selectedRef, "refs/heads/") {
-				target = strings.TrimPrefix(selectedRef, "refs/heads/")
-			}
-			parent := path.Dir(requestedPath)
-			if parent == "." {
-				parent = ""
-			}
-			file := &webui.FileView{
-				Path: requestedPath, Size: int64(len(blob.Content)), Binary: binary, Truncated: blob.Truncated,
-				RawURL:     rawURL(page.Repo.ID, selectedRef, requestedPath),
-				RestoreURL: restoreURL(page.Repo.ID, page.Ref.Revision, target, requestedPath),
-			}
-			if !binary {
-				content := strings.ReplaceAll(string(blob.Content), "\r\n", "\n")
-				file.Lines = strings.Split(strings.TrimSuffix(content, "\n"), "\n")
-			}
-			if !binary && markdown.IsDocument(requestedPath) {
-				file.Document = true
-				file.ShowSource = request.URL.Query().Get("view") == "source"
-				file.PreviewURL = codeURL(page.Repo.ID, selectedRef, requestedPath)
-				file.SourceURL = file.PreviewURL + "&view=source"
-				// A cut-off document would render a broken ending, so only a
-				// whole file is rendered. The source view is always offered.
-				if blob.Truncated {
-					file.NotRendered = webui.MsgCodeNotShown
-				} else if !file.ShowSource {
-					file.Rendered, file.NotRendered = app.renderMarkdown(request.Context(), page.Repo.ID, selectedRef, parent, blob.Content)
-				}
-			}
-			_, siblings, _ := app.Repositories.Tree(request.Context(), page.Repo.ID, selectedRef, parent)
-			view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.ID, selectedRef, siblings)}
-			// The drawer lists the file's folder, so "up" leaves that folder.
-			if parent != "" {
-				view.UpURL = codeURL(page.Repo.ID, selectedRef, path.Dir(parent))
-			}
-			for _, sibling := range siblings {
-				if sibling.Path == requestedPath && sibling.Size >= 0 {
-					file.Size = sibling.Size
-				}
-			}
-			file.RawTooLarge = file.Size > maximumRawBytes
-			// A picture loads through the raw endpoint, so it is shown only
-			// when that endpoint would serve it.
-			if binary && !file.RawTooLarge {
-				file.Image, file.ImageWidth, file.ImageHeight = inlineImage(requestedPath, blob.Content)
-			}
-			page.Code = view
+	// The ref was resolved once, above; every read below names its commit.
+	commitOID := page.Ref.Revision
+	lookup, err := app.Repositories.PathAt(request.Context(), page.Repo.ID, commitOID, requestedPath)
+	if err != nil {
+		page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
+		return
+	}
+	if !lookup.Folder {
+		blob, err := app.Repositories.BlobAt(request.Context(), page.Repo.ID, lookup.File, 2<<20)
+		if err != nil {
+			page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
 			return
 		}
-	}
-	_, entries, err := app.Repositories.Tree(request.Context(), page.Repo.ID, selectedRef, requestedPath)
-	if err != nil || (requestedPath != "" && len(entries) == 0) {
-		page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
+		binary := blob.Binary || !utf8.Valid(blob.Content)
+		target := summary.DefaultBranch
+		if strings.HasPrefix(selectedRef, "refs/heads/") {
+			target = strings.TrimPrefix(selectedRef, "refs/heads/")
+		}
+		parent := path.Dir(requestedPath)
+		if parent == "." {
+			parent = ""
+		}
+		file := &webui.FileView{
+			Path: requestedPath, Size: int64(len(blob.Content)), Binary: binary, Truncated: blob.Truncated,
+			RawURL:     rawURL(page.Repo.ID, selectedRef, requestedPath),
+			RestoreURL: restoreURL(page.Repo.ID, commitOID, target, requestedPath),
+		}
+		if lookup.File.Size >= 0 {
+			file.Size = lookup.File.Size
+		}
+		if !binary {
+			content := strings.ReplaceAll(string(blob.Content), "\r\n", "\n")
+			file.Lines = strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+		}
+		if !binary && markdown.IsDocument(requestedPath) {
+			file.Document = true
+			file.ShowSource = request.URL.Query().Get("view") == "source"
+			file.PreviewURL = codeURL(page.Repo.ID, selectedRef, requestedPath)
+			file.SourceURL = file.PreviewURL + "&view=source"
+			// A cut-off document would render a broken ending, so only a
+			// whole file is rendered. The source view is always offered.
+			if blob.Truncated {
+				file.NotRendered = webui.MsgCodeNotShown
+			} else if !file.ShowSource {
+				file.Rendered, file.NotRendered = app.renderMarkdown(request.Context(), page.Repo.ID, selectedRef, parent, blob.Content)
+			}
+		}
+		view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.ID, selectedRef, lookup.Entries)}
+		// The drawer lists the file's folder, so "up" leaves that folder.
+		if parent != "" {
+			view.UpURL = codeURL(page.Repo.ID, selectedRef, path.Dir(parent))
+		}
+		file.RawTooLarge = file.Size > maximumRawBytes
+		// A picture loads through the raw endpoint, so it is shown only
+		// when that endpoint would serve it.
+		if binary && !file.RawTooLarge {
+			file.Image, file.ImageWidth, file.ImageHeight = inlineImage(requestedPath, blob.Content)
+		}
+		page.Code = view
 		return
 	}
 	view := webui.CodeView{Path: requestedPath, Dir: requestedPath, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
 	if requestedPath != "" {
 		view.UpURL = codeURL(page.Repo.ID, selectedRef, path.Dir(requestedPath))
 	}
-	view.Entries = treeViewEntries(page.Repo.ID, selectedRef, entries)
-	view.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, requestedPath, entries)
+	view.Entries = treeViewEntries(page.Repo.ID, selectedRef, lookup.Entries)
+	view.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, requestedPath, lookup.Entries)
 	page.Code = view
 }
 
@@ -841,7 +842,24 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	if !resolved && requested == "" && page.Ref.Missing {
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgRepoDefaultGone})
 	}
-	if resolved && openedOID != "" {
+	if openedOID == "" {
+		if !resolved {
+			return
+		}
+		commits, err := app.Repositories.CommitsAt(request.Context(), page.Repo.ID, page.Ref.Revision, repository.CommitPageSize)
+		if err != nil {
+			page.Commits.NotFound = true
+			return
+		}
+		for _, commit := range commits {
+			page.Commits.List = append(page.Commits.List, app.commitSummary(page.Repo.ID, selectedRef, commit))
+		}
+		return
+	}
+	// One commit. The page names the selected branch or tag only when the
+	// commit is part of its history. The list of commits is one link away
+	// and is not read here.
+	if resolved {
 		reachable, err := app.Repositories.CommitReachableFrom(request.Context(), page.Repo.ID, page.Ref.Revision, openedOID)
 		if err != nil {
 			page.Commits.NotFound = true
@@ -855,23 +873,10 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 			page.CommitsURL = page.Repo.URL + "/commits"
 		}
 	}
-	if resolved {
-		_, commits, err := app.Repositories.Commits(request.Context(), page.Repo.ID, selectedRef, 100)
-		if err != nil {
-			page.Commits.NotFound = true
-			return
-		}
-		for _, commit := range commits {
-			page.Commits.List = append(page.Commits.List, app.commitSummary(page.Repo.ID, selectedRef, commit))
-		}
-	}
-	if openedOID == "" {
-		return
-	}
 	if !resolved {
 		page.Ref = webui.RefSelection{Name: shortOID(openedOID), Kind: "revision", Detached: true, Revision: openedOID, ShortRevision: shortOID(openedOID)}
 	}
-	files, err := app.Repositories.ChangedFiles(request.Context(), page.Repo.ID, openedOID)
+	commit, files, err := app.Repositories.CommitFiles(request.Context(), page.Repo.ID, openedOID)
 	if err != nil {
 		page.Commits.NotFound = true
 		return
@@ -893,88 +898,130 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 			return
 		}
 	}
-	var detail repository.CommitDetail
-	if requestedPath != "" {
-		detail, err = app.Repositories.Commit(request.Context(), page.Repo.ID, openedOID, requestedPath)
-	} else {
-		detail, err = app.Repositories.CommitAllFiles(request.Context(), page.Repo.ID, openedOID, maximumCommitPatchBytes, maximumCommitFileBytes)
-	}
-	if err != nil {
-		page.Commits.NotFound = true
-		return
-	}
-	if len(page.Commits.List) == 0 {
-		page.Commits.List = append(page.Commits.List, app.commitSummary(page.Repo.ID, selectedRef, detail.Commit))
-	}
 	target := summary.DefaultBranch
 	if strings.HasPrefix(selectedRef, "refs/heads/") {
 		target = strings.TrimPrefix(selectedRef, "refs/heads/")
 	}
 	view := webui.CommitDetail{
-		Commit: app.commitSummary(page.Repo.ID, selectedRef, detail.Commit), Body: detail.Body,
-		CommitterName: detail.CommitterName, CommitterDate: detail.CommittedAt,
-		SelectedPath: requestedPath, Truncated: detail.Truncated,
-		RestoreURL: restoreURL(page.Repo.ID, detail.OID, target, requestedPath),
+		Commit: app.commitSummary(page.Repo.ID, selectedRef, commit), Body: commit.Body,
+		CommitterName: commit.CommitterName, CommitterDate: commit.CommittedAt,
+		SelectedPath: requestedPath,
+		RestoreURL:   restoreURL(page.Repo.ID, commit.OID, target, requestedPath),
 	}
 	if requestedPath != "" {
 		view.AllFilesURL = commitURL(page.Repo.ID, selectedRef, openedOID, "")
 	}
-	if len(detail.Parents) > 1 {
-		view.Unavailable = true
-		view.UnavailableReason = webui.MsgCommitDiffMerge
-	}
-	for _, parentOID := range detail.Parents {
+	for _, parentOID := range commit.Parents {
 		view.Parents = append(view.Parents, webui.CommitSummary{OID: parentOID, ShortOID: shortOID(parentOID), URL: commitURL(page.Repo.ID, selectedRef, parentOID, "")})
 	}
-	sections := map[string]string{}
-	deferred := map[string]bool{}
-	shownLines := 0
-	if requestedPath == "" {
-		sections = splitPatchByFile(detail.Diff, detail.Truncated)
-		for _, filePath := range detail.Deferred {
-			deferred[filePath] = true
-		}
+	if len(commit.Parents) > 1 {
+		view.Unavailable = true
+		view.UnavailableReason = webui.MsgCommitDiffMerge
+		page.Commits.Detail = &view
+		return
 	}
-	for _, file := range files {
-		if requestedPath != "" && file.Path != requestedPath {
-			continue
+	fileURL := func(filePath string) string { return commitURL(page.Repo.ID, selectedRef, openedOID, filePath) }
+	if requestedPath != "" {
+		patch, truncated, err := app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, requestedPath, nil, maximumSingleFilePatchBytes)
+		if err != nil {
+			page.Commits.NotFound = true
+			return
 		}
-		item := webui.DiffFile{
-			Path: file.Path, OldPath: file.OldPath, Status: file.Status, Additions: file.Additions, Deletions: file.Deletions,
-			Binary: file.Binary, URL: commitURL(page.Repo.ID, selectedRef, openedOID, file.Path), Selected: file.Path == requestedPath,
-		}
-		switch {
-		case item.Binary:
-		case requestedPath != "":
-			item.Hunks = parsePatch(detail.Diff)
-		default:
-			section, ok := sections[file.Path]
-			lines := strings.Count(section, "\n")
-			switch {
-			case ok && shownLines+lines <= maximumCommitDiffLines:
-				item.Hunks = parsePatch(section)
-				shownLines += lines
-			case ok || deferred[file.Path] || detail.Truncated && file.Additions+file.Deletions > 0:
-				item.NotLoaded = true
+		view.Truncated = truncated
+		for _, file := range files {
+			if file.Path != requestedPath {
+				continue
 			}
+			item := diffFileItem(file, fileURL)
+			item.Selected = true
+			if !item.Binary {
+				item.Hunks = parsePatch(patch)
+			}
+			view.Files = append(view.Files, item)
 		}
-		view.Files = append(view.Files, item)
+		page.Commits.Detail = &view
+		return
 	}
+	// A file with more changed lines than the page shows is left out of the
+	// diff read, so it cannot use up the size limit of the files after it.
+	deferred := map[string]bool{}
+	var excluded []string
+	for _, file := range files {
+		if !file.Binary && file.Additions+file.Deletions > maximumCommitDiffLines && len(excluded) < maximumDeferredFiles {
+			deferred[file.Path] = true
+			excluded = append(excluded, file.Path)
+		}
+	}
+	var patch string
+	var truncated bool
+	if len(excluded) < len(files) {
+		patch, truncated, err = app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, "", excluded, maximumCommitPatchBytes)
+		if err != nil {
+			page.Commits.NotFound = true
+			return
+		}
+	}
+	view.Truncated = truncated
+	view.Files, _ = diffFileItems(files, patch, truncated, deferred, fileURL)
 	page.Commits.Detail = &view
 }
 
-// A commit shown with all of its files reads at most maximumCommitPatchBytes
-// of diff text and shows at most maximumCommitDiffLines diff lines, because
-// each line becomes a table row and short lines would otherwise make a page
-// many times larger than the diff. A file with a side above
-// maximumCommitFileBytes is not read with the others, so the files after it
-// still load. Files left out for any of these reasons are listed with a link
-// to their diff alone.
+// Bounds for one commit or pull request diff. A commit's diff read stops at
+// maximumCommitPatchBytes of text and a single file's diff at
+// maximumSingleFilePatchBytes; a comparison has the repository package's own
+// limit. A page shows at most maximumCommitDiffLines diff lines, because each
+// line becomes a table row and short lines would otherwise make a page many
+// times larger than the diff, and no file whose diff text is larger than
+// maximumCommitFileBytes. Files left out for any of these reasons are listed
+// and marked as not loaded, with a link to their diff alone where the page
+// has one. A commit leaves at most maximumDeferredFiles large files out of
+// its diff read by name, which keeps the Git command line short.
 const (
-	maximumCommitPatchBytes = 1 << 20
-	maximumCommitFileBytes  = 256 << 10
-	maximumCommitDiffLines  = 10000
+	maximumCommitPatchBytes     = 2 << 20
+	maximumSingleFilePatchBytes = 8 << 20
+	maximumCommitFileBytes      = 256 << 10
+	maximumCommitDiffLines      = 10000
+	maximumDeferredFiles        = 100
 )
+
+// diffFileItem is the list row of one changed file, without its diff.
+func diffFileItem(file repository.ChangedFile, fileURL func(string) string) webui.DiffFile {
+	item := webui.DiffFile{
+		Path: file.Path, OldPath: file.OldPath, Status: file.Status, Additions: file.Additions, Deletions: file.Deletions,
+		Binary: file.Binary,
+	}
+	if fileURL != nil {
+		item.URL = fileURL(file.Path)
+	}
+	return item
+}
+
+// diffFileItems pairs changed files with their parts of patch, a diff read
+// without rename detection, within the page's limits. A file in deferred was
+// left out of patch on purpose. When truncated, the patch stopped early, so
+// a file with changed lines and no complete part is not loaded. notLoaded
+// reports whether any file's changes are missing from the page.
+func diffFileItems(files []repository.ChangedFile, patch string, truncated bool, deferred map[string]bool, fileURL func(string) string) (items []webui.DiffFile, notLoaded bool) {
+	sections := splitPatchByFile(patch, truncated)
+	shownLines := 0
+	for _, file := range files {
+		item := diffFileItem(file, fileURL)
+		if !item.Binary {
+			section, ok := sections[file.Path]
+			lines := strings.Count(section, "\n")
+			switch {
+			case ok && len(section) <= maximumCommitFileBytes && shownLines+lines <= maximumCommitDiffLines:
+				item.Hunks = parsePatch(section)
+				shownLines += lines
+			case ok || deferred[file.Path] || truncated && file.Additions+file.Deletions > 0:
+				item.NotLoaded = true
+				notLoaded = true
+			}
+		}
+		items = append(items, item)
+	}
+	return items, notLoaded
+}
 
 // splitPatchByFile splits a whole-commit patch read without rename detection
 // into each file's part, keyed by the file's path. A path is read from the

@@ -193,7 +193,9 @@ func TestRestoreApplyReportsPageConstructionFailure(t *testing.T) {
 	gitPath, err := exec.LookPath("git")
 	noErr(t, err)
 	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
-	wrapper := "#!/bin/sh\nfor arg in \"$@\"; do\n  if test \"$arg\" = show; then exit 97; fi\ndone\nexec " + serverShellQuote(gitPath) + " \"$@\"\n"
+	// The page reads the source commit's metadata with the only log that
+	// lists raw changes, so failing that read fails the page alone.
+	wrapper := "#!/bin/sh\nfor arg in \"$@\"; do\n  if test \"$arg\" = --raw; then exit 97; fi\ndone\nexec " + serverShellQuote(gitPath) + " \"$@\"\n"
 	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
 	failing, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
 	noErr(t, err)

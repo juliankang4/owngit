@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,14 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	"owngit/internal/gitexec"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
-
-const maximumBrowserDiffFiles = 200
 
 func (app *App) handlePullRequestsGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	page := app.pullRequestsPage(request, stored, summary, chrome)
@@ -123,7 +119,7 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 	} else if !page.Source.Resolved() || !page.Target.Resolved() {
 		page.ChangesUnavailable = true
 	} else {
-		files, truncated, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
+		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
 		if err != nil {
 			page.ChangesUnavailable = true
 			page.ChangesReason = webui.MsgErrUnavailable
@@ -131,8 +127,12 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 				status = http.StatusServiceUnavailable
 			}
 		} else {
-			page.Changes = files
-			page.DiffTruncated = truncated
+			page.Changes = changes.Files
+			page.ChangesBase = changes.Base
+			page.ChangesUnavailable = changes.Unavailable != ""
+			page.ChangesReason = changes.Unavailable
+			page.DiffTruncated = changes.PatchesIncomplete
+			page.FilesTruncated = changes.FilesIncomplete
 		}
 	}
 	app.render(writer, status, page)
@@ -320,7 +320,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 	if !page.Source.Resolved() || !page.Target.Resolved() {
 		page.ChangesUnavailable = true
 	} else {
-		files, truncated, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
+		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
 		if err != nil {
 			page.ChangesUnavailable = true
 			page.ChangesReason = webui.MsgErrUnavailable
@@ -328,8 +328,12 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 				status = http.StatusServiceUnavailable
 			}
 		} else {
-			page.Changes = files
-			page.DiffTruncated = truncated
+			page.Changes = changes.Files
+			page.ChangesBase = changes.Base
+			page.ChangesUnavailable = changes.Unavailable != ""
+			page.ChangesReason = changes.Unavailable
+			page.DiffTruncated = changes.PatchesIncomplete
+			page.FilesTruncated = changes.FilesIncomplete
 		}
 	}
 	app.render(writer, status, page)
@@ -684,136 +688,46 @@ func browserProvenance(jobID, credentialID, executionScope string) string {
 	return webui.ProvenanceAutomaticJob
 }
 
-func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, sourceOID, targetOID string) ([]webui.DiffFile, bool, error) {
+// pullRequestChanges is what a pull request page shows as its changes.
+type pullRequestChanges struct {
+	Files []webui.DiffFile
+	// Base is the merge base the changes are counted from.
+	Base string
+	// Unavailable names why there is no change list: the branches share no
+	// history, or they have several merge bases.
+	Unavailable webui.MessageCode
+	// PatchesIncomplete is set when some file's changes are not shown.
+	PatchesIncomplete bool
+	// FilesIncomplete is set when the list of changed files was cut off.
+	FilesIncomplete bool
+}
+
+// comparePullRequestRevisions reads what the source adds since it branched
+// from the target: the changes from the merge base of the two recorded
+// revisions to the source, as a three-dot diff shows them. Without a merge
+// base, or with several, it shows no comparison rather than one against the
+// target tip or an arbitrary base. Merge and review use their own exact
+// revision checks and never this reading.
+func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, sourceOID, targetOID string) (pullRequestChanges, error) {
 	if !validOID(sourceOID) || !validOID(targetOID) {
-		return nil, false, errors.New("invalid pull request revision")
+		return pullRequestChanges{}, errors.New("invalid pull request revision")
 	}
-	repositoryPath, _, exists, err := app.Repositories.ExistingPath(ctx, repositoryID)
-	if err != nil || !exists {
-		if err == nil {
-			err = errors.New("repository not found")
-		}
-		return nil, false, err
-	}
-	lock := app.Repositories.Locks.For(repositoryID)
-	if err := lock.RLockContext(ctx); err != nil {
-		return nil, false, fmt.Errorf("%w (%w)", repository.ErrRepositoryInUse, err)
-	}
-	defer lock.RUnlock()
-
-	statusResult, err := app.Repositories.Git.Run(ctx, repositoryPath, nil,
-		"--git-dir", ".", "diff", "--name-status", "--no-renames", "-z", targetOID, sourceOID)
+	comparison, err := app.Repositories.Compare(ctx, repositoryID, targetOID, sourceOID)
 	if err != nil {
-		return nil, false, fmt.Errorf("read pull request changes: %w", err)
+		return pullRequestChanges{}, fmt.Errorf("read pull request changes: %w", err)
 	}
-	files, err := parseBrowserChangedFiles(statusResult.Stdout)
-	if err != nil {
-		return nil, false, err
+	switch {
+	case comparison.Bases == 0:
+		return pullRequestChanges{Unavailable: webui.MsgPRChangesNoBase}, nil
+	case comparison.Bases > 1:
+		return pullRequestChanges{Unavailable: webui.MsgPRChangesManyBases}, nil
 	}
-	numResult, err := app.Repositories.Git.Run(ctx, repositoryPath, nil,
-		"--git-dir", ".", "diff", "--numstat", "--no-renames", "-z", targetOID, sourceOID)
-	if err != nil {
-		return nil, false, fmt.Errorf("read pull request change sizes: %w", err)
-	}
-	counts, err := parseBrowserNumstat(numResult.Stdout)
-	if err != nil {
-		return nil, false, err
-	}
-	for index := range files {
-		if count, ok := counts[files[index].Path]; ok {
-			files[index].Additions = count.additions
-			files[index].Deletions = count.deletions
-			files[index].Binary = count.binary
-		}
-	}
-
-	truncated := false
-	for index := range files {
-		if index >= maximumBrowserDiffFiles {
-			truncated = true
-			files[index].NotLoaded = !files[index].Binary
-			continue
-		}
-		if files[index].Binary {
-			continue
-		}
-		result, runErr := app.Repositories.Git.RunWithOutputLimit(ctx, repositoryPath, nil, 256<<10,
-			"--git-dir", ".", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3",
-			targetOID, sourceOID, "--", ":(top,literal)"+files[index].Path)
-		if runErr != nil {
-			var limitErr *gitexec.LimitError
-			if !errors.As(runErr, &limitErr) {
-				return nil, false, fmt.Errorf("read pull request patch for %q: %w", files[index].Path, runErr)
-			}
-			truncated = true
-		}
-		files[index].Hunks = parsePatch(string(result.Stdout))
-	}
-	return files, truncated, nil
-}
-
-func parseBrowserChangedFiles(output []byte) ([]webui.DiffFile, error) {
-	tokens := bytes.Split(output, []byte{0})
-	var files []webui.DiffFile
-	for index := 0; index < len(tokens) && len(tokens[index]) != 0; index += 2 {
-		if index+1 >= len(tokens) || len(tokens[index]) != 1 || len(tokens[index+1]) == 0 {
-			return nil, errors.New("Git returned malformed pull request changes")
-		}
-		status := browserChangeStatus(tokens[index][0])
-		if status == "" {
-			return nil, errors.New("Git returned an unknown pull request change status")
-		}
-		files = append(files, webui.DiffFile{Path: string(tokens[index+1]), Status: status})
-	}
-	return files, nil
-}
-
-type browserLineCount struct {
-	additions int
-	deletions int
-	binary    bool
-}
-
-func parseBrowserNumstat(output []byte) (map[string]browserLineCount, error) {
-	counts := make(map[string]browserLineCount)
-	for _, token := range bytes.Split(output, []byte{0}) {
-		if len(token) == 0 {
-			continue
-		}
-		fields := bytes.SplitN(token, []byte{'\t'}, 3)
-		if len(fields) != 3 || len(fields[2]) == 0 {
-			return nil, errors.New("Git returned malformed pull request change sizes")
-		}
-		count := browserLineCount{}
-		if string(fields[0]) == "-" && string(fields[1]) == "-" {
-			count.binary = true
-		} else {
-			var err error
-			count.additions, err = strconv.Atoi(string(fields[0]))
-			if err != nil || count.additions < 0 {
-				return nil, errors.New("Git returned invalid pull request additions")
-			}
-			count.deletions, err = strconv.Atoi(string(fields[1]))
-			if err != nil || count.deletions < 0 {
-				return nil, errors.New("Git returned invalid pull request deletions")
-			}
-		}
-		counts[string(fields[2])] = count
-	}
-	return counts, nil
-}
-
-func browserChangeStatus(code byte) string {
-	switch code {
-	case 'A':
-		return "added"
-	case 'D':
-		return "deleted"
-	case 'M', 'T':
-		return "modified"
-	default:
-		return ""
-	}
+	files, notLoaded := diffFileItems(comparison.Files, comparison.Patch, comparison.PatchTruncated, nil, nil)
+	return pullRequestChanges{
+		Files: files, Base: comparison.Base,
+		PatchesIncomplete: notLoaded || comparison.PatchTruncated,
+		FilesIncomplete:   comparison.FilesTruncated,
+	}, nil
 }
 
 func parsePullRequestNumber(value string) (int64, bool) {

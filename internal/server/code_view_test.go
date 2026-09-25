@@ -318,24 +318,33 @@ func TestPullRequestFilesPastTheLimitAreMarked(t *testing.T) {
 	when := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	work, base := seedRepository(t, app, "many-files", map[string]string{"keep.txt": "keep\n"}, when)
 	files := map[string]string{"z-image.png": "\x89PNG\r\n\x1a\n\x00binary"}
-	for index := 0; index < maximumBrowserDiffFiles+2; index++ {
-		files[fmt.Sprintf("f%03d.txt", index)] = fmt.Sprintf("line %d\n", index)
+	// Each file fits alone; together they pass the page's line limit.
+	for index := 0; index < 3; index++ {
+		files[fmt.Sprintf("f%03d.txt", index)] = strings.Repeat(fmt.Sprintf("line %d\n", index), maximumCommitDiffLines*6/10)
 	}
 	head := commitFiles(t, work, files, "add many files", when.Add(time.Hour))
-	diffs, truncated, err := app.comparePullRequestRevisions(context.Background(), "many-files", head, base)
+	changes, err := app.comparePullRequestRevisions(context.Background(), "many-files", head, base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !truncated || len(diffs) != maximumBrowserDiffFiles+3 {
-		t.Fatalf("truncated=%v files=%d", truncated, len(diffs))
+	diffs := changes.Files
+	if !changes.PatchesIncomplete || changes.FilesIncomplete || len(diffs) != 4 {
+		t.Fatalf("changes=%+v files=%d", changes, len(diffs))
 	}
 	for index, file := range diffs {
-		past := index >= maximumBrowserDiffFiles
-		if past && file.Binary == file.NotLoaded {
-			t.Errorf("%s past the limit: binary=%v not loaded=%v", file.Path, file.Binary, file.NotLoaded)
-		}
-		if !past && (file.NotLoaded || len(file.Hunks) == 0) {
-			t.Errorf("%s inside the limit was not loaded", file.Path)
+		switch {
+		case file.Path == "z-image.png":
+			if !file.Binary || file.NotLoaded {
+				t.Errorf("%s: binary=%v not loaded=%v", file.Path, file.Binary, file.NotLoaded)
+			}
+		case index == 0:
+			if file.NotLoaded || len(file.Hunks) == 0 {
+				t.Errorf("%s inside the limit was not loaded", file.Path)
+			}
+		default:
+			if !file.NotLoaded || len(file.Hunks) != 0 || file.Additions != maximumCommitDiffLines*6/10 {
+				t.Errorf("%s past the limit: not loaded=%v hunks=%d additions=%d", file.Path, file.NotLoaded, len(file.Hunks), file.Additions)
+			}
 		}
 	}
 }

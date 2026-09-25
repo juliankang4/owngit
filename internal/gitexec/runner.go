@@ -165,6 +165,12 @@ type CommandLimits struct {
 	Timeout     time.Duration
 	OutputLimit int64
 	Environment []string
+	// StopAtOutputLimit ends the command as soon as its output passes
+	// OutputLimit instead of letting it run to the end with the rest of its
+	// output discarded. The result is then the output up to the limit and a
+	// *LimitError, as for a command that finished. Use it only for a read
+	// whose partial output is shown as incomplete, such as a diff.
+	StopAtOutputLimit bool
 }
 
 // RunWithLimits executes Git with per-command bounds. Import work uses it for
@@ -174,7 +180,7 @@ func (r *Runner) RunWithLimits(ctx context.Context, dir string, stdin io.Reader,
 	if limits.OutputLimit > 0 {
 		limit = limits.OutputLimit
 	}
-	return r.run(ctx, dir, stdin, limit, limits.Environment, limits.Timeout, args...)
+	return r.runCommand(ctx, dir, stdin, limit, limits.Environment, limits.Timeout, limits.StopAtOutputLimit, args...)
 }
 
 // RunWithEnvironment executes Git with the runner's isolated environment plus
@@ -189,6 +195,10 @@ func (r *Runner) RunWithOutputLimit(ctx context.Context, dir string, stdin io.Re
 }
 
 func (r *Runner) run(ctx context.Context, dir string, stdin io.Reader, limit int64, extraEnv []string, commandTimeout time.Duration, args ...string) (Result, error) {
+	return r.runCommand(ctx, dir, stdin, limit, extraEnv, commandTimeout, false, args...)
+}
+
+func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, limit int64, extraEnv []string, commandTimeout time.Duration, stopAtLimit bool, args ...string) (Result, error) {
 	if limit <= 0 {
 		limit = defaultOutputLimit
 	}
@@ -221,6 +231,9 @@ func (r *Runner) run(ctx context.Context, dir string, stdin io.Reader, limit int
 	}
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if stopAtLimit {
+		stdout.exceededHook = cancel
+	}
 	waited, err := runOwnedProcess(runCtx, cmd, r.TerminationGrace, r.processSeam, stdin, stdinPipe)
 	if !waited {
 		// Attachment cleanup returned while the delayed Wait still owns the
@@ -229,6 +242,12 @@ func (r *Runner) run(ctx context.Context, dir string, stdin io.Reader, limit int
 		return Result{}, fmt.Errorf("git %s: %w", commandName(args), err)
 	}
 	result := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
+	// A command stopped at its output limit ends with the cancellation that
+	// stopped it. That cancellation came from the limit only when neither the
+	// caller's context nor the timeout ended first.
+	if err != nil && stopAtLimit && stdout.hasExceeded() && ctx.Err() == nil && errors.Is(runCtx.Err(), context.Canceled) {
+		return result, &LimitError{Stream: "stdout", Limit: limit}
+	}
 	// A limit describes only a command that completed successfully. Process
 	// failure and timeout remain authoritative even when captured output also
 	// reached its bound.
@@ -521,6 +540,8 @@ type limitedBuffer struct {
 	buf      bytes.Buffer
 	limit    int64
 	exceeded bool
+	// exceededHook, when set, runs once when the output first passes limit.
+	exceededHook func()
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
@@ -531,16 +552,30 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	}
 	remaining := b.limit - int64(b.buf.Len())
 	if remaining <= 0 {
-		b.exceeded = true
+		b.markExceeded()
 		return len(p), nil
 	}
 	if int64(len(p)) > remaining {
 		_, _ = b.buf.Write(p[:remaining])
-		b.exceeded = true
+		b.markExceeded()
 		return len(p), nil
 	}
 	_, _ = b.buf.Write(p)
 	return len(p), nil
+}
+
+// markExceeded records the overflow. The caller holds b.mu.
+func (b *limitedBuffer) markExceeded() {
+	b.exceeded = true
+	if b.exceededHook != nil {
+		b.exceededHook()
+	}
+}
+
+func (b *limitedBuffer) hasExceeded() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.exceeded
 }
 
 func (b *limitedBuffer) Bytes() []byte {

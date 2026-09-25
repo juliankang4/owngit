@@ -194,6 +194,7 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 		return DeleteResult{}, fmt.Errorf("%w: %v", ErrDeleteIncomplete, err)
 	}
 	m.snapshots.drop(deletion.RepositoryID)
+	m.objects.drop(deletion.RepositoryID)
 	if deletion.Root != root {
 		return incomplete(fmt.Errorf("the repository folder changed from %s since the deletion began; its directory is left in place", deletion.Root))
 	}

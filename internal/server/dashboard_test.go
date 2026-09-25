@@ -129,12 +129,16 @@ func TestDashboardRendersRealEscapedGitDataAndRetainedHistory(t *testing.T) {
 	apiRunGit(t, work, "add", ".")
 	apiRunGit(t, work, "commit", "-m", "replacement")
 	apiRunGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
+	// These pushes bypass OwnGit, which sees refs changed outside it after
+	// its next write; a push through OwnGit is such a write.
+	wroteRefs(app, "real-project")
 	body, status = dashboardGET(t, client, server.URL+"/repositories/real-project/commits/"+oid)
 	if status != http.StatusOK || !strings.Contains(body, "Showing a specific revision, not a branch") || strings.Contains(body, "ref=refs%2Fheads%2Fmain") {
 		t.Fatalf("retained activity commit was not shown detached from current main: status=%d", status)
 	}
 
 	apiRunGit(t, work, "push", "origin", ":refs/heads/main")
+	wroteRefs(app, "real-project")
 	body, status = dashboardGET(t, client, server.URL+"/repositories/real-project")
 	if status != http.StatusOK || !strings.Contains(body, shortOID(oid)) || !strings.Contains(body, "default branch no longer exists") {
 		t.Fatalf("deleted default branch page status=%d did not show retained history and missing default", status)
