@@ -50,7 +50,15 @@ func TestGlobalHelpFlagsPrintUsageAndSucceed(t *testing.T) {
 }
 
 func captureStdout(handle func() error) (string, error) {
-	original := os.Stdout
+	return captureStream(&os.Stdout, handle)
+}
+
+func captureStderr(handle func() error) (string, error) {
+	return captureStream(&os.Stderr, handle)
+}
+
+func captureStream(stream **os.File, handle func() error) (string, error) {
+	original := *stream
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		return "", err
@@ -64,9 +72,9 @@ func captureStdout(handle func() error) (string, error) {
 		content, readErr := io.ReadAll(reader)
 		readDone <- readResult{content: content, err: readErr}
 	}()
-	os.Stdout = writer
+	*stream = writer
 	runErr := handle()
-	os.Stdout = original
+	*stream = original
 	writeCloseErr := writer.Close()
 	captured := <-readDone
 	readCloseErr := reader.Close()

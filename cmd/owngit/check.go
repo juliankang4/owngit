@@ -36,6 +36,7 @@ func (exit *checkExit) Unwrap() error { return exit.err }
 
 func checkCommand(arguments []string) error {
 	if len(arguments) == 0 {
+		printCheckUsage(os.Stderr)
 		return cliProblem("invalid_arguments", "check requires task, cycle, run, status, log, or config.")
 	}
 	if isHelpArgument(arguments[0]) {
@@ -61,8 +62,13 @@ func checkCommand(arguments []string) error {
 }
 
 func checkTaskCommand(arguments []string) error {
-	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
-		fmt.Fprintln(os.Stdout, "Usage: owngit check task new --server URL --repository ID --credential-file PATH [--title TITLE]")
+	const usage = "Usage: owngit check task new --server URL --repository ID --credential-file PATH [--title TITLE]"
+	if len(arguments) == 0 {
+		fmt.Fprintln(os.Stderr, usage)
+		return cliProblem("invalid_arguments", "check task requires new.")
+	}
+	if isHelpArgument(arguments[0]) {
+		fmt.Fprintln(os.Stdout, usage)
 		return nil
 	}
 	if arguments[0] != "new" {
@@ -89,9 +95,16 @@ func checkTaskCommand(arguments []string) error {
 // reserved before an agent is asked to correct, counted once whether the
 // following check succeeds or fails, and reused by retries inside the round.
 func checkCycleCommand(arguments []string) error {
-	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
-		fmt.Fprintln(os.Stdout, "Usage: owngit check cycle <reserve|list> --task ID --server URL --repository ID --credential-file PATH")
-		fmt.Fprintln(os.Stdout, "A reserved round is consumed once. The initial check and manual reruns consume none.")
+	usage := func(writer io.Writer) {
+		fmt.Fprintln(writer, "Usage: owngit check cycle <reserve|list> --task ID --server URL --repository ID --credential-file PATH")
+		fmt.Fprintln(writer, "A reserved round is consumed once. The initial check and manual reruns consume none.")
+	}
+	if len(arguments) == 0 {
+		usage(os.Stderr)
+		return cliProblem("invalid_arguments", "check cycle requires reserve or list.")
+	}
+	if isHelpArgument(arguments[0]) {
+		usage(os.Stdout)
 		return nil
 	}
 	switch arguments[0] {
@@ -193,8 +206,13 @@ func checkLog(arguments []string) error {
 }
 
 func checkConfigCommand(arguments []string) error {
-	if len(arguments) == 0 || isHelpArgument(arguments[0]) {
-		fmt.Fprintln(os.Stdout, "Usage: owngit check config show --server URL --repository ID --credential-file PATH")
+	const usage = "Usage: owngit check config show --server URL --repository ID --credential-file PATH"
+	if len(arguments) == 0 {
+		fmt.Fprintln(os.Stderr, usage)
+		return cliProblem("invalid_arguments", "check config requires show.")
+	}
+	if isHelpArgument(arguments[0]) {
+		fmt.Fprintln(os.Stdout, usage)
 		return nil
 	}
 	if arguments[0] != "show" {

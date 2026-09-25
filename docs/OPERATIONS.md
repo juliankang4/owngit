@@ -192,9 +192,9 @@ Every import command takes the same `--server`, `--accept-insecure-http`, and `-
 - `--accept-insecure-http` consents to reaching OwnGit over plain HTTP for that command only. The import source itself must use HTTPS.
 - Output shows the credential type and whether one is stored, never the token, password, or CA.
 - `import add` creates a new repository. For a repository that already exists it refuses with `repository_taken` and changes nothing; use `import refresh` to update it from its stored source.
-- `import add` and `import refresh` wait for the whole run, up to about 62 minutes by default. When a finished run kept local refs that differ from the source, the command lists them and exits with status 3 instead of 0; other failures exit with 1. `import status` lists the last and active runs and every observed branch or tag that does not match the source, with its state.
+- `import add` and `import refresh` wait for the whole run, up to about 62 minutes by default. When a finished run kept local refs that differ from the source, the command lists them and exits with status 3 instead of 0. A run cancelled before it finished, for example with `import cancel`, exits with status 130, as a cancelled `check run` does; other failures exit with 1. `import status` lists the last and active runs and every observed branch or tag that does not match the source, with its state.
 - If the first import of a new repository fails, OwnGit removes the source and credentials it stored for that name, and the command result still reports the failed run. If OwnGit stopped during that import, for example after a crash, it removes them at its next start. A retry uses only what you supply. Creating a repository with that name also removes leftover import settings, or is refused while an earlier import for the name is still running or needs recovery. `import credentials NAME --clear` removes them for a name that has no repository.
-- A schedule interval is between 60 seconds and 7 days. Scheduled refreshes run only while `owngit serve` is running.
+- A schedule interval is between 60 seconds and 7 days. Another interval is refused with `invalid_schedule`. Scheduled refreshes run only while `owngit serve` is running.
 
 ### Source connections
 

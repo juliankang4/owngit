@@ -25,6 +25,7 @@ type prRemoteFlags struct {
 
 func prCommand(arguments []string) error {
 	if len(arguments) == 0 {
+		printPRUsage(os.Stderr)
 		return cliProblem("invalid_arguments", "pr requires create, list, show, review, or merge.")
 	}
 	if isHelpArgument(arguments[0]) {
@@ -101,6 +102,7 @@ func prShow(arguments []string) error {
 
 func prReview(arguments []string) error {
 	if len(arguments) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: owngit pr review <request|submit|skip> [options]")
 		return cliProblem("invalid_arguments", "pr review requires request, submit, or skip.")
 	}
 	if isHelpArgument(arguments[0]) {

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"owngit/internal/apiclient"
 )
 
 // helpCommands lists every command path. Leaves parse flags and must print
@@ -83,13 +86,67 @@ func TestFlagErrorsStillFail(t *testing.T) {
 // A command group run without an action is an error, like any other missing
 // argument, and the group help names every action it accepts.
 func TestCommandGroupsWithoutAnActionFail(t *testing.T) {
-	for _, group := range []string{"pr", "check", "helper-credential", "check-policy", "check-job", "runner-credential", "import"} {
-		if _, err := captureStdout(func() error { return run([]string{group}) }); err == nil {
+	for _, command := range helpCommands {
+		if command.leaf {
+			continue
+		}
+		group := command.path
+		usage, err := captureStderr(func() error {
+			_, err := captureStdout(func() error { return run(strings.Fields(group)) })
+			return err
+		})
+		if err == nil {
 			t.Errorf("owngit %s without an action succeeded", group)
+		}
+		if !strings.HasPrefix(usage, "Usage: owngit "+group+" ") {
+			t.Errorf("owngit %s without an action printed %q on stderr, want its usage", group, usage)
 		}
 	}
 	output, err := captureStdout(func() error { return run([]string{"check", "--help"}) })
 	if err != nil || !strings.Contains(output, "cycle list") {
 		t.Errorf("owngit check --help=%q err=%v, want cycle list", output, err)
+	}
+}
+
+// An action's help lists only the options that action accepts, and an option
+// of another action is refused instead of being silently ignored.
+func TestActionHelpListsOnlyItsOwnOptions(t *testing.T) {
+	for _, test := range []struct {
+		path      string
+		want, not []string
+	}{
+		{"check-policy show", nil, []string{"--policy-file"}},
+		{"check-policy set", []string{"--policy-file"}, nil},
+		{"check-job list", nil, []string{"--job"}},
+		{"check-job show", []string{"--job"}, nil},
+		{"runner-credential list", []string{"--ca-file"}, []string{"--label", "--token-file", "--creation-id", "--credential"}},
+		{"runner-credential revoke", []string{"--credential"}, []string{"--label", "--token-file", "--creation-id"}},
+		{"runner-credential issue", []string{"--label", "--token-file", "--creation-id"}, []string{"--credential"}},
+		{"import history", []string{"--limit N", "--cursor ROW"}, []string{" int"}},
+	} {
+		output, err := captureStdout(func() error { return run(append(strings.Fields(test.path), "--help")) })
+		if err != nil {
+			t.Fatalf("owngit %s --help: %v", test.path, err)
+		}
+		for _, want := range test.want {
+			if !strings.Contains(output, "  "+want) {
+				t.Errorf("owngit %s --help lacks %q: %q", test.path, want, output)
+			}
+		}
+		for _, not := range test.not {
+			if strings.Contains(output, not) {
+				t.Errorf("owngit %s --help lists %q: %q", test.path, not, output)
+			}
+		}
+	}
+	var usage strings.Builder
+	printImportUsage(&usage)
+	if !strings.Contains(usage.String(), "[--limit N] [--cursor ROW]") {
+		t.Errorf("import usage does not match the history options: %q", usage.String())
+	}
+	_, err := captureStdout(func() error { return run([]string{"check-policy", "show", "--policy-file", "policy.json"}) })
+	var problem *apiclient.Error
+	if !errors.As(err, &problem) || problem.Code != "invalid_arguments" {
+		t.Errorf("check-policy show --policy-file err=%v, want invalid_arguments", err)
 	}
 }

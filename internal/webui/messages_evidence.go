@@ -710,9 +710,9 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgAttemptOutput:   {en: "Output", ko: "출력"},
 	MsgAttemptNoOutput: {en: "No output was kept for this command.", ko: "이 명령의 출력은 보관되지 않았습니다."},
 
-	MsgConfigTitle:   {en: "Configured checks", ko: "설정된 체크"},
+	MsgConfigTitle:   {en: "Latest recorded check configuration", ko: "가장 최근에 기록된 체크 구성"},
 	MsgConfigVersion: {en: "Version", ko: "버전"},
-	MsgConfigNone:    {en: "No checks are configured yet.", ko: "아직 설정된 체크가 없습니다."},
+	MsgConfigNone:    {en: "No check configuration has been recorded yet.", ko: "아직 기록된 체크 구성이 없습니다."},
 	MsgConfigNoneHelp: {
 		en: "Until then, nothing here reports on this repository's code.",
 		ko: "그때까지는 이 저장소 코드에 대해 보고할 내용이 없습니다.",

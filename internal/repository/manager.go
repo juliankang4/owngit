@@ -27,6 +27,9 @@ var (
 	ErrInvalidDescription = errors.New("invalid repository description")
 	ErrNameTaken          = errors.New("repository name is already in use")
 	ErrUnsupportedFormat  = errors.New("unsupported repository object format")
+	// ErrImportInProgress wraps ErrNameTaken when no repository has the name
+	// yet but an import for it is running or still needs recovery.
+	ErrImportInProgress = fmt.Errorf("%w: an import for this name is still running or needs recovery; try again after it finishes, or restart OwnGit if no import is running", ErrNameTaken)
 )
 
 type Manager struct {
@@ -147,7 +150,7 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	// earlier import that never created it.
 	if options.forgetImport {
 		if err := m.Store.ForgetUnpublishedImport(ctx, id); errors.Is(err, state.ErrImportNotForgettable) {
-			return state.Repository{}, fmt.Errorf("%w: an earlier import with this name is still running or needs recovery; restart OwnGit or try again later", ErrNameTaken)
+			return state.Repository{}, ErrImportInProgress
 		} else if err != nil {
 			return state.Repository{}, fmt.Errorf("clear earlier import settings: %w", err)
 		}

@@ -27,6 +27,10 @@ const (
 	maximumObservedRefs     = 64
 	maximumObservedPRs      = 64
 	maximumAutomaticLogSize = 256 << 10
+
+	// repositoryBusyWait bounds how long a job waits for its exact source
+	// while pushes or other repository writes hold the repository.
+	repositoryBusyWait = 10 * time.Minute
 )
 
 var ErrRuntimeUnavailable = errors.New("configured check runtime is unavailable")
@@ -435,27 +439,7 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 	}
 	defer stopWatcher()
 
-	_, workspace, err := coordinator.workspace.PrepareJob(job.ID)
-	var materialization *checksource.Result
-	if err == nil {
-		var pinned *repository.PinnedRepository
-		pinned, err = coordinator.Repositories.PinRepository(jobContext, job.RepositoryID, job.SourceOID, job.SourceOID)
-		if err == nil {
-			err = func() error {
-				var materializeErr error
-				materialization, materializeErr = checksource.MaterializePinned(jobContext, pinned, repository.PinnedHead, workspace, checksource.Options{
-					Limits: checksource.Limits{
-						MaxEntries: job.Execution.Source.MaxEntries, MaxFileBytes: job.Execution.Source.MaxFileBytes,
-						MaxTotalBytes: job.Execution.Source.MaxTotalBytes, MaxPathDepth: job.Execution.Source.MaxPathDepth,
-						MaxPathBytes: job.Execution.Source.MaxPathBytes, MaxNameBytes: job.Execution.Source.MaxNameBytes,
-						MetadataLimit: job.Execution.Source.MetadataLimit,
-					},
-					Timeout: time.Duration(job.Limits.TimeoutMS) * time.Millisecond,
-				})
-				return materializeErr
-			}()
-		}
-	}
+	workspace, materialization, err := coordinator.materialize(jobContext, job)
 	if err != nil {
 		_ = coordinator.workspace.RemoveJob(job.ID)
 		status := state.CheckJobUnavailable
@@ -570,6 +554,40 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 	completion.Log, completion.LogTruncated = buildLog(results)
 	_, _, completeErr := coordinator.Store.CompleteCheckJobAttempt(context.WithoutCancel(parent), completion, authority, time.Now().UTC())
 	return completeErr
+}
+
+// materialize copies the job's exact source into a new private workspace. A
+// push or another repository write makes pinned reads refuse for a moment; the
+// copy then starts again in a fresh workspace instead of ending the job.
+func (coordinator *Coordinator) materialize(ctx context.Context, job state.CheckJob) (string, *checksource.Result, error) {
+	var workspace string
+	var materialization *checksource.Result
+	err := checksource.RetryWhileRepositoryBusy(ctx, repositoryBusyWait, func() error {
+		if workspace != "" {
+			if err := coordinator.workspace.RemoveJob(job.ID); err != nil {
+				return err
+			}
+		}
+		var err error
+		if _, workspace, err = coordinator.workspace.PrepareJob(job.ID); err != nil {
+			return err
+		}
+		pinned, err := coordinator.Repositories.PinRepository(ctx, job.RepositoryID, job.SourceOID, job.SourceOID)
+		if err != nil {
+			return err
+		}
+		materialization, err = checksource.MaterializePinned(ctx, pinned, repository.PinnedHead, workspace, checksource.Options{
+			Limits: checksource.Limits{
+				MaxEntries: job.Execution.Source.MaxEntries, MaxFileBytes: job.Execution.Source.MaxFileBytes,
+				MaxTotalBytes: job.Execution.Source.MaxTotalBytes, MaxPathDepth: job.Execution.Source.MaxPathDepth,
+				MaxPathBytes: job.Execution.Source.MaxPathBytes, MaxNameBytes: job.Execution.Source.MaxNameBytes,
+				MetadataLimit: job.Execution.Source.MetadataLimit,
+			},
+			Timeout: time.Duration(job.Limits.TimeoutMS) * time.Millisecond,
+		})
+		return err
+	})
+	return workspace, materialization, err
 }
 
 func (coordinator *Coordinator) watchLease(ctx context.Context, cancel context.CancelFunc, job state.CheckJob, authority state.CheckJobCompletionAuthority, done chan<- error) {

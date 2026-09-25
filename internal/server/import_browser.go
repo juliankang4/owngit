@@ -167,7 +167,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 	case webui.ActionImportSchedule:
 		interval, parseErr := time.ParseDuration(postValue(request, "interval"))
 		if parseErr != nil {
-			err = parseErr
+			err = &importsync.Problem{Code: importsync.CodeInvalidSchedule, Message: "schedule interval is not a duration", Cause: parseErr}
 		} else {
 			_, err = app.Imports.SetSchedule(request.Context(), stored.ID, postValue(request, "enabled") == "1", interval)
 		}

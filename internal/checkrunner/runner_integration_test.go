@@ -52,6 +52,28 @@ func TestExternalRunnerClaimsExactSourceExecutesAndCompletes(t *testing.T) {
 	}
 }
 
+// A push holds the repository while the runner fetches the job's source. The
+// server used to refuse the source at once and the runner reported the job
+// unavailable without running it; the server now waits for the push.
+func TestExternalRunnerWaitsForAPushThatHoldsTheRepository(t *testing.T) {
+	fixture := newRunnerIntegrationFixture(t, "echo runner-ok")
+	httpServer, origin := fixture.startHTTPServer(nil)
+	defer httpServer.Close()
+	lock := fixture.manager.Locks.For(fixture.repository.ID)
+	lock.Lock()
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		time.Sleep(300 * time.Millisecond)
+		lock.Unlock()
+	}()
+	noErr(t, fixture.runner(fixture.client(origin)).Run(fixture.ctx))
+	<-released
+	if completed := fixture.readJob(); completed.Status != state.CheckJobPassed {
+		t.Fatalf("job after a concurrent push: %+v", completed)
+	}
+}
+
 // A byte cut through Korean output, plus a non-UTF-8 byte, used to grow past
 // the server's excerpt bound after JSON encoding. The server refused the
 // completion and the runner stopped with the job left started.

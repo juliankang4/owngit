@@ -3,11 +3,13 @@ package checksource
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
@@ -340,5 +342,40 @@ func TestPinnedSourceRejectsAnInvalidSide(t *testing.T) {
 	}
 	if _, err := NewPinnedSource(nil, repository.PinnedHead); err == nil {
 		t.Fatal("a missing pinned repository was accepted")
+	}
+}
+
+// Waiting for a busy repository ends when the caller's context ends or the
+// bound elapses, and stops at the first answer that is not busy.
+func TestRetryWhileRepositoryBusyIsBounded(t *testing.T) {
+	calls := 0
+	err := RetryWhileRepositoryBusy(context.Background(), time.Minute, func() error {
+		calls++
+		if calls < 3 {
+			return fmt.Errorf("read: %w", repository.ErrPinnedRepositoryBusy)
+		}
+		return nil
+	})
+	if err != nil || calls != 3 {
+		t.Fatalf("retry until free: calls=%d err=%v", calls, err)
+	}
+
+	other := errors.New("not busy")
+	calls = 0
+	if err := RetryWhileRepositoryBusy(context.Background(), time.Minute, func() error { calls++; return other }); err != other || calls != 1 {
+		t.Fatalf("another failure was retried: calls=%d err=%v", calls, err)
+	}
+
+	busy := func() error { return repository.ErrPinnedRepositoryBusy }
+	started := time.Now()
+	if err := RetryWhileRepositoryBusy(context.Background(), 100*time.Millisecond, busy); !errors.Is(err, repository.ErrPinnedRepositoryBusy) || time.Since(started) > 5*time.Second {
+		t.Fatalf("bound: err=%v after %s", err, time.Since(started))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started = time.Now()
+	if err := RetryWhileRepositoryBusy(ctx, time.Hour, busy); !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 5*time.Second {
+		t.Fatalf("cancellation: err=%v after %s", err, time.Since(started))
 	}
 }

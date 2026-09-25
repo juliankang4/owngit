@@ -39,7 +39,11 @@ func checkPolicyCommand(arguments []string) error {
 	}
 	flags := newCheckFlagSet("check-policy " + action)
 	admin := addHelperAdminFlags(flags)
-	policyFile := flags.String("policy-file", "", "JSON file containing the complete configured-check policy")
+	// Each action accepts, and its help lists, only the options it uses.
+	policyFile := new(string)
+	if action == "set" {
+		flags.StringVar(policyFile, "policy-file", "", "JSON file containing the complete configured-check policy")
+	}
 	if err := parseCheckFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -91,7 +95,10 @@ func checkJobCommand(arguments []string) error {
 	}
 	flags := newCheckFlagSet("check-job " + action)
 	admin := addHelperAdminFlags(flags)
-	jobID := flags.String("job", "", "configured-check job identifier")
+	jobID := new(string)
+	if action != "list" {
+		flags.StringVar(jobID, "job", "", "configured-check job identifier")
+	}
 	if err := parseCheckFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -140,11 +147,16 @@ func runnerCredentialCommand(arguments []string) error {
 	}
 	flags := newCheckFlagSet("runner-credential " + action)
 	admin := addHelperAdminFlags(flags)
-	label := flags.String("label", "", "runner credential label")
-	creationID := flags.String("creation-id", "", "idempotent credential creation identifier")
-	tokenFile := flags.String("token-file", "", "new owner-only token file")
+	label, creationID, tokenFile, credentialID := new(string), new(string), new(string), new(string)
+	switch action {
+	case "issue":
+		flags.StringVar(label, "label", "", "runner credential label")
+		flags.StringVar(creationID, "creation-id", "", "idempotent credential creation identifier")
+		flags.StringVar(tokenFile, "token-file", "", "new owner-only token file")
+	case "revoke":
+		flags.StringVar(credentialID, "credential", "", "runner credential identifier")
+	}
 	caFile := flags.String("ca-file", "", "PEM certificate authority file for private HTTPS")
-	credentialID := flags.String("credential", "", "runner credential identifier")
 	if err := parseCheckFlags(flags, arguments); err != nil {
 		return err
 	}

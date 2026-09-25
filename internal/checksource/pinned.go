@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"owngit/internal/repository"
 )
@@ -70,6 +71,34 @@ func (s *PinnedSource) ListTree(ctx context.Context, metadataLimit int64) ([]Ent
 
 func (s *PinnedSource) ReadBlob(ctx context.Context, oid string, size int64) ([]byte, error) {
 	return s.tree.ReadBlobObject(ctx, oid, size)
+}
+
+// RetryWhileRepositoryBusy runs operation again while it fails with
+// repository.ErrPinnedRepositoryBusy. Pinned reads refuse instead of waiting
+// behind a repository writer such as a push, so a caller that must not lose a
+// check to a brief write waits here, up to limit and while ctx lasts. The
+// operation must start from scratch each time it runs.
+func RetryWhileRepositoryBusy(ctx context.Context, limit time.Duration, operation func() error) error {
+	deadline := time.Now().Add(limit)
+	delay := 20 * time.Millisecond
+	for {
+		err := operation()
+		if !errors.Is(err, repository.ErrPinnedRepositoryBusy) {
+			return err
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("the repository stayed busy with other writes for %s: %w", limit, err)
+		}
+		timer := time.NewTimer(min(delay, remaining))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		delay = min(2*delay, 500*time.Millisecond)
+	}
 }
 
 // MaterializePinned materializes one pinned commit side into a new directory.

@@ -1257,8 +1257,11 @@ func (s *Service) SetSchedule(ctx context.Context, repositoryID string, enabled 
 		return state.ImportSchedule{}, newProblem(CodeRepositoryMissing, "repository destination does not exist", err)
 	}
 	schedule, err := s.Store.SetImportSchedule(ctx, repositoryID, enabled, interval, s.clock())
+	if errors.Is(err, state.ErrInvalidImportSchedule) {
+		return state.ImportSchedule{}, newProblem(CodeInvalidSchedule, err.Error(), err)
+	}
 	if err != nil {
-		return state.ImportSchedule{}, newProblem(CodeInvalidSource, err.Error(), err)
+		return state.ImportSchedule{}, newProblem(CodeStateUnavailable, "import schedule could not be saved", err)
 	}
 	return schedule, nil
 }

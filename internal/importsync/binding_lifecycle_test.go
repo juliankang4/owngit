@@ -274,7 +274,7 @@ func TestRepositoryCreationDoesNotInheritAnImportBinding(t *testing.T) {
 		AuthorityRevision: source.AuthorityRevision, Kind: state.ImportKindInitial, Status: state.ImportRunFetching,
 		StartedAt: f.now, CreatedAt: f.now,
 	}))
-	if _, err := f.manager.Create(ctx, "running", ""); !errors.Is(err, repository.ErrNameTaken) {
+	if _, err := f.manager.Create(ctx, "running", ""); !errors.Is(err, repository.ErrImportInProgress) || !errors.Is(err, repository.ErrNameTaken) {
 		t.Fatalf("creation beside a running import err=%v", err)
 	}
 	if _, exists, err := f.store.LoadImportCredentials(ctx, "running"); err != nil || !exists {

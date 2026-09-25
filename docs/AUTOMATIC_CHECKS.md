@@ -161,7 +161,10 @@ job that already finished changes nothing, records no cancellation, and fails
 with `check_job_finished`.
 
 A failure before start is recorded as `unavailable`, `error`, or
-`interrupted`. After the commands run, OwnGit checks every tracked file again.
+`interrupted`. A push or another write that holds the repository while a job
+copies its source only delays the job: it waits up to 10 minutes for a check
+that OwnGit runs, and up to 20 seconds per source request from a runner,
+before it is recorded as `unavailable`. After the commands run, OwnGit checks every tracked file again.
 Generated untracked files are fine, but a changed, removed, or mode-changed
 tracked file prevents a clean result. If OwnGit cannot confirm that the job's
 processes or container were cleaned up, the job does not pass.

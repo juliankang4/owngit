@@ -130,6 +130,51 @@ func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
 	}
 }
 
+// A refresh names no source. For a name without a repository it used to start
+// a new import with an empty URL and fail as invalid_source.
+func TestImportRefreshWithoutARepositoryIsNotFound(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	server := serve(t, fixture.app.Handler())
+	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/missing/import/run", map[string]any{}, "admin-password", "", "")
+	if response.StatusCode != http.StatusNotFound || importAPICode(t, response) != "repository_not_found" {
+		t.Fatalf("refresh without a repository status=%d", response.StatusCode)
+	}
+	runs, _, err := fixture.app.Imports.History(context.Background(), "missing", 10)
+	if err != nil || len(runs) != 0 {
+		t.Fatalf("a refresh without a repository recorded runs=%d err=%v", len(runs), err)
+	}
+	// An add that names no source still reports the missing source.
+	added := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/missing/import/run", map[string]any{"name": "missing"}, "admin-password", "", "")
+	if added.StatusCode != http.StatusUnprocessableEntity || importAPICode(t, added) != importsync.CodeInvalidSource {
+		t.Fatalf("add without a URL status=%d", added.StatusCode)
+	}
+}
+
+// A schedule interval that is not a duration or is out of range is a schedule
+// problem. It used to be reported as invalid_source although the source was
+// fine.
+func TestImportScheduleIntervalErrorsNameTheSchedule(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	server := serve(t, fixture.app.Handler())
+	base := server.URL + "/api/v1/repositories/fresh/import"
+	created := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{
+		"name": "fresh", "url": "https://example.invalid/team/fresh.git", "mode": "standalone",
+	}, "admin-password", "", "")
+	if created.StatusCode != http.StatusOK {
+		t.Fatalf("initial import status=%d body=%s", created.StatusCode, importAPIBody(t, created))
+	}
+	for _, interval := range []string{"soon", "10s", "999h"} {
+		response := importAPIRequest(t, http.MethodPut, base+"/schedule", map[string]any{"enabled": true, "interval": interval}, "admin-password", "", "")
+		if response.StatusCode != http.StatusUnprocessableEntity || importAPICode(t, response) != importsync.CodeInvalidSchedule {
+			t.Fatalf("interval %s status=%d", interval, response.StatusCode)
+		}
+	}
+	saved := importAPIRequest(t, http.MethodPut, base+"/schedule", map[string]any{"enabled": true, "interval": "1h"}, "admin-password", "", "")
+	if saved.StatusCode != http.StatusOK {
+		t.Fatalf("valid schedule status=%d body=%s", saved.StatusCode, importAPIBody(t, saved))
+	}
+}
+
 func TestImportRunRouteOutlivesOrdinaryDeadline(t *testing.T) {
 	fixture := newImportAPIFixture(t)
 	fixture.app.HTTPTimeout = 500 * time.Millisecond
@@ -239,6 +284,34 @@ func TestReservedRepositoryNamesStayOnForms(t *testing.T) {
 	}, server.URL)
 	if imported.status != http.StatusUnprocessableEntity || !strings.Contains(imported.body, reserved) {
 		t.Fatalf("import form did not explain the reserved name: status=%d", imported.status)
+	}
+}
+
+// Creating a repository while a first import of that name runs is refused. The
+// form used to say that the repository already exists, although none did.
+func TestRepositoryCreationBesideARunningImportSaysSo(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	source, err := fixture.store.ConfigureImportSource(ctx, state.ImportSourceInput{
+		RepositoryID: "arriving", URL: "https://example.invalid/team/arriving.git", Mode: "standalone", Now: now,
+	})
+	noErr(t, err)
+	noErr(t, fixture.store.BeginImportRun(ctx, state.ImportRun{
+		ID: strings.Repeat("7", 32), RepositoryID: "arriving", SourceGeneration: source.SourceGeneration,
+		AuthorityRevision: source.AuthorityRevision, Kind: state.ImportKindInitial, Status: state.ImportRunFetching,
+		StartedAt: now, CreatedAt: now,
+	}))
+	server := serve(t, fixture.app.Handler())
+	client, jar := newBrowserClient(t)
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "arriving-admin")
+	created := browserForm(t, client, server.URL+"/repositories", url.Values{"csrf": {csrf}, "name": {"arriving"}}, server.URL)
+	if created.status != http.StatusUnprocessableEntity || !strings.Contains(created.body, "An import for that name is in progress") ||
+		strings.Contains(created.body, "already exists") {
+		t.Fatalf("create beside a running import: status=%d", created.status)
+	}
+	if _, exists, err := fixture.store.ImportSource(ctx, "arriving"); err != nil || !exists {
+		t.Fatalf("the running import lost its source exists=%v err=%v", exists, err)
 	}
 }
 

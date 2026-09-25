@@ -647,7 +647,7 @@ func TestEveryMessageCodeUsedByPagesExists(t *testing.T) {
 	codes := []MessageCode{
 		MsgSetupLinkExpired, MsgSetupReissueHint, MsgPrereqGitMissing,
 		MsgLoginFailed, MsgAdminFailed, MsgSettingsSaved,
-		MsgRepoNameTaken, MsgRepoUnreadable, MsgCodePathMissing,
+		MsgRepoNameTaken, MsgRepoNameBusy, MsgRepoUnreadable, MsgCodePathMissing,
 		MsgCommitDiffMerge, MsgActivityLimit, MsgErrCSRF,
 	}
 	for _, code := range codes {

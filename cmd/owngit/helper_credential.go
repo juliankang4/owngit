@@ -17,6 +17,7 @@ import (
 
 func helperCredentialCommand(arguments []string) error {
 	if len(arguments) == 0 {
+		printHelperCredentialUsage(os.Stderr)
 		return cliProblem("invalid_arguments", "helper-credential requires create, list, or revoke.")
 	}
 	if isHelpArgument(arguments[0]) {

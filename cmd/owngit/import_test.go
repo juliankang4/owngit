@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -284,6 +285,43 @@ func TestImportResolveAcceptsTheDestination(t *testing.T) {
 	stored, _, err := fixture.store.ImportIntent(ctx, intent.ID)
 	if err != nil || stored.Status != state.ImportIntentOwnerResolved {
 		t.Fatalf("resolved intent status=%s err=%v", stored.Status, err)
+	}
+}
+
+// A cancelled run used to print its outcome and exit 0, as if it had finished.
+func TestCancelledImportRunExitsWithTheCancelledStatus(t *testing.T) {
+	output, err := captureStdout(func() error {
+		return printImportRun("project", []byte(`{"ok":false,"code":"cancelled","run":{"status":"cancelled"}}`))
+	})
+	var exit *checkExit
+	if !errors.As(err, &exit) || exit.code != importCancelledExit || output != "Import for project was cancelled.\n" {
+		t.Fatalf("cancelled run output=%q err=%v", output, err)
+	}
+}
+
+// A credential file that cannot be used is reported as a structured error that
+// names the problem, like every other import error, instead of a log line.
+func TestUnusableImportCredentialFileIsAStructuredError(t *testing.T) {
+	directory := t.TempDir()
+	missing := filepath.Join(directory, "missing-token")
+	_, _, _, _, err := readImportCredential(missing, "")
+	var problem *apiclient.Error
+	if !errors.As(err, &problem) || problem.Code != "invalid_credential_file" || !strings.Contains(problem.Message, "missing-token") {
+		t.Fatalf("missing credential file err=%v", err)
+	}
+	var written strings.Builder
+	if !writeStructuredCommandError(&written, err) || !strings.Contains(written.String(), `"code":"invalid_credential_file"`) {
+		t.Fatalf("missing credential file printed %q", written.String())
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	shared := filepath.Join(directory, "shared-token")
+	noErr(t, os.WriteFile(shared, []byte("secret-value\n"), 0o644))
+	noErr(t, os.Chmod(shared, 0o644))
+	_, _, _, _, err = readImportCredential(shared, "")
+	if !errors.As(err, &problem) || problem.Code != "invalid_credential_file" || strings.Contains(problem.Message, "secret-value") {
+		t.Fatalf("shared credential file err=%v", err)
 	}
 }
 

@@ -229,6 +229,7 @@ const (
 	MsgRepoNameInvalid  MessageCode = "repo.new.name_invalid"
 	MsgRepoNameReserved MessageCode = "repo.new.name_reserved"
 	MsgRepoNameTaken    MessageCode = "repo.new.name_taken"
+	MsgRepoNameBusy     MessageCode = "repo.new.name_busy"
 	MsgRepoNameLong     MessageCode = "repo.new.name_long"
 	MsgRepoCreateFail   MessageCode = "repo.new.failed"
 	MsgRepoCreated      MessageCode = "repo.new.created"
@@ -938,6 +939,10 @@ var catalog = map[MessageCode]message{
 	MsgRepoNameTaken: {
 		en: "A repository with that name already exists.",
 		ko: "같은 이름의 저장소가 이미 있습니다.",
+	},
+	MsgRepoNameBusy: {
+		en: "An import for that name is in progress, so no repository was created. Try again after the import finishes, or restart OwnGit if no import is running.",
+		ko: "그 이름으로 가져오기가 진행 중이라 저장소를 만들지 않았습니다. 가져오기가 끝난 뒤 다시 시도하세요. 진행 중인 가져오기가 없다면 OwnGit을 다시 시작하세요.",
 	},
 	MsgRepoNameLong: {
 		en: "That name is too long.",

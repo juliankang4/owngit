@@ -1521,10 +1521,14 @@ func scanImportStaging(scanner rowScanner) (ImportStaging, error) {
 	return record, nil
 }
 
+// ErrInvalidImportSchedule reports a schedule interval outside the supported
+// range.
+var ErrInvalidImportSchedule = errors.New("import schedule interval is out of range")
+
 func (s *Store) SetImportSchedule(ctx context.Context, repositoryID string, enabled bool, interval time.Duration, now time.Time) (ImportSchedule, error) {
 	seconds := int64(interval / time.Second)
 	if seconds < maxImportScheduleStart || seconds > maxImportScheduleEnd {
-		return ImportSchedule{}, fmt.Errorf("import schedule interval must be between %ds and %ds", maxImportScheduleStart, maxImportScheduleEnd)
+		return ImportSchedule{}, fmt.Errorf("%w: it must be between %ds and %ds", ErrInvalidImportSchedule, maxImportScheduleStart, maxImportScheduleEnd)
 	}
 	if now.IsZero() {
 		return ImportSchedule{}, errors.New("import schedule time is required")

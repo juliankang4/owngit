@@ -58,7 +58,7 @@ func printImportUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  import add <name> <url> [--mode standalone|coexistence] [--git-only-consent] [--allow-private-network] [--token-file PATH | --basic-file PATH] [--ca-file PATH]")
 	fmt.Fprintln(writer, "  import refresh <name>")
 	fmt.Fprintln(writer, "  import status <name>")
-	fmt.Fprintln(writer, "  import history <name> [--limit N] [--cursor C]")
+	fmt.Fprintln(writer, "  import history <name> [--limit N] [--cursor ROW]")
 	fmt.Fprintln(writer, "  import cancel <name>")
 	fmt.Fprintln(writer, "  import schedule <name> --enable --interval 1h | --disable")
 	fmt.Fprintln(writer, "  import credentials <name> [--token-file PATH | --basic-file PATH] [--ca-file PATH]")
@@ -306,8 +306,8 @@ func importStatus(arguments []string) error {
 func importHistory(arguments []string) error {
 	flags := newCheckFlagSet("import history")
 	remote := addImportFlags(flags)
-	limit := flags.Int("limit", 20, "maximum runs to print")
-	cursor := flags.Int64("cursor", 0, "return runs older than this row id")
+	limit := flags.Int("limit", 20, "print at most `N` runs")
+	cursor := flags.Int64("cursor", 0, "print runs older than this `ROW`, as named by the previous page")
 	if err := parseImportFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -729,11 +729,11 @@ func signalNumber(received os.Signal) int {
 
 func readPrivateImportSecret(path string) (string, error) {
 	if err := state.ValidatePrivateFile(path); err != nil {
-		return "", fmt.Errorf("inspect credential file: %w", err)
+		return "", &apiclient.Error{Code: "invalid_credential_file", Message: "The credential file is unavailable or is not private: " + err.Error(), Cause: err}
 	}
 	content, err := readBoundedFile(path, 1<<20)
 	if err != nil {
-		return "", err
+		return "", &apiclient.Error{Code: "invalid_credential_file", Message: "The credential file could not be read: " + err.Error(), Cause: err}
 	}
 	return strings.TrimRight(string(content), "\r\n"), nil
 }
@@ -741,6 +741,10 @@ func readPrivateImportSecret(path string) (string, error) {
 // importDivergedExit is the exit status of a finished import or refresh that
 // kept at least one local ref that differs from the source.
 const importDivergedExit = 3
+
+// importCancelledExit is the exit status of an import or refresh that was
+// cancelled before it finished, the status check run uses for a cancelled run.
+const importCancelledExit = 130
 
 type importRefView struct {
 	Name  string `json:"name"`
@@ -764,7 +768,7 @@ func printImportRun(name string, content []byte) error {
 	}
 	if response.Code == "cancelled" {
 		fmt.Printf("Import for %s was cancelled.\n", name)
-		return nil
+		return &checkExit{code: importCancelledExit, err: errors.New("the import was cancelled")}
 	}
 	fmt.Printf("Import for %s finished: %s.\n", name, response.Run.Status)
 	if deleted := response.Run.RefsDeletedUpstream; deleted > 0 {

@@ -299,6 +299,8 @@ func ImportErrorCode(class string) MessageCode {
 		return MsgImportErrorLimit
 	case "nothing_to_resolve":
 		return MsgImportErrorNothing
+	case "invalid_schedule":
+		return MsgImportIntervalHelp
 	default:
 		return MsgImportFailed
 	}

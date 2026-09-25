@@ -120,19 +120,26 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 		writeAPIError(writer, http.StatusServiceUnavailable, importsync.CodeStateUnavailable, "The repository destination could not be read.", nil)
 		return
 	}
+	// A request that names a source is a new import. It must not turn into a
+	// refresh of whatever source an existing repository has, and a refresh
+	// must not turn into a new import without a source.
+	addShaped := input.URL != "" || input.Name != "" || input.Mode != "" || input.Description != "" || input.GitOnlyConsent || input.AllowPrivateNetwork
+	credentialsPresent := importCredentialFieldsPresent(input.CredentialForm, input.Username, input.Password, input.Token, input.CAPEM)
 	if exists {
-		// A request that names a source is a new import. It must not turn into
-		// a refresh of whatever source the existing repository has.
-		if input.URL != "" || input.Name != "" || input.Mode != "" || input.Description != "" || input.GitOnlyConsent || input.AllowPrivateNetwork {
+		if addShaped {
 			writeAPIError(writer, http.StatusConflict, importsync.CodeRepositoryTaken, "The repository already exists, so nothing was imported. Use refresh to update it from its stored source, or change the source on the repository's Import tab.", nil)
 			return
 		}
-		if importCredentialFieldsPresent(input.CredentialForm, input.Username, input.Password, input.Token, input.CAPEM) {
+		if credentialsPresent {
 			writeAPIError(writer, http.StatusUnprocessableEntity, importsync.CodeInvalidSource, "Refresh does not accept credentials. Save them with the credentials endpoint first.", nil)
 			return
 		}
 		run, runErr := app.Imports.Refresh(request.Context(), repositoryID, app.importRunLimits())
 		app.writeImportRunResult(writer, request, repositoryID, run, runErr)
+		return
+	}
+	if !addShaped && !credentialsPresent {
+		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist, so there is nothing to refresh. Use import add with a source URL to create it.", nil)
 		return
 	}
 	name := strings.TrimSpace(input.Name)
@@ -144,7 +151,7 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	var credential *importsync.Credentials
-	if importCredentialFieldsPresent(input.CredentialForm, input.Username, input.Password, input.Token, input.CAPEM) {
+	if credentialsPresent {
 		parsed, credErr := importCredentialFromInput(input.CredentialForm, input.Username, input.Password, input.Token, input.CAPEM)
 		if credErr != nil {
 			writeAPIError(writer, http.StatusUnprocessableEntity, importsync.CodeInvalidSource, credErr.Error(), nil)
@@ -298,7 +305,7 @@ func (app *App) handleImportScheduleAPI(writer http.ResponseWriter, request *htt
 		}
 		interval, err := time.ParseDuration(input.Interval)
 		if err != nil || interval <= 0 {
-			writeAPIError(writer, http.StatusUnprocessableEntity, importsync.CodeInvalidSource, "Schedule interval must be a positive duration such as 1h.", nil)
+			writeAPIError(writer, http.StatusUnprocessableEntity, importsync.CodeInvalidSchedule, "Schedule interval must be a positive duration such as 1h.", nil)
 			return
 		}
 		schedule, err := app.Imports.SetSchedule(request.Context(), repositoryID, input.Enabled, interval)
@@ -495,7 +502,7 @@ func importProblemHTTP(err error) (int, string, string, any) {
 		status = http.StatusNotFound
 	case importsync.CodeRuntimeUnavailable, importsync.CodeStateUnavailable, importsync.CodeRuntimeUnsafe:
 		status = http.StatusServiceUnavailable
-	case importsync.CodeInvalidSource, importsync.CodeUnsupportedFormat, importsync.CodeUnsupportedRefs, importsync.CodeUnsupported:
+	case importsync.CodeInvalidSource, importsync.CodeInvalidSchedule, importsync.CodeUnsupportedFormat, importsync.CodeUnsupportedRefs, importsync.CodeUnsupported:
 		status = http.StatusUnprocessableEntity
 	case importsync.CodeTooLarge:
 		status = http.StatusRequestEntityTooLarge

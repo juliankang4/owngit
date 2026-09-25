@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"owngit/internal/checkapi"
 	"owngit/internal/checksource"
@@ -407,18 +408,30 @@ func (app *App) runnerSourceManifest(writer http.ResponseWriter, request *http.R
 		writeRunnerError(writer, err)
 		return
 	}
-	pinned, err := app.Repositories.PinRepository(request.Context(), repositoryID, job.SourceOID, job.SourceOID)
+	// A busy repository is retried; any other listing failure is the source's
+	// answer and is reported as a refusal below.
+	var source *checksource.PinnedSource
+	var entries []checksource.Entry
+	var listErr error
+	err = checksource.RetryWhileRepositoryBusy(request.Context(), runnerSourceBusyWait, func() error {
+		pinned, err := app.Repositories.PinRepository(request.Context(), repositoryID, job.SourceOID, job.SourceOID)
+		if err != nil {
+			return err
+		}
+		if source, err = checksource.NewPinnedSource(pinned, repository.PinnedHead); err != nil {
+			return err
+		}
+		entries, listErr = source.ListTree(request.Context(), job.Execution.Source.MetadataLimit)
+		if errors.Is(listErr, repository.ErrPinnedRepositoryBusy) {
+			return listErr
+		}
+		return nil
+	})
 	if err != nil {
 		writeAPIError(writer, http.StatusServiceUnavailable, "check_source_unavailable", "The exact configured-check source is unavailable.", nil)
 		return
 	}
-	source, err := checksource.NewPinnedSource(pinned, repository.PinnedHead)
-	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "check_source_unavailable", err.Error(), nil)
-		return
-	}
-	entries, err := source.ListTree(request.Context(), job.Execution.Source.MetadataLimit)
-	if err != nil || checksource.ValidateEntries(entries, sourceLimits(job.Execution.Source)) != nil {
+	if listErr != nil || checksource.ValidateEntries(entries, sourceLimits(job.Execution.Source)) != nil {
 		writeAPIError(writer, http.StatusUnprocessableEntity, "check_source_refused", "The exact source does not satisfy the configured materialization bounds.", nil)
 		return
 	}
@@ -435,18 +448,21 @@ func (app *App) runnerSourceBlob(writer http.ResponseWriter, request *http.Reque
 		writeRunnerError(writer, err)
 		return
 	}
-	pinned, err := app.Repositories.PinRepository(request.Context(), repositoryID, job.SourceOID, job.SourceOID)
-	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "check_source_unavailable", "The exact configured-check source is unavailable.", nil)
-		return
-	}
 	decodedPath, err := base64.RawURLEncoding.DecodeString(encodedPath)
 	if err != nil || len(decodedPath) == 0 || len(decodedPath) > job.Execution.Source.MaxPathBytes {
 		writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_check_source_path", "The authorized source path is invalid.", nil)
 		return
 	}
-	blob, err := pinned.ReadBlob(request.Context(), repository.PinnedHead, string(decodedPath), 0,
-		job.Execution.Source.MetadataLimit, job.Execution.Source.MaxFileBytes+1, job.Execution.Source.MaxFileBytes+1)
+	var blob repository.PinnedBlobChunk
+	err = checksource.RetryWhileRepositoryBusy(request.Context(), runnerSourceBusyWait, func() error {
+		pinned, err := app.Repositories.PinRepository(request.Context(), repositoryID, job.SourceOID, job.SourceOID)
+		if err != nil {
+			return err
+		}
+		blob, err = pinned.ReadBlob(request.Context(), repository.PinnedHead, string(decodedPath), 0,
+			job.Execution.Source.MetadataLimit, job.Execution.Source.MaxFileBytes+1, job.Execution.Source.MaxFileBytes+1)
+		return err
+	})
 	if err != nil || blob.HasMore || blob.OID != oid || blob.Size != int64(len(blob.Content)) ||
 		blob.Symlink || (blob.Mode != "100644" && blob.Mode != "100755") {
 		writeAPIError(writer, http.StatusServiceUnavailable, "check_source_unavailable", "The authorized exact source blob is unavailable.", nil)
@@ -535,6 +551,11 @@ func runnerCredentialJSON(credential state.RunnerCredential) *checkapi.RunnerCre
 		Generation: credential.Generation, CreatedAt: credential.CreatedAt, RevokedAt: credential.RevokedAt, LastUsedAt: credential.LastUsedAt,
 	}
 }
+
+// runnerSourceBusyWait bounds how long one runner source request waits while a
+// push or another repository write holds the repository. It stays below the
+// runner's request timeout, so the runner receives an answer.
+const runnerSourceBusyWait = 20 * time.Second
 
 func sourceLimits(limits state.CheckSourceLimits) checksource.Limits {
 	return checksource.Limits{

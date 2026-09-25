@@ -41,6 +41,9 @@ const (
 	// CodeNothingToResolve reports an owner resolution with no unresolved
 	// publication intent to accept.
 	CodeNothingToResolve = "nothing_to_resolve"
+	// CodeInvalidSchedule reports a schedule interval that is not a supported
+	// duration. The source is not involved.
+	CodeInvalidSchedule = "invalid_schedule"
 )
 
 var (

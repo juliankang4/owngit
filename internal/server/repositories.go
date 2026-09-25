@@ -183,6 +183,8 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 	created, err := app.Repositories.Create(request.Context(), name, description)
 	if err != nil {
 		switch {
+		case errors.Is(err, repository.ErrImportInProgress):
+			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("name", webui.MsgRepoNameBusy)})
 		case errors.Is(err, repository.ErrNameTaken):
 			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("name", webui.MsgRepoNameTaken)})
 		case errors.Is(err, repository.ErrReservedName):
