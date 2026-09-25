@@ -64,7 +64,7 @@ func TestTailscaleCommandBesideARunningServer(t *testing.T) {
 		instance.stop()
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Tailscale now answers HTTPS for " + tailscaletest.Name, "http://127.0.0.1:7821", "on, but not ready yet", "Restart OwnGit to finish"} {
+	for _, want := range []string{"Tailscale now answers HTTPS for " + tailscaletest.Name, "http://127.0.0.1:7821", "on, but not ready yet", "Restart OwnGit to finish", "Turning sharing on or off in Settings applies at once"} {
 		if !strings.Contains(output, want) {
 			instance.stop()
 			t.Fatalf("on printed %q, lacking %q", output, want)
@@ -101,7 +101,8 @@ func TestTailscaleCommandBesideARunningServer(t *testing.T) {
 	output, err = runTailscale(t, "off", "--state-dir", stateDir, "--tailscale", fake.Path)
 	instance.stop()
 	noErr(t, err)
-	if !strings.Contains(output, "Tailscale no longer answers HTTPS for "+tailscaletest.Name) || !strings.Contains(output, "Restart OwnGit") {
+	if !strings.Contains(output, "Tailscale no longer answers HTTPS for "+tailscaletest.Name) || !strings.Contains(output, "Restart OwnGit") ||
+		!strings.Contains(output, "Settings applies at once") {
 		t.Fatalf("off printed %q", output)
 	}
 	want := []string{"serve --bg --https=443 http://127.0.0.1:7821", "serve --https=443 --set-path=/ off"}

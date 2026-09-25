@@ -55,6 +55,7 @@ func printTailscaleUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  tailscale on [--home-network[=false]]      share OwnGit at https://NAME.TAILNET.ts.net/ with Tailscale Serve")
 	fmt.Fprintln(writer, "  tailscale off                              remove the Tailscale address OwnGit made and the settings it changed")
 	fmt.Fprintln(writer, "Tailscale must be installed and signed in on this computer, with MagicDNS and HTTPS certificates on in the tailnet.")
+	fmt.Fprintln(writer, "on and off change the saved settings; a running OwnGit uses them after a restart. The Settings page applies them at once.")
 }
 
 // tailscaleFlags are the options every tailscale command takes.
@@ -161,7 +162,21 @@ func tailscaleOn(arguments []string) error {
 		fmt.Printf("OwnGit listens on %s from the next start.\n", change.Listen)
 	}
 	printTailscaleReport(os.Stdout, report)
+	observed, err := store.ObserveRunningNetwork(ctx)
+	if err != nil {
+		return err
+	}
+	printRunningServerNote(observed.Server)
 	return nil
+}
+
+// printRunningServerNote says, when a server may be running, that this
+// command changed only the saved settings, because it cannot reach that
+// server, and that the Settings page applies the change at once.
+func printRunningServerNote(server string) {
+	if server == state.ServerRunning || server == state.ServerUnknown {
+		fmt.Println("This command cannot change a running OwnGit, so the change applies after a restart. Turning sharing on or off in Settings applies at once.")
+	}
 }
 
 func tailscaleOff(arguments []string) error {
@@ -208,6 +223,7 @@ func tailscaleOff(arguments []string) error {
 	if observed.Server == state.ServerRunning || observed.Server == state.ServerUnknown {
 		fmt.Println("Restart OwnGit so the running server stops accepting the Tailscale address.")
 	}
+	printRunningServerNote(observed.Server)
 	return nil
 }
 
