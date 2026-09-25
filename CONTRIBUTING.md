@@ -78,7 +78,8 @@ A change must keep the following behavior.
 ### Defaults
 
 - Everything works by default. A restriction on what owners do with their own installation is an option they can turn on, not a default that blocks them.
-- Protections against other people stay on: the administrator password, the shared access password, the one-time setup link, allowed Hosts, and the plain-HTTP acknowledgement. Make these steps easier instead of removing them.
+- Protections against other people stay on. These include local-only listening until the owner chooses another address, the administrator password, the shared access password when the owner sets one, the one-time setup link, Host, Origin and CSRF checks, and the plain-HTTP acknowledgement. Make these steps easier instead of removing them.
+- This rule does not replace the consent rules below. Running checks on the storage host and sending code to an external service still need the owner's explicit choice.
 
 ### Private Git storage
 
