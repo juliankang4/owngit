@@ -164,11 +164,6 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	controller := http.NewResponseController(writer)
-	// git-http-backend writes its response headers before it reads a push,
-	// and the response is flushed as Git writes it. Without full duplex,
-	// net/http would read and discard the rest of the request body at the
-	// first flush.
-	_ = controller.EnableFullDuplex()
 	operationContext := request.Context()
 	cancel := func() {}
 	var deadline time.Time
@@ -198,13 +193,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	// input is the body the backend reads. A read error on it, such as the
 	// size limit, also abandons the request.
 	var input *observedBody
-	body := io.ReadCloser(&networkBody{
+	network := &networkBody{
 		ReadCloser: request.Body,
 		abandoned: func() bool {
 			return streamContext.Err() != nil || consumeFailed.Load() || (input != nil && input.firstError() != nil)
 		},
 		deadlines: deadlines,
-	})
+	}
+	body := io.ReadCloser(network)
 	if h.MaximumRequest > 0 {
 		// The subprocess copies stdin on its own goroutine. Passing the live
 		// ResponseWriter to MaxBytesReader would let that goroutine write a 413
@@ -245,7 +241,15 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "invalid Git protocol request", http.StatusBadRequest)
 		return
 	}
-	committed := &responseState{ResponseWriter: writer, deadlines: deadlines}
+	// git-http-backend writes its response headers before it reads a push,
+	// and the response is flushed as Git writes it. Without full duplex,
+	// net/http would read and discard the rest of the request body at the
+	// first flush. In full duplex it neither does that nor announces that it
+	// closes the connection after a body left unread, so the response does:
+	// otherwise a client that reuses the connection gets EOF.
+	_ = controller.EnableFullDuplex()
+	committed := &responseState{ResponseWriter: writer, deadlines: deadlines,
+		bodyUnfinished: func() bool { return request.ContentLength != 0 && !network.ended.Load() }}
 	var report *pushReport
 	var observer io.Writer
 	if route.service == "git-receive-pack" && request.Method == http.MethodPost {
@@ -308,7 +312,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		} else if invalidGzip {
 			status = http.StatusBadRequest
 		}
-		http.Error(writer, http.StatusText(status), status)
+		http.Error(committed, http.StatusText(status), status)
 	}
 }
 
@@ -650,11 +654,14 @@ func hopByHop(name string) bool {
 }
 
 // responseState writes the backend response under the transfer deadlines and
-// records whether the status was sent.
+// records whether the status was sent. A response sent before the request
+// body was read to its end says Connection: close, because the rest may never
+// be read and the connection then cannot carry another request.
 type responseState struct {
 	http.ResponseWriter
-	deadlines   *transferDeadlines
-	wroteHeader bool
+	deadlines      *transferDeadlines
+	bodyUnfinished func() bool
+	wroteHeader    bool
 }
 
 func (writer *responseState) WriteHeader(status int) {
@@ -662,6 +669,9 @@ func (writer *responseState) WriteHeader(status int) {
 		return
 	}
 	writer.wroteHeader = true
+	if writer.bodyUnfinished() {
+		writer.Header().Set("Connection", "close")
+	}
 	writer.ResponseWriter.WriteHeader(status)
 }
 
