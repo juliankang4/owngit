@@ -18,7 +18,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"owngit/internal/auth"
 	"owngit/internal/bootstrap"
@@ -828,29 +827,11 @@ func restoreState(arguments []string) error {
 	return nil
 }
 
+// readPrivatePassword reads a password file for a command that sends it to
+// no server. A server line, if present, is accepted and not used.
 func readPrivatePassword(path string) (string, error) {
-	if err := state.ValidatePrivateFile(path); err != nil {
-		return "", fmt.Errorf("inspect password file: %w", err)
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	// The longest accepted password plus an optional CRLF line ending.
-	const maximumFileBytes = utf8.UTFMax*auth.MaximumPasswordCharacters + 2
-	content, err := io.ReadAll(io.LimitReader(file, maximumFileBytes+1))
-	if err != nil {
-		return "", err
-	}
-	if len(content) > maximumFileBytes {
-		return "", errors.New("password file is too large")
-	}
-	password := strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")
-	if err := auth.ValidatePassword(password); err != nil {
-		return "", err
-	}
-	return password, nil
+	file, err := readPasswordFile(path)
+	return file.secret, err
 }
 
 func checkRuntimeUnavailableReason(code string) string {

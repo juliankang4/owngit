@@ -33,7 +33,7 @@ owngit helper-credential create \
   --output /path/to/helper-token
 ```
 
-이 토큰은 OwnGit 범위의 체크 에이전트 토큰이며, 제공자의 구독 토큰이 아닙니다. `--output` 파일에만 쓰이고 서버에는 해시로만 저장됩니다. 명령 인수, 문서, 로그에 넣지 마세요. 파일은 소유자만 읽을 수 있습니다. 파일이나 심볼릭 링크가 이미 있으면 교체하지 않고 알려 줍니다.
+이 토큰은 OwnGit 범위의 체크 에이전트 토큰이며, 제공자의 구독 토큰이 아닙니다. `--output` 파일에만 쓰이고 서버에는 해시로만 저장됩니다. 명령 인수, 문서, 로그에 넣지 마세요. 파일은 소유자만 읽을 수 있습니다. 파일이나 심볼릭 링크가 이미 있으면 교체하지 않고 알려 줍니다. 파일의 첫 줄에는 토큰을 발급한 서버가 적히고([자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄) 참고), 명령은 그 서버를 `token_file_server`로 출력합니다.
 
 일반 HTTP는 전송 내용을 암호화하지 않습니다. 사용자가 해당 요청에 `--accept-insecure-http`를 넘기지 않으면 체크 에이전트는 HTTP를 거부합니다. 사용자를 대신해 이 플래그를 붙이지 마세요.
 
@@ -47,6 +47,38 @@ owngit helper-credential create \
 - Pi: 프로젝트의 `.agents/skills/owngit-checks`나 `.pi/skills/owngit-checks`, 또는 사용자 전체에 쓰려면 `~/.agents/skills/owngit-checks`나 `~/.pi/agent/skills/owngit-checks`.
 
 Codex 독립 스킬은 ChatGPT 데스크톱 앱, Codex CLI, IDE 확장에서 쓸 수 있습니다. 앱에서는 `@`로 스킬을 고르고, CLI와 IDE 확장에서는 `/skills`로 목록을 보고 `$`로 스킬을 언급합니다. Pi는 `/skill:owngit-checks`를 등록합니다. 두 도구 모두 설명을 보고 스킬을 저절로 고를 수도 있지만 놓칠 수 있으므로, 직접 호출하는 쪽이 확실합니다. 스킬이 로드되지 않았으면 이 안내의 명령을 직접 실행하세요.
+
+## 클론 안에서 실행하기
+
+OwnGit 저장소의 클론 안에서는 `owngit pr`, `owngit check`, `owngit repo`가 서버와 저장소를 스스로 찾습니다. `--server`나 `--repository`가 없으면 클론의 `origin` 원격을 읽고, OwnGit 클론 주소인 `http(s)://HOST[:PORT]/git/ID.git` 형태만 받아들입니다. `check run`은 `--workdir`가 들어 있는 클론을 읽고, 다른 명령은 현재 디렉터리가 들어 있는 클론을 읽습니다. 직접 넘긴 플래그가 항상 우선하며, `--repository`만 넘기면 서버는 계속 `origin`에서 가져옵니다. `repo list`와 `repo create`는 서버만 가져옵니다.
+
+명령은 무엇을 가져왔는지 표준 오류에 한 줄로 알립니다. 예를 들면 `owngit: using server https://owngit.example.test and repository example-project from the origin remote`입니다. 표준 출력의 JSON은 바뀌지 않습니다.
+
+Git은 사용자 설정과 시스템 설정을 비우고 물려받은 Git 환경 변수 없이 원격을 읽습니다. 그래서 자격 증명 도우미, include, 설정 덮어쓰기가 끼어들지 않습니다. 일반 HTTP에는 여전히 `--accept-insecure-http`가 필요합니다. 다음 경우에는 어떤 서버에도 접속하기 전에 멈춥니다.
+
+- `origin_unavailable`: 디렉터리가 클론 안에 있지 않거나 클론에 `origin` 원격이 없습니다.
+- `origin_ambiguous`: `origin`에 URL이 둘 이상 있습니다.
+- `origin_unsupported`: `origin`이 GitHub URL, SSH 주소, 로컬 경로 같은 다른 종류의 주소입니다. 메시지에 주소를 다시 적지 않습니다.
+- `origin_server_mismatch`: `--server`가 `origin`과 다른 서버를 가리키는데 `--repository`가 없습니다.
+
+### 자격 증명 파일과 서버 줄
+
+클론의 `origin`은 어떤 서버든 가리킬 수 있으므로, `origin`에서 가져온 서버라고 해서 믿을 수 있다는 뜻은 아닙니다. 비밀번호 파일이나 자격 증명 파일은 첫 줄에 그 서버가 적혀 있을 때만 `origin`에서 가져온 서버로 보냅니다.
+
+```text
+owngit-server: https://owngit.example.test
+SECRET
+```
+
+첫 줄은 파일의 맨 처음에서 시작하며 정확히 `owngit-server:`, 공백 하나, 경로 없는 HTTP(S) 오리진 하나로 이루어집니다. 비밀 값은 마지막 줄에 둡니다. 바이트 순서 표시나 빈 줄 뒤에 오거나 대소문자가 다르게 적힌 것처럼 이 줄과 비슷하기만 한 첫 줄은 거부합니다. 이 줄이 없는 파일은 기존 형식이며, 비밀 값을 한 줄에 담아야 하고, `--server`를 직접 넘기면 지금처럼 동작합니다. 이 줄이 있는 파일은 `--server`를 직접 넘긴 경우를 포함해 다른 서버로는 보내지 않으므로, 이 줄은 비밀 값을 항상 한 서버에 묶습니다. 관리자 비밀번호 파일과 러너 토큰 파일도 이 줄을 받아들이며, 이 명령들에는 항상 `--server`를 직접 넘겨야 합니다. 이 줄에는 서버만 적고, 비밀 값의 종류는 파일을 읽는 플래그가 정합니다.
+
+`helper-credential create`는 자신이 사용한 서버로 이 줄을 씁니다. 직접 만든 공유 비밀번호 파일을 묶으려면 텍스트 편집기로 맨 위에 이 줄을 넣으세요. 이렇게 하면 소유자만 읽을 수 있는 권한이 그대로 유지됩니다. macOS나 Linux에서는 본인만 읽을 수 있는 새 파일을 만들 수도 있습니다.
+
+```sh
+(umask 077; { printf 'owngit-server: %s\n' https://owngit.example.test; cat password-file; } > bound-password-file)
+```
+
+거부 코드는 `credential_origin_required`(서버를 `origin`에서 가져왔는데 파일에 서버가 없음), `credential_origin_mismatch`(파일에 다른 서버가 적혀 있음), `invalid_credential_origin`(첫 줄 형식이 잘못됨)입니다. 어느 경우에도 아무것도 보내지 않습니다. 체크 에이전트 토큰 파일을 직접 읽는 스크립트는 마지막 줄을 읽어야 합니다.
 
 ## 작업 흐름
 
@@ -103,7 +135,7 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 
 `check task new`는 작업을 만듭니다. 플래그는 `--title`, `--server`, `--repository`, `--credential-file`, `--accept-insecure-http`입니다.
 
-`check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값은 체크당 65536바이트), `--no-upload`, 그리고 여러 번 쓸 수 있는 `--check name=command`입니다. `--timeout`과 `--output-limit`은 0보다 커야 합니다. `--no-upload`를 쓰지 않으면 원격 플래그가 필요합니다.
+`check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값은 체크당 65536바이트), `--no-upload`, 그리고 여러 번 쓸 수 있는 `--check name=command`입니다. `--timeout`과 `--output-limit`은 0보다 커야 합니다. `--no-upload`를 쓰지 않으면 원격 플래그가 필요하며, 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져올 수 있습니다.
 
 `check cycle reserve`는 수정 라운드 하나를 예약합니다. 플래그는 `--task`(필수)와 원격 플래그입니다. `check cycle list`는 예약한 라운드 목록을 보여 줍니다.
 

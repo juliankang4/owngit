@@ -284,7 +284,7 @@ func runnerCommand(arguments []string) error {
 	if parsed.Scheme != "https" && *caFile != "" {
 		return cliProblem("invalid_arguments", "--ca-file applies only to HTTPS runner connections.")
 	}
-	token, err := readPrivateToken(*tokenFile)
+	token, err := readServerToken(*tokenFile, parsed, false)
 	if err != nil {
 		return err
 	}

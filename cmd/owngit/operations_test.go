@@ -74,7 +74,7 @@ func TestCheckAttemptStepsRecordACancelledExecution(t *testing.T) {
 	flags := newCheckFlagSet("check run")
 	remote := addCheckRemoteFlags(flags)
 	noErr(t, parseCheckFlags(flags, remoteFlags))
-	target, err := remote.connection()
+	target, err := remote.connection(".")
 	noErr(t, err)
 	attempt, err := prepareCheckAttempt(context.Background(), &target, checkRunRequest{
 		TaskID: taskID, Workdir: work, Timeout: time.Minute, OutputLimit: 1024,

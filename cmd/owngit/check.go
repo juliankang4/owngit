@@ -80,7 +80,7 @@ func checkTaskCommand(arguments []string) error {
 	if err := parseCheckFlags(flags, arguments[1:]); err != nil {
 		return err
 	}
-	target, err := remote.connection()
+	target, err := remote.connection(".")
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func checkCycleReserve(arguments []string) error {
 	if *taskID == "" {
 		return cliProblem("invalid_arguments", "check cycle reserve requires --task.")
 	}
-	target, err := remote.connection()
+	target, err := remote.connection(".")
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func checkCycleList(arguments []string) error {
 	if *taskID == "" {
 		return cliProblem("invalid_arguments", "check cycle list requires --task.")
 	}
-	target, err := remote.connection()
+	target, err := remote.connection(".")
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func checkStatus(arguments []string) error {
 	if *taskID == "" {
 		return cliProblem("invalid_arguments", "check status requires --task.")
 	}
-	target, err := remote.connection()
+	target, err := remote.connection(".")
 	if err != nil {
 		return err
 	}
@@ -174,7 +174,7 @@ func checkLog(arguments []string) error {
 	if *attemptID == "" {
 		return cliProblem("invalid_arguments", "check log requires --attempt.")
 	}
-	target, err := remote.connection()
+	target, err := remote.connection(".")
 	if err != nil {
 		return err
 	}
@@ -199,7 +199,7 @@ func checkConfigCommand(arguments []string) error {
 	if err := parseCheckFlags(flags, arguments[1:]); err != nil {
 		return err
 	}
-	target, err := remote.connection()
+	target, err := remote.connection(".")
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func checkRun(arguments []string) error {
 	// A local-only run does not need a server; uploading does.
 	var target *connection
 	if !*noUpload {
-		resolved, err := remote.connection()
+		resolved, err := remote.connection(*workdir)
 		if err != nil {
 			return err
 		}
@@ -675,34 +675,23 @@ func addCheckRemoteFlags(flags *flag.FlagSet) *checkRemoteFlags {
 	return remote
 }
 
-func (remote *checkRemoteFlags) connection() (connection, error) {
-	if remote.server == "" || remote.repository == "" || remote.credentialFile == "" {
-		return connection{}, cliProblem("invalid_arguments", "--server, --repository, and --credential-file are required.")
+// connection resolves the server and repository from the flags or, inside the
+// clone that contains dir, from its origin remote, then reads the helper
+// credential.
+func (remote *checkRemoteFlags) connection(dir string) (connection, error) {
+	if remote.credentialFile == "" {
+		return connection{}, cliProblem("invalid_arguments", "--credential-file is required.")
 	}
-	parsed, err := apiclient.ValidateServer(remote.server, remote.acceptInsecureHTTP)
+	resolved, err := resolveTarget(context.Background(), remote.server, remote.repository, true, remote.acceptInsecureHTTP, dir)
 	if err != nil {
 		return connection{}, err
 	}
-	token, err := readPrivateToken(remote.credentialFile)
+	token, err := readServerToken(remote.credentialFile, resolved.server, resolved.inferredServer)
 	if err != nil {
 		return connection{}, err
 	}
-	return connection{server: parsed, repository: remote.repository, credential: credential{kind: credentialHelperToken, secret: token}}, nil
-}
-
-func readPrivateToken(path string) (string, error) {
-	if err := state.ValidatePrivateFile(path); err != nil {
-		return "", &apiclient.Error{Code: "invalid_credential_file", Message: "The helper credential file is unavailable or is not private.", Cause: err}
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", &apiclient.Error{Code: "invalid_credential_file", Message: "The helper credential file could not be read.", Cause: err}
-	}
-	token := strings.TrimSpace(string(content))
-	if token == "" {
-		return "", &apiclient.Error{Code: "invalid_credential_file", Message: "The helper credential file is empty."}
-	}
-	return token, nil
+	noteInference(resolved)
+	return connection{server: resolved.server, repository: resolved.repository, credential: credential{kind: credentialHelperToken, secret: token}}, nil
 }
 
 func newCheckFlagSet(name string) *flag.FlagSet {
@@ -754,4 +743,5 @@ func printCheckUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit check <task new|cycle reserve|cycle list|run|status|log|config show> [options]")
 	fmt.Fprintln(writer, "The helper registers an attempt before execution, runs checks in the current environment, and reports revision-bound evidence.")
 	fmt.Fprintln(writer, "A reserved correction cycle is consumed once. The initial check and manual reruns consume none.")
+	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server and --repository default to its origin remote.")
 }

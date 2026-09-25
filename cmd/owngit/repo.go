@@ -75,4 +75,5 @@ func repoCreate(arguments []string) error {
 func printRepoUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit repo <list|show|create> [options]")
 	fmt.Fprintln(writer, "Lists, shows, and creates repositories with general access and prints JSON. There is no delete or rename.")
+	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server (and --repository for show) default to its origin remote.")
 }

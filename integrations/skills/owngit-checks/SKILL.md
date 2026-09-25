@@ -21,6 +21,14 @@ The credential file is owner-readable and contains an OwnGit-scoped helper
 token, not a provider subscription token. Never pass the token as a command
 argument, write it into a document, or print it in a log.
 
+Inside a clone whose `origin` remote is the OwnGit clone address
+(`http(s)://HOST[:PORT]/git/ID.git`), you may omit `--server` and
+`--repository`. The helper reads them from `origin` and names them on standard
+error. It sends the credential to that server only when the credential file's
+first line names it (`owngit-server: ORIGIN`); otherwise it stops with
+`credential_origin_required` or `credential_origin_mismatch`. Do not add or
+change that line yourself. Report the error and ask the user.
+
 Do not add `--accept-insecure-http` on your own. Plain HTTP is unencrypted, and
 the user must accept that risk for the private connection.
 

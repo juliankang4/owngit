@@ -89,9 +89,9 @@ func (remote *importFlags) client() (*apiclient.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	password, err := readPrivatePassword(remote.passwordFile)
+	password, err := readServerPassword(remote.passwordFile, parsed, false, "The administrator password file is unavailable or is not private.")
 	if err != nil {
-		return nil, &apiclient.Error{Code: "invalid_password_file", Message: "The administrator password file is unavailable or is not private.", Cause: err}
+		return nil, err
 	}
 	return apiclient.NewAdmin(parsed, password), nil
 }

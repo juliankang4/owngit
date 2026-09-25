@@ -216,25 +216,23 @@ func parsePRFlags(flags *flag.FlagSet, arguments []string) error {
 	return nil
 }
 
+// connection resolves the server and repository from the flags or, inside a
+// clone, from its origin remote, then reads the shared password if a file is
+// given.
 func (remote *generalRemoteFlags) connection() (connection, error) {
-	if !remote.withRepository && remote.server == "" {
-		return connection{}, cliProblem("invalid_arguments", "--server is required.")
-	}
-	if remote.withRepository && (remote.server == "" || remote.repository == "") {
-		return connection{}, cliProblem("invalid_arguments", "--server and --repository are required.")
-	}
-	parsed, err := apiclient.ValidateServer(remote.server, remote.acceptInsecureHTTP)
+	resolved, err := resolveTarget(context.Background(), remote.server, remote.repository, remote.withRepository, remote.acceptInsecureHTTP, ".")
 	if err != nil {
 		return connection{}, err
 	}
-	target := connection{server: parsed, repository: remote.repository, credential: credential{kind: credentialNone}}
+	target := connection{server: resolved.server, repository: resolved.repository, credential: credential{kind: credentialNone}}
 	if remote.passwordFile != "" {
-		password, err := readPrivatePassword(remote.passwordFile)
+		password, err := readServerPassword(remote.passwordFile, resolved.server, resolved.inferredServer, "The shared password file is unavailable or is not private.")
 		if err != nil {
-			return connection{}, &apiclient.Error{Code: "invalid_password_file", Message: "The shared password file is unavailable or is not private.", Cause: err}
+			return connection{}, err
 		}
 		target.credential = credential{kind: credentialSharedPassword, secret: password}
 	}
+	noteInference(resolved)
 	return target, nil
 }
 
@@ -259,5 +257,5 @@ func writeStructuredCommandError(writer io.Writer, err error) bool {
 
 func printPRUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|review|merge|close|reopen> [options]")
-	fmt.Fprintln(writer, "Every remote command requires --server and --repository. HTTP also requires --accept-insecure-http.")
+	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server and --repository default to its origin remote. HTTP also requires --accept-insecure-http.")
 }

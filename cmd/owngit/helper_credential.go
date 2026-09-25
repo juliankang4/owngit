@@ -60,9 +60,9 @@ func (admin *helperAdminFlags) client() (*apiclient.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	password, err := readPrivatePassword(admin.passwordFile)
+	password, err := readServerPassword(admin.passwordFile, parsed, false, "The administrator password file is unavailable or is not private.")
 	if err != nil {
-		return nil, &apiclient.Error{Code: "invalid_password_file", Message: "The administrator password file is unavailable or is not private.", Cause: err}
+		return nil, err
 	}
 	return apiclient.NewAdmin(parsed, password), nil
 }
@@ -88,6 +88,11 @@ func helperCredentialCreate(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	server, err := url.Parse(admin.server)
+	if err != nil {
+		return err
+	}
+	origin := canonicalOrigin(server)
 	creationID, err := state.RandomID()
 	if err != nil {
 		return err
@@ -126,7 +131,9 @@ func helperCredentialCreate(arguments []string) error {
 		return fail("output_replaced",
 			cliProblem("output_replaced", "The output path was replaced while the credential was created. The replacement was left untouched."), true)
 	}
-	if err := reserved.write(response.Token); err != nil {
+	// The first line binds the token to the server that issued it, so a
+	// command that infers the server from a clone sends it only there.
+	if err := reserved.write(credentialOriginPrefix + " " + origin + "\n" + response.Token); err != nil {
 		return fail("token_delivery_failed",
 			&apiclient.Error{Code: "token_delivery_failed", Message: "The token could not be written.", Cause: err}, true)
 	}
@@ -144,7 +151,11 @@ func helperCredentialCreate(arguments []string) error {
 	}
 	// The token is delivered only through the file, so stdout never carries it.
 	response.Token = ""
-	return writeJSONValue(response)
+	return writeJSONValue(struct {
+		checkapi.CredentialResponse
+		// TokenFileServer is the server named on the token file's first line.
+		TokenFileServer string `json:"token_file_server"`
+	}{response, origin})
 }
 
 func preservedOutputError(err, closeErr error) error {

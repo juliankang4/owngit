@@ -44,6 +44,9 @@ The token is an OwnGit-scoped helper token, not a provider subscription token.
 It is written only to the `--output` file and stored on the server only as a
 hash. Keep it out of command arguments, documents, and logs. The file is
 owner-readable. An existing file or symlink is reported instead of replaced.
+The file's first line names the server that issued the token (see
+[Credential files and the server line](#credential-files-and-the-server-line)),
+and the command prints that server as `token_file_server`.
 
 Plain HTTP does not encrypt transport. The helper refuses HTTP unless the user
 passes `--accept-insecure-http` for that request. Do not add that flag on the
@@ -75,6 +78,74 @@ registers `/skill:owngit-checks`. Both tools can also match a skill by its
 description, but implicit matching can be missed, so explicit invocation is the
 reliable path. If the skill is not loaded, run the commands in this guide
 directly.
+
+## Inside a clone
+
+Inside a clone of an OwnGit repository, `owngit pr`, `owngit check`, and
+`owngit repo` can find the server and the repository by themselves. When
+`--server` or `--repository` is missing, the command reads the clone's `origin`
+remote and accepts only an OwnGit clone address,
+`http(s)://HOST[:PORT]/git/ID.git`. `check run` reads the clone that contains
+`--workdir`; the other commands read the clone that contains the current
+directory. Explicit flags always win, and `--repository` alone keeps the
+inferred server. `repo list` and `repo create` infer only the server.
+
+The command prints one line on standard error that says what it inferred, for
+example
+`owngit: using server https://owngit.example.test and repository example-project from the origin remote`.
+The JSON on standard output does not change.
+
+Git reads the remote with empty user and system configuration and without
+inherited Git environment variables, so no helper, include, or override is
+involved. Plain HTTP still needs `--accept-insecure-http`. The command stops
+before contacting any server when:
+
+- `origin_unavailable`: the directory is not in a clone, or the clone has no
+  `origin` remote;
+- `origin_ambiguous`: `origin` has more than one URL;
+- `origin_unsupported`: `origin` is another kind of address, such as a GitHub
+  URL, an SSH address, or a local path. The address is not repeated in the
+  message;
+- `origin_server_mismatch`: `--server` names another server than `origin`, and
+  `--repository` is missing.
+
+### Credential files and the server line
+
+A clone's `origin` can name any server, so an inferred server does not show
+that you trust it. A password or credential file is sent to an inferred server
+only when the file names that server on its first line:
+
+```text
+owngit-server: https://owngit.example.test
+SECRET
+```
+
+The first line is the exact text `owngit-server:`, one space, and one HTTP(S)
+origin without a path, at the very start of the file. The secret is the last
+line. A first line that only resembles it, for example after a byte order mark
+or a blank line or in another letter case, is refused. A file without that line
+is the original format, must hold the secret on one line, and still works with
+an explicit `--server`. A file with the
+line is refused for any other server, including an explicit `--server`, so the
+line always binds the secret to one server. Administrator password files and
+runner token files accept the line too; their commands always need an explicit
+`--server`. The line names only the server; the flag that reads the file says
+what kind of secret it holds.
+
+`helper-credential create` writes the line for the server it used. To bind a
+shared password file you wrote yourself, add the line at the top with a text
+editor, which keeps the file's owner-only permissions. On macOS or Linux you can
+also write a new file that only you can read:
+
+```sh
+(umask 077; { printf 'owngit-server: %s\n' https://owngit.example.test; cat password-file; } > bound-password-file)
+```
+
+Refusals are `credential_origin_required` (the server was inferred and the file
+names no server), `credential_origin_mismatch` (the file names another server),
+and `invalid_credential_origin` (the first line is malformed). Nothing is sent
+in any of these cases. Scripts that read a helper credential file directly must
+take its last line.
 
 ## Workflow
 
@@ -152,7 +223,8 @@ attempt. Flags: `--task` (required), `--cycle`, `--workdir` (default `.`),
 `--timeout` (default 10 minutes), `--output-limit` (default 65536 bytes per
 check), `--no-upload`, and repeatable `--check name=command`. `--timeout` and
 `--output-limit` must be positive. The remote flags are required unless
-`--no-upload` is set.
+`--no-upload` is set; inside a clone, `--server` and `--repository` can come
+from `origin`.
 
 `check cycle reserve` reserves one correction round. Flags: `--task` (required)
 and the remote flags. `check cycle list` lists the reserved rounds.
