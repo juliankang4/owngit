@@ -245,16 +245,19 @@ func (m *Manager) runPreparation(ctx context.Context, id string, job *preparatio
 	}
 	for attempt := 1; ; attempt++ {
 		err := m.prepareAttempt(ctx, id, job)
-		if attempt == 1 {
-			close(job.attempted)
-		}
 		if err == nil {
+			// Forget the job before reporting the first attempt, so a
+			// repository that StartPreparation waited for is served when
+			// it returns.
 			p.mu.Lock()
 			ready := p.jobs[id] == job
 			if ready {
 				delete(p.jobs, id)
 			}
 			p.mu.Unlock()
+			if attempt == 1 {
+				close(job.attempted)
+			}
 			if ready && attempt > 1 {
 				p.logf("repository %q is prepared after %d attempts and is served again", id, attempt)
 			}
@@ -262,6 +265,9 @@ func (m *Manager) runPreparation(ctx context.Context, id string, job *preparatio
 				m.OnChange(id)
 			}
 			return
+		}
+		if attempt == 1 {
+			close(job.attempted)
 		}
 		if ctx.Err() != nil {
 			return
