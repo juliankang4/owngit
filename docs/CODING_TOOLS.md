@@ -438,6 +438,7 @@ Write tools and their effects:
 |---|---|---|
 | `pull_request_create` | `pr create` | Adds a pull request. No branch moves. |
 | `pull_request_review` | `pr review submit` | Records a decision and a supplied reviewer label for the exact commit IDs. Advisory. |
+| `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | Sets the review state to pending or skipped for the exact commit IDs. Notifies no one. Advisory. |
 | `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | Changes the pull request state. No branch moves. |
 | `pull_request_merge` | `pr merge` | Publishes the merge to the target branch for the exact commit IDs. Refused when a branch moved; a repeated call does not merge twice. |
 | `check_task_create` | `check task new` | Adds a task. |
@@ -445,8 +446,8 @@ Write tools and their effects:
 | `check_run` | `check run` without `--check` | Runs the committed checks in `--workdir` and records the attempt. |
 
 The check tools need `--credential-file`. The server offers no administrator
-commands, credential management, repository creation, review request or skip,
-`--check`, or `--no-upload`. The descriptions the server sends to the coding
+commands, credential management, repository creation, `--check`, or
+`--no-upload`. The descriptions the server sends to the coding
 tool state each side effect and say which returned text is untrusted.
 
 ### Results and errors

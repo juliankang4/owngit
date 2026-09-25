@@ -663,7 +663,8 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	session := startMCPSession(t, mcpOptions{server: serverURL, repository: "project", credentialFile: credentialFile, acceptInsecureHTTP: true, workdir: work})
 	names, _ := session.toolNames()
 	if got := strings.Join(names, " "); got != "check_config_show check_cycle_list check_cycle_reserve check_log check_run check_status check_task_create check_task_list "+
-		"pull_request_close pull_request_create pull_request_diff pull_request_list pull_request_merge pull_request_reopen pull_request_review pull_request_show repository_list repository_show" {
+		"pull_request_close pull_request_create pull_request_diff pull_request_list pull_request_merge pull_request_reopen pull_request_review "+
+		"pull_request_review_request pull_request_review_skip pull_request_show repository_list repository_show" {
 		t.Fatalf("tools: %s", got)
 	}
 
@@ -679,6 +680,27 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 		t.Fatal("a second open pull request for the pair was not refused")
 	}
 	pair := map[string]any{"number": number, "source_oid": pr.Source.OID, "target_oid": pr.Target.OID}
+	// Requesting and skipping a review bind to the exact pair, like the
+	// command line.
+	for _, step := range []struct{ tool, status string }{{"pull_request_review_skip", "skipped"}, {"pull_request_review_request", "pending"}} {
+		var marked pullrequest.SuccessEnvelope
+		text, isError := session.call(step.tool, pair)
+		decodeToolJSON(t, text, &marked)
+		if isError || marked.PullRequest == nil || marked.PullRequest.Review.Status != step.status ||
+			marked.PullRequest.Review.SourceOID != pr.Source.OID || marked.PullRequest.Review.TargetOID != pr.Target.OID {
+			t.Fatalf("%s: %s", step.tool, text)
+		}
+		stale := map[string]any{"number": number, "source_oid": pr.Target.OID, "target_oid": pr.Target.OID}
+		if code := session.callError(step.tool, stale); code == "" {
+			t.Fatalf("%s for other commits was accepted", step.tool)
+		}
+		if code := session.callError(step.tool, map[string]any{"number": number}); code != "invalid_arguments" {
+			t.Fatalf("%s without commit IDs: %q", step.tool, code)
+		}
+	}
+	if shown := runPRCommandJSON(t, append([]string{"show", "--number", string(number)}, general...)); shown.PullRequest.Review.Status != "pending" {
+		t.Fatalf("the command line shows review %q after the request", shown.PullRequest.Review.Status)
+	}
 	review := map[string]any{"decision": "approved", "reviewer": "mcp-test"}
 	for key, value := range pair {
 		review[key] = value
@@ -846,7 +868,7 @@ func TestMCPBinaryRoundTrip(t *testing.T) {
 		t.Fatalf("initialize: %s", response.Result)
 	}
 	session.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	if names, _ := session.toolNames(); len(names) != 18 {
+	if names, _ := session.toolNames(); len(names) != 20 {
 		t.Fatalf("tools: %v", names)
 	}
 	if text, isError := session.call("pull_request_list", nil); isError || text != `{"ok":true,"pull_requests":[]}` {

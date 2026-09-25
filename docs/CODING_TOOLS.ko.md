@@ -253,13 +253,14 @@ Codex는 기본으로 도구를 60초 기다린 뒤 호출을 취소하며, 이�
 |---|---|---|
 | `pull_request_create` | `pr create` | 풀 리퀘스트를 추가합니다. 브랜치는 움직이지 않습니다. |
 | `pull_request_review` | `pr review submit` | 정확한 커밋 ID에 대한 결정과 호출자가 준 리뷰어 표시를 기록합니다. 참고용입니다. |
+| `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | 정확한 커밋 ID에 대한 리뷰 상태를 pending이나 skipped로 바꿉니다. 누구에게도 알리지 않습니다. 참고용입니다. |
 | `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | 풀 리퀘스트 상태를 바꿉니다. 브랜치는 움직이지 않습니다. |
 | `pull_request_merge` | `pr merge` | 정확한 커밋 ID로 대상 브랜치에 병합을 게시합니다. 브랜치가 움직였으면 거부하고, 같은 호출을 되풀이해도 두 번 병합하지 않습니다. |
 | `check_task_create` | `check task new` | 작업을 추가합니다. |
 | `check_cycle_reserve` | `check cycle reserve` | 작업의 수정 라운드 세 번 가운데 하나를 씁니다. |
 | `check_run` | `--check` 없는 `check run` | `--workdir`에서 커밋된 체크를 실행하고 시도를 기록합니다. |
 
-체크 도구에는 `--credential-file`이 필요합니다. 관리자 명령, 자격 증명 관리, 저장소 만들기, 리뷰 요청이나 건너뛰기, `--check`, `--no-upload`는 제공하지 않습니다. 서버가 코딩 도구에 보내는 도구 설명에는 도구마다 어떤 변화를 일으키는지, 돌려주는 글 가운데 무엇을 믿으면 안 되는지가 적혀 있습니다.
+체크 도구에는 `--credential-file`이 필요합니다. 관리자 명령, 자격 증명 관리, 저장소 만들기, `--check`, `--no-upload`는 제공하지 않습니다. 서버가 코딩 도구에 보내는 도구 설명에는 도구마다 어떤 변화를 일으키는지, 돌려주는 글 가운데 무엇을 믿으면 안 되는지가 적혀 있습니다.
 
 ### 결과와 오류
 

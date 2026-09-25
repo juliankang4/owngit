@@ -268,6 +268,12 @@ func (server *mcpServer) buildTools() []mcpTool {
 				})
 			},
 		},
+		server.reviewMarkTool("pull_request_review_request", "request",
+			"Record that a review is requested for exactly source_oid and target_oid; the review state becomes pending. It is refused when either branch has moved, and it no longer counts once either branch moves. "+
+				"OwnGit does not notify or start any reviewer. Advisory: it never merges or blocks a merge."),
+		server.reviewMarkTool("pull_request_review_skip", "skip",
+			"Record that review is skipped for exactly source_oid and target_oid; the review state becomes skipped. It is refused when either branch has moved, and it no longer counts once either branch moves. "+
+				"Skip only when the user decided so. Advisory: it never merges or blocks a merge."),
 		server.closeTool("pull_request_close", "Close a pull request without merging. No branch changes; pull_request_reopen undoes it.", true),
 		server.closeTool("pull_request_reopen", "Reopen a closed pull request. No branch changes.", false),
 		{
@@ -409,6 +415,33 @@ func (server *mcpServer) buildTools() []mcpTool {
 		}
 	}
 	return tools
+}
+
+// reviewMarkTool requests a review (action "request") or records that review
+// is skipped (action "skip") for exact revisions, like owngit pr review
+// request and skip.
+func (server *mcpServer) reviewMarkTool(name, action, description string) mcpTool {
+	return mcpTool{
+		Name:        name,
+		Description: description,
+		InputSchema: server.schema(true, []string{"number", "source_oid", "target_oid"}, map[string]toolInputField{
+			"number":     numberField,
+			"source_oid": sourceOIDField,
+			"target_oid": targetOIDField,
+		}),
+		Annotations: repeatableWrite,
+		call: func(ctx context.Context, raw json.RawMessage) ([]byte, error) {
+			var arguments revisionArguments
+			target, err := server.decodeRepositoryArguments(raw, &arguments, &arguments.Repository)
+			if err != nil {
+				return nil, err
+			}
+			if arguments.SourceOID == "" || arguments.TargetOID == "" {
+				return nil, cliProblem("invalid_arguments", "source_oid and target_oid are required.")
+			}
+			return markPullRequestReview(ctx, target, arguments.Number, action, pullrequest.RevisionInput{SourceOID: arguments.SourceOID, TargetOID: arguments.TargetOID})
+		},
+	}
 }
 
 // closeTool closes (closed true) or reopens a pull request.
