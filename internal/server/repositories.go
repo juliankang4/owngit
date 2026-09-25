@@ -420,6 +420,9 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	case len(parts) == 1:
 		page.Tab = webui.RepoTabOverview
 		app.fillRepositoryOverview(request, &page, summary, snapshot.ActivityKey, requestedRef)
+		if requestedRef != "" && page.Ref.Missing {
+			status = http.StatusNotFound
+		}
 	case len(parts) == 2 && parts[1] == "code":
 		page.Tab = webui.RepoTabCode
 		app.fillCode(request, &page, summary, requestedRef, request.URL.Query().Get("path"))
@@ -433,15 +436,26 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	case len(parts) == 2 && parts[1] == "commits":
 		page.Tab = webui.RepoTabCommits
 		app.fillCommits(request, &page, summary, requestedRef, "")
+		if page.Commits.NotFound || (requestedRef != "" && page.Ref.Missing) {
+			status = http.StatusNotFound
+		}
 	case len(parts) == 3 && parts[1] == "commits":
 		page.Tab = webui.RepoTabCommits
+		// A commit this repository does not have, including one that only
+		// another repository has, is not found. A commit that exists opens
+		// even when the address names a missing branch: the page then shows
+		// it as a bare revision.
 		app.fillCommits(request, &page, summary, requestedRef, parts[2])
+		if page.Commits.NotFound {
+			status = http.StatusNotFound
+		}
 	default:
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 		return
 	}
 	// A read that ran out of time leaves parts of the page empty or marked
-	// missing, so the page explains the wait instead.
+	// missing, so the page explains the wait instead, before any 404: a
+	// timed-out read is never reported as a missing ref or commit.
 	if err := request.Context().Err(); err != nil {
 		if app.Repositories.InUse(id) {
 			err = repository.ErrRepositoryInUse
@@ -449,6 +463,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.renderRepositoryUnavailable(writer, request, chrome, stored, err)
 		return
 	}
+	page.NotFound = status == http.StatusNotFound
 	app.render(writer, status, page)
 }
 
@@ -530,7 +545,10 @@ func (app *App) selectRef(request *http.Request, page *webui.RepositoryPage, sum
 		full := "refs/tags/" + tag.Name
 		page.Ref.Tags = append(page.Ref.Tags, webui.RefOption{Name: tag.Name, URL: withRef(request.URL.Path, full), Selected: selected == full})
 	}
-	if selected != "" {
+	// The tabs keep only a ref that resolves. A missing one would send each
+	// tab to a not-found page (QA-054), so they then open the repository's
+	// default addresses; the picker still shows the missing name.
+	if selected != "" && resolveErr == nil {
 		page.OverviewURL = withRef(page.OverviewURL, selected)
 		page.CodeURL = withRef(page.CodeURL, selected)
 		page.CommitsURL = withRef(page.CommitsURL, selected)
@@ -1207,6 +1225,10 @@ func (app *App) overviewLanguages(request *http.Request, id, commitOID string) w
 	}
 	stats, err := app.Repositories.Languages(request.Context(), id, commitOID)
 	switch {
+	case errors.Is(err, repository.ErrRepositoryInUse):
+		// Only this panel waits for the operation; the rest of the page is
+		// answered from what could be read (QA-058).
+		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesBusy}
 	case err != nil:
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesUnavailable}
 	case stats.TooLarge:

@@ -151,6 +151,9 @@ var (
 	languageOutputLimit  int64 = 64 << 20
 	languageTimeoutRetry       = 2 * time.Minute
 	languageNow                = time.Now
+	// languageLockWait is how long a count waits for an operation that holds
+	// the repository before the panel says it will be counted later.
+	languageLockWait = 250 * time.Millisecond
 )
 
 // languageAttributes are the Linguist attributes Git may report for a path.
@@ -176,8 +179,17 @@ func (m *Manager) Languages(ctx context.Context, id, commitOID string) (Language
 	if stats, ok := m.languages.lookup(id, repositoryPath, commitOID); ok {
 		return stats, nil
 	}
+	// The count is a side panel of the overview. It waits for the repository
+	// only briefly, and never past the request, so an operation holding the
+	// repository cannot hold the page (QA-058). A count that could not start
+	// is not cached and is tried on the next visit.
 	lock := m.Locks.For(id)
-	lock.RLock()
+	waitCtx, stopWaiting := context.WithTimeout(ctx, languageLockWait)
+	err = readLock(waitCtx, lock)
+	stopWaiting()
+	if err != nil {
+		return LanguageStats{}, err
+	}
 	defer lock.RUnlock()
 	limited, cancel := context.WithTimeout(ctx, languageTimeLimit)
 	defer cancel()

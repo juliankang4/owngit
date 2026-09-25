@@ -416,6 +416,11 @@ type RepositoryPage struct {
 	Repo   RepositoryHeader
 	Tab    RepoTab
 
+	// NotFound is true when the address named a path, branch, tag, or
+	// commit that this repository does not have. The page answers 404 and
+	// offers the way back to the repository.
+	NotFound bool
+
 	OverviewURL string
 	CodeURL     string
 	CommitsURL  string

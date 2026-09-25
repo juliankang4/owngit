@@ -59,6 +59,7 @@
         {{if $p.CommitsURL}}<a class="sec__hint" href="{{$p.CommitsURL}}">{{bi $lang "repo.overview.all_commits"}}</a>{{end}}
       </div>
       {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.OverviewURL}}
+      {{if $p.NotFound}}{{template "backToRepo" dict "Lang" $lang "P" $p}}{{end}}
       {{if $o.Recent}}
       <div class="ov-rows">
         {{range $o.Recent}}
@@ -230,9 +231,7 @@
        warning, so the panel does not repeat it; it only offers the way back
        to the repository. */}}
   {{if $p.Ref.Missing}}
-    <div class="empty">
-      <a class="btn" href="{{$p.Repo.URL}}">{{bi $lang "app.back_to_repository"}}</a>
-    </div>
+    {{template "backToRepo" dict "Lang" $lang "P" $p}}
   {{else if $c.NotFound}}
     <div class="empty">
       <p class="empty__lead">{{bi $lang "code.path_missing"}}</p>
@@ -297,8 +296,13 @@
   {{if $p.Commits.NotFound}}
     <div class="empty">
       <p class="empty__lead">{{bi $lang "commits.not_found"}}</p>
-      <a class="btn" href="{{$p.CommitsURL}}">{{bi $lang "app.commit_history"}}</a>
+      <p class="empty__acts">
+        <a class="btn" href="{{$p.CommitsURL}}">{{bi $lang "app.commit_history"}}</a>
+        <a class="btn" href="{{$p.Repo.URL}}">{{bi $lang "app.back_to_repository"}}</a>
+      </p>
     </div>
+  {{else if $p.NotFound}}
+    {{template "backToRepo" dict "Lang" $lang "P" $p}}
   {{else if $p.Commits.Detail}}
     {{/* One commit uses the full width: its message, then every changed
          file. The list of commits is one link away. */}}
@@ -421,5 +425,13 @@
       {{with .RestoreURL}}<a class="refline__act" href="{{.}}">{{bi $lang "restore.open"}}</a>{{end}}
     </div>
   {{end}}
+</div>
+{{end}}
+
+{{/* The way back from an address this repository cannot answer: a missing
+     branch or tag on any tab. The ref bar above already names the problem. */}}
+{{define "backToRepo"}}
+<div class="empty">
+  <a class="btn" href="{{.P.Repo.URL}}">{{bi .Lang "app.back_to_repository"}}</a>
 </div>
 {{end}}

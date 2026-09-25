@@ -506,6 +506,7 @@ a:hover { text-decoration: underline; }
   justify-items: start;
 }
 .empty__lead { font-size: 13.5px; color: var(--text-1); font-weight: 560; }
+.empty__acts { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .backline { margin: 0 0 14px; }
 .back {

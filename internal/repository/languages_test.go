@@ -303,3 +303,28 @@ func TestLanguagesAttributeFailures(t *testing.T) {
 		})
 	}
 }
+
+// QA-058: a count waits only briefly for an operation that holds the
+// repository and never past the request. It then reports the repository as
+// in use, caches nothing, and counts on the next call.
+func TestLanguagesDoNotWaitForABusyRepository(t *testing.T) {
+	generousLanguageTime(t)
+	manager, remote, work := newTestRepository(t)
+	commit := writeLanguageFixture(t, work, remote, map[string]int{"main.go": 10})
+	lock := manager.Locks.For("sample")
+	lock.Lock()
+	started := time.Now()
+	_, err := manager.Languages(context.Background(), "sample", commit)
+	waited := time.Since(started)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, ended := manager.Languages(ctx, "sample", commit)
+	lock.Unlock()
+	if !errors.Is(err, ErrRepositoryInUse) || waited > 2*time.Second || ended == nil {
+		t.Fatalf("busy count: err=%v after %s, ended request err=%v", err, waited, ended)
+	}
+	stats, err := manager.Languages(context.Background(), "sample", commit)
+	if err != nil || len(stats.Shares) != 1 || stats.Shares[0].Name != "Go" {
+		t.Fatalf("after the operation: stats=%+v err=%v", stats, err)
+	}
+}

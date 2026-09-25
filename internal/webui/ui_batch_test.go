@@ -135,6 +135,11 @@ func TestUIBatchScreens(t *testing.T) {
 					AttributesNote: MsgRepoLanguagesAttrsFailed}
 			}),
 			want: []MessageCode{MsgRepoLanguagesAttrsFailed}, absent: []MessageCode{MsgRepoLanguagesNoAttrs}},
+		screen{name: "a count that could not wait for a busy repository says it counts later",
+			page: with(repoPage(fullChrome(LangEN), RepoTabOverview), func(p *RepositoryPage) {
+				p.Overview.Languages = LanguageSummary{Note: MsgRepoLanguagesBusy}
+			}),
+			want: []MessageCode{MsgRepoLanguagesTitle, MsgRepoLanguagesBusy}, noMarkup: []string{"langs__bar"}},
 		screen{name: "a count that took too long says so and when it is tried again", lang: LangKO,
 			page: with(repoPage(fullChrome(LangKO), RepoTabOverview), func(p *RepositoryPage) {
 				p.Overview.Languages = LanguageSummary{Note: MsgRepoLanguagesSlow}
