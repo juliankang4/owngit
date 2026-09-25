@@ -451,6 +451,9 @@ type RepositoryPage struct {
 
 	// Ref is the currently selected branch, tag, or revision.
 	Ref RefSelection
+	// Downloads offer the selected branch or tag on the Code tab's top
+	// folder, or the open commit on its page, as archives. Empty means none.
+	Downloads []ArchiveLink
 
 	// Overview is used when Tab is RepoTabOverview.
 	Overview RepositoryOverview

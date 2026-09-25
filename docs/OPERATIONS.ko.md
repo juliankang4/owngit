@@ -512,6 +512,19 @@ OwnGit은 실패한 준비를 스스로 다시 시도합니다. 시도가 끝나
 
 다만 OwnGit이 상태 데이터베이스에서 저장소 목록을 읽지 못하면 시작을 거부합니다.
 
+## 압축 파일 내려받기
+
+**코드** 탭의 최상위 폴더에서 선택한 브랜치나 태그를 ZIP 또는 tar.gz 파일로 내려받을 수 있고, 커밋 페이지에서는 그 커밋을 내려받을 수 있습니다. 압축 파일에는 Git 기록 없이 그 리비전의 파일만 `PROJECT-REF` 폴더(예: `project-main`) 하나에 담깁니다. `git archive`처럼 그 리비전에 커밋된 `export-ignore`와 `export-subst` 속성을 따르므로, **코드** 탭에 보이는 파일과 다를 수 있습니다. 파일 이름도 같습니다. 문자, 숫자, `.`, `-`, `_`가 아닌 글자는 `-`로 바뀌므로 `feature/login`은 `project-feature-login.zip`이 됩니다. 내려받으려면 **코드** 탭을 읽을 때와 같은 접근 권한이 필요합니다.
+
+브라우저 없이 받으려면 API 경로를 씁니다. `ref`는 짧은 이름이나 `refs/heads/main` 같은 전체 이름으로 쓴 브랜치나 태그, 또는 전체 커밋 ID이며, 생략하면 기본 브랜치입니다. `format`은 `zip` 또는 `tar.gz`입니다. 없는 ref나 형식에는 404로 답합니다. 공유 비밀번호로 보호할 때는 `--user owngit`을 넣으면 curl이 비밀번호를 묻습니다. 접근이 열려 있으면 빼세요.
+
+```sh
+curl --fail --remote-name --remote-header-name --user owngit \
+  'http://HOST:7654/api/v1/repositories/PROJECT/archive?ref=main&format=tar.gz'
+```
+
+압축 파일 내려받기도 Git 전송이므로 아래 제한을 똑같이 받습니다. 최대 4 GiB, 30분이며, 이 시간에는 자리나 같은 저장소의 푸시를 기다리는 시간도 들어갑니다. 실행 중인 Git 요청의 자리 하나를 씁니다. 시간 안에 내려받기를 시작하지 못하면 `Retry-After`와 함께 HTTP 503으로 답합니다. OwnGit은 Git이 압축 파일을 만드는 동안 바로 보냅니다. Git이 실패하거나, 제한에 닿거나, 끝나기 전에 OwnGit이 멈추면 응답을 마무리하지 않은 채 연결을 닫습니다. 그래서 내려받기는 완료되지 않고 실패합니다. curl은 `(18) transfer closed with outstanding read data remaining` 같은 오류로 끝나고, 브라우저는 내려받기가 실패했다고 표시합니다. 받은 부분도 올바른 압축 파일이 아닙니다. OwnGit은 ZIP 파일의 끝부분과 tar.gz 파일의 gzip 트레일러를 Git이 성공적으로 끝난 뒤에만 보내기 때문입니다. Git이 아무것도 쓰기 전에 실패하면 대신 HTTP 오류로 답합니다.
+
 ## Git 전송 제한
 
 - clone, fetch, 푸시 같은 Git 요청 하나는 최대 4 GiB까지 보내거나 받을 수 있고, 30분 안에 끝나야 합니다. 크기 제한을 넘는 푸시는 HTTP 413으로 거부됩니다. 어느 한쪽 제한을 넘는 clone이나 fetch는 중간에 끊기고, Git은 전송이 완료되지 않았다고 알립니다. 서버 로그에도 실패가 남습니다. 이 제한은 이 버전에서 고정되어 있으며 바꾸는 옵션은 없습니다. OwnGit은 Git LFS를 제공하지 않으므로, 전체 기록이 4 GiB보다 큰 저장소는 OwnGit으로 clone할 수 없습니다. 큰 바이너리 파일은 Git 기록에 넣지 마세요.

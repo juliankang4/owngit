@@ -72,6 +72,24 @@ func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string,
 	return "", "", errors.New("branch or tag not found")
 }
 
+// ResolveRevision is ResolveRef that also accepts a full commit ID, which
+// must name a commit of this repository, and then returns it for both
+// values. A full ID wins over a branch or tag with the same short name; the
+// full ref name still reaches such a branch or tag.
+func (m *Manager) ResolveRevision(ctx context.Context, id, requested string) (string, string, error) {
+	if !isOID(requested) {
+		return m.ResolveRef(ctx, id, requested)
+	}
+	if _, err := m.RefSnapshot(ctx, id); err != nil {
+		// The same answer as ResolveRef for a repository that cannot be read.
+		return "", "", err
+	}
+	if commitOID, ok := m.peelToCommit(ctx, id, requested); ok && commitOID == requested {
+		return requested, requested, nil
+	}
+	return "", "", errors.New("commit not found")
+}
+
 func snapshotRef(summary Summary, full string) (Ref, bool) {
 	refs, name := summary.Branches, strings.TrimPrefix(full, "refs/heads/")
 	if strings.HasPrefix(full, "refs/tags/") {

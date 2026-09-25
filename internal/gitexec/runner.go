@@ -291,12 +291,23 @@ func commandName(args []string) string {
 // process never sees a clean end of its input. A stdin reader that must not
 // end the input cleanly can cancel ctx and block in Read until Close.
 func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
+	return r.stream(ctx, exec.Command(executable), dir, stdin, extraEnv, consume)
+}
+
+// StreamGit runs Git with args as Stream runs a backend, with no input: its
+// output goes to consume while it runs. The caller bounds the time with ctx
+// and the output in consume; returning an error from consume, or cancelling
+// ctx, stops Git and its owned descendants before StreamGit returns.
+func (r *Runner) StreamGit(ctx context.Context, dir string, consume func(io.Reader) error, args ...string) ([]byte, error) {
+	return r.stream(ctx, exec.Command(r.GitPath, args...), dir, nil, nil, consume)
+}
+
+func (r *Runner) stream(ctx context.Context, cmd *exec.Cmd, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
 	var stderr limitedBuffer
 	stderr.limit = r.OutputLimit
 	if stderr.limit <= 0 {
 		stderr.limit = defaultOutputLimit
 	}
-	cmd := exec.Command(executable)
 	cmd.Dir = dir
 	cmd.Env = r.Environment(extraEnv...)
 	cmd.Stderr = &stderr

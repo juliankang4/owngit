@@ -31,7 +31,8 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		return
 	}
 	repositoryID, resource, remainder, repositoryRoute := parseRepositoryAPIRoute(request.URL.Path)
-	if request.URL.RawQuery != "" && !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) && !pullRequestDiffQueryAllowed(request) {
+	if request.URL.RawQuery != "" && !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) &&
+		!pullRequestDiffQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) {
 		writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
 		return
 	}
@@ -58,6 +59,9 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 			return
 		case "import":
 			app.handleImportAPI(writer, request, repositoryID, remainder)
+			return
+		case "archive":
+			app.handleArchiveAPI(writer, request, settings, repositoryID, remainder)
 			return
 		}
 	}

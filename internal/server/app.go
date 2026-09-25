@@ -165,6 +165,12 @@ func (app *App) requestTimeout(request *http.Request) (time.Duration, time.Durat
 	if importRunRequest(request) {
 		return ImportRunRequestTimeout(app.importRunTimeout()), 0
 	}
+	// An archive download is a Git transfer. Its own operation deadline ends
+	// it first; the request keeps the reply reserve beyond that, so the limit
+	// that fires is the one the log names.
+	if archiveRoute(request) && app.GitHTTP != nil && app.GitHTTP.OperationTimeout > 0 {
+		return app.GitHTTP.OperationTimeout + 2*replyReserve, replyReserve
+	}
 	timeout := 30 * time.Second
 	if app.HTTPTimeout > 0 {
 		timeout = app.HTTPTimeout

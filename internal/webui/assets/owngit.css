@@ -1052,6 +1052,20 @@ span.hm__cell { cursor: default; }
 .codebar__fact { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .codebar__link { white-space: nowrap; }
 
+/* Archive download links: a label and one link per format. On the Code tab
+   they sit at the end of the row. */
+.dl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.codebar .dl { margin-left: auto; }
+.dl a { white-space: nowrap; }
+
 /* The file list drawer. */
 .drawer { position: static; }
 .drawer > summary { list-style: none; }

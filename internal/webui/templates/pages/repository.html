@@ -205,6 +205,7 @@
       {{end}}
     </nav>
     {{end}}
+    {{template "archiveLinks" dict "Lang" $lang "Links" $p.Downloads}}
     {{with $f}}
     <div class="codebar__tools">
       {{if not .Binary}}<span class="codebar__fact">{{biCount $lang "line" (len .Lines)}}</span>{{end}}
@@ -330,6 +331,7 @@
           {{if not .CommitterDate.IsZero}}<span>{{biDateTime $lang .CommitterDate}}</span>{{end}}
         </p>
       {{end}}
+      {{template "archiveLinks" dict "Lang" $lang "Links" $p.Downloads}}
       {{with .RestoreURL}}
         <p class="cdetail__act"><a class="btn" href="{{.}}">{{icon "kept"}}{{bi $lang "restore.open"}}</a></p>
       {{end}}
@@ -426,6 +428,18 @@
     </div>
   {{end}}
 </div>
+{{end}}
+
+{{/* Download links for the selected branch or tag, or the open commit: a
+     label, then one link per archive format. Nothing when Links is empty. */}}
+{{define "archiveLinks"}}
+{{$lang := .Lang}}
+{{with .Links}}
+<nav class="dl" {{biAttr $lang "aria-label" "archive.label"}}>
+  <span>{{bi $lang "archive.download"}}</span>
+  {{range .}}<a href="{{.URL}}">{{.Label}}</a>{{end}}
+</nav>
+{{end}}
 {{end}}
 
 {{/* The way back from an address this repository cannot answer: a missing

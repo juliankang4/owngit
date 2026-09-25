@@ -405,6 +405,10 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.handleRestoreApply(writer, request, stored, summary, chrome)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "archive" && request.Method == http.MethodGet {
+		app.handleArchive(writer, request, stored)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "raw" && (request.Method == http.MethodGet || request.Method == http.MethodHead) {
 		app.handleRaw(writer, request, stored)
 		return
@@ -860,6 +864,11 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 	view.Entries = treeViewEntries(page.Repo.ID, selectedRef, lookup.Entries)
 	view.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, requestedPath, lookup.Entries)
 	page.Code = view
+	// The whole branch or tag downloads from its top folder, where no folder
+	// or file could be taken for what the archive holds.
+	if requestedPath == "" {
+		page.Downloads = archiveLinks(page.Repo.ID, selectedRef)
+	}
 }
 
 func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, openedOID string) {
@@ -939,6 +948,7 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	for _, parentOID := range commit.Parents {
 		view.Parents = append(view.Parents, webui.CommitSummary{OID: parentOID, ShortOID: shortOID(parentOID), URL: commitURL(page.Repo.ID, selectedRef, parentOID, "")})
 	}
+	page.Downloads = archiveLinks(page.Repo.ID, commit.OID)
 	if len(commit.Parents) > 1 {
 		view.Unavailable = true
 		view.UnavailableReason = webui.MsgCommitDiffMerge

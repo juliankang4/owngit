@@ -506,6 +506,19 @@ OwnGit retries a failed preparation by itself: 30 seconds after the attempt ende
 
 If OwnGit cannot read the list of repositories from its state database, it still refuses to start.
 
+## Downloading an archive
+
+The Code tab offers the selected branch or tag as a ZIP or tar.gz file from its top folder, and a commit page offers that commit. The archive holds the files of that revision, without Git history, in one folder named `PROJECT-REF`, such as `project-main`. Like `git archive`, it follows the `export-ignore` and `export-subst` attributes committed in that revision, so it can differ from the files the Code tab shows. The file has the same name. Any character other than a letter, a digit, `.`, `-`, or `_` becomes `-`, so `feature/login` gives `project-feature-login.zip`. Downloading needs the same access as reading the Code tab.
+
+Without a browser, use the API route. `ref` is a branch or tag, as a short name or a full name such as `refs/heads/main`, or a full commit ID, and the default branch when it is left out. `format` is `zip` or `tar.gz`. An unknown ref or format answers 404. With shared-password protection, `--user owngit` makes curl ask for the password; leave it out when access is open:
+
+```sh
+curl --fail --remote-name --remote-header-name --user owngit \
+  'http://HOST:7654/api/v1/repositories/PROJECT/archive?ref=main&format=tar.gz'
+```
+
+An archive download is a Git transfer with the limits below: at most 4 GiB and 30 minutes, including any wait for a place or for a push to the same repository, and one of the places for running Git requests. When the download cannot start in time, it answers HTTP 503 with `Retry-After`. OwnGit sends the archive while Git writes it. When Git fails, a limit is reached, or OwnGit stops before the end, OwnGit closes the connection without finishing the response, so the download fails instead of completing: curl exits with an error such as `(18) transfer closed with outstanding read data remaining`, and a browser marks the download as failed. The part received is not a valid archive either, because OwnGit sends the end of a ZIP file and the gzip trailer of a tar.gz file only after Git has finished successfully. When Git fails before it writes anything, the answer is an HTTP error instead.
+
 ## Git transfer limits
 
 - Each Git request, such as a clone, fetch, or push, can send or receive at most 4 GiB and must finish within 30 minutes. A push over the size limit is refused with HTTP 413. A clone or fetch that passes either limit is cut off, and Git reports an incomplete transfer. The server log records the failure. These limits are fixed in this version and no option changes them. OwnGit does not host Git LFS, so a repository whose complete history is larger than 4 GiB cannot be cloned through OwnGit. Keep large binary files out of Git history.
