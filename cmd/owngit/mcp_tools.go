@@ -465,7 +465,7 @@ func (server *mcpServer) closeTool(name, description string, closed bool) mcpToo
 // runChecks runs the committed checks like owngit check run without --check:
 // the working directory, timeouts, and output limits are the command's
 // defaults and cannot be changed by arguments. The attempt is recorded even
-// when ctx is cancelled during execution.
+// when ctx is cancelled during registration or execution.
 func (server *mcpServer) runChecks(ctx context.Context, raw json.RawMessage) ([]byte, error) {
 	var arguments runArguments
 	if err := decodeArguments(raw, &arguments); err != nil {
@@ -488,7 +488,13 @@ func (server *mcpServer) runChecks(ctx context.Context, raw json.RawMessage) ([]
 	if err != nil {
 		return nil, err
 	}
-	if err := attempt.register(ctx); err != nil {
+	// Registration and completion outlive a cancellation, as in the command
+	// line: once the server may have recorded the attempt, the run must reach
+	// its completion, or the attempt would stay pending.
+	registerCtx, cancelRegister := context.WithTimeout(context.WithoutCancel(ctx), mcpCallTimeout)
+	err = attempt.register(registerCtx)
+	cancelRegister()
+	if err != nil {
 		return nil, err
 	}
 	attempt.execute(ctx)

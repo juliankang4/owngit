@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/checkapi"
 	"owngit/internal/pullrequest"
 	"owngit/internal/version"
 )
@@ -920,4 +923,65 @@ func TestMCPBinaryLaunchFailureUsesStandardError(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "insecure_http_confirmation_required") {
 		t.Fatalf("err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
+}
+
+// A cancellation that arrives while the registration is on its way still
+// ends with a recorded cancelled attempt instead of a pending one.
+func TestMCPCancellationDuringRegistrationRecordsTheAttempt(t *testing.T) {
+	remoteFlags, taskID, work := startMCPCheckFixture(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	writeCommittedChecks(t, work, `{"version":1,"events":{"push":{}},"checks":[{"name":"marker","command":"echo ran > `+filepath.ToSlash(marker)+`"}]}`)
+	target, err := url.Parse(remoteFlags[1])
+	noErr(t, err)
+	registering := make(chan struct{}, 1)
+	proceed := make(chan struct{})
+	forward := &httputil.ReverseProxy{Rewrite: func(request *httputil.ProxyRequest) { request.SetURL(target) }}
+	proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || !strings.HasSuffix(request.URL.Path, "/attempts") {
+			forward.ServeHTTP(writer, request)
+			return
+		}
+		// The server records the registration; its answer is held until the
+		// call was cancelled, or the client gave up on the request.
+		recorder := httptest.NewRecorder()
+		forward.ServeHTTP(recorder, request)
+		registering <- struct{}{}
+		select {
+		case <-proceed:
+		case <-request.Context().Done():
+		}
+		for key, values := range recorder.Header() {
+			writer.Header()[key] = values
+		}
+		writer.WriteHeader(recorder.Code)
+		_, _ = writer.Write(recorder.Body.Bytes())
+	}))
+	t.Cleanup(proxy.Close)
+	session := startMCPSession(t, mcpOptions{server: proxy.URL, repository: "project", credentialFile: remoteFlags[6], acceptInsecureHTTP: true, workdir: work})
+	session.send(`{"jsonrpc":"2.0","id":"run","method":"tools/call","params":{"name":"check_run","arguments":{"task":"` + taskID + `"}}}`)
+	select {
+	case <-registering:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the registration did not arrive")
+	}
+	session.send(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"run"}}`)
+	// Give the cancellation time to reach the call, then answer.
+	time.Sleep(300 * time.Millisecond)
+	close(proceed)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var status checkapi.TaskResponse
+		noErr(t, json.Unmarshal([]byte(cliOutput(t, checkCommand, append([]string{"status", "--task", taskID}, remoteFlags...)...)), &status))
+		if status.Attempt != nil && status.Attempt.Status == "cancelled" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the attempt was not recorded as cancelled: %+v pending=%q", status.Attempt, status.Task.PendingAttemptID)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a check ran after the cancellation")
+	}
+	session.expectSilence()
 }
