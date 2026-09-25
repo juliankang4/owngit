@@ -358,7 +358,11 @@ const privateFileGuide = `"Password and token files" in docs/OPERATIONS.md`
 func secretFileMessage(what string, err error) string {
 	var notPrivate *state.NotPrivateError
 	if errors.As(err, &notPrivate) {
-		return what + " is not private: " + notPrivate.Problem + ". To fix it, run: " + notPrivate.Fix + " (see " + privateFileGuide + ")."
+		run := "To fix it, run: "
+		if notPrivate.Shell != "" {
+			run = "In " + notPrivate.Shell + ", run: "
+		}
+		return what + " is not private: " + notPrivate.Problem + ". " + run + notPrivate.Fix + " (see " + privateFileGuide + ")."
 	}
 	return what + " is unavailable or is not private."
 }

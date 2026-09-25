@@ -406,8 +406,8 @@ func validatePrivateInput(descriptor *windows.SECURITY_DESCRIPTOR, user *windows
 // only reports; the decision stays with validatePrivateInputDescriptor.
 func describeNotPrivate(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, path string, refused error) *NotPrivateError {
 	var problems, fixes []string
-	userTrustee := `"*` + user.String() + `"`
-	quoted := `"` + path + `"`
+	userTrustee := powerShellQuote("*" + user.String())
+	quoted := powerShellQuote(path)
 	if owner, _, err := descriptor.Owner(); err != nil || !privateInputOwner(owner, user) {
 		name := "unknown"
 		if err == nil && owner != nil {
@@ -424,11 +424,30 @@ func describeNotPrivate(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.S
 	if len(problems) == 0 {
 		problems = append(problems, refused.Error())
 	}
-	return &NotPrivateError{Problem: strings.Join(problems, "; "), Fix: strings.Join(fixes, "; ")}
+	return &NotPrivateError{Problem: strings.Join(problems, "; "), Fix: strings.Join(fixes, "; "), Shell: "PowerShell"}
+}
+
+// powerShellQuote quotes s as a PowerShell single-quoted string, in which
+// nothing is expanded, so a path with $, a backtick or $( ) stays text.
+// PowerShell also ends such a string at the typographic single quotes, so
+// every single quote character is doubled.
+func powerShellQuote(s string) string {
+	var quoted strings.Builder
+	quoted.WriteByte('\'')
+	for _, character := range s {
+		switch character {
+		case '\'', '\u2018', '\u2019', '\u201a', '\u201b':
+			quoted.WriteRune(character)
+		}
+		quoted.WriteRune(character)
+	}
+	quoted.WriteByte('\'')
+	return quoted.String()
 }
 
 // describeACL names what makes the file's access list more than one full
 // grant to user, and returns the icacls command that leaves only that grant.
+// quoted and userTrustee are already quoted for PowerShell.
 func describeACL(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, quoted, userTrustee string) ([]string, string) {
 	var problems, others, explicitOthers []string
 	userDenied, userFull, userFlags, unknownEntries := false, false, false, false
@@ -467,14 +486,14 @@ func describeACL(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, quo
 			if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE && !inherited {
 				// A deny entry for another account takes access away, but
 				// the file should still name only the current user.
-				explicitOthers = appendNew(explicitOthers, `"*`+sid.String()+`"`)
+				explicitOthers = appendNew(explicitOthers, powerShellQuote("*"+sid.String()))
 				continue
 			}
 			if ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE {
 				others = appendNew(others, accountName(sid))
 			}
 			if !inherited {
-				explicitOthers = appendNew(explicitOthers, `"*`+sid.String()+`"`)
+				explicitOthers = appendNew(explicitOthers, powerShellQuote("*"+sid.String()))
 			}
 		}
 	}
@@ -497,7 +516,7 @@ func describeACL(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, quo
 	if userDenied {
 		fix += " /remove:d " + userTrustee
 	}
-	fix += " /grant:r " + strings.TrimSuffix(userTrustee, `"`) + `:F"`
+	fix += " /grant:r " + powerShellQuote("*"+user.String()+":F")
 	if len(explicitOthers) != 0 {
 		fix += " /remove " + strings.Join(explicitOthers, " ")
 	}

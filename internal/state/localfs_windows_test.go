@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -274,8 +275,8 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	noErr(t, err)
 	const path = `C:\secrets\password.txt`
-	trustee := `"*` + user.String() + `"`
-	grant := `icacls "` + path + `" /inheritance:r /grant:r "*` + user.String() + `:F"`
+	trustee := `'*` + user.String() + `'`
+	grant := `icacls '` + path + `' /inheritance:r /grant:r '*` + user.String() + `:F'`
 	for _, test := range []struct {
 		name       string
 		descriptor *windows.SECURITY_DESCRIPTOR
@@ -284,19 +285,19 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 	}{
 		{"foreign owner", testDescriptor(t, users, true, user),
 			"its owner is " + accountName(users) + ", not your account or Administrators",
-			`icacls "` + path + `" /setowner ` + trustee},
+			`icacls '` + path + `' /setowner ` + trustee},
 		{"inherited entries", testDescriptor(t, user, false, user),
 			"it inherits access entries from its folder", grant},
 		{"another account", testDescriptor(t, user, true, user, everyone),
-			accountName(everyone) + " can also access it", grant + ` /remove "*` + everyone.String() + `"`},
+			accountName(everyone) + " can also access it", grant + ` /remove '*` + everyone.String() + `'`},
 		{"two other accounts and a foreign owner", testDescriptor(t, users, true, user, everyone, users),
 			"its owner is " + accountName(users) + ", not your account or Administrators; " + accountName(everyone) + ", " + accountName(users) + " can also access it",
-			`icacls "` + path + `" /setowner ` + trustee + "; " + grant + ` /remove "*` + everyone.String() + `" "*` + users.String() + `"`},
+			`icacls '` + path + `' /setowner ` + trustee + "; " + grant + ` /remove '*` + everyone.String() + `' '*` + users.String() + `'`},
 		{"read only", testDescriptorWith(t, user, []windows.EXPLICIT_ACCESS{testEntry(user, windows.GRANT_ACCESS, windows.GENERIC_READ)}),
 			"your account does not have full control of it", grant},
 		{"denied", testDescriptorWith(t, user, []windows.EXPLICIT_ACCESS{testEntry(user, windows.DENY_ACCESS, windows.FILE_WRITE_DATA), testEntry(user, windows.GRANT_ACCESS, fileAllAccess)}),
 			"it denies your account some access",
-			`icacls "` + path + `" /inheritance:r /remove:d ` + trustee + ` /grant:r "*` + user.String() + `:F"`},
+			`icacls '` + path + `' /inheritance:r /remove:d ` + trustee + ` /grant:r '*` + user.String() + `:F'`},
 	} {
 		err := validatePrivateInput(test.descriptor, user, path)
 		var notPrivate *NotPrivateError
@@ -314,15 +315,23 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 }
 
 // The fix OwnGit prints makes a hand-made file private: running it in
-// PowerShell is enough for the file to be accepted.
+// PowerShell is enough for the file to be accepted. Folder names with
+// PowerShell syntax stay text: the fix neither runs them nor changes another
+// file.
 func TestWindowsNotPrivateFixWorks(t *testing.T) {
 	user, _, err := processIdentity()
 	noErr(t, err)
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	noErr(t, err)
 	directory := t.TempDir()
-	inherited := filepath.Join(directory, "inherited password")
-	noErr(t, os.WriteFile(inherited, []byte("valid-password\n"), 0o600))
+	workingDirectory := t.TempDir()
+	var paths []string
+	for _, folder := range []string{"plain folder", "x$(ni INJ-subexpr)y", "y$HOMEz", "back`tick", "it's", "curly\u2019s", "$(ni INJ-second)"} {
+		noErr(t, os.MkdirAll(filepath.Join(directory, folder), 0o700))
+		path := filepath.Join(directory, folder, "password")
+		noErr(t, os.WriteFile(path, []byte("valid-password\n"), 0o600))
+		paths = append(paths, path)
+	}
 	shared := filepath.Join(directory, "shared password")
 	noErr(t, os.WriteFile(shared, []byte("valid-password\n"), 0o600))
 	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
@@ -332,17 +341,32 @@ func TestWindowsNotPrivateFixWorks(t *testing.T) {
 	noErr(t, err)
 	noErr(t, windows.SetNamedSecurityInfo(shared, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
-	for _, path := range []string{inherited, shared} {
+	paths = append(paths, shared)
+	for _, path := range paths {
 		err := ValidatePrivateInputFile(path)
 		var notPrivate *NotPrivateError
 		if !errors.As(err, &notPrivate) {
 			t.Fatalf("%s: err=%v, want *NotPrivateError", path, err)
 		}
-		t.Logf("%s: %s; fix: %s", filepath.Base(path), notPrivate.Problem, notPrivate.Fix)
-		output, err := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", notPrivate.Fix).CombinedOutput()
+		if notPrivate.Shell != "PowerShell" {
+			t.Errorf("%s: fix shell %q", path, notPrivate.Shell)
+		}
+		t.Logf("%s: %s; fix: %s", path, notPrivate.Problem, notPrivate.Fix)
+		command := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", notPrivate.Fix)
+		command.Dir = workingDirectory
+		output, err := command.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: the fix failed: %v\n%s", path, err, output)
 		}
 		noErr(t, ValidatePrivateInputFile(path))
+	}
+	for _, place := range []string{workingDirectory, directory} {
+		entries, err := os.ReadDir(place)
+		noErr(t, err)
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "INJ-") {
+				t.Errorf("the fix ran code from a folder name: %s", filepath.Join(place, entry.Name()))
+			}
+		}
 	}
 }
