@@ -233,6 +233,7 @@ owngit check run \
 Read durable state:
 
 ```sh
+owngit check task list --server URL --repository ID --credential-file PATH
 owngit check status --task TASK_ID --server URL --repository ID --credential-file PATH
 owngit check log --attempt ATTEMPT_ID --server URL --repository ID --credential-file PATH
 owngit check config show --server URL --repository ID --credential-file PATH
@@ -242,7 +243,9 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 ## Command reference
 
 `check task new` creates a task. Flags: `--title`, `--server`, `--repository`,
-`--credential-file`, `--accept-insecure-http`.
+`--credential-file`, `--accept-insecure-http`. `check task list` lists the
+repository's tasks with their correction budgets and takes the same flags
+without `--title`.
 
 `check run` executes checks and, unless `--no-upload` is set, records the
 attempt. Flags: `--task` (required), `--cycle`, `--workdir` (default `.`),
@@ -426,7 +429,8 @@ Read tools change nothing:
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show` |
 | `pull_request_diff` | `pr diff`; `patch: false` is `--stat`, and `source_oid` with `target_oid` pins a pair |
-| `check_status`, `check_log`, `check_cycle_list` | `check status`, `check log`, `check cycle list` |
+| `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt) |
+| `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 
 Write tools and their effects:
 

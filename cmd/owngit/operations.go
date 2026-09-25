@@ -187,6 +187,11 @@ func createTask(ctx context.Context, target connection, title string) ([]byte, e
 	return target.client().Do(ctx, http.MethodPost, target.repositoryPath()+"/tasks", checkapi.CreateTaskInput{Title: title})
 }
 
+// listTasks lists the repository's check tasks with their budgets.
+func listTasks(ctx context.Context, target connection) ([]byte, error) {
+	return target.client().Do(ctx, http.MethodGet, target.repositoryPath()+"/tasks", nil)
+}
+
 func showTask(ctx context.Context, target connection, taskID string) ([]byte, error) {
 	if err := requireIdentifier(taskID, "task"); err != nil {
 		return nil, err

@@ -63,22 +63,43 @@ func checkCommand(arguments []string) error {
 }
 
 func checkTaskCommand(arguments []string) error {
-	const usage = "Usage: owngit check task new --server URL --repository ID --credential-file PATH [--title TITLE]"
+	const usage = "Usage: owngit check task <new|list> --server URL --repository ID --credential-file PATH [--title TITLE]"
 	if len(arguments) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
-		return cliProblem("invalid_arguments", "check task requires new.")
+		return cliProblem("invalid_arguments", "check task requires new or list.")
 	}
 	if isHelpArgument(arguments[0]) {
 		fmt.Fprintln(os.Stdout, usage)
 		return nil
 	}
-	if arguments[0] != "new" {
-		return cliProblem("invalid_arguments", "check task requires new.")
+	switch arguments[0] {
+	case "new":
+		return checkTaskNew(arguments[1:])
+	case "list":
+		return checkTaskList(arguments[1:])
+	default:
+		return cliProblem("invalid_arguments", "check task requires new or list.")
 	}
+}
+
+func checkTaskList(arguments []string) error {
+	flags := newCheckFlagSet("check task list")
+	remote := addCheckRemoteFlags(flags)
+	if err := parseCheckFlags(flags, arguments); err != nil {
+		return err
+	}
+	target, err := remote.connection(".")
+	if err != nil {
+		return err
+	}
+	return writeResult(listTasks(context.Background(), target))
+}
+
+func checkTaskNew(arguments []string) error {
 	flags := newCheckFlagSet("check task new")
 	remote := addCheckRemoteFlags(flags)
 	title := flags.String("title", "", "task title")
-	if err := parseCheckFlags(flags, arguments[1:]); err != nil {
+	if err := parseCheckFlags(flags, arguments); err != nil {
 		return err
 	}
 	target, err := remote.connection(".")
@@ -745,7 +766,7 @@ func writeJSONValue(value any) error {
 }
 
 func printCheckUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit check <task new|cycle reserve|cycle list|run|status|log|config show> [options]")
+	fmt.Fprintln(writer, "Usage: owngit check <task new|task list|cycle reserve|cycle list|run|status|log|config show> [options]")
 	fmt.Fprintln(writer, "The helper registers an attempt before execution, runs checks in the current environment, and reports revision-bound evidence.")
 	fmt.Fprintln(writer, "A reserved correction cycle is consumed once. The initial check and manual reruns consume none.")
 	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server and --repository default to its origin remote.")

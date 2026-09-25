@@ -134,6 +134,7 @@ owngit check run \
 저장된 상태를 읽습니다.
 
 ```sh
+owngit check task list --server URL --repository ID --credential-file PATH
 owngit check status --task TASK_ID --server URL --repository ID --credential-file PATH
 owngit check log --attempt ATTEMPT_ID --server URL --repository ID --credential-file PATH
 owngit check config show --server URL --repository ID --credential-file PATH
@@ -142,7 +143,7 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 
 ## 명령 참조
 
-`check task new`는 작업을 만듭니다. 플래그는 `--title`, `--server`, `--repository`, `--credential-file`, `--accept-insecure-http`입니다.
+`check task new`는 작업을 만듭니다. 플래그는 `--title`, `--server`, `--repository`, `--credential-file`, `--accept-insecure-http`입니다. `check task list`는 저장소의 작업과 각 작업의 수정 라운드 한도를 보여 주며, `--title`을 뺀 같은 플래그를 받습니다.
 
 `check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값은 체크당 65536바이트), `--no-upload`, 그리고 여러 번 쓸 수 있는 `--check name=command`입니다. `--timeout`과 `--output-limit`은 0보다 커야 합니다. `--no-upload`를 쓰지 않으면 원격 플래그가 필요하며, 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져올 수 있습니다.
 
@@ -243,7 +244,8 @@ Codex는 기본으로 도구를 60초 기다린 뒤 호출을 취소하며, 이�
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show` |
 | `pull_request_diff` | `pr diff`. `patch: false`는 `--stat`과 같고, `source_oid`와 `target_oid`를 함께 넘기면 커밋 쌍을 고정합니다. |
-| `check_status`, `check_log`, `check_cycle_list` | `check status`, `check log`, `check cycle list` |
+| `check_task_list`, `check_status` | `check task list`, `check status`(작업 하나와 가장 최근 시도) |
+| `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 
 쓰기 도구와 그 효과는 다음과 같습니다.
 

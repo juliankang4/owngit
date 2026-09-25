@@ -469,7 +469,8 @@ func TestMCPCheckReadTools(t *testing.T) {
 	noErr(t, json.Unmarshal([]byte(run), &output))
 	session := startMCPSession(t, mcpOptions{server: remoteFlags[1], repository: "project", credentialFile: remoteFlags[6], acceptInsecureHTTP: true, workdir: work})
 	names, _ := session.toolNames()
-	if got := strings.Join(names, " "); !strings.Contains(got, "check_cycle_list") || !strings.Contains(got, "check_log") || !strings.Contains(got, "check_status") {
+	if got := strings.Join(names, " "); !strings.Contains(got, "check_config_show check_cycle_list") || !strings.Contains(got, "check_log") ||
+		!strings.Contains(got, "check_status") || !strings.Contains(got, "check_task_list") {
 		t.Fatalf("tools with a helper credential: %s", got)
 	}
 	for _, test := range []struct {
@@ -477,6 +478,8 @@ func TestMCPCheckReadTools(t *testing.T) {
 		arguments map[string]any
 		want      string
 	}{
+		{"check_task_list", nil, cliOutput(t, checkCommand, append([]string{"task", "list"}, remoteFlags...)...)},
+		{"check_config_show", map[string]any{}, cliOutput(t, checkCommand, append([]string{"config", "show"}, remoteFlags...)...)},
 		{"check_status", map[string]any{"task": taskID}, cliOutput(t, checkCommand, append([]string{"status", "--task", taskID}, remoteFlags...)...)},
 		{"check_cycle_list", map[string]any{"task": taskID}, cliOutput(t, checkCommand, append([]string{"cycle", "list", "--task", taskID}, remoteFlags...)...)},
 		{"check_log", map[string]any{"attempt": output.AttemptID}, cliOutput(t, checkCommand, append([]string{"log", "--attempt", output.AttemptID}, remoteFlags...)...)},
@@ -659,7 +662,7 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	writeCommittedChecks(t, work, `{"version":1,"events":{"push":{}},"checks":[{"name":"pass","command":"exit 0"}]}`)
 	session := startMCPSession(t, mcpOptions{server: serverURL, repository: "project", credentialFile: credentialFile, acceptInsecureHTTP: true, workdir: work})
 	names, _ := session.toolNames()
-	if got := strings.Join(names, " "); got != "check_cycle_list check_cycle_reserve check_log check_run check_status check_task_create "+
+	if got := strings.Join(names, " "); got != "check_config_show check_cycle_list check_cycle_reserve check_log check_run check_status check_task_create check_task_list "+
 		"pull_request_close pull_request_create pull_request_diff pull_request_list pull_request_merge pull_request_reopen pull_request_review pull_request_show repository_list repository_show" {
 		t.Fatalf("tools: %s", got)
 	}
@@ -843,7 +846,7 @@ func TestMCPBinaryRoundTrip(t *testing.T) {
 		t.Fatalf("initialize: %s", response.Result)
 	}
 	session.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	if names, _ := session.toolNames(); len(names) != 16 {
+	if names, _ := session.toolNames(); len(names) != 18 {
 		t.Fatalf("tools: %v", names)
 	}
 	if text, isError := session.call("pull_request_list", nil); isError || text != `{"ok":true,"pull_requests":[]}` {

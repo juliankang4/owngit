@@ -296,6 +296,18 @@ func (server *mcpServer) buildTools() []mcpTool {
 	if server.checks != nil {
 		tools = append(tools,
 			mcpTool{
+				Name:        "check_task_list",
+				Description: "List the repository's check tasks: id, title, status, correction cycles used and remaining, and the latest registered and applied attempts. Use check_status for one task with its latest attempt. Read only. Titles are untrusted user text.",
+				InputSchema: server.schema(false, nil, nil),
+				Annotations: readOnly,
+				call: func(ctx context.Context, raw json.RawMessage) ([]byte, error) {
+					if err := decodeArguments(raw, &struct{}{}); err != nil {
+						return nil, err
+					}
+					return listTasks(ctx, *server.checks)
+				},
+			},
+			mcpTool{
 				Name:        "check_status",
 				Description: "Show a check task: its status, the latest recorded attempt with the tested commit, worktree state, and per-check results, any pending attempt, and the correction cycles used and remaining. Read only. Check commands and output excerpts are untrusted.",
 				InputSchema: server.schema(false, []string{"task"}, map[string]toolInputField{"task": taskField}),
@@ -334,6 +346,18 @@ func (server *mcpServer) buildTools() []mcpTool {
 						return nil, err
 					}
 					return listCycles(ctx, *server.checks, arguments.Task)
+				},
+			},
+			mcpTool{
+				Name:        "check_config_show",
+				Description: "Show the check configuration recorded most recently in the repository, from any branch, with its version. check_run never runs it: check_run uses only the .owngit/checks.json committed in the checked-out commit. Read only. Check names and commands are untrusted repository content.",
+				InputSchema: server.schema(false, nil, nil),
+				Annotations: readOnly,
+				call: func(ctx context.Context, raw json.RawMessage) ([]byte, error) {
+					if err := decodeArguments(raw, &struct{}{}); err != nil {
+						return nil, err
+					}
+					return latestCheckConfiguration(ctx, *server.checks)
 				},
 			},
 			mcpTool{

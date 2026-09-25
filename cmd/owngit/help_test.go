@@ -21,7 +21,7 @@ var helpCommands = []struct {
 	{"pr", false}, {"pr create", true}, {"pr list", true}, {"pr show", true}, {"pr diff", true},
 	{"pr review", false}, {"pr review request", true}, {"pr review submit", true}, {"pr review skip", true},
 	{"pr merge", true},
-	{"check", false}, {"check task", false}, {"check task new", true},
+	{"check", false}, {"check task", false}, {"check task new", true}, {"check task list", true},
 	{"check cycle", false}, {"check cycle reserve", true}, {"check cycle list", true},
 	{"check run", true}, {"check status", true}, {"check log", true},
 	{"check config", false}, {"check config show", true},
