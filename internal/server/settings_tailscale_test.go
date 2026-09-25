@@ -126,7 +126,7 @@ func TestTailscaleRefusalIsExplainedOnTheBlock(t *testing.T) {
 // proxy forwarded for the shared name.
 func TestConnectionNamesTailscaleOnlyForItsEndpoint(t *testing.T) {
 	app, _ := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
-	_, err := app.turnTailscaleOn(t.Context(), nil)
+	_, err := app.Tailscale.On(t.Context(), nil)
 	noErr(t, err)
 	cases := []struct {
 		name, host, proto string

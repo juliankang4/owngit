@@ -69,10 +69,10 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 	notice := "tailscale_off"
 	if action == webui.ActionTailscaleOn {
 		homeNetwork := formChecked(postValue(request, "home_network"))
-		_, err = app.turnTailscaleOn(request.Context(), &homeNetwork)
+		_, err = app.Tailscale.On(request.Context(), &homeNetwork)
 		notice = "tailscale_on"
 	} else {
-		_, err = app.turnTailscaleOff(request.Context())
+		_, err = app.Tailscale.Off(request.Context())
 	}
 	if err != nil {
 		app.renderTailscaleRefusal(writer, request, settings, csrf, action, err)

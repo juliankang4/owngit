@@ -1442,6 +1442,28 @@ func (s *Store) TailscaleServe(ctx context.Context) (TailscaleServe, bool, error
 	return record, true, nil
 }
 
+// TailscaleChangeLockFile serializes changes of Tailscale sharing between
+// the serve process and "owngit tailscale".
+const TailscaleChangeLockFile = ".tailscale-change.lock"
+
+// LockTailscaleChange waits until no other process is changing Tailscale
+// sharing and holds the lock until the release is called. It gives up when
+// ctx ends.
+func (s *Store) LockTailscaleChange(ctx context.Context) (func(), error) {
+	path := filepath.Join(s.dir, TailscaleChangeLockFile)
+	for {
+		release, err := AcquireExclusiveFileLock(path)
+		if !errors.Is(err, ErrInstanceRunning) {
+			return release, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, errors.New("another change of Tailscale sharing is still running; try again later")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
 // SaveTailscaleServe replaces the Tailscale sharing record.
 func (s *Store) SaveTailscaleServe(ctx context.Context, record TailscaleServe) error {
 	return putTailscaleServe(ctx, s.db, record)

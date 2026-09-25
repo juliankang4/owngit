@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"owngit/internal/requestctx"
@@ -53,6 +54,13 @@ type Tailscale struct {
 	// runs with: state.ObserveRunningNetwork from another process, or
 	// state.OwnRunningNetwork inside the serve process.
 	Observe func(context.Context) (state.RunningObservation, error)
+	// Live is the network of the running server, which a change applies to
+	// at once; nil outside the serve process.
+	Live *LiveNetwork
+	// changing serializes changes inside this process, and
+	// Store.LockTailscaleChange between processes, so that no change reads
+	// the record of what OwnGit added while another rewrites it.
+	changing sync.Mutex
 }
 
 // Endpoint states in TailscaleReport.
@@ -290,8 +298,38 @@ type TailscaleChange struct {
 // true also listens on the home network, and false listens on this computer
 // only. Changing the listen address applies at the next start.
 func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool) (TailscaleChange, error) {
+	ctx, unlock, err := sharing.lock(ctx)
+	if err != nil {
+		return TailscaleChange{}, err
+	}
+	defer unlock()
+	change, err := sharing.on(ctx, homeNetwork)
+	if err == nil && sharing.Live != nil {
+		sharing.Live.ApplyTailscale(change.Record)
+	}
+	return change, err
+}
+
+// lock starts a change: it runs to its end even when ctx is cancelled,
+// within tailscaleChangeTimeout, and after every other change of this state
+// directory.
+func (sharing *Tailscale) lock(ctx context.Context) (context.Context, func(), error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tailscaleChangeTimeout)
-	defer cancel()
+	sharing.changing.Lock()
+	release, err := sharing.Store.LockTailscaleChange(ctx)
+	if err != nil {
+		sharing.changing.Unlock()
+		cancel()
+		return nil, nil, err
+	}
+	return ctx, func() {
+		release()
+		sharing.changing.Unlock()
+		cancel()
+	}, nil
+}
+
+func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleChange, error) {
 	command, err := sharing.findCommand()
 	if err != nil {
 		return TailscaleChange{}, tailscaleError(err, false)
@@ -441,9 +479,21 @@ func (sharing *Tailscale) onUpdate(ctx context.Context, saved state.NetworkSetti
 // endpoint changed it explains and changes nothing. Then it takes back the
 // settings OwnGit changed, where they are still as OwnGit saved them. The
 // listen address stays.
-func (sharing *Tailscale) Off(ctx context.Context) (TailscaleChange, string, error) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tailscaleChangeTimeout)
-	defer cancel()
+func (sharing *Tailscale) Off(ctx context.Context) (TailscaleChange, error) {
+	ctx, unlock, err := sharing.lock(ctx)
+	if err != nil {
+		return TailscaleChange{}, err
+	}
+	defer unlock()
+	change, baseURL, err := sharing.off(ctx)
+	if err == nil && sharing.Live != nil {
+		sharing.Live.RemoveTailscale(change.Record, baseURL)
+	}
+	return change, err
+}
+
+// off turns sharing off and returns the base URL saved now.
+func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, error) {
 	record, on, err := sharing.Store.TailscaleServe(ctx)
 	if err != nil {
 		return TailscaleChange{}, "", err
@@ -531,26 +581,6 @@ func (app *App) throughTailscale(request *http.Request) bool {
 	}
 	peer, _, err := net.SplitHostPort(info.Peer)
 	return err == nil && peer == loopbackProxy
-}
-
-// turnTailscaleOn turns sharing on and makes this running server use it at
-// once, where no start option decides otherwise.
-func (app *App) turnTailscaleOn(ctx context.Context, homeNetwork *bool) (TailscaleChange, error) {
-	change, err := app.Tailscale.On(ctx, homeNetwork)
-	if err == nil && app.Network != nil {
-		app.Network.ApplyTailscale(change.Record)
-	}
-	return change, err
-}
-
-// turnTailscaleOff turns sharing off and makes this running server stop
-// using it at once.
-func (app *App) turnTailscaleOff(ctx context.Context) (TailscaleChange, error) {
-	change, baseURL, err := app.Tailscale.Off(ctx)
-	if err == nil && app.Network != nil {
-		app.Network.RemoveTailscale(change.Record, baseURL)
-	}
-	return change, err
 }
 
 func (sharing *Tailscale) findCommand() (tailscale.Command, error) {

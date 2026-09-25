@@ -201,7 +201,7 @@ func tailscaleOff(arguments []string) error {
 		return err
 	}
 	defer store.Close()
-	change, _, err := sharing.Off(ctx)
+	change, err := sharing.Off(ctx)
 	if err != nil {
 		return tailscaleFailure(err)
 	}

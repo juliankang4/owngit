@@ -42,6 +42,10 @@ type State struct {
 	// IgnoreWrites makes Serve changes succeed without being kept, as
 	// Tailscale does when it cannot save its state.
 	IgnoreWrites bool `json:"ignore_writes,omitempty"`
+	// WriteDelay makes every Serve change wait this many milliseconds
+	// before it takes effect, as Tailscale does while it fetches a
+	// certificate. Other calls are answered meanwhile.
+	WriteDelay int `json:"write_delay,omitempty"`
 	// Calls are the argument lists the fake was run with, in order.
 	Calls [][]string `json:"calls,omitempty"`
 }
@@ -180,6 +184,11 @@ func RunIfFake() {
 // run handles one fake command. Calls from concurrent processes are
 // serialized with a lock file next to the state.
 func run(file string, arguments []string) int {
+	if len(arguments) > 1 && arguments[0] == "serve" && arguments[1] != "status" {
+		if state, err := load(file); err == nil && state.WriteDelay > 0 {
+			time.Sleep(time.Duration(state.WriteDelay) * time.Millisecond)
+		}
+	}
 	unlock, err := lockFile(file + ".lock")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

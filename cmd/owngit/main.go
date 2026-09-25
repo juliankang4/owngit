@@ -398,6 +398,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			Observe: func(ctx context.Context) (state.RunningObservation, error) {
 				return store.OwnRunningNetwork(ctx, runningLive)
 			},
+			Live: live,
 		},
 		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true, Version: version.Version,
 		WakeChecks: checkCoordinator.Wake, Imports: imports, RunningRecordLive: runningLive,
