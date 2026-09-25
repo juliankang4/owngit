@@ -167,7 +167,9 @@ OwnGit은 신뢰하는 프록시에서 온 요청에서만 다음 세 헤더를 
 
 헤더가 여러 번 오거나, 값 하나가 와야 할 자리에 목록이 오거나, 다른 값이 오면 OwnGit은 그 헤더를 무시하고 연결에서 보이는 값을 씁니다. `Forwarded` 헤더도 무시합니다. 다른 주소에서 온 요청은 전과 똑같이 처리하므로, OwnGit에 직접 접속한 기기는 이 헤더로 아무것도 바꿀 수 없습니다. 프록시는 클라이언트 주소를 `X-Forwarded-For`에 직접 덧붙여야 합니다. 클라이언트가 보낸 헤더를 그대로 넘기는 프록시를 쓰면 클라이언트가 잠금에 쓰일 주소를 고를 수 있습니다.
 
-프록시가 같은 컴퓨터에서 돌면 OwnGit은 기본값인 `127.0.0.1:7654`에서 연결을 받게 두세요. 그러면 다른 기기는 프록시를 거쳐야만 OwnGit에 닿습니다. 컨테이너 안의 프록시는 호스트 네트워크를 쓰지 않는 한 호스트의 `127.0.0.1`에 닿지 못합니다. 이때는 컨테이너가 닿을 수 있는 주소에서 OwnGit이 연결을 받게 하고, 컨테이너가 접속해 오는 주소를 신뢰하세요.
+프록시가 같은 컴퓨터에서 돌면 OwnGit은 기본값인 `127.0.0.1:7654`에서 연결을 받게 두세요. 그러면 다른 기기는 프록시를 거쳐야만 OwnGit에 닿습니다. 컨테이너 안의 프록시는 호스트 네트워크를 쓰지 않는 한 호스트의 `127.0.0.1`에 닿지 못합니다. 이때는 프록시가 닿을 수 있는 주소에서 OwnGit이 연결을 받게 하고, 프록시가 접속해 오는 주소를 신뢰하세요. 같은 컴퓨터의 Docker 안에서 도는 프록시는 `172.18.0.0/16` 같은 그 컨테이너의 Docker 네트워크 범위에서 접속합니다. 다른 컴퓨터에서 도는 프록시는 그 컴퓨터에서 Docker로 돌더라도 그 컴퓨터의 주소에서 접속합니다. Docker가 컨테이너 주소를 그 컴퓨터의 주소로 바꾸기 때문입니다.
+
+OwnGit이 네트워크 주소에서 연결을 받으면 다른 기기도 프록시를 거치지 않고 일반 HTTP로 OwnGit에 직접 접속할 수 있습니다. `network set`과 설정 화면도 이를 알려 줍니다. OwnGit은 그런 기기가 보낸 전달 헤더를 믿지 않지만, 그 연결은 암호화되지 않습니다. 모든 기기가 프록시를 거치게 하려면 방화벽 규칙 등으로 프록시만 OwnGit의 포트에 닿게 하세요.
 
 Git 요청 하나는 최대 4 GiB를 주고받고 최대 30분까지 걸릴 수 있습니다([Git 전송 제한](#git-전송-제한) 참고). 프록시의 한도가 이보다 작으면 큰 푸시나 클론이 프록시에서 실패합니다.
 
@@ -179,7 +181,7 @@ git.example.internal {
 }
 ```
 
-`reverse_proxy`는 기본값으로 원래 Host를 넘기고, `X-Forwarded-Proto`를 설정하며, `X-Forwarded-For`를 클라이언트 주소로 설정합니다. 클라이언트가 보낸 값은 무시합니다. 요청 크기 한도가 없고, 긴 푸시를 끊는 시간 제한도 없습니다. 공개 이름이면 Caddy가 인증서를 자동으로 받습니다. `git.example.internal` 같은 이름에는 Caddy 자체 인증 기관을 쓰므로 각 기기가 그 인증 기관을 신뢰해야 합니다.
+`reverse_proxy`는 기본값으로 원래 Host를 넘기고, `X-Forwarded-Proto`를 설정하며, `X-Forwarded-For`를 클라이언트 주소로 설정합니다. 클라이언트가 보낸 값은 무시합니다. 요청 크기 한도가 없고, 긴 푸시를 끊는 시간 제한도 없습니다. 공개 이름이면 Caddy가 인증서를 자동으로 받습니다. `git.example.internal` 같은 이름에는 Caddy 자체 인증 기관을 쓰므로 각 기기가 그 인증 기관을 신뢰해야 합니다. Caddy의 Debian 패키지로 설치했다면 이 인증 기관의 인증서는 `/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`에 있습니다. root와 `caddy` 사용자만 읽을 수 있으니 root 권한으로 복사한 뒤 각 기기의 신뢰하는 인증서에 추가하세요.
 
 #### nginx
 
@@ -207,28 +209,68 @@ server {
 }
 ```
 
-`client_max_body_size`와 두 시간 제한은 OwnGit의 한도에 맞춘 값입니다. `proxy_request_buffering off`와 `proxy_http_version 1.1`을 함께 쓰면 nginx가 푸시를 디스크에 모두 저장하지 않고 받는 대로 넘깁니다. `$proxy_add_x_forwarded_for`는 클라이언트 주소를 헤더 끝에 덧붙입니다. nginx는 클라이언트가 보낸 다른 헤더를 그대로 넘기고 빈 값을 주면 그 헤더를 지우므로, `X-Forwarded-Host` 줄은 클라이언트가 이 헤더를 직접 보내지 못하게 합니다. `$host`에는 포트가 없으므로, 클라이언트가 443이 아닌 포트로 접속한다면 `proxy_set_header Host $http_host;`로 바꾸세요. 그래야 OwnGit이 보는 Host가 브라우저의 주소와 같아집니다.
+`client_max_body_size`와 두 시간 제한은 OwnGit의 한도에 맞춘 값입니다. `proxy_request_buffering off`와 `proxy_http_version 1.1`을 함께 쓰면 nginx가 푸시를 디스크에 모두 저장하지 않고 받는 대로 넘깁니다. `proxy_buffering off`는 반대 방향에서 같은 일을 합니다. 클론과 압축 파일을 임시 파일에 먼저 저장하지 않고 OwnGit이 보내는 대로 클라이언트에 넘깁니다. `$proxy_add_x_forwarded_for`는 클라이언트 주소를 헤더 끝에 덧붙입니다. nginx는 클라이언트가 보낸 다른 헤더를 그대로 넘기고 빈 값을 주면 그 헤더를 지우므로, `X-Forwarded-Host` 줄은 클라이언트가 이 헤더를 직접 보내지 못하게 합니다. `$host`에는 포트가 없으므로, 클라이언트가 443이 아닌 포트로 접속한다면 `proxy_set_header Host $http_host;`로 바꾸세요. 그래야 OwnGit이 보는 Host가 브라우저의 주소와 같아집니다.
 
 #### Traefik
 
-Traefik은 원래 Host를 넘기고, `X-Forwarded-Proto`를 설정하며, `X-Forwarded-For`에 클라이언트 주소를 덧붙입니다. `forwardedHeaders.trustedIPs`를 설정하지 않으면 클라이언트가 보낸 전달 헤더는 버립니다. 엔트리포인트는 기본값으로 요청을 60초까지만 읽으므로 긴 푸시가 끊깁니다. HTTPS 엔트리포인트의 `transport.respondingTimeouts.readTimeout`을 `30m`처럼 늘리세요. Traefik이 Docker에서 돌면 Traefik이 접속해 오는 주소, 예를 들어 Traefik의 Docker 네트워크 범위를 신뢰하세요.
+Traefik은 원래 Host를 넘기고, `X-Forwarded-Proto`를 설정하며, `X-Forwarded-For`에 클라이언트 주소를 덧붙입니다. `forwardedHeaders.trustedIPs`를 설정하지 않으면 클라이언트가 보낸 전달 헤더는 버립니다. 엔트리포인트는 기본값으로 요청을 60초까지만 읽으므로 긴 푸시가 HTTP 504로 끊깁니다. HTTPS 엔트리포인트의 `readTimeout`을 늘리세요. 이 값은 정적 설정에 넣고, 라우터와 서비스와 인증서는 동적 설정 파일에 넣습니다.
+
+```yaml
+# /etc/traefik/traefik.yml (static configuration)
+entryPoints:
+  websecure:
+    address: ":443"
+    transport:
+      respondingTimeouts:
+        readTimeout: 30m
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+```
+
+```yaml
+# /etc/traefik/dynamic.yml
+http:
+  routers:
+    owngit:
+      rule: Host(`git.example.internal`)
+      entryPoints: [websecure]
+      service: owngit
+      tls: {}
+  services:
+    owngit:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:7654
+tls:
+  certificates:
+    - certFile: /etc/ssl/git.example.internal.crt
+      keyFile: /etc/ssl/git.example.internal.key
+```
+
+Traefik은 `traefik --configFile=/etc/traefik/traefik.yml`로 시작합니다. 이 예시는 릴리스 바이너리로 설치한 Traefik 3.7에서 시험했습니다. Traefik이 Docker에서 돌면 위에서 설명한 대로 Traefik이 접속해 오는 주소를 신뢰하세요.
 
 #### Nginx Proxy Manager
 
-기본 설정의 Nginx Proxy Manager는 내 네트워크에 있는 기기의 실제 주소를 OwnGit에 알려 주지 못합니다. 이 프로그램의 `nginx.conf`는 `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`에 속한 주소가 보낸 `X-Real-IP` 헤더를 받아들여 그 값을 클라이언트 주소로 쓰고, 그 값을 `X-Forwarded-For`에 덧붙입니다. 그래서 가정용 네트워크의 기기는 원하는 주소를 마음대로 보낼 수 있습니다. OwnGit에서 Nginx Proxy Manager를 신뢰하면 그런 기기는 비밀번호를 추측할 때마다 주소를 바꿔 잠금을 피할 수 있고, 다른 기기의 주소를 보내 그 기기를 잠글 수 있으며, 설치 승인 요청이 이 컴퓨터에서 온 것처럼 보이게 해서 다른 기기가 요청했다는 경고가 나오지 않게 할 수 있습니다. Nginx Proxy Manager가 실제 주소를 알려 주게 하는 설정은 아직 시험하지 않았습니다.
+기본 설정의 Nginx Proxy Manager에서는 내 네트워크의 기기가 OwnGit이 보는 주소를 직접 정할 수 있습니다. 이 프로그램의 `nginx.conf`는 `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`에 속한 주소가 보낸 `X-Real-IP` 헤더를 받아들여 그 값을 클라이언트 주소로 쓰고, 그 값을 `X-Forwarded-For`에 덧붙입니다. 이 설정 그대로 OwnGit에서 Nginx Proxy Manager를 신뢰하면 가정용 네트워크의 기기는 비밀번호를 추측할 때마다 주소를 바꿔 잠금을 피할 수 있고, 다른 기기의 주소를 보내 그 기기를 잠글 수 있으며, 설치 승인 요청이 이 컴퓨터에서 온 것처럼 보이게 해서 다른 기기가 요청했다는 경고가 나오지 않게 할 수 있습니다.
 
-Caddy나 nginx를 쓰는 편이 좋습니다. 그래도 Nginx Proxy Manager를 쓴다면 거기에 접속할 수 있는 기기가 모두 내 기기일 때만 신뢰하세요. 내 네트워크에서 오는 추측은 잠금으로 늦출 수 없으므로 긴 비밀번호를 쓰고, 설치 요청을 승인할 때 보이는 주소를 믿지 마세요.
+아래 Advanced 탭 설정에 있는 `set_real_ip_from 127.0.0.1;` 줄을 넣으면 OwnGit용 프록시 호스트에서는 이 동작이 꺼집니다. Nginx Proxy Manager는 자기 컨테이너에서 온 `X-Real-IP`만 받아들이고 각 기기가 접속해 온 주소를 그대로 알려 주므로, 기기마다 따로 잠깁니다. Linux의 Docker Engine에서 돌린 Nginx Proxy Manager 2.16.0과 IPv4 클라이언트로, Websockets Support를 켠 경우와 끈 경우를 모두 시험했습니다. Docker Desktop, rootless Docker, IPv6 클라이언트는 시험하지 않았습니다. 이 줄은 Nginx Proxy Manager가 `X-Real-IP`를 믿지 않게 할 뿐이므로, Docker가 이미 바꾼 클라이언트 주소를 되살리지는 못합니다.
 
-설정할 때는 프록시 호스트를 만들고 scheme은 `http`, 주소와 포트는 OwnGit의 것으로 정한 뒤 SSL 인증서를 붙이고 Force SSL을 켜세요. Nginx Proxy Manager 2.14.0부터는 클라이언트가 보낸 `X-Forwarded-Proto` 값을 그대로 넘깁니다. 상위 프록시의 전달 프로토콜 헤더를 신뢰하는 옵션을 끈 채로 Force SSL을 켜면 일반 HTTP 요청은 모두 HTTPS로 넘겨지므로 OwnGit에는 HTTPS 요청만 도착합니다. Nginx Proxy Manager는 `X-Forwarded-Host`를 설정하지 않으므로 클라이언트가 보낸 값이 OwnGit까지 오지만, OwnGit은 위에서 설명한 경우에만 그 값을 씁니다. 기본값은 요청 본문을 2000 MB로 제한하고 OwnGit이 데이터를 보내거나 받기를 최대 90초만 기다립니다. Advanced 탭에 다음 줄을 넣으세요.
+이 줄을 넣지 않았다면 Nginx Proxy Manager에 접속할 수 있는 기기가 모두 내 기기일 때만 신뢰하세요. 내 네트워크에서 오는 추측은 잠금으로 늦출 수 없으므로 긴 비밀번호를 쓰고, 설치 요청을 승인할 때 보이는 주소를 믿지 마세요.
+
+설정할 때는 프록시 호스트를 만들고 scheme은 `http`, Forward Hostname / IP와 Forward Port는 OwnGit의 주소와 포트로 정한 뒤 SSL 인증서를 붙이고 Force SSL을 켜세요. "Trust Upstream Forwarded Proto Headers"는 끈 채로 두세요. Nginx Proxy Manager 2.14.0부터는 클라이언트가 보낸 `X-Forwarded-Proto` 값을 그대로 넘깁니다. 이 옵션을 끈 채로 Force SSL을 켜면 일반 HTTP 요청은 모두 HTTPS로 넘겨지므로 OwnGit에는 HTTPS 요청만 도착합니다. HTTPS로 접속하면서 `X-Forwarded-Proto: http`를 보내는 클라이언트는 자기 요청만 일반 HTTP로 처리되게 할 뿐입니다. Nginx Proxy Manager는 `X-Forwarded-Host`를 설정하지 않으므로 클라이언트가 보낸 값이 OwnGit까지 오지만, OwnGit은 위에서 설명한 경우에만 그 값을 씁니다. 기본값은 요청 본문을 2000 MB로 제한하고, OwnGit이 데이터를 보내거나 받기를 최대 90초만 기다리며, 큰 응답을 임시 파일에 저장합니다. Advanced 탭의 Custom Nginx Configuration에 다음 줄을 넣으세요.
 
 ```nginx
 client_max_body_size 4g;
 proxy_request_buffering off;
 proxy_read_timeout 30m;
 proxy_send_timeout 30m;
+set_real_ip_from 127.0.0.1;
 ```
 
-Nginx Proxy Manager는 Docker에서 돌므로 컨테이너가 접속해 오는 주소, 예를 들어 그 Docker 네트워크 범위를 신뢰하세요.
+Websockets Support를 켜든 끄든 그대로 쓸 수 있습니다. `proxy_buffering off;`를 더하면 클론과 압축 파일을 임시 파일에 먼저 쓰지 않고 OwnGit이 보내는 대로 넘깁니다. `proxy_http_version`은 넣지 마세요. Nginx Proxy Manager가 이미 설정하므로 Websockets Support를 켜면 값이 두 번 들어가 프록시 호스트가 동작하지 않습니다.
+
+Nginx Proxy Manager가 접속해 오는 주소는 위에서 설명한 대로 신뢰하세요. OwnGit이 같은 컴퓨터에서 돌면 그 Docker 네트워크 범위이고, 다른 컴퓨터에서 돌면 Nginx Proxy Manager를 실행하는 컴퓨터의 주소입니다.
 
 ## 새 릴리스 알림
 

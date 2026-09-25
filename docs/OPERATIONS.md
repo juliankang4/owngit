@@ -167,7 +167,9 @@ From a trusted proxy, and only from one, OwnGit reads three headers:
 
 OwnGit ignores a repeated header, a list where one value belongs, or any other value, and uses what the connection itself shows. It ignores the `Forwarded` header. Requests from other addresses are treated as before, so a device that connects to OwnGit directly cannot set these headers. The proxy must add the client's address to `X-Forwarded-For` itself; a proxy that passes the client's header through unchanged lets clients choose their lockout address.
 
-When the proxy runs on the same computer, keep OwnGit listening on `127.0.0.1:7654`, the default, so that other devices can reach it only through the proxy. A proxy in a container cannot reach `127.0.0.1` on the host unless it uses the host's network. Otherwise, let OwnGit listen on an address the container can reach, and trust the address the container connects from.
+When the proxy runs on the same computer, keep OwnGit listening on `127.0.0.1:7654`, the default, so that other devices can reach it only through the proxy. A proxy in a container cannot reach `127.0.0.1` on the host unless it uses the host's network. Otherwise, let OwnGit listen on an address the proxy can reach, and trust the address the proxy connects from. A proxy in Docker on the same computer connects from its container's Docker network range, such as `172.18.0.0/16`. A proxy on another computer connects from that computer's address, even when it runs in Docker there, because Docker replaces the container's address with the computer's own.
+
+When OwnGit listens on a network address, other devices can also connect to it directly over plain HTTP, without the proxy. `network set` and the Settings page say so. OwnGit does not believe forwarded headers from those devices, but their connection is not encrypted. To make every device go through the proxy, let only the proxy reach OwnGit's port, for example with a firewall rule.
 
 Each Git request can send or receive up to 4 GiB and take up to 30 minutes (see [Git transfer limits](#git-transfer-limits)). The proxy's own limits must be at least as large, or large pushes and clones fail at the proxy.
 
@@ -179,7 +181,7 @@ git.example.internal {
 }
 ```
 
-By default `reverse_proxy` passes the original Host, sets `X-Forwarded-Proto`, and sets `X-Forwarded-For` to the client's address, ignoring any value the client sent. It has no request size limit and no timeout that would cut a long push. Caddy gets a certificate for a public name automatically. For a name such as `git.example.internal` it uses its own local certificate authority, which each device must trust.
+By default `reverse_proxy` passes the original Host, sets `X-Forwarded-Proto`, and sets `X-Forwarded-For` to the client's address, ignoring any value the client sent. It has no request size limit and no timeout that would cut a long push. Caddy gets a certificate for a public name automatically. For a name such as `git.example.internal` it uses its own local certificate authority, which each device must trust. With Caddy's Debian package, the certificate of that authority is `/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`. Only root and the `caddy` user can read it, so copy it as root, then add it to the trusted certificates on each device.
 
 #### nginx
 
@@ -207,28 +209,68 @@ server {
 }
 ```
 
-`client_max_body_size` and the two timeouts match OwnGit's limits. `proxy_request_buffering off` together with `proxy_http_version 1.1` lets nginx pass a push on as it arrives instead of storing all of it on disk first. `$proxy_add_x_forwarded_for` adds the client's address at the end of the header. nginx passes other client headers on unchanged, and an empty value removes one, so the `X-Forwarded-Host` line stops a client from sending its own. `$host` has no port, so if clients use a port other than 443, write `proxy_set_header Host $http_host;` instead, so that the Host OwnGit sees matches the address in the browser.
+`client_max_body_size` and the two timeouts match OwnGit's limits. `proxy_request_buffering off` together with `proxy_http_version 1.1` lets nginx pass a push on as it arrives instead of storing all of it on disk first. `proxy_buffering off` does the same in the other direction: clones and archives go to the client as OwnGit sends them instead of into temporary files. `$proxy_add_x_forwarded_for` adds the client's address at the end of the header. nginx passes other client headers on unchanged, and an empty value removes one, so the `X-Forwarded-Host` line stops a client from sending its own. `$host` has no port, so if clients use a port other than 443, write `proxy_set_header Host $http_host;` instead, so that the Host OwnGit sees matches the address in the browser.
 
 #### Traefik
 
-Traefik passes the original Host and sets `X-Forwarded-Proto` and `X-Forwarded-For` with the client's address added, and it drops forwarded headers that clients send unless you configure `forwardedHeaders.trustedIPs`. Its entry points stop reading a request after 60 seconds by default, which cuts long pushes; raise `transport.respondingTimeouts.readTimeout` on the HTTPS entry point, for example to `30m`. When Traefik runs in Docker, trust the address it connects from, such as its Docker network range.
+Traefik passes the original Host and sets `X-Forwarded-Proto` and `X-Forwarded-For` with the client's address added, and it drops forwarded headers that clients send unless you configure `forwardedHeaders.trustedIPs`. Its entry points stop reading a request after 60 seconds by default, which cuts a long push with HTTP 504. Raise `readTimeout` on the HTTPS entry point. That setting belongs in the static configuration, and the router, service, and certificate go in a dynamic configuration file:
+
+```yaml
+# /etc/traefik/traefik.yml (static configuration)
+entryPoints:
+  websecure:
+    address: ":443"
+    transport:
+      respondingTimeouts:
+        readTimeout: 30m
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+```
+
+```yaml
+# /etc/traefik/dynamic.yml
+http:
+  routers:
+    owngit:
+      rule: Host(`git.example.internal`)
+      entryPoints: [websecure]
+      service: owngit
+      tls: {}
+  services:
+    owngit:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:7654
+tls:
+  certificates:
+    - certFile: /etc/ssl/git.example.internal.crt
+      keyFile: /etc/ssl/git.example.internal.key
+```
+
+Start Traefik with `traefik --configFile=/etc/traefik/traefik.yml`. This example was tested with Traefik 3.7 installed from its release binary. When Traefik runs in Docker, trust the address it connects from, as described above.
 
 #### Nginx Proxy Manager
 
-With its default settings, Nginx Proxy Manager cannot tell OwnGit the real address of devices on your own network. Its `nginx.conf` accepts an `X-Real-IP` header from any address in `10.0.0.0/8`, `172.16.0.0/12`, and `192.168.0.0/16`, uses that value as the client's address, and adds it to `X-Forwarded-For`. A device on a home network can therefore send any address it likes. If you trust Nginx Proxy Manager in OwnGit, such a device can avoid the password lockout by sending a new address with every guess, lock out another device by sending that device's address, and make a setup approval request look as if it came from this computer, so the approval does not warn that another device asked. A setting that makes Nginx Proxy Manager report the real address has not been tested yet.
+With its default settings, Nginx Proxy Manager lets devices on your own network choose the address that OwnGit sees. Its `nginx.conf` accepts an `X-Real-IP` header from any address in `10.0.0.0/8`, `172.16.0.0/12`, and `192.168.0.0/16`, uses that value as the client's address, and adds it to `X-Forwarded-For`. If you trust Nginx Proxy Manager in OwnGit with these settings, a device on a home network can avoid the password lockout by sending a new address with every guess, lock out another device by sending that device's address, and make a setup approval request look as if it came from this computer, so the approval does not warn that another device asked.
 
-Prefer Caddy or nginx. If you use Nginx Proxy Manager anyway, trust it only when every device that can reach it is yours. Use long passwords, because the lockout cannot slow down guesses from your network, and do not rely on the address shown when you approve a setup request.
+The line `set_real_ip_from 127.0.0.1;` in the Advanced tab settings below turns this off for the OwnGit proxy host. Nginx Proxy Manager then accepts `X-Real-IP` only from its own container and reports the address each device connects from, so devices lock out separately. This was tested with Nginx Proxy Manager 2.16.0 on Docker Engine on Linux and IPv4 clients, with Websockets Support on and off. Docker Desktop, rootless Docker, and IPv6 clients were not tested. The line only stops Nginx Proxy Manager from believing `X-Real-IP`, so it cannot bring back a client address that Docker has already replaced.
 
-To set it up, create a proxy host with the scheme `http`, OwnGit's address and port, and an SSL certificate, and turn on Force SSL. Since version 2.14.0, Nginx Proxy Manager passes on an `X-Forwarded-Proto` value that the client sent. Force SSL, with the option that trusts upstream forwarded proto headers left off, redirects every plain-HTTP request, so only HTTPS requests reach OwnGit. Nginx Proxy Manager does not set `X-Forwarded-Host`, so a value from the client reaches OwnGit, which uses it only as described above. Its defaults limit a request body to 2000 MB and wait at most 90 seconds for OwnGit to send or accept data. Add these lines on the Advanced tab:
+Without that line, trust Nginx Proxy Manager only when every device that can reach it is yours. Use long passwords, because the lockout cannot slow down guesses from your network, and do not rely on the address shown when you approve a setup request.
+
+To set it up, create a proxy host with the scheme `http`, OwnGit's address and port as Forward Hostname / IP and Forward Port, and an SSL certificate, and turn on Force SSL. Leave "Trust Upstream Forwarded Proto Headers" off. Since version 2.14.0, Nginx Proxy Manager passes on an `X-Forwarded-Proto` value that the client sent. With that option off, Force SSL redirects every plain-HTTP request, so only HTTPS requests reach OwnGit. A client that sends `X-Forwarded-Proto: http` over HTTPS only makes OwnGit treat its own request as plain HTTP. Nginx Proxy Manager does not set `X-Forwarded-Host`, so a value from the client reaches OwnGit, which uses it only as described above. By default, Nginx Proxy Manager limits a request body to 2000 MB, waits at most 90 seconds for OwnGit to send or accept data, and stores large responses in temporary files. Add these lines to Custom Nginx Configuration on the Advanced tab:
 
 ```nginx
 client_max_body_size 4g;
 proxy_request_buffering off;
 proxy_read_timeout 30m;
 proxy_send_timeout 30m;
+set_real_ip_from 127.0.0.1;
 ```
 
-Nginx Proxy Manager runs in Docker, so trust the address its container connects from, such as its Docker network range.
+They work with Websockets Support on or off. You can also add `proxy_buffering off;`, which passes clones and archives on as OwnGit sends them instead of writing them to temporary files first. Do not add `proxy_http_version`: Nginx Proxy Manager already sets it, and with Websockets Support on, a second value takes the proxy host offline.
+
+Trust the address Nginx Proxy Manager connects from, as described above. That is its Docker network range when OwnGit runs on the same computer, and the address of the computer that runs Nginx Proxy Manager when OwnGit runs on another one.
 
 ## New-release notice
 
