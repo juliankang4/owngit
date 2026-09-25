@@ -219,17 +219,43 @@ func TestHoldbackWriterPassesOnlyBytesFollowedByTheHeldTail(t *testing.T) {
 // A name that is not plain ASCII also gets an ASCII form, which clients that
 // ignore the UTF-8 form keep, such as curl --remote-header-name.
 func TestArchiveDispositionHasAnASCIIFallback(t *testing.T) {
-	for filename, want := range map[string]string{
-		"sample-main.zip":  "attachment; filename=sample-main.zip",
-		"demo-기능.zip":      `attachment; filename="demo-.zip"; filename*=UTF-8''demo-%EA%B8%B0%EB%8A%A5.zip`,
-		"demo-café.tar.gz": `attachment; filename="demo-caf.tar.gz"; filename*=UTF-8''demo-caf%C3%A9.tar.gz`,
+	for _, test := range []struct{ filename, fallback, want string }{
+		{"sample-main.zip", "sample-0123456789ab.zip", "attachment; filename=sample-main.zip"},
+		{"demo-기능.zip", "demo-0123456789ab.zip", `attachment; filename="demo-0123456789ab.zip"; filename*=UTF-8''demo-%EA%B8%B0%EB%8A%A5.zip`},
+		{"demo-café.tar.gz", "demo-0123456789ab.tar.gz", `attachment; filename="demo-0123456789ab.tar.gz"; filename*=UTF-8''demo-caf%C3%A9.tar.gz`},
+		{"demo-기능.zip", "demo/\"x\".zip", `attachment; filename="demox.zip"; filename*=UTF-8''demo-%EA%B8%B0%EB%8A%A5.zip`},
 	} {
-		got := attachmentDisposition(filename)
-		if got != want {
-			t.Errorf("%q: %s, want %s", filename, got, want)
+		got := attachmentDisposition(test.filename, test.fallback)
+		if got != test.want {
+			t.Errorf("%q: %s, want %s", test.filename, got, test.want)
 		}
-		if _, parameters, err := mime.ParseMediaType(got); err != nil || parameters["filename"] != filename {
-			t.Errorf("%q: parsed %q %v", filename, parameters["filename"], err)
+		if _, parameters, err := mime.ParseMediaType(got); err != nil || parameters["filename"] != test.filename {
+			t.Errorf("%q: parsed %q %v", test.filename, parameters["filename"], err)
+		}
+	}
+}
+
+// When an archive's name is not plain ASCII, its ASCII name is the repository
+// and the short commit ID instead of the name with those letters dropped, so
+// it still tells archives of different commits apart.
+func TestArchiveASCIINameNamesTheCommit(t *testing.T) {
+	handler, commitOID := archiveFixture(t, 16)
+	for _, format := range []string{ArchiveZip, ArchiveTarGz} {
+		extension := ".zip"
+		if format == ArchiveTarGz {
+			extension = ".tar.gz"
+		}
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/archive", nil)
+		noErr(t, handler.ServeArchive(recorder, request, "sample", commitOID, format, "sample-기능-한글", "sample-기능-한글"+extension))
+		got := recorder.Header().Get("Content-Disposition")
+		_, parameters, err := mime.ParseMediaType(got)
+		noErr(t, err)
+		if want := `attachment; filename="sample-` + commitOID[:12] + extension + `"; filename*=UTF-8''sample-%EA%B8%B0%EB%8A%A5-%ED%95%9C%EA%B8%80` + extension; got != want {
+			t.Errorf("%s: disposition %s, want %s", format, got, want)
+		}
+		if parameters["filename"] != "sample-기능-한글"+extension {
+			t.Errorf("%s: UTF-8 name %q", format, parameters["filename"])
 		}
 	}
 }

@@ -614,6 +614,15 @@ curl --fail --remote-name --remote-header-name --user owngit \
   'http://HOST:7654/api/v1/repositories/PROJECT/archive?ref=main&format=tar.gz'
 ```
 
+With `--remote-header-name`, curl uses only the plain ASCII file name that OwnGit sends for clients that cannot read the full name. When the name has other letters, such as Korean, that ASCII name is the repository and the first 12 characters of the commit ID, for example `project-1a2b3c4d5e6f.zip`, and the folder inside keeps the full name. Browsers use the full name. To save the file under the full name with curl, give the name with `--output`; `--data-urlencode` encodes the ref:
+
+```sh
+curl --fail --get --user owngit \
+  --data-urlencode 'ref=기능/로그인' --data format=zip \
+  --output 'project-기능-로그인.zip' \
+  'http://HOST:7654/api/v1/repositories/PROJECT/archive'
+```
+
 An archive download is a Git transfer with the limits below: at most 4 GiB and 30 minutes, including any wait for a place or for a push to the same repository, and one of the places for running Git requests. When the download cannot start in time, it answers HTTP 503 with `Retry-After`. OwnGit sends the archive while Git writes it. When Git fails, a limit is reached, or OwnGit stops before the end, OwnGit closes the connection without finishing the response, so the download fails instead of completing: curl exits with an error such as `(18) transfer closed with outstanding read data remaining`, and a browser marks the download as failed. The part received is not a valid archive either, because OwnGit sends the end of a ZIP file and the gzip trailer of a tar.gz file only after Git has finished successfully. When Git fails before it writes anything, the answer is an HTTP error instead.
 
 ## Git transfer limits

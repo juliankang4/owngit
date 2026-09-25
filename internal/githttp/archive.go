@@ -60,12 +60,12 @@ func (e *ArchiveError) Error() string { return e.Message }
 // also stays incomplete: a ZIP file misses its end records and a tar.gz file
 // its gzip trailer, which are written only after Git has succeeded.
 func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request, repositoryID, commitOID, format, prefix, filename string) error {
-	var contentType, gitFormat string
+	var contentType, gitFormat, extension string
 	switch format {
 	case ArchiveZip:
-		contentType, gitFormat = "application/zip", "zip"
+		contentType, gitFormat, extension = "application/zip", "zip", ".zip"
 	case ArchiveTarGz:
-		contentType, gitFormat = "application/gzip", "tar"
+		contentType, gitFormat, extension = "application/gzip", "tar", ".tar.gz"
 	default:
 		return &ArchiveError{Status: http.StatusNotFound, Message: "The archive format must be zip or tar.gz."}
 	}
@@ -118,7 +118,7 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 	}
 	defer lock.RUnlock()
 
-	sent := &archiveResponse{ResponseWriter: writer, deadlines: deadlines, limit: h.MaximumResponse, contentType: contentType, disposition: attachmentDisposition(filename)}
+	sent := &archiveResponse{ResponseWriter: writer, deadlines: deadlines, limit: h.MaximumResponse, contentType: contentType, disposition: attachmentDisposition(filename, repositoryID+"-"+shortCommitID(commitOID)+extension)}
 	held := &holdbackWriter{next: sent, hold: archiveHoldback}
 	var compressed *gzip.Writer
 	_, err = h.Git.StreamGit(ctx, repositoryPath, func(stdout io.Reader) error {
@@ -176,28 +176,45 @@ func logArchiveFailure(repositoryID string, err error, deadline time.Time, busy 
 }
 
 // attachmentDisposition names filename for a download. A name with other than
-// ASCII letters, digits, ".", "-" and "_" also gets that ASCII form first, for
-// clients that do not read the UTF-8 form (RFC 6266 section 4.3).
-func attachmentDisposition(filename string) string {
-	fallback := strings.Map(func(character rune) rune {
-		if character < utf8.RuneSelf && (character == '.' || character == '-' || character == '_' ||
-			'0' <= character && character <= '9' || 'a' <= character && character <= 'z' || 'A' <= character && character <= 'Z') {
-			return character
-		}
-		return -1
-	}, filename)
-	if fallback == filename {
+// ASCII letters, digits, ".", "-" and "_" also gets the ASCII name fallback
+// first, for clients that do not read the UTF-8 form (RFC 6266 section 4.3),
+// such as curl --remote-header-name. Characters of fallback outside that set
+// are dropped.
+func attachmentDisposition(filename, fallback string) string {
+	if strings.IndexFunc(filename, notPlainNameCharacter) < 0 {
 		return "attachment; filename=" + filename
 	}
+	fallback = strings.Map(func(character rune) rune {
+		if notPlainNameCharacter(character) {
+			return -1
+		}
+		return character
+	}, fallback)
 	var encoded strings.Builder
 	for _, b := range []byte(filename) {
-		if b < utf8.RuneSelf && (b == '.' || b == '-' || b == '_' || '0' <= b && b <= '9' || 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z') {
+		if b < utf8.RuneSelf && !notPlainNameCharacter(rune(b)) {
 			encoded.WriteByte(b)
 		} else {
 			fmt.Fprintf(&encoded, "%%%02X", b)
 		}
 	}
 	return `attachment; filename="` + fallback + `"; filename*=UTF-8''` + encoded.String()
+}
+
+// notPlainNameCharacter reports whether character is other than an ASCII
+// letter, digit, ".", "-" or "_".
+func notPlainNameCharacter(character rune) bool {
+	return !(character == '.' || character == '-' || character == '_' ||
+		'0' <= character && character <= '9' || 'a' <= character && character <= 'z' || 'A' <= character && character <= 'Z')
+}
+
+// shortCommitID is the first 12 characters of a commit ID, which name a
+// commit well enough in an archive's ASCII file name.
+func shortCommitID(commitOID string) string {
+	if len(commitOID) > 12 {
+		return commitOID[:12]
+	}
+	return commitOID
 }
 
 // archiveFailureReason names a failed archive for the server log, or returns

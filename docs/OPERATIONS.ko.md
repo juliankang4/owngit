@@ -620,6 +620,15 @@ curl --fail --remote-name --remote-header-name --user owngit \
   'http://HOST:7654/api/v1/repositories/PROJECT/archive?ref=main&format=tar.gz'
 ```
 
+`--remote-header-name`을 쓰면 curl은 전체 이름을 읽지 못하는 프로그램을 위해 OwnGit이 함께 보내는 ASCII 파일 이름만 씁니다. 이름에 한글처럼 ASCII가 아닌 글자가 있으면 이 ASCII 이름은 저장소 이름과 커밋 ID 앞 12글자로 이루어지며(예: `project-1a2b3c4d5e6f.zip`), 압축 파일 안의 폴더는 전체 이름을 그대로 씁니다. 브라우저는 전체 이름을 씁니다. curl로 전체 이름을 지정해 저장하려면 `--output`으로 이름을 넘기세요. `--data-urlencode`는 ref를 인코딩합니다.
+
+```sh
+curl --fail --get --user owngit \
+  --data-urlencode 'ref=기능/로그인' --data format=zip \
+  --output 'project-기능-로그인.zip' \
+  'http://HOST:7654/api/v1/repositories/PROJECT/archive'
+```
+
 압축 파일 내려받기도 Git 전송이므로 아래 제한을 똑같이 받습니다. 최대 4 GiB, 30분이며, 이 시간에는 자리나 같은 저장소의 푸시를 기다리는 시간도 들어갑니다. 실행 중인 Git 요청의 자리 하나를 씁니다. 시간 안에 내려받기를 시작하지 못하면 `Retry-After`와 함께 HTTP 503으로 답합니다. OwnGit은 Git이 압축 파일을 만드는 동안 바로 보냅니다. Git이 실패하거나, 제한에 닿거나, 끝나기 전에 OwnGit이 멈추면 응답을 마무리하지 않은 채 연결을 닫습니다. 그래서 내려받기는 완료되지 않고 실패합니다. curl은 `(18) transfer closed with outstanding read data remaining` 같은 오류로 끝나고, 브라우저는 내려받기가 실패했다고 표시합니다. 받은 부분도 올바른 압축 파일이 아닙니다. OwnGit은 ZIP 파일의 끝부분과 tar.gz 파일의 gzip 트레일러를 Git이 성공적으로 끝난 뒤에만 보내기 때문입니다. Git이 아무것도 쓰기 전에 실패하면 대신 HTTP 오류로 답합니다.
 
 ## Git 전송 제한
