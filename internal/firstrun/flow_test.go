@@ -130,6 +130,18 @@ func (h *harness) waitFor(text string) {
 	}
 }
 
+// waitForCount waits until the output contains text at least count times.
+func (h *harness) waitForCount(text string, count int) {
+	h.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for strings.Count(h.out.String(), text) < count {
+		if time.Now().After(deadline) {
+			h.t.Fatalf("output never contained %q %d times:\n%s", text, count, h.out.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func (h *harness) settings() state.Settings {
 	settings, err := h.store.Settings(context.Background())
 	if err != nil {
@@ -406,7 +418,10 @@ func TestANewRequestIsShownAfterAnEarlierApproval(t *testing.T) {
 		page := b.do(http.MethodGet, "/setup", nil)
 		page = b.do(http.MethodPost, "/setup/approval", url.Values{"csrf": {field(t, csrfField, page)}})
 		h.waitFor(strings.Join(strings.Split(field(t, codeOnPage, page), ""), " "))
+		approved := strings.Count(h.out.String(), "[ok] Approved. Continue in the browser.")
 		h.send("y\r")
+		// The browser may ask before the terminal has recorded the answer.
+		h.waitForCount("[ok] Approved. Continue in the browser.", approved+1)
 		if page := b.do(http.MethodGet, "/setup", nil); !strings.Contains(page, `name="storage_path"`) {
 			t.Fatalf("no setup form after approval:\n%s", page)
 		}
