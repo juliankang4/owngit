@@ -5,7 +5,7 @@
 <h1 align="center">OwnGit</h1>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.2-0A62C9?style=flat&colorA=222222" alt="버전 1.0.2"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.3-0A62C9?style=flat&colorA=222222" alt="버전 1.0.3"></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-keep-E05735?style=flat&colorA=222222" alt="변경 기록"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-58A6FF?style=flat&colorA=222222" alt="MIT 라이선스"></a>
   <a href="https://github.com/juliankang4/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-juliankang4%2Ftap-FBB040?style=flat&colorA=222222&logo=homebrew&logoColor=white" alt="Homebrew tap juliankang4/tap"></a>
