@@ -283,8 +283,8 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 		ko: "선택하면 OwnGit이 %s에서 연결을 받아 홈 네트워크의 기기도 일반 HTTP로 접속할 수 있습니다. 선택하지 않으면 %s에서 이 컴퓨터의 연결만 받고, 다른 기기는 HTTPS 주소를 씁니다. 연결을 받는 주소가 바뀌면 OwnGit을 다음에 시작할 때 적용됩니다.",
 	},
 	MsgTSOnNote: {
-		en: "OwnGit asks Tailscale on this computer to answer HTTPS for this computer's name and pass the requests to OwnGit, and saves that address as the address other devices use. If Tailscale already uses port 443 for something else, nothing changes.",
-		ko: "OwnGit이 이 컴퓨터의 Tailscale에 이 컴퓨터 이름으로 오는 HTTPS 요청을 받아 OwnGit에 넘기도록 요청하고, 그 주소를 다른 기기가 쓰는 주소로 저장합니다. Tailscale이 포트 443을 이미 다른 용도로 쓰고 있으면 아무것도 바꾸지 않습니다.",
+		en: "OwnGit asks Tailscale on this computer to answer HTTPS for this computer's name and pass the requests to OwnGit, and saves that address as the address other devices use. If Tailscale already uses port 443 for something else, nothing changes. OwnGit also trusts this computer's loopback address as a proxy, so while sharing is on, programs on this computer can choose the client address that OwnGit uses for sign-in limits.",
+		ko: "OwnGit이 이 컴퓨터의 Tailscale에 이 컴퓨터 이름으로 오는 HTTPS 요청을 받아 OwnGit에 넘기도록 요청하고, 그 주소를 다른 기기가 쓰는 주소로 저장합니다. Tailscale이 포트 443을 이미 다른 용도로 쓰고 있으면 아무것도 바꾸지 않습니다. OwnGit은 이 컴퓨터의 루프백 주소도 프록시로 믿으므로, 공유가 켜져 있는 동안 이 컴퓨터의 프로그램은 OwnGit이 로그인 제한에 쓰는 클라이언트 주소를 정할 수 있습니다.",
 	},
 	MsgTSOffNote: {
 		en: "Turning off removes the Tailscale address that OwnGit made, if it is still as OwnGit made it, and takes back the address, name and proxy that sharing added. The listen address stays as it is.",
