@@ -243,9 +243,6 @@ func tailscaleOff(arguments []string) error {
 		fmt.Printf("OwnGit did not create the Tailscale address for %s, so it left it in place. Remove it with \"tailscale serve --https=%d off\" if you no longer need it.\n", change.Record.Name, change.Record.HTTPSPort)
 	}
 	fmt.Println("The base URL, allowed name and trusted proxy that sharing added were removed where they were still saved. The listen address is unchanged.")
-	if observed.Server == state.ServerRunning || observed.Server == state.ServerUnknown {
-		fmt.Println("Restart OwnGit so the running server stops accepting the Tailscale address.")
-	}
 	printRunningServerNote(observed.Server)
 	return nil
 }

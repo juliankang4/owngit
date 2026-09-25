@@ -104,8 +104,8 @@ func TestTailscaleCommandBesideARunningServer(t *testing.T) {
 	output, err = runTailscale(t, "off", "--state-dir", stateDir, "--tailscale", fake.Path)
 	instance.stop()
 	noErr(t, err)
-	if !strings.Contains(output, "Tailscale no longer answers HTTPS for "+tailscaletest.Name) || !strings.Contains(output, "Restart OwnGit") ||
-		!strings.Contains(output, "Settings applies at once") {
+	if !strings.Contains(output, "Tailscale no longer answers HTTPS for "+tailscaletest.Name) ||
+		strings.Count(strings.ToLower(output), "restart") != 1 || !strings.Contains(output, "Settings applies at once") {
 		t.Fatalf("off printed %q", output)
 	}
 	want := []string{"serve --bg --https=443 http://127.0.0.1:7821", "serve --https=443 --set-path=/ off"}
