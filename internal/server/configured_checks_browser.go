@@ -12,6 +12,7 @@ import (
 	"owngit/internal/checkapi"
 	"owngit/internal/checkworkflow"
 	"owngit/internal/repository"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -93,7 +94,7 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 		submitted := submittedPolicyForm(request)
 		form = &submitted
 	}
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), request.RemoteAddr); err != nil {
+	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
 		code, status := webui.MsgAdminFailed, http.StatusUnauthorized
 		if errors.Is(err, auth.ErrRateLimited) {
 			code, status = webui.MsgAdminLocked, http.StatusTooManyRequests
@@ -931,7 +932,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
 		return
 	}
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), request.RemoteAddr); err != nil {
+	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
 		code, status := webui.MsgAdminFailed, http.StatusUnauthorized
 		if errors.Is(err, auth.ErrRateLimited) {
 			code, status = webui.MsgAdminLocked, http.StatusTooManyRequests

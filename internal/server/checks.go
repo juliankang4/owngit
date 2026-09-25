@@ -11,6 +11,7 @@ import (
 	"owngit/internal/auth"
 	"owngit/internal/checkapi"
 	"owngit/internal/pullrequest"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 )
 
@@ -478,7 +479,7 @@ func (app *App) authorizeAdminAPI(writer http.ResponseWriter, request *http.Requ
 }
 
 func (app *App) verifyAdminPassword(writer http.ResponseWriter, request *http.Request, password string) bool {
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", password, request.RemoteAddr); err != nil {
+	if err := app.Auth.VerifyCredential(request.Context(), "admin", password, requestctx.Of(request).ClientAddress); err != nil {
 		if errors.Is(err, auth.ErrRateLimited) {
 			writeAPIError(writer, http.StatusTooManyRequests, "authentication_rate_limited", "Too many authentication attempts. Try again later.", nil)
 			return false

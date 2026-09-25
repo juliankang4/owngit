@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -328,14 +329,11 @@ func approvalCode() (string, error) {
 }
 
 func requestAddress(request *http.Request) string {
-	host, _, err := net.SplitHostPort(request.RemoteAddr)
-	if err != nil {
-		return request.RemoteAddr
-	}
-	if ip := net.ParseIP(host); ip != nil {
+	address := requestctx.Of(request).ClientAddress
+	if ip := net.ParseIP(address); ip != nil {
 		return ip.String()
 	}
-	return host
+	return address
 }
 
 func (app *App) approvalCookieHash(request *http.Request) ([32]byte, bool) {

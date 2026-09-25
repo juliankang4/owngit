@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+
+	"owngit/internal/requestctx"
 )
 
 type HostPolicy struct {
@@ -45,7 +47,7 @@ func (policy *HostPolicy) Allows(requestHost string) bool {
 
 func (policy *HostPolicy) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if !policy.Allows(request.Host) {
+		if !policy.Allows(requestctx.Of(request).Host) {
 			if strings.HasPrefix(request.URL.Path, "/api/") {
 				writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
 			} else {
@@ -79,11 +81,8 @@ func sameOrigin(request *http.Request, value string) bool {
 	if err != nil || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
 		return false
 	}
-	scheme := "http"
-	if request.TLS != nil {
-		scheme = "https"
-	}
-	return origin.Scheme == scheme && strings.EqualFold(origin.Host, request.Host)
+	info := requestctx.Of(request)
+	return origin.Scheme == info.Scheme && strings.EqualFold(origin.Host, info.Host)
 }
 
 func normalizeHost(value string) (string, error) {

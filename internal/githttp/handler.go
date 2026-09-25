@@ -24,6 +24,7 @@ import (
 
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
+	"owngit/internal/requestctx"
 )
 
 type Handler struct {
@@ -522,18 +523,15 @@ func parseRoute(request *http.Request) (route, bool) {
 // the length of the body the backend reads, or -1 when unknown (chunked or
 // inflated here), so the backend reads until end of input.
 func (h *Handler) cgiEnvironment(request *http.Request, route route, contentLength int64) ([]string, error) {
-	host, port, err := net.SplitHostPort(request.Host)
+	info := requestctx.Of(request)
+	host, port, err := net.SplitHostPort(info.Host)
 	if err != nil {
-		host = request.Host
-		if request.TLS != nil {
+		host = info.Host
+		if info.Secure() {
 			port = "443"
 		} else {
 			port = "80"
 		}
-	}
-	remote, _, err := net.SplitHostPort(request.RemoteAddr)
-	if err != nil {
-		remote = request.RemoteAddr
 	}
 	protocol := request.Header.Get("Git-Protocol")
 	if len(protocol) > 256 || strings.ContainsAny(protocol, "\x00\r\n") {
@@ -546,7 +544,7 @@ func (h *Handler) cgiEnvironment(request *http.Request, route route, contentLeng
 		"PATH_INFO=" + route.pathInfo,
 		"QUERY_STRING=" + route.query,
 		"CONTENT_TYPE=" + request.Header.Get("Content-Type"),
-		"REMOTE_ADDR=" + remote,
+		"REMOTE_ADDR=" + info.ClientAddress,
 		"SERVER_NAME=" + host,
 		"SERVER_PORT=" + port,
 		"SERVER_PROTOCOL=" + request.Proto,
@@ -558,7 +556,7 @@ func (h *Handler) cgiEnvironment(request *http.Request, route route, contentLeng
 	if protocol != "" {
 		environment = append(environment, "HTTP_GIT_PROTOCOL="+protocol)
 	}
-	if request.TLS != nil {
+	if info.Secure() {
 		environment = append(environment, "HTTPS=on")
 	}
 	return environment, nil

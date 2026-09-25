@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"owngit/internal/auth"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -31,7 +32,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	}
 	action := postValue(request, "action")
 	adminPassword := postValue(request, "admin_password")
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", adminPassword, request.RemoteAddr); err != nil {
+	if err := app.Auth.VerifyCredential(request.Context(), "admin", adminPassword, requestctx.Of(request).ClientAddress); err != nil {
 		code := webui.MsgAdminFailed
 		if errors.Is(err, auth.ErrRateLimited) {
 			code = webui.MsgAdminLocked
@@ -175,9 +176,5 @@ func (app *App) renderSettings(writer http.ResponseWriter, request *http.Request
 }
 
 func (app *App) baseURL(request *http.Request) string {
-	scheme := "http"
-	if request.TLS != nil {
-		scheme = "https"
-	}
-	return scheme + "://" + request.Host
+	return requestctx.Of(request).Origin()
 }

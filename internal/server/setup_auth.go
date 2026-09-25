@@ -10,6 +10,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/repository"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -109,7 +110,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		StoragePath: answers.StoragePath, SuggestedPath: app.SuggestedRepositoryRoot,
 		AccessMode: webui.AccessMode(answers.AccessMode), InsecureAck: answers.InsecureAccepted,
 	}
-	notices, err := app.CompleteSetup(request.Context(), answers, request.TLS == nil)
+	notices, err := app.CompleteSetup(request.Context(), answers, !requestctx.Of(request).Secure())
 	switch {
 	case len(notices) != 0:
 		app.renderSetupWizard(writer, request, session.CSRF, form, notices, http.StatusUnprocessableEntity)
@@ -253,7 +254,7 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 		app.renderLoginFailure(writer, request, scope, field, next, code, false, http.StatusUnprocessableEntity)
 		return
 	}
-	session, err := app.Auth.Authenticate(request.Context(), kind, password, request.RemoteAddr)
+	session, err := app.Auth.Authenticate(request.Context(), kind, password, requestctx.Of(request).ClientAddress)
 	if err != nil {
 		code := webui.MsgLoginFailed
 		if scope == webui.AuthAdmin {

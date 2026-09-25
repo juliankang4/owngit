@@ -11,6 +11,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/repository"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -44,7 +45,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
 		return
 	}
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), request.RemoteAddr); err != nil {
+	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
 		code, status := webui.MsgAdminFailed, http.StatusUnauthorized
 		if errors.Is(err, auth.ErrRateLimited) {
 			code, status = webui.MsgAdminLocked, http.StatusTooManyRequests

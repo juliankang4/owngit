@@ -17,6 +17,7 @@ import (
 	"owngit/internal/pullrequest"
 	"owngit/internal/releasecheck"
 	"owngit/internal/repository"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -51,6 +52,9 @@ type App struct {
 	SuggestedRepositoryRoot string
 	GitVersion              string
 	HTTPBackendFound        bool
+	// Requests derives each request's scheme, Host and client address. The
+	// zero value trusts only the connection itself.
+	Requests requestctx.Resolver
 	// Version is the running application version. It comes from the single
 	// version source and is never read from storage or a remote value.
 	Version string
@@ -93,7 +97,7 @@ type App struct {
 }
 
 func (app *App) Handler() http.Handler {
-	return app.Hosts.Middleware(http.HandlerFunc(app.serveHTTP))
+	return app.Requests.Middleware(app.Hosts.Middleware(http.HandlerFunc(app.serveHTTP)))
 }
 
 func (app *App) AuthorizeGit(request *http.Request) bool {
@@ -105,7 +109,7 @@ func (app *App) AuthorizeGit(request *http.Request) bool {
 		return true
 	}
 	_, password, ok := request.BasicAuth()
-	return ok && app.Auth.VerifyCredential(request.Context(), "general", password, request.RemoteAddr) == nil
+	return ok && app.Auth.VerifyCredential(request.Context(), "general", password, requestctx.Of(request).ClientAddress) == nil
 }
 
 // ImportResponseMargin is how long an import run request outlives the run's

@@ -12,6 +12,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/pullrequest"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 )
 
@@ -203,7 +204,7 @@ func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, 
 		writeAPIError(writer, http.StatusUnauthorized, "authentication_required", "A shared general-access password is required.", nil)
 		return false
 	}
-	if err := app.Auth.VerifyCredential(request.Context(), "general", password, request.RemoteAddr); err != nil {
+	if err := app.Auth.VerifyCredential(request.Context(), "general", password, requestctx.Of(request).ClientAddress); err != nil {
 		if errors.Is(err, auth.ErrRateLimited) {
 			writeAPIError(writer, http.StatusTooManyRequests, "authentication_rate_limited", "Too many authentication attempts. Try again later.", nil)
 			return false

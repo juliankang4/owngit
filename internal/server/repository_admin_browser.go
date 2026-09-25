@@ -15,6 +15,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/repository"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -208,7 +209,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 	}
 	// The password is asked again even inside an administrator session, as
 	// every other destructive administrator action does.
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), request.RemoteAddr); err != nil {
+	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
 		code, status := webui.MsgAdminFailed, http.StatusUnauthorized
 		if errors.Is(err, auth.ErrRateLimited) {
 			code, status = webui.MsgAdminLocked, http.StatusTooManyRequests

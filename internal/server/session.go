@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -53,7 +54,7 @@ func loginNext(request *http.Request) string {
 		return localNext(target.RequestURI(), "/")
 	}
 	target := request.URL
-	if referer, err := url.Parse(request.Header.Get("Referer")); err == nil && referer.Host == request.Host && (referer.Scheme == "http" || referer.Scheme == "https") {
+	if referer, err := url.Parse(request.Header.Get("Referer")); err == nil && referer.Host == requestctx.Of(request).Host && (referer.Scheme == "http" || referer.Scheme == "https") {
 		target = referer
 	}
 	path := target.EscapedPath()
@@ -181,14 +182,14 @@ func (app *App) setCookie(writer http.ResponseWriter, request *http.Request, nam
 	http.SetCookie(writer, &http.Cookie{
 		Name: name, Value: value, Path: "/", Expires: expires,
 		MaxAge: int(expires.Sub(app.now()).Seconds()), HttpOnly: httpOnly,
-		Secure: request.TLS != nil, SameSite: http.SameSiteStrictMode,
+		Secure: requestctx.Of(request).Secure(), SameSite: http.SameSiteStrictMode,
 	})
 }
 
 func (app *App) clearCookie(writer http.ResponseWriter, request *http.Request, name string, httpOnly bool) {
 	http.SetCookie(writer, &http.Cookie{
 		Name: name, Value: "", Path: "/", MaxAge: -1, Expires: time.Unix(1, 0),
-		HttpOnly: httpOnly, Secure: request.TLS != nil, SameSite: http.SameSiteStrictMode,
+		HttpOnly: httpOnly, Secure: requestctx.Of(request).Secure(), SameSite: http.SameSiteStrictMode,
 	})
 }
 
@@ -220,7 +221,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			AccessMode: accessMode, GeneralUnlocked: settings.AccessMode == "open" || generalOK,
 			AdminConfirmed: adminOK, SetupComplete: settings.Initialized,
 		},
-		Connection: webui.Connection{Encrypted: request.TLS != nil, Host: request.Host, InsecureAcknowledged: settings.InsecureHTTPAccepted},
+		Connection: webui.Connection{Encrypted: requestctx.Of(request).Secure(), Host: requestctx.Of(request).Host, InsecureAcknowledged: settings.InsecureHTTPAccepted},
 	}
 	if adminOK {
 		chrome.Viewer.AdminExpiresAt = admin.Expires

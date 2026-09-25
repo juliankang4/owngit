@@ -11,6 +11,7 @@ import (
 	"owngit/internal/auth"
 	"owngit/internal/importsync"
 	"owngit/internal/repository"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -349,7 +350,7 @@ func importRunRow(run *importsync.RunView, admin bool) *webui.ImportRunRow {
 }
 
 func (app *App) importAdminPassword(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome) (bool, int) {
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), request.RemoteAddr); err != nil {
+	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
 		code, status := webui.MsgAdminFailed, http.StatusUnauthorized
 		if errors.Is(err, auth.ErrRateLimited) {
 			code, status = webui.MsgAdminLocked, http.StatusTooManyRequests

@@ -58,7 +58,7 @@ When the test is enabled, a missing prerequisite fails the test instead of skipp
 - `cmd/owngit`: the `owngit` command, host commands, and the server lifecycle.
 - `internal/`: one package per responsibility. The main groups are:
   - storage and Git: `repository`, `githttp`, `gitexec`, `publishdir`;
-  - state and security: `state` (SQLite), `auth`, `bootstrap` (setup file), `server` (routing, Host, Origin, and CSRF checks), `webui` (templates, localization, assets);
+  - state and security: `state` (SQLite), `auth`, `bootstrap` (setup file), `server` (routing, Host, Origin, and CSRF checks), `requestctx` (a request's effective scheme, Host, and client address), `webui` (templates, localization, assets);
   - pull requests: `pullrequest`, `apiclient`;
   - checks: `checkapi` (wire contract), `checkworkflow` (`.owngit/checks.json`), `checkexec`, `checksource`, `checkrun`, `checkrunner`;
   - imports: `importgit`, `importfetch`, `importsync`;

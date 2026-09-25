@@ -2,13 +2,18 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"owngit/internal/auth"
 )
 
 func TestStalledOrdinaryFormTimesOutAndShutdownCompletes(t *testing.T) {
@@ -87,5 +92,85 @@ func TestOriginMustExactlyMatchRequest(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !called {
 		t.Fatalf("matching origin status=%d called=%v", response.Code, called)
+	}
+}
+
+// Until trusted proxies exist, forwarded headers from any peer change neither
+// the Host check, the Origin check, cookie security nor the lockout key.
+func TestForwardedHeadersFromDirectPeersChangeNothing(t *testing.T) {
+	app := newConfiguredApp(t)
+	app.Hosts = NewHostPolicy("owngit.internal")
+	handler := app.Handler()
+	spoof := func(request *http.Request, client string) {
+		request.Header.Set("X-Forwarded-For", client)
+		request.Header.Set("X-Forwarded-Proto", "https")
+		request.Header.Set("X-Forwarded-Host", "owngit.internal")
+		request.Header.Set("Forwarded", "for="+client+";proto=https;host=owngit.internal")
+	}
+
+	unknown := httptest.NewRequest(http.MethodGet, "/", nil)
+	unknown.Host = "attacker.invalid"
+	spoof(unknown, "127.0.0.1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, unknown)
+	if response.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("forwarded approved Host passed the Host check: status=%d", response.Code)
+	}
+
+	httpsOrigin := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	httpsOrigin.Host = "owngit.internal"
+	httpsOrigin.Header.Set("Origin", "https://owngit.internal")
+	spoof(httpsOrigin, "127.0.0.1")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httpsOrigin)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("forwarded scheme satisfied an https Origin: status=%d", response.Code)
+	}
+
+	page := httptest.NewRequest(http.MethodGet, "/admin/login", nil)
+	page.Host = "owngit.internal"
+	spoof(page, "127.0.0.1")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, page)
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Secure {
+			t.Fatalf("cookie %s is Secure on a plain HTTP connection with a forwarded scheme", cookie.Name)
+		}
+	}
+
+	// Wrong administrator passwords from one peer lock that peer out, even
+	// when each attempt claims another forwarded client address.
+	for attempt := 0; attempt < 4; attempt++ {
+		login := httptest.NewRequest(http.MethodGet, "/admin/login", nil)
+		login.Host = "owngit.internal"
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, login)
+		preauth := ""
+		for _, cookie := range response.Result().Cookies() {
+			if cookie.Name == preauthCookie {
+				preauth = cookie.Value
+			}
+		}
+		form := url.Values{"csrf": {preauth}, "admin_password": {"wrong-password"}, "next": {"/"}}
+		post := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form.Encode()))
+		post.Host = "owngit.internal"
+		post.RemoteAddr = "192.0.2.50:1000"
+		post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		post.Header.Set("Origin", "http://owngit.internal")
+		post.AddCookie(&http.Cookie{Name: preauthCookie, Value: preauth})
+		spoof(post, "203.0.113."+strconv.Itoa(attempt+1))
+		response = httptest.NewRecorder()
+		handler.ServeHTTP(response, post)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("wrong password attempt %d status=%d", attempt, response.Code)
+		}
+	}
+	if err := app.Auth.VerifyCredential(context.Background(), "admin", "admin-password", "192.0.2.50"); !errors.Is(err, auth.ErrRateLimited) {
+		t.Fatalf("peer 192.0.2.50 is not locked out: %v", err)
+	}
+	for attempt := 1; attempt <= 4; attempt++ {
+		if err := app.Auth.VerifyCredential(context.Background(), "admin", "admin-password", "203.0.113."+strconv.Itoa(attempt)); err != nil {
+			t.Fatalf("forwarded address 203.0.113.%d was charged: %v", attempt, err)
+		}
 	}
 }
