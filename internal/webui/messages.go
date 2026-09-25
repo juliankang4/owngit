@@ -121,6 +121,8 @@ const (
 	MsgSetupInsecureLabel MessageCode = "setup.insecure.label"
 	MsgSetupInsecureHelp  MessageCode = "setup.insecure.help"
 	MsgSetupInsecureNeed  MessageCode = "setup.insecure.required"
+	MsgSetupKeepHostLabel MessageCode = "setup.keep_host.label"
+	MsgSetupKeepHostHelp  MessageCode = "setup.keep_host.help"
 
 	MsgSetupSubmit    MessageCode = "setup.submit"
 	MsgSetupFailed    MessageCode = "setup.failed"
@@ -616,6 +618,14 @@ var catalog = map[MessageCode]message{
 	MsgSetupInsecureNeed: {
 		en: "Confirm that you understand OwnGit is not encrypting this connection.",
 		ko: "OwnGit이 이 연결을 암호화하지 않는다는 점을 확인해 주세요.",
+	},
+	MsgSetupKeepHostLabel: {
+		en: "Keep accepting this address after a restart:",
+		ko: "다시 시작한 뒤에도 이 주소 받아들이기:",
+	},
+	MsgSetupKeepHostHelp: {
+		en: "OwnGit accepts this address now only because of how this run was started. Ticking the box saves it as an allowed Host. To remove it later, use owngit network on this computer.",
+		ko: "지금은 이번 실행을 시작한 방식 때문에 이 주소를 받아들입니다. 선택하면 허용한 Host로 저장합니다. 나중에 지우려면 이 컴퓨터에서 owngit network 명령을 쓰세요.",
 	},
 	MsgSetupSubmit: {
 		en: "Finish setup",

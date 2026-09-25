@@ -106,3 +106,34 @@ func (app *App) serverOrigin(request *http.Request) string {
 func (app *App) cloneURL(request *http.Request, id string) string {
 	return app.serverOrigin(request) + "/git/" + url.PathEscape(id) + ".git"
 }
+
+// setupHostToKeep returns the Host this request used when setup may offer to
+// keep accepting it after a restart: a name that is not loopback and that the
+// next start would not accept from saved settings (the allowed Hosts, the
+// saved listen address or the saved base URL). Otherwise it returns "".
+func (app *App) setupHostToKeep(request *http.Request) string {
+	host, err := NormalizeHost(requestctx.Of(request).Host)
+	if err != nil || IsLoopbackHost(host) {
+		return ""
+	}
+	saved, err := app.Store.TrustedHosts(request.Context())
+	if err != nil {
+		return ""
+	}
+	network, err := app.Store.NetworkSettings(request.Context())
+	if err != nil {
+		return ""
+	}
+	if listenHost, _, err := net.SplitHostPort(network.Listen); err == nil {
+		saved = append(saved, listenHost)
+	}
+	if parsed, err := url.Parse(network.BaseURL); err == nil && parsed.Host != "" {
+		saved = append(saved, parsed.Host)
+	}
+	for _, value := range saved {
+		if normalized, err := NormalizeHost(value); err == nil && normalized == host {
+			return ""
+		}
+	}
+	return host
+}

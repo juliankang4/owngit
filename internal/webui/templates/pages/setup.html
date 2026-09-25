@@ -130,9 +130,12 @@
            Afterwards the header shows the connection state instead of asking
            again. This is a statement about this request, not a claim about
            the whole network. */}}
-      {{if not .Chrome.Connection.Encrypted}}
+      {{/* Keeping the address is offered only for a Host this run accepts
+           that would be refused after a restart. Unticked saves nothing. */}}
+      {{if or (not .Chrome.Connection.Encrypted) $p.KeepHost}}
       <div class="setblock">
         <h2 class="setblock__h">{{bi $lang "settings.connection.title"}}</h2>
+        {{if not .Chrome.Connection.Encrypted}}
         {{/* What OwnGit does, then what it cannot know, then the choice. */}}
         <p class="setblock__d">{{bi $lang "setup.insecure.help"}}</p>
         <p class="setblock__d">{{bi $lang "connection.no_proof"}}</p>
@@ -143,6 +146,14 @@
           <span class="check__d">{{bi $lang "connection.tailscale_hint"}}</span>
         </label>
         {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "insecure_ack"}}
+        {{end}}
+        {{with $p.KeepHost}}
+        <label class="check">
+          <input type="checkbox" name="keep_host" value="1"{{if $p.Form.KeepHost}} checked{{end}}>
+          <span class="check__t">{{bi $lang "setup.keep_host.label"}} <span class="mono">{{.}}</span></span>
+          <span class="check__d">{{bi $lang "setup.keep_host.help"}}</span>
+        </label>
+        {{end}}
       </div>
       {{end}}
 

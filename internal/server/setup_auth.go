@@ -39,6 +39,9 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 		Prerequisites: app.setupPrerequisites(),
 		Form:          webui.SetupForm{SuggestedPath: app.SuggestedRepositoryRoot, AccessMode: webui.AccessOpen},
 	}
+	if stage == webui.SetupWizard {
+		page.KeepHost = app.setupHostToKeep(request)
+	}
 	if settings.Initialized {
 		page.Reason = webui.MsgSetupAlreadyDone
 		page.RecoveryHint = webui.MsgSetupReissueHint
@@ -106,9 +109,15 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		// must acknowledge it.
 		InsecureAccepted: formChecked(postValue(request, "insecure_ack")),
 	}
+	// The Host to keep comes from this request, never from the form, and
+	// only when the wizard would offer it.
+	keepHost := formChecked(postValue(request, "keep_host"))
+	if keepHost {
+		answers.KeepHost = app.setupHostToKeep(request)
+	}
 	form := webui.SetupForm{
 		StoragePath: answers.StoragePath, SuggestedPath: app.SuggestedRepositoryRoot,
-		AccessMode: webui.AccessMode(answers.AccessMode), InsecureAck: answers.InsecureAccepted,
+		AccessMode: webui.AccessMode(answers.AccessMode), InsecureAck: answers.InsecureAccepted, KeepHost: keepHost,
 	}
 	notices, err := app.CompleteSetup(request.Context(), answers, !requestctx.Of(request).Secure())
 	switch {
@@ -153,7 +162,7 @@ func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Requ
 	chrome.Notices = notices
 	app.render(writer, status, webui.SetupPage{
 		Chrome: chrome, Stage: webui.SetupWizard, SubmitURL: "/setup", RedeemURL: "/setup/redeem", Form: form,
-		Prerequisites: app.setupPrerequisites(),
+		Prerequisites: app.setupPrerequisites(), KeepHost: app.setupHostToKeep(request),
 	})
 }
 

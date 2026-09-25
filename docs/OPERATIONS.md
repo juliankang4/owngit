@@ -72,6 +72,8 @@ OwnGit can save the listen address, the base URL, and the allowed Host names, so
 - `--allowed-host` and `--remove-allowed-host` change the stored list that `owngit approve-host` also adds to. Both are repeatable.
 - An empty value, such as `--base-url ""`, removes that saved value.
 
+When you finish web setup from another device by a name that OwnGit accepts only for the current run, for example through a `--listen` or `--base-url` option, the setup form offers "Keep accepting this address after a restart". Ticking it saves the name as an allowed Host when setup finishes. Unticked, nothing is saved.
+
 `set` prints a note when the listen address leaves this computer, because other devices then use plain HTTP. A reverse proxy with HTTPS or Tailscale HTTPS encrypts that connection.
 
 For each value, `owngit serve` uses its option if one is given, then the saved value, then the default (`127.0.0.1:7654`, with the base URL taken from the listen address). An option applies to that run only and does not change what is saved. `localhost`, `127.0.0.1`, and `::1` are always accepted, whatever is saved.

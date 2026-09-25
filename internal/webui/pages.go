@@ -69,6 +69,10 @@ type SetupPage struct {
 
 	// Form holds the values to redisplay. Passwords are never echoed.
 	Form SetupForm
+	// KeepHost, when set, is the Host this browser used, which OwnGit accepts
+	// for this run only. The wizard offers to keep accepting it after a
+	// restart ("keep_host").
+	KeepHost string
 
 	// Reason explains an unavailable stage.
 	Reason MessageCode
@@ -91,6 +95,8 @@ type SetupForm struct {
 	AccessMode AccessMode
 	// InsecureAck is the "insecure_ack" checkbox state.
 	InsecureAck bool
+	// KeepHost is the "keep_host" checkbox state.
+	KeepHost bool
 	// AccessPasswordSet and AdminPasswordSet report whether a value was
 	// accepted on an earlier attempt, so the wizard can say "already entered"
 	// without holding the secret.

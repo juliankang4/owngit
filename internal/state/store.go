@@ -1474,7 +1474,9 @@ func (s *Store) metadataValues(ctx context.Context, keys ...string) (map[string]
 	return values, nil
 }
 
-func (s *Store) CompleteSetup(ctx context.Context, repositoryRoot, accessMode, accessHash, adminHash string, insecureAccepted bool) error {
+// CompleteSetup saves the first-run answers. trustedHosts, when given, are
+// normalized Host names saved as allowed Hosts in the same transaction.
+func (s *Store) CompleteSetup(ctx context.Context, repositoryRoot, accessMode, accessHash, adminHash string, insecureAccepted bool, trustedHosts ...string) error {
 	if accessMode != "open" && accessMode != "password" {
 		return errors.New("invalid access mode")
 	}
@@ -1516,6 +1518,11 @@ func (s *Store) CompleteSetup(ctx context.Context, repositoryRoot, accessMode, a
 		}
 	} else if _, err := tx.ExecContext(ctx, `DELETE FROM passwords WHERE kind='access'`); err != nil {
 		return err
+	}
+	for _, host := range trustedHosts {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO trusted_hosts(host,created_at) VALUES(?,?)`, host, time.Now().Unix()); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM bootstrap`); err != nil {
 		return err

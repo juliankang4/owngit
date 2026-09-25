@@ -22,6 +22,9 @@ type SetupAnswers struct {
 	AccessPassword   string
 	AdminPassword    string
 	InsecureAccepted bool
+	// KeepHost, when set, is a normalized Host name saved as an allowed Host
+	// together with the answers.
+	KeepHost string
 }
 
 var (
@@ -130,7 +133,11 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 	if err != nil {
 		return nil, ErrSetupUnavailable
 	}
-	completeErr := app.Store.CompleteSetup(ctx, canonical, answers.AccessMode, accessHash, adminHash, answers.InsecureAccepted)
+	var keepHosts []string
+	if answers.KeepHost != "" {
+		keepHosts = append(keepHosts, answers.KeepHost)
+	}
+	completeErr := app.Store.CompleteSetup(ctx, canonical, answers.AccessMode, accessHash, adminHash, answers.InsecureAccepted, keepHosts...)
 	var cleanupErr error
 	if completeErr == nil {
 		cleanupErr = bootstrap.RemoveOwnerSetupFiles(app.Store.Dir())
