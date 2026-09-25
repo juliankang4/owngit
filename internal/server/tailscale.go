@@ -66,6 +66,8 @@ type Tailscale struct {
 	// Store.LockTailscaleChange between processes, so that no change reads
 	// the record of what OwnGit added while another rewrites it.
 	changing sync.Mutex
+	// readings shares reads of Tailscale's state among reports.
+	readings readingCache
 }
 
 // Endpoint states in TailscaleReport.
@@ -157,21 +159,25 @@ func (sharing *Tailscale) Report(ctx context.Context) (TailscaleReport, error) {
 		report.Sharing, report.URL = &record, "https://"+record.Name+"/"
 	}
 
-	command, err := sharing.findCommand()
+	reading, err := sharing.read(ctx)
 	if err != nil {
-		report.Problem = string(tailscale.KindOf(err))
+		return TailscaleReport{}, err
+	}
+	if reading.commandErr != nil {
+		report.Problem = string(tailscale.KindOf(reading.commandErr))
 	} else {
+		command := reading.command
 		report.Installed, report.Command, report.MacApp = true, command.Path, command.MacApp
-		status, err := command.Status(ctx)
+		err := reading.statusErr
 		if err == nil {
-			report.Name = status.Name
-			err = status.Usable()
+			report.Name = reading.status.Name
+			err = reading.status.Usable()
 		}
 		if err != nil {
 			report.Problem, report.ProblemDetail = problemOf(err)
 		}
 		if report.Problem == "" || on {
-			sharing.readEndpoint(ctx, command, &report, record, observed)
+			readEndpoint(reading, &report, record, observed)
 		}
 	}
 	if on {
@@ -183,8 +189,8 @@ func (sharing *Tailscale) Report(ctx context.Context) (TailscaleReport, error) {
 
 // readEndpoint fills the Endpoint fields from Tailscale's Serve
 // configuration.
-func (sharing *Tailscale) readEndpoint(ctx context.Context, command tailscale.Command, report *TailscaleReport, record state.TailscaleServe, observed state.RunningObservation) {
-	config, err := command.ServeConfig(ctx)
+func readEndpoint(reading tailscaleReading, report *TailscaleReport, record state.TailscaleServe, observed state.RunningObservation) {
+	config, err := reading.config, reading.configErr
 	if err != nil {
 		if report.Problem == "" {
 			report.Problem, report.ProblemDetail = problemOf(err)
@@ -318,6 +324,7 @@ func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool) (TailscaleC
 		return TailscaleChange{}, err
 	}
 	defer unlock()
+	defer sharing.forget()
 	change, err := sharing.on(ctx, homeNetwork)
 	if err == nil && sharing.Live != nil {
 		sharing.Live.ApplyTailscale(change.Record, change.RemovedHost)
@@ -511,6 +518,7 @@ func (sharing *Tailscale) Off(ctx context.Context) (TailscaleChange, error) {
 		return TailscaleChange{}, err
 	}
 	defer unlock()
+	defer sharing.forget()
 	change, baseURL, err := sharing.off(ctx)
 	if err == nil && sharing.Live != nil {
 		sharing.Live.RemoveTailscale(change.Record, baseURL)

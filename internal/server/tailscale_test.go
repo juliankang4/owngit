@@ -719,3 +719,75 @@ func TestTurningOnAfterARenameMovesToTheNewName(t *testing.T) {
 		t.Fatalf("after off: hosts %v, proxies %v, record %+v", hosts, proxies, record)
 	}
 }
+
+// reads counts the fake's read commands.
+func reads(fake *tailscaletest.Fake) int {
+	count := 0
+	for _, call := range fake.Calls() {
+		if call == "status --json" || call == "serve status --json" {
+			count++
+		}
+	}
+	return count
+}
+
+// Concurrent reports, such as many Settings views at once, share one
+// reading of Tailscale and reuse it for a few seconds, so the number of
+// tailscale processes does not follow the request rate. A change reads
+// again.
+func TestReportsShareOneReadingOfTailscale(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), ReadDelay: 300})
+	ctx := context.Background()
+	var wait sync.WaitGroup
+	for range 40 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			report, err := app.Tailscale.Report(ctx)
+			if err != nil || report.Name != tailscaletest.Name {
+				t.Errorf("report: %+v %v", report, err)
+			}
+		}()
+	}
+	wait.Wait()
+	if got := reads(fake); got != 2 {
+		t.Fatalf("40 concurrent reports ran %d read commands, want 2: %q", got, fake.Calls())
+	}
+	_, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if got := reads(fake); got != 2 {
+		t.Fatalf("a report within the reading's lifetime ran tailscale again: %d", got)
+	}
+	fake.Update(func(s *tailscaletest.State) { s.ReadDelay = 0 })
+	_, err = app.Tailscale.On(ctx, nil)
+	noErr(t, err)
+	before := reads(fake)
+	report, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if reads(fake) != before+2 || !report.Ready {
+		t.Fatalf("the report after turning on did not read again: %d reads, %+v", reads(fake)-before, report)
+	}
+}
+
+// Many Settings views at once, from viewers without the administrator
+// password, start at most one reading.
+func TestConcurrentSettingsViewsStartOneReading(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), ReadDelay: 300})
+	client, base, _, _ := networkSettingsClient(t, app)
+	app.Tailscale.forget()
+	before := len(fake.Calls())
+	var wait sync.WaitGroup
+	for range 20 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if _, status := dashboardGET(t, client, base+"/settings"); status != http.StatusOK {
+				t.Errorf("status=%d", status)
+			}
+		}()
+	}
+	wait.Wait()
+	if got := len(fake.Calls()) - before; got > 2 {
+		t.Fatalf("20 concurrent Settings views ran tailscale %d times, want at most 2", got)
+	}
+}

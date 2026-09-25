@@ -46,6 +46,9 @@ type State struct {
 	// before it takes effect, as Tailscale does while it fetches a
 	// certificate. Other calls are answered meanwhile.
 	WriteDelay int `json:"write_delay,omitempty"`
+	// ReadDelay does the same for "status --json" and "serve status
+	// --json", as a slow tailscaled does.
+	ReadDelay int `json:"read_delay,omitempty"`
 	// Calls are the argument lists the fake was run with, in order.
 	Calls [][]string `json:"calls,omitempty"`
 }
@@ -184,9 +187,14 @@ func RunIfFake() {
 // run handles one fake command. Calls from concurrent processes are
 // serialized with a lock file next to the state.
 func run(file string, arguments []string) int {
-	if len(arguments) > 1 && arguments[0] == "serve" && arguments[1] != "status" {
-		if state, err := load(file); err == nil && state.WriteDelay > 0 {
+	if state, err := load(file); err == nil {
+		write := len(arguments) > 1 && arguments[0] == "serve" && arguments[1] != "status"
+		read := slices.Contains([]string{"status --json", "serve status --json"}, strings.Join(arguments, " "))
+		switch {
+		case write && state.WriteDelay > 0:
 			time.Sleep(time.Duration(state.WriteDelay) * time.Millisecond)
+		case read && state.ReadDelay > 0:
+			time.Sleep(time.Duration(state.ReadDelay) * time.Millisecond)
 		}
 	}
 	unlock, err := lockFile(file + ".lock")
