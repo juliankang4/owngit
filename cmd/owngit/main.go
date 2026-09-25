@@ -654,6 +654,9 @@ func setupLink(arguments []string) error {
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
+	if flags.NArg() != 0 {
+		return errors.New("setup-link takes no positional arguments")
+	}
 	store, err := openLiveState(context.Background(), *stateDir)
 	if err != nil {
 		return err
@@ -684,6 +687,9 @@ func resetAdmin(arguments []string) error {
 	passwordFile := flags.String("password-file", "", "owner-readable file containing the new password")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("reset-admin takes no positional arguments")
 	}
 	if *passwordFile == "" {
 		return errors.New("--password-file is required; passwords are never accepted as command arguments")
@@ -726,13 +732,14 @@ func approveHost(arguments []string) error {
 	flags := flag.NewFlagSet("approve-host", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
-	if err := parseFlags(flags, arguments); err != nil {
+	operands, err := parseFlagsAndOperands(flags, arguments)
+	if err != nil {
 		return err
 	}
-	if flags.NArg() != 1 {
+	if len(operands) != 1 {
 		return errors.New("approve-host requires exactly one host name")
 	}
-	host := flags.Arg(0)
+	host := operands[0]
 	policy := server.NewHostPolicy()
 	if err := policy.Add(host); err != nil {
 		return err
@@ -1020,6 +1027,28 @@ func parseFlags(flags *flag.FlagSet, arguments []string) error {
 		return errUsageShown
 	}
 	return err
+}
+
+// parseFlagsAndOperands parses a command's flags wherever they appear among
+// its positional operands, as the usage line "owngit approve-host <host>
+// [options]" shows, and returns the operands in order. After "--", every
+// argument is an operand.
+func parseFlagsAndOperands(flags *flag.FlagSet, arguments []string) ([]string, error) {
+	var operands []string
+	for {
+		if err := parseFlags(flags, arguments); err != nil {
+			return nil, err
+		}
+		rest := flags.Args()
+		if consumed := len(arguments) - len(rest); consumed > 0 && arguments[consumed-1] == "--" {
+			return append(operands, rest...), nil
+		}
+		if len(rest) == 0 {
+			return operands, nil
+		}
+		operands = append(operands, rest[0])
+		arguments = rest[1:]
+	}
 }
 
 func printFlagUsage(writer io.Writer, flags *flag.FlagSet) {
