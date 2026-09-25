@@ -80,15 +80,11 @@ func checkTaskCommand(arguments []string) error {
 	if err := parseCheckFlags(flags, arguments[1:]); err != nil {
 		return err
 	}
-	client, err := remote.helperClient()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	content, err := client.Do(context.Background(), "POST", remote.repositoryPath()+"/tasks", checkapi.CreateTaskInput{Title: *title})
-	if err != nil {
-		return err
-	}
-	return writeJSON(content)
+	return writeResult(createTask(context.Background(), target, *title))
 }
 
 // checkCycleCommand reserves one automatic correction round. The round is
@@ -127,19 +123,11 @@ func checkCycleReserve(arguments []string) error {
 	if *taskID == "" {
 		return cliProblem("invalid_arguments", "check cycle reserve requires --task.")
 	}
-	client, err := remote.helperClient()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	cycleID, err := state.RandomID()
-	if err != nil {
-		return err
-	}
-	content, err := postWithRetry(client, remote.repositoryPath()+"/tasks/"+url.PathEscape(*taskID)+"/cycles", checkapi.CreateCycleInput{CycleID: cycleID})
-	if err != nil {
-		return err
-	}
-	return writeJSON(content)
+	return writeResult(reserveCycle(context.Background(), target, *taskID))
 }
 
 func checkCycleList(arguments []string) error {
@@ -152,15 +140,11 @@ func checkCycleList(arguments []string) error {
 	if *taskID == "" {
 		return cliProblem("invalid_arguments", "check cycle list requires --task.")
 	}
-	client, err := remote.helperClient()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	content, err := client.Do(context.Background(), "GET", remote.repositoryPath()+"/tasks/"+url.PathEscape(*taskID)+"/cycles", nil)
-	if err != nil {
-		return err
-	}
-	return writeJSON(content)
+	return writeResult(listCycles(context.Background(), target, *taskID))
 }
 
 func checkStatus(arguments []string) error {
@@ -173,15 +157,11 @@ func checkStatus(arguments []string) error {
 	if *taskID == "" {
 		return cliProblem("invalid_arguments", "check status requires --task.")
 	}
-	client, err := remote.helperClient()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	content, err := client.Do(context.Background(), "GET", remote.repositoryPath()+"/tasks/"+url.PathEscape(*taskID), nil)
-	if err != nil {
-		return err
-	}
-	return writeJSON(content)
+	return writeResult(showTask(context.Background(), target, *taskID))
 }
 
 func checkLog(arguments []string) error {
@@ -194,15 +174,11 @@ func checkLog(arguments []string) error {
 	if *attemptID == "" {
 		return cliProblem("invalid_arguments", "check log requires --attempt.")
 	}
-	client, err := remote.helperClient()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	content, err := client.Do(context.Background(), "GET", remote.repositoryPath()+"/check-attempts/"+url.PathEscape(*attemptID)+"/log", nil)
-	if err != nil {
-		return err
-	}
-	return writeJSON(content)
+	return writeResult(readAttemptLog(context.Background(), target, *attemptID))
 }
 
 func checkConfigCommand(arguments []string) error {
@@ -223,15 +199,11 @@ func checkConfigCommand(arguments []string) error {
 	if err := parseCheckFlags(flags, arguments[1:]); err != nil {
 		return err
 	}
-	client, err := remote.helperClient()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	content, err := client.Do(context.Background(), "GET", remote.repositoryPath()+"/check-configurations/latest", nil)
-	if err != nil {
-		return err
-	}
-	return writeJSON(content)
+	return writeResult(latestCheckConfiguration(context.Background(), target))
 }
 
 type checkRunOutput struct {
@@ -264,129 +236,232 @@ func checkRun(arguments []string) error {
 	if *taskID == "" {
 		return cliProblem("invalid_arguments", "check run requires --task. Create one with owngit check task new.")
 	}
-	if *cycleID != "" && !validHexID(*cycleID) {
-		return cliProblem("invalid_arguments", "--cycle must be a 32 character lowercase hex identifier.")
+	request := checkRunRequest{
+		TaskID: *taskID, CycleID: *cycleID, Workdir: *workdir, Timeout: *timeout, OutputLimit: *outputLimit,
+		LocalRepository: remote.repository,
 	}
-	// Zero or negative limits would run without a bound locally and are
-	// refused by the server anyway, so they are refused before anything runs.
-	if *timeout <= 0 {
-		return cliProblem("invalid_arguments", "--timeout must be a positive duration.")
-	}
-	if *outputLimit <= 0 {
-		return cliProblem("invalid_arguments", "--output-limit must be a positive number of bytes.")
+	if err := request.validate(); err != nil {
+		return err
 	}
 	definitions, err := parseCheckDefinitions(checks)
 	if err != nil {
 		return err
 	}
+	request.Checks = definitions
 	// A local-only run does not need a server; uploading does.
-	var client *apiclient.Client
+	var target *connection
 	if !*noUpload {
-		client, err = remote.helperClient()
+		resolved, err := remote.connection()
 		if err != nil {
 			return err
 		}
+		target = &resolved
 	}
-	revision, worktree, err := inspectWorktree(*workdir)
+	attempt, err := prepareCheckAttempt(context.Background(), target, request)
 	if err != nil {
 		return err
 	}
+	if err := attempt.register(context.Background()); err != nil {
+		return err
+	}
+	// Only execution listens for an interrupt, so a cancelled run is still
+	// recorded by the completion below.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	attempt.execute(ctx)
+	output := attempt.complete(context.Background())
+	if err := writeJSONValue(output); err != nil {
+		return err
+	}
+	return attempt.outcome()
+}
+
+// checkRunRequest describes one check run.
+type checkRunRequest struct {
+	TaskID      string
+	CycleID     string
+	Workdir     string
+	Timeout     time.Duration
+	OutputLimit int64
+	// Checks runs exactly these definitions. When it is empty, only the
+	// configuration committed in the tested revision may run.
+	Checks []checkexec.Definition
+	// LocalRepository names the repository in the attempt of a local-only
+	// run, which has no connection.
+	LocalRepository string
+}
+
+func (request checkRunRequest) validate() error {
+	if request.TaskID == "" {
+		return cliProblem("invalid_arguments", "A check run requires a task identifier.")
+	}
+	if request.CycleID != "" && !validHexID(request.CycleID) {
+		return cliProblem("invalid_arguments", "--cycle must be a 32 character lowercase hex identifier.")
+	}
+	// Zero or negative limits would run without a bound locally and are
+	// refused by the server anyway, so they are refused before anything runs.
+	if request.Timeout <= 0 {
+		return cliProblem("invalid_arguments", "--timeout must be a positive duration.")
+	}
+	if request.OutputLimit <= 0 {
+		return cliProblem("invalid_arguments", "--output-limit must be a positive number of bytes.")
+	}
+	return nil
+}
+
+// checkAttempt carries one check run through separable steps: prepareCheckAttempt
+// inspects the worktree and selects the checks, register records the attempt
+// before anything runs, execute runs the checks, and complete records the
+// outcome and returns the result. A run without a connection stays local.
+//
+// Each step honors its own context. Give complete a context that outlives a
+// cancellation of execute, so a cancelled run is still recorded.
+type checkAttempt struct {
+	target       *connection
+	request      checkRunRequest
+	definitions  []checkexec.Definition
+	revision     string
+	worktree     string
+	started      time.Time
+	registration checkapi.AttemptRegistration
+	registered   bool
+	output       checkRunOutput
+	results      []checkexec.Result
+	cancelled    bool
+	status       string
+	finished     time.Time
+	log          string
+	logTruncated bool
+}
+
+func prepareCheckAttempt(ctx context.Context, target *connection, request checkRunRequest) (*checkAttempt, error) {
+	if err := request.validate(); err != nil {
+		return nil, err
+	}
+	revision, worktree, err := inspectWorktree(ctx, request.Workdir)
+	if err != nil {
+		return nil, err
+	}
+	definitions := request.Checks
 	if len(definitions) == 0 {
 		// Without explicit checks, only the configuration committed in the
 		// revision under test may run. A configuration recorded on the server
 		// can come from any branch, so it never selects commands here.
-		definitions, err = committedCheckDefinitions(*workdir, revision)
+		definitions, err = committedCheckDefinitions(ctx, request.Workdir, revision)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	// The identity is generated before execution, so the server can issue a
 	// repository-wide sequence and a retransmitted registration stays idempotent.
 	attemptID, err := state.RandomID()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	started := time.Now().UTC()
-	output := checkRunOutput{AttemptID: attemptID, CycleID: *cycleID}
-	registration := checkapi.AttemptRegistration{
-		AttemptID: attemptID, RevisionOID: revision, WorktreeState: worktree, Checks: checkDefinitionsJSON(definitions),
-		CycleID: *cycleID, StartedAt: started, TimeoutMS: timeout.Milliseconds(), OutputLimitBytes: *outputLimit,
-	}
-	registered := false
-	if !*noUpload {
-		content, registerErr := postWithRetry(client, remote.repositoryPath()+"/tasks/"+url.PathEscape(*taskID)+"/attempts", registration)
-		if definiteRefusal(registerErr) {
-			// The server answered and refused, so nothing was recorded and
-			// no check runs. Only an unconfirmed registration runs anyway.
-			return registerErr
-		}
-		if registerErr != nil {
-			output.UploadError = registerErr.Error()
-		} else {
-			var response checkapi.TaskResponse
-			if err := json.Unmarshal(content, &response); err != nil || !response.OK || response.Attempt == nil {
-				output.UploadError = "the server returned an invalid registration response"
-			} else {
-				registered = true
-				output.Registered = true
-				output.Task = response.Task
-				if response.Task != nil {
-					output.CorrectionCyclesRemaining = response.Task.CorrectionCyclesRemaining
-				}
-			}
-		}
-	}
+	return &checkAttempt{
+		target: target, request: request, definitions: definitions, revision: revision, worktree: worktree, started: started,
+		registration: checkapi.AttemptRegistration{
+			AttemptID: attemptID, RevisionOID: revision, WorktreeState: worktree, Checks: checkDefinitionsJSON(definitions),
+			CycleID: request.CycleID, StartedAt: started, TimeoutMS: request.Timeout.Milliseconds(), OutputLimitBytes: request.OutputLimit,
+		},
+		output: checkRunOutput{AttemptID: attemptID, CycleID: request.CycleID},
+	}, nil
+}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	results, cancelled := checkexec.Run(ctx, definitions, checkexec.Options{
-		Dir: *workdir, Timeout: *timeout, OutputLimit: *outputLimit, Redact: []string{remote.token},
-	})
-	finished := time.Now().UTC()
-	status := aggregateCheckStatus(results, cancelled)
-	// A check that commits or dirties the tree must not be certified as the
-	// revision observed before it ran.
-	worktree = confirmWorktree(*workdir, revision, worktree)
-	log, logTruncated := buildCheckLog(results)
-	output.Results = checkResultsJSON(results)
-
-	if registered {
-		completion := checkapi.AttemptCompletion{
-			Results: output.Results, Cancelled: cancelled, FinishedAt: finished, WorktreeState: worktree,
-			Log: log, LogTruncated: logTruncated,
-		}
-		content, completeErr := postWithRetry(client, remote.repositoryPath()+"/tasks/"+url.PathEscape(*taskID)+"/attempts/"+url.PathEscape(attemptID)+"/complete", completion)
-		if completeErr != nil {
-			output.UploadError = completeErr.Error()
-		} else {
-			var response checkapi.TaskResponse
-			if err := json.Unmarshal(content, &response); err != nil || !response.OK || response.Attempt == nil {
-				output.UploadError = "the server returned an invalid completion response"
-			} else {
-				output.OK = true
-				output.Uploaded = true
-				output.Task = response.Task
-				output.Attempt = response.Attempt
-				if response.Task != nil {
-					output.CorrectionCyclesRemaining = response.Task.CorrectionCyclesRemaining
-				}
-			}
-		}
-	} else if *noUpload {
-		output.OK = true
-		output.Attempt = &checkapi.Attempt{
-			ID: attemptID, TaskID: *taskID, RepositoryID: remote.repository, RevisionOID: revision, WorktreeState: worktree,
-			Status: status, StartedAt: started, FinishedAt: finished, DurationMS: finished.Sub(started).Milliseconds(),
-			Summary: state.AttemptSummary(checkResults(results), worktree, status), Results: output.Results,
-			Protection: state.ProtectionUnknown, ExecutionScope: state.ExecutionScopeInherited, CycleID: *cycleID,
-			TimeoutMS: timeout.Milliseconds(), OutputLimitBytes: *outputLimit, LogTruncated: logTruncated,
-			CleanupFailed: cleanupFailed(results),
-		}
+// register records the attempt before execution. It returns an error only
+// when the server answered and refused, so nothing was recorded and no check
+// may run. An unconfirmed registration is kept as the upload error and the
+// checks still run.
+func (run *checkAttempt) register(ctx context.Context) error {
+	if run.target == nil {
+		return nil
 	}
-	if err := writeJSONValue(output); err != nil {
+	content, err := postWithRetry(ctx, run.target.client(), run.target.taskPath(run.request.TaskID)+"/attempts", run.registration)
+	if definiteRefusal(err) {
 		return err
 	}
-	return checkRunOutcomeError(output.OK, status, cancelled)
+	if err != nil {
+		run.output.UploadError = err.Error()
+		return nil
+	}
+	var response checkapi.TaskResponse
+	if err := json.Unmarshal(content, &response); err != nil || !response.OK || response.Attempt == nil {
+		run.output.UploadError = "the server returned an invalid registration response"
+		return nil
+	}
+	run.registered = true
+	run.output.Registered = true
+	run.output.Task = response.Task
+	if response.Task != nil {
+		run.output.CorrectionCyclesRemaining = response.Task.CorrectionCyclesRemaining
+	}
+	return nil
+}
+
+// execute runs the checks until they finish or ctx is cancelled, then
+// observes the worktree again.
+func (run *checkAttempt) execute(ctx context.Context) {
+	redact := ""
+	if run.target != nil {
+		redact = run.target.credential.secret
+	}
+	run.results, run.cancelled = checkexec.Run(ctx, run.definitions, checkexec.Options{
+		Dir: run.request.Workdir, Timeout: run.request.Timeout, OutputLimit: run.request.OutputLimit, Redact: []string{redact},
+	})
+	run.finished = time.Now().UTC()
+	run.status = aggregateCheckStatus(run.results, run.cancelled)
+	// A check that commits or dirties the tree must not be certified as the
+	// revision observed before it ran. The observation belongs to the record,
+	// so it runs even after a cancellation.
+	run.worktree = confirmWorktree(context.WithoutCancel(ctx), run.request.Workdir, run.revision, run.worktree)
+	run.log, run.logTruncated = buildCheckLog(run.results)
+	run.output.Results = checkResultsJSON(run.results)
+}
+
+// complete records the outcome of a registered attempt, or describes a
+// local-only attempt, and returns the result.
+func (run *checkAttempt) complete(ctx context.Context) checkRunOutput {
+	if run.registered {
+		completion := checkapi.AttemptCompletion{
+			Results: run.output.Results, Cancelled: run.cancelled, FinishedAt: run.finished, WorktreeState: run.worktree,
+			Log: run.log, LogTruncated: run.logTruncated,
+		}
+		content, err := postWithRetry(ctx, run.target.client(), run.target.taskPath(run.request.TaskID)+"/attempts/"+url.PathEscape(run.output.AttemptID)+"/complete", completion)
+		if err != nil {
+			run.output.UploadError = err.Error()
+			return run.output
+		}
+		var response checkapi.TaskResponse
+		if err := json.Unmarshal(content, &response); err != nil || !response.OK || response.Attempt == nil {
+			run.output.UploadError = "the server returned an invalid completion response"
+			return run.output
+		}
+		run.output.OK = true
+		run.output.Uploaded = true
+		run.output.Task = response.Task
+		run.output.Attempt = response.Attempt
+		if response.Task != nil {
+			run.output.CorrectionCyclesRemaining = response.Task.CorrectionCyclesRemaining
+		}
+	} else if run.target == nil {
+		request := run.request
+		run.output.OK = true
+		run.output.Attempt = &checkapi.Attempt{
+			ID: run.output.AttemptID, TaskID: request.TaskID, RepositoryID: request.LocalRepository, RevisionOID: run.revision, WorktreeState: run.worktree,
+			Status: run.status, StartedAt: run.started, FinishedAt: run.finished, DurationMS: run.finished.Sub(run.started).Milliseconds(),
+			Summary: state.AttemptSummary(checkResults(run.results), run.worktree, run.status), Results: run.output.Results,
+			Protection: state.ProtectionUnknown, ExecutionScope: state.ExecutionScopeInherited, CycleID: request.CycleID,
+			TimeoutMS: request.Timeout.Milliseconds(), OutputLimitBytes: request.OutputLimit, LogTruncated: run.logTruncated,
+			CleanupFailed: cleanupFailed(run.results),
+		}
+	}
+	return run.output
+}
+
+// outcome is the conventional exit status of a completed run.
+func (run *checkAttempt) outcome() error {
+	return checkRunOutcomeError(run.output.OK, run.status, run.cancelled)
 }
 
 func checkRunOutcomeError(recorded bool, status string, cancelled bool) error {
@@ -400,28 +475,6 @@ func checkRunOutcomeError(recorded bool, status string, cancelled bool) error {
 	default:
 		return nil
 	}
-}
-
-// postWithRetry retries a lost response with the same body. Both the
-// registration and the completion are idempotent by identity and payload, so a
-// retry cannot create a second attempt or consume a second correction round.
-func postWithRetry(client *apiclient.Client, path string, body any) ([]byte, error) {
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
-		}
-		content, err := client.Do(context.Background(), "POST", path, body)
-		if err == nil {
-			return content, nil
-		}
-		lastErr = err
-		var problem *apiclient.Error
-		if !errors.As(err, &problem) || (problem.Code != "connection_failed" && problem.Code != "invalid_response") {
-			return nil, err
-		}
-	}
-	return nil, lastErr
 }
 
 func parseCheckDefinitions(values []string) ([]checkexec.Definition, error) {
@@ -446,8 +499,8 @@ func definiteRefusal(err error) bool {
 // committedCheckDefinitions reads the checks from the workflow file committed
 // in revision. The working tree copy is ignored, so an uncommitted edit cannot
 // change what runs for the recorded revision.
-func committedCheckDefinitions(directory, revision string) ([]checkexec.Definition, error) {
-	listing, err := runGit(directory, "ls-tree", "-z", "-l", "--full-tree", revision, "--", checkworkflow.Path)
+func committedCheckDefinitions(ctx context.Context, directory, revision string) ([]checkexec.Definition, error) {
+	listing, err := runGit(ctx, directory, "ls-tree", "-z", "-l", "--full-tree", revision, "--", checkworkflow.Path)
 	if err != nil {
 		return nil, cliProblem("revision_unavailable", "The committed check configuration could not be read: "+err.Error())
 	}
@@ -463,7 +516,7 @@ func committedCheckDefinitions(directory, revision string) ([]checkexec.Definiti
 	if size, err := strconv.ParseInt(fields[3], 10, 64); err != nil || size > checkworkflow.MaximumBytes {
 		return nil, cliProblem("invalid_check_configuration", checkworkflow.Path+" in revision "+revision+" is larger than 64 KiB.")
 	}
-	command := exec.Command("git", "cat-file", "blob", fields[2])
+	command := exec.CommandContext(ctx, "git", "cat-file", "blob", fields[2])
 	command.Dir = directory
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	content, err := command.Output()
@@ -481,12 +534,12 @@ func committedCheckDefinitions(directory, revision string) ([]checkexec.Definiti
 	return definitions, nil
 }
 
-func inspectWorktree(directory string) (string, string, error) {
-	revision, err := runGit(directory, "rev-parse", "HEAD")
+func inspectWorktree(ctx context.Context, directory string) (string, string, error) {
+	revision, err := runGit(ctx, directory, "rev-parse", "HEAD")
 	if err != nil {
 		return "", state.WorktreeUnknown, cliProblem("revision_unavailable", "The working directory is not a Git checkout with a commit: "+err.Error())
 	}
-	status, err := runGit(directory, "status", "--porcelain")
+	status, err := runGit(ctx, directory, "status", "--porcelain")
 	if err != nil {
 		return revision, state.WorktreeUnknown, nil
 	}
@@ -499,8 +552,8 @@ func inspectWorktree(directory string) (string, string, error) {
 // confirmWorktree re-observes the worktree after execution. A changed revision
 // or a newly dirty tree downgrades the attempt to dirty, and an unreadable tree
 // becomes unknown.
-func confirmWorktree(directory, revision, before string) string {
-	afterRevision, afterState, err := inspectWorktree(directory)
+func confirmWorktree(ctx context.Context, directory, revision, before string) string {
+	afterRevision, afterState, err := inspectWorktree(ctx, directory)
 	if err != nil {
 		return state.WorktreeUnknown
 	}
@@ -510,8 +563,8 @@ func confirmWorktree(directory, revision, before string) string {
 	return before
 }
 
-func runGit(directory string, arguments ...string) (string, error) {
-	command := exec.Command("git", arguments...)
+func runGit(ctx context.Context, directory string, arguments ...string) (string, error) {
+	command := exec.CommandContext(ctx, "git", arguments...)
 	command.Dir = directory
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	output, err := command.Output()
@@ -611,7 +664,6 @@ type checkRemoteFlags struct {
 	repository         string
 	credentialFile     string
 	acceptInsecureHTTP bool
-	token              string
 }
 
 func addCheckRemoteFlags(flags *flag.FlagSet) *checkRemoteFlags {
@@ -623,26 +675,19 @@ func addCheckRemoteFlags(flags *flag.FlagSet) *checkRemoteFlags {
 	return remote
 }
 
-func (remote *checkRemoteFlags) helperClient() (*apiclient.Client, error) {
+func (remote *checkRemoteFlags) connection() (connection, error) {
 	if remote.server == "" || remote.repository == "" || remote.credentialFile == "" {
-		return nil, cliProblem("invalid_arguments", "--server, --repository, and --credential-file are required.")
+		return connection{}, cliProblem("invalid_arguments", "--server, --repository, and --credential-file are required.")
 	}
 	parsed, err := apiclient.ValidateServer(remote.server, remote.acceptInsecureHTTP)
 	if err != nil {
-		return nil, err
+		return connection{}, err
 	}
 	token, err := readPrivateToken(remote.credentialFile)
 	if err != nil {
-		return nil, err
+		return connection{}, err
 	}
-	remote.token = token
-	client := apiclient.NewBearer(parsed, token)
-	client.MaximumRequest = checkapi.MaximumUploadBytes
-	return client, nil
-}
-
-func (remote *checkRemoteFlags) repositoryPath() string {
-	return "/api/v1/repositories/" + url.PathEscape(remote.repository)
+	return connection{server: parsed, repository: remote.repository, credential: credential{kind: credentialHelperToken, secret: token}}, nil
 }
 
 func readPrivateToken(path string) (string, error) {
@@ -677,6 +722,14 @@ func parseCheckFlags(flags *flag.FlagSet, arguments []string) error {
 		return cliProblem("invalid_arguments", "Unexpected positional arguments were supplied.")
 	}
 	return nil
+}
+
+// writeResult prints an operation's JSON result, or returns its error.
+func writeResult(content []byte, err error) error {
+	if err != nil {
+		return err
+	}
+	return writeJSON(content)
 }
 
 func writeJSON(content []byte) error {

@@ -1,0 +1,221 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	"owngit/internal/apiclient"
+	"owngit/internal/checkapi"
+	"owngit/internal/pullrequest"
+	"owngit/internal/state"
+)
+
+// This file holds the remote operations shared by the command line and the
+// MCP server. Each takes a context and a resolved connection and returns the
+// server's JSON result, or a structured *apiclient.Error. None of them reads
+// flags or writes to stdout or stderr; the caller decides how to present the
+// result.
+
+// credentialKind says how a connection authenticates. The kind is implied by
+// the flag that read the secret, so a later kind (such as a personal key) can
+// be added without changing the operations.
+type credentialKind string
+
+const (
+	credentialNone           credentialKind = "none"
+	credentialSharedPassword credentialKind = "shared_password"
+	credentialHelperToken    credentialKind = "helper_token"
+)
+
+type credential struct {
+	kind   credentialKind
+	secret string
+}
+
+// connection is a resolved target: a validated server origin, a repository
+// identifier (empty for server-wide operations), and the credential sent to
+// that origin.
+type connection struct {
+	server     *url.URL
+	repository string
+	credential credential
+}
+
+func (target connection) client() *apiclient.Client {
+	switch target.credential.kind {
+	case credentialHelperToken:
+		client := apiclient.NewBearer(target.server, target.credential.secret)
+		client.MaximumRequest = checkapi.MaximumUploadBytes
+		return client
+	case credentialSharedPassword:
+		return apiclient.New(target.server, target.credential.secret)
+	default:
+		return apiclient.New(target.server, "")
+	}
+}
+
+func (target connection) repositoryPath() string {
+	return "/api/v1/repositories/" + url.PathEscape(target.repository)
+}
+
+func (target connection) pullRequestPath(number int64) string {
+	return target.repositoryPath() + "/pull-requests/" + strconv.FormatInt(number, 10)
+}
+
+func (target connection) taskPath(taskID string) string {
+	return target.repositoryPath() + "/tasks/" + url.PathEscape(taskID)
+}
+
+// Pull request operations. The server validates titles, branches, object IDs
+// and review values; these functions only refuse inputs that would address the
+// wrong resource.
+
+func listPullRequests(ctx context.Context, target connection) ([]byte, error) {
+	return target.client().Do(ctx, http.MethodGet, target.repositoryPath()+"/pull-requests", nil)
+}
+
+func showPullRequest(ctx context.Context, target connection, number int64) ([]byte, error) {
+	if err := requirePullRequestNumber(number); err != nil {
+		return nil, err
+	}
+	return target.client().Do(ctx, http.MethodGet, target.pullRequestPath(number), nil)
+}
+
+func createPullRequest(ctx context.Context, target connection, input pullrequest.CreateInput) ([]byte, error) {
+	return target.client().Do(ctx, http.MethodPost, target.repositoryPath()+"/pull-requests", input)
+}
+
+// markPullRequestReview requests a review (action "request") or records that
+// review was skipped (action "skip") for exact revisions.
+func markPullRequestReview(ctx context.Context, target connection, number int64, action string, input pullrequest.RevisionInput) ([]byte, error) {
+	if err := requirePullRequestNumber(number); err != nil {
+		return nil, err
+	}
+	if action != "request" && action != "skip" {
+		return nil, cliProblem("invalid_arguments", "The review action must be request or skip.")
+	}
+	return target.client().Do(ctx, http.MethodPost, target.pullRequestPath(number)+"/review/"+action, input)
+}
+
+// submitPullRequestReview records a review decision with a supplied reviewer
+// label for exact revisions.
+func submitPullRequestReview(ctx context.Context, target connection, number int64, input pullrequest.ReviewSubmitInput) ([]byte, error) {
+	if err := requirePullRequestNumber(number); err != nil {
+		return nil, err
+	}
+	return target.client().Do(ctx, http.MethodPost, target.pullRequestPath(number)+"/review/submit", input)
+}
+
+func mergePullRequest(ctx context.Context, target connection, number int64, input pullrequest.RevisionInput) ([]byte, error) {
+	if err := requirePullRequestNumber(number); err != nil {
+		return nil, err
+	}
+	return target.client().Do(ctx, http.MethodPost, target.pullRequestPath(number)+"/merge", input)
+}
+
+// setPullRequestClosed closes (closed true) or reopens a pull request. Neither
+// changes a branch, so no object IDs are needed.
+func setPullRequestClosed(ctx context.Context, target connection, number int64, closed bool) ([]byte, error) {
+	if err := requirePullRequestNumber(number); err != nil {
+		return nil, err
+	}
+	action := "/reopen"
+	if closed {
+		action = "/close"
+	}
+	return target.client().Do(ctx, http.MethodPost, target.pullRequestPath(number)+action, struct{}{})
+}
+
+func requirePullRequestNumber(number int64) error {
+	if number <= 0 {
+		return cliProblem("invalid_arguments", "The pull request number must be positive.")
+	}
+	return nil
+}
+
+// Check task, cycle, and evidence operations. They authenticate with a
+// repository-scoped helper credential.
+
+func createTask(ctx context.Context, target connection, title string) ([]byte, error) {
+	return target.client().Do(ctx, http.MethodPost, target.repositoryPath()+"/tasks", checkapi.CreateTaskInput{Title: title})
+}
+
+func showTask(ctx context.Context, target connection, taskID string) ([]byte, error) {
+	if err := requireIdentifier(taskID, "task"); err != nil {
+		return nil, err
+	}
+	return target.client().Do(ctx, http.MethodGet, target.taskPath(taskID), nil)
+}
+
+// reserveCycle reserves one automatic correction round. The round identity is
+// generated here, so a retried request cannot reserve a second round.
+func reserveCycle(ctx context.Context, target connection, taskID string) ([]byte, error) {
+	if err := requireIdentifier(taskID, "task"); err != nil {
+		return nil, err
+	}
+	cycleID, err := state.RandomID()
+	if err != nil {
+		return nil, err
+	}
+	return postWithRetry(ctx, target.client(), target.taskPath(taskID)+"/cycles", checkapi.CreateCycleInput{CycleID: cycleID})
+}
+
+func listCycles(ctx context.Context, target connection, taskID string) ([]byte, error) {
+	if err := requireIdentifier(taskID, "task"); err != nil {
+		return nil, err
+	}
+	return target.client().Do(ctx, http.MethodGet, target.taskPath(taskID)+"/cycles", nil)
+}
+
+func readAttemptLog(ctx context.Context, target connection, attemptID string) ([]byte, error) {
+	if err := requireIdentifier(attemptID, "attempt"); err != nil {
+		return nil, err
+	}
+	return target.client().Do(ctx, http.MethodGet, target.repositoryPath()+"/check-attempts/"+url.PathEscape(attemptID)+"/log", nil)
+}
+
+// latestCheckConfiguration reads the configuration recorded most recently in
+// the repository, from any branch. A check run never selects commands from it.
+func latestCheckConfiguration(ctx context.Context, target connection) ([]byte, error) {
+	return target.client().Do(ctx, http.MethodGet, target.repositoryPath()+"/check-configurations/latest", nil)
+}
+
+func requireIdentifier(value, name string) error {
+	if value == "" {
+		return cliProblem("invalid_arguments", "A "+name+" identifier is required.")
+	}
+	return nil
+}
+
+// postWithRetry retries a lost response with the same body. The cycle
+// reservation, attempt registration, and attempt completion are idempotent by
+// identity and payload, so a retry cannot create a second record or consume a
+// second correction round. A cancelled context stops the retries.
+func postWithRetry(ctx context.Context, client *apiclient.Client, path string, body any) ([]byte, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(time.Duration(attempt) * 200 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, lastErr
+			case <-timer.C:
+			}
+		}
+		content, err := client.Do(ctx, http.MethodPost, path, body)
+		if err == nil {
+			return content, nil
+		}
+		lastErr = err
+		var problem *apiclient.Error
+		if !errors.As(err, &problem) || (problem.Code != "connection_failed" && problem.Code != "invalid_response") {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}

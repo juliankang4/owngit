@@ -7,10 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 
 	"owngit/internal/apiclient"
 	"owngit/internal/pullrequest"
@@ -55,21 +52,21 @@ func prCreate(arguments []string) error {
 	remote := addPRRemoteFlags(flags)
 	title := flags.String("title", "", "pull request title")
 	source := flags.String("source", "", "source branch")
-	target := flags.String("target", "", "target branch")
+	targetBranch := flags.String("target", "", "target branch")
 	review := flags.String("review", "", "optional review choice: request or skip")
 	if err := parsePRFlags(flags, arguments); err != nil {
 		return err
 	}
-	if *title == "" || *source == "" || *target == "" {
+	if *title == "" || *source == "" || *targetBranch == "" {
 		return cliProblem("invalid_arguments", "pr create requires --title, --source, and --target. --review is optional.")
 	}
-	client, err := remote.client()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	return executePRRequest(client, http.MethodPost, remote.collectionPath(), pullrequest.CreateInput{
-		Title: *title, SourceBranch: *source, TargetBranch: *target, ReviewChoice: *review,
-	})
+	return writeResult(createPullRequest(context.Background(), target, pullrequest.CreateInput{
+		Title: *title, SourceBranch: *source, TargetBranch: *targetBranch, ReviewChoice: *review,
+	}))
 }
 
 func prList(arguments []string) error {
@@ -78,11 +75,11 @@ func prList(arguments []string) error {
 	if err := parsePRFlags(flags, arguments); err != nil {
 		return err
 	}
-	client, err := remote.client()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	return executePRRequest(client, http.MethodGet, remote.collectionPath(), nil)
+	return writeResult(listPullRequests(context.Background(), target))
 }
 
 func prShow(arguments []string) error {
@@ -95,11 +92,11 @@ func prShow(arguments []string) error {
 	if *number <= 0 {
 		return cliProblem("invalid_arguments", "pr show requires a positive --number.")
 	}
-	client, err := remote.client()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	return executePRRequest(client, http.MethodGet, remote.itemPath(*number), nil)
+	return writeResult(showPullRequest(context.Background(), target, *number))
 }
 
 func prReview(arguments []string) error {
@@ -128,23 +125,22 @@ func prReview(arguments []string) error {
 	if *number <= 0 || *sourceOID == "" || *targetOID == "" {
 		return cliProblem("invalid_arguments", "pr review requires --number, --source-oid, and --target-oid.")
 	}
-	client, err := remote.client()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	path := remote.itemPath(*number) + "/review/" + action
 	if action == "submit" {
 		if *decision == "" || *reviewer == "" {
 			return cliProblem("invalid_arguments", "pr review submit requires --decision and --reviewer.")
 		}
-		return executePRRequest(client, http.MethodPost, path, pullrequest.ReviewSubmitInput{
+		return writeResult(submitPullRequestReview(context.Background(), target, *number, pullrequest.ReviewSubmitInput{
 			SourceOID: *sourceOID, TargetOID: *targetOID, Decision: *decision, ReviewerLabel: *reviewer,
-		})
+		}))
 	}
 	if *decision != "" || *reviewer != "" {
 		return cliProblem("invalid_arguments", "--decision and --reviewer are valid only for pr review submit.")
 	}
-	return executePRRequest(client, http.MethodPost, path, pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID})
+	return writeResult(markPullRequestReview(context.Background(), target, *number, action, pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID}))
 }
 
 func prMerge(arguments []string) error {
@@ -159,11 +155,11 @@ func prMerge(arguments []string) error {
 	if *number <= 0 || *sourceOID == "" || *targetOID == "" {
 		return cliProblem("invalid_arguments", "pr merge requires --number, --source-oid, and --target-oid.")
 	}
-	client, err := remote.client()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	return executePRRequest(client, http.MethodPost, remote.itemPath(*number)+"/merge", pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID})
+	return writeResult(mergePullRequest(context.Background(), target, *number, pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID}))
 }
 
 // prSetClosed closes or reopens a pull request. Neither changes a branch, so
@@ -178,11 +174,11 @@ func prSetClosed(action string, arguments []string) error {
 	if *number <= 0 {
 		return cliProblem("invalid_arguments", "pr "+action+" requires a positive --number.")
 	}
-	client, err := remote.client()
+	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
-	return executePRRequest(client, http.MethodPost, remote.itemPath(*number)+"/"+action, struct{}{})
+	return writeResult(setPullRequestClosed(context.Background(), target, *number, action == "close"))
 }
 
 func newPRFlagSet(name string) *flag.FlagSet {
@@ -213,44 +209,23 @@ func parsePRFlags(flags *flag.FlagSet, arguments []string) error {
 	return nil
 }
 
-func (remote *prRemoteFlags) client() (*apiclient.Client, error) {
+func (remote *prRemoteFlags) connection() (connection, error) {
 	if remote.server == "" || remote.repository == "" {
-		return nil, cliProblem("invalid_arguments", "--server and --repository are required.")
+		return connection{}, cliProblem("invalid_arguments", "--server and --repository are required.")
 	}
 	parsed, err := apiclient.ValidateServer(remote.server, remote.acceptInsecureHTTP)
 	if err != nil {
-		return nil, err
+		return connection{}, err
 	}
-	password := ""
+	target := connection{server: parsed, repository: remote.repository, credential: credential{kind: credentialNone}}
 	if remote.passwordFile != "" {
-		password, err = readPrivatePassword(remote.passwordFile)
+		password, err := readPrivatePassword(remote.passwordFile)
 		if err != nil {
-			return nil, &apiclient.Error{Code: "invalid_password_file", Message: "The shared password file is unavailable or is not private.", Cause: err}
+			return connection{}, &apiclient.Error{Code: "invalid_password_file", Message: "The shared password file is unavailable or is not private.", Cause: err}
 		}
+		target.credential = credential{kind: credentialSharedPassword, secret: password}
 	}
-	return apiclient.New(parsed, password), nil
-}
-
-func (remote *prRemoteFlags) collectionPath() string {
-	return "/api/v1/repositories/" + url.PathEscape(remote.repository) + "/pull-requests"
-}
-
-func (remote *prRemoteFlags) itemPath(number int64) string {
-	return remote.collectionPath() + "/" + strconv.FormatInt(number, 10)
-}
-
-func executePRRequest(client *apiclient.Client, method, path string, input any) error {
-	content, err := client.Do(context.Background(), method, path, input)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stdout.Write(content); err != nil {
-		return &apiclient.Error{Code: "output_failed", Message: "The JSON result could not be written.", Cause: err}
-	}
-	if len(content) == 0 || content[len(content)-1] != '\n' {
-		_, _ = fmt.Fprintln(os.Stdout)
-	}
-	return nil
+	return target, nil
 }
 
 func cliProblem(code, message string) error {
