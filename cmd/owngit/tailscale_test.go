@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
+	"owngit/internal/webui"
 )
 
 func runTailscale(t *testing.T, arguments ...string) (string, error) {
@@ -198,5 +200,38 @@ func TestTailscaleCommandAfterARename(t *testing.T) {
 	noErr(t, err)
 	if !strings.Contains(output, "Tailscale now answers HTTPS for newbox.tail0000.ts.net") || !strings.Contains(output, "under a name this computer had before") {
 		t.Fatalf("on after the rename printed %q", output)
+	}
+}
+
+// "on" shows the certificate log notice, in the words of the Settings page,
+// before it asks Tailscale to serve the address, and its JSON carries it.
+// A refusal before any write shows no notice.
+func TestTailscaleOnShowsTheCertificateLogNotice(t *testing.T) {
+	notice := fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSCertLog), tailscaletest.Name)
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), WriteError: "Access denied: serve config denied"})
+	output, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path)
+	if err == nil || !strings.Contains(output, notice) {
+		t.Fatalf("a failed write: err=%v output=%q", err, output)
+	}
+	fake.Update(func(s *tailscaletest.State) { s.WriteError = "" })
+	output, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--json")
+	noErr(t, err)
+	var result struct {
+		On             bool   `json:"on"`
+		CertificateLog string `json:"certificate_log"`
+	}
+	noErr(t, json.Unmarshal([]byte(output), &result))
+	if !result.On || result.CertificateLog != notice {
+		t.Fatalf("JSON: %+v", result)
+	}
+
+	taken := initializedState(t, false)
+	busy := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: tailscale.ServeConfig{
+		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+		Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}}}},
+	}})
+	if output, err := runTailscale(t, "on", "--state-dir", taken, "--tailscale", busy.Path); err == nil || strings.Contains(output, "certificate log") {
+		t.Fatalf("a refusal: err=%v output=%q", err, output)
 	}
 }

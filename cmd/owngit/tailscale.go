@@ -143,6 +143,16 @@ func tailscaleOn(arguments []string) error {
 		return err
 	}
 	defer store.Close()
+	// The certificate log notice comes before Tailscale is asked to serve
+	// the address, as it stands next to the switch in Settings. Command
+	// output other than terminal setup is English.
+	var certificateLog string
+	sharing.BeforeServe = func(name string) {
+		certificateLog = fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSCertLog), name)
+		if !*options.asJSON {
+			fmt.Println(certificateLog)
+		}
+	}
 	change, err := sharing.On(ctx, choice)
 	if err != nil {
 		return tailscaleFailure(err)
@@ -152,7 +162,12 @@ func tailscaleOn(arguments []string) error {
 		return err
 	}
 	if *options.asJSON {
-		return printJSON(report)
+		return printJSON(struct {
+			server.TailscaleReport
+			// CertificateLog is the notice shown before the address was
+			// served, or empty when turning on served nothing new.
+			CertificateLog string `json:"certificate_log,omitempty"`
+		}{report, certificateLog})
 	}
 	switch {
 	case change.Endpoint == "created":

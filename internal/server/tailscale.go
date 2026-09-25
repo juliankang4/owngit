@@ -57,6 +57,11 @@ type Tailscale struct {
 	// Live is the network of the running server, which a change applies to
 	// at once; nil outside the serve process.
 	Live *LiveNetwork
+	// BeforeServe, when set, runs just before turning on asks Tailscale to
+	// answer HTTPS for name, which gets the address a certificate. The
+	// command line shows the certificate log notice there; the Settings page
+	// shows it next to the switch.
+	BeforeServe func(name string)
 	// changing serializes changes inside this process, and
 	// Store.LockTailscaleChange between processes, so that no change reads
 	// the record of what OwnGit added while another rewrites it.
@@ -418,6 +423,9 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 			if err := sharing.Store.SaveTailscaleServe(ctx, record); err != nil {
 				return TailscaleChange{}, err
 			}
+		}
+		if sharing.BeforeServe != nil {
+			sharing.BeforeServe(record.Name)
 		}
 		writeErr := command.ServeHTTPS(ctx, TailscaleHTTPSPort, target)
 		after, readErr := command.ServeConfig(ctx)
