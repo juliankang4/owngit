@@ -461,8 +461,10 @@ sets `isError` and holds the command's error object,
 could not be recorded also sets `isError`; its text is the run's JSON with
 `upload_error`.
 
-Results over the limit are cut and say so. `pull_request_diff` keeps whole
-files, like the API, and sets `truncated` with the reason `response_limit`.
+Results over the limit are cut and say so. `pull_request_diff`, with or
+without the patch, is cut like the API cuts its response: it keeps whole files
+of the patch, then as many file list entries as fit, and sets `truncated`,
+`incomplete` when entries are missing, and the reason `response_limit`.
 Any other result is shortened, longest text first and then entries from the end
 of the longest lists, and gets a `result_truncated` object with the full size
 (`bytes`), the `limit`, and the fields that were `cut`.

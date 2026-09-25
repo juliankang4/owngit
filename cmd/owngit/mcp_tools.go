@@ -520,8 +520,9 @@ func (server *mcpServer) decodeRepositoryArguments(raw json.RawMessage, argument
 }
 
 // pullRequestDiff reads a diff like owngit pr diff, or like --stat when patch
-// is false. A result over the limit keeps whole files of the patch and says
-// that it was cut, as the API does for its own response limit.
+// is false. A result over the limit is cut like the API cuts its own
+// response: whole files of the patch, then entries of the file list, with
+// truncated, incomplete, and reason set.
 func (server *mcpServer) pullRequestDiff(ctx context.Context, raw json.RawMessage) ([]byte, error) {
 	var arguments diffArguments
 	target, err := server.decodeRepositoryArguments(raw, &arguments, &arguments.Repository)
@@ -529,18 +530,23 @@ func (server *mcpServer) pullRequestDiff(ctx context.Context, raw json.RawMessag
 		return nil, err
 	}
 	content, err := pullRequestDiff(ctx, target, arguments.Number, pullrequest.RevisionInput{SourceOID: arguments.SourceOID, TargetOID: arguments.TargetOID})
-	switch {
-	case err != nil:
+	withPatch := arguments.Patch == nil || *arguments.Patch
+	if err != nil || (withPatch && len(content) <= server.resultLimit) {
+		return content, err
+	}
+	diff, err := decodeDiff(content)
+	if err != nil {
 		return nil, err
-	case arguments.Patch != nil && !*arguments.Patch:
-		return diffStat(content)
-	case len(content) <= server.resultLimit:
-		return content, nil
 	}
-	var diff pullrequest.Diff
-	if err := json.Unmarshal(content, &diff); err != nil {
-		return nil, &apiclient.Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid diff.", Cause: err}
+	if withPatch {
+		diff.Fit(server.resultLimit)
+		return json.Marshal(diff)
 	}
+	stat, err := encodeDiffStat(diff)
+	if err != nil || len(stat) <= server.resultLimit {
+		return stat, err
+	}
+	diff.Patch = ""
 	diff.Fit(server.resultLimit)
-	return json.Marshal(diff)
+	return encodeDiffStat(diff)
 }

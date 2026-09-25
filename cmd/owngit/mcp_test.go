@@ -632,6 +632,23 @@ func TestMCPDiffKeepsWholeFilesUnderTheResultLimit(t *testing.T) {
 		sections == 0 || sections >= 9 || !strings.HasSuffix(diff.Patch, "\n") || strings.Contains(text, "result_truncated") {
 		t.Fatalf("cut diff (%d bytes, %d sections): %+v", len(text), sections, diff)
 	}
+
+	// The summary without the patch is cut the same way: the file list
+	// loses entries from its end and says so in the diff's own fields.
+	for index := 0; index < 80; index++ {
+		noErr(t, os.WriteFile(filepath.Join(work, fmt.Sprintf("summary-file-with-a-long-name-%02d.txt", index)), []byte("x\n"), 0o600))
+	}
+	runPRGit(t, work, "add", ".")
+	runPRGit(t, work, "commit", "-q", "-m", "many files")
+	runPRGit(t, work, "push", "-q", "origin", "HEAD:refs/heads/feature")
+	text, isError = session.call("pull_request_diff", map[string]any{"number": json.Number(number), "patch": false})
+	var summary map[string]any
+	noErr(t, json.Unmarshal([]byte(text), &summary))
+	files, _ := summary["files"].([]any)
+	if _, hasPatch := summary["patch"]; isError || hasPatch || len(text) > minimumMCPResultLimit || summary["truncated"] != true || summary["incomplete"] != true ||
+		summary["reason"] != "response_limit" || len(files) == 0 || len(files) >= 89 || strings.Contains(text, "result_truncated") {
+		t.Fatalf("cut summary (%d bytes, %d files): %.300s", len(text), len(files), text)
+	}
 }
 
 // startMCPCheckFixture serves an open-access repository "project" with a

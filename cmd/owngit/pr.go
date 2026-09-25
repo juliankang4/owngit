@@ -142,10 +142,23 @@ func prDiff(arguments []string) error {
 
 // diffStat returns a diff result without its patch.
 func diffStat(content []byte) ([]byte, error) {
+	diff, err := decodeDiff(content)
+	if err != nil {
+		return nil, err
+	}
+	return encodeDiffStat(diff)
+}
+
+func decodeDiff(content []byte) (pullrequest.Diff, error) {
 	var diff pullrequest.Diff
 	if err := json.Unmarshal(content, &diff); err != nil {
-		return nil, &apiclient.Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid diff.", Cause: err}
+		return pullrequest.Diff{}, &apiclient.Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid diff.", Cause: err}
 	}
+	return diff, nil
+}
+
+// encodeDiffStat encodes diff without its patch.
+func encodeDiffStat(diff pullrequest.Diff) ([]byte, error) {
 	encoded, err := json.Marshal(struct {
 		pullrequest.Diff
 		// A field at a shallower depth hides the embedded one of the same
