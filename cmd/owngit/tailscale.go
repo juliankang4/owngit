@@ -221,6 +221,9 @@ func tailscaleOff(arguments []string) error {
 		fmt.Printf("Tailscale no longer answers HTTPS for %s.\n", change.Record.Name)
 	case "gone":
 		fmt.Printf("Tailscale had already stopped answering HTTPS for %s.\n", change.Record.Name)
+	case "stale":
+		fmt.Printf("This computer is no longer named %s in the tailnet, so Tailscale no longer answers for that name. %s https://%s:%d/\n",
+			change.Record.Name, webui.Text(webui.LangEN, webui.MsgTSStale), change.Record.Name, change.Record.HTTPSPort)
 	default:
 		fmt.Printf("OwnGit did not create the Tailscale address for %s, so it left it in place. Remove it with \"tailscale serve --https=%d off\" if you no longer need it.\n", change.Record.Name, change.Record.HTTPSPort)
 	}
@@ -284,6 +287,9 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 		if wait != server.TailscaleWaitTailscale {
 			fmt.Fprintf(writer, "  %s\n", webui.Text(webui.LangEN, webui.TailscaleWaitCode(wait)))
 		}
+	}
+	if len(report.Stale) > 0 {
+		fmt.Fprintf(writer, "  %s %s\n", webui.Text(webui.LangEN, webui.MsgTSStale), server.TailscaleUsesText(report.Stale))
 	}
 	if report.MacApp {
 		fmt.Fprintf(writer, "  %s\n", webui.Text(webui.LangEN, webui.MsgTSMacApp))

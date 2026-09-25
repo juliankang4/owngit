@@ -132,3 +132,18 @@ func TestTailscalePortListIsTranslated(t *testing.T) {
 		}
 	}
 }
+
+// What Tailscale keeps under an earlier name is shown with how to remove
+// it.
+func TestTailscaleStaleAddressIsExplained(t *testing.T) {
+	r := newRenderer(t)
+	for _, lang := range Langs() {
+		page := SettingsPage{Chrome: fullChrome(lang), SubmitURL: "/settings",
+			Tailscale: TailscaleInfo{Stale: []TailscaleUse{{Kind: "proxy", Address: "https://oldbox.tail0000.ts.net:443/", Target: "http://127.0.0.1:7654"}}}}
+		out := render(t, r, page)
+		if !strings.Contains(out, wantText(lang, MsgTSStale)) || !strings.Contains(out, "https://oldbox.tail0000.ts.net:443/") ||
+			!strings.Contains(out, "tailscale serve --https=443 --set-path=/ off") {
+			t.Errorf("%s: the earlier name's address is not explained", lang)
+		}
+	}
+}

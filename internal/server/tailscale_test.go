@@ -467,7 +467,7 @@ func TestTailscaleReadinessFollowsTheRunningServer(t *testing.T) {
 	app.Network = flagged
 	record, _, err := app.Store.TailscaleServe(ctx)
 	noErr(t, err)
-	flagged.ApplyTailscale(record)
+	flagged.ApplyTailscale(record, "")
 	report, err = app.Tailscale.Report(ctx)
 	noErr(t, err)
 	if report.Ready || !reflect.DeepEqual(report.Waiting, []string{TailscaleWaitOption}) {
@@ -626,5 +626,96 @@ func TestAChangeWaitsForAnotherProcess(t *testing.T) {
 		noErr(t, err)
 	case <-time.After(20 * time.Second):
 		t.Fatal("the change did not continue after the lock was released")
+	}
+}
+
+const renamed = "newbox.tail0000.ts.net"
+
+// rename makes the fake computer take a new name, as a rename in the
+// Tailscale admin console does. Serve keeps its handlers under the old name.
+func rename(fake *tailscaletest.Fake) {
+	fake.Update(func(s *tailscaletest.State) {
+		s.Status.Self.DNSName, s.Status.CertDomains = renamed+".", []string{renamed}
+	})
+}
+
+// After a rename, turning off cannot remove the endpoint under the old name
+// ("tailscale serve" works only under the current name), so it takes back
+// OwnGit's settings and says how to remove the endpoint. (Tailscale issue
+// 16992.)
+func TestTurningOffAfterARenameTakesBackTheSettings(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{BaseURL: "http://gitbox.lan:7654"}}))
+	_, err := app.Tailscale.On(ctx, nil)
+	noErr(t, err)
+	rename(fake)
+	report, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if report.Ready || !slices.Contains(report.Waiting, TailscaleWaitName) || len(report.Stale) != 1 {
+		t.Fatalf("after the rename: %+v", report)
+	}
+	change, err := app.Tailscale.Off(ctx)
+	noErr(t, err)
+	if change.Endpoint != "stale" {
+		t.Fatalf("endpoint=%q, want stale", change.Endpoint)
+	}
+	if writes := fake.Writes(); len(writes) != 1 {
+		t.Fatalf("turning off after the rename wrote to Tailscale: %q", writes)
+	}
+	settings, hosts, proxies, record := savedSharing(t, app.Store)
+	if settings.BaseURL != "http://gitbox.lan:7654" || len(hosts) != 0 || len(proxies) != 0 || record != nil {
+		t.Fatalf("after off: base URL %q, hosts %v, proxies %v, record %+v", settings.BaseURL, hosts, proxies, record)
+	}
+	report, err = app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if report.On || report.Endpoint != TailscaleEndpointFree || len(report.Stale) != 1 || report.Stale[0].Address != "https://"+tailscaletest.Name+":443/" {
+		t.Fatalf("report after off: %+v", report)
+	}
+	// Turning on again uses the new name beside the old endpoint.
+	change, err = app.Tailscale.On(ctx, nil)
+	noErr(t, err)
+	if change.Endpoint != "created" || change.Record.Name != renamed {
+		t.Fatalf("turning on after the rename: %+v", change)
+	}
+	if report, err = app.Tailscale.Report(ctx); err != nil || !report.Ready {
+		t.Fatalf("ready after turning on with the new name: %+v %v", report, err)
+	}
+}
+
+// After a rename, turning on again moves sharing to the new name: a new
+// endpoint, the new base URL and allowed name, and the old name that OwnGit
+// had added is no longer accepted.
+func TestTurningOnAfterARenameMovesToTheNewName(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	_, err := app.Tailscale.On(ctx, nil)
+	noErr(t, err)
+	rename(fake)
+	change, err := app.Tailscale.On(ctx, nil)
+	noErr(t, err)
+	if change.Endpoint != "created" || change.Record.Name != renamed || change.RemovedHost != tailscaletest.Name {
+		t.Fatalf("turning on after the rename: %+v", change)
+	}
+	settings, hosts, proxies, record := savedSharing(t, app.Store)
+	if settings.BaseURL != "https://"+renamed || !reflect.DeepEqual(hosts, []string{renamed}) || !reflect.DeepEqual(proxies, []string{loopbackProxy}) ||
+		record == nil || record.AddedHost != renamed || record.AddedProxy != loopbackProxy {
+		t.Fatalf("after moving: base URL %q, hosts %v, proxies %v, record %+v", settings.BaseURL, hosts, proxies, record)
+	}
+	if app.Hosts.Allows(tailscaletest.Name) || !app.Hosts.Allows(renamed) || app.Network.TailscaleName() != renamed {
+		t.Fatal("the running server does not follow the new name")
+	}
+	report, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if !report.Ready || report.Endpoint != TailscaleEndpointOwnGit || len(report.Stale) != 1 {
+		t.Fatalf("report after moving: %+v", report)
+	}
+	change, err = app.Tailscale.Off(ctx)
+	noErr(t, err)
+	if change.Endpoint != "removed" {
+		t.Fatalf("turning off: %+v", change)
+	}
+	if _, hosts, proxies, record := savedSharing(t, app.Store); len(hosts) != 0 || len(proxies) != 0 || record != nil {
+		t.Fatalf("after off: hosts %v, proxies %v, record %+v", hosts, proxies, record)
 	}
 }

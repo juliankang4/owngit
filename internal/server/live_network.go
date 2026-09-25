@@ -99,9 +99,14 @@ func (live *LiveNetwork) Publish() {
 
 // ApplyTailscale makes the running server do what the saved settings of
 // Tailscale sharing say: accept the name, trust 127.0.0.1 as a proxy and use
-// the HTTPS base URL, except where a start option decides.
-func (live *LiveNetwork) ApplyTailscale(record state.TailscaleServe) {
+// the HTTPS base URL, except where a start option decides. removedHost is
+// an allowed Host that the change took back, or "".
+func (live *LiveNetwork) ApplyTailscale(record state.TailscaleServe, removedHost string) {
 	live.mu.Lock()
+	if removedHost != "" && !slices.Contains(live.flagHosts, removedHost) {
+		live.hosts.Remove(removedHost)
+		live.record.SavedHosts = slices.DeleteFunc(slices.Clone(live.record.SavedHosts), func(host string) bool { return host == removedHost })
+	}
 	loopback := netip.MustParsePrefix(loopbackProxy + "/32")
 	if live.record.TrustedProxiesSource != NetworkSourceFlag && !slices.ContainsFunc(live.proxies, func(prefix netip.Prefix) bool { return prefix.Contains(loopback.Addr()) }) {
 		live.proxies = append(slices.Clone(live.proxies), loopback)

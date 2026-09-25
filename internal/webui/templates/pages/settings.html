@@ -297,6 +297,10 @@
       <div class="netnote">{{icon "warning"}}<div><span>{{bi $lang $ts.FoundNote}}</span>
         <ul class="tsfound">{{range $ts.Found}}<li>{{tsUse $lang .}}</li>{{end}}</ul></div></div>
     {{end}}
+    {{if $ts.Stale}}
+      <div class="netnote netnote--info">{{icon "info"}}<div><span>{{bi $lang "tailscale.stale"}}</span>
+        <ul class="tsfound">{{range $ts.Stale}}<li>{{tsUse $lang .}}</li>{{end}}</ul></div></div>
+    {{end}}
     {{if $ts.MacApp}}<p class="netnote netnote--info">{{icon "info"}}<span>{{bi $lang "tailscale.mac_app"}}</span></p>{{end}}
 
     {{if $ts.On}}

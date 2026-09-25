@@ -52,6 +52,7 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	case !report.On && report.Endpoint == TailscaleEndpointTaken:
 		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSTaken
 	}
+	info.Stale = tailscaleUses(report.Stale)
 	info.CanTurnOn = !report.On && report.Installed && report.Problem == "" && report.Endpoint == TailscaleEndpointFree
 	home, local := true, false
 	info.HomeListen, info.LocalListen = planListen(report.Listen, &home), planListen(report.Listen, &local)

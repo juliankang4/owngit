@@ -80,7 +80,7 @@ const (
 const (
 	TailscaleWaitTailscale  = "tailscale"          // Problem says what
 	TailscaleWaitUnfinished = "unfinished"         // turning on did not finish; turn on again
-	TailscaleWaitName       = "name_changed"       // the computer's name changed; turn off and on
+	TailscaleWaitName       = "name_changed"       // the computer's name changed; turn on again
 	TailscaleWaitEndpoint   = "endpoint"           // Endpoint says what
 	TailscaleWaitStopped    = "server_not_running" // start OwnGit
 	TailscaleWaitUnknown    = "server_unknown"     // the running server cannot be confirmed
@@ -113,6 +113,9 @@ type TailscaleReport struct {
 	// what else is on the HTTPS port.
 	Endpoint string          `json:"endpoint"`
 	Found    []tailscale.Use `json:"found,omitempty"`
+	// Stale lists what Tailscale keeps on the HTTPS port under a name this
+	// computer had before (tailscale.Endpoint).
+	Stale []tailscale.Use `json:"stale,omitempty"`
 	// Server is the state of the OwnGit server (state.RunningObservation).
 	Server string `json:"server"`
 	// Ready is true when the HTTPS address works: Tailscale has OwnGit's
@@ -182,6 +185,9 @@ func (sharing *Tailscale) readEndpoint(ctx context.Context, command tailscale.Co
 			report.Problem, report.ProblemDetail = problemOf(err)
 		}
 		return
+	}
+	if report.Name != "" {
+		report.Stale = config.Endpoint(report.Name, TailscaleHTTPSPort, "").Stale
 	}
 	if report.On {
 		endpoint := config.Endpoint(record.Name, record.HTTPSPort, record.Target)
@@ -259,9 +265,6 @@ const (
 	TailscaleProblemReadBack = "read_back"
 	// TailscaleProblemChanged: the endpoint changed since OwnGit made it.
 	TailscaleProblemChanged = "endpoint_changed"
-	// TailscaleProblemRenamed: the computer's name changed since sharing
-	// was turned on.
-	TailscaleProblemRenamed = "name_changed"
 	// TailscaleProblemListenOption: the running server listens, by a start
 	// option, where Tailscale cannot connect.
 	TailscaleProblemListenOption = "listen_option"
@@ -289,8 +292,13 @@ type TailscaleChange struct {
 	ListenChanged bool
 	// Endpoint says what happened to Tailscale's endpoint: "created",
 	// "kept" (it was already there) or, when turning off, "removed", "gone"
-	// (it was already removed) or "left" (OwnGit had not created it).
+	// (it was already removed), "left" (OwnGit had not created it) or
+	// "stale" (it is under the name the computer had before a rename, which
+	// only that name can remove; it answers for nothing).
 	Endpoint string
+	// RemovedHost is the allowed Host that turning on after a rename took
+	// back: the earlier name, which OwnGit had added.
+	RemovedHost string
 }
 
 // On turns sharing on. homeNetwork chooses the listen address: nil keeps it
@@ -305,7 +313,7 @@ func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool) (TailscaleC
 	defer unlock()
 	change, err := sharing.on(ctx, homeNetwork)
 	if err == nil && sharing.Live != nil {
-		sharing.Live.ApplyTailscale(change.Record)
+		sharing.Live.ApplyTailscale(change.Record, change.RemovedHost)
 	}
 	return change, err
 }
@@ -345,9 +353,6 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 	if err != nil {
 		return TailscaleChange{}, err
 	}
-	if wasOn && previous.Name != status.Name {
-		return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemRenamed, Detail: previous.Name}
-	}
 	saved, err := sharing.Store.NetworkSettings(ctx)
 	if err != nil {
 		return TailscaleChange{}, err
@@ -378,7 +383,10 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 		return TailscaleChange{}, tailscaleError(err, command.MacApp)
 	}
 	endpoint := config.Endpoint(status.Name, TailscaleHTTPSPort, target)
-	ours := wasOn && config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact
+	// After a rename OwnGit's earlier endpoint is under the old name, which
+	// answers for nothing and does not take the port for the new one
+	// (tailscale.Endpoint.Stale), so the new name gets its own endpoint.
+	ours := wasOn && previous.Name == status.Name && config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact
 	// A record that was never confirmed belongs to a turning on that was
 	// interrupted before it changed any setting, so this one starts anew:
 	// it records the base URL saved now and what it adds itself.
@@ -429,6 +437,9 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 	if err != nil {
 		return TailscaleChange{}, err
 	}
+	if len(update.RemoveHosts) > 0 {
+		change.RemovedHost = previous.AddedHost
+	}
 	if homeNetwork != nil && *homeNetwork {
 		if err := sharing.Store.AcknowledgeInsecureHTTP(ctx); err != nil {
 			return TailscaleChange{}, err
@@ -463,6 +474,11 @@ func (sharing *Tailscale) onUpdate(ctx context.Context, saved state.NetworkSetti
 		record.PreviousBaseURL = saved.BaseURL
 	}
 	update.Settings.BaseURL, record.BaseURL = origin, origin
+	// After a rename, the earlier name that OwnGit added is taken back.
+	if record.AddedHost != "" && record.AddedHost != record.Name {
+		update.RemoveHosts = matchingHosts(hosts, record.AddedHost)
+		record.AddedHost = ""
+	}
 	if !trustsLoopback(proxies) {
 		update.AddProxies, record.AddedProxy = []string{loopbackProxy}, loopbackProxy
 	}
@@ -507,12 +523,25 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 		if err != nil {
 			return TailscaleChange{}, "", tailscaleError(err, false)
 		}
+		status, err := command.Status(ctx)
+		if err != nil {
+			return TailscaleChange{}, "", tailscaleError(err, command.MacApp)
+		}
 		config, err := command.ServeConfig(ctx)
 		if err != nil {
 			return TailscaleChange{}, "", tailscaleError(err, command.MacApp)
 		}
 		endpoint := config.Endpoint(record.Name, record.HTTPSPort, record.Target)
 		switch {
+		case status.Name != "" && status.Name != record.Name:
+			// "tailscale serve" removes handlers only under the current
+			// name, and the endpoint under the old one answers for nothing.
+			// OwnGit takes back its settings and leaves the rest to the
+			// owner (Stale in the report says how).
+			change.Endpoint = "gone"
+			if !endpoint.Free {
+				change.Endpoint = "stale"
+			}
 		case endpoint.Exact:
 			if err := command.RemoveHTTPS(ctx, record.HTTPSPort); err != nil {
 				return TailscaleChange{}, "", tailscaleError(err, command.MacApp)
@@ -548,17 +577,24 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 		if err != nil {
 			return TailscaleChange{}, "", err
 		}
-		for _, host := range hosts {
-			if normalized, err := NormalizeHost(host); err == nil && normalized == record.AddedHost {
-				update.RemoveHosts = append(update.RemoveHosts, host)
-			}
-		}
+		update.RemoveHosts = matchingHosts(hosts, record.AddedHost)
 	}
 	if err := sharing.Store.UpdateNetwork(ctx, update); err != nil {
 		return TailscaleChange{}, "", err
 	}
 	change.Listen = nextListen(saved)
 	return change, update.Settings.BaseURL, nil
+}
+
+// matchingHosts returns the saved hosts that name normalizes to.
+func matchingHosts(hosts []string, name string) []string {
+	var matching []string
+	for _, host := range hosts {
+		if normalized, err := NormalizeHost(host); err == nil && normalized == name {
+			matching = append(matching, host)
+		}
+	}
+	return matching
 }
 
 // throughTailscale reports whether a request came through this server's

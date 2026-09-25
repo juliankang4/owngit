@@ -152,7 +152,7 @@ func TestEndpointTellsOwnGitsFromEverythingElse(t *testing.T) {
 		{"TCP forwarding", tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"443": {TCPForward: "127.0.0.1:22"}}}, false, false, "tcp_forward 443 127.0.0.1:22"},
 		{"OwnGit's with Funnel", tailscale.ServeConfig{TCP: https, Web: web(name+":443", owngit), AllowFunnel: map[string]bool{name + ":443": true}}, false, false, "funnel"},
 		{"a foreground session", tailscale.ServeConfig{Foreground: map[string]tailscale.ServeConfig{"session": {TCP: https, Web: web(name+":443", owngit)}}}, false, false, "foreground"},
-		{"another name", tailscale.ServeConfig{TCP: https, Web: web("old.tail0000.ts.net:443", owngit)}, false, false, "old.tail0000.ts.net"},
+		{"another program with Funnel under another name", tailscale.ServeConfig{TCP: https, Web: web("old.tail0000.ts.net:443", owngit), AllowFunnel: map[string]bool{"old.tail0000.ts.net:443": true}}, false, false, "funnel"},
 		{"incomplete", tailscale.ServeConfig{TCP: https}, false, false, "incomplete"},
 	}
 	for _, test := range cases {
@@ -165,6 +165,23 @@ func TestEndpointTellsOwnGitsFromEverythingElse(t *testing.T) {
 		}) {
 			t.Errorf("%s: found=%q lacks %q", test.name, endpoint.Found, test.found)
 		}
+	}
+	// A handler left under the name the computer had before a rename
+	// answers for nothing: the port stays free for the current name, and
+	// OwnGit's endpoint beside it is still exact.
+	old := web("old.tail0000.ts.net:443", owngit)
+	for label, config := range map[string]tailscale.ServeConfig{
+		"a handler under an earlier name":             {TCP: https, Web: old},
+		"a handler under an earlier name without TCP": {Web: old},
+	} {
+		endpoint := config.Endpoint(name, 443, target)
+		if !endpoint.Free || endpoint.Exact || len(endpoint.Found) != 0 || len(endpoint.Stale) != 1 || endpoint.Stale[0].Address != "https://old.tail0000.ts.net:443/" {
+			t.Errorf("%s: %+v", label, endpoint)
+		}
+	}
+	both := tailscale.ServeConfig{TCP: https, Web: map[string]tailscale.WebServer{"old.tail0000.ts.net:443": {Handlers: owngit}, name + ":443": {Handlers: owngit}}}
+	if endpoint := both.Endpoint(name, 443, target); !endpoint.Exact || len(endpoint.Stale) != 1 {
+		t.Errorf("OwnGit's endpoint beside an earlier name's: %+v", endpoint)
 	}
 	if config, err := tailscale.ParseServeConfig([]byte("null\n")); err != nil || !config.Endpoint(name, 443, target).Free {
 		t.Fatalf("an empty configuration: %+v %v", config, err)

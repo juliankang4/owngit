@@ -130,7 +130,9 @@ Tailscale은 `127.0.0.1`로 OwnGit에 접속합니다. 기본값 `127.0.0.1:7654
 
 설정 화면에서 켜거나 끄면 바로 적용됩니다. 실행 중인 서버가 다시 시작하지 않아도 이름을 받아들이고, 프록시를 신뢰하고, 클론 주소에 HTTPS 주소를 씁니다. `owngit tailscale on`과 `off`도 같은 내용을 저장하지만 실행 중인 서버에는 전달할 수 없으므로 OwnGit을 다시 시작하라고 안내합니다. `owngit tailscale status`와 설정 화면은 실행 중인 서버가 이름을 받아들이고 `127.0.0.1`을 신뢰하며 Tailscale에 주소가 남아 있을 때만 "준비됨"으로 표시합니다. 그렇지 않으면 다시 시작처럼 무엇이 남았는지 알려 줍니다. OwnGit이 `tailscale` 명령을 찾지 못하면 `owngit serve --tailscale PATH`와 `owngit tailscale --tailscale PATH`로 경로를 지정합니다. `status --json`은 같은 내용을 JSON으로 출력합니다.
 
-Tailscale이 인증서를 발급할 때 `gitbox.tail0000.ts.net`처럼 이 컴퓨터와 tailnet의 이름이 공개 인증서 투명성(Certificate Transparency) 로그에 기록됩니다. 주소를 열었다는 기록만 남을 뿐 코드, 저장소, 비밀번호 같은 내용은 기록되지 않습니다. 이 컴퓨터의 이름은 Tailscale 관리 콘솔에서 바꿀 수 있습니다. 이름을 바꾼 뒤에는 새 이름을 쓰도록 공유를 껐다가 다시 켜세요.
+Tailscale이 인증서를 발급할 때 `gitbox.tail0000.ts.net`처럼 이 컴퓨터와 tailnet의 이름이 공개 인증서 투명성(Certificate Transparency) 로그에 기록됩니다. 주소를 열었다는 기록만 남을 뿐 코드, 저장소, 비밀번호 같은 내용은 기록되지 않습니다. 이 컴퓨터의 이름은 Tailscale 관리 콘솔에서 바꿀 수 있습니다.
+
+이름을 바꾼 뒤에는 새 이름을 쓰도록 공유를 다시 켜세요. OwnGit은 새 이름으로 주소를 만들고, 새 기본 URL과 허용한 Host 이름을 저장하며, 예전 이름을 자신이 추가했다면 지웁니다. 예전 주소는 예전 이름으로 Tailscale에 남습니다. Tailscale은 지금 이름으로만 응답하므로 이 주소는 아무 데도 연결되지 않지만, `tailscale serve`는 컴퓨터가 그 이름일 때만 이 주소를 지울 수 있습니다(Tailscale 이슈 16992). 지우려면 이름을 예전 이름으로 되돌리고 `tailscale serve --https=443 --set-path=/ off`를 실행한 뒤 다시 이름을 바꾸세요. 이 컴퓨터에서 Tailscale이 다른 것을 제공하지 않는다면 `tailscale serve reset`으로도 지울 수 있습니다. 설정 화면과 `owngit tailscale status`는 이런 주소를 이 방법과 함께 보여 줍니다. 이름을 바꾼 뒤 공유를 끄면 OwnGit은 자신의 설정을 되돌리고 예전 주소는 그대로 둡니다.
 
 공유를 끄면 OwnGit은 자신이 만든 Tailscale 주소가 만들 때 모습 그대로 남아 있을 때만 그 주소를 지웁니다. 그 뒤에 누가 주소를 바꿨다면 아무것도 바꾸지 않고 이유를 알려 줍니다. 원래대로 되돌리거나 `tailscale serve`로 지운 뒤 다시 끄세요. OwnGit이 공유를 켜기 전부터 있던 주소는 그대로 두고, 이미 없어진 주소는 지울 것이 없습니다. 끌 때도 먼저 Tailscale에 확인하므로 Tailscale이 응답해야 합니다. 그다음 HTTPS 주소가 아직 기본 URL로 저장되어 있으면 그 전에 저장되어 있던 기본 URL로 되돌리고, OwnGit이 추가한 허용 Host 이름과 신뢰하는 프록시를 지웁니다. 연결 주소는 바꾸지 않습니다. OwnGit은 `tailscale serve reset`이나 `tailscale funnel`을 실행하지 않습니다.
 

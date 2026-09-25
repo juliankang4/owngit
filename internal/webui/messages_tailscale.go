@@ -71,6 +71,9 @@ const (
 	MsgTSMacApp = MessageCode("tailscale.mac_app")
 	// MsgTSReadBackMacApp is added to the read-back problem for that app.
 	MsgTSReadBackMacApp = MessageCode("tailscale.problem.read_back_mac_app")
+	// MsgTSStale introduces what Tailscale keeps under an earlier name of
+	// this computer, and how to remove it.
+	MsgTSStale = MessageCode("tailscale.stale")
 )
 
 // Messages that end with a colon are followed by the detail named in their
@@ -148,6 +151,12 @@ var tailscaleCatalog = map[MessageCode]message{
 		ko: "OwnGit이 만든 뒤 Tailscale 주소 설정이 바뀌어 OwnGit은 아무것도 바꾸지 않았습니다. 원래대로 돌리거나 \"tailscale serve\"로 지운 뒤 공유를 다시 끄세요. 이 포트의 설정은 아래에 있습니다.",
 	},
 
+	// Followed by the addresses.
+	MsgTSStale: {
+		en: "Tailscale still has an address under a name this computer had before. It answers for nothing, because Tailscale answers only for the current name, and it does not keep OwnGit from sharing. Tailscale can remove it only while the computer has that name: rename the computer back in the Tailscale admin console, run \"tailscale serve --https=443 --set-path=/ off\", then rename it again. If Tailscale serves nothing else on this computer, \"tailscale serve reset\" also removes it. The address:",
+		ko: "Tailscale에 이 컴퓨터의 예전 이름으로 된 주소가 남아 있습니다. Tailscale은 지금 이름으로만 응답하므로 이 주소는 아무 데도 연결되지 않으며, OwnGit의 공유도 막지 않습니다. Tailscale은 컴퓨터가 그 이름일 때만 이 주소를 지울 수 있습니다. Tailscale 관리 콘솔에서 이름을 예전 이름으로 되돌리고 \"tailscale serve --https=443 --set-path=/ off\"를 실행한 뒤 다시 이름을 바꾸세요. 이 컴퓨터에서 Tailscale이 다른 것을 제공하지 않는다면 \"tailscale serve reset\"으로도 지울 수 있습니다. 남아 있는 주소:",
+	},
+
 	// What is on Tailscale's HTTPS port: %[1]s is the address and %[2]s the
 	// target (tailscale.Use).
 	"tailscale.use.proxy":       {en: "%[1]s to %[2]s", ko: "%[1]s에서 %[2]s(으)로 전달"},
@@ -162,11 +171,6 @@ var tailscaleCatalog = map[MessageCode]message{
 	"tailscale.use.incomplete":  {en: "an incomplete Serve setting on port %[1]s", ko: "포트 %[1]s의 불완전한 Serve 설정"},
 	"tailscale.use.unknown":     {en: "%[1]s", ko: "%[1]s"},
 
-	// Detail: the name when sharing was turned on.
-	"tailscale.problem.name_changed": {
-		en: "This computer's name in the tailnet changed after sharing was turned on. Turn sharing off and on again to use the new name. Name when sharing was turned on:",
-		ko: "공유를 켠 뒤 tailnet에서 이 컴퓨터의 이름이 바뀌었습니다. 새 이름을 쓰려면 공유를 껐다가 다시 켜세요. 공유를 켤 때의 이름:",
-	},
 	// Detail: the listen address.
 	"tailscale.problem.listen_option": {
 		en: "The running OwnGit was started with a --listen option that Tailscale cannot reach: Tailscale connects to OwnGit through this computer's own loopback address. Start OwnGit without that option and try again. The option was:",
@@ -186,8 +190,8 @@ var tailscaleCatalog = map[MessageCode]message{
 		ko: "공유를 켜는 작업이 끝나지 않았습니다. 다시 켜세요.",
 	},
 	"tailscale.wait.name_changed": {
-		en: "This computer's name in the tailnet changed. Turn sharing off and on again.",
-		ko: "tailnet에서 이 컴퓨터의 이름이 바뀌었습니다. 공유를 껐다가 다시 켜세요.",
+		en: "This computer's name in the tailnet changed. Turn sharing on again to use the new name.",
+		ko: "tailnet에서 이 컴퓨터의 이름이 바뀌었습니다. 새 이름을 쓰려면 공유를 다시 켜세요.",
 	},
 	"tailscale.wait.endpoint": {
 		en: "Tailscale no longer has the address OwnGit made. Turn sharing on again, or off if you changed it on purpose.",

@@ -95,20 +95,27 @@ type Endpoint struct {
 	// exactly one handler, at "/", that proxies to the expected target, and
 	// the port is not open to Funnel.
 	Exact bool
-	// Found lists everything on the port, for the owner.
+	// Found lists everything on the port that answers for the node name or
+	// could, for the owner.
 	Found []Use
+	// Stale lists the web handlers on the port for another name: names this
+	// computer had before it was renamed. Tailscale answers only for the
+	// current name, so they serve nothing and do not keep the port from
+	// being used, but "tailscale serve" can remove them only under their
+	// own name.
+	Stale []Use
 }
 
 // Endpoint describes port for the node name and the expected proxy target.
 func (config ServeConfig) Endpoint(name string, port int, target string) Endpoint {
 	portText := strconv.Itoa(port)
-	var found []Use
+	var found, stale []Use
 	add := func(use Use) {
 		if !slices.Contains(found, use) {
 			found = append(found, use)
 		}
 	}
-	webKeys := 0
+	webKeys, staleKeys := 0, 0
 	exactHandler := false
 	var visit func(ServeConfig, bool)
 	visit = func(current ServeConfig, foreground bool) {
@@ -122,6 +129,13 @@ func (config ServeConfig) Endpoint(name string, port int, target string) Endpoin
 		for hostPort, server := range current.Web {
 			host, p, err := net.SplitHostPort(hostPort)
 			if err != nil || p != portText {
+				continue
+			}
+			if !foreground && host != name {
+				staleKeys++
+				for path, handler := range server.Handlers {
+					stale = append(stale, handler.use("https://"+net.JoinHostPort(host, p)+path))
+				}
 				continue
 			}
 			webKeys++
@@ -148,15 +162,19 @@ func (config ServeConfig) Endpoint(name string, port int, target string) Endpoin
 	for _, session := range config.Foreground {
 		visit(session, true)
 	}
+	// The HTTPS setting of the port alone, without a handler for any name,
+	// is incomplete.
 	tcp, tcpOK := config.TCP[portText]
-	if len(found) == 0 && (tcpOK || webKeys > 0) {
+	if len(found) == 0 && (webKeys > 0 || tcpOK && staleKeys == 0) {
 		add(Use{Kind: UseIncomplete, Address: portText})
 	}
-	slices.SortFunc(found, func(a, b Use) int {
+	byPlace := func(a, b Use) int {
 		return cmp.Or(cmp.Compare(a.Address, b.Address), cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Target, b.Target))
-	})
-	endpoint := Endpoint{Found: found}
-	endpoint.Free = len(found) == 0 && !tcpOK && webKeys == 0
+	}
+	slices.SortFunc(found, byPlace)
+	slices.SortFunc(stale, byPlace)
+	endpoint := Endpoint{Found: found, Stale: stale}
+	endpoint.Free = len(found) == 0 && webKeys == 0
 	endpoint.Exact = exactHandler && webKeys == 1 && len(found) == 1 &&
 		tcpOK && tcp == (TCPHandler{HTTPS: true})
 	return endpoint

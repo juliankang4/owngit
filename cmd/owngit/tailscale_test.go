@@ -167,3 +167,36 @@ func TestTailscaleCommandExplainsRefusals(t *testing.T) {
 		t.Fatalf("writes=%q", fake.Writes())
 	}
 }
+
+// After the computer is renamed, "off" takes back OwnGit's settings and
+// says how to remove the address under the old name, which only that name
+// can remove, and "on" then uses the new name.
+func TestTailscaleCommandAfterARename(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
+	_, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	fake.Update(func(s *tailscaletest.State) {
+		s.Status.Self.DNSName, s.Status.CertDomains = "newbox.tail0000.ts.net.", []string{"newbox.tail0000.ts.net"}
+	})
+	output, err := runTailscale(t, "status", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	if !strings.Contains(output, "Turn sharing on again to use the new name") {
+		t.Fatalf("status printed %q", output)
+	}
+	output, err = runTailscale(t, "off", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	for _, want := range []string{"no longer named " + tailscaletest.Name, "rename the computer back", "https://" + tailscaletest.Name + ":443/"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("off printed %q, lacking %q", output, want)
+		}
+	}
+	if len(fake.Writes()) != 1 {
+		t.Fatalf("off wrote to Tailscale after the rename: %q", fake.Writes())
+	}
+	output, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	if !strings.Contains(output, "Tailscale now answers HTTPS for newbox.tail0000.ts.net") || !strings.Contains(output, "under a name this computer had before") {
+		t.Fatalf("on after the rename printed %q", output)
+	}
+}
