@@ -175,21 +175,35 @@ func (buffer *limitedBuffer) Write(p []byte) (int, error) {
 	return buffer.Buffer.Write(p)
 }
 
-// tailscaleCommand is the restart command that serves OwnGit on the
-// Tailscale address. It is printed for the owner to copy; OwnGit never runs
-// it and saves nothing. Every part is quoted by shellQuote, so the command
-// holds no control or direction characters and can be printed as it is.
+// tailscaleCommand is the command that saves network settings for the
+// Tailscale address, so every later start, a background service included,
+// serves OwnGit there. The listen address makes OwnGit accept the Tailscale
+// IP address and the base URL its MagicDNS name, when there is one. It is
+// printed for the owner to copy; OwnGit never runs it and saves nothing.
+// Every part is quoted by shellQuote, so the command holds no control or
+// direction characters and can be printed as it is.
 func tailscaleCommand(found Tailscale, port, stateDir string) string {
 	address := net.JoinHostPort(found.IPv4, port)
 	host := found.Name
 	if host == "" {
 		host = found.IPv4
 	}
-	parts := []string{"owngit", "serve", "--listen", address, "--base-url", "http://" + net.JoinHostPort(host, port)}
-	if found.Name != "" {
-		parts = append(parts, "--allowed-host", found.Name)
+	parts := []string{"owngit", "network", "set", "--listen", address, "--base-url", "http://" + net.JoinHostPort(host, port)}
+	if stateDir != "" {
+		parts = append(parts, "--state-dir", stateDir)
 	}
-	parts = append(parts, "--allowed-host", found.IPv4)
+	for i, part := range parts {
+		parts[i] = shellQuote(part)
+	}
+	return strings.Join(parts, " ")
+}
+
+// localOnlyCommand is the command that saves a listen address only this
+// computer can reach, on the same port, and removes the saved base URL, which
+// would name an address other devices use. Like tailscaleCommand it is
+// printed for the owner and never run.
+func localOnlyCommand(port, stateDir string) string {
+	parts := []string{"owngit", "network", "set", "--listen", net.JoinHostPort("127.0.0.1", port), "--base-url", ""}
 	if stateDir != "" {
 		parts = append(parts, "--state-dir", stateDir)
 	}

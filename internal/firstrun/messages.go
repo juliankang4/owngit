@@ -41,6 +41,8 @@ var phrases = map[string]phrase{
 	"conn_q":      {"Continue without encryption?", "암호화 없이 계속할까요?"},
 	"conn_need":   {"Confirm that you understand OwnGit is not encrypting this connection. To keep OwnGit on this computer only, press Ctrl-C and start it again with --listen 127.0.0.1:{port}.", "OwnGit이 이 연결을 암호화하지 않는다는 점을 확인해 주세요. 이 컴퓨터에서만 쓰려면 Ctrl-C로 멈춘 뒤 --listen 127.0.0.1:{port} 옵션으로 다시 시작하세요."},
 
+	"conn_need_saved": {"Confirm that you understand OwnGit is not encrypting this connection. This address comes from the saved network settings. To keep OwnGit on this computer only, press Ctrl-C, run the command below, and start OwnGit again.", "OwnGit이 이 연결을 암호화하지 않는다는 점을 확인해 주세요. 이 주소는 저장된 네트워크 설정에서 왔습니다. 이 컴퓨터에서만 쓰려면 Ctrl-C로 멈춘 뒤 아래 명령을 실행하고 OwnGit을 다시 시작하세요."},
+
 	"review_title": {"Review", "설정 확인"},
 	"review_help":  {"Nothing is saved until you choose Finish setup.", "설치 완료를 고르기 전에는 아무것도 저장하지 않습니다."},
 	"row_access":   {"Access", "접근"},
@@ -82,11 +84,11 @@ var phrases = map[string]phrase{
 	"dev_stopped":  {"Tailscale is installed but not running.", "Tailscale이 설치되어 있지만 실행 중이 아닙니다."},
 	"dev_addr":     {"Tailscale address", "Tailscale 주소"},
 	"dev_name":     {"MagicDNS name", "MagicDNS 이름"},
-	"dev_how":      {"To use OwnGit from your other Tailscale devices, restart it after setup with the command below.", "설치를 마친 뒤 아래 명령으로 다시 시작하면 Tailscale로 연결된 다른 기기에서 OwnGit을 쓸 수 있습니다."},
+	"dev_how":      {"To use OwnGit from your other Tailscale devices, save these network settings with the command below, then restart OwnGit after setup. You can change them later in Settings, under Network.", "다른 Tailscale 기기에서 OwnGit을 쓰려면 아래 명령으로 네트워크 설정을 저장하고, 설치를 마친 뒤 OwnGit을 다시 시작하세요. 나중에 설정 화면의 \"네트워크\"에서 바꿀 수도 있습니다."},
 	"dev_enc":      {"Tailscale encrypts the connection between devices, but OwnGit still reports plain HTTP because it cannot see that protection.", "Tailscale이 기기 사이의 연결을 암호화하지만, OwnGit은 그 보호를 확인할 수 없어 계속 일반 HTTP로 표시합니다."},
 	"dev_docs":     {`See "Reaching the server from another device" in the OwnGit docs.`, `OwnGit 문서의 "다른 기기에서 서버에 접속하기"를 보세요.`},
-	"dev_cmd":      {"Command to run after setup (one line, copy all of it):", "설치 후 실행할 명령 (한 줄 전체를 복사하세요):"},
-	"dev_service":  {`If OwnGit runs as a background service, these options go into the service definition instead. See "Options for a background service" in the OwnGit docs.`, `OwnGit을 백그라운드 서비스로 실행한다면 이 옵션은 서비스 정의에 넣어야 합니다. OwnGit 문서의 "백그라운드 서비스의 옵션"을 보세요.`},
+	"dev_cmd":      {"Command that saves the settings (one line, copy all of it):", "설정을 저장하는 명령 (한 줄 전체를 복사하세요):"},
+	"dev_service":  {`Saved settings also apply when OwnGit runs as a background service. Leave --listen and --base-url out of the service definition, because an option there replaces the saved value. See "Options for a background service" in the OwnGit docs.`, `OwnGit을 백그라운드 서비스로 실행해도 저장된 설정이 적용됩니다. 서비스 정의에 --listen이나 --base-url 옵션이 있으면 저장된 값 대신 옵션 값을 쓰므로 빼 두세요. OwnGit 문서의 "백그라운드 서비스의 옵션"을 보세요.`},
 	"dev_continue": {"Press Enter to continue", "계속하려면 Enter를 누르세요"},
 
 	"stop_title":  {"Setup stopped", "설치를 멈췄습니다"},

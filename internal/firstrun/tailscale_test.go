@@ -72,10 +72,10 @@ func TestTailscaleDetectionIsReadOnly(t *testing.T) {
 
 func TestTailscaleCommand(t *testing.T) {
 	found := Tailscale{State: TailscaleRunning, IPv4: "100.64.0.7", Name: "my-mac.tail0000.ts.net"}
-	if got := tailscaleCommand(found, "7654", ""); got != "owngit serve --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654 --allowed-host my-mac.tail0000.ts.net --allowed-host 100.64.0.7" {
+	if got := tailscaleCommand(found, "7654", ""); got != "owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654" {
 		t.Fatal(got)
 	}
-	if got := tailscaleCommand(Tailscale{IPv4: "100.64.0.7"}, "7654", "/srv/it's here"); got != `owngit serve --listen 100.64.0.7:7654 --base-url http://100.64.0.7:7654 --allowed-host 100.64.0.7 --state-dir '/srv/it'\''s here'` {
+	if got := tailscaleCommand(Tailscale{IPv4: "100.64.0.7"}, "7654", "/srv/it's here"); got != `owngit network set --listen 100.64.0.7:7654 --base-url http://100.64.0.7:7654 --state-dir '/srv/it'\''s here'` {
 		t.Fatal(got)
 	}
 }

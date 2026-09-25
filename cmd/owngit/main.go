@@ -479,7 +479,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if terminalSetup {
 		config := firstrun.Config{
 			Input: os.Stdin, Output: os.Stdout, App: application, Origin: origin, Listen: listener.Addr().String(),
-			SuggestedFolder: application.SuggestedRepositoryRoot,
+			ListenSaved: network.ListenSource == sourceSaved, SuggestedFolder: application.SuggestedRepositoryRoot,
 		}
 		if !*noOpen {
 			config.OpenBrowser = opener

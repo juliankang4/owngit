@@ -206,7 +206,7 @@ func TestNetworkListenAsksForThePlainHTTPAcknowledgement(t *testing.T) {
 	for _, want := range []string{
 		"+- [!] 암호화되지 않는 연결 ", "5/6", "[x] OwnGit이 이 연결을 암호화하지 않는다는 점을 확인해 주세요.", "--listen", "127.0.0.1:7654",
 		"[x] y 또는 n을 입력하세요.", "일반 HTTP, 암호화 안 됨", "[ok] 이 컴퓨터에서 Tailscale이 실행 중입니다.",
-		"\nowngit serve --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654 --allowed-host my-mac.tail0000.ts.net --allowed-host 100.64.0.7 --state-dir '/tmp/owngit state'\n",
+		"\nowngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654 --state-dir '/tmp/owngit state'\n",
 		"백그라운드 서비스의 옵션",
 	} {
 		if !strings.Contains(out, want) {
@@ -216,6 +216,38 @@ func TestNetworkListenAsksForThePlainHTTPAcknowledgement(t *testing.T) {
 	settings := h.settings()
 	if !settings.Initialized || settings.AccessMode != "open" || !settings.InsecureHTTPAccepted {
 		t.Fatalf("settings=%+v", settings)
+	}
+}
+
+// A listen address from the saved network settings applies at every start,
+// so the way back to this computer only is a saved loopback address, not a
+// one-run --listen option.
+func TestSavedNetworkListenSuggestsSavingALocalAddress(t *testing.T) {
+	for _, test := range []struct {
+		lang, first string
+		want        []string
+	}{
+		{"en", "1\r", []string{"[x] Confirm that you understand OwnGit is not encrypting this connection.", "saved network settings"}},
+		{"ko", "2\r", []string{"[x] OwnGit이 이 연결을 암호화하지 않는다는 점을 확인해 주세요.", "저장된 네트워크 설정"}},
+	} {
+		h := newHarness(t, "0.0.0.0:7700", Tailscale{})
+		h.flow.listenSaved = true
+		err := h.run(test.first, "1\r", "\r", "1\r", "admin-password-1\r", "admin-password-1\r", "\r", "n\r", "y\r", "1\r")
+		if err != nil {
+			t.Fatalf("%s run: %v\n%s", test.lang, err, h.out)
+		}
+		out := h.out.String()
+		for _, want := range append(test.want, "\nowngit network set --listen 127.0.0.1:7700 --base-url '' --state-dir '/tmp/owngit state'\n") {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s: output lacks %q", test.lang, want)
+			}
+		}
+		if strings.Contains(out, "--listen 127.0.0.1:7700.") || strings.Contains(out, "--listen 127.0.0.1:7700 옵션") {
+			t.Errorf("%s: a saved address was answered with a one-run --listen option:\n%s", test.lang, out)
+		}
+		if settings := h.settings(); !settings.Initialized || !settings.InsecureHTTPAccepted {
+			t.Fatalf("%s settings=%+v", test.lang, settings)
+		}
 	}
 }
 

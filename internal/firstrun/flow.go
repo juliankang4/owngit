@@ -28,6 +28,10 @@ type flow struct {
 	// devices can connect to it.
 	listen  string
 	network bool
+	// listenSaved is true when the listen address came from the saved
+	// network settings, so a one-run --listen option would not keep OwnGit
+	// on this computer at later starts.
+	listenSaved bool
 	// otherDevices is the address other devices use, when it differs from
 	// origin and OwnGit accepts it.
 	otherDevices string
@@ -449,7 +453,17 @@ func (f *flow) askConnection(step string) error {
 			f.insecure = true
 			return nil
 		}
-		f.screen.notice("err", f.say("conn_need", "port", f.port()))
+		if !f.listenSaved {
+			f.screen.notice("err", f.say("conn_need", "port", f.port()))
+			continue
+		}
+		// A saved address applies at every start, so the way back to this
+		// computer only is to save a loopback address, printed alone on its
+		// line so it copies as one command.
+		f.screen.notice("err", f.say("conn_need_saved"))
+		f.screen.blankLine()
+		f.screen.write(f.screen.painter.paint(rolePlain, localOnlyCommand(f.port(), f.stateDir), true) + "\n")
+		f.screen.blankLine()
 	}
 }
 

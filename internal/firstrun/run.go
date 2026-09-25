@@ -49,6 +49,9 @@ type Config struct {
 	Origin string
 	// Listen is the address the server listens on.
 	Listen string
+	// ListenSaved is true when Listen came from the saved network settings
+	// rather than a --listen option.
+	ListenSaved bool
 	// SuggestedFolder is offered for the repository folder.
 	SuggestedFolder string
 	// OpenBrowser opens the setup page; nil only prints its address.
@@ -168,6 +171,7 @@ func newFlow(ctx context.Context, config Config, input <-chan []byte, colors dep
 		openBrowser: config.OpenBrowser, stateDir: config.StateDir, tailscale: found,
 	}
 	f.network, f.otherDevices = networkReach(config.Listen, config.Origin)
+	f.listenSaved = config.ListenSaved
 	return f, pending
 }
 
