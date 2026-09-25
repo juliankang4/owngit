@@ -136,7 +136,7 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 		Chrome: chrome,
 		Repo: webui.RepositoryHeader{
 			ID: stored.ID, Name: stored.Name, Description: stored.Description, URL: base,
-			CloneURL: app.baseURL(request) + "/git/" + url.PathEscape(stored.ID) + ".git", Empty: summary.Empty,
+			CloneURL: app.cloneURL(request, stored.ID), Empty: summary.Empty,
 		},
 		Source: app.commitSummary(stored.ID, "", sourceCommit), TargetBranch: selection.Target,
 		CreatesBranch: branchPreview.CreatesBranch, Mode: selection.Mode, Previewed: previewed,

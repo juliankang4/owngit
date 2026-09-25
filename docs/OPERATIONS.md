@@ -58,11 +58,46 @@ The server accepts only requests whose Host is `localhost`, `127.0.0.1`, `::1`, 
 ./bin/owngit approve-host gitbox.internal
 ```
 
+### Network settings
+
+OwnGit can save the listen address, the base URL, and the allowed Host names, so a server started without options, such as a background service, uses them at every start. Run these commands on the installation host. They work whether or not the server is running, and a change applies at the next start.
+
+```sh
+./bin/owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
+./bin/owngit network show
+```
+
+- `--listen` is `host:port`. An empty host, `0.0.0.0`, or `::` listens on every interface.
+- `--base-url` is the address other devices use, an `http` or `https` origin with no path. OwnGit accepts its host name and shows it in clone addresses. Without a base URL, clone addresses on the pages use the address the browser connected to.
+- `--allowed-host` and `--remove-allowed-host` change the stored list that `owngit approve-host` also adds to. Both are repeatable.
+- An empty value, such as `--base-url ""`, removes that saved value.
+
+`set` prints a note when the listen address leaves this computer, because other devices then use plain HTTP. A reverse proxy with HTTPS or Tailscale HTTPS encrypts that connection.
+
+For each value, `owngit serve` uses its option if one is given, then the saved value, then the default (`127.0.0.1:7654`, with the base URL taken from the listen address). An option applies to that run only and does not change what is saved. `localhost`, `127.0.0.1`, and `::1` are always accepted, whatever is saved.
+
+`owngit network show` lists the saved values. When a server is running on that state directory, it also shows what that server actually uses and whether a restart is needed for saved changes to apply. `--json` prints the same report as JSON.
+
+If a saved value locks you out, for example a listen address that no longer exists on this computer, reset it on the installation host and restart the server:
+
+```sh
+./bin/owngit network reset
+```
+
+`reset` removes the saved listen address and base URL. It keeps the allowed Host names unless you add `--clear-allowed-hosts`. No web page can do this; it needs access to the state directory.
+
+Network settings belong to this installation host. An offline backup does not carry them, and a restored installation starts with the defaults.
+
 ### Options for a background service
 
-`--listen`, `--base-url`, and `--allowed-host` are options of `owngit serve`, so they apply only to the command that starts the server. When a service manager starts OwnGit, put them in the service definition: the `ProgramArguments` of a LaunchAgent, or the `ExecStart` line of a systemd unit. Names approved with `owngit approve-host` are stored and apply to every start.
+`--listen`, `--base-url`, and `--allowed-host` are options of `owngit serve`, so they apply only to the command that starts the server. A service manager that passes them in the service definition (the `ProgramArguments` of a LaunchAgent, or the `ExecStart` line of a systemd unit) overrides the saved values at every start. To use saved settings, leave these options out of the service definition.
 
-The Homebrew service (`brew services start owngit`) runs `owngit serve --no-open` without other options, and OwnGit does not yet store the listen address or base URL. Until a later version stores network settings, reaching a Homebrew installation from other devices requires starting `owngit serve` with these options another way, for example from your own LaunchAgent, instead of `brew services`.
+The Homebrew service (`brew services start owngit`) runs `owngit serve --no-open` without other options, so it uses the saved settings. To reach it from other devices:
+
+```sh
+owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654
+brew services restart owngit
+```
 
 ## New-release notice
 
@@ -439,7 +474,7 @@ Restore checks every bundle, ref, object, and record before it publishes the new
 
 After a restore:
 
-- sign-in sessions, setup links, approved Hosts, credentials, schedules, and every consent are gone;
+- sign-in sessions, setup links, approved Hosts, saved network settings, credentials, schedules, and every consent are gone;
 - create new helper and runner credentials, and store import credentials again before refreshing an import that needs them;
 - automatic checks stay off until the owner enables them again, and unfinished check jobs are marked `interrupted` instead of rerunning;
 - unsettled import publications are closed without being applied;

@@ -58,11 +58,46 @@ LAN 이름을 쓰려면 다음과 같이 실행합니다.
 ./bin/owngit approve-host gitbox.internal
 ```
 
+### 네트워크 설정
+
+OwnGit은 연결 주소, 기본 URL, 허용한 Host 이름을 저장할 수 있습니다. 백그라운드 서비스처럼 옵션 없이 시작한 서버도 시작할 때마다 저장된 값을 씁니다. 다음 명령은 설치 호스트에서 실행합니다. 서버가 실행 중이든 아니든 동작하며, 바꾼 값은 다음 시작부터 적용됩니다.
+
+```sh
+./bin/owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
+./bin/owngit network show
+```
+
+- `--listen`은 `host:port` 형식입니다. host를 비우거나 `0.0.0.0`, `::`로 쓰면 모든 네트워크 인터페이스에서 연결을 받습니다.
+- `--base-url`은 다른 기기가 쓰는 주소로, 경로 없는 `http` 또는 `https` origin입니다. OwnGit은 이 주소의 호스트 이름을 받아들이고 클론 주소에도 이 주소를 표시합니다. 기본 URL이 없으면 화면의 클론 주소는 브라우저가 접속한 주소를 따릅니다.
+- `--allowed-host`와 `--remove-allowed-host`는 `owngit approve-host`가 이름을 추가하는 저장 목록을 바꿉니다. 둘 다 여러 번 지정할 수 있습니다.
+- `--base-url ""`처럼 빈 값을 주면 저장된 그 값을 지웁니다.
+
+연결 주소가 이 컴퓨터 밖에서 접속을 받는 주소이면 `set`은 안내 한 줄을 출력합니다. 다른 기기는 암호화되지 않은 일반 HTTP로 접속하게 되기 때문입니다. HTTPS 리버스 프록시나 Tailscale HTTPS를 쓰면 이 연결을 암호화할 수 있습니다.
+
+`owngit serve`는 값마다 옵션이 있으면 옵션을, 없으면 저장된 값을, 둘 다 없으면 기본값을 씁니다. 기본값은 `127.0.0.1:7654`이고, 기본 URL은 연결 주소에서 정합니다. 옵션은 그 실행에만 적용되며 저장된 값을 바꾸지 않습니다. `localhost`, `127.0.0.1`, `::1`은 무엇을 저장했든 항상 받아들입니다.
+
+`owngit network show`는 저장된 값을 보여 줍니다. 그 상태 디렉터리로 서버가 실행 중이면 서버가 실제로 쓰는 값과, 저장한 변경을 적용하려면 다시 시작해야 하는지도 함께 보여 줍니다. `--json`을 붙이면 같은 내용을 JSON으로 출력합니다.
+
+저장한 값 때문에 접속할 수 없게 되었다면, 예를 들어 이 컴퓨터에 더 이상 없는 주소를 연결 주소로 저장했다면, 설치 호스트에서 설정을 되돌리고 서버를 다시 시작하세요.
+
+```sh
+./bin/owngit network reset
+```
+
+`reset`은 저장된 연결 주소와 기본 URL을 지웁니다. `--clear-allowed-hosts`를 붙이지 않으면 허용한 Host 이름은 그대로 둡니다. 이 작업은 상태 디렉터리에 접근할 수 있어야 하며 웹 화면에서는 할 수 없습니다.
+
+네트워크 설정은 이 설치 호스트에 속합니다. 오프라인 백업에 포함되지 않으며, 복원한 설치는 기본값으로 시작합니다.
+
 ### 백그라운드 서비스의 옵션
 
-`--listen`, `--base-url`, `--allowed-host`는 `owngit serve`의 옵션이므로 서버를 시작하는 명령에만 적용됩니다. 서비스 관리자가 OwnGit을 시작한다면 이 옵션을 서비스 정의에 넣으세요. LaunchAgent라면 `ProgramArguments`에, systemd 유닛이라면 `ExecStart` 줄에 넣습니다. `owngit approve-host`로 승인한 이름은 저장되어 시작할 때마다 적용됩니다.
+`--listen`, `--base-url`, `--allowed-host`는 `owngit serve`의 옵션이므로 서버를 시작하는 명령에만 적용됩니다. 서비스 정의(LaunchAgent의 `ProgramArguments`, systemd 유닛의 `ExecStart` 줄)에서 이 옵션을 넘기면 시작할 때마다 저장된 값보다 옵션이 우선합니다. 저장된 설정을 쓰려면 서비스 정의에서 이 옵션을 빼세요.
 
-Homebrew 서비스(`brew services start owngit`)는 다른 옵션 없이 `owngit serve --no-open`을 실행하며, OwnGit은 아직 연결 주소나 기본 URL을 저장하지 않습니다. 네트워크 설정을 저장하는 버전이 나오기 전까지는, Homebrew로 설치한 OwnGit에 다른 기기에서 접속하려면 `brew services` 대신 직접 만든 LaunchAgent 같은 다른 방법으로 이 옵션을 붙여 `owngit serve`를 시작해야 합니다.
+Homebrew 서비스(`brew services start owngit`)는 다른 옵션 없이 `owngit serve --no-open`을 실행하므로 저장된 설정을 씁니다. 다른 기기에서 접속하려면 다음과 같이 합니다.
+
+```sh
+owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654
+brew services restart owngit
+```
 
 ## 새 릴리스 알림
 
@@ -445,7 +480,7 @@ OwnGit은 백업 버전 1, 2, 9, 10을 복원하고 나머지는 거부합니다
 
 복원한 뒤에는 다음과 같습니다.
 
-- 로그인 세션, 설정 링크, 승인된 Host, 인증 정보, 예약, 모든 동의가 사라집니다.
+- 로그인 세션, 설정 링크, 승인된 Host, 저장된 네트워크 설정, 인증 정보, 예약, 모든 동의가 사라집니다.
 - 체크 에이전트 토큰과 러너 토큰을 새로 만드세요. 인증 정보가 필요한 가져오기는 새로고침하기 전에 가져오기 인증 정보를 다시 저장하세요.
 - 자동 체크는 소유자가 다시 켤 때까지 꺼져 있고, 끝나지 않은 체크 작업은 다시 실행하지 않고 `interrupted`로 표시합니다.
 - 정리되지 않은 가져오기 게시는 적용하지 않고 닫습니다.

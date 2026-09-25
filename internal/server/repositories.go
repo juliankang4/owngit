@@ -503,7 +503,7 @@ func administratorRepositoryScreen(segment string) bool {
 
 func (app *App) baseRepositoryPage(request *http.Request, chrome webui.Chrome, stored state.Repository, summary repository.Summary) webui.RepositoryPage {
 	base := "/repositories/" + url.PathEscape(stored.ID)
-	clone := app.baseURL(request) + "/git/" + url.PathEscape(stored.ID) + ".git"
+	clone := app.cloneURL(request, stored.ID)
 	page := webui.RepositoryPage{
 		Chrome:      chrome,
 		Repo:        webui.RepositoryHeader{ID: stored.ID, Name: stored.Name, Description: stored.Description, URL: base, CloneURL: clone, Empty: summary.Empty},
@@ -1113,7 +1113,7 @@ func (app *App) repositorySummary(request *http.Request, stored state.Repository
 	summary := snapshot.Summary
 	result := webui.RepositorySummary{
 		ID: stored.ID, Name: stored.Name, Description: stored.Description,
-		URL: "/repositories/" + url.PathEscape(stored.ID), CloneURL: app.baseURL(request) + "/git/" + url.PathEscape(stored.ID) + ".git",
+		URL: "/repositories/" + url.PathEscape(stored.ID), CloneURL: app.cloneURL(request, stored.ID),
 		CreatedAt: stored.CreatedAt, Empty: summary.Empty, DefaultBranch: summary.DefaultBranch,
 		// An empty repository has no branch at all yet, which is its normal
 		// first state rather than a default branch that went missing.

@@ -55,6 +55,10 @@ type App struct {
 	// Requests derives each request's scheme, Host and client address. The
 	// zero value trusts only the connection itself.
 	Requests requestctx.Resolver
+	// BaseURL is the configured owner-facing origin, from the serve flag or
+	// the saved network setting, or "" when addresses shown to people are
+	// derived from each request. See serverOrigin.
+	BaseURL string
 	// Version is the running application version. It comes from the single
 	// version source and is never read from storage or a remote value.
 	Version string

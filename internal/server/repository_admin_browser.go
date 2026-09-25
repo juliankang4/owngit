@@ -338,7 +338,7 @@ func (app *App) removedNotices(writer http.ResponseWriter, request *http.Request
 			return append(notices, webui.Info(webui.MsgRepoRemovedKeptRecovery))
 		}
 		return append(notices,
-			webui.Info(webui.MsgRepoRemovedKeptCommand).WithDetail(recoveryCommand(result.Kept, app.baseURL(request)+"/git/"+url.PathEscape(result.ID)+".git")),
+			webui.Info(webui.MsgRepoRemovedKeptCommand).WithDetail(recoveryCommand(result.Kept, app.cloneURL(request, result.ID))),
 			webui.Info(webui.MsgRepoRemovedKeptWhere))
 	case webui.DeleteModeDeleteFiles:
 		return []webui.Notice{webui.Success(webui.MsgRepoRemovedDeleted).WithDetail(result.Name)}

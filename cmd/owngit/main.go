@@ -97,6 +97,8 @@ func runCommand(command string, arguments []string) error {
 		return resetAdmin(arguments)
 	case "approve-host":
 		return approveHost(arguments)
+	case "network":
+		return networkCommand(arguments)
 	case "forget-check-container":
 		return forgetCheckContainer(arguments)
 	case "backup":
@@ -172,8 +174,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
-	listenAddress := flags.String("listen", "127.0.0.1:7654", "HTTP listen address")
-	baseURL := flags.String("base-url", "", "owner-facing HTTP origin")
+	listenAddress := flags.String("listen", server.DefaultListenAddress, "HTTP listen address; overrides the saved one for this run")
+	baseURL := flags.String("base-url", "", "owner-facing HTTP origin; overrides the saved one for this run")
 	gitPath := flags.String("git", "", "Git executable path")
 	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
@@ -196,7 +198,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if err := os.MkdirAll(*stateDir, 0o700); err != nil {
 		return fmt.Errorf("create state directory: %w", err)
 	}
-	unlock, err := state.AcquireOfflineLock(*stateDir)
+	unlock, err := acquireLockBriefly(func() (func(), error) { return state.AcquireOfflineLock(*stateDir) })
 	if err != nil {
 		return err
 	}
@@ -206,6 +208,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	defer store.Close()
+	defer claimRunningRecord(ctx, *stateDir, store, logf)()
 	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))
 	if err != nil {
 		return err
@@ -224,6 +227,14 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	settings, err := store.Settings(ctx)
+	if err != nil {
+		return err
+	}
+	savedNetwork, err := store.NetworkSettings(ctx)
+	if err != nil {
+		return err
+	}
+	network, err := effectiveServeNetwork(savedNetwork, flags, *listenAddress, *baseURL)
 	if err != nil {
 		return err
 	}
@@ -296,9 +307,9 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	authentication := &auth.Manager{Store: store, SessionLife: 12 * time.Hour, AdminSessionLife: 15 * time.Minute}
-	listener, err := net.Listen("tcp", *listenAddress)
+	listener, err := net.Listen("tcp", network.Listen)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", *listenAddress, err)
+		return network.listenError(err)
 	}
 	defer listener.Close()
 
@@ -312,16 +323,16 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			return fmt.Errorf("invalid stored trusted host: %w", err)
 		}
 	}
-	if host, _, err := net.SplitHostPort(*listenAddress); err == nil && host != "" && host != "0.0.0.0" && host != "::" {
+	if host, _, err := net.SplitHostPort(network.Listen); err == nil && host != "" && host != "0.0.0.0" && host != "::" {
 		if err := policy.Add(host); err != nil {
 			return err
 		}
 	}
-	originAddress := *listenAddress
-	if *baseURL == "" {
+	originAddress := network.Listen
+	if network.BaseURL == "" {
 		originAddress = listener.Addr().String()
 	}
-	origin, err := ownerOrigin(*baseURL, originAddress)
+	origin, err := ownerOrigin(network.BaseURL, originAddress)
 	if err != nil {
 		return err
 	}
@@ -356,7 +367,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	application := &server.App{
 		Store: store, Auth: authentication, Repositories: repositories, PullRequests: pullRequests, GitHTTP: gitHandler,
-		Renderer: renderer, Hosts: policy, SuggestedRepositoryRoot: filepath.Join(home, "OwnGit-Repositories"),
+		Renderer: renderer, Hosts: policy, BaseURL: configuredOrigin(network, origin), SuggestedRepositoryRoot: filepath.Join(home, "OwnGit-Repositories"),
 		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true, Version: version.Version,
 		WakeChecks: checkCoordinator.Wake, Imports: imports,
 		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
@@ -433,6 +444,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		ReadTimeout: 30 * time.Second, WriteTimeout: server.ImportRunRequestTimeout(importsync.DefaultLimits().RunTimeout),
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
+	defer publishRunningNetwork(ctx, store, network, listener.Addr().String(), origin, trusted, policy, logf)()
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
 	logf("OwnGit listening on %s", listener.Addr())
@@ -807,7 +819,7 @@ func restoreState(arguments []string) error {
 	if err := recovery.Restore(context.Background(), *input, *stateDir, *repositoryRoot, *gitPath); err != nil {
 		return err
 	}
-	fmt.Printf("Offline backup restored to %s with repositories at %s. Previous sessions and trusted hosts were not restored.\n", *stateDir, *repositoryRoot)
+	fmt.Printf("Offline backup restored to %s with repositories at %s. Previous sessions, trusted hosts, and network settings were not restored.\n", *stateDir, *repositoryRoot)
 	return nil
 }
 
@@ -896,11 +908,11 @@ func ownerOrigin(configured, listenAddress string) (string, error) {
 		}
 		configured = "http://" + net.JoinHostPort(host, port)
 	}
-	parsed, err := url.Parse(configured)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("--base-url must be an HTTP(S) origin without a path, query, credentials, or fragment")
+	canonical, err := server.ValidateBaseURL(configured)
+	if err != nil {
+		return "", fmt.Errorf("--base-url: %w", err)
 	}
-	return parsed.String(), nil
+	return canonical, nil
 }
 
 func defaultStateDir() string {
@@ -919,7 +931,7 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|forget-check-container|backup|restore|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|version] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|network|forget-check-container|backup|restore|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|version] [options]")
 	fmt.Fprintln(writer, "Run owngit <command> --help for the options of a command.")
 }
 

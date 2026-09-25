@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -1320,6 +1321,157 @@ func (s *Store) SetUpdateCheck(ctx context.Context, enabled bool) error {
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, updateCheckKey, value)
 	return err
+}
+
+// Network settings are optional metadata keys like updateCheckKey, so they
+// need no schema change and older OwnGit builds ignore them. They are
+// machine-local: backups do not carry them. The allowed Host names are the
+// trusted_hosts table.
+const (
+	networkListenKey  = "network_listen"
+	networkBaseURLKey = "network_base_url"
+	// networkRunningKey holds the RunningNetwork record of the server that
+	// currently serves this state directory.
+	networkRunningKey = "network_running"
+)
+
+// NetworkSettings are the saved network settings that serve applies at its
+// next start when no flag overrides them. An empty value is not saved, so
+// the default applies. The store does not validate them; callers do.
+type NetworkSettings struct {
+	Listen  string
+	BaseURL string
+}
+
+// NetworkSettings returns the saved network settings.
+func (s *Store) NetworkSettings(ctx context.Context) (NetworkSettings, error) {
+	values, err := s.metadataValues(ctx, networkListenKey, networkBaseURLKey)
+	if err != nil {
+		return NetworkSettings{}, err
+	}
+	return NetworkSettings{Listen: values[networkListenKey], BaseURL: values[networkBaseURLKey]}, nil
+}
+
+// NetworkUpdate replaces the saved network settings and changes the allowed
+// Host names in one transaction. Host names are stored as given; callers
+// pass normalized names.
+type NetworkUpdate struct {
+	Settings    NetworkSettings
+	AddHosts    []string
+	RemoveHosts []string
+}
+
+// UpdateNetwork applies update atomically.
+func (s *Store) UpdateNetwork(ctx context.Context, update NetworkUpdate) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for key, value := range map[string]string{networkListenKey: update.Settings.Listen, networkBaseURLKey: update.Settings.BaseURL} {
+		if value == "" {
+			_, err = tx.ExecContext(ctx, `DELETE FROM metadata WHERE key=?`, key)
+		} else {
+			_, err = tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	for _, host := range update.RemoveHosts {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM trusted_hosts WHERE host=?`, host); err != nil {
+			return err
+		}
+	}
+	for _, host := range update.AddHosts {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO trusted_hosts(host,created_at) VALUES(?,?)`, host, time.Now().Unix()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// RunningNetwork is what a serving process actually uses. serve publishes it
+// after its listener is bound and clears it when it stops. A process that
+// ends without stopping, such as after a crash, leaves the record behind, so
+// the record is trustworthy only while the process that published it holds
+// the running-record lock in the state directory (runningLockName in
+// cmd/owngit, which also clears a stale record when it takes that lock).
+// Holding the offline lock alone proves nothing: an older OwnGit or an
+// offline backup holds it too. Saved settings (NetworkSettings and the
+// allowed Hosts) differ from the running values until the next start.
+type RunningNetwork struct {
+	PID       int   `json:"pid"`
+	StartedAt int64 `json:"started_at"`
+	// Listen is the requested listen address and Address the bound one; they
+	// differ when the port is 0.
+	Listen  string `json:"listen"`
+	Address string `json:"address"`
+	// BaseURL is the configured base URL, or "" when the server derives the
+	// address from each request. Origin is the owner-facing origin used for
+	// setup links.
+	BaseURL string `json:"base_url"`
+	Origin  string `json:"origin"`
+	// ListenSource and BaseURLSource name where each value came from:
+	// "flag", "saved", or "default".
+	ListenSource  string `json:"listen_source"`
+	BaseURLSource string `json:"base_url_source"`
+	// SavedHosts are the allowed Host names loaded from storage at start;
+	// AcceptedHosts are every Host name the running Host check accepts,
+	// loopback names included.
+	SavedHosts    []string `json:"saved_hosts"`
+	AcceptedHosts []string `json:"accepted_hosts"`
+}
+
+// PublishRunningNetwork records what this serving process uses.
+func (s *Store) PublishRunningNetwork(ctx context.Context, running RunningNetwork) error {
+	encoded, err := json.Marshal(running)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, networkRunningKey, string(encoded))
+	return err
+}
+
+// ClearRunningNetwork removes the running record when a server stops.
+func (s *Store) ClearRunningNetwork(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key=?`, networkRunningKey)
+	return err
+}
+
+// RunningNetwork returns the last published running record. It does not
+// check whether that server still runs; see RunningNetwork.
+func (s *Store) RunningNetwork(ctx context.Context) (RunningNetwork, bool, error) {
+	values, err := s.metadataValues(ctx, networkRunningKey)
+	if err != nil {
+		return RunningNetwork{}, false, err
+	}
+	raw, found := values[networkRunningKey]
+	if !found {
+		return RunningNetwork{}, false, nil
+	}
+	var running RunningNetwork
+	if err := json.Unmarshal([]byte(raw), &running); err != nil {
+		return RunningNetwork{}, false, fmt.Errorf("invalid running network record: %w", err)
+	}
+	return running, true, nil
+}
+
+// metadataValues reads the present values of keys.
+func (s *Store) metadataValues(ctx context.Context, keys ...string) (map[string]string, error) {
+	values := make(map[string]string, len(keys))
+	for _, key := range keys {
+		var value string
+		err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key=?`, key).Scan(&value)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		values[key] = value
+	}
+	return values, nil
 }
 
 func (s *Store) CompleteSetup(ctx context.Context, repositoryRoot, accessMode, accessHash, adminHash string, insecureAccepted bool) error {

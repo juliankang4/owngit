@@ -15,6 +15,7 @@ var helpCommands = []struct {
 	leaf bool
 }{
 	{"serve", true}, {"setup-link", true}, {"reset-admin", true}, {"approve-host", true},
+	{"network", false}, {"network show", true}, {"network set", true}, {"network reset", true},
 	{"forget-check-container", true}, {"backup", true}, {"restore", true},
 	{"pr", false}, {"pr create", true}, {"pr list", true}, {"pr show", true},
 	{"pr review", false}, {"pr review request", true}, {"pr review submit", true}, {"pr review skip", true},

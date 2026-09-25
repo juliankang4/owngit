@@ -247,7 +247,8 @@ func TestReadPrivatePasswordCountsCharacters(t *testing.T) {
 }
 
 func TestOwnerOriginRejectsCredentialAndPath(t *testing.T) {
-	for _, value := range []string{"http://user@example.test", "http://example.test/path", "ftp://example.test"} {
+	for _, value := range []string{"http://user@example.test", "http://example.test/path", "ftp://example.test",
+		"http://example.test:99999", "http://example.test:0", "http://example.test:"} {
 		if _, err := ownerOrigin(value, "127.0.0.1:7654"); err == nil {
 			t.Errorf("owner origin %q was accepted", value)
 		}

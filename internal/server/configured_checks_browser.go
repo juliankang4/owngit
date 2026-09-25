@@ -1026,7 +1026,7 @@ func (app *App) renderRunnerTokens(writer http.ResponseWriter, request *http.Req
 		PendingAction:       pendingAction,
 		PendingCredentialID: pendingCredentialID,
 		PendingLabel:        pendingLabel,
-		Commands:            runnerCommands(app.baseURL(request), stored.ID),
+		Commands:            runnerCommands(app.serverOrigin(request), stored.ID),
 	}
 	if notices != nil {
 		page.Chrome.Notices = notices

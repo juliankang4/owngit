@@ -86,7 +86,7 @@ A change must keep the following behavior.
 - Core use must not need published code, an external Git-host account, or an AI subscription.
 - Never silently discard work or delete history. Before accepting a force-push or a branch or tag deletion, retain what it replaces. Recovery covers Git-tracked files, not application databases, untracked files, or whole systems.
 - Browser restore previews every addition, change, and deletion, then adds a commit without rewriting a branch. It refuses the write if the branch moved after the preview. Repository paths and symbolic links are data, never host filesystem paths.
-- A backup keeps every ref and reachable object, repository metadata, access mode, password hashes, and the durable pull request, task, check, and import records. Sessions, setup links, trusted Hosts, consent, schedules, and helper, runner, and source credentials stay machine-local and are not restored.
+- A backup keeps every ref and reachable object, repository metadata, access mode, password hashes, and the durable pull request, task, check, and import records. Sessions, setup links, trusted Hosts, network settings, consent, schedules, and helper, runner, and source credentials stay machine-local and are not restored.
 - Activity comes from commit author dates across working and retained branches, counts each commit once per repository, and is never evidence that checks passed.
 
 ### Access and administration

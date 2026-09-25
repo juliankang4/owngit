@@ -170,11 +170,7 @@ func (app *App) renderSettings(writer http.ResponseWriter, request *http.Request
 	}
 	app.render(writer, status, webui.SettingsPage{
 		Chrome: chrome, SubmitURL: "/settings", AccessMode: mode, AdminRequired: true,
-		PendingAction: pending, Storage: storage, CloneHint: app.baseURL(request) + "/git/",
+		PendingAction: pending, Storage: storage, CloneHint: app.serverOrigin(request) + "/git/",
 		UpdateCheck: webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil},
 	})
-}
-
-func (app *App) baseURL(request *http.Request) string {
-	return requestctx.Of(request).Origin()
 }

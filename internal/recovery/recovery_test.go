@@ -49,6 +49,8 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	settings, _ := store.Settings(ctx)
 	noErr(t, store.CreateSession(ctx, "general-session", "general", "csrf", settings.AccessSessionVersion, time.Now().Add(time.Hour)))
 	noErr(t, store.AddTrustedHost(ctx, "private-host.example"))
+	noErr(t, store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{Listen: "0.0.0.0:7654", BaseURL: "http://private-host.example:7654"}}))
+	noErr(t, store.PublishRunningNetwork(ctx, state.RunningNetwork{PID: 1, Listen: "0.0.0.0:7654"}))
 
 	remote, _ := manager.Path("project")
 	work := filepath.Join(root, "work")
@@ -96,6 +98,13 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	}
 	if hosts, err := restoredStore.TrustedHosts(ctx); err != nil || len(hosts) != 0 {
 		t.Fatalf("trusted hosts were restored: hosts=%v err=%v", hosts, err)
+	}
+	// Network settings belong to the machine, like trusted hosts.
+	if network, err := restoredStore.NetworkSettings(ctx); err != nil || network != (state.NetworkSettings{}) {
+		t.Fatalf("network settings were restored: %+v err=%v", network, err)
+	}
+	if _, found, err := restoredStore.RunningNetwork(ctx); err != nil || found {
+		t.Fatalf("running network record was restored: found=%v err=%v", found, err)
 	}
 	repositories, err := restoredStore.Repositories(ctx)
 	if err != nil || len(repositories) != 3 {

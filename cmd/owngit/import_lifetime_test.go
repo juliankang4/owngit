@@ -34,6 +34,12 @@ var listeningLine = regexp.MustCompile(`OwnGit listening on (\S+)`)
 
 func startServed(t *testing.T, stateDir string, extra ...string) *servedInstance {
 	t.Helper()
+	return startServedWith(t, append([]string{"--state-dir", stateDir, "--listen", "127.0.0.1:0", "--no-open"}, extra...))
+}
+
+// startServedWith starts serve with exactly these arguments.
+func startServedWith(t *testing.T, arguments []string) *servedInstance {
+	t.Helper()
 	instance := &servedInstance{t: t, result: make(chan error, 1)}
 	logf := func(format string, arguments ...any) {
 		instance.mu.Lock()
@@ -43,7 +49,6 @@ func startServed(t *testing.T, stateDir string, extra ...string) *servedInstance
 	ctx, cancel := context.WithCancel(context.Background())
 	instance.cancel = cancel
 	go func() {
-		arguments := append([]string{"--state-dir", stateDir, "--listen", "127.0.0.1:0", "--no-open"}, extra...)
 		instance.result <- serveWithContext(ctx, arguments, func(string) error { return nil }, logf)
 	}()
 	deadline := time.Now().Add(20 * time.Second)
