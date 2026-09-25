@@ -357,6 +357,8 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgRepoCreated)}
 	case "settings_saved":
 		return []webui.Notice{webui.Success(webui.MsgSettingsSaved)}
+	case "network_saved":
+		return []webui.Notice{webui.Success(webui.MsgNetSaved)}
 	case "access_password_saved":
 		return []webui.Notice{webui.Success(webui.MsgSettingsAccessSaved)}
 	case "logout":

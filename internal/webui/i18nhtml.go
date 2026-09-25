@@ -116,6 +116,16 @@ func biN(lang Lang, code MessageCode, n int) template.HTML {
 	return biText(lang, fmt.Sprintf(Text(LangEN, code), n), fmt.Sprintf(Text(LangKO, code), n))
 }
 
+// biF renders a sentence whose %s placeholders are filled, in order, with
+// untranslated values such as addresses.
+func biF(lang Lang, code MessageCode, values ...string) template.HTML {
+	args := make([]any, len(values))
+	for i, value := range values {
+		args[i] = value
+	}
+	return biText(lang, fmt.Sprintf(Text(LangEN, code), args...), fmt.Sprintf(Text(LangKO, code), args...))
+}
+
 // biRelease renders the new-release sentence in both languages. The versions
 // are strict X.Y.Z strings chosen by the backend and are escaped like any
 // other text.

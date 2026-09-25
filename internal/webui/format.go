@@ -26,6 +26,7 @@ func templateFuncs() template.FuncMap {
 		"biNotice":     biNotice,
 		"biRelease":    biRelease,
 		"biN":          biN,
+		"biF":          biF,
 		"diffTotals":   diffTotals,
 		"icon":         icon,
 		"statusIcon":   statusIcon,

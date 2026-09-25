@@ -59,6 +59,11 @@ type App struct {
 	// the saved network setting, or "" when addresses shown to people are
 	// derived from each request. See serverOrigin.
 	BaseURL string
+	// RunningRecordLive is true when this process holds the running-record
+	// lock, so the stored running network record is its own and the Settings
+	// page may show it as what the server uses. See runningLockName in
+	// cmd/owngit.
+	RunningRecordLive bool
 	// Version is the running application version. It comes from the single
 	// version source and is never read from storage or a remote value.
 	Version string

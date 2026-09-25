@@ -83,6 +83,8 @@ For each value, `owngit serve` uses its option if one is given, then the saved v
 
 `owngit network show` lists the saved values. When a server is running on that state directory, it also shows what that server actually uses and whether a restart is needed for saved changes to apply. `--json` prints the same report as JSON.
 
+The same settings are on the Settings page under Network. Everyone who can open Settings sees the saved values, the values the running server uses, and whether a restart is needed, as `network show` reports them, with the same notes that `network set` prints. Changing them there asks for the administrator password and uses the same checks as `network set`. A saved change applies at the next start, and the running server keeps its current values until then. If the new listen address reaches other devices and plain HTTP has not been accepted yet, the form also asks you to accept it, as setup does. If the settings changed after you opened the page, for example with `network set`, the save is refused and the page shows the current values. The page cannot reset the settings; use `owngit network reset` as described below.
+
 If a saved value locks you out, for example a listen address that no longer exists on this computer, reset it on the installation host and restart the server:
 
 ```sh

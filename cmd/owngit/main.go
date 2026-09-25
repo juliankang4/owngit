@@ -214,7 +214,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	defer store.Close()
-	defer claimRunningRecord(ctx, *stateDir, store, logf)()
+	releaseRunning, runningLive := claimRunningRecord(ctx, *stateDir, store, logf)
+	defer releaseRunning()
 	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))
 	if err != nil {
 		return err
@@ -384,7 +385,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		Renderer: renderer, Hosts: policy, BaseURL: configuredOrigin(network, origin), SuggestedRepositoryRoot: filepath.Join(home, "OwnGit-Repositories"),
 		Requests:   requestctx.Resolver{TrustedProxies: proxies.Prefixes, HostAllowed: policy.Allows},
 		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true, Version: version.Version,
-		WakeChecks: checkCoordinator.Wake, Imports: imports,
+		WakeChecks: checkCoordinator.Wake, Imports: imports, RunningRecordLive: runningLive,
 		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
 		Releases:         releases,
 		// First-run setup inside this process starts the same import runtime

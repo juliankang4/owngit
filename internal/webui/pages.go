@@ -205,6 +205,8 @@ type SettingsPage struct {
 	CloneHint string
 	// UpdateCheck is the new-release check setting.
 	UpdateCheck UpdateCheckInfo
+	// Network is the network settings block. See NetworkInfo.
+	Network NetworkInfo
 }
 
 // UpdateCheckInfo describes the new-release check on the Settings page.

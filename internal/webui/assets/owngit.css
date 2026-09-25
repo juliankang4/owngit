@@ -604,7 +604,8 @@ a:hover { text-decoration: underline; }
   color: var(--text-1);
   font-size: 13px;
 }
-.f input[aria-invalid="true"] { border-color: var(--bad); }
+.f input[aria-invalid="true"],
+.f textarea[aria-invalid="true"] { border-color: var(--bad); }
 .f textarea { min-height: 62px; resize: vertical; }
 
 .choice {
@@ -1448,6 +1449,48 @@ span.hm__cell { cursor: default; }
 .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px 18px; }
 .kv dt { font-size: 11px; color: var(--text-3); }
 .kv dd { margin-top: 1px; font-size: 12.5px; word-break: break-all; }
+
+/* Network settings: each setting compares the next start with the running
+   server. A value that waits for a restart is marked by an edge and a
+   labelled clock, never by colour alone. On a wide window the column names
+   sit in one header row and each value's own name is kept for screen
+   readers; in the narrow layout every value shows its name. */
+.netvals { border: 1px solid var(--sep); border-radius: var(--r-m); overflow: hidden; }
+.netvals__head,
+.netrow {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 4px 16px;
+  padding: 9px 12px;
+}
+.netvals__head { font-size: 11px; color: var(--text-3); background: var(--bg-fill); }
+.netrow { border-top: 1px solid var(--sep); }
+.netrow--pending { box-shadow: inset 3px 0 0 var(--warn); }
+.netrow__name { font-size: 12.5px; font-weight: 560; }
+.netrow__v { display: grid; align-content: start; gap: 2px; min-width: 0; font-size: 12.5px; }
+.netrow__k {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0;
+}
+.netrow__vals { display: grid; gap: 2px; }
+.netrow__vals .mono { font-size: 12px; word-break: break-all; }
+.netrow__src { font-size: 11px; color: var(--text-3); }
+.netrow__src--option { color: var(--text-2); font-weight: 560; }
+.netrow__pending {
+  grid-column: 2 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 560;
+  color: var(--warn);
+}
+.netnote { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--text-2); max-width: 66ch; }
+.netnote .icon { margin-top: 2px; color: var(--warn); }
+.netreset { justify-self: start; max-width: 100%; }
 
 /* ---------- error page ---------- */
 
@@ -2414,3 +2457,11 @@ span.hm__cell { cursor: default; }
 .imp__empty { margin-bottom: 16px; }
 .imp__setup { margin-bottom: 16px; }
 .imp__clear { margin-top: 10px; padding-top: 16px; border-top: 1px solid var(--sep); }
+
+/* Network settings in the narrow layout. */
+@media (max-width: 620px) {
+  .netvals__head { display: none; }
+  .netrow { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .netrow__k { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; white-space: normal; font-size: 11px; color: var(--text-3); }
+  .netrow__pending { grid-column: auto; }
+}

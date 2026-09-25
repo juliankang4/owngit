@@ -130,6 +130,16 @@ func allPages(lang Lang) map[string]Page {
 			Chrome: c, SubmitURL: "/settings", AccessMode: AccessPassword,
 			Storage:   StorageInfo{Visible: true, Label: "Home server", Path: "/volume1/git"},
 			CloneHint: "http://owngit.local:8080/git/",
+			Network: NetworkInfo{
+				Status:   NetworkRestart,
+				Listen:   NetworkValue{Next: []string{"[::]:8080"}, NextSource: NetworkFromSaved, Now: []string{"localhost:8080"}, NowSource: NetworkFromOption, NowKnown: true},
+				BaseURL:  NetworkValue{Next: []string{"http://owngit.local:8080"}, NextSource: NetworkFromSaved, NowKnown: true, NowSource: NetworkFromDefault, Pending: true},
+				Hosts:    NetworkValue{Next: []string{"owngit.local", "nas.lan"}, Now: []string{"nas.lan"}, NowKnown: true, Pending: true},
+				Proxies:  NetworkValue{NowKnown: true, NextSource: NetworkFromDefault, NowSource: NetworkFromDefault},
+				Form:     NetworkForm{Listen: "[::]:8080", BaseURL: "http://owngit.local:8080", Hosts: "nas.lan\nowngit.local"},
+				Revision: "0123abcd", PlainHTTP: true, FromOption: true, HTTPSWithoutProxy: true,
+				DefaultListen: "localhost:7654", EveryNetwork: "[::]:7654", ProxyExample: "fd00:ab::/48",
+			},
 		},
 		"overview": OverviewPage{
 			Chrome: c, Activity: sampleGraph(), TotalCount: 2,

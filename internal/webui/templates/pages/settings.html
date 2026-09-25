@@ -152,6 +152,99 @@
     {{end}}
   </div>
 
+  {{/* Network settings. Every viewer sees the saved values and what the
+       running server uses; saving asks for the administrator password and
+       only changes what the next start uses. Resetting stays with the
+       host-only command, which is explained instead of offered here. */}}
+  {{$net := $p.Network}}
+  <div class="setblock" id="network">
+    <h2 class="setblock__h">{{bi $lang "settings.network.title"}}</h2>
+    <p class="setblock__d">{{bi $lang "settings.network.intro"}}</p>
+    <p class="setblock__now">
+      {{if and (eq $net.Status "current") $net.FromOption}}{{icon "check"}}{{bi $lang "settings.network.current_with_option"}}
+      {{else if eq $net.Status "current"}}{{icon "check"}}{{bi $lang "settings.network.current"}}
+      {{else if eq $net.Status "restart"}}{{icon "clock"}}{{bi $lang "settings.network.restart"}}
+      {{else}}{{icon "info"}}{{bi $lang "settings.network.unconfirmed"}}{{end}}
+    </p>
+    {{if $net.FromOption}}<p class="setblock__d">{{bi $lang "settings.network.option_note"}}</p>{{end}}
+
+    <div class="netvals">
+      <div class="netvals__head" aria-hidden="true">
+        <span>{{bi $lang "settings.network.setting"}}</span><span>{{bi $lang "settings.network.next_start"}}</span><span>{{bi $lang "settings.network.running_now"}}</span>
+      </div>
+      <dl {{biAttr $lang "aria-label" "settings.network.values_label"}}>
+        {{range $net.Rows}}{{template "netRow" dict "Lang" $lang "Row" .}}{{end}}
+      </dl>
+    </div>
+    {{if $net.PlainHTTP}}<p class="netnote">{{icon "unlocked"}}<span>{{bi $lang "settings.network.plain_http"}}</span></p>{{end}}
+    {{if $net.NeedsName}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.network.needs_name"}}</span></p>{{end}}
+    {{if $net.HTTPSWithoutProxy}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.network.https_without_proxy"}}</span></p>{{end}}
+
+    {{$act := "save_network"}}{{$fn := forAction $pending $act $n}}
+    <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
+      <summary class="btn">{{bi $lang "settings.network.change"}}</summary>
+      <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="action" value="{{$act}}">
+        <input type="hidden" name="network_revision" value="{{$net.Revision}}">
+        <div class="f">
+          <label for="net-listen">{{bi $lang "settings.network.listen"}}</label>
+          <input id="net-listen" name="listen" type="text" value="{{$net.Form.Listen}}" placeholder="{{$net.DefaultListen}}"
+                 spellcheck="false" autocapitalize="off" autocomplete="off"
+                 {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "listen" "Help" "net-listen-help"}}{{if eq $net.Focus "listen"}} autofocus{{end}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "listen"}}
+          <p class="f__help" id="net-listen-help">{{biF $lang "settings.network.listen_help" $net.DefaultListen $net.EveryNetwork}}</p>
+        </div>
+        <div class="f">
+          <label for="net-base">{{bi $lang "settings.network.base_url"}}</label>
+          <input id="net-base" name="base_url" type="text" inputmode="url" value="{{$net.Form.BaseURL}}" placeholder="http://gitbox.local:7654"
+                 spellcheck="false" autocapitalize="off" autocomplete="off"
+                 {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "base_url" "Help" "net-base-help"}}{{if eq $net.Focus "base_url"}} autofocus{{end}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "base_url"}}
+          <p class="f__help" id="net-base-help">{{bi $lang "settings.network.base_url_help"}}</p>
+        </div>
+        <div class="f">
+          <label for="net-hosts">{{bi $lang "settings.network.allowed_hosts"}}</label>
+          <textarea id="net-hosts" name="allowed_hosts" rows="3" spellcheck="false" autocapitalize="off"
+                    {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "allowed_hosts" "Help" "net-hosts-help"}}{{if eq $net.Focus "allowed_hosts"}} autofocus{{end}}>{{$net.Form.Hosts}}</textarea>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "allowed_hosts"}}
+          <p class="f__help" id="net-hosts-help">{{bi $lang "settings.network.allowed_hosts_help"}}</p>
+        </div>
+        <div class="f">
+          <label for="net-proxies">{{bi $lang "settings.network.trusted_proxies"}}</label>
+          <textarea id="net-proxies" name="trusted_proxies" rows="2" spellcheck="false" autocapitalize="off"
+                    {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "trusted_proxies" "Help" "net-proxies-help"}}{{if eq $net.Focus "trusted_proxies"}} autofocus{{end}}>{{$net.Form.Proxies}}</textarea>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "trusted_proxies"}}
+          <p class="f__help" id="net-proxies-help">{{biF $lang "settings.network.trusted_proxies_help" $net.ProxyExample}}</p>
+        </div>
+        {{/* The same acknowledgement setup asks for, until it was given
+             once. The server requires it only for an address that other
+             devices can reach. */}}
+        {{if not .Chrome.Connection.InsecureAcknowledged}}
+          <div>
+            <label class="check">
+              <input type="checkbox" name="insecure_ack" value="1"
+                     {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "insecure_ack" "Help" "net-ack-help"}}{{if eq $net.Focus "insecure_ack"}} autofocus{{end}}>
+              <span class="check__t">{{bi $lang "setup.insecure.label"}}</span>
+              <span class="check__d" id="net-ack-help">{{bi $lang "settings.network.ack_help"}}</span>
+            </label>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "insecure_ack"}}
+          </div>
+        {{end}}
+        <div class="f">
+          <label for="net-admin">{{bi $lang "admin.field"}}</label>
+          <input id="net-admin" name="admin_password" type="password" autocomplete="current-password" required
+                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}{{if eq $net.Focus "admin_password"}} autofocus{{end}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+        </div>
+        <p class="f__help">{{bi $lang "settings.network.save_note"}}</p>
+        <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "settings.network.save"}}</button></div>
+      </form>
+    </details>
+    <p class="f__help">{{biF $lang "settings.network.reset" $net.DefaultListen}}</p>
+    <pre class="clone__cmds netreset">owngit network reset</pre>
+  </div>
+
   {{/* Apart from imports, which reach only the source hosts an owner
        configures, the new-release check is OwnGit's only outbound
        connection. Changing it is an
@@ -203,3 +296,40 @@
   {{end}}
 </div>
 {{end}}
+
+{{/* One network setting: what the next start uses and what the running
+     server uses. Each value carries its own column name, visible in the
+     narrow layout and read by screen readers in both, so the comparison
+     never depends on the column header or on colour. Where a value came
+     from is shown beside a value, and beside an empty one only when a start
+     option emptied it. */}}
+{{define "netRow"}}{{$lang := .Lang}}{{$v := .Row.V}}{{$empty := .Row.Empty}}
+<div class="netrow{{if $v.Pending}} netrow--pending{{end}}">
+  <dt class="netrow__name">{{bi $lang .Row.Name}}</dt>
+  <dd class="netrow__v">
+    <span class="netrow__k">{{bi $lang "settings.network.next_start"}}</span>
+    <span class="netrow__vals">{{range $v.Next}}<span class="mono">{{.}}</span>{{else}}<span>{{bi $lang $empty}}</span>{{end}}</span>
+    {{if $v.Next}}{{template "netSource" dict "Lang" $lang "Source" $v.NextSource}}{{end}}
+  </dd>
+  <dd class="netrow__v">
+    <span class="netrow__k">{{bi $lang "settings.network.running_now"}}</span>
+    {{if $v.NowKnown}}
+      <span class="netrow__vals">{{range $v.Now}}<span class="mono">{{.}}</span>{{else}}<span>{{bi $lang $empty}}</span>{{end}}</span>
+      {{if or $v.Now (eq $v.NowSource "flag")}}{{template "netSource" dict "Lang" $lang "Source" $v.NowSource}}{{end}}
+    {{else}}
+      <span class="netrow__vals"><span>{{bi $lang "settings.network.not_confirmed"}}</span></span>
+    {{end}}
+  </dd>
+  {{if $v.Pending}}<dd class="netrow__pending">{{icon "clock"}}<span>{{bi $lang "settings.network.pending"}}</span></dd>{{end}}
+</div>
+{{end}}
+
+{{define "netSource"}}{{$lang := .Lang}}
+{{if eq .Source "saved"}}<span class="netrow__src">{{bi $lang "settings.network.from_saved"}}</span>
+{{else if eq .Source "default"}}<span class="netrow__src">{{bi $lang "settings.network.from_default"}}</span>
+{{else if eq .Source "flag"}}<span class="netrow__src netrow__src--option">{{bi $lang "settings.network.from_option"}}</span>{{end}}
+{{end}}
+
+{{/* aria-describedby for a field with help text, plus its error note and
+     aria-invalid when the field carries an error. */}}
+{{define "netDescribed"}}{{if ge (firstAlert .Notices .Field) 0}} aria-invalid="true" aria-describedby="{{noteID .Scope .Field}} {{.Help}}"{{else}} aria-describedby="{{.Help}}"{{end}}{{end}}

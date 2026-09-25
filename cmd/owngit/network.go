@@ -28,9 +28,9 @@ import (
 // host itself out, and "owngit network reset" goes back to the defaults.
 
 const (
-	sourceFlag    = "flag"
-	sourceSaved   = "saved"
-	sourceDefault = "default"
+	sourceFlag    = server.NetworkSourceFlag
+	sourceSaved   = server.NetworkSourceSaved
+	sourceDefault = server.NetworkSourceDefault
 )
 
 // serveNetwork is the network configuration one serve run uses.
@@ -151,20 +151,21 @@ func acquireLockBriefly(acquire func() (func(), error)) (func(), error) {
 
 // claimRunningRecord takes the running-record lock for this serve process
 // and removes a record left by a run that ended without cleanup. It returns
-// the release to run after the record is cleared at shutdown. Failing to take
-// the lock only means "owngit network show" cannot vouch for this run.
-func claimRunningRecord(ctx context.Context, stateDir string, store *state.Store, logf func(string, ...any)) func() {
+// the release to run after the record is cleared at shutdown, and whether
+// the lock is held. Failing to take the lock only means that neither
+// "owngit network show" nor the Settings page can vouch for this run.
+func claimRunningRecord(ctx context.Context, stateDir string, store *state.Store, logf func(string, ...any)) (func(), bool) {
 	release, err := acquireLockBriefly(func() (func(), error) {
 		return state.AcquireExclusiveFileLock(filepath.Join(stateDir, runningLockName))
 	})
 	if err != nil {
-		logf("could not take the running-settings lock; \"owngit network show\" will not report this server: %v", err)
-		return func() {}
+		logf("could not take the running-settings lock; neither \"owngit network show\" nor the Network section of Settings will report what this server uses: %v", err)
+		return func() {}, false
 	}
 	if err := store.ClearRunningNetwork(ctx); err != nil {
 		logf("could not clear an earlier running network record: %v", err)
 	}
-	return release
+	return release, true
 }
 
 // runningNetworkRecord publishes what this serve run uses for "owngit network
@@ -175,7 +176,7 @@ func runningNetworkRecord(store *state.Store, network serveNetwork, proxies serv
 		PID: os.Getpid(), StartedAt: time.Now().Unix(),
 		Listen: network.Listen, Address: address, ListenSource: network.ListenSource,
 		BaseURL: network.BaseURL, BaseURLSource: network.BaseURLSource, Origin: origin,
-		SavedHosts:     normalizedHosts(savedHosts),
+		SavedHosts:     server.NormalizedHosts(savedHosts),
 		TrustedProxies: proxies.List, TrustedProxiesSource: proxies.Source,
 	}
 	publish = func() {
@@ -229,35 +230,9 @@ func newNetworkFlags(name string) (*flag.FlagSet, *string) {
 	return flags, flags.String("state-dir", defaultStateDir(), "host-local state directory")
 }
 
-// networkReport is the JSON form of "owngit network show".
-type networkReport struct {
-	Saved struct {
-		Listen         string   `json:"listen"`
-		BaseURL        string   `json:"base_url"`
-		AllowedHosts   []string `json:"allowed_hosts"`
-		TrustedProxies []string `json:"trusted_proxies"`
-	} `json:"saved"`
-	// NextStart is what a start without network flags uses.
-	NextStart struct {
-		Listen        string `json:"listen"`
-		ListenSource  string `json:"listen_source"`
-		BaseURL       string `json:"base_url"`
-		BaseURLSource string `json:"base_url_source"`
-		// TrustedProxies is the saved list; a serve flag replaces it.
-		TrustedProxies       []string `json:"trusted_proxies"`
-		TrustedProxiesSource string   `json:"trusted_proxies_source"`
-	} `json:"next_start"`
-	// Server is "running" when a live serve process published what it uses,
-	// "starting" when that process has not published yet, "not_running", or
-	// "unknown" when something else holds the state directory, such as an
-	// older OwnGit or an offline backup.
-	Server        string                `json:"server"`
-	Running       *state.RunningNetwork `json:"running"`
-	RestartNeeded bool                  `json:"restart_needed"`
-	// StaleRecord says that a record left by a server that ended without
-	// cleanup was found and ignored.
-	StaleRecord bool `json:"stale_record"`
-}
+// networkReport is the JSON form of "owngit network show". The Settings
+// page renders the same report.
+type networkReport = server.NetworkReport
 
 func networkShow(arguments []string) error {
 	flags, stateDir := newNetworkFlags("network show")
@@ -307,33 +282,8 @@ func networkShow(arguments []string) error {
 			return err
 		}
 	}
-	var report networkReport
-	report.Saved.Listen, report.Saved.BaseURL = saved.Listen, saved.BaseURL
-	report.Saved.AllowedHosts = normalizedHosts(hosts)
-	report.Saved.TrustedProxies = proxies
-	report.NextStart.TrustedProxies, report.NextStart.TrustedProxiesSource = proxies, sourceDefault
-	if len(proxies) > 0 {
-		report.NextStart.TrustedProxiesSource = sourceSaved
-	}
-	report.NextStart.Listen, report.NextStart.ListenSource = server.DefaultListenAddress, sourceDefault
-	if saved.Listen != "" {
-		report.NextStart.Listen, report.NextStart.ListenSource = saved.Listen, sourceSaved
-	}
-	report.NextStart.BaseURL, report.NextStart.BaseURLSource = saved.BaseURL, sourceDefault
-	if saved.BaseURL != "" {
-		report.NextStart.BaseURLSource = sourceSaved
-	}
-	switch {
-	case live && published:
-		report.Server, report.Running = "running", &running
-		report.RestartNeeded = restartNeeded(report, running)
-	case live:
-		report.Server = "starting"
-	case held:
-		report.Server, report.StaleRecord = "unknown", published
-	default:
-		report.Server, report.StaleRecord = "not_running", published
-	}
+	report := server.NewNetworkReport(saved, hosts, proxies)
+	report.SetServer(live, held, running, published)
 	if *asJSON {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
@@ -358,42 +308,6 @@ func lockHeld(acquire func() (func(), error)) (bool, error) {
 	return false, nil
 }
 
-// restartNeeded reports whether saved settings differ from what the running
-// server uses. A value the server took from a flag is not compared: the flag
-// wins for that run whatever is saved. A saved Host name needs a restart when
-// the running server does not accept it yet, and a removed one when the
-// server loaded it at start.
-func restartNeeded(report networkReport, running state.RunningNetwork) bool {
-	if running.ListenSource != sourceFlag && report.NextStart.Listen != running.Listen {
-		return true
-	}
-	if running.BaseURLSource != sourceFlag && report.NextStart.BaseURL != running.BaseURL {
-		return true
-	}
-	for _, host := range report.Saved.AllowedHosts {
-		if !slices.Contains(running.AcceptedHosts, host) {
-			return true
-		}
-	}
-	for _, host := range running.SavedHosts {
-		if !slices.Contains(report.Saved.AllowedHosts, host) {
-			return true
-		}
-	}
-	// A trusted proxy list from a flag is not compared, like the values above.
-	if running.TrustedProxiesSource != sourceFlag && !slices.Equal(report.Saved.TrustedProxies, nonNil(running.TrustedProxies)) {
-		return true
-	}
-	return false
-}
-
-func nonNil(values []string) []string {
-	if values == nil {
-		return []string{}
-	}
-	return values
-}
-
 func printNetworkReport(writer io.Writer, report networkReport) {
 	fmt.Fprintln(writer, "Saved settings (used at the next start; a serve flag overrides one for that run):")
 	listen := report.Saved.Listen
@@ -411,13 +325,13 @@ func printNetworkReport(writer io.Writer, report networkReport) {
 		fmt.Fprintln(writer, "A record left by an OwnGit server that stopped without cleaning up was ignored.")
 	}
 	switch report.Server {
-	case "not_running":
+	case server.NetworkNotRunning:
 		fmt.Fprintln(writer, "No OwnGit server is running on this state directory. The saved settings apply when it starts.")
 		return
-	case "starting":
+	case server.NetworkStarting:
 		fmt.Fprintln(writer, "An OwnGit server is starting on this state directory. Run this command again in a moment to see the values it uses.")
 		return
-	case "unknown":
+	case server.NetworkUnknown:
 		fmt.Fprintln(writer, "Something is using this state directory, such as an older OwnGit server or an offline backup, but it did not record its network settings. Restart OwnGit to be sure the saved settings apply.")
 		return
 	}
@@ -648,7 +562,7 @@ func networkReset(arguments []string) error {
 	if *clearHosts {
 		fmt.Println("Allowed Hosts removed. localhost, 127.0.0.1 and ::1 are always accepted.")
 	} else {
-		fmt.Printf("Allowed Hosts kept: %s. localhost, 127.0.0.1 and ::1 are always accepted.\n", hostList(normalizedHosts(hosts)))
+		fmt.Printf("Allowed Hosts kept: %s. localhost, 127.0.0.1 and ::1 are always accepted.\n", hostList(server.NormalizedHosts(hosts)))
 	}
 	switch {
 	case *clearProxies:
@@ -672,24 +586,6 @@ func normalizeHostArguments(values []string) ([]string, error) {
 		}
 	}
 	return hosts, nil
-}
-
-// normalizedHosts returns stored Host names in the form the Host check uses,
-// sorted and without duplicates. A name that cannot be normalized is kept as
-// stored, so it stays visible.
-func normalizedHosts(values []string) []string {
-	hosts := []string{}
-	for _, value := range values {
-		host, err := server.NormalizeHost(value)
-		if err != nil {
-			host = value
-		}
-		if !slices.Contains(hosts, host) {
-			hosts = append(hosts, host)
-		}
-	}
-	slices.Sort(hosts)
-	return hosts
 }
 
 func hostList(hosts []string) string {

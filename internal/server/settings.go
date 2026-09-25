@@ -106,6 +106,9 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		if err == nil && value == "on" && app.Releases != nil {
 			app.Releases.Wake()
 		}
+	case webui.ActionSaveNetwork:
+		app.saveNetwork(writer, request, settings, csrf)
+		return
 	default:
 		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
 		return
@@ -150,10 +153,29 @@ func (app *App) allowSettingsViewer(writer http.ResponseWriter, request *http.Re
 }
 
 func (app *App) renderSettings(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, pending string, notices []webui.Notice, status int) {
+	app.renderSettingsPage(writer, request, settings, csrf, pending, notices, status, nil)
+}
+
+// renderSettingsPage renders Settings. network, when set, is what a refused
+// Network save submitted, shown again so it can be corrected; otherwise the
+// Network form shows the saved values.
+func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, pending string, notices []webui.Notice, status int, network *webui.NetworkForm) {
 	chrome, err := app.chrome(writer, request, webui.SectionSettings, "", csrf)
 	if err != nil {
 		app.writePlainError(writer, http.StatusServiceUnavailable)
 		return
+	}
+	report, err := app.networkReport(request.Context())
+	if err != nil {
+		app.writePlainError(writer, http.StatusServiceUnavailable)
+		return
+	}
+	networkBlock := networkInfo(report)
+	if network != nil {
+		networkBlock.Form = *network
+	}
+	if pending == webui.ActionSaveNetwork {
+		networkBlock.Focus = networkFocus(notices)
 	}
 	// A failed form brings its own notices. Otherwise keep the page notice
 	// from the address, such as the confirmation after a saved change.
@@ -172,5 +194,6 @@ func (app *App) renderSettings(writer http.ResponseWriter, request *http.Request
 		Chrome: chrome, SubmitURL: "/settings", AccessMode: mode, AdminRequired: true,
 		PendingAction: pending, Storage: storage, CloneHint: app.serverOrigin(request) + "/git/",
 		UpdateCheck: webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil},
+		Network:     networkBlock,
 	})
 }
