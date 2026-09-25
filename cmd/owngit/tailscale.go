@@ -128,6 +128,9 @@ func tailscaleOn(arguments []string) error {
 	if options.flags.NArg() != 0 {
 		return errors.New("tailscale on accepts no positional arguments")
 	}
+	if err := state.RequireExisting(*options.stateDir); err != nil {
+		return err
+	}
 	var choice *bool
 	options.flags.Visit(func(entry *flag.Flag) {
 		if entry.Name == "home-network" {

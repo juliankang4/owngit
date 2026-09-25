@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -150,5 +151,19 @@ func TestTailscaleCommandExplainsRefusals(t *testing.T) {
 	}
 	if _, err := runTailscale(t, "off", "--state-dir", stateDir, "--tailscale", fake.Path); err == nil || !strings.Contains(err.Error(), "not on") {
 		t.Fatalf("off while off: err=%v", err)
+	}
+	// A mistyped state directory is refused before Tailscale is changed,
+	// as by every other command.
+	for _, command := range []string{"on", "status", "off"} {
+		missing := filepath.Join(t.TempDir(), "missing")
+		if _, err := runTailscale(t, command, "--state-dir", missing, "--tailscale", fake.Path); err == nil {
+			t.Errorf("tailscale %s accepted a missing state directory", command)
+		}
+		if _, err := os.Stat(missing); !os.IsNotExist(err) {
+			t.Errorf("tailscale %s created the missing state directory", command)
+		}
+	}
+	if len(fake.Writes()) != 0 {
+		t.Fatalf("writes=%q", fake.Writes())
 	}
 }
