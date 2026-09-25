@@ -34,7 +34,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 		app.writePlainError(writer, http.StatusServiceUnavailable)
 		return
 	}
-	if request.URL.Query().Get("notice") == removedNotice {
+	if app.resultNotice(writer, request) == removedNotice {
 		chrome.Notices = app.removedNotices(writer, request, chrome.Viewer.AdminConfirmed)
 	}
 	repositories, err := app.Store.Repositories(request.Context())
@@ -223,7 +223,7 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 		}
 		return
 	}
-	http.Redirect(writer, request, "/repositories/"+url.PathEscape(created.ID)+"?notice=repository_created", http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(created.ID)+"?notice=repository_created", http.StatusSeeOther)
 }
 
 func (app *App) handleActivity(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
@@ -408,6 +408,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	}
 	page := app.baseRepositoryPage(request, chrome, stored, summary)
 	requestedRef := request.URL.Query().Get("ref")
+	status := http.StatusOK
 	switch {
 	case len(parts) == 1:
 		page.Tab = webui.RepoTabOverview
@@ -415,6 +416,13 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	case len(parts) == 2 && parts[1] == "code":
 		page.Tab = webui.RepoTabCode
 		app.fillCode(request, &page, summary, requestedRef, request.URL.Query().Get("path"))
+		// A path or a requested branch or tag that does not exist is not
+		// found. The page keeps the repository and links back to it. A
+		// default branch that has gone is the repository's state, not a bad
+		// address, so it stays a normal page with its warning.
+		if page.Code.NotFound || (requestedRef != "" && page.Ref.Missing) {
+			status = http.StatusNotFound
+		}
 	case len(parts) == 2 && parts[1] == "commits":
 		page.Tab = webui.RepoTabCommits
 		app.fillCommits(request, &page, summary, requestedRef, "")
@@ -434,7 +442,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.renderRepositoryUnavailable(writer, request, chrome, stored, err)
 		return
 	}
-	app.render(writer, http.StatusOK, page)
+	app.render(writer, status, page)
 }
 
 // renderRepositoryUnavailable answers a repository page whose Git data could
@@ -1149,10 +1157,24 @@ func (app *App) overviewLanguages(request *http.Request, id, commitOID string) w
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesUnavailable}
 	case stats.TooLarge:
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesTooLarge}
+	case stats.TimedOut:
+		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesSlow}
 	case len(stats.Shares) == 0:
-		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesNone, AttributesIgnored: stats.AttributesIgnored}
+		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesNone, AttributesNote: languageAttributesNote(stats.Attributes)}
 	}
-	return webui.LanguageSummary{Rows: languageRows(stats.Shares), AttributesIgnored: stats.AttributesIgnored}
+	return webui.LanguageSummary{Rows: languageRows(stats.Shares), AttributesNote: languageAttributesNote(stats.Attributes)}
+}
+
+// languageAttributesNote says why .gitattributes language settings were not
+// applied, or nothing when they were.
+func languageAttributesNote(state repository.AttributeState) webui.MessageCode {
+	switch state {
+	case repository.AttributesUnsupported:
+		return webui.MsgRepoLanguagesNoAttrs
+	case repository.AttributesUnreadable:
+		return webui.MsgRepoLanguagesAttrsFailed
+	}
+	return ""
 }
 
 // languageRows turns sizes, largest first, into the panel rows: the first

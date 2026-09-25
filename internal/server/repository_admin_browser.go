@@ -129,7 +129,7 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 		}
 		return
 	}
-	http.Redirect(writer, request, repositorySettingsURL(stored.ID)+"?notice="+defaultBranchNotice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, repositorySettingsURL(stored.ID)+"?notice="+defaultBranchNotice, http.StatusSeeOther)
 }
 
 func hasBranch(summary repository.Summary, name string) bool {
@@ -264,7 +264,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 	// so the dashboard reports it as removed, with the file cleanup still
 	// owed, rather than as a failure to retry on a page that no longer exists.
 	app.setRemovedCookie(writer, request, removedResult{Name: stored.Name, ID: stored.ID, Mode: mode, Kept: result.KeptPath, Incomplete: incomplete})
-	http.Redirect(writer, request, "/?notice="+removedNotice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/?notice="+removedNotice, http.StatusSeeOther)
 }
 
 func (app *App) renderRepositoryDelete(writer http.ResponseWriter, request *http.Request, stored state.Repository, chrome webui.Chrome, mode string, status int) {

@@ -537,6 +537,19 @@ func (r ReviewEvidence) HasReviewer() bool {
 	return r.Recorded() && r.Status != ReviewPending && r.Status != ReviewSkipped
 }
 
+// RevisionLabel names the revision row of a review record: the revision a
+// request or a skip belongs to, or the revision a given review tested.
+func (r ReviewEvidence) RevisionLabel() MessageCode {
+	switch r.Status {
+	case ReviewPending:
+		return MsgReviewRevisionRequested
+	case ReviewSkipped:
+		return MsgReviewRevisionSkipped
+	default:
+		return MsgCheckRevision
+	}
+}
+
 // MergeBlocker is one reason the backend refuses to merge. These are Git and
 // state reasons only; check and review results never appear here.
 type MergeBlocker struct {

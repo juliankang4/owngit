@@ -40,6 +40,8 @@ const (
 	MsgRepoLanguagesTooLarge    MessageCode = "repo.languages.too_large"
 	MsgRepoLanguagesUnavailable MessageCode = "repo.languages.unavailable"
 	MsgRepoLanguagesNoAttrs     MessageCode = "repo.languages.attributes_ignored"
+	MsgRepoLanguagesAttrsFailed MessageCode = "repo.languages.attributes_unreadable"
+	MsgRepoLanguagesSlow        MessageCode = "repo.languages.slow"
 	MsgRepoRestoreLead          MessageCode = "repo.overview.restore_lead"
 	MsgRepoRestoreStart         MessageCode = "repo.overview.restore_start"
 
@@ -135,6 +137,11 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoLanguagesNone:        {en: "No languages detected", ko: "감지된 언어가 없습니다"},
 	MsgRepoLanguagesTooLarge:    {en: "Too many files to count", ko: "파일이 너무 많아 세지 않았습니다"},
 	MsgRepoLanguagesUnavailable: {en: "Not counted right now", ko: "지금은 세지 못했습니다"},
+	MsgRepoLanguagesSlow:        {en: "Counting took too long. It will be tried again in a few minutes.", ko: "세는 데 시간이 오래 걸려 몇 분 뒤 다시 셉니다"},
+	MsgRepoLanguagesAttrsFailed: {
+		en: "Language settings in .gitattributes could not be read, so they were not applied.",
+		ko: ".gitattributes의 언어 설정을 읽지 못해 반영하지 않았습니다.",
+	},
 	MsgRepoLanguagesNoAttrs: {
 		en: "Language settings in .gitattributes were not applied. They need Git 2.40 or newer on the OwnGit host.",
 		ko: ".gitattributes의 언어 설정은 반영하지 않았습니다. OwnGit 호스트에 Git 2.40 이상이 필요합니다.",

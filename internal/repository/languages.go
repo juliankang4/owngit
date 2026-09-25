@@ -118,21 +118,39 @@ type LanguageShare struct {
 
 // LanguageStats is the language make-up of one commit. Shares are sorted
 // by size, largest first. TooLarge means the commit has more files than one
-// count reads, and then Shares is empty rather than partial.
-// AttributesIgnored means the tree has a .gitattributes file but Git could
-// not read attributes from the commit (Git older than 2.40), so linguist
-// attributes were not applied.
+// count reads, and TimedOut means the count ran past its time limit; in both
+// cases Shares is empty rather than partial. Attributes says whether the
+// Linguist attributes of the commit's .gitattributes files were applied.
 type LanguageStats struct {
-	Shares            []LanguageShare
-	TooLarge          bool
-	AttributesIgnored bool
+	Shares     []LanguageShare
+	TooLarge   bool
+	TimedOut   bool
+	Attributes AttributeState
 }
 
+// AttributeState says what happened to the Linguist attributes of a count.
+type AttributeState string
+
+const (
+	// AttributesApplied: applied, or the tree has no .gitattributes file.
+	AttributesApplied AttributeState = ""
+	// AttributesUnsupported: the host Git cannot read attributes from a
+	// commit (it needs Git 2.40 or newer).
+	AttributesUnsupported AttributeState = "unsupported"
+	// AttributesUnreadable: Git could not read them for another reason.
+	AttributesUnreadable AttributeState = "unreadable"
+)
+
 // Bounds for one language count. Variables so tests can lower them.
+// languageTimeoutRetry is how long a count that ran past languageTimeLimit
+// is remembered before it is tried again, so a slow storage folder does not
+// pay the time limit on every overview.
 var (
-	languageEntryLimit        = 200_000
-	languageTimeLimit         = 2 * time.Second
-	languageOutputLimit int64 = 64 << 20
+	languageEntryLimit         = 200_000
+	languageTimeLimit          = 2 * time.Second
+	languageOutputLimit  int64 = 64 << 20
+	languageTimeoutRetry       = 2 * time.Minute
+	languageNow                = time.Now
 )
 
 // languageAttributes are the Linguist attributes Git may report for a path.
@@ -141,7 +159,9 @@ var languageAttributes = []string{"linguist-language", "linguist-vendored", "lin
 // Languages returns the language make-up of commitOID, counted from blob
 // sizes in its tree without a checkout. A commit's contents never change, so
 // the result is cached per repository by commit ID; only the newest counted
-// commit of each repository is kept. Errors are not cached.
+// commit of each repository is kept. A count that ran past its time limit is
+// kept for languageTimeoutRetry. Errors, including a count stopped because
+// the request ended, are not cached.
 func (m *Manager) Languages(ctx context.Context, id, commitOID string) (LanguageStats, error) {
 	if !isOID(commitOID) {
 		return LanguageStats{}, errors.New("invalid commit ID")
@@ -159,11 +179,16 @@ func (m *Manager) Languages(ctx context.Context, id, commitOID string) (Language
 	lock := m.Locks.For(id)
 	lock.RLock()
 	defer lock.RUnlock()
-	ctx, cancel := context.WithTimeout(ctx, languageTimeLimit)
+	limited, cancel := context.WithTimeout(ctx, languageTimeLimit)
 	defer cancel()
-	stats, err := m.countLanguages(ctx, repositoryPath, commitOID)
+	stats, err := m.countLanguages(limited, repositoryPath, commitOID)
 	if err != nil {
-		return LanguageStats{}, err
+		// Only the count's own limit is a result worth remembering. The
+		// request ending first, or Git failing, is tried again next time.
+		if ctx.Err() != nil || !errors.Is(limited.Err(), context.DeadlineExceeded) {
+			return LanguageStats{}, err
+		}
+		stats = LanguageStats{TimedOut: true}
 	}
 	m.languages.store(id, repositoryPath, commitOID, stats)
 	return stats.clone(), nil
@@ -217,9 +242,10 @@ func (m *Manager) countLanguages(ctx context.Context, repositoryPath, commitOID 
 			return LanguageStats{}, ctx.Err()
 		case errors.As(err, &limitErr):
 			return LanguageStats{TooLarge: true}, nil
+		case err != nil && unsupportedAttributeSource(err):
+			stats.Attributes = AttributesUnsupported
 		case err != nil:
-			// Git before 2.40 cannot read attributes from a commit.
-			stats.AttributesIgnored = true
+			stats.Attributes = AttributesUnreadable
 		}
 	}
 	totals := map[string]int64{}
@@ -272,6 +298,14 @@ func (m *Manager) readLanguageAttributes(ctx context.Context, repositoryPath, co
 		attributes[file][fields[index+1]] = value
 	}
 	return attributes, nil
+}
+
+// unsupportedAttributeSource reports whether check-attr failed because the
+// host Git does not know --source (added in Git 2.40). Such a Git answers
+// with its usage and "unknown option `source'".
+func unsupportedAttributeSource(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "unknown option") && strings.Contains(message, "source")
 }
 
 // Paths that GitHub Linguist treats as not written by the project. The
@@ -375,6 +409,9 @@ type languageCache struct {
 type languageEntry struct {
 	path, commit string
 	stats        LanguageStats
+	// retryAt is set for a count that ran past its time limit; the entry is
+	// not used from then on.
+	retryAt time.Time
 }
 
 func (cache *languageCache) lookup(id, repositoryPath, commit string) (LanguageStats, bool) {
@@ -382,6 +419,10 @@ func (cache *languageCache) lookup(id, repositoryPath, commit string) (LanguageS
 	defer cache.mu.Unlock()
 	entry, ok := cache.entries[id]
 	if !ok || entry.path != repositoryPath || entry.commit != commit {
+		return LanguageStats{}, false
+	}
+	if !entry.retryAt.IsZero() && !languageNow().Before(entry.retryAt) {
+		delete(cache.entries, id)
 		return LanguageStats{}, false
 	}
 	return entry.stats.clone(), true
@@ -393,7 +434,11 @@ func (cache *languageCache) store(id, repositoryPath, commit string, stats Langu
 	if cache.entries == nil {
 		cache.entries = make(map[string]languageEntry)
 	}
-	cache.entries[id] = languageEntry{path: repositoryPath, commit: commit, stats: stats.clone()}
+	entry := languageEntry{path: repositoryPath, commit: commit, stats: stats.clone()}
+	if stats.TimedOut {
+		entry.retryAt = languageNow().Add(languageTimeoutRetry)
+	}
+	cache.entries[id] = entry
 }
 
 func (cache *languageCache) forget(present []string) {

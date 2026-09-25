@@ -150,10 +150,14 @@
       </div>
       {{if or $nav.NewRepoURL $nav.NewImportURL}}
       <div class="sb__acts">
-        {{with $nav.NewRepoURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "new"}} aria-current="page"{{end}}>{{icon "plus"}}<span>{{bi $lang "repo.new.title"}}</span></a>{{end}}
+        {{/* Both entries fit on one line under the heading, so the visible
+             English labels are short ("New", "Import"). Assistive technology
+             reads the full names from the hidden text instead, and hovering
+             shows them; the lock's hidden words are kept. */}}
+        {{with $nav.NewRepoURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "new"}} aria-current="page"{{end}} {{biAttr $lang "title" "repo.new.title"}}>{{icon "plus"}}<span aria-hidden="true">{{bi $lang "app.nav.new_short"}}</span><span class="visually-hidden">{{bi $lang "repo.new.title"}}</span></a>{{end}}
         {{/* Importing asks for the administrator password, so the entry
              carries the lock mark until an administrator session exists. */}}
-        {{with $nav.NewImportURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "import"}} aria-current="page"{{end}} {{biAttr $lang "title" "import.list_link"}}>{{icon "import"}}<span>{{bi $lang "app.nav.import"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $.Chrome.Viewer.AdminConfirmed)}}</a>{{end}}
+        {{with $nav.NewImportURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "import"}} aria-current="page"{{end}} {{biAttr $lang "title" "import.list_link"}}>{{icon "import"}}<span aria-hidden="true">{{bi $lang "app.nav.import"}}</span><span class="visually-hidden">{{bi $lang "import.list_link"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $.Chrome.Viewer.AdminConfirmed)}}</a>{{end}}
       </div>
       {{end}}
       {{/* The filter only hides rows already on the page; it starts hidden

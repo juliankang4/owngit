@@ -111,7 +111,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		}
 		notice = "import_run_cancelled"
 	}
-	http.Redirect(writer, request, "/repositories/"+url.PathEscape(result.RepositoryID)+"/import?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(result.RepositoryID)+"/import?notice="+notice, http.StatusSeeOther)
 }
 
 // handleImportPage serves the repository's Import tab. Anyone who may read
@@ -249,7 +249,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		app.renderImportPage(writer, request, stored, summary, chrome, importProblemStatus(err))
 		return
 	}
-	http.Redirect(writer, request, "/repositories/"+url.PathEscape(stored.ID)+"/import?notice="+notice, status)
+	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(stored.ID)+"/import?notice="+notice, status)
 }
 
 func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, status int) {

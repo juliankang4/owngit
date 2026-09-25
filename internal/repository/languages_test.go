@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"owngit/internal/gitexec"
 )
 
 // writeLanguageFixture writes files of the given sizes into the work tree, adds index
@@ -37,6 +41,15 @@ func hashObject(t *testing.T, work, content string) string {
 	path := filepath.Join(t.TempDir(), "blob")
 	noErr(t, os.WriteFile(path, []byte(content), 0o600))
 	return gitOutput(t, work, "hash-object", "-w", path)
+}
+
+// generousLanguageTime lifts the count's time limit for a test that is not
+// about time, so a loaded test machine does not turn a count into a timeout.
+func generousLanguageTime(t *testing.T) {
+	t.Helper()
+	old := languageTimeLimit
+	languageTimeLimit = time.Minute
+	t.Cleanup(func() { languageTimeLimit = old })
 }
 
 var languageFixture = map[string]int{
@@ -73,6 +86,7 @@ var languageFixture = map[string]int{
 // submodules, and vendored, generated, and documentation paths, and applying
 // the commit's Linguist attributes.
 func TestLanguagesCountsListedLanguagesOnly(t *testing.T) {
+	generousLanguageTime(t)
 	manager, remote, work := newTestRepository(t)
 	files := map[string]int{}
 	for name, size := range languageFixture {
@@ -91,7 +105,7 @@ func TestLanguagesCountsListedLanguagesOnly(t *testing.T) {
 		{"Go", 1123}, {"PHP", 400}, {"HTML", 300}, {"TypeScript", 250},
 		{"Makefile", 200}, {"Shell", 150}, {"CSS", 100}, {"Dockerfile", 50},
 	}
-	if stats.AttributesIgnored {
+	if stats.Attributes == AttributesUnsupported {
 		// Git before 2.40 cannot read attributes from a commit, so only the
 		// path rules apply.
 		want = []LanguageShare{
@@ -135,6 +149,7 @@ func TestClassifyLanguage(t *testing.T) {
 // TestLanguagesCacheByCommit proves that a second count of the same commit
 // starts no Git process, and that a new commit is counted again.
 func TestLanguagesCacheByCommit(t *testing.T) {
+	generousLanguageTime(t)
 	if os.PathSeparator != '/' {
 		t.Skip("the command-counting wrapper is a POSIX-shell fixture")
 	}
@@ -173,6 +188,7 @@ func TestLanguagesCacheByCommit(t *testing.T) {
 // count reads as too large, never as partial shares, and a count that runs
 // past its time limit as an error that is not cached.
 func TestLanguagesBounds(t *testing.T) {
+	generousLanguageTime(t)
 	if os.PathSeparator != '/' {
 		t.Skip("the slow-command wrapper is a POSIX-shell fixture")
 	}
@@ -199,20 +215,48 @@ func TestLanguagesBounds(t *testing.T) {
 		t.Fatalf("output cap: stats=%+v err=%v", stats, err)
 	}
 
+	// A count that runs past its time limit is remembered for a short while,
+	// so a slow storage folder does not pay the limit on every overview. A
+	// count stopped because the request itself ended is not remembered.
 	count, _, slowPath := countGitProcesses(t, manager, "ls-tree")
 	noErr(t, os.WriteFile(slowPath, nil, 0o600))
 	undo = restore(languageEntryLimit, languageOutputLimit, 200*time.Millisecond)
+	clock := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	oldNow := languageNow
+	languageNow = func() time.Time { return clock }
+	defer func() { languageNow = oldNow }()
 	started := time.Now()
-	_, err = manager.Languages(context.Background(), "sample", commit)
-	undo()
-	if err == nil || time.Since(started) > 1900*time.Millisecond {
-		t.Fatalf("time cap: err=%v after %s", err, time.Since(started))
+	stats, err = manager.Languages(context.Background(), "sample", commit)
+	if err != nil || !stats.TimedOut || len(stats.Shares) != 0 || time.Since(started) > 1900*time.Millisecond {
+		t.Fatalf("time cap: stats=%+v err=%v after %s", stats, err, time.Since(started))
 	}
 	noErr(t, os.Remove(slowPath))
 	before := count()
+	clock = clock.Add(languageTimeoutRetry - time.Second)
+	if stats, err = manager.Languages(context.Background(), "sample", commit); err != nil || !stats.TimedOut || count() != before {
+		t.Fatalf("within the retry period: stats=%+v err=%v, %d more Git processes", stats, err, count()-before)
+	}
+	// The retried count gets the generous limit back, so only the retry
+	// period is under test here, not the machine's speed.
+	undo()
+	clock = clock.Add(2 * time.Second)
 	stats, err = manager.Languages(context.Background(), "sample", commit)
-	if err != nil || count() == before || len(stats.Shares) != 1 || stats.Shares[0].Bytes != 40 {
-		t.Fatalf("after a timed-out count: stats=%+v err=%v", stats, err)
+	if err != nil || count() == before || stats.TimedOut || len(stats.Shares) != 1 || stats.Shares[0].Bytes != 40 {
+		t.Fatalf("after the retry period: stats=%+v err=%v", stats, err)
+	}
+
+	manager.ForgetRefSnapshots(nil)
+	noErr(t, os.WriteFile(slowPath, nil, 0o600))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	_, err = manager.Languages(ctx, "sample", commit)
+	cancel()
+	noErr(t, os.Remove(slowPath))
+	if err == nil {
+		t.Fatal("a count whose request ended reported no error")
+	}
+	before = count()
+	if stats, err = manager.Languages(context.Background(), "sample", commit); err != nil || count() == before || stats.TimedOut {
+		t.Fatalf("a count stopped by its request was remembered: stats=%+v err=%v", stats, err)
 	}
 
 	if _, err := manager.Languages(context.Background(), "sample", "not-a-commit"); err == nil {
@@ -220,5 +264,42 @@ func TestLanguagesBounds(t *testing.T) {
 	}
 	if _, err := manager.Languages(context.Background(), "missing", commit); err == nil || errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("a missing repository: err=%v", err)
+	}
+}
+
+// A check-attr that fails because Git is too old to read attributes from a
+// commit is told apart from one that fails for another reason, and either
+// way the path rules still count the languages.
+func TestLanguagesAttributeFailures(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("the failing-command wrapper is a POSIX-shell fixture")
+	}
+	for _, test := range []struct {
+		name, stderr string
+		status       int
+		want         AttributeState
+	}{
+		{"old Git", "error: unknown option `source'\nusage: git check-attr [--source <tree-ish>] [-a | --all | <attr>...] [--] <pathname>...", 129, AttributesUnsupported},
+		{"other failure", "fatal: unable to read attributes", 128, AttributesUnreadable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			generousLanguageTime(t)
+			manager, remote, work := newTestRepository(t)
+			noErr(t, os.WriteFile(filepath.Join(work, ".gitattributes"), []byte("*.inc linguist-language=PHP\n"), 0o600))
+			commit := writeLanguageFixture(t, work, remote, map[string]int{"main.go": 30, "lib.inc": 10})
+			gitPath, err := exec.LookPath("git")
+			noErr(t, err)
+			dir := t.TempDir()
+			wrapper := filepath.Join(dir, "git")
+			script := "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = check-attr ]; then printf '%s\\n' " + shellQuote(test.stderr) + " >&2; exit " + strconv.Itoa(test.status) + "; fi; done\nexec " + shellQuote(gitPath) + " \"$@\"\n"
+			noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
+			runner, err := gitexec.New(wrapper, filepath.Join(dir, "runtime"))
+			noErr(t, err)
+			manager.Git = runner
+			stats, err := manager.Languages(context.Background(), "sample", commit)
+			if err != nil || stats.Attributes != test.want || !reflect.DeepEqual(stats.Shares, []LanguageShare{{"Go", 30}}) {
+				t.Fatalf("stats=%+v err=%v, want attributes %q and Go only", stats, err, test.want)
+			}
+		})
 	}
 }

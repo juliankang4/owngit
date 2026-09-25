@@ -119,22 +119,24 @@
 
       {{/* The language make-up of the default branch: one bar, then a legend
            whose names and percentages carry the meaning, so color is never
-           the only cue. The bar's text alternative repeats the legend. */}}
+           the only cue. The bar only repeats the legend, so it is hidden
+           from assistive technology, which reads the legend once as a list
+           named for the shares. */}}
       {{with $o.Languages}}{{if or .Rows .Note}}
       <section class="ov-panel langs" aria-labelledby="ov-langs-h">
         {{if .Rows}}
         <div class="sec__bar sec__bar--flat">
           <h2 id="ov-langs-h">{{bi $lang "repo.languages.title"}}</h2>
         </div>
-        <div class="langs__bar" role="img" {{biAttrText $lang "aria-label" (.BarLabel "en") (.BarLabel "ko")}}>
+        <div class="langs__bar" aria-hidden="true">
           {{- range .Rows}}<span class="langs__seg" style="flex-grow:{{.Share}};{{if .Color}}--lang:{{.Color}}{{end}}"></span>{{end -}}
         </div>
-        <ul class="langs__list">
+        <ul class="langs__list" {{biAttr $lang "aria-label" "repo.languages.bar_label"}}>
           {{- range .Rows}}
           <li><span class="langs__dot" aria-hidden="true"{{if .Color}} style="--lang:{{.Color}}"{{end}}></span><span class="langs__name">{{if .Other}}{{bi $lang "repo.languages.other"}}{{else}}{{.Name}}{{end}}</span> <span class="langs__pct">{{.Percent}}</span></li>
           {{- end}}
         </ul>
-        {{if .AttributesIgnored}}<p class="ov-order">{{bi $lang "repo.languages.attributes_ignored"}}</p>{{end}}
+        {{with .AttributesNote}}<p class="ov-order">{{bi $lang .}}</p>{{end}}
         {{else}}
         <div class="sec__bar sec__bar--flat">
           <h2 id="ov-langs-h">{{bi $lang "repo.languages.title"}}</h2>
@@ -225,10 +227,12 @@
   </div>
 
   {{/* A missing ref has no tree to show. The refbar above already carries the
-       warning, and the backend's page notice names the actual reason, so the
-       panel stays quiet rather than printing the same generic sentence a
-       second line below the first. */}}
+       warning, so the panel does not repeat it; it only offers the way back
+       to the repository. */}}
   {{if $p.Ref.Missing}}
+    <div class="empty">
+      <a class="btn" href="{{$p.Repo.URL}}">{{bi $lang "app.back_to_repository"}}</a>
+    </div>
   {{else if $c.NotFound}}
     <div class="empty">
       <p class="empty__lead">{{bi $lang "code.path_missing"}}</p>

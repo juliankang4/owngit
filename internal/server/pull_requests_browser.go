@@ -177,7 +177,7 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")
-	http.Redirect(writer, request, pullRequestURL(stored.ID, created.Number)+"?notice=pull_request_created", http.StatusSeeOther)
+	app.noticeRedirect(writer, request, pullRequestURL(stored.ID, created.Number)+"?notice=pull_request_created", http.StatusSeeOther)
 }
 
 func (app *App) handlePullRequestGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64) {
@@ -238,7 +238,7 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")
-	http.Redirect(writer, request, pullRequestURL(stored.ID, view.Number)+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+	app.noticeRedirect(writer, request, pullRequestURL(stored.ID, view.Number)+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }
 
 func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, view *pullrequest.View, notices []webui.Notice, extraBlockers []webui.MergeBlocker, status int) {
@@ -287,7 +287,9 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 	if notices != nil {
 		page.Chrome.Notices = notices
 	} else {
-		page.Chrome.Notices = pullRequestNotices(request.URL.Query().Get("notice"), view)
+		// A result is shown only after the action that produced it, once
+		// (resultNotice), and only when the pull request's state confirms it.
+		page.Chrome.Notices = pullRequestNotices(app.resultNotice(writer, request), view)
 	}
 	page.Merge.Blockers = append(page.Merge.Blockers, extraBlockers...)
 	if len(extraBlockers) != 0 {

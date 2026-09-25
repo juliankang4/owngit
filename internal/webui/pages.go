@@ -2,7 +2,6 @@ package webui
 
 import (
 	"html/template"
-	"strings"
 	"time"
 )
 
@@ -541,9 +540,10 @@ type LanguageSummary struct {
 	// Note explains an empty panel: nothing detected, too large, or not
 	// counted. Empty when Rows are shown.
 	Note MessageCode
-	// AttributesIgnored says .gitattributes language settings were not
-	// applied because the host Git cannot read them from a commit.
-	AttributesIgnored bool
+	// AttributesNote says why .gitattributes language settings were not
+	// applied: the host Git cannot read them from a commit, or they could
+	// not be read. Empty when they were applied or there are none.
+	AttributesNote MessageCode
 }
 
 // LanguageRow is one language, or the folded rest when Other is true.
@@ -557,19 +557,6 @@ type LanguageRow struct {
 	// Percent is the shown share with one decimal, for example "93.9%".
 	Percent string
 	Other   bool
-}
-
-// BarLabel is the text alternative of the language bar, in lang.
-func (summary LanguageSummary) BarLabel(lang Lang) string {
-	parts := make([]string, 0, len(summary.Rows))
-	for _, row := range summary.Rows {
-		name := row.Name
-		if row.Other {
-			name = Text(lang, MsgRepoLanguagesOther)
-		}
-		parts = append(parts, name+" "+row.Percent)
-	}
-	return Text(lang, MsgRepoLanguagesBarLabel) + ": " + strings.Join(parts, ", ")
 }
 
 // RefLine is one branch or tag row.

@@ -81,7 +81,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 				[]webui.Notice{webui.Error("", webui.MsgHelperNotFound)}, state.HelperCredential{}, "", http.StatusConflict)
 			return
 		}
-		http.Redirect(writer, request, baseHelperCredentialsURL(stored.ID)+"?notice=helper_credential_revoked", http.StatusSeeOther)
+		app.noticeRedirect(writer, request, baseHelperCredentialsURL(stored.ID)+"?notice=helper_credential_revoked", http.StatusSeeOther)
 	default:
 		app.renderHelperCredentials(writer, request, stored, summary, chrome, action, credentialID,
 			[]webui.Notice{webui.Error("", webui.MsgHelperFailed)}, state.HelperCredential{}, "", http.StatusBadRequest)

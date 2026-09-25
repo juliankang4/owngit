@@ -1016,13 +1016,39 @@ func TestCheckEvidenceNeverOverclaims(t *testing.T) {
 					t.Errorf("unrecognised statuses are stated %d times, want both the check and the review", n)
 				}
 			}},
-		screen{name: "a pending review labels its revision as the target, not tested", lang: LangKO,
+		screen{name: "a pending review labels its revision as requested, not tested", lang: LangKO,
 			page: with(pullRequestPage(fullChrome(LangKO), prFixtureFailing), func(p *PullRequestPage) {
 				p.Checks = CheckEvidence{Status: CheckAbsent, Configured: true, Advisory: true}
 				p.Review = ReviewEvidence{Status: ReviewPending, SourceOID: "7f2c1a0bb", ShortSourceOID: "7f2c1a0",
 					BoundToCurrentRevision: true, Provenance: ReviewFromRequest, SubmittedAt: testNow}
 			}),
-			markup: []string{"대상 커밋", "7f2c1a0"}, noMarkup: []string{"테스트한 커밋"}},
+			markup: []string{`>요청한 커밋</span></dt><dd class="mono">7f2c1a0</dd>`}, noMarkup: []string{"테스트한 커밋", ">대상 커밋</span></dt>"}},
+		// QA-043: only a given review names the revision it tested. A request
+		// and a skip keep their revision under a label that says what it is.
+		screen{name: "a pending review in English is requested for its revision",
+			page: with(pullRequestPage(fullChrome(LangEN), prFixtureFailing), func(p *PullRequestPage) {
+				p.Checks = CheckEvidence{Status: CheckAbsent, Configured: true, Advisory: true}
+				p.Review = ReviewEvidence{Status: ReviewPending, SourceOID: "7f2c1a0bb", ShortSourceOID: "7f2c1a0",
+					BoundToCurrentRevision: true, Provenance: ReviewFromRequest, SubmittedAt: testNow}
+			}),
+			markup:   []string{`>Requested for revision</span></dt><dd class="mono">7f2c1a0</dd>`},
+			noMarkup: []string{">Tested revision</span></dt>"}},
+		screen{name: "a skipped review names the revision it skipped",
+			page: with(pullRequestPage(fullChrome(LangEN), prFixtureFailing), func(p *PullRequestPage) {
+				p.Checks = CheckEvidence{Status: CheckAbsent, Configured: true, Advisory: true}
+				p.Review = ReviewEvidence{Status: ReviewSkipped, SourceOID: "7f2c1a0bb", ShortSourceOID: "7f2c1a0",
+					BoundToCurrentRevision: true, Provenance: ReviewFromSkip, SubmittedAt: testNow}
+			}),
+			markup:   []string{`>Skipped for revision</span></dt><dd class="mono">7f2c1a0</dd>`},
+			noMarkup: []string{">Tested revision</span></dt>"}},
+		screen{name: "a given review names its tested revision",
+			page: with(pullRequestPage(fullChrome(LangEN), prFixtureFailing), func(p *PullRequestPage) {
+				p.Checks = CheckEvidence{Status: CheckAbsent, Configured: true, Advisory: true}
+				p.Review = ReviewEvidence{Status: ReviewApproved, SourceOID: "7f2c1a0bb", ShortSourceOID: "7f2c1a0",
+					BoundToCurrentRevision: true, Provenance: ReviewFromExternalTool, ReviewerLabel: "reviewer-one", SubmittedAt: testNow}
+			}),
+			markup: []string{`>Tested revision</span></dt><dd class="mono">7f2c1a0</dd>`},
+			absent: []MessageCode{MsgReviewRevisionRequested, MsgReviewRevisionSkipped}},
 		screen{name: "a stale result names its revision and never looks current",
 			page: prEN(func(p *PullRequestPage) {
 				p.Checks.Status, p.Checks.Stale, p.Checks.TestedCommit, p.Checks.RevisionShortOID = CheckStale, true, true, "5d0aa13"

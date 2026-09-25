@@ -167,6 +167,7 @@ func TestSettingsChangesConfirmTheSave(t *testing.T) {
 	}
 
 	// Korean readers get the same confirmation.
+	afterAction(t, jar, server.URL, "settings_saved")
 	body, _ := dashboardGET(t, client, server.URL+"/settings?notice=settings_saved&lang=ko")
 	if !strings.Contains(body, webui.Text(webui.LangKO, webui.MsgSettingsSaved)) {
 		t.Error("the Korean page does not confirm the save")
@@ -216,6 +217,7 @@ func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 		t.Fatalf("after enabling the shared password location=%q, want sign-in with the confirmation", location)
 	}
 	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		afterAction(t, jar, server.URL, "access_password_saved")
 		body, status := dashboardGET(t, client, server.URL+response.Header.Get("Location")+"&lang="+string(lang))
 		if status != http.StatusOK || !strings.Contains(body, webui.Text(lang, webui.MsgSettingsAccessSaved)) || !strings.Contains(body, `name="next" value="/settings"`) {
 			t.Fatalf("%s: the sign-in page does not confirm the saved shared password (status %d)", lang, status)

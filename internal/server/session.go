@@ -43,7 +43,14 @@ func (app *App) requireGeneral(writer http.ResponseWriter, request *http.Request
 // form. Returning there directly would answer 404.
 func loginNext(request *http.Request) string {
 	if request.Method == http.MethodGet || request.Method == http.MethodHead {
-		return localNext(request.URL.RequestURI(), "/")
+		// A result notice belongs to the moment of its action. Signing in
+		// later must not bring it back.
+		target := *request.URL
+		if query := target.Query(); query.Has("notice") {
+			query.Del("notice")
+			target.RawQuery = query.Encode()
+		}
+		return localNext(target.RequestURI(), "/")
 	}
 	target := request.URL
 	if referer, err := url.Parse(request.Header.Get("Referer")); err == nil && referer.Host == request.Host && (referer.Scheme == "http" || referer.Scheme == "https") {
@@ -259,8 +266,36 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		})
 		chrome.Nav = nav
 	}
-	chrome.Notices = noticeFromQuery(request)
+	chrome.Notices = noticeFor(app.resultNotice(writer, request))
 	return chrome, nil
+}
+
+// noticeRedirect ends an action by redirecting to target. When target names
+// a result notice, the notice is also kept in a short-lived cookie, and the
+// page shows the notice only while the two match (see resultNotice).
+func (app *App) noticeRedirect(writer http.ResponseWriter, request *http.Request, target string, status int) {
+	if parsed, err := url.Parse(target); err == nil {
+		if notice := parsed.Query().Get("notice"); notice != "" {
+			app.setCookie(writer, request, noticeCookie, notice, app.now().Add(noticeCookieMaxAge), true)
+		}
+	}
+	http.Redirect(writer, request, target, status)
+}
+
+// resultNotice returns the result notice of the address when the action that
+// produced it set the matching cookie, and clears the cookie so the notice
+// is shown once. A crafted or reloaded address gives "".
+func (app *App) resultNotice(writer http.ResponseWriter, request *http.Request) string {
+	notice := request.URL.Query().Get("notice")
+	if notice == "" {
+		return ""
+	}
+	cookie, err := request.Cookie(noticeCookie)
+	if err != nil || cookie.Value != notice {
+		return ""
+	}
+	app.clearCookie(writer, request, noticeCookie, true)
+	return notice
 }
 
 func (app *App) setupSession(request *http.Request) (state.Session, bool) {
@@ -307,8 +342,9 @@ func (app *App) appearance(writer http.ResponseWriter, request *http.Request) we
 	return webui.AppearanceSystem
 }
 
-func noticeFromQuery(request *http.Request) []webui.Notice {
-	switch request.URL.Query().Get("notice") {
+// noticeFor turns a verified result notice into its message.
+func noticeFor(notice string) []webui.Notice {
+	switch notice {
 	case "setup_completed":
 		return []webui.Notice{webui.Success(webui.MsgSetupCompleted)}
 	case "repository_created":

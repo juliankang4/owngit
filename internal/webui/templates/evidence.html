@@ -181,7 +181,7 @@
         <div><dt>{{bi $lang "evidence.review.reviewer"}}</dt><dd>{{.}}</dd></div>
       {{end}}
       {{with $e.ShortSourceOID}}
-        <div><dt>{{bi $lang "evidence.checks.revision"}}</dt><dd class="mono">{{.}}</dd></div>
+        <div><dt>{{bi $lang $e.RevisionLabel}}</dt><dd class="mono">{{.}}</dd></div>
       {{end}}
       {{if notZero $e.SubmittedAt}}
         <div><dt>{{bi $lang "evidence.review.submitted_at"}}</dt><dd>{{biDateTime $lang $e.SubmittedAt}}</dd></div>

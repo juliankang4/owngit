@@ -269,6 +269,7 @@ func TestBrowserEveryCheckResultReachesTheScreen(t *testing.T) {
 		"check_job_rerun":            webui.MsgCCJobRerunQueued,
 		"check_job_rerun_existing":   webui.MsgCCJobRerunExisting,
 	} {
+		afterAction(t, jar, server.URL, key)
 		shown := browserGET(t, client, server.URL+configuredChecksURL("project")+"?notice="+key)
 		if shown.status != http.StatusOK {
 			t.Fatalf("%s: status=%d", key, shown.status)
@@ -277,6 +278,7 @@ func TestBrowserEveryCheckResultReachesTheScreen(t *testing.T) {
 			t.Fatalf("%s: the result was dropped instead of shown", key)
 		}
 	}
+	afterAction(t, jar, server.URL, "runner_token_revoked")
 	shown := browserGET(t, client, server.URL+runnerTokensURL("project")+"?notice=runner_token_revoked")
 	if shown.status != http.StatusOK || !strings.Contains(shown.body, webui.Text(webui.LangEN, webui.MsgRTRevokedDone)) {
 		t.Fatalf("runner_token_revoked status=%d, result shown=%v",

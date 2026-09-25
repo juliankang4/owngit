@@ -9,8 +9,11 @@ const (
 	MsgNavNoMatch      MessageCode = "app.nav.no_match"
 	MsgNavMenu         MessageCode = "app.nav.menu"
 	MsgNavImport       MessageCode = "app.nav.import"
-	MsgNavAdminOn      MessageCode = "app.nav.admin_on"
-	MsgNavAdminEnd     MessageCode = "app.nav.admin_end"
+	// MsgNavNewShort is the visible sidebar label of New repository. Korean
+	// keeps the full name, which already fits.
+	MsgNavNewShort MessageCode = "app.nav.new_short"
+	MsgNavAdminOn  MessageCode = "app.nav.admin_on"
+	MsgNavAdminEnd MessageCode = "app.nav.admin_end"
 
 	MsgCodeFiles         MessageCode = "code.files"
 	MsgCodePreview       MessageCode = "code.preview"
@@ -47,6 +50,7 @@ var navigationCatalog = map[MessageCode]message{
 	MsgNavNoMatch:      {en: "No repository matches.", ko: "일치하는 저장소가 없습니다."},
 	MsgNavMenu:         {en: "Menu", ko: "메뉴"},
 	MsgNavImport:       {en: "Import", ko: "가져오기"},
+	MsgNavNewShort:     {en: "New", ko: "새 저장소"},
 	MsgNavAdminOn:      {en: "Confirmed as administrator", ko: "관리자로 확인됨"},
 	MsgNavAdminEnd:     {en: "End", ko: "종료"},
 

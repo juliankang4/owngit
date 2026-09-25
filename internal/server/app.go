@@ -31,6 +31,11 @@ const (
 	// releaseDismissCookie holds the release version whose dashboard notice
 	// this browser dismissed. It is a preference, not a credential.
 	releaseDismissCookie = "owngit_release_dismissed"
+	// noticeCookie carries the result notice of the action that redirected
+	// here. A page shows a result notice from its address only when this
+	// cookie names the same notice, so an address alone cannot show one.
+	noticeCookie       = "owngit_notice"
+	noticeCookieMaxAge = 2 * time.Minute
 )
 
 type App struct {

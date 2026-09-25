@@ -101,8 +101,12 @@ const (
 	MsgReviewNoChecksRun    MessageCode = "evidence.review.no_checks_run"
 	MsgReviewOtherRevision  MessageCode = "evidence.review.other_revision"
 	MsgReviewSubmittedAt    MessageCode = "evidence.review.submitted_at"
-	MsgReviewCoverage       MessageCode = "evidence.review.coverage"
-	MsgReviewRequestIntent  MessageCode = "evidence.review.request_intent"
+	// The revision a review request or skip belongs to. Only a given review
+	// names its revision "Tested revision" (MsgCheckRevision).
+	MsgReviewRevisionRequested MessageCode = "evidence.review.revision_requested"
+	MsgReviewRevisionSkipped   MessageCode = "evidence.review.revision_skipped"
+	MsgReviewCoverage          MessageCode = "evidence.review.coverage"
+	MsgReviewRequestIntent     MessageCode = "evidence.review.request_intent"
 )
 
 // Pull request screens.
@@ -473,8 +477,10 @@ var evidenceCatalog = map[MessageCode]message{
 		en: "This review belongs to an earlier revision, not to the code shown here.",
 		ko: "이 리뷰는 이전 커밋의 것이며, 여기 표시된 코드에 대한 것이 아닙니다.",
 	},
-	MsgReviewSubmittedAt: {en: "Recorded", ko: "기록 시각"},
-	MsgReviewCoverage:    {en: "Covered", ko: "다룬 범위"},
+	MsgReviewSubmittedAt:       {en: "Recorded", ko: "기록 시각"},
+	MsgReviewRevisionRequested: {en: "Requested for revision", ko: "요청한 커밋"},
+	MsgReviewRevisionSkipped:   {en: "Skipped for revision", ko: "건너뛴 커밋"},
+	MsgReviewCoverage:          {en: "Covered", ko: "다룬 범위"},
 	MsgReviewRequestIntent: {
 		en: "Requesting or skipping records your decision. It does not call a review model.",
 		ko: "요청과 건너뛰기는 결정을 기록할 뿐, 리뷰 모델을 호출하지는 않습니다.",

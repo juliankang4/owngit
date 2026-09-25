@@ -40,7 +40,8 @@ func TestOverviewShowsLanguages(t *testing.T) {
 			webui.Text(lang, webui.MsgRepoLanguagesTitle),
 			`<span class="langs__name">Go</span> <span class="langs__pct">75.0%</span>`,
 			`<span class="langs__name">CSS</span> <span class="langs__pct">25.0%</span>`,
-			`--lang:#00add8`, webui.Text(lang, webui.MsgRepoLanguagesBarLabel) + ": Go 75.0%, CSS 25.0%",
+			`--lang:#00add8`, `<div class="langs__bar" aria-hidden="true">`,
+			`aria-label="` + webui.Text(lang, webui.MsgRepoLanguagesBarLabel) + `"`,
 		} {
 			if !strings.Contains(panel, want) {
 				t.Errorf("%s Languages panel lacks %q:\n%s", lang, want, panel)

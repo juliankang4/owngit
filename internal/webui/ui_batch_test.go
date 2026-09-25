@@ -113,12 +113,14 @@ func TestUIBatchScreens(t *testing.T) {
 				}}
 			}),
 			want: []MessageCode{MsgRepoLanguagesTitle, MsgRepoLanguagesOther},
-			markup: []string{`role="img" aria-label="Language shares: Go 93.9%, &lt;b&gt;&#34;x&#34;&lt;/b&gt; 5.3%, Other 0.8%"`,
-				`data-ko-aria-label="언어 비율: Go 93.9%, &lt;b&gt;&#34;x&#34;&lt;/b&gt; 5.3%, 기타 0.8%"`,
+			// The bar only repeats the legend, so assistive technology reads
+			// the legend once, as a named list, and skips the bar.
+			markup: []string{`<div class="langs__bar" aria-hidden="true">`,
+				`<ul class="langs__list" aria-label="Language shares" data-en-aria-label="Language shares" data-ko-aria-label="언어 비율">`,
 				`style="flex-grow:93.94;--lang:#00add8"`, `style="flex-grow:0.76;"`,
 				`<span class="langs__name">&lt;b&gt;&#34;x&#34;&lt;/b&gt;</span> <span class="langs__pct">5.3%</span>`,
 				`<span class="langs__dot" aria-hidden="true" style="--lang:#00add8"></span><span class="langs__name">Go</span>`},
-			noMarkup: []string{`<b>"x"</b>`, "ZgotmplZ"},
+			noMarkup: []string{`<b>"x"</b>`, "ZgotmplZ", `role="img"`, "Language shares: "},
 			extra:    inOrder(`id="ov-tags-h"`, `id="ov-langs-h"`, `id="ov-kept-h"`)},
 		screen{name: "the languages panel says when nothing was detected", lang: LangKO,
 			page: with(repoPage(fullChrome(LangKO), RepoTabOverview), func(p *RepositoryPage) {
@@ -127,6 +129,17 @@ func TestUIBatchScreens(t *testing.T) {
 			want: []MessageCode{MsgRepoLanguagesTitle, MsgRepoLanguagesNone}, noMarkup: []string{"langs__bar"}},
 		screen{name: "an overview without a language summary has no panel",
 			page: repoPage(fullChrome(LangEN), RepoTabOverview), absent: []MessageCode{MsgRepoLanguagesTitle, MsgErrGeneric}},
+		screen{name: "unreadable language settings are named as unreadable, not as an old Git",
+			page: with(repoPage(fullChrome(LangEN), RepoTabOverview), func(p *RepositoryPage) {
+				p.Overview.Languages = LanguageSummary{Rows: []LanguageRow{{Name: "Go", Color: "#00add8", Share: 100, Percent: "100.0%"}},
+					AttributesNote: MsgRepoLanguagesAttrsFailed}
+			}),
+			want: []MessageCode{MsgRepoLanguagesAttrsFailed}, absent: []MessageCode{MsgRepoLanguagesNoAttrs}},
+		screen{name: "a count that took too long says so and when it is tried again", lang: LangKO,
+			page: with(repoPage(fullChrome(LangKO), RepoTabOverview), func(p *RepositoryPage) {
+				p.Overview.Languages = LanguageSummary{Note: MsgRepoLanguagesSlow}
+			}),
+			want: []MessageCode{MsgRepoLanguagesSlow}, noMarkup: []string{"langs__bar"}},
 		screen{name: "a language count past its bounds shows a note, not a share",
 			page: with(repoPage(fullChrome(LangEN), RepoTabOverview), func(p *RepositoryPage) {
 				p.Overview.Languages = LanguageSummary{Note: MsgRepoLanguagesTooLarge}

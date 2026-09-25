@@ -184,7 +184,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	app.clearCookie(writer, request, setupCookie, true)
-	http.Redirect(writer, request, "/?notice=setup_completed", http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/?notice=setup_completed", http.StatusSeeOther)
 }
 
 func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Request, csrf string, form webui.SetupForm, notices []webui.Notice, status int) {
@@ -380,13 +380,16 @@ func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, 
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
 		return
 	}
-	kind, cookieName, notice := "general", generalCookie, "logout"
+	// Leaving shared access is confirmed on the sign-in page it leads to,
+	// not after the next sign-in. Ending the administrator session keeps the
+	// shared session, so its confirmation stays on the dashboard.
+	kind, cookieName, target := "general", generalCookie, "/login?notice=logout"
 	if scope == webui.AuthAdmin {
-		kind, cookieName, notice = "admin", adminCookie, "admin_logout"
+		kind, cookieName, target = "admin", adminCookie, "/?notice=admin_logout"
 	}
 	app.deleteSessionCookie(request.Context(), request, kind, cookieName)
 	app.clearCookie(writer, request, cookieName, true)
-	http.Redirect(writer, request, "/?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, target, http.StatusSeeOther)
 }
 
 func chooseMessage(condition bool, yes, no webui.MessageCode) webui.MessageCode {

@@ -118,11 +118,11 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	// sign-in page and drop the confirmation, so the confirmation goes there.
 	if action == webui.ActionEnableAccessPassword || action == webui.ActionChangeAccessPassword {
 		if _, ok := app.cookieSession(request, "admin", adminCookie); !ok {
-			http.Redirect(writer, request, "/login?notice=access_password_saved&next=%2Fsettings", http.StatusSeeOther)
+			app.noticeRedirect(writer, request, "/login?notice=access_password_saved&next=%2Fsettings", http.StatusSeeOther)
 			return
 		}
 	}
-	http.Redirect(writer, request, "/settings?notice=settings_saved", http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/settings?notice=settings_saved", http.StatusSeeOther)
 }
 
 // passwordRuleMessage names the password rule a refused password broke.

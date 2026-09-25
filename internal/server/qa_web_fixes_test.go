@@ -77,6 +77,7 @@ func TestBrowserMergeOfAContainedSourceIsAlreadyUpToDate(t *testing.T) {
 		t.Fatalf("main=%s, want it unchanged at %s", got, fixture.sourceOID)
 	}
 	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		afterAction(t, jar, server.URL, "pull_request_up_to_date")
 		page := browserGET(t, client, server.URL+merge.header.Get("Location")+"&lang="+string(lang))
 		for _, code := range []webui.MessageCode{webui.MsgPRUpToDate, webui.MsgPRMergedUpToDate, webui.MsgPRMergedUpToDateFor, webui.MsgPRMergedTarget} {
 			if !strings.Contains(page.body, webui.Text(lang, code)) {
@@ -115,10 +116,11 @@ func TestActionsAfterTheSourceBranchWasDeletedExplainTheRefusal(t *testing.T) {
 }
 
 // QA-016: a notice from the address shows only when the pull request's state
-// confirms it.
+// confirms it. Each address here comes with the notice cookie its action
+// would set (QA-046), so the state check alone decides.
 func TestPullRequestNoticesMustMatchTheState(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	server, client, _ := openBrowser(t, fixture)
+	server, client, jar := openBrowser(t, fixture)
 	_, err := fixture.app.PullRequests.Create(context.Background(), pullrequest.CreateInput{Repository: "project", Title: "Open", SourceBranch: "feature", TargetBranch: "main"})
 	noErr(t, err)
 	merged := webui.Text(webui.LangEN, webui.MsgPRMerged)
@@ -131,6 +133,8 @@ func TestPullRequestNoticesMustMatchTheState(t *testing.T) {
 		"/settings?notice=pull_request_merged",
 		"/?notice=pull_request_created",
 	} {
+		parsed, _ := url.Parse(target)
+		afterAction(t, jar, server.URL, parsed.Query().Get("notice"))
 		page := browserGET(t, client, server.URL+target)
 		for _, code := range []webui.MessageCode{webui.MsgPRMerged, webui.MsgPRUpToDate, webui.MsgPRReviewAsked, webui.MsgPRReviewSkipped, webui.MsgPRCreated} {
 			if strings.Contains(page.body, webui.Text(webui.LangEN, code)) {
@@ -138,11 +142,13 @@ func TestPullRequestNoticesMustMatchTheState(t *testing.T) {
 			}
 		}
 	}
+	afterAction(t, jar, server.URL, "pull_request_created")
 	if page := browserGET(t, client, server.URL+"/repositories/project/pull-requests/1?notice=pull_request_created"); !strings.Contains(page.body, webui.Text(webui.LangEN, webui.MsgPRCreated)) {
 		t.Error("the created notice is missing on the open pull request")
 	}
 	_, err = fixture.app.PullRequests.Merge(context.Background(), "project", 1, pullrequest.RevisionInput{SourceOID: fixture.sourceOID, TargetOID: fixture.targetOID})
 	noErr(t, err)
+	afterAction(t, jar, server.URL, "pull_request_merged")
 	if page := browserGET(t, client, server.URL+"/repositories/project/pull-requests/1?notice=pull_request_merged"); !strings.Contains(page.body, merged) {
 		t.Error("the merged notice is missing on the merged pull request")
 	}
@@ -299,6 +305,7 @@ func TestCloseAndReopenPullRequestInBrowserAndAPI(t *testing.T) {
 		t.Fatalf("close status=%d location=%q", closed.status, closed.header.Get("Location"))
 	}
 	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		afterAction(t, jar, server.URL, "pull_request_closed")
 		page = browserGET(t, client, server.URL+closed.header.Get("Location")+"&lang="+string(lang))
 		for _, code := range []webui.MessageCode{webui.MsgPRClosedDone, webui.MsgPRStateClosed, webui.MsgPRClosedNote, webui.MsgPRReopen} {
 			if !strings.Contains(page.body, webui.Text(lang, code)) {

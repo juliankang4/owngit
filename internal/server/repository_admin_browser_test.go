@@ -351,12 +351,14 @@ func TestRepositoryDeleteFilesRemovesTheFolder(t *testing.T) {
 func TestRemovalNoticeTrustsOnlyItsOwnCookie(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)
+	// A crafted link without the action says nothing at all (QA-046).
 	plain := browserGET(t, client, server.URL+"/?notice="+removedNotice)
-	if !strings.Contains(plain.body, "The repository was removed.") || strings.Contains(plain.body, removedFolderName) {
-		t.Fatal("a crafted notice link claimed more than the generic sentence")
+	if strings.Contains(plain.body, "The repository was removed.") || strings.Contains(plain.body, removedFolderName) {
+		t.Fatal("a crafted notice link claimed a removal")
 	}
 	parsed, _ := url.Parse(server.URL)
 	jar.SetCookies(parsed, []*http.Cookie{{Name: removedCookie, Value: "%%%not-base64", Path: "/"}})
+	afterAction(t, jar, server.URL, removedNotice)
 	malformed := browserGET(t, client, server.URL+"/?notice="+removedNotice)
 	if !strings.Contains(malformed.body, "The repository was removed.") {
 		t.Fatal("a malformed removal cookie was not answered with the generic notice")
@@ -365,6 +367,7 @@ func TestRemovalNoticeTrustsOnlyItsOwnCookie(t *testing.T) {
 	// The details name storage paths, so a viewer without an administrator
 	// session gets only the generic sentence, even with a well-formed cookie.
 	jar.SetCookies(parsed, []*http.Cookie{{Name: removedCookie, Value: value, Path: "/"}})
+	afterAction(t, jar, server.URL, removedNotice)
 	visitor := browserGET(t, client, server.URL+"/?notice="+removedNotice)
 	if !strings.Contains(visitor.body, "The repository was removed.") || strings.Contains(visitor.body, "/srv/.owngit-removed/x") ||
 		strings.Contains(visitor.body, "&lt;b&gt;x&lt;/b&gt;") {
@@ -379,6 +382,7 @@ func TestRemovalNoticeTrustsOnlyItsOwnCookie(t *testing.T) {
 	}
 	signInAdmin(t, fixture, server.URL, jar)
 	jar.SetCookies(parsed, []*http.Cookie{{Name: removedCookie, Value: value, Path: "/"}})
+	afterAction(t, jar, server.URL, removedNotice)
 	escaped := browserGET(t, client, server.URL+"/?notice="+removedNotice)
 	if strings.Contains(escaped.body, "<b>x</b>") || !strings.Contains(escaped.body, "&lt;b&gt;x&lt;/b&gt;") {
 		t.Fatal("the removal notice did not escape its detail")
@@ -531,6 +535,7 @@ func TestIncompleteDeletionIsReportedAsRemovedWithCleanupOwed(t *testing.T) {
 	parsed, _ := url.Parse(server.URL)
 	value := base64.RawURLEncoding.EncodeToString([]byte(`{"n":"old-project","m":"delete_files","i":true}`))
 	jar.SetCookies(parsed, []*http.Cookie{{Name: removedCookie, Value: value, Path: "/"}})
+	afterAction(t, jar, server.URL, removedNotice)
 	page := browserGET(t, client, server.URL+"/?notice="+removedNotice)
 	for _, want := range []string{"Removed from OwnGit, but its files are not fully moved or deleted yet:", ">old-project<", "finishes at the next start"} {
 		if !strings.Contains(page.body, want) {
@@ -562,6 +567,7 @@ func TestKeptNoticeGivesAQuotedRecoveryCommand(t *testing.T) {
 		t.Helper()
 		value := base64.RawURLEncoding.EncodeToString([]byte(`{"n":"old-project","d":` + fmt.Sprintf("%q", id) + `,"m":"keep_files","k":` + fmt.Sprintf("%q", kept) + `}`))
 		jar.SetCookies(parsed, []*http.Cookie{{Name: removedCookie, Value: value, Path: "/"}})
+		afterAction(t, jar, server.URL, removedNotice)
 		return browserGET(t, client, server.URL+"/?notice="+removedNotice).body
 	}
 

@@ -153,7 +153,7 @@ func (app *App) saveCheckPolicy(writer http.ResponseWriter, request *http.Reques
 	}
 	// A saved policy is a durable change, so the result is a redirect: a
 	// reload re-reads it instead of re-submitting the form.
-	http.Redirect(writer, request, configuredChecksURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
 }
 
 func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, action string) {
@@ -198,7 +198,7 @@ func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Req
 	if action == webui.ActionDisableChecks {
 		notice = "checks_disabled"
 	}
-	http.Redirect(writer, request, configuredChecksURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
 }
 
 func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, action string) {
@@ -268,7 +268,7 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 	if opened != "" {
 		target = configuredCheckJobURL(self, opened) + "&notice=" + notice
 	}
-	http.Redirect(writer, request, target, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, target, http.StatusSeeOther)
 }
 
 func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, result configuredChecksState, status int) {
@@ -987,7 +987,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 			return
 		}
 		app.wakeChecks(stored.ID)
-		http.Redirect(writer, request, runnerTokensURL(stored.ID)+"?notice=runner_token_revoked", http.StatusSeeOther)
+		app.noticeRedirect(writer, request, runnerTokensURL(stored.ID)+"?notice=runner_token_revoked", http.StatusSeeOther)
 	default:
 		app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, "",
 			[]webui.Notice{webui.Error("", webui.MsgRTFailed)}, state.RunnerCredential{}, "", http.StatusBadRequest)
