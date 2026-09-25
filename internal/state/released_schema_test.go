@@ -99,3 +99,38 @@ func TestPullRequestCloseAndReopenTransitions(t *testing.T) {
 		t.Fatalf("reopen=%+v err=%v", reopened, err)
 	}
 }
+
+// Open describes the upgrade it applied, once. A new database, a current one,
+// and one that another opener already upgraded report nothing.
+func TestSchemaUpgradeIsReportedOnce(t *testing.T) {
+	ctx := context.Background()
+	fresh, err := Open(ctx, filepath.Join(t.TempDir(), "state"))
+	noErr(t, err)
+	if upgrade := fresh.SchemaUpgrade(); upgrade != "" {
+		t.Fatalf("new database reported %q", upgrade)
+	}
+	noErr(t, fresh.Close())
+
+	directory := filepath.Join(t.TempDir(), "state")
+	createMigratedSchemaDatabase(t, directory, releasedSchemaVersion)
+	store, err := Open(ctx, directory)
+	noErr(t, err)
+	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from schema 14 to 15" {
+		t.Fatalf("released schema upgrade reported %q", upgrade)
+	}
+	noErr(t, store.Close())
+
+	reopened, err := Open(ctx, directory)
+	noErr(t, err)
+	defer reopened.Close()
+	if upgrade := reopened.SchemaUpgrade(); upgrade != "" {
+		t.Fatalf("current database reported %q", upgrade)
+	}
+	// An opener that inspected the released schema but finds it current in
+	// the migration transaction, because another opener migrated first,
+	// reports nothing.
+	noErr(t, reopened.migrate(ctx, schemaReleased))
+	if upgrade := reopened.SchemaUpgrade(); upgrade != "" {
+		t.Fatalf("already migrated database reported %q", upgrade)
+	}
+}

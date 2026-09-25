@@ -39,6 +39,8 @@ var ErrSetupComplete = errors.New("setup is already complete")
 type Store struct {
 	db  *sql.DB
 	dir string
+	// schemaUpgrade describes the upgrade this Open applied, for SchemaUpgrade.
+	schemaUpgrade string
 
 	// Credential transitions are repository-scoped. credentialRestoreMu stops
 	// all of them only while a whole-store restore replaces portable state.
@@ -165,6 +167,13 @@ func Open(ctx context.Context, dir string) (result *Store, err error) {
 	}
 	return store, nil
 }
+
+// SchemaUpgrade returns a one-line description of the schema upgrade that Open
+// applied to an existing database, for the caller to log, for example "state
+// database upgraded from schema 14 to 15". It returns "" when Open created a
+// new database or found the schema current, including one that another opener
+// had already upgraded.
+func (s *Store) SchemaUpgrade() string { return s.schemaUpgrade }
 
 func sqliteFileURI(path string) string {
 	return sqliteURI(path, "_txlock=immediate")
@@ -387,7 +396,16 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 	if violated {
 		return errors.New("state schema migration left a foreign key violation")
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	switch class {
+	case schemaReleased:
+		s.schemaUpgrade = fmt.Sprintf("state database upgraded from schema %d to %d", releasedSchemaVersion, currentSchemaVersion)
+	case schemaBaseline:
+		s.schemaUpgrade = fmt.Sprintf("state database upgraded from the committed baseline (no schema version) to schema %d", currentSchemaVersion)
+	}
+	return nil
 }
 
 // migrations maps each upgrade step to its statements. The steps always run

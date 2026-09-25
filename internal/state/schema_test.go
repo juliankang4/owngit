@@ -215,6 +215,9 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 		t.Fatalf("open committed baseline: %v", err)
 	}
 	defer store.Close()
+	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from the committed baseline (no schema version) to schema 15" {
+		t.Fatalf("baseline upgrade reported %q", upgrade)
+	}
 	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
 		t.Fatalf("upgraded schema version=%d err=%v", version, err)
 	}

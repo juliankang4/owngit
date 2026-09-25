@@ -201,7 +201,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	defer unlock()
-	store, err := state.Open(ctx, *stateDir)
+	store, err := openState(ctx, *stateDir, logf)
 	if err != nil {
 		return err
 	}
@@ -604,7 +604,7 @@ func setupLink(arguments []string) error {
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
-	store, err := state.Open(context.Background(), *stateDir)
+	store, err := openState(context.Background(), *stateDir, stderrf)
 	if err != nil {
 		return err
 	}
@@ -646,7 +646,7 @@ func resetAdmin(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	store, err := state.Open(context.Background(), *stateDir)
+	store, err := openState(context.Background(), *stateDir, stderrf)
 	if err != nil {
 		return err
 	}
@@ -687,7 +687,7 @@ func approveHost(arguments []string) error {
 	if err := policy.Add(host); err != nil {
 		return err
 	}
-	store, err := state.Open(context.Background(), *stateDir)
+	store, err := openState(context.Background(), *stateDir, stderrf)
 	if err != nil {
 		return err
 	}
@@ -723,7 +723,7 @@ func forgetCheckContainer(arguments []string) error {
 	if !*confirmed {
 		return errors.New("--confirm-container-removed is required: first remove any container labeled com.owngit.check-job=" + *jobID + " on the Docker daemon that ran it, or make sure that daemon no longer exists")
 	}
-	store, err := state.Open(context.Background(), *stateDir)
+	store, err := openState(context.Background(), *stateDir, stderrf)
 	if err != nil {
 		return err
 	}
@@ -767,7 +767,7 @@ func backupState(arguments []string) error {
 		return fmt.Errorf("backup requires OwnGit to be offline: %w", err)
 	}
 	defer unlock()
-	store, err := state.Open(context.Background(), *stateDir)
+	store, err := openState(context.Background(), *stateDir, stderrf)
 	if err != nil {
 		return err
 	}
@@ -845,6 +845,25 @@ func checkRuntimeUnavailableReason(code string) string {
 	default:
 		return "Configured checks are unavailable. Repair the check runtime and restart OwnGit."
 	}
+}
+
+// openState opens the state directory and reports a schema upgrade that the
+// open applied, so the operator can tell when older builds stopped accepting
+// the database. serve passes its log; offline commands pass stderrf.
+func openState(ctx context.Context, dir string, report func(string, ...any)) (*state.Store, error) {
+	store, err := state.Open(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	if upgrade := store.SchemaUpgrade(); upgrade != "" {
+		report("%s", upgrade)
+	}
+	return store, nil
+}
+
+// stderrf writes one line to standard error.
+func stderrf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }
 
 func serveOpenTarget(initialized, explicitlyOpen, noOpen bool, setupPath, origin string) string {
