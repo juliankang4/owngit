@@ -587,12 +587,15 @@ func confirmWorktree(ctx context.Context, directory, revision, before string) st
 
 // runGit runs Git in the working directory with the user's configuration,
 // which decides what counts as a change (for example ignored files and
-// filters). core.fsmonitor is turned off: it only speeds up the scan, and a
-// clone's configuration could name any program as its monitor.
+// filters), so configured clean filters still run. Two things that do not
+// change the answer are turned off, because a clone's configuration could
+// name any program for them: core.fsmonitor, which only speeds up the scan,
+// and the optional index write of git status, which would run the
+// post-index-change hook.
 func runGit(ctx context.Context, directory string, arguments ...string) (string, error) {
 	command := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, arguments...)...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 	output, err := command.Output()
 	if err != nil {
 		return "", err

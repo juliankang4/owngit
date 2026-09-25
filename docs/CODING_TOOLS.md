@@ -209,9 +209,12 @@ commit.
 
 The helper reads the worktree with Git and your Git configuration, because that
 configuration decides which files count as changed, for example through ignore
-rules and filters. It turns off `core.fsmonitor` for these reads, so a clone's
-configuration cannot make the inspection start a monitor program. Clean filters
-configured for the clone still run, as they do for `git status`.
+rules and filters. For these reads it turns off `core.fsmonitor` and does not
+write the index, so neither a monitor program nor a `post-index-change` hook
+named in the clone's configuration runs. Clean filters still run, as they do
+for `git status`: a filter set in the clone's `.git/config` and assigned to
+files in `.gitattributes` or `.git/info/attributes` starts its program during
+the inspection, before any check runs and without a commit.
 
 Reserve a correction round before asking an agent to correct, then pass it to
 the verifying run:
@@ -482,6 +485,13 @@ limits of 10 minutes and 65536 bytes of output per check. Arguments name only
 the task and, for a verifying run, the reserved cycle. The checks run with the
 user's permissions and environment and are not sandboxed. One run at a time is
 allowed; a second call fails with `check_run_busy`.
+
+The checks are commands that come from the repository. Anyone or anything that
+can commit to the clone or edit it, including its `.git/config`, attribute
+files, and filters, can therefore make `check_run` start a program: through
+the committed checks, or through a clean filter that runs while the worktree is
+inspected. When an agent may edit files but must not run commands, start the
+server with `--no-run-check`.
 
 A cancellation from the coding tool, or the end of its input, stops the checks
 and their child processes. The attempt is still recorded as cancelled before

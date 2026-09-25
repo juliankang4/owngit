@@ -149,3 +149,31 @@ func TestCheckRunDoesNotRunTheClonesFileSystemMonitor(t *testing.T) {
 		t.Fatalf("the fixture's monitor does not run with Git itself: %v", err)
 	}
 }
+
+// Inspecting the worktree for a check run does not write the index, so the
+// clone's post-index-change hook does not run, even when Git would refresh
+// the index.
+func TestCheckRunDoesNotRunTheClonesIndexHook(t *testing.T) {
+	_, taskID, work := startMCPCheckFixture(t)
+	markers, hooks := t.TempDir(), t.TempDir()
+	hook := writePrivate(t, filepath.Join(hooks, "post-index-change"), "#!/bin/sh\necho ran >> "+filepath.Join(markers, "hook-ran")+"\n")
+	noErr(t, os.Chmod(hook, 0o700))
+	runPRGit(t, work, "config", "core.hooksPath", hooks)
+	// A newer modification time makes git status refresh the index entry.
+	later := time.Now().Add(2 * time.Second)
+	noErr(t, os.Chtimes(filepath.Join(work, "file.txt"), later, later))
+	output := cliOutput(t, checkCommand, "run", "--no-upload", "--task", taskID, "--workdir", work, "--check", "pass=exit 0")
+	var result checkRunOutput
+	noErr(t, json.Unmarshal([]byte(output), &result))
+	if result.Attempt == nil || result.Attempt.Status != "passed" || result.Attempt.WorktreeState != "clean" {
+		t.Fatalf("check run: %s", output)
+	}
+	if _, err := os.Stat(filepath.Join(markers, "hook-ran")); err == nil {
+		t.Fatal("the clone's post-index-change hook ran")
+	}
+	// The hook is live: Git itself runs it when it may write the index.
+	runPRGit(t, work, "status", "--porcelain")
+	if _, err := os.Stat(filepath.Join(markers, "hook-ran")); err != nil {
+		t.Fatalf("the fixture's hook does not run with Git itself: %v", err)
+	}
+}
