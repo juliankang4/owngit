@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,7 +27,7 @@ import (
 // mcpSession is an in-process owngit mcp session over pipes.
 type mcpSession struct {
 	t      *testing.T
-	input  *io.PipeWriter
+	input  io.WriteCloser
 	lines  chan string
 	done   chan error
 	nextID int
@@ -47,14 +50,22 @@ func serveMCPSession(t *testing.T, server *mcpServer) *mcpSession {
 	t.Helper()
 	inputReader, inputWriter := io.Pipe()
 	outputReader, outputWriter := io.Pipe()
-	session := &mcpSession{t: t, input: inputWriter, lines: make(chan string, 64), done: make(chan error, 1)}
+	done := make(chan error, 1)
 	go func() {
 		err := server.serve(context.Background(), inputReader, outputWriter)
 		_ = outputWriter.Close()
-		session.done <- err
+		done <- err
 	}()
+	return newMCPSession(t, inputWriter, outputReader, done)
+}
+
+// newMCPSession reads the messages written to output. done receives the
+// result of the session once it ends.
+func newMCPSession(t *testing.T, input io.WriteCloser, output io.Reader, done chan error) *mcpSession {
+	t.Helper()
+	session := &mcpSession{t: t, input: input, lines: make(chan string, 64), done: done}
 	go func() {
-		reader := bufio.NewReader(outputReader)
+		reader := bufio.NewReader(output)
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
@@ -65,7 +76,7 @@ func serveMCPSession(t *testing.T, server *mcpServer) *mcpSession {
 		}
 	}()
 	t.Cleanup(func() {
-		_ = inputWriter.Close()
+		_ = input.Close()
 		select {
 		case <-session.done:
 		case <-time.After(30 * time.Second):
@@ -279,7 +290,8 @@ func TestMCPReadToolsReturnTheCommandLineJSON(t *testing.T) {
 	}
 
 	names, schemas := session.toolNames()
-	if got := strings.Join(names, " "); got != "pull_request_diff pull_request_list pull_request_show repository_list repository_show" {
+	if got := strings.Join(names, " "); strings.Contains(got, "check_") || !strings.Contains(got, "pull_request_diff pull_request_list") ||
+		!strings.Contains(got, "pull_request_show repository_list repository_show") {
 		t.Fatalf("tools without a helper credential: %s", got)
 	}
 	if _, ok := schemas["pull_request_show"].Properties["repository"]; ok {
@@ -457,7 +469,7 @@ func TestMCPCheckReadTools(t *testing.T) {
 	noErr(t, json.Unmarshal([]byte(run), &output))
 	session := startMCPSession(t, mcpOptions{server: remoteFlags[1], repository: "project", credentialFile: remoteFlags[6], acceptInsecureHTTP: true, workdir: work})
 	names, _ := session.toolNames()
-	if got := strings.Join(names, " "); !strings.Contains(got, "check_cycle_list check_log check_status") {
+	if got := strings.Join(names, " "); !strings.Contains(got, "check_cycle_list") || !strings.Contains(got, "check_log") || !strings.Contains(got, "check_status") {
 		t.Fatalf("tools with a helper credential: %s", got)
 	}
 	for _, test := range []struct {
@@ -613,5 +625,274 @@ func TestMCPDiffKeepsWholeFilesUnderTheResultLimit(t *testing.T) {
 	if isError || len(text) > minimumMCPResultLimit || !diff.Truncated || diff.Reason != "response_limit" || len(diff.Files) != 9 ||
 		sections == 0 || sections >= 9 || !strings.HasSuffix(diff.Patch, "\n") || strings.Contains(text, "result_truncated") {
 		t.Fatalf("cut diff (%d bytes, %d sections): %+v", len(text), sections, diff)
+	}
+}
+
+// startMCPCheckFixture serves an open-access repository "project" with a
+// helper credential and a task, and returns the helper flags, the task ID,
+// and a work tree whose origin is the repository and whose main branch is
+// pushed.
+func startMCPCheckFixture(t *testing.T) (remoteFlags []string, taskID, work string) {
+	t.Helper()
+	remoteFlags, taskID, work = startCheckCLIServer(t)
+	runPRGit(t, work, "remote", "add", "origin", remoteFlags[1]+"/git/project.git")
+	runPRGit(t, work, "push", "-q", "origin", "HEAD:refs/heads/main")
+	return remoteFlags, taskID, work
+}
+
+func decodeToolJSON(t *testing.T, text string, target any) {
+	t.Helper()
+	if err := json.Unmarshal([]byte(text), target); err != nil {
+		t.Fatalf("decode %s: %v", text, err)
+	}
+}
+
+// The write tools change the same records as the matching commands, and
+// check_run runs only the committed checks.
+func TestMCPWriteToolsAndCheckRun(t *testing.T) {
+	remoteFlags, taskID, work := startMCPCheckFixture(t)
+	serverURL, credentialFile := remoteFlags[1], remoteFlags[6]
+	general := []string{"--server", serverURL, "--accept-insecure-http", "--repository", "project"}
+	runPRGit(t, work, "checkout", "-q", "-b", "feature")
+	commitFile(t, work, "feature.txt", "feature\n")
+	runPRGit(t, work, "push", "-q", "origin", "HEAD:refs/heads/feature")
+	writeCommittedChecks(t, work, `{"version":1,"events":{"push":{}},"checks":[{"name":"pass","command":"exit 0"}]}`)
+	session := startMCPSession(t, mcpOptions{server: serverURL, repository: "project", credentialFile: credentialFile, acceptInsecureHTTP: true, workdir: work})
+	names, _ := session.toolNames()
+	if got := strings.Join(names, " "); got != "check_cycle_list check_cycle_reserve check_log check_run check_status check_task_create "+
+		"pull_request_close pull_request_create pull_request_diff pull_request_list pull_request_merge pull_request_reopen pull_request_review pull_request_show repository_list repository_show" {
+		t.Fatalf("tools: %s", got)
+	}
+
+	var created pullrequest.SuccessEnvelope
+	text, isError := session.call("pull_request_create", map[string]any{"title": "Feature", "source_branch": "feature", "target_branch": "main", "review": "request"})
+	decodeToolJSON(t, text, &created)
+	if isError || created.PullRequest == nil || created.PullRequest.State != "open" {
+		t.Fatalf("create: %s", text)
+	}
+	pr := created.PullRequest
+	number := json.Number(strconv.FormatInt(pr.Number, 10))
+	if code := session.callError("pull_request_create", map[string]any{"title": "Again", "source_branch": "feature", "target_branch": "main"}); code == "" {
+		t.Fatal("a second open pull request for the pair was not refused")
+	}
+	pair := map[string]any{"number": number, "source_oid": pr.Source.OID, "target_oid": pr.Target.OID}
+	review := map[string]any{"decision": "approved", "reviewer": "mcp-test"}
+	for key, value := range pair {
+		review[key] = value
+	}
+	var reviewed pullrequest.SuccessEnvelope
+	text, isError = session.call("pull_request_review", review)
+	decodeToolJSON(t, text, &reviewed)
+	if isError || reviewed.PullRequest == nil || reviewed.PullRequest.Review.Status != "approved" || reviewed.PullRequest.Review.ReviewerLabel != "mcp-test" {
+		t.Fatalf("review: %s", text)
+	}
+	review["target_oid"] = pr.Source.OID
+	if code := session.callError("pull_request_review", review); code == "" {
+		t.Fatal("a review for other commits was accepted")
+	}
+	for _, step := range []struct{ tool, state string }{{"pull_request_close", "closed"}, {"pull_request_reopen", "open"}} {
+		var result pullrequest.SuccessEnvelope
+		text, isError := session.call(step.tool, map[string]any{"number": number})
+		decodeToolJSON(t, text, &result)
+		if isError || result.PullRequest == nil || result.PullRequest.State != step.state {
+			t.Fatalf("%s: %s", step.tool, text)
+		}
+	}
+
+	// check_run takes only a task and a cycle, never a command or path.
+	for _, arguments := range []map[string]any{
+		{"task": taskID, "check": "evil=touch evil"},
+		{"task": taskID, "workdir": t.TempDir()},
+		{"task": taskID, "timeout": "1h"},
+		{"task": taskID, "cycle": "not-a-cycle"},
+		{},
+	} {
+		if code := session.callError("check_run", arguments); code != "invalid_arguments" {
+			t.Errorf("check_run %v: code %q", arguments, code)
+		}
+	}
+	var task struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	text, isError = session.call("check_task_create", map[string]any{"title": "MCP work"})
+	decodeToolJSON(t, text, &task)
+	if isError || task.Task.ID == "" {
+		t.Fatalf("task: %s", text)
+	}
+	var run checkRunOutput
+	text, isError = session.call("check_run", map[string]any{"task": task.Task.ID})
+	decodeToolJSON(t, text, &run)
+	if isError || !run.OK || !run.Uploaded || run.Attempt == nil || run.Attempt.Status != "passed" || run.Attempt.WorktreeState != "clean" ||
+		run.Attempt.RevisionOID != prGitOutput(t, work, "rev-parse", "HEAD") || len(run.Results) != 1 || run.Results[0].Name != "pass" {
+		t.Fatalf("check_run: %s", text)
+	}
+	var cycle struct {
+		Cycle struct {
+			ID string `json:"id"`
+		} `json:"cycle"`
+	}
+	text, isError = session.call("check_cycle_reserve", map[string]any{"task": task.Task.ID})
+	decodeToolJSON(t, text, &cycle)
+	if isError || cycle.Cycle.ID == "" {
+		t.Fatalf("cycle: %s", text)
+	}
+	text, isError = session.call("check_run", map[string]any{"task": task.Task.ID, "cycle": cycle.Cycle.ID})
+	decodeToolJSON(t, text, &run)
+	if isError || run.CycleID != cycle.Cycle.ID || run.CorrectionCyclesRemaining != 2 {
+		t.Fatalf("check_run with a cycle: %s", text)
+	}
+	// The status tool and the command line agree on the recorded evidence.
+	status, _ := session.call("check_status", map[string]any{"task": task.Task.ID})
+	if want := cliOutput(t, checkCommand, append([]string{"status", "--task", task.Task.ID}, remoteFlags...)...); status != want {
+		t.Fatalf("check_status %s, want %s", status, want)
+	}
+
+	var merged pullrequest.SuccessEnvelope
+	pair["source_oid"] = prGitOutput(t, work, "rev-parse", "feature")
+	text, isError = session.call("pull_request_merge", pair)
+	decodeToolJSON(t, text, &merged)
+	if !isError {
+		t.Fatalf("a merge of commits that are not the branch heads succeeded: %s", text)
+	}
+	pair["source_oid"] = pr.Source.OID
+	text, isError = session.call("pull_request_merge", pair)
+	decodeToolJSON(t, text, &merged)
+	if isError || merged.PullRequest == nil || merged.PullRequest.State != "merged" {
+		t.Fatalf("merge: %s", text)
+	}
+	if shown := runPRCommandJSON(t, append([]string{"show", "--number", string(number)}, general...)); shown.PullRequest.State != "merged" {
+		t.Fatalf("the command line shows state %q after the merge", shown.PullRequest.State)
+	}
+}
+
+// With --no-run-check the check tools stay, check_run is not listed, and a
+// call to it is refused before anything runs.
+func TestMCPNoRunCheckRemovesCheckRun(t *testing.T) {
+	remoteFlags, taskID, work := startMCPCheckFixture(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	writeCommittedChecks(t, work, `{"version":1,"events":{"push":{}},"checks":[{"name":"marker","command":"echo ran > `+filepath.ToSlash(marker)+`"}]}`)
+	session := startMCPSession(t, mcpOptions{server: remoteFlags[1], repository: "project", credentialFile: remoteFlags[6], acceptInsecureHTTP: true, workdir: work, noRunCheck: true})
+	names, _ := session.toolNames()
+	if got := strings.Join(names, " "); strings.Contains(got, "check_run") || !strings.Contains(got, "check_status") {
+		t.Fatalf("tools with --no-run-check: %s", got)
+	}
+	response := session.request("tools/call", map[string]any{"name": "check_run", "arguments": map[string]any{"task": taskID}})
+	if response.Error == nil || response.Error.Code != rpcInvalidParams || !strings.Contains(response.Error.Message, "--no-run-check") {
+		t.Fatalf("check_run with --no-run-check: %+v", response.Error)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a check ran with --no-run-check")
+	}
+}
+
+// buildOwngit builds this command into a temporary directory.
+func buildOwngit(t *testing.T) string {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "owngit")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	output, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build: %v\n%s", err, output)
+	}
+	return binary
+}
+
+// startMCPBinary runs "owngit mcp" as a separate process in dir.
+func startMCPBinary(t *testing.T, binary, dir string, arguments ...string) (*mcpSession, *exec.Cmd, *strings.Builder) {
+	t.Helper()
+	command := exec.Command(binary, append([]string{"mcp"}, arguments...)...)
+	command.Dir = dir
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	input, err := command.StdinPipe()
+	noErr(t, err)
+	// Wait returns after the output was copied, so no message is lost.
+	outputReader, outputWriter := io.Pipe()
+	command.Stdout = outputWriter
+	noErr(t, command.Start())
+	done := make(chan error, 1)
+	go func() {
+		err := command.Wait()
+		_ = outputWriter.Close()
+		done <- err
+	}()
+	return newMCPSession(t, input, outputReader, done), command, &stderr
+}
+
+// The built binary serves a whole session over its standard input and
+// output: the server and repository come from the launch directory's
+// origin, and a read, a write, and a check run work.
+func TestMCPBinaryRoundTrip(t *testing.T) {
+	binary := buildOwngit(t)
+	remoteFlags, _, work := startMCPCheckFixture(t)
+	serverURL := remoteFlags[1]
+	token, err := os.ReadFile(remoteFlags[6])
+	noErr(t, err)
+	bound := writePrivate(t, filepath.Join(t.TempDir(), "bound-token"), "owngit-server: "+serverURL+"\n"+string(token))
+	runPRGit(t, work, "checkout", "-q", "-b", "feature")
+	writeCommittedChecks(t, work, `{"version":1,"events":{"push":{}},"checks":[{"name":"pass","command":"exit 0"}]}`)
+	runPRGit(t, work, "push", "-q", "origin", "HEAD:refs/heads/feature")
+
+	session, command, stderr := startMCPBinary(t, binary, work, "--accept-insecure-http", "--credential-file", bound)
+	response := session.request("initialize", map[string]any{"protocolVersion": mcpProtocolVersion, "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "1"}})
+	if !strings.Contains(string(response.Result), `"protocolVersion":"`+mcpProtocolVersion+`"`) {
+		t.Fatalf("initialize: %s", response.Result)
+	}
+	session.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	if names, _ := session.toolNames(); len(names) != 16 {
+		t.Fatalf("tools: %v", names)
+	}
+	if text, isError := session.call("pull_request_list", nil); isError || text != `{"ok":true,"pull_requests":[]}` {
+		t.Fatalf("pull_request_list: %s", text)
+	}
+	text, isError := session.call("pull_request_create", map[string]any{"title": "Binary", "source_branch": "feature", "target_branch": "main"})
+	if isError || !strings.Contains(text, `"title":"Binary"`) {
+		t.Fatalf("pull_request_create: %s", text)
+	}
+	var task struct {
+		Task struct {
+			ID string `json:"id"`
+		} `json:"task"`
+	}
+	text, _ = session.call("check_task_create", map[string]any{"title": "binary"})
+	decodeToolJSON(t, text, &task)
+	var run checkRunOutput
+	text, isError = session.call("check_run", map[string]any{"task": task.Task.ID})
+	decodeToolJSON(t, text, &run)
+	if isError || !run.Uploaded || run.Attempt == nil || run.Attempt.Status != "passed" {
+		t.Fatalf("check_run: %s", text)
+	}
+	noErr(t, session.input.Close())
+	select {
+	case err := <-session.done:
+		if err != nil {
+			t.Fatalf("owngit mcp exited with %v; stderr:\n%s", err, stderr.String())
+		}
+		session.done <- nil // for the cleanup
+	case <-time.After(30 * time.Second):
+		_ = command.Process.Kill()
+		t.Fatal("owngit mcp did not exit after its input closed")
+	}
+	if !strings.Contains(stderr.String(), "from the origin remote") {
+		t.Fatalf("stderr did not name the inference: %q", stderr.String())
+	}
+}
+
+// A launch failure is reported on standard error and exits 1, leaving
+// standard output empty for the protocol.
+func TestMCPBinaryLaunchFailureUsesStandardError(t *testing.T) {
+	binary := buildOwngit(t)
+	command := exec.Command(binary, "mcp", "--server", "http://127.0.0.1:7839")
+	command.Dir = t.TempDir()
+	var stdout, stderr strings.Builder
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err := command.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "insecure_http_confirmation_required") {
+		t.Fatalf("err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 }

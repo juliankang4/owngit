@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -73,6 +74,7 @@ func mcpCommand(arguments []string) error {
 	credentialFile := flags.String("credential-file", "", "owner-readable file containing a helper credential; enables the check tools")
 	acceptInsecureHTTP := flags.Bool("accept-insecure-http", false, "accept unencrypted HTTP to the server")
 	workdir := flags.String("workdir", ".", "working directory whose origin remote names the server and repository")
+	noRunCheck := flags.Bool("no-run-check", false, "leave out the check_run tool, so agents cannot run the committed checks")
 	resultLimit := flags.Int("result-limit", defaultMCPResultLimit, "maximum bytes of one tool result; longer results are cut and say so")
 	if err := parseFlags(flags, arguments); err != nil {
 		if errors.Is(err, errUsageShown) {
@@ -85,7 +87,7 @@ func mcpCommand(arguments []string) error {
 	}
 	server, err := newMCPServer(context.Background(), mcpOptions{
 		server: *serverFlag, repository: *repositoryID, passwordFile: *passwordFile, credentialFile: *credentialFile,
-		acceptInsecureHTTP: *acceptInsecureHTTP, workdir: *workdir, resultLimit: *resultLimit,
+		acceptInsecureHTTP: *acceptInsecureHTTP, workdir: *workdir, noRunCheck: *noRunCheck, resultLimit: *resultLimit,
 	})
 	if err != nil {
 		return mcpLaunchFailed(err)
@@ -115,6 +117,7 @@ type mcpOptions struct {
 	credentialFile     string
 	acceptInsecureHTTP bool
 	workdir            string
+	noRunCheck         bool
 	resultLimit        int
 }
 
@@ -125,8 +128,10 @@ type mcpServer struct {
 	general connection
 	// checks carries the helper credential for the fixed repository, or is
 	// nil when no credential file was given.
-	checks       *connection
+	checks *connection
+	// workdir is where check_run runs the committed checks.
 	workdir      string
+	runCheck     bool
 	resultLimit  int
 	instructions string
 	tools        []mcpTool
@@ -140,6 +145,8 @@ type mcpServer struct {
 	closed bool // the input ended; no further responses are written
 	stop   context.CancelFunc
 	wait   sync.WaitGroup
+	// checkRunning allows one check run at a time in the working directory.
+	checkRunning atomic.Bool
 }
 
 type mcpCall struct {
@@ -171,6 +178,7 @@ func newMCPServer(ctx context.Context, options mcpOptions) (*mcpServer, error) {
 	server := &mcpServer{
 		general:     connection{server: resolved.server, repository: resolved.repository, credential: credential{kind: credentialNone}},
 		workdir:     workdir,
+		runCheck:    !options.noRunCheck,
 		resultLimit: options.resultLimit,
 		calls:       map[string]*mcpCall{},
 	}
@@ -429,6 +437,10 @@ func (server *mcpServer) startCall(ctx context.Context, id json.RawMessage, para
 		return
 	}
 	tool := server.tool(call.Name)
+	if tool == nil && call.Name == "check_run" && !server.runCheck {
+		server.sendError(id, rpcInvalidParams, "check_run is turned off for this server (--no-run-check).")
+		return
+	}
 	if tool == nil {
 		server.sendError(id, rpcInvalidParams, "Unknown tool: "+call.Name)
 		return

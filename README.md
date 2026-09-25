@@ -27,6 +27,7 @@ OwnGit is a self-hosted Git server for home labs and local machines. It keeps pr
 - Downloads a branch, tag, or commit as a ZIP or tar.gz archive, from the browser or with `curl`.
 - Shows the languages a repository is written in on its overview, by the size of its files on the default branch. Data and prose files (JSON, YAML, Markdown, plain text) and vendored, generated, and documentation paths are not counted; Linguist attributes in `.gitattributes` are honored with Git 2.40 or newer.
 - Creates and merges pull requests in the browser at the exact revisions it displays. Pull requests can be closed without merging and reopened. JSON CLI commands can also create, inspect, review, merge, close, and reopen them. Ordinary `git push` works without a pull request, and review is optional.
+- Offers the pull request, repository, and check commands to coding tools that support MCP through `owngit mcp`, a local server on standard input and output. See [Coding tool integration](docs/CODING_TOOLS.md#mcp-server).
 - Records checks that a helper runs in your own environment. Configured checks that the owner enables can run on the host, in restricted local Docker, or on a separate runner. Checks and reviews are advisory and never hold a merge.
 - Imports a repository from another HTTPS Git host and refreshes it on demand or on a schedule, without writing to the source.
 - Keeps replaced or deleted branch and tag history in hidden refs. The browser restores a whole tree or selected files after previewing every change.

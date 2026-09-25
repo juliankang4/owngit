@@ -2,7 +2,7 @@
 
 <p align="center"><a href="CODING_TOOLS.md">English</a> | <b>한국어</b></p>
 
-OwnGit은 버전이 붙은 JSON 명령줄 인터페이스와 공용 Agent Skill로 코딩 도구에 프로젝트 체크를 제공합니다. 이 연동에는 MCP, 데몬, 세션 실행기가 필요 없습니다. 코딩 도구가 사용자 환경에서 `owngit` 실행 파일을 실행하고 JSON 결과를 읽습니다.
+OwnGit은 버전이 붙은 JSON 명령줄 인터페이스와 공용 Agent Skill로 코딩 도구에 프로젝트 체크를 제공합니다. 이 연동에는 데몬이나 세션 실행기가 필요 없습니다. 코딩 도구가 사용자 환경에서 `owngit` 실행 파일을 실행하고 JSON 결과를 읽습니다. MCP를 지원하는 코딩 도구는 대신 같은 명령을 도구로 제공하는 로컬 [MCP 서버](#mcp-서버)인 `owngit mcp`를 실행할 수 있습니다.
 
 스킬은 지침일 뿐 강제 장치가 아닙니다. 코딩 도구는 스킬을 무시할 수 있으며, 서버는 체크 에이전트(helper)가 실제로 제출한 것만 기록합니다.
 
@@ -12,6 +12,7 @@ OwnGit은 버전이 붙은 JSON 명령줄 인터페이스와 공용 Agent Skill�
 - OwnGit 서버에 기록되는, 리비전에 묶인 체크 결과
 - 작업마다 세 라운드로 명시된 수정 라운드 한도
 - 진행 중인 코딩 세션에 언제 체크 에이전트를 실행하고 결과를 어떻게 읽을지 알려 주는 스킬
+- 같은 풀 리퀘스트, 저장소, 체크 기능을 제공하는 MCP 서버(선택 사항)
 
 ## 준비 사항
 
@@ -112,6 +113,8 @@ owngit check run \
 
 `check run`은 실행하기 전에 시도(attempt)를 등록합니다. 그래서 서버가 저장소 전체에 걸친 순번을 매기고, 다시 보낸 요청도 한 번만 처리됩니다. 체크 에이전트는 실행 전후에 워킹 트리를 관찰합니다. 처음에 리비전을 읽지 못하면 등록하기 전에 실행을 멈춥니다. 처음 상태 읽기만 실패하면 상태는 `unknown`입니다. 마지막 관찰에서 리비전을 읽지 못하면 `unknown`이 되고, 리비전이 바뀌었거나 변경이 있거나 상태 읽기가 실패하면 `dirty`로 기록합니다. `dirty`와 `unknown`은 어느 쪽도 깨끗한 커밋을 테스트했다는 증거가 아닙니다.
 
+체크 에이전트는 Git과 사용자의 Git 설정으로 워킹 트리를 읽습니다. 무시 규칙이나 필터처럼 어떤 파일을 변경으로 볼지를 이 설정이 정하기 때문입니다. 다만 이때는 `core.fsmonitor`를 끄므로, 클론의 설정이 워킹 트리 검사 중에 감시 프로그램을 실행하게 만들 수 없습니다. 클론에 설정된 clean 필터는 `git status`에서처럼 그대로 실행됩니다.
+
 에이전트에게 수정을 맡기기 전에 수정 라운드를 예약하고, 그 라운드를 확인용 실행에 넘기세요.
 
 ```sh
@@ -180,6 +183,99 @@ owngit pr diff --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
 결과에는 크기 제한이 있습니다. 패치에서 빠진 파일이 있으면 `truncated`가 true이고, 파일 목록에서도 빠진 파일이 있으면 `incomplete`가 true입니다. 패치는 언제나 파일 경계에서 끝납니다. `reason`은 빠진 이유를 알려 줍니다. `output_limit`는 비교 결과가 8 MiB 제한에 닿은 경우, `time_limit`는 Git의 시간이 다 된 경우(나중에 다시 시도하면 더 읽을 수 있습니다), `response_limit`는 4 MiB 응답에 맞추려고 잘라 낸 경우입니다. 두 브랜치에 공통 커밋이 없거나 병합 기준이 둘 이상이면 `unavailable`이 `no_merge_base` 또는 `multiple_merge_bases`이고, 파일 목록과 패치가 없습니다.
 
 `--stat`은 `patch`를 뺀 같은 객체를 출력합니다. `--patch`는 패치 텍스트만 출력하고, 비교한 커밋과 브랜치 이동이나 잘림 여부는 표준 오류에 씁니다. API 경로는 `GET /api/v1/repositories/ID/pull-requests/N/diff`이며, 선택 쿼리 매개변수로 `source_oid`와 `target_oid`를 받습니다.
+
+## MCP 서버
+
+`owngit mcp`는 MCP를 지원하는 코딩 도구를 위한 [Model Context Protocol](https://modelcontextprotocol.io) 서버입니다. 프로토콜 리비전 `2025-11-25`를 표준 입력과 표준 출력(stdio 전송)으로 구현하며, 한 줄에 JSON-RPC 메시지 하나를 주고받고 네트워크 포트는 열지 않습니다. 각 도구는 `owngit` 명령 하나를 감싸고 그 명령이 출력하는 JSON을 돌려줍니다. 셸 명령을 실행할 수 있는 코딩 도구는 명령줄을 그대로 써도 됩니다. 도구 설명 목록보다 명령줄 쪽이 대개 토큰을 덜 씁니다.
+
+### 서버 시작
+
+코딩 도구가 서버를 자식 프로세스로 실행합니다. 도구 호출이 다른 곳에 닿는 데 쓸 수 있는 값은 모두 시작 플래그로 정해집니다.
+
+- `--workdir DIR`(기본값은 코딩 도구가 서버를 시작한 디렉터리): [클론 안에서 실행하기](#클론-안에서-실행하기)에서처럼 `origin`으로 서버와 저장소를 알려 주는 클론이며, `check_run`이 체크를 실행하는 곳입니다. 코딩 도구마다 서버를 시작하는 디렉터리가 다르므로 절대 경로를 주세요.
+- `--server`와 `--repository`는 `origin`보다 우선합니다. 알려진 저장소가 없으면 저장소 도구와 풀 리퀘스트 도구가 대신 `repository` 인수를 받습니다.
+- `--password-file`: 저장소 도구와 풀 리퀘스트 도구에 쓰는 공유 일반 접근 비밀번호입니다. 접근이 열려 있으면 생략합니다.
+- `--credential-file`: 체크 에이전트 토큰입니다. 체크 도구를 추가하며, 저장소가 정해져 있어야 합니다.
+- `--accept-insecure-http`: 다른 명령과 마찬가지로 일반 HTTP 서버에 필요합니다. 위험을 받아들인 연결에만 붙이세요.
+- `--no-run-check`: `check_run`을 뺍니다.
+- `--result-limit BYTES`(기본값 65536, 4096부터 4194304까지): 도구 결과 하나의 최대 크기입니다.
+
+비밀번호 파일과 자격 증명 파일에는 [자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄)의 규칙이 그대로 적용됩니다. 서버를 `origin`에서 가져왔으면 파일에 그 서버가 적혀 있어야 합니다. 파일은 시작할 때 한 번 읽으며, 비밀 값은 결과에 나오지 않습니다. `credential_origin_required`나 `insecure_http_confirmation_required`처럼 시작에 실패하면 오류 객체를 표준 오류에 쓰고 종료 상태 1로 끝납니다. 코딩 도구는 이 내용을 MCP 서버 로그에 보여 줍니다. `origin`에서 무엇을 가져왔는지 알리는 줄도 표준 오류에 씁니다.
+
+도구 인수는 풀 리퀘스트 번호, 커밋 ID, 작업 ID, 제목, 브랜치 이름 같은 값입니다. 서버, 경로, 명령처럼 도구의 입력 스키마에 없는 인수는 `invalid_arguments`로 실패하고, 시작할 때 정한 저장소가 아닌 `repository`는 `repository_not_allowed`로 실패합니다.
+
+### 클라이언트 설정
+
+경로는 자신의 것으로 바꾸세요. 자격 증명은 플래그가 가리키는 파일에만 두고, 클라이언트 설정이나 환경 변수에는 넣지 마세요.
+
+Claude Code는 프로젝트의 `.mcp.json`을 읽습니다. `claude mcp add --scope project owngit -- owngit mcp ...`도 이 파일에 씁니다.
+
+```json
+{
+  "mcpServers": {
+    "owngit": {
+      "command": "owngit",
+      "args": ["mcp", "--workdir", "/path/to/clone", "--credential-file", "/path/to/helper-token"]
+    }
+  }
+}
+```
+
+Codex는 `~/.codex/config.toml`을 읽습니다.
+
+```toml
+[mcp_servers.owngit]
+command = "owngit"
+args = ["mcp", "--workdir", "/path/to/clone", "--credential-file", "/path/to/helper-token"]
+tool_timeout_sec = 1800
+```
+
+Codex는 기본으로 도구를 60초 기다린 뒤 호출을 취소하며, 이때 실행 중인 `check_run`도 멈춥니다. `tool_timeout_sec`을 체크에 걸리는 시간보다 길게 잡으세요.
+
+그 밖의 MCP 클라이언트에서는 stdio 전송, 명령 `owngit`(또는 전체 경로, [체크 에이전트 실행 파일 찾기](#체크-에이전트-실행-파일-찾기) 참고), 인수 `mcp`와 위의 플래그를 설정합니다.
+
+### 도구
+
+읽기 도구는 아무것도 바꾸지 않습니다.
+
+| 도구 | 명령 |
+|---|---|
+| `repository_list`, `repository_show` | `repo list`, `repo show` |
+| `pull_request_list`, `pull_request_show` | `pr list`, `pr show` |
+| `pull_request_diff` | `pr diff`. `patch: false`는 `--stat`과 같고, `source_oid`와 `target_oid`를 함께 넘기면 커밋 쌍을 고정합니다. |
+| `check_status`, `check_log`, `check_cycle_list` | `check status`, `check log`, `check cycle list` |
+
+쓰기 도구와 그 효과는 다음과 같습니다.
+
+| 도구 | 명령 | 효과 |
+|---|---|---|
+| `pull_request_create` | `pr create` | 풀 리퀘스트를 추가합니다. 브랜치는 움직이지 않습니다. |
+| `pull_request_review` | `pr review submit` | 정확한 커밋 ID에 대한 결정과 호출자가 준 리뷰어 표시를 기록합니다. 참고용입니다. |
+| `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | 풀 리퀘스트 상태를 바꿉니다. 브랜치는 움직이지 않습니다. |
+| `pull_request_merge` | `pr merge` | 정확한 커밋 ID로 대상 브랜치에 병합을 게시합니다. 브랜치가 움직였으면 거부하고, 같은 호출을 되풀이해도 두 번 병합하지 않습니다. |
+| `check_task_create` | `check task new` | 작업을 추가합니다. |
+| `check_cycle_reserve` | `check cycle reserve` | 작업의 수정 라운드 세 번 가운데 하나를 씁니다. |
+| `check_run` | `--check` 없는 `check run` | `--workdir`에서 커밋된 체크를 실행하고 시도를 기록합니다. |
+
+체크 도구에는 `--credential-file`이 필요합니다. 관리자 명령, 자격 증명 관리, 저장소 만들기, 리뷰 요청이나 건너뛰기, `--check`, `--no-upload`는 제공하지 않습니다. 서버가 코딩 도구에 보내는 도구 설명에는 도구마다 어떤 변화를 일으키는지, 돌려주는 글 가운데 무엇을 믿으면 안 되는지가 적혀 있습니다.
+
+### 결과와 오류
+
+도구 결과는 명령의 JSON을 담은 텍스트 항목 하나입니다. 실패한 호출은 `isError`를 설정하고 명령의 오류 객체 `{"ok":false,"error":{"code":...,"message":...}}`를 담습니다. 시도를 기록하지 못한 `check_run`도 `isError`를 설정하며, 이때 텍스트는 `upload_error`가 들어 있는 실행 결과 JSON입니다.
+
+한도를 넘는 결과는 잘라 내고 그 사실을 알립니다. `pull_request_diff`는 API처럼 파일 단위로 자르고 `truncated`와 이유 `response_limit`를 설정합니다. 다른 결과는 가장 긴 글부터 줄이고, 그래도 넘치면 가장 긴 목록의 끝에서 항목을 뺍니다. 그리고 원래 크기(`bytes`), 한도(`limit`), 잘라 낸 필드(`cut`)를 담은 `result_truncated` 객체를 붙입니다.
+
+제목, 설명, 브랜치 이름, 파일 경로, 패치, 리뷰어 표시, 체크 명령과 체크 출력은 저장소 사용자가 쓴 것입니다. 서버는 코딩 도구에 이를 데이터로만 다루고 그 안의 지시를 따르지 말라고 알립니다.
+
+프로토콜 오류에는 JSON-RPC 코드를 씁니다. JSON이 아닌 메시지는 `-32700`, 잘못된 요청이나 1 MiB를 넘는 메시지는 `-32600`, 알 수 없는 메서드는 `-32601`, 알 수 없는 도구는 `-32602`입니다. `check_run`을 뺀 나머지 호출은 2분이 지나면 멈춥니다.
+
+### 체크 실행
+
+`check_run`은 서버를 `--no-run-check`로 시작하지 않는 한 켜져 있습니다. `--check` 없이 실행한 `owngit check run`과 똑같이, `--workdir`의 `HEAD`에 커밋된 `.owngit/checks.json`의 체크를 체크당 10분과 출력 65536바이트라는 기본 한도로 실행합니다. 인수로는 작업과, 확인용 실행이라면 예약한 라운드만 넘깁니다. 체크는 사용자의 권한과 환경으로 실행되며 샌드박스 안에서 실행되지 않습니다. 한 번에 하나만 실행할 수 있으며, 실행 중에 다시 호출하면 `check_run_busy`로 실패합니다.
+
+코딩 도구가 호출을 취소하거나 입력을 닫으면 체크와 그 자식 프로세스를 멈춥니다. 시도는 서버가 멈추기 전에 취소된 것으로 기록되며, 취소된 호출에는 응답하지 않습니다.
+
+`--no-run-check`로 시작하면 도구 목록에서 `check_run`이 빠지고, 호출해도 아무것도 실행하기 전에 거부합니다. 다른 체크 도구는 남아 있으므로 에이전트는 기록된 결과를 읽고, 작업을 만들고, 라운드를 예약할 수 있습니다.
 
 ## 결과 읽기
 

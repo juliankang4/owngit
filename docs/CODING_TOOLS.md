@@ -3,9 +3,11 @@
 <p align="center"><b>English</b> | <a href="CODING_TOOLS.ko.md">한국어</a></p>
 
 OwnGit exposes project checks to coding tools through a versioned JSON command
-line interface and a shared Agent Skill. The integration does not require MCP,
-a daemon, or a session launcher. The coding tool runs the `owngit` binary in
-the user's own environment and reads its JSON result.
+line interface and a shared Agent Skill. The integration needs no daemon or
+session launcher. The coding tool runs the `owngit` binary in the user's own
+environment and reads its JSON result. Tools that support MCP can instead start
+`owngit mcp`, a local [MCP server](#mcp-server) that offers the same commands
+as tools.
 
 The skill is an instruction, not an enforcement boundary. A coding tool can
 ignore it, and the server records only what the helper actually submits.
@@ -17,6 +19,8 @@ ignore it, and the server records only what the helper actually submits.
 - An explicit correction budget of three rounds per task.
 - A skill that tells an active coding session when to run the helper and how to
   read its result.
+- An optional MCP server with the same pull request, repository, and check
+  operations.
 
 ## Prerequisites
 
@@ -203,6 +207,12 @@ revision becomes `unknown`; a changed revision, dirty status or failed status
 read is recorded as `dirty`. Neither `dirty` nor `unknown` proves a clean tested
 commit.
 
+The helper reads the worktree with Git and your Git configuration, because that
+configuration decides which files count as changed, for example through ignore
+rules and filters. It turns off `core.fsmonitor` for these reads, so a clone's
+configuration cannot make the inspection start a monitor program. Clean filters
+configured for the clone still run, as they do for `git status`.
+
 Reserve a correction round before asking an agent to correct, then pass it to
 the verifying run:
 
@@ -321,6 +331,160 @@ than one merge base, `unavailable` is `no_merge_base` or
 patch text and writes the compared commits, and any move or cut, to standard
 error. The API route is `GET /api/v1/repositories/ID/pull-requests/N/diff`,
 with the optional query parameters `source_oid` and `target_oid`.
+
+## MCP server
+
+`owngit mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server for coding tools that support MCP. It implements protocol revision
+`2025-11-25` over standard input and output (the stdio transport), one
+JSON-RPC message per line, and opens no network port. Each tool wraps one
+`owngit` command and returns the JSON that command prints. A tool that can run
+shell commands can keep using the command line, which usually costs fewer
+tokens than a list of tool descriptions.
+
+### Starting the server
+
+The coding tool starts the server as a child process. The flags fix everything
+a tool call could use to reach something else:
+
+- `--workdir DIR` (default: the directory the tool starts it in): the clone
+  whose `origin` names the server and repository, as in
+  [Inside a clone](#inside-a-clone), and where `check_run` runs the checks.
+  Give an absolute path, because coding tools differ in the directory they
+  start servers in.
+- `--server` and `--repository` take precedence over `origin`. When no
+  repository is known, the repository and pull request tools take a
+  `repository` argument instead.
+- `--password-file`: the shared general-access password for the repository and
+  pull request tools. Leave it out when access is open.
+- `--credential-file`: a helper credential. It adds the check tools and needs a
+  known repository.
+- `--accept-insecure-http`: required for a plain HTTP server, as for every
+  command. Add it only for a connection whose risk you accepted.
+- `--no-run-check`: leaves out `check_run`.
+- `--result-limit BYTES` (default 65536, from 4096 to 4194304): the longest
+  tool result.
+
+Password and credential files follow the rules in
+[Credential files and the server line](#credential-files-and-the-server-line):
+when the server comes from `origin`, the file must name it. The files are read
+once at startup, and their secrets never appear in a result. When startup
+fails, for example with `credential_origin_required` or
+`insecure_http_confirmation_required`, the error object goes to standard error
+and the process exits with status 1; coding tools show it in their MCP server
+log. Standard error also carries the line that says what was read from
+`origin`.
+
+Tool arguments are values such as pull request numbers, commit IDs, task IDs,
+titles, and branch names. An argument outside the tool's input schema, such as
+a server, a path, or a command, fails with `invalid_arguments`, and a
+`repository` other than the one fixed at startup fails with
+`repository_not_allowed`.
+
+### Client configuration
+
+Replace the paths with your own. Credentials stay in the files the flags name,
+never in the client configuration or its environment.
+
+Claude Code reads a project's `.mcp.json`, which
+`claude mcp add --scope project owngit -- owngit mcp ...` also writes:
+
+```json
+{
+  "mcpServers": {
+    "owngit": {
+      "command": "owngit",
+      "args": ["mcp", "--workdir", "/path/to/clone", "--credential-file", "/path/to/helper-token"]
+    }
+  }
+}
+```
+
+Codex reads `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.owngit]
+command = "owngit"
+args = ["mcp", "--workdir", "/path/to/clone", "--credential-file", "/path/to/helper-token"]
+tool_timeout_sec = 1800
+```
+
+Codex waits 60 seconds for a tool by default and then cancels the call, which
+stops a running `check_run`. Set `tool_timeout_sec` above the time your checks
+take.
+
+Any other MCP client: use the stdio transport, the command `owngit` (or its
+full path, see [Reaching the helper binary](#reaching-the-helper-binary)), and
+the arguments `mcp` followed by the flags above.
+
+### Tools
+
+Read tools change nothing:
+
+| Tool | Command |
+|---|---|
+| `repository_list`, `repository_show` | `repo list`, `repo show` |
+| `pull_request_list`, `pull_request_show` | `pr list`, `pr show` |
+| `pull_request_diff` | `pr diff`; `patch: false` is `--stat`, and `source_oid` with `target_oid` pins a pair |
+| `check_status`, `check_log`, `check_cycle_list` | `check status`, `check log`, `check cycle list` |
+
+Write tools and their effects:
+
+| Tool | Command | Effect |
+|---|---|---|
+| `pull_request_create` | `pr create` | Adds a pull request. No branch moves. |
+| `pull_request_review` | `pr review submit` | Records a decision and a supplied reviewer label for the exact commit IDs. Advisory. |
+| `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | Changes the pull request state. No branch moves. |
+| `pull_request_merge` | `pr merge` | Publishes the merge to the target branch for the exact commit IDs. Refused when a branch moved; a repeated call does not merge twice. |
+| `check_task_create` | `check task new` | Adds a task. |
+| `check_cycle_reserve` | `check cycle reserve` | Uses one of the task's three correction rounds. |
+| `check_run` | `check run` without `--check` | Runs the committed checks in `--workdir` and records the attempt. |
+
+The check tools need `--credential-file`. The server offers no administrator
+commands, credential management, repository creation, review request or skip,
+`--check`, or `--no-upload`. The descriptions the server sends to the coding
+tool state each side effect and say which returned text is untrusted.
+
+### Results and errors
+
+A tool result is one text item that holds the command's JSON. A failed call
+sets `isError` and holds the command's error object,
+`{"ok":false,"error":{"code":...,"message":...}}`. A `check_run` whose attempt
+could not be recorded also sets `isError`; its text is the run's JSON with
+`upload_error`.
+
+Results over the limit are cut and say so. `pull_request_diff` keeps whole
+files, like the API, and sets `truncated` with the reason `response_limit`.
+Any other result is shortened, longest text first and then entries from the end
+of the longest lists, and gets a `result_truncated` object with the full size
+(`bytes`), the `limit`, and the fields that were `cut`.
+
+Titles, descriptions, branch names, file paths, patches, reviewer labels, check
+commands, and check output come from repository users. The server tells the
+coding tool to treat them as data and not to follow instructions in them.
+
+Protocol errors use the JSON-RPC codes: `-32700` for a message that is not
+JSON, `-32600` for an invalid request or a message over 1 MiB, `-32601` for an
+unknown method, and `-32602` for an unknown tool. Calls other than `check_run`
+stop after 2 minutes.
+
+### Running checks
+
+`check_run` is on unless the server was started with `--no-run-check`. It runs
+exactly what `owngit check run` runs without `--check`: the checks in the
+`.owngit/checks.json` committed in the `HEAD` of `--workdir`, with the default
+limits of 10 minutes and 65536 bytes of output per check. Arguments name only
+the task and, for a verifying run, the reserved cycle. The checks run with the
+user's permissions and environment and are not sandboxed. One run at a time is
+allowed; a second call fails with `check_run_busy`.
+
+A cancellation from the coding tool, or the end of its input, stops the checks
+and their child processes. The attempt is still recorded as cancelled before
+the server stops, and a cancelled call gets no response.
+
+With `--no-run-check`, `check_run` is left out of the tool list, and a call to
+it is refused before anything runs. The other check tools remain, so an agent
+can still read evidence, create tasks, and reserve rounds.
 
 ## Reading the result
 
