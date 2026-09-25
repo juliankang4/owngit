@@ -47,6 +47,33 @@ func TestNetworkSettingsAreOptionalMetadata(t *testing.T) {
 	}
 }
 
+func TestTrustedProxiesAreAddedAndRemovedInOneUpdate(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	if proxies, err := store.TrustedProxies(ctx); err != nil || len(proxies) != 0 {
+		t.Fatalf("fresh trusted proxies=%v err=%v", proxies, err)
+	}
+	noErr(t, store.UpdateNetwork(ctx, NetworkUpdate{AddProxies: []string{"192.0.2.10", "10.1.0.0/16", "192.0.2.10"}}))
+	noErr(t, store.UpdateNetwork(ctx, NetworkUpdate{AddProxies: []string{"fd00::10"}, RemoveProxies: []string{"192.0.2.10", "198.51.100.1"}}))
+	proxies, err := store.TrustedProxies(ctx)
+	noErr(t, err)
+	if !reflect.DeepEqual(proxies, []string{"10.1.0.0/16", "fd00::10"}) {
+		t.Fatalf("trusted proxies=%v", proxies)
+	}
+	// An update without proxy changes keeps them.
+	noErr(t, store.UpdateNetwork(ctx, NetworkUpdate{Settings: NetworkSettings{Listen: "127.0.0.1:7654"}}))
+	noErr(t, store.UpdateNetwork(ctx, NetworkUpdate{RemoveProxies: []string{"10.1.0.0/16"}}))
+	if proxies, err := store.TrustedProxies(ctx); err != nil || !reflect.DeepEqual(proxies, []string{"fd00::10"}) {
+		t.Fatalf("trusted proxies=%v err=%v", proxies, err)
+	}
+	noErr(t, store.UpdateNetwork(ctx, NetworkUpdate{RemoveProxies: []string{"fd00::10"}}))
+	var rows int
+	noErr(t, store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metadata WHERE key=?`, networkTrustedProxiesKey).Scan(&rows))
+	if rows != 0 {
+		t.Fatalf("an empty list left %d metadata rows", rows)
+	}
+}
+
 func TestRunningNetworkRecordRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
@@ -57,6 +84,7 @@ func TestRunningNetworkRecordRoundTrip(t *testing.T) {
 		PID: 42, StartedAt: 1700000000, Listen: "127.0.0.1:0", Address: "127.0.0.1:50123",
 		ListenSource: "flag", BaseURLSource: "default", Origin: "http://127.0.0.1:50123",
 		SavedHosts: []string{}, AcceptedHosts: []string{"127.0.0.1", "::1", "localhost"},
+		TrustedProxies: []string{"192.0.2.10"}, TrustedProxiesSource: "saved",
 	}
 	noErr(t, store.PublishRunningNetwork(ctx, running))
 	got, found, err := store.RunningNetwork(ctx)

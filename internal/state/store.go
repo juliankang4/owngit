@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1330,6 +1331,9 @@ func (s *Store) SetUpdateCheck(ctx context.Context, enabled bool) error {
 const (
 	networkListenKey  = "network_listen"
 	networkBaseURLKey = "network_base_url"
+	// networkTrustedProxiesKey holds the trusted reverse proxies as a JSON
+	// list of canonical addresses and ranges.
+	networkTrustedProxiesKey = "network_trusted_proxies"
 	// networkRunningKey holds the RunningNetwork record of the server that
 	// currently serves this state directory.
 	networkRunningKey = "network_running"
@@ -1352,13 +1356,36 @@ func (s *Store) NetworkSettings(ctx context.Context) (NetworkSettings, error) {
 	return NetworkSettings{Listen: values[networkListenKey], BaseURL: values[networkBaseURLKey]}, nil
 }
 
+// TrustedProxies returns the saved trusted reverse proxies, sorted.
+func (s *Store) TrustedProxies(ctx context.Context) ([]string, error) {
+	return trustedProxies(ctx, s.db)
+}
+
+func trustedProxies(ctx context.Context, db queryRower) ([]string, error) {
+	var raw string
+	err := db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key=?`, networkTrustedProxiesKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	proxies := []string{}
+	if err := json.Unmarshal([]byte(raw), &proxies); err != nil {
+		return nil, fmt.Errorf("invalid saved trusted proxies: %w", err)
+	}
+	return proxies, nil
+}
+
 // NetworkUpdate replaces the saved network settings and changes the allowed
-// Host names in one transaction. Host names are stored as given; callers
-// pass normalized names.
+// Host names and trusted proxies in one transaction. Host names and proxies
+// are stored as given; callers pass normalized names and canonical proxies.
 type NetworkUpdate struct {
-	Settings    NetworkSettings
-	AddHosts    []string
-	RemoveHosts []string
+	Settings      NetworkSettings
+	AddHosts      []string
+	RemoveHosts   []string
+	AddProxies    []string
+	RemoveProxies []string
 }
 
 // UpdateNetwork applies update atomically.
@@ -1385,6 +1412,28 @@ func (s *Store) UpdateNetwork(ctx context.Context, update NetworkUpdate) error {
 	}
 	for _, host := range update.AddHosts {
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO trusted_hosts(host,created_at) VALUES(?,?)`, host, time.Now().Unix()); err != nil {
+			return err
+		}
+	}
+	if len(update.AddProxies) > 0 || len(update.RemoveProxies) > 0 {
+		proxies, err := trustedProxies(ctx, tx)
+		if err != nil {
+			return err
+		}
+		proxies = slices.DeleteFunc(proxies, func(proxy string) bool { return slices.Contains(update.RemoveProxies, proxy) })
+		for _, proxy := range update.AddProxies {
+			if !slices.Contains(proxies, proxy) {
+				proxies = append(proxies, proxy)
+			}
+		}
+		slices.Sort(proxies)
+		if len(proxies) == 0 {
+			_, err = tx.ExecContext(ctx, `DELETE FROM metadata WHERE key=?`, networkTrustedProxiesKey)
+		} else {
+			encoded, _ := json.Marshal(proxies)
+			_, err = tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, networkTrustedProxiesKey, string(encoded))
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -1421,6 +1470,10 @@ type RunningNetwork struct {
 	// loopback names included.
 	SavedHosts    []string `json:"saved_hosts"`
 	AcceptedHosts []string `json:"accepted_hosts"`
+	// TrustedProxies are the reverse proxies whose forwarded headers the
+	// server believes, and TrustedProxiesSource where the list came from.
+	TrustedProxies       []string `json:"trusted_proxies"`
+	TrustedProxiesSource string   `json:"trusted_proxies_source"`
 }
 
 // PublishRunningNetwork records what this serving process uses.

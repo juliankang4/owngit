@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/requestctx"
 )
 
 func TestStalledOrdinaryFormTimesOutAndShutdownCompletes(t *testing.T) {
@@ -95,11 +98,19 @@ func TestOriginMustExactlyMatchRequest(t *testing.T) {
 	}
 }
 
-// Until trusted proxies exist, forwarded headers from any peer change neither
-// the Host check, the Origin check, cookie security nor the lockout key.
+// Forwarded headers from a peer that is not a trusted proxy change neither
+// the Host check, the Origin check, cookie security nor the lockout key,
+// whether no proxy is trusted or another address is.
 func TestForwardedHeadersFromDirectPeersChangeNothing(t *testing.T) {
+	for _, trusted := range [][]netip.Prefix{nil, {netip.MustParsePrefix("192.0.2.99/32"), netip.MustParsePrefix("10.0.0.0/8")}} {
+		t.Run(fmt.Sprintf("trusted %v", trusted), func(t *testing.T) { forwardedHeadersChangeNothing(t, trusted) })
+	}
+}
+
+func forwardedHeadersChangeNothing(t *testing.T, trusted []netip.Prefix) {
 	app := newConfiguredApp(t)
 	app.Hosts = NewHostPolicy("owngit.internal")
+	app.Requests = requestctx.Resolver{TrustedProxies: trusted, HostAllowed: app.Hosts.Allows}
 	handler := app.Handler()
 	spoof := func(request *http.Request, client string) {
 		request.Header.Set("X-Forwarded-For", client)

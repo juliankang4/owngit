@@ -32,6 +32,7 @@ import (
 	"owngit/internal/recovery"
 	"owngit/internal/releasecheck"
 	"owngit/internal/repository"
+	"owngit/internal/requestctx"
 	"owngit/internal/server"
 	"owngit/internal/state"
 	"owngit/internal/version"
@@ -184,8 +185,9 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
 	noUpdateCheck := flags.Bool("no-update-check", false, "never contact GitHub to check for a newer OwnGit release, whatever the Settings page says")
-	var allowedHosts stringList
+	var allowedHosts, trustedProxies stringList
 	flags.Var(&allowedHosts, "allowed-host", "additional accepted `host` name (repeatable)")
+	flags.Var(&trustedProxies, "trusted-proxy", "trust forwarded headers from this reverse proxy `address` or CIDR range (repeatable); overrides the saved list for this run")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -239,6 +241,14 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	network, err := effectiveServeNetwork(savedNetwork, flags, *listenAddress, *baseURL)
+	if err != nil {
+		return err
+	}
+	savedProxies, err := store.TrustedProxies(ctx)
+	if err != nil {
+		return err
+	}
+	proxies, err := effectiveTrustedProxies(savedProxies, flags, trustedProxies)
 	if err != nil {
 		return err
 	}
@@ -372,6 +382,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	application := &server.App{
 		Store: store, Auth: authentication, Repositories: repositories, PullRequests: pullRequests, GitHTTP: gitHandler,
 		Renderer: renderer, Hosts: policy, BaseURL: configuredOrigin(network, origin), SuggestedRepositoryRoot: filepath.Join(home, "OwnGit-Repositories"),
+		Requests:   requestctx.Resolver{TrustedProxies: proxies.Prefixes, HostAllowed: policy.Allows},
 		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true, Version: version.Version,
 		WakeChecks: checkCoordinator.Wake, Imports: imports,
 		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
@@ -448,13 +459,16 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		ReadTimeout: 30 * time.Second, WriteTimeout: server.ImportRunRequestTimeout(importsync.DefaultLimits().RunTimeout),
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
-	publishNetwork, clearNetwork := runningNetworkRecord(store, network, listener.Addr().String(), origin, trusted, policy, logf)
+	publishNetwork, clearNetwork := runningNetworkRecord(store, network, proxies, listener.Addr().String(), origin, trusted, policy, logf)
 	application.OnHostAccepted = publishNetwork
 	publishNetwork()
 	defer clearNetwork()
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
 	logf("OwnGit listening on %s", listener.Addr())
+	if len(proxies.List) > 0 {
+		logf("trusting forwarded headers from reverse proxies at %s", strings.Join(proxies.List, ", "))
+	}
 	// An initialized installation opens only on explicit request, after the
 	// listener exists and the HTTP server has started. First-run opening above
 	// continues to use the private setup file exactly once.
