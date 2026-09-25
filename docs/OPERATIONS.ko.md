@@ -19,7 +19,7 @@ go build -o bin/owngit ./cmd/owngit
 
 터미널에서는 웹 설정 화면과 같은 내용을 같은 순서로 묻습니다. 저장소 폴더, 저장소를 읽고 쓸 수 있는 사람, 관리자 비밀번호, "다른 기기에서 접속"을 차례로 묻고, OwnGit이 네트워크 주소에서 연결을 받는다면 암호화되지 않는 연결로 계속할지도 묻습니다. 비밀번호는 두 번 입력하며 입력하는 동안 화면에 아무것도 나타나지 않습니다. 답에는 웹 페이지가 받는 문자가 모두 그대로 들어갑니다. 붙여 넣은 줄바꿈 없는 공백이나 이모지도 마찬가지이며, Enter, Backspace, Ctrl-U, Ctrl-C, Escape만 키로 동작합니다. 확인 카드에서 "설치 완료"를 고르기 전에는 아무것도 저장하지 않습니다. 질문에 답하는 동안 Ctrl-Z와 Ctrl-D는 키로 동작하지 않고, 다른 제어 문자처럼 답의 일부가 됩니다. 설치 중에 OwnGit이 멈췄다가 백그라운드에서 다시 실행되면(예: `kill -STOP` 뒤 `bg`) 서버는 계속 동작하지만 질문은 멈춥니다. `fg`를 실행하면 질문이 이어집니다. 설치를 마친 뒤에는 OwnGit이 터미널을 더 읽지 않으므로 Ctrl-Z와 `bg`를 써도 서버가 계속 실행됩니다. Ctrl-C를 누르면 아무것도 저장하지 않고 서버가 멈춥니다. 다시 하려면 `owngit serve`를 다시 실행하세요. OwnGit이 이 컴퓨터에서만 연결을 받으면 터미널에서는 일반 HTTP 확인을 묻지 않습니다. 나중에 다른 기기에서 OwnGit에 접속한다면 설정 화면에서 확인해 주세요. 확인하기 전까지는 다른 설치와 마찬가지로 설정 화면이 이 확인을 계속 묻습니다. 일반 HTTP 질문에 아니요라고 답하면 OwnGit을 이 컴퓨터에서만 쓰는 방법을 알려 줍니다. `--listen 127.0.0.1:PORT` 옵션으로 다시 시작하면 됩니다. 다만 네트워크 주소가 저장된 [네트워크 설정](#네트워크-설정)에서 왔다면, 저장된 주소는 매번 시작할 때 적용되므로 OwnGit을 멈추고 `owngit network set --listen 127.0.0.1:PORT --base-url ""`를 실행한 뒤 다시 시작해야 합니다.
 
-"다른 기기에서 접속" 단계는 이 컴퓨터에서 Tailscale이 실행 중인지 확인합니다. `tailscale status --json`만 실행하며 아무것도 바꾸지 않습니다. Tailscale이 실행 중이면 이 컴퓨터의 Tailscale 주소와 MagicDNS 이름을 보여 주고, 이 값을 [네트워크 설정](#네트워크-설정)으로 저장하는 명령을 한 줄에 따로 출력합니다. 예를 들면 `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654`입니다. 이 명령을 실행하고 설치를 마친 뒤 OwnGit을 다시 시작하세요. 저장된 설정은 백그라운드 서비스를 포함해 이후 모든 시작에 적용됩니다. 기본 위치가 아닌 상태 디렉터리를 쓴다면 명령에 `--state-dir`이 들어갑니다. 경로에 탭 같은 제어 문자나 방향 제어 문자가 있으면 ANSI-C 따옴표(`$'...'`)로 적습니다. zsh, bash, ksh는 이를 읽지만 `dash` 같은 순수 POSIX 셸은 읽지 못합니다. 설치 과정에서 이 명령을 실행하거나 저장하지는 않습니다. Tailscale이 기기 사이의 연결을 암호화하더라도 OwnGit은 그 보호를 확인할 수 없어 계속 일반 HTTP로 표시합니다. Enter를 누르면 다음으로 넘어갑니다. OwnGit을 서비스로 실행한다면 서비스 정의에서 `--listen`과 `--base-url`을 빼 두세요. [백그라운드 서비스의 옵션](#백그라운드-서비스의-옵션)을 보세요.
+"다른 기기에서 접속" 단계는 이 컴퓨터에서 Tailscale이 실행 중인지 확인합니다. `tailscale status --json`만 실행하며 아무것도 바꾸지 않습니다. Tailscale이 실행 중이면 이 컴퓨터의 Tailscale 주소와 MagicDNS 이름을 보여 주고, 이 값을 [네트워크 설정](#네트워크-설정)으로 저장하는 명령을 한 줄에 따로 출력합니다. 예를 들면 `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654`입니다. 이 명령을 실행하고 설치를 마친 뒤 OwnGit을 다시 시작하세요. 저장된 설정은 백그라운드 서비스를 포함해 이후 모든 시작에 적용됩니다. 기본 위치가 아닌 상태 디렉터리를 쓴다면 명령에 `--state-dir`이 들어갑니다. 경로에 탭 같은 제어 문자나 방향 제어 문자가 있으면 ANSI-C 따옴표(`$'...'`)로 적습니다. zsh, bash, ksh는 이를 읽지만 `dash` 같은 순수 POSIX 셸은 읽지 못합니다. 설치 과정에서 이 명령을 실행하거나 저장하지는 않습니다. Tailscale이 기기 사이의 연결을 암호화하더라도 OwnGit은 그 보호를 확인할 수 없어 계속 일반 HTTP로 표시합니다. OwnGit이 암호화된 연결로 표시하는 HTTPS 주소를 쓰려면 대신 [tailnet에서 HTTPS로 공유](#tailnet에서-https로-공유하기)하세요. Enter를 누르면 다음으로 넘어갑니다. OwnGit을 서비스로 실행한다면 서비스 정의에서 `--listen`과 `--base-url`을 빼 두세요. [백그라운드 서비스의 옵션](#백그라운드-서비스의-옵션)을 보세요.
 
 ### 브라우저에서 설치하고 터미널에서 승인하기
 
@@ -42,7 +42,7 @@ go build -o bin/owngit ./cmd/owngit
 
 ## 다른 기기에서 서버에 접속하기
 
-OwnGit은 일반 HTTP로 동작하므로 연결이 암호화되지 않으며, TLS를 내장하지 않습니다. HTTPS로 접속하려면 OwnGit 앞에 리버스 프록시나 Tailscale을 두세요([리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기) 참고). 비공개 네트워크 주소로 접속하려면 Tailscale이나 직접 운영하는 VPN을 쓰세요. 이름이 Tailscale과 관련되어 보인다는 것만으로 전체 경로가 보호된다고 볼 수는 없습니다. 일반 LAN에서 HTTP로 접속해도 됩니다. 이때 OwnGit은 비밀번호를 받기 전에 한 번 경고를 보여 주고, 화면에 연결 상태를 계속 표시합니다. OwnGit을 공개 인터넷에 노출하지 마세요.
+OwnGit은 일반 HTTP로 동작하므로 연결이 암호화되지 않으며, TLS를 내장하지 않습니다. HTTPS로 접속하려면 이 컴퓨터의 Tailscale로 tailnet에 공유하거나([tailnet에서 HTTPS로 공유하기](#tailnet에서-https로-공유하기) 참고) OwnGit 앞에 리버스 프록시를 두세요([리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기) 참고). 비공개 네트워크 주소로 접속하려면 Tailscale이나 직접 운영하는 VPN을 쓰세요. 이름이 Tailscale과 관련되어 보인다는 것만으로 전체 경로가 보호된다고 볼 수는 없습니다. 일반 LAN에서 HTTP로 접속해도 됩니다. 이때 OwnGit은 비밀번호를 받기 전에 한 번 경고를 보여 주고, 화면에 연결 상태를 계속 표시합니다. OwnGit을 공개 인터넷에 노출하지 마세요.
 
 LAN 이름을 쓰려면 다음과 같이 실행합니다.
 
@@ -77,7 +77,7 @@ OwnGit은 연결 주소, 기본 URL, 허용한 Host 이름, 신뢰하는 리버�
 
 `--listen`이나 `--base-url` 옵션처럼 이번 실행에서만 받아들이는 이름으로 다른 기기에서 웹 설치를 마치면, 설치 화면에 "다시 시작한 뒤에도 이 주소 받아들이기"가 나타납니다. 선택하면 설치를 마칠 때 그 이름을 허용한 Host로 저장합니다. 선택하지 않으면 아무것도 저장하지 않습니다.
 
-연결 주소가 이 컴퓨터 밖에서 접속을 받는 주소이면 `set`은 안내 한 줄을 출력합니다. 다른 기기는 암호화되지 않은 일반 HTTP로 접속하게 되기 때문입니다. HTTPS 리버스 프록시나 Tailscale HTTPS를 쓰면 이 연결을 암호화할 수 있습니다. 기본 URL이 `https`인데 신뢰하는 리버스 프록시가 없을 때도 안내 한 줄을 출력합니다.
+연결 주소가 이 컴퓨터 밖에서 접속을 받는 주소이면 `set`은 안내 한 줄을 출력합니다. 다른 기기는 암호화되지 않은 일반 HTTP로 접속하게 되기 때문입니다. HTTPS 리버스 프록시나 [Tailscale HTTPS](#tailnet에서-https로-공유하기)를 쓰면 이 연결을 암호화할 수 있습니다. 기본 URL이 `https`인데 신뢰하는 리버스 프록시가 없을 때도 안내 한 줄을 출력합니다.
 
 `owngit serve`는 값마다 옵션이 있으면 옵션을, 없으면 저장된 값을, 둘 다 없으면 기본값을 씁니다. 기본값은 `127.0.0.1:7654`이고, 기본 URL은 연결 주소에서 정합니다. 옵션은 그 실행에만 적용되며 저장된 값을 바꾸지 않습니다. `localhost`, `127.0.0.1`, `::1`은 무엇을 저장했든 항상 받아들입니다.
 
@@ -105,6 +105,40 @@ Homebrew 서비스(`brew services start owngit`)는 다른 옵션 없이 `owngit
 owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654
 brew services restart owngit
 ```
+
+### tailnet에서 HTTPS로 공유하기
+
+OwnGit을 실행하는 컴퓨터에서 Tailscale이 실행 중이면, OwnGit은 이 컴퓨터의 Tailscale 이름으로 들어오는 HTTPS 요청을 Tailscale이 받아 OwnGit에 넘기도록 설정할 수 있습니다. 그러면 tailnet에 로그인한 다른 기기에서 `https://NAME.TAILNET.ts.net/`을 열고 `https://NAME.TAILNET.ts.net/git/project.git` 같은 주소로 클론할 수 있습니다. 인증서는 이 컴퓨터의 Tailscale이 관리하고 연결도 Tailscale이 암호화합니다. 이 주소로 OwnGit을 열면 화면 상단에 "이 컴퓨터의 Tailscale이 암호화함"이라고 표시됩니다. tailnet 밖의 기기는 이 주소에 접속할 수 없습니다.
+
+이 컴퓨터에 Tailscale이 설치되어 있고 로그인되어 있어야 합니다. tailnet에서는 MagicDNS와 HTTPS Certificates가 켜져 있어야 하며, 둘 다 Tailscale 관리 콘솔의 DNS 페이지에서 켭니다. Linux의 Tailscale은 root나 지정된 operator만 설정을 바꿀 수 있습니다. `sudo tailscale set --operator=$USER`로 사용자를 한 번 허용해 두세요. OwnGit이 `sudo`를 직접 실행하지는 않습니다.
+
+공유는 설정 화면의 "tailnet에서 HTTPS로 공유"에서 관리자 비밀번호를 입력해 켜거나, 설치 호스트에서 다음 명령으로 켭니다.
+
+```sh
+./bin/owngit tailscale on
+./bin/owngit tailscale status
+./bin/owngit tailscale off
+```
+
+공유를 켜면 OwnGit은 다음 순서로 동작합니다.
+
+1. 먼저 현재 Tailscale Serve 설정을 읽습니다. 이 컴퓨터의 HTTPS 443 포트가 이미 다른 용도로 쓰이고 있으면 아무것도 바꾸지 않고 그 포트에 무엇이 있는지 보여 줍니다. Tailscale Funnel도 여기에 해당합니다.
+2. `tailscale serve --bg --https=443 http://127.0.0.1:PORT`를 실행합니다. PORT는 OwnGit의 포트입니다. 그런 다음 설정을 다시 읽어 이 주소가 OwnGit을 가리키는지 확인합니다.
+3. HTTPS 주소를 기본 URL로, Tailscale 이름을 허용한 Host 이름으로, `127.0.0.1`을 신뢰하는 프록시로 저장합니다. 이미 저장된 값은 다시 넣지 않습니다. 공유를 끌 때 정확히 그만큼만 되돌릴 수 있도록 OwnGit이 만든 내용도 기록합니다.
+
+Tailscale은 `127.0.0.1`로 OwnGit에 접속합니다. 기본값 `127.0.0.1:7654`나 `0.0.0.0:7654`처럼 연결 주소가 이 접속을 받을 수 있으면 OwnGit은 연결 주소를 그대로 둡니다. OwnGit이 Tailscale 주소에서만 접속을 받는 경우처럼 그렇지 않으면 `127.0.0.1:PORT`를 저장합니다. OwnGit은 홈 네트워크 접속을 스스로 열지 않습니다. "홈 네트워크에서도 허용 (암호화되지 않음)" 체크박스를 켜거나 `owngit tailscale on --home-network`를 쓰면 `0.0.0.0:PORT`를 저장하므로 홈 네트워크의 기기도 일반 HTTP로 접속할 수 있습니다. 이 선택은 일반 HTTP를 허용한다는 확인으로도 기록됩니다. `--home-network=false`는 이 컴퓨터에서만 접속을 받게 합니다. 새 연결 주소는 다음 시작부터 적용됩니다.
+
+설정 화면에서 켜거나 끄면 바로 적용됩니다. 실행 중인 서버가 다시 시작하지 않아도 이름을 받아들이고, 프록시를 신뢰하고, 클론 주소에 HTTPS 주소를 씁니다. `owngit tailscale on`과 `off`도 같은 내용을 저장하지만 실행 중인 서버에는 전달할 수 없으므로 OwnGit을 다시 시작하라고 안내합니다. `owngit tailscale status`와 설정 화면은 실행 중인 서버가 이름을 받아들이고 `127.0.0.1`을 신뢰하며 Tailscale에 주소가 남아 있을 때만 "준비됨"으로 표시합니다. 그렇지 않으면 다시 시작처럼 무엇이 남았는지 알려 줍니다. OwnGit이 `tailscale` 명령을 찾지 못하면 `owngit serve --tailscale PATH`와 `owngit tailscale --tailscale PATH`로 경로를 지정합니다. `status --json`은 같은 내용을 JSON으로 출력합니다.
+
+Tailscale이 인증서를 발급할 때 `gitbox.tail0000.ts.net`처럼 이 컴퓨터와 tailnet의 이름이 공개 인증서 투명성(Certificate Transparency) 로그에 기록됩니다. 주소를 열었다는 기록만 남을 뿐 코드, 저장소, 비밀번호 같은 내용은 기록되지 않습니다. 이 컴퓨터의 이름은 Tailscale 관리 콘솔에서 바꿀 수 있습니다. 이름을 바꾼 뒤에는 새 이름을 쓰도록 공유를 껐다가 다시 켜세요.
+
+공유를 끄면 OwnGit은 자신이 만든 Tailscale 주소가 만들 때 모습 그대로 남아 있을 때만 그 주소를 지웁니다. 그 뒤에 누가 주소를 바꿨다면 아무것도 바꾸지 않고 이유를 알려 줍니다. 원래대로 되돌리거나 `tailscale serve`로 지운 뒤 다시 끄세요. OwnGit이 공유를 켜기 전부터 있던 주소는 그대로 두고, 이미 없어진 주소는 지울 것이 없습니다. 끌 때도 먼저 Tailscale에 확인하므로 Tailscale이 응답해야 합니다. 그다음 HTTPS 주소가 아직 기본 URL로 저장되어 있으면 그 전에 저장되어 있던 기본 URL로 되돌리고, OwnGit이 추가한 허용 Host 이름과 신뢰하는 프록시를 지웁니다. 연결 주소는 바꾸지 않습니다. OwnGit은 `tailscale serve reset`이나 `tailscale funnel`을 실행하지 않습니다.
+
+OwnGit은 `Tailscale-Funnel-Request` 헤더가 붙은 요청을 모두 거부하므로 이 주소가 Funnel을 통해 인터넷에 열리지 않습니다. `Tailscale-User-Login` 같은 `Tailscale-User-*` 헤더는 무시합니다. 누가 읽고 쓰고 관리할 수 있는지는 여전히 비밀번호로 정합니다.
+
+macOS용 Tailscale 앱(App Store 앱이나 독립 실행형 앱으로, Homebrew의 `tailscaled`와는 다릅니다)은 누군가 로그인해 있을 때만 실행됩니다. Mac을 다시 시작하면 누군가 로그인할 때까지 HTTPS가 동작하지 않습니다. 자동 로그인을 켜거나, 로그인 없이 실행되는 Homebrew의 `tailscaled`를 쓰세요. 설정 화면은 이 앱을 감지하면 같은 안내를 한 줄로 보여 줍니다.
+
+공유 기록은 네트워크 설정처럼 이 설치 호스트에 속하며 오프라인 백업에 포함되지 않습니다.
 
 ### 리버스 프록시 뒤에서 운영하기
 

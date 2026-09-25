@@ -100,7 +100,7 @@ Each password check needs about 70 MB more for a moment, because passwords are h
 - The server is local-only by default. General repository access can be password-free or protected by one shared password. There are no individual accounts.
 - A separate administrator password protects security settings, and every security change asks for it again.
 - After setup, OwnGit asks GitHub once a day whether a newer release exists and shows a notice on the dashboard. It sends no repository data and never updates itself. Turn it off in Settings, or start with `--no-update-check` so it never checks. See [New-release notice](docs/OPERATIONS.md#new-release-notice).
-- OwnGit serves plain HTTP, which is not encrypted, and has no built-in TLS. TLS comes from a reverse proxy or Tailscale in front of OwnGit, and OwnGit believes forwarded headers only from proxies you configure (see [Behind a reverse proxy](docs/OPERATIONS.md#behind-a-reverse-proxy)). Prefer Tailscale or your own VPN for connections from another device. Public Internet hosting is out of scope.
+- OwnGit serves plain HTTP, which is not encrypted, and has no built-in TLS. TLS comes from Tailscale on this computer (see [Share on your tailnet over HTTPS](docs/OPERATIONS.md#share-on-your-tailnet-over-https)) or a reverse proxy in front of OwnGit, and OwnGit believes forwarded headers only from proxies you configure (see [Behind a reverse proxy](docs/OPERATIONS.md#behind-a-reverse-proxy)). Prefer Tailscale or your own VPN for connections from another device. Public Internet hosting is out of scope.
 
 ## Status and limits
 

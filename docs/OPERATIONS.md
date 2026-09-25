@@ -19,7 +19,7 @@ When `owngit serve` starts an installation that is not set up yet, both its inpu
 
 In the terminal, OwnGit asks what the web setup page asks, in the same order: the repository folder, who can read and write repositories, the administrator password, "Other devices", and, when OwnGit listens on a network address, whether to continue with a connection it does not encrypt. Each password is typed twice and nothing appears while you type. An answer keeps every character the web page keeps, including a pasted no-break space or emoji; only Enter, Backspace, Ctrl-U, Ctrl-C and Escape act as keys instead. Nothing is saved until you choose "Finish setup" on the review card. While a question is open, Ctrl-Z and Ctrl-D are not keys: like any other control character, they become part of the answer. If OwnGit is stopped during setup and continued in the background (for example `kill -STOP`, then `bg`), it keeps serving but stops asking; run `fg` to continue the questions. After setup, OwnGit no longer reads the terminal, so Ctrl-Z and `bg` leave the server running. Ctrl-C stops the server without saving anything; run `owngit serve` again to start over. When OwnGit listens only on this computer, the terminal does not ask about plain HTTP. If you later reach OwnGit from another device, confirm it on the Settings page, which asks until the confirmation is given, as for any installation without it. If you answer no to the plain HTTP question, OwnGit tells you how to keep it on this computer only: start again with `--listen 127.0.0.1:PORT`, or, when the network address comes from the saved [network settings](#network-settings), stop OwnGit, run `owngit network set --listen 127.0.0.1:PORT --base-url ""` and start it again, because a saved address applies at every start.
 
-"Other devices" checks whether Tailscale runs on this computer. It only runs `tailscale status --json` and changes nothing. When Tailscale is running, the step shows this computer's Tailscale address and MagicDNS name and prints, on a line of its own, a command that saves them as [network settings](#network-settings), for example `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654`. Run it, then restart OwnGit after setup; the saved settings apply at every later start, a background service included. When you use a state directory other than the default, the command includes `--state-dir`. A path with a control or direction character, such as a tab, is written in ANSI-C quotes (`$'...'`), which zsh, bash and ksh read but a plain POSIX shell such as `dash` does not. Setup does not run or save that command. Tailscale encrypts the connection between devices, but OwnGit still reports plain HTTP because it cannot see that protection. Press Enter to continue. If OwnGit runs as a service, leave `--listen` and `--base-url` out of the service definition; see [Options for a background service](#options-for-a-background-service).
+"Other devices" checks whether Tailscale runs on this computer. It only runs `tailscale status --json` and changes nothing. When Tailscale is running, the step shows this computer's Tailscale address and MagicDNS name and prints, on a line of its own, a command that saves them as [network settings](#network-settings), for example `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654`. Run it, then restart OwnGit after setup; the saved settings apply at every later start, a background service included. When you use a state directory other than the default, the command includes `--state-dir`. A path with a control or direction character, such as a tab, is written in ANSI-C quotes (`$'...'`), which zsh, bash and ksh read but a plain POSIX shell such as `dash` does not. Setup does not run or save that command. Tailscale encrypts the connection between devices, but OwnGit still reports plain HTTP because it cannot see that protection. To use an HTTPS address that OwnGit reports as encrypted, [share on your tailnet over HTTPS](#share-on-your-tailnet-over-https) instead. Press Enter to continue. If OwnGit runs as a service, leave `--listen` and `--base-url` out of the service definition; see [Options for a background service](#options-for-a-background-service).
 
 ### Setup in the browser, approved in the terminal
 
@@ -42,7 +42,7 @@ Before setup is finished, the setup link also works from another device by an ad
 
 ## Reaching the server from another device
 
-OwnGit serves plain HTTP, so the connection is not encrypted, and it has no built-in TLS. For HTTPS, put a reverse proxy or Tailscale in front of it (see [Behind a reverse proxy](#behind-a-reverse-proxy)). Use Tailscale or your own VPN to reach its private-network address. A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP also works: OwnGit shows a one-time warning before it accepts passwords, and the interface keeps the connection status visible. Do not expose OwnGit to the public Internet.
+OwnGit serves plain HTTP, so the connection is not encrypted, and it has no built-in TLS. For HTTPS, let Tailscale on this computer share it on your tailnet (see [Share on your tailnet over HTTPS](#share-on-your-tailnet-over-https)) or put a reverse proxy in front of it (see [Behind a reverse proxy](#behind-a-reverse-proxy)). Use Tailscale or your own VPN to reach its private-network address. A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP also works: OwnGit shows a one-time warning before it accepts passwords, and the interface keeps the connection status visible. Do not expose OwnGit to the public Internet.
 
 To use a LAN name:
 
@@ -77,7 +77,7 @@ OwnGit can save the listen address, the base URL, the allowed Host names, and th
 
 When you finish web setup from another device by a name that OwnGit accepts only for the current run, for example through a `--listen` or `--base-url` option, the setup form offers "Keep accepting this address after a restart". Ticking it saves the name as an allowed Host when setup finishes. Unticked, nothing is saved.
 
-`set` prints a note when the listen address leaves this computer, because other devices then use plain HTTP. A reverse proxy with HTTPS or Tailscale HTTPS encrypts that connection. It also prints a note when the base URL uses `https` but no reverse proxy is trusted.
+`set` prints a note when the listen address leaves this computer, because other devices then use plain HTTP. A reverse proxy with HTTPS or [Tailscale HTTPS](#share-on-your-tailnet-over-https) encrypts that connection. It also prints a note when the base URL uses `https` but no reverse proxy is trusted.
 
 For each value, `owngit serve` uses its option if one is given, then the saved value, then the default (`127.0.0.1:7654`, with the base URL taken from the listen address). An option applies to that run only and does not change what is saved. `localhost`, `127.0.0.1`, and `::1` are always accepted, whatever is saved.
 
@@ -105,6 +105,40 @@ The Homebrew service (`brew services start owngit`) runs `owngit serve --no-open
 owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654
 brew services restart owngit
 ```
+
+### Share on your tailnet over HTTPS
+
+When Tailscale runs on the computer that runs OwnGit, OwnGit can ask it to answer HTTPS for this computer's Tailscale name and pass the requests to OwnGit. Other devices signed in to your tailnet then open `https://NAME.TAILNET.ts.net/` and clone from addresses such as `https://NAME.TAILNET.ts.net/git/project.git`. Tailscale on this computer holds the certificate and encrypts the connection. When you open OwnGit at that address, the page header shows "Encrypted by Tailscale on this computer". Devices outside your tailnet cannot reach the address.
+
+Tailscale must be installed and signed in on this computer, and the tailnet needs MagicDNS and HTTPS Certificates, both on the DNS page of the Tailscale admin console. On Linux, Tailscale changes its settings only for root or its operator. Allow your user once with `sudo tailscale set --operator=$USER`; OwnGit never runs `sudo`.
+
+Turn sharing on in Settings, under "Share on your tailnet over HTTPS", with the administrator password, or on the installation host:
+
+```sh
+./bin/owngit tailscale on
+./bin/owngit tailscale status
+./bin/owngit tailscale off
+```
+
+Turning it on does the following:
+
+1. OwnGit reads the current Tailscale Serve configuration first. If HTTPS port 443 of this computer already serves something else, including Tailscale Funnel, OwnGit changes nothing and shows what is there.
+2. It runs `tailscale serve --bg --https=443 http://127.0.0.1:PORT`, where PORT is OwnGit's port, and reads the configuration back to confirm that the address points at OwnGit.
+3. It saves the HTTPS address as the base URL, the Tailscale name as an allowed Host, and `127.0.0.1` as a trusted proxy, each only if it is not saved yet. It also records what it made, so that turning off can take back exactly that.
+
+Tailscale connects to OwnGit through `127.0.0.1`. When the listen address already accepts that, for example the default `127.0.0.1:7654` or `0.0.0.0:7654`, OwnGit keeps it. Otherwise, for example when OwnGit listens only on its Tailscale address, turning on saves `127.0.0.1:PORT`. OwnGit never opens home-network access on its own. The "Also allow on the home network (not encrypted)" checkbox, or `owngit tailscale on --home-network`, saves `0.0.0.0:PORT` so that devices on your home network can also connect over plain HTTP, and it counts as accepting plain HTTP. `--home-network=false` keeps OwnGit on this computer only. A new listen address applies at the next start.
+
+On the Settings page, the change applies at once: the running server accepts the name, trusts the proxy and uses the HTTPS address in clone addresses without a restart. `owngit tailscale on` and `off` save the same change but cannot reach a running server, so they tell you to restart OwnGit. `owngit tailscale status` and the Settings page say "ready" only after the running server accepts the name and trusts `127.0.0.1`, and Tailscale still has the address; otherwise they say what is missing, such as a restart. `owngit serve --tailscale PATH` and `owngit tailscale --tailscale PATH` use a `tailscale` command that OwnGit does not find on its own. `status --json` prints the report as JSON.
+
+When Tailscale issues the certificate, the names of this computer and your tailnet, such as `gitbox.tail0000.ts.net`, are recorded in a public Certificate Transparency log. Only the fact that the address was opened is recorded, not your code, repositories, passwords or other content. You can change this computer's name in the Tailscale admin console; turn sharing off and on again afterwards to use the new name.
+
+Turning off removes the Tailscale address only if OwnGit made it and it is still exactly as OwnGit made it. If someone changed it since, OwnGit changes nothing and explains; change it back or remove it with `tailscale serve`, then turn off again. If the address was already there before OwnGit turned sharing on, turning off leaves it, and if it is already gone, there is nothing to remove. Turning off asks Tailscale first, so it needs Tailscale to answer. OwnGit then restores the base URL that was saved before, if the HTTPS address is still saved, and removes the allowed Host and trusted proxy that it added. The listen address stays as it is. OwnGit never runs `tailscale serve reset` or `tailscale funnel`.
+
+OwnGit refuses every request that carries the `Tailscale-Funnel-Request` header, so the address cannot be opened to the Internet through Funnel. It ignores the `Tailscale-User-Login` and other `Tailscale-User-*` headers; passwords still decide who can read, write and administer.
+
+With the Tailscale app for macOS (the App Store or standalone app, as opposed to Homebrew's `tailscaled`), Tailscale runs only while someone is logged in. After the Mac restarts, HTTPS does not work until someone logs in. Turn on automatic login, or use Homebrew's `tailscaled`, which runs without a login. The Settings page shows this line when it detects the app.
+
+The sharing record belongs to this installation host, like the network settings. An offline backup does not carry it.
 
 ### Behind a reverse proxy
 
