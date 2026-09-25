@@ -214,6 +214,11 @@ func TestTailscaleOnShowsTheCertificateLogNotice(t *testing.T) {
 	if err == nil || !strings.Contains(output, notice) {
 		t.Fatalf("a failed write: err=%v output=%q", err, output)
 	}
+	// Printed while turning on, the notice reads as a statement, not as
+	// advice for before turning on.
+	if strings.Contains(notice, "before you turn") {
+		t.Errorf("notice %q", notice)
+	}
 	fake.Update(func(s *tailscaletest.State) { s.WriteError = "" })
 	output, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--json")
 	noErr(t, err)
