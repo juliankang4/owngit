@@ -32,9 +32,9 @@ import (
 	"owngit/internal/recovery"
 	"owngit/internal/releasecheck"
 	"owngit/internal/repository"
-	"owngit/internal/requestctx"
 	"owngit/internal/server"
 	"owngit/internal/state"
+	"owngit/internal/tailscale"
 	"owngit/internal/version"
 	"owngit/internal/webui"
 )
@@ -100,6 +100,8 @@ func runCommand(command string, arguments []string) error {
 		return approveHost(arguments)
 	case "network":
 		return networkCommand(arguments)
+	case "tailscale":
+		return tailscaleCommand(arguments)
 	case "forget-check-container":
 		return forgetCheckContainer(arguments)
 	case "backup":
@@ -189,6 +191,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	noUpdateCheck := flags.Bool("no-update-check", false, "never contact GitHub to check for a newer OwnGit release, whatever the Settings page says")
 	var allowedHosts, trustedProxies stringList
 	flags.Var(&allowedHosts, "allowed-host", "additional accepted `host` name (repeatable)")
+	tailscalePath := flags.String("tailscale", "", "tailscale command `path` for sharing on the tailnet; found automatically when empty")
 	flags.Var(&trustedProxies, "trusted-proxy", "trust forwarded headers from this reverse proxy `address` or CIDR range (repeatable); overrides the saved list for this run")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
@@ -382,10 +385,20 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			},
 		}
 	}
+	live, clearNetwork, err := liveNetwork(store, runningLive, network, proxies, listener.Addr().String(), origin, trusted, allowedHosts, policy, logf)
+	if err != nil {
+		return err
+	}
 	application := &server.App{
 		Store: store, Auth: authentication, Repositories: repositories, PullRequests: pullRequests, GitHTTP: gitHandler,
-		Renderer: renderer, Hosts: policy, BaseURL: configuredOrigin(network, origin), SuggestedRepositoryRoot: filepath.Join(home, "OwnGit-Repositories"),
-		Requests:   requestctx.Resolver{TrustedProxies: proxies.Prefixes, HostAllowed: policy.Allows},
+		Renderer: renderer, Hosts: policy, Network: live, SuggestedRepositoryRoot: filepath.Join(home, "OwnGit-Repositories"),
+		Tailscale: &server.Tailscale{
+			Store: store,
+			Find:  func() (tailscale.Command, error) { return findTailscale(*tailscalePath) },
+			Observe: func(ctx context.Context) (state.RunningObservation, error) {
+				return store.OwnRunningNetwork(ctx, runningLive)
+			},
+		},
 		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true, Version: version.Version,
 		WakeChecks: checkCoordinator.Wake, Imports: imports, RunningRecordLive: runningLive,
 		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
@@ -462,9 +475,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		ReadTimeout: 30 * time.Second, WriteTimeout: server.ImportRunRequestTimeout(importsync.DefaultLimits().RunTimeout),
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
-	publishNetwork, clearNetwork := runningNetworkRecord(store, runningLive, network, proxies, listener.Addr().String(), origin, trusted, policy, logf)
-	application.OnHostAccepted = publishNetwork
-	publishNetwork()
+	application.OnHostAccepted = live.Publish
+	live.Publish()
 	defer clearNetwork()
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
@@ -964,7 +976,7 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|network|forget-check-container|backup|restore|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|skill|mcp|version] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|skill|mcp|version] [options]")
 	fmt.Fprintln(writer, "Run owngit <command> --help for the options of a command.")
 }
 

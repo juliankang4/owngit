@@ -131,34 +131,42 @@ func claimRunningRecord(ctx context.Context, store *state.Store, logf func(strin
 	return release, true
 }
 
-// runningNetworkRecord publishes what this serve run uses for "owngit network
-// show". publish records it, each time with the Host names the policy accepts
-// then; unpublish removes it when serving stops. Both do nothing when live
-// is false, because this run does not hold the running-record lock.
-func runningNetworkRecord(store *state.Store, live bool, network serveNetwork, proxies serveProxies, address, origin string, savedHosts []string, policy *server.HostPolicy, logf func(string, ...any)) (publish, unpublish func()) {
-	if !live {
-		return func() {}, func() {}
+// liveNetwork is what this serve run uses for the network, published for
+// "owngit network show" and the Settings page each time it changes. The
+// returned unpublish removes the record when serving stops. Without the
+// running-record lock (live false) nothing is published.
+func liveNetwork(store *state.Store, live bool, network serveNetwork, proxies serveProxies, address, origin string, savedHosts, flagHosts []string, policy *server.HostPolicy, logf func(string, ...any)) (*server.LiveNetwork, func(), error) {
+	config := server.LiveNetworkConfig{
+		Record: state.RunningNetwork{
+			PID: os.Getpid(), StartedAt: time.Now().Unix(),
+			Listen: network.Listen, Address: address, ListenSource: network.ListenSource,
+			BaseURL: network.BaseURL, BaseURLSource: network.BaseURLSource, Origin: origin,
+			SavedHosts:     server.NormalizedHosts(savedHosts),
+			TrustedProxies: proxies.List, TrustedProxiesSource: proxies.Source,
+		},
+		BaseURL: configuredOrigin(network, origin), Proxies: proxies.Prefixes, Hosts: policy, FlagHosts: flagHosts,
 	}
-	running := state.RunningNetwork{
-		PID: os.Getpid(), StartedAt: time.Now().Unix(),
-		Listen: network.Listen, Address: address, ListenSource: network.ListenSource,
-		BaseURL: network.BaseURL, BaseURLSource: network.BaseURLSource, Origin: origin,
-		SavedHosts:     server.NormalizedHosts(savedHosts),
-		TrustedProxies: proxies.List, TrustedProxiesSource: proxies.Source,
+	record, sharing, err := store.TailscaleServe(context.Background())
+	if err != nil {
+		return nil, nil, err
 	}
-	publish = func() {
-		current := running
-		current.AcceptedHosts = policy.Hosts()
-		if err := store.PublishRunningNetwork(context.Background(), current); err != nil {
-			logf("could not record the running network settings for \"owngit network show\": %v", err)
+	if sharing {
+		config.Tailscale = &record
+	}
+	unpublish := func() {}
+	if live {
+		config.Publish = func(running state.RunningNetwork) {
+			if err := store.PublishRunningNetwork(context.Background(), running); err != nil {
+				logf("could not record the running network settings for \"owngit network show\": %v", err)
+			}
+		}
+		unpublish = func() {
+			if err := store.ClearRunningNetwork(context.Background()); err != nil {
+				logf("could not clear the running network settings: %v", err)
+			}
 		}
 	}
-	unpublish = func() {
-		if err := store.ClearRunningNetwork(context.Background()); err != nil {
-			logf("could not clear the running network settings: %v", err)
-		}
-	}
-	return publish, unpublish
+	return server.NewLiveNetwork(config), unpublish, nil
 }
 
 func networkCommand(arguments []string) error {

@@ -97,3 +97,29 @@ func TestRunningNetworkRecordRoundTrip(t *testing.T) {
 		t.Fatalf("cleared running record found=%v err=%v", found, err)
 	}
 }
+
+// The Tailscale sharing record is optional metadata that changes in the same
+// transaction as the network settings it describes.
+func TestTailscaleSharingRecordChangesWithTheNetworkSettings(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	if _, found, err := store.TailscaleServe(ctx); err != nil || found {
+		t.Fatalf("fresh record found=%v err=%v", found, err)
+	}
+	record := TailscaleServe{Name: "box.tail0000.ts.net", HTTPSPort: 443, Target: "http://127.0.0.1:7654", Created: true}
+	noErr(t, store.SaveTailscaleServe(ctx, record))
+	record.Confirmed, record.BaseURL, record.AddedProxy = true, "https://box.tail0000.ts.net", "127.0.0.1"
+	noErr(t, store.UpdateNetwork(ctx, NetworkUpdate{
+		Settings: NetworkSettings{BaseURL: record.BaseURL}, AddProxies: []string{"127.0.0.1"}, Tailscale: &record,
+	}))
+	if saved, found, err := store.TailscaleServe(ctx); err != nil || !found || !reflect.DeepEqual(saved, record) {
+		t.Fatalf("saved=%+v found=%v err=%v", saved, found, err)
+	}
+	noErr(t, store.UpdateNetwork(ctx, NetworkUpdate{RemoveProxies: []string{"127.0.0.1"}, ClearTailscale: true}))
+	if _, found, err := store.TailscaleServe(ctx); err != nil || found {
+		t.Fatalf("cleared record found=%v err=%v", found, err)
+	}
+	if proxies, err := store.TrustedProxies(ctx); err != nil || len(proxies) != 0 {
+		t.Fatalf("proxies=%v err=%v", proxies, err)
+	}
+}

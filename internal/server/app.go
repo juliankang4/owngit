@@ -59,6 +59,13 @@ type App struct {
 	// the saved network setting, or "" when addresses shown to people are
 	// derived from each request. See serverOrigin.
 	BaseURL string
+	// Network, when set, holds the base URL, trusted proxies and accepted
+	// Host names the running server uses now, which Tailscale sharing can
+	// change without a restart; it then replaces Requests and BaseURL.
+	Network *LiveNetwork
+	// Tailscale shares this OwnGit on the tailnet with Tailscale Serve. Nil
+	// shows Tailscale as not installed.
+	Tailscale *Tailscale
 	// RunningRecordLive is true when this process holds the running-record
 	// lock, so the stored running network record is its own and the Settings
 	// page may show it as what the server uses. See
@@ -112,7 +119,15 @@ type App struct {
 }
 
 func (app *App) Handler() http.Handler {
-	return app.Requests.Middleware(app.Hosts.MiddlewareAdmitting(app.admitUnknownHost, http.HandlerFunc(app.serveHTTP)))
+	next := app.Hosts.MiddlewareAdmitting(app.admitUnknownHost, http.HandlerFunc(app.serveHTTP))
+	resolved := app.Requests.Middleware(next)
+	return refuseFunnel(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if app.Network != nil {
+			app.Network.Resolver().Middleware(next).ServeHTTP(writer, request)
+			return
+		}
+		resolved.ServeHTTP(writer, request)
+	}))
 }
 
 func (app *App) AuthorizeGit(request *http.Request) bool {

@@ -6,11 +6,13 @@ import (
 	"testing"
 
 	"owngit/internal/markdown"
+	"owngit/internal/tailscale/tailscaletest"
 )
 
 // TestMain lets the test binary render Markdown in a child process, as the
-// owngit binary does.
+// owngit binary does, and act as a fake tailscale command.
 func TestMain(m *testing.M) {
+	tailscaletest.RunIfFake()
 	if markdown.IsChild(os.Args) {
 		os.Exit(markdown.RunChild(os.Stdin, os.Stdout))
 	}

@@ -51,6 +51,7 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	noErr(t, store.AddTrustedHost(ctx, "private-host.example"))
 	noErr(t, store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{Listen: "0.0.0.0:7654", BaseURL: "http://private-host.example:7654"}, AddProxies: []string{"192.0.2.10"}}))
 	noErr(t, store.PublishRunningNetwork(ctx, state.RunningNetwork{PID: 1, Listen: "0.0.0.0:7654"}))
+	noErr(t, store.SaveTailscaleServe(ctx, state.TailscaleServe{Name: "box.tail0000.ts.net", HTTPSPort: 443, Target: "http://127.0.0.1:7654", Confirmed: true}))
 
 	remote, _ := manager.Path("project")
 	work := filepath.Join(root, "work")
@@ -105,6 +106,9 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	}
 	if proxies, err := restoredStore.TrustedProxies(ctx); err != nil || len(proxies) != 0 {
 		t.Fatalf("trusted proxies were restored: %v err=%v", proxies, err)
+	}
+	if _, found, err := restoredStore.TailscaleServe(ctx); err != nil || found {
+		t.Fatalf("Tailscale sharing record was restored: found=%v err=%v", found, err)
 	}
 	if _, found, err := restoredStore.RunningNetwork(ctx); err != nil || found {
 		t.Fatalf("running network record was restored: found=%v err=%v", found, err)

@@ -34,6 +34,17 @@ func (policy *HostPolicy) Add(value string) error {
 	return nil
 }
 
+// Remove stops accepting a Host name. The loopback names stay accepted.
+func (policy *HostPolicy) Remove(value string) {
+	host, err := normalizeHost(value)
+	if err != nil || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return
+	}
+	policy.mu.Lock()
+	delete(policy.allowed, host)
+	policy.mu.Unlock()
+}
+
 func (policy *HostPolicy) Allows(requestHost string) bool {
 	host, err := normalizeHost(requestHost)
 	if err != nil {
@@ -74,6 +85,25 @@ func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) bool, ne
 		writer.Header().Set("Referrer-Policy", "same-origin")
 		writer.Header().Set("X-Frame-Options", "DENY")
 		writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		next.ServeHTTP(writer, request)
+	})
+}
+
+// refuseFunnel refuses every request that carries Tailscale's Funnel header.
+// Tailscale sets it on requests from the public Internet through Funnel,
+// which OwnGit never enables and must never answer, whoever configured it.
+// Nothing else reads Tailscale's headers: the Tailscale-User-* identity
+// headers grant nothing, since OwnGit has its own passwords.
+func refuseFunnel(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if _, present := request.Header["Tailscale-Funnel-Request"]; present {
+			if strings.HasPrefix(request.URL.Path, "/api/") {
+				writeAPIError(writer, http.StatusForbidden, "funnel_refused", "OwnGit does not answer requests from the public Internet through Tailscale Funnel.", nil)
+			} else {
+				http.Error(writer, "OwnGit does not answer requests from the public Internet through Tailscale Funnel", http.StatusForbidden)
+			}
+			return
+		}
 		next.ServeHTTP(writer, request)
 	})
 }

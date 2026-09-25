@@ -1386,6 +1386,82 @@ type NetworkUpdate struct {
 	RemoveHosts   []string
 	AddProxies    []string
 	RemoveProxies []string
+	// Tailscale, when set, replaces the Tailscale sharing record in the same
+	// transaction; ClearTailscale removes it.
+	Tailscale      *TailscaleServe
+	ClearTailscale bool
+}
+
+// tailscaleServeKey holds the TailscaleServe record. Like the network
+// settings it is optional metadata and machine-local.
+const tailscaleServeKey = "tailscale_serve"
+
+// TailscaleServe records what OwnGit changed to share this computer's OwnGit
+// on the tailnet: the Tailscale Serve endpoint it wrote and the OwnGit
+// settings it changed. Turning sharing off removes the endpoint only when
+// Tailscale still has exactly this endpoint, and takes back only these
+// settings.
+type TailscaleServe struct {
+	// Name is the computer's MagicDNS name, such as box.tail1234.ts.net.
+	Name string `json:"name"`
+	// HTTPSPort is the port Tailscale answers HTTPS on, and Target the local
+	// address it proxies to, such as http://127.0.0.1:7654.
+	HTTPSPort int    `json:"https_port"`
+	Target    string `json:"target"`
+	// Created is false when Tailscale already had exactly this endpoint, so
+	// turning sharing off leaves it in place.
+	Created bool `json:"created"`
+	// Confirmed is true once the endpoint was read back from Tailscale and
+	// the settings below were saved.
+	Confirmed bool  `json:"confirmed"`
+	CreatedAt int64 `json:"created_at"`
+	// BaseURL is the base URL OwnGit saved and PreviousBaseURL the one saved
+	// before; turning off restores it while BaseURL is still saved.
+	BaseURL         string `json:"base_url"`
+	PreviousBaseURL string `json:"previous_base_url,omitempty"`
+	// AddedProxy and AddedHost are the trusted proxy and allowed Host name
+	// OwnGit added, or empty when they were already saved.
+	AddedProxy string `json:"added_proxy,omitempty"`
+	AddedHost  string `json:"added_host,omitempty"`
+}
+
+// TailscaleServe returns the Tailscale sharing record.
+func (s *Store) TailscaleServe(ctx context.Context) (TailscaleServe, bool, error) {
+	values, err := s.metadataValues(ctx, tailscaleServeKey)
+	if err != nil {
+		return TailscaleServe{}, false, err
+	}
+	raw, found := values[tailscaleServeKey]
+	if !found {
+		return TailscaleServe{}, false, nil
+	}
+	var record TailscaleServe
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		return TailscaleServe{}, false, fmt.Errorf("invalid Tailscale sharing record: %w", err)
+	}
+	return record, true, nil
+}
+
+// SaveTailscaleServe replaces the Tailscale sharing record.
+func (s *Store) SaveTailscaleServe(ctx context.Context, record TailscaleServe) error {
+	return putTailscaleServe(ctx, s.db, record)
+}
+
+// ClearTailscaleServe removes the Tailscale sharing record.
+func (s *Store) ClearTailscaleServe(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key=?`, tailscaleServeKey)
+	return err
+}
+
+func putTailscaleServe(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, record TailscaleServe) error {
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, tailscaleServeKey, string(encoded))
+	return err
 }
 
 // UpdateNetwork applies update atomically.
@@ -1436,6 +1512,15 @@ func (s *Store) UpdateNetwork(ctx context.Context, update NetworkUpdate) error {
 		if err != nil {
 			return err
 		}
+	}
+	switch {
+	case update.ClearTailscale:
+		_, err = tx.ExecContext(ctx, `DELETE FROM metadata WHERE key=?`, tailscaleServeKey)
+	case update.Tailscale != nil:
+		err = putTailscaleServe(ctx, tx, *update.Tailscale)
+	}
+	if err != nil {
+		return err
 	}
 	return tx.Commit()
 }

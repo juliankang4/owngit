@@ -96,10 +96,19 @@ func (policy *HostPolicy) Hosts() []string {
 // one (from a flag or the saved setting), otherwise the scheme and Host of
 // this request.
 func (app *App) serverOrigin(request *http.Request) string {
-	if app.BaseURL != "" {
-		return app.BaseURL
+	if base := app.configuredBaseURL(); base != "" {
+		return base
 	}
 	return requestctx.Of(request).Origin()
+}
+
+// configuredBaseURL is the base URL the server uses now: the live value when
+// serve runs with a LiveNetwork, otherwise App.BaseURL.
+func (app *App) configuredBaseURL() string {
+	if app.Network != nil {
+		return app.Network.BaseURL()
+	}
+	return app.BaseURL
 }
 
 // cloneURL is the Git address of a repository.
