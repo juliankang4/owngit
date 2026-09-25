@@ -11,10 +11,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"owngit/internal/tailscale"
 )
 
 // TailscaleState is what setup found out about Tailscale on this computer.
@@ -44,34 +45,16 @@ type Tailscale struct {
 // tailscaleTimeout bounds the one status query.
 const tailscaleTimeout = 2 * time.Second
 
-// tailscaleCandidates lists where the Tailscale command may be: on PATH, and
-// inside the macOS app bundle, whose executable also answers CLI commands.
-func tailscaleCandidates() []string {
-	var candidates []string
-	if path, err := exec.LookPath("tailscale"); err == nil {
-		candidates = append(candidates, path)
+// detectTailscale asks Tailscale for its status without changing anything.
+// It finds the command the way Tailscale sharing does (override, when not
+// empty, is the only path tried) and runs only `tailscale status --json`,
+// with a time limit, a minimal environment and no input.
+func detectTailscale(ctx context.Context, override string, timeout time.Duration) Tailscale {
+	command, err := tailscale.Find(override)
+	if err != nil {
+		return Tailscale{State: TailscaleMissing}
 	}
-	if runtime.GOOS == "darwin" {
-		candidates = append(candidates, "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
-	}
-	return candidates
-}
-
-// DetectTailscale asks Tailscale for its status without changing anything.
-// It runs only `tailscale status --json`, with a two second limit, a minimal
-// environment and no input.
-func DetectTailscale(ctx context.Context) Tailscale {
-	return detectTailscale(ctx, tailscaleCandidates(), tailscaleTimeout)
-}
-
-func detectTailscale(ctx context.Context, candidates []string, timeout time.Duration) Tailscale {
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err != nil || info.IsDir() {
-			continue
-		}
-		return tailscaleStatus(ctx, candidate, timeout)
-	}
-	return Tailscale{State: TailscaleMissing}
+	return tailscaleStatus(ctx, command.Path, timeout)
 }
 
 func tailscaleStatus(ctx context.Context, executable string, timeout time.Duration) Tailscale {

@@ -494,6 +494,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		config := firstrun.Config{
 			Input: os.Stdin, Output: os.Stdout, App: application, Origin: origin, Listen: listener.Addr().String(),
 			ListenSaved: network.ListenSource == sourceSaved, SuggestedFolder: application.SuggestedRepositoryRoot,
+			TailscalePath: *tailscalePath,
 		}
 		if !*noOpen {
 			config.OpenBrowser = opener

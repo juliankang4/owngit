@@ -59,7 +59,10 @@ type Config struct {
 	// StateDir is added to the printed Tailscale command; "" when it is the
 	// default.
 	StateDir string
-	// Tailscale detects Tailscale; nil means DetectTailscale.
+	// TailscalePath is the tailscale command given with --tailscale; ""
+	// finds it.
+	TailscalePath string
+	// Tailscale detects Tailscale; nil runs the read-only detection.
 	Tailscale func(context.Context) Tailscale
 }
 
@@ -161,7 +164,9 @@ func newFlow(ctx context.Context, config Config, input <-chan []byte, colors dep
 	con.echo = s.write
 	detect := config.Tailscale
 	if detect == nil {
-		detect = DetectTailscale
+		detect = func(ctx context.Context) Tailscale {
+			return detectTailscale(ctx, config.TailscalePath, tailscaleTimeout)
+		}
 	}
 	found := make(chan Tailscale, 1)
 	go func() { found <- detect(ctx) }()

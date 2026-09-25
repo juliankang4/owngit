@@ -48,7 +48,7 @@ func TestTailscaleDetectionIsReadOnly(t *testing.T) {
 			path, record := fakeTailscale(t, c.body)
 			t.Setenv("OWNGIT_TEST_SECRET", "must-not-leak")
 			started := time.Now()
-			got := detectTailscale(context.Background(), []string{filepath.Join(t.TempDir(), "absent"), path}, 500*time.Millisecond)
+			got := detectTailscale(context.Background(), path, 500*time.Millisecond)
 			if got != c.want {
 				t.Fatalf("got %+v want %+v", got, c.want)
 			}
@@ -65,8 +65,22 @@ func TestTailscaleDetectionIsReadOnly(t *testing.T) {
 			}
 		})
 	}
-	if got := detectTailscale(context.Background(), []string{filepath.Join(t.TempDir(), "absent")}, time.Second); got.State != TailscaleMissing {
+	if got := detectTailscale(context.Background(), filepath.Join(t.TempDir(), "absent"), time.Second); got.State != TailscaleMissing {
 		t.Fatalf("missing command: %+v", got)
+	}
+}
+
+// Without --tailscale, setup finds the command where Tailscale sharing does,
+// starting with PATH.
+func TestTailscaleDetectionFindsTheCommandOnPath(t *testing.T) {
+	path, record := fakeTailscale(t, `echo '{"BackendState":"Running","Self":{"DNSName":"my-mac.tail0000.ts.net.","TailscaleIPs":["100.64.0.7"]}}'`)
+	t.Setenv("PATH", filepath.Dir(path))
+	want := Tailscale{State: TailscaleRunning, IPv4: "100.64.0.7", Name: "my-mac.tail0000.ts.net"}
+	if got := detectTailscale(context.Background(), "", 2*time.Second); got != want {
+		t.Fatalf("got %+v want %+v", got, want)
+	}
+	if arguments, _ := os.ReadFile(record); strings.TrimSpace(string(arguments)) != "status --json" {
+		t.Fatalf("tailscale was run with %q", arguments)
 	}
 }
 
