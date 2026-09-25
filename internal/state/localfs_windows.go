@@ -230,7 +230,47 @@ func handleDescriptor(handle windows.Handle) (*windows.SECURITY_DESCRIPTOR, erro
 	return descriptor, nil
 }
 
+// ValidatePrivateFile checks a file that OwnGit wrote and protected itself,
+// such as a lock or marker file: it must be a regular file owned by the
+// current user and accessible only to that user.
 func ValidatePrivateFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("private input must be a regular file")
+	}
+	user, _, err := processIdentity()
+	if err != nil {
+		return err
+	}
+	return validateOwnerOnly(path, user, false)
+}
+
+// ValidatePrivateFileHandle is ValidatePrivateFile for an open file, without
+// reopening its path.
+func ValidatePrivateFileHandle(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("private input must be a regular file")
+	}
+	user, _, err := processIdentity()
+	if err != nil {
+		return err
+	}
+	return validateOwnerOnlyHandle(windows.Handle(file.Fd()), user, false)
+}
+
+// ValidatePrivateInputFile checks a secret file that the owner may have made
+// by hand, such as a password or token file. Access must be limited to the
+// current user as for ValidatePrivateFile, but the owner may also be the
+// Administrators group (see validatePrivateInputDescriptor). A refusal is a
+// *NotPrivateError that explains it.
+func ValidatePrivateInputFile(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -247,26 +287,6 @@ func ValidatePrivateFile(path string) error {
 		return err
 	}
 	return validatePrivateInput(descriptor, user, path)
-}
-
-// ValidatePrivateFileHandle validates the open file without reopening its path.
-func ValidatePrivateFileHandle(file *os.File) error {
-	info, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return errors.New("private input must be a regular file")
-	}
-	user, _, err := processIdentity()
-	if err != nil {
-		return err
-	}
-	descriptor, err := handleDescriptor(windows.Handle(file.Fd()))
-	if err != nil {
-		return err
-	}
-	return validatePrivateInput(descriptor, user, file.Name())
 }
 
 type tokenOwner struct {

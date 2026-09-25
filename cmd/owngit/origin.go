@@ -267,7 +267,7 @@ func errOriginLine(message string) error {
 // readPasswordFile reads a password file with owner-only permissions and
 // the optional server line.
 func readPasswordFile(path string) (secretFile, error) {
-	if err := state.ValidatePrivateFile(path); err != nil {
+	if err := state.ValidatePrivateInputFile(path); err != nil {
 		return secretFile{}, fmt.Errorf("inspect password file: %w", err)
 	}
 	file, err := os.Open(path)
@@ -306,7 +306,7 @@ func readPasswordFile(path string) (secretFile, error) {
 // readTokenFile reads a helper or runner credential file with owner-only
 // permissions and the optional server line.
 func readTokenFile(path string) (secretFile, error) {
-	if err := state.ValidatePrivateFile(path); err != nil {
+	if err := state.ValidatePrivateInputFile(path); err != nil {
 		return secretFile{}, &apiclient.Error{Code: "invalid_credential_file", Message: secretFileMessage("The helper credential file", err), Cause: err}
 	}
 	content, err := os.ReadFile(path)

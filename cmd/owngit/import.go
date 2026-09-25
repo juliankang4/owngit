@@ -738,7 +738,7 @@ func importSecretFileMessage(err error) string {
 }
 
 func readPrivateImportSecret(path string) (string, error) {
-	if err := state.ValidatePrivateFile(path); err != nil {
+	if err := state.ValidatePrivateInputFile(path); err != nil {
 		return "", &apiclient.Error{Code: "invalid_credential_file", Message: importSecretFileMessage(err), Cause: err}
 	}
 	content, err := readBoundedFile(path, 1<<20)

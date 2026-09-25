@@ -40,6 +40,13 @@ func ValidatePrivateFile(path string) error {
 	return validatePrivateFileInfo(path, info)
 }
 
+// ValidatePrivateInputFile checks a secret file that the owner may have made
+// by hand, such as a password or token file. On Unix it is the same check as
+// ValidatePrivateFile.
+func ValidatePrivateInputFile(path string) error {
+	return ValidatePrivateFile(path)
+}
+
 // ValidatePrivateFileHandle validates the open file rather than reopening its
 // path, which may now name a replacement.
 func ValidatePrivateFileHandle(file *os.File) error {

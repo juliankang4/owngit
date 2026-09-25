@@ -125,7 +125,7 @@ func TestWindowsStateTargetResolutionAndOwnerOnlyACL(t *testing.T) {
 	noErr(t, os.WriteFile(privateFile, []byte("private"), 0o600))
 	if !defaultOwner.Equals(user) {
 		if err := ValidatePrivateFile(privateFile); err == nil {
-			t.Fatal("validation accepted a file whose ACL is still inherited")
+			t.Fatal("strict validation accepted a file still owned by the token default owner")
 		}
 	}
 	noErr(t, ProtectPrivatePath(privateFile, false))
@@ -204,12 +204,13 @@ func TestWindowsPrivateInputRule(t *testing.T) {
 
 // A file written by hand and restricted the way the docs describe (inheritance
 // removed and full access granted to the current user, owner left as created)
-// is accepted from both an ordinary and an elevated shell. An elevated shell
-// makes the Administrators group the owner of the file.
+// is accepted as input from both an ordinary and an elevated shell. An
+// elevated shell makes the Administrators group the owner of the file, which
+// the check for OwnGit's own files still refuses.
 func TestWindowsHandMadePrivateFileIsAccepted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password")
 	noErr(t, os.WriteFile(path, []byte("valid-password\n"), 0o600))
-	if err := ValidatePrivateFile(path); err == nil {
+	if err := ValidatePrivateInputFile(path); err == nil {
 		t.Fatal("a file with inherited access entries was accepted")
 	}
 	user, defaultOwner, err := processIdentity()
@@ -227,11 +228,19 @@ func TestWindowsHandMadePrivateFileIsAccepted(t *testing.T) {
 		t.Fatalf("owner=%s, want the token default owner %s", owner, defaultOwner)
 	}
 	t.Logf("file owner %s (current user %s)", owner, user)
-	noErr(t, ValidatePrivateFile(path))
+	noErr(t, ValidatePrivateInputFile(path))
 	file, err := os.Open(path)
 	noErr(t, err)
 	defer file.Close()
-	noErr(t, ValidatePrivateFileHandle(file))
+	strict := map[string]error{"path": ValidatePrivateFile(path), "handle": ValidatePrivateFileHandle(file)}
+	for source, err := range strict {
+		if owner.Equals(user) && err != nil {
+			t.Errorf("own-file check by %s refused a file owned by the current user: %v", source, err)
+		}
+		if !owner.Equals(user) && err == nil {
+			t.Errorf("own-file check by %s accepted a file owned by %s", source, owner)
+		}
+	}
 }
 
 // testDescriptorWith builds a protected descriptor from explicit entries.
@@ -324,7 +333,7 @@ func TestWindowsNotPrivateFixWorks(t *testing.T) {
 	noErr(t, windows.SetNamedSecurityInfo(shared, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
 	for _, path := range []string{inherited, shared} {
-		err := ValidatePrivateFile(path)
+		err := ValidatePrivateInputFile(path)
 		var notPrivate *NotPrivateError
 		if !errors.As(err, &notPrivate) {
 			t.Fatalf("%s: err=%v, want *NotPrivateError", path, err)
@@ -334,6 +343,6 @@ func TestWindowsNotPrivateFixWorks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: the fix failed: %v\n%s", path, err, output)
 		}
-		noErr(t, ValidatePrivateFile(path))
+		noErr(t, ValidatePrivateInputFile(path))
 	}
 }
