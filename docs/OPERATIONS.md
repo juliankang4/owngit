@@ -42,7 +42,7 @@ Before setup is finished, the setup link also works from another device by an ad
 
 ## Reaching the server from another device
 
-OwnGit serves plain HTTP, so the connection is not encrypted, and it has no built-in TLS. Use Tailscale or your own VPN to reach its private-network address. A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP also works: OwnGit shows a one-time warning before it accepts passwords, and the interface keeps the connection status visible. Do not expose OwnGit to the public Internet.
+OwnGit serves plain HTTP, so the connection is not encrypted, and it has no built-in TLS. For HTTPS, put a reverse proxy or Tailscale in front of it (see [Behind a reverse proxy](#behind-a-reverse-proxy)). Use Tailscale or your own VPN to reach its private-network address. A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP also works: OwnGit shows a one-time warning before it accepts passwords, and the interface keeps the connection status visible. Do not expose OwnGit to the public Internet.
 
 To use a LAN name:
 
@@ -62,7 +62,7 @@ The server accepts only requests whose Host is `localhost`, `127.0.0.1`, `::1`, 
 
 ### Network settings
 
-OwnGit can save the listen address, the base URL, and the allowed Host names, so a server started without options, such as a background service, uses them at every start. Run these commands on the installation host. They work whether or not the server is running, and a change applies at the next start.
+OwnGit can save the listen address, the base URL, the allowed Host names, and the trusted reverse proxies, so a server started without options, such as a background service, uses them at every start. Run these commands on the installation host. They work whether or not the server is running, and a change applies at the next start.
 
 ```sh
 ./bin/owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
@@ -72,11 +72,12 @@ OwnGit can save the listen address, the base URL, and the allowed Host names, so
 - `--listen` is `host:port`. An empty host, `0.0.0.0`, or `::` listens on every interface.
 - `--base-url` is the address other devices use, an `http` or `https` origin with no path. OwnGit accepts its host name and shows it in clone addresses. Without a base URL, clone addresses on the pages use the address the browser connected to.
 - `--allowed-host` and `--remove-allowed-host` change the stored list that `owngit approve-host` also adds to. Both are repeatable.
+- `--trusted-proxy` and `--remove-trusted-proxy` change the reverse proxies whose forwarded headers OwnGit believes. Each takes an IP address or a CIDR range and is repeatable. See [Behind a reverse proxy](#behind-a-reverse-proxy).
 - An empty value, such as `--base-url ""`, removes that saved value.
 
 When you finish web setup from another device by a name that OwnGit accepts only for the current run, for example through a `--listen` or `--base-url` option, the setup form offers "Keep accepting this address after a restart". Ticking it saves the name as an allowed Host when setup finishes. Unticked, nothing is saved.
 
-`set` prints a note when the listen address leaves this computer, because other devices then use plain HTTP. A reverse proxy with HTTPS or Tailscale HTTPS encrypts that connection.
+`set` prints a note when the listen address leaves this computer, because other devices then use plain HTTP. A reverse proxy with HTTPS or Tailscale HTTPS encrypts that connection. It also prints a note when the base URL uses `https` but no reverse proxy is trusted.
 
 For each value, `owngit serve` uses its option if one is given, then the saved value, then the default (`127.0.0.1:7654`, with the base URL taken from the listen address). An option applies to that run only and does not change what is saved. `localhost`, `127.0.0.1`, and `::1` are always accepted, whatever is saved.
 
@@ -88,13 +89,13 @@ If a saved value locks you out, for example a listen address that no longer exis
 ./bin/owngit network reset
 ```
 
-`reset` removes the saved listen address and base URL. It keeps the allowed Host names unless you add `--clear-allowed-hosts`. No web page can do this; it needs access to the state directory.
+`reset` removes the saved listen address and base URL. It keeps the allowed Host names unless you add `--clear-allowed-hosts`, and it keeps the trusted proxies unless you add `--clear-trusted-proxies`. No web page can do this; it needs access to the state directory.
 
 Network settings belong to this installation host. An offline backup does not carry them, and a restored installation starts with the defaults.
 
 ### Options for a background service
 
-`--listen`, `--base-url`, and `--allowed-host` are options of `owngit serve`, so they apply only to the command that starts the server. A service manager that passes them in the service definition (the `ProgramArguments` of a LaunchAgent, or the `ExecStart` line of a systemd unit) overrides the saved values at every start. To use saved settings, leave these options out of the service definition.
+`--listen`, `--base-url`, `--allowed-host`, and `--trusted-proxy` are options of `owngit serve`, so they apply only to the command that starts the server. A service manager that passes them in the service definition (the `ProgramArguments` of a LaunchAgent, or the `ExecStart` line of a systemd unit) overrides the saved values at every start. To use saved settings, leave these options out of the service definition.
 
 The Homebrew service (`brew services start owngit`) runs `owngit serve --no-open` without other options, so it uses the saved settings. To reach it from other devices:
 
@@ -102,6 +103,92 @@ The Homebrew service (`brew services start owngit`) runs `owngit serve --no-open
 owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654
 brew services restart owngit
 ```
+
+### Behind a reverse proxy
+
+A reverse proxy such as Caddy, nginx, Traefik, or Nginx Proxy Manager can give OwnGit an HTTPS address. OwnGit must be at the root of its own host name, such as `https://git.example.internal`. A path below another site, such as `https://example.internal/git`, is not supported.
+
+Behind a proxy, every request reaches OwnGit from the proxy over plain HTTP. Until you tell OwnGit that the proxy is trusted, it treats every client as the proxy: wrong passwords from one device lock out every device for 15 minutes, cookies are not marked `Secure`, and forms that the browser sends over HTTPS fail the Origin check. Save the proxy's address and the HTTPS address, then restart OwnGit:
+
+```sh
+owngit network set --base-url https://git.example.internal --trusted-proxy 127.0.0.1
+owngit network show
+```
+
+`network show` lists the saved trusted proxies, and while OwnGit runs, the ones it uses. After the restart, the connection status in the page header shows an encrypted connection when you open OwnGit through the proxy.
+
+`--trusted-proxy` takes the address the proxy connects from, such as `127.0.0.1` when the proxy runs on the same computer, or a CIDR range such as `172.18.0.0/16` for a Docker network. It is repeatable. OwnGit trusts no proxy by default, not even `127.0.0.1`. It refuses ranges wider than `/8` for IPv4 or `/32` for IPv6, such as `0.0.0.0/0`, `0.0.0.0/1`, and `::/0`, and the unspecified addresses `0.0.0.0` and `::`. A range trusts every computer in it, so keep it as small as you can. Trusting `127.0.0.1` also trusts every program on this computer, which can then choose the client address OwnGit sees. `owngit serve --trusted-proxy ADDRESS` replaces the saved list for one run, and `--trusted-proxy ""` trusts none for that run.
+
+From a trusted proxy, and only from one, OwnGit reads three headers:
+
+- `X-Forwarded-Proto`, when it is sent once and is exactly `https` or `http`. With `https`, OwnGit marks its cookies `Secure`, checks browser forms against the `https` address, shows the connection as encrypted, does not ask for the plain-HTTP acknowledgement, and tells Git that the request came over HTTPS.
+- `X-Forwarded-For`, when its last entry is an IP address. The last entry is the one the proxy added. OwnGit uses it for password lockouts and the setup approval warning, so two devices behind the proxy lock out separately. Entries before it came from the client and are ignored.
+- `X-Forwarded-Host`, when it is sent once and OwnGit accepts both that Host and the Host of the request itself. It can only choose between names that already pass the Host check, never add one. The examples below pass the original Host instead, and the nginx example removes any `X-Forwarded-Host` that a client sends.
+
+OwnGit ignores a repeated header, a list where one value belongs, or any other value, and uses what the connection itself shows. It ignores the `Forwarded` header. Requests from other addresses are treated as before, so a device that connects to OwnGit directly cannot set these headers. The proxy must add the client's address to `X-Forwarded-For` itself; a proxy that passes the client's header through unchanged lets clients choose their lockout address.
+
+When the proxy runs on the same computer, keep OwnGit listening on `127.0.0.1:7654`, the default, so that other devices can reach it only through the proxy. A proxy in a container cannot reach `127.0.0.1` on the host unless it uses the host's network. Otherwise, let OwnGit listen on an address the container can reach, and trust the address the container connects from.
+
+Each Git request can send or receive up to 4 GiB and take up to 30 minutes (see [Git transfer limits](#git-transfer-limits)). The proxy's own limits must be at least as large, or large pushes and clones fail at the proxy.
+
+#### Caddy
+
+```caddyfile
+git.example.internal {
+	reverse_proxy 127.0.0.1:7654
+}
+```
+
+By default `reverse_proxy` passes the original Host, sets `X-Forwarded-Proto`, and sets `X-Forwarded-For` to the client's address, ignoring any value the client sent. It has no request size limit and no timeout that would cut a long push. Caddy gets a certificate for a public name automatically. For a name such as `git.example.internal` it uses its own local certificate authority, which each device must trust.
+
+#### nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name git.example.internal;
+    ssl_certificate     /etc/ssl/git.example.internal.crt;
+    ssl_certificate_key /etc/ssl/git.example.internal.key;
+
+    client_max_body_size 4g;
+    proxy_request_buffering off;
+    proxy_buffering off;
+    proxy_read_timeout 30m;
+    proxy_send_timeout 30m;
+
+    location / {
+        proxy_pass http://127.0.0.1:7654;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host "";
+    }
+}
+```
+
+`client_max_body_size` and the two timeouts match OwnGit's limits. `proxy_request_buffering off` together with `proxy_http_version 1.1` lets nginx pass a push on as it arrives instead of storing all of it on disk first. `$proxy_add_x_forwarded_for` adds the client's address at the end of the header. nginx passes other client headers on unchanged, and an empty value removes one, so the `X-Forwarded-Host` line stops a client from sending its own. `$host` has no port, so if clients use a port other than 443, write `proxy_set_header Host $http_host;` instead, so that the Host OwnGit sees matches the address in the browser.
+
+#### Traefik
+
+Traefik passes the original Host and sets `X-Forwarded-Proto` and `X-Forwarded-For` with the client's address added, and it drops forwarded headers that clients send unless you configure `forwardedHeaders.trustedIPs`. Its entry points stop reading a request after 60 seconds by default, which cuts long pushes; raise `transport.respondingTimeouts.readTimeout` on the HTTPS entry point, for example to `30m`. When Traefik runs in Docker, trust the address it connects from, such as its Docker network range.
+
+#### Nginx Proxy Manager
+
+With its default settings, Nginx Proxy Manager cannot tell OwnGit the real address of devices on your own network. Its `nginx.conf` accepts an `X-Real-IP` header from any address in `10.0.0.0/8`, `172.16.0.0/12`, and `192.168.0.0/16`, uses that value as the client's address, and adds it to `X-Forwarded-For`. A device on a home network can therefore send any address it likes. If you trust Nginx Proxy Manager in OwnGit, such a device can avoid the password lockout by sending a new address with every guess, lock out another device by sending that device's address, and make a setup approval request look as if it came from this computer, so the approval does not warn that another device asked. A setting that makes Nginx Proxy Manager report the real address has not been tested yet.
+
+Prefer Caddy or nginx. If you use Nginx Proxy Manager anyway, trust it only when every device that can reach it is yours. Use long passwords, because the lockout cannot slow down guesses from your network, and do not rely on the address shown when you approve a setup request.
+
+To set it up, create a proxy host with the scheme `http`, OwnGit's address and port, and an SSL certificate, and turn on Force SSL. Since version 2.14.0, Nginx Proxy Manager passes on an `X-Forwarded-Proto` value that the client sent. Force SSL, with the option that trusts upstream forwarded proto headers left off, redirects every plain-HTTP request, so only HTTPS requests reach OwnGit. Nginx Proxy Manager does not set `X-Forwarded-Host`, so a value from the client reaches OwnGit, which uses it only as described above. Its defaults limit a request body to 2000 MB and wait at most 90 seconds for OwnGit to send or accept data. Add these lines on the Advanced tab:
+
+```nginx
+client_max_body_size 4g;
+proxy_request_buffering off;
+proxy_read_timeout 30m;
+proxy_send_timeout 30m;
+```
+
+Nginx Proxy Manager runs in Docker, so trust the address its container connects from, such as its Docker network range.
 
 ## New-release notice
 

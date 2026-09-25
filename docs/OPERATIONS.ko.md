@@ -42,7 +42,7 @@ go build -o bin/owngit ./cmd/owngit
 
 ## 다른 기기에서 서버에 접속하기
 
-OwnGit은 일반 HTTP로 동작하므로 연결이 암호화되지 않으며, TLS를 내장하지 않습니다. 비공개 네트워크 주소로 접속하려면 Tailscale이나 직접 운영하는 VPN을 쓰세요. 이름이 Tailscale과 관련되어 보인다는 것만으로 전체 경로가 보호된다고 볼 수는 없습니다. 일반 LAN에서 HTTP로 접속해도 됩니다. 이때 OwnGit은 비밀번호를 받기 전에 한 번 경고를 보여 주고, 화면에 연결 상태를 계속 표시합니다. OwnGit을 공개 인터넷에 노출하지 마세요.
+OwnGit은 일반 HTTP로 동작하므로 연결이 암호화되지 않으며, TLS를 내장하지 않습니다. HTTPS로 접속하려면 OwnGit 앞에 리버스 프록시나 Tailscale을 두세요([리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기) 참고). 비공개 네트워크 주소로 접속하려면 Tailscale이나 직접 운영하는 VPN을 쓰세요. 이름이 Tailscale과 관련되어 보인다는 것만으로 전체 경로가 보호된다고 볼 수는 없습니다. 일반 LAN에서 HTTP로 접속해도 됩니다. 이때 OwnGit은 비밀번호를 받기 전에 한 번 경고를 보여 주고, 화면에 연결 상태를 계속 표시합니다. OwnGit을 공개 인터넷에 노출하지 마세요.
 
 LAN 이름을 쓰려면 다음과 같이 실행합니다.
 
@@ -62,7 +62,7 @@ LAN 이름을 쓰려면 다음과 같이 실행합니다.
 
 ### 네트워크 설정
 
-OwnGit은 연결 주소, 기본 URL, 허용한 Host 이름을 저장할 수 있습니다. 백그라운드 서비스처럼 옵션 없이 시작한 서버도 시작할 때마다 저장된 값을 씁니다. 다음 명령은 설치 호스트에서 실행합니다. 서버가 실행 중이든 아니든 동작하며, 바꾼 값은 다음 시작부터 적용됩니다.
+OwnGit은 연결 주소, 기본 URL, 허용한 Host 이름, 신뢰하는 리버스 프록시를 저장할 수 있습니다. 백그라운드 서비스처럼 옵션 없이 시작한 서버도 시작할 때마다 저장된 값을 씁니다. 다음 명령은 설치 호스트에서 실행합니다. 서버가 실행 중이든 아니든 동작하며, 바꾼 값은 다음 시작부터 적용됩니다.
 
 ```sh
 ./bin/owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
@@ -72,11 +72,12 @@ OwnGit은 연결 주소, 기본 URL, 허용한 Host 이름을 저장할 수 있�
 - `--listen`은 `host:port` 형식입니다. host를 비우거나 `0.0.0.0`, `::`로 쓰면 모든 네트워크 인터페이스에서 연결을 받습니다.
 - `--base-url`은 다른 기기가 쓰는 주소로, 경로 없는 `http` 또는 `https` origin입니다. OwnGit은 이 주소의 호스트 이름을 받아들이고 클론 주소에도 이 주소를 표시합니다. 기본 URL이 없으면 화면의 클론 주소는 브라우저가 접속한 주소를 따릅니다.
 - `--allowed-host`와 `--remove-allowed-host`는 `owngit approve-host`가 이름을 추가하는 저장 목록을 바꿉니다. 둘 다 여러 번 지정할 수 있습니다.
+- `--trusted-proxy`와 `--remove-trusted-proxy`는 OwnGit이 전달 헤더를 믿는 리버스 프록시 목록을 바꿉니다. 각각 IP 주소나 CIDR 범위를 받으며 여러 번 지정할 수 있습니다. [리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기)를 보세요.
 - `--base-url ""`처럼 빈 값을 주면 저장된 그 값을 지웁니다.
 
 `--listen`이나 `--base-url` 옵션처럼 이번 실행에서만 받아들이는 이름으로 다른 기기에서 웹 설치를 마치면, 설치 화면에 "다시 시작한 뒤에도 이 주소 받아들이기"가 나타납니다. 선택하면 설치를 마칠 때 그 이름을 허용한 Host로 저장합니다. 선택하지 않으면 아무것도 저장하지 않습니다.
 
-연결 주소가 이 컴퓨터 밖에서 접속을 받는 주소이면 `set`은 안내 한 줄을 출력합니다. 다른 기기는 암호화되지 않은 일반 HTTP로 접속하게 되기 때문입니다. HTTPS 리버스 프록시나 Tailscale HTTPS를 쓰면 이 연결을 암호화할 수 있습니다.
+연결 주소가 이 컴퓨터 밖에서 접속을 받는 주소이면 `set`은 안내 한 줄을 출력합니다. 다른 기기는 암호화되지 않은 일반 HTTP로 접속하게 되기 때문입니다. HTTPS 리버스 프록시나 Tailscale HTTPS를 쓰면 이 연결을 암호화할 수 있습니다. 기본 URL이 `https`인데 신뢰하는 리버스 프록시가 없을 때도 안내 한 줄을 출력합니다.
 
 `owngit serve`는 값마다 옵션이 있으면 옵션을, 없으면 저장된 값을, 둘 다 없으면 기본값을 씁니다. 기본값은 `127.0.0.1:7654`이고, 기본 URL은 연결 주소에서 정합니다. 옵션은 그 실행에만 적용되며 저장된 값을 바꾸지 않습니다. `localhost`, `127.0.0.1`, `::1`은 무엇을 저장했든 항상 받아들입니다.
 
@@ -88,13 +89,13 @@ OwnGit은 연결 주소, 기본 URL, 허용한 Host 이름을 저장할 수 있�
 ./bin/owngit network reset
 ```
 
-`reset`은 저장된 연결 주소와 기본 URL을 지웁니다. `--clear-allowed-hosts`를 붙이지 않으면 허용한 Host 이름은 그대로 둡니다. 이 작업은 상태 디렉터리에 접근할 수 있어야 하며 웹 화면에서는 할 수 없습니다.
+`reset`은 저장된 연결 주소와 기본 URL을 지웁니다. `--clear-allowed-hosts`를 붙이지 않으면 허용한 Host 이름은 그대로 두고, `--clear-trusted-proxies`를 붙이지 않으면 신뢰하는 프록시도 그대로 둡니다. 이 작업은 상태 디렉터리에 접근할 수 있어야 하며 웹 화면에서는 할 수 없습니다.
 
 네트워크 설정은 이 설치 호스트에 속합니다. 오프라인 백업에 포함되지 않으며, 복원한 설치는 기본값으로 시작합니다.
 
 ### 백그라운드 서비스의 옵션
 
-`--listen`, `--base-url`, `--allowed-host`는 `owngit serve`의 옵션이므로 서버를 시작하는 명령에만 적용됩니다. 서비스 정의(LaunchAgent의 `ProgramArguments`, systemd 유닛의 `ExecStart` 줄)에서 이 옵션을 넘기면 시작할 때마다 저장된 값보다 옵션이 우선합니다. 저장된 설정을 쓰려면 서비스 정의에서 이 옵션을 빼세요.
+`--listen`, `--base-url`, `--allowed-host`, `--trusted-proxy`는 `owngit serve`의 옵션이므로 서버를 시작하는 명령에만 적용됩니다. 서비스 정의(LaunchAgent의 `ProgramArguments`, systemd 유닛의 `ExecStart` 줄)에서 이 옵션을 넘기면 시작할 때마다 저장된 값보다 옵션이 우선합니다. 저장된 설정을 쓰려면 서비스 정의에서 이 옵션을 빼세요.
 
 Homebrew 서비스(`brew services start owngit`)는 다른 옵션 없이 `owngit serve --no-open`을 실행하므로 저장된 설정을 씁니다. 다른 기기에서 접속하려면 다음과 같이 합니다.
 
@@ -102,6 +103,92 @@ Homebrew 서비스(`brew services start owngit`)는 다른 옵션 없이 `owngit
 owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654
 brew services restart owngit
 ```
+
+### 리버스 프록시 뒤에서 운영하기
+
+Caddy, nginx, Traefik, Nginx Proxy Manager 같은 리버스 프록시를 쓰면 OwnGit에 HTTPS 주소를 붙일 수 있습니다. OwnGit은 `https://git.example.internal`처럼 호스트 이름 하나의 루트에 있어야 합니다. `https://example.internal/git`처럼 다른 사이트 아래 경로에 두는 방식은 지원하지 않습니다.
+
+프록시 뒤에서는 모든 요청이 프록시에서 일반 HTTP로 OwnGit에 도착합니다. 프록시를 신뢰한다고 알려 주기 전까지 OwnGit은 모든 클라이언트를 프록시로 봅니다. 그래서 기기 하나에서 비밀번호를 잘못 입력하면 모든 기기가 15분 동안 막히고, 쿠키에 `Secure`가 붙지 않으며, 브라우저가 HTTPS로 보낸 양식은 Origin 확인에서 거부됩니다. 프록시 주소와 HTTPS 주소를 저장한 뒤 OwnGit을 다시 시작하세요.
+
+```sh
+owngit network set --base-url https://git.example.internal --trusted-proxy 127.0.0.1
+owngit network show
+```
+
+`network show`는 저장된 신뢰 프록시를 보여 주고, OwnGit이 실행 중이면 실제로 쓰는 목록도 보여 줍니다. 다시 시작한 뒤 프록시를 거쳐 OwnGit을 열면 화면 위쪽의 연결 상태가 암호화된 연결로 표시됩니다.
+
+`--trusted-proxy`에는 프록시가 접속해 오는 주소를 씁니다. 프록시가 같은 컴퓨터에서 돌면 `127.0.0.1`이고, Docker 네트워크라면 `172.18.0.0/16` 같은 CIDR 범위를 쓸 수 있습니다. 여러 번 지정할 수 있습니다. OwnGit은 기본값으로 어떤 프록시도 믿지 않으며 `127.0.0.1`도 예외가 아닙니다. IPv4는 `/8`, IPv6는 `/32`보다 넓은 범위(`0.0.0.0/0`, `0.0.0.0/1`, `::/0` 등)와 지정되지 않은 주소 `0.0.0.0`, `::`는 거부합니다. 범위를 쓰면 그 안의 모든 컴퓨터를 믿게 되므로 가능한 한 좁게 잡으세요. `127.0.0.1`을 믿으면 이 컴퓨터의 모든 프로그램도 믿게 되며, 그 프로그램은 OwnGit이 보는 클라이언트 주소를 정할 수 있습니다. `owngit serve --trusted-proxy 주소`는 그 실행에서만 저장된 목록 대신 쓰이고, `--trusted-proxy ""`를 주면 그 실행에서는 아무 프록시도 믿지 않습니다.
+
+OwnGit은 신뢰하는 프록시에서 온 요청에서만 다음 세 헤더를 읽습니다.
+
+- `X-Forwarded-Proto`: 한 번만 오고 값이 정확히 `https`나 `http`일 때 씁니다. `https`이면 OwnGit은 쿠키에 `Secure`를 붙이고, 브라우저 양식을 `https` 주소와 비교하고, 연결을 암호화된 연결로 표시하고, 일반 HTTP 확인을 묻지 않으며, Git에도 HTTPS로 온 요청이라고 알립니다.
+- `X-Forwarded-For`: 마지막 항목이 IP 주소일 때 씁니다. 마지막 항목은 프록시가 붙인 값입니다. OwnGit은 이 주소로 비밀번호 잠금과 설치 승인 경고를 처리하므로, 프록시 뒤의 두 기기는 따로 잠깁니다. 그 앞의 항목은 클라이언트가 보낸 값이라 무시합니다.
+- `X-Forwarded-Host`: 한 번만 오고, OwnGit이 그 Host와 요청 자체의 Host를 모두 받아들일 때 씁니다. 이미 Host 확인을 통과하는 이름 가운데 하나를 고를 수만 있고 새 이름을 더할 수는 없습니다. 아래 예시는 원래 Host를 그대로 넘기며, nginx 예시는 클라이언트가 보낸 `X-Forwarded-Host`를 지웁니다.
+
+헤더가 여러 번 오거나, 값 하나가 와야 할 자리에 목록이 오거나, 다른 값이 오면 OwnGit은 그 헤더를 무시하고 연결에서 보이는 값을 씁니다. `Forwarded` 헤더도 무시합니다. 다른 주소에서 온 요청은 전과 똑같이 처리하므로, OwnGit에 직접 접속한 기기는 이 헤더로 아무것도 바꿀 수 없습니다. 프록시는 클라이언트 주소를 `X-Forwarded-For`에 직접 덧붙여야 합니다. 클라이언트가 보낸 헤더를 그대로 넘기는 프록시를 쓰면 클라이언트가 잠금에 쓰일 주소를 고를 수 있습니다.
+
+프록시가 같은 컴퓨터에서 돌면 OwnGit은 기본값인 `127.0.0.1:7654`에서 연결을 받게 두세요. 그러면 다른 기기는 프록시를 거쳐야만 OwnGit에 닿습니다. 컨테이너 안의 프록시는 호스트 네트워크를 쓰지 않는 한 호스트의 `127.0.0.1`에 닿지 못합니다. 이때는 컨테이너가 닿을 수 있는 주소에서 OwnGit이 연결을 받게 하고, 컨테이너가 접속해 오는 주소를 신뢰하세요.
+
+Git 요청 하나는 최대 4 GiB를 주고받고 최대 30분까지 걸릴 수 있습니다([Git 전송 제한](#git-전송-제한) 참고). 프록시의 한도가 이보다 작으면 큰 푸시나 클론이 프록시에서 실패합니다.
+
+#### Caddy
+
+```caddyfile
+git.example.internal {
+	reverse_proxy 127.0.0.1:7654
+}
+```
+
+`reverse_proxy`는 기본값으로 원래 Host를 넘기고, `X-Forwarded-Proto`를 설정하며, `X-Forwarded-For`를 클라이언트 주소로 설정합니다. 클라이언트가 보낸 값은 무시합니다. 요청 크기 한도가 없고, 긴 푸시를 끊는 시간 제한도 없습니다. 공개 이름이면 Caddy가 인증서를 자동으로 받습니다. `git.example.internal` 같은 이름에는 Caddy 자체 인증 기관을 쓰므로 각 기기가 그 인증 기관을 신뢰해야 합니다.
+
+#### nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name git.example.internal;
+    ssl_certificate     /etc/ssl/git.example.internal.crt;
+    ssl_certificate_key /etc/ssl/git.example.internal.key;
+
+    client_max_body_size 4g;
+    proxy_request_buffering off;
+    proxy_buffering off;
+    proxy_read_timeout 30m;
+    proxy_send_timeout 30m;
+
+    location / {
+        proxy_pass http://127.0.0.1:7654;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host "";
+    }
+}
+```
+
+`client_max_body_size`와 두 시간 제한은 OwnGit의 한도에 맞춘 값입니다. `proxy_request_buffering off`와 `proxy_http_version 1.1`을 함께 쓰면 nginx가 푸시를 디스크에 모두 저장하지 않고 받는 대로 넘깁니다. `$proxy_add_x_forwarded_for`는 클라이언트 주소를 헤더 끝에 덧붙입니다. nginx는 클라이언트가 보낸 다른 헤더를 그대로 넘기고 빈 값을 주면 그 헤더를 지우므로, `X-Forwarded-Host` 줄은 클라이언트가 이 헤더를 직접 보내지 못하게 합니다. `$host`에는 포트가 없으므로, 클라이언트가 443이 아닌 포트로 접속한다면 `proxy_set_header Host $http_host;`로 바꾸세요. 그래야 OwnGit이 보는 Host가 브라우저의 주소와 같아집니다.
+
+#### Traefik
+
+Traefik은 원래 Host를 넘기고, `X-Forwarded-Proto`를 설정하며, `X-Forwarded-For`에 클라이언트 주소를 덧붙입니다. `forwardedHeaders.trustedIPs`를 설정하지 않으면 클라이언트가 보낸 전달 헤더는 버립니다. 엔트리포인트는 기본값으로 요청을 60초까지만 읽으므로 긴 푸시가 끊깁니다. HTTPS 엔트리포인트의 `transport.respondingTimeouts.readTimeout`을 `30m`처럼 늘리세요. Traefik이 Docker에서 돌면 Traefik이 접속해 오는 주소, 예를 들어 Traefik의 Docker 네트워크 범위를 신뢰하세요.
+
+#### Nginx Proxy Manager
+
+기본 설정의 Nginx Proxy Manager는 내 네트워크에 있는 기기의 실제 주소를 OwnGit에 알려 주지 못합니다. 이 프로그램의 `nginx.conf`는 `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`에 속한 주소가 보낸 `X-Real-IP` 헤더를 받아들여 그 값을 클라이언트 주소로 쓰고, 그 값을 `X-Forwarded-For`에 덧붙입니다. 그래서 가정용 네트워크의 기기는 원하는 주소를 마음대로 보낼 수 있습니다. OwnGit에서 Nginx Proxy Manager를 신뢰하면 그런 기기는 비밀번호를 추측할 때마다 주소를 바꿔 잠금을 피할 수 있고, 다른 기기의 주소를 보내 그 기기를 잠글 수 있으며, 설치 승인 요청이 이 컴퓨터에서 온 것처럼 보이게 해서 다른 기기가 요청했다는 경고가 나오지 않게 할 수 있습니다. Nginx Proxy Manager가 실제 주소를 알려 주게 하는 설정은 아직 시험하지 않았습니다.
+
+Caddy나 nginx를 쓰는 편이 좋습니다. 그래도 Nginx Proxy Manager를 쓴다면 거기에 접속할 수 있는 기기가 모두 내 기기일 때만 신뢰하세요. 내 네트워크에서 오는 추측은 잠금으로 늦출 수 없으므로 긴 비밀번호를 쓰고, 설치 요청을 승인할 때 보이는 주소를 믿지 마세요.
+
+설정할 때는 프록시 호스트를 만들고 scheme은 `http`, 주소와 포트는 OwnGit의 것으로 정한 뒤 SSL 인증서를 붙이고 Force SSL을 켜세요. Nginx Proxy Manager 2.14.0부터는 클라이언트가 보낸 `X-Forwarded-Proto` 값을 그대로 넘깁니다. 상위 프록시의 전달 프로토콜 헤더를 신뢰하는 옵션을 끈 채로 Force SSL을 켜면 일반 HTTP 요청은 모두 HTTPS로 넘겨지므로 OwnGit에는 HTTPS 요청만 도착합니다. Nginx Proxy Manager는 `X-Forwarded-Host`를 설정하지 않으므로 클라이언트가 보낸 값이 OwnGit까지 오지만, OwnGit은 위에서 설명한 경우에만 그 값을 씁니다. 기본값은 요청 본문을 2000 MB로 제한하고 OwnGit이 데이터를 보내거나 받기를 최대 90초만 기다립니다. Advanced 탭에 다음 줄을 넣으세요.
+
+```nginx
+client_max_body_size 4g;
+proxy_request_buffering off;
+proxy_read_timeout 30m;
+proxy_send_timeout 30m;
+```
+
+Nginx Proxy Manager는 Docker에서 돌므로 컨테이너가 접속해 오는 주소, 예를 들어 그 Docker 네트워크 범위를 신뢰하세요.
 
 ## 새 릴리스 알림
 
