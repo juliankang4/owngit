@@ -58,6 +58,25 @@ type publicationPlan struct {
 	skipped         []string
 }
 
+// changesRefs reports whether applying the plan writes a destination ref or
+// HEAD. applyIntent writes exactly the refs whose desired value differs from
+// the expected one, and HEAD only for a HEAD change; its other commands only
+// verify refs. Without such a write, publication leaves the cached ref
+// snapshot valid.
+func (plan publicationPlan) changesRefs() bool {
+	if plan.headChange {
+		return true
+	}
+	for _, refs := range []map[string]string{plan.desired, plan.expected} {
+		for ref := range refs {
+			if ref != state.ImportHeadRef && plan.desired[ref] != plan.expected[ref] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // planPublication applies the divergence rule:
 //
 //   - a missing destination ref is created;
@@ -396,9 +415,10 @@ func (s *Service) releaseDestinationKeep(run *runState, repositoryPath string) {
 		directory = dest.finalPath
 	}
 	path := filepath.Join(directory, "objects", "pack", "pack-"+hash+".keep")
-	// A discarded unpublished directory no longer holds the file.
+	// A discarded unpublished directory no longer holds the file. The file
+	// is not a ref, so the cached ref snapshot stays valid.
 	err := os.Remove(path)
-	lock.Unlock()
+	lock.UnlockWithoutRefChanges()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logf("import %s could not remove its pack keep file %s: %v", run.run.RepositoryID, path, err)
 	}
@@ -466,7 +486,16 @@ func (s *Service) publish(ctx context.Context, run *runState, repositoryPath str
 	if err != nil {
 		appendDeferredImportLog(&logs, "import publication for %s remains incomplete: %v", run.run.RepositoryID, err)
 	}
-	lock.Unlock()
+	// A successful publication whose plan writes nothing only read the
+	// destination and recorded state. A failed one does not prove the cached
+	// refs current: reconciliation fails exactly when the destination differs
+	// from the record. A first import renames a new directory into place and
+	// always counts as a change.
+	if err == nil && run.initialDestination == nil && !plan.changesRefs() {
+		lock.UnlockWithoutRefChanges()
+	} else {
+		lock.Unlock()
+	}
 	s.flushDeferredImportLogs(logs)
 	return plan, err
 }

@@ -69,10 +69,10 @@ func (l *RepositoryLock) Unlock() {
 
 // UnlockWithoutRefChanges releases the write lock without advancing the
 // generation, so cached ref snapshots stay valid. Use it only when the holder
-// ran no Git command or file operation that can change refs, HEAD, or the
-// repository's objects since it took the lock. Storing the same objects
-// differently, as repack and commit-graph do, does not change them. When in
-// doubt, use Unlock.
+// ran no Git command or file operation that can change refs or HEAD since it
+// took the lock. Storing the same objects differently, as repack and
+// commit-graph do, or adding objects that no ref reaches, as a refused push
+// does, leaves every snapshot as it was. When in doubt, use Unlock.
 func (l *RepositoryLock) UnlockWithoutRefChanges() {
 	l.RWMutex.Unlock()
 }

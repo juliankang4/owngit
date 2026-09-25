@@ -138,9 +138,20 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	defer h.active.Add(-1)
 
 	lock := h.Repositories.Locks.For(route.repositoryID)
+	// Releasing the write lock invalidates the cached ref snapshot unless the
+	// request provably changed no ref: the ref advertisement never writes, and
+	// a push only when its complete report refused every command before a
+	// write.
+	refsUnchanged := request.Method == http.MethodGet
 	if route.service == "git-receive-pack" {
 		lock.Lock()
-		defer lock.Unlock()
+		defer func() {
+			if refsUnchanged {
+				lock.UnlockWithoutRefChanges()
+			} else {
+				lock.Unlock()
+			}
+		}()
 	} else {
 		lock.RLock()
 		defer lock.RUnlock()
@@ -240,6 +251,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		// Without a side band, receive-pack's messages arrive on stderr.
 		report.scan(stderr)
 		inBand = report.reason()
+		refsUnchanged = err == nil && !consumeFailed.Load() && report.refsUnchanged()
 	}
 	if err == nil && len(stderr) == 0 && inBand == "" {
 		return

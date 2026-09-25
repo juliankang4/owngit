@@ -457,7 +457,9 @@ func (s *Service) adoptAdvertisement(run *runState, advertisement *importgit.Adv
 func (s *Service) requestFor(ctx context.Context, run *runState) (importfetch.Request, error) {
 	lock := s.Repositories.Locks.For(run.run.RepositoryID)
 	lock.Lock()
-	defer lock.Unlock()
+	// The lock only orders this read of the source and its credentials with
+	// their writers; nothing here changes a ref.
+	defer lock.UnlockWithoutRefChanges()
 	releaseCredentialAuthority := s.Store.LockImportCredentialAuthority(run.run.RepositoryID)
 	run.credentialAuthorityLocked = true
 	defer func() {

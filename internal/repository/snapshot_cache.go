@@ -14,9 +14,11 @@ import (
 // snapshotCache keeps the latest ref snapshot of each repository with the
 // write generation of the repository lock it was read at. Every OwnGit ref
 // write holds that lock, and releasing it advances the generation, so an entry
-// is current exactly while the generation is unchanged. Refs written to the
-// storage folder without OwnGit are not seen until OwnGit next writes to that
-// repository or restarts.
+// is current exactly while the generation is unchanged. A holder that proves
+// it changed no ref, such as a push that updated nothing or an import that
+// found every ref unchanged, releases the lock without advancing it. Refs
+// written to the storage folder without OwnGit are not seen until OwnGit next
+// changes a ref in that repository or restarts.
 type snapshotCache struct {
 	mu sync.Mutex
 	// root is the storage folder the entries were read from. Entries of an
