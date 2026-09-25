@@ -45,11 +45,11 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	case webui.ActionEnableAccessPassword, webui.ActionChangeAccessPassword:
 		password := postValue(request, "access_password")
 		if validateErr := auth.ValidatePassword(password); validateErr != nil {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", webui.MsgSetupAccessPassShort)}, http.StatusUnprocessableEntity)
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", passwordRuleMessage(validateErr, webui.MsgSetupAccessPassShort))}, http.StatusUnprocessableEntity)
 			return
 		}
 		if adminPassword == password {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", webui.MsgSetupAdminSameAsGen)}, http.StatusUnprocessableEntity)
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", webui.MsgSetupGenSameAsAdmin)}, http.StatusUnprocessableEntity)
 			return
 		}
 		var encoded string
@@ -64,11 +64,19 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	case webui.ActionChangeAdminPassword:
 		newPassword := postValue(request, "new_admin_password")
 		if validateErr := auth.ValidatePassword(newPassword); validateErr != nil {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", webui.MsgSetupAdminShort)}, http.StatusUnprocessableEntity)
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", passwordRuleMessage(validateErr, webui.MsgSetupAdminShort))}, http.StatusUnprocessableEntity)
+			return
+		}
+		if adminPassword == newPassword {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", webui.MsgSettingsAdminSame)}, http.StatusUnprocessableEntity)
 			return
 		}
 		accessHash, hashErr := app.Store.PasswordHash(request.Context(), "access")
-		if adminPassword == newPassword || hashErr != nil || (accessHash != "" && auth.CheckPassword(accessHash, newPassword)) {
+		if hashErr != nil {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgErrUnavailable)}, http.StatusServiceUnavailable)
+			return
+		}
+		if accessHash != "" && auth.CheckPassword(accessHash, newPassword) {
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", webui.MsgSetupAdminSameAsGen)}, http.StatusUnprocessableEntity)
 			return
 		}
@@ -105,7 +113,24 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgErrUnavailable)}, http.StatusServiceUnavailable)
 		return
 	}
+	// A new shared password signs out every general session, this browser's
+	// too. Without an administrator session Settings would send it to the
+	// sign-in page and drop the confirmation, so the confirmation goes there.
+	if action == webui.ActionEnableAccessPassword || action == webui.ActionChangeAccessPassword {
+		if _, ok := app.cookieSession(request, "admin", adminCookie); !ok {
+			http.Redirect(writer, request, "/login?notice=access_password_saved&next=%2Fsettings", http.StatusSeeOther)
+			return
+		}
+	}
 	http.Redirect(writer, request, "/settings?notice=settings_saved", http.StatusSeeOther)
+}
+
+// passwordRuleMessage names the password rule a refused password broke.
+func passwordRuleMessage(err error, tooShort webui.MessageCode) webui.MessageCode {
+	if errors.Is(err, auth.ErrPasswordTooLong) {
+		return webui.MsgPasswordTooLong
+	}
+	return tooShort
 }
 
 func (app *App) allowSettingsViewer(writer http.ResponseWriter, request *http.Request, settings state.Settings) (string, bool) {

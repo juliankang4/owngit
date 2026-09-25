@@ -27,7 +27,7 @@ func TestKoreanDeveloperTermsUseFamiliarWording(t *testing.T) {
 		MsgSettingsCloneTitle:     "클론 주소",
 		MsgSettingsCloneHelp:      "클론할 때 이 주소 뒤에 저장소 이름을 붙이세요.",
 		MsgRepoNameRules:          "영문자, 숫자, 점, 하이픈, 밑줄을 사용합니다. 이 이름이 클론 주소가 됩니다.",
-		MsgRepoNameInvalid:        "영문자, 숫자, 점, 하이픈, 밑줄만 사용하세요.",
+		MsgRepoNameInvalid:        "영문자나 숫자로 시작해 영문자, 숫자, 점, 하이픈, 밑줄로 1자에서 100자까지 입력하세요. .git으로 끝나거나 con 같은 Windows 장치 이름은 쓸 수 없습니다.",
 		MsgRepoCloneTitle:         "클론 주소",
 		MsgRepoDetached:           "브랜치가 아니라 특정 커밋을 보고 있습니다.",
 		MsgCodePathMissing:        "이 커밋에는 그 경로가 없습니다.",

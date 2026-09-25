@@ -127,7 +127,8 @@ type PullRequestPage struct {
 
 	Number int64
 	Title  string
-	// State is PullRequestOpen, PullRequestMerged, or PullRequestCreating.
+	// State is PullRequestOpen, PullRequestMerged, PullRequestClosed, or
+	// PullRequestCreating.
 	State  string
 	Source RevisionState
 	Target RevisionState
@@ -163,6 +164,10 @@ type PullRequestPage struct {
 	ReviewRequestURL string
 	ReviewSkipURL    string
 	MergeURL         string
+	// CloseURL closes an open pull request and ReopenURL reopens a closed
+	// one. Each is set only in the state where it applies.
+	CloseURL  string
+	ReopenURL string
 	// TasksURL opens the repository's task and check history.
 	TasksURL string
 

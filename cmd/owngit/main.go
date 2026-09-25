@@ -18,6 +18,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"owngit/internal/auth"
 	"owngit/internal/bootstrap"
@@ -727,11 +728,13 @@ func readPrivatePassword(path string) (string, error) {
 		return "", err
 	}
 	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, 1026))
+	// The longest accepted password plus an optional CRLF line ending.
+	const maximumFileBytes = utf8.UTFMax*auth.MaximumPasswordCharacters + 2
+	content, err := io.ReadAll(io.LimitReader(file, maximumFileBytes+1))
 	if err != nil {
 		return "", err
 	}
-	if len(content) > 1025 {
+	if len(content) > maximumFileBytes {
 		return "", errors.New("password file is too large")
 	}
 	password := strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")

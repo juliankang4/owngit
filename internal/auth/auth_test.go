@@ -45,3 +45,32 @@ func TestPasswordPolicy(t *testing.T) {
 		t.Fatalf("valid password rejected: %v", err)
 	}
 }
+
+// QA-013: both limits count characters (code points), not bytes.
+func TestPasswordLimitsCountCharacters(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		password string
+		want     error
+	}{
+		{"three Hangul characters are nine bytes", "비밀번", ErrPasswordTooShort},
+		{"seven emoji are 28 bytes", strings.Repeat("\U0001F512", 7), ErrPasswordTooShort},
+		{"eight Hangul characters", "비밀번호여덟글자", nil},
+		{"the longest password in four-byte characters", strings.Repeat("\U0001F512", MaximumPasswordCharacters), nil},
+		{"one character too many", strings.Repeat("가", MaximumPasswordCharacters+1), ErrPasswordTooLong},
+	} {
+		if err := ValidatePassword(test.password); err != test.want {
+			t.Errorf("%s: err=%v, want %v", test.name, err, test.want)
+		}
+	}
+	// The longest accepted password also verifies, so no accepted password
+	// can lock its owner out.
+	longest := strings.Repeat("\U0001F512", MaximumPasswordCharacters)
+	encoded, err := HashPassword(longest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !CheckPassword(encoded, longest) {
+		t.Fatal("the longest accepted password does not verify")
+	}
+}

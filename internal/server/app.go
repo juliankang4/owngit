@@ -26,6 +26,8 @@ const (
 	setupCookie    = "owngit_setup"
 	preauthCookie  = "owngit_preauth"
 	languageCookie = "owngit_lang"
+	// appearanceCookie is a preference the page script also reads and writes.
+	appearanceCookie = "owngit_appearance"
 	// releaseDismissCookie holds the release version whose dashboard notice
 	// this browser dismissed. It is a preference, not a credential.
 	releaseDismissCookie = "owngit_release_dismissed"
@@ -162,9 +164,10 @@ func importRunRequest(request *http.Request) bool {
 
 // maxRefreshFormBytes bounds what peekFormAction reads before authentication.
 // The refresh form carries csrf, action and admin_password. A password is at
-// most 1024 bytes, which URL-encodes to at most 3072 bytes, so every valid
-// refresh form fits. A larger body is handled as an ordinary request.
-const maxRefreshFormBytes = 4 << 10
+// most 1024 characters of up to four bytes, which URL-encodes to at most
+// 12288 bytes, so every valid refresh form fits. A larger body is handled as
+// an ordinary request.
+const maxRefreshFormBytes = 16 << 10
 
 // peekFormAction reads at most maxRefreshFormBytes of a URL-encoded form to
 // find its action. The handler still receives the complete body, including

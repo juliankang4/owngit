@@ -109,9 +109,9 @@ func prReviewSummary(evidence ReviewEvidence) MessageCode {
 		return ""
 	case !evidence.BoundToCurrentRevision:
 		return MsgReviewOtherRevision
-	case !evidence.Independent:
+	case evidence.HasReviewer() && !evidence.Independent:
 		return MsgReviewNotIndependent
-	case !evidence.ExecutedChecks:
+	case evidence.HasReviewer() && !evidence.ExecutedChecks:
 		return MsgReviewNoChecksRun
 	default:
 		return reviewOrigin(evidence.Provenance)

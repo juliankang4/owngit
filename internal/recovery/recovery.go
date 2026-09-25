@@ -39,9 +39,13 @@ const (
 	// pullRequestBackupVersion added durable pull request records. Versions 1
 	// and 2 were written by the committed baseline.
 	pullRequestBackupVersion = 2
-	// backupVersion is the current format. Versions 3 through 8 were written
-	// only by unreleased development builds and are refused.
-	backupVersion      = 9
+	// checkBackupVersion added checks, jobs, imports and review event
+	// identities; the 1.0 releases wrote it. Versions 3 through 8 were
+	// written only by unreleased development builds and are refused.
+	checkBackupVersion = 9
+	// backupVersion is the current format. It adds closed pull requests and
+	// merges recorded as already up to date.
+	backupVersion      = 10
 	maximumManifest    = 64 << 20
 	pendingRestoreName = state.IncompleteRestoreMarkerName
 )
@@ -1204,17 +1208,17 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 	return snapshot
 }
 
-// validateBackupVersion accepts the committed baseline formats and the
-// current format. Every other version below the current one was written only
-// by unreleased development builds.
+// validateBackupVersion accepts the committed baseline formats, the released
+// format and the current format. Every other version below the current one
+// was written only by unreleased development builds.
 func validateBackupVersion(version int) error {
 	switch {
-	case version == legacyBackupVersion || version == pullRequestBackupVersion || version == backupVersion:
+	case version == legacyBackupVersion || version == pullRequestBackupVersion || version == checkBackupVersion || version == backupVersion:
 		return nil
 	case version > backupVersion:
-		return fmt.Errorf("unsupported backup version %d: this build supports versions 1, 2, and %d", version, backupVersion)
+		return fmt.Errorf("unsupported backup version %d: this build supports versions 1, 2, %d, and %d", version, checkBackupVersion, backupVersion)
 	default:
-		return fmt.Errorf("backup uses the unreleased development format %d; this build supports versions 1, 2, and %d", version, backupVersion)
+		return fmt.Errorf("backup uses the unreleased development format %d; this build supports versions 1, 2, %d, and %d", version, checkBackupVersion, backupVersion)
 	}
 }
 
@@ -1284,6 +1288,18 @@ func validateManifest(manifest Manifest) error {
 		}
 	}
 	if manifest.Version < backupVersion {
+		for _, record := range manifest.PullRequests {
+			if record.Status == state.PullRequestClosed {
+				return fmt.Errorf("version %d backup contains an unsupported closed pull request", manifest.Version)
+			}
+		}
+		for _, intent := range manifest.PullRequestMergeIntents {
+			if intent.Mode == "up_to_date" {
+				return fmt.Errorf("version %d backup contains an unsupported up-to-date merge", manifest.Version)
+			}
+		}
+	}
+	if manifest.Version < checkBackupVersion {
 		if len(manifest.Tasks) != 0 || len(manifest.CheckConfigurations) != 0 || len(manifest.CheckCycles) != 0 || len(manifest.CheckAttempts) != 0 || len(manifest.CheckResults) != 0 || len(manifest.CheckPolicies) != 0 || len(manifest.CheckJobs) != 0 {
 			return fmt.Errorf("version %d backup contains unsupported check metadata", manifest.Version)
 		}

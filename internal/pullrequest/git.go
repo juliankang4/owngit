@@ -254,9 +254,9 @@ func (service *Service) ensureProtectedMergeRef(ctx context.Context, repositoryP
 }
 
 func (service *Service) ensurePlannedMergeTree(ctx context.Context, repositoryPath string, record state.PullRequest, intent state.PullRequestMergeIntent, verifyHeads bool) error {
-	if intent.Mode == "fast_forward" {
+	if intent.Mode == "fast_forward" || intent.Mode == "up_to_date" {
 		if intent.TreeOID != "" {
-			return NewProblem("repository_integrity_error", "A fast-forward merge intent unexpectedly contains a merge tree.")
+			return NewProblem("repository_integrity_error", "A merge intent without a merge commit unexpectedly contains a merge tree.")
 		}
 		return nil
 	}
@@ -275,6 +275,9 @@ func (service *Service) ensureMergeResult(ctx context.Context, repositoryPath st
 		return "", err
 	}
 	resultOID := intent.SourceOID
+	if intent.Mode == "up_to_date" {
+		resultOID = intent.TargetOID
+	}
 	if intent.Mode == "merge_commit" {
 		var err error
 		resultOID, err = service.createMergeCommit(ctx, repositoryPath, record, intent)
@@ -307,12 +310,24 @@ func (service *Service) requireMergeCapability(ctx context.Context) error {
 }
 
 func (service *Service) planMerge(ctx context.Context, repositoryPath string, intent state.PullRequestMergeIntent) (state.PullRequestMergeIntent, error) {
+	intent.UpdatedAt = service.now()
+	intent.Status = state.MergeIntentPlanned
+	// A source the target already contains has nothing to merge. Like Git's
+	// "Already up to date", the target stays where it is and no commit is
+	// written; the pull request is still recorded as merged at that target.
+	contained, err := service.isAncestor(ctx, repositoryPath, intent.SourceOID, intent.TargetOID)
+	if err != nil {
+		return state.PullRequestMergeIntent{}, err
+	}
+	if contained {
+		intent.Mode = "up_to_date"
+		intent.ResultOID = intent.TargetOID
+		return intent, nil
+	}
 	fastForward, err := service.isAncestor(ctx, repositoryPath, intent.TargetOID, intent.SourceOID)
 	if err != nil {
 		return state.PullRequestMergeIntent{}, err
 	}
-	intent.UpdatedAt = service.now()
-	intent.Status = state.MergeIntentPlanned
 	if fastForward {
 		intent.Mode = "fast_forward"
 		intent.ResultOID = intent.SourceOID
@@ -380,10 +395,14 @@ func (service *Service) publishMerge(ctx context.Context, repositoryPath string,
 	if err := service.validateMergeCandidate(ctx, repositoryPath, intent); err != nil {
 		return err
 	}
+	targetCommand := "update refs/heads/" + record.TargetBranch + " " + intent.ResultOID + " " + intent.TargetOID
+	if intent.Mode == "up_to_date" {
+		targetCommand = "verify refs/heads/" + record.TargetBranch + " " + intent.TargetOID
+	}
 	commands := strings.Join([]string{
 		"start",
 		"verify refs/heads/" + record.SourceBranch + " " + intent.SourceOID,
-		"update refs/heads/" + record.TargetBranch + " " + intent.ResultOID + " " + intent.TargetOID,
+		targetCommand,
 		"create " + intent.ReceiptRef + " " + intent.ResultOID,
 		"prepare",
 		"commit",
@@ -422,6 +441,18 @@ func (service *Service) validateProtectedMergeObjects(ctx context.Context, repos
 		}
 		if !ancestor {
 			return NewProblem("repository_integrity_error", "The fast-forward result does not descend from the target revision.")
+		}
+		return service.validateProtectedResultRef(ctx, repositoryPath, intent, intent.ResultOID, requireResult)
+	case "up_to_date":
+		if intent.ResultOID != intent.TargetOID || intent.TreeOID != "" {
+			return NewProblem("repository_integrity_error", "The up-to-date merge intent is invalid.")
+		}
+		contained, err := service.isAncestor(ctx, repositoryPath, intent.SourceOID, intent.TargetOID)
+		if err != nil {
+			return err
+		}
+		if !contained {
+			return NewProblem("repository_integrity_error", "The up-to-date merge target does not contain the source revision.")
 		}
 		return service.validateProtectedResultRef(ctx, repositoryPath, intent, intent.ResultOID, requireResult)
 	case "merge_commit":

@@ -22,6 +22,9 @@ type schemaClass int
 const (
 	schemaEmpty schemaClass = iota
 	schemaBaseline
+	// schemaReleased is the schema the 1.0 releases wrote. It is upgraded
+	// in place like the baseline.
+	schemaReleased
 	schemaCurrent
 )
 

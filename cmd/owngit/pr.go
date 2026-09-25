@@ -26,7 +26,7 @@ type prRemoteFlags struct {
 func prCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		printPRUsage(os.Stderr)
-		return cliProblem("invalid_arguments", "pr requires create, list, show, review, or merge.")
+		return cliProblem("invalid_arguments", "pr requires create, list, show, review, merge, close, or reopen.")
 	}
 	if isHelpArgument(arguments[0]) {
 		printPRUsage(os.Stdout)
@@ -43,6 +43,8 @@ func prCommand(arguments []string) error {
 		return prReview(arguments[1:])
 	case "merge":
 		return prMerge(arguments[1:])
+	case "close", "reopen":
+		return prSetClosed(arguments[0], arguments[1:])
 	default:
 		return cliProblem("invalid_arguments", "Unknown pr command: "+arguments[0])
 	}
@@ -164,6 +166,25 @@ func prMerge(arguments []string) error {
 	return executePRRequest(client, http.MethodPost, remote.itemPath(*number)+"/merge", pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID})
 }
 
+// prSetClosed closes or reopens a pull request. Neither changes a branch, so
+// no object IDs are needed.
+func prSetClosed(action string, arguments []string) error {
+	flags := newPRFlagSet("pr " + action)
+	remote := addPRRemoteFlags(flags)
+	number := flags.Int64("number", 0, "pull request number")
+	if err := parsePRFlags(flags, arguments); err != nil {
+		return err
+	}
+	if *number <= 0 {
+		return cliProblem("invalid_arguments", "pr "+action+" requires a positive --number.")
+	}
+	client, err := remote.client()
+	if err != nil {
+		return err
+	}
+	return executePRRequest(client, http.MethodPost, remote.itemPath(*number)+"/"+action, struct{}{})
+}
+
 func newPRFlagSet(name string) *flag.FlagSet {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -252,6 +273,6 @@ func writeStructuredCommandError(writer io.Writer, err error) bool {
 }
 
 func printPRUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|review|merge> [options]")
+	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|review|merge|close|reopen> [options]")
 	fmt.Fprintln(writer, "Every remote command requires --server and --repository. HTTP also requires --accept-insecure-http.")
 }

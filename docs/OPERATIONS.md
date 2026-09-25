@@ -262,6 +262,10 @@ A normal push does not create a pull request. After pushing distinct source and 
 
 Use `--review skip` when you intentionally omit review. A skip is recorded as skipped, not approved. Without `--review`, no review is requested, and `pr review request` can still be run later. Omit `--password-file` when general access is open. The file contains the shared general-access password, never the administrator password, and has the same owner-only checks as `reset-admin`.
 
+Only one pull request can be open for a source and target branch pair. Creating a second one is refused with `pull_request_exists`, and `error.details.number` names the open pull request; the web page links to it. Pull requests from before this rule stay open and work as before.
+
+A pull request you no longer need can be closed without merging, with Close pull request on its page or `pr close`. Closing changes no branch. A closed pull request stays in the list as Closed, keeps its history, cannot be reviewed or merged, and no longer holds its branch pair, so a new one can be opened. Reopen pull request or `pr reopen` opens it again; this is refused with `pull_request_exists` while another pull request is open for the same pair. A merged pull request cannot be closed or reopened (`pull_request_merged`). Closing and reopening need the same access as merging.
+
 Plain HTTP exposes the password and pull request details to the network. `--accept-insecure-http` records your consent for that command only; omit it for HTTPS. The CLI rejects credentials embedded in the URL and does not follow redirects.
 
 The other `pr` commands take the same `--server`, `--accept-insecure-http`, `--repository`, and `--password-file` flags; they are omitted below. `pr show` reports the current source and target object IDs, and every review decision and merge must supply both:
@@ -274,13 +278,15 @@ The other `pr` commands take the same `--server`, `--accept-insecure-http`, `--r
   --decision approved --reviewer "existing-tool: reviewer label"
 ./bin/owngit pr review skip --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
 ./bin/owngit pr merge --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+./bin/owngit pr close --number 1
+./bin/owngit pr reopen --number 1
 ```
 
 A submitted review is `approved` or `changes_requested`. The reviewer label records who supplied the review; it does not claim independence or that checks ran. A pending or changes-requested review does not hold a merge. When the source or target moves, earlier review and skip decisions no longer apply, so inspect the pull request again and decide for the new object IDs.
 
 Every command writes a JSON result. Failures include a stable `error.code` and a nonzero exit status. When the server cannot be reached, `connection_failed` names the cause, such as a refused connection or a TLS error. `checks` in a pull request result reports the evidence recorded for the current source revision, or `absent`. That evidence is `stale` when it ran other checks than those in the `.owngit/checks.json` committed in the source revision; configurations recorded for other branches do not affect it. A failed, stale, dirty, or incomplete check is advisory and never blocks a merge.
 
-Merge makes a fast-forward or a new merge commit with the old target as first parent and the source as second parent, authored as `OwnGit <owngit@localhost>` with the pull request number and title in the message. It does not squash, rebase, force-update, delete the source branch, or change anyone's working tree. Merge requires Git 2.38 or newer on the OwnGit host; with an older Git it returns `unsupported_git`, and other Git use keeps working. A retried or interrupted merge never creates a second merge commit.
+Merge makes a fast-forward or a new merge commit with the old target as first parent and the source as second parent, authored as `OwnGit <owngit@localhost>` with the pull request number and title in the message. It does not squash, rebase, force-update, delete the source branch, or change anyone's working tree. Merge requires Git 2.38 or newer on the OwnGit host; with an older Git it returns `unsupported_git`, and other Git use keeps working. A retried or interrupted merge never creates a second merge commit. When the target already contains the source, for example after the branch was merged some other way, merge writes no commit and leaves the target unchanged, like Git's "Already up to date". The pull request is recorded as merged with `merge.mode` `up_to_date` and `merge.oid` set to the unchanged target commit.
 
 ## Project checks
 
@@ -356,7 +362,7 @@ If OwnGit cannot read the list of repositories from its state database, it still
 - Repository names cannot end in `.git` or use Windows device names such as `CON`, `AUX`, `NUL`, `COM1`, or `LPT1`, with or without an extension. `new` and `new-import` are reserved. These rules apply on every platform.
 - Expired logs free space inside the database for reuse, but the file does not shrink, the old bytes are not securely erased, and there is no overall size limit. OwnGit does not run `VACUUM`.
 - When a `-wal` or `-shm` file is present at startup, OwnGit copies the database and its WAL to a private temporary directory to inspect them. The temporary volume needs about that much free space.
-- On start, OwnGit upgrades a database from the earlier committed version in place. It refuses a database from a newer or unknown version, or from an unreleased development build, and leaves its files unchanged. An older build refuses a database that a newer build has upgraded, so back up before you replace the executable.
+- On start, OwnGit upgrades a database from the earlier committed version or from OwnGit 1.0 in place. It refuses a database from a newer or unknown version, or from an unreleased development build, and leaves its files unchanged. An older build refuses a database that a newer build has upgraded, so back up before you replace the executable. To go back to OwnGit 1.0 after an upgrade, restore a backup that OwnGit 1.0 made: it refuses both the upgraded database and backups made by this version.
 - OwnGit does not read or remove a `logs/` directory left by older versions. Remove it yourself once no older OwnGit process uses it.
 - Removing the `owngit` executable leaves the state directory and repositories in place. Delete them yourself only when you no longer need them.
 - A database from an unreleased development build that had built-in AI review may still hold review records and provider tokens. OwnGit does not use or erase them. Backup never copies the tokens, and it checks for review records and refuses to run while any remain.
@@ -384,7 +390,7 @@ Backup refuses to run when an import publication is still unsettled for a reposi
 
 The manifest is limited to 64 MiB. A backup that would exceed it fails without writing output and never drops records to fit. Creating a backup holds the whole export in memory.
 
-OwnGit restores backup versions 1, 2, and 9 and refuses others, including the versions 3 through 8 that only unreleased development builds wrote. Older builds refuse a newer backup instead of dropping records they do not know. Restore into new paths that do not exist:
+OwnGit restores backup versions 1, 2, 9, and 10 and refuses others, including the versions 3 through 8 that only unreleased development builds wrote. Older builds refuse a newer backup instead of dropping records they do not know. Restore into new paths that do not exist:
 
 ```sh
 ./bin/owngit restore \

@@ -114,6 +114,8 @@ const (
 	MsgSetupAdminShort     MessageCode = "setup.admin.short"
 	MsgSetupAdminSaved     MessageCode = "setup.admin.saved"
 	MsgSetupAdminSameAsGen MessageCode = "setup.admin.same_as_general"
+	MsgSetupGenSameAsAdmin MessageCode = "setup.access.same_as_admin"
+	MsgPasswordTooLong     MessageCode = "setup.password_too_long"
 
 	MsgSetupInsecureLabel MessageCode = "setup.insecure.label"
 	MsgSetupInsecureHelp  MessageCode = "setup.insecure.help"
@@ -168,6 +170,9 @@ const (
 	MsgSettingsTitle    MessageCode = "settings.title"
 	MsgSettingsSaved    MessageCode = "settings.saved"
 	MsgSettingsAdminReq MessageCode = "settings.admin_required"
+	// The shared password changed, which signed this browser out too.
+	MsgSettingsAccessSaved MessageCode = "settings.access_password_saved"
+	MsgSettingsAdminSame   MessageCode = "settings.admin_password_unchanged"
 
 	MsgSettingsAccessTitle    MessageCode = "settings.access.title"
 	MsgSettingsAccessOpenNow  MessageCode = "settings.access.open_now"
@@ -564,6 +569,14 @@ var catalog = map[MessageCode]message{
 		en: "Use a different password from the shared access password.",
 		ko: "공용 접근 비밀번호와 다른 비밀번호를 사용하세요.",
 	},
+	MsgSetupGenSameAsAdmin: {
+		en: "Use a different password from the administrator password.",
+		ko: "관리자 비밀번호와 다른 비밀번호를 사용하세요.",
+	},
+	MsgPasswordTooLong: {
+		en: "Use at most 1024 characters.",
+		ko: "1024자 이하로 입력하세요.",
+	},
 	MsgSetupInsecureLabel: {
 		en: "Continue with a connection OwnGit does not encrypt",
 		ko: "OwnGit이 암호화하지 않는 연결로 계속하기",
@@ -732,6 +745,14 @@ var catalog = map[MessageCode]message{
 	MsgSettingsSaved: {
 		en: "Settings saved.",
 		ko: "설정을 저장했습니다.",
+	},
+	MsgSettingsAccessSaved: {
+		en: "Shared password saved. Sign in with the new shared password.",
+		ko: "공용 비밀번호를 저장했습니다. 새 공용 비밀번호로 로그인하세요.",
+	},
+	MsgSettingsAdminSame: {
+		en: "Use a new password that differs from the current administrator password.",
+		ko: "현재 관리자 비밀번호와 다른 새 비밀번호를 사용하세요.",
 	},
 	MsgSettingsAdminReq: {
 		en: "Enter the administrator password to apply a change.",
@@ -929,8 +950,8 @@ var catalog = map[MessageCode]message{
 		ko: "저장소 이름을 입력하세요.",
 	},
 	MsgRepoNameInvalid: {
-		en: "Use letters, numbers, dots, dashes, and underscores only.",
-		ko: "영문자, 숫자, 점, 하이픈, 밑줄만 사용하세요.",
+		en: "Use 1 to 100 letters, numbers, dots, dashes, and underscores, starting with a letter or number. The name cannot end in .git or be a Windows device name such as con.",
+		ko: "영문자나 숫자로 시작해 영문자, 숫자, 점, 하이픈, 밑줄로 1자에서 100자까지 입력하세요. .git으로 끝나거나 con 같은 Windows 장치 이름은 쓸 수 없습니다.",
 	},
 	MsgRepoNameReserved: {
 		en: "The names new and new-import are reserved. Choose another name.",

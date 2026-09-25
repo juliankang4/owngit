@@ -173,6 +173,14 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	runPRCommandJSON(t, append([]string{
 		"review", "skip", "--number", number, "--source-oid", sourceOID, "--target-oid", targetOID,
 	}, remoteFlags...))
+	closed := runPRCommandJSON(t, append([]string{"close", "--number", number}, remoteFlags...))
+	if closed.PullRequest == nil || closed.PullRequest.State != state.PullRequestClosed {
+		t.Fatalf("CLI close result=%+v", closed.PullRequest)
+	}
+	reopened := runPRCommandJSON(t, append([]string{"reopen", "--number", number}, remoteFlags...))
+	if reopened.PullRequest == nil || reopened.PullRequest.State != state.PullRequestOpen {
+		t.Fatalf("CLI reopen result=%+v", reopened.PullRequest)
+	}
 	merged := runPRCommandJSON(t, append([]string{
 		"merge", "--number", number, "--source-oid", sourceOID, "--target-oid", targetOID,
 	}, remoteFlags...))
@@ -182,6 +190,10 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	repositoryPath, _ := manager.Path("project")
 	if got := prGitOutput(t, "", "--git-dir", repositoryPath, "rev-parse", "--verify", "refs/heads/main"); got != sourceOID {
 		t.Fatalf("CLI merge target=%s, want %s", got, sourceOID)
+	}
+	err = prCommand(append([]string{"close", "--number", number}, remoteFlags...))
+	if got := commandErrorCode(err); got != "pull_request_merged" {
+		t.Fatalf("CLI close of a merged pull request error=%v code=%q", err, got)
 	}
 }
 

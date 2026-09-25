@@ -151,11 +151,12 @@
 <div class="card">
   <h2 class="setblock__h">{{bi $lang "pr.merged.title"}}</h2>
   <dl class="kv">
-    {{with $p.Merged.Mode}}<div><dt>{{bi $lang "pr.merged.mode"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
-    {{with $p.Merged.ShortOID}}<div><dt>{{bi $lang "pr.merged.commit"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
+    {{with $p.Merged.Mode}}<div><dt>{{bi $lang "pr.merged.mode"}}</dt>{{with $p.Merged.ModeNote}}<dd>{{bi $lang .}}</dd>{{else}}<dd class="mono">{{$p.Merged.Mode}}</dd>{{end}}</div>{{end}}
+    {{with $p.Merged.ShortOID}}<div><dt>{{bi $lang $p.Merged.CommitLabel}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
     {{with $p.Merged.ReceiptRef}}<div><dt>{{bi $lang "pr.merged.receipt"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
     {{if notZero $p.Merged.MergedAt}}<div><dt>{{bi $lang "pr.merged.at"}}</dt><dd>{{biDateTime $lang $p.Merged.MergedAt}}</dd></div>{{end}}
   </dl>
+  {{if eq $p.Merged.Mode "up_to_date"}}<p class="ev__note">{{bi $lang "pr.merged.up_to_date_note"}}</p>{{end}}
 </div>
 {{end}}
 
@@ -194,6 +195,27 @@
     <p class="f__help">{{bi $lang "evidence.review.request_intent"}}</p>
   </div>
 </details>
+{{end}}
+
+{{/* Closing is not a decision about the change, so it sits apart from the
+     merge control. A closed pull request keeps its history and offers only
+     Reopen; a merged one offers neither. */}}
+{{if or $p.CloseURL $p.ReopenURL}}
+<div class="card">
+  {{if eq $p.State "closed"}}<p class="ev__note">{{bi $lang "pr.closed.note"}}</p>{{end}}
+  <div class="pract">
+    <form method="post" action="{{or $p.CloseURL $p.ReopenURL}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      {{if $p.CloseURL}}
+        <button type="submit" class="btn">{{bi $lang "pr.actions.close"}}</button>
+        <span class="f__help">{{bi $lang "pr.actions.close_help"}}</span>
+      {{else}}
+        <button type="submit" class="btn">{{bi $lang "pr.actions.reopen"}}</button>
+        <span class="f__help">{{bi $lang "pr.actions.reopen_help"}}</span>
+      {{end}}
+    </form>
+  </div>
+</div>
 {{end}}
 
 {{template "changeList" dict "Lang" $lang "Files" $p.Changes "Truncated" $p.DiffTruncated "Unavailable" $p.ChangesUnavailable "Reason" $p.ChangesReason}}

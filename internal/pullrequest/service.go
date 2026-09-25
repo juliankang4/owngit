@@ -92,6 +92,14 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 	if (input.SourceOID != "" && input.SourceOID != sourceHead.OID) || (input.TargetOID != "" && input.TargetOID != targetHead.OID) {
 		return nil, staleRevisionProblem(sourceHead.OID, targetHead.OID)
 	}
+	// One open pull request per source and target branch pair. A second one
+	// would compete for the same merge, so the caller is sent to the first.
+	if problem, err := service.openPairProblem(ctx, input.Repository, source, target); err != nil || problem != nil {
+		if err != nil {
+			return nil, err
+		}
+		return nil, problem
+	}
 	return service.createForHeadsLocked(ctx, input.Repository, title, source, target, reviewStatus, repositoryPath, sourceHead, targetHead)
 }
 
@@ -237,7 +245,7 @@ func (service *Service) recordReview(ctx context.Context, repositoryID string, n
 		return nil, err
 	}
 	if record.Status != state.PullRequestOpen {
-		return nil, NewProblem("pull_request_not_open", "The pull request is already merged.")
+		return nil, notOpenProblem(record.Status)
 	}
 	sourceHead, targetHead, err := service.currentHeads(ctx, repositoryPath, record)
 	if err != nil {
@@ -308,6 +316,9 @@ func (service *Service) Merge(ctx context.Context, repositoryID string, number i
 			return nil, NewProblem("repository_integrity_error", "The merged pull request receipt is missing.")
 		}
 		return service.readViewLocked(ctx, repositoryPath, record)
+	}
+	if record.Status != state.PullRequestOpen {
+		return nil, notOpenProblem(record.Status)
 	}
 
 	sourceHead, targetHead, err := service.currentHeads(ctx, repositoryPath, record)
@@ -404,6 +415,117 @@ func (service *Service) Merge(ctx context.Context, repositoryID string, number i
 		return nil, err
 	}
 	return service.readViewLocked(ctx, repositoryPath, record)
+}
+
+// Close closes an open pull request without merging it. It stays in the
+// history and can be reopened. Closing a closed pull request returns it
+// unchanged, and a merged one cannot be closed.
+func (service *Service) Close(ctx context.Context, repositoryID string, number int64) (*View, error) {
+	return service.setClosed(ctx, repositoryID, number, true)
+}
+
+// Reopen reopens a closed pull request. It is refused with
+// pull_request_exists while another pull request is open for the same branch
+// pair. Reopening an open pull request returns it unchanged.
+func (service *Service) Reopen(ctx context.Context, repositoryID string, number int64) (*View, error) {
+	return service.setClosed(ctx, repositoryID, number, false)
+}
+
+func (service *Service) setClosed(ctx context.Context, repositoryID string, number int64, closed bool) (*View, error) {
+	if service.OnChange != nil {
+		defer service.OnChange(repositoryID)
+	}
+	repositoryPath, err := service.repositoryPath(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	lock := service.Repositories.Locks.For(repositoryID)
+	lock.Lock()
+	defer lock.Unlock()
+	record, err := service.requirePullRequest(ctx, repositoryID, number)
+	if err != nil {
+		return nil, err
+	}
+	if closed && record.Status == state.PullRequestOpen {
+		// A merge whose Git update was published but not yet recorded
+		// completes first, so a published merge is never recorded as closed.
+		record, err = service.completePublishedMergeLocked(ctx, repositoryPath, record)
+		if err != nil {
+			return nil, err
+		}
+	}
+	wanted, from := state.PullRequestClosed, state.PullRequestOpen
+	if !closed {
+		wanted, from = state.PullRequestOpen, state.PullRequestClosed
+	}
+	switch record.Status {
+	case wanted:
+		return service.readViewLocked(ctx, repositoryPath, record)
+	case state.PullRequestMerged:
+		return nil, NewProblem("pull_request_merged", "A merged pull request cannot be closed or reopened.")
+	case from:
+	default:
+		return nil, NewProblem("repository_integrity_error", "The pull request has an unexpected state.")
+	}
+	if !closed {
+		if problem, err := service.openPairProblem(ctx, record.RepositoryID, record.SourceBranch, record.TargetBranch); err != nil || problem != nil {
+			if err != nil {
+				return nil, err
+			}
+			return nil, problem
+		}
+	}
+	record, err = service.Store.SetPullRequestClosed(ctx, repositoryID, number, closed, service.now())
+	if err != nil {
+		return nil, &Problem{Code: "state_unavailable", Message: "The pull request state could not be saved.", Cause: err}
+	}
+	return service.readViewLocked(ctx, repositoryPath, record)
+}
+
+// completePublishedMergeLocked records a merge of this pull request that Git
+// already published. It returns the current record, merged or not.
+func (service *Service) completePublishedMergeLocked(ctx context.Context, repositoryPath string, record state.PullRequest) (state.PullRequest, error) {
+	intents, err := service.Store.PullRequestMergeIntents(ctx, true)
+	if err != nil {
+		return state.PullRequest{}, &Problem{Code: "state_unavailable", Message: "The merge metadata could not be read.", Cause: err}
+	}
+	for _, intent := range intents {
+		if intent.RepositoryID != record.RepositoryID || intent.PullRequestNumber != record.Number || intent.Status != state.MergeIntentReady {
+			continue
+		}
+		published, err := service.reconcileIntentLocked(ctx, repositoryPath, intent)
+		if err != nil {
+			return state.PullRequest{}, err
+		}
+		if published {
+			return service.requirePullRequest(ctx, record.RepositoryID, record.Number)
+		}
+	}
+	return record, nil
+}
+
+// openPairProblem reports the open pull request that already covers a branch
+// pair, as pull_request_exists, or nil when there is none.
+func (service *Service) openPairProblem(ctx context.Context, repositoryID, source, target string) (*Problem, error) {
+	existing, exists, err := service.Store.OpenPullRequestForBranches(ctx, repositoryID, source, target)
+	if err != nil {
+		return nil, &Problem{Code: "state_unavailable", Message: "Pull request metadata could not be read.", Cause: err}
+	}
+	if !exists {
+		return nil, nil
+	}
+	return &Problem{
+		Code:    "pull_request_exists",
+		Message: fmt.Sprintf("Pull request #%d is already open for this source and target branch.", existing.Number),
+		Details: ExistingPullRequest{Number: existing.Number},
+	}, nil
+}
+
+func notOpenProblem(status string) *Problem {
+	if status == state.PullRequestClosed {
+		return NewProblem("pull_request_not_open", "The pull request is closed. Reopen it first.")
+	}
+	return NewProblem("pull_request_not_open", "The pull request is already merged.")
 }
 
 // ObserveCurrentRevisions preserves the original count-only API.
@@ -763,6 +885,10 @@ func evaluateEligibility(requestStatus string, source, target branchHead) Eligib
 	eligibility := Eligibility{}
 	if requestStatus == state.PullRequestMerged {
 		eligibility.Blockers = append(eligibility.Blockers, Blocker{Code: "already_merged", Message: "The pull request is already merged."})
+		return eligibility
+	}
+	if requestStatus == state.PullRequestClosed {
+		eligibility.Blockers = append(eligibility.Blockers, Blocker{Code: "pull_request_not_open", Message: "The pull request is closed."})
 		return eligibility
 	}
 	for _, head := range []struct {

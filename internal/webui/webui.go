@@ -125,6 +125,10 @@ type viewData struct {
 
 	// LangLinks are the language switch targets for the current URL.
 	LangLinks []LangLink
+	// Appearance is the colour choice the document starts in.
+	Appearance Appearance
+	// current is the address the language and appearance links keep.
+	current string
 	// PageNotices are the notices not attached to a form field.
 	PageNotices []Notice
 	// Sidebar selects the general or the repository sidebar.
@@ -143,6 +147,13 @@ type viewData struct {
 
 // Asset returns the versioned URL of an embedded asset.
 func (v *viewData) Asset(name string) string { return v.prints.url(name) }
+
+// AppearanceURL is the link that saves an appearance choice and returns to
+// the current screen. It works without JavaScript; with the script loaded the
+// choice switches in place instead.
+func (v *viewData) AppearanceURL(choice string) string {
+	return withQuery(v.current, "appearance", choice)
+}
 
 // LangLink is one entry in the language picker.
 type LangLink struct {
@@ -168,6 +179,16 @@ func newViewData(page Page, prints fingerprints) (*viewData, error) {
 	if chrome.Lang == LangKO {
 		title = titleKO
 	}
+	appearance, ok := ParseAppearance(string(chrome.Appearance))
+	if !ok {
+		appearance = AppearanceSystem
+	}
+	// The appearance parameter has done its work once the backend saved the
+	// choice, so links built from this screen do not carry it on.
+	current := canonicalURL(page, chrome)
+	if current != "" {
+		current = withQuery(current, "appearance", "")
+	}
 	var pageNotices []Notice
 	for _, n := range chrome.Notices {
 		if isPageNotice(n) {
@@ -179,7 +200,9 @@ func newViewData(page Page, prints fingerprints) (*viewData, error) {
 		Lang:        chrome.Lang,
 		Page:        page,
 		Name:        page.page(),
-		LangLinks:   languageLinks(chrome, canonicalURL(page, chrome)),
+		LangLinks:   languageLinks(chrome, current),
+		Appearance:  appearance,
+		current:     current,
 		PageNotices: pageNotices,
 		Sidebar:     sidebarOf(page),
 		Wide:        wideOf(page),

@@ -38,7 +38,7 @@ func countGitProcesses(t *testing.T, manager *Manager, commands string) (count f
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuote(tracePath) + "\n" +
 		"for a in \"$@\"; do case \"$a\" in " + commands + ")\n" +
 		"  if [ -e " + shellQuote(failPath) + " ]; then echo 'fatal: simulated storage failure' >&2; exit 128; fi\n" +
-		"  if [ -e " + shellQuote(slowPath) + " ]; then /bin/sleep 2; fi;;\n" +
+		"  if [ -e " + shellQuote(slowPath) + " ]; then : > " + shellQuote(slowPath+".started") + "; /bin/sleep 2; fi;;\n" +
 		"esac; done\n" +
 		"exec " + shellQuote(gitPath) + " \"$@\"\n"
 	noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
@@ -52,6 +52,39 @@ func countGitProcesses(t *testing.T, manager *Manager, commands string) (count f
 		noErr(t, err)
 		return strings.Count(string(trace), "\n")
 	}, failPath, slowPath
+}
+
+// cancelWhenSlowStarts returns a context that is canceled as soon as the slow
+// command of countGitProcesses starts. The cancellation therefore hits that
+// command and never the reads before it, however loaded the host is; a fixed
+// deadline covered those reads too and failed on a busy machine. started
+// reports whether the slow command ran at all.
+func cancelWhenSlowStarts(t *testing.T, slowPath string) (ctx context.Context, started func() bool) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	marker := slowPath + ".started"
+	stop := make(chan struct{})
+	go func() {
+		defer cancel()
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				return
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		cancel()
+	})
+	return ctx, func() bool {
+		_, err := os.Stat(marker)
+		return err == nil
+	}
 }
 
 func mustSnapshot(t *testing.T, manager *Manager) RefSnapshot {
@@ -268,7 +301,6 @@ func TestRefSnapshotCacheSkipsSnapshotsWithAFailedFollowUpRead(t *testing.T) {
 	if os.PathSeparator != '/' {
 		t.Skip("the command-counting wrapper is a POSIX-shell fixture")
 	}
-	ctx := context.Background()
 	// completeAfter checks that the next call reads again, shows want, and is
 	// then cached.
 	completeAfter := func(t *testing.T, manager *Manager, count func() int, want func(RefSnapshot) bool) {
@@ -309,9 +341,11 @@ func TestRefSnapshotCacheSkipsSnapshotsWithAFailedFollowUpRead(t *testing.T) {
 		wroteRefs(manager, "sample")
 		count, _, slowPath := countGitProcesses(t, manager, "log")
 		noErr(t, os.WriteFile(slowPath, nil, 0o600))
-		deadline, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		degraded, err := manager.RefSnapshot(deadline, "sample")
-		cancel()
+		canceled, started := cancelWhenSlowStarts(t, slowPath)
+		degraded, err := manager.RefSnapshot(canceled, "sample")
+		if !started() {
+			t.Fatal("the slow git log never started")
+		}
 		if err != nil || degraded.HeadFound {
 			t.Fatalf("canceled git log: snapshot head=%+v err=%v, want the refs without a head", degraded.Head, err)
 		}
@@ -340,9 +374,11 @@ func TestRefSnapshotCacheSkipsSnapshotsWithAFailedFollowUpRead(t *testing.T) {
 		manager, _, _ := newTestRepository(t)
 		count, _, slowPath := countGitProcesses(t, manager, "symbolic-ref")
 		noErr(t, os.WriteFile(slowPath, nil, 0o600))
-		deadline, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		degraded, err := manager.RefSnapshot(deadline, "sample")
-		cancel()
+		canceled, started := cancelWhenSlowStarts(t, slowPath)
+		degraded, err := manager.RefSnapshot(canceled, "sample")
+		if !started() {
+			t.Fatal("the slow symbolic-ref never started")
+		}
 		if err != nil || degraded.Summary.DefaultBranch != "" {
 			t.Fatalf("canceled symbolic-ref: summary=%+v err=%v", degraded.Summary, err)
 		}

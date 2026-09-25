@@ -175,7 +175,8 @@ func TestSettingsChangesConfirmTheSave(t *testing.T) {
 
 // Turning the shared password off keeps the reader on Settings, so the save is
 // confirmed there too. Turning it on or changing it ends the current session
-// by design, so the reader signs in again instead.
+// by design, so the reader signs in again, and the sign-in page confirms the
+// save (QA-014).
 func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
@@ -211,8 +212,25 @@ func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("enable status=%d", response.StatusCode)
 	}
-	follow := request(t, client, http.MethodGet, server.URL+response.Header.Get("Location"), nil, "")
-	if follow.StatusCode != http.StatusSeeOther || !strings.HasPrefix(follow.Header.Get("Location"), "/login") {
-		t.Fatalf("after enabling the shared password status=%d location=%q, want sign-in", follow.StatusCode, follow.Header.Get("Location"))
+	if location := response.Header.Get("Location"); location != "/login?notice=access_password_saved&next=%2Fsettings" {
+		t.Fatalf("after enabling the shared password location=%q, want sign-in with the confirmation", location)
+	}
+	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		body, status := dashboardGET(t, client, server.URL+response.Header.Get("Location")+"&lang="+string(lang))
+		if status != http.StatusOK || !strings.Contains(body, webui.Text(lang, webui.MsgSettingsAccessSaved)) || !strings.Contains(body, `name="next" value="/settings"`) {
+			t.Fatalf("%s: the sign-in page does not confirm the saved shared password (status %d)", lang, status)
+		}
+	}
+
+	// An administrator session keeps Settings open, so the change is confirmed
+	// there.
+	noErr(t, store.CreateSession(context.Background(), "admin-token", "admin", "admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
+	jar.SetCookies(parsed, []*http.Cookie{{Name: adminCookie, Value: "admin-token", Path: "/"}})
+	response = request(t, client, http.MethodPost, server.URL+"/settings", url.Values{
+		"csrf": {"admin-csrf"}, "action": {webui.ActionChangeAccessPassword}, "admin_password": {"admin-password"},
+		"access_password": {"third-shared-password"},
+	}, server.URL)
+	if location := response.Header.Get("Location"); response.StatusCode != http.StatusSeeOther || location != "/settings?notice=settings_saved" {
+		t.Fatalf("change with an administrator session status=%d location=%q", response.StatusCode, location)
 	}
 }

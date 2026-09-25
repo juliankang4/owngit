@@ -39,6 +39,26 @@ func ParseLang(value string) (Lang, bool) {
 // Langs lists the supported languages in display order.
 func Langs() []Lang { return []Lang{LangEN, LangKO} }
 
+// Appearance is the Light, Dark, or System colour choice. System follows the
+// operating system and is the default.
+type Appearance string
+
+const (
+	AppearanceSystem Appearance = "system"
+	AppearanceLight  Appearance = "light"
+	AppearanceDark   Appearance = "dark"
+)
+
+// ParseAppearance validates a submitted or stored appearance value.
+func ParseAppearance(value string) (Appearance, bool) {
+	switch Appearance(value) {
+	case AppearanceSystem, AppearanceLight, AppearanceDark:
+		return Appearance(value), true
+	default:
+		return AppearanceSystem, false
+	}
+}
+
 // AccessMode describes how general repository access is protected.
 type AccessMode string
 
@@ -67,6 +87,9 @@ const (
 type Chrome struct {
 	// Lang is the resolved interface language for this request.
 	Lang Lang
+	// Appearance is the saved colour choice, so a browser without
+	// JavaScript renders it too. Empty means System.
+	Appearance Appearance
 	// Now is the reference calendar for relative dates: it decides which date
 	// counts as today, yesterday, and the current year.
 	//
@@ -206,6 +229,8 @@ type Notice struct {
 	// page-level notices.
 	Field  string
 	Detail string
+	// Link, when set, is a local address the Detail text links to.
+	Link string
 }
 
 // Error builds a field or page level error notice.
@@ -226,5 +251,13 @@ func Info(code MessageCode) Notice {
 // WithDetail returns a copy of the notice carrying an untranslated detail.
 func (n Notice) WithDetail(detail string) Notice {
 	n.Detail = detail
+	return n
+}
+
+// WithLink returns a copy of the notice whose untranslated detail links to a
+// local address, such as the pull request a refusal points to.
+func (n Notice) WithLink(detail, href string) Notice {
+	n.Detail = detail
+	n.Link = href
 	return n
 }

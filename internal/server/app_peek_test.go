@@ -38,10 +38,12 @@ func refreshRequest(body io.ReadCloser, contentLength int64, contentType string)
 func TestRefreshPeekReadsOnlyWhatTheFormNeeds(t *testing.T) {
 	csrf, err := auth.RandomToken(32)
 	noErr(t, err)
-	// The longest accepted password, made only of bytes that URL-encode to
-	// three characters, is the largest valid refresh form.
+	// The longest accepted password, made only of four-byte characters that
+	// URL-encode to twelve bytes each, is the largest valid refresh form.
+	longest := strings.Repeat("\U0001F512", auth.MaximumPasswordCharacters)
+	noErr(t, auth.ValidatePassword(longest))
 	largest := url.Values{
-		"csrf": {csrf}, "action": {webui.ActionImportRefresh}, "admin_password": {strings.Repeat("%", 1024)},
+		"csrf": {csrf}, "action": {webui.ActionImportRefresh}, "admin_password": {longest},
 	}.Encode()
 	if len(largest) > maxRefreshFormBytes {
 		t.Fatalf("largest valid refresh form is %d bytes, above the %d byte peek", len(largest), maxRefreshFormBytes)

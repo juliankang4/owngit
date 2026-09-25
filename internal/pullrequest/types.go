@@ -147,7 +147,16 @@ type Eligibility struct {
 	Blockers []Blocker `json:"blockers"`
 }
 
+// ExistingPullRequest is the detail of a pull_request_exists problem: the open
+// pull request that already covers the requested branch pair.
+type ExistingPullRequest struct {
+	Number int64 `json:"number"`
+}
+
 type MergeResult struct {
+	// Mode is fast_forward, merge_commit, or up_to_date. up_to_date means the
+	// target already contained the source, so no commit was written and OID is
+	// the unchanged target commit.
 	Mode       string    `json:"mode"`
 	OID        string    `json:"oid"`
 	ReceiptRef string    `json:"receipt_ref"`

@@ -1,5 +1,5 @@
 {{define "layout"}}<!doctype html>
-<html lang="{{.Lang}}" class="theme-system" data-appearance="system"
+<html lang="{{.Lang}}" class="theme-{{.Appearance}}" data-appearance="{{.Appearance}}"
       data-lang="{{.Lang}}" data-lang-cookie="owngit_lang"{{if .Chrome.Connection.Encrypted}} data-secure="1"{{end}}
       data-title-en="{{.TitleEN}}" data-title-ko="{{.TitleKO}}">
 <head>
@@ -58,17 +58,20 @@
   <div class="toolbar__controls">
     {{template "connection" .}}
 
-    <div class="appear" role="group" {{biAttr .Lang "aria-label" "app.appearance"}} data-appearance-picker>
-      <button type="button" class="appear__btn" data-appearance-set="light" aria-pressed="false">
+    {{/* Appearance links work without JavaScript like the language links:
+         the backend validates the choice and stores it in a cookie. With the
+         script loaded they switch in place, so typing in a form is kept. */}}
+    <nav class="appear" {{biAttr .Lang "aria-label" "app.appearance"}} data-appearance-picker>
+      <a class="appear__btn" href="{{.AppearanceURL "light"}}" data-appearance-set="light"{{if eq .Appearance "light"}} aria-current="true"{{end}}>
         {{themeIcon "light"}}<span class="appear__t">{{bi .Lang "app.appearance.light"}}</span>
-      </button>
-      <button type="button" class="appear__btn" data-appearance-set="dark" aria-pressed="false">
+      </a>
+      <a class="appear__btn" href="{{.AppearanceURL "dark"}}" data-appearance-set="dark"{{if eq .Appearance "dark"}} aria-current="true"{{end}}>
         {{themeIcon "dark"}}<span class="appear__t">{{bi .Lang "app.appearance.dark"}}</span>
-      </button>
-      <button type="button" class="appear__btn" data-appearance-set="system" aria-pressed="true">
+      </a>
+      <a class="appear__btn" href="{{.AppearanceURL "system"}}" data-appearance-set="system"{{if eq .Appearance "system"}} aria-current="true"{{end}}>
         {{themeIcon "system"}}<span class="appear__t">{{bi .Lang "app.appearance.system"}}</span>
-      </button>
-    </div>
+      </a>
+    </nav>
 
     {{/* Language links work without JavaScript: the backend validates lang and
          stores the preference. With the script loaded they switch in place, so
@@ -198,7 +201,7 @@
   {{range .PageNotices}}
     <p class="notice notice--{{.Kind}}"{{if eq .Kind "error"}} role="alert"{{else}} role="status"{{end}}>
       {{statusIcon .Kind}}
-      <span>{{biNotice $.Lang .}}{{with .Detail}} <span class="mono">{{.}}</span>{{end}}</span>
+      <span>{{biNotice $.Lang .}}{{if .Link}} <a class="mono" href="{{.Link}}">{{.Detail}}</a>{{else}}{{with .Detail}} <span class="mono">{{.}}</span>{{end}}{{end}}</span>
     </p>
   {{end}}
 </div>

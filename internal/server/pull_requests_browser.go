@@ -169,6 +169,9 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 	created, err := app.PullRequests.Create(request.Context(), input)
 	if err != nil {
 		notice, status := browserPullRequestProblem(err, "")
+		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
+			notice = notice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.ID, existing.Number))
+		}
 		app.renderNewPullRequest(writer, request, stored, summary, chrome, input.SourceBranch, input.TargetBranch, input.Title, input.ReviewChoice,
 			[]webui.Notice{notice}, status)
 		return
@@ -209,12 +212,24 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 	case "merge":
 		view, err = app.PullRequests.Merge(request.Context(), stored.ID, number, input)
 		notice = "pull_request_merged"
+		if err == nil && view.Merge != nil && view.Merge.Mode == webui.MergeModeUpToDate {
+			notice = "pull_request_up_to_date"
+		}
+	case "close":
+		view, err = app.PullRequests.Close(request.Context(), stored.ID, number)
+		notice = "pull_request_closed"
+	case "reopen":
+		view, err = app.PullRequests.Reopen(request.Context(), stored.ID, number)
+		notice = "pull_request_reopened"
 	default:
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 		return
 	}
 	if err != nil {
 		problemNotice, status := browserPullRequestProblem(err, action)
+		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
+			problemNotice = problemNotice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.ID, existing.Number))
+		}
 		var blockers []webui.MergeBlocker
 		if action == "merge" {
 			blockers = browserMergeProblemBlockers(err)
@@ -271,6 +286,8 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 	}
 	if notices != nil {
 		page.Chrome.Notices = notices
+	} else {
+		page.Chrome.Notices = pullRequestNotices(request.URL.Query().Get("notice"), view)
 	}
 	page.Merge.Blockers = append(page.Merge.Blockers, extraBlockers...)
 	if len(extraBlockers) != 0 {
@@ -290,6 +307,14 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 		page.ReviewSkipURL = self + "/review/skip"
 		page.MergeURL = self + "/merge"
 	}
+	// Closing needs no branch, so it stays available after the source branch
+	// was deleted, which is a common reason to close.
+	switch view.State {
+	case state.PullRequestOpen:
+		page.CloseURL = self + "/close"
+	case state.PullRequestClosed:
+		page.ReopenURL = self + "/reopen"
+	}
 	if !page.Source.Resolved() || !page.Target.Resolved() {
 		page.ChangesUnavailable = true
 	} else {
@@ -306,6 +331,37 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 		}
 	}
 	app.render(writer, status, page)
+}
+
+// pullRequestNotices shows the result of an action this page redirected from,
+// but only while the pull request's current state still confirms it. The
+// notice key comes from the address, so anyone can write it into a link; a
+// key the state contradicts, or one meant for another page, shows nothing.
+func pullRequestNotices(key string, view *pullrequest.View) []webui.Notice {
+	open := view.State == state.PullRequestOpen
+	merged := view.State == state.PullRequestMerged && view.Merge != nil
+	var confirmed bool
+	var code webui.MessageCode
+	switch key {
+	case "pull_request_created":
+		confirmed, code = open, webui.MsgPRCreated
+	case "review_requested":
+		confirmed, code = open && view.Review.Status == state.ReviewPending, webui.MsgPRReviewAsked
+	case "review_skipped":
+		confirmed, code = open && view.Review.Status == state.ReviewSkipped, webui.MsgPRReviewSkipped
+	case "pull_request_merged":
+		confirmed, code = merged && view.Merge.Mode != webui.MergeModeUpToDate, webui.MsgPRMerged
+	case "pull_request_up_to_date":
+		confirmed, code = merged && view.Merge.Mode == webui.MergeModeUpToDate, webui.MsgPRUpToDate
+	case "pull_request_closed":
+		confirmed, code = view.State == state.PullRequestClosed, webui.MsgPRClosedDone
+	case "pull_request_reopened":
+		confirmed, code = open, webui.MsgPRReopenedDone
+	}
+	if !confirmed {
+		return nil
+	}
+	return []webui.Notice{webui.Success(code)}
 }
 
 func browserRevision(revision pullrequest.Revision) webui.RevisionState {
@@ -432,10 +488,30 @@ func browserPullRequestProblem(err error, action string) (webui.Notice, int) {
 	switch problem.Code {
 	case "invalid_title":
 		field, code = "title", webui.MsgPRInvalidTitle
-	case "invalid_branch", "reserved_ref", "source_branch_missing", "source_not_commit":
+	case "invalid_branch", "reserved_ref":
 		field, code = "source_branch", webui.MsgPRInvalidBranch
+	case "source_branch_missing", "source_not_commit":
+		field, code = "source_branch", webui.MsgPRInvalidBranch
+		if action != "" {
+			// The pull request page has no branch field, so the notice is page
+			// level there and says what happened to the branch.
+			field, code = "", webui.MsgMergeBlockedSourceGone
+			if problem.Code == "source_not_commit" {
+				code = webui.MsgMergeBlockedSourceKind
+			}
+		}
 	case "target_branch_missing", "target_not_commit":
 		field, code = "target_branch", webui.MsgPRInvalidBranch
+		if action != "" {
+			field, code = "", webui.MsgMergeBlockedTargetGone
+			if problem.Code == "target_not_commit" {
+				code = webui.MsgMergeBlockedTargetKind
+			}
+		}
+	case "pull_request_exists":
+		code = webui.MsgPRAlreadyOpen
+	case "pull_request_merged":
+		code = webui.MsgPRMergedFixed
 	case "same_branch":
 		field, code = "source_branch", webui.MsgPRSameBranch
 	case "invalid_review_choice":

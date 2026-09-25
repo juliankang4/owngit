@@ -31,9 +31,76 @@ func (app *App) requireGeneral(writer http.ResponseWriter, request *http.Request
 	if session, ok := app.cookieSession(request, "general", generalCookie); ok {
 		return session, true
 	}
-	next := url.QueryEscape(localNext(request.URL.RequestURI(), "/"))
-	http.Redirect(writer, request, "/login?next="+next, http.StatusSeeOther)
+	http.Redirect(writer, request, "/login?next="+url.QueryEscape(loginNext(request)), http.StatusSeeOther)
 	return state.Session{}, false
+}
+
+// loginNext is where signing in again returns to. A page read with GET returns
+// to itself. A form submission returns to the page that held the form: the
+// same-origin Referer when there is one, otherwise the submission address.
+// Either can be an address that accepts only POST, such as a refused merge
+// shown at its own route, so it is mapped to the GET page that holds that
+// form. Returning there directly would answer 404.
+func loginNext(request *http.Request) string {
+	if request.Method == http.MethodGet || request.Method == http.MethodHead {
+		return localNext(request.URL.RequestURI(), "/")
+	}
+	target := request.URL
+	if referer, err := url.Parse(request.Header.Get("Referer")); err == nil && referer.Host == request.Host && (referer.Scheme == "http" || referer.Scheme == "https") {
+		target = referer
+	}
+	path := target.EscapedPath()
+	page := formPage(path)
+	if page == path && target.RawQuery != "" {
+		page += "?" + target.RawQuery
+	}
+	fallback := "/"
+	if id, ok := repositoryOfPath(request.URL.EscapedPath()); ok {
+		fallback = "/repositories/" + id
+	}
+	return localNext(page, fallback)
+}
+
+// formPage maps an address that accepts only POST to the GET page that holds
+// its form. Every other address is returned unchanged.
+func formPage(path string) string {
+	switch path {
+	case "/repositories":
+		return "/repositories/new"
+	case "/setup/redeem":
+		return "/setup"
+	case "/logout", "/admin/logout", releaseDismissPath:
+		return "/"
+	}
+	id, ok := repositoryOfPath(path)
+	if !ok {
+		return path
+	}
+	base := "/repositories/" + id
+	parts := strings.Split(strings.TrimPrefix(path, base+"/"), "/")
+	switch {
+	// Merge, close, reopen and the review actions of one pull request.
+	case len(parts) >= 3 && parts[0] == "pull-requests":
+		return base + "/pull-requests/" + parts[1]
+	// Default branch and any later repository setting action.
+	case len(parts) == 2 && parts[0] == "settings":
+		return base + "/settings"
+	// Restore preview.
+	case len(parts) == 2 && parts[0] == "restore":
+		return base + "/restore"
+	}
+	return path
+}
+
+// repositoryOfPath returns the repository identifier of a path below
+// /repositories/<id>/.
+func repositoryOfPath(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, "/repositories/")
+	if !ok {
+		return "", false
+	}
+	id, _, found := strings.Cut(rest, "/")
+	return id, found && id != ""
 }
 
 func (app *App) cookieSession(request *http.Request, kind, cookieName string) (state.Session, bool) {
@@ -124,6 +191,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		return webui.Chrome{}, err
 	}
 	lang := app.language(writer, request)
+	appearance := app.appearance(writer, request)
 	general, generalOK := app.cookieSession(request, "general", generalCookie)
 	admin, adminOK := app.cookieSession(request, "admin", adminCookie)
 	if csrf == "" {
@@ -140,7 +208,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		accessMode = webui.AccessPassword
 	}
 	chrome := webui.Chrome{
-		Lang: lang, Now: app.now(), CurrentURL: request.URL.RequestURI(), CSRF: csrf, Version: app.Version,
+		Lang: lang, Appearance: appearance, Now: app.now(), CurrentURL: request.URL.RequestURI(), CSRF: csrf, Version: app.Version,
 		Viewer: webui.Viewer{
 			AccessMode: accessMode, GeneralUnlocked: settings.AccessMode == "open" || generalOK,
 			AdminConfirmed: adminOK, SetupComplete: settings.Initialized,
@@ -159,7 +227,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		nav := webui.Nav{
 			Section: section, ActiveRepoID: activeRepository, Total: len(repositories), Query: query,
 			OverviewURL: "/", ActivityURL: "/activity", SettingsURL: "/settings", NewRepoURL: "/repositories/new", NewImportURL: "/repositories/new-import",
-			AdminLoginURL: "/admin/login?next=" + url.QueryEscape(request.URL.RequestURI()),
+			AdminLoginURL: "/admin/login?next=" + url.QueryEscape(loginNext(request)),
 		}
 		if generalOK && settings.AccessMode == "password" {
 			nav.LogoutURL = "/logout"
@@ -222,6 +290,23 @@ func (app *App) language(writer http.ResponseWriter, request *http.Request) webu
 	return webui.DefaultLang
 }
 
+// appearance reads the Light, Dark, or System choice. A valid appearance
+// parameter, sent by the appearance links, is saved for later requests.
+func (app *App) appearance(writer http.ResponseWriter, request *http.Request) webui.Appearance {
+	if value, present := request.URL.Query()["appearance"]; present && len(value) == 1 {
+		if appearance, valid := webui.ParseAppearance(value[0]); valid {
+			app.setCookie(writer, request, appearanceCookie, string(appearance), app.now().Add(365*24*time.Hour), false)
+			return appearance
+		}
+	}
+	if cookie, err := request.Cookie(appearanceCookie); err == nil {
+		if appearance, valid := webui.ParseAppearance(cookie.Value); valid {
+			return appearance
+		}
+	}
+	return webui.AppearanceSystem
+}
+
 func noticeFromQuery(request *http.Request) []webui.Notice {
 	switch request.URL.Query().Get("notice") {
 	case "setup_completed":
@@ -230,20 +315,18 @@ func noticeFromQuery(request *http.Request) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgRepoCreated)}
 	case "settings_saved":
 		return []webui.Notice{webui.Success(webui.MsgSettingsSaved)}
+	case "access_password_saved":
+		return []webui.Notice{webui.Success(webui.MsgSettingsAccessSaved)}
 	case "logout":
 		return []webui.Notice{webui.Success(webui.MsgLogoutDone)}
 	case "admin_logout":
 		return []webui.Notice{webui.Success(webui.MsgAdminEnded)}
 	case "restore_success":
 		return []webui.Notice{webui.Success(webui.MsgRestoreSuccess)}
-	case "pull_request_created":
-		return []webui.Notice{webui.Success(webui.MsgPRCreated)}
-	case "review_requested":
-		return []webui.Notice{webui.Success(webui.MsgPRReviewAsked)}
-	case "review_skipped":
-		return []webui.Notice{webui.Success(webui.MsgPRReviewSkipped)}
-	case "pull_request_merged":
-		return []webui.Notice{webui.Success(webui.MsgPRMerged)}
+	// Pull request results are not answered here. The pull request page
+	// shows them only when its current state confirms them (see
+	// pullRequestNotices), so a crafted link cannot report a merge that did
+	// not happen.
 	case "helper_credential_revoked":
 		return []webui.Notice{webui.Success(webui.MsgHelperRevokedDone)}
 	case "import_saved":

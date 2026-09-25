@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 
@@ -33,6 +34,18 @@ const (
 	maximumFailures = 4
 	failureWindow   = 10 * time.Minute
 	failureBlock    = 15 * time.Minute
+)
+
+// Password length limits, in characters (Unicode code points) rather than
+// bytes, so a password in any script meets the rule the interface states.
+const (
+	MinimumPasswordCharacters = 8
+	MaximumPasswordCharacters = 1024
+)
+
+var (
+	ErrPasswordTooShort = errors.New("password must contain at least 8 characters")
+	ErrPasswordTooLong  = errors.New("password must contain at most 1024 characters")
 )
 
 type Manager struct {
@@ -82,7 +95,7 @@ func HashPassword(password string) (string, error) {
 
 func CheckPassword(encoded, password string) bool {
 	parameters, salt, expected, err := parseHash(encoded)
-	if err != nil || len(password) > 1024 {
+	if err != nil || !withinMaximum(password) {
 		return false
 	}
 	actual := argon2.IDKey([]byte(password), salt, parameters.time, parameters.memory, parameters.threads, uint32(len(expected)))
@@ -95,13 +108,19 @@ func ValidatePasswordHash(encoded string) error {
 }
 
 func ValidatePassword(password string) error {
-	if len(password) < 8 {
-		return errors.New("password must contain at least 8 characters")
+	if !withinMaximum(password) {
+		return ErrPasswordTooLong
 	}
-	if len(password) > 1024 {
-		return errors.New("password is too long")
+	if utf8.RuneCountInString(password) < MinimumPasswordCharacters {
+		return ErrPasswordTooShort
 	}
 	return nil
+}
+
+// withinMaximum applies the character limit. A character is at most four
+// bytes, so a longer string is refused before it is counted.
+func withinMaximum(password string) bool {
+	return len(password) <= utf8.UTFMax*MaximumPasswordCharacters && utf8.RuneCountInString(password) <= MaximumPasswordCharacters
 }
 
 func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddress string) (NewSession, error) {

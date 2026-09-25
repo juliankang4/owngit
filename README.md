@@ -24,7 +24,7 @@ OwnGit is a self-hosted Git server for home labs and local machines. It keeps pr
 
 - Supports clone, fetch, and push over Smart HTTP from standard Git clients.
 - Shows repositories, branches, tags, files, commits, diffs, author-date activity, pull requests, and revision-bound check evidence in the browser.
-- Creates and merges pull requests in the browser at the exact revisions it displays. JSON CLI commands can also create, inspect, review, and merge them. Ordinary `git push` works without a pull request, and review is optional.
+- Creates and merges pull requests in the browser at the exact revisions it displays. Pull requests can be closed without merging and reopened. JSON CLI commands can also create, inspect, review, merge, close, and reopen them. Ordinary `git push` works without a pull request, and review is optional.
 - Records checks that a helper runs in your own environment. Configured checks that the owner enables can run on the host, in restricted local Docker, or on a separate runner. Checks and reviews are advisory and never hold a merge.
 - Imports a repository from another HTTPS Git host and refreshes it on demand or on a schedule, without writing to the source.
 - Keeps replaced or deleted branch and tag history in hidden refs. The browser restores a whole tree or selected files after previewing every change.

@@ -121,8 +121,7 @@ func (app *App) requireBrowserAdmin(writer http.ResponseWriter, request *http.Re
 	if session, ok := app.cookieSession(request, "admin", adminCookie); ok {
 		return session, true
 	}
-	next := url.QueryEscape(localNext(request.URL.RequestURI(), "/"))
-	http.Redirect(writer, request, "/admin/login?next="+next, http.StatusSeeOther)
+	http.Redirect(writer, request, "/admin/login?next="+url.QueryEscape(loginNext(request)), http.StatusSeeOther)
 	return state.Session{}, false
 }
 

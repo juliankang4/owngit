@@ -22,10 +22,12 @@ const (
 	IncompleteRestoreMarkerName = ".owngit-restore-pending"
 
 	// currentSchemaVersion is the schema this build writes. The committed
-	// baseline wrote no version marker. Every numbered schema below the
-	// current one was written only by unreleased development builds and is
-	// refused before any file changes.
-	currentSchemaVersion = 14
+	// baseline wrote no version marker. releasedSchemaVersion is the schema
+	// the 1.0 releases wrote; it is upgraded in place. Every other numbered
+	// schema below the current one was written only by unreleased
+	// development builds and is refused before any file changes.
+	currentSchemaVersion  = 15
+	releasedSchemaVersion = 14
 	// This SHA-256 fingerprint covers normalized, non-internal sqlite_master
 	// entries of the baseline emitted by commit
 	// 8fdefd1bf10bd4a41b7261131efc119d46666260.
@@ -236,10 +238,12 @@ func classifySchema(ctx context.Context, db queryRower) (schemaClass, error) {
 	switch {
 	case version == currentSchemaVersion:
 		return schemaCurrent, nil
+	case version == releasedSchemaVersion:
+		return schemaReleased, nil
 	case version > currentSchemaVersion:
 		return 0, fmt.Errorf("state database schema version %d is newer than this OwnGit build supports (%d)", version, currentSchemaVersion)
 	case version >= 1:
-		return 0, fmt.Errorf("state database uses the unreleased development schema %d; this build upgrades only the committed baseline (no schema version) and opens schema %d", version, currentSchemaVersion)
+		return 0, fmt.Errorf("state database uses the unreleased development schema %d; this build upgrades only the committed baseline (no schema version) and released schema %d, and opens schema %d", version, releasedSchemaVersion, currentSchemaVersion)
 	default:
 		return 0, fmt.Errorf("unsupported state database schema version %d", version)
 	}
@@ -323,7 +327,20 @@ func schemaFingerprint(ctx context.Context, db queryRower) (string, int, error) 
 // classification inside that transaction is the migration authority. A
 // completed concurrent migration is accepted, while any other owner change is
 // refused before a migration statement runs.
-func (s *Store) migrate(ctx context.Context, expected schemaClass) error {
+func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
+	// A step that rebuilds a parent table drops it, and with foreign keys on
+	// SQLite would first delete every child row through ON DELETE CASCADE.
+	// Enforcement is therefore off for the migration connection, which is the
+	// only one, and is checked before commit and restored afterwards. The
+	// pragma has no effect inside a transaction, so it is set around it.
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return fmt.Errorf("prepare state schema migration: %w", err)
+	}
+	defer func() {
+		if _, restoreErr := s.db.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`); restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("restore foreign key enforcement after schema migration: %w", restoreErr))
+		}
+	}()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -339,8 +356,12 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) error {
 	if class != expected {
 		return unstable("state database changed before schema migration")
 	}
-	// Only the committed baseline and an empty database reach this point.
-	versions := []int{6, 7, 8, 9, 10, 11, 12, 13, 14}
+	// Only the committed baseline, an empty database and the released schema
+	// reach this point.
+	versions := []int{6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	if class == schemaReleased {
+		versions = []int{15}
+	}
 	for _, version := range versions {
 		statements, ok := migrations[version]
 		if !ok {
@@ -355,6 +376,17 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) error {
 			return fmt.Errorf("record state schema migration %d: %w", version, err)
 		}
 	}
+	violations, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("check foreign keys after schema migration: %w", err)
+	}
+	violated := violations.Next()
+	if err := closeRows(violations); err != nil {
+		return fmt.Errorf("check foreign keys after schema migration: %w", err)
+	}
+	if violated {
+		return errors.New("state schema migration left a foreign key violation")
+	}
 	return tx.Commit()
 }
 
@@ -366,7 +398,8 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) error {
 // foundation, version 10 binds executable settings and executor roles, version
 // 11 adds inbound import state, version 12 records structured HEAD ownership,
 // version 13 records machine-local ownership of unpublished initial
-// destinations, and version 14 admits the owner_resolved intent status.
+// destinations, version 14 admits the owner_resolved intent status, and
+// version 15 admits closed pull requests.
 // Schema 12 has no ownership rows. A missing row never authorizes removal or
 // publication of a look-alike directory.
 var migrations = map[int][]string{
@@ -1084,6 +1117,34 @@ var migrations = map[int][]string{
 		`DROP TABLE import_publication_intents`,
 		`ALTER TABLE import_publication_intents_v14 RENAME TO import_publication_intents`,
 		`CREATE INDEX import_publication_intents_repository ON import_publication_intents(repository_id,created_at,id)`,
+	},
+	// A pull request can be closed without merging. The table is rebuilt with
+	// every row and column kept; its revisions, reviews and merge intents
+	// refer to it by name and keep their rows (see migrate).
+	15: {
+		`CREATE TABLE pull_requests_v15 (
+			repository_id TEXT NOT NULL,
+			number INTEGER NOT NULL CHECK (number > 0),
+			title TEXT NOT NULL,
+			source_branch TEXT NOT NULL,
+			target_branch TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('creating','open','merged','closed')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			merge_source_oid TEXT NOT NULL DEFAULT '',
+			merge_target_oid TEXT NOT NULL DEFAULT '',
+			merge_oid TEXT NOT NULL DEFAULT '',
+			merge_receipt_ref TEXT NOT NULL DEFAULT '',
+			merged_at INTEGER,
+			PRIMARY KEY (repository_id, number),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO pull_requests_v15(repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,
+			merge_source_oid,merge_target_oid,merge_oid,merge_receipt_ref,merged_at)
+			SELECT repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,
+			merge_source_oid,merge_target_oid,merge_oid,merge_receipt_ref,merged_at FROM pull_requests`,
+		`DROP TABLE pull_requests`,
+		`ALTER TABLE pull_requests_v15 RENAME TO pull_requests`,
 	},
 }
 

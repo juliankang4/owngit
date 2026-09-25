@@ -147,6 +147,26 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		if err == nil {
 			result = pullrequest.SuccessEnvelope{OK: true, PullRequest: view}
 		}
+	case "close", "reopen":
+		if request.Method != http.MethodPost {
+			writeAPIMethodError(writer, http.MethodPost)
+			return
+		}
+		// The body is an empty JSON object. Requiring JSON keeps the same
+		// cross-site protection as every other mutating call.
+		var input struct{}
+		if !decodeAPIJSON(writer, request, &input) {
+			return
+		}
+		var view *pullrequest.View
+		if operation == "close" {
+			view, err = app.PullRequests.Close(request.Context(), repositoryID, number)
+		} else {
+			view, err = app.PullRequests.Reopen(request.Context(), repositoryID, number)
+		}
+		if err == nil {
+			result = pullrequest.SuccessEnvelope{OK: true, PullRequest: view}
+		}
 	case "review_submit":
 		if request.Method != http.MethodPost {
 			writeAPIMethodError(writer, http.MethodPost)
@@ -231,8 +251,8 @@ func parsePullRequestAPIRoute(requestPath string) (string, int64, string, bool) 
 	if len(parts) == 3 {
 		return parts[0], number, "show", true
 	}
-	if len(parts) == 4 && parts[3] == "merge" {
-		return parts[0], number, "merge", true
+	if len(parts) == 4 && (parts[3] == "merge" || parts[3] == "close" || parts[3] == "reopen") {
+		return parts[0], number, parts[3], true
 	}
 	if len(parts) == 5 && parts[3] == "review" {
 		switch parts[4] {
@@ -328,7 +348,8 @@ func apiStatus(code string) int {
 		return http.StatusUnprocessableEntity
 	case "repository_not_found", "pull_request_not_found", "task_not_found", "configuration_not_found", "attempt_not_found", "log_not_recorded", "cycle_not_found":
 		return http.StatusNotFound
-	case "stale_revision", "merge_conflict", "merge_blocked", "pull_request_not_open", "git_update_failed", "credential_not_found", "attempt_conflict", "cycle_conflict", "correction_budget_exhausted":
+	case "stale_revision", "merge_conflict", "merge_blocked", "pull_request_not_open", "pull_request_exists", "pull_request_merged", "git_update_failed",
+		"source_branch_missing", "target_branch_missing", "source_not_commit", "target_not_commit", "credential_not_found", "attempt_conflict", "cycle_conflict", "correction_budget_exhausted":
 		return http.StatusConflict
 	case "helper_authentication_required", "invalid_helper_credential", "admin_authentication_required", "invalid_admin_credentials", "admin_password_required":
 		return http.StatusUnauthorized

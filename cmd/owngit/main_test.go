@@ -222,6 +222,30 @@ func TestReadPrivatePasswordRejectsBroadPermissions(t *testing.T) {
 	}
 }
 
+// QA-013: a password file follows the same character rules as the web page.
+func TestReadPrivatePasswordCountsCharacters(t *testing.T) {
+	for _, test := range []struct {
+		name, content string
+		accepted      bool
+	}{
+		{"three Hangul characters", "비밀번\n", false},
+		{"eight Hangul characters", "비밀번호여덟글자\n", true},
+		{"the longest password in four-byte characters", strings.Repeat("\U0001F512", auth.MaximumPasswordCharacters) + "\r\n", true},
+		{"one character too many", strings.Repeat("가", auth.MaximumPasswordCharacters+1), false},
+	} {
+		path := filepath.Join(t.TempDir(), "password")
+		noErr(t, os.WriteFile(path, []byte(test.content), 0o600))
+		noErr(t, state.ProtectPrivatePath(path, false))
+		password, err := readPrivatePassword(path)
+		if (err == nil) != test.accepted {
+			t.Errorf("%s: err=%v, accepted=%v", test.name, err, test.accepted)
+		}
+		if err == nil && strings.ContainsAny(password, "\r\n") {
+			t.Errorf("%s: the line ending was kept", test.name)
+		}
+	}
+}
+
 func TestOwnerOriginRejectsCredentialAndPath(t *testing.T) {
 	for _, value := range []string{"http://user@example.test", "http://example.test/path", "ftp://example.test"} {
 		if _, err := ownerOrigin(value, "127.0.0.1:7654"); err == nil {

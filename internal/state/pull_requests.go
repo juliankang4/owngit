@@ -15,6 +15,9 @@ const (
 	PullRequestCreating = "creating"
 	PullRequestOpen     = "open"
 	PullRequestMerged   = "merged"
+	// PullRequestClosed is a pull request closed without merging. It keeps
+	// its history and can be reopened.
+	PullRequestClosed = "closed"
 
 	ReviewPending          = "pending"
 	ReviewApproved         = "approved"
@@ -185,6 +188,47 @@ func (s *Store) ActivatePullRequestCreation(ctx context.Context, repositoryID st
 	return record, nil
 }
 
+// ErrPullRequestStateChanged reports that a pull request was not in the state
+// a close or reopen expected.
+var ErrPullRequestStateChanged = errors.New("pull request state changed")
+
+// SetPullRequestClosed closes an open pull request, or reopens a closed one
+// when closed is false. Any other state is left unchanged and reported with
+// ErrPullRequestStateChanged.
+func (s *Store) SetPullRequestClosed(ctx context.Context, repositoryID string, number int64, closed bool, now time.Time) (PullRequest, error) {
+	if now.IsZero() {
+		return PullRequest{}, errors.New("pull request state change time is required")
+	}
+	from, to := PullRequestOpen, PullRequestClosed
+	if !closed {
+		from, to = PullRequestClosed, PullRequestOpen
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PullRequest{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE pull_requests SET status=?,updated_at=MAX(updated_at,?) WHERE repository_id=? AND number=? AND status=?`,
+		to, now.Unix(), repositoryID, number, from)
+	if err != nil {
+		return PullRequest{}, err
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		if err != nil {
+			return PullRequest{}, err
+		}
+		return PullRequest{}, ErrPullRequestStateChanged
+	}
+	record, err := scanPullRequest(tx.QueryRowContext(ctx, pullRequestSelect+` WHERE repository_id=? AND number=?`, repositoryID, number))
+	if err != nil {
+		return PullRequest{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return PullRequest{}, err
+	}
+	return record, nil
+}
+
 func (s *Store) DeletePullRequestCreation(ctx context.Context, repositoryID string, number int64) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM pull_requests WHERE repository_id=? AND number=? AND status=?`, repositoryID, number, PullRequestCreating)
 	if err != nil {
@@ -218,6 +262,19 @@ func (s *Store) ProvisionalPullRequests(ctx context.Context, repositoryID string
 
 func (s *Store) PullRequest(ctx context.Context, repositoryID string, number int64) (PullRequest, bool, error) {
 	row := s.db.QueryRowContext(ctx, pullRequestSelect+` WHERE repository_id=? AND number=? AND status!='creating'`, repositoryID, number)
+	record, err := scanPullRequest(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PullRequest{}, false, nil
+	}
+	return record, err == nil, err
+}
+
+// OpenPullRequestForBranches returns the oldest open pull request from source
+// into target. Stores written before one open pull request per branch pair was
+// enforced can hold several; the oldest one is reported.
+func (s *Store) OpenPullRequestForBranches(ctx context.Context, repositoryID, sourceBranch, targetBranch string) (PullRequest, bool, error) {
+	row := s.db.QueryRowContext(ctx, pullRequestSelect+` WHERE repository_id=? AND source_branch=? AND target_branch=? AND status=? ORDER BY number LIMIT 1`,
+		repositoryID, sourceBranch, targetBranch, PullRequestOpen)
 	record, err := scanPullRequest(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PullRequest{}, false, nil
@@ -793,6 +850,11 @@ func ValidatePullRequestRecovery(snapshot RecoveryState) error {
 			completed[requestKey] = intent
 		}
 	}
+	for key := range completed {
+		if requests[key].Status != PullRequestMerged {
+			return errors.New("completed merge intent belongs to a pull request that is not merged")
+		}
+	}
 	for key, record := range requests {
 		if record.Status != PullRequestMerged {
 			continue
@@ -810,7 +872,7 @@ func validatePullRequestRecord(record PullRequest) error {
 		return errors.New("invalid pull request metadata")
 	}
 	switch record.Status {
-	case PullRequestCreating, PullRequestOpen:
+	case PullRequestCreating, PullRequestOpen, PullRequestClosed:
 		if record.MergeSourceOID != "" || record.MergeTargetOID != "" || record.MergeOID != "" || record.MergeReceipt != "" || record.MergedAt != nil {
 			return errors.New("unmerged pull request contains merge metadata")
 		}
@@ -899,6 +961,10 @@ func validateMergeIntentRecord(intent PullRequestMergeIntent, requireTimes bool)
 			if intent.ResultOID != intent.SourceOID || intent.TreeOID != "" {
 				return errors.New("invalid planned fast-forward merge intent")
 			}
+		case "up_to_date":
+			if intent.ResultOID != intent.TargetOID || intent.TreeOID != "" {
+				return errors.New("invalid planned up-to-date merge intent")
+			}
 		case "merge_commit":
 			if !validObjectID(intent.TreeOID) || intent.ResultOID != "" {
 				return errors.New("invalid planned merge-commit intent")
@@ -911,6 +977,10 @@ func validateMergeIntentRecord(intent PullRequestMergeIntent, requireTimes bool)
 		case "fast_forward":
 			if intent.ResultOID != intent.SourceOID || intent.TreeOID != "" {
 				return errors.New("invalid fast-forward merge intent")
+			}
+		case "up_to_date":
+			if intent.ResultOID != intent.TargetOID || intent.TreeOID != "" {
+				return errors.New("invalid up-to-date merge intent")
 			}
 		case "merge_commit":
 			if !validObjectID(intent.TreeOID) || !validObjectID(intent.ResultOID) {

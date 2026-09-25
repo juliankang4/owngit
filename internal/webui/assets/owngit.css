@@ -337,7 +337,7 @@ a:hover { text-decoration: underline; }
   text-decoration: none;
 }
 .appear__btn:hover, .lang__btn:hover { color: var(--text-1); text-decoration: none; }
-.appear__btn[aria-pressed="true"], .lang__btn[aria-current="true"] {
+.appear__btn[aria-current="true"], .lang__btn[aria-current="true"] {
   background: var(--raised);
   color: var(--text-1);
   font-weight: 590;
@@ -1841,6 +1841,8 @@ span.hm__cell { cursor: default; }
 
 .pract { display: grid; gap: 12px; margin-top: 10px; }
 .pract form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.card > .pract:first-child { margin-top: 0; }
+.disc + .card { margin-top: 16px; }
 
 /* The refusal list. These are Git and repository reasons: a conflict, a branch
    that moved, a pull request already merged. A failed check never appears

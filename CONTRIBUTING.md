@@ -98,7 +98,7 @@ A change must keep the following behavior.
 - A task keeps one identity across revisions and a budget of three correction rounds. A round is reserved explicitly and counted once. Manual reruns, retransmits, cancelled runs, and unavailable environments are not corrections. An exhausted budget stops automatic continuation without blocking Git.
 - Missing checks are not passing checks. Failed, unavailable, incomplete, cancelled, and stale evidence stays visible. Checks and reviews are advisory and never hold a merge.
 - Push works without pull requests. Review decisions and merges bind to exact source and target revisions and become invalid when either moves. A reviewer label is supplied provenance, not independent review.
-- Merge publishes a fast-forward or a nonrewriting merge commit, with a protected receipt so a retry never creates a second merge.
+- Merge publishes a fast-forward or a nonrewriting merge commit, with a protected receipt so a retry never creates a second merge. A source the target already contains is recorded as merged without a new commit. One pull request can be open per source and target branch pair.
 - Never send private code to an external service without explicit, informed enablement that states what is sent.
 
 ### Imports

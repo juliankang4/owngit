@@ -116,13 +116,13 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		if accessPassword == "" {
 			notices = append(notices, webui.Error("access_password", webui.MsgSetupAccessPassEmpty))
 		} else if err := auth.ValidatePassword(accessPassword); err != nil {
-			notices = append(notices, webui.Error("access_password", webui.MsgSetupAccessPassShort))
+			notices = append(notices, webui.Error("access_password", passwordRuleMessage(err, webui.MsgSetupAccessPassShort)))
 		}
 	}
 	if adminPassword == "" {
 		notices = append(notices, webui.Error("admin_password", webui.MsgSetupAdminEmpty))
 	} else if err := auth.ValidatePassword(adminPassword); err != nil {
-		notices = append(notices, webui.Error("admin_password", webui.MsgSetupAdminShort))
+		notices = append(notices, webui.Error("admin_password", passwordRuleMessage(err, webui.MsgSetupAdminShort)))
 	}
 	if accessMode == "password" && accessPassword != "" && adminPassword == accessPassword {
 		notices = append(notices, webui.Error("admin_password", webui.MsgSetupAdminSameAsGen))

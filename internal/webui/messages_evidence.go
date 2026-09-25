@@ -112,6 +112,7 @@ const (
 	MsgPRStateOpen     MessageCode = "pr.state.open"
 	MsgPRStateMerged   MessageCode = "pr.state.merged"
 	MsgPRStateCreating MessageCode = "pr.state.creating"
+	MsgPRStateClosed   MessageCode = "pr.state.closed"
 
 	MsgPRListEmpty       MessageCode = "pr.list.empty"
 	MsgPRListStart       MessageCode = "pr.list.start"
@@ -170,6 +171,16 @@ const (
 	MsgPRMergedCommit      MessageCode = "pr.merged.commit"
 	MsgPRMergedReceipt     MessageCode = "pr.merged.receipt"
 	MsgPRMergedAt          MessageCode = "pr.merged.at"
+	MsgPRClose             MessageCode = "pr.actions.close"
+	MsgPRCloseHelp         MessageCode = "pr.actions.close_help"
+	MsgPRReopen            MessageCode = "pr.actions.reopen"
+	MsgPRReopenHelp        MessageCode = "pr.actions.reopen_help"
+	MsgPRClosedNote        MessageCode = "pr.closed.note"
+	MsgPRMergedTarget      MessageCode = "pr.merged.target_commit"
+	MsgPRMergedFastForward MessageCode = "pr.merged.mode.fast_forward"
+	MsgPRMergedMergeCommit MessageCode = "pr.merged.mode.merge_commit"
+	MsgPRMergedUpToDate    MessageCode = "pr.merged.mode.up_to_date"
+	MsgPRMergedUpToDateFor MessageCode = "pr.merged.up_to_date_note"
 
 	MsgMergeBlockedMerged     MessageCode = "pr.blocked.already_merged"
 	MsgMergeBlockedSourceGone MessageCode = "pr.blocked.source_missing"
@@ -196,6 +207,11 @@ const (
 	MsgPRSameBranch    MessageCode = "pr.result.same_branch"
 	MsgPRFailed        MessageCode = "pr.result.failed"
 	MsgPRReconciling   MessageCode = "pr.result.reconciling"
+	MsgPRAlreadyOpen   MessageCode = "pr.result.already_open"
+	MsgPRClosedDone    MessageCode = "pr.result.closed"
+	MsgPRReopenedDone  MessageCode = "pr.result.reopened"
+	MsgPRMergedFixed   MessageCode = "pr.result.merged_fixed"
+	MsgPRUpToDate      MessageCode = "pr.result.up_to_date"
 )
 
 // Task and check history screens.
@@ -470,6 +486,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRStateOpen:     {en: "Open", ko: "열림"},
 	MsgPRStateMerged:   {en: "Merged", ko: "병합됨"},
 	MsgPRStateCreating: {en: "Still being created", ko: "생성 중"},
+	MsgPRStateClosed:   {en: "Closed", ko: "닫힘"},
 
 	MsgPRListEmpty: {en: "No pull requests yet.", ko: "아직 풀 리퀘스트가 없습니다."},
 	MsgPRListStart: {
@@ -589,6 +606,29 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRMergedCommit:  {en: "Merge commit", ko: "병합 커밋"},
 	MsgPRMergedReceipt: {en: "Receipt", ko: "병합 기록 ref"},
 	MsgPRMergedAt:      {en: "Merged", ko: "병합 시각"},
+	MsgPRMergedTarget:  {en: "Target branch commit", ko: "대상 브랜치 커밋"},
+	MsgPRClose:         {en: "Close pull request", ko: "풀 리퀘스트 닫기"},
+	MsgPRCloseHelp: {
+		en: "Closes it without merging. Nothing changes in either branch, the history stays, and you can reopen it later.",
+		ko: "병합하지 않고 닫습니다. 두 브랜치는 그대로이고 기록도 남으며, 나중에 다시 열 수 있습니다.",
+	},
+	MsgPRReopen: {en: "Reopen pull request", ko: "풀 리퀘스트 다시 열기"},
+	MsgPRReopenHelp: {
+		en: "Opens it again for review and merging. This is refused while another pull request is open for the same two branches.",
+		ko: "리뷰와 병합을 위해 다시 엽니다. 같은 두 브랜치로 열려 있는 다른 풀 리퀘스트가 있으면 거부됩니다.",
+	},
+	MsgPRClosedNote: {
+		en: "This pull request was closed without merging.",
+		ko: "이 풀 리퀘스트는 병합하지 않고 닫혔습니다.",
+	},
+	// Fast-forward is established Git terminology and stays in English.
+	MsgPRMergedFastForward: {en: "Fast-forward", ko: "fast-forward"},
+	MsgPRMergedMergeCommit: {en: "Merge commit", ko: "병합 커밋"},
+	MsgPRMergedUpToDate:    {en: "Already up to date, no new commit", ko: "이미 최신 상태, 새 커밋 없음"},
+	MsgPRMergedUpToDateFor: {
+		en: "The target branch already contained this work, so OwnGit left it unchanged and recorded the pull request as merged.",
+		ko: "대상 브랜치에 이 작업이 이미 들어 있어 브랜치는 그대로 두고 풀 리퀘스트를 병합됨으로 기록했습니다.",
+	},
 
 	MsgMergeBlockedMerged:     {en: "This pull request is already merged.", ko: "이미 병합된 풀 리퀘스트입니다."},
 	MsgMergeBlockedSourceGone: {en: "The branch with your work no longer exists.", ko: "작업이 있던 브랜치가 더 이상 없습니다."},
@@ -626,11 +666,25 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgPRMergeBlocked:  {en: "The merge was refused.", ko: "병합이 거부되었습니다."},
 	MsgPRNotFound:      {en: "That pull request does not exist.", ko: "해당 풀 리퀘스트가 없습니다."},
-	MsgPRNotOpen:       {en: "That pull request is already merged.", ko: "해당 풀 리퀘스트는 이미 병합되었습니다."},
+	MsgPRNotOpen:       {en: "That pull request is not open.", ko: "해당 풀 리퀘스트는 열려 있지 않습니다."},
 	MsgPRInvalidTitle:  {en: "Enter a title of 1 to 500 characters on one line.", ko: "한 줄로 1자에서 500자 사이의 제목을 입력하세요."},
 	MsgPRInvalidBranch: {en: "That branch name cannot be used here.", ko: "여기서는 사용할 수 없는 브랜치 이름입니다."},
 	MsgPRSameBranch:    {en: "Pick two different branches.", ko: "서로 다른 브랜치를 골라 주세요."},
 	MsgPRFailed:        {en: "The pull request operation did not complete.", ko: "풀 리퀘스트 작업을 끝내지 못했습니다."},
+	MsgPRClosedDone:    {en: "Pull request closed.", ko: "풀 리퀘스트를 닫았습니다."},
+	MsgPRReopenedDone:  {en: "Pull request reopened.", ko: "풀 리퀘스트를 다시 열었습니다."},
+	MsgPRMergedFixed: {
+		en: "A merged pull request cannot be closed or reopened.",
+		ko: "병합된 풀 리퀘스트는 닫거나 다시 열 수 없습니다.",
+	},
+	MsgPRAlreadyOpen: {
+		en: "A pull request is already open for these two branches:",
+		ko: "이 두 브랜치로 이미 열려 있는 풀 리퀘스트가 있습니다:",
+	},
+	MsgPRUpToDate: {
+		en: "Already up to date. The target branch already contained this work, so no commit was made.",
+		ko: "이미 최신 상태입니다. 대상 브랜치에 이 작업이 이미 들어 있어 커밋을 만들지 않았습니다.",
+	},
 	MsgPRReconciling: {
 		en: "Your work was kept, but OwnGit still has to finish recording it. Reload shortly.",
 		ko: "작업은 보존되었지만 기록을 마무리해야 합니다. 잠시 후 새로 고쳐 주세요.",

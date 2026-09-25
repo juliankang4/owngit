@@ -151,6 +151,7 @@ const (
 	PullRequestCreating = "creating"
 	PullRequestOpen     = "open"
 	PullRequestMerged   = "merged"
+	PullRequestClosed   = "closed"
 )
 
 // Branch tip resolution as the backend observed it.
@@ -270,6 +271,8 @@ func pullRequestState(state string) stateLabel {
 		return known(MsgPRStateOpen, "branch", "quiet")
 	case PullRequestMerged:
 		return known(MsgPRStateMerged, "check", "ok")
+	case PullRequestClosed:
+		return known(MsgPRStateClosed, "minus", "quiet")
 	case PullRequestCreating:
 		return known(MsgPRStateCreating, "clock", "warn")
 	default:
@@ -527,6 +530,13 @@ func (r ReviewEvidence) Recorded() bool {
 	}
 }
 
+// HasReviewer reports whether the record carries a reviewer's own result.
+// A review request or an explicit skip has no reviewer yet, so statements
+// about the reviewer do not apply to it.
+func (r ReviewEvidence) HasReviewer() bool {
+	return r.Recorded() && r.Status != ReviewPending && r.Status != ReviewSkipped
+}
+
 // MergeBlocker is one reason the backend refuses to merge. These are Git and
 // state reasons only; check and review results never appear here.
 type MergeBlocker struct {
@@ -582,6 +592,37 @@ type MergeRecord struct {
 	ShortOID   string
 	ReceiptRef string
 	MergedAt   time.Time
+}
+
+// Merge modes the backend records.
+const (
+	MergeModeFastForward = "fast_forward"
+	MergeModeCommit      = "merge_commit"
+	MergeModeUpToDate    = "up_to_date"
+)
+
+// ModeNote names how the merge was made. An unknown mode returns nothing, and
+// the screen shows the recorded value instead.
+func (m MergeRecord) ModeNote() MessageCode {
+	switch m.Mode {
+	case MergeModeFastForward:
+		return MsgPRMergedFastForward
+	case MergeModeCommit:
+		return MsgPRMergedMergeCommit
+	case MergeModeUpToDate:
+		return MsgPRMergedUpToDate
+	default:
+		return ""
+	}
+}
+
+// CommitLabel names the recorded commit. Only a merge commit is a new commit;
+// otherwise the commit is where the target branch now points.
+func (m MergeRecord) CommitLabel() MessageCode {
+	if m.Mode == MergeModeCommit {
+		return MsgPRMergedCommit
+	}
+	return MsgPRMergedTarget
 }
 
 // CheckDefinitionLine is one configured check.

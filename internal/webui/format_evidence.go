@@ -186,6 +186,9 @@ func reviewNotes(evidence ReviewEvidence) []MessageCode {
 	if !evidence.BoundToCurrentRevision {
 		notes = append(notes, MsgReviewOtherRevision)
 	}
+	if !evidence.HasReviewer() {
+		return notes
+	}
 	if !evidence.Independent {
 		notes = append(notes, MsgReviewNotIndependent)
 	}

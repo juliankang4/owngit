@@ -61,13 +61,22 @@
 
   /* System is the default and keeps following the operating system while it
    * stays selected. An explicit Light or Dark choice wins, because the CSS
-   * rule for System is a media query on a different class. */
+   * rule for System is a media query on a different class.
+   *
+   * The choice lives in a preference cookie, so the server renders it and the
+   * links work without this script. A choice made before the cookie existed
+   * is still in this browser's storage and is read once, then moved. */
 
   var APPEARANCE_KEY = 'owngit_appearance';
   var darkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
+  function validAppearance(value) {
+    return value === 'light' || value === 'dark' || value === 'system';
+  }
+
   function currentAppearance() {
-    var stored = '';
+    var stored = readCookie(APPEARANCE_KEY);
+    if (validAppearance(stored)) { return stored; }
     try { stored = window.localStorage.getItem(APPEARANCE_KEY) || ''; } catch (e) { stored = ''; }
     return stored === 'light' || stored === 'dark' ? stored : 'system';
   }
@@ -83,22 +92,46 @@
     root.classList.toggle('theme-system', choice === 'system');
     root.setAttribute('data-appearance', choice);
     root.setAttribute('data-appearance-resolved', resolvedAppearance(choice));
-    all('[data-appearance-set]').forEach(function (button) {
-      button.setAttribute('aria-pressed', String(button.getAttribute('data-appearance-set') === choice));
+    all('[data-appearance-set]').forEach(function (link) {
+      if (link.getAttribute('data-appearance-set') === choice) {
+        link.setAttribute('aria-current', 'true');
+      } else {
+        link.removeAttribute('aria-current');
+      }
     });
   }
 
   function setAppearance(choice) {
-    try { window.localStorage.setItem(APPEARANCE_KEY, choice); } catch (e) { /* private mode */ }
+    writeCookie(APPEARANCE_KEY, choice);
+    try { window.localStorage.removeItem(APPEARANCE_KEY); } catch (e) { /* private mode */ }
     applyAppearance(choice);
   }
 
-  applyAppearance(currentAppearance());
+  // Remove an appearance parameter the server has already saved, so a later
+  // in-place choice is not undone by reloading the address.
+  function dropAppearanceParameter() {
+    if (!window.history || !window.history.replaceState) { return; }
+    try {
+      var url = new URL(window.location.href);
+      if (!url.searchParams.has('appearance')) { return; }
+      url.searchParams.delete('appearance');
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    } catch (e) { /* older browser: the cookie still carries the choice */ }
+  }
+
+  var initialAppearance = currentAppearance();
+  if (!validAppearance(readCookie(APPEARANCE_KEY)) && initialAppearance !== 'system') {
+    setAppearance(initialAppearance);
+  }
+  applyAppearance(initialAppearance);
+  dropAppearanceParameter();
 
   document.addEventListener('click', function (event) {
-    var button = event.target.closest && event.target.closest('[data-appearance-set]');
-    if (!button) { return; }
-    setAppearance(button.getAttribute('data-appearance-set'));
+    var link = event.target.closest && event.target.closest('[data-appearance-set]');
+    if (!link) { return; }
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) { return; }
+    event.preventDefault();
+    setAppearance(link.getAttribute('data-appearance-set'));
   });
 
   if (darkQuery) {
