@@ -38,6 +38,11 @@ type Handler struct {
 	MaximumRequest   int64
 	MaximumResponse  int64
 	OperationTimeout time.Duration
+	// IdleTimeout stops a transfer whose client moves no data for this long:
+	// a response write the client does not accept, or a request body read
+	// that receives nothing. Time that Git spends working without output does
+	// not count. Zero leaves only OperationTimeout.
+	IdleTimeout time.Duration
 	// QueueWait bounds how long a request waits for a transfer slot before
 	// it is refused with 503 and Retry-After.
 	QueueWait   time.Duration
@@ -66,7 +71,7 @@ func New(git *gitexec.Runner, repositories *repository.Manager, backendPath stri
 	return &Handler{
 		Git: git, Repositories: repositories, BackendPath: backendPath,
 		MaximumRequest: 4 << 30, MaximumResponse: 4 << 30, OperationTimeout: 30 * time.Minute,
-		QueueWait: 90 * time.Second, slots: newAdmission(maximumConcurrent),
+		IdleTimeout: time.Minute, QueueWait: 90 * time.Second, slots: newAdmission(maximumConcurrent),
 	}, nil
 }
 
@@ -170,12 +175,15 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		// pack request or response in memory.
 		_ = controller.SetReadDeadline(deadline)
 		_ = controller.SetWriteDeadline(deadline)
+	}
+	if h.OperationTimeout > 0 || h.IdleTimeout > 0 {
 		defer func() {
 			_ = controller.SetReadDeadline(time.Time{})
 			_ = controller.SetWriteDeadline(time.Time{})
 		}()
 	}
 	defer cancel()
+	deadlines := &transferDeadlines{controller: controller, idle: h.IdleTimeout, overall: deadline}
 	request = request.WithContext(operationContext)
 
 	contentLength := request.ContentLength
@@ -190,7 +198,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		abandoned: func() bool {
 			return streamContext.Err() != nil || consumeFailed.Load() || (input != nil && input.firstError() != nil)
 		},
-		expire: func() { _ = controller.SetReadDeadline(time.Now()) },
+		deadlines: deadlines,
 	})
 	if h.MaximumRequest > 0 {
 		// The subprocess copies stdin on its own goroutine. Passing the live
@@ -232,7 +240,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "invalid Git protocol request", http.StatusBadRequest)
 		return
 	}
-	committed := &responseState{ResponseWriter: writer}
+	committed := &responseState{ResponseWriter: writer, deadlines: deadlines}
 	var report *pushReport
 	var observer io.Writer
 	if route.service == "git-receive-pack" && request.Method == http.MethodPost {
@@ -254,6 +262,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		inBand = report.reason()
 		refsUnchanged = err == nil && !consumeFailed.Load() && report.refsUnchanged()
 	}
+	if err == nil {
+		// Send the end of the response while the transfer still holds its
+		// deadlines. A failure here changes nothing Git already did.
+		if flushErr := deadlines.flush(); flushErr != nil && deadlines.stalled.Load() {
+			logGitFailure(route, request.Method, deadlines.reason())
+			return
+		}
+	}
 	if err == nil && len(stderr) == 0 && inBand == "" {
 		return
 	}
@@ -270,6 +286,11 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	reason := failureReason(err, stderr, tooLarge, invalidGzip, timedOut)
 	if err == nil && inBand != "" {
 		reason = inBand
+	}
+	if err != nil && deadlines.stalled.Load() {
+		// The client stopped first; what Git reported after it was stopped
+		// follows from that.
+		reason = deadlines.reason()
 	}
 	if reason != "" {
 		logGitFailure(route, request.Method, reason)
@@ -347,43 +368,6 @@ func (body *gzipBody) Read(buffer []byte) (int, error) {
 func (body *gzipBody) Close() error {
 	body.closeOnce.Do(func() { close(body.closed) })
 	return body.source.Close()
-}
-
-// networkBody is the request body read from the connection. net/http's Close
-// waits for a Read blocked on a stalled client and then reads up to 256 KiB
-// more, so closing alone does not release an abandoned upload before the
-// connection read deadline. When the operation was abandoned and the body is
-// unfinished, Close first moves that deadline to now, which ends the blocked
-// Read and the drain at once. The backend stream closes its input only after
-// it has terminated the backend, so the backend never sees the cut input as a
-// complete request.
-//
-// Known limit: a backend that exits normally before reading the whole
-// request, while the client stalls its upload, is not an abandoned operation
-// here, so Close still waits for the operation deadline. Expiring the
-// deadline in that case would make net/http cancel the request context,
-// which races with the stream's final wait and can turn a completed push
-// into a cancelled one; it also breaks the bounded gzip upload-pack case.
-type networkBody struct {
-	io.ReadCloser
-	abandoned func() bool
-	expire    func()
-	ended     atomic.Bool
-}
-
-func (body *networkBody) Read(buffer []byte) (int, error) {
-	n, err := body.ReadCloser.Read(buffer)
-	if err == io.EOF {
-		body.ended.Store(true)
-	}
-	return n, err
-}
-
-func (body *networkBody) Close() error {
-	if !body.ended.Load() && body.abandoned() {
-		body.expire()
-	}
-	return body.ReadCloser.Close()
 }
 
 // observedBody records the first read error of the backend input, which the
@@ -636,8 +620,11 @@ func hopByHop(name string) bool {
 	}
 }
 
+// responseState writes the backend response under the transfer deadlines and
+// records whether the status was sent.
 type responseState struct {
 	http.ResponseWriter
+	deadlines   *transferDeadlines
 	wroteHeader bool
 }
 
@@ -653,7 +640,7 @@ func (writer *responseState) Write(content []byte) (int, error) {
 	if !writer.wroteHeader {
 		writer.WriteHeader(http.StatusOK)
 	}
-	return writer.ResponseWriter.Write(content)
+	return writer.deadlines.write(writer.ResponseWriter, content)
 }
 
 func executableName(name string) string {

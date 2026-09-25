@@ -46,9 +46,9 @@ func (e *ArchiveError) Error() string { return e.Message }
 //
 // The archive shares the Smart HTTP bounds: a transfer slot, the operation
 // timeout (which also bounds the waits for a slot and for the repository read
-// lock), and the response size limit. Git runs under the repository read
-// lock, as for a clone, and is stopped when the client goes away, the time
-// runs out, or the size limit is reached.
+// lock), the idle limit, and the response size limit. Git runs under the
+// repository read lock, as for a clone, and is stopped when the client goes
+// away or stops reading, the time runs out, or the size limit is reached.
 //
 // Until the first archive byte, a failure writes nothing and is returned as an
 // *ArchiveError: 404 for an unknown format or repository, 503 when the
@@ -88,6 +88,7 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 	defer h.operations.Done()
 
 	ctx := request.Context()
+	controller := http.NewResponseController(writer)
 	var deadline time.Time
 	if h.OperationTimeout > 0 {
 		deadline = time.Now().Add(h.OperationTimeout)
@@ -95,10 +96,12 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 		ctx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 		// A blocked write to a stalled client does not see the context.
-		controller := http.NewResponseController(writer)
 		_ = controller.SetWriteDeadline(deadline)
+	}
+	if h.OperationTimeout > 0 || h.IdleTimeout > 0 {
 		defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
 	}
+	deadlines := &transferDeadlines{controller: controller, idle: h.IdleTimeout, overall: deadline}
 	busy := &ArchiveError{Status: http.StatusServiceUnavailable, RetryAfter: 10 * time.Second, Message: "The repository is busy with other Git transfers. Try again shortly."}
 	release, err := h.slots.acquire(ctx, repositoryID, h.QueueWait)
 	if err != nil {
@@ -115,7 +118,7 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 	}
 	defer lock.RUnlock()
 
-	sent := &archiveResponse{ResponseWriter: writer, limit: h.MaximumResponse, contentType: contentType, disposition: attachmentDisposition(filename)}
+	sent := &archiveResponse{ResponseWriter: writer, deadlines: deadlines, limit: h.MaximumResponse, contentType: contentType, disposition: attachmentDisposition(filename)}
 	held := &holdbackWriter{next: sent, hold: archiveHoldback}
 	var compressed *gzip.Writer
 	_, err = h.Git.StreamGit(ctx, repositoryPath, func(stdout io.Reader) error {
@@ -134,9 +137,19 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 		err = held.flush()
 	}
 	if err == nil {
+		// Send the end of the archive while the deadlines still apply.
+		if err = deadlines.flush(); err != nil {
+			err = fmt.Errorf("%w: %w", errArchiveWrite, err)
+		}
+	}
+	if err == nil {
 		return nil
 	}
-	logArchiveFailure(repositoryID, err, deadline, "")
+	if deadlines.stalled.Load() {
+		log.Printf("Git archive request for repository %q failed: %s", repositoryID, deadlines.reason())
+	} else {
+		logArchiveFailure(repositoryID, err, deadline, "")
+	}
 	if !sent.started {
 		// A client that went away does not read this answer, which is
 		// harmless; any other reader must not see an empty success.
@@ -221,6 +234,7 @@ var errArchiveWrite = errors.New("archive response write failed")
 // then a failure can still answer with an error status.
 type archiveResponse struct {
 	http.ResponseWriter
+	deadlines   *transferDeadlines
 	limit       int64
 	contentType string
 	disposition string
@@ -242,7 +256,7 @@ func (response *archiveResponse) Write(content []byte) (int, error) {
 		header.Set("Cache-Control", "private, no-store")
 		response.WriteHeader(http.StatusOK)
 	}
-	n, err := response.ResponseWriter.Write(content)
+	n, err := response.deadlines.write(response.ResponseWriter, content)
 	response.written += int64(n)
 	if err != nil {
 		return n, fmt.Errorf("%w: %w", errArchiveWrite, err)
