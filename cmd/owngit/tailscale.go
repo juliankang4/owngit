@@ -154,9 +154,11 @@ func tailscaleOn(arguments []string) error {
 	if *options.asJSON {
 		return printJSON(report)
 	}
-	switch change.Endpoint {
-	case "created":
+	switch {
+	case change.Endpoint == "created":
 		fmt.Printf("Tailscale now answers HTTPS for %s and passes it to OwnGit at %s.\n", change.Record.Name, change.Record.Target)
+	case change.Record.Created:
+		fmt.Printf("Tailscale already answered HTTPS for %s with the address OwnGit made, passing it to OwnGit at %s.\n", change.Record.Name, change.Record.Target)
 	default:
 		fmt.Printf("Tailscale already answered HTTPS for %s with OwnGit at %s; OwnGit left that setting as it was.\n", change.Record.Name, change.Record.Target)
 	}

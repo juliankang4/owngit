@@ -37,6 +37,12 @@ const TailscaleHTTPSPort = 443
 // loopbackProxy is the address Tailscale Serve connects to OwnGit from.
 const loopbackProxy = "127.0.0.1"
 
+// tailscaleChangeTimeout bounds one change of sharing. A change runs to its
+// end even when the request that asked for it is cancelled, such as by a
+// closed browser tab, so that it is not left half done; each tailscale
+// command keeps its own time limit.
+const tailscaleChangeTimeout = 2 * time.Minute
+
 // Tailscale reports and changes Tailscale sharing. The Settings page and
 // "owngit tailscale" use it with the same rules.
 type Tailscale struct {
@@ -284,6 +290,8 @@ type TailscaleChange struct {
 // true also listens on the home network, and false listens on this computer
 // only. Changing the listen address applies at the next start.
 func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool) (TailscaleChange, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tailscaleChangeTimeout)
+	defer cancel()
 	command, err := sharing.findCommand()
 	if err != nil {
 		return TailscaleChange{}, tailscaleError(err, false)
@@ -333,8 +341,12 @@ func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool) (TailscaleC
 	}
 	endpoint := config.Endpoint(status.Name, TailscaleHTTPSPort, target)
 	ours := wasOn && config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact
+	// A record that was never confirmed belongs to a turning on that was
+	// interrupted before it changed any setting, so this one starts anew:
+	// it records the base URL saved now and what it adds itself.
+	fresh := !wasOn || !previous.Confirmed
 	record := previous
-	if !wasOn {
+	if fresh {
 		record = state.TailscaleServe{CreatedAt: time.Now().Unix()}
 	}
 	record.Name, record.HTTPSPort, record.Target = status.Name, TailscaleHTTPSPort, target
@@ -354,7 +366,7 @@ func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool) (TailscaleC
 		// written and then interrupted can still be found and removed. An
 		// existing record keeps describing the endpoint it made until the
 		// new one is confirmed.
-		if !wasOn {
+		if fresh {
 			if err := sharing.Store.SaveTailscaleServe(ctx, record); err != nil {
 				return TailscaleChange{}, err
 			}
@@ -368,14 +380,14 @@ func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool) (TailscaleC
 			writeErr = readErr
 		}
 		if writeErr != nil {
-			if readErr == nil && !wasOn && after.Endpoint(record.Name, TailscaleHTTPSPort, target).Free {
-				_ = sharing.Store.ClearTailscaleServe(context.WithoutCancel(ctx))
+			if readErr == nil && fresh && after.Endpoint(record.Name, TailscaleHTTPSPort, target).Free {
+				_ = sharing.Store.ClearTailscaleServe(ctx)
 			}
 			return TailscaleChange{}, tailscaleError(writeErr, command.MacApp)
 		}
 	}
 
-	update, err := sharing.onUpdate(ctx, saved, change.Listen, &record, wasOn)
+	update, err := sharing.onUpdate(ctx, saved, change.Listen, &record, fresh)
 	if err != nil {
 		return TailscaleChange{}, err
 	}
@@ -395,7 +407,7 @@ func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool) (TailscaleC
 // address, the HTTPS base URL, 127.0.0.1 as a trusted proxy and the name as
 // an allowed Host, each only when not already saved, and the confirmed
 // record naming what was added.
-func (sharing *Tailscale) onUpdate(ctx context.Context, saved state.NetworkSettings, listen string, record *state.TailscaleServe, wasOn bool) (state.NetworkUpdate, error) {
+func (sharing *Tailscale) onUpdate(ctx context.Context, saved state.NetworkSettings, listen string, record *state.TailscaleServe, fresh bool) (state.NetworkUpdate, error) {
 	proxies, err := sharing.Store.TrustedProxies(ctx)
 	if err != nil {
 		return state.NetworkUpdate{}, err
@@ -409,7 +421,7 @@ func (sharing *Tailscale) onUpdate(ctx context.Context, saved state.NetworkSetti
 		update.Settings.Listen = listen
 	}
 	origin := "https://" + record.Name
-	if !wasOn {
+	if fresh {
 		record.PreviousBaseURL = saved.BaseURL
 	}
 	update.Settings.BaseURL, record.BaseURL = origin, origin
@@ -430,6 +442,8 @@ func (sharing *Tailscale) onUpdate(ctx context.Context, saved state.NetworkSetti
 // settings OwnGit changed, where they are still as OwnGit saved them. The
 // listen address stays.
 func (sharing *Tailscale) Off(ctx context.Context) (TailscaleChange, string, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tailscaleChangeTimeout)
+	defer cancel()
 	record, on, err := sharing.Store.TailscaleServe(ctx)
 	if err != nil {
 		return TailscaleChange{}, "", err

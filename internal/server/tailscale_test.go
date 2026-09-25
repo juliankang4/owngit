@@ -515,3 +515,51 @@ func TestTailscaleHeadersGrantNothing(t *testing.T) {
 		t.Errorf("identity headers opened Git: %d", response.Code)
 	}
 }
+
+// Turning on again after a turning on that was interrupted between the
+// Tailscale write and the settings save keeps the owner's base URL for
+// turning off. (Regression test from the security review.)
+func TestTurningOnAfterAnInterruptionKeepsThePreviousBaseURL(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{BaseURL: "http://gitbox.lan:7654"}}))
+	// What turning on leaves behind when the process dies right after the
+	// write: an unconfirmed record and OwnGit's endpoint.
+	target := tailscale.Target(7654)
+	noErr(t, app.Store.SaveTailscaleServe(ctx, state.TailscaleServe{Name: tailscaletest.Name, HTTPSPort: 443, Target: target, Created: true}))
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve = tailscale.ServeConfig{
+			TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+			Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: target}}}},
+		}
+	})
+	change, err := app.turnTailscaleOn(ctx, nil)
+	noErr(t, err)
+	if !change.Record.Created || change.Record.AddedProxy != loopbackProxy || change.Record.AddedHost != tailscaletest.Name {
+		t.Fatalf("record after the retry: %+v", change.Record)
+	}
+	_, err = app.turnTailscaleOff(ctx)
+	noErr(t, err)
+	settings, hosts, proxies, record := savedSharing(t, app.Store)
+	if settings.BaseURL != "http://gitbox.lan:7654" || len(hosts) != 0 || len(proxies) != 0 || record != nil {
+		t.Fatalf("after interruption, retry and off: base URL %q, hosts %v, proxies %v, record %+v", settings.BaseURL, hosts, proxies, record)
+	}
+}
+
+// A request cancelled halfway, such as by a closed browser tab, does not
+// leave the change half done.
+func TestACancelledRequestStillFinishesTheChange(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := app.turnTailscaleOn(cancelled, nil)
+	noErr(t, err)
+	if _, _, _, record := savedSharing(t, app.Store); record == nil || !record.Confirmed {
+		t.Fatalf("record after a cancelled request: %+v", record)
+	}
+	_, err = app.turnTailscaleOff(cancelled)
+	noErr(t, err)
+	if len(fake.Writes()) != 2 {
+		t.Fatalf("writes=%q", fake.Writes())
+	}
+}
