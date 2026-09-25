@@ -164,6 +164,11 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	controller := http.NewResponseController(writer)
+	// git-http-backend writes its response headers before it reads a push,
+	// and the response is flushed as Git writes it. Without full duplex,
+	// net/http would read and discard the rest of the request body at the
+	// first flush.
+	_ = controller.EnableFullDuplex()
 	operationContext := request.Context()
 	cancel := func() {}
 	var deadline time.Time
@@ -263,8 +268,9 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		refsUnchanged = err == nil && !consumeFailed.Load() && report.refsUnchanged()
 	}
 	if err == nil {
-		// Send the end of the response while the transfer still holds its
-		// deadlines. A failure here changes nothing Git already did.
+		// Make sure the end of the response went out while the transfer still
+		// holds its deadlines; the copy does not report a failed flush after
+		// Git's last output. A failure here changes nothing Git already did.
 		if flushErr := deadlines.flush(); flushErr != nil && deadlines.stalled.Load() {
 			logGitFailure(route, request.Method, deadlines.reason())
 			return
@@ -592,23 +598,46 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 		writer.Header().Add(name, value)
 	}
 	writer.WriteHeader(status)
+	// While Git prepares data it writes only small keepalive and progress
+	// packets. They must reach the client, and any proxy with a read timeout,
+	// at once instead of waiting in the response buffer. So the response is
+	// flushed whenever everything Git has written so far was passed on. Bulk
+	// data still goes out in writes of up to 32 KiB. A failed flush leaves the
+	// connection failed, so the next write reports it, and the handler reports
+	// a failure after Git's last output.
+	if reader.Buffered() == 0 {
+		_ = writer.deadlines.flush()
+	}
 	body := io.Reader(reader)
 	if observer != nil {
 		body = io.TeeReader(reader, observer)
 	}
-	if h.MaximumResponse <= 0 {
-		_, err := io.Copy(writer, body)
-		return err
+	if h.MaximumResponse > 0 {
+		body = &io.LimitedReader{R: body, N: h.MaximumResponse + 1}
 	}
-	limited := &io.LimitedReader{R: body, N: h.MaximumResponse + 1}
-	written, err := io.Copy(writer, limited)
-	if err != nil {
-		return err
+	buffer := make([]byte, 32<<10)
+	var written int64
+	for {
+		n, err := body.Read(buffer)
+		if n > 0 {
+			if _, err := writer.Write(buffer[:n]); err != nil {
+				return err
+			}
+			written += int64(n)
+			if h.MaximumResponse > 0 && written > h.MaximumResponse {
+				return errResponseTooLarge
+			}
+			if reader.Buffered() == 0 {
+				_ = writer.deadlines.flush()
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
 	}
-	if written > h.MaximumResponse {
-		return errResponseTooLarge
-	}
-	return nil
 }
 
 func hopByHop(name string) bool {
