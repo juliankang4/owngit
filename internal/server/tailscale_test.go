@@ -251,7 +251,7 @@ func TestTailscaleOffChangesNothingWhenTheEndpointChanged(t *testing.T) {
 	before, hostsBefore, proxiesBefore, recordBefore := savedSharing(t, app.Store)
 	_, err = app.Tailscale.Off(ctx)
 	var refusal *TailscaleError
-	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemChanged || !strings.Contains(strings.Join(refusal.Found, " "), "127.0.0.1:3000") {
+	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemChanged || !strings.Contains(TailscaleUsesText(refusal.Found), "127.0.0.1:3000") {
 		t.Fatalf("err=%v", err)
 	}
 	if len(fake.Writes()) != 1 {

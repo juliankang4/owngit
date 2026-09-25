@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -105,14 +106,19 @@ func TestTailscaleRefusalIsExplainedOnTheBlock(t *testing.T) {
 	}
 	for _, want := range []string{
 		`id="tailscale_on-tailscale-note"`, `role="alert"`, "autofocus",
-		enText(webui.TailscaleProblemCode(TailscaleProblemTaken)), "http://127.0.0.1:3000",
+		enText(webui.TailscaleRefusalCode(TailscaleProblemTaken, true)),
+		// The list below the alert, in both languages.
+		"https://" + tailscaletest.Name + ":443/ to http://127.0.0.1:3000",
+		"https://" + tailscaletest.Name + ":443/에서 http://127.0.0.1:3000(으)로 전달",
 	} {
 		if !strings.Contains(result.body, want) {
 			t.Errorf("the refusal lacks %q", want)
 		}
 	}
-	if strings.Count(result.body, "http://127.0.0.1:3000") != 1 {
-		t.Error("what is on the port is listed twice")
+	// Listed once, in the block below the alert.
+	list := regexp.MustCompile(`(?s)<ul class="tsfound">.*?</ul>`)
+	if lists := list.FindAllString(result.body, -1); len(lists) != 1 || strings.Contains(list.ReplaceAllString(result.body, ""), "127.0.0.1:3000") {
+		t.Errorf("what is on the port is not listed exactly once: %d lists", len(lists))
 	}
 	if len(fake.Writes()) != 0 {
 		t.Fatalf("writes=%q", fake.Writes())

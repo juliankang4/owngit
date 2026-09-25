@@ -148,9 +148,9 @@ func TestEndpointTellsOwnGitsFromEverythingElse(t *testing.T) {
 		{"OwnGit's", tailscale.ServeConfig{TCP: https, Web: web(name+":443", owngit)}, false, true, target},
 		{"another program", tailscale.ServeConfig{TCP: https, Web: web(name+":443", map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}})}, false, false, "http://127.0.0.1:3000"},
 		{"another path beside OwnGit's", tailscale.ServeConfig{TCP: https, Web: web(name+":443", map[string]tailscale.Handler{"/": {Proxy: target}, "/grafana": {Proxy: "http://127.0.0.1:3000"}})}, false, false, "/grafana"},
-		{"files", tailscale.ServeConfig{TCP: https, Web: web(name+":443", map[string]tailscale.Handler{"/": {Path: "/srv/www"}})}, false, false, "files at /srv/www"},
-		{"TCP forwarding", tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"443": {TCPForward: "127.0.0.1:22"}}}, false, false, "TCP forwarding"},
-		{"OwnGit's with Funnel", tailscale.ServeConfig{TCP: https, Web: web(name+":443", owngit), AllowFunnel: map[string]bool{name + ":443": true}}, false, false, "Funnel"},
+		{"files", tailscale.ServeConfig{TCP: https, Web: web(name+":443", map[string]tailscale.Handler{"/": {Path: "/srv/www"}})}, false, false, "/srv/www"},
+		{"TCP forwarding", tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"443": {TCPForward: "127.0.0.1:22"}}}, false, false, "tcp_forward 443 127.0.0.1:22"},
+		{"OwnGit's with Funnel", tailscale.ServeConfig{TCP: https, Web: web(name+":443", owngit), AllowFunnel: map[string]bool{name + ":443": true}}, false, false, "funnel"},
 		{"a foreground session", tailscale.ServeConfig{Foreground: map[string]tailscale.ServeConfig{"session": {TCP: https, Web: web(name+":443", owngit)}}}, false, false, "foreground"},
 		{"another name", tailscale.ServeConfig{TCP: https, Web: web("old.tail0000.ts.net:443", owngit)}, false, false, "old.tail0000.ts.net"},
 		{"incomplete", tailscale.ServeConfig{TCP: https}, false, false, "incomplete"},
@@ -160,7 +160,9 @@ func TestEndpointTellsOwnGitsFromEverythingElse(t *testing.T) {
 		if endpoint.Free != test.free || endpoint.Exact != test.exact {
 			t.Errorf("%s: free=%v exact=%v, want %v %v (%q)", test.name, endpoint.Free, endpoint.Exact, test.free, test.exact, endpoint.Found)
 		}
-		if test.found != "" && !slices.ContainsFunc(endpoint.Found, func(text string) bool { return strings.Contains(text, test.found) }) {
+		if test.found != "" && !slices.ContainsFunc(endpoint.Found, func(use tailscale.Use) bool {
+			return strings.Contains(use.Kind+" "+use.Address+" "+use.Target, test.found)
+		}) {
 			t.Errorf("%s: found=%q lacks %q", test.name, endpoint.Found, test.found)
 		}
 	}

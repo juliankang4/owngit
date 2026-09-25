@@ -151,7 +151,7 @@ func allPages(lang Lang) map[string]Page {
 				On: true, URL: "https://owngit.tail0000.ts.net/", Name: "owngit.tail0000.ts.net",
 				Problem: TailscaleProblemCode("logged_out"),
 				Waiting: []MessageCode{TailscaleWaitCode("restart"), TailscaleWaitCode("endpoint")},
-				Found:   []string{"https://owngit.tail0000.ts.net:443/ to http://localhost:3000"}, FoundNote: MsgTSChanged,
+				Found:   []TailscaleUse{{Kind: "proxy", Address: "https://owngit.tail0000.ts.net:443/", Target: "http://localhost:3000"}}, FoundNote: MsgTSChanged,
 			},
 		},
 		"overview": OverviewPage{

@@ -101,3 +101,34 @@ func TestConnectionThroughTailscaleNamesTailscale(t *testing.T) {
 		t.Errorf("indicator text %q", text)
 	}
 }
+
+// What is on the port is described in the page's language, with the
+// addresses kept as they are.
+func TestTailscalePortListIsTranslated(t *testing.T) {
+	r := newRenderer(t)
+	uses := []TailscaleUse{
+		{Kind: "proxy", Address: "https://owngit.tail0000.ts.net:443/", Target: "http://localhost:3000"},
+		{Kind: "funnel", Address: "owngit.tail0000.ts.net:443"},
+		{Kind: "tcp_forward", Address: "443", Target: "localhost:22"},
+	}
+	page := SettingsPage{Chrome: fullChrome(LangKO), SubmitURL: "/settings",
+		Tailscale: TailscaleInfo{Found: uses, FoundNote: MsgTSTaken}}
+	out := render(t, r, page)
+	for _, want := range []string{
+		">https://owngit.tail0000.ts.net:443/에서 http://localhost:3000(으)로 전달<",
+		">owngit.tail0000.ts.net:443의 Funnel(공개 인터넷에 열림)<",
+		">포트 443의 TCP 전달(localhost:22)<",
+		`data-en="https://owngit.tail0000.ts.net:443/ to http://localhost:3000"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the Korean list lacks %q", want)
+		}
+	}
+	for _, use := range uses {
+		for _, lang := range Langs() {
+			if text := TailscaleUseText(lang, use); strings.Contains(text, "%!") || !strings.Contains(text, use.Address) || !strings.Contains(text, use.Target) {
+				t.Errorf("%s %s: %q", lang, use.Kind, text)
+			}
+		}
+	}
+}

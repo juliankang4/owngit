@@ -48,9 +48,9 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	}
 	switch {
 	case report.On && report.Endpoint == TailscaleEndpointChanged:
-		info.Found, info.FoundNote = report.Found, webui.MsgTSChanged
+		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSChanged
 	case !report.On && report.Endpoint == TailscaleEndpointTaken:
-		info.Found, info.FoundNote = report.Found, webui.MsgTSTaken
+		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSTaken
 	}
 	info.CanTurnOn = !report.On && report.Installed && report.Problem == "" && report.Endpoint == TailscaleEndpointFree
 	home, local := true, false
@@ -89,13 +89,33 @@ func (app *App) renderTailscaleRefusal(writer http.ResponseWriter, request *http
 		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("tailscale", webui.MsgErrUnavailable)}, http.StatusServiceUnavailable)
 		return
 	}
-	notice := webui.Notice{Kind: webui.NoticeError, Code: webui.TailscaleProblemCode(refusal.Problem), Field: "tailscale", Detail: refusal.Detail}
+	// What is on the port is listed in the block, in the page's language.
+	notice := webui.Notice{Kind: webui.NoticeError, Code: webui.TailscaleRefusalCode(refusal.Problem, len(refusal.Found) > 0), Field: "tailscale", Detail: refusal.Detail}
 	if len(refusal.Found) > 0 {
-		notice.Detail = strings.Join(refusal.Found, "; ")
+		notice.Detail = ""
 	}
 	notices := []webui.Notice{notice}
 	if refusal.Problem == TailscaleProblemReadBack && refusal.MacApp {
 		notices = append(notices, webui.Notice{Kind: webui.NoticeInfo, Code: webui.MsgTSReadBackMacApp, Field: "tailscale"})
 	}
 	app.renderSettings(writer, request, settings, csrf, action, notices, http.StatusConflict)
+}
+
+// tailscaleUses turns what Tailscale has on its port into the page's form.
+func tailscaleUses(uses []tailscale.Use) []webui.TailscaleUse {
+	converted := make([]webui.TailscaleUse, len(uses))
+	for i, use := range uses {
+		converted[i] = webui.TailscaleUse{Kind: use.Kind, Address: use.Address, Target: use.Target}
+	}
+	return converted
+}
+
+// TailscaleUsesText describes what Tailscale has on its port in English,
+// for the command line and errors.
+func TailscaleUsesText(uses []tailscale.Use) string {
+	texts := make([]string, len(uses))
+	for i, use := range tailscaleUses(uses) {
+		texts[i] = webui.TailscaleUseText(webui.LangEN, use)
+	}
+	return strings.Join(texts, "; ")
 }

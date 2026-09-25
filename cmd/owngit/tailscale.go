@@ -242,10 +242,10 @@ func tailscaleFailure(err error) error {
 }
 
 // tailscaleProblemText is the English message for a problem.
-func tailscaleProblemText(problem, detail string, found []string, macApp bool) string {
+func tailscaleProblemText(problem, detail string, found []tailscale.Use, macApp bool) string {
 	text := webui.Text(webui.LangEN, webui.TailscaleProblemCode(problem))
 	if len(found) > 0 {
-		detail = strings.Join(found, "; ")
+		detail = server.TailscaleUsesText(found)
 	}
 	if detail != "" && strings.HasSuffix(text, ":") {
 		text += " " + detail
@@ -278,7 +278,7 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 		fmt.Fprintf(writer, "  Ready to share as https://%s/.\n", report.Name)
 	}
 	if report.Endpoint == server.TailscaleEndpointTaken || report.Endpoint == server.TailscaleEndpointChanged {
-		fmt.Fprintf(writer, "  HTTPS port %d of Tailscale also has: %s\n", server.TailscaleHTTPSPort, strings.Join(report.Found, "; "))
+		fmt.Fprintf(writer, "  HTTPS port %d of Tailscale also has: %s\n", server.TailscaleHTTPSPort, server.TailscaleUsesText(report.Found))
 	}
 	for _, wait := range report.Waiting {
 		if wait != server.TailscaleWaitTailscale {

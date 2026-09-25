@@ -2,8 +2,8 @@ package tailscale
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
-	"fmt"
 	"net"
 	"slices"
 	"strconv"
@@ -59,6 +59,34 @@ func ParseServeConfig(output []byte) (ServeConfig, error) {
 	return config, nil
 }
 
+// Use is one thing the Serve configuration has on a port. The words that
+// describe it for the owner come from the message catalog, so only the
+// kind and the values are here.
+type Use struct {
+	// Kind is one of the Use values below.
+	Kind string `json:"kind"`
+	// Address is where: an HTTPS address with its path, "name:port", or a
+	// port number.
+	Address string `json:"address"`
+	// Target is where it leads, when it leads anywhere: a proxy target, a
+	// file path or a redirect address.
+	Target string `json:"target,omitempty"`
+}
+
+// Kinds of Use.
+const (
+	UseProxy      = "proxy"       // Address passes requests to Target
+	UseFiles      = "files"       // Address serves the files at Target
+	UseRedirect   = "redirect"    // Address redirects to Target
+	UseText       = "text"        // Address answers with fixed text
+	UseEmpty      = "empty"       // Address has a handler that serves nothing
+	UseTCPForward = "tcp_forward" // port Address is forwarded to Target over TCP
+	UsePlainHTTP  = "plain_http"  // port Address answers plain HTTP
+	UseFunnel     = "funnel"      // Address is open to the public Internet
+	UseForeground = "foreground"  // a foreground "tailscale serve" session uses port Address
+	UseIncomplete = "incomplete"  // port Address has an incomplete setting
+)
+
 // Endpoint is what the Serve configuration has on one HTTPS port.
 type Endpoint struct {
 	// Free is true when nothing uses the port.
@@ -67,17 +95,17 @@ type Endpoint struct {
 	// exactly one handler, at "/", that proxies to the expected target, and
 	// the port is not open to Funnel.
 	Exact bool
-	// Found describes everything on the port, for the owner.
-	Found []string
+	// Found lists everything on the port, for the owner.
+	Found []Use
 }
 
 // Endpoint describes port for the node name and the expected proxy target.
 func (config ServeConfig) Endpoint(name string, port int, target string) Endpoint {
 	portText := strconv.Itoa(port)
-	var found []string
-	add := func(text string) {
-		if !slices.Contains(found, text) {
-			found = append(found, text)
+	var found []Use
+	add := func(use Use) {
+		if !slices.Contains(found, use) {
+			found = append(found, use)
 		}
 	}
 	webKeys := 0
@@ -86,9 +114,9 @@ func (config ServeConfig) Endpoint(name string, port int, target string) Endpoin
 	visit = func(current ServeConfig, foreground bool) {
 		if handler, ok := current.TCP[portText]; ok {
 			if handler.TCPForward != "" {
-				add(fmt.Sprintf("TCP forwarding of port %d to %s", port, handler.TCPForward))
+				add(Use{Kind: UseTCPForward, Address: portText, Target: handler.TCPForward})
 			} else if !handler.HTTPS {
-				add(fmt.Sprintf("plain HTTP on port %d", port))
+				add(Use{Kind: UsePlainHTTP, Address: portText})
 			}
 		}
 		for hostPort, server := range current.Web {
@@ -98,7 +126,7 @@ func (config ServeConfig) Endpoint(name string, port int, target string) Endpoin
 			}
 			webKeys++
 			for path, handler := range server.Handlers {
-				add(fmt.Sprintf("https://%s%s to %s", net.JoinHostPort(host, p), path, handler.describe()))
+				add(handler.use("https://" + net.JoinHostPort(host, p) + path))
 				if !foreground && host == name && path == "/" && len(server.Handlers) == 1 &&
 					handler.Proxy == target && handler.Path == "" && handler.Text == "" && handler.Redirect == "" && len(handler.AcceptAppCaps) == 0 {
 					exactHandler = true
@@ -107,12 +135,12 @@ func (config ServeConfig) Endpoint(name string, port int, target string) Endpoin
 		}
 		for hostPort, open := range current.AllowFunnel {
 			if _, p, err := net.SplitHostPort(hostPort); err == nil && p == portText && open {
-				add(fmt.Sprintf("Funnel, open to the public Internet, on %s", hostPort))
+				add(Use{Kind: UseFunnel, Address: hostPort})
 			}
 		}
 		if foreground {
 			if _, ok := current.TCP[portText]; ok {
-				add(fmt.Sprintf("a foreground \"tailscale serve\" session on port %d", port))
+				add(Use{Kind: UseForeground, Address: portText})
 			}
 		}
 	}
@@ -122,9 +150,11 @@ func (config ServeConfig) Endpoint(name string, port int, target string) Endpoin
 	}
 	tcp, tcpOK := config.TCP[portText]
 	if len(found) == 0 && (tcpOK || webKeys > 0) {
-		add(fmt.Sprintf("an incomplete Serve setting on port %d", port))
+		add(Use{Kind: UseIncomplete, Address: portText})
 	}
-	slices.Sort(found)
+	slices.SortFunc(found, func(a, b Use) int {
+		return cmp.Or(cmp.Compare(a.Address, b.Address), cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Target, b.Target))
+	})
 	endpoint := Endpoint{Found: found}
 	endpoint.Free = len(found) == 0 && !tcpOK && webKeys == 0
 	endpoint.Exact = exactHandler && webKeys == 1 && len(found) == 1 &&
@@ -132,17 +162,17 @@ func (config ServeConfig) Endpoint(name string, port int, target string) Endpoin
 	return endpoint
 }
 
-// describe names what a handler serves.
-func (handler Handler) describe() string {
+// use describes what a handler at address serves.
+func (handler Handler) use(address string) Use {
 	switch {
 	case handler.Proxy != "":
-		return handler.Proxy
+		return Use{Kind: UseProxy, Address: address, Target: handler.Proxy}
 	case handler.Path != "":
-		return "files at " + handler.Path
+		return Use{Kind: UseFiles, Address: address, Target: handler.Path}
 	case handler.Redirect != "":
-		return "a redirect to " + handler.Redirect
+		return Use{Kind: UseRedirect, Address: address, Target: handler.Redirect}
 	case handler.Text != "":
-		return "fixed text"
+		return Use{Kind: UseText, Address: address}
 	}
-	return "nothing"
+	return Use{Kind: UseEmpty, Address: address}
 }

@@ -111,8 +111,8 @@ type TailscaleReport struct {
 	URL     string                `json:"url,omitempty"`
 	// Endpoint is one of the TailscaleEndpoint values, and Found describes
 	// what else is on the HTTPS port.
-	Endpoint string   `json:"endpoint"`
-	Found    []string `json:"found,omitempty"`
+	Endpoint string          `json:"endpoint"`
+	Found    []tailscale.Use `json:"found,omitempty"`
 	// Server is the state of the OwnGit server (state.RunningObservation).
 	Server string `json:"server"`
 	// Ready is true when the HTTPS address works: Tailscale has OwnGit's
@@ -245,8 +245,8 @@ type TailscaleError struct {
 	Problem string
 	// Detail is what Tailscale printed, or the address concerned.
 	Detail string
-	// Found describes what is on the HTTPS port.
-	Found []string
+	// Found is what is on the HTTPS port.
+	Found []tailscale.Use
 	// MacApp is true for the Tailscale app for macOS.
 	MacApp bool
 }
@@ -275,7 +275,7 @@ func (err *TailscaleError) Error() string {
 		text += ": " + err.Detail
 	}
 	if len(err.Found) > 0 {
-		text += " (" + strings.Join(err.Found, "; ") + ")"
+		text += " (" + TailscaleUsesText(err.Found) + ")"
 	}
 	return text
 }

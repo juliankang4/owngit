@@ -32,7 +32,7 @@ type TailscaleInfo struct {
 	// Found lists what else is on Tailscale's HTTPS port, and FoundNote
 	// introduces it: the port is taken while sharing is off, or changed
 	// while it is on.
-	Found     []string
+	Found     []TailscaleUse
 	FoundNote MessageCode
 	// MacApp is true for the Tailscale app for macOS, which does not run
 	// after a restart until someone logs in.

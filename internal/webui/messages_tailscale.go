@@ -1,5 +1,10 @@
 package webui
 
+import (
+	"fmt"
+	"html/template"
+)
+
 // Strings for sharing on the tailnet over HTTPS: the problems Tailscale can
 // report and what readiness waits for. "owngit tailscale" prints the English
 // text of the same codes, so the page and the command say the same thing.
@@ -21,6 +26,42 @@ func TailscaleWaitCode(wait string) MessageCode {
 		return code
 	}
 	return MsgTSWaitUnknown
+}
+
+// TailscaleRefusalCode is the message for a refusal on the Settings page.
+// When the page lists what is on the port below, a refusal about the port
+// points there instead of ending in that list.
+func TailscaleRefusalCode(problem string, listed bool) MessageCode {
+	code := TailscaleProblemCode(problem)
+	if listed && Has(code+"_listed") {
+		return code + "_listed"
+	}
+	return code
+}
+
+// TailscaleUse is one thing Tailscale has on its HTTPS port, as
+// tailscale.Use describes it.
+type TailscaleUse struct {
+	Kind, Address, Target string
+}
+
+// TailscaleUseCode is the message that describes a TailscaleUse of kind.
+// Its text takes the address as %[1]s and the target as %[2]s.
+func TailscaleUseCode(kind string) MessageCode {
+	if code := MessageCode("tailscale.use." + kind); Has(code) {
+		return code
+	}
+	return "tailscale.use.unknown"
+}
+
+// TailscaleUseText describes use in lang.
+func TailscaleUseText(lang Lang, use TailscaleUse) string {
+	return fmt.Sprintf(Text(lang, TailscaleUseCode(use.Kind)), use.Address, use.Target)
+}
+
+// tsUse renders the description of use in both languages.
+func tsUse(lang Lang, use TailscaleUse) template.HTML {
+	return biText(lang, TailscaleUseText(LangEN, use), TailscaleUseText(LangKO, use))
 }
 
 const (
@@ -85,6 +126,10 @@ var tailscaleCatalog = map[MessageCode]message{
 		en: "Tailscale already serves something else on HTTPS port 443 of this computer, so OwnGit changed nothing. If you no longer need it, remove it with \"tailscale serve\" and try again. On the port now:",
 		ko: "이 컴퓨터의 HTTPS 포트 443에서 Tailscale이 이미 다른 것을 제공하고 있어 OwnGit은 아무것도 바꾸지 않았습니다. 더 이상 필요 없다면 \"tailscale serve\"로 지운 뒤 다시 시도하세요. 지금 이 포트의 설정:",
 	},
+	"tailscale.problem.port_taken_listed": {
+		en: "Tailscale already serves something else on HTTPS port 443 of this computer, so OwnGit changed nothing. If you no longer need it, remove it with \"tailscale serve\" and try again. What is on the port is listed below.",
+		ko: "이 컴퓨터의 HTTPS 포트 443에서 Tailscale이 이미 다른 것을 제공하고 있어 OwnGit은 아무것도 바꾸지 않았습니다. 더 이상 필요 없다면 \"tailscale serve\"로 지운 뒤 다시 시도하세요. 이 포트의 설정은 아래에 있습니다.",
+	},
 	"tailscale.problem.read_back": {
 		en: "Tailscale accepted the change but did not keep it, so OwnGit does not use it.",
 		ko: "Tailscale이 변경을 받아들였지만 유지하지 않아 OwnGit은 이 주소를 쓰지 않습니다.",
@@ -98,6 +143,25 @@ var tailscaleCatalog = map[MessageCode]message{
 		en: "The Tailscale address was changed after OwnGit made it, so OwnGit changed nothing. Change it back or remove it with \"tailscale serve\", then turn sharing off again. On the port now:",
 		ko: "OwnGit이 만든 뒤 Tailscale 주소 설정이 바뀌어 OwnGit은 아무것도 바꾸지 않았습니다. 원래대로 돌리거나 \"tailscale serve\"로 지운 뒤 공유를 다시 끄세요. 지금 이 포트의 설정:",
 	},
+	"tailscale.problem.endpoint_changed_listed": {
+		en: "The Tailscale address was changed after OwnGit made it, so OwnGit changed nothing. Change it back or remove it with \"tailscale serve\", then turn sharing off again. What is on the port is listed below.",
+		ko: "OwnGit이 만든 뒤 Tailscale 주소 설정이 바뀌어 OwnGit은 아무것도 바꾸지 않았습니다. 원래대로 돌리거나 \"tailscale serve\"로 지운 뒤 공유를 다시 끄세요. 이 포트의 설정은 아래에 있습니다.",
+	},
+
+	// What is on Tailscale's HTTPS port: %[1]s is the address and %[2]s the
+	// target (tailscale.Use).
+	"tailscale.use.proxy":       {en: "%[1]s to %[2]s", ko: "%[1]s에서 %[2]s(으)로 전달"},
+	"tailscale.use.files":       {en: "%[1]s serving the files at %[2]s", ko: "%[1]s에서 %[2]s의 파일 제공"},
+	"tailscale.use.redirect":    {en: "%[1]s redirecting to %[2]s", ko: "%[1]s에서 %[2]s(으)로 리디렉션"},
+	"tailscale.use.text":        {en: "%[1]s answering with fixed text", ko: "%[1]s에서 고정된 텍스트로 응답"},
+	"tailscale.use.empty":       {en: "%[1]s with a handler that serves nothing", ko: "%[1]s에 아무것도 제공하지 않는 핸들러"},
+	"tailscale.use.tcp_forward": {en: "TCP forwarding of port %[1]s to %[2]s", ko: "포트 %[1]s의 TCP 전달(%[2]s)"},
+	"tailscale.use.plain_http":  {en: "plain HTTP on port %[1]s", ko: "포트 %[1]s의 일반 HTTP"},
+	"tailscale.use.funnel":      {en: "Funnel, open to the public Internet, on %[1]s", ko: "%[1]s의 Funnel(공개 인터넷에 열림)"},
+	"tailscale.use.foreground":  {en: "a foreground \"tailscale serve\" session on port %[1]s", ko: "포트 %[1]s의 포그라운드 \"tailscale serve\" 세션"},
+	"tailscale.use.incomplete":  {en: "an incomplete Serve setting on port %[1]s", ko: "포트 %[1]s의 불완전한 Serve 설정"},
+	"tailscale.use.unknown":     {en: "%[1]s", ko: "%[1]s"},
+
 	// Detail: the name when sharing was turned on.
 	"tailscale.problem.name_changed": {
 		en: "This computer's name in the tailnet changed after sharing was turned on. Turn sharing off and on again to use the new name. Name when sharing was turned on:",
