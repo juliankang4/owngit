@@ -161,6 +161,25 @@ also write a new file that only you can read:
 (umask 077; { printf 'owngit-server: %s\n' https://owngit.example.test; cat password-file; } > bound-password-file)
 ```
 
+On Windows, a file made with Notepad or `echo` inherits its folder's access
+entries and is refused as not private. In PowerShell, create the file, limit it
+to your account, write the password, and then add the line:
+
+```powershell
+$file = "$HOME\owngit-password.txt"
+New-Item -ItemType File -Path $file
+icacls $file /inheritance:r /grant:r "*$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value):F"
+[IO.File]::WriteAllText($file, [Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Password')).Password)
+[IO.File]::WriteAllText($file, "owngit-server: https://owngit.example.test`n" + [IO.File]::ReadAllText($file))
+```
+
+`icacls` removes the inherited entries and gives full control only to your
+account, and writing into the existing file keeps that.
+`Read-Host -AsSecureString` keeps the password off the screen and out of the
+PowerShell history. The commands work in an ordinary PowerShell window and in
+one opened with Run as administrator, where the Administrators group becomes
+the file's owner; OwnGit accepts that owner when only your account has access.
+
 Refusals are `credential_origin_required` (the server was inferred and the file
 names no server), `credential_origin_mismatch` (the file names another server),
 and `invalid_credential_origin` (the first line is malformed). Nothing is sent

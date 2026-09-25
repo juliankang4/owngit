@@ -85,6 +85,18 @@ SECRET
 (umask 077; { printf 'owngit-server: %s\n' https://owngit.example.test; cat password-file; } > bound-password-file)
 ```
 
+Windows에서 메모장이나 `echo`로 만든 파일은 폴더의 접근 항목을 상속하므로 비공개가 아니라는 이유로 거부됩니다. PowerShell에서 파일을 만들고 본인 계정으로 접근을 제한한 뒤 비밀번호를 적고 서버 줄을 넣으세요.
+
+```powershell
+$file = "$HOME\owngit-password.txt"
+New-Item -ItemType File -Path $file
+icacls $file /inheritance:r /grant:r "*$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value):F"
+[IO.File]::WriteAllText($file, [Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Password')).Password)
+[IO.File]::WriteAllText($file, "owngit-server: https://owngit.example.test`n" + [IO.File]::ReadAllText($file))
+```
+
+`icacls`는 상속된 항목을 지우고 본인 계정에만 모든 권한을 주며, 기존 파일에 내용을 쓰면 이 권한이 그대로 유지됩니다. `Read-Host -AsSecureString`은 비밀번호를 화면과 PowerShell 기록에 남기지 않습니다. 이 명령은 일반 PowerShell 창과 관리자 권한으로 실행한 창에서 똑같이 동작합니다. 관리자 창에서는 Administrators 그룹이 파일 소유자가 되며, 본인 계정만 접근할 수 있으면 OwnGit은 이 소유자를 받아들입니다.
+
 거부 코드는 `credential_origin_required`(서버를 `origin`에서 가져왔는데 파일에 서버가 없음), `credential_origin_mismatch`(파일에 다른 서버가 적혀 있음), `invalid_credential_origin`(첫 줄 형식이 잘못됨)입니다. 어느 경우에도 아무것도 보내지 않습니다. 체크 에이전트 토큰 파일이나 러너 토큰 파일을 직접 읽는 스크립트는 마지막 줄을 읽어야 합니다.
 
 ## 작업 흐름

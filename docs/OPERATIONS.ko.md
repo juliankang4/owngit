@@ -300,9 +300,22 @@ Nginx Proxy Manager가 접속해 오는 주소는 위에서 설명한 대로 신
 ./bin/owngit reset-admin --password-file /path/to/owner-only-password-file
 ```
 
-비밀번호 파일은 일반 파일이어야 합니다. Unix 계열 시스템에서는 그룹이나 다른 사용자가 읽을 수 없어야 합니다. OwnGit은 비밀번호를 명령줄 값으로 받지 않습니다. 관리자 비밀번호를 재설정하면 관리자 세션이 로그아웃되고 저장소는 그대로 남습니다.
+비밀번호 파일은 일반 파일이어야 합니다. Unix 계열 시스템에서는 그룹이나 다른 사용자가 읽을 수 없어야 합니다. Windows에서는 폴더의 접근 항목을 상속하지 않고 본인 계정에만 접근을 허용해야 합니다([Windows의 비밀번호 파일](#windows의-비밀번호-파일) 참고). OwnGit은 비밀번호를 명령줄 값으로 받지 않습니다. 관리자 비밀번호를 재설정하면 관리자 세션이 로그아웃되고 저장소는 그대로 남습니다.
 
 OwnGit에는 이메일 복구나 계정 복구 기능이 없습니다. 두 절차 모두 설치 호스트에 접근할 수 있어야 합니다.
+
+### Windows의 비밀번호 파일
+
+직접 만든 비밀번호 파일이나 토큰 파일을 읽는 명령은 모두 이 방식으로 검사합니다. `reset-admin`, `import`, `pr`, `repo`도 마찬가지입니다. 메모장이나 `echo`로 만든 파일은 폴더의 접근 항목을 상속하고, 이 항목은 보통 다른 계정에도 읽기를 허용하므로 OwnGit은 이 파일을 비공개가 아니라고 보고 거부합니다. PowerShell에서 파일을 만들고 본인 계정으로 접근을 제한한 다음에 비밀번호를 적으세요.
+
+```powershell
+$file = "$HOME\owngit-password.txt"
+New-Item -ItemType File -Path $file
+icacls $file /inheritance:r /grant:r "*$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value):F"
+[IO.File]::WriteAllText($file, [Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Password')).Password)
+```
+
+`icacls`는 상속된 항목을 지우고 본인 계정에 모든 권한을 줍니다. 계정은 보안 식별자(SID)로 지정합니다. `Read-Host -AsSecureString`은 비밀번호를 화면과 PowerShell 기록에 남기지 않습니다. 이 명령은 일반 PowerShell 창과 관리자 권한으로 실행한 창에서 똑같이 동작합니다. 관리자 창에서는 Windows가 새 파일의 소유자를 Administrators 그룹으로 정합니다. 관리자는 어차피 어떤 파일이든 소유권을 가져올 수 있으므로, 접근 항목에 본인 계정만 있으면 OwnGit은 이 소유자를 받아들입니다.
 
 ## 저장소 파일 되돌리기
 

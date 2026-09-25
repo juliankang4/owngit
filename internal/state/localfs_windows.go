@@ -213,12 +213,20 @@ func ProtectPrivateHandle(file *os.File, directory bool) error {
 }
 
 func validateOwnerOnlyHandle(handle windows.Handle, user *windows.SID, directory bool) error {
+	descriptor, err := handleDescriptor(handle)
+	if err != nil {
+		return err
+	}
+	return validateOwnerOnlyDescriptor(descriptor, user, directory)
+}
+
+func handleDescriptor(handle windows.Handle) (*windows.SECURITY_DESCRIPTOR, error) {
 	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return fmt.Errorf("read private-handle ACL: %w", err)
+		return nil, fmt.Errorf("read private-handle ACL: %w", err)
 	}
-	return validateOwnerOnlyDescriptor(descriptor, user, directory)
+	return descriptor, nil
 }
 
 func ValidatePrivateFile(path string) error {
@@ -233,7 +241,11 @@ func ValidatePrivateFile(path string) error {
 	if err != nil {
 		return err
 	}
-	return validateOwnerOnly(path, user, false)
+	descriptor, err := pathDescriptor(path)
+	if err != nil {
+		return err
+	}
+	return validatePrivateInputDescriptor(descriptor, user)
 }
 
 // ValidatePrivateFileHandle validates the open file without reopening its path.
@@ -249,7 +261,11 @@ func ValidatePrivateFileHandle(file *os.File) error {
 	if err != nil {
 		return err
 	}
-	return validateOwnerOnlyHandle(windows.Handle(file.Fd()), user, false)
+	descriptor, err := handleDescriptor(windows.Handle(file.Fd()))
+	if err != nil {
+		return err
+	}
+	return validatePrivateInputDescriptor(descriptor, user)
 }
 
 type tokenOwner struct {
@@ -306,14 +322,24 @@ func ownerMatchesProcess(owner, user, defaultOwner *windows.SID) bool {
 }
 
 func validateOwnerOnly(path string, user *windows.SID, directory bool) error {
-	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	descriptor, err := pathDescriptor(path)
 	if err != nil {
-		return fmt.Errorf("read private-file ACL: %w", err)
+		return err
 	}
 	return validateOwnerOnlyDescriptor(descriptor, user, directory)
 }
 
+func pathDescriptor(path string) (*windows.SECURITY_DESCRIPTOR, error) {
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return nil, fmt.Errorf("read private-file ACL: %w", err)
+	}
+	return descriptor, nil
+}
+
+// validateOwnerOnlyDescriptor checks a path OwnGit protected itself, so the
+// owner must be exactly the current user it set.
 func validateOwnerOnlyDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, directory bool) error {
 	if descriptor == nil {
 		return errors.New("private file has no security descriptor")
@@ -322,13 +348,41 @@ func validateOwnerOnlyDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, user *
 	if err != nil || owner == nil || !owner.Equals(user) {
 		return errors.New("private file must be owned by the current Windows user")
 	}
+	return validateUserOnlyDACL(descriptor, user, directory)
+}
+
+// validatePrivateInputDescriptor checks a file OwnGit reads, which may have
+// been made by hand. Its ACL must grant access only to the current user, as
+// for files OwnGit protects. Its owner may be the current user or the
+// Administrators group, which an elevated shell makes the owner of new files.
+// Administrators can take ownership of any file anyway, so accepting them as
+// owner does not widen who can read the file.
+func validatePrivateInputDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID) error {
+	if descriptor == nil {
+		return errors.New("private file has no security descriptor")
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || !privateInputOwner(owner, user) {
+		return errors.New("private file must be owned by the current Windows user or the Administrators group")
+	}
+	return validateUserOnlyDACL(descriptor, user, false)
+}
+
+func privateInputOwner(owner, user *windows.SID) bool {
+	if owner == nil {
+		return false
+	}
+	return owner.Equals(user) || owner.IsWellKnown(windows.WinBuiltinAdministratorsSid)
+}
+
+func validateUserOnlyDACL(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, directory bool) error {
 	control, _, err := descriptor.Control()
 	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
 		return errors.New("private file ACL must not inherit access entries")
 	}
 	dacl, _, err := descriptor.DACL()
 	if err != nil || dacl == nil || dacl.AceCount == 0 {
-		return errors.New("private file ACL must grant access only to its owner")
+		return errors.New("private file ACL must grant access only to the current Windows user")
 	}
 
 	// Windows can split a directory grant into an effective FILE_ALL_ACCESS ACE
@@ -347,7 +401,7 @@ func validateOwnerOnlyDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, user *
 			return errors.New("private file ACL cannot be inspected")
 		}
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
-			return errors.New("private file ACL must grant access only to its owner")
+			return errors.New("private file ACL must grant access only to the current Windows user")
 		}
 		flags := uint32(ace.Header.AceFlags)
 		if flags & ^allowedFlags != 0 || flags&windows.INHERIT_ONLY_ACE != 0 && flags&(windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE) == 0 {
@@ -355,7 +409,7 @@ func validateOwnerOnlyDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, user *
 		}
 		aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 		if !aceSID.Equals(user) || !hasFullFileAccess(ace.Mask) {
-			return errors.New("private file ACL must grant full access only to its owner")
+			return errors.New("private file ACL must grant full access only to the current Windows user")
 		}
 		if flags&windows.INHERIT_ONLY_ACE == 0 {
 			effectiveFullAccess = true
@@ -364,7 +418,7 @@ func validateOwnerOnlyDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, user *
 		containersInherit = containersInherit || flags&windows.CONTAINER_INHERIT_ACE != 0
 	}
 	if !effectiveFullAccess {
-		return errors.New("private file ACL must include an effective owner grant")
+		return errors.New("private file ACL must include an effective grant to the current Windows user")
 	}
 	if directory && (!objectsInherit || !containersInherit) {
 		return errors.New("private directory ACL must protect inherited files and directories")

@@ -123,9 +123,111 @@ func TestWindowsStateTargetResolutionAndOwnerOnlyACL(t *testing.T) {
 	noErr(t, os.WriteFile(privateFile, []byte("private"), 0o600))
 	if !defaultOwner.Equals(user) {
 		if err := ValidatePrivateFile(privateFile); err == nil {
-			t.Fatal("strict validation accepted a file still owned by the token default owner")
+			t.Fatal("validation accepted a file whose ACL is still inherited")
 		}
 	}
 	noErr(t, ProtectPrivatePath(privateFile, false))
 	noErr(t, ValidatePrivateFile(privateFile))
+}
+
+// testDescriptor builds a security descriptor with owner and a DACL that grants
+// full access to each of grants.
+func testDescriptor(t *testing.T, owner *windows.SID, protected bool, grants ...*windows.SID) *windows.SECURITY_DESCRIPTOR {
+	t.Helper()
+	entries := make([]windows.EXPLICIT_ACCESS, 0, len(grants))
+	for _, sid := range grants {
+		entries = append(entries, windows.EXPLICIT_ACCESS{
+			AccessPermissions: fileAllAccess,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_UNKNOWN,
+				TrusteeValue: windows.TrusteeValueFromSID(sid),
+			},
+		})
+	}
+	acl, err := windows.ACLFromEntries(entries, nil)
+	noErr(t, err)
+	descriptor, err := windows.NewSecurityDescriptor()
+	noErr(t, err)
+	noErr(t, descriptor.SetOwner(owner, false))
+	noErr(t, descriptor.SetDACL(acl, true, false))
+	if protected {
+		noErr(t, descriptor.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED))
+	}
+	return descriptor
+}
+
+// A file read as a secret must grant access only to the current user. Its
+// owner may be that user or the Administrators group (what an elevated shell
+// assigns), but no other account, and files OwnGit protects itself keep the
+// exact owner.
+func TestWindowsPrivateInputRule(t *testing.T) {
+	user, _, err := processIdentity()
+	noErr(t, err)
+	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	noErr(t, err)
+	users, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
+	noErr(t, err)
+	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	noErr(t, err)
+	if user.Equals(administrators) || user.Equals(users) {
+		t.Fatal("the current user is unexpectedly a builtin group")
+	}
+	for _, test := range []struct {
+		name       string
+		descriptor *windows.SECURITY_DESCRIPTOR
+		input      bool
+		protected  bool
+	}{
+		{"user owner, user only", testDescriptor(t, user, true, user), true, true},
+		{"Administrators owner, user only", testDescriptor(t, administrators, true, user), true, false},
+		{"Users owner, user only", testDescriptor(t, users, true, user), false, false},
+		{"user owner, inherited entries allowed", testDescriptor(t, user, false, user), false, false},
+		{"user owner, Everyone also granted", testDescriptor(t, user, true, user, everyone), false, false},
+		{"Administrators owner, Administrators also granted", testDescriptor(t, administrators, true, user, administrators), false, false},
+		{"Administrators owner, only Administrators granted", testDescriptor(t, administrators, true, administrators), false, false},
+	} {
+		err := validatePrivateInputDescriptor(test.descriptor, user)
+		if (err == nil) != test.input {
+			t.Errorf("%s: input validation error=%v, want accepted=%v", test.name, err, test.input)
+		}
+		err = validateOwnerOnlyDescriptor(test.descriptor, user, false)
+		if (err == nil) != test.protected {
+			t.Errorf("%s: protected-path validation error=%v, want accepted=%v", test.name, err, test.protected)
+		}
+	}
+}
+
+// A file written by hand and restricted the way the docs describe (inheritance
+// removed and full access granted to the current user, owner left as created)
+// is accepted from both an ordinary and an elevated shell. An elevated shell
+// makes the Administrators group the owner of the file.
+func TestWindowsHandMadePrivateFileIsAccepted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "password")
+	noErr(t, os.WriteFile(path, []byte("valid-password\n"), 0o600))
+	if err := ValidatePrivateFile(path); err == nil {
+		t.Fatal("a file with inherited access entries was accepted")
+	}
+	user, defaultOwner, err := processIdentity()
+	noErr(t, err)
+	acl, err := ownerOnlyACL(user, false)
+	noErr(t, err)
+	// Like icacls /inheritance:r /grant:r: the DACL changes, the owner does not.
+	noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
+	descriptor, err := pathDescriptor(path)
+	noErr(t, err)
+	owner, _, err := descriptor.Owner()
+	noErr(t, err)
+	if !owner.Equals(defaultOwner) {
+		t.Fatalf("owner=%s, want the token default owner %s", owner, defaultOwner)
+	}
+	t.Logf("file owner %s (current user %s)", owner, user)
+	noErr(t, ValidatePrivateFile(path))
+	file, err := os.Open(path)
+	noErr(t, err)
+	defer file.Close()
+	noErr(t, ValidatePrivateFileHandle(file))
 }
