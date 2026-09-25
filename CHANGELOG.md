@@ -4,6 +4,8 @@ All notable changes to OwnGit are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
 ## [1.0.3] - 2026-09-25
 
 **Upgrading:** the state database moves to schema 15 and offline backups to version 10. OwnGit 1.0.3 upgrades a 1.0.x database the first time it starts and still restores backups of versions 1, 2, 9 and 10. Earlier versions refuse the upgraded database and the new backups with a "newer version" message. To go back, restore a backup made before upgrading with the earlier version. Before you upgrade, stop OwnGit and make a backup with your current version's `owngit backup` (see Offline backups in the operations guide). Any 1.0.3 command that opens the state, including `backup`, upgrades the database first, and it logs one line when it does.

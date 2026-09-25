@@ -81,6 +81,18 @@ To start OwnGit at login with Homebrew, run `brew services start owngit`. Its lo
 
 Create a repository from the dashboard, then use its clone address, for example `http://127.0.0.1:7654/git/project.git`, with any Git client. [Operations](docs/OPERATIONS.md) covers access from other devices, moving existing repositories, recovery, and backups.
 
+## Resource use
+
+OwnGit is one program of about 30 MB (an 18 MB download) plus the Git already on the computer. Measured with OwnGit 1.0.3 after setup, with nobody using it:
+
+| | Linux x64 | macOS (Apple silicon) |
+| --- | --- | --- |
+| Memory, no repositories | about 45 MB | about 55 MB |
+| Memory, 100 small repositories | about 50 MB | about 50 MB |
+| CPU | under 0.1% of one core | under 0.1% of one core |
+
+Setting a password or signing in needs about 64 MB more for a moment, because passwords are hashed with Argon2id; OwnGit returns that memory within a few minutes. Each clone or push also runs Git, whose memory depends on the repository. Memory is the resident set size reported by `/proc` and `ps`; Activity Monitor on macOS can show a larger number.
+
 ## Access and security
 
 - The server is local-only by default. General repository access can be password-free or protected by one shared password. There are no individual accounts.

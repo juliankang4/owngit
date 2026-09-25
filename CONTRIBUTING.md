@@ -75,6 +75,11 @@ Runtime dependencies are `modernc.org/sqlite` (SQLite without a C compiler), `go
 
 A change must keep the following behavior.
 
+### Defaults
+
+- Everything works by default. A restriction on what owners do with their own installation is an option they can turn on, not a default that blocks them.
+- Protections against other people stay on: the administrator password, the shared access password, the one-time setup link, allowed Hosts, and the plain-HTTP acknowledgement. Make these steps easier instead of removing them.
+
 ### Private Git storage
 
 - Core use must not need published code, an external Git-host account, or an AI subscription.
