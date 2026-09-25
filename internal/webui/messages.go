@@ -246,6 +246,10 @@ const (
 	MsgConnPlainDetail MessageCode = "connection.plain_detail"
 	MsgConnTailscale   MessageCode = "connection.tailscale_hint"
 	MsgConnNoProof     MessageCode = "connection.no_proof"
+	// What OwnGit sees when a proxy or Tailscale on this computer encrypted
+	// the connection, in place of MsgConnNoProof.
+	MsgConnProxyNote     MessageCode = "connection.proxy_note"
+	MsgConnTailscaleNote MessageCode = "connection.tailscale_note"
 )
 
 // Repositories.
@@ -1031,6 +1035,14 @@ var catalog = map[MessageCode]message{
 	},
 	// A host name is not evidence. A Tailscale-style name can be served over
 	// plain HTTP, and a plain name can sit inside a protected network.
+	MsgConnProxyNote: {
+		en: "OwnGit receives this request over plain HTTP from the proxy in front of it. The encrypted part is between your device and that proxy; the proxy's own connection to OwnGit is plain HTTP.",
+		ko: "OwnGit은 앞에 있는 프록시에서 이 요청을 일반 HTTP로 받습니다. 암호화되는 구간은 사용 중인 기기와 그 프록시 사이이며, 프록시가 OwnGit에 연결하는 구간은 일반 HTTP입니다.",
+	},
+	MsgConnTailscaleNote: {
+		en: "OwnGit receives this request over plain HTTP from Tailscale on this computer. The encrypted part is between your device and Tailscale on this computer.",
+		ko: "OwnGit은 이 컴퓨터의 Tailscale에서 이 요청을 일반 HTTP로 받습니다. 암호화되는 구간은 사용 중인 기기와 이 컴퓨터의 Tailscale 사이입니다.",
+	},
 	MsgConnNoProof: {
 		en: "OwnGit reports only its own connection. It cannot tell whether a VPN or other protection covers the rest of the path, and a host name alone does not prove one.",
 		ko: "OwnGit은 자신이 맺은 연결만 알려줍니다. VPN 같은 다른 보호가 나머지 구간을 감싸는지는 알 수 없으며, 호스트 이름만으로는 증명되지 않습니다.",

@@ -1347,6 +1347,11 @@ func TestRepositoryAndActivityStatesAreHonest(t *testing.T) {
 		screen{name: "HTTPS through a trusted proxy names the proxy, not OwnGit",
 			page: overview(func(c *Chrome) { c.Connection = Connection{Encrypted: true, Proxy: true, Host: "git.example.internal"} }),
 			want: []MessageCode{MsgConnProxy}, markup: []string{"conn--secure"}, absent: []MessageCode{MsgConnEncrypted}},
+		screen{name: "Settings says OwnGit sees HTTP from the proxy and the encryption ends there",
+			page: SettingsPage{Chrome: with(fullChrome(LangKO), func(c *Chrome) {
+				c.Connection = Connection{Encrypted: true, Proxy: true, Host: "git.example.internal"}
+			}), SubmitURL: "/settings", AccessMode: AccessOpen},
+			lang: LangKO, want: []MessageCode{MsgConnProxy, MsgConnProxyNote}, absent: []MessageCode{MsgConnNoProof, MsgConnTailscaleNote}},
 		screen{name: "an acknowledged connection stops prompting and shows status",
 			page: SettingsPage{Chrome: with(fullChrome(LangEN), func(c *Chrome) {
 				c.Connection = Connection{Encrypted: false, InsecureAcknowledged: true}

@@ -87,6 +87,9 @@ func TestConnectionThroughTailscaleNamesTailscale(t *testing.T) {
 		if !strings.Contains(out, wantText(lang, MsgConnTailscaleOn)) || !strings.Contains(out, "conn--secure") {
 			t.Errorf("%s: the indicator does not say Tailscale on this computer encrypted the request", lang)
 		}
+		if !strings.Contains(out, wantText(lang, MsgConnTailscaleNote)) || strings.Contains(out, wantText(lang, MsgConnNoProof)) {
+			t.Errorf("%s: Settings does not say that OwnGit sees HTTP from Tailscale on this computer", lang)
+		}
 		if strings.Contains(out, wantText(lang, MsgConnEncrypted)) {
 			t.Errorf("%s: a request encrypted by Tailscale is reported as encrypted by OwnGit", lang)
 		}

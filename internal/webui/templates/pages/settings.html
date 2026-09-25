@@ -121,7 +121,11 @@
     {{if not .Chrome.Connection.Encrypted}}
       <p class="setblock__d">{{bi $lang "connection.plain_detail"}}</p>
     {{end}}
-    <p class="setblock__d">{{bi $lang "connection.no_proof"}}</p>
+    {{/* Through a proxy or Tailscale, OwnGit sees plain HTTP from it, and the
+         encrypted part ends there. */}}
+    {{if .Chrome.Connection.Tailscale}}<p class="setblock__d">{{bi $lang "connection.tailscale_note"}}</p>
+    {{else if .Chrome.Connection.Proxy}}<p class="setblock__d">{{bi $lang "connection.proxy_note"}}</p>
+    {{else}}<p class="setblock__d">{{bi $lang "connection.no_proof"}}</p>{{end}}
 
     {{/* Acknowledging plain HTTP is a security setting, so it also verifies
          the administrator password. */}}

@@ -54,7 +54,7 @@ func connectionMessages() []MessageCode {
 	return []MessageCode{
 		MsgSetupInsecureLabel, MsgSetupInsecureHelp, MsgSetupInsecureNeed,
 		MsgConnEncrypted, MsgConnProxy, MsgConnPlain, MsgConnPlainDetail,
-		MsgConnTailscale, MsgConnNoProof, MsgSettingsAckSubmit, MsgSettingsAckDone,
+		MsgConnTailscale, MsgConnNoProof, MsgConnProxyNote, MsgConnTailscaleNote, MsgSettingsAckSubmit, MsgSettingsAckDone,
 	}
 }
 
