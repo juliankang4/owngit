@@ -3,9 +3,13 @@ name: CI
 # Runs the checks from CONTRIBUTING.md on every pull request. Pull requests
 # merge by fast-forward, so main receives the commits that already passed here
 # and pushes to main do not run the checks again; run them by hand from the
-# Actions tab when needed. macOS is not in the matrix; contributors run the
-# checks there locally.
-# Tests are split into shards so the slowest packages run in parallel.
+# Actions tab when needed. Tests run on Linux (with the race detector),
+# Windows, and macOS.
+#
+# The tests of every package are split over four shards per system by
+# .github/scripts/test-shard.sh. Each job runs about a quarter of every
+# package, so the slowest package no longer sets the length of a run. Each test
+# runs in exactly one shard, and new tests join a shard without changes here.
 #
 # A change to documents alone runs nothing. The documents that tests read or
 # that release archives carry still run the checks.
@@ -63,12 +67,13 @@ jobs:
           GOOS=darwin go vet ./...
 
   test:
-    name: test (${{ matrix.os }}, ${{ matrix.shard }})
+    name: test (${{ matrix.os }}, ${{ matrix.shard }}/4)
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        shard: [importsync, server-release, rest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Keep in step with the shard count passed to test-shard.sh below.
+        shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -89,25 +94,8 @@ jobs:
           go version
           git --version
 
-      - name: Select packages
-        run: |
-          # Keep this list in step with the importsync and server-release shards.
-          heavy='^owngit/(internal/importsync|internal/server|tools/release)$'
-          case "${{ matrix.shard }}" in
-            importsync) packages="owngit/internal/importsync" ;;
-            server-release) packages="owngit/internal/server owngit/tools/release" ;;
-            rest) packages="$(go list ./... | grep -Ev "$heavy" | tr '\n' ' ')" ;;
-          esac
-          echo "PACKAGES=$packages" >> "$GITHUB_ENV"
-          echo "$packages"
-
-      # A slow runner can take more than Go's default 10 minutes for one
-      # package, so the limit is raised.
-      - name: go test
-        if: runner.os != 'Linux'
-        run: go test -timeout 30m $PACKAGES
-
-      # The race detector also runs every test, so Linux runs only this one.
-      - name: go test -race
-        if: runner.os == 'Linux'
-        run: go test -race -timeout 30m $PACKAGES
+      # Linux runs the tests once, with the race detector, which also runs
+      # every test; test-shard.sh names the packages it leaves out. Windows and
+      # macOS run them without it.
+      - name: go test (shard ${{ matrix.shard }} of 4)
+        run: bash .github/scripts/test-shard.sh ${{ matrix.shard }} 4 ${{ runner.os == 'Linux' && '-race' || '' }}

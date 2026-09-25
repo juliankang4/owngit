@@ -34,6 +34,8 @@ go test -race ./...
 
 `gofmt -l .` must print nothing. Integration tests create temporary repositories and cover Smart HTTP, ref retention, pull request revisions and merges, browser restore, offline backup and restore, import publication and recovery, and process cancellation. Tests with POSIX-shell fixtures skip on Windows.
 
+Pull requests run these checks in GitHub Actions: `gofmt` and `go vet` once, and the tests on Linux, Windows, and macOS, with `-race` only on Linux. The tests are split into four shards per system by [`.github/scripts/test-shard.sh`](.github/scripts/test-shard.sh). To repeat one shard locally, run `bash .github/scripts/test-shard.sh 2 4` (append `-race` to match Linux), or add `--dry-run` before the shard number to list its tests.
+
 ### Real Docker test (opt-in)
 
 One Linux test runs configured checks in a real Docker container. Run it only as a trusted nonroot user with Git, the Docker CLI, and the local default Docker socket available. The test does not pull images, install tools, use `sudo`, or contact an external network.
