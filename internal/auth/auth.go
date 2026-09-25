@@ -59,6 +59,10 @@ type Manager struct {
 	// clients serializes the checks of one kind and client address, so a
 	// failure is recorded before the next check from that address starts.
 	clients map[string]*clientTurn
+	// remembered holds recent successful shared-password checks.
+	remembered rememberedChecks
+	// passwordCheck replaces CheckPassword in tests; nil uses CheckPassword.
+	passwordCheck func(encoded, password string) bool
 }
 
 // clientTurn is a context-aware lock shared by the checks of one kind and
@@ -183,18 +187,36 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 	if err != nil {
 		return err
 	}
+	// Only the shared access password is remembered. Administrator
+	// confirmations are rare and typed by a person, so they keep the full
+	// check and no fast digest of that password stays in memory.
+	var remembered []byte
+	if kind == "general" && encoded != "" && withinMaximum(password) {
+		remembered = m.remembered.digest(kind, encoded, password)
+		if m.remembered.contains(remembered, m.now()) {
+			return m.Store.ClearAttempts(ctx, kind, address)
+		}
+	}
 	if err := m.acquireCheck(ctx); err != nil {
 		return err
 	}
 	defer func() { <-m.checkSlots }()
-	if encoded == "" || !CheckPassword(encoded, password) {
+	check := m.passwordCheck
+	if check == nil {
+		check = CheckPassword
+	}
+	if encoded == "" || !check(encoded, password) {
 		// A client that leaves after its guess was checked still counts.
 		if err := m.Store.RecordFailedAttempt(context.WithoutCancel(ctx), kind, address, m.now(), maximumFailures, failureWindow, failureBlock); err != nil {
 			return err
 		}
 		return errors.New("invalid credentials")
 	}
-	return m.Store.ClearAttempts(ctx, kind, address)
+	if err := m.Store.ClearAttempts(ctx, kind, address); err != nil {
+		return err
+	}
+	m.remembered.add(remembered, m.now())
+	return nil
 }
 
 // takeTurn waits until no other check of key runs and returns the release

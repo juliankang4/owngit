@@ -91,7 +91,7 @@ OwnGit is one program of about 30 MB (an 18 MB download) plus the Git already on
 | Memory, 100 small repositories | about 50 MB | about 50 to 70 MB |
 | CPU | under 0.1% of one core | under 0.1% of one core |
 
-Each password check needs about 70 MB more for a moment, because passwords are hashed with Argon2id. OwnGit checks a password when you set one or sign in, when you confirm a settings change with the administrator password, and on every Git or API request when a shared access password is set. It runs at most four checks at once and gives the memory back to the system a few minutes later. Each clone or push also runs Git, whose memory depends on the repository. Memory is the resident set size reported by `/proc` and `ps`; Activity Monitor on macOS can show a larger number.
+Each password check needs about 70 MB more for a moment, because passwords are hashed with Argon2id. OwnGit checks a password when you set one or sign in, when you confirm a settings change with the administrator password, and on Git and API requests when a shared access password is set. After the shared password is checked once, OwnGit accepts the same password for five minutes without hashing it again, so the several requests of one clone or push need one check. It runs at most four checks at once and gives the memory back to the system a few minutes later. Each clone or push also runs Git, whose memory depends on the repository. Memory is the resident set size reported by `/proc` and `ps`; Activity Monitor on macOS can show a larger number.
 
 ## Access and security
 
