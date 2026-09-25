@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
@@ -195,5 +196,41 @@ func TestUnfinishedSharingOffersTurningOnAgain(t *testing.T) {
 	}
 	if report, err := app.Tailscale.Report(ctx); err != nil || !report.Ready {
 		t.Fatalf("after turning on again: %+v %v", report, err)
+	}
+}
+
+// A viewer who is not the administrator sees that the port is taken, but not
+// the backend addresses of other services, addresses under earlier names or
+// what Tailscale printed. An administrator session sees them.
+func TestOnlyTheAdministratorSeesWhatElseTailscaleServes(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve = tailscale.ServeConfig{
+			TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+			Web: map[string]tailscale.WebServer{
+				tailscaletest.Name + ":443":  {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}}},
+				"oldbox.tail0000.ts.net:443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:9090"}}},
+			},
+		}
+	})
+	client, base, _, body := networkSettingsClient(t, app)
+	if !strings.Contains(body, enText(webui.MsgTSTakenBrief)) {
+		t.Error("a viewer is not told that the port is taken")
+	}
+	for _, secret := range []string{"127.0.0.1:3000", "127.0.0.1:9090", "oldbox", enText(webui.MsgTSStale)} {
+		if strings.Contains(body, secret) {
+			t.Errorf("a viewer sees %q", secret)
+		}
+	}
+	settings, err := app.Store.Settings(context.Background())
+	noErr(t, err)
+	noErr(t, app.Store.CreateSession(context.Background(), "tailscale-admin-session", "admin", "tailscale-admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
+	parsed, _ := url.Parse(base)
+	client.Jar.SetCookies(parsed, []*http.Cookie{{Name: adminCookie, Value: "tailscale-admin-session", Path: "/"}})
+	body, _ = dashboardGET(t, client, base+"/settings")
+	for _, want := range []string{enText(webui.MsgTSTaken), "127.0.0.1:3000", "https://oldbox.tail0000.ts.net:443/"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the administrator does not see %q", want)
+		}
 	}
 }

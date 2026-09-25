@@ -31,7 +31,8 @@ type TailscaleInfo struct {
 	Waiting []MessageCode
 	// Found lists what else is on Tailscale's HTTPS port, and FoundNote
 	// introduces it: the port is taken while sharing is off, or changed
-	// while it is on.
+	// while it is on. Only the administrator gets the list; other viewers
+	// get a note that says only that.
 	Found []TailscaleUse
 	// Stale lists what Tailscale keeps under an earlier name of this
 	// computer (MsgTSStale).

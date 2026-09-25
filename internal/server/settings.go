@@ -156,13 +156,23 @@ func (app *App) allowSettingsViewer(writer http.ResponseWriter, request *http.Re
 }
 
 func (app *App) renderSettings(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, pending string, notices []webui.Notice, status int) {
-	app.renderSettingsPage(writer, request, settings, csrf, pending, notices, status, nil)
+	app.renderSettingsPage(writer, request, settings, csrf, pending, notices, status, settingsView{})
 }
 
-// renderSettingsPage renders Settings. network, when set, is what a refused
-// Network save submitted, shown again so it can be corrected; otherwise the
-// Network form shows the saved values.
-func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, pending string, notices []webui.Notice, status int, network *webui.NetworkForm) {
+// settingsView is what a refused form brings to the Settings page that
+// shows it again.
+type settingsView struct {
+	// Network is what a refused Network save submitted.
+	Network *webui.NetworkForm
+	// AdminVerified is true when this request verified the administrator
+	// password, so the page may show what only an administrator sees.
+	AdminVerified bool
+}
+
+// renderSettingsPage renders Settings. A refused Network save in view is
+// shown again so it can be corrected; otherwise the Network form shows the
+// saved values.
+func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, pending string, notices []webui.Notice, status int, view settingsView) {
 	chrome, err := app.chrome(writer, request, webui.SectionSettings, "", csrf)
 	if err != nil {
 		app.writePlainError(writer, http.StatusServiceUnavailable)
@@ -174,8 +184,8 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	networkBlock := networkInfo(report)
-	if network != nil {
-		networkBlock.Form = *network
+	if view.Network != nil {
+		networkBlock.Form = *view.Network
 	}
 	if pending == webui.ActionSaveNetwork {
 		networkBlock.Focus = networkFocus(notices)
@@ -197,6 +207,6 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 		Chrome: chrome, SubmitURL: "/settings", AccessMode: mode, AdminRequired: true,
 		PendingAction: pending, Storage: storage, CloneHint: app.serverOrigin(request) + "/git/",
 		UpdateCheck: webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil},
-		Network:     networkBlock, Tailscale: app.tailscaleBlock(request.Context()),
+		Network:     networkBlock, Tailscale: app.tailscaleBlock(request.Context(), chrome.Viewer.AdminConfirmed || view.AdminVerified),
 	})
 }

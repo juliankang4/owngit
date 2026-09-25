@@ -19,7 +19,12 @@ import (
 
 // tailscaleBlock reads the state of sharing for the page. It never fails the
 // page: a state that cannot be read is shown as a Tailscale problem.
-func (app *App) tailscaleBlock(ctx context.Context) webui.TailscaleInfo {
+//
+// Only an administrator sees what Tailscale reports beyond OwnGit's own
+// endpoint: what else is on the port, addresses under earlier names and what
+// Tailscale printed, since they can name other services on this computer.
+// Other viewers see that the port is taken.
+func (app *App) tailscaleBlock(ctx context.Context, admin bool) webui.TailscaleInfo {
 	if app.Tailscale == nil {
 		return webui.TailscaleInfo{Problem: webui.TailscaleProblemCode(string(tailscale.KindNotInstalled))}
 	}
@@ -27,7 +32,15 @@ func (app *App) tailscaleBlock(ctx context.Context) webui.TailscaleInfo {
 	if err != nil {
 		return webui.TailscaleInfo{Problem: webui.MsgTSProblemFailed}
 	}
-	return tailscaleInfo(report)
+	info := tailscaleInfo(report)
+	if !admin {
+		info.ProblemDetail, info.Stale = "", nil
+		if info.Found != nil {
+			info.Found = nil
+			info.FoundNote = webui.TailscalePortNoteBrief(info.FoundNote)
+		}
+	}
+	return info
 }
 
 // tailscaleInfo turns the report into the page block.
@@ -93,7 +106,7 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 func (app *App) renderTailscaleRefusal(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, action string, err error) {
 	var refusal *TailscaleError
 	if !errors.As(err, &refusal) {
-		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("tailscale", webui.MsgErrUnavailable)}, http.StatusServiceUnavailable)
+		app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("tailscale", webui.MsgErrUnavailable)}, http.StatusServiceUnavailable, settingsView{AdminVerified: true})
 		return
 	}
 	// What is on the port is listed in the block, in the page's language.
@@ -105,7 +118,7 @@ func (app *App) renderTailscaleRefusal(writer http.ResponseWriter, request *http
 	if refusal.Problem == TailscaleProblemReadBack && refusal.MacApp {
 		notices = append(notices, webui.Notice{Kind: webui.NoticeInfo, Code: webui.MsgTSReadBackMacApp, Field: "tailscale"})
 	}
-	app.renderSettings(writer, request, settings, csrf, action, notices, http.StatusConflict)
+	app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusConflict, settingsView{AdminVerified: true})
 }
 
 // tailscaleUses turns what Tailscale has on its port into the page's form.

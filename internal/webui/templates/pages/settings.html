@@ -293,9 +293,9 @@
       </div>
     {{end}}
     {{/* A refusal about the port points to this list. */}}
-    {{if $ts.Found}}
+    {{if $ts.FoundNote}}
       <div class="netnote">{{icon "warning"}}<div><span>{{bi $lang $ts.FoundNote}}</span>
-        <ul class="tsfound">{{range $ts.Found}}<li>{{tsUse $lang .}}</li>{{end}}</ul></div></div>
+        {{with $ts.Found}}<ul class="tsfound">{{range .}}<li>{{tsUse $lang .}}</li>{{end}}</ul>{{end}}</div></div>
     {{end}}
     {{if $ts.Stale}}
       <div class="netnote netnote--info">{{icon "info"}}<div><span>{{bi $lang "tailscale.stale"}}</span>

@@ -215,7 +215,7 @@ func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, s
 		acknowledge = true
 	}
 	if len(notices) > 0 {
-		app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity, &form)
+		app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity, settingsView{Network: &form, AdminVerified: true})
 		return
 	}
 	update := state.NetworkUpdate{Settings: state.NetworkSettings{Listen: form.Listen, BaseURL: baseURL}}

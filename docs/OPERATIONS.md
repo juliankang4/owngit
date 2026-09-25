@@ -122,7 +122,7 @@ Turn sharing on in Settings, under "Share on your tailnet over HTTPS", with the 
 
 Turning it on does the following:
 
-1. OwnGit reads the current Tailscale Serve configuration first. If HTTPS port 443 of this computer already serves something else, including Tailscale Funnel, OwnGit changes nothing and shows what is there.
+1. OwnGit reads the current Tailscale Serve configuration first. If HTTPS port 443 of this computer already serves something else, including Tailscale Funnel, OwnGit changes nothing and shows what is there. The Settings page lists it, like addresses under earlier names and what Tailscale printed, only to an administrator session or right after the administrator password was entered; other viewers see only that the port is taken. `owngit tailscale status` always lists it.
 2. It runs `tailscale serve --bg --https=443 http://127.0.0.1:PORT`, where PORT is OwnGit's port, and reads the configuration back to confirm that the address points at OwnGit.
 3. It saves the HTTPS address as the base URL, the Tailscale name as an allowed Host, and `127.0.0.1` as a trusted proxy, each only if it is not saved yet. It also records what it made, so that turning off can take back exactly that.
 

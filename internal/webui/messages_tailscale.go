@@ -59,6 +59,15 @@ func TailscaleUseText(lang Lang, use TailscaleUse) string {
 	return fmt.Sprintf(Text(lang, TailscaleUseCode(use.Kind)), use.Address, use.Target)
 }
 
+// TailscalePortNoteBrief is note without the list of what is on the port,
+// for a viewer who is not the administrator.
+func TailscalePortNoteBrief(note MessageCode) MessageCode {
+	if note == MsgTSChanged {
+		return MsgTSChangedBrief
+	}
+	return MsgTSTakenBrief
+}
+
 // tsUse renders the description of use in both languages.
 func tsUse(lang Lang, use TailscaleUse) template.HTML {
 	return biText(lang, TailscaleUseText(LangEN, use), TailscaleUseText(LangKO, use))
@@ -230,6 +239,8 @@ const (
 	MsgTSCloneHint     MessageCode = "settings.tailscale.clone_hint"
 	MsgTSTaken         MessageCode = "settings.tailscale.taken"
 	MsgTSChanged       MessageCode = "settings.tailscale.changed"
+	MsgTSTakenBrief    MessageCode = "settings.tailscale.taken_brief"
+	MsgTSChangedBrief  MessageCode = "settings.tailscale.changed_brief"
 	MsgTSTurnOn        MessageCode = "settings.tailscale.turn_on"
 	MsgTSTurnOnButton  MessageCode = "settings.tailscale.turn_on_button"
 	MsgTSTurnOff       MessageCode = "settings.tailscale.turn_off"
@@ -258,6 +269,14 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 	MsgTSCloneHint: {
 		en: "Clone addresses start with it, such as %sgit/project.git.",
 		ko: "클론 주소는 %sgit/project.git처럼 이 주소로 시작합니다.",
+	},
+	MsgTSTakenBrief: {
+		en: "Tailscale's HTTPS port 443 on this computer already serves something else, so sharing cannot be turned on. \"owngit tailscale status\" on this computer shows what is there.",
+		ko: "이 컴퓨터에서 Tailscale의 HTTPS 포트 443이 이미 다른 것을 제공하고 있어 공유를 켤 수 없습니다. 이 컴퓨터에서 \"owngit tailscale status\"를 실행하면 무엇이 있는지 볼 수 있습니다.",
+	},
+	MsgTSChangedBrief: {
+		en: "Tailscale's HTTPS port 443 on this computer now has something other than the address OwnGit made. \"owngit tailscale status\" on this computer shows what is there.",
+		ko: "이 컴퓨터에서 Tailscale의 HTTPS 포트 443에 OwnGit이 만든 주소 대신 다른 설정이 있습니다. 이 컴퓨터에서 \"owngit tailscale status\"를 실행하면 무엇이 있는지 볼 수 있습니다.",
 	},
 	MsgTSTaken: {
 		en: "Tailscale's HTTPS port 443 on this computer already serves something else, so sharing cannot be turned on. If you no longer need it, remove it with \"tailscale serve\". On the port now:",
