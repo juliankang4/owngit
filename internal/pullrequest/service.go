@@ -838,7 +838,7 @@ func (service *Service) repositoryPath(ctx context.Context, repositoryID string)
 	}
 	path, _, exists, err := service.Repositories.ExistingPath(ctx, repositoryID)
 	if errors.Is(err, repository.ErrRepositoryPreparing) {
-		return "", &Problem{Code: "repository_preparing", Message: "The repository is being prepared after startup. Try again later.", Cause: err}
+		return "", &Problem{Code: "repository_preparing", Message: "The repository is being prepared. Try again later.", Cause: err}
 	}
 	if err != nil {
 		return "", &Problem{Code: "repository_unavailable", Message: "The repository storage is unavailable.", Cause: err}

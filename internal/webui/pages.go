@@ -335,6 +335,9 @@ type RepositorySummary struct {
 	// Preparing is true while OwnGit prepares the repository after startup.
 	// Nothing was read from Git, so only the name and description are known.
 	Preparing bool
+	// Unreadable is true when the repository's Git data could not be read
+	// for this page. Only the name and description are known.
+	Unreadable bool
 }
 
 // ---------------------------------------------------------------------------

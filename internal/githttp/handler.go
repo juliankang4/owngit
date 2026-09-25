@@ -37,11 +37,14 @@ type Handler struct {
 	MaximumRequest   int64
 	MaximumResponse  int64
 	OperationTimeout time.Duration
-	semaphore        chan struct{}
-	active           atomic.Int64
-	operationMu      sync.Mutex
-	operations       sync.WaitGroup
-	closing          bool
+	// QueueWait bounds how long a request waits for a transfer slot before
+	// it is refused with 503 and Retry-After.
+	QueueWait   time.Duration
+	slots       *admission
+	active      atomic.Int64
+	operationMu sync.Mutex
+	operations  sync.WaitGroup
+	closing     bool
 }
 
 func New(git *gitexec.Runner, repositories *repository.Manager, backendPath string, maximumConcurrent int) (*Handler, error) {
@@ -62,7 +65,7 @@ func New(git *gitexec.Runner, repositories *repository.Manager, backendPath stri
 	return &Handler{
 		Git: git, Repositories: repositories, BackendPath: backendPath,
 		MaximumRequest: 4 << 30, MaximumResponse: 4 << 30, OperationTimeout: 30 * time.Minute,
-		semaphore: make(chan struct{}, maximumConcurrent),
+		QueueWait: 90 * time.Second, slots: newAdmission(maximumConcurrent),
 	}, nil
 }
 
@@ -100,7 +103,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	repositoryPath, _, exists, err := h.Repositories.ExistingPath(request.Context(), route.repositoryID)
 	if errors.Is(err, repository.ErrRepositoryPreparing) {
 		writer.Header().Set("Retry-After", "30")
-		http.Error(writer, "repository is being prepared after startup; try again later", http.StatusServiceUnavailable)
+		http.Error(writer, "repository is being prepared; try again later", http.StatusServiceUnavailable)
 		return
 	}
 	if err != nil {
@@ -120,12 +123,17 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	h.operations.Add(1)
 	h.operationMu.Unlock()
 	defer h.operations.Done()
-	select {
-	case h.semaphore <- struct{}{}:
-		defer func() { <-h.semaphore }()
-	case <-request.Context().Done():
+	release, err := h.slots.acquire(request.Context(), route.repositoryID, h.QueueWait)
+	if errors.Is(err, errBusy) {
+		logGitFailure(route, request.Method, "no Git transfer slot became free within "+h.QueueWait.String())
+		writer.Header().Set("Retry-After", "10")
+		http.Error(writer, "Git service is busy with other transfers; try again shortly", http.StatusServiceUnavailable)
 		return
 	}
+	if err != nil {
+		return
+	}
+	defer release()
 	h.active.Add(1)
 	defer h.active.Add(-1)
 
@@ -138,12 +146,13 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		defer lock.RUnlock()
 	}
 
+	controller := http.NewResponseController(writer)
 	operationContext := request.Context()
 	cancel := func() {}
+	var deadline time.Time
 	if h.OperationTimeout > 0 {
-		deadline := time.Now().Add(h.OperationTimeout)
+		deadline = time.Now().Add(h.OperationTimeout)
 		operationContext, cancel = context.WithDeadline(operationContext, deadline)
-		controller := http.NewResponseController(writer)
 		// Context cancellation alone does not interrupt a blocked socket Read or
 		// Write. Connection deadlines bound both directions without buffering a
 		// pack request or response in memory.
@@ -157,17 +166,27 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	defer cancel()
 	request = request.WithContext(operationContext)
 
-	body := request.Body
+	contentLength := request.ContentLength
+	streamContext, cancelStream := context.WithCancelCause(request.Context())
+	defer cancelStream(nil)
+	var consumeFailed atomic.Bool
+	// input is the body the backend reads. A read error on it, such as the
+	// size limit, also abandons the request.
+	var input *observedBody
+	body := io.ReadCloser(&networkBody{
+		ReadCloser: request.Body,
+		abandoned: func() bool {
+			return streamContext.Err() != nil || consumeFailed.Load() || (input != nil && input.firstError() != nil)
+		},
+		expire: func() { _ = controller.SetReadDeadline(time.Now()) },
+	})
 	if h.MaximumRequest > 0 {
 		// The subprocess copies stdin on its own goroutine. Passing the live
 		// ResponseWriter to MaxBytesReader would let that goroutine write a 413
 		// concurrently with the CGI response copier. The handler reports the
 		// returned MaxBytesError after both owned streams have stopped instead.
-		body = http.MaxBytesReader(nil, request.Body, h.MaximumRequest)
+		body = http.MaxBytesReader(nil, body, h.MaximumRequest)
 	}
-	contentLength := request.ContentLength
-	streamContext, cancelStream := context.WithCancelCause(request.Context())
-	defer cancelStream(nil)
 	if gzipped {
 		// Git clients gzip upload-pack requests over 1 KiB. Inflate here so the
 		// same MaximumRequest also bounds the inflated bytes the backend reads.
@@ -194,7 +213,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 		contentLength = -1
 	}
-	input := &observedBody{ReadCloser: body}
+	input = &observedBody{ReadCloser: body}
 	extraEnvironment, err := h.cgiEnvironment(request, route, contentLength)
 	if err != nil {
 		_ = input.Close()
@@ -202,13 +221,27 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	committed := &responseState{ResponseWriter: writer}
+	var report *pushReport
+	var observer io.Writer
+	if route.service == "git-receive-pack" && request.Method == http.MethodPost {
+		report = &pushReport{}
+		observer = report
+	}
 	stderr, err := h.Git.Stream(streamContext, h.BackendPath, repositoryPath, input, extraEnvironment, func(stdout io.Reader) error {
-		return h.copyCGIResponse(committed, stdout)
+		err := h.copyCGIResponse(committed, stdout, observer)
+		consumeFailed.Store(err != nil)
+		return err
 	})
 	if err == nil && route.service == "git-receive-pack" && h.OnReceive != nil {
 		h.OnReceive(route.repositoryID)
 	}
-	if err == nil && len(stderr) == 0 {
+	inBand := ""
+	if report != nil {
+		// Without a side band, receive-pack's messages arrive on stderr.
+		report.scan(stderr)
+		inBand = report.reason()
+	}
+	if err == nil && len(stderr) == 0 && inBand == "" {
 		return
 	}
 	// The backend usually fails after a request-body error cut its input
@@ -218,7 +251,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	var maxErr *http.MaxBytesError
 	tooLarge := errors.As(err, &maxErr) || errors.As(inputErr, &maxErr)
 	invalidGzip := errors.Is(context.Cause(streamContext), errInvalidGzip)
-	if reason := failureReason(err, stderr, tooLarge, invalidGzip); reason != "" {
+	// The deadline also bounds the connection, so an operation that ran out
+	// of time can surface as a write timeout or a cancelled request instead.
+	timedOut := err != nil && !deadline.IsZero() && !time.Now().Before(deadline)
+	reason := failureReason(err, stderr, tooLarge, invalidGzip, timedOut)
+	if err == nil && inBand != "" {
+		reason = inBand
+	}
+	if reason != "" {
 		logGitFailure(route, request.Method, reason)
 	}
 	if err != nil && !committed.wroteHeader {
@@ -260,6 +300,8 @@ func requestBodyEncoding(request *http.Request) (gzipped bool, ok bool) {
 
 var errInvalidGzip = errors.New("request body is not valid gzip")
 
+var errResponseTooLarge = errors.New("Git response exceeded the configured limit")
+
 // gzipBody inflates a request body. When the network body ended cleanly but
 // the gzip stream is corrupt, truncated or fails its checksum, Read cancels
 // the operation and blocks until the backend stream closes the body. The
@@ -294,6 +336,43 @@ func (body *gzipBody) Close() error {
 	return body.source.Close()
 }
 
+// networkBody is the request body read from the connection. net/http's Close
+// waits for a Read blocked on a stalled client and then reads up to 256 KiB
+// more, so closing alone does not release an abandoned upload before the
+// connection read deadline. When the operation was abandoned and the body is
+// unfinished, Close first moves that deadline to now, which ends the blocked
+// Read and the drain at once. The backend stream closes its input only after
+// it has terminated the backend, so the backend never sees the cut input as a
+// complete request.
+//
+// Known limit: a backend that exits normally before reading the whole
+// request, while the client stalls its upload, is not an abandoned operation
+// here, so Close still waits for the operation deadline. Expiring the
+// deadline in that case would make net/http cancel the request context,
+// which races with the stream's final wait and can turn a completed push
+// into a cancelled one; it also breaks the bounded gzip upload-pack case.
+type networkBody struct {
+	io.ReadCloser
+	abandoned func() bool
+	expire    func()
+	ended     atomic.Bool
+}
+
+func (body *networkBody) Read(buffer []byte) (int, error) {
+	n, err := body.ReadCloser.Read(buffer)
+	if err == io.EOF {
+		body.ended.Store(true)
+	}
+	return n, err
+}
+
+func (body *networkBody) Close() error {
+	if !body.ended.Load() && body.abandoned() {
+		body.expire()
+	}
+	return body.ReadCloser.Close()
+}
+
 // observedBody records the first read error of the backend input, which the
 // backend stream does not report when the backend itself also fails.
 type observedBody struct {
@@ -326,7 +405,7 @@ func (body *observedBody) firstError() error {
 // handler cancels the backend for it. Backend diagnostics come before the
 // exit status because a backend that stops reading early also makes the input
 // copy fail. It never includes backend output, which can echo request bytes.
-func failureReason(err error, stderr []byte, tooLarge, invalidGzip bool) string {
+func failureReason(err error, stderr []byte, tooLarge, invalidGzip, timedOut bool) string {
 	message := string(stderr)
 	var exitErr *exec.ExitError
 	switch {
@@ -334,10 +413,12 @@ func failureReason(err error, stderr []byte, tooLarge, invalidGzip bool) string 
 		return "request body exceeded the size limit"
 	case invalidGzip:
 		return errInvalidGzip.Error()
+	case errors.Is(err, errResponseTooLarge):
+		return "response exceeded the size limit"
+	case timedOut || errors.Is(err, context.DeadlineExceeded):
+		return "operation timed out"
 	case errors.Is(err, context.Canceled):
 		return ""
-	case errors.Is(err, context.DeadlineExceeded):
-		return "operation timed out"
 	case strings.Contains(message, "protocol error"):
 		return "Git protocol error"
 	case strings.Contains(message, "request was larger than our maximum size"):
@@ -399,7 +480,8 @@ func parseRoute(request *http.Request) (route, bool) {
 	}
 	id := remainder[:marker]
 	suffix := remainder[marker+5:]
-	if id != strings.ToLower(id) || !validID(id) {
+	// The route accepts exactly the IDs a repository can be created with.
+	if repository.ValidateID(id) != nil {
 		return route{}, false
 	}
 	switch {
@@ -422,19 +504,6 @@ func parseRoute(request *http.Request) (route, bool) {
 	default:
 		return route{}, false
 	}
-}
-
-func validID(id string) bool {
-	if id == "" || len(id) > 100 || id[0] == '.' || id[len(id)-1] == '.' {
-		return false
-	}
-	for _, character := range id {
-		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '.' || character == '_' || character == '-' {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 // cgiEnvironment describes the request to git-http-backend. contentLength is
@@ -483,7 +552,9 @@ func (h *Handler) cgiEnvironment(request *http.Request, route route, contentLeng
 	return environment, nil
 }
 
-func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader) error {
+// copyCGIResponse copies the backend's CGI response to writer. A non-nil
+// observer also receives the body bytes as they are copied.
+func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, observer io.Writer) error {
 	reader := bufio.NewReaderSize(stdout, 32<<10)
 	totalHeaderBytes := 0
 	status := http.StatusOK
@@ -527,17 +598,21 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader) error
 		writer.Header().Add(name, value)
 	}
 	writer.WriteHeader(status)
+	body := io.Reader(reader)
+	if observer != nil {
+		body = io.TeeReader(reader, observer)
+	}
 	if h.MaximumResponse <= 0 {
-		_, err := io.Copy(writer, reader)
+		_, err := io.Copy(writer, body)
 		return err
 	}
-	limited := &io.LimitedReader{R: reader, N: h.MaximumResponse + 1}
+	limited := &io.LimitedReader{R: body, N: h.MaximumResponse + 1}
 	written, err := io.Copy(writer, limited)
 	if err != nil {
 		return err
 	}
 	if written > h.MaximumResponse {
-		return errors.New("Git response exceeded the configured limit")
+		return errResponseTooLarge
 	}
 	return nil
 }

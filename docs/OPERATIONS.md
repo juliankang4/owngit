@@ -320,20 +320,29 @@ Create a stable task, then run checks:
 
 Raw check logs are stored in `owngit.sqlite`, limited to 256 KiB each, and kept for 30 days by default. Task and attempt records stay after a log expires. Reading an expired log returns `log_expired`, and a log that is missing earlier returns `log_missing`. A log that fails its integrity check is refused, and a truncated log is reported as truncated. If the database is full or reports an I/O error while storing a result, OwnGit stores the result without its raw log and records a log error on the attempt.
 
-## Repositories being prepared at startup
+## Repositories being prepared
 
 When `owngit serve` starts, it prepares each repository before serving it. It checks the repository's safety settings and retention hook and finishes pull request work that a previous run left unfinished. Up to 8 repositories are prepared at a time. Startup waits at most 10 seconds for this. Repositories that are not ready by then are served as soon as they are.
 
+While OwnGit runs, a repository whose folder cannot be read when the dashboard lists it (for example because the folder was moved, its permissions changed, or its share is not mounted) is locked and prepared again in the same way. A repository whose folder can be read but whose Git data cannot is not locked: the dashboard lists it with an Unreadable label and leaves it out of the activity count, the server log records the cause once, and Git reports the error itself. Either way, the dashboard keeps listing the other repositories.
+
 A repository whose preparation fails or does not finish stays locked, and the other repositories are served normally. While it is locked:
 
-- Git clones, fetches and pushes get HTTP 503 with the message `repository is being prepared after startup; try again later`.
+- Git clones, fetches and pushes get HTTP 503 with the message `repository is being prepared; try again later`.
 - Its pages show that the repository is being prepared, and the API answers with the error code `repository_preparing`. The dashboard lists it with a Preparing label and leaves it out of the activity count.
 - Scheduled imports and project checks for it wait. Nothing is recorded as failed, and they run once it is ready.
 - An administrator can still delete it (except while a preparation attempt is running), and can still issue and revoke its helper credentials and runner tokens.
 
-OwnGit retries a failed preparation by itself: 30 seconds after the attempt ended, then after twice the previous wait, up to 10 minutes. An attempt that does not return is never overlapped by another. The server log names the repository and the cause of each failure, and says when the repository is served again. The pages do not show the cause. Fix the cause (for example a disk that is not mounted, file permissions, or a conflicting Git setting that the log quotes) and wait for the next retry, or restart OwnGit to retry at once.
+OwnGit retries a failed preparation by itself: 30 seconds after the attempt ended, then after twice the previous wait, up to 10 minutes. When the folder could not be read, OwnGit also checks it every 5 seconds and retries as soon as it can be read again. An attempt that does not return is never overlapped by another. The server log names the repository and the cause of each failure, and says when the repository is served again. The pages do not show the cause. Fix the cause (for example a disk that is not mounted, file permissions, or a conflicting Git setting that the log quotes) and wait for the next retry, or restart OwnGit to retry at once.
 
 If OwnGit cannot read the list of repositories from its state database, it still refuses to start.
+
+## Git transfer limits
+
+- Each Git request, such as a clone, fetch, or push, can send or receive at most 4 GiB and must finish within 30 minutes. A push over the size limit is refused with HTTP 413. A clone or fetch that passes either limit is cut off, and Git reports an incomplete transfer. The server log records the failure. These limits are fixed in this version and no option changes them. OwnGit does not host Git LFS, so a repository whose complete history is larger than 4 GiB cannot be cloned through OwnGit. Keep large binary files out of Git history.
+- At most 5 Git requests run at once. One repository can use up to 4 of them, and the fifth is only for a repository with no request running, so slow transfers of one repository never block the others. A request that finds no free place waits up to 90 seconds, then gets HTTP 503 with the message `Git service is busy with other transfers; try again shortly`, and the server log records it. Run the Git command again.
+- With shared-password protection, 4 wrong passwords from one address within 10 minutes block that address for 15 minutes. Correct passwords never count, so several Git commands with the right password can run at the same time. The administrator password has the same limit, counted separately.
+- When OwnGit is stopped, it waits up to 10 seconds for running requests, then ends the ones still running, such as a slow clone, and logs how many Git transfers it ended. This is a normal stop.
 
 ## Storage
 

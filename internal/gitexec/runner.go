@@ -249,8 +249,11 @@ func commandName(args []string) string {
 
 // Stream starts an owned Git process, passes stdout to consume, and does not
 // return until the process and its owned descendants have been reaped. It owns
-// both subprocess pipes: cancellation closes the request reader and pipes so a
-// stalled upload cannot keep a copy goroutine or child process alive.
+// both subprocess pipes and closes stdin when it stops the process. Stream
+// also waits for the stdin copy to end, so Close must release a Read blocked
+// on stdin. A net/http server request body does not: its Close waits for the
+// blocked Read, so a caller must make Close end that Read, for example by
+// expiring the connection read deadline.
 //
 // Cancellation terminates the process before it closes stdin, so a cancelled
 // process never sees a clean end of its input. A stdin reader that must not
@@ -346,8 +349,8 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 		_ = stdout.Close()
 		startWait()
 		terminate()
-		// Only now release a blocked request read and end the input: the
-		// process is gone and cannot mistake the close for a complete request.
+		// Only now close the input, which ends the stdin copy: the process
+		// is gone and cannot mistake the close for a complete request.
 		closeInput(stdin)
 		_ = stdinPipe.Close()
 		if err := <-consumeCh; consumeErr == nil {
@@ -356,8 +359,9 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 	}
 
 	// A backend may exit without consuming its complete request. Closing the
-	// source here releases a blocked network-body read before process cleanup.
-	// If the output ended while ctx was cancelled, terminate first, as above.
+	// source here ends a stdin copy blocked on that request before process
+	// cleanup. If the output ended while ctx was cancelled, terminate first, as
+	// above.
 	if ctx.Err() != nil {
 		startWait()
 		terminate()

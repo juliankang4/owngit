@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -12,11 +14,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"owngit/internal/pullrequest"
+	"owngit/internal/repository"
 	"owngit/internal/webui"
 )
 
@@ -296,4 +300,225 @@ func TestDeletionDuringAPreparationAttemptExplainsTheWait(t *testing.T) {
 	if _, exists, err := fixture.store.Repository(t.Context(), "project"); err != nil || !exists {
 		t.Fatalf("a refused deletion removed the repository: exists=%v err=%v", exists, err)
 	}
+}
+
+// While OwnGit serves, a repository whose folder disappears is locked and
+// prepared again like at startup, and one whose Git data alone cannot be read
+// is only marked: the dashboard lists every repository, the cause stays in
+// the server log, and both are shown normally again once they can be read
+// (QA-009).
+func TestUnreadableRepositoryAtRuntimeKeepsTheDashboard(t *testing.T) {
+	app := newConfiguredApp(t)
+	for _, name := range []string{"alpha", "gone", "broken"} {
+		_, err := app.Repositories.Create(context.Background(), name, "")
+		noErr(t, err)
+	}
+	app.Repositories.PreparationRetry = 20 * time.Millisecond
+	var logMu sync.Mutex
+	var logged []string
+	logf := func(format string, arguments ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		logged = append(logged, fmt.Sprintf(format, arguments...))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		noErr(t, app.Repositories.StopPreparation(context.Background()))
+	})
+	noErr(t, app.Repositories.StartPreparation(ctx, nil, 5*time.Second, logf))
+
+	gonePath, err := app.Repositories.Path("gone")
+	noErr(t, err)
+	noErr(t, os.Rename(gonePath, gonePath+".away"))
+	brokenPath, err := app.Repositories.Path("broken")
+	noErr(t, err)
+	packedRefs := filepath.Join(brokenPath, "packed-refs")
+	noErr(t, os.WriteFile(packedRefs, []byte("not a packed ref\n"), 0o600))
+
+	var serverLog lockedLog
+	previousLog, previousFlags := log.Writer(), log.Flags()
+	log.SetOutput(&serverLog)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousLog)
+		log.SetFlags(previousFlags)
+	})
+	server := serve(t, app.Handler())
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	body, status := dashboardGET(t, client, server.URL+"/")
+	if status != http.StatusOK || !strings.Contains(body, "This repository is being prepared.") || !strings.Contains(body, "This repository&#39;s Git data could not be read.") {
+		t.Fatalf("dashboard status=%d does not mark the unreadable repositories", status)
+	}
+	for _, name := range []string{"alpha", "gone", "broken"} {
+		if !strings.Contains(body, `class="row row--repo" href="/repositories/`+name+`"`) {
+			t.Fatalf("dashboard does not list %s", name)
+		}
+	}
+	if strings.Contains(body, app.Repositories.RepositoryRoot()) || strings.Contains(body, "packed") {
+		t.Fatal("the dashboard shows storage details")
+	}
+	// The activity graph leaves both out with a reason instead of becoming
+	// unavailable as a whole.
+	if !strings.Contains(body, "Repositories that are still being prepared or whose Git data could not be read are not counted.") || strings.Contains(body, "could not be read while counting") {
+		t.Fatal("the activity graph does not leave out only the unreadable repository")
+	}
+	// The cause is logged once, not on every visit.
+	dashboardGET(t, client, server.URL+"/")
+	if count := strings.Count(serverLog.String(), `repository "broken" is shown as unreadable`); count != 1 || !strings.Contains(serverLog.String(), "packed-refs") {
+		t.Fatalf("the unreadable repository was logged %d times: %q", count, serverLog.String())
+	}
+	if !app.Repositories.Preparing("gone") {
+		t.Fatal("the repository with a missing folder is not locked")
+	}
+	if app.Repositories.Preparing("broken") {
+		t.Fatal("a repository whose folder is readable was locked")
+	}
+	if body, status = dashboardGET(t, client, server.URL+"/repositories/gone"); status != http.StatusServiceUnavailable || !strings.Contains(body, "This repository is being prepared.") {
+		t.Fatalf("locked repository page status=%d lacks the preparing notice", status)
+	}
+	// Retries keep the missing repository locked.
+	time.Sleep(200 * time.Millisecond)
+	if !app.Repositories.Preparing("gone") {
+		t.Fatal("a repository with a missing folder was served again")
+	}
+	logMu.Lock()
+	joined := strings.Join(logged, "\n")
+	logMu.Unlock()
+	if !strings.Contains(joined, `repository "gone" could not be read`) || strings.Contains(joined, `"broken"`) {
+		t.Fatalf("server log does not name exactly the locked repository: %q", joined)
+	}
+
+	noErr(t, os.Rename(gonePath+".away", gonePath))
+	deadline := time.Now().Add(10 * time.Second)
+	for app.Repositories.Preparing("gone") {
+		if time.Now().After(deadline) {
+			t.Fatal("the repository was not served again after its folder returned")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if body, _ = dashboardGET(t, client, server.URL+"/"); !strings.Contains(body, "Repositories whose Git data could not be read are not counted.") {
+		t.Fatal("the activity graph does not name the unreadable repository as the reason")
+	}
+	noErr(t, os.Remove(packedRefs))
+	if body, status = dashboardGET(t, client, server.URL+"/"); status != http.StatusOK || strings.Contains(body, "This repository is being prepared.") || strings.Contains(body, "could not be read") {
+		t.Fatalf("dashboard after recovery status=%d still marks a repository", status)
+	}
+}
+
+// A dashboard that listed a repository just before it was deleted leaves it
+// out and starts no preparation for it, so a repository created again under
+// that name is served at once (review of QA-009). Slow repositories are
+// simulated by holding their locks, so the deleted one is read last.
+func TestDashboardDuringDeletionStartsNoPreparation(t *testing.T) {
+	app := newConfiguredApp(t)
+	var blockers []string
+	for index := 0; index < 5*snapshotConcurrency; index++ {
+		// Blockers sort before and after the deleted repository, so its read
+		// queues behind theirs.
+		name := fmt.Sprintf("a-blocker-%d", index)
+		if index%2 == 1 {
+			name = fmt.Sprintf("z-blocker-%d", index)
+		}
+		_, err := app.Repositories.Create(context.Background(), name, "")
+		noErr(t, err)
+		blockers = append(blockers, name)
+	}
+	app.Repositories.PreparationRetry = 50 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		noErr(t, app.Repositories.StopPreparation(context.Background()))
+	})
+	noErr(t, app.Repositories.StartPreparation(ctx, nil, 5*time.Second, func(string, ...any) {}))
+	server := serve(t, app.Handler())
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+
+	// A round whose page read the repository before the deletion rightly
+	// lists it and proves nothing, so it is void and another round runs. At
+	// least one round must read after the deletion, within a bounded time.
+	raced, rounds, deadline := 0, 0, time.Now().Add(90*time.Second)
+	for ; raced < 2 && rounds < 20 && time.Now().Before(deadline); rounds++ {
+		round := rounds
+		doomed := fmt.Sprintf("m-doomed-%d", round)
+		_, err := app.Repositories.Create(context.Background(), doomed, "")
+		noErr(t, err)
+		for _, name := range blockers {
+			// Advance the generation first so no cached snapshot is used.
+			lock := app.Repositories.Locks.For(name)
+			lock.Lock()
+			lock.Unlock()
+			lock.Lock()
+		}
+		type page struct {
+			body   string
+			status int
+		}
+		done := make(chan page, 1)
+		go func() {
+			body, status := dashboardGET(t, client, server.URL+"/")
+			done <- page{body, status}
+		}()
+		time.Sleep(300 * time.Millisecond)
+		_, err = app.Repositories.Delete(context.Background(), doomed, repository.DeleteKeepFiles)
+		noErr(t, err)
+		for _, name := range blockers {
+			app.Repositories.Locks.For(name).UnlockWithoutRefChanges()
+		}
+		result := <-done
+		if result.status != http.StatusOK {
+			t.Fatalf("round %d: dashboard status=%d", round, result.status)
+		}
+		if row, listed := dashboardRow(result.body, doomed); !listed {
+			raced++
+		} else if strings.Contains(row, "This repository is being prepared.") || strings.Contains(row, "could not be read") {
+			t.Fatalf("round %d: the deleted repository is listed as unreadable or preparing", round)
+		}
+		time.Sleep(100 * time.Millisecond)
+		if app.Repositories.Preparing(doomed) {
+			t.Fatalf("round %d: the deleted repository is being prepared", round)
+		}
+		_, err = app.Repositories.Create(context.Background(), doomed, "")
+		noErr(t, err)
+		if _, _, _, err := app.Repositories.ExistingPath(context.Background(), doomed); err != nil {
+			t.Fatalf("round %d: the recreated repository is refused: %v", round, err)
+		}
+	}
+	t.Logf("%d of %d rounds read the repository after its deletion", raced, rounds)
+	if raced == 0 {
+		t.Fatal("no round read the repository after its deletion")
+	}
+}
+
+// dashboardRow returns the dashboard list row of repository id.
+func dashboardRow(body, id string) (string, bool) {
+	start := strings.Index(body, `class="row row--repo" href="/repositories/`+id+`"`)
+	if start < 0 {
+		return "", false
+	}
+	row := body[start:]
+	if end := strings.Index(row, "</a>"); end >= 0 {
+		row = row[:end]
+	}
+	return row, true
+}
+
+// lockedLog collects the standard logger's output for one test.
+type lockedLog struct {
+	mu     sync.Mutex
+	buffer strings.Builder
+}
+
+func (l *lockedLog) Write(content []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buffer.Write(content)
+}
+
+func (l *lockedLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buffer.String()
 }

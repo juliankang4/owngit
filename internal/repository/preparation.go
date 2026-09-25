@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -12,12 +13,21 @@ import (
 // has not succeeded yet. OwnGit refuses to read or write it until then.
 var ErrRepositoryPreparing = errors.New("the repository is being prepared")
 
+// ErrStorageUnavailable reports a repository whose folder is missing, is not
+// a readable directory, or lies under a storage folder that is unavailable.
+var ErrStorageUnavailable = errors.New("repository storage is unavailable")
+
 // Waits between failed preparation attempts: the first wait, doubling up to
 // the cap.
 const (
 	preparationRetryFirst = 30 * time.Second
 	preparationRetryMax   = 10 * time.Minute
 )
+
+// storageProbeInterval is how often a repository that failed preparation
+// because its storage was unavailable checks whether the storage is back, so
+// it is retried soon after instead of after the whole wait.
+var storageProbeInterval = 5 * time.Second
 
 // PreparationStep is extra recovery that must succeed before a repository is
 // served, such as pull request recovery. It runs with the repository write
@@ -114,6 +124,59 @@ func (m *Manager) PrepareRegistered(id string) {
 	m.startPreparationLocked(id)
 }
 
+// PrepareUnavailable checks the storage of a served repository that could
+// not be read. When its storage is unavailable, the repository is locked and
+// prepared again in the background, like a repository that failed
+// preparation at startup, and PrepareUnavailable returns
+// ErrRepositoryPreparing. It returns nil when the storage can be read, so the
+// failure lies in the Git data and the repository stays served;
+// ErrRepositoryNotFound when the repository no longer exists; and the storage
+// error when no preparation was started.
+func (m *Manager) PrepareUnavailable(ctx context.Context, id string) error {
+	_, cause := m.readableStorage(ctx, id)
+	if !errors.Is(cause, ErrStorageUnavailable) {
+		return cause
+	}
+	p := &m.preparation
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.started || p.ctx.Err() != nil {
+		return cause
+	}
+	if _, running := p.jobs[id]; running {
+		return ErrRepositoryPreparing
+	}
+	// Deletion removes the record before it cancels preparation under this
+	// mutex, so a job started for a record seen here is always cancelled by a
+	// deletion, and a deleted repository never gets a job.
+	if _, exists, err := m.Store.Repository(ctx, id); err != nil {
+		return err
+	} else if !exists {
+		return ErrRepositoryNotFound
+	}
+	p.logf("repository %q could not be read and is locked until it is prepared again: %v", id, cause)
+	m.startPreparationLocked(id)
+	return ErrRepositoryPreparing
+}
+
+// readableStorage returns the path of a recorded repository whose folder can
+// be read, ErrRepositoryNotFound when it is not recorded, or an
+// ErrStorageUnavailable error.
+func (m *Manager) readableStorage(ctx context.Context, id string) (string, error) {
+	path, _, exists, err := m.existingPath(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", ErrRepositoryNotFound
+	}
+	folder, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+	}
+	return path, folder.Close()
+}
+
 // CancelPreparation stops preparing id and forgets its state. Deletion calls
 // it with the repository lock held once the repository is removed, so a stale
 // attempt can never change a later repository with the same ID.
@@ -202,15 +265,42 @@ func (m *Manager) runPreparation(ctx context.Context, id string, job *preparatio
 		if ctx.Err() != nil {
 			return
 		}
-		p.logf("repository %q could not be prepared and stays locked; retrying in %s: %v", id, delay, err)
-		timer := time.NewTimer(delay)
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			timer.Stop()
+		storage := errors.Is(err, ErrStorageUnavailable)
+		if storage {
+			p.logf("repository %q could not be prepared and stays locked; retrying in %s, or once its storage can be read: %v", id, delay, err)
+		} else {
+			p.logf("repository %q could not be prepared and stays locked; retrying in %s: %v", id, delay, err)
+		}
+		if !m.waitForRetry(ctx, id, delay, storage) {
 			return
 		}
 		delay = min(delay*2, preparationRetryMax)
+	}
+}
+
+// waitForRetry waits delay before the next attempt, or less when probe is set
+// and the repository's storage can be read again. It returns false when ctx
+// ends.
+func (m *Manager) waitForRetry(ctx context.Context, id string, delay time.Duration, probe bool) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	var probes <-chan time.Time
+	if probe {
+		ticker := time.NewTicker(storageProbeInterval)
+		defer ticker.Stop()
+		probes = ticker.C
+	}
+	for {
+		select {
+		case <-timer.C:
+			return true
+		case <-probes:
+			if _, err := m.readableStorage(ctx, id); err == nil {
+				return true
+			}
+		case <-ctx.Done():
+			return false
+		}
 	}
 }
 
@@ -233,10 +323,7 @@ func (m *Manager) prepareAttempt(ctx context.Context, id string, job *preparatio
 	if !current {
 		return errors.New("repository preparation was cancelled")
 	}
-	path, _, exists, err := m.existingPath(ctx, id)
-	if err == nil && !exists {
-		err = ErrRepositoryNotFound
-	}
+	path, err := m.readableStorage(ctx, id)
 	if err != nil {
 		return err
 	}

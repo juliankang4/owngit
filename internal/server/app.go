@@ -71,6 +71,8 @@ type App struct {
 	CheckRuntimeUnavailableReason string
 	// activity caches activity observations by ref key. See activityCache.
 	activity activityCache
+	// unreadable remembers the repositories already logged as unreadable.
+	unreadable unreadableLog
 }
 
 func (app *App) Handler() http.Handler {

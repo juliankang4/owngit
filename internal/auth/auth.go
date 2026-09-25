@@ -27,6 +27,14 @@ const (
 
 var ErrRateLimited = errors.New("too many authentication attempts")
 
+// Failed password limit per client address and kind: the fourth wrong
+// password within the window refuses that address for the block time.
+const (
+	maximumFailures = 4
+	failureWindow   = 10 * time.Minute
+	failureBlock    = 15 * time.Minute
+)
+
 type Manager struct {
 	Store                   *state.Store
 	SessionLife             time.Duration
@@ -35,6 +43,16 @@ type Manager struct {
 	Now                     func() time.Time
 	checkMu                 sync.Mutex
 	checkSlots              chan struct{}
+	// clients serializes the checks of one kind and client address, so a
+	// failure is recorded before the next check from that address starts.
+	clients map[string]*clientTurn
+}
+
+// clientTurn is a context-aware lock shared by the checks of one kind and
+// client address; users counts the holders and waiters.
+type clientTurn struct {
+	turn  chan struct{}
+	users int
 }
 
 type NewSession struct {
@@ -125,13 +143,21 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 	if kind != "general" && kind != "admin" {
 		return errors.New("invalid authentication kind")
 	}
-	now := m.now()
 	address := clientAddress(remoteAddress)
-	allowed, _, err := m.Store.CheckAttempt(ctx, kind, address, now, 5, 10*time.Minute, 15*time.Minute)
+	// Only wrong passwords count toward the limit. Checks from one address
+	// take turns, so parallel guesses cannot pass the limit before their
+	// failures are recorded, while parallel correct requests are never
+	// refused for being parallel.
+	release, err := m.takeTurn(ctx, kind+"\x00"+address)
 	if err != nil {
 		return err
 	}
-	if !allowed {
+	defer release()
+	blocked, err := m.Store.AttemptBlocked(ctx, kind, address, m.now())
+	if err != nil {
+		return err
+	}
+	if blocked {
 		return ErrRateLimited
 	}
 	encoded, err := m.Store.PasswordHash(ctx, map[string]string{"general": "access", "admin": "admin"}[kind])
@@ -143,9 +169,47 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 	}
 	defer func() { <-m.checkSlots }()
 	if encoded == "" || !CheckPassword(encoded, password) {
+		// A client that leaves after its guess was checked still counts.
+		if err := m.Store.RecordFailedAttempt(context.WithoutCancel(ctx), kind, address, m.now(), maximumFailures, failureWindow, failureBlock); err != nil {
+			return err
+		}
 		return errors.New("invalid credentials")
 	}
 	return m.Store.ClearAttempts(ctx, kind, address)
+}
+
+// takeTurn waits until no other check of key runs and returns the release
+// function.
+func (m *Manager) takeTurn(ctx context.Context, key string) (func(), error) {
+	m.checkMu.Lock()
+	if m.clients == nil {
+		m.clients = make(map[string]*clientTurn)
+	}
+	client := m.clients[key]
+	if client == nil {
+		client = &clientTurn{turn: make(chan struct{}, 1)}
+		m.clients[key] = client
+	}
+	client.users++
+	m.checkMu.Unlock()
+	leave := func() {
+		m.checkMu.Lock()
+		client.users--
+		if client.users == 0 {
+			delete(m.clients, key)
+		}
+		m.checkMu.Unlock()
+	}
+	select {
+	case client.turn <- struct{}{}:
+		return func() {
+			<-client.turn
+			leave()
+		}, nil
+	case <-ctx.Done():
+		leave()
+		return nil, ctx.Err()
+	}
 }
 
 func (m *Manager) ValidateSession(ctx context.Context, token, kind string) (state.Session, bool, error) {

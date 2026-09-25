@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -252,4 +253,76 @@ func TestRegisteredRepositoryIsServedOnlyAfterPreparation(t *testing.T) {
 	}
 	probe.setFail("late", false)
 	waitFor(t, "the registered repository became ready", func() bool { return !manager.Preparing("late") })
+}
+
+// PrepareUnavailable locks a served repository only when its storage cannot
+// be read, never starts preparation for a repository that no longer exists,
+// and leaves a repository with readable storage served (QA-009).
+func TestPrepareUnavailableLocksOnlyUnavailableStorage(t *testing.T) {
+	manager, _, _ := newTestRepository(t)
+	ctx := context.Background()
+	for _, id := range []string{"gone", "deleted"} {
+		_, err := manager.Create(ctx, id, "")
+		noErr(t, err)
+	}
+	gonePath, err := manager.Path("gone")
+	noErr(t, err)
+	noErr(t, os.Rename(gonePath, gonePath+".away"))
+	if err := manager.PrepareUnavailable(ctx, "gone"); !errors.Is(err, ErrStorageUnavailable) || manager.Preparing("gone") {
+		t.Fatalf("before preparation started: err=%v preparing=%v, want the storage error and no lock", err, manager.Preparing("gone"))
+	}
+	manager.PreparationRetry = time.Hour
+	probe := newPreparationProbe()
+	noErr(t, os.Rename(gonePath+".away", gonePath))
+	startPreparationForTest(t, manager, probe, 5*time.Second)
+	noErr(t, os.Rename(gonePath, gonePath+".away"))
+
+	if err := manager.PrepareUnavailable(ctx, "sample"); err != nil || manager.Preparing("sample") {
+		t.Fatalf("readable repository: err=%v preparing=%v", err, manager.Preparing("sample"))
+	}
+	if err := manager.PrepareUnavailable(ctx, "gone"); !errors.Is(err, ErrRepositoryPreparing) || !manager.Preparing("gone") {
+		t.Fatalf("missing folder: err=%v preparing=%v, want a lock", err, manager.Preparing("gone"))
+	}
+	_, err = manager.Delete(ctx, "deleted", DeleteKeepFiles)
+	noErr(t, err)
+	if err := manager.PrepareUnavailable(ctx, "deleted"); !errors.Is(err, ErrRepositoryNotFound) || manager.Preparing("deleted") {
+		t.Fatalf("deleted repository: err=%v preparing=%v", err, manager.Preparing("deleted"))
+	}
+}
+
+// A repository locked because its storage was unavailable is prepared again
+// soon after the storage returns, not after the whole retry wait (review of
+// QA-009).
+func TestUnavailableStorageIsRetriedOnceReadable(t *testing.T) {
+	manager, _, _ := newTestRepository(t)
+	previous := storageProbeInterval
+	storageProbeInterval = 20 * time.Millisecond
+	t.Cleanup(func() { storageProbeInterval = previous })
+	manager.PreparationRetry = time.Hour
+	path, err := manager.Path("sample")
+	noErr(t, err)
+	noErr(t, os.Rename(path, path+".away"))
+	probe := newPreparationProbe()
+	startPreparationForTest(t, manager, probe, 5*time.Second)
+	if !manager.Preparing("sample") {
+		t.Fatal("a repository with a missing folder was served")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !manager.Preparing("sample") {
+		t.Fatal("the repository was served while its folder was missing")
+	}
+	noErr(t, os.Rename(path+".away", path))
+	waitFor(t, "the repository was served again", func() bool { return !manager.Preparing("sample") })
+
+	// A failure that is not about storage still waits for its retry.
+	probe.setFail("sample", true)
+	_, err = manager.Create(context.Background(), "failing", "")
+	noErr(t, err)
+	probe.setFail("failing", true)
+	manager.PrepareRegistered("failing")
+	waitFor(t, "the first attempt", func() bool { return probe.count("failing") == 1 })
+	time.Sleep(100 * time.Millisecond)
+	if probe.count("failing") != 1 {
+		t.Fatal("a failure unrelated to storage was retried before its wait")
+	}
 }

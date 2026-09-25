@@ -1442,39 +1442,46 @@ func (s *Store) DeleteSession(ctx context.Context, token, kind string) error {
 	return err
 }
 
-func (s *Store) CheckAttempt(ctx context.Context, kind, address string, now time.Time, maxAttempts int, window, block time.Duration) (bool, time.Duration, error) {
+// AttemptBlocked reports whether authentication of kind from address is
+// refused at now because of earlier failures.
+func (s *Store) AttemptBlocked(ctx context.Context, kind, address string, now time.Time) (bool, error) {
+	var blocked int64
+	err := s.db.QueryRowContext(ctx, `SELECT blocked_until FROM login_attempts WHERE kind=? AND address=?`, kind, address).Scan(&blocked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return blocked > now.Unix(), nil
+}
+
+// RecordFailedAttempt counts one wrong password from address. The failure
+// that reaches maxFailures within window blocks the address for block.
+func (s *Store) RecordFailedAttempt(ctx context.Context, kind, address string, now time.Time, maxFailures int, window, block time.Duration) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, 0, err
+		return err
 	}
 	defer tx.Rollback()
 	var started, blocked int64
-	var attempts int
-	err = tx.QueryRowContext(ctx, `SELECT window_started_at,attempts,blocked_until FROM login_attempts WHERE kind=? AND address=?`, kind, address).Scan(&started, &attempts, &blocked)
+	var failures int
+	err = tx.QueryRowContext(ctx, `SELECT window_started_at,attempts,blocked_until FROM login_attempts WHERE kind=? AND address=?`, kind, address).Scan(&started, &failures, &blocked)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, 0, err
-	}
-	if blocked > now.Unix() {
-		return false, time.Unix(blocked, 0).Sub(now), nil
+		return err
 	}
 	if errors.Is(err, sql.ErrNoRows) || now.Sub(time.Unix(started, 0)) >= window {
-		started, attempts, blocked = now.Unix(), 0, 0
+		started, failures, blocked = now.Unix(), 0, 0
 	}
-	attempts++
-	if attempts >= maxAttempts {
+	failures++
+	if failures >= maxFailures {
 		blocked = now.Add(block).Unix()
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO login_attempts(kind,address,window_started_at,attempts,blocked_until) VALUES(?,?,?,?,?)
-		ON CONFLICT(kind,address) DO UPDATE SET window_started_at=excluded.window_started_at,attempts=excluded.attempts,blocked_until=excluded.blocked_until`, kind, address, started, attempts, blocked); err != nil {
-		return false, 0, err
+		ON CONFLICT(kind,address) DO UPDATE SET window_started_at=excluded.window_started_at,attempts=excluded.attempts,blocked_until=excluded.blocked_until`, kind, address, started, failures, blocked); err != nil {
+		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return false, 0, err
-	}
-	if blocked > now.Unix() {
-		return false, time.Unix(blocked, 0).Sub(now), nil
-	}
-	return true, 0, nil
+	return tx.Commit()
 }
 
 func (s *Store) ClearAttempts(ctx context.Context, kind, address string) error {

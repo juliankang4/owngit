@@ -227,22 +227,24 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		if err := repositories.ReconcileDeletions(ctx); err != nil {
 			logf("unfinished repository deletion was not completed: %v", err)
 		}
-		// Each repository is prepared on its own: safety configuration,
-		// retention hook, and pull request recovery. One that fails or hangs
-		// stays locked and is retried in the background while the others are
-		// served. Startup waits at most preparationGrace for the first attempts.
-		// The stop is registered first, so a signal during the startup wait
-		// also cancels and awaits the attempts before the store closes.
-		defer func() {
-			stopContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := repositories.StopPreparation(stopContext); err != nil {
-				logf("%v", err)
-			}
-		}()
-		if err := repositories.StartPreparation(ctx, pullRequests.RecoverRepositoryLocked, preparationGrace, logf); err != nil {
-			return err
+	}
+	// Each repository is prepared on its own: safety configuration,
+	// retention hook, and pull request recovery. One that fails or hangs
+	// stays locked and is retried in the background while the others are
+	// served. Startup waits at most preparationGrace for the first attempts.
+	// Preparation also runs before setup, with no repositories, so a
+	// repository whose storage becomes unavailable later is prepared again
+	// the same way. The stop is registered first, so a signal during the startup wait
+	// also cancels and awaits the attempts before the store closes.
+	defer func() {
+		stopContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := repositories.StopPreparation(stopContext); err != nil {
+			logf("%v", err)
 		}
+	}()
+	if err := repositories.StartPreparation(ctx, pullRequests.RecoverRepositoryLocked, preparationGrace, logf); err != nil {
+		return err
 	}
 	if _, err := store.PruneCheckLogs(ctx, time.Now()); err != nil {
 		log.Printf("could not prune expired check logs: %v", err)
@@ -409,21 +411,37 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		// Stop import runs first, so their handlers return promptly with the
 		// recorded outcome instead of outliving the HTTP shutdown window.
 		importRuntime.stop()
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		shutdownErr := httpServer.Shutdown(shutdownContext)
-		if shutdownErr != nil {
-			_ = httpServer.Close()
-		}
-		gitErr := gitHandler.Wait(shutdownContext)
-		if gitErr != nil {
-			return fmt.Errorf("wait for Git process cleanup: %w", gitErr)
-		}
-		if shutdownErr != nil {
-			return fmt.Errorf("graceful shutdown: %w", shutdownErr)
-		}
-		return nil
+		return stopServing(httpServer, gitHandler, 10*time.Second, logf)
 	}
+}
+
+// stopServing stops the HTTP server and waits up to grace for running
+// requests. Requests still running then, such as a slow clone, are ended by
+// closing their connections, which is an ordinary stop and is logged. It
+// fails only when the server cannot stop or when the Git processes are not
+// cleaned up within another grace.
+func stopServing(httpServer *http.Server, gitHandler *githttp.Handler, grace time.Duration, logf func(string, ...any)) error {
+	shutdownContext, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	shutdownErr := httpServer.Shutdown(shutdownContext)
+	if shutdownErr != nil {
+		if errors.Is(shutdownErr, context.DeadlineExceeded) {
+			logf("stopping: ended %d Git transfer(s) and any other requests still running after %s", gitHandler.Active(), grace)
+			shutdownErr = nil
+		}
+		_ = httpServer.Close()
+	}
+	// The ended requests stop their Git processes; wait for that cleanup with
+	// its own deadline, since the shutdown wait may have used all of grace.
+	cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), grace)
+	defer cancelCleanup()
+	if err := gitHandler.Wait(cleanupContext); err != nil {
+		return fmt.Errorf("wait for Git process cleanup: %w", err)
+	}
+	if shutdownErr != nil {
+		return fmt.Errorf("graceful shutdown: %w", shutdownErr)
+	}
+	return nil
 }
 
 // importLifetime owns import reconciliation, the scheduler, and import

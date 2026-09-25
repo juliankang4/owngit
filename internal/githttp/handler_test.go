@@ -214,3 +214,35 @@ func httpGitBytes(directory string, arguments ...string) ([]byte, error) {
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	return command.CombinedOutput()
 }
+
+// Every name that repository creation accepts is reachable over Git HTTP,
+// including a name that ends with a dot (QA-021).
+func TestSmartHTTPServesEveryCreatableRepositoryName(t *testing.T) {
+	manager, runner := newHTTPTestRepository(t)
+	handler, err := New(runner, manager, "", 1)
+	noErr(t, err)
+	handler.Authorize = func(*http.Request) bool { return true }
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	work := filepath.Join(t.TempDir(), "work")
+	runHTTPGit(t, "", "init", "--initial-branch=main", work)
+	runHTTPGit(t, work, "-c", "user.name=HTTP Test", "-c", "user.email=http@example.invalid", "commit", "--allow-empty", "-m", "first")
+	for _, id := range []string{"trail.", "dotdot..", "a.b_c-1"} {
+		if _, err := manager.Create(context.Background(), id, ""); err != nil {
+			t.Fatalf("create %q: %v", id, err)
+		}
+		runHTTPGit(t, work, "push", server.URL+"/git/"+id+".git", "HEAD:refs/heads/main")
+		if refs := httpGitOutput(t, "", "ls-remote", server.URL+"/git/"+id+".git"); !strings.Contains(refs, "refs/heads/main") {
+			t.Fatalf("ls-remote %q = %q", id, refs)
+		}
+	}
+	for _, target := range []string{"/git/Trail..git/info/refs?service=git-upload-pack", "/git/con.git/info/refs?service=git-upload-pack", "/git/x.git.git/info/refs?service=git-upload-pack"} {
+		response, err := http.Get(server.URL + target)
+		noErr(t, err)
+		response.Body.Close()
+		if response.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s status=%d, want 404", target, response.StatusCode)
+		}
+	}
+}

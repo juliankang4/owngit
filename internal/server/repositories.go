@@ -3,13 +3,16 @@ package server
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -43,31 +46,54 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	snapshots, snapshotErrs := app.refSnapshots(ctx, repositories)
 	query := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("q")))
 	var summaries []webui.RepositorySummary
+	listed := 0
 	for index, stored := range repositories {
-		// A repository still being prepared after startup is listed with its
-		// status; the other repositories are shown as usual.
-		preparing := errors.Is(snapshotErrs[index], repository.ErrRepositoryPreparing)
-		if snapshotErrs[index] != nil && !preparing {
-			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoUnreadable, stored.Name)
-			return
+		// One repository that cannot be read never takes the page down. A
+		// repository whose storage is unavailable is locked and prepared
+		// again, as at startup; one whose Git data alone cannot be read is
+		// marked here and stays available to Git. A repository deleted while
+		// the page was built is left out.
+		err := snapshotErrs[index]
+		if err != nil && !errors.Is(err, repository.ErrRepositoryPreparing) {
+			if ctx.Err() != nil {
+				app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoUnreadable, stored.Name)
+				return
+			}
+			if checked := app.Repositories.PrepareUnavailable(ctx, stored.ID); errors.Is(checked, repository.ErrRepositoryNotFound) {
+				continue
+			} else if checked != nil {
+				err = checked
+			}
 		}
+		if err == nil || errors.Is(err, repository.ErrRepositoryPreparing) {
+			app.unreadable.recovered(stored.ID)
+		} else {
+			app.unreadable.report(stored.ID, err)
+		}
+		snapshot := snapshots[index]
+		repositories[listed], snapshots[listed], snapshotErrs[listed] = stored, snapshot, err
+		listed++
 		if query == "" || strings.Contains(strings.ToLower(stored.Name), query) || strings.Contains(strings.ToLower(stored.Description), query) {
-			summary := app.repositorySummary(request, stored, snapshots[index])
-			if preparing {
+			summary := app.repositorySummary(request, stored, snapshot)
+			if err != nil {
+				preparing := errors.Is(err, repository.ErrRepositoryPreparing)
 				summary = webui.RepositorySummary{
 					ID: stored.ID, Name: stored.Name, Description: stored.Description,
-					URL: summary.URL, CloneURL: summary.CloneURL, CreatedAt: stored.CreatedAt, Preparing: true,
+					URL: summary.URL, CloneURL: summary.CloneURL, CreatedAt: stored.CreatedAt,
+					Preparing: preparing, Unreadable: !preparing,
 				}
 			}
 			summaries = append(summaries, summary)
 		}
 	}
+	repositories, snapshots, snapshotErrs = repositories[:listed], snapshots[:listed], snapshotErrs[:listed]
 	app.activity.forget(repositories)
 	present := make([]string, len(repositories))
 	for index, stored := range repositories {
 		present[index] = stored.ID
 	}
 	app.Repositories.ForgetRefSnapshots(present)
+	app.unreadable.forget(present)
 	observation := app.observeActivity(ctx, repositories, activityKeysFrom(snapshots, snapshotErrs), app.activityLimit())
 	recent := observation.entries
 	sortActivityEntries(recent)
@@ -81,6 +107,44 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 		RecentMoreURL: "/activity", TotalCount: len(repositories),
 		Release: app.releaseNotice(request, settings),
 	})
+}
+
+// unreadableLog logs the cause once when a repository is first shown as
+// unreadable, and again only after it was read successfully in between. The
+// cause goes only to the server log; pages show a fixed notice.
+type unreadableLog struct {
+	mu     sync.Mutex
+	logged map[string]bool
+}
+
+func (l *unreadableLog) report(id string, cause error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.logged[id] {
+		return
+	}
+	if l.logged == nil {
+		l.logged = make(map[string]bool)
+	}
+	l.logged[id] = true
+	log.Printf("repository %q is shown as unreadable because its Git data could not be read: %v", id, cause)
+}
+
+func (l *unreadableLog) recovered(id string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.logged, id)
+}
+
+// forget drops repositories that no longer exist.
+func (l *unreadableLog) forget(present []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for id := range l.logged {
+		if !slices.Contains(present, id) {
+			delete(l.logged, id)
+		}
+	}
 }
 
 func (app *App) handleNewRepositoryGet(writer http.ResponseWriter, request *http.Request, settings state.Settings, name, description string, notices []webui.Notice) {
@@ -934,6 +998,9 @@ type activityObservation struct {
 	// preparing is true when some repository was skipped because it is
 	// still being prepared after startup.
 	preparing bool
+	// unreadable is true when some repository was skipped because its refs
+	// could not be read.
+	unreadable bool
 }
 
 // observeActivity gathers one bounded, current-history-first observation per
@@ -949,9 +1016,16 @@ func (app *App) observeActivity(ctx context.Context, repositories []state.Reposi
 	}
 	parts := app.activity.observe(ctx, app.Repositories, ids, keys, maximum, activityWait)
 	for index, part := range parts {
-		if errors.Is(part.err, errRefsUnlisted) && app.Repositories.Preparing(ids[index]) {
-			// Its refs were not read, by design; the others are still shown.
-			observation.complete, observation.preparing = false, true
+		if errors.Is(part.err, errRefsUnlisted) {
+			// Its refs were not read: it is being prepared, by design, or its
+			// Git data could not be read. It is left out and the others are
+			// still shown.
+			observation.complete = false
+			if app.Repositories.Preparing(ids[index]) {
+				observation.preparing = true
+			} else {
+				observation.unreadable = true
+			}
 			continue
 		}
 		if part.err != nil {
@@ -979,8 +1053,12 @@ func (observation activityObservation) describe(graph *webui.ActivityGraph) {
 	switch {
 	case observation.counting:
 		graph.IncompleteReason = webui.MsgActivityCounting
+	case observation.preparing && observation.unreadable:
+		graph.IncompleteReason = webui.MsgActivitySkipped
 	case observation.preparing:
 		graph.IncompleteReason = webui.MsgActivityPreparing
+	case observation.unreadable:
+		graph.IncompleteReason = webui.MsgActivityUnreadable
 	case !observation.complete:
 		graph.IncompleteReason = webui.MsgActivityLimit
 	}

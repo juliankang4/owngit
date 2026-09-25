@@ -285,7 +285,7 @@ func (app *App) refusePreparingAPI(writer http.ResponseWriter, repositoryID stri
 		return false
 	}
 	writer.Header().Set("Retry-After", "30")
-	writeAPIError(writer, http.StatusServiceUnavailable, "repository_preparing", "The repository is being prepared after startup. Try again later.", nil)
+	writeAPIError(writer, http.StatusServiceUnavailable, "repository_preparing", "The repository is being prepared. Try again later.", nil)
 	return true
 }
 

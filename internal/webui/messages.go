@@ -240,7 +240,10 @@ const (
 	MsgRepoPreparing        MessageCode = "repo.preparing"
 	MsgRepoPreparingDetail  MessageCode = "repo.preparing.detail"
 	MsgRepoPreparingShort   MessageCode = "repo.preparing.short"
+	MsgRepoUnreadableShort  MessageCode = "repo.unreadable.short"
 	MsgActivityPreparing    MessageCode = "activity.preparing"
+	MsgActivityUnreadable   MessageCode = "activity.unreadable"
+	MsgActivitySkipped      MessageCode = "activity.skipped"
 	MsgRepoNoBranches       MessageCode = "repo.no_branches"
 	MsgRepoNoTags           MessageCode = "repo.no_tags"
 	MsgRepoDefaultGone      MessageCode = "repo.default_branch_missing"
@@ -969,12 +972,16 @@ var catalog = map[MessageCode]message{
 		ko: "이 저장소를 준비하는 중입니다.",
 	},
 	MsgRepoPreparingDetail: {
-		en: "After starting, OwnGit checks each repository's safety settings before serving it. This one is not ready yet, so pushes, clones, and changes are refused for now. OwnGit keeps retrying on its own. The server log explains what went wrong.",
-		ko: "OwnGit은 시작할 때 저장소마다 안전 설정을 확인한 뒤에 제공합니다. 이 저장소는 아직 준비되지 않아 지금은 푸시, 클론, 변경을 받지 않습니다. OwnGit이 알아서 계속 다시 시도합니다. 원인은 서버 로그에 있습니다.",
+		en: "OwnGit checks each repository's safety settings before serving it, after starting and whenever its folder could not be read. This one is not ready yet, so pushes, clones, and changes are refused for now. OwnGit keeps retrying on its own. The server log explains what went wrong.",
+		ko: "OwnGit은 시작할 때와 저장소 폴더를 읽지 못했을 때 저장소마다 안전 설정을 확인한 뒤에 제공합니다. 이 저장소는 아직 준비되지 않아 지금은 푸시, 클론, 변경을 받지 않습니다. OwnGit이 알아서 계속 다시 시도합니다. 원인은 서버 로그에 있습니다.",
 	},
 	MsgRepoPreparingShort: {
 		en: "Preparing",
 		ko: "준비 중",
+	},
+	MsgRepoUnreadableShort: {
+		en: "Unreadable",
+		ko: "읽지 못함",
 	},
 	MsgRepoNoBranches: {
 		en: "No branches.",
@@ -1340,6 +1347,14 @@ var catalog = map[MessageCode]message{
 	MsgActivityPreparing: {
 		en: "Repositories that are still being prepared are not counted yet.",
 		ko: "아직 준비 중인 저장소는 집계하지 않았습니다.",
+	},
+	MsgActivityUnreadable: {
+		en: "Repositories whose Git data could not be read are not counted.",
+		ko: "Git 데이터를 읽지 못한 저장소는 집계하지 않았습니다.",
+	},
+	MsgActivitySkipped: {
+		en: "Repositories that are still being prepared or whose Git data could not be read are not counted.",
+		ko: "아직 준비 중이거나 Git 데이터를 읽지 못한 저장소는 집계하지 않았습니다.",
 	},
 	MsgActivityScanFail: {
 		en: "Some repositories could not be read while counting.",

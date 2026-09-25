@@ -253,17 +253,17 @@ func (m *Manager) existingPath(ctx context.Context, id string) (string, state.Re
 	}
 	path, err := m.Path(id)
 	if err != nil {
-		return "", state.Repository{}, false, err
+		return "", state.Repository{}, false, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", state.Repository{}, false, fmt.Errorf("repository storage is unavailable: %w", err)
+		return "", state.Repository{}, false, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return "", state.Repository{}, false, errors.New("repository path must not be a symbolic link")
+		return "", state.Repository{}, false, fmt.Errorf("%w: repository path must not be a symbolic link", ErrStorageUnavailable)
 	}
 	if !info.IsDir() {
-		return "", state.Repository{}, false, errors.New("repository path is not a directory")
+		return "", state.Repository{}, false, fmt.Errorf("%w: repository path is not a directory", ErrStorageUnavailable)
 	}
 	return path, repository, true, nil
 }
