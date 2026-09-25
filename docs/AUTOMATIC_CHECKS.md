@@ -268,6 +268,10 @@ owngit runner \
   --workspace-root /srv/owngit-runner/project
 ```
 
+The token file starts with the line `owngit-server: ORIGIN` for the server that
+issued it, and `runner` refuses the file for any other `--server`. See
+[Credential files and the server line](CODING_TOOLS.md#credential-files-and-the-server-line).
+
 `runner` and `runner-credential` require HTTPS. OwnGit serves plain HTTP, so
 put a TLS-terminating proxy in front of it. `--ca-file /path/to/private-ca.pem`
 trusts a private certificate authority in addition to the system roots. The

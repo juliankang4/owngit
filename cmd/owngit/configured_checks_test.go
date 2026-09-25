@@ -74,7 +74,10 @@ func TestConfiguredCheckCLIEndToEnd(t *testing.T) {
 		return runnerCredentialCommand(fixture.adminArguments("issue",
 			"--label", "CLI runner", "--creation-id", strings.Repeat("a", 32), "--token-file", tokenFile))
 	})
-	var issued checkapi.RunnerCredentialResponse
+	var issued struct {
+		checkapi.RunnerCredentialResponse
+		TokenFileServer string `json:"token_file_server"`
+	}
 	if err := json.Unmarshal([]byte(issueOutput), &issued); err != nil || issued.Credential == nil {
 		t.Fatal("runner-credential issue did not return a credential")
 	}
@@ -82,7 +85,12 @@ func TestConfiguredCheckCLIEndToEnd(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(token)) == "" {
 		t.Fatalf("runner token file available=%v err=%v", len(token) != 0, err)
 	}
-	trimmedToken := strings.TrimSpace(string(token))
+	// Like a helper credential, the token file names the server it belongs to.
+	serverLine, trimmedToken, found := strings.Cut(strings.TrimSuffix(string(token), "\n"), "\n")
+	if !found || serverLine != "owngit-server: "+fixture.httpServer.URL || issued.TokenFileServer != fixture.httpServer.URL ||
+		trimmedToken == "" || strings.Contains(trimmedToken, "\n") {
+		t.Fatalf("runner token file server line=%q token_file_server=%q token lines ok=%v", serverLine, issued.TokenFileServer, found && !strings.Contains(trimmedToken, "\n"))
+	}
 	if issued.Token != "" || strings.Contains(issueOutput, trimmedToken) {
 		t.Fatal("runner-credential issue exposed its bearer token on stdout")
 	}
@@ -101,6 +109,18 @@ func TestConfiguredCheckCLIEndToEnd(t *testing.T) {
 	}
 	if stored := fixture.readJob(t, job.ID); stored.Status != state.CheckJobPending {
 		t.Fatalf("refused insecure runner changed job status to %s", stored.Status)
+	}
+	// The same server under another name is another origin: the token file
+	// is refused before anything is sent.
+	otherName := strings.Replace(fixture.httpServer.URL, "127.0.0.1", "localhost", 1)
+	if err := runnerCommand([]string{
+		"--server", otherName, "--accept-insecure-http", "--repository", fixture.repository.ID,
+		"--token-file", tokenFile, "--workspace-root", workspaceRoot, "--poll", "10ms", "--once",
+	}); commandErrorCode(err) != "credential_origin_mismatch" {
+		t.Fatalf("runner with a token file for another server: %v", err)
+	}
+	if stored := fixture.readJob(t, job.ID); stored.Status != state.CheckJobPending {
+		t.Fatalf("refused runner changed job status to %s", stored.Status)
 	}
 	if err := runnerCommand([]string{
 		"--server", fixture.httpServer.URL, "--accept-insecure-http", "--repository", fixture.repository.ID,

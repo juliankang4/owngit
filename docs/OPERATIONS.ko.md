@@ -432,7 +432,7 @@ OwnGit이 게시가 어떻게 끝났는지 증명할 수 없으면 그 게시는
 
 일반 HTTP에서는 비밀번호와 풀 리퀘스트 내용이 네트워크에 노출됩니다. `--accept-insecure-http`는 그 명령에 한해 동의를 기록합니다. HTTPS라면 빼세요. CLI는 URL에 넣은 인증 정보를 거부하며 리디렉션을 따라가지 않습니다.
 
-다른 `pr` 명령도 같은 `--server`, `--accept-insecure-http`, `--repository`, `--password-file` 플래그를 받습니다. 아래에서는 생략했습니다. `pr show`는 현재 원본과 대상의 객체 ID를 알려 주며, 모든 리뷰 결정과 병합에는 두 값을 모두 넘겨야 합니다.
+다른 `pr` 명령도 같은 `--server`, `--accept-insecure-http`, `--repository`, `--password-file` 플래그를 받습니다. 아래에서는 생략했습니다. OwnGit 저장소의 클론 안에서는 `--server`와 `--repository`를 클론의 `origin` 원격에서 가져오므로 생략할 수 있으며, 이때 비밀번호 파일은 첫 줄에 그 서버가 적혀 있을 때만 보냅니다([클론 안에서 실행하기](CODING_TOOLS.ko.md#클론-안에서-실행하기), [자격 증명 파일과 서버 줄](CODING_TOOLS.ko.md#자격-증명-파일과-서버-줄) 참고). `pr show`는 현재 원본과 대상의 객체 ID를 알려 주며, 모든 리뷰 결정과 병합에는 두 값을 모두 넘겨야 합니다.
 
 ```sh
 ./bin/owngit pr list

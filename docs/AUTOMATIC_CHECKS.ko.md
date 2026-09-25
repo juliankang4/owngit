@@ -165,6 +165,8 @@ owngit runner \
   --workspace-root /srv/owngit-runner/project
 ```
 
+토큰 파일의 첫 줄에는 토큰을 발급한 서버가 `owngit-server: ORIGIN` 형식으로 적히며, `runner`는 다른 `--server`에는 이 파일을 쓰지 않습니다. [자격 증명 파일과 서버 줄](CODING_TOOLS.ko.md#자격-증명-파일과-서버-줄)을 참고하세요.
+
 `runner`와 `runner-credential`은 HTTPS가 필요합니다. OwnGit은 일반 HTTP로 동작하므로 앞에 TLS를 처리하는 프록시를 두세요. `--ca-file /path/to/private-ca.pem`을 쓰면 시스템 루트에 더해 비공개 인증 기관도 신뢰합니다. 프록시는 다음 조건을 지켜야 합니다.
 
 - OwnGit이 받아들이는 Host를 보내야 합니다. `localhost`, `127.0.0.1`, `::1`, 또는 `--allowed-host`나 `approve-host`로 승인한 이름입니다([다른 기기에서 서버에 접속하기](OPERATIONS.ko.md#다른-기기에서-서버에-접속하기) 참고).

@@ -147,7 +147,8 @@ runner token files accept the line too; their commands always need an explicit
 `--server`. The line names only the server; the flag that reads the file says
 what kind of secret it holds.
 
-`helper-credential create` writes the line for the server it used. To bind a
+`helper-credential create` and `runner-credential issue` write the line for
+the server they used. To bind a
 shared password file you wrote yourself, add the line at the top with a text
 editor, which keeps the file's owner-only permissions. On macOS or Linux you can
 also write a new file that only you can read:
@@ -159,8 +160,8 @@ also write a new file that only you can read:
 Refusals are `credential_origin_required` (the server was inferred and the file
 names no server), `credential_origin_mismatch` (the file names another server),
 and `invalid_credential_origin` (the first line is malformed). Nothing is sent
-in any of these cases. Scripts that read a helper credential file directly must
-take its last line.
+in any of these cases. Scripts that read a helper or runner token file directly
+must take its last line.
 
 ## Workflow
 

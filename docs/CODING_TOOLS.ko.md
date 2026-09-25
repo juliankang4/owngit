@@ -78,13 +78,13 @@ SECRET
 
 첫 줄은 파일의 맨 처음에서 시작하며 정확히 `owngit-server:`, 공백 하나, 경로 없는 HTTP(S) 오리진 하나로 이루어집니다. 비밀 값은 마지막 줄에 둡니다. 바이트 순서 표시나 빈 줄 뒤에 오거나 대소문자가 다르게 적힌 것처럼 이 줄과 비슷하기만 한 첫 줄은 거부합니다. 이 줄이 없는 파일은 기존 형식이며, 비밀 값을 한 줄에 담아야 하고, `--server`를 직접 넘기면 지금처럼 동작합니다. 이 줄이 있는 파일은 `--server`를 직접 넘긴 경우를 포함해 다른 서버로는 보내지 않으므로, 이 줄은 비밀 값을 항상 한 서버에 묶습니다. 관리자 비밀번호 파일과 러너 토큰 파일도 이 줄을 받아들이며, 이 명령들에는 항상 `--server`를 직접 넘겨야 합니다. 이 줄에는 서버만 적고, 비밀 값의 종류는 파일을 읽는 플래그가 정합니다.
 
-`helper-credential create`는 자신이 사용한 서버로 이 줄을 씁니다. 직접 만든 공유 비밀번호 파일을 묶으려면 텍스트 편집기로 맨 위에 이 줄을 넣으세요. 이렇게 하면 소유자만 읽을 수 있는 권한이 그대로 유지됩니다. macOS나 Linux에서는 본인만 읽을 수 있는 새 파일을 만들 수도 있습니다.
+`helper-credential create`와 `runner-credential issue`는 자신이 사용한 서버로 이 줄을 씁니다. 직접 만든 공유 비밀번호 파일을 묶으려면 텍스트 편집기로 맨 위에 이 줄을 넣으세요. 이렇게 하면 소유자만 읽을 수 있는 권한이 그대로 유지됩니다. macOS나 Linux에서는 본인만 읽을 수 있는 새 파일을 만들 수도 있습니다.
 
 ```sh
 (umask 077; { printf 'owngit-server: %s\n' https://owngit.example.test; cat password-file; } > bound-password-file)
 ```
 
-거부 코드는 `credential_origin_required`(서버를 `origin`에서 가져왔는데 파일에 서버가 없음), `credential_origin_mismatch`(파일에 다른 서버가 적혀 있음), `invalid_credential_origin`(첫 줄 형식이 잘못됨)입니다. 어느 경우에도 아무것도 보내지 않습니다. 체크 에이전트 토큰 파일을 직접 읽는 스크립트는 마지막 줄을 읽어야 합니다.
+거부 코드는 `credential_origin_required`(서버를 `origin`에서 가져왔는데 파일에 서버가 없음), `credential_origin_mismatch`(파일에 다른 서버가 적혀 있음), `invalid_credential_origin`(첫 줄 형식이 잘못됨)입니다. 어느 경우에도 아무것도 보내지 않습니다. 체크 에이전트 토큰 파일이나 러너 토큰 파일을 직접 읽는 스크립트는 마지막 줄을 읽어야 합니다.
 
 ## 작업 흐름
 

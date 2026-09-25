@@ -239,7 +239,10 @@ func runnerCredentialCommand(arguments []string) error {
 		if reserved.replaced() {
 			return fail(errors.New("runner token path was replaced during issuance; the replacement was left untouched"), true)
 		}
-		if err := reserved.write(response.Token); err != nil {
+		// The first line binds the token to the server that issued it, as
+		// helper-credential create does; the runner refuses it for another.
+		tokenFileServer := canonicalOrigin(origin)
+		if err := reserved.write(credentialOriginPrefix + " " + tokenFileServer + "\n" + response.Token); err != nil {
 			return fail(fmt.Errorf("write runner token file: %w", err), true)
 		}
 		if reserved.replaced() {
@@ -252,7 +255,11 @@ func runnerCredentialCommand(arguments []string) error {
 			return preservedOutputError(compensateRunnerCreation(client, path, *creationID, errors.New("runner token path was replaced after delivery; the replacement was left untouched")), nil)
 		}
 		response.Token = ""
-		return writeJSONValue(response)
+		return writeJSONValue(struct {
+			checkapi.RunnerCredentialResponse
+			// TokenFileServer is the server named on the token file's first line.
+			TokenFileServer string `json:"token_file_server"`
+		}{response, tokenFileServer})
 	default:
 		return cliProblem("invalid_arguments", "Unknown runner-credential action.")
 	}

@@ -426,7 +426,7 @@ A pull request you no longer need can be closed without merging, with Close pull
 
 Plain HTTP exposes the password and pull request details to the network. `--accept-insecure-http` records your consent for that command only; omit it for HTTPS. The CLI rejects credentials embedded in the URL and does not follow redirects.
 
-The other `pr` commands take the same `--server`, `--accept-insecure-http`, `--repository`, and `--password-file` flags; they are omitted below. `pr show` reports the current source and target object IDs, and every review decision and merge must supply both:
+The other `pr` commands take the same `--server`, `--accept-insecure-http`, `--repository`, and `--password-file` flags; they are omitted below. Inside a clone of an OwnGit repository, `--server` and `--repository` can be left out because they come from the clone's `origin` remote, and a password file is then sent only when its first line names that server (see [Inside a clone](CODING_TOOLS.md#inside-a-clone) and [Credential files and the server line](CODING_TOOLS.md#credential-files-and-the-server-line)). `pr show` reports the current source and target object IDs, and every review decision and merge must supply both:
 
 ```sh
 ./bin/owngit pr list
