@@ -379,29 +379,60 @@
     if (details.getAttribute('data-disclosure-open') === action) { details.open = true; }
   });
 
-  /* The ref picker submits on change once scripting is available, so the
-   * separate button is only needed without it. */
-
-  all('[data-hide-with-script]').forEach(function (button) { button.hidden = true; });
+  /* The ref picker opens the chosen ref as soon as a pointer picks it, and
+   * on Enter. A change made with arrow keys only moves the selection: on a
+   * closed select those keys change the value one step at a time, and
+   * loading a page for every step would make a far branch unreachable.
+   * The visible button submits in every case, including without scripting. */
 
   all('[data-submit-on-change]').forEach(function (select) {
-    select.addEventListener('change', function () {
+    var pointer = false;
+    function submit() {
       var form = select.form;
       if (!form) { return; }
       if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); }
+    }
+    select.addEventListener('pointerdown', function () { pointer = true; });
+    select.addEventListener('keydown', function (event) {
+      pointer = false;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        submit();
+      }
+    });
+    select.addEventListener('change', function () {
+      if (pointer) { submit(); }
     });
   });
 
-  /* Restore: show which of the two scopes the per-file ticks belong to.
+  /* Import credentials: show and send only the chosen form's fields.
    *
-   * The radio is what the backend reads, with or without this script, so the
-   * ticks are only marked inactive, never disabled or cleared. A reader who
-   * chose the whole project can still read the list to see what that will do,
-   * and switching back finds their earlier ticks intact.
+   * The stylesheet already hides the other forms' fields; disabling them
+   * here also keeps a value typed before switching from being sent with the
+   * form that was chosen afterwards. Nothing is cleared, so switching back
+   * finds what was typed. */
+
+  all('[data-cred-form]').forEach(function (select) {
+    var form = select.form;
+    if (!form) { return; }
+    var groups = all('[data-cred-for]', form);
+    function sync() {
+      groups.forEach(function (group) {
+        var on = group.getAttribute('data-cred-for') === select.value;
+        group.hidden = !on;
+        all('input, textarea', group).forEach(function (field) { field.disabled = !on; });
+      });
+    }
+    select.addEventListener('change', sync);
+    sync();
+  });
+
+  /* Restore: show the file list only while "Selected files" is chosen.
    *
-   * The marking is an attribute the stylesheet reads. It changes the panel's
-   * surface and reveals a line of text; it never fades the text itself, so
-   * every word in here keeps its normal contrast. */
+   * The stylesheet already does this from the radio's state; hidden covers a
+   * browser without :has(). The radio is what the backend reads, so the
+   * ticks are only hidden, never disabled or cleared, and switching back
+   * finds them as they were. */
 
   all('[data-restore-files]').forEach(function (panel) {
     var form = panel.closest && panel.closest('form');
@@ -411,30 +442,10 @@
 
     function sync() {
       var picked = form.querySelector('[data-restore-scope]:checked');
-      var files = picked && picked.getAttribute('data-restore-scope') === 'files';
-      if (files) {
-        panel.removeAttribute('data-restore-dimmed');
-      } else {
-        panel.setAttribute('data-restore-dimmed', '');
-      }
+      panel.hidden = !(picked && picked.getAttribute('data-restore-scope') === 'files');
     }
 
     scopes.forEach(function (scope) { scope.addEventListener('change', sync); });
-
-    // Ticking a path is a statement that those paths are what should be
-    // restored, so it selects the matching scope rather than being read under
-    // a scope that ignores it.
-    all('input[type="checkbox"][name="path"]', panel).forEach(function (box) {
-      box.addEventListener('change', function () {
-        if (!box.checked) { return; }
-        var files = form.querySelector('[data-restore-scope="files"]');
-        if (files && !files.checked) {
-          files.checked = true;
-          sync();
-        }
-      });
-    });
-
     sync();
   });
 

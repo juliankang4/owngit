@@ -150,7 +150,7 @@ func TestAdminLoginRefusesNextWithControlCharacters(t *testing.T) {
 // administrator login, and logging in returns to the entry that was followed.
 func TestRepositoryAdminEntryReturnsAfterLogin(t *testing.T) {
 	for _, path := range []string{"/repositories/project/settings", "/repositories/project/delete?lang=ko",
-		"/repositories/project/configured-checks", "/repositories/project/helper-credentials", "/repositories/project/import"} {
+		"/repositories/project/configured-checks", "/repositories/project/helper-credentials", "/repositories/project/import?setup=1"} {
 		fixture := newAPIFixture(t, false)
 		server, client, jar := openBrowser(t, fixture)
 		entry := browserGET(t, client, server.URL+path)
@@ -591,5 +591,40 @@ func TestKeptNoticeGivesAQuotedRecoveryCommand(t *testing.T) {
 		if strings.Contains(body, "git --git-dir") || !strings.Contains(body, "To bring it back, create a new repository and push from that folder.") {
 			t.Errorf("%s: a kept path of the wrong shape was offered a command", name)
 		}
+	}
+}
+
+// The administrator password prompt opened from a repository keeps that
+// repository on screen: its name as the heading and its sidebar with the
+// requested section marked, also after a wrong password. A viewer who has
+// not passed general access sees the plain prompt, with no repository name.
+func TestAdminPromptKeepsTheRepositoryContext(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	next := "/repositories/project/settings"
+	heading := `<h1 class="rhead__name">project</h1>`
+	marked := `href="/repositories/project/settings" aria-current="page"`
+	for _, lang := range []string{"en", "ko"} {
+		prompt := browserGET(t, client, server.URL+"/admin/login?lang="+lang+"&next="+url.QueryEscape(next))
+		if prompt.status != http.StatusOK || !strings.Contains(prompt.body, heading) || !strings.Contains(prompt.body, marked) {
+			t.Fatalf("%s administrator prompt status=%d lost the repository context", lang, prompt.status)
+		}
+	}
+	wrong := browserForm(t, client, server.URL+"/admin/login", url.Values{
+		"csrf": {cookieValue(t, jar, server.URL, preauthCookie)}, "admin_password": {"wrong"}, "next": {next},
+	}, server.URL)
+	if wrong.status != http.StatusUnauthorized || !strings.Contains(wrong.body, heading) || !strings.Contains(wrong.body, marked) {
+		t.Fatalf("wrong password status=%d lost the repository context", wrong.status)
+	}
+	if other := browserGET(t, client, server.URL+"/admin/login?next=/settings"); strings.Contains(other.body, "rhead__name") {
+		t.Error("a prompt outside a repository shows a repository heading")
+	}
+
+	locked := newAPIFixture(t, true)
+	lockedServer := serve(t, locked.app.Handler())
+	stranger, _ := newBrowserClient(t)
+	prompt := browserGET(t, stranger, lockedServer.URL+"/admin/login?next="+url.QueryEscape("/repositories/project/import"))
+	if prompt.status != http.StatusOK || strings.Contains(prompt.body, "rhead__name") || strings.Contains(prompt.body, "sb__repo") {
+		t.Fatalf("a viewer without general access sees the repository on the prompt: status=%d", prompt.status)
 	}
 }

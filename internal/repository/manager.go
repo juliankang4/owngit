@@ -44,6 +44,8 @@ type Manager struct {
 	mu       sync.RWMutex
 	// snapshots caches RefSnapshot results between ref writes.
 	snapshots snapshotCache
+	// languages caches the newest language count of each repository.
+	languages languageCache
 	// preparation records the repositories that are still being prepared
 	// after startup; see StartPreparation.
 	preparation preparationState

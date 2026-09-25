@@ -11,9 +11,11 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
+	"owngit/internal/webui"
 )
 
 func TestDashboardPreservesCollidingBranchAndTagIdentity(t *testing.T) {
@@ -479,4 +481,33 @@ func gitCombined(directory string, arguments ...string) (string, error) {
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	output, err := command.CombinedOutput()
 	return string(output), err
+}
+
+// A new repository with no commits is a normal first state. The dashboard
+// names it neutrally instead of reporting a missing default branch, and the
+// latest activity rows name their day, not only a clock.
+func TestDashboardShowsEmptyRepositoriesNeutrallyAndDatesActivity(t *testing.T) {
+	app := newConfiguredApp(t)
+	if _, err := app.Repositories.Create(context.Background(), "fresh", ""); err != nil {
+		t.Fatal(err)
+	}
+	seedRepository(t, app, "older", map[string]string{"a.txt": "a\n"}, time.Date(2024, 8, 2, 1, 0, 0, 0, time.UTC))
+	server := serve(t, app.Handler())
+	client := &http.Client{}
+
+	body, status := dashboardGET(t, client, server.URL+"/")
+	if status != http.StatusOK {
+		t.Fatalf("dashboard status=%d", status)
+	}
+	row := body[strings.Index(body, `class="row row--repo" href="/repositories/fresh"`):]
+	row = row[:strings.Index(row, "</a>")]
+	if !strings.Contains(row, webui.Text(webui.LangEN, webui.MsgRepoEmptyShort)) || strings.Contains(row, "pill--missing") ||
+		strings.Contains(row, webui.Text(webui.LangEN, webui.MsgRepoDefaultGoneShort)) {
+		t.Errorf("an empty repository is not shown as a neutral first state:\n%s", row)
+	}
+	recent := pageSection(t, body, webui.Text(webui.LangEN, webui.MsgLatestActivity))
+	if !strings.Contains(recent, `<time class="row__time" datetime="2024-08-02T01:00:00Z"`) || !strings.Contains(recent, "Aug 2, 2024") ||
+		!strings.Contains(recent, `title="Aug 2, 2024 01:00"`) {
+		t.Errorf("a latest activity row does not name its date and exact time:\n%s", recent)
+	}
 }

@@ -52,6 +52,7 @@
   </dl>
 
   <div class="ov-cols">
+    <div class="ov-main">
     <section class="ov-commits" aria-labelledby="ov-commits-h">
       <div class="sec__bar">
         <h2 id="ov-commits-h">{{bi $lang "repo.overview.recent_commits"}}</h2>
@@ -72,6 +73,12 @@
       {{if and $o.RecentMore $p.CommitsURL}}<p class="ov-more"><a href="{{$p.CommitsURL}}">{{bi $lang "repo.overview.all_commits"}}</a></p>{{end}}
       {{end}}
     </section>
+
+    {{/* The README of the selected ref, rendered by the same helper as the
+         code view's folder README. One that cannot be rendered is still
+         named, with the reason and a link to open it. */}}
+    {{template "readme" dict "Lang" $lang "R" $o.Readme}}
+    </div>
 
     {{/* The side column lists the newest refs. A long list is cut to the
          newest few and says how many exist; "Show all" reloads with every
@@ -109,6 +116,33 @@
         </div>
       </section>
       {{end}}
+
+      {{/* The language make-up of the default branch: one bar, then a legend
+           whose names and percentages carry the meaning, so color is never
+           the only cue. The bar's text alternative repeats the legend. */}}
+      {{with $o.Languages}}{{if or .Rows .Note}}
+      <section class="ov-panel langs" aria-labelledby="ov-langs-h">
+        {{if .Rows}}
+        <div class="sec__bar sec__bar--flat">
+          <h2 id="ov-langs-h">{{bi $lang "repo.languages.title"}}</h2>
+        </div>
+        <div class="langs__bar" role="img" {{biAttrText $lang "aria-label" (.BarLabel "en") (.BarLabel "ko")}}>
+          {{- range .Rows}}<span class="langs__seg" style="flex-grow:{{.Share}};{{if .Color}}--lang:{{.Color}}{{end}}"></span>{{end -}}
+        </div>
+        <ul class="langs__list">
+          {{- range .Rows}}
+          <li><span class="langs__dot" aria-hidden="true"{{if .Color}} style="--lang:{{.Color}}"{{end}}></span><span class="langs__name">{{if .Other}}{{bi $lang "repo.languages.other"}}{{else}}{{.Name}}{{end}}</span> <span class="langs__pct">{{.Percent}}</span></li>
+          {{- end}}
+        </ul>
+        {{if .AttributesIgnored}}<p class="ov-order">{{bi $lang "repo.languages.attributes_ignored"}}</p>{{end}}
+        {{else}}
+        <div class="sec__bar sec__bar--flat">
+          <h2 id="ov-langs-h">{{bi $lang "repo.languages.title"}}</h2>
+          <span class="sec__n">{{bi $lang .Note}}</span>
+        </div>
+        {{end}}
+      </section>
+      {{end}}{{end}}
 
       {{/* History kept after a force push or a deleted ref. It is listed as
            kept history, never as a live branch, and each entry offers restore
@@ -171,6 +205,7 @@
     {{with $f}}
     <div class="codebar__tools">
       {{if not .Binary}}<span class="codebar__fact">{{biCount $lang "line" (len .Lines)}}</span>{{end}}
+      {{if and .Image .ImageWidth}}<span class="codebar__fact">{{.ImageWidth}} &times; {{.ImageHeight}} px</span>{{end}}
       <span class="codebar__fact">{{bytes .Size}}</span>
       {{/* The source view renders nothing, so it offers the switch unless the
            backend already knows the preview cannot be shown. */}}
@@ -202,7 +237,17 @@
     </div>
   {{else if $f}}
     {{with $f}}
-    {{if .Binary}}
+    {{if .Image}}
+      {{/* A raster picture loads through the raw endpoint, which sends it as
+           an attachment with a sandboxing policy. An img element never runs
+           script, and SVG is never marked as an image here. The size keeps
+           the page from jumping while the picture loads; the stylesheet
+           scales a large one down to the column. */}}
+      <figure class="imgview">
+        <img class="imgview__img" src="{{.RawURL}}" alt="{{.Path}}" decoding="async"
+             {{if .ImageWidth}}width="{{.ImageWidth}}" height="{{.ImageHeight}}"{{end}}>
+      </figure>
+    {{else if .Binary}}
       <p class="empty">{{bi $lang "code.binary"}}</p>
     {{else if and .Document (not .ShowSource) .Rendered}}
       {{/* Rendered by internal/markdown: raw HTML from the file is never
@@ -239,12 +284,7 @@
       </ul>
       {{if not $c.Entries}}<p class="empty">{{bi $lang "code.empty_directory"}}</p>{{end}}
     </nav>
-    {{with $c.Readme}}
-      <section class="readme" aria-labelledby="readme-h">
-        <h2 class="readme__h" id="readme-h">{{icon "file"}}<a href="{{.URL}}">{{.Path}}</a></h2>
-        {{if .Rendered}}<article class="md">{{.Rendered}}</article>{{else}}<p class="hm__note">{{bi $lang .Note}}</p>{{end}}
-      </section>
-    {{end}}
+    {{template "readme" dict "Lang" $lang "R" $c.Readme}}
   {{end}}
 
 {{else}}
@@ -342,6 +382,18 @@
     {{end}}
   </ul>
 </nav>
+{{end}}
+
+{{/* A folder's README below its listing, or the top README on the overview.
+     Call as: {{template "readme" dict "Lang" $lang "R" $readme}} */}}
+{{define "readme"}}
+{{$lang := .Lang}}
+{{with .R}}
+  <section class="readme" aria-labelledby="readme-h">
+    <h2 class="readme__h" id="readme-h">{{icon "file"}}<a href="{{.URL}}">{{.Path}}</a></h2>
+    {{if .Rendered}}<article class="md">{{.Rendered}}</article>{{else}}<p class="hm__note">{{bi $lang .Note}}</p>{{end}}
+  </section>
+{{end}}
 {{end}}
 
 {{define "entryIcon"}}{{if eq .Kind "dir"}}{{icon "folder"}}{{else if eq .Kind "symlink"}}{{icon "symlink"}}{{else if eq .Kind "submodule"}}{{icon "module"}}{{else}}{{icon "file"}}{{end}}{{end}}

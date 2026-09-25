@@ -42,6 +42,23 @@ type ImportPage struct {
 	SubmitURL string
 	OlderURL  string
 
+	// Admin is true for an administrator session. Only then does the backend
+	// fill the administrator data below (URL, the consents, the credential
+	// fields and run messages) and does the page draw the change forms.
+	// Everyone else sees the status and each change as a locked link.
+	Admin bool
+	// AdminLoginURL asks for the administrator password and returns to this
+	// tab. SetupURL opens the source form: for an administrator this tab
+	// with the form shown, for anyone else the password prompt first.
+	AdminLoginURL string
+	SetupURL      string
+	// Setup shows the source form. It opens on request and stays open after
+	// a refused change.
+	Setup bool
+	// CredentialChoice is the credential form submitted with a refused
+	// change, so the same fields are shown again. Empty otherwise.
+	CredentialChoice string
+
 	Available         bool
 	Configured        bool
 	URL               string
@@ -79,6 +96,9 @@ type NewImportPage struct {
 	Mode           string
 	GitOnlyConsent bool
 	PrivateNetwork bool
+	// CredentialForm is the submitted credential form, so a refused import
+	// shows the same fields again. The secrets themselves are never echoed.
+	CredentialForm string
 }
 
 func (NewImportPage) page() string { return "new-import" }

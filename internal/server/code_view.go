@@ -1,9 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"html/template"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"mime"
 	"net/http"
 	"net/url"
@@ -107,6 +112,68 @@ var rawTypes = map[string]string{
 	".gif":  "image/gif",
 	".webp": "image/webp",
 	".svg":  "image/svg+xml",
+}
+
+// inlineImageTypes are the raster formats the file view shows as a picture
+// through the raw endpoint. SVG is left out on purpose: it can carry script
+// and links, so it is offered only as a download (its text is shown as
+// source like any other text file).
+var inlineImageTypes = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/gif":  true,
+	"image/webp": true,
+}
+
+// inlineImage reports whether filePath names a raster picture whose first
+// bytes match its type, and its pixel size when it can be read from the
+// header (zero otherwise). A file named .png that holds something else is
+// treated as an ordinary binary file.
+func inlineImage(filePath string, head []byte) (bool, int, int) {
+	declared := rawTypes[strings.ToLower(path.Ext(filePath))]
+	if !inlineImageTypes[declared] || http.DetectContentType(head) != declared {
+		return false, 0, 0
+	}
+	if declared == "image/webp" {
+		width, height := webpSize(head)
+		return true, width, height
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(head))
+	if err != nil || config.Width <= 0 || config.Height <= 0 {
+		return true, 0, 0
+	}
+	return true, config.Width, config.Height
+}
+
+// webpSize reads a WebP picture's pixel size from its first chunk header, so
+// the page can reserve its space. The standard library has no WebP decoder;
+// the three first-chunk forms are small fixed layouts (RFC 9649). An
+// unrecognised header reports zero, and the picture is still shown.
+func webpSize(head []byte) (int, int) {
+	if len(head) < 30 || string(head[0:4]) != "RIFF" || string(head[8:12]) != "WEBP" {
+		return 0, 0
+	}
+	le24 := func(b []byte) int { return int(b[0]) | int(b[1])<<8 | int(b[2])<<16 }
+	switch string(head[12:16]) {
+	case "VP8X":
+		// Canvas width and height minus one, 24 bits each.
+		return le24(head[24:27]) + 1, le24(head[27:30]) + 1
+	case "VP8 ":
+		// A key frame: 3-byte frame tag, start code 9d 01 2a, then 14-bit
+		// width and height.
+		if head[23] != 0x9d || head[24] != 0x01 || head[25] != 0x2a {
+			return 0, 0
+		}
+		return (int(head[26]) | int(head[27])<<8) & 0x3fff, (int(head[28]) | int(head[29])<<8) & 0x3fff
+	case "VP8L":
+		// Signature 0x2f, then width and height minus one, 14 bits each.
+		if head[20] != 0x2f {
+			return 0, 0
+		}
+		bits := uint32(head[21]) | uint32(head[22])<<8 | uint32(head[23])<<16 | uint32(head[24])<<24
+		return int(bits&0x3fff) + 1, int(bits>>14&0x3fff) + 1
+	}
+	return 0, 0
 }
 
 // handleRaw sends one file as a download. It serves the file view's download

@@ -1,5 +1,5 @@
 {{define "body"}}
-{{$p := .Page}}{{$lang := .Lang}}{{$csrf := .Chrome.CSRF}}
+{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}
 
 <div class="card">
   <div class="phead">
@@ -8,60 +8,29 @@
   </div>
   <form class="form" method="post" action="{{$p.SubmitURL}}">
     <input type="hidden" name="csrf" value="{{$csrf}}">
+    {{template "importSourceFields" dict "Lang" $lang "Notices" $n "ID" "import-new" "URL" $p.URL "Mode" $p.Mode "GitOnly" $p.GitOnlyConsent "Private" $p.PrivateNetwork "Focus" false}}
     <div class="f">
       <label for="import-new-name">{{bi $lang "import.name"}}</label>
-      <input id="import-new-name" name="name" type="text" required spellcheck="false" autocomplete="off" value="{{$p.Name}}">
+      <input id="import-new-name" name="name" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" value="{{$p.Name}}"
+             {{template "fieldInvalid" dict "Notices" $n "Field" "name"}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "name"}}
+      <p class="f__help">{{bi $lang "import.name_help"}}</p>
     </div>
     <div class="f">
       <label for="import-new-description">{{bi $lang "import.description"}}</label>
-      <textarea id="import-new-description" name="description" rows="3">{{$p.Description}}</textarea>
+      <textarea id="import-new-description" name="description" rows="3"
+                {{template "fieldInvalid" dict "Notices" $n "Field" "description"}}>{{$p.Description}}</textarea>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "description"}}
     </div>
-    <div class="f">
-      <label for="import-new-url">{{bi $lang "import.url"}}</label>
-      <input id="import-new-url" name="url" type="url" required spellcheck="false" autocomplete="off" value="{{$p.URL}}">
-    </div>
-    <div class="f">
-      <label for="import-new-mode">{{bi $lang "import.mode"}}</label>
-      <select id="import-new-mode" name="mode">
-        <option value="standalone"{{if or (eq $p.Mode "") (eq $p.Mode "standalone")}} selected{{end}}>{{bi $lang "import.mode.standalone"}}</option>
-        <option value="coexistence"{{if eq $p.Mode "coexistence"}} selected{{end}}>{{bi $lang "import.mode.coexistence"}}</option>
-      </select>
-    </div>
-    <div class="f">
-      <label><input type="checkbox" name="git_only_consent" value="1"{{if $p.GitOnlyConsent}} checked{{end}}> {{bi $lang "import.git_only"}}</label>
-      <p class="f__help">{{bi $lang "import.git_only_help"}}</p>
-    </div>
-    <div class="f">
-      <label><input type="checkbox" name="allow_private_network" value="1"{{if $p.PrivateNetwork}} checked{{end}}> {{bi $lang "import.private_network"}}</label>
-      <p class="f__help">{{bi $lang "import.private_network_help"}}</p>
-    </div>
-    <div class="f">
-      <label for="import-new-credential-form">{{bi $lang "import.credential_form"}}</label>
-      <select id="import-new-credential-form" name="credential_form">
-        <option value="none">{{bi $lang "import.credential_none"}}</option>
-        <option value="basic">{{bi $lang "import.credential_basic"}}</option>
-        <option value="bearer">{{bi $lang "import.credential_bearer"}}</option>
-      </select>
-    </div>
-    <div class="f">
-      <label for="import-new-username">{{bi $lang "import.username"}}</label>
-      <input id="import-new-username" name="username" type="text" autocomplete="off">
-    </div>
-    <div class="f">
-      <label for="import-new-password">{{bi $lang "import.password"}}</label>
-      <input id="import-new-password" name="password" type="password" autocomplete="new-password">
-    </div>
-    <div class="f">
-      <label for="import-new-token">{{bi $lang "import.token"}}</label>
-      <input id="import-new-token" name="token" type="password" autocomplete="new-password">
-    </div>
-    <div class="f">
-      <label for="import-new-ca">{{bi $lang "import.ca"}}</label>
-      <textarea id="import-new-ca" name="ca_pem" rows="4" autocomplete="off"></textarea>
-    </div>
+    <fieldset class="fset">
+      <legend>{{bi $lang "import.credentials"}}</legend>
+      <p class="f__help">{{bi $lang "import.credentials_help"}}</p>
+      {{template "importCredentialFields" dict "Lang" $lang "Notices" $n "ID" "import-new" "Choice" $p.CredentialForm}}
+    </fieldset>
     <div class="f">
       <label for="import-new-admin">{{bi $lang "admin.field"}}</label>
-      <input id="import-new-admin" name="admin_password" type="password" required autocomplete="current-password">
+      <input id="import-new-admin" name="admin_password" type="password" required autocomplete="current-password"
+             {{template "fieldInvalid" dict "Notices" $n "Field" "admin_password"}}>
       <p class="f__help">{{bi $lang "import.password_each_time"}}</p>
     </div>
     <div class="actions">

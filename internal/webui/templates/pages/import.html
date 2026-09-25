@@ -5,9 +5,16 @@
   <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
 </div>
 
-<div class="rpane">
+{{/* Anyone who can read the repository sees its import status here. The
+     source address, credential state, and run messages are administrator
+     data: the backend fills them only for an administrator session, and the
+     change forms exist only then. Everyone else sees each change as a link
+     with the lock mark, which asks for the administrator password and
+     returns to this tab (Set up import returns with the source form open;
+     Change import settings returns to the tab, where every setting is). */}}
+<div class="rpane imp">
 <div class="phead">
-  <h1>{{bi $lang "import.title"}}</h1>
+  <h2>{{bi $lang "import.title"}}</h2>
   <p>{{bi $lang "import.intro"}}</p>
 </div>
 
@@ -23,14 +30,20 @@
 {{if $p.Unresolved}}
 <p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "import.unresolved"}} {{$p.Unresolved}}</span></p>
 <div class="card">
-  <p>{{bi $lang "import.resolve_help"}}</p>
-  <form class="form" method="post" action="{{$p.SubmitURL}}">
+  <p class="setblock__d">{{bi $lang "import.resolve_help"}}</p>
+  {{if $p.Admin}}
+  <form class="form form--inline imp__act" method="post" action="{{$p.SubmitURL}}">
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <input type="hidden" name="action" value="import_resolve">
-    <label for="import-resolve-password">{{bi $lang "import.password_each_time"}}</label>
-    <input id="import-resolve-password" name="admin_password" type="password" required autocomplete="current-password">
+    <div class="f">
+      <label for="import-resolve-password">{{bi $lang "import.password_each_time"}}</label>
+      <input id="import-resolve-password" name="admin_password" type="password" required autocomplete="current-password">
+    </div>
     <button type="submit" class="btn">{{bi $lang "import.resolve"}}</button>
   </form>
+  {{else}}
+  <div class="actions">{{template "importLocked" dict "Lang" $lang "URL" $p.AdminLoginURL "Label" (bi $lang "import.resolve")}}</div>
+  {{end}}
 </div>
 {{end}}
 {{if $p.StagingIssues}}
@@ -40,6 +53,73 @@
 <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "import.incomplete"}}</span></p>
 {{end}}
 
+{{if $p.Configured}}
+  {{/* The current setup in one strip. Each value is a recorded fact; the
+       source address is named as hidden rather than left out, so nobody
+       mistakes its absence for a repository without a source. */}}
+  <dl class="facts imp__facts" {{biAttr $lang "aria-label" "import.status_heading"}}>
+    <div class="facts__i">
+      <dt>{{bi $lang "import.source"}}</dt>
+      <dd>{{if $p.Admin}}<span class="mono imp__url">{{$p.URL}}</span>
+          {{else}}{{icon "lock"}}<span class="facts__sub">{{bi $lang "import.admin_only"}}</span>{{end}}</dd>
+    </div>
+    <div class="facts__i">
+      <dt>{{bi $lang "import.mode"}}</dt>
+      <dd>{{importToken $lang $p.Mode}}</dd>
+    </div>
+    <div class="facts__i">
+      <dt>{{bi $lang "import.auto_refresh"}}</dt>
+      <dd>{{if and $p.ScheduleEnabled $p.ScheduleInterval}}{{biText $lang (printf (t "en" "import.every") $p.ScheduleInterval) (printf (t "ko" "import.every") $p.ScheduleInterval)}}
+          {{else}}{{bi $lang "import.schedule_disabled"}}{{end}}</dd>
+    </div>
+    {{if $p.Admin}}
+    <div class="facts__i">
+      <dt>{{bi $lang "import.credentials"}}</dt>
+      <dd>{{template "importCredentialState" dict "Lang" $lang "P" $p}}</dd>
+    </div>
+    {{end}}
+  </dl>
+
+  {{if $p.Admin}}
+  <div class="imp__acts">
+    <form class="form form--inline imp__act" method="post" action="{{$p.SubmitURL}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <input type="hidden" name="action" value="import_refresh">
+      <div class="f">
+        <label for="import-refresh-password">{{bi $lang "import.password_each_time"}}</label>
+        <input id="import-refresh-password" name="admin_password" type="password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn--primary">{{bi $lang "import.refresh"}}</button>
+    </form>
+    <form class="form form--inline imp__act" method="post" action="{{$p.SubmitURL}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <input type="hidden" name="action" value="import_cancel">
+      <div class="f">
+        <label for="import-cancel-password">{{bi $lang "import.password_each_time"}}</label>
+        <input id="import-cancel-password" name="admin_password" type="password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn">{{bi $lang "import.cancel"}}</button>
+    </form>
+  </div>
+  {{else}}
+  <div class="actions imp__locked">
+    {{template "importLocked" dict "Lang" $lang "URL" $p.AdminLoginURL "Label" (bi $lang "import.refresh") "Primary" true}}
+    {{template "importLocked" dict "Lang" $lang "URL" $p.AdminLoginURL "Label" (bi $lang "import.cancel")}}
+    {{template "importLocked" dict "Lang" $lang "URL" $p.AdminLoginURL "Label" (bi $lang "import.change_settings")}}
+  </div>
+  {{end}}
+{{else}}
+  <div class="empty imp__empty">
+    <p class="empty__lead">{{bi $lang "import.not_configured"}}</p>
+    <p>{{bi $lang "import.not_configured_help"}}</p>
+    {{if not $p.Setup}}
+      <a class="btn btn--primary" href="{{$p.SetupURL}}">{{icon "import"}}<span>{{bi $lang "import.set_up"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $p.Admin)}}</a>
+    {{end}}
+  </div>
+  {{if $p.Setup}}{{template "importSetup" dict "Lang" $lang "P" $p "Notices" $n "CSRF" $csrf}}{{end}}
+{{end}}
+
+{{if or $p.Configured $p.Last $p.Active}}
 <section class="sec">
   <h2>{{bi $lang "import.last_run"}}</h2>
   {{if $p.Active}}
@@ -53,6 +133,7 @@
     <p>{{bi $lang "import.no_run"}}</p>
   {{end}}
 </section>
+{{end}}
 
 {{if $p.Configured}}
 <section class="sec">
@@ -64,7 +145,7 @@
     {{end}}
   </ul>
   {{else}}
-  <p>{{bi $lang "import.no_run"}}</p>
+  <p>{{bi $lang "import.no_refs"}}</p>
   {{end}}
   {{if $p.RefsTruncated}}
   <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "import.refs_truncated"}}</span></p>
@@ -85,103 +166,40 @@
   {{with $p.OlderURL}}<p><a href="{{.}}">{{bi $lang "import.older"}}</a></p>{{end}}
 </section>
 
-<div class="actions">
-  <form method="post" action="{{$p.SubmitURL}}">
-    <input type="hidden" name="csrf" value="{{$csrf}}">
-    <input type="hidden" name="action" value="import_refresh">
-    <label for="import-refresh-password">{{bi $lang "import.password_each_time"}}</label>
-    <input id="import-refresh-password" name="admin_password" type="password" required autocomplete="current-password">
-    <button type="submit" class="btn btn--primary">{{bi $lang "import.refresh"}}</button>
-  </form>
-  <form method="post" action="{{$p.SubmitURL}}">
-    <input type="hidden" name="csrf" value="{{$csrf}}">
-    <input type="hidden" name="action" value="import_cancel">
-    <label for="import-cancel-password">{{bi $lang "import.password_each_time"}}</label>
-    <input id="import-cancel-password" name="admin_password" type="password" required autocomplete="current-password">
-    <button type="submit" class="btn">{{bi $lang "import.cancel"}}</button>
-  </form>
-</div>
+{{if $p.Admin}}
+{{if $p.Setup}}
+  {{template "importSetup" dict "Lang" $lang "P" $p "Notices" $n "CSRF" $csrf}}
 {{else}}
-<p>{{bi $lang "import.not_configured"}}</p>
+<div class="card">
+  <h2 class="setblock__h">{{bi $lang "import.source"}}</h2>
+  <p class="setblock__d">{{bi $lang "import.change_source_intro"}}</p>
+  <div class="actions"><a class="btn" href="{{$p.SetupURL}}">{{bi $lang "import.change_source"}}</a></div>
+</div>
 {{end}}
 
 <div class="card">
-  <h2 class="setblock__h">{{bi $lang "import.save_source"}}</h2>
-  <form class="form" method="post" action="{{$p.SubmitURL}}">
-    <input type="hidden" name="csrf" value="{{$csrf}}">
-    <input type="hidden" name="action" value="import_configure">
-    <div class="f">
-      <label for="import-url">{{bi $lang "import.url"}}</label>
-      <input id="import-url" name="url" type="url" required spellcheck="false" autocomplete="off" value="{{$p.URL}}">
-    </div>
-    <div class="f">
-      <label for="import-mode">{{bi $lang "import.mode"}}</label>
-      <select id="import-mode" name="mode">
-        <option value="standalone"{{if eq $p.Mode "standalone"}} selected{{end}}>{{bi $lang "import.mode.standalone"}}</option>
-        <option value="coexistence"{{if eq $p.Mode "coexistence"}} selected{{end}}>{{bi $lang "import.mode.coexistence"}}</option>
-      </select>
-    </div>
-    <div class="f">
-      <label><input type="checkbox" name="git_only_consent" value="1"{{if $p.GitOnlyConsent}} checked{{end}}> {{bi $lang "import.git_only"}}</label>
-      <p class="f__help">{{bi $lang "import.git_only_help"}}</p>
-    </div>
-    <div class="f">
-      <label><input type="checkbox" name="allow_private_network" value="1"{{if $p.PrivateNetwork}} checked{{end}}> {{bi $lang "import.private_network"}}</label>
-      <p class="f__help">{{bi $lang "import.private_network_help"}}</p>
-    </div>
-    <div class="f">
-      <label for="import-configure-password">{{bi $lang "admin.field"}}</label>
-      <input id="import-configure-password" name="admin_password" type="password" required autocomplete="current-password">
-    </div>
-    <button type="submit" class="btn btn--primary">{{bi $lang "import.save_source"}}</button>
-  </form>
-</div>
-
-{{if $p.Configured}}
-<div class="card">
   <h2 class="setblock__h">{{bi $lang "import.credentials"}}</h2>
-  <p>{{bi $lang "import.credentials_help"}}</p>
-  {{if $p.CredentialBound}}<p>{{bi $lang "import.bound"}} <span class="pill pill--off">{{importToken $lang $p.CredentialForm}}</span></p>{{else}}<p>{{bi $lang "import.unbound"}}</p>{{end}}
-  {{if $p.CAPresent}}<p>{{bi $lang "import.ca_present"}}</p>{{end}}
+  <p class="setblock__d">{{bi $lang "import.credentials_help"}}</p>
+  {{if $p.CredentialBound}}<p class="setblock__d">{{bi $lang "import.bound"}} <span class="pill pill--off">{{template "importCredentialState" dict "Lang" $lang "P" $p}}</span></p>{{else}}<p class="setblock__d">{{bi $lang "import.unbound"}}</p>{{end}}
+  {{if $p.CAPresent}}<p class="setblock__d">{{bi $lang "import.ca_present"}}</p>{{end}}
+  {{$choice := $p.CredentialChoice}}{{if and (not $choice) $p.CredentialBound}}{{$choice = $p.CredentialForm}}{{end}}
   <form class="form" method="post" action="{{$p.SubmitURL}}">
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <input type="hidden" name="action" value="import_credentials">
-    <div class="f">
-      <label for="import-credential-form">{{bi $lang "import.credential_form"}}</label>
-      <select id="import-credential-form" name="credential_form">
-        {{$bound := ""}}{{if $p.CredentialBound}}{{$bound = $p.CredentialForm}}{{end}}
-        <option value="basic"{{if eq $bound "basic"}} selected{{end}}>{{bi $lang "import.credential_basic"}}</option>
-        <option value="bearer"{{if eq $bound "bearer"}} selected{{end}}>{{bi $lang "import.credential_bearer"}}</option>
-        <option value="none"{{if eq $bound "none"}} selected{{end}}>{{bi $lang "import.credential_none"}}</option>
-      </select>
-    </div>
-    <div class="f">
-      <label for="import-username">{{bi $lang "import.username"}}</label>
-      <input id="import-username" name="username" type="text" autocomplete="off">
-    </div>
-    <div class="f">
-      <label for="import-password">{{bi $lang "import.password"}}</label>
-      <input id="import-password" name="password" type="password" autocomplete="new-password">
-    </div>
-    <div class="f">
-      <label for="import-token">{{bi $lang "import.token"}}</label>
-      <input id="import-token" name="token" type="password" autocomplete="new-password">
-    </div>
-    <div class="f">
-      <label for="import-ca">{{bi $lang "import.ca"}}</label>
-      <textarea id="import-ca" name="ca_pem" rows="4" autocomplete="off"></textarea>
-    </div>
+    {{template "importCredentialFields" dict "Lang" $lang "Notices" $n "ID" "import" "Choice" $choice "Stored" true}}
     <div class="f">
       <label for="import-credential-admin">{{bi $lang "admin.field"}}</label>
       <input id="import-credential-admin" name="admin_password" type="password" required autocomplete="current-password">
     </div>
-    <button type="submit" class="btn btn--primary">{{bi $lang "import.save_credentials"}}</button>
+    <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "import.save_credentials"}}</button></div>
   </form>
-  <form method="post" action="{{$p.SubmitURL}}">
+  <form class="form form--inline imp__act imp__clear" method="post" action="{{$p.SubmitURL}}">
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <input type="hidden" name="action" value="import_clear_credentials">
-    <label for="import-clear-password">{{bi $lang "admin.field"}}</label>
-    <input id="import-clear-password" name="admin_password" type="password" required autocomplete="current-password">
+    <div class="f">
+      <label for="import-clear-password">{{bi $lang "admin.field"}}</label>
+      <input id="import-clear-password" name="admin_password" type="password" required autocomplete="current-password">
+    </div>
     <button type="submit" class="btn">{{bi $lang "import.clear_credentials"}}</button>
   </form>
 </div>
@@ -192,7 +210,7 @@
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <input type="hidden" name="action" value="import_schedule">
     <div class="f">
-      <label for="import-enabled">{{bi $lang "import.schedule"}}</label>
+      <label for="import-enabled">{{bi $lang "import.auto_refresh"}}</label>
       <select id="import-enabled" name="enabled">
         <option value="1"{{if $p.ScheduleEnabled}} selected{{end}}>{{bi $lang "import.schedule_enabled"}}</option>
         <option value="0"{{if not $p.ScheduleEnabled}} selected{{end}}>{{bi $lang "import.schedule_disabled"}}</option>
@@ -207,10 +225,44 @@
       <label for="import-schedule-password">{{bi $lang "admin.field"}}</label>
       <input id="import-schedule-password" name="admin_password" type="password" required autocomplete="current-password">
     </div>
-    <button type="submit" class="btn btn--primary">{{bi $lang "import.save_schedule"}}</button>
+    <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "import.save_schedule"}}</button></div>
   </form>
 </div>
 {{end}}
 {{end}}
+{{end}}
 </div>
+{{end}}
+
+{{/* The source form, opened by "Set up import" or "Change source". It is
+     drawn only for an administrator, and Cancel returns to the status. */}}
+{{define "importSetup"}}
+{{$lang := .Lang}}{{$p := .P}}{{$n := .Notices}}
+<div class="card imp__setup" id="import-setup">
+  <h2 class="setblock__h">{{if $p.Configured}}{{bi $lang "import.change_source"}}{{else}}{{bi $lang "import.set_up"}}{{end}}</h2>
+  <p class="setblock__d">{{if $p.Configured}}{{bi $lang "import.change_source_intro"}}{{else}}{{bi $lang "import.set_up_intro"}}{{end}}</p>
+  <form class="form" method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="action" value="import_configure">
+    {{template "importSourceFields" dict "Lang" $lang "Notices" $n "ID" "import" "URL" $p.URL "Mode" $p.Mode "GitOnly" $p.GitOnlyConsent "Private" $p.PrivateNetwork "Focus" (not $n)}}
+    <div class="f">
+      <label for="import-configure-password">{{bi $lang "admin.field"}}</label>
+      <input id="import-configure-password" name="admin_password" type="password" required autocomplete="current-password">
+      <p class="f__help">{{bi $lang "import.password_each_time"}}</p>
+    </div>
+    <div class="actions">
+      <button type="submit" class="btn btn--primary">{{bi $lang "import.save_source"}}</button>
+      <a class="btn" href="{{$p.SubmitURL}}">{{bi $lang "app.cancel"}}</a>
+    </div>
+  </form>
+</div>
+{{end}}
+
+{{/* The stored sign-in in a word: its form, "CA only" when only a source CA
+     is stored, or none. */}}
+{{define "importCredentialState"}}
+{{- $lang := .Lang}}{{$p := .P -}}
+{{- if not $p.CredentialBound}}{{bi $lang "import.credential_none"}}
+{{- else if and (eq $p.CredentialForm "none") $p.CAPresent}}{{bi $lang "import.ca_only"}}
+{{- else}}{{importToken $lang $p.CredentialForm}}{{end -}}
 {{end}}

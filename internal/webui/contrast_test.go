@@ -265,47 +265,23 @@ func TestFadedPanelsStillMeetContrast(t *testing.T) {
 	}
 }
 
-func TestRestoreInactivePanelKeepsItsTextReadable(t *testing.T) {
-	// The inactive file list is now marked by its own surface and a line of
-	// text rather than by fading. Check the state exists, that it says so in
-	// words, and that the words on its surface are readable.
+func TestRestoreFileListIsHiddenForTheWholeProject(t *testing.T) {
+	// The file list belongs to "Selected files". While the whole project is
+	// chosen it is hidden by a rule on the radio's own state, so a browser
+	// without scripting hides it too, and the ticks stay in the form.
 	data, err := assetFS.ReadFile("assets/owngit.css")
 	noErr(t, err)
 	css := string(data)
-
-	start := strings.Index(css, ".restore__files[data-restore-dimmed]")
+	rule := `.restore:has([data-restore-scope="all"]:checked) .restore__files`
+	start := strings.Index(css, rule)
 	if start < 0 {
-		t.Fatal("the inactive file list has no style")
+		t.Fatal("no stylesheet rule hides the file list while the whole project is chosen")
 	}
-	rule := css[start : start+strings.Index(css[start:], "}")]
-	if strings.Contains(rule, "opacity") {
-		t.Error("the inactive file list is faded again")
+	if body := css[start : start+strings.Index(css[start:], "}")]; !strings.Contains(body, "display: none") {
+		t.Errorf("the whole-project rule does not hide the file list: %q", body)
 	}
-	if !strings.Contains(rule, "background") {
-		t.Error("the inactive state has no visible surface of its own")
-	}
-
-	// The state is also stated in words, so it does not rely on the surface
-	// being noticed.
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, restorePage(fullChrome(lang), false))
-		if !strings.Contains(out, wantText(lang, MsgRestoreFilesInactive)) {
-			t.Errorf("%s: the inactive file list does not explain itself", lang)
-		}
-	}
-
-	for _, p := range []struct{ name, selector string }{
-		{"light", ":root {"},
-		{"dark", ".theme-dark {"},
-	} {
-		colours := palette(t, p.selector)
-		for _, fg := range []string{"--text-1", "--text-2", "--text-3"} {
-			if got := contrast(colours[fg], colours["--bg-fill"]); got < 4.5 {
-				t.Errorf("%s palette: %s on the inactive surface is %.2f:1, need 4.50:1",
-					p.name, fg, got)
-			}
-		}
+	if strings.Contains(css, "data-restore-dimmed") {
+		t.Error("the old dimmed state is still styled, so the list would show as inactive instead of hidden")
 	}
 }
 

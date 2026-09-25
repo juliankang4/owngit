@@ -1274,9 +1274,10 @@ func TestRestoreLinksNeverDescribeTwoScopesAtOnce(t *testing.T) {
 }
 
 func TestRestoreFileTicksSurviveTheWholeProjectScope(t *testing.T) {
-	// Without scripting the radio is the only thing that decides the scope, so
-	// the checkboxes must stay present and usable even while the whole project
-	// is selected. The page says, in words, that they are not being used.
+	// The radio is the only thing that decides the scope, so the checkboxes
+	// stay in the form while the whole project is selected. The stylesheet
+	// hides them there; they are never disabled or cleared, so switching back
+	// finds earlier ticks intact.
 	r := newRenderer(t)
 	page := restorePage(fullChrome(LangEN), false)
 	page.Mode = RestoreModeAll
@@ -1295,11 +1296,8 @@ func TestRestoreFileTicksSurviveTheWholeProjectScope(t *testing.T) {
 	if !strings.Contains(panel, "checked") {
 		t.Error("an earlier tick was cleared by choosing the whole project")
 	}
-	for _, lang := range Langs() {
-		out := render(t, r, restorePage(fullChrome(lang), false))
-		if !strings.Contains(out, wantText(lang, MsgRestoreFilesInactive)) {
-			t.Errorf("%s: the page does not say the ticks are unused in this scope", lang)
-		}
+	if strings.Contains(panel[:strings.Index(panel, ">")], "hidden") {
+		t.Error("the file list is hidden in the markup, so choosing Selected files without scripting could not show it")
 	}
 }
 

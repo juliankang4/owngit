@@ -119,6 +119,10 @@ func sidebarOf(page Page) Sidebar {
 		return inRepo(p.Repo, p.Tabs)
 	case *RepositorySettingsPage:
 		return inRepo(p.Repo, p.Tabs)
+	case AuthPage:
+		return inRepo(p.Repo, p.Tabs)
+	case *AuthPage:
+		return inRepo(p.Repo, p.Tabs)
 	case RepositoryDeletePage:
 		return inRepo(p.Repo, p.Tabs)
 	case *RepositoryDeletePage:

@@ -35,8 +35,10 @@
          chosen short name is visible, so the label must not say "Branch"
          while a tag is selected. */}}
     <label class="refbar__label{{if $.Compact}} visually-hidden{{end}}" for="ref-select">{{bi $lang "app.ref_label"}}</label>
-    {{/* The button submits without JavaScript; the shared script submits on
-         change so the picker feels immediate when scripting is available. */}}
+    {{/* The button submits with or without JavaScript. The shared script
+         also submits when a pointer picks an option, or on Enter, but not
+         while arrow keys move through the list, so a keyboard reader can
+         reach any branch without loading a page for each step. */}}
     {{/* A branch and a tag can share one short name. The option shows the
          short name but submits the unambiguous ref the backend put in its
          URL, so picking one never resolves to the other. */}}
@@ -72,7 +74,7 @@
     </select>
     {{with .Path}}<input type="hidden" name="path" value="{{.}}">{{end}}
     <input type="hidden" name="lang" value="{{$lang}}">
-    <button type="submit" class="btn refbar__go" data-hide-with-script>{{bi $lang "app.show"}}</button>
+    <button type="submit" class="btn refbar__go">{{bi $lang "app.show"}}</button>
   </form>
   {{end}}
 

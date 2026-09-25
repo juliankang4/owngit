@@ -34,6 +34,7 @@ The entries fall into two groups:
 - `modernc.org/memory` v1.12.1: LICENSE, LICENSE-GO, LICENSE-LOGO, LICENSE-MMAP-GO
 - `modernc.org/sqlite` v1.59.0: LICENSE, LICENSE-SQLITE, LICENSE-SQLITE_VEC
 - `bundled-assets/pretendard` unversioned (internal/webui/assets/fonts/PretendardVariable.woff2): PRETENDARD-LICENSE.txt
+- `bundled-assets/linguist` v9.7.0 (internal/repository/languages.go): LINGUIST-LICENSE.txt
 - `go-runtime` go1.27.1: LICENSE, PATENTS
 
 Entries that need more than a single license file:

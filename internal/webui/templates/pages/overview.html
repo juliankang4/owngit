@@ -33,7 +33,7 @@
       <span class="sec__hint"><a href="{{.}}">{{bi $lang "repo.new.title"}}</a></span>
     {{end}}
     {{with .Chrome.Nav.NewImportURL}}
-      <span class="sec__hint"><a href="{{.}}">{{bi $lang "import.list_link"}}</a></span>
+      <span class="sec__hint"><a href="{{.}}">{{bi $lang "import.list_link"}}{{template "adminLock" dict "Lang" $lang "Locked" (not $.Chrome.Viewer.AdminConfirmed)}}</a></span>
     {{end}}
   </div>
 
@@ -50,18 +50,20 @@
               {{icon "info"}}<span class="pill pill--kept">{{bi $lang "repo.preparing.short"}}</span>
             {{else if .Unreadable}}
               {{icon "warning"}}<span class="pill pill--missing">{{bi $lang "repo.unreadable.short"}}</span>
+            {{else if .Empty}}
+              {{icon "commit"}}<span class="pill">{{bi $lang "repo.empty.short"}}</span>
             {{else if .DefaultBranchMissing}}
               {{icon "warning"}}<span class="pill pill--missing">{{bi $lang "repo.default_branch_missing.short"}}</span>
             {{else if .DefaultBranch}}
               {{icon "branch"}}<span class="row__refname" title="{{.DefaultBranch}}">{{.DefaultBranch}}</span>
             {{end}}
           </span>
-          {{/* An empty repository says so instead of showing a blank row that
-               looks like missing data. */}}
+          {{/* An empty repository is named by its badge, so the message shows
+               its description, if any, rather than repeating the badge. */}}
           <span class="row__msg">
             {{if .Preparing}}{{bi $lang "repo.preparing"}}
             {{else if .Unreadable}}{{bi $lang "repo.unreadable"}}
-            {{else if .Empty}}{{bi $lang "repo.empty"}}
+            {{else if .Empty}}{{.Description}}
             {{else if .Head.Subject}}{{.Head.Subject}}
             {{else if .Description}}{{.Description}}{{end}}
           </span>
@@ -97,7 +99,7 @@
   </div>
   <div class="rows">
     {{range $p.Recent}}
-      {{template "activityRow" dict "Lang" $lang "Now" $now "E" . "ShowRepo" true}}
+      {{template "activityRow" dict "Lang" $lang "Now" $now "E" . "ShowRepo" true "Dated" true}}
     {{end}}
   </div>
 </section>

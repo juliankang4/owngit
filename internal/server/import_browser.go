@@ -43,6 +43,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
 		return
 	}
+	page.CredentialForm = postValue(request, "credential_form")
 	if ok, status := app.importAdminPassword(writer, request, &chrome); !ok {
 		page.Chrome = chrome
 		app.render(writer, status, page)
@@ -52,6 +53,26 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		chrome.Notices = []webui.Notice{webui.Error("", webui.MsgImportUnavailable)}
 		page.Chrome = chrome
 		app.render(writer, http.StatusServiceUnavailable, page)
+		return
+	}
+	// A mistake the form can name is reported on its field, before anything
+	// is sent to the import service, which stays the authority on every rule.
+	if problems := importNameProblems(page.Name, page.Description); len(problems) > 0 {
+		chrome.Notices = problems
+		page.Chrome = chrome
+		app.render(writer, http.StatusUnprocessableEntity, page)
+		return
+	}
+	if notice, ok := importURLProblem(page.URL); !ok {
+		chrome.Notices = []webui.Notice{notice}
+		page.Chrome = chrome
+		app.render(writer, http.StatusUnprocessableEntity, page)
+		return
+	}
+	if problems, status := importCredentialProblems(request); len(problems) > 0 {
+		chrome.Notices = problems
+		page.Chrome = chrome
+		app.render(writer, status, page)
 		return
 	}
 	credential, credErr := postedImportCredential(request)
@@ -74,7 +95,13 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 			if cancelled {
 				chrome.Notices = []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgImportCancelledNoRepo}}
 			} else if errors.Is(err, repository.ErrReservedName) {
-				chrome.Notices = []webui.Notice{webui.Error("", webui.MsgRepoNameReserved)}
+				chrome.Notices = []webui.Notice{webui.Error("name", webui.MsgRepoNameReserved)}
+			} else if code := importsyncProblemCode(err); code == importsync.CodeRepositoryTaken {
+				chrome.Notices = []webui.Notice{webui.Error("name", webui.MsgImportErrorRepoTaken)}
+			} else if code == importsync.CodeInvalidSource {
+				// The name and the address were checked above, so what is
+				// left is the address as the import service reads it.
+				chrome.Notices = []webui.Notice{webui.Error("url", webui.MsgImportErrorInvalidSource)}
 			} else {
 				chrome.Notices = []webui.Notice{importFailureNotice(err, result.Run.ErrorClass)}
 			}
@@ -87,8 +114,32 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 	http.Redirect(writer, request, "/repositories/"+url.PathEscape(result.RepositoryID)+"/import?notice="+notice, http.StatusSeeOther)
 }
 
+// handleImportPage serves the repository's Import tab. Anyone who may read
+// the repository sees its import status; the source address, credential
+// state and technical messages are administrator data and are filled in
+// only for an administrator session. Every change is a POST that needs that
+// session and the administrator password again.
 func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	writer.Header().Set("Cache-Control", "no-store")
+	if request.Method == http.MethodGet {
+		// Opening the source form is a change, so it asks for the
+		// administrator password first and returns here afterwards.
+		if request.URL.Query().Get("setup") == "1" {
+			if _, ok := app.requireBrowserAdmin(writer, request); !ok {
+				return
+			}
+		}
+		if session, admin := app.cookieSession(request, "admin", adminCookie); admin {
+			var err error
+			chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, session.CSRF)
+			if err != nil {
+				app.writePlainError(writer, http.StatusServiceUnavailable)
+				return
+			}
+		}
+		app.renderImportPage(writer, request, stored, summary, chrome, http.StatusOK)
+		return
+	}
 	session, ok := app.requireBrowserAdmin(writer, request)
 	if !ok {
 		return
@@ -97,10 +148,6 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 	chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, session.CSRF)
 	if err != nil {
 		app.writePlainError(writer, http.StatusServiceUnavailable)
-		return
-	}
-	if request.Method == http.MethodGet {
-		app.renderImportPage(writer, request, stored, summary, chrome, http.StatusOK)
 		return
 	}
 	if !parseForm(writer, request) {
@@ -124,12 +171,27 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 	refresh := false
 	switch postValue(request, "action") {
 	case webui.ActionImportConfigure:
+		if problem, ok := importURLProblem(postValue(request, "url")); !ok {
+			chrome.Notices = append(chrome.Notices, problem)
+			app.renderImportPage(writer, request, stored, summary, chrome, http.StatusUnprocessableEntity)
+			return
+		}
 		_, err = app.Imports.ConfigureSource(request.Context(), importsync.ConfigureInput{
 			RepositoryID: stored.ID, URL: postValue(request, "url"), Mode: importsync.Mode(postValue(request, "mode")),
 			GitOnlyConsent: postValue(request, "git_only_consent") == "1", AllowPrivateNetwork: postValue(request, "allow_private_network") == "1",
 		})
+		if importsyncProblemCode(err) == importsync.CodeInvalidSource {
+			chrome.Notices = append(chrome.Notices, webui.Error("url", webui.MsgImportErrorInvalidSource))
+			app.renderImportPage(writer, request, stored, summary, chrome, importProblemStatus(err))
+			return
+		}
 		notice = "import_saved"
 	case webui.ActionImportCredentials:
+		if problems, status := importCredentialProblems(request); len(problems) > 0 {
+			chrome.Notices = append(chrome.Notices, problems...)
+			app.renderImportPage(writer, request, stored, summary, chrome, status)
+			return
+		}
 		var credential *importsync.Credentials
 		credential, err = postedImportCredential(request)
 		if err == nil && credential == nil {
@@ -192,9 +254,23 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 
 func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, status int) {
 	base := app.baseRepositoryPage(request, chrome, stored, summary)
+	self := base.Repo.URL + "/import"
+	admin := chrome.Viewer.AdminConfirmed
 	page := webui.ImportPage{
-		Chrome: chrome, Repo: base.Repo, SubmitURL: base.Repo.URL + "/import", SelfURL: base.Repo.URL + "/import",
-		Tabs: repositoryTabs(base, webui.RepoTabImport),
+		Chrome: chrome, Repo: base.Repo, SubmitURL: self, SelfURL: self,
+		Tabs: repositoryTabs(base, webui.RepoTabImport), Admin: admin,
+		AdminLoginURL: "/admin/login?next=" + url.QueryEscape(self),
+		SetupURL:      "/admin/login?next=" + url.QueryEscape(self+"?setup=1"),
+	}
+	if admin {
+		page.SetupURL = self + "?setup=1"
+		// The source form opens on request, and stays open after a refused
+		// change so the reader can correct it.
+		page.Setup = request.URL.Query().Get("setup") == "1" ||
+			(request.Method == http.MethodPost && postValue(request, "action") == webui.ActionImportConfigure)
+		if request.Method == http.MethodPost {
+			page.CredentialChoice = postValue(request, "credential_form")
+		}
 	}
 	if app.Imports == nil {
 		app.render(writer, status, page)
@@ -208,13 +284,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	page.Configured = importStatus.Configured
-	page.URL = importStatus.URL
 	page.Mode = importStatus.Mode
-	page.GitOnlyConsent = importStatus.GitOnlyConsent
-	page.PrivateNetwork = importStatus.TransportConsent
-	page.CredentialForm = importStatus.CredentialForm
-	page.CredentialBound = importStatus.CredentialBound
-	page.CAPresent = importStatus.CAPresent
 	page.ContentIncomplete = importStatus.Content.Incomplete
 	page.Unresolved = importStatus.UnresolvedIntents
 	page.StagingIssues = importStatus.StagingIssues
@@ -228,8 +298,23 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	for _, ref := range importStatus.Refs {
 		page.Refs = append(page.Refs, webui.ImportRefRow{Name: ref.Name, State: ref.State, Source: ref.SourceOID, Local: ref.LocalOID})
 	}
-	page.Last = importRunRow(importStatus.LastRun)
-	page.Active = importRunRow(importStatus.ActiveRun)
+	page.Last = importRunRow(importStatus.LastRun, admin)
+	page.Active = importRunRow(importStatus.ActiveRun, admin)
+	if admin {
+		page.URL = importStatus.URL
+		page.GitOnlyConsent = importStatus.GitOnlyConsent
+		page.PrivateNetwork = importStatus.TransportConsent
+		page.CredentialForm = importStatus.CredentialForm
+		page.CredentialBound = importStatus.CredentialBound
+		page.CAPresent = importStatus.CAPresent
+		if request.Method == http.MethodPost && postValue(request, "action") == webui.ActionImportConfigure {
+			// A refused change shows what was typed, not the saved source.
+			page.URL = strings.TrimSpace(postValue(request, "url"))
+			page.Mode = postValue(request, "mode")
+			page.GitOnlyConsent = postValue(request, "git_only_consent") == "1"
+			page.PrivateNetwork = postValue(request, "allow_private_network") == "1"
+		}
+	}
 	cursor, _ := strconv.ParseInt(request.URL.Query().Get("cursor"), 10, 64)
 	if cursor < 0 {
 		cursor = 0
@@ -238,7 +323,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	if err == nil {
 		for _, run := range runs {
 			row := run
-			page.History = append(page.History, *importRunRow(&row))
+			page.History = append(page.History, *importRunRow(&row, admin))
 		}
 		if more && len(runs) > 0 {
 			page.OlderURL = page.SelfURL + "?cursor=" + strconv.FormatInt(runs[len(runs)-1].RowID, 10)
@@ -249,11 +334,18 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	app.render(writer, status, page)
 }
 
-func importRunRow(run *importsync.RunView) *webui.ImportRunRow {
+// importRunRow is one run for the page. Its technical message can name the
+// source host, so it is kept for an administrator only; everyone sees the
+// kind, the status and the explained failure class.
+func importRunRow(run *importsync.RunView, admin bool) *webui.ImportRunRow {
 	if run == nil {
 		return nil
 	}
-	return &webui.ImportRunRow{ID: run.ID, Kind: run.Kind, Status: run.Status, Message: run.Message, ErrorClass: run.ErrorClass, RowID: run.RowID}
+	row := &webui.ImportRunRow{ID: run.ID, Kind: run.Kind, Status: run.Status, ErrorClass: run.ErrorClass, RowID: run.RowID}
+	if admin {
+		row.Message = run.Message
+	}
+	return row
 }
 
 func (app *App) importAdminPassword(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome) (bool, int) {
@@ -268,16 +360,106 @@ func (app *App) importAdminPassword(writer http.ResponseWriter, request *http.Re
 	return true, http.StatusOK
 }
 
+// browserCredentialInput is the credential part of a browser form, reduced
+// to the fields of the chosen credential form. The page shows only that
+// form's fields, but a browser without scripting still submits the hidden
+// ones, for example a token typed before switching to Basic. Those values
+// are ignored here: never validated, stored, or shown again. The JSON API
+// keeps its strict rule that a request names only one kind of secret.
+type browserCredentialInput struct {
+	form, username, password, token, caPEM string
+}
+
+func postedCredentialInput(request *http.Request) browserCredentialInput {
+	input := browserCredentialInput{form: strings.TrimSpace(postValue(request, "credential_form")), caPEM: postValue(request, "ca_pem")}
+	switch input.form {
+	case "basic":
+		input.username, input.password = postValue(request, "username"), postValue(request, "password")
+	case "bearer":
+		input.token = postValue(request, "token")
+	}
+	return input
+}
+
 func postedImportCredential(request *http.Request) (*importsync.Credentials, error) {
-	form := postValue(request, "credential_form")
-	username := postValue(request, "username")
-	password := postValue(request, "password")
-	token := postValue(request, "token")
-	caPEM := postValue(request, "ca_pem")
-	if !importCredentialFieldsPresent(form, username, password, token, caPEM) {
+	input := postedCredentialInput(request)
+	if !importCredentialFieldsPresent(input.form, input.username, input.password, input.token, input.caPEM) {
 		return nil, nil
 	}
-	return importCredentialFromInput(form, username, password, token, caPEM)
+	return importCredentialFromInput(input.form, input.username, input.password, input.token, input.caPEM)
+}
+
+// importNameProblems reports a new import's name or description that the
+// repository rules refuse, on its own field. An empty name is allowed: the
+// import then derives one from the source address.
+func importNameProblems(name, description string) []webui.Notice {
+	if name == "" {
+		if len(description) > 500 {
+			return []webui.Notice{webui.Error("description", webui.MsgRepoDescriptionTooLong)}
+		}
+		return nil
+	}
+	switch err := repository.ValidateName(name, description); {
+	case err == nil:
+		return nil
+	case errors.Is(err, repository.ErrReservedName):
+		return []webui.Notice{webui.Error("name", webui.MsgRepoNameReserved)}
+	case errors.Is(err, repository.ErrInvalidDescription):
+		return []webui.Notice{webui.Error("description", webui.MsgRepoDescriptionTooLong)}
+	default:
+		return []webui.Notice{webui.Error("name", webui.MsgRepoNameInvalid)}
+	}
+}
+
+// importURLProblem names the rule a source address breaks, on the address
+// field. The import service applies the full rules afterwards; this only
+// turns the common mistakes into a sentence that says what to change.
+func importURLProblem(raw string) (webui.Notice, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return webui.Error("url", webui.MsgImportURLRequired), false
+	}
+	parsed, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return webui.Error("url", webui.MsgImportErrorInvalidSource), false
+	case parsed.Scheme != "https":
+		return webui.Error("url", webui.MsgImportURLHTTPS), false
+	case parsed.User != nil:
+		return webui.Error("url", webui.MsgImportURLUser), false
+	case parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "":
+		return webui.Error("url", webui.MsgImportURLQuery), false
+	case parsed.Host == "":
+		return webui.Error("url", webui.MsgImportErrorInvalidSource), false
+	}
+	return webui.Notice{}, true
+}
+
+// importCredentialProblems names, on its field, what the chosen credential
+// form is missing, with the status to answer. Fields of the other forms were
+// already dropped by postedCredentialInput. A form the page never offers can
+// only come from a crafted request, so it is answered as a bad request, still
+// with the field note.
+func importCredentialProblems(request *http.Request) ([]webui.Notice, int) {
+	input := postedCredentialInput(request)
+	var problems []webui.Notice
+	switch input.form {
+	case "basic":
+		if input.username == "" {
+			problems = append(problems, webui.Error("username", webui.MsgImportBasicNeedsBoth))
+		}
+		if input.password == "" {
+			problems = append(problems, webui.Error("password", webui.MsgImportBasicNeedsBoth))
+		}
+	case "bearer":
+		if input.token == "" {
+			problems = append(problems, webui.Error("token", webui.MsgImportTokenRequired))
+		}
+	case "", "none":
+	default:
+		return []webui.Notice{webui.Error("credential_form", webui.MsgImportCredentialFormUnknown)}, http.StatusBadRequest
+	}
+	return problems, http.StatusUnprocessableEntity
 }
 
 // importFailureNotice explains a failed import action in the reader's

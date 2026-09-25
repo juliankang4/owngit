@@ -3,9 +3,18 @@
 {{$admin := eq $p.Scope "admin"}}
 {{$field := "password"}}{{if $admin}}{{$field = "admin_password"}}{{end}}
 
+{{/* An administrator prompt opened from a repository keeps its name as the
+     page heading, as the repository's own sections do, so the reader can
+     see where the password will take them. */}}
+{{if $p.Repo.Name}}
+<div class="rhead">
+  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+</div>
+{{end}}
+
 <div class="card">
   <div class="phead">
-    <h1>{{if $admin}}{{bi $lang "admin.title"}}{{else}}{{bi $lang "login.title"}}{{end}}</h1>
+    {{if $p.Repo.Name}}<h2>{{else}}<h1>{{end}}{{if $admin}}{{bi $lang "admin.title"}}{{else}}{{bi $lang "login.title"}}{{end}}{{if $p.Repo.Name}}</h2>{{else}}</h1>{{end}}
     <p>{{if $admin}}{{bi $lang "admin.body"}}{{else}}{{bi $lang "login.body"}}{{end}}</p>
   </div>
 

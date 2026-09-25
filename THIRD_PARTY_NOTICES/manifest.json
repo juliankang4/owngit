@@ -208,6 +208,19 @@
       ]
     },
     {
+      "module": "bundled-assets/linguist",
+      "version": "v9.7.0",
+      "source": "internal/repository/languages.go",
+      "files": [
+        {
+          "path": "LINGUIST-LICENSE.txt",
+          "mode": "0644",
+          "size": 1056,
+          "sha256": "7717070c5a8c85440ff2312930bb30dd19002ab5bc235c9800042767f6f5242f"
+        }
+      ]
+    },
+    {
       "module": "go-runtime",
       "version": "go1.27.1",
       "files": [

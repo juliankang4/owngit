@@ -113,11 +113,23 @@
 {{end}}
 
 {{/* One commit row in an activity list.
-     Call as: {{template "activityRow" dict "Lang" .Lang "Now" .Chrome.Now "E" $entry "ShowRepo" true}} */}}
+     Call as: {{template "activityRow" dict "Lang" .Lang "Now" .Chrome.Now "E" $entry "ShowRepo" true}}
+
+     A list grouped under day headings shows the clock only. A list without
+     them passes "Dated" true, so each row names its day as well: "Today
+     14:32" for recent commits, the date for older ones. The exact author
+     time is the hover title, and it is also what assistive technology
+     reads, since an older row's visible date leaves the time out. */}}
 {{define "activityRow"}}
-{{$lang := .Lang}}{{$e := .E}}
-<a class="row row--act" href="{{$e.Commit.URL}}">
-  <span class="row__time">{{clock $e.Commit.AuthorDate}}</span>
+{{$lang := .Lang}}{{$e := .E}}{{$when := $e.Commit.AuthorDate}}
+<a class="row row--act{{if .Dated}} row--dated{{end}}" href="{{$e.Commit.URL}}">
+  {{if .Dated}}
+  <time class="row__time" datetime="{{$when.Format "2006-01-02T15:04:05Z07:00"}}" {{biAttrText $lang "title" (dateTime "en" $when) (dateTime "ko" $when)}}>
+    <span aria-hidden="true">{{biRelative $lang .Now $when}}</span><span class="visually-hidden">{{biDateTime $lang $when}}</span>
+  </time>
+  {{else}}
+  <span class="row__time">{{clock $when}}</span>
+  {{end}}
   {{if .ShowRepo}}<span class="row__name">{{$e.RepositoryName}}</span>{{end}}
   {{/* The ref name carries its own element so a long name can be shortened
        without clipping the status badge beside it. The title attribute keeps

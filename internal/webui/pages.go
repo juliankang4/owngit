@@ -2,6 +2,7 @@ package webui
 
 import (
 	"html/template"
+	"strings"
 	"time"
 )
 
@@ -122,6 +123,10 @@ type AuthPage struct {
 	Locked bool
 	// RetryAfter is when attempts resume. Zero when not locked.
 	RetryAfter time.Time
+	// Repo and Tabs keep the repository the administrator prompt was opened
+	// from, so the sidebar and the heading stay on it. Empty elsewhere.
+	Repo RepositoryHeader
+	Tabs RepoTabs
 }
 
 func (AuthPage) page() string { return "auth" }
@@ -518,6 +523,49 @@ type RepositoryOverview struct {
 	// PushCommands are the copyable first-push lines for an empty repository.
 	// They contain no credentials.
 	PushCommands []string
+	// Readme is the README at the top of the selected ref, rendered like a
+	// folder README in the code view. Nil when there is none.
+	Readme *ReadmeView
+	// Languages is the language make-up of the default branch.
+	Languages LanguageSummary
+}
+
+// LanguageSummary is the Languages panel: up to six languages by size and
+// then "Other", or a short note when no share can be shown.
+type LanguageSummary struct {
+	Rows []LanguageRow
+	// Note explains an empty panel: nothing detected, too large, or not
+	// counted. Empty when Rows are shown.
+	Note MessageCode
+	// AttributesIgnored says .gitattributes language settings were not
+	// applied because the host Git cannot read them from a commit.
+	AttributesIgnored bool
+}
+
+// LanguageRow is one language, or the folded rest when Other is true.
+type LanguageRow struct {
+	Name string
+	// Color is a "#rrggbb" value from the language table. Empty for Other,
+	// which uses the neutral theme color.
+	Color string
+	// Share is the exact percentage, used for the bar segment width.
+	Share float64
+	// Percent is the shown share with one decimal, for example "93.9%".
+	Percent string
+	Other   bool
+}
+
+// BarLabel is the text alternative of the language bar, in lang.
+func (summary LanguageSummary) BarLabel(lang Lang) string {
+	parts := make([]string, 0, len(summary.Rows))
+	for _, row := range summary.Rows {
+		name := row.Name
+		if row.Other {
+			name = Text(lang, MsgRepoLanguagesOther)
+		}
+		parts = append(parts, name+" "+row.Percent)
+	}
+	return Text(lang, MsgRepoLanguagesBarLabel) + ": " + strings.Join(parts, ", ")
 }
 
 // RefLine is one branch or tag row.
@@ -598,6 +646,14 @@ type FileView struct {
 	// RawTooLarge is true when the file is above the download limit; the
 	// page then says so instead of offering RawURL.
 	RawTooLarge bool
+	// Image is true for a raster picture (PNG, JPEG, GIF or WebP) that the
+	// page shows through RawURL. The backend sets it only when the file's
+	// bytes match its type and it is within the download limit. SVG and other
+	// formats that can carry script are never shown as a picture.
+	// ImageWidth and ImageHeight are its pixel size, zero when unknown.
+	Image       bool
+	ImageWidth  int
+	ImageHeight int
 	// RestoreURL opens the restore screen with this file preselected. Empty
 	// means no link.
 	RestoreURL string

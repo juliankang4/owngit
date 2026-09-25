@@ -26,8 +26,9 @@ type declaredNoticeInput struct {
 	files   []string
 }
 
-// bundledAssets declares the embedded assets explicitly. Each entry names the
-// notice directory, the embedded source file, and the notice files to copy.
+// bundledAssets declares the embedded assets and bundled data explicitly. Each
+// entry names the notice directory, the source file, and the notice files to
+// copy.
 var bundledAssets = []declaredNoticeInput{
 	{
 		module:  bundledNoticePrefix + "pretendard",
@@ -35,11 +36,19 @@ var bundledAssets = []declaredNoticeInput{
 		source:  "internal/webui/assets/fonts/PretendardVariable.woff2",
 		files:   []string{"internal/webui/assets/fonts/PRETENDARD-LICENSE.txt"},
 	},
+	{
+		// Language names and colors for the repository overview's Languages
+		// panel, taken from lib/linguist/languages.yml.
+		module:  bundledNoticePrefix + "linguist",
+		version: "v9.7.0",
+		source:  "internal/repository/languages.go",
+		files:   []string{"internal/repository/LINGUIST-LICENSE.txt"},
+	},
 }
 
 // declaredNoticeInputs returns the non-module notice inputs in a stable order.
 //
-// An embedded asset is the only kind left. The built-in review removal took the
+// Embedded assets and bundled data are the only kinds left. The built-in review removal took the
 // pinned third-party authorization flows with it, so no adapted source and no
 // credit that such a reference carried is declared any more.
 func declaredNoticeInputs() []declaredNoticeInput {

@@ -18,7 +18,8 @@ func TestImportBrowserFormsWorkInBothLanguages(t *testing.T) {
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "import-browser")
-	english := browserGET(t, client, server.URL+"/repositories/project/import")
+	// The source form is behind the explicit Set up import action.
+	english := browserGET(t, client, server.URL+"/repositories/project/import?setup=1")
 	if english.status != http.StatusOK || !strings.Contains(english.body, webui.Text(webui.LangEN, webui.MsgImportTitle)) || !strings.Contains(english.body, `name="csrf" value="`+csrf+`"`) {
 		t.Fatalf("english import page status=%d body=%s", english.status, english.body)
 	}
@@ -163,5 +164,157 @@ func TestCancelledImportsDoNotReportSuccess(t *testing.T) {
 	}
 	if _, exists, err := fixture.store.Repository(context.Background(), "fresh"); err != nil || exists {
 		t.Fatalf("cancelled initial import repository exists=%v err=%v", exists, err)
+	}
+}
+
+// The Import tab shows its status to anyone who can read the repository,
+// without the administrator password. The source address, credential state
+// and run messages stay hidden, every change is a link with the lock mark to
+// the password prompt, and a change posted without an administrator session
+// goes to that prompt too.
+func TestImportTabShowsStatusWithoutTheAdministratorPassword(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	const source = "https://git.example.invalid/private-team/project.git"
+	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{
+		RepositoryID: "project", URL: source, Mode: importsync.ModeCoexistence,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := serve(t, fixture.app.Handler())
+	client, _ := newBrowserClient(t)
+	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		page := browserGET(t, client, server.URL+"/repositories/project/import?lang="+string(lang))
+		if page.status != http.StatusOK {
+			t.Fatalf("%s import tab without the administrator status=%d location=%q", lang, page.status, page.header.Get("Location"))
+		}
+		for _, want := range []webui.MessageCode{webui.MsgImportModeCoexistence, webui.MsgImportAdminOnly, webui.MsgImportRefresh, webui.MsgImportChangeSettings, webui.MsgImportLastRun} {
+			if !strings.Contains(page.body, webui.Text(lang, want)) {
+				t.Errorf("%s import tab lacks %q", lang, webui.Text(lang, want))
+			}
+		}
+		if strings.Contains(page.body, "git.example.invalid") || strings.Contains(page.body, `name="admin_password"`) || strings.Contains(page.body, `method="post" action="/repositories/project/import"`) {
+			t.Errorf("%s import tab shows administrator data or a change form without the administrator", lang)
+		}
+		login := `href="/admin/login?next=` + url.QueryEscape("/repositories/project/import")
+		if !strings.Contains(page.body, login) || !strings.Contains(page.body, `class="adminlock"`) {
+			t.Errorf("%s import tab changes are not locked links to the password prompt", lang)
+		}
+		if !strings.Contains(page.body, `class="sb__item" href="/repositories/project/import" aria-current="page"`) {
+			t.Errorf("%s import tab does not keep the repository sidebar", lang)
+		}
+	}
+	posted := browserForm(t, client, server.URL+"/repositories/project/import", url.Values{
+		"action": {webui.ActionImportRefresh}, "admin_password": {"admin-password"},
+	}, server.URL)
+	if posted.status != http.StatusSeeOther || !strings.HasPrefix(posted.header.Get("Location"), "/admin/login?next=") {
+		t.Fatalf("a change without an administrator session status=%d location=%q", posted.status, posted.header.Get("Location"))
+	}
+}
+
+// An unconfigured repository offers Set up import instead of an open source
+// form. The form opens on that action, for an administrator only.
+func TestImportFormIsBehindSetUpImport(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	server := serve(t, fixture.app.Handler())
+	viewer, _ := newBrowserClient(t)
+	page := browserGET(t, viewer, server.URL+"/repositories/project/import")
+	setUp := `href="/admin/login?next=` + url.QueryEscape("/repositories/project/import?setup=1") + `"`
+	if page.status != http.StatusOK || !strings.Contains(page.body, setUp) || strings.Contains(page.body, `name="url"`) {
+		t.Fatalf("viewer import tab status=%d does not offer a locked Set up import", page.status)
+	}
+	admin, jar := newBrowserClient(t)
+	browserAdminSessionFor(t, fixture, server.URL, jar, "setup-admin")
+	page = browserGET(t, admin, server.URL+"/repositories/project/import")
+	if !strings.Contains(page.body, `href="/repositories/project/import?setup=1"`) || strings.Contains(page.body, `name="url"`) {
+		t.Fatal("administrator import tab opens the source form before Set up import")
+	}
+	page = browserGET(t, admin, server.URL+"/repositories/project/import?setup=1")
+	if !strings.Contains(page.body, `name="url"`) || !strings.Contains(page.body, `value="import_configure"`) {
+		t.Fatal("Set up import does not open the source form")
+	}
+}
+
+// A refused import names the rule on the field it is about, in both
+// languages, and marks that field invalid.
+func TestImportFormsReportTheRuleOnTheField(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	server := serve(t, fixture.app.Handler())
+	client, jar := newBrowserClient(t)
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "field-admin")
+	for _, test := range []struct {
+		name   string
+		target string
+		values url.Values
+		field  string
+		code   webui.MessageCode
+	}{
+		{"new import over http", "/repositories/new-import", url.Values{"url": {"http://example.invalid/team/p.git"}, "credential_form": {"none"}}, "url", webui.MsgImportURLHTTPS},
+		{"new import with user info", "/repositories/new-import", url.Values{"url": {"https://user:pw@example.invalid/p.git"}, "credential_form": {"none"}}, "url", webui.MsgImportURLUser},
+		{"new import with a bad name", "/repositories/new-import", url.Values{"name": {"bad name"}, "url": {"https://example.invalid/p.git"}, "credential_form": {"none"}}, "name", webui.MsgRepoNameInvalid},
+		{"new import token missing", "/repositories/new-import", url.Values{"url": {"https://example.invalid/p.git"}, "credential_form": {"bearer"}}, "token", webui.MsgImportTokenRequired},
+		{"new import password missing", "/repositories/new-import", url.Values{"url": {"https://example.invalid/p.git"}, "credential_form": {"basic"}, "username": {"someone"}}, "password", webui.MsgImportBasicNeedsBoth},
+		{"new import with a long description", "/repositories/new-import", url.Values{"description": {strings.Repeat("a", 501)}, "url": {"https://example.invalid/p.git"}, "credential_form": {"none"}}, "description", webui.MsgRepoDescriptionTooLong},
+		{"new repository with a long description", "/repositories", url.Values{"name": {"long-description"}, "description": {strings.Repeat("설", 167)}}, "description", webui.MsgRepoDescriptionTooLong},
+		{"source over http", "/repositories/project/import", url.Values{"action": {webui.ActionImportConfigure}, "url": {"http://example.invalid/team/p.git"}, "mode": {"standalone"}}, "url", webui.MsgImportURLHTTPS},
+		{"source with a query", "/repositories/project/import", url.Values{"action": {webui.ActionImportConfigure}, "url": {"https://example.invalid/p.git?x=1"}, "mode": {"standalone"}}, "url", webui.MsgImportURLQuery},
+	} {
+		for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+			values := url.Values{"csrf": {csrf}, "admin_password": {"admin-password"}, "lang": {string(lang)}}
+			for key, value := range test.values {
+				values[key] = value
+			}
+			result := browserForm(t, client, server.URL+test.target+"?lang="+string(lang), values, server.URL)
+			if result.status != http.StatusUnprocessableEntity {
+				t.Errorf("%s (%s) status=%d", test.name, lang, result.status)
+				continue
+			}
+			note := `<p class="fieldnote fieldnote--error" id="` + test.field + `-note">`
+			at := strings.Index(result.body, note)
+			if at < 0 || !strings.Contains(result.body[at:], webui.Text(lang, test.code)) {
+				t.Errorf("%s (%s) does not name the rule on the %s field", test.name, lang, test.field)
+			}
+			if !strings.Contains(result.body, `aria-invalid="true" aria-describedby="`+test.field+`-note"`) {
+				t.Errorf("%s (%s) does not mark the %s field invalid", test.name, lang, test.field)
+			}
+		}
+	}
+	if status, err := fixture.app.Imports.Status(context.Background(), "project"); err != nil || status.Configured {
+		t.Fatalf("a refused source change configured the import: %+v %v", status, err)
+	}
+}
+
+// A run's technical message can name the source host, so a viewer without
+// an administrator session never receives it, while the explained failure
+// class stays visible to everyone.
+func TestImportTabKeepsRunMessagesFromViewers(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	fixture.app.Imports.Fetch = func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
+		return nil, &importfetch.Error{Op: "connect", Kind: importfetch.ErrConnection}
+	}
+	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{
+		RepositoryID: "project", URL: "https://private-host.example.invalid/team/project.git", Mode: importsync.ModeStandalone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.app.Imports.Refresh(context.Background(), "project", fixture.app.importRunLimits()); err == nil {
+		t.Fatal("the refresh did not fail")
+	}
+	server := serve(t, fixture.app.Handler())
+	admin, jar := newBrowserClient(t)
+	browserAdminSessionFor(t, fixture, server.URL, jar, "message-admin")
+	adminPage := browserGET(t, admin, server.URL+"/repositories/project/import")
+	if !strings.Contains(adminPage.body, webui.Text(webui.LangEN, webui.MsgImportTechnicalDetails)) {
+		t.Fatal("the administrator does not see the run's technical details, so this test would prove nothing")
+	}
+	viewer, _ := newBrowserClient(t)
+	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		page := browserGET(t, viewer, server.URL+"/repositories/project/import?lang="+string(lang))
+		if page.status != http.StatusOK || !strings.Contains(page.body, webui.Text(lang, webui.MsgImportErrorNetwork)) {
+			t.Fatalf("%s viewer does not see the explained failure: status=%d", lang, page.status)
+		}
+		if strings.Contains(page.body, "private-host") || strings.Contains(page.body, "<details>") ||
+			strings.Contains(page.body, webui.Text(lang, webui.MsgImportTechnicalDetails)) {
+			t.Errorf("%s viewer receives the run's technical message or the source host", lang)
+		}
 	}
 }

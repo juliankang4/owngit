@@ -192,7 +192,7 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 		case errors.Is(err, repository.ErrInvalidName):
 			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("name", webui.MsgRepoNameInvalid)})
 		case errors.Is(err, repository.ErrInvalidDescription):
-			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("description", webui.MsgErrTooLarge)})
+			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("description", webui.MsgRepoDescriptionTooLong)})
 		default:
 			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoCreateFail, "")
 		}
@@ -415,9 +415,12 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 // administratorRepositoryScreen names the repository screens that require an
 // administrator session before anything is read. They all read or change
 // execution authority, so a general session must not reach them at all.
+// The Import tab is not one of them: its status is readable by anyone who
+// can read the repository, and handleImportPage requires the administrator
+// session for every change and keeps administrator data out of other views.
 func administratorRepositoryScreen(segment string) bool {
 	switch segment {
-	case "helper-credentials", "configured-checks", "runner-tokens", "import", "settings", "delete":
+	case "helper-credentials", "configured-checks", "runner-tokens", "settings", "delete":
 		return true
 	default:
 		return false
@@ -537,6 +540,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		page.Overview.Activity = emptyActivityGraph(selectedYear(request, app.now().Year()), app.now(), page.Repo.Name)
 		return
 	}
+	page.Overview.Languages = app.overviewLanguages(request, page.Repo.ID, summary.DefaultOID)
 	if resolved {
 		// One extra commit says whether older history exists without counting it.
 		_, commits, err := app.Repositories.Commits(request.Context(), page.Repo.ID, selectedRef, overviewRecentCommits+1)
@@ -549,6 +553,11 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 				page.Overview.Recent = append(page.Overview.Recent, app.commitSummary(page.Repo.ID, selectedRef, commit))
 			}
 			page.Overview.Head = page.Overview.Recent[0]
+		}
+		// The README answers what the repository is. It is found and
+		// rendered exactly as the code view does for the top folder.
+		if _, entries, err := app.Repositories.Tree(request.Context(), page.Repo.ID, selectedRef, ""); err == nil {
+			page.Overview.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, "", entries)
 		}
 	}
 	app.fillOverviewEvidence(request, page, summary)
@@ -752,6 +761,11 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 				}
 			}
 			file.RawTooLarge = file.Size > maximumRawBytes
+			// A picture loads through the raw endpoint, so it is shown only
+			// when that endpoint would serve it.
+			if binary && !file.RawTooLarge {
+				file.Image, file.ImageWidth, file.ImageHeight = inlineImage(requestedPath, blob.Content)
+			}
 			page.Code = view
 			return
 		}
@@ -977,7 +991,9 @@ func (app *App) repositorySummary(request *http.Request, stored state.Repository
 		ID: stored.ID, Name: stored.Name, Description: stored.Description,
 		URL: "/repositories/" + url.PathEscape(stored.ID), CloneURL: app.baseURL(request) + "/git/" + url.PathEscape(stored.ID) + ".git",
 		CreatedAt: stored.CreatedAt, Empty: summary.Empty, DefaultBranch: summary.DefaultBranch,
-		DefaultBranchMissing: summary.DefaultBranch != "" && summary.DefaultOID == "",
+		// An empty repository has no branch at all yet, which is its normal
+		// first state rather than a default branch that went missing.
+		DefaultBranchMissing: !summary.Empty && summary.DefaultBranch != "" && summary.DefaultOID == "",
 		BranchCount:          len(summary.Branches), TagCount: len(summary.Tags), Counted: true,
 	}
 	if snapshot.HeadFound {
@@ -1070,6 +1086,66 @@ func (observation activityObservation) describe(graph *webui.ActivityGraph) {
 	if !observation.available {
 		graph.UnavailableReason = webui.MsgActivityScanFail
 	}
+}
+
+// overviewLanguageRows is how many languages the Languages panel names
+// before folding the rest into Other.
+const overviewLanguageRows = 6
+
+// overviewLanguages builds the Languages panel from the default branch's
+// current commit. A count that hit its bounds or failed shows a short note,
+// never a share that could be wrong.
+func (app *App) overviewLanguages(request *http.Request, id, commitOID string) webui.LanguageSummary {
+	if commitOID == "" {
+		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesNone}
+	}
+	stats, err := app.Repositories.Languages(request.Context(), id, commitOID)
+	switch {
+	case err != nil:
+		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesUnavailable}
+	case stats.TooLarge:
+		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesTooLarge}
+	case len(stats.Shares) == 0:
+		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesNone, AttributesIgnored: stats.AttributesIgnored}
+	}
+	return webui.LanguageSummary{Rows: languageRows(stats.Shares), AttributesIgnored: stats.AttributesIgnored}
+}
+
+// languageRows turns sizes, largest first, into the panel rows: the first
+// overviewLanguageRows languages and then Other for the rest.
+func languageRows(shares []repository.LanguageShare) []webui.LanguageRow {
+	var total int64
+	for _, share := range shares {
+		total += share.Bytes
+	}
+	if total <= 0 {
+		return nil
+	}
+	percent := func(size int64) float64 { return float64(size) * 100 / float64(total) }
+	var rows []webui.LanguageRow
+	var rest int64
+	for index, share := range shares {
+		if index >= overviewLanguageRows {
+			rest += share.Bytes
+			continue
+		}
+		value := percent(share.Bytes)
+		rows = append(rows, webui.LanguageRow{Name: share.Name, Color: repository.LanguageColor(share.Name), Share: value, Percent: languagePercent(value)})
+	}
+	if rest > 0 {
+		value := percent(rest)
+		rows = append(rows, webui.LanguageRow{Name: "Other", Share: value, Percent: languagePercent(value), Other: true})
+	}
+	return rows
+}
+
+// languagePercent shows a share with one decimal. A share too small for
+// that shows "<0.1%" rather than a misleading 0.0%.
+func languagePercent(value float64) string {
+	if value > 0 && value < 0.05 {
+		return "<0.1%"
+	}
+	return strconv.FormatFloat(value, 'f', 1, 64) + "%"
 }
 
 // repositoryActivityGraph builds one repository's activity graph from the

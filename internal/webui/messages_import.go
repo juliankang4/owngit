@@ -76,6 +76,36 @@ const (
 	MsgImportCancelledNoRepo  MessageCode = "import.cancelled_no_repository"
 	MsgImportTechnicalDetails MessageCode = "import.technical_details"
 
+	// The Import tab's read-only status and its set-up step.
+	MsgImportStatusHeading         MessageCode = "import.status_heading"
+	MsgImportSource                MessageCode = "import.source"
+	MsgImportAdminOnly             MessageCode = "import.admin_only"
+	MsgImportAutoRefresh           MessageCode = "import.auto_refresh"
+	MsgImportEvery                 MessageCode = "import.every"
+	MsgImportSetUp                 MessageCode = "import.set_up"
+	MsgImportSetUpIntro            MessageCode = "import.set_up_intro"
+	MsgImportNotConfiguredHelp     MessageCode = "import.not_configured_help"
+	MsgImportChangeSource          MessageCode = "import.change_source"
+	MsgImportChangeSourceIntro     MessageCode = "import.change_source_intro"
+	MsgImportChangeSettings        MessageCode = "import.change_settings"
+	MsgImportModeHelp              MessageCode = "import.mode.help"
+	MsgImportModeStandaloneHelp    MessageCode = "import.mode.standalone_help"
+	MsgImportModeCoexistHelp       MessageCode = "import.mode.coexistence_help"
+	MsgImportURLHelp               MessageCode = "import.url_help"
+	MsgImportURLRequired           MessageCode = "import.url_required"
+	MsgImportURLHTTPS              MessageCode = "import.url_https"
+	MsgImportURLUser               MessageCode = "import.url_user"
+	MsgImportURLQuery              MessageCode = "import.url_query"
+	MsgImportNameHelp              MessageCode = "import.name_help"
+	MsgImportCAHelp                MessageCode = "import.ca_help"
+	MsgImportBasicNeedsBoth        MessageCode = "import.basic_needs_both"
+	MsgImportTokenRequired         MessageCode = "import.token_required"
+	MsgImportCredentialFormUnknown MessageCode = "import.credential_form_unknown"
+	MsgImportCredentialKeep        MessageCode = "import.credential_keep"
+	MsgImportCredentialSaveHelp    MessageCode = "import.credential_save_help"
+	MsgImportCAOnly                MessageCode = "import.ca_only"
+	MsgImportNoRefs                MessageCode = "import.no_refs"
+
 	MsgImportErrorInvalidSource MessageCode = "import.error.invalid_source"
 	MsgImportErrorBusy          MessageCode = "import.error.busy"
 	MsgImportErrorRepoMissing   MessageCode = "import.error.repository_missing"
@@ -191,6 +221,35 @@ var importCatalog = map[MessageCode]message{
 	MsgImportRunCancelled:       {en: "The import run was cancelled.", ko: "가져오기 실행이 취소되었습니다."},
 	MsgImportCancelledNoRepo:    {en: "The import was cancelled before the repository was created. No repository was added.", ko: "저장소가 만들어지기 전에 가져오기가 취소되었습니다. 추가된 저장소는 없습니다."},
 	MsgImportTechnicalDetails:   {en: "Technical details", ko: "기술 세부 정보"},
+
+	MsgImportStatusHeading:         {en: "Status", ko: "상태"},
+	MsgImportSource:                {en: "Source", ko: "원본"},
+	MsgImportAdminOnly:             {en: "Shown to administrators", ko: "관리자에게만 표시"},
+	MsgImportAutoRefresh:           {en: "Automatic refresh", ko: "자동 새로고침"},
+	MsgImportEvery:                 {en: "Every %s", ko: "%s마다"},
+	MsgImportSetUp:                 {en: "Set up import", ko: "가져오기 설정"},
+	MsgImportSetUpIntro:            {en: "Choose the Git host to copy from. Each refresh copies its branches and tags into this repository. Branches and tags that are already here are never removed.", ko: "복사해 올 Git 호스트를 고르세요. 새로고침할 때마다 그 브랜치와 태그를 이 저장소로 복사합니다. 이미 있는 브랜치와 태그는 지우지 않습니다."},
+	MsgImportNotConfiguredHelp:     {en: "Set up an import to keep this repository updated from another Git host.", ko: "다른 Git 호스트의 내용으로 이 저장소를 계속 갱신하려면 가져오기를 설정하세요."},
+	MsgImportChangeSource:          {en: "Change source", ko: "원본 바꾸기"},
+	MsgImportChangeSourceIntro:     {en: "The next refresh copies from the new source. Branches and tags already in this repository are not removed.", ko: "다음 새로고침부터 새 원본에서 복사합니다. 이 저장소에 이미 있는 브랜치와 태그는 지우지 않습니다."},
+	MsgImportChangeSettings:        {en: "Change import settings", ko: "가져오기 설정 바꾸기"},
+	MsgImportModeHelp:              {en: "The mode records how you use this copy. Imports and refreshes work the same way in both modes.", ko: "방식은 이 복사본을 어떻게 쓰는지 기록합니다. 가져오기와 새로고침은 두 방식 모두 같게 동작합니다."},
+	MsgImportModeStandaloneHelp:    {en: "You use OwnGit as the main copy from now on.", ko: "앞으로 OwnGit을 주 저장소로 씁니다."},
+	MsgImportModeCoexistHelp:       {en: "The other host stays the main copy, and you refresh this copy from it.", ko: "다른 호스트가 계속 주 저장소이고, 이 복사본은 거기서 새로고침합니다."},
+	MsgImportURLHelp:               {en: "The HTTPS clone address, for example https://example.com/team/project.git.", ko: "HTTPS 클론 주소를 입력합니다. 예: https://example.com/team/project.git"},
+	MsgImportURLRequired:           {en: "Enter the source address.", ko: "원본 주소를 입력하세요."},
+	MsgImportURLHTTPS:              {en: "Only HTTPS addresses can be imported. Enter an address that starts with https://.", ko: "HTTPS 주소만 가져올 수 있습니다. https://로 시작하는 주소를 입력하세요."},
+	MsgImportURLUser:               {en: "Leave the username and password out of the address. Enter them under Credentials instead.", ko: "주소에서 사용자 이름과 비밀번호를 빼세요. 인증 정보에 따로 입력하세요."},
+	MsgImportURLQuery:              {en: "Remove the part of the address after ? or #.", ko: "주소에서 ? 또는 # 뒤의 부분을 지우세요."},
+	MsgImportNameHelp:              {en: "Optional. Without a name, OwnGit uses the last part of the address. Letters, numbers, dots, dashes, and underscores.", ko: "선택 사항입니다. 비워 두면 주소의 마지막 부분을 이름으로 씁니다. 영문자, 숫자, 점, 하이픈, 밑줄을 사용합니다."},
+	MsgImportCAHelp:                {en: "Optional. Needed only when the source uses a certificate that this computer does not trust. Paste the PEM text.", ko: "선택 사항입니다. 원본이 이 컴퓨터가 신뢰하지 않는 인증서를 쓸 때만 필요합니다. PEM 텍스트를 붙여 넣으세요."},
+	MsgImportBasicNeedsBoth:        {en: "Username and password sign-in needs both a username and a password.", ko: "사용자 이름과 비밀번호 방식에는 둘 다 입력해야 합니다."},
+	MsgImportTokenRequired:         {en: "Enter the access token.", ko: "액세스 토큰을 입력하세요."},
+	MsgImportCredentialFormUnknown: {en: "Choose one of the listed credential forms.", ko: "목록에 있는 인증 형식 중 하나를 고르세요."},
+	MsgImportCredentialKeep:        {en: "No new sign-in (CA only)", ko: "새 로그인 정보 없음 (CA만)"},
+	MsgImportCredentialSaveHelp:    {en: "Saving changes only what you enter. With “No new sign-in (CA only)”, only the CA below is saved, and a stored username and password or token stays. A new sign-in replaces the stored one and keeps the stored CA unless you enter a new CA. To remove the stored sign-in and CA, use Clear credentials below.", ko: "저장하면 입력한 것만 바뀝니다. “새 로그인 정보 없음 (CA만)”을 고르면 아래 CA만 저장되고, 저장된 사용자 이름과 비밀번호 또는 토큰은 그대로 남습니다. 새 로그인 정보를 저장하면 기존 것을 대신하며, 새 CA를 입력하지 않으면 저장된 CA는 남습니다. 저장된 로그인 정보와 CA를 지우려면 아래의 인증 정보 지우기를 사용하세요."},
+	MsgImportCAOnly:                {en: "CA only", ko: "CA만"},
+	MsgImportNoRefs:                {en: "No branches or tags have been observed at the source yet.", ko: "아직 원본에서 관측된 브랜치나 태그가 없습니다."},
 
 	MsgImportErrorInvalidSource: {en: "The source address or settings are not valid.", ko: "원본 주소나 설정이 올바르지 않습니다."},
 	MsgImportErrorBusy:          {en: "Another import run is active for this repository.", ko: "이 저장소에서 다른 가져오기가 진행 중입니다."},

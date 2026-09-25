@@ -32,8 +32,16 @@ const (
 	MsgRepoShowFewerRefs  MessageCode = "repo.overview.show_fewer_refs"
 	MsgRepoNewestShown    MessageCode = "repo.overview.newest_shown"
 	MsgRepoNoTagsYet      MessageCode = "repo.overview.no_tags_yet"
-	MsgRepoRestoreLead    MessageCode = "repo.overview.restore_lead"
-	MsgRepoRestoreStart   MessageCode = "repo.overview.restore_start"
+	// Languages panel.
+	MsgRepoLanguagesTitle       MessageCode = "repo.languages.title"
+	MsgRepoLanguagesBarLabel    MessageCode = "repo.languages.bar_label"
+	MsgRepoLanguagesOther       MessageCode = "repo.languages.other"
+	MsgRepoLanguagesNone        MessageCode = "repo.languages.none"
+	MsgRepoLanguagesTooLarge    MessageCode = "repo.languages.too_large"
+	MsgRepoLanguagesUnavailable MessageCode = "repo.languages.unavailable"
+	MsgRepoLanguagesNoAttrs     MessageCode = "repo.languages.attributes_ignored"
+	MsgRepoRestoreLead          MessageCode = "repo.overview.restore_lead"
+	MsgRepoRestoreStart         MessageCode = "repo.overview.restore_start"
 
 	// Settings tab.
 	MsgRepoSettingsTitle        MessageCode = "repoadmin.settings.title"
@@ -101,24 +109,36 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoAdminNeeded:     {en: "(asks for the administrator password)", ko: "(관리자 비밀번호를 묻습니다)"},
 	MsgRepoAdminNeededHint: {en: "Asks for the administrator password", ko: "관리자 비밀번호를 묻습니다"},
 
-	MsgRepoCloneAddress:   {en: "Clone address", ko: "클론 주소"},
-	MsgRepoCopy:           {en: "Copy", ko: "복사"},
-	MsgRepoCopied:         {en: "Copied", ko: "복사함"},
-	MsgRepoCopyFailed:     {en: "Select the address to copy it", ko: "주소를 선택해 복사하세요"},
-	MsgRepoSummaryLabel:   {en: "Repository summary", ko: "저장소 요약"},
-	MsgRepoFactDefault:    {en: "Default branch", ko: "기본 브랜치"},
-	MsgRepoFactNoDefault:  {en: "Not set", ko: "정해지지 않음"},
-	MsgRepoFactLatest:     {en: "Last commit", ko: "마지막 커밋"},
-	MsgRepoFactOpenPRs:    {en: "Open pull requests", ko: "열린 풀 리퀘스트"},
-	MsgRepoFactCheck:      {en: "Latest check on the default branch", ko: "기본 브랜치 최근 체크"},
-	MsgRepoFactUnreadable: {en: "Could not be read", ko: "읽지 못함"},
-	MsgRepoRecentCommits:  {en: "Recent commits", ko: "최근 커밋"},
-	MsgRepoAllCommits:     {en: "All commits", ko: "커밋 전체 보기"},
-	MsgRepoSideLabel:      {en: "Branches and history", ko: "브랜치와 기록"},
-	MsgRepoShowAllRefs:    {en: "Show all", ko: "모두 보기"},
-	MsgRepoShowFewerRefs:  {en: "Show newest only", ko: "최신만 보기"},
-	MsgRepoNewestShown:    {en: "Newest first", ko: "최신순"},
-	MsgRepoNoTagsYet:      {en: "None yet", ko: "아직 없음"},
+	MsgRepoCloneAddress:      {en: "Clone address", ko: "클론 주소"},
+	MsgRepoCopy:              {en: "Copy", ko: "복사"},
+	MsgRepoCopied:            {en: "Copied", ko: "복사함"},
+	MsgRepoCopyFailed:        {en: "Select the address to copy it", ko: "주소를 선택해 복사하세요"},
+	MsgRepoSummaryLabel:      {en: "Repository summary", ko: "저장소 요약"},
+	MsgRepoFactDefault:       {en: "Default branch", ko: "기본 브랜치"},
+	MsgRepoFactNoDefault:     {en: "Not set", ko: "정해지지 않음"},
+	MsgRepoFactLatest:        {en: "Last commit", ko: "마지막 커밋"},
+	MsgRepoFactOpenPRs:       {en: "Open pull requests", ko: "열린 풀 리퀘스트"},
+	MsgRepoFactCheck:         {en: "Latest check on the default branch", ko: "기본 브랜치 최근 체크"},
+	MsgRepoFactUnreadable:    {en: "Could not be read", ko: "읽지 못함"},
+	MsgRepoRecentCommits:     {en: "Recent commits", ko: "최근 커밋"},
+	MsgRepoAllCommits:        {en: "All commits", ko: "커밋 전체 보기"},
+	MsgRepoSideLabel:         {en: "Branches and history", ko: "브랜치와 기록"},
+	MsgRepoShowAllRefs:       {en: "Show all", ko: "모두 보기"},
+	MsgRepoShowFewerRefs:     {en: "Show newest only", ko: "최신만 보기"},
+	MsgRepoNewestShown:       {en: "Newest first", ko: "최신순"},
+	MsgRepoNoTagsYet:         {en: "None yet", ko: "아직 없음"},
+	MsgRepoLanguagesTitle:    {en: "Languages", ko: "언어"},
+	MsgRepoLanguagesBarLabel: {en: "Language shares", ko: "언어 비율"},
+	MsgRepoLanguagesOther:    {en: "Other", ko: "기타"},
+	// The short notes sit beside the heading, like the Tags panel's empty
+	// state, instead of a share that could be wrong.
+	MsgRepoLanguagesNone:        {en: "No languages detected", ko: "감지된 언어가 없습니다"},
+	MsgRepoLanguagesTooLarge:    {en: "Too many files to count", ko: "파일이 너무 많아 세지 않았습니다"},
+	MsgRepoLanguagesUnavailable: {en: "Not counted right now", ko: "지금은 세지 못했습니다"},
+	MsgRepoLanguagesNoAttrs: {
+		en: "Language settings in .gitattributes were not applied. They need Git 2.40 or newer on the OwnGit host.",
+		ko: ".gitattributes의 언어 설정은 반영하지 않았습니다. OwnGit 호스트에 Git 2.40 이상이 필요합니다.",
+	},
 	MsgRepoRestoreLead: {
 		en: "Bring back deleted or overwritten work from an earlier commit.",
 		ko: "지운 파일이나 덮어쓴 작업을 예전 커밋에서 되살립니다.",

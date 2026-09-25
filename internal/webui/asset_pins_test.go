@@ -130,10 +130,10 @@ func TestAssetPins(t *testing.T) {
 		// Enter is left to the browser, since the day is a link.
 		{name: "graph keyboard and readout stay wired together", src: js,
 			has: []string{"graph.querySelector('[data-graph-readout]')", "announce(cell)"}, lacks: []string{"case 'Enter':"}},
-		// The script dims the file list while the whole project is selected.
+		// The script hides the file list unless Selected files is chosen.
 		// Clearing or disabling the inputs would submit a selection nobody made.
-		{name: "the restore scope hint is presentation only", src: jsFrom("data-restore-files", "})();"),
-			has: []string{"data-restore-dimmed"}, lacks: []string{"checked = false", "disabled", "remove()"}},
+		{name: "the restore file list is only hidden", src: jsFrom("data-restore-files", "/* Select a one-time secret"),
+			has: []string{"panel.hidden = !"}, lacks: []string{"checked = false", "disabled", "remove()"}},
 
 		// A retained badge was clipped at 1440px because the row truncated
 		// its last child. Only the ref name shortens; the badge keeps its

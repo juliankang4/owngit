@@ -1,0 +1,107 @@
+{{/* Shared import form partials: the source fields and the credential fields.
+     The new-import page and the repository's Import tab use the same ones, so
+     both forms look and behave alike. */}}
+
+{{/* The source address, the mode, and the two consents.
+     Call as: {{template "importSourceFields" dict "Lang" $lang "Notices" $n "ID" "import" "URL" $p.URL "Mode" $p.Mode "GitOnly" $p.GitOnlyConsent "Private" $p.PrivateNetwork "Focus" false}} */}}
+{{define "importSourceFields"}}
+{{$lang := .Lang}}{{$n := .Notices}}{{$id := .ID}}
+<div class="f">
+  <label for="{{$id}}-url">{{bi $lang "import.url"}}</label>
+  <input id="{{$id}}-url" name="url" type="url" required spellcheck="false" autocapitalize="off" autocomplete="off"
+         value="{{.URL}}"{{if .Focus}} autofocus{{end}}
+         {{template "fieldInvalid" dict "Notices" $n "Field" "url"}}>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "url"}}
+  {{/* The rule is visible before a mistake, not only after one. */}}
+  <p class="f__help">{{bi $lang "import.url_help"}}</p>
+</div>
+
+<fieldset class="fset">
+  <legend>{{bi $lang "import.mode"}}</legend>
+  <p class="f__help">{{bi $lang "import.mode.help"}}</p>
+  <label class="choice">
+    <input type="radio" name="mode" value="standalone"{{if ne .Mode "coexistence"}} checked{{end}}>
+    <span class="choice__t">{{bi $lang "import.mode.standalone"}}</span>
+    <span class="choice__d">{{bi $lang "import.mode.standalone_help"}}</span>
+  </label>
+  <label class="choice">
+    <input type="radio" name="mode" value="coexistence"{{if eq .Mode "coexistence"}} checked{{end}}>
+    <span class="choice__t">{{bi $lang "import.mode.coexistence"}}</span>
+    <span class="choice__d">{{bi $lang "import.mode.coexistence_help"}}</span>
+  </label>
+</fieldset>
+
+<label class="check">
+  <input type="checkbox" name="git_only_consent" value="1"{{if .GitOnly}} checked{{end}}>
+  <span class="check__t">{{bi $lang "import.git_only"}}</span>
+  <span class="check__d">{{bi $lang "import.git_only_help"}}</span>
+</label>
+<label class="check">
+  <input type="checkbox" name="allow_private_network" value="1"{{if .Private}} checked{{end}}>
+  <span class="check__t">{{bi $lang "import.private_network"}}</span>
+  <span class="check__d">{{bi $lang "import.private_network_help"}}</span>
+</label>
+{{end}}
+
+{{/* The credential form and only its own fields.
+
+     The stylesheet hides the fields of the forms that are not chosen, from
+     the select's own state, so this works without scripting. The script also
+     disables them, so a value typed before switching is not sent with the
+     other form. Secrets are never filled back in.
+
+     On the Import tab a credential may already be stored ("Stored" true).
+     A save there changes only what is entered, so the no-sign-in choice is
+     named for what it does and the rule, including how to remove a stored
+     credential, is stated under the choice.
+
+     Call as: {{template "importCredentialFields" dict "Lang" $lang "Notices" $n "ID" "import" "Choice" $choice "Stored" true}} */}}
+{{define "importCredentialFields"}}
+{{$lang := .Lang}}{{$n := .Notices}}{{$id := .ID}}{{$choice := .Choice}}
+<div class="f">
+  <label for="{{$id}}-credential-form">{{bi $lang "import.credential_form"}}</label>
+  <select id="{{$id}}-credential-form" name="credential_form" data-cred-form
+          {{template "fieldInvalid" dict "Notices" $n "Field" "credential_form"}}>
+    <option value="none"{{if eq $choice "none"}} selected{{end}}>{{if .Stored}}{{bi $lang "import.credential_keep"}}{{else}}{{bi $lang "import.credential_none"}}{{end}}</option>
+    <option value="basic"{{if eq $choice "basic"}} selected{{end}}>{{bi $lang "import.credential_basic"}}</option>
+    <option value="bearer"{{if eq $choice "bearer"}} selected{{end}}>{{bi $lang "import.credential_bearer"}}</option>
+  </select>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "credential_form"}}
+  {{if .Stored}}<p class="f__help">{{bi $lang "import.credential_save_help"}}</p>{{end}}
+</div>
+<div class="credset" data-cred-for="basic">
+  <div class="f">
+    <label for="{{$id}}-username">{{bi $lang "import.username"}}</label>
+    <input id="{{$id}}-username" name="username" type="text" autocomplete="off" spellcheck="false" autocapitalize="off"
+           {{template "fieldInvalid" dict "Notices" $n "Field" "username"}}>
+    {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "username"}}
+  </div>
+  <div class="f">
+    <label for="{{$id}}-password">{{bi $lang "import.password"}}</label>
+    <input id="{{$id}}-password" name="password" type="password" autocomplete="new-password"
+           {{template "fieldInvalid" dict "Notices" $n "Field" "password"}}>
+    {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "password"}}
+  </div>
+</div>
+<div class="credset" data-cred-for="bearer">
+  <div class="f">
+    <label for="{{$id}}-token">{{bi $lang "import.token"}}</label>
+    <input id="{{$id}}-token" name="token" type="password" autocomplete="new-password"
+           {{template "fieldInvalid" dict "Notices" $n "Field" "token"}}>
+    {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "token"}}
+  </div>
+</div>
+<div class="f">
+  <label for="{{$id}}-ca">{{bi $lang "import.ca"}}</label>
+  <textarea id="{{$id}}-ca" name="ca_pem" rows="4" autocomplete="off" spellcheck="false"></textarea>
+  <p class="f__help">{{bi $lang "import.ca_help"}}</p>
+</div>
+{{end}}
+
+{{/* A change that needs the administrator password, for a viewer without an
+     administrator session: a link to the password prompt that returns here,
+     marked with the lock.
+     Call as: {{template "importLocked" dict "Lang" $lang "URL" $url "Label" (bi $lang "import.refresh") "Primary" true}} */}}
+{{define "importLocked"}}
+<a class="btn{{if .Primary}} btn--primary{{end}}" href="{{.URL}}">{{.Label}}{{template "adminLock" dict "Lang" .Lang "Locked" true}}</a>
+{{end}}

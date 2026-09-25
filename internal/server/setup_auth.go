@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/bootstrap"
+	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -262,7 +264,52 @@ func (app *App) handleLoginGet(writer http.ResponseWriter, request *http.Request
 	if scope == webui.AuthAdmin {
 		submitURL = "/admin/login"
 	}
-	app.render(writer, http.StatusOK, webui.AuthPage{Chrome: chrome, Scope: scope, SubmitURL: submitURL, Next: localNext(request.URL.Query().Get("next"), "/")})
+	page := webui.AuthPage{Chrome: chrome, Scope: scope, SubmitURL: submitURL, Next: localNext(request.URL.Query().Get("next"), "/")}
+	app.keepRepositoryContext(request, &page)
+	app.render(writer, http.StatusOK, page)
+}
+
+// keepRepositoryContext keeps the repository an administrator prompt was
+// opened from on screen: the sidebar keeps that repository's sections with
+// the requested one marked, and the page names the repository. It applies
+// only to the administrator prompt, and only for a viewer who may already
+// see the repository, so it never reveals a repository name to someone who
+// has not passed general access.
+func (app *App) keepRepositoryContext(request *http.Request, page *webui.AuthPage) {
+	if page.Scope != webui.AuthAdmin || !page.Chrome.Viewer.GeneralUnlocked || page.Chrome.Nav.OverviewURL == "" {
+		return
+	}
+	target, err := url.Parse(page.Next)
+	if err != nil || !strings.HasPrefix(target.Path, "/repositories/") {
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(target.Path, "/repositories/"), "/")
+	id := parts[0]
+	if id == "" || id == "new" || id == "new-import" {
+		return
+	}
+	stored, exists, err := app.Store.Repository(request.Context(), id)
+	if err != nil || !exists {
+		return
+	}
+	active := webui.RepoTabOverview
+	if len(parts) > 1 {
+		switch parts[1] {
+		case "import":
+			active = webui.RepoTabImport
+		case "settings":
+			active = webui.RepoTabSettings
+		case "delete":
+			active = webui.RepoTabDelete
+		case "tasks", "helper-credentials", "configured-checks", "runner-tokens":
+			active = webui.RepoTabChecks
+		}
+	}
+	base := app.baseRepositoryPage(request, page.Chrome, stored, repository.Summary{})
+	page.Repo = base.Repo
+	page.Tabs = repositoryTabs(base, active)
+	page.Chrome.Nav.Section = webui.SectionRepository
+	page.Chrome.Nav.ActiveRepoID = stored.ID
 }
 
 func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Request, settings state.Settings, scope webui.AuthScope) {
@@ -320,7 +367,9 @@ func (app *App) renderLoginFailure(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	chrome.Notices = []webui.Notice{webui.Error(field, code)}
-	app.render(writer, status, webui.AuthPage{Chrome: chrome, Scope: scope, SubmitURL: request.URL.Path, Next: next, Locked: locked})
+	page := webui.AuthPage{Chrome: chrome, Scope: scope, SubmitURL: request.URL.Path, Next: next, Locked: locked}
+	app.keepRepositoryContext(request, &page)
+	app.render(writer, status, page)
 }
 
 func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, scope webui.AuthScope) {

@@ -1,8 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
@@ -495,5 +499,102 @@ func TestSplitPatchByFile(t *testing.T) {
 	}
 	if got := len(splitPatchByFile(patch, false)); got != 5 {
 		t.Errorf("a complete patch gave %d parts, want 5", got)
+	}
+}
+
+// A raster picture is shown in the file view through the raw endpoint, with
+// its pixel size. SVG, which can carry script, stays a download (its text is
+// shown as source), and a file whose bytes do not match its image type is an
+// ordinary binary file.
+func TestCodeViewShowsPicturesButNeverSVG(t *testing.T) {
+	var picture bytes.Buffer
+	noErr(t, png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 3, 2))))
+	app := newConfiguredApp(t)
+	seedRepository(t, app, "pictures", map[string]string{
+		"logo.png":     picture.String(),
+		"docs/pic.svg": hostileSVG,
+		"fake.png":     "\x00\x01not a picture",
+	}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
+	server := serve(t, app.Handler())
+	client := &http.Client{}
+	code := server.URL + "/repositories/pictures/code?ref=refs%2Fheads%2Fmain&path="
+
+	body, status := dashboardGET(t, client, code+"logo.png")
+	wantImage := `<img class="imgview__img" src="/repositories/pictures/raw?path=logo.png&amp;ref=refs%2Fheads%2Fmain" alt="logo.png"`
+	if status != http.StatusOK || !strings.Contains(body, wantImage) || !strings.Contains(body, `width="3" height="2"`) || !strings.Contains(body, "3 &times; 2 px") {
+		t.Fatalf("picture status=%d is not shown with its size:\n%s", status, body)
+	}
+	if strings.Contains(body, "This file is not text") {
+		t.Error("a picture is still described as a file that cannot be shown")
+	}
+
+	body, _ = dashboardGET(t, client, code+"docs%2Fpic.svg")
+	if strings.Contains(body, "<img") && strings.Contains(body, "imgview") {
+		t.Error("an SVG file is shown as a picture")
+	}
+	if !strings.Contains(body, "&lt;svg") || !strings.Contains(body, "Download this file") {
+		t.Error("an SVG file does not show its source with a download link")
+	}
+
+	body, _ = dashboardGET(t, client, code+"fake.png")
+	if strings.Contains(body, "imgview") || !strings.Contains(body, "This file is not text") {
+		t.Error("a .png file that is not a picture is shown as one")
+	}
+}
+
+// The repository overview shows the top README of the selected ref, rendered
+// by the same helper as the code view, and a repository without one shows
+// no README section.
+func TestOverviewShowsTheRenderedReadme(t *testing.T) {
+	app := newConfiguredApp(t)
+	seedRepository(t, app, "with-readme", map[string]string{
+		"README.md": hostileReadme,
+		"main.go":   "package main\n",
+	}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
+	seedRepository(t, app, "no-readme", map[string]string{"main.go": "package main\n"}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
+	server := serve(t, app.Handler())
+	client := &http.Client{}
+
+	body, status := dashboardGET(t, client, server.URL+"/repositories/with-readme")
+	if status != http.StatusOK || !strings.Contains(body, `<section class="readme"`) || !strings.Contains(body, `<article class="md">`) {
+		t.Fatalf("overview status=%d has no rendered README", status)
+	}
+	readme := body[strings.Index(body, `<section class="readme"`):]
+	readme = readme[:strings.Index(readme, "</section>")]
+	if !strings.Contains(readme, "Guide") || strings.Contains(readme, "<script") || strings.Contains(readme, "onerror") {
+		t.Errorf("overview README is not the safely rendered document:\n%s", readme)
+	}
+	if !strings.Contains(readme, `href="/repositories/with-readme/code?path=README.md&amp;ref=refs%2Fheads%2Fmain"`) {
+		t.Errorf("overview README does not link to the file:\n%s", readme)
+	}
+
+	body, _ = dashboardGET(t, client, server.URL+"/repositories/no-readme")
+	if strings.Contains(body, `class="readme"`) {
+		t.Error("a repository without a README shows a README section")
+	}
+}
+
+// WebP pictures get their pixel size from the first chunk header, so the
+// page reserves their space. The headers are the first 32 bytes of real
+// files written by Pillow in its three forms.
+func TestWebPSizeFromHeader(t *testing.T) {
+	for _, test := range []struct {
+		name, header  string
+		width, height int
+	}{
+		{"extended (alpha)", "524946467000000057454250565038580a00000010000000280000160000414c", 41, 23},
+		{"lossless", "524946461e000000574542505650384c110000002f248004000750e42ad4a3ff", 37, 19},
+		{"lossy", "524946464c0000005745425056503820400000009003009d012a250013003e6d", 37, 19},
+		{"not WebP", "89504e470d0a1a0a0000000d4948445200000003000000020806000000000000", 0, 0},
+	} {
+		head, err := hex.DecodeString(test.header)
+		noErr(t, err)
+		if width, height := webpSize(head); width != test.width || height != test.height {
+			t.Errorf("%s: size %dx%d, want %dx%d", test.name, width, height, test.width, test.height)
+		}
+	}
+	lossy, _ := hex.DecodeString("524946464c0000005745425056503820400000009003009d012a250013003e6d")
+	if ok, width, height := inlineImage("pic.webp", lossy); !ok || width != 37 || height != 19 {
+		t.Errorf("a WebP picture is shown=%v at %dx%d", ok, width, height)
 	}
 }

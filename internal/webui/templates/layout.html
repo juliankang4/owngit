@@ -151,7 +151,9 @@
       {{if or $nav.NewRepoURL $nav.NewImportURL}}
       <div class="sb__acts">
         {{with $nav.NewRepoURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "new"}} aria-current="page"{{end}}>{{icon "plus"}}<span>{{bi $lang "repo.new.title"}}</span></a>{{end}}
-        {{with $nav.NewImportURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "import"}} aria-current="page"{{end}} {{biAttr $lang "title" "import.list_link"}}>{{icon "import"}}<span>{{bi $lang "app.nav.import"}}</span></a>{{end}}
+        {{/* Importing asks for the administrator password, so the entry
+             carries the lock mark until an administrator session exists. */}}
+        {{with $nav.NewImportURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "import"}} aria-current="page"{{end}} {{biAttr $lang "title" "import.list_link"}}>{{icon "import"}}<span>{{bi $lang "app.nav.import"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $.Chrome.Viewer.AdminConfirmed)}}</a>{{end}}
       </div>
       {{end}}
       {{/* The filter only hides rows already on the page; it starts hidden

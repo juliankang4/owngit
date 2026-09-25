@@ -224,20 +224,21 @@ const (
 
 // Repositories.
 const (
-	MsgRepoNewTitle     MessageCode = "repo.new.title"
-	MsgRepoNameLabel    MessageCode = "repo.new.name"
-	MsgRepoNameRules    MessageCode = "repo.new.name_rules"
-	MsgRepoDescLabel    MessageCode = "repo.new.description"
-	MsgRepoDescHelp     MessageCode = "repo.new.description_help"
-	MsgRepoCreate       MessageCode = "repo.new.submit"
-	MsgRepoNameEmpty    MessageCode = "repo.new.name_empty"
-	MsgRepoNameInvalid  MessageCode = "repo.new.name_invalid"
-	MsgRepoNameReserved MessageCode = "repo.new.name_reserved"
-	MsgRepoNameTaken    MessageCode = "repo.new.name_taken"
-	MsgRepoNameBusy     MessageCode = "repo.new.name_busy"
-	MsgRepoNameLong     MessageCode = "repo.new.name_long"
-	MsgRepoCreateFail   MessageCode = "repo.new.failed"
-	MsgRepoCreated      MessageCode = "repo.new.created"
+	MsgRepoNewTitle           MessageCode = "repo.new.title"
+	MsgRepoNameLabel          MessageCode = "repo.new.name"
+	MsgRepoNameRules          MessageCode = "repo.new.name_rules"
+	MsgRepoDescLabel          MessageCode = "repo.new.description"
+	MsgRepoDescHelp           MessageCode = "repo.new.description_help"
+	MsgRepoCreate             MessageCode = "repo.new.submit"
+	MsgRepoNameEmpty          MessageCode = "repo.new.name_empty"
+	MsgRepoNameInvalid        MessageCode = "repo.new.name_invalid"
+	MsgRepoNameReserved       MessageCode = "repo.new.name_reserved"
+	MsgRepoNameTaken          MessageCode = "repo.new.name_taken"
+	MsgRepoNameBusy           MessageCode = "repo.new.name_busy"
+	MsgRepoDescriptionTooLong MessageCode = "repo.new.description_too_long"
+	MsgRepoNameLong           MessageCode = "repo.new.name_long"
+	MsgRepoCreateFail         MessageCode = "repo.new.failed"
+	MsgRepoCreated            MessageCode = "repo.new.created"
 
 	MsgRepoEmpty            MessageCode = "repo.empty"
 	MsgRepoEmptyPush        MessageCode = "repo.empty.push_hint"
@@ -254,6 +255,7 @@ const (
 	MsgRepoNoTags           MessageCode = "repo.no_tags"
 	MsgRepoDefaultGone      MessageCode = "repo.default_branch_missing"
 	MsgRepoDefaultGoneShort MessageCode = "repo.default_branch_missing.short"
+	MsgRepoEmptyShort       MessageCode = "repo.empty.short"
 	MsgRepoRefMissing       MessageCode = "repo.ref_missing"
 	MsgRepoRefRetained      MessageCode = "repo.ref_retained"
 	MsgRepoDetached         MessageCode = "repo.detached"
@@ -314,7 +316,6 @@ const (
 	MsgRestoreModeFilesHelp  MessageCode = "restore.scope.files_help"
 	MsgRestoreFilesLabel     MessageCode = "restore.files.label"
 	MsgRestoreFilesHelp      MessageCode = "restore.files.help"
-	MsgRestoreFilesInactive  MessageCode = "restore.files.inactive"
 	MsgRestoreFilesNone      MessageCode = "restore.files.none"
 	MsgRestoreFilesEmpty     MessageCode = "restore.files.empty"
 	MsgRestoreStatusAdded    MessageCode = "restore.status.added"
@@ -965,6 +966,12 @@ var catalog = map[MessageCode]message{
 		en: "An import for that name is in progress, so no repository was created. Try again after the import finishes, or restart OwnGit if no import is running.",
 		ko: "그 이름으로 가져오기가 진행 중이라 저장소를 만들지 않았습니다. 가져오기가 끝난 뒤 다시 시도하세요. 진행 중인 가져오기가 없다면 OwnGit을 다시 시작하세요.",
 	},
+	// The limit is 500 bytes (repository.ValidateName), so the sentence says
+	// what that means for Korean text instead of promising 500 characters.
+	MsgRepoDescriptionTooLong: {
+		en: "Keep the description to 500 bytes or fewer: up to 500 characters in English, or about 160 in Korean.",
+		ko: "설명은 500바이트 이내로 입력하세요. 영문은 500자, 한글은 약 160자입니다.",
+	},
 	MsgRepoNameLong: {
 		en: "That name is too long.",
 		ko: "이름이 너무 깁니다.",
@@ -1029,6 +1036,13 @@ var catalog = map[MessageCode]message{
 	MsgRepoDefaultGoneShort: {
 		en: "Default branch missing",
 		ko: "기본 브랜치 없음",
+	},
+	// A new repository has no commits and so no default branch yet. That is
+	// its normal first state, so the row names it neutrally instead of
+	// reporting a missing branch.
+	MsgRepoEmptyShort: {
+		en: "No commits yet",
+		ko: "아직 커밋 없음",
 	},
 	MsgRepoRefMissing: {
 		en: "That branch or tag does not exist in this repository.",
@@ -1261,10 +1275,6 @@ var catalog = map[MessageCode]message{
 	MsgRestoreFilesLabel: {
 		en: "Files",
 		ko: "파일",
-	},
-	MsgRestoreFilesInactive: {
-		en: "The whole project is selected, so these ticks are not used. They are kept if you switch back.",
-		ko: "프로젝트 전체를 선택했기 때문에 이 체크는 사용하지 않습니다. 다시 바꾸면 그대로 남아 있습니다.",
 	},
 	MsgRestoreFilesHelp: {
 		en: "Each row says what restoring that path would do to the branch.",

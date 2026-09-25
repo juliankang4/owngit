@@ -106,17 +106,14 @@
       {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "mode"}}
     </fieldset>
 
-    {{/* The file list stays usable without scripting: the mode radio above is
-         what decides whether these ticks are read. With the script loaded the
-         panel also states, in words, when the whole project is selected and
-         these ticks are therefore not what decides the result. */}}
+    {{/* The file list is shown only while "Selected files" is chosen. The
+         stylesheet hides it from the radio's state, so this works without
+         scripting too, and the script sets hidden for browsers without that
+         selector. The ticks stay in the form either way: the radio decides
+         whether they are read, and switching back finds them as they were. */}}
     <div class="restore__files" data-restore-files>
       <fieldset class="fset">
         <legend>{{bi $lang "restore.files.label"}}</legend>
-        {{/* Shown by the stylesheet only while the panel is marked inactive,
-             so a reader without scripting never sees a claim about a state
-             that nothing is maintaining. */}}
-        <p class="restore__note">{{icon "info"}}<span>{{bi $lang "restore.files.inactive"}}</span></p>
         <p class="f__help">{{bi $lang "restore.files.help"}}</p>
         {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "path"}}
 
