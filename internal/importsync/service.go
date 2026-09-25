@@ -103,6 +103,12 @@ type Service struct {
 	// beforeInitialDestinationCheck runs after fetch and before the new
 	// destination collision check. It is outside the repository lock.
 	beforeInitialDestinationCheck func() error
+	// afterInitialDirectoryCreated runs right after the unpublished initial
+	// directory was created, before its marker and repository are written.
+	afterInitialDirectoryCreated func()
+	// afterRunStage runs outside every lock each time a run records a stage,
+	// starting with preparing.
+	afterRunStage func(status string)
 	// beforeInitialPublication runs after the unpublished initial directory
 	// exists and before objects are indexed. It is outside the repository lock.
 	beforeInitialPublication func() error
@@ -488,6 +494,7 @@ func (s *Service) forgetOrphanImport(ctx context.Context, repositoryID string, s
 	if s.Store == nil || s.Repositories == nil || s.Repositories.Locks == nil {
 		return false, newProblem(CodeRuntimeUnavailable, "import configuration runtime is unavailable", nil)
 	}
+	now := s.clock()
 	mutex := s.repositoryLock(repositoryID)
 	if !mutex.TryLock() {
 		return false, newProblem(CodeBusy, "an import is already running for this repository", ErrBusy)
@@ -510,6 +517,9 @@ func (s *Service) forgetOrphanImport(ctx context.Context, repositoryID string, s
 		return false, err
 	} else if taken {
 		return false, newProblem(CodeRepositoryTaken, "repository destination already exists", nil)
+	}
+	if err := s.settleStrandedInitialRuns(ctx, repositoryID, now); err != nil {
+		return false, newProblem(CodeStateUnavailable, "stopped first imports could not be settled", err)
 	}
 	if err := s.Store.ForgetUnpublishedImport(ctx, repositoryID); errors.Is(err, state.ErrImportNotForgettable) {
 		return false, newProblem(CodeBusy, "an earlier import for this name is still running or needs recovery; restart OwnGit or try again later", err)

@@ -299,6 +299,17 @@ func TestCancelledImportRunExitsWithTheCancelledStatus(t *testing.T) {
 	}
 }
 
+// A cancel that arrives after publication cannot stop the import. The run
+// completes, and the output says why the cancellation had no effect.
+func TestLateCancellationOfAPublishedImportIsExplained(t *testing.T) {
+	output, err := captureStdout(func() error {
+		return printImportRun("project", []byte(`{"ok":true,"run":{"status":"complete","refs_divergent":0,"cancel_requested_at":"2026-01-01T00:00:00Z"},"status":{"refs":[]}}`))
+	})
+	if err != nil || output != "Import for project finished: complete.\nThe cancellation arrived after the import was published, so it did not stop it.\n" {
+		t.Fatalf("late cancel output=%q err=%v", output, err)
+	}
+}
+
 // A credential file that cannot be used is reported as a structured error that
 // names the problem, like every other import error, instead of a log line.
 func TestUnusableImportCredentialFileIsAStructuredError(t *testing.T) {

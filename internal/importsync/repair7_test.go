@@ -379,6 +379,10 @@ func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {
 	})
 }
 
+// publicationHoldDeadlines are the publication deadlines tried in turn by
+// TestPublicationHoldsGuardsUntilPreparedCallbackFinishes.
+var publicationHoldDeadlines = []time.Duration{time.Second, 4 * time.Second, 16 * time.Second}
+
 // Production lifecycle: while the prepared callback is still running, the
 // publication guard and the repository write lock stay held, no HEAD write
 // happens and the run does not complete. Once the callback finishes the run
@@ -391,7 +395,13 @@ func TestPublicationHoldsGuardsUntilPreparedCallbackFinishes(t *testing.T) {
 	markHEADOwnedForTest(t, f, initial.Run.ID)
 	f.git(f.source, "checkout", "--quiet", "dev")
 	f.commit("dev next", "next\n")
-	f.manager.Git.TerminationGrace = 200 * time.Millisecond
+	// The grace bounds each wait for the stopped transaction: first for the
+	// callback to abort it, then for the killed process to be reaped. Each
+	// wait returns as soon as its step finishes, so a long grace costs time
+	// only on a loaded machine that needs it. A short one let a loaded machine
+	// miss the reap, and the run then honestly ended unresolved.
+	grace := 5 * time.Second
+	f.manager.Git.TerminationGrace = grace
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	f.service.whileRefsPrepared = func() {
@@ -399,16 +409,41 @@ func TestPublicationHoldsGuardsUntilPreparedCallbackFinishes(t *testing.T) {
 		close(entered)
 		<-release
 	}
-	done := make(chan struct{})
-	var run state.ImportRun
-	var runErr error
-	go func() {
-		defer close(done)
-		run, runErr = f.service.Refresh(context.Background(), "project", Limits{PublishTimeout: time.Second})
-	}()
-	<-entered
-	// Deadline plus termination grace plus join grace all pass here.
-	time.Sleep(2500 * time.Millisecond)
+	// Under load the publication deadline can expire before publication
+	// reaches the prepared callback, and the run then ends without testing
+	// anything. Such a round is repeated with a longer deadline; the wait for
+	// the callback is bounded, so a missed round never hangs the test.
+	var (
+		done    chan struct{}
+		run     state.ImportRun
+		runErr  error
+		timeout time.Duration
+	)
+	for round, candidate := range publicationHoldDeadlines {
+		timeout, done = candidate, make(chan struct{})
+		go func(done chan struct{}) {
+			defer close(done)
+			run, runErr = f.service.Refresh(context.Background(), "project", Limits{PublishTimeout: timeout})
+		}(done)
+		select {
+		case <-entered:
+		case <-done:
+			// Only a cleanly failed round leaves the repository ready for
+			// another attempt.
+			if round == len(publicationHoldDeadlines)-1 || run.Status != state.ImportRunFailed {
+				t.Fatalf("publication ended before its prepared callback ran with a %s deadline: run=%+v err=%v", timeout, run, runErr)
+			}
+			t.Logf("publication ended before its prepared callback ran with a %s deadline (run %s, err %v); retrying with a longer one", timeout, run.Status, runErr)
+			continue
+		case <-time.After(timeout + time.Minute):
+			t.Fatalf("publication neither reached its prepared callback nor returned within %s", timeout+time.Minute)
+		}
+		break
+	}
+	// Without the guard, publication would return once the deadline and the
+	// callback's abort grace passed and the killed process was reaped, which
+	// takes well under 1.5 s more. It must still be waiting here.
+	time.Sleep(timeout + grace + 1500*time.Millisecond)
 	select {
 	case <-done:
 		t.Fatalf("publication returned while its prepared callback was still running: run=%+v err=%v", run, runErr)
@@ -424,7 +459,7 @@ func TestPublicationHoldsGuardsUntilPreparedCallbackFinishes(t *testing.T) {
 	close(release)
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(time.Minute):
 		t.Fatal("publication did not return after the callback finished")
 	}
 	if runErr == nil || run.Status != state.ImportRunFailed || !errors.Is(runErr, context.DeadlineExceeded) {

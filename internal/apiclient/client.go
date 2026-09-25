@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +50,42 @@ type Error struct {
 	// Status is the HTTP status of an error response from the server, or 0
 	// when no valid error response was received.
 	Status int
+	// ResponseStatus is the HTTP status of any response that was received,
+	// including one without a valid error object, such as a proxy's 502 page.
+	// It is 0 when no response arrived.
+	ResponseStatus int
+	// RetryAfter is the delay a 429 or 503 response asked for, or 0.
+	RetryAfter time.Duration
+}
+
+// retryAfter reads the Retry-After header of a 429 or 503 response, given in
+// seconds or as an HTTP date.
+func retryAfter(response *http.Response) time.Duration {
+	if response.StatusCode != http.StatusTooManyRequests && response.StatusCode != http.StatusServiceUnavailable {
+		return 0
+	}
+	value := strings.TrimSpace(response.Header.Get("Retry-After"))
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(min(seconds, int64(24*time.Hour/time.Second))) * time.Second
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		return max(time.Until(when), 0)
+	}
+	return 0
+}
+
+// responseError fills the response-level fields of a failure built from a
+// received response.
+func responseError(response *http.Response, problem *Error) *Error {
+	problem.ResponseStatus = response.StatusCode
+	problem.RetryAfter = retryAfter(response)
+	return problem
 }
 
 func (problem *Error) Error() string {
@@ -247,21 +284,21 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 	limited := io.LimitReader(response.Body, responseLimit+1)
 	content, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, &Error{Code: "invalid_response", Message: "The OwnGit API response could not be read.", Cause: err}
+		return nil, responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit API response could not be read.", Cause: err})
 	}
 	if int64(len(content)) > responseLimit {
-		return nil, &Error{Code: "response_too_large", Message: "The OwnGit API response exceeds the supported size."}
+		return nil, responseError(response, &Error{Code: "response_too_large", Message: "The OwnGit API response exceeds the supported size."})
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if mediaErr != nil || mediaType != "application/json" {
-		return nil, &Error{Code: "invalid_response", Message: "The OwnGit API returned a non-JSON response."}
+		return nil, responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit API returned a non-JSON response."})
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var envelope pullrequest.ErrorEnvelope
 		if err := json.Unmarshal(content, &envelope); err != nil || envelope.OK || envelope.Error.Code == "" || envelope.Error.Message == "" {
-			return nil, &Error{Code: "invalid_response", Message: fmt.Sprintf("The OwnGit API returned HTTP %d without a valid error object.", response.StatusCode)}
+			return nil, responseError(response, &Error{Code: "invalid_response", Message: fmt.Sprintf("The OwnGit API returned HTTP %d without a valid error object.", response.StatusCode)})
 		}
-		return nil, &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details, Status: response.StatusCode}
+		return nil, responseError(response, &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details, Status: response.StatusCode})
 	}
 	var success struct {
 		OK bool `json:"ok"`
@@ -302,14 +339,14 @@ func (client *Client) GetBytes(ctx context.Context, apiPath string, headers map[
 	defer response.Body.Close()
 	content, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if readErr != nil {
-		return nil, nil, &Error{Code: "invalid_response", Message: "The OwnGit blob response could not be read.", Cause: readErr}
+		return nil, nil, responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit blob response could not be read.", Cause: readErr})
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var envelope pullrequest.ErrorEnvelope
 		if err := json.Unmarshal(content, &envelope); err == nil && !envelope.OK && envelope.Error.Code != "" {
-			return nil, nil, &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details, Status: response.StatusCode}
+			return nil, nil, responseError(response, &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details, Status: response.StatusCode})
 		}
-		return nil, nil, &Error{Code: "invalid_response", Message: fmt.Sprintf("The OwnGit API returned HTTP %d for a source blob.", response.StatusCode)}
+		return nil, nil, responseError(response, &Error{Code: "invalid_response", Message: fmt.Sprintf("The OwnGit API returned HTTP %d for a source blob.", response.StatusCode)})
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if mediaErr != nil || mediaType != "application/octet-stream" {

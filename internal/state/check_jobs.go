@@ -957,6 +957,36 @@ func (s *Store) RecordCheckObservation(ctx context.Context, repositoryID, refNam
 	return tx.Commit()
 }
 
+// CheckEventsWithJobs reports which of eventKeys already have a job of the
+// given trigger in the repository, under any policy version. The coordinator
+// uses it for branch heads it has no observation for, so a head it saw before
+// the bounded observation set dropped it is not queued a second time.
+func (s *Store) CheckEventsWithJobs(ctx context.Context, repositoryID, trigger string, eventKeys []string) (map[string]bool, error) {
+	found := make(map[string]bool, len(eventKeys))
+	if len(eventKeys) == 0 {
+		return found, nil
+	}
+	arguments := make([]any, 0, len(eventKeys)+2)
+	arguments = append(arguments, repositoryID, trigger)
+	for _, key := range eventKeys {
+		arguments = append(arguments, key)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(eventKeys)), ",")
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT event_key FROM check_jobs WHERE repository_id=? AND trigger_kind=? AND event_key IN (`+placeholders+`)`, arguments...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		found[key] = true
+	}
+	return found, closeRows(rows)
+}
+
 // DeleteCheckObservation records a branch deletion by removing its last live
 // object. A later recreation is therefore admitted as a new ref event.
 func (s *Store) DeleteCheckObservation(ctx context.Context, repositoryID, refName string) error {

@@ -755,9 +755,10 @@ func printImportRun(name string, content []byte) error {
 	var response struct {
 		Code string `json:"code"`
 		Run  struct {
-			Status              string `json:"status"`
-			RefsDivergent       int64  `json:"refs_divergent"`
-			RefsDeletedUpstream int64  `json:"refs_deleted_upstream"`
+			Status              string     `json:"status"`
+			RefsDivergent       int64      `json:"refs_divergent"`
+			RefsDeletedUpstream int64      `json:"refs_deleted_upstream"`
+			CancelRequestedAt   *time.Time `json:"cancel_requested_at"`
 		} `json:"run"`
 		Status struct {
 			Refs []importRefView `json:"refs"`
@@ -771,6 +772,9 @@ func printImportRun(name string, content []byte) error {
 		return &checkExit{code: importCancelledExit, err: errors.New("the import was cancelled")}
 	}
 	fmt.Printf("Import for %s finished: %s.\n", name, response.Run.Status)
+	if response.Run.Status == "complete" && response.Run.CancelRequestedAt != nil {
+		fmt.Println("The cancellation arrived after the import was published, so it did not stop it.")
+	}
 	if deleted := response.Run.RefsDeletedUpstream; deleted > 0 {
 		fmt.Printf("%d %s deleted at the source and kept here.\n", deleted, plural(deleted, "ref was", "refs were"))
 	}

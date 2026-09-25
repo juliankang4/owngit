@@ -634,6 +634,7 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 				if errors.Is(err, gitexec.ErrPreparedProcessNotReaped) {
 					commandErr = newProblem(CodeUnresolved, "destination ref transaction process could not be reaped; its outcome is left for reconciliation", err)
 					processUnreaped = true
+					run.refProcessUnreaped = true
 				} else if errors.As(err, &problem) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					commandErr = err
 				} else {
@@ -710,13 +711,26 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 		if finalizationBlocked {
 			return commandErr
 		}
-		if err := s.authorityCurrent(ctx, run); err != nil {
+		// Once the refs are in a visible repository, the import is published
+		// and a cancellation comes too late: the rest records the outcome
+		// without the run's cancellation. A changed authority still stops it.
+		// A first import is visible only after finishInitialDestination renames
+		// its directory into place, so a cancel before that still stops it.
+		publishedCtx, cancelPublished := context.WithTimeout(context.WithoutCancel(ctx), run.limits.PublishTimeout)
+		defer cancelPublished()
+		if run.initialDestination == nil {
+			ctx = publishedCtx
+			if err := s.authorityUnchanged(ctx, run); err != nil {
+				return err
+			}
+		} else if err := s.authorityCurrent(ctx, run); err != nil {
 			return err
 		}
 		if run.initialDestination != nil {
 			if err := s.finishInitialDestination(ctx, run, &intent, observation, now); err != nil {
 				return err
 			}
+			ctx = publishedCtx
 			confirmed, confirmErr := s.observeIntent(ctx, run.initialDestination.finalPath, intent)
 			if confirmErr != nil || !confirmed.matchesDesired || !confirmed.retentionComplete || !confirmed.headMatches {
 				cause := confirmErr
@@ -732,7 +746,7 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 		run.run.ErrorClass = ""
 		run.run = s.settleStagingAt(ctx, run.staging, run.run, now)
 		run.stagingSettled = true
-		if err := s.authorityCurrent(ctx, run); err != nil {
+		if err := s.authorityUnchanged(ctx, run); err != nil {
 			return err
 		}
 		receipt, digest := buildReceipt(intent, observation)
@@ -1352,6 +1366,17 @@ func intentObservations(intent state.ImportIntent, now time.Time) ([]state.Impor
 }
 
 func (s *Service) authorityCurrent(ctx context.Context, run *runState) error {
+	return s.checkAuthority(ctx, run, true)
+}
+
+// authorityUnchanged is authorityCurrent for the steps after publication, when
+// the refs are already visible: a changed source, credential, or runtime still
+// stops the run, but a cancellation request comes too late and is ignored.
+func (s *Service) authorityUnchanged(ctx context.Context, run *runState) error {
+	return s.checkAuthority(ctx, run, false)
+}
+
+func (s *Service) checkAuthority(ctx context.Context, run *runState, honorCancel bool) error {
 	if err := s.runtimeCurrentForRun(run); err != nil {
 		return err
 	}
@@ -1394,7 +1419,7 @@ func (s *Service) authorityCurrent(ctx context.Context, run *runState) error {
 	if err != nil {
 		return runStateReadProblem("import run could not be re-read", err)
 	}
-	if exists && current.CancelRequestedAt != nil {
+	if honorCancel && exists && current.CancelRequestedAt != nil {
 		return newProblem(CodeCancelled, "import was cancelled before publication", nil)
 	}
 	return nil

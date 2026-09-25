@@ -50,6 +50,9 @@ type runState struct {
 	consumeErr                  error
 	stagingSettled              bool
 	publicationFinalized        bool
+	// refProcessUnreaped is set when the ref transaction process could not be
+	// reaped and may still write to the destination.
+	refProcessUnreaped bool
 }
 
 // execute runs one import or refresh from start to terminal state. The
@@ -160,7 +163,13 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 		return run.run, newProblem(CodeStateUnavailable, "import run could not be recorded", beginErr)
 	}
 
+	if s.afterRunStage != nil {
+		s.afterRunStage(run.run.Status)
+	}
 	pipelineErr := s.runPipeline(ctx, run)
+	if pipelineErr != nil && ctx.Err() != nil {
+		pipelineErr = s.discardStoppedInitial(ctx, run, pipelineErr)
+	}
 	pipelineErr = stoppedStageFailure(ctx, run.run.Status, pipelineErr)
 	return s.finishRun(context.WithoutCancel(parent), run, pipelineErr)
 }
@@ -335,6 +344,9 @@ func (s *Service) setStatus(ctx context.Context, run *runState, status string) e
 		return newProblem(CodeStateUnavailable, "import run stage could not be recorded", err)
 	}
 	run.run.Status = status
+	if s.afterRunStage != nil {
+		s.afterRunStage(status)
+	}
 	return nil
 }
 

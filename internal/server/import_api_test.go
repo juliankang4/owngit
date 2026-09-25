@@ -175,6 +175,74 @@ func TestImportScheduleIntervalErrorsNameTheSchedule(t *testing.T) {
 	}
 }
 
+// A first import has no repository yet. Cancelling it by name used to answer
+// repository_not_found and leave it running; it now stops the run, and the
+// source and token it stored are removed like after any failed first import.
+func TestImportCancelStopsARunningFirstImport(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	fetching, stopped := make(chan struct{}), make(chan struct{})
+	fixture.app.Imports.Fetch = func(ctx context.Context, _ importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
+		close(fetching)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-stopped:
+			return nil, errors.New("test ended")
+		}
+	}
+	server := serve(t, fixture.app.Handler())
+	// Registered after the server, so it runs first: a failing test does not
+	// leave the import blocked while the server shuts down.
+	t.Cleanup(func() { close(stopped) })
+	base := server.URL + "/api/v1/repositories/arriving/import"
+	type outcome struct {
+		status int
+		code   string
+	}
+	added := make(chan outcome, 1)
+	go func() {
+		response := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{
+			"name": "arriving", "url": "https://example.invalid/team/arriving.git", "mode": "standalone",
+			"credential_form": "bearer", "token": "first-import-token",
+		}, "admin-password", "", "")
+		defer response.Body.Close()
+		var body struct {
+			Code string `json:"code"`
+		}
+		_ = json.NewDecoder(response.Body).Decode(&body)
+		added <- outcome{response.StatusCode, body.Code}
+	}()
+	select {
+	case <-fetching:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first import did not start fetching")
+	}
+	cancelled := importAPIRequest(t, http.MethodPost, base+"/cancel", map[string]any{}, "admin-password", "", "")
+	if body := importAPIBody(t, cancelled); cancelled.StatusCode != http.StatusOK || !strings.Contains(body, `"cancelled":true`) {
+		t.Fatalf("cancel of a first import status=%d body=%s", cancelled.StatusCode, body)
+	}
+	select {
+	case result := <-added:
+		if result.code != importsync.CodeCancelled {
+			t.Fatalf("first import after cancel status=%d code=%s", result.status, result.code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first import kept running after cancel")
+	}
+	ctx := context.Background()
+	if _, exists, err := fixture.store.ImportSource(ctx, "arriving"); err != nil || exists {
+		t.Fatalf("the cancelled first import kept its source exists=%v err=%v", exists, err)
+	}
+	if _, exists, err := fixture.store.LoadImportCredentials(ctx, "arriving"); err != nil || exists {
+		t.Fatalf("the cancelled first import kept its token exists=%v err=%v", exists, err)
+	}
+	// With nothing running, a name without a repository is still not found.
+	again := importAPIRequest(t, http.MethodPost, base+"/cancel", map[string]any{}, "admin-password", "", "")
+	if again.StatusCode != http.StatusNotFound || importAPICode(t, again) != "repository_not_found" {
+		t.Fatalf("cancel with nothing running status=%d", again.StatusCode)
+	}
+}
+
 func TestImportRunRouteOutlivesOrdinaryDeadline(t *testing.T) {
 	fixture := newImportAPIFixture(t)
 	fixture.app.HTTPTimeout = 500 * time.Millisecond

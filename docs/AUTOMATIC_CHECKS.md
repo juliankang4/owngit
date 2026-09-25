@@ -141,6 +141,15 @@ file from the exact commit, and admits a job for each matching event. Git
 writes never wait for checks. Seeing the same event again does not create a
 second job.
 
+Saving or enabling a new policy version does not queue branch heads or pull
+request revisions that already had a job, even if that job ran under an older
+version. Only new pushes and new pull request revisions are queued. When checks
+are enabled for the first time, each matching branch head that never had a job
+is queued once, within the queue limit. Saving a new policy version also marks
+jobs that are still waiting to start `interrupted`, and they are not queued
+again. To check an existing head under the new policy, rerun its job with
+`owngit check-job rerun`.
+
 A job moves from `pending` to `claimed`, `started`, and a result: `passed`,
 `failed`, `error`, `cancelled`, `incomplete`, `unavailable`, `ambiguous`, or
 `interrupted`. Once a job has started, OwnGit never queues it again
@@ -286,6 +295,41 @@ List or revoke runner tokens with `owngit runner-credential list` and
 `owngit runner-credential revoke --credential ID`. The server stores only a
 hash of each token. Revoking a token stops its use and interrupts a claimed job
 that has not started.
+
+The runner keeps running while OwnGit restarts or the network drops. When
+OwnGit does not answer, times out, returns a server error, or asks it to wait,
+the runner retries with a growing delay of up to one minute (longer only when
+OwnGit sends `Retry-After`). It logs the outage once and the recovery once. A
+job that was running during the outage may end without a confirmed result;
+check it with `owngit check-job show`. The runner stops with exit status 1 and
+a message only when retrying cannot help: its token is unknown or revoked, or
+the server refuses the request as invalid. With `--once` the runner claims at
+most one job, makes a single attempt, and exits with status 1 on any failure,
+including an unreachable server.
+
+To keep a runner available after a reboot, run it under the system's service
+manager. On Linux with systemd, for example:
+
+```ini
+[Unit]
+Description=OwnGit runner for project
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=owngit-runner
+ExecStart=/usr/local/bin/owngit runner --server https://git.example.test --repository project --token-file /etc/owngit-runner/project-token --workspace-root /srv/owngit-runner/project
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The token file must be readable only by the service account. On macOS use a
+launchd agent or daemon, and on Windows a service wrapper, with the same
+command. `Restart=on-failure` restarts the runner after a crash; after a
+revoked token it only repeats the same error, so issue a new token first.
 
 ## Backup and restore
 

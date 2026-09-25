@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"time"
@@ -25,9 +26,20 @@ const (
 	leaseHeader       = "X-OwnGit-Runner-Lease"
 	maximumRunnerLog  = 256 << 10
 	minimumRenewDelay = 100 * time.Millisecond
+
+	defaultRetryInitial = time.Second
+	defaultRetryMax     = time.Minute
+	// maximumRetryAfter caps a server's Retry-After request, so a wrong
+	// header cannot park the runner for hours.
+	maximumRetryAfter = 10 * time.Minute
 )
 
 // Runner polls one repository with one repository-scoped bearer token.
+//
+// Without Once it keeps running while OwnGit restarts or the network drops:
+// a transient failure is retried with capped, jittered exponential backoff,
+// and the runner stops only when the server refuses it permanently. With Once
+// it makes a single attempt and returns any failure.
 type Runner struct {
 	Client        *apiclient.Client
 	RepositoryID  string
@@ -35,6 +47,10 @@ type Runner struct {
 	PollInterval  time.Duration
 	Once          bool
 	Logf          func(string, ...any)
+	// RetryInitial and RetryMax bound the wait after a transient failure.
+	// Zero values use one second and one minute.
+	RetryInitial time.Duration
+	RetryMax     time.Duration
 }
 
 func (runner *Runner) Run(ctx context.Context) error {
@@ -57,24 +73,130 @@ func (runner *Runner) Run(ctx context.Context) error {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
+	failures := 0
+	var outageStarted time.Time
 	for {
 		worked, err := runner.runOne(ctx, workspaceRoot)
-		if err != nil {
-			return err
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
 		}
 		if runner.Once {
-			return nil
+			return err
+		}
+		kind := classifyFailure(err, worked)
+		if kind == failureTransient {
+			if failures == 0 {
+				outageStarted = time.Now()
+				runner.log("OwnGit is unreachable or unavailable, retrying until it answers: %v", err)
+			}
+			failures++
+			if err := sleepContext(ctx, runner.retryDelay(failures, err)); err != nil {
+				return err
+			}
+			continue
+		}
+		if failures > 0 {
+			runner.log("OwnGit answered again after %s; the runner resumed", time.Since(outageStarted).Round(time.Second))
+			failures = 0
+		}
+		switch kind {
+		case failurePermanent:
+			return stoppedError(err)
+		case failureJob:
+			runner.log("configured-check job ended without a confirmed result: %v", err)
 		}
 		if worked {
 			continue
 		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+		if err := sleepContext(ctx, interval); err != nil {
+			return err
 		}
+	}
+}
+
+type failureKind int
+
+const (
+	failureNone failureKind = iota
+	// failureTransient is an outage: no answer, a timeout, a server error, or
+	// a request to slow down. Retrying later can succeed.
+	failureTransient
+	// failureJob is a refusal that concerns one claimed job, such as a lease
+	// that expired while OwnGit restarted. The runner continues.
+	failureJob
+	// failurePermanent is a refusal the runner cannot fix by retrying, such as
+	// a revoked token or a server that does not speak this protocol.
+	failurePermanent
+)
+
+func classifyFailure(err error, claimed bool) failureKind {
+	if err == nil {
+		return failureNone
+	}
+	var problem *apiclient.Error
+	if !errors.As(err, &problem) {
+		return failurePermanent
+	}
+	status := problem.ResponseStatus
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return failurePermanent
+	case problem.Code == "connection_failed",
+		problem.Code == "invalid_response" && problem.Cause != nil && status == 0,
+		status == http.StatusRequestTimeout, status == http.StatusTooManyRequests, status >= 500:
+		return failureTransient
+	case claimed && status >= 400:
+		return failureJob
+	default:
+		return failurePermanent
+	}
+}
+
+// retryDelay is the wait before the given consecutive retry: exponential from
+// RetryInitial up to RetryMax, with jitter so runners do not return in step,
+// and never shorter than a Retry-After the server asked for.
+func (runner *Runner) retryDelay(failures int, err error) time.Duration {
+	initial, ceiling := runner.RetryInitial, runner.RetryMax
+	if initial <= 0 {
+		initial = defaultRetryInitial
+	}
+	if ceiling <= 0 {
+		ceiling = defaultRetryMax
+	}
+	delay := initial
+	for step := 1; step < failures && delay < ceiling; step++ {
+		delay *= 2
+	}
+	delay = min(delay, ceiling)
+	delay = delay/2 + rand.N(delay/2+1)
+	var problem *apiclient.Error
+	if errors.As(err, &problem) && problem.RetryAfter > delay {
+		delay = min(problem.RetryAfter, maximumRetryAfter)
+	}
+	return delay
+}
+
+// stoppedError explains why a continuously running runner stopped.
+func stoppedError(err error) error {
+	var problem *apiclient.Error
+	if !errors.As(err, &problem) {
+		return &apiclient.Error{Code: "runner_stopped", Message: "The runner stopped because the server answer could not be used: " + err.Error(), Cause: err}
+	}
+	message := "The runner stopped because the server refused a request that retrying cannot fix: " + problem.Message
+	if problem.ResponseStatus == http.StatusUnauthorized || problem.ResponseStatus == http.StatusForbidden {
+		message = "The runner stopped because the server refused its token, which is unknown or revoked. Issue a new token with owngit runner-credential issue, then start the runner again."
+	}
+	return &apiclient.Error{Code: problem.Code, Message: message, Details: problem.Details, Cause: err, Status: problem.Status, ResponseStatus: problem.ResponseStatus}
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

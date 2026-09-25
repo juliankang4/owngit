@@ -263,9 +263,23 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	for _, branch := range summary.Branches {
 		live["refs/heads/"+branch.Name] = true
 	}
+	// The observation set is bounded, so in a repository with more branches
+	// a head can lose its observation without moving. A head that already has
+	// a job for this exact event, under any policy version, is not queued
+	// again; otherwise every policy change would requeue those heads.
+	var unobserved []string
+	for _, branch := range branches {
+		if refName := "refs/heads/" + branch.Name; previous[refName] == "" {
+			unobserved = append(unobserved, refName+"@"+branch.OID)
+		}
+	}
+	seen, err := coordinator.Store.CheckEventsWithJobs(ctx, repositoryID, checkworkflow.EventPush, unobserved)
+	if err != nil {
+		return err
+	}
 	for _, branch := range branches {
 		refName := "refs/heads/" + branch.Name
-		if previous[refName] != branch.OID {
+		if previous[refName] != branch.OID && !seen[refName+"@"+branch.OID] {
 			admitted, err := coordinator.admit(ctx, policy, state.CheckJobRequest{
 				RepositoryID: repositoryID, Trigger: checkworkflow.EventPush,
 				EventKey: refName + "@" + branch.OID, SourceOID: branch.OID, TriggerRef: branch.Name,
@@ -310,18 +324,31 @@ func (coordinator *Coordinator) reconcilePullRequests(ctx context.Context, repos
 	if err != nil {
 		return err
 	}
+	eventKey := func(revision pullrequest.CurrentRevision) string {
+		return fmt.Sprintf("pr/%d/%s/%s", revision.PullRequest.Number, revision.SourceOID, revision.TargetOID)
+	}
+	keys := make([]string, 0, len(revisions))
+	for _, revision := range revisions {
+		keys = append(keys, eventKey(revision))
+	}
+	// A revision that already has a job, under any policy version, is not
+	// queued again, so a policy change does not requeue every open request.
+	seen, err := coordinator.Store.CheckEventsWithJobs(ctx, repositoryID, checkworkflow.EventPullRequest, keys)
+	if err != nil {
+		return err
+	}
 	observed := 0
 	for _, revision := range revisions {
 		coordinator.pullRequestCursor[repositoryID] = revision.PullRequest.Number
 		if revision.NewlyObserved {
 			observed++
 		}
-		if revision.SourceOID == "" || revision.TargetOID == "" {
+		if revision.SourceOID == "" || revision.TargetOID == "" || seen[eventKey(revision)] {
 			continue
 		}
 		_, err := coordinator.admit(ctx, policy, state.CheckJobRequest{
 			RepositoryID: repositoryID, Trigger: checkworkflow.EventPullRequest,
-			EventKey:  fmt.Sprintf("pr/%d/%s/%s", revision.PullRequest.Number, revision.SourceOID, revision.TargetOID),
+			EventKey:  eventKey(revision),
 			SourceOID: revision.SourceOID, BaseOID: revision.TargetOID, PullRequestNumber: revision.PullRequest.Number,
 			TriggerRef: revision.PullRequest.TargetBranch,
 		})

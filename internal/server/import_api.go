@@ -198,7 +198,11 @@ func (app *App) handleImportCancelAPI(writer http.ResponseWriter, request *http.
 		writeAPIMethodError(writer, http.MethodPost)
 		return
 	}
-	if !app.importRepositoryExists(writer, request, repositoryID) {
+	// A first import has no repository until it finishes, so a name without a
+	// repository still reaches its running import.
+	_, exists, err := app.Store.Repository(request.Context(), repositoryID)
+	if err != nil {
+		writeAPIError(writer, http.StatusServiceUnavailable, importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
 		return
 	}
 	if !decodeAPIJSON(writer, request, &struct{}{}) {
@@ -207,6 +211,10 @@ func (app *App) handleImportCancelAPI(writer http.ResponseWriter, request *http.
 	cancelled, err := app.Imports.Cancel(request.Context(), repositoryID)
 	if err != nil {
 		writeImportProblem(writer, err)
+		return
+	}
+	if !cancelled && !exists {
+		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist, and no import for that name is running.", nil)
 		return
 	}
 	writeAPIJSON(writer, http.StatusOK, struct {

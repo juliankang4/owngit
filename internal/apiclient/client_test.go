@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"owngit/internal/pullrequest"
 )
@@ -137,5 +138,37 @@ func TestConnectionFailureNamesTheCause(t *testing.T) {
 	_, err = New(origin, "password").Do(context.Background(), http.MethodGet, "/api/v1/x", nil)
 	if !errors.As(err, &problem) || problem.Status != http.StatusConflict {
 		t.Fatalf("refusal error=%v", err)
+	}
+}
+
+// A caller that retries needs the status of any response, even a proxy page
+// without an OwnGit error object, and the delay a 503 asked for.
+func TestErrorsCarryTheResponseStatusAndRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/proxy" {
+			writer.Header().Set("Content-Type", "text/html")
+			writer.WriteHeader(http.StatusBadGateway)
+			_, _ = writer.Write([]byte("<html>bad gateway</html>"))
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("Retry-After", "7")
+		writer.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = writer.Write([]byte(`{"ok":false,"error":{"code":"state_unavailable","message":"starting"}}`))
+	}))
+	defer server.Close()
+	origin, err := ValidateServer(server.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := New(origin, "")
+	_, err = client.Do(context.Background(), http.MethodGet, "/busy", nil)
+	var problem *Error
+	if !errors.As(err, &problem) || problem.Status != http.StatusServiceUnavailable || problem.ResponseStatus != http.StatusServiceUnavailable || problem.RetryAfter != 7*time.Second {
+		t.Fatalf("503 err=%+v", problem)
+	}
+	_, err = client.Do(context.Background(), http.MethodGet, "/proxy", nil)
+	if !errors.As(err, &problem) || problem.Code != "invalid_response" || problem.Status != 0 || problem.ResponseStatus != http.StatusBadGateway || problem.RetryAfter != 0 {
+		t.Fatalf("proxy err=%+v", problem)
 	}
 }

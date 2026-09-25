@@ -40,7 +40,18 @@ const (
 	initialMarkerName          = ".owngit-initial.json"
 	initialMarkerVersion       = 1
 	maxInitialMarkerSize       = 4096
+
+	// initialCleanupTimeout bounds the removal of an unpublished destination
+	// after the run stopped. The cleanup runs without the run's cancellation,
+	// so a cancelled first import still leaves nothing behind.
+	initialCleanupTimeout = time.Minute
 )
+
+// cleanupContext keeps the values of ctx but not its cancellation, bounded by
+// initialCleanupTimeout.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), initialCleanupTimeout)
+}
 
 type initialMarker struct {
 	Version      int    `json:"version"`
@@ -63,6 +74,9 @@ type initialDestination struct {
 	repositoryID string
 	runID        string
 	rowRecorded  bool
+	// released is set once the unpublished directory was removed and its
+	// ownership row released.
+	released bool
 }
 
 func newUnpublishedDirectoryName() (string, error) {
@@ -165,12 +179,17 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 		return "", newProblem(CodeRepositoryMissing, "unpublished destination path escapes the repository root", nil)
 	}
 	if err := os.Mkdir(path, 0o700); err != nil {
-		_ = s.setInitialDestinationState(ctx, name, state.ImportInitialUnknown, "directory name was already present", now)
+		cleanupCtx, cancel := cleanupContext(ctx)
+		defer cancel()
+		_ = s.setInitialDestinationState(cleanupCtx, name, state.ImportInitialUnknown, "directory name was already present", now)
 		return "", newProblem(CodeRepositoryTaken, "unpublished destination path already exists and was not changed", err)
 	}
 	dest := &initialDestination{
 		storageRoot: storageRoot, rootID: root.rootID, generation: run.runtimeGeneration,
 		name: name, path: path, token: token, repositoryID: run.run.RepositoryID, runID: run.run.ID,
+	}
+	if s.afterInitialDirectoryCreated != nil {
+		s.afterInitialDirectoryCreated()
 	}
 	marker := initialMarker{
 		Version: initialMarkerVersion, Name: name, RootID: root.rootID, RunID: run.run.ID,
@@ -186,8 +205,13 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 	return path, nil
 }
 
+// discardInitialDestination removes a destination whose preparation failed.
+// ctx is the run's context; the removal does not use its cancellation, and a
+// failure the run's own stop caused is reported as that stop.
 func (s *Service) discardInitialDestination(ctx context.Context, dest *initialDestination, now time.Time, cause error) error {
-	if removeErr := s.removeOwnedInitialDirectory(ctx, dest, now); removeErr != nil {
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	if removeErr := s.removeOwnedInitialDirectory(cleanupCtx, dest, now); removeErr != nil {
 		return newProblem(CodeUnresolved, "initial destination creation failed and cleanup also failed", errors.Join(cause, removeErr))
 	}
 	if cause == nil {
@@ -197,7 +221,40 @@ func (s *Service) discardInitialDestination(ctx context.Context, dest *initialDe
 	if errors.As(cause, &problem) {
 		return problem
 	}
+	if ctx.Err() != nil {
+		return stoppedProblem(ctx, "while creating the destination", cause)
+	}
 	return newProblem(CodePublishFailed, "initial destination could not be prepared", cause)
+}
+
+// discardStoppedInitial removes the unpublished destination of a first import
+// that was stopped (cancelled, superseded, or out of time) after its
+// destination was prepared and before it was renamed into place, and settles
+// its publication intent. The directory was never visible, so nothing was
+// published. It runs without the run's cancellation. An unresolved outcome,
+// and a destination whose ref transaction process could not be reaped, are
+// left for restart reconciliation as before, because their directory may
+// still change. When the cleanup itself fails, the directory also stays for
+// restart reconciliation and the run keeps its own outcome.
+func (s *Service) discardStoppedInitial(ctx context.Context, run *runState, cause error) error {
+	dest := run.initialDestination
+	if dest == nil || dest.released || dest.finalPath != "" || run.refProcessUnreaped || problemCode(cause) == CodeUnresolved {
+		return cause
+	}
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	now := s.clock()
+	intent, exists, err := s.intentForInitialRun(cleanupCtx, run.run.RepositoryID, run.run.ID)
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("the unpublished initial destination was preserved: %w", err))
+	}
+	if exists {
+		return s.abandonUnpublishedInitial(ctx, cleanupCtx, dest, intent, cause, "", now)
+	}
+	if err := s.removeOwnedInitialDirectory(cleanupCtx, dest, now); err != nil {
+		return errors.Join(cause, fmt.Errorf("the unpublished initial destination was preserved: %w", err))
+	}
+	return cause
 }
 
 func (s *Service) setInitialDestinationState(ctx context.Context, name, destinationState, issue string, now time.Time) error {
@@ -320,7 +377,11 @@ func (s *Service) removeOwnedInitialDirectory(ctx context.Context, dest *initial
 		_ = s.setInitialDestinationState(ctx, dest.name, state.ImportInitialCleanupFailed, "initial destination directory remained after removal", now)
 		return errors.New("initial destination directory remained after removal")
 	}
-	return s.setInitialDestinationState(ctx, dest.name, state.ImportInitialReleased, "", now)
+	if err := s.setInitialDestinationState(ctx, dest.name, state.ImportInitialReleased, "", now); err != nil {
+		return err
+	}
+	dest.released = true
+	return nil
 }
 
 // finishInitialDestination records the receipt, publishes the directory, and
@@ -331,18 +392,25 @@ func (s *Service) finishInitialDestination(ctx context.Context, run *runState, i
 	if dest == nil {
 		return newProblem(CodeUnresolved, "initial destination ownership is missing", nil)
 	}
+	// State writes do not use the run's cancellation, so a cancel cannot leave
+	// a half-written record. The run's context is checked once more just
+	// before the rename, which is the point of no return: before it a cancel
+	// stops the import and its destination is removed; after it the import
+	// completes, and a later cancel comes too late.
+	stateCtx, cancelState := cleanupContext(ctx)
+	defer cancelState()
 	receipt, digest := buildReceipt(*intent, observation)
-	if err := s.Store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentApplied, receipt, digest, intent.Reason, now); err != nil {
+	if err := s.Store.UpdateImportIntent(stateCtx, intent.ID, state.ImportIntentApplied, receipt, digest, intent.Reason, now); err != nil {
 		return newProblem(CodeStateUnavailable, "publication receipt could not be recorded before destination publication", err)
 	}
-	storedIntent, exists, err := s.Store.ImportIntent(ctx, intent.ID)
+	storedIntent, exists, err := s.Store.ImportIntent(stateCtx, intent.ID)
 	if err != nil || !exists || storedIntent.ReceiptJSON != receipt || storedIntent.ReceiptDigest != digest || storedIntent.Status != state.ImportIntentApplied {
 		return newProblem(CodeUnresolved, "publication receipt could not be read back before destination publication", err)
 	}
 	intent.ReceiptJSON = receipt
 	intent.ReceiptDigest = digest
 	intent.Status = state.ImportIntentApplied
-	if err := s.setInitialDestinationState(ctx, dest.name, state.ImportInitialReady, "", now); err != nil {
+	if err := s.setInitialDestinationState(stateCtx, dest.name, state.ImportInitialReady, "", now); err != nil {
 		return newProblem(CodeUnresolved, "initial destination readiness could not be recorded", err)
 	}
 	if s.beforeInitialRename != nil {
@@ -353,18 +421,18 @@ func (s *Service) finishInitialDestination(ctx context.Context, run *runState, i
 	if err := s.authorityCurrent(ctx, run); err != nil {
 		return err
 	}
-	taken, err := s.destinationTaken(ctx, run.run.RepositoryID)
+	taken, err := s.destinationTaken(stateCtx, run.run.RepositoryID)
 	if err != nil {
 		return err
 	}
 	if taken {
-		return s.refuseTakenNewDestination(ctx, run)
+		return s.refuseTakenNewDestination(stateCtx, run)
 	}
 	finalPath, err := s.Repositories.Path(run.run.RepositoryID)
 	if err != nil {
 		return newProblem(CodeRepositoryMissing, "final repository path could not be resolved", err)
 	}
-	renameErr := publishdir.Rename(ctx, dest.path, finalPath)
+	renameErr := publishdir.Rename(stateCtx, dest.path, finalPath)
 	landed, landErr := initialRenameLanded(dest, finalPath)
 	if renameErr != nil && !landed {
 		cause := errors.Join(renameErr, landErr)
@@ -379,25 +447,26 @@ func (s *Service) finishInitialDestination(ctx context.Context, run *runState, i
 			return ownerRecoveryProblem(finalPath, err)
 		}
 	}
-	if err := s.authorityCurrent(ctx, run); err != nil {
+	// Past the rename only a changed authority, not a cancel, stops the run.
+	if err := s.authorityUnchanged(stateCtx, run); err != nil {
 		return ownerRecoveryProblem(finalPath, err)
 	}
 	repositoryRecord := state.Repository{
 		ID: run.run.RepositoryID, Name: run.name, Description: strings.TrimSpace(run.description), CreatedAt: now,
 	}
-	if err := s.Store.AddRepository(ctx, repositoryRecord); err != nil {
+	if err := s.Store.AddRepository(stateCtx, repositoryRecord); err != nil {
 		return ownerRecoveryProblem(finalPath, err)
 	}
-	recorded, exists, err := s.Store.Repository(ctx, run.run.RepositoryID)
+	recorded, exists, err := s.Store.Repository(stateCtx, run.run.RepositoryID)
 	if err != nil || !exists || recorded.ID != repositoryRecord.ID || recorded.Name != repositoryRecord.Name {
 		return ownerRecoveryProblem(finalPath, err)
 	}
 	dest.rowRecorded = true
-	if err := s.setInitialDestinationState(ctx, dest.name, state.ImportInitialPublished, "", now); err != nil {
+	if err := s.setInitialDestinationState(stateCtx, dest.name, state.ImportInitialPublished, "", now); err != nil {
 		return ownerRecoveryProblem(finalPath, err)
 	}
 	if err := os.Remove(filepath.Join(finalPath, initialMarkerName)); err != nil && !os.IsNotExist(err) {
-		_ = s.Store.SetImportInitialDestinationState(ctx, dest.name, state.ImportInitialPublished, boundedImportMessage(err.Error()), now)
+		_ = s.Store.SetImportInitialDestinationState(stateCtx, dest.name, state.ImportInitialPublished, boundedImportMessage(err.Error()), now)
 	}
 	return nil
 }
@@ -582,6 +651,13 @@ func (s *Service) reconcileOneInitialDestination(ctx context.Context, generation
 		if err := s.removeOwnedInitialDirectory(ctx, dest, now); err != nil {
 			return 1, nil
 		}
+		// A run that stopped before it recorded an intent has nothing else
+		// that would settle it.
+		if !intentExists {
+			if err := s.settleNeverPublishedRun(ctx, row.RunID); err != nil {
+				return 0, err
+			}
+		}
 		return 0, nil
 	}
 	return 1, nil
@@ -610,7 +686,15 @@ func (s *Service) settleNeverPublishedInitial(ctx context.Context, intent state.
 	if err := s.Store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentInvalidated, "", "", boundedImportMessage(reason), now); err != nil {
 		return err
 	}
-	run, exists, err := s.Store.ImportRun(ctx, intent.RunID)
+	return s.settleNeverPublishedRun(ctx, intent.RunID)
+}
+
+// settleNeverPublishedRun records an unresolved initial run whose destination
+// can no longer become its repository as failed. An unresolved run keeps its
+// name blocked, so without this a first import that stopped while preparing
+// its destination would block the name for good.
+func (s *Service) settleNeverPublishedRun(ctx context.Context, runID string) error {
+	run, exists, err := s.Store.ImportRun(ctx, runID)
 	if err != nil || !exists || run.Status != state.ImportRunUnresolved {
 		return err
 	}
@@ -637,6 +721,12 @@ func (s *Service) initialPublicationGone(ctx context.Context, intent state.Impor
 	if err != nil || len(rows) == 0 {
 		return false, err
 	}
+	return s.initialDestinationsGone(rows)
+}
+
+// initialDestinationsGone reports whether none of rows can still become a
+// repository or still needs the owner's inspection.
+func (s *Service) initialDestinationsGone(rows []state.ImportInitialDestination) (bool, error) {
 	storageRoot, err := s.Repositories.CanonicalStorageRoot()
 	if err != nil {
 		return false, err
@@ -656,6 +746,51 @@ func (s *Service) initialPublicationGone(ctx context.Context, intent state.Impor
 		}
 	}
 	return true, nil
+}
+
+// settleStrandedInitialRuns records as failed the unresolved first-import
+// runs of a name without a repository that stopped before they recorded a
+// publication intent, once none of their unpublished directories remains.
+// Such a run can no longer publish, but as unresolved it would keep the name
+// blocked. The caller holds the repository lock.
+func (s *Service) settleStrandedInitialRuns(ctx context.Context, repositoryID string, now time.Time) error {
+	runs, _, err := s.Store.ImportRuns(ctx, repositoryID, 20)
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.Status != state.ImportRunUnresolved || run.Kind != state.ImportKindInitial || s.runIsLive(run.ID) {
+			continue
+		}
+		if _, exists, err := s.intentForInitialRun(ctx, repositoryID, run.ID); err != nil || exists {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		rows, err := s.Store.ImportInitialDestinationsForRun(ctx, run.ID)
+		if err != nil {
+			return err
+		}
+		if gone, err := s.initialDestinationsGone(rows); err != nil || !gone {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		// A directory that is already gone no longer needs cleanup.
+		for _, row := range rows {
+			if row.State == state.ImportInitialPreparing || row.State == state.ImportInitialCleanupFailed {
+				if err := s.setInitialDestinationState(ctx, row.Name, state.ImportInitialReleased, "the unpublished directory was already gone", now); err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.settleNeverPublishedRun(ctx, run.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // settleGoneInitialIntent settles an intent whose initial publication can no

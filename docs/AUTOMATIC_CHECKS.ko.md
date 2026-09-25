@@ -80,6 +80,8 @@ owngit check-policy enable \
 
 OwnGit은 푸시, 풀 리퀘스트 갱신, 병합을 감지하고, 바로 그 커밋에서 워크플로 파일을 읽어 조건에 맞는 이벤트마다 작업을 받아들입니다. Git 쓰기는 체크를 기다리지 않습니다. 같은 이벤트를 다시 보더라도 작업을 두 번 만들지 않습니다.
 
+정책의 새 버전을 저장하거나 켜도, 이미 작업이 있었던 브랜치 헤드나 풀 리퀘스트 리비전은 다시 대기열에 넣지 않습니다. 그 작업이 이전 정책 버전으로 실행되었더라도 마찬가지입니다. 새 푸시와 새 풀 리퀘스트 리비전만 대기열에 들어갑니다. 체크를 처음 켤 때는 조건에 맞는 브랜치 헤드 가운데 작업이 한 번도 없었던 것을 대기열 한도 안에서 한 번씩 넣습니다. 정책의 새 버전을 저장하면 아직 시작하지 않고 기다리던 작업은 `interrupted`로 표시되며 다시 대기열에 들어가지 않습니다. 기존 헤드를 새 정책으로 다시 확인하려면 `owngit check-job rerun`으로 그 작업을 재실행하세요.
+
 작업은 `pending`에서 `claimed`, `started`를 거쳐 결과 상태가 됩니다. 결과는 `passed`, `failed`, `error`, `cancelled`, `incomplete`, `unavailable`, `ambiguous`, `interrupted` 중 하나입니다. 작업이 한 번 시작되면 명령이 이미 실행되었을 수 있으므로, 다시 시작하거나 임대가 끊기더라도 OwnGit은 그 작업을 자동으로 다시 대기열에 넣지 않습니다. 대신 재실행을 요청하세요.
 
 ```sh
@@ -173,6 +175,28 @@ OwnGit은 HTTPS 프록시를 거쳐 들어온 브라우저 변경을 거부합�
 러너는 자기 저장소의 작업만 가져가서, 정확한 소스 파일을 내려받고, 명령을 실행하고, 작업 공간을 정리한 뒤 결과를 보고합니다. 작업 공간 루트는 절대 경로여야 하며, 비어 있거나 전에 OwnGit 러너가 쓰던 곳이어야 합니다. `--workspace-root`가 없으면 러너가 임시 디렉터리를 고릅니다. OwnGit이 소유하지 않은 비어 있지 않은 루트나 다른 러너가 쓰고 있는 루트는 거부하고 건드리지 않습니다. 러너는 저장소 저장 경로를 받지 않습니다. 명령은 러너의 계정으로 실행되며, 그 계정이나 컴퓨터를 직접 격리하지 않는 한 샌드박스 안에서 실행되지 않습니다.
 
 러너 토큰은 `owngit runner-credential list`로 확인하고 `owngit runner-credential revoke --credential ID`로 취소합니다. 서버는 각 토큰의 해시만 저장합니다. 토큰을 취소하면 더는 쓸 수 없고, 그 러너가 가져갔지만 아직 시작하지 않은 작업은 중단됩니다.
+
+러너는 OwnGit이 다시 시작되거나 네트워크가 끊겨도 멈추지 않습니다. OwnGit이 응답하지 않거나, 시간이 초과되거나, 서버 오류를 돌려주거나, 기다리라고 하면 러너는 간격을 늘려 가며 다시 시도합니다. 간격은 최대 1분이며, OwnGit이 `Retry-After`를 보낸 경우에만 더 길어집니다. 장애와 복구는 각각 한 번씩만 기록합니다. 장애 중에 실행되던 작업은 결과가 확인되지 않은 채 끝날 수 있으니 `owngit check-job show`로 확인하세요. 러너는 다시 시도해도 소용없을 때만 메시지를 남기고 종료 코드 1로 멈춥니다. 토큰을 알 수 없거나 취소된 경우, 또는 서버가 요청 자체를 잘못되었다고 거부한 경우입니다. `--once`를 쓰면 러너는 작업을 최대 하나만 가져와 한 번만 시도하며, 서버에 연결할 수 없는 경우를 포함해 실패하면 종료 코드 1로 끝납니다.
+
+재부팅 뒤에도 러너가 계속 동작하게 하려면 시스템의 서비스 관리자로 실행하세요. 예를 들어 systemd를 쓰는 Linux에서는 다음과 같습니다.
+
+```ini
+[Unit]
+Description=OwnGit runner for project
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=owngit-runner
+ExecStart=/usr/local/bin/owngit runner --server https://git.example.test --repository project --token-file /etc/owngit-runner/project-token --workspace-root /srv/owngit-runner/project
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+```
+
+토큰 파일은 서비스 계정만 읽을 수 있어야 합니다. macOS에서는 launchd 에이전트나 데몬으로, Windows에서는 서비스 래퍼로 같은 명령을 실행하세요. `Restart=on-failure`는 러너가 비정상 종료했을 때 다시 시작합니다. 토큰이 취소된 경우에는 같은 오류만 되풀이하므로 먼저 새 토큰을 발급하세요.
 
 ## 백업과 복원
 
