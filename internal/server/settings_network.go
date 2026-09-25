@@ -25,7 +25,7 @@ import (
 // networkReport reads the saved settings and this server's running record.
 // The page is served by the running server, so the state directory is held;
 // the record is trusted only while this process holds the running-record
-// lock (RunningRecordLive).
+// lock (RunningRecordLive), by the rule of state.OwnRunningNetwork.
 func (app *App) networkReport(ctx context.Context) (NetworkReport, error) {
 	saved, err := app.Store.NetworkSettings(ctx)
 	if err != nil {
@@ -39,12 +39,12 @@ func (app *App) networkReport(ctx context.Context) (NetworkReport, error) {
 	if err != nil {
 		return NetworkReport{}, err
 	}
-	running, published, err := app.Store.RunningNetwork(ctx)
+	observed, err := app.Store.OwnRunningNetwork(ctx, app.RunningRecordLive)
 	if err != nil {
 		return NetworkReport{}, err
 	}
 	report := NewNetworkReport(saved, hosts, proxies)
-	report.SetServer(app.RunningRecordLive, true, running, published)
+	report.SetServer(observed)
 	return report, nil
 }
 

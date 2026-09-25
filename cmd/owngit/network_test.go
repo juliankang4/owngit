@@ -308,7 +308,7 @@ func TestNetworkShowTrustsTheRecordOnlyWhileItsServerLives(t *testing.T) {
 	}
 
 	// A live holder of the running-record lock vouches for its record.
-	releaseRecord, err := state.AcquireExclusiveFileLock(filepath.Join(stateDir, runningLockName))
+	releaseRecord, err := state.AcquireExclusiveFileLock(filepath.Join(stateDir, state.RunningNetworkLockFile))
 	noErr(t, err)
 	if report := networkJSON(t, stateDir); report.Server != "running" || report.Running == nil || report.StaleRecord {
 		releaseRecord()
@@ -325,6 +325,30 @@ func TestNetworkShowTrustsTheRecordOnlyWhileItsServerLives(t *testing.T) {
 	}
 }
 
+// A serve that cannot take the running-record lock publishes no record: a
+// reader would attribute it to whoever holds the lock, and after this run it
+// would only be reported as stale.
+func TestServeWithoutTheRunningLockPublishesNoRecord(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	noErr(t, os.MkdirAll(stateDir, 0o700))
+	releaseRecord, err := state.AcquireExclusiveFileLock(filepath.Join(stateDir, state.RunningNetworkLockFile))
+	noErr(t, err)
+	defer releaseRecord()
+	instance := startServed(t, stateDir)
+	store, err := state.Open(context.Background(), stateDir)
+	noErr(t, err)
+	_, published, err := store.RunningNetwork(context.Background())
+	noErr(t, store.Close())
+	noErr(t, err)
+	instance.stop()
+	if published {
+		t.Fatalf("a serve without the running-record lock published a record\n%s", instance.log())
+	}
+	if !strings.Contains(instance.log(), "could not take the running-settings lock") {
+		t.Fatalf("the log does not say why nothing is reported:\n%s", instance.log())
+	}
+}
+
 // A serve that starts while "network show" probes its locks waits for the
 // probe instead of failing, and it removes a record left by a crash as soon
 // as it holds the running-record lock.
@@ -336,7 +360,7 @@ func TestServeWaitsForAMomentaryLockProbeAndClearsAStaleRecord(t *testing.T) {
 	noErr(t, store.Close())
 	release, err := state.AcquireOfflineLock(stateDir)
 	noErr(t, err)
-	releaseRecord, err := state.AcquireExclusiveFileLock(filepath.Join(stateDir, runningLockName))
+	releaseRecord, err := state.AcquireExclusiveFileLock(filepath.Join(stateDir, state.RunningNetworkLockFile))
 	noErr(t, err)
 	go func() {
 		time.Sleep(100 * time.Millisecond)

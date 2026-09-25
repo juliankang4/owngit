@@ -206,7 +206,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if err := os.MkdirAll(*stateDir, 0o700); err != nil {
 		return fmt.Errorf("create state directory: %w", err)
 	}
-	unlock, err := acquireLockBriefly(func() (func(), error) { return state.AcquireOfflineLock(*stateDir) })
+	unlock, err := state.AcquireLockBriefly(func() (func(), error) { return state.AcquireOfflineLock(*stateDir) })
 	if err != nil {
 		return err
 	}
@@ -216,7 +216,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	defer store.Close()
-	releaseRunning, runningLive := claimRunningRecord(ctx, *stateDir, store, logf)
+	releaseRunning, runningLive := claimRunningRecord(ctx, store, logf)
 	defer releaseRunning()
 	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))
 	if err != nil {
@@ -462,7 +462,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		ReadTimeout: 30 * time.Second, WriteTimeout: server.ImportRunRequestTimeout(importsync.DefaultLimits().RunTimeout),
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
-	publishNetwork, clearNetwork := runningNetworkRecord(store, network, proxies, listener.Addr().String(), origin, trusted, policy, logf)
+	publishNetwork, clearNetwork := runningNetworkRecord(store, runningLive, network, proxies, listener.Addr().String(), origin, trusted, policy, logf)
 	application.OnHostAccepted = publishNetwork
 	publishNetwork()
 	defer clearNetwork()

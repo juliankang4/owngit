@@ -13,18 +13,12 @@ const (
 	NetworkSourceDefault = "default"
 )
 
-// Server states in NetworkReport.
+// Server states in NetworkReport; see state.RunningObservation.
 const (
-	// NetworkRunning: a live serve process published what it uses.
-	NetworkRunning = "running"
-	// NetworkStarting: the live process has not published yet.
-	NetworkStarting = "starting"
-	// NetworkNotRunning: no process uses the state directory.
-	NetworkNotRunning = "not_running"
-	// NetworkUnknown: something else holds the state directory, such as an
-	// older OwnGit or an offline backup, or the running record cannot be
-	// vouched for.
-	NetworkUnknown = "unknown"
+	NetworkRunning    = state.ServerRunning
+	NetworkStarting   = state.ServerStarting
+	NetworkNotRunning = state.ServerNotRunning
+	NetworkUnknown    = state.ServerUnknown
 )
 
 // NetworkReport compares the saved network settings with what the running
@@ -81,24 +75,12 @@ func NewNetworkReport(saved state.NetworkSettings, hosts, proxies []string) Netw
 	return report
 }
 
-// SetServer records the server state. live says that the publisher of the
-// running record holds its liveness lock, so only then is the record
-// trusted (see runningLockName in cmd/owngit). held says that something
-// holds the state directory's offline lock; it matters only when live is
-// false. running and published are the stored record.
-func (report *NetworkReport) SetServer(live, held bool, running state.RunningNetwork, published bool) {
-	report.Running, report.RestartNeeded, report.StaleRecord = nil, false, false
-	switch {
-	case live && published:
-		report.Server, report.Running = NetworkRunning, &running
-		report.RestartNeeded = report.Pending().Any()
-	case live:
-		report.Server = NetworkStarting
-	case held:
-		report.Server, report.StaleRecord = NetworkUnknown, published
-	default:
-		report.Server, report.StaleRecord = NetworkNotRunning, published
-	}
+// SetServer records the server state from an observation made by
+// state.ObserveRunningNetwork or state.OwnRunningNetwork, which trust the
+// running record only while its publisher is alive.
+func (report *NetworkReport) SetServer(observed state.RunningObservation) {
+	report.Server, report.Running, report.StaleRecord = observed.Server, observed.Record, observed.StaleRecord
+	report.RestartNeeded = report.Pending().Any()
 }
 
 // NetworkPending names the saved values the running server does not use yet.

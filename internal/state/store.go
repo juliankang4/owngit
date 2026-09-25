@@ -1444,11 +1444,11 @@ func (s *Store) UpdateNetwork(ctx context.Context, update NetworkUpdate) error {
 // after its listener is bound and clears it when it stops. A process that
 // ends without stopping, such as after a crash, leaves the record behind, so
 // the record is trustworthy only while the process that published it holds
-// the running-record lock in the state directory (runningLockName in
-// cmd/owngit, which also clears a stale record when it takes that lock).
-// Holding the offline lock alone proves nothing: an older OwnGit or an
-// offline backup holds it too. Saved settings (NetworkSettings and the
-// allowed Hosts) differ from the running values until the next start.
+// the running-record lock in the state directory; read it through
+// ObserveRunningNetwork or OwnRunningNetwork, never directly. Holding the
+// offline lock alone proves nothing: an older OwnGit or an offline backup
+// holds it too. Saved settings (NetworkSettings and the allowed Hosts)
+// differ from the running values until the next start.
 type RunningNetwork struct {
 	PID       int   `json:"pid"`
 	StartedAt int64 `json:"started_at"`
@@ -1493,7 +1493,8 @@ func (s *Store) ClearRunningNetwork(ctx context.Context) error {
 }
 
 // RunningNetwork returns the last published running record. It does not
-// check whether that server still runs; see RunningNetwork.
+// check whether that server still runs; ObserveRunningNetwork and
+// OwnRunningNetwork do.
 func (s *Store) RunningNetwork(ctx context.Context) (RunningNetwork, bool, error) {
 	values, err := s.metadataValues(ctx, networkRunningKey)
 	if err != nil {

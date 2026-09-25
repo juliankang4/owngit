@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -118,60 +117,28 @@ func (network serveNetwork) listenError(err error) error {
 	return fmt.Errorf("listen on %s: %w", network.Listen, err)
 }
 
-// The running record (state.RunningNetwork) tells saved from running values,
-// which later features such as Tailscale setup rely on. It is trusted only
-// while its publisher is alive: a serve process holds runningLockName in the
-// state directory for its whole life, clears any record left by a crashed
-// run as soon as it holds that lock, and publishes its own record once its
-// listener is bound. The operating system releases the lock when the process
-// ends in any way, including kill -9, so "lock held and record present" means
-// the record belongs to the live holder. Other holders of the offline lock,
-// such as an OwnGit 1.0.3 server or an offline backup, never take this lock,
-// so a record they find is reported as stale, never as running. Unlike a
-// process ID check this cannot be fooled by a reused process ID.
-const runningLockName = ".network-running.lock"
-
-// lockRetry bounds how long serve waits for a state lock that a momentary
-// "owngit network show" probe holds. A real second owner holds it longer and
-// still stops the start.
-const lockRetry = 500 * time.Millisecond
-
-// acquireLockBriefly takes a lock, retrying for lockRetry while another
-// process holds it.
-func acquireLockBriefly(acquire func() (func(), error)) (func(), error) {
-	deadline := time.Now().Add(lockRetry)
-	for {
-		release, err := acquire()
-		if !errors.Is(err, state.ErrInstanceRunning) || time.Now().After(deadline) {
-			return release, err
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 // claimRunningRecord takes the running-record lock for this serve process
-// and removes a record left by a run that ended without cleanup. It returns
-// the release to run after the record is cleared at shutdown, and whether
-// the lock is held. Failing to take the lock only means that neither
-// "owngit network show" nor the Settings page can vouch for this run.
-func claimRunningRecord(ctx context.Context, stateDir string, store *state.Store, logf func(string, ...any)) (func(), bool) {
-	release, err := acquireLockBriefly(func() (func(), error) {
-		return state.AcquireExclusiveFileLock(filepath.Join(stateDir, runningLockName))
-	})
+// (state.ClaimRunningNetwork). It returns the release to run after the
+// record is cleared at shutdown, and whether the lock is held. Without the
+// lock this run publishes no record, and neither "owngit network show" nor
+// the Settings page can vouch for what it uses.
+func claimRunningRecord(ctx context.Context, store *state.Store, logf func(string, ...any)) (func(), bool) {
+	release, err := store.ClaimRunningNetwork(ctx)
 	if err != nil {
 		logf("could not take the running-settings lock; neither \"owngit network show\" nor the Network section of Settings will report what this server uses: %v", err)
 		return func() {}, false
-	}
-	if err := store.ClearRunningNetwork(ctx); err != nil {
-		logf("could not clear an earlier running network record: %v", err)
 	}
 	return release, true
 }
 
 // runningNetworkRecord publishes what this serve run uses for "owngit network
 // show". publish records it, each time with the Host names the policy accepts
-// then; unpublish removes it when serving stops.
-func runningNetworkRecord(store *state.Store, network serveNetwork, proxies serveProxies, address, origin string, savedHosts []string, policy *server.HostPolicy, logf func(string, ...any)) (publish, unpublish func()) {
+// then; unpublish removes it when serving stops. Both do nothing when live
+// is false, because this run does not hold the running-record lock.
+func runningNetworkRecord(store *state.Store, live bool, network serveNetwork, proxies serveProxies, address, origin string, savedHosts []string, policy *server.HostPolicy, logf func(string, ...any)) (publish, unpublish func()) {
+	if !live {
+		return func() {}, func() {}
+	}
 	running := state.RunningNetwork{
 		PID: os.Getpid(), StartedAt: time.Now().Unix(),
 		Listen: network.Listen, Address: address, ListenSource: network.ListenSource,
@@ -264,26 +231,12 @@ func networkShow(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	// The running-record lock is probed first, so a running server's offline
-	// lock is never touched. See runningLockName.
-	live, err := lockHeld(func() (func(), error) {
-		return state.AcquireExclusiveFileLock(filepath.Join(*stateDir, runningLockName))
-	})
+	observed, err := store.ObserveRunningNetwork(ctx)
 	if err != nil {
 		return err
-	}
-	running, published, err := store.RunningNetwork(ctx)
-	if err != nil {
-		return err
-	}
-	held := live
-	if !live {
-		if held, err = lockHeld(func() (func(), error) { return state.AcquireOfflineLock(*stateDir) }); err != nil {
-			return err
-		}
 	}
 	report := server.NewNetworkReport(saved, hosts, proxies)
-	report.SetServer(live, held, running, published)
+	report.SetServer(observed)
 	if *asJSON {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
@@ -291,21 +244,6 @@ func networkShow(arguments []string) error {
 	}
 	printNetworkReport(os.Stdout, report)
 	return nil
-}
-
-// lockHeld reports whether another process holds the lock that acquire
-// takes. The probe holds the lock only for an instant; serve waits for such a
-// probe (acquireLockBriefly) instead of failing.
-func lockHeld(acquire func() (func(), error)) (bool, error) {
-	release, err := acquire()
-	if errors.Is(err, state.ErrInstanceRunning) {
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	release()
-	return false, nil
 }
 
 func printNetworkReport(writer io.Writer, report networkReport) {
