@@ -17,16 +17,34 @@ import (
 // entry and mode. The classification is not migration authority: initialize
 // reclassifies through the real connection before it writes.
 
-type schemaClass int
+// schemaClass is the accepted state of a schema. version is set only for a
+// released schema, so an opener that inspected one released version refuses a
+// database that another opener left at a different one.
+type schemaClass struct {
+	kind    schemaKind
+	version int
+}
+
+type schemaKind int
 
 const (
-	schemaEmpty schemaClass = iota
-	schemaBaseline
-	// schemaReleased is the schema the 1.0 releases wrote. It is upgraded
+	kindEmpty schemaKind = iota
+	kindBaseline
+	// kindReleased is a schema that an earlier release wrote. It is upgraded
 	// in place like the baseline.
-	schemaReleased
-	schemaCurrent
+	kindReleased
+	kindCurrent
 )
+
+var (
+	schemaEmpty    = schemaClass{kind: kindEmpty}
+	schemaBaseline = schemaClass{kind: kindBaseline}
+	schemaCurrent  = schemaClass{kind: kindCurrent}
+)
+
+func schemaReleased(version int) schemaClass {
+	return schemaClass{kind: kindReleased, version: version}
+}
 
 // ErrInspectionUnstable reports that the state directory changed while it was
 // being inspected. The source is untouched and the operation can be retried.

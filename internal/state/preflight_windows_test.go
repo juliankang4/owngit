@@ -227,7 +227,7 @@ func TestWindowsReparseStateEntriesAreRefused(t *testing.T) {
 			directory := filepath.Join(root, "state")
 			noErr(t, os.Mkdir(directory, 0o700))
 			if name != databaseName {
-				createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
+				createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
 			}
 			target := filepath.Join(root, "target")
 			noErr(t, os.Mkdir(target, 0o700))

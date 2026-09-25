@@ -107,7 +107,7 @@ func TestFreshSchemaOpen(t *testing.T) {
 			store, err := Open(ctx, directory)
 			noErr(t, err)
 			version, err := store.schemaVersion(ctx)
-			if err != nil || version != currentSchemaVersion {
+			if err != nil || version != currentSchemaVersion() {
 				store.Close()
 				t.Fatalf("schema version=%d err=%v", version, err)
 			}
@@ -218,7 +218,7 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from the committed baseline (no schema version) to schema 15" {
 		t.Fatalf("baseline upgrade reported %q", upgrade)
 	}
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion {
+	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion() {
 		t.Fatalf("upgraded schema version=%d err=%v", version, err)
 	}
 	// The only upgrade path must produce exactly the catalog a fresh store has.
@@ -273,7 +273,7 @@ func TestUnsupportedNumberedSchemasAreRefusedWithoutWrites(t *testing.T) {
 	for _, version := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 99} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			if version >= 6 && version < releasedSchemaVersion {
+			if version >= 6 && version < 14 {
 				createMigratedSchemaDatabase(t, directory, version)
 			} else {
 				createNumberedSchemaDatabase(t, directory, version)
@@ -284,7 +284,7 @@ func TestUnsupportedNumberedSchemasAreRefusedWithoutWrites(t *testing.T) {
 				_ = store.Close()
 			}
 			want := "state database uses the unreleased development schema " + strconv.Itoa(version) + "; this build upgrades only the committed baseline (no schema version) and released schema 14, and opens schema 15"
-			if version > currentSchemaVersion {
+			if version > currentSchemaVersion() {
 				want = "state database schema version 99 is newer than this OwnGit build supports (15)"
 			}
 			if err == nil || err.Error() != want {
@@ -369,13 +369,16 @@ func createMigratedSchemaDatabase(t *testing.T, directory string, version int) {
 	t.Helper()
 	db := createSchemaDatabase(t, directory)
 	defer db.Close()
-	for step := 6; step <= version; step++ {
-		for _, statement := range migrations[step] {
+	for _, step := range schemaSteps {
+		if step.version > version {
+			break
+		}
+		for _, statement := range step.statements {
 			if _, err := db.Exec(statement); err != nil {
-				t.Fatalf("apply schema %d fixture: %v", step, err)
+				t.Fatalf("apply schema %d fixture: %v", step.version, err)
 			}
 		}
-		if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, step); err != nil {
+		if _, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, step.version); err != nil {
 			t.Fatal(err)
 		}
 	}

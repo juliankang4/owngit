@@ -246,7 +246,7 @@ func TestMissingDatabaseWithRecoveryFilesIsRefused(t *testing.T) {
 func TestRollbackJournalIsRefusedWithoutBeingRead(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "state")
-	createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
+	createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
 	sentinel := filepath.Join(root, "super-journal-sentinel")
 	noErr(t, os.WriteFile(sentinel, []byte("outside"), 0o600))
 	journal := append([]byte("\xd9\xd5\x05\xf9\x20\xa1\x63\xd7"), []byte(sentinel)...)
@@ -314,7 +314,7 @@ func TestRevalidationFilesystemFailureKeepsItsCause(t *testing.T) {
 			noErr(t, os.Mkdir(directory, 0o750))
 		}},
 		{name: "current database", prepare: func(t *testing.T, directory string) {
-			createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
+			createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
 			setFixtureModes(t, directory, map[string]os.FileMode{".": 0o750, databaseName: 0o640})
 		}},
 	} {
@@ -353,7 +353,7 @@ func TestNonRegularStateEntriesAreRefused(t *testing.T) {
 	}
 	root := t.TempDir()
 	target := filepath.Join(root, "target")
-	createNumberedSchemaDatabase(t, target, currentSchemaVersion)
+	createNumberedSchemaDatabase(t, target, currentSchemaVersion())
 	for _, test := range []struct {
 		name  string
 		build func(t *testing.T, directory string)
@@ -362,11 +362,11 @@ func TestNonRegularStateEntriesAreRefused(t *testing.T) {
 			noErr(t, os.Symlink(filepath.Join(target, databaseName), filepath.Join(directory, databaseName)))
 		}},
 		{name: "WAL symlink", build: func(t *testing.T, directory string) {
-			createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
+			createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
 			noErr(t, os.Symlink(filepath.Join(target, databaseName), filepath.Join(directory, databaseName+walSuffix)))
 		}},
 		{name: "SHM directory", build: func(t *testing.T, directory string) {
-			createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
+			createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
 			noErr(t, os.Mkdir(filepath.Join(directory, databaseName+shmSuffix), 0o700))
 		}},
 	} {
@@ -461,7 +461,7 @@ func TestInspectionInstabilityIsRetryableAndLeavesSourceUntouched(t *testing.T) 
 		createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion(""))
 		setFixtureModes(t, directory, map[string]os.FileMode{".": 0o750, databaseName: 0o640})
 		replacement := filepath.Join(t.TempDir(), "replacement")
-		createNumberedSchemaDatabase(t, replacement, currentSchemaVersion)
+		createNumberedSchemaDatabase(t, replacement, currentSchemaVersion())
 		replacementPath := filepath.Join(replacement, databaseName)
 		databasePath := filepath.Join(directory, databaseName)
 		replaced := captureSchemaDirectory(t, replacement)[databaseName]
@@ -531,7 +531,7 @@ func TestSidecarFreeInspectionDetectsAppearanceAndPermissionChange(t *testing.T)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
+			createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
 			hookAt(t, pointClassified, func(string) { test.disturb(t, directory) })
 			err := openRefused(t, directory, ErrInspectionUnstable.Error())
 			if !errors.Is(err, ErrInspectionUnstable) {
@@ -788,7 +788,7 @@ func TestSourceReleaseFailureBlocksWritableOpen(t *testing.T) {
 	}{
 		{name: "directory handle on fresh path", prepare: func(*testing.T, string) {}, handle: func(in *inspection) *os.File { return in.dir.handle }},
 		{name: "database handle on immutable path", prepare: func(t *testing.T, directory string) {
-			createNumberedSchemaDatabase(t, directory, currentSchemaVersion)
+			createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
 		}, handle: func(in *inspection) *os.File { return in.main.handle }},
 		{name: "WAL handle on private-copy path", prepare: func(t *testing.T, directory string) {
 			createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion(""))

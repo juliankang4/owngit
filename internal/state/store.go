@@ -21,16 +21,10 @@ const (
 	databaseName                = "owngit.sqlite"
 	IncompleteRestoreMarkerName = ".owngit-restore-pending"
 
-	// currentSchemaVersion is the schema this build writes. The committed
-	// baseline wrote no version marker. releasedSchemaVersion is the schema
-	// the 1.0 releases wrote; it is upgraded in place. Every other numbered
-	// schema below the current one was written only by unreleased
-	// development builds and is refused before any file changes.
-	currentSchemaVersion  = 15
-	releasedSchemaVersion = 14
-	// This SHA-256 fingerprint covers normalized, non-internal sqlite_master
-	// entries of the baseline emitted by commit
-	// 8fdefd1bf10bd4a41b7261131efc119d46666260.
+	// The committed baseline wrote no schema version marker; numbered
+	// schemas are defined by schemaSteps. This SHA-256 fingerprint covers
+	// normalized, non-internal sqlite_master entries of the baseline emitted
+	// by commit 8fdefd1bf10bd4a41b7261131efc119d46666260.
 	committedBaselineSchemaFingerprint = "0b1acb0288e7a64da492d7a2a768538052492f887c3b5e6ec2efc7a42b465600"
 )
 
@@ -239,22 +233,58 @@ func closeRows(rows *sql.Rows) error {
 func classifySchema(ctx context.Context, db queryRower) (schemaClass, error) {
 	version, versioned, err := readSchemaVersion(ctx, db)
 	if err != nil {
-		return 0, err
+		return schemaClass{}, err
 	}
 	if !versioned {
 		return validateUnversionedSchema(ctx, db)
 	}
+	current := currentSchemaVersion()
 	switch {
-	case version == currentSchemaVersion:
+	case version == current:
 		return schemaCurrent, nil
-	case version == releasedSchemaVersion:
-		return schemaReleased, nil
-	case version > currentSchemaVersion:
-		return 0, fmt.Errorf("state database schema version %d is newer than this OwnGit build supports (%d)", version, currentSchemaVersion)
+	case version > current:
+		return schemaClass{}, fmt.Errorf("state database schema version %d is newer than this OwnGit build supports (%d)", version, current)
+	case isReleasedSchema(version):
+		return schemaReleased(version), nil
 	case version >= 1:
-		return 0, fmt.Errorf("state database uses the unreleased development schema %d; this build upgrades only the committed baseline (no schema version) and released schema %d, and opens schema %d", version, releasedSchemaVersion, currentSchemaVersion)
+		return schemaClass{}, fmt.Errorf("state database uses the unreleased development schema %d; this build upgrades only the committed baseline (no schema version) and %s, and opens schema %d", version, describeReleasedSchemas(), current)
 	default:
-		return 0, fmt.Errorf("unsupported state database schema version %d", version)
+		return schemaClass{}, fmt.Errorf("unsupported state database schema version %d", version)
+	}
+}
+
+// currentSchemaVersion is the schema this build writes.
+func currentSchemaVersion() int {
+	return schemaSteps[len(schemaSteps)-1].version
+}
+
+// isReleasedSchema reports whether version is a released schema below the
+// current one, which upgrades in place.
+func isReleasedSchema(version int) bool {
+	for _, step := range schemaSteps[:len(schemaSteps)-1] {
+		if step.version == version {
+			return step.released
+		}
+	}
+	return false
+}
+
+// describeReleasedSchemas names the released schemas below the current one,
+// for example "released schema 14" or "released schemas 14 and 15".
+func describeReleasedSchemas() string {
+	var versions []string
+	for _, step := range schemaSteps[:len(schemaSteps)-1] {
+		if step.released {
+			versions = append(versions, strconv.Itoa(step.version))
+		}
+	}
+	switch len(versions) {
+	case 0:
+		return "no released schema"
+	case 1:
+		return "released schema " + versions[0]
+	default:
+		return "released schemas " + strings.Join(versions[:len(versions)-1], ", ") + " and " + versions[len(versions)-1]
 	}
 }
 
@@ -291,7 +321,7 @@ func readSchemaVersion(ctx context.Context, db queryRower) (int, bool, error) {
 func validateUnversionedSchema(ctx context.Context, db queryRower) (schemaClass, error) {
 	fingerprint, objects, err := schemaFingerprint(ctx, db)
 	if err != nil {
-		return 0, fmt.Errorf("inspect unversioned state database: %w", err)
+		return schemaClass{}, fmt.Errorf("inspect unversioned state database: %w", err)
 	}
 	if objects == 0 {
 		return schemaEmpty, nil
@@ -299,7 +329,7 @@ func validateUnversionedSchema(ctx context.Context, db queryRower) (schemaClass,
 	if fingerprint == committedBaselineSchemaFingerprint {
 		return schemaBaseline, nil
 	}
-	return 0, errors.New("state database has no schema version and does not match the committed baseline")
+	return schemaClass{}, errors.New("state database has no schema version and does not match the committed baseline")
 }
 
 func schemaFingerprint(ctx context.Context, db queryRower) (string, int, error) {
@@ -365,25 +395,29 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 	if class != expected {
 		return unstable("state database changed before schema migration")
 	}
-	// Only the committed baseline, an empty database and the released schema
-	// reach this point.
-	versions := []int{6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
-	if class == schemaReleased {
-		versions = []int{15}
+	// Only the committed baseline, an empty database and a released schema
+	// reach this point. The first two run every step, a released schema every
+	// step after its own version.
+	previous := schemaSteps[0].version - 1
+	if class.kind == kindReleased {
+		previous = class.version
 	}
-	for _, version := range versions {
-		statements, ok := migrations[version]
-		if !ok {
-			return fmt.Errorf("missing state schema migration %d", version)
+	for _, step := range schemaSteps {
+		if step.version <= previous {
+			continue
 		}
-		for _, statement := range statements {
+		if step.version != previous+1 {
+			return fmt.Errorf("missing state schema migration %d", previous+1)
+		}
+		for _, statement := range step.statements {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
-				return fmt.Errorf("apply state schema migration %d: %w", version, err)
+				return fmt.Errorf("apply state schema migration %d: %w", step.version, err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, strconv.Itoa(version)); err != nil {
-			return fmt.Errorf("record state schema migration %d: %w", version, err)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, strconv.Itoa(step.version)); err != nil {
+			return fmt.Errorf("record state schema migration %d: %w", step.version, err)
 		}
+		previous = step.version
 	}
 	violations, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
 	if err != nil {
@@ -399,29 +433,44 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	switch class {
-	case schemaReleased:
-		s.schemaUpgrade = fmt.Sprintf("state database upgraded from schema %d to %d", releasedSchemaVersion, currentSchemaVersion)
-	case schemaBaseline:
-		s.schemaUpgrade = fmt.Sprintf("state database upgraded from the committed baseline (no schema version) to schema %d", currentSchemaVersion)
+	switch class.kind {
+	case kindReleased:
+		s.schemaUpgrade = fmt.Sprintf("state database upgraded from schema %d to %d", class.version, previous)
+	case kindBaseline:
+		s.schemaUpgrade = fmt.Sprintf("state database upgraded from the committed baseline (no schema version) to schema %d", previous)
 	}
 	return nil
 }
 
-// migrations maps each upgrade step to its statements. The steps always run
-// in order from the committed baseline or an empty database, and together they
-// produce the current schema catalog, so their text must not change. Version 6
+// schemaStep upgrades the schema from version-1 to version.
+type schemaStep struct {
+	version int
+	// released marks a version that an OwnGit release wrote. A database at a
+	// released version below the current one upgrades in place through every
+	// later step. Any other numbered version below the current one came from
+	// an unreleased development build and is refused.
+	released   bool
+	statements []string
+}
+
+// schemaSteps is the ordered migration chain and the single source of truth
+// for schema versions: its last step is the schema this build writes, and its
+// released steps are the versions it upgrades. The committed baseline and an
+// empty database run every step from the first. Together the steps produce the
+// current schema catalog, so their text must not change. A new schema appends
+// one step, and a release that writes it marks that step released. Version 6
 // upgrades the committed baseline, version 7 adds local raw check logs, version
 // 8 adds the unused direct-review tables, version 9 adds the automatic-check
 // foundation, version 10 binds executable settings and executor roles, version
 // 11 adds inbound import state, version 12 records structured HEAD ownership,
 // version 13 records machine-local ownership of unpublished initial
 // destinations, version 14 admits the owner_resolved intent status, and
-// version 15 admits closed pull requests.
+// version 15 admits closed pull requests. The 1.0.0 to 1.0.2 releases wrote
+// schema 14 and 1.0.3 wrote schema 15.
 // Schema 12 has no ownership rows. A missing row never authorizes removal or
 // publication of a look-alike directory.
-var migrations = map[int][]string{
-	6: {
+var schemaSteps = []schemaStep{
+	{version: 6, statements: []string{
 		`CREATE TABLE IF NOT EXISTS metadata (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
@@ -649,8 +698,8 @@ var migrations = map[int][]string{
 			SELECT repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at FROM pull_request_reviews`,
 		`DROP TABLE pull_request_reviews`,
 		`ALTER TABLE pull_request_reviews_v6 RENAME TO pull_request_reviews`,
-	},
-	7: {
+	}},
+	{version: 7, statements: []string{
 		`CREATE TABLE check_raw_logs (
 			attempt_id TEXT PRIMARY KEY,
 			content BLOB NOT NULL CHECK (length(content) <= 262144),
@@ -658,8 +707,8 @@ var migrations = map[int][]string{
 			FOREIGN KEY (attempt_id) REFERENCES check_attempts(id) ON DELETE CASCADE
 		) WITHOUT ROWID`,
 		`CREATE INDEX check_raw_logs_expiry ON check_raw_logs(expires_at,attempt_id)`,
-	},
-	8: {
+	}},
+	{version: 8, statements: []string{
 		`ALTER TABLE pull_request_reviews ADD COLUMN review_event_id TEXT NOT NULL DEFAULT ''`,
 		`CREATE UNIQUE INDEX pull_request_reviews_event ON pull_request_reviews(repository_id,review_event_id) WHERE review_event_id != ''`,
 		`CREATE TABLE direct_review_credentials (
@@ -781,8 +830,8 @@ var migrations = map[int][]string{
 		`CREATE UNIQUE INDEX direct_review_requests_source_event ON direct_review_requests(repository_id,trigger_kind,source_event_key) WHERE source_event_key != ''`,
 		`CREATE INDEX direct_review_requests_pull_request ON direct_review_requests(repository_id,pull_request_number,sequence) WHERE pull_request_number > 0`,
 		`CREATE INDEX direct_review_requests_task ON direct_review_requests(repository_id,task_id,sequence) WHERE task_id != ''`,
-	},
-	9: {
+	}},
+	{version: 9, statements: []string{
 		// Attempts gain a server-owned job link. Empty keeps the exact helper
 		// behavior and every historical digest shape.
 		`ALTER TABLE check_attempts ADD COLUMN job_id TEXT NOT NULL DEFAULT ''`,
@@ -885,8 +934,8 @@ var migrations = map[int][]string{
 			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX check_observations_recent ON check_observations(repository_id,observed_at,ref_name)`,
-	},
-	10: {
+	}},
+	{version: 10, statements: []string{
 		// Schema 9 did not persist source/container bounds. Its rows remain valid
 		// history under their original v1 digests, but consent is cleared and the
 		// operator must save a complete v2 policy before new execution.
@@ -968,8 +1017,8 @@ var migrations = map[int][]string{
 			FOREIGN KEY (job_id) REFERENCES check_jobs(id) ON DELETE CASCADE,
 			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
 		)`,
-	},
-	11: {
+	}},
+	{version: 11, statements: []string{
 		// One inbound import source per repository. No foreign key is declared
 		// because a configured source can precede the repository row: the
 		// destination object format is only known after the first advertisement.
@@ -1083,11 +1132,11 @@ var migrations = map[int][]string{
 			updated_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX import_schedules_due ON import_schedules(enabled,last_started_at,repository_id)`,
-	},
-	12: {
+	}},
+	{version: 12, statements: []string{
 		`ALTER TABLE import_publication_intents ADD COLUMN head_owned INTEGER NOT NULL DEFAULT 0 CHECK (head_owned IN (0,1))`,
-	},
-	13: {
+	}},
+	{version: 13, statements: []string{
 		`CREATE TABLE import_initial_destinations (
 			name TEXT PRIMARY KEY CHECK (length(name) BETWEEN 1 AND 80),
 			repository_id TEXT NOT NULL CHECK (length(repository_id) <= 100),
@@ -1102,11 +1151,11 @@ var migrations = map[int][]string{
 			updated_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX import_initial_destinations_run ON import_initial_destinations(run_id)`,
-	},
+	}},
 	// SQLite cannot change a CHECK constraint in place, so the intent table is
 	// rebuilt with every row and column kept. owner_resolved is terminal: the
 	// owner accepted the destination as found after an unresolved outcome.
-	14: {
+	{version: 14, released: true, statements: []string{
 		`CREATE TABLE import_publication_intents_v14 (
 			id TEXT PRIMARY KEY,
 			repository_id TEXT NOT NULL,
@@ -1135,11 +1184,11 @@ var migrations = map[int][]string{
 		`DROP TABLE import_publication_intents`,
 		`ALTER TABLE import_publication_intents_v14 RENAME TO import_publication_intents`,
 		`CREATE INDEX import_publication_intents_repository ON import_publication_intents(repository_id,created_at,id)`,
-	},
+	}},
 	// A pull request can be closed without merging. The table is rebuilt with
 	// every row and column kept; its revisions, reviews and merge intents
 	// refer to it by name and keep their rows (see migrate).
-	15: {
+	{version: 15, released: true, statements: []string{
 		`CREATE TABLE pull_requests_v15 (
 			repository_id TEXT NOT NULL,
 			number INTEGER NOT NULL CHECK (number > 0),
@@ -1163,7 +1212,7 @@ var migrations = map[int][]string{
 			merge_source_oid,merge_target_oid,merge_oid,merge_receipt_ref,merged_at FROM pull_requests`,
 		`DROP TABLE pull_requests`,
 		`ALTER TABLE pull_requests_v15 RENAME TO pull_requests`,
-	},
+	}},
 }
 
 // Exec runs one statement against the state database. It is used for targeted
