@@ -310,7 +310,7 @@ func TestCompareLimits(t *testing.T) {
 	before := count()
 	cut, err := manager.Compare(context.Background(), "sample", target, source)
 	noErr(t, err)
-	if !cut.PatchTruncated || cut.FilesTruncated || len(cut.Files) != 20 || len(cut.Patch) >= len(full.Patch) || count()-before != 1 {
+	if !cut.PatchTruncated || cut.FilesTruncated || cut.TimedOut || len(cut.Files) != 20 || len(cut.Patch) >= len(full.Patch) || count()-before != 1 {
 		t.Fatalf("patch cut: files=%d cut=%v/%v patch=%d processes=%d", len(cut.Files), cut.PatchTruncated, cut.FilesTruncated, len(cut.Patch), count()-before)
 	}
 	before = count()
@@ -333,7 +333,7 @@ func TestCompareLimits(t *testing.T) {
 	for attempt := 0; attempt < 2; attempt++ {
 		before = count()
 		slow, err := manager.Compare(context.Background(), "sample", target, source)
-		if err != nil || !slow.FilesTruncated || !slow.PatchTruncated || count()-before != 1 {
+		if err != nil || !slow.FilesTruncated || !slow.PatchTruncated || !slow.TimedOut || count()-before != 1 {
 			t.Fatalf("attempt %d past the time limit: %+v %v processes=%d", attempt, slow, err, count()-before)
 		}
 	}

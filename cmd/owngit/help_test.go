@@ -18,7 +18,7 @@ var helpCommands = []struct {
 	{"network", false}, {"network show", true}, {"network set", true}, {"network reset", true},
 	{"forget-check-container", true}, {"backup", true}, {"restore", true},
 	{"repo", false}, {"repo list", true}, {"repo show", true}, {"repo create", true},
-	{"pr", false}, {"pr create", true}, {"pr list", true}, {"pr show", true},
+	{"pr", false}, {"pr create", true}, {"pr list", true}, {"pr show", true}, {"pr diff", true},
 	{"pr review", false}, {"pr review request", true}, {"pr review submit", true}, {"pr review skip", true},
 	{"pr merge", true},
 	{"check", false}, {"check task", false}, {"check task new", true},

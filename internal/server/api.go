@@ -31,7 +31,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		return
 	}
 	repositoryID, resource, remainder, repositoryRoute := parseRepositoryAPIRoute(request.URL.Path)
-	if request.URL.RawQuery != "" && !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) {
+	if request.URL.RawQuery != "" && !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) && !pullRequestDiffQueryAllowed(request) {
 		writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
 		return
 	}
@@ -152,6 +152,14 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		if err == nil {
 			result = pullrequest.SuccessEnvelope{OK: true, PullRequest: view}
 		}
+	case "diff":
+		if request.Method != http.MethodGet {
+			writeAPIMethodError(writer, http.MethodGet)
+			return
+		}
+		query := request.URL.Query()
+		pinned := pullrequest.RevisionInput{SourceOID: query.Get("source_oid"), TargetOID: query.Get("target_oid")}
+		result, err = app.pullRequestDiff(request.Context(), repositoryID, number, pinned)
 	case "close", "reopen":
 		if request.Method != http.MethodPost {
 			writeAPIMethodError(writer, http.MethodPost)
@@ -256,7 +264,7 @@ func parsePullRequestAPIRoute(requestPath string) (string, int64, string, bool) 
 	if len(parts) == 3 {
 		return parts[0], number, "show", true
 	}
-	if len(parts) == 4 && (parts[3] == "merge" || parts[3] == "close" || parts[3] == "reopen") {
+	if len(parts) == 4 && (parts[3] == "merge" || parts[3] == "close" || parts[3] == "reopen" || parts[3] == "diff") {
 		return parts[0], number, parts[3], true
 	}
 	if len(parts) == 5 && parts[3] == "review" {
@@ -349,7 +357,7 @@ func writeAPIJSON(writer http.ResponseWriter, status int, value any) {
 func apiStatus(code string) int {
 	switch code {
 	case "invalid_repository", "invalid_pull_request_number", "invalid_title", "invalid_branch", "reserved_ref", "same_branch", "invalid_review_choice", "invalid_review_decision", "invalid_reviewer_label", "invalid_revision",
-		"invalid_task", "invalid_credential", "invalid_attempt", "invalid_attempt_id", "invalid_check_definition", "invalid_worktree_state", "invalid_revision_oid", "invalid_cycle_id":
+		"invalid_task", "invalid_credential", "invalid_attempt", "invalid_attempt_id", "invalid_check_definition", "invalid_worktree_state", "invalid_revision_oid", "invalid_cycle_id", "revision_not_recorded":
 		return http.StatusUnprocessableEntity
 	case "repository_not_found", "pull_request_not_found", "task_not_found", "configuration_not_found", "attempt_not_found", "log_not_recorded", "cycle_not_found":
 		return http.StatusNotFound

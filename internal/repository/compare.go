@@ -29,6 +29,9 @@ type Comparison struct {
 	// FilesTruncated is set when the diff stopped before Git had listed every
 	// file. Files then holds only the files read in full.
 	FilesTruncated bool
+	// TimedOut is set when the time limit, not the size limit, cut the diff.
+	// Another attempt may read more.
+	TimedOut bool
 }
 
 // Bounds for one comparison. Variables so tests can lower them.
@@ -74,7 +77,7 @@ func (m *Manager) Compare(ctx context.Context, id, targetOID, sourceOID string) 
 		case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
 			// The time limit, not the request, ended the diff. What Git wrote
 			// so far is shown as incomplete.
-			return cachedResult{data: output.Stdout, truncated: true}, false, nil
+			return cachedResult{data: output.Stdout, truncated: true, timedOut: true}, false, nil
 		}
 		return cachedResult{}, false, err
 	})
@@ -83,6 +86,7 @@ func (m *Manager) Compare(ctx context.Context, id, targetOID, sourceOID string) 
 	}
 	files, end, complete, separated := parseChanges(result.data)
 	comparison.Files = files
+	comparison.TimedOut = result.timedOut
 	// A cut output lists every file only when Git got as far as the NUL it
 	// writes between the file records and the patch.
 	if !complete || result.truncated && !separated {

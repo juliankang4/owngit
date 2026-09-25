@@ -26,7 +26,7 @@ type generalRemoteFlags struct {
 func prCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		printPRUsage(os.Stderr)
-		return cliProblem("invalid_arguments", "pr requires create, list, show, review, merge, close, or reopen.")
+		return cliProblem("invalid_arguments", "pr requires create, list, show, diff, review, merge, close, or reopen.")
 	}
 	if isHelpArgument(arguments[0]) {
 		printPRUsage(os.Stdout)
@@ -39,6 +39,8 @@ func prCommand(arguments []string) error {
 		return prList(arguments[1:])
 	case "show":
 		return prShow(arguments[1:])
+	case "diff":
+		return prDiff(arguments[1:])
 	case "review":
 		return prReview(arguments[1:])
 	case "merge":
@@ -100,6 +102,92 @@ func prShow(arguments []string) error {
 		return err
 	}
 	return writeResult(showPullRequest(context.Background(), target, *number))
+}
+
+func prDiff(arguments []string) error {
+	flags := newPRFlagSet("pr diff")
+	remote := addGeneralRemoteFlags(flags, true)
+	number := flags.Int64("number", 0, "pull request number")
+	sourceOID := flags.String("source-oid", "", "pin this exact source commit object ID (with --target-oid)")
+	targetOID := flags.String("target-oid", "", "pin this exact target commit object ID (with --source-oid)")
+	stat := flags.Bool("stat", false, "print the JSON result without the patch")
+	patch := flags.Bool("patch", false, "print only the patch text; the revisions and any cut are noted on standard error")
+	if err := parsePRFlags(flags, arguments); err != nil {
+		return err
+	}
+	if *number <= 0 {
+		return cliProblem("invalid_arguments", "pr diff requires a positive --number.")
+	}
+	if (*sourceOID == "") != (*targetOID == "") {
+		return cliProblem("invalid_arguments", "pr diff requires both --source-oid and --target-oid, or neither.")
+	}
+	if *stat && *patch {
+		return cliProblem("invalid_arguments", "Use --stat or --patch, not both.")
+	}
+	target, err := remote.connection()
+	if err != nil {
+		return err
+	}
+	content, err := pullRequestDiff(context.Background(), target, *number, pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID})
+	switch {
+	case err != nil:
+		return err
+	case *stat:
+		return writeDiffStat(content)
+	case *patch:
+		return writeDiffPatch(content, os.Stdout, os.Stderr)
+	}
+	return writeJSON(content)
+}
+
+// writeDiffStat prints a diff result without its patch.
+func writeDiffStat(content []byte) error {
+	var diff pullrequest.Diff
+	if err := json.Unmarshal(content, &diff); err != nil {
+		return &apiclient.Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid diff.", Cause: err}
+	}
+	return writeJSONValue(struct {
+		pullrequest.Diff
+		// A field at a shallower depth hides the embedded one of the same
+		// JSON name, and a nil pointer with omitempty is left out.
+		Patch *struct{} `json:"patch,omitempty"`
+	}{Diff: diff})
+}
+
+// writeDiffPatch prints only the patch text on output, and on notes one line
+// with the diffed revisions plus a line for each condition a reader of the
+// bare patch would otherwise miss.
+func writeDiffPatch(content []byte, output, notes io.Writer) error {
+	var diff pullrequest.Diff
+	if err := json.Unmarshal(content, &diff); err != nil {
+		return &apiclient.Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid diff.", Cause: err}
+	}
+	fmt.Fprintf(notes, "owngit: source %s, target %s, merge base %s\n", diff.Source.OID, diff.Target.OID, valueOr(diff.MergeBase, "none"))
+	if diff.Moved && diff.Current != nil {
+		fmt.Fprintf(notes, "owngit: the branches moved; the current source is %s and the current target is %s\n",
+			valueOr(diff.Current.Source.OID, diff.Current.Source.Status), valueOr(diff.Current.Target.OID, diff.Current.Target.Status))
+	}
+	if diff.Unavailable != "" {
+		fmt.Fprintf(notes, "owngit: no patch: %s\n", diff.Unavailable)
+	}
+	if diff.Truncated {
+		scope := "the patch leaves out some files"
+		if diff.Incomplete {
+			scope = "the patch and the file list leave out some files"
+		}
+		fmt.Fprintf(notes, "owngit: %s (%s)\n", scope, diff.Reason)
+	}
+	if _, err := io.WriteString(output, diff.Patch); err != nil {
+		return &apiclient.Error{Code: "output_failed", Message: "The patch could not be written.", Cause: err}
+	}
+	return nil
+}
+
+func valueOr(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func prReview(arguments []string) error {
@@ -256,6 +344,6 @@ func writeStructuredCommandError(writer io.Writer, err error) bool {
 }
 
 func printPRUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|review|merge|close|reopen> [options]")
+	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|diff|review|merge|close|reopen> [options]")
 	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server and --repository default to its origin remote. HTTP also requires --accept-insecure-http.")
 }

@@ -162,6 +162,25 @@ owngit repo create --server https://owngit.example.test --name example-project \
 
 저장소마다 `id`, `name`, `description`, `created_at`, `clone_url`이 있습니다. `repo show`는 그 순간 저장소의 브랜치를 읽을 수 있으면 `default_branch`도 보여 줍니다. `repo list`는 저장소를 최대 1000개까지 돌려주고, 더 있으면 `truncated`가 true입니다. `repo create`는 브라우저 양식과 같은 이름과 설명 규칙을 적용합니다. 이름이 이미 쓰이고 있으면 `repository_exists`, 양식이 거부할 이름이면 `invalid_repository_name`이나 `reserved_repository_name`, 설명이 500바이트를 넘으면 `invalid_repository_description`으로 실패합니다.
 
+## 풀 리퀘스트 변경 내용
+
+`owngit pr diff --number N`은 풀 리퀘스트가 바꾸는 내용을 JSON 객체 하나로 출력합니다. 비교한 원본과 대상 커밋, 두 커밋의 병합 기준(merge base), 줄 수가 붙은 변경 파일 목록, 패치가 들어 있습니다. `owngit pr`과 같이 일반 접근을 사용하고, 클론 안에서는 서버와 저장소를 `origin`에서 읽습니다.
+
+```sh
+owngit pr diff --number 3
+owngit pr diff --number 3 --stat
+owngit pr diff --number 3 --patch
+owngit pr diff --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
+```
+
+변경 내용은 풀 리퀘스트 페이지와 같이 병합 기준에서 원본까지 셉니다. 기본값으로는 풀 리퀘스트의 현재 원본과 대상 커밋을 한 번 읽고 바로 그 두 커밋을 비교합니다. 그래서 읽는 도중에 브랜치가 움직여도 `source.oid`와 `target.oid`는 패치와 일치합니다. 읽은 내용을 리뷰하려면 같은 객체 ID를 `pr review submit`에 넘깁니다. 그사이 브랜치가 움직였으면 리뷰는 `stale_revision`으로 실패합니다. 병합된 풀 리퀘스트의 현재 쌍은 병합한 커밋 쌍입니다.
+
+`--source-oid`와 `--target-oid`는 비교할 커밋 쌍을 고정합니다. 이 쌍은 현재 쌍이거나, 리뷰를 요청한 쌍처럼 그 풀 리퀘스트에 기록된 쌍이어야 합니다. 다른 쌍은 `revision_not_recorded`로 실패하고, 둘 중 하나만 넘기면 CLI에서는 `invalid_arguments`, API에서는 `invalid_revision`으로 실패합니다. 고정한 쌍에서 브랜치가 움직였으면 결과는 여전히 그 쌍을 보여 주면서 `moved`를 true로 두고 현재 쌍을 `current`에 담습니다.
+
+결과에는 크기 제한이 있습니다. 패치에서 빠진 파일이 있으면 `truncated`가 true이고, 파일 목록에서도 빠진 파일이 있으면 `incomplete`가 true입니다. 패치는 언제나 파일 경계에서 끝납니다. `reason`은 빠진 이유를 알려 줍니다. `output_limit`는 비교 결과가 8 MiB 제한에 닿은 경우, `time_limit`는 Git의 시간이 다 된 경우(나중에 다시 시도하면 더 읽을 수 있습니다), `response_limit`는 4 MiB 응답에 맞추려고 잘라 낸 경우입니다. 두 브랜치에 공통 커밋이 없거나 병합 기준이 둘 이상이면 `unavailable`이 `no_merge_base` 또는 `multiple_merge_bases`이고, 파일 목록과 패치가 없습니다.
+
+`--stat`은 `patch`를 뺀 같은 객체를 출력합니다. `--patch`는 패치 텍스트만 출력하고, 비교한 커밋과 브랜치 이동이나 잘림 여부는 표준 오류에 씁니다. API 경로는 `GET /api/v1/repositories/ID/pull-requests/N/diff`이며, 선택 쿼리 매개변수로 `source_oid`와 `target_oid`를 받습니다.
+
 ## 결과 읽기
 
 `check run`은 JSON 객체 하나를 출력하고 다음 코드로 끝납니다.

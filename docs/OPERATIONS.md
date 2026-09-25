@@ -431,6 +431,7 @@ The other `pr` commands take the same `--server`, `--accept-insecure-http`, `--r
 ```sh
 ./bin/owngit pr list
 ./bin/owngit pr show --number 1
+./bin/owngit pr diff --number 1
 ./bin/owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
 ./bin/owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
   --decision approved --reviewer "existing-tool: reviewer label"
@@ -441,6 +442,8 @@ The other `pr` commands take the same `--server`, `--accept-insecure-http`, `--r
 ```
 
 A submitted review is `approved` or `changes_requested`. The reviewer label records who supplied the review; it does not claim independence or that checks ran. A pending or changes-requested review does not hold a merge. When the source or target moves, earlier review and skip decisions no longer apply, so inspect the pull request again and decide for the new object IDs.
+
+`pr diff` prints what the pull request changes, with the exact object IDs it compared; `--stat` leaves out the patch and `--patch` prints only the patch. [Pull request changes](CODING_TOOLS.md#pull-request-changes) describes pinning, limits, and the result.
 
 Every command writes a JSON result. Failures include a stable `error.code` and a nonzero exit status. When the server cannot be reached, `connection_failed` names the cause, such as a refused connection or a TLS error. `checks` in a pull request result reports the evidence recorded for the current source revision, or `absent`. That evidence is `stale` when it ran other checks than those in the `.owngit/checks.json` committed in the source revision; configurations recorded for other branches do not affect it. A failed, stale, dirty, or incomplete check is advisory and never blocks a merge.
 

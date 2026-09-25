@@ -56,10 +56,13 @@ type objectKey struct {
 }
 
 // cachedResult is one Git read. Truncated says the read stopped at a limit
-// that is part of its key, so the same read gives the same result.
+// that is part of its key, so the same read gives the same result. TimedOut
+// says a time limit stopped it instead; such a result is never cached, since
+// another attempt may finish.
 type cachedResult struct {
 	data      []byte
 	truncated bool
+	timedOut  bool
 }
 
 func (result cachedResult) clone() cachedResult {

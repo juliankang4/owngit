@@ -143,6 +143,23 @@ func mergePullRequest(ctx context.Context, target connection, number int64, inpu
 	return target.client().Do(ctx, http.MethodPost, target.pullRequestPath(number)+"/merge", input)
 }
 
+// pullRequestDiff reads what a pull request changes: its current pair, or the
+// pair pinned names, which must be the current pair or one recorded for the
+// pull request.
+func pullRequestDiff(ctx context.Context, target connection, number int64, pinned pullrequest.RevisionInput) ([]byte, error) {
+	if err := requirePullRequestNumber(number); err != nil {
+		return nil, err
+	}
+	if (pinned.SourceOID == "") != (pinned.TargetOID == "") {
+		return nil, cliProblem("invalid_arguments", "Pin both the source and the target object ID, or neither.")
+	}
+	path := target.pullRequestPath(number) + "/diff"
+	if pinned.SourceOID != "" {
+		path += "?" + url.Values{"source_oid": {pinned.SourceOID}, "target_oid": {pinned.TargetOID}}.Encode()
+	}
+	return target.client().Do(ctx, http.MethodGet, path, nil)
+}
+
 // setPullRequestClosed closes (closed true) or reopens a pull request. Neither
 // changes a branch, so no object IDs are needed.
 func setPullRequestClosed(ctx context.Context, target connection, number int64, closed bool) ([]byte, error) {

@@ -276,6 +276,51 @@ applies the same name and description rules as the browser form. It fails with
 `reserved_repository_name` for a name the form would refuse, and
 `invalid_repository_description` for a description over 500 bytes.
 
+## Pull request changes
+
+`owngit pr diff --number N` prints what a pull request changes as one JSON
+object: the exact source and target commits it compared, their merge base, the
+changed files with line counts, and the patch. It uses general access, like
+`owngit pr`, and inside a clone it reads the server and repository from
+`origin`.
+
+```sh
+owngit pr diff --number 3
+owngit pr diff --number 3 --stat
+owngit pr diff --number 3 --patch
+owngit pr diff --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
+```
+
+The changes are counted from the merge base to the source, as on the pull
+request page. By default the command reads the pull request's current source
+and target commits once and diffs exactly those, so `source.oid` and
+`target.oid` describe the patch even if a branch moves during the read. Pass
+the same object IDs to `pr review submit` to review what you read. If a branch
+moved in the meantime, the review fails with `stale_revision`. For a merged
+pull request the current pair is the pair it merged.
+
+`--source-oid` and `--target-oid` pin a pair. The pair must be the current one
+or one recorded for the pull request, such as the pair a review was requested
+for. Any other pair fails with `revision_not_recorded`. Giving only one of the
+two fails with `invalid_arguments` in the CLI and `invalid_revision` in the
+API. When the branches have moved away from
+a pinned pair, the result still shows that pair, sets `moved` to true, and
+gives the current pair in `current`.
+
+The result is bounded. `truncated` is true when the patch leaves out some
+files, and `incomplete` is true when the file list misses files too. The patch
+always ends at a file boundary. `reason` says why output is missing:
+`output_limit` (the diff reached its 8 MiB limit), `time_limit` (Git ran out of
+time, and a later try may read more), or `response_limit` (the result was cut
+to fit the 4 MiB response). When the branches share no commit or have more
+than one merge base, `unavailable` is `no_merge_base` or
+`multiple_merge_bases`, and the result has no file list or patch.
+
+`--stat` prints the same object without `patch`. `--patch` prints only the
+patch text and writes the compared commits, and any move or cut, to standard
+error. The API route is `GET /api/v1/repositories/ID/pull-requests/N/diff`,
+with the optional query parameters `source_oid` and `target_oid`.
+
 ## Reading the result
 
 `check run` prints one JSON object and exits with a code:

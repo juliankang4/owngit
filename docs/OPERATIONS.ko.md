@@ -437,6 +437,7 @@ OwnGit이 게시가 어떻게 끝났는지 증명할 수 없으면 그 게시는
 ```sh
 ./bin/owngit pr list
 ./bin/owngit pr show --number 1
+./bin/owngit pr diff --number 1
 ./bin/owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
 ./bin/owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
   --decision approved --reviewer "existing-tool: reviewer label"
@@ -447,6 +448,8 @@ OwnGit이 게시가 어떻게 끝났는지 증명할 수 없으면 그 게시는
 ```
 
 제출하는 리뷰는 `approved` 또는 `changes_requested`입니다. 리뷰어 라벨은 누가 리뷰를 제출했는지 기록할 뿐, 독립적인 리뷰였다거나 체크를 실행했다는 뜻은 아닙니다. 대기 중이거나 변경을 요청한 리뷰가 병합을 막지는 않습니다. 원본이나 대상이 움직이면 이전 리뷰와 생략 결정은 더 이상 적용되지 않으므로, 풀 리퀘스트를 다시 살펴보고 새 객체 ID로 결정하세요.
+
+`pr diff`는 풀 리퀘스트가 바꾸는 내용을 비교한 정확한 객체 ID와 함께 출력합니다. `--stat`은 패치를 빼고, `--patch`는 패치만 출력합니다. 커밋 쌍 고정, 제한, 결과 형식은 [풀 리퀘스트 변경 내용](CODING_TOOLS.ko.md#풀-리퀘스트-변경-내용)에 있습니다.
 
 모든 명령은 JSON 결과를 출력합니다. 실패하면 바뀌지 않는 `error.code`와 0이 아닌 종료 코드를 냅니다. 서버에 연결하지 못하면 `connection_failed`에 연결 거부나 TLS 오류 같은 원인이 함께 나옵니다. 풀 리퀘스트 결과의 `checks`는 현재 원본 리비전에 기록된 체크 결과를 알려 주며, 기록이 없으면 `absent`입니다. 그 결과가 원본 리비전에 커밋된 `.owngit/checks.json`과 다른 체크를 실행했다면 `stale`입니다. 다른 브랜치에서 기록된 설정은 영향을 주지 않습니다. 실패했거나, 오래되었거나, 워킹 트리에 변경이 있었거나, 불완전한 체크는 참고용이며 병합을 막지 않습니다.
 

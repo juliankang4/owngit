@@ -178,6 +178,61 @@ type View struct {
 	UpdatedAt        time.Time    `json:"updated_at"`
 }
 
+// Diff is what a pull request changes between an exact source and target
+// revision, counted from their merge base, as the pull request diff API
+// returns it.
+type Diff struct {
+	OK         bool         `json:"ok"`
+	Repository string       `json:"repository"`
+	Number     int64        `json:"number"`
+	State      string       `json:"state"`
+	Source     DiffRevision `json:"source"`
+	Target     DiffRevision `json:"target"`
+	// MergeBase is the single merge base the changes are counted from. It is
+	// empty when Unavailable is set.
+	MergeBase string `json:"merge_base,omitempty"`
+	// Moved is set when the requested pair is no longer the pull request's
+	// current pair. Current then holds the current pair.
+	Moved   bool         `json:"moved"`
+	Current *DiffCurrent `json:"current,omitempty"`
+	// Unavailable is no_merge_base or multiple_merge_bases when there is no
+	// single merge base to count from; Files and Patch are then empty.
+	Unavailable string     `json:"unavailable,omitempty"`
+	Files       []DiffFile `json:"files"`
+	// Incomplete is set when Files does not list every changed file. It
+	// implies Truncated.
+	Incomplete bool `json:"incomplete"`
+	// Truncated is set when Patch leaves out the changes of some files. Patch
+	// always ends at a file boundary, so each file in it is whole.
+	Truncated bool `json:"truncated"`
+	// Reason says why output is missing: output_limit (the diff reached its
+	// size limit), time_limit (the diff ran out of time; a retry may read
+	// more), or response_limit (cut to fit the API response).
+	Reason string `json:"reason,omitempty"`
+	Patch  string `json:"patch"`
+}
+
+// DiffRevision is one side of the diffed pair.
+type DiffRevision struct {
+	Branch string `json:"branch"`
+	OID    string `json:"oid"`
+}
+
+// DiffCurrent is the pull request's current pair when a pinned pair moved.
+type DiffCurrent struct {
+	Source Revision `json:"source"`
+	Target Revision `json:"target"`
+}
+
+// DiffFile is one changed file with its line counts.
+type DiffFile struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Binary    bool   `json:"binary"`
+}
+
 type CreateInput struct {
 	Repository   string `json:"repository,omitempty"`
 	Title        string `json:"title"`
