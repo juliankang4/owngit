@@ -805,6 +805,9 @@ func TestPackagingRendering(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(unready, "npm", "owngit", "package.json")); err != nil {
 		t.Fatalf("the default formats did not render the npm packages: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(unready, "aur", "PKGBUILD")); err != nil {
+		t.Fatalf("the default formats did not render the PKGBUILD: %v", err)
+	}
 
 	ready := t.TempDir()
 	readyArguments := []string{

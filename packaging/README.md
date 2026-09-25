@@ -1,6 +1,6 @@
 # Packaging templates
 
-The files here are inputs for `tools/release`. They produce portable archives, unsigned native prototypes, and package-manager files. `packaging` output is what gets published to the Homebrew tap and npm; the native prototypes are not published. [CONTRIBUTING.md](../CONTRIBUTING.md#releases) shows how to run the release tool.
+The files here are inputs for `tools/release`. They produce portable archives, unsigned native prototypes, and package-manager files. `packaging` output is what gets published to the Homebrew tap and npm and attached to GitHub Releases as the Arch Linux `PKGBUILD`; the native prototypes are not published. [CONTRIBUTING.md](../CONTRIBUTING.md#releases) shows how to run the release tool.
 
 ## Layout
 
@@ -9,6 +9,7 @@ The files here are inputs for `tools/release`. They produce portable archives, u
 - `linux/` contains the Debian control file, the desktop entry, and the package instructions.
 - `homebrew/owngit.rb.tmpl` is the Homebrew formula template.
 - `winget/` holds the WinGet portable-package manifest templates.
+- `aur/` holds the Arch Linux `PKGBUILD` and `.SRCINFO` templates of the `owngit-bin` package.
 - `npm/` holds the npm launcher (`owngit.js.tmpl`) and the README templates of the npm packages.
 - `notices/README.md.tmpl` renders the third-party notice index. `release notices` writes it; edit the template rather than a generated copy.
 
@@ -26,11 +27,13 @@ Each DEB holds the `linux/amd64` or `linux/arm64` binary, a terminal-backed desk
 
 The bundle identifier and the Debian maintainer address are placeholders, not publisher identities.
 
-## Homebrew, WinGet, and npm
+## Homebrew, WinGet, npm, and Arch Linux
 
-`packaging` renders these files from a portable manifest. `-formats` accepts `homebrew`, `winget`, `npm`, or `all`. The download base URL, the project homepage, the npm repository URL, the Homebrew tap, and the WinGet package identifier and publisher are explicit inputs. A missing input produces an `UNREADY` marker, or an error with `-strict`. Every format requires a manifest that holds all four release targets.
+`packaging` renders these files from a portable manifest. `-formats` accepts `homebrew`, `winget`, `npm`, `aur`, or `all`. The download base URL, the project homepage, the npm repository URL, the Homebrew tap, the WinGet package identifier and publisher, and the `PKGBUILD` maintainer line are explicit inputs. A missing input produces an `UNREADY` marker, or an error with `-strict`. Every format requires a manifest that holds all four release targets, with archive names that match the version and SHA-256 values of 64 lowercase hexadecimal characters; `packaging` refuses any other manifest before it writes a file. The `aur` format also refuses a version that `makepkg` does not accept as `pkgver` with `-strict`, and marks it `UNREADY` otherwise.
 
 The Homebrew formula installs the binary, license, and notices, depends on `git`, supports Apple silicon Macs and Linux on x64 and ARM64, and offers a `brew services` entry that runs `owngit serve -no-open`. The WinGet installer manifest describes the zip archive with a nested portable `owngit` command and its SHA-256.
+
+The `aur` format writes `<out>/aur/PKGBUILD` and `<out>/aur/.SRCINFO` for the `owngit-bin` package. The `.SRCINFO` holds the same fields that `makepkg --printsrcinfo` prints for the `PKGBUILD`. The package takes the `linux/amd64` archive on `x86_64` and the `linux/arm64` archive on `aarch64`, each with the SHA-256 from the manifest, and installs the unchanged binary as `/usr/bin/owngit` (`!strip` and `!debug`), the license in `/usr/share/licenses/owngit-bin/`, and the notices and coding-tool documents in `/usr/share/doc/owngit-bin/`. It depends on `git`, provides and conflicts with `owngit`, and has no install scripts or systemd units. `-aur-maintainer` sets the `# Maintainer:` comment; the AUR convention is `Name <address at domain dot tld>`.
 
 The npm format writes one directory per package under `<out>/npm/`, ready for `npm pack` or `npm publish`. `<out>/npm` must not exist yet. Because the packages contain the executables, `packaging` first verifies a private snapshot of the portable output, like `native`, and copies each executable only if its digest matches the manifest. `-go` names the Go toolchain used for that verification.
 

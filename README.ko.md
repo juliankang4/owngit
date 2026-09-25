@@ -35,7 +35,7 @@ OwnGit은 홈랩과 로컬 컴퓨터를 위한 셀프 호스팅 Git 서버입니
 
 ## 설치
 
-어느 방법으로 설치하든 호스트에 실행 가능한 `git-http-backend`가 들어 있는 Git이 필요합니다. Homebrew는 Git을 함께 설치합니다.
+어느 방법으로 설치하든 호스트에 실행 가능한 `git-http-backend`가 들어 있는 Git이 필요합니다. Homebrew와 Arch Linux 패키지는 Git을 함께 설치합니다.
 
 macOS(Apple silicon)나 Linux(x64, ARM64)에서 [Homebrew](https://brew.sh)로 설치합니다.
 
@@ -47,6 +47,14 @@ macOS(Apple silicon), Linux(x64, ARM64), Windows(x64)에서는 [npm](https://www
 
 ```sh
 npm install -g owngit
+```
+
+Arch Linux(x64, ARM64)나 Omarchy에서는 1.0.3부터 각 릴리스에 첨부된 `PKGBUILD`로 패키지를 만들어 설치합니다. `makepkg`가 릴리스 압축 파일을 내려받아 SHA-256을 확인하고 `pacman`으로 `owngit`을 설치합니다. `base-devel` 그룹이 필요합니다. AUR 패키지 `owngit-bin`도 준비하고 있습니다.
+
+```sh
+mkdir owngit-bin && cd owngit-bin
+curl -fLO https://github.com/juliankang4/owngit/releases/latest/download/PKGBUILD
+makepkg -si
 ```
 
 [GitHub Releases](https://github.com/juliankang4/owngit/releases)에서 플랫폼에 맞는 압축 파일을 내려받아 `SHA256SUMS`로 확인해도 됩니다. 실행 파일에는 서명이 없습니다. macOS에서 브라우저로 내려받은 실행 파일이 실행되지 않으면 `xattr -d com.apple.quarantine owngit`을 한 번 실행하세요.

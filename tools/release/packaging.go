@@ -12,8 +12,9 @@ import (
 	"text/template"
 )
 
-// packagingData is the template input for the Homebrew and WinGet files. The
-// two formats have independent readiness, because they need different inputs.
+// packagingData is the template input for the Homebrew, WinGet, and Arch Linux
+// files. The formats have independent readiness, because they need different
+// inputs.
 type packagingData struct {
 	Version         string
 	BaseURL         string
@@ -24,6 +25,8 @@ type packagingData struct {
 	PublisherURL    string
 	HomebrewUnready string
 	WingetUnready   string
+	AURMaintainer   string
+	AURUnready      string
 	DarwinArm64     artifactRef
 	LinuxAMD64      artifactRef
 	LinuxARM64      artifactRef
@@ -40,13 +43,15 @@ type artifactRef struct {
 // placeholder values are used only when the matching input is absent. Every
 // file that uses one carries an UNREADY header naming the missing input.
 const (
-	placeholderURL       = "https://example.invalid"
-	placeholderPackageID = "OwnGit.Owngit"
-	placeholderPublisher = "OwnGit"
+	placeholderURL        = "https://example.invalid"
+	placeholderPackageID  = "OwnGit.Owngit"
+	placeholderPublisher  = "OwnGit"
+	placeholderMaintainer = "OwnGit"
 )
 
 var (
 	tapPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	sha256Pattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	packageIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z0-9][A-Za-z0-9._-]*$`)
 )
 
@@ -55,7 +60,7 @@ func packagingCommand(arguments []string) error {
 	source := set.String("source", ".", "module root holding the packaging templates")
 	manifestPath := set.String("manifest", "dist/manifest.json", "artifact manifest written by \"release build\"")
 	out := set.String("out", "dist/packaging", "output directory")
-	formats := set.String("formats", "all", "comma-separated formats to render: homebrew, winget, npm, or all")
+	formats := set.String("formats", "all", "comma-separated formats to render: homebrew, winget, npm, aur, or all")
 	baseURL := set.String("base-url", "", "release download base URL, for example https://host/owner/owngit/releases/download/v1.0.0")
 	homepage := set.String("homepage", "", "project homepage URL")
 	repositoryURL := set.String("repository-url", "", "npm Git repository URL, for example https://host/owner/owngit.git")
@@ -63,6 +68,7 @@ func packagingCommand(arguments []string) error {
 	packageID := set.String("package-id", "", "WinGet package identifier, for example Owner.Owngit")
 	publisher := set.String("publisher", "", "WinGet publisher display name")
 	publisherURL := set.String("publisher-url", "", "WinGet publisher URL")
+	aurMaintainer := set.String("aur-maintainer", "", "Arch Linux PKGBUILD maintainer line, for example \"Name <address at example dot org>\"")
 	strict := set.Bool("strict", false, "fail when a selected format is missing an input instead of marking it unready")
 	goTool := set.String("go", "go", "Go toolchain command used to verify the portable output for npm")
 	if err := parseFlags(set, arguments); err != nil {
@@ -113,6 +119,7 @@ func packagingCommand(arguments []string) error {
 	homebrewMissing := append(append([]string{}, downloadMissing...), homepageMissing...)
 	wingetMissing := append(append([]string{}, downloadMissing...), homepageMissing...)
 	npmMissing := append([]string{}, homepageMissing...)
+	aurMissing := append(append([]string{}, downloadMissing...), homepageMissing...)
 	if err := check("repository-url", *repositoryURL, &repository, validateURL, &npmMissing); err != nil {
 		return err
 	}
@@ -128,6 +135,9 @@ func packagingCommand(arguments []string) error {
 	if err := check("publisher-url", *publisherURL, &data.PublisherURL, validateURL, &wingetMissing); err != nil {
 		return err
 	}
+	if err := check("aur-maintainer", *aurMaintainer, &data.AURMaintainer, validateNonEmpty, &aurMissing); err != nil {
+		return err
+	}
 
 	var missing []string
 	if selected["homebrew"] {
@@ -139,9 +149,23 @@ func packagingCommand(arguments []string) error {
 	if selected["npm"] {
 		missing = append(missing, npmMissing...)
 	}
+	if selected["aur"] {
+		missing = append(missing, aurMissing...)
+	}
 	missing = uniqueSorted(missing)
 	if len(missing) > 0 && *strict {
 		return fmt.Errorf("missing required inputs: %s", strings.Join(missing, ", "))
+	}
+	// makepkg refuses some version strings, so an Arch package for such a
+	// version is unready.
+	var aurProblems []string
+	if selected["aur"] {
+		if err := validatePkgver(document.Version); err != nil {
+			if *strict {
+				return fmt.Errorf("aur: %w", err)
+			}
+			aurProblems = append(aurProblems, err.Error())
+		}
 	}
 
 	if data.BaseURL == "" {
@@ -162,12 +186,19 @@ func packagingCommand(arguments []string) error {
 	if data.Publisher == "" {
 		data.Publisher = placeholderPublisher
 	}
+	if data.AURMaintainer == "" {
+		data.AURMaintainer = placeholderMaintainer
+	}
 	if selected["homebrew"] && len(homebrewMissing) > 0 {
 		data.HomebrewUnready = unreadyText(homebrewMissing)
 	}
 	if selected["winget"] && len(wingetMissing) > 0 {
 		data.WingetUnready = unreadyText(wingetMissing)
 	}
+	if selected["aur"] && len(aurMissing) > 0 {
+		aurProblems = append([]string{unreadyText(aurMissing)}, aurProblems...)
+	}
+	data.AURUnready = strings.Join(aurProblems, "; ")
 
 	refs := map[string]*artifactRef{
 		"darwin/arm64":  &data.DarwinArm64,
@@ -175,10 +206,22 @@ func packagingCommand(arguments []string) error {
 		"linux/arm64":   &data.LinuxARM64,
 		"windows/amd64": &data.WindowsAMD64,
 	}
+	// Manifest values end up in files that shells, Ruby, and package managers
+	// read, so they are checked before any format is rendered.
 	for _, built := range document.Artifacts {
 		ref, ok := refs[built.Target]
 		if !ok {
 			continue
+		}
+		current, err := targetFor(built.Target)
+		if err != nil {
+			return err
+		}
+		if want := current.archiveName(document.Version); built.Name != want {
+			return fmt.Errorf("manifest names the %s archive %q, want %q", built.Target, built.Name, want)
+		}
+		if !sha256Pattern.MatchString(built.SHA256) {
+			return fmt.Errorf("manifest SHA-256 of %s is not 64 lowercase hexadecimal characters", built.Name)
 		}
 		*ref = artifactRef{Name: built.Name, SHA256: built.SHA256, SHA256Upper: strings.ToUpper(built.SHA256), Size: built.Size}
 	}
@@ -226,6 +269,8 @@ func packagingCommand(arguments []string) error {
 		{"winget", filepath.Join(root, "packaging", "winget", "version.yaml.tmpl"), filepath.Join(outDir, data.PackageID+".yaml")},
 		{"winget", filepath.Join(root, "packaging", "winget", "installer.yaml.tmpl"), filepath.Join(outDir, data.PackageID+".installer.yaml")},
 		{"winget", filepath.Join(root, "packaging", "winget", "locale.en-US.yaml.tmpl"), filepath.Join(outDir, data.PackageID+".locale.en-US.yaml")},
+		{"aur", filepath.Join(root, "packaging", "aur", "PKGBUILD.tmpl"), filepath.Join(outDir, "aur", "PKGBUILD")},
+		{"aur", filepath.Join(root, "packaging", "aur", "SRCINFO.tmpl"), filepath.Join(outDir, "aur", ".SRCINFO")},
 	}
 	for _, item := range rendered {
 		if !selected[item.format] {
@@ -249,13 +294,15 @@ func packagingCommand(arguments []string) error {
 		}
 		fmt.Printf("rendered %s\n", npmDir)
 	}
-	for _, format := range []string{"homebrew", "winget", "npm"} {
+	for _, format := range []string{"homebrew", "winget", "npm", "aur"} {
 		if !selected[format] {
 			continue
 		}
-		formatMissing := map[string][]string{"homebrew": homebrewMissing, "winget": wingetMissing, "npm": npmMissing}[format]
+		formatMissing := map[string][]string{"homebrew": homebrewMissing, "winget": wingetMissing, "npm": npmMissing, "aur": aurMissing}[format]
 		if len(formatMissing) > 0 {
 			fmt.Printf("UNREADY %s: missing %s\n", format, strings.Join(uniqueSorted(formatMissing), ", "))
+		} else if format == "aur" && data.AURUnready != "" {
+			fmt.Printf("UNREADY %s: %s\n", format, data.AURUnready)
 		} else {
 			fmt.Printf("ready %s: every input was supplied\n", format)
 		}
@@ -294,10 +341,11 @@ func selectFormats(list string) (map[string]bool, error) {
 			selected["homebrew"] = true
 			selected["winget"] = true
 			selected["npm"] = true
-		case "homebrew", "winget", "npm":
+			selected["aur"] = true
+		case "homebrew", "winget", "npm", "aur":
 			selected[strings.TrimSpace(item)] = true
 		default:
-			return nil, fmt.Errorf("unknown format %q; use homebrew, winget, npm, or all", strings.TrimSpace(item))
+			return nil, fmt.Errorf("unknown format %q; use homebrew, winget, npm, aur, or all", strings.TrimSpace(item))
 		}
 	}
 	if len(selected) == 0 {
@@ -310,6 +358,7 @@ func renderTemplate(path string, data packagingData) ([]byte, error) {
 	parsed, err := template.New(filepath.Base(path)).Funcs(template.FuncMap{
 		"ruby": rubyString,
 		"yaml": yamlString,
+		"sh":   shellString,
 	}).ParseFiles(path)
 	if err != nil {
 		return nil, err
@@ -338,6 +387,11 @@ func rubyString(value string) string {
 		}
 	}
 	return builder.String()
+}
+
+// shellString renders a single-quoted shell word, as used in a PKGBUILD.
+func shellString(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 // yamlString renders a double-quoted YAML scalar.
@@ -408,6 +462,20 @@ func validatePackageID(value string) error {
 	}
 	if !packageIDPattern.MatchString(value) {
 		return fmt.Errorf("%q must look like Publisher.Package", value)
+	}
+	return nil
+}
+
+// validatePkgver accepts the version characters makepkg allows in pkgver:
+// printable ASCII without whitespace, hyphens, colons, or slashes.
+func validatePkgver(version string) error {
+	if version == "" {
+		return fmt.Errorf("empty version is not a valid Arch Linux pkgver")
+	}
+	for _, r := range version {
+		if r <= ' ' || r > '~' || strings.ContainsRune("-:/", r) {
+			return fmt.Errorf("version %q is not a valid Arch Linux pkgver (no hyphen, colon, slash, whitespace, or non-ASCII character)", version)
+		}
 	}
 	return nil
 }

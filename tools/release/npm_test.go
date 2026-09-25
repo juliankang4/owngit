@@ -49,7 +49,7 @@ func TestNPMPlatformNames(t *testing.T) {
 func TestNPMFormatSelection(t *testing.T) {
 	selected, err := selectFormats("all")
 	noErr(t, err)
-	if !reflect.DeepEqual(selected, map[string]bool{"homebrew": true, "winget": true, "npm": true}) {
+	if !reflect.DeepEqual(selected, map[string]bool{"homebrew": true, "winget": true, "npm": true, "aur": true}) {
 		t.Fatalf("-formats all selects %v", selected)
 	}
 	selected, err = selectFormats("npm")

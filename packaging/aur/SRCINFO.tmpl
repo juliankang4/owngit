@@ -1,0 +1,21 @@
+{{- if .AURUnready}}# UNREADY: {{.AURUnready}}
+{{end -}}
+pkgbase = owngit-bin
+	pkgdesc = Private Git storage and browser dashboard on your own computer
+	pkgver = {{.Version}}
+	pkgrel = 1
+	url = {{.Homepage}}
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	depends = git
+	provides = owngit
+	conflicts = owngit
+	options = !strip
+	options = !debug
+	source_x86_64 = {{.BaseURL}}/{{.LinuxAMD64.Name}}
+	sha256sums_x86_64 = {{.LinuxAMD64.SHA256}}
+	source_aarch64 = {{.BaseURL}}/{{.LinuxARM64.Name}}
+	sha256sums_aarch64 = {{.LinuxARM64.SHA256}}
+
+pkgname = owngit-bin

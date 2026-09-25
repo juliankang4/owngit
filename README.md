@@ -35,7 +35,7 @@ OwnGit is a self-hosted Git server for home labs and local machines. It keeps pr
 
 ## Install
 
-Every install route needs Git with an executable `git-http-backend` on the host. Homebrew installs Git for you.
+Every install route needs Git with an executable `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you.
 
 With [Homebrew](https://brew.sh) on macOS (Apple silicon) or Linux (x64, ARM64):
 
@@ -47,6 +47,14 @@ With [npm](https://www.npmjs.com/package/owngit) on macOS (Apple silicon), Linux
 
 ```sh
 npm install -g owngit
+```
+
+On Arch Linux (x64, ARM64) or Omarchy, build the package from the `PKGBUILD` attached to each release from 1.0.3 on. `makepkg` downloads the release archive, checks its SHA-256, and installs `owngit` with `pacman`; it needs the `base-devel` group. An AUR package, `owngit-bin`, is planned.
+
+```sh
+mkdir owngit-bin && cd owngit-bin
+curl -fLO https://github.com/juliankang4/owngit/releases/latest/download/PKGBUILD
+makepkg -si
 ```
 
 Or download the archive for your platform from [GitHub Releases](https://github.com/juliankang4/owngit/releases) and check it against `SHA256SUMS`. The binaries are not signed. If macOS refuses to run a binary you downloaded with a browser, run `xattr -d com.apple.quarantine owngit` once.
