@@ -13,11 +13,14 @@ import (
 	"owngit/internal/pullrequest"
 )
 
-type prRemoteFlags struct {
+// generalRemoteFlags are the connection flags of commands that use general
+// access: the shared password, or no credential when access is open.
+type generalRemoteFlags struct {
 	server             string
 	repository         string
 	passwordFile       string
 	acceptInsecureHTTP bool
+	withRepository     bool
 }
 
 func prCommand(arguments []string) error {
@@ -49,7 +52,7 @@ func prCommand(arguments []string) error {
 
 func prCreate(arguments []string) error {
 	flags := newPRFlagSet("pr create")
-	remote := addPRRemoteFlags(flags)
+	remote := addGeneralRemoteFlags(flags, true)
 	title := flags.String("title", "", "pull request title")
 	source := flags.String("source", "", "source branch")
 	targetBranch := flags.String("target", "", "target branch")
@@ -71,7 +74,7 @@ func prCreate(arguments []string) error {
 
 func prList(arguments []string) error {
 	flags := newPRFlagSet("pr list")
-	remote := addPRRemoteFlags(flags)
+	remote := addGeneralRemoteFlags(flags, true)
 	if err := parsePRFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -84,7 +87,7 @@ func prList(arguments []string) error {
 
 func prShow(arguments []string) error {
 	flags := newPRFlagSet("pr show")
-	remote := addPRRemoteFlags(flags)
+	remote := addGeneralRemoteFlags(flags, true)
 	number := flags.Int64("number", 0, "pull request number")
 	if err := parsePRFlags(flags, arguments); err != nil {
 		return err
@@ -113,7 +116,7 @@ func prReview(arguments []string) error {
 		return cliProblem("invalid_arguments", "pr review requires request, submit, or skip.")
 	}
 	flags := newPRFlagSet("pr review " + action)
-	remote := addPRRemoteFlags(flags)
+	remote := addGeneralRemoteFlags(flags, true)
 	number := flags.Int64("number", 0, "pull request number")
 	sourceOID := flags.String("source-oid", "", "exact source commit object ID")
 	targetOID := flags.String("target-oid", "", "exact target commit object ID")
@@ -145,7 +148,7 @@ func prReview(arguments []string) error {
 
 func prMerge(arguments []string) error {
 	flags := newPRFlagSet("pr merge")
-	remote := addPRRemoteFlags(flags)
+	remote := addGeneralRemoteFlags(flags, true)
 	number := flags.Int64("number", 0, "pull request number")
 	sourceOID := flags.String("source-oid", "", "exact source commit object ID")
 	targetOID := flags.String("target-oid", "", "exact target commit object ID")
@@ -166,7 +169,7 @@ func prMerge(arguments []string) error {
 // no object IDs are needed.
 func prSetClosed(action string, arguments []string) error {
 	flags := newPRFlagSet("pr " + action)
-	remote := addPRRemoteFlags(flags)
+	remote := addGeneralRemoteFlags(flags, true)
 	number := flags.Int64("number", 0, "pull request number")
 	if err := parsePRFlags(flags, arguments); err != nil {
 		return err
@@ -187,10 +190,14 @@ func newPRFlagSet(name string) *flag.FlagSet {
 	return flags
 }
 
-func addPRRemoteFlags(flags *flag.FlagSet) *prRemoteFlags {
-	remote := &prRemoteFlags{}
+// addGeneralRemoteFlags adds the connection flags. withRepository adds
+// --repository for commands that address one repository.
+func addGeneralRemoteFlags(flags *flag.FlagSet, withRepository bool) *generalRemoteFlags {
+	remote := &generalRemoteFlags{withRepository: withRepository}
 	flags.StringVar(&remote.server, "server", "", "OwnGit HTTP(S) origin")
-	flags.StringVar(&remote.repository, "repository", "", "repository identifier")
+	if withRepository {
+		flags.StringVar(&remote.repository, "repository", "", "repository identifier")
+	}
 	flags.StringVar(&remote.passwordFile, "password-file", "", "owner-readable file containing the shared general-access password")
 	flags.BoolVar(&remote.acceptInsecureHTTP, "accept-insecure-http", false, "accept unencrypted HTTP for this request")
 	return remote
@@ -209,8 +216,11 @@ func parsePRFlags(flags *flag.FlagSet, arguments []string) error {
 	return nil
 }
 
-func (remote *prRemoteFlags) connection() (connection, error) {
-	if remote.server == "" || remote.repository == "" {
+func (remote *generalRemoteFlags) connection() (connection, error) {
+	if !remote.withRepository && remote.server == "" {
+		return connection{}, cliProblem("invalid_arguments", "--server is required.")
+	}
+	if remote.withRepository && (remote.server == "" || remote.repository == "") {
 		return connection{}, cliProblem("invalid_arguments", "--server and --repository are required.")
 	}
 	parsed, err := apiclient.ValidateServer(remote.server, remote.acceptInsecureHTTP)

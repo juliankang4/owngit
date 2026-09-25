@@ -166,6 +166,29 @@ recently in the repository, from any branch; `check run` does not use it.
 `--accept-insecure-http`. `helper-credential list` and
 `helper-credential revoke --id ID` manage existing credentials.
 
+## Repositories
+
+`owngit repo` lists, shows, and creates repositories and prints one JSON
+object. It uses general access, like `owngit pr`: pass the shared
+general-access password with `--password-file`, or omit it when access is
+open. There is no delete or rename.
+
+```sh
+owngit repo list --server https://owngit.example.test
+owngit repo show --server https://owngit.example.test --repository example-project
+owngit repo create --server https://owngit.example.test --name example-project \
+  --description "Optional description"
+```
+
+Each repository carries `id`, `name`, `description`, `created_at`, and
+`clone_url`. `repo show` also carries `default_branch` when the repository's
+branches can be read at that moment. `repo list` returns at most 1000
+repositories, and `truncated` is true when there are more. `repo create`
+applies the same name and description rules as the browser form. It fails with
+`repository_exists` when the name is taken, `invalid_repository_name` or
+`reserved_repository_name` for a name the form would refuse, and
+`invalid_repository_description` for a description over 500 bytes.
+
 ## Reading the result
 
 `check run` prints one JSON object and exits with a code:

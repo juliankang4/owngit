@@ -17,6 +17,7 @@ var helpCommands = []struct {
 	{"serve", true}, {"setup-link", true}, {"reset-admin", true}, {"approve-host", true},
 	{"network", false}, {"network show", true}, {"network set", true}, {"network reset", true},
 	{"forget-check-container", true}, {"backup", true}, {"restore", true},
+	{"repo", false}, {"repo list", true}, {"repo show", true}, {"repo create", true},
 	{"pr", false}, {"pr create", true}, {"pr list", true}, {"pr show", true},
 	{"pr review", false}, {"pr review request", true}, {"pr review submit", true}, {"pr review skip", true},
 	{"pr merge", true},
@@ -124,6 +125,9 @@ func TestActionHelpListsOnlyItsOwnOptions(t *testing.T) {
 		{"runner-credential revoke", []string{"--credential"}, []string{"--label", "--token-file", "--creation-id"}},
 		{"runner-credential issue", []string{"--label", "--token-file", "--creation-id"}, []string{"--credential"}},
 		{"import history", []string{"--limit N", "--cursor ROW"}, []string{" int"}},
+		{"repo list", []string{"--server", "--password-file"}, []string{"--repository", "--name"}},
+		{"repo show", []string{"--repository"}, []string{"--name"}},
+		{"repo create", []string{"--name", "--description"}, []string{"--repository"}},
 	} {
 		output, err := captureStdout(func() error { return run(append(strings.Fields(test.path), "--help")) })
 		if err != nil {

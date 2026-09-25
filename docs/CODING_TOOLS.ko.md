@@ -111,6 +111,19 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 
 `helper-credential create`는 토큰을 발급합니다. 플래그는 `--label`, `--output`(필수), `--server`, `--repository`, `--password-file`, `--accept-insecure-http`입니다. `helper-credential list`와 `helper-credential revoke --id ID`로 기존 토큰을 관리합니다.
 
+## 저장소
+
+`owngit repo`는 저장소 목록을 보여 주고, 저장소 하나의 정보를 읽고, 새 저장소를 만든 뒤 JSON 객체 하나를 출력합니다. `owngit pr`과 같이 일반 접근을 사용합니다. 공유 일반 접근 비밀번호를 `--password-file`로 넘기고, 접근이 열려 있으면 생략합니다. 삭제나 이름 변경은 없습니다.
+
+```sh
+owngit repo list --server https://owngit.example.test
+owngit repo show --server https://owngit.example.test --repository example-project
+owngit repo create --server https://owngit.example.test --name example-project \
+  --description "Optional description"
+```
+
+저장소마다 `id`, `name`, `description`, `created_at`, `clone_url`이 있습니다. `repo show`는 그 순간 저장소의 브랜치를 읽을 수 있으면 `default_branch`도 보여 줍니다. `repo list`는 저장소를 최대 1000개까지 돌려주고, 더 있으면 `truncated`가 true입니다. `repo create`는 브라우저 양식과 같은 이름과 설명 규칙을 적용합니다. 이름이 이미 쓰이고 있으면 `repository_exists`, 양식이 거부할 이름이면 `invalid_repository_name`이나 `reserved_repository_name`, 설명이 500바이트를 넘으면 `invalid_repository_description`으로 실패합니다.
+
 ## 결과 읽기
 
 `check run`은 JSON 객체 하나를 출력하고 다음 코드로 끝납니다.

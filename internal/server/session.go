@@ -232,7 +232,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		chrome.Version = ""
 	}
 	if settings.Initialized && (chrome.Viewer.GeneralUnlocked || adminOK) {
-		repositories, err := app.Store.Repositories(request.Context())
+		repositories, err := app.visibleRepositories(request)
 		if err != nil {
 			return webui.Chrome{}, err
 		}

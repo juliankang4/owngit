@@ -44,7 +44,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	if app.resultNotice(writer, request) == removedNotice {
 		chrome.Notices = app.removedNotices(writer, request, chrome.Viewer.AdminConfirmed)
 	}
-	repositories, err := app.Store.Repositories(request.Context())
+	repositories, err := app.visibleRepositories(request)
 	if err != nil {
 		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
 		return
@@ -243,7 +243,7 @@ func (app *App) handleActivity(writer http.ResponseWriter, request *http.Request
 		app.writePlainError(writer, http.StatusServiceUnavailable)
 		return
 	}
-	repositories, err := app.Store.Repositories(request.Context())
+	repositories, err := app.visibleRepositories(request)
 	if err != nil {
 		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgActivityUnavail, "")
 		return

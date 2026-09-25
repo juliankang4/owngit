@@ -107,6 +107,8 @@ func runCommand(command string, arguments []string) error {
 		return restoreState(arguments)
 	case "pr":
 		return prCommand(arguments)
+	case "repo":
+		return repoCommand(arguments)
 	case "check":
 		return checkCommand(arguments)
 	case "helper-credential":
@@ -934,7 +936,7 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|network|forget-check-container|backup|restore|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|version] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|network|forget-check-container|backup|restore|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|version] [options]")
 	fmt.Fprintln(writer, "Run owngit <command> --help for the options of a command.")
 }
 

@@ -70,6 +70,32 @@ func (target connection) taskPath(taskID string) string {
 	return target.repositoryPath() + "/tasks/" + url.PathEscape(taskID)
 }
 
+// Repository operations use general access. Listing and creating address the
+// server, so they ignore the connection's repository.
+
+const repositoryCollectionPath = "/api/v1/repositories"
+
+func listRepositories(ctx context.Context, target connection) ([]byte, error) {
+	return target.client().Do(ctx, http.MethodGet, repositoryCollectionPath, nil)
+}
+
+func showRepository(ctx context.Context, target connection) ([]byte, error) {
+	if err := requireIdentifier(target.repository, "repository"); err != nil {
+		return nil, err
+	}
+	return target.client().Do(ctx, http.MethodGet, target.repositoryPath(), nil)
+}
+
+// repositoryInput is the body of a repository creation request.
+type repositoryInput struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func createRepository(ctx context.Context, target connection, input repositoryInput) ([]byte, error) {
+	return target.client().Do(ctx, http.MethodPost, repositoryCollectionPath, input)
+}
+
 // Pull request operations. The server validates titles, branches, object IDs
 // and review values; these functions only refuse inputs that would address the
 // wrong resource.
@@ -186,7 +212,7 @@ func latestCheckConfiguration(ctx context.Context, target connection) ([]byte, e
 
 func requireIdentifier(value, name string) error {
 	if value == "" {
-		return cliProblem("invalid_arguments", "A "+name+" identifier is required.")
+		return cliProblem("invalid_arguments", "The "+name+" identifier is required.")
 	}
 	return nil
 }
