@@ -74,8 +74,13 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	again := slices.Contains(report.Waiting, TailscaleWaitUnfinished) || slices.Contains(report.Waiting, TailscaleWaitName)
 	info.CanTurnOn = report.Installed && report.Problem == "" &&
 		(!report.On && report.Endpoint == TailscaleEndpointFree || report.On && again)
-	home, local := true, false
-	info.HomeListen, info.LocalListen = planListen(report.Listen, &home), planListen(report.Listen, &local)
+	// A --listen option decides where the running server listens, so the
+	// home network choice would change nothing then.
+	info.ListenOption = report.ListenOption
+	if info.ListenOption == "" {
+		home, local := true, false
+		info.HomeListen, info.LocalListen = planListen(report.Listen, &home), planListen(report.Listen, &local)
+	}
 	return info
 }
 

@@ -135,6 +135,10 @@ type TailscaleReport struct {
 	// whether it reaches other devices on the home network.
 	Listen      string `json:"listen"`
 	HomeNetwork bool   `json:"home_network"`
+	// ListenOption is the --listen option the running server was started
+	// with, or empty. It decides where that server listens, so turning
+	// sharing on keeps it and the home network choice has no effect.
+	ListenOption string `json:"listen_option,omitempty"`
 }
 
 // Report reads the state of Tailscale sharing without changing anything.
@@ -155,6 +159,9 @@ func (sharing *Tailscale) Report(ctx context.Context) (TailscaleReport, error) {
 	report.Listen = nextListen(saved)
 	host, _, _ := net.SplitHostPort(report.Listen)
 	report.HomeNetwork = everyInterface(host)
+	if _, fromOption := targetPort(report.Listen, observed); fromOption {
+		report.ListenOption = observed.Record.Listen
+	}
 	if on {
 		report.Sharing, report.URL = &record, "https://"+record.Name+"/"
 	}
@@ -303,6 +310,9 @@ type TailscaleChange struct {
 	// whether turning sharing on changed it.
 	Listen        string
 	ListenChanged bool
+	// ListenOption is the --listen option of the running server, which
+	// kept the listen address as it is; empty otherwise.
+	ListenOption string
 	// Endpoint says what happened to Tailscale's endpoint: "created",
 	// "kept" (it was already there) or, when turning off, "removed", "gone"
 	// (it was already removed), "left" (OwnGit had not created it) or
@@ -378,6 +388,7 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 	change := TailscaleChange{Listen: nextListen(saved)}
 	port, fromOption := targetPort(change.Listen, observed)
 	if fromOption {
+		change.ListenOption = observed.Record.Listen
 		if host, _, _ := net.SplitHostPort(observed.Record.Listen); !reachableAtLoopback(host) {
 			return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemListenOption, Detail: observed.Record.Listen}
 		}
@@ -457,7 +468,8 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 	if len(update.RemoveHosts) > 0 {
 		change.RemovedHost = previous.AddedHost
 	}
-	if homeNetwork != nil && *homeNetwork {
+	// Plain HTTP is accepted only when this change opens the home network.
+	if host, _, _ := net.SplitHostPort(change.Listen); change.ListenChanged && !IsLoopbackHost(host) {
 		if err := sharing.Store.AcknowledgeInsecureHTTP(ctx); err != nil {
 			return TailscaleChange{}, err
 		}

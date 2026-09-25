@@ -262,6 +262,7 @@ const (
 	MsgTSTurnOffBtn    MessageCode = "settings.tailscale.turn_off_button"
 	MsgTSCertLog       MessageCode = "settings.tailscale.certificate_log"
 	MsgTSHome          MessageCode = "settings.tailscale.home_network"
+	MsgTSListenOption  MessageCode = "settings.tailscale.listen_option"
 	MsgTSHomeHelp      MessageCode = "settings.tailscale.home_network_help"
 	MsgTSOnNote        MessageCode = "settings.tailscale.on_note"
 	MsgTSOffNote       MessageCode = "settings.tailscale.off_note"
@@ -309,6 +310,11 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 	MsgTSCertLog: {
 		en: "When Tailscale issues the certificate for this address, the names of this computer and your tailnet, as in %s, are recorded in a public certificate log. Only the fact that the address was opened is recorded, not your code, repositories, passwords or other content. This computer's name can be changed in the Tailscale admin console.",
 		ko: "Tailscale이 이 주소의 인증서를 발급하면 %s처럼 이 컴퓨터와 tailnet의 이름이 공개 인증서 로그에 기록됩니다. 주소를 열었다는 기록만 남을 뿐 코드, 저장소, 비밀번호 같은 내용은 기록되지 않습니다. 이 컴퓨터의 이름은 Tailscale 관리 콘솔에서 바꿀 수 있습니다.",
+	},
+	// Value: the --listen option.
+	MsgTSListenOption: {
+		en: "OwnGit was started with --listen %s, which decides where it listens, so turning sharing on keeps that address. To choose whether devices on the home network can also connect, start OwnGit without that option.",
+		ko: "OwnGit이 --listen %s 옵션으로 시작되어 이 옵션이 연결 주소를 정합니다. 그래서 공유를 켜도 이 주소를 그대로 씁니다. 홈 네트워크의 기기도 접속할 수 있게 할지 고르려면 이 옵션 없이 OwnGit을 시작하세요.",
 	},
 	MsgTSHome: {en: "Also allow on the home network (not encrypted)", ko: "홈 네트워크에서도 허용 (암호화되지 않음)"},
 	// Values: the listen address with the home network, then without it.

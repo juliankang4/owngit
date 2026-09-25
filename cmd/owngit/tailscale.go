@@ -181,6 +181,9 @@ func tailscaleOn(arguments []string) error {
 	if change.ListenChanged {
 		fmt.Printf("OwnGit listens on %s from the next start.\n", change.Listen)
 	}
+	if change.ListenOption != "" && choice != nil {
+		fmt.Printf("The running OwnGit was started with --listen %s, which decides where it listens, so --home-network changed nothing.\n", change.ListenOption)
+	}
 	printTailscaleReport(os.Stdout, report)
 	observed, err := store.ObserveRunningNetwork(ctx)
 	if err != nil {

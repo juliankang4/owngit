@@ -791,3 +791,51 @@ func TestConcurrentSettingsViewsStartOneReading(t *testing.T) {
 		t.Fatalf("20 concurrent Settings views ran tailscale %d times, want at most 2", got)
 	}
 }
+
+// With "serve --listen", the option decides where the server listens: the
+// home network choice changes nothing, so it is not offered, does not count
+// as accepting plain HTTP, and the page names the option's address instead
+// of the saved port.
+func TestAListenOptionDecidesInsteadOfTheHomeNetworkChoice(t *testing.T) {
+	unacknowledged, store, root := newTestApp(t)
+	ctx := context.Background()
+	noErr(t, store.CompleteSetup(ctx, root, "open", "", "synthetic-admin-hash", false))
+	app, fake := withTailscale(t, unacknowledged, tailscaletest.State{Status: tailscaletest.Running()})
+	app.Network = NewLiveNetwork(LiveNetworkConfig{
+		Record: state.RunningNetwork{
+			Listen: "127.0.0.1:7890", Address: "127.0.0.1:7890", ListenSource: NetworkSourceFlag,
+			Origin: "http://127.0.0.1:7890", BaseURLSource: NetworkSourceDefault,
+			SavedHosts: []string{}, TrustedProxies: []string{}, TrustedProxiesSource: NetworkSourceDefault,
+		},
+		Hosts:   app.Hosts,
+		Publish: func(running state.RunningNetwork) { noErr(t, app.Store.PublishRunningNetwork(ctx, running)) },
+	})
+	app.Network.Publish()
+	app.Tailscale.Live = app.Network
+
+	report, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	info := tailscaleInfo(report)
+	if report.ListenOption != "127.0.0.1:7890" || info.ListenOption != "127.0.0.1:7890" || info.HomeListen != "" {
+		t.Fatalf("report=%+v info=%+v", report, info)
+	}
+	_, _, _, page := networkSettingsClient(t, app)
+	block := page[strings.Index(page, `id="tailscale"`):]
+	block = block[:strings.Index(block, `<div class="setblock"`)]
+	if !strings.Contains(block, `value="tailscale_on"`) || strings.Contains(block, `name="home_network"`) || !strings.Contains(block, "--listen 127.0.0.1:7890") ||
+		strings.Contains(block, "7654") {
+		t.Fatal("the Tailscale block offers the home network choice or names the saved port under a --listen option")
+	}
+
+	yes := true
+	change, err := app.Tailscale.On(ctx, &yes)
+	noErr(t, err)
+	if change.ListenChanged || change.ListenOption != "127.0.0.1:7890" || !slices.Contains(fake.Writes(), "serve --bg --https=443 http://127.0.0.1:7890") {
+		t.Fatalf("change=%+v writes=%q", change, fake.Writes())
+	}
+	settings, err := app.Store.Settings(ctx)
+	noErr(t, err)
+	if saved, _, _, _ := savedSharing(t, app.Store); saved.Listen != "" || settings.InsecureHTTPAccepted {
+		t.Fatalf("a choice that changed nothing saved listen %q or accepted plain HTTP (%v)", saved.Listen, settings.InsecureHTTPAccepted)
+	}
+}

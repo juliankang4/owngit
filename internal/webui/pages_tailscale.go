@@ -50,4 +50,8 @@ type TailscaleInfo struct {
 	// HomeListen and LocalListen are the listen addresses with and without
 	// the home network, for the checkbox's help text.
 	HomeListen, LocalListen string
+	// ListenOption is the --listen option the running OwnGit was started
+	// with, which decides where it listens; the page then explains that
+	// instead of offering the home network checkbox.
+	ListenOption string
 }

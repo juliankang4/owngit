@@ -313,6 +313,9 @@
           <input type="hidden" name="action" value="{{$act}}">
           <p class="setblock__d">{{bi $lang "settings.tailscale.on_note"}}</p>
           <p class="tslog" id="ts-log">{{icon "info"}}<span>{{biF $lang "settings.tailscale.certificate_log" $ts.Name}}</span></p>
+          {{if $ts.ListenOption}}
+            <p class="netnote netnote--info">{{icon "info"}}<span>{{biF $lang "settings.tailscale.listen_option" $ts.ListenOption}}</span></p>
+          {{else}}
           <div>
             <label class="check">
               <input type="checkbox" name="home_network" value="1"{{if $ts.HomeNetwork}} checked{{end}} aria-describedby="ts-home-help">
@@ -320,6 +323,7 @@
               <span class="check__d" id="ts-home-help">{{biF $lang "settings.tailscale.home_network_help" $ts.HomeListen $ts.LocalListen}}</span>
             </label>
           </div>
+          {{end}}
           <div class="f">
             <label for="ts-on-admin">{{bi $lang "admin.field"}}</label>
             <input id="ts-on-admin" name="admin_password" type="password" autocomplete="current-password" required
