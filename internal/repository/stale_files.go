@@ -23,6 +23,13 @@ var processStart = time.Now()
 // leaves them behind, and nothing else ever removes them.
 var gitTemporaryPackFile = regexp.MustCompile(`^(tmp_(pack|idx|rev|mtimes|bitmap)_[A-Za-z0-9]{6}|\.tmp-[0-9]+-pack-[0-9a-f]+\.(pack|idx|rev|mtimes|bitmap|promisor))$`)
 
+// gitIncomingObjectDirectory matches the quarantine directory that
+// receive-pack creates in objects for the objects of a push while it checks
+// them (Git's tmp_objdir with the prefix "incoming"). Git removes it when the
+// push ends, but a push whose receive-pack was killed leaves it behind with
+// the objects received so far, and nothing else ever removes it.
+var gitIncomingObjectDirectory = regexp.MustCompile(`^tmp_objdir-incoming-[A-Za-z0-9]{6}$`)
+
 // staleGitLockFiles are the Git lock files that repository maintenance
 // creates. A Git process that was killed, which on Windows ends the process
 // at once, leaves them behind, and every later pack-refs, branch deletion or
@@ -33,12 +40,14 @@ var staleGitLockFiles = []string{
 	filepath.Join("objects", "info", "commit-graphs", "commit-graph-chain.lock"),
 }
 
-// removeStaleGitFiles removes the temporary pack files and the lock files
-// above that are older than this process. The caller holds the repository
-// write lock, so no Git command of this process that uses the lock files
-// runs. The age check keeps the temporary files of an import, which indexes
-// its pack without the lock, because this process started that import. It
-// returns what it removed and any errors.
+// removeStaleGitFiles removes the temporary pack files, the push quarantine
+// directories and the lock files above that are older than this process. A
+// quarantine directory counts as older only when nothing in it changed since
+// this process started. The caller holds the repository write lock, so no
+// push and no Git command of this process that uses the lock files runs. The
+// age check keeps the temporary files of an import, which indexes its pack
+// without the lock, because this process started that import. It returns what
+// it removed and any errors.
 func removeStaleGitFiles(path string) (removed []string, err error) {
 	var errs []error
 	remove := func(relative string) {
@@ -73,7 +82,55 @@ func removeStaleGitFiles(path string) (removed []string, err error) {
 	for _, name := range staleGitLockFiles {
 		remove(name)
 	}
+	objectEntries, readErr := os.ReadDir(filepath.Join(path, "objects"))
+	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+		errs = append(errs, readErr)
+	}
+	for _, entry := range objectEntries {
+		if !entry.IsDir() || !gitIncomingObjectDirectory.MatchString(entry.Name()) {
+			continue
+		}
+		relative := filepath.Join("objects", entry.Name())
+		size, stale, walkErr := staleDirectory(filepath.Join(path, relative))
+		if walkErr != nil {
+			errs = append(errs, walkErr)
+			continue
+		}
+		if !stale {
+			continue
+		}
+		if removeErr := os.RemoveAll(filepath.Join(path, relative)); removeErr != nil {
+			errs = append(errs, removeErr)
+			continue
+		}
+		removed = append(removed, fmt.Sprintf("%s (directory, %d bytes)", filepath.ToSlash(relative), size))
+	}
 	return removed, errors.Join(errs...)
+}
+
+// staleDirectory reports the size of the regular files in directory and
+// whether the directory and everything in it were last changed before this
+// process started. Links inside are counted by their own times and are not
+// followed.
+func staleDirectory(directory string) (size int64, stale bool, err error) {
+	stale = true
+	err = filepath.WalkDir(directory, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.ModTime().Before(processStart) {
+			stale = false
+		}
+		if info.Mode().IsRegular() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size, stale, err
 }
 
 // logStaleGitFileRemoval removes stale Git files from repository id at path
