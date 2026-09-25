@@ -514,20 +514,6 @@ func networkReset(arguments []string) error {
 	return nil
 }
 
-// openLiveState opens a state directory that a running server may be writing
-// to. Opening refuses a directory that changed while it was inspected and
-// says the operation can be retried, so the network commands retry a few
-// times instead of failing because the server wrote at that moment.
-func openLiveState(ctx context.Context, stateDir string) (*state.Store, error) {
-	for attempt := 1; ; attempt++ {
-		store, err := openState(ctx, stateDir, stderrf)
-		if !errors.Is(err, state.ErrInspectionUnstable) || attempt == 5 {
-			return store, err
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
 func normalizeHostArguments(values []string) ([]string, error) {
 	var hosts []string
 	for _, value := range values {

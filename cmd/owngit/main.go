@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -622,7 +623,7 @@ func setupLink(arguments []string) error {
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
-	store, err := openState(context.Background(), *stateDir, stderrf)
+	store, err := openLiveState(context.Background(), *stateDir)
 	if err != nil {
 		return err
 	}
@@ -664,7 +665,7 @@ func resetAdmin(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	store, err := openState(context.Background(), *stateDir, stderrf)
+	store, err := openLiveState(context.Background(), *stateDir)
 	if err != nil {
 		return err
 	}
@@ -705,7 +706,7 @@ func approveHost(arguments []string) error {
 	if err := policy.Add(host); err != nil {
 		return err
 	}
-	store, err := openState(context.Background(), *stateDir, stderrf)
+	store, err := openLiveState(context.Background(), *stateDir)
 	if err != nil {
 		return err
 	}
@@ -741,7 +742,7 @@ func forgetCheckContainer(arguments []string) error {
 	if !*confirmed {
 		return errors.New("--confirm-container-removed is required: first remove any container labeled com.owngit.check-job=" + *jobID + " on the Docker daemon that ran it, or make sure that daemon no longer exists")
 	}
-	store, err := openState(context.Background(), *stateDir, stderrf)
+	store, err := openLiveState(context.Background(), *stateDir)
 	if err != nil {
 		return err
 	}
@@ -859,6 +860,33 @@ func openState(ctx context.Context, dir string, report func(string, ...any)) (*s
 		report("%s", upgrade)
 	}
 	return store, nil
+}
+
+// openLiveState opens a state directory that a running server may be writing
+// to. Opening refuses a directory that changed while it was inspected and
+// says the operation can be retried, so the commands that work next to a
+// running server retry a few times instead of failing because the server
+// wrote at that moment. The wait between attempts varies, so a retry does not
+// keep meeting writes that repeat at a steady interval.
+func openLiveState(ctx context.Context, stateDir string) (*state.Store, error) {
+	for attempt := 1; ; attempt++ {
+		store, err := openLiveStateAttempt(ctx, stateDir)
+		if !errors.Is(err, state.ErrInspectionUnstable) || attempt == liveStateAttempts {
+			return store, err
+		}
+		time.Sleep(liveStateRetryDelay/2 + rand.N(liveStateRetryDelay))
+	}
+}
+
+const (
+	liveStateAttempts   = 5
+	liveStateRetryDelay = 100 * time.Millisecond
+)
+
+// openLiveStateAttempt is one attempt of openLiveState; tests replace it to
+// make the state directory change during inspection.
+var openLiveStateAttempt = func(ctx context.Context, stateDir string) (*state.Store, error) {
+	return openState(ctx, stateDir, stderrf)
 }
 
 // stderrf writes one line to standard error.
