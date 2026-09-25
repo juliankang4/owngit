@@ -13,9 +13,14 @@ import (
 // cleanup grace must not make the runner report a detached callback. The gate
 // closes first, the delayed admission is refused, and no callback starts after
 // the return, so the caller sees only the context and lifecycle errors.
+// The deadline passes when the protocol reaches the admission check, after the
+// helper has started and prepared, so machine load cannot move it earlier. The
+// command timeout only bounds a broken run.
 func TestPreparedUnstartedCallbackCannotBeReportedDetached(t *testing.T) {
 	runner := newPreparedHelperRunner(t)
 	runner.TerminationGrace = 40 * time.Millisecond
+	ctx := newManualDeadline()
+	defer ctx.expire()
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	protocolExited := make(chan struct{})
@@ -25,6 +30,7 @@ func TestPreparedUnstartedCallbackCannotBeReportedDetached(t *testing.T) {
 	seam := &preparedProtocolSeam{
 		beforeAdmission: func() {
 			close(entered)
+			ctx.expire()
 			<-release
 		},
 		afterProtocol: func() { close(protocolExited) },
@@ -32,9 +38,9 @@ func TestPreparedUnstartedCallbackCannotBeReportedDetached(t *testing.T) {
 	var calls atomic.Int32
 	result := make(chan error, 1)
 	go func() {
-		_, err := runner.runPreparedUpdateContext(context.Background(), t.TempDir(),
+		_, err := runner.runPreparedUpdateContext(ctx, t.TempDir(),
 			[]string{"verify refs/heads/main 0000000000000000000000000000000000000000"},
-			CommandLimits{Timeout: 120 * time.Millisecond, Environment: []string{preparedHelperModeEnvironment + "=normal"}},
+			CommandLimits{Timeout: time.Minute, Environment: []string{preparedHelperModeEnvironment + "=normal"}},
 			func(context.Context) error { calls.Add(1); return nil }, seam)
 		result <- err
 	}()
@@ -68,39 +74,47 @@ func TestPreparedUnstartedCallbackCannotBeReportedDetached(t *testing.T) {
 
 // The opposite order: an admitted callback that outlives the join grace is
 // genuinely detached, so a caller can hold its guards until the callback
-// finishes. Closing the gate must not over-cancel a running callback.
+// finishes. Closing the gate must not over-cancel a running callback. The
+// callback expires the deadline when it is entered, after the helper has
+// started and prepared, and the bound is measured from that moment. The
+// command timeout only bounds a broken run.
 func TestPreparedAdmittedCallbackIsStillReportedDetached(t *testing.T) {
 	runner := newPreparedHelperRunner(t)
 	runner.TerminationGrace = 40 * time.Millisecond
+	ctx := newManualDeadline()
+	defer ctx.expire()
 	entered := make(chan struct{})
 	finished := make(chan struct{})
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	t.Cleanup(unblock)
-	started := time.Now()
-	_, err := runner.RunPreparedUpdateContext(context.Background(), t.TempDir(),
+	var expired time.Time
+	_, err := runner.RunPreparedUpdateContext(ctx, t.TempDir(),
 		[]string{"verify refs/heads/main 0000000000000000000000000000000000000000"},
-		CommandLimits{Timeout: 120 * time.Millisecond, Environment: []string{preparedHelperModeEnvironment + "=normal"}},
+		CommandLimits{Timeout: time.Minute, Environment: []string{preparedHelperModeEnvironment + "=normal"}},
 		func(context.Context) error {
+			expired = time.Now()
 			close(entered)
+			ctx.expire()
 			<-release
 			close(finished)
 			return nil
 		})
+	returned := time.Now()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline cause missing: %v", err)
 	}
 	if !errors.Is(err, ErrPreparedCallbackDetached) {
 		t.Fatalf("admitted unfinished callback was not reported detached: %v", err)
 	}
-	if time.Since(started) > 3*time.Second {
-		t.Fatalf("detached return exceeded its bound: %s", time.Since(started))
-	}
 	select {
 	case <-entered:
 	default:
 		t.Fatal("callback was not admitted before the return")
+	}
+	if elapsed := returned.Sub(expired); elapsed > 3*time.Second {
+		t.Fatalf("detached return exceeded its bound: %s", elapsed)
 	}
 	select {
 	case <-finished:

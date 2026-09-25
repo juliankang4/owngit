@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,6 +17,9 @@ import (
 const (
 	preparedHelperModeEnvironment   = "OWNGIT_PREPARED_HELPER_MODE"
 	preparedHelperMarkerEnvironment = "OWNGIT_PREPARED_HELPER_MARKER"
+	// preparedHelperFinalEnvironment names a file where a hanging helper
+	// writes the final command it received, once it is about to hang.
+	preparedHelperFinalEnvironment = "OWNGIT_PREPARED_HELPER_FINAL"
 )
 
 func TestMain(m *testing.M) {
@@ -77,6 +81,11 @@ func runPreparedHelper(mode string) int {
 					}
 					if err := child.Start(); err != nil {
 						return 4
+					}
+				}
+				if final := os.Getenv(preparedHelperFinalEnvironment); final != "" {
+					if err := os.WriteFile(final, []byte(line), 0o600); err != nil {
+						return 3
 					}
 				}
 				for {
@@ -170,9 +179,13 @@ func TestPreparedUpdateExplicitAbortReturnsCallbackError(t *testing.T) {
 		}
 	})
 	t.Run("cleanup timeout", func(t *testing.T) {
+		// The deadline passes only once the helper has received the abort and
+		// hangs, so the run times out during cleanup however long the helper
+		// takes to start. The command timeout only bounds a broken run.
 		runner := newPreparedHelperRunner(t)
-		_, err := runner.RunPreparedUpdateContext(context.Background(), t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
-			Timeout: 50 * time.Millisecond, Environment: []string{preparedHelperModeEnvironment + "=hang-final"},
+		ctx, final := deadlineAtFinalCommand(t, "abort")
+		_, err := runner.RunPreparedUpdateContext(ctx, t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
+			Timeout: time.Minute, Environment: []string{preparedHelperModeEnvironment + "=hang-final", final},
 		}, func(context.Context) error { return want })
 		if !errors.Is(err, want) || !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("callback and cleanup rejection err=%v", err)
@@ -180,42 +193,120 @@ func TestPreparedUpdateExplicitAbortReturnsCallbackError(t *testing.T) {
 	})
 }
 
+// manualDeadline is a context whose deadline passes when the test calls
+// expire, so a test can place a timeout at a known protocol step.
+type manualDeadline struct {
+	context.Context
+	done    chan struct{}
+	once    sync.Once
+	expired time.Time
+}
+
+func newManualDeadline() *manualDeadline {
+	return &manualDeadline{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (d *manualDeadline) Done() <-chan struct{} { return d.done }
+
+func (d *manualDeadline) Err() error {
+	select {
+	case <-d.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (d *manualDeadline) expire() {
+	d.once.Do(func() {
+		d.expired = time.Now()
+		close(d.done)
+	})
+}
+
+// expiredAt reports when the deadline passed, or false if it has not, for
+// example because the run ended with another error first. It never waits.
+func (d *manualDeadline) expiredAt() (time.Time, bool) {
+	select {
+	case <-d.done:
+		return d.expired, true
+	default:
+		return time.Time{}, false
+	}
+}
+
+// deadlineAtFinalCommand returns a deadline that passes once a hanging helper
+// reports that it received the final command want, and the environment entry
+// that tells the helper where to report it. The timeout then falls in the
+// step after that command however long the helper took to start. The test
+// should also set a long command timeout, which only bounds a broken run.
+func deadlineAtFinalCommand(t *testing.T, want string) (*manualDeadline, string) {
+	t.Helper()
+	ctx := newManualDeadline()
+	t.Cleanup(ctx.expire)
+	path := filepath.Join(t.TempDir(), "final-command")
+	go func() {
+		for {
+			if data, err := os.ReadFile(path); err == nil && string(data) == want {
+				ctx.expire()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+	}()
+	return ctx, preparedHelperFinalEnvironment + "=" + path
+}
+
 func TestPreparedUpdateCancellationBoundsNonCooperativeCallback(t *testing.T) {
+	// The deadline passes when the callback is entered, after the helper has
+	// started and prepared however loaded the machine is, and the bound is
+	// measured from that moment. The command timeout only bounds a broken run.
 	runner := newPreparedHelperRunner(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+	ctx := newManualDeadline()
+	defer ctx.expire()
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	started := time.Now()
+	var expired time.Time
 	_, err := runner.RunPreparedUpdateContext(ctx, t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
-		Timeout: time.Second, Environment: []string{preparedHelperModeEnvironment + "=normal"},
+		Timeout: time.Minute, Environment: []string{preparedHelperModeEnvironment + "=normal"},
 	}, func(context.Context) error {
+		expired = time.Now()
 		close(entered)
+		ctx.expire()
 		<-release
 		return nil
 	})
+	returned := time.Now()
 	close(release)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("non-cooperative callback err=%v", err)
-	}
-	if time.Since(started) > 500*time.Millisecond {
-		t.Fatalf("non-cooperative callback exceeded bounded cancellation: %s", time.Since(started))
 	}
 	select {
 	case <-entered:
 	default:
 		t.Fatal("prepared callback was not entered")
 	}
+	if elapsed := returned.Sub(expired); elapsed > 500*time.Millisecond {
+		t.Fatalf("non-cooperative callback exceeded bounded cancellation: %s", elapsed)
+	}
 }
 
 func TestPreparedUpdateTerminationReapsDescendant(t *testing.T) {
+	// The deadline passes once the helper has started its descendant and
+	// hangs after the final command, so the descendant always exists.
 	runner := newPreparedHelperRunner(t)
 	marker := filepath.Join(t.TempDir(), "descendant-survived")
-	_, err := runner.RunPreparedUpdateContext(context.Background(), t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
-		Timeout: 50 * time.Millisecond,
+	ctx, final := deadlineAtFinalCommand(t, "commit")
+	_, err := runner.RunPreparedUpdateContext(ctx, t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
+		Timeout: time.Minute,
 		Environment: []string{
 			preparedHelperModeEnvironment + "=hang-descendant",
 			preparedHelperMarkerEnvironment + "=" + marker,
+			final,
 		},
 	}, func(context.Context) error { return nil })
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -227,32 +318,48 @@ func TestPreparedUpdateTerminationReapsDescendant(t *testing.T) {
 	}
 }
 
+// The deadline passes once the helper hangs after the final command, and the
+// bound is measured from that moment, not from the helper start.
 func TestPreparedUpdateTerminationWaitIsBounded(t *testing.T) {
 	runner := newPreparedHelperRunner(t)
-	started := time.Now()
-	_, err := runner.RunPreparedUpdateContext(context.Background(), t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
-		Timeout: 50 * time.Millisecond, Environment: []string{preparedHelperModeEnvironment + "=hang-final"},
+	ctx, final := deadlineAtFinalCommand(t, "commit")
+	_, err := runner.RunPreparedUpdateContext(ctx, t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
+		Timeout: time.Minute, Environment: []string{preparedHelperModeEnvironment + "=hang-final", final},
 	}, func(context.Context) error { return nil })
+	returned := time.Now()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("hung final acknowledgement err=%v", err)
 	}
-	if time.Since(started) > time.Second {
-		t.Fatalf("termination and reap exceeded bound: %s", time.Since(started))
+	expired, ok := ctx.expiredAt()
+	if !ok {
+		t.Fatal("the run ended before the helper reached its final command")
+	}
+	if elapsed := returned.Sub(expired); elapsed > time.Second {
+		t.Fatalf("termination and reap exceeded bound: %s", elapsed)
 	}
 }
 
 // The runner joins a callback that returns inside the termination grace and
 // reports one that is still running, so a caller can complete its own barrier.
+// Each callback expires the deadline when it is entered, after the helper has
+// started and prepared, so machine load cannot let the deadline pass before
+// the callback is admitted. The command timeout only bounds a broken run.
 func TestPreparedUpdateJoinsOrReportsCallbackAfterDeadline(t *testing.T) {
 	t.Run("joined", func(t *testing.T) {
+		// The callback returns 100 ms after the deadline, well inside the
+		// grace, so a runner that did not join it would return first.
 		runner := newPreparedHelperRunner(t)
-		runner.TerminationGrace = 300 * time.Millisecond
+		runner.TerminationGrace = 2 * time.Second
+		ctx := newManualDeadline()
+		defer ctx.expire()
 		finished := make(chan struct{})
-		_, err := runner.RunPreparedUpdateContext(context.Background(), t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
-			Timeout: 50 * time.Millisecond, Environment: []string{preparedHelperModeEnvironment + "=normal"},
-		}, func(ctx context.Context) error {
+		_, err := runner.RunPreparedUpdateContext(ctx, t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
+			Timeout: time.Minute, Environment: []string{preparedHelperModeEnvironment + "=normal"},
+		}, func(callbackCtx context.Context) error {
 			defer close(finished)
-			<-ctx.Done()
+			ctx.expire()
+			<-callbackCtx.Done()
+			time.Sleep(100 * time.Millisecond)
 			return nil
 		})
 		if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPreparedCallbackDetached) {
@@ -266,11 +373,14 @@ func TestPreparedUpdateJoinsOrReportsCallbackAfterDeadline(t *testing.T) {
 	})
 	t.Run("detached", func(t *testing.T) {
 		runner := newPreparedHelperRunner(t)
+		ctx := newManualDeadline()
+		defer ctx.expire()
 		release := make(chan struct{})
 		defer close(release)
-		_, err := runner.RunPreparedUpdateContext(context.Background(), t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
-			Timeout: 50 * time.Millisecond, Environment: []string{preparedHelperModeEnvironment + "=normal"},
+		_, err := runner.RunPreparedUpdateContext(ctx, t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
+			Timeout: time.Minute, Environment: []string{preparedHelperModeEnvironment + "=normal"},
 		}, func(context.Context) error {
+			ctx.expire()
 			<-release
 			return nil
 		})

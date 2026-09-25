@@ -33,15 +33,26 @@ func TestPreparedAttachmentFailureCleanupIsBoundedAndPreservesCauses(t *testing.
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
+			// With a completed wait, the helper is killed and reaped before the
+			// cleanup starts, so the cleanup grace covers only the seam calls
+			// and not how long a loaded machine takes to end a process.
+			var reaped error
 			runner.processSeam = &processCleanupSeam{
-				attachFunc: func(*exec.Cmd) (*ProcessOwner, error) { return nil, attachErr },
-				killFunc:   func(*exec.Cmd) error { return killErr },
+				attachFunc: func(cmd *exec.Cmd) (*ProcessOwner, error) {
+					if !stalled {
+						_ = cmd.Process.Kill()
+						reaped = cmd.Wait()
+					}
+					return nil, attachErr
+				},
+				killFunc: func(*exec.Cmd) error { return killErr },
 				waitFunc: func(cmd *exec.Cmd) error {
 					defer close(waitFinished)
-					if stalled {
-						close(entered)
-						<-release
+					if !stalled {
+						return errors.Join(waitErr, reaped)
 					}
+					close(entered)
+					<-release
 					_ = cmd.Process.Kill()
 					return errors.Join(waitErr, cmd.Wait())
 				},

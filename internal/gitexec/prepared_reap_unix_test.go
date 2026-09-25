@@ -31,7 +31,8 @@ func linuxZombieTerminate(owner *ProcessOwner, grace time.Duration) error {
 
 // A prepared update that hangs after its final command is terminated while
 // Wait already runs, so the killed leader is reaped during termination and the
-// timeout reports only the deadline, promptly.
+// timeout reports only the deadline, promptly. The deadline passes once the
+// helper hangs after the final command, and the time is measured from then.
 func TestPreparedUpdateTerminationReapsLeaderWhileSignaling(t *testing.T) {
 	previous := preparedTerminateOwnedProcess
 	preparedTerminateOwnedProcess = linuxZombieTerminate
@@ -39,11 +40,11 @@ func TestPreparedUpdateTerminationReapsLeaderWhileSignaling(t *testing.T) {
 
 	runner := newPreparedHelperRunner(t)
 	runner.TerminationGrace = 500 * time.Millisecond
-	started := time.Now()
-	_, err := runner.RunPreparedUpdateContext(context.Background(), t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
-		Timeout: 50 * time.Millisecond, Environment: []string{preparedHelperModeEnvironment + "=hang-final"},
+	ctx, final := deadlineAtFinalCommand(t, "commit")
+	_, err := runner.RunPreparedUpdateContext(ctx, t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
+		Timeout: time.Minute, Environment: []string{preparedHelperModeEnvironment + "=hang-final", final},
 	}, func(context.Context) error { return nil })
-	elapsed := time.Since(started)
+	returned := time.Now()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("hung prepared update err=%v", err)
 	}
@@ -60,8 +61,12 @@ func TestPreparedUpdateTerminationReapsLeaderWhileSignaling(t *testing.T) {
 			unwrapped = append(unwrapped, joined.Unwrap()...)
 		}
 	}
+	expired, ok := ctx.expiredAt()
+	if !ok {
+		t.Fatal("the run ended before the helper reached its final command")
+	}
 	// One grace interval for the protocol, then prompt termination.
-	if elapsed > 1500*time.Millisecond {
+	if elapsed := returned.Sub(expired); elapsed > 1500*time.Millisecond {
 		t.Fatalf("termination took %s", elapsed)
 	}
 }
