@@ -42,8 +42,14 @@ import (
 // measured on an Apple M4 Pro:
 //
 //   - emphasis and strikethrough delimiters in one paragraph: each one that
-//     can close emphasis looks back over the others, up to about 3 ns per
-//     pair ("*a_", or "x_" among many snake_case words);
+//     can close emphasis looks back over the others ("*a_", or "x_" among
+//     many snake_case words), up to about 3 ns per pair. The walk follows
+//     one pointer per delimiter, so once the list outgrows the processor's
+//     cache each step waits for memory: about 50 ns on a GitHub-hosted
+//     macOS runner shared with other tests, and 100 to 130 ns here on a
+//     loaded or efficiency core, for 50,000 to 100,000 delimiters. Closers
+//     after all the other delimiters make every pair a step. Pairs in a
+//     run with more than cachedDelimiters are charged 50;
 //   - "<!" and "<?", which may open a comment, declaration, CDATA section or
 //     processing instruction, scan to the end of their paragraph, about 2 ns
 //     times their number times the paragraph size;
@@ -63,6 +69,16 @@ const (
 	// source at this edge takes about 0.8 s there: a fifth of renderBudget,
 	// which leaves room for a processor several times slower.
 	maxCost = 500_000_000
+	// cachedDelimiters is the most emphasis delimiters in one run of lines
+	// whose pairs are charged the cached rate. Their nodes take about 400
+	// bytes each, about 3 MB for this many. On that runner 13,000
+	// delimiters of "*a_" took about twice as long as here, as the other
+	// shapes did, so the walk still hit the cache. A blank line ends a run,
+	// so documents made of ordinary paragraphs are not affected. A long
+	// list or paragraph without blank lines that passes this many "*", "_"
+	// or "~" (underscores inside words count) is charged more and shows as
+	// source from a smaller size than before.
+	cachedDelimiters = 8192
 	// maxTableCells bounds the table cells one run of lines can make, about
 	// 50 MB of memory. Real tables have a few thousand.
 	maxTableCells = 200_000
@@ -400,7 +416,11 @@ func estimate(source []byte, skipped func(start, end int)) int64 {
 	var allBacktickRuns, escapedPipes int64
 	tooManyCells := false
 	endRun := func() {
-		total += 3*delimiters*closers + 2*rawOpeners*size + linkOpeners*size/16 + 40*backtickRuns*lines
+		pairCost := int64(3)
+		if delimiters > cachedDelimiters {
+			pairCost = 50
+		}
+		total += pairCost*delimiters*closers + 2*rawOpeners*size + linkOpeners*size/16 + 40*backtickRuns*lines
 		// A table row has at most the header's cells, but a row with fewer
 		// is padded to them, so every line may cost the widest line's cells.
 		if (widest+1)*lines > maxTableCells {

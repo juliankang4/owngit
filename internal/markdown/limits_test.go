@@ -140,6 +140,7 @@ func TestShapesAtTheBudgetRenderInTime(t *testing.T) {
 		"mixed delimiters":           wrap(strings.Repeat("***a___ ", MaxSource/8), 80),
 		"closers among snake_case":   wrap(strings.Repeat(strings.Repeat("a_b_c_d ", 10)+"x_ ", MaxSource/83), 80),
 		"emphasis among snake_case":  wrap(strings.Repeat(strings.Repeat("a_b_c_d ", 10)+"*x* ", MaxSource/84), 80),
+		"closers after snake_case":   closersAfterSnakeCase(),
 		"link openers on long lines": wrap("x "+strings.Repeat("[a](", MaxSource/4-1), 4<<10),
 		"images on long lines":       wrap("x "+strings.Repeat("![a](", MaxSource/5-1), 4<<10),
 		"processing instructions":    "x\n" + fillTo("x <?", "\n"),
@@ -169,6 +170,25 @@ func TestShapesAtTheBudgetRenderInTime(t *testing.T) {
 			t.Errorf("repeated headings did not get numbered anchors: %v", err)
 		}
 	}
+}
+
+// closersAfterSnakeCase is a long paragraph of snake_case words followed by
+// as many closers as the estimate admits. Each closer walks back over every
+// delimiter, so the walk is as long as the estimate allows and the list is
+// far larger than a processor cache.
+func closersAfterSnakeCase() string {
+	head := wrap(strings.Repeat("a_b_c_d ", (MaxSource-8<<10)/8), 80) + "\n"
+	source := func(closers int) string { return head + wrap(strings.Repeat("x_ ", closers), 80) + "\n" }
+	low, high := 0, 8<<10/3
+	for low < high {
+		middle := (low + high + 1) / 2
+		if estimateCost([]byte(source(middle))) <= maxCost {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	return source(low)
 }
 
 func definitionsAndUses() string {
