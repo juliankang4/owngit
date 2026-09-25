@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,8 +16,10 @@ import (
 )
 
 const (
-	preparedHelperModeEnvironment   = "OWNGIT_PREPARED_HELPER_MODE"
-	preparedHelperMarkerEnvironment = "OWNGIT_PREPARED_HELPER_MARKER"
+	preparedHelperModeEnvironment = "OWNGIT_PREPARED_HELPER_MODE"
+	// preparedHelperDescendantEnvironment names the test's TCP address that a
+	// descendant of a hanging helper connects to and keeps open while it lives.
+	preparedHelperDescendantEnvironment = "OWNGIT_PREPARED_HELPER_DESCENDANT"
 	// preparedHelperFinalEnvironment names a file where a hanging helper
 	// writes the final command it received, once it is about to hang.
 	preparedHelperFinalEnvironment = "OWNGIT_PREPARED_HELPER_FINAL"
@@ -30,11 +33,17 @@ func TestMain(m *testing.M) {
 }
 
 func runPreparedHelper(mode string) int {
-	if mode == "delayed-marker" {
-		time.Sleep(300 * time.Millisecond)
-		if err := os.WriteFile(os.Getenv(preparedHelperMarkerEnvironment), []byte("descendant survived"), 0o600); err != nil {
+	if mode == "descendant" {
+		// Hold a connection to the test until the process ends or the test
+		// closes its side, so the test sees the moment this process is gone.
+		connection, err := net.Dial("tcp", os.Getenv(preparedHelperDescendantEnvironment))
+		if err != nil {
 			return 3
 		}
+		if _, err := os.Stdout.WriteString("ready\n"); err != nil {
+			return 3
+		}
+		_, _ = connection.Read(make([]byte, 1))
 		return 0
 	}
 	reader := bufio.NewScanner(os.Stdin)
@@ -76,10 +85,19 @@ func runPreparedHelper(mode string) int {
 					child.Env = os.Environ()
 					for index, entry := range child.Env {
 						if strings.HasPrefix(entry, preparedHelperModeEnvironment+"=") {
-							child.Env[index] = preparedHelperModeEnvironment + "=delayed-marker"
+							child.Env[index] = preparedHelperModeEnvironment + "=descendant"
 						}
 					}
+					ready, err := child.StdoutPipe()
+					if err != nil {
+						return 4
+					}
 					if err := child.Start(); err != nil {
+						return 4
+					}
+					// The final command is reported only once the descendant
+					// holds its connection.
+					if line, err := bufio.NewReader(ready).ReadString('\n'); err != nil || line != "ready\n" {
 						return 4
 					}
 				}
@@ -296,24 +314,47 @@ func TestPreparedUpdateCancellationBoundsNonCooperativeCallback(t *testing.T) {
 }
 
 func TestPreparedUpdateTerminationReapsDescendant(t *testing.T) {
-	// The deadline passes once the helper has started its descendant and
-	// hangs after the final command, so the descendant always exists.
+	// The deadline passes once the helper's descendant holds its connection
+	// and the helper hangs after the final command, so the descendant always
+	// exists when cleanup starts. The descendant never exits on its own while
+	// the test holds the connection, so the connection closes only when
+	// cleanup ends the descendant, however long cleanup takes.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	noErr(t, err)
+	defer listener.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if connection, err := listener.Accept(); err == nil {
+			accepted <- connection
+		}
+		close(accepted)
+	}()
 	runner := newPreparedHelperRunner(t)
-	marker := filepath.Join(t.TempDir(), "descendant-survived")
 	ctx, final := deadlineAtFinalCommand(t, "commit")
-	_, err := runner.RunPreparedUpdateContext(ctx, t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
+	_, err = runner.RunPreparedUpdateContext(ctx, t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
 		Timeout: time.Minute,
 		Environment: []string{
 			preparedHelperModeEnvironment + "=hang-descendant",
-			preparedHelperMarkerEnvironment + "=" + marker,
+			preparedHelperDescendantEnvironment + "=" + listener.Addr().String(),
 			final,
 		},
 	}, func(context.Context) error { return nil })
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("descendant cleanup err=%v", err)
 	}
-	time.Sleep(400 * time.Millisecond)
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+	if _, ok := ctx.expiredAt(); !ok {
+		t.Fatal("the run ended before the helper reached its final command")
+	}
+	// The helper reported the final command only after the descendant had
+	// connected, so Accept has a connection to return.
+	connection, ok := <-accepted
+	if !ok {
+		t.Fatal("the descendant never connected")
+	}
+	// Closing the test's side also ends a descendant that survived.
+	defer connection.Close()
+	noErr(t, connection.SetReadDeadline(time.Now().Add(30*time.Second)))
+	if _, err := connection.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
 		t.Fatalf("prepared descendant survived process-group cleanup: %v", err)
 	}
 }
