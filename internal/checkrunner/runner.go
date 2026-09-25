@@ -76,7 +76,14 @@ func (runner *Runner) Run(ctx context.Context) error {
 	failures := 0
 	var outageStarted time.Time
 	for {
-		worked, err := runner.runOne(ctx, workspaceRoot)
+		jobID, err := runner.runOne(ctx, workspaceRoot)
+		worked := jobID != ""
+		if err != nil && worked {
+			// The server keeps a claimed or started job until its lease
+			// expires and then marks it ambiguous, because the commands may
+			// have run. Name the job so the operator can find it.
+			runner.log("configured-check job %s ended without a confirmed result; OwnGit marks it ambiguous when its lease expires unless it already recorded an outcome (check it with owngit check-job show): %v", jobID, err)
+		}
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -99,11 +106,8 @@ func (runner *Runner) Run(ctx context.Context) error {
 			runner.log("OwnGit answered again after %s; the runner resumed", time.Since(outageStarted).Round(time.Second))
 			failures = 0
 		}
-		switch kind {
-		case failurePermanent:
+		if kind == failurePermanent {
 			return stoppedError(err)
-		case failureJob:
-			runner.log("configured-check job ended without a confirmed result: %v", err)
 		}
 		if worked {
 			continue
@@ -183,7 +187,10 @@ func stoppedError(err error) error {
 		return &apiclient.Error{Code: "runner_stopped", Message: "The runner stopped because the server answer could not be used: " + err.Error(), Cause: err}
 	}
 	message := "The runner stopped because the server refused a request that retrying cannot fix: " + problem.Message
-	if problem.ResponseStatus == http.StatusUnauthorized || problem.ResponseStatus == http.StatusForbidden {
+	switch {
+	case problem.Code == "runner_credential_repository_mismatch":
+		message = "The runner stopped because its token belongs to another repository. Start it with --repository set to the repository the token was issued for, or issue a token for this repository with owngit runner-credential issue."
+	case problem.ResponseStatus == http.StatusUnauthorized || problem.ResponseStatus == http.StatusForbidden:
 		message = "The runner stopped because the server refused its token, which is unknown or revoked. Issue a new token with owngit runner-credential issue, then start the runner again."
 	}
 	return &apiclient.Error{Code: problem.Code, Message: message, Details: problem.Details, Cause: err, Status: problem.Status, ResponseStatus: problem.ResponseStatus}
@@ -200,22 +207,28 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.WorkspaceRoot) (bool, error) {
+// runOne claims and runs at most one job. It returns the ID of the claimed
+// job, or "" when it claimed none, and any failure after the claim concerns
+// that job.
+func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.WorkspaceRoot) (string, error) {
 	base := "/api/v1/repositories/" + url.PathEscape(runner.RepositoryID) + "/runner"
 	content, err := runner.Client.Do(ctx, http.MethodPost, base+"/claim", nil)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	var claimed checkapi.JobResponse
 	if err := json.Unmarshal(content, &claimed); err != nil {
-		return false, fmt.Errorf("decode claimed job: %w", err)
+		return "", fmt.Errorf("decode claimed job: %w", err)
 	}
 	if claimed.Job == nil {
-		return false, nil
+		return "", nil
 	}
 	job := claimed.Job
+	if job.ID == "" {
+		return "", errors.New("server returned an invalid external-runner claim")
+	}
 	if job.LeaseID == "" || job.Executor != state.CheckExecutorExternalRunner {
-		return true, errors.New("server returned an invalid external-runner claim")
+		return job.ID, errors.New("server returned an invalid external-runner claim")
 	}
 	runner.log("claimed configured-check job %s", job.ID)
 	leaseContext, cancelLease := context.WithCancel(ctx)
@@ -251,23 +264,23 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 		input := checkapi.RunnerUnavailableInput{LeaseID: job.LeaseID, Status: status, Summary: bounded("Exact configured-check source is unavailable or workspace ownership is uncertain: " + materializeErr.Error())}
 		_, reportErr := runner.Client.DoWithHeaders(context.WithoutCancel(ctx), http.MethodPost, base+"/jobs/"+job.ID+"/unavailable", input, leaseHeaders(job.LeaseID))
 		if reportErr != nil {
-			return true, errors.Join(materializeErr, reportErr)
+			return job.ID, errors.Join(materializeErr, reportErr)
 		}
 		runner.log("reported configured-check job %s unavailable: %v", job.ID, materializeErr)
-		return true, nil
+		return job.ID, nil
 	}
 
 	attemptID, err := state.RandomID()
 	if err != nil {
 		_ = workspaceRoot.RemoveJob(job.ID)
-		return true, err
+		return job.ID, err
 	}
 	startInput := checkapi.RunnerStartInput{LeaseID: job.LeaseID, AttemptID: attemptID}
 	if _, err := runner.Client.DoWithHeaders(leaseContext, http.MethodPost, base+"/jobs/"+job.ID+"/start", startInput, leaseHeaders(job.LeaseID)); err != nil {
 		_ = workspaceRoot.RemoveJob(job.ID)
 		cancelLease()
 		<-leaseErrors
-		return true, err
+		return job.ID, err
 	}
 
 	definitions := make([]checkexec.Definition, 0, len(job.Checks))
@@ -314,7 +327,7 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 	if err == nil {
 		runner.log("completed configured-check job %s", job.ID)
 	}
-	return true, err
+	return job.ID, err
 }
 
 func (runner *Runner) renewLease(ctx context.Context, cancel context.CancelFunc, base string, job *checkapi.Job, done chan<- error) {

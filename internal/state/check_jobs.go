@@ -94,6 +94,9 @@ var (
 	ErrCheckJobCompletionRequired = errors.New("automatic check completion requires job authority")
 	// ErrCheckRunnerCredential reports unknown, revoked, or foreign authority.
 	ErrCheckRunnerCredential = errors.New("the runner credential is unknown or revoked")
+	// ErrRunnerCredentialOtherRepository reports a live runner token that was
+	// presented for a repository other than the one it was issued for.
+	ErrRunnerCredentialOtherRepository = errors.New("the runner credential belongs to another repository")
 	// ErrCheckRunnerRevoked reports a revoke of a missing or retired credential.
 	ErrCheckRunnerRevoked = errors.New("the runner credential was not found or was already revoked")
 	// ErrCheckRunnerCreationConflict reports a reused creation identity with a
@@ -781,7 +784,9 @@ func parseRunnerToken(token string) (string, int64, string, bool) {
 }
 
 // RunnerCredentialByToken resolves a live credential and records its use. The
-// encoded local epoch makes every pre-restore token unverifiable.
+// encoded local epoch makes every pre-restore token unverifiable. A token that
+// is live for another repository returns ErrRunnerCredentialOtherRepository,
+// so only its holder learns that the repository, not the token, is wrong.
 func (s *Store) RunnerCredentialByToken(ctx context.Context, repositoryID, token string, now time.Time) (RunnerCredential, bool, error) {
 	epoch, generation, id, valid := parseRunnerToken(token)
 	if repositoryID == "" || !valid || now.IsZero() {
@@ -793,16 +798,26 @@ func (s *Store) RunnerCredentialByToken(ctx context.Context, repositoryID, token
 		return RunnerCredential{}, false, err
 	}
 	defer tx.Rollback()
+	notFound := func() (RunnerCredential, bool, error) {
+		elsewhere, err := runnerTokenLiveElsewhereTx(ctx, tx, repositoryID, epoch, generation, id, tokenHash[:])
+		if err != nil {
+			return RunnerCredential{}, false, err
+		}
+		if elsewhere {
+			return RunnerCredential{}, false, ErrRunnerCredentialOtherRepository
+		}
+		return RunnerCredential{}, false, nil
+	}
 	policy, exists, err := readCheckPolicyTx(ctx, tx, repositoryID)
 	if err != nil {
 		return RunnerCredential{}, false, err
 	}
 	if !exists || policy.AuthorityEpoch != epoch {
-		return RunnerCredential{}, false, nil
+		return notFound()
 	}
 	credential, err := scanRunnerCredential(tx.QueryRowContext(ctx, runnerCredentialSelect+` WHERE repository_id=? AND id=? AND generation=? AND token_hash=? AND revoked_at IS NULL`, repositoryID, id, generation, tokenHash[:]))
 	if errors.Is(err, sql.ErrNoRows) {
-		return RunnerCredential{}, false, nil
+		return notFound()
 	}
 	if err != nil {
 		return RunnerCredential{}, false, err
@@ -821,6 +836,26 @@ func (s *Store) RunnerCredentialByToken(ctx context.Context, repositoryID, token
 	}
 	credential.LastUsedAt = &value
 	return credential, true, nil
+}
+
+// runnerTokenLiveElsewhereTx reports whether the presented token, matched by
+// its full hash, is a live external-runner credential of a repository other
+// than repositoryID under that repository's current authority epoch.
+func runnerTokenLiveElsewhereTx(ctx context.Context, tx *sql.Tx, repositoryID, epoch string, generation int64, id string, tokenHash []byte) (bool, error) {
+	var owner string
+	err := tx.QueryRowContext(ctx, `SELECT repository_id FROM check_runner_credentials WHERE id=? AND generation=? AND token_hash=? AND role=? AND revoked_at IS NULL AND repository_id<>?`,
+		id, generation, tokenHash, RunnerRoleExternal, repositoryID).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	policy, exists, err := readCheckPolicyTx(ctx, tx, owner)
+	if err != nil {
+		return false, err
+	}
+	return exists && policy.AuthorityEpoch == epoch, nil
 }
 
 // CheckRunnerCredentials lists the authority of one repository in creation

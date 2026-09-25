@@ -485,6 +485,12 @@ func (app *App) authorizeRunner(writer http.ResponseWriter, request *http.Reques
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
 	credential, ok, err := app.Store.RunnerCredentialByToken(request.Context(), repositoryID, token, app.now())
+	if errors.Is(err, state.ErrRunnerCredentialOtherRepository) {
+		// Only the holder of a live token reaches this answer, and it names
+		// no repository.
+		writeAPIError(writer, http.StatusForbidden, "runner_credential_repository_mismatch", "This runner token belongs to another repository.", nil)
+		return state.RunnerCredential{}, false
+	}
 	if err != nil {
 		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The runner token could not be verified.", nil)
 		return state.RunnerCredential{}, false

@@ -971,7 +971,9 @@ func TestRunnerCredentialRevocationAndScope(t *testing.T) {
 	if err != nil || !found || resolved.ID != runner.ID {
 		t.Fatalf("resolve runner found=%v err=%v", found, err)
 	}
-	if _, found, err := fixture.store.RunnerCredentialByToken(ctx, "other", token, fixture.now); err != nil || found {
+	// A live token for another repository is refused as such, so the holder
+	// learns that the repository, not the token, is wrong.
+	if _, found, err := fixture.store.RunnerCredentialByToken(ctx, "other", token, fixture.now); !errors.Is(err, ErrRunnerCredentialOtherRepository) || found {
 		t.Fatalf("cross-repository resolve found=%v err=%v", found, err)
 	}
 	job := fixture.admit(t, pushJobRequest())
@@ -983,8 +985,10 @@ func TestRunnerCredentialRevocationAndScope(t *testing.T) {
 	if err := fixture.store.RevokeCheckRunnerToken(ctx, "project", runner.ID, fixture.now); !errors.Is(err, ErrCheckRunnerRevoked) {
 		t.Fatalf("double revoke error=%v", err)
 	}
-	if _, found, err := fixture.store.RunnerCredentialByToken(ctx, "project", token, fixture.now); err != nil || found {
-		t.Fatalf("revoked resolve found=%v err=%v", found, err)
+	for _, repositoryID := range []string{"project", "other"} {
+		if _, found, err := fixture.store.RunnerCredentialByToken(ctx, repositoryID, token, fixture.now); err != nil || found {
+			t.Fatalf("revoked resolve for %s found=%v err=%v", repositoryID, found, err)
+		}
 	}
 	if _, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now); !errors.Is(err, ErrCheckRunnerCredential) {
 		t.Fatalf("revoked claim error=%v", err)

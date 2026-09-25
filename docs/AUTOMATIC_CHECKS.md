@@ -300,10 +300,13 @@ The runner keeps running while OwnGit restarts or the network drops. When
 OwnGit does not answer, times out, returns a server error, or asks it to wait,
 the runner retries with a growing delay of up to one minute (longer only when
 OwnGit sends `Retry-After`). It logs the outage once and the recovery once. A
-job that was running during the outage may end without a confirmed result;
-check it with `owngit check-job show`. The runner stops with exit status 1 and
-a message only when retrying cannot help: its token is unknown or revoked, or
-the server refuses the request as invalid. With `--once` the runner claims at
+job that was running during the outage may end without a confirmed result. The
+runner then logs one line with the job ID and the reason, and OwnGit marks the
+job `ambiguous` when its lease expires; check it with `owngit check-job show`.
+The runner stops with exit status 1 and a message only when retrying cannot
+help: its token is unknown or revoked, the token belongs to a repository other
+than the one given with `--repository`, or the server refuses the request as
+invalid. With `--once` the runner claims at
 most one job, makes a single attempt, and exits with status 1 on any failure,
 including an unreachable server.
 
