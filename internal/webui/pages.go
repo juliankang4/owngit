@@ -31,6 +31,15 @@ const (
 	// SetupUnavailable explains why setup cannot continue: the link expired,
 	// was already redeemed, or the installation is already configured.
 	SetupUnavailable SetupStage = "unavailable"
+	// SetupApproval is shown instead of SetupWelcome while setup runs in the
+	// terminal that started OwnGit: the browser asks that terminal for
+	// approval with an explicit POST.
+	SetupApproval SetupStage = "approval"
+	// SetupApprovalWait shows the comparison code while the terminal
+	// decides. The page script asks ApprovalURL for the state and opens
+	// SetupURL once the terminal has answered; without scripting the owner
+	// uses the Check again link.
+	SetupApprovalWait SetupStage = "approval_wait"
 )
 
 // SetupPage renders /setup.
@@ -45,6 +54,15 @@ type SetupPage struct {
 	RedeemURL string
 	// SubmitURL receives the completed wizard.
 	SubmitURL string
+	// ApprovalURL receives the POST that asks the terminal for approval.
+	ApprovalURL string
+	// ApprovalCode is the comparison code the terminal also shows. It helps
+	// the owner recognize this browser and is not a credential.
+	ApprovalCode string
+	// RetryURL, when set on an unavailable stage, offers to start again.
+	RetryURL string
+	// SetupURL is the setup page the waiting page returns to.
+	SetupURL string
 
 	// Prerequisites are environment findings such as a missing system Git.
 	Prerequisites []Prerequisite

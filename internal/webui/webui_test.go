@@ -115,6 +115,15 @@ func allPages(lang Lang) map[string]Page {
 			Chrome: bare, Stage: SetupUnavailable,
 			Reason: MsgSetupLinkExpired, RecoveryHint: MsgSetupReissueHint,
 		},
+		"setup-approval": SetupPage{
+			Chrome: bare, Stage: SetupApproval, ApprovalURL: "/setup/approval", RedeemURL: "/setup/redeem",
+		},
+		"setup-approval-wait": SetupPage{
+			Chrome: bare, Stage: SetupApprovalWait, ApprovalCode: "K7Q-4MP", ApprovalURL: "/setup/approval", SetupURL: "/setup",
+		},
+		"setup-approval-refused": SetupPage{
+			Chrome: bare, Stage: SetupUnavailable, Reason: MsgSetupApprovalBusy, RetryURL: "/setup",
+		},
 		"auth-general": AuthPage{Chrome: bare, Scope: AuthGeneral, SubmitURL: "/login", Next: "/"},
 		"auth-admin":   AuthPage{Chrome: bare, Scope: AuthAdmin, SubmitURL: "/admin/login"},
 		"settings": SettingsPage{
@@ -832,11 +841,46 @@ func TestSetupWelcomeRedeemsOnlyByExplicitPost(t *testing.T) {
 	}
 }
 
+// While setup runs in the terminal, the browser asks for approval only by
+// an explicit POST, shows the code, and still accepts a setup link; the
+// waiting page reloads itself and works without scripting.
+func TestSetupApprovalPages(t *testing.T) {
+	r := newRenderer(t)
+	chrome := Chrome{Lang: LangEN, Now: testNow, CurrentURL: "/setup", CSRF: "csrf"}
+	out := render(t, r, SetupPage{Chrome: chrome, Stage: SetupApproval, ApprovalURL: "/setup/approval", RedeemURL: "/setup/redeem"})
+	if !strings.Contains(out, `action="/setup/approval"`) || !strings.Contains(out, Text(LangEN, MsgSetupApprovalRequest)) {
+		t.Fatal("the approval page has no explicit request form")
+	}
+	if !strings.Contains(out, `data-redeem-form data-redeem-optional hidden`) {
+		t.Fatal("the setup link form is not optional and hidden")
+	}
+	out = render(t, r, SetupPage{Chrome: chrome, Stage: SetupApprovalWait, ApprovalCode: "K7Q-4MP", ApprovalURL: "/setup/approval", SetupURL: "/setup"})
+	if !strings.Contains(out, `>K7Q-4MP<`) || !strings.Contains(out, `href="/setup"`) ||
+		!strings.Contains(out, `role="status" aria-live="polite" data-approval-wait`) || !strings.Contains(out, `data-status-url="/setup/approval"`) {
+		t.Fatal("the waiting page lacks the code, the live status or the manual check")
+	}
+	if strings.Count(out, `aria-live`) != 1 {
+		t.Fatal("the waiting page must have exactly one live region")
+	}
+	if strings.Contains(out, `method="post"`) {
+		t.Fatal("the waiting page submits something")
+	}
+	js := scriptSource(t)
+	watcher := section(t, js, "(function watchApproval()", "})();")
+	// The live region changes once, when the answer arrives; while the
+	// request is pending the script only schedules the next poll.
+	if !strings.Contains(watcher, "reply.state === 'pending'") || strings.Count(watcher, "status.textContent") != 1 ||
+		strings.Contains(watcher, "location.reload") || !strings.Contains(js, "form.hidden = !haveToken") {
+		t.Fatal("the script does not handle the approval pages")
+	}
+}
+
 func TestCSRFTokenIsPresentOnEveryMutatingForm(t *testing.T) {
 	r := newRenderer(t)
 	for _, page := range []Page{
 		SetupPage{Chrome: Chrome{Lang: LangEN, Now: testNow, CSRF: "tok"}, Stage: SetupWelcome, RedeemURL: "/setup/redeem"},
 		SetupPage{Chrome: Chrome{Lang: LangEN, Now: testNow, CSRF: "tok"}, Stage: SetupWizard, SubmitURL: "/setup"},
+		SetupPage{Chrome: Chrome{Lang: LangEN, Now: testNow, CSRF: "tok"}, Stage: SetupApproval, ApprovalURL: "/setup/approval", RedeemURL: "/setup/redeem"},
 		AuthPage{Chrome: Chrome{Lang: LangEN, Now: testNow, CSRF: "tok"}, Scope: AuthGeneral, SubmitURL: "/login"},
 		SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings"},
 		NewRepositoryPage{Chrome: fullChrome(LangEN), SubmitURL: "/repositories"},

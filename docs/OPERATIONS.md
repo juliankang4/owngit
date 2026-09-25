@@ -8,12 +8,35 @@ From the source checkout:
 
 ```sh
 go build -o bin/owngit ./cmd/owngit
-./bin/owngit serve --no-open
+./bin/owngit serve
 ```
 
-On first run, OwnGit writes an owner-readable setup file inside the state directory. Open that file in the installation owner's browser. The setup secret is not printed or passed in a browser command argument.
-
 The default address is `http://127.0.0.1:7654`. Setup configures repository storage, optional shared-password protection for general access, and a separate administrator password. Every later security-setting change asks for the current administrator password. Setup finishes at an empty dashboard, where New repository creates a repository. Its clone address has the form `http://HOST:7654/git/PROJECT.git`.
+
+### Setup in the terminal
+
+When `owngit serve` starts an installation that is not set up yet, both its input and its output are a terminal, and it runs in the foreground of that terminal, setup runs in that terminal. It asks for the language first (English or 한국어; Enter keeps the language of your locale, and L switches it later), then offers "Continue in this terminal" and "Open the web dashboard". Server log lines written while a question is open are held and shown between the questions. This path writes no setup file.
+
+In the terminal, OwnGit asks what the web setup page asks, in the same order: the repository folder, who can read and write repositories, the administrator password, "Other devices", and, when OwnGit listens on a network address, whether to continue with a connection it does not encrypt. Each password is typed twice and nothing appears while you type. An answer keeps every character the web page keeps, including a pasted no-break space or emoji; only Enter, Backspace, Ctrl-U, Ctrl-C and Escape act as keys instead. Nothing is saved until you choose "Finish setup" on the review card. While a question is open, Ctrl-Z and Ctrl-D are not keys: like any other control character, they become part of the answer. If OwnGit is stopped during setup and continued in the background (for example `kill -STOP`, then `bg`), it keeps serving but stops asking; run `fg` to continue the questions. After setup, OwnGit no longer reads the terminal, so Ctrl-Z and `bg` leave the server running. Ctrl-C stops the server without saving anything; run `owngit serve` again to start over. When OwnGit listens only on this computer, the terminal does not ask about plain HTTP. If you later reach OwnGit from another device, confirm it on the Settings page, which asks until the confirmation is given, as for any installation without it.
+
+"Other devices" checks whether Tailscale runs on this computer. It only runs `tailscale status --json` and changes nothing. When Tailscale is running, the step shows this computer's Tailscale address and MagicDNS name and prints a restart command on a line of its own, for example `owngit serve --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654 --allowed-host my-mac.tail0000.ts.net --allowed-host 100.64.0.7`. When you use a state directory other than the default, the command includes `--state-dir`. A path with a control or direction character, such as a tab, is written in ANSI-C quotes (`$'...'`), which zsh, bash and ksh read but a plain POSIX shell such as `dash` does not. Setup does not run or save that command. Tailscale encrypts the connection between devices, but OwnGit still reports plain HTTP because it cannot see that protection. Press Enter to continue. If OwnGit runs as a service, see [Options for a background service](#options-for-a-background-service).
+
+### Setup in the browser, approved in the terminal
+
+"Open the web dashboard" opens `http://127.0.0.1:7654/setup` in your browser; with `--no-open` the terminal prints the address instead. Nothing secret is in that address. In the browser, choose "Ask the terminal for approval". The page shows a short code, and the terminal shows "A browser wants to set up OwnGit" with the same code and the address the request came from. Answer `y` only when your browser shows that code. The approval applies to that one browser, which then continues setup on the web page.
+
+- A request from another device is marked with a warning in the terminal.
+- Only one browser can wait for approval at a time. Another browser is told to try again later.
+- A rejected browser must wait a minute before asking again, and each address can ask at most five times in ten minutes.
+- An unanswered request, or an approval the browser does not use, expires after ten minutes.
+- Press T while waiting to set up in the terminal instead. A browser you already approved then loses its setup session.
+- After you approved a browser, the terminal still shows a new request, for example from another browser of yours. Approving it ends the setup session of the browser approved before, and the request card says so.
+
+When setup finishes in the browser, the terminal lists the saved answers and the server keeps running.
+
+### Setup with a setup file
+
+When OwnGit starts without a terminal, for example under `brew services`, a LaunchAgent, or systemd, with its output redirected, or as a background job of a shell (`owngit serve &`), it writes an owner-readable setup file inside the state directory and opens it in the installation owner's browser. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. The setup secret is not printed or passed in a browser command argument. `owngit setup-link` issues a new file, and it also works while setup waits in a terminal.
 
 ## Reaching the server from another device
 
@@ -34,6 +57,12 @@ The server accepts only requests whose Host is `localhost`, `127.0.0.1`, `::1`, 
 ```sh
 ./bin/owngit approve-host gitbox.internal
 ```
+
+### Options for a background service
+
+`--listen`, `--base-url`, and `--allowed-host` are options of `owngit serve`, so they apply only to the command that starts the server. When a service manager starts OwnGit, put them in the service definition: the `ProgramArguments` of a LaunchAgent, or the `ExecStart` line of a systemd unit. Names approved with `owngit approve-host` are stored and apply to every start.
+
+The Homebrew service (`brew services start owngit`) runs `owngit serve --no-open` without other options, and OwnGit does not yet store the listen address or base URL. Until a later version stores network settings, reaching a Homebrew installation from other devices requires starting `owngit serve` with these options another way, for example from your own LaunchAgent, instead of `brew services`.
 
 ## New-release notice
 

@@ -18,6 +18,8 @@ func TestMain(m *testing.M) {
 	// package points its release check at a closed local port unless the
 	// test sets its own endpoint.
 	releaseCheckEndpoint = "http://127.0.0.1:0/owngit-tests-never-contact-github"
+	// A test run from a terminal must not ask setup questions there.
+	interactiveSetup = func() bool { return false }
 	os.Exit(m.Run())
 }
 

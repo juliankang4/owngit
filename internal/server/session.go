@@ -74,7 +74,7 @@ func formPage(path string) string {
 	switch path {
 	case "/repositories":
 		return "/repositories/new"
-	case "/setup/redeem":
+	case "/setup/redeem", "/setup/approval":
 		return "/setup"
 	case "/logout", "/admin/logout", releaseDismissPath:
 		return "/"

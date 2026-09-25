@@ -23,6 +23,7 @@ import (
 	"owngit/internal/auth"
 	"owngit/internal/bootstrap"
 	"owngit/internal/checkrun"
+	"owngit/internal/firstrun"
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
 	"owngit/internal/importsync"
@@ -157,7 +158,17 @@ func serveWithOpener(arguments []string, opener func(string) error, logf func(st
 	return serveWithContext(ctx, arguments, opener, logf)
 }
 
+// interactiveSetup reports whether first-run setup can ask its questions in
+// this terminal. Tests replace it, so a test run from a terminal never
+// waits for answers.
+var interactiveSetup = defaultInteractiveSetup
+
+func defaultInteractiveSetup() bool { return firstrun.Interactive(os.Stdin, os.Stdout) }
+
 func serveWithContext(ctx context.Context, arguments []string, opener func(string) error, logf func(string, ...any)) error {
+	// Stopping setup in the terminal stops the server like a signal does.
+	ctx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
@@ -360,6 +371,13 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			}
 		},
 	}
+	// First-run setup asks its questions in the terminal when OwnGit was
+	// started from one. Otherwise, as under a service manager, it keeps the
+	// private setup file. The terminal flow issues no setup file at all.
+	terminalSetup := !settings.Initialized && interactiveSetup()
+	if terminalSetup {
+		application.Approvals = server.NewSetupApprovals()
+	}
 	gitHandler.Authorize = application.AuthorizeGit
 	gitHandler.OnReceive = noteChange
 	// Activity is counted in the background under the serving lifetime, so
@@ -399,7 +417,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		}()
 	}
 
-	if !settings.Initialized {
+	if !settings.Initialized && !terminalSetup {
 		path, err := (&bootstrap.Issuer{Store: store, BaseURL: origin}).Issue(ctx)
 		if err != nil {
 			return err
@@ -424,6 +442,40 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if target := serveOpenTarget(settings.Initialized, *openOwner, *noOpen, "", origin); target != "" {
 		openServeTarget(target, "owner URL", opener, logf)
 	}
+	if terminalSetup {
+		config := firstrun.Config{
+			Input: os.Stdin, Output: os.Stdout, App: application, Origin: origin, Listen: listener.Addr().String(),
+			SuggestedFolder: application.SuggestedRepositoryRoot,
+		}
+		if !*noOpen {
+			config.OpenBrowser = opener
+		}
+		if *stateDir != defaultStateDir() {
+			config.StateDir, _ = filepath.Abs(*stateDir)
+		}
+		switch err := runTerminalSetup(ctx, config); {
+		case err == nil:
+			logf("setup completed")
+			logf("OwnGit ready at %s/", origin)
+		case errors.Is(err, firstrun.ErrStopped):
+			logf("OwnGit stopped; setup is not complete")
+			cancelServe()
+		default:
+			// The terminal could not be used, so setup falls back to the
+			// private setup file, and browsers see its ordinary setup page.
+			application.Approvals.Abandon()
+			logf("terminal setup unavailable: %v", err)
+			path, issueErr := (&bootstrap.Issuer{Store: store, BaseURL: origin}).Issue(ctx)
+			if issueErr != nil {
+				_ = httpServer.Close()
+				return issueErr
+			}
+			logf("owner setup file: %s", path)
+			if !*noOpen {
+				openServeTarget(path, "setup file", opener, logf)
+			}
+		}
+	}
 
 	select {
 	case serveErr := <-errCh:
@@ -444,6 +496,16 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		importRuntime.stop()
 		return stopServing(httpServer, gitHandler, 10*time.Second, logf)
 	}
+}
+
+// runTerminalSetup runs first-run setup in the terminal. Server log lines
+// written meanwhile are held and shown between the setup cards.
+func runTerminalSetup(ctx context.Context, config firstrun.Config) error {
+	previous := log.Writer()
+	config.Logs = firstrun.NewLogGate(previous)
+	log.SetOutput(config.Logs)
+	defer log.SetOutput(previous)
+	return firstrun.Run(ctx, config)
 }
 
 // stopServing stops the HTTP server and waits up to grace for running

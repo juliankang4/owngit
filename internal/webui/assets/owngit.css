@@ -1418,6 +1418,8 @@ span.hm__cell { cursor: default; }
 .prereq__row.is-ok .icon { color: var(--ok); }
 .prereq__row.is-bad .icon { color: var(--bad); }
 .prereq__n { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+/* The browser approval code, spaced for comparing with the terminal. */
+.approvalcode { margin: 6px 0 2px; font: 600 26px/1.2 var(--mono); letter-spacing: 0.16em; }
 
 .stateline {
   display: inline-flex;

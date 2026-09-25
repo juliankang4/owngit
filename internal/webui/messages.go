@@ -96,6 +96,7 @@ const (
 	MsgSetupStorageDenied  MessageCode = "setup.storage.denied"
 	MsgSetupStorageNotDir  MessageCode = "setup.storage.not_directory"
 	MsgSetupStorageInUse   MessageCode = "setup.storage.in_use"
+	MsgSetupStorageOverlap MessageCode = "setup.storage.overlaps_state"
 	MsgSetupStorageRemote  MessageCode = "setup.storage.network_share"
 
 	MsgSetupAccessLabel     MessageCode = "setup.access.label"
@@ -132,6 +133,21 @@ const (
 	MsgSetupRaceLost     MessageCode = "setup.unavailable.race_lost"
 	MsgSetupSessionEnded MessageCode = "setup.unavailable.session_ended"
 	MsgSetupReissueHint  MessageCode = "setup.unavailable.reissue_hint"
+
+	MsgSetupApprovalBody       MessageCode = "setup.approval.body"
+	MsgSetupApprovalRequest    MessageCode = "setup.approval.request"
+	MsgSetupApprovalWaitTitle  MessageCode = "setup.approval.wait_title"
+	MsgSetupApprovalWaitBody   MessageCode = "setup.approval.wait_body"
+	MsgSetupApprovalCode       MessageCode = "setup.approval.code"
+	MsgSetupApprovalWaiting    MessageCode = "setup.approval.waiting"
+	MsgSetupApprovalCheck      MessageCode = "setup.approval.check"
+	MsgSetupApprovalAnswered   MessageCode = "setup.approval.answered"
+	MsgSetupApprovalNotWaiting MessageCode = "setup.approval.not_waiting"
+	MsgSetupApprovalBusy       MessageCode = "setup.approval.busy"
+	MsgSetupApprovalRejected   MessageCode = "setup.approval.rejected"
+	MsgSetupApprovalExpired    MessageCode = "setup.approval.expired"
+	MsgSetupApprovalLimited    MessageCode = "setup.approval.limited"
+	MsgSetupApprovalRetry      MessageCode = "setup.approval.try_again"
 
 	MsgPrereqGitFound   MessageCode = "setup.prereq.git_found"
 	MsgPrereqGitMissing MessageCode = "setup.prereq.git_missing"
@@ -508,6 +524,10 @@ var catalog = map[MessageCode]message{
 		en: "That folder already holds another installation's data.",
 		ko: "그 폴더에는 이미 다른 설치의 데이터가 있습니다.",
 	},
+	MsgSetupStorageOverlap: {
+		en: "That folder is inside OwnGit's own data folder, or holds it. Enter a separate folder.",
+		ko: "그 폴더는 OwnGit 자체 데이터 폴더 안에 있거나 그 폴더를 담고 있습니다. 별도의 폴더를 입력하세요.",
+	},
 	MsgSetupStorageRemote: {
 		en: "That folder looks like a network share. Repositories can be kept there while only one OwnGit uses it at a time. The database always stays on this computer.",
 		ko: "그 폴더는 네트워크 공유로 보입니다. 한 번에 하나의 OwnGit만 쓴다면 저장소를 그곳에 둘 수 있습니다. 데이터베이스는 항상 이 컴퓨터에 남습니다.",
@@ -636,6 +656,65 @@ var catalog = map[MessageCode]message{
 	MsgSetupReissueHint: {
 		en: "Issue a new link from the computer running OwnGit. There is no email or account recovery.",
 		ko: "OwnGit을 실행 중인 컴퓨터에서 새 링크를 발급하세요. 이메일이나 계정 복구 절차는 없습니다.",
+	},
+	// Browser approval while setup runs in the terminal that started OwnGit.
+	// The code is a comparison aid, so the wording never calls it a password
+	// or a secret.
+	MsgSetupApprovalBody: {
+		en: "OwnGit is waiting in the terminal where it was started. Ask that terminal for approval, then approve this browser there.",
+		ko: "OwnGit은 실행한 터미널에서 기다리고 있습니다. 그 터미널에 승인을 요청한 뒤 거기서 이 브라우저를 승인하세요.",
+	},
+	MsgSetupApprovalRequest: {
+		en: "Ask the terminal for approval",
+		ko: "터미널에 승인 요청",
+	},
+	MsgSetupApprovalWaitTitle: {
+		en: "Approve this browser in the terminal",
+		ko: "터미널에서 이 브라우저를 승인하세요",
+	},
+	MsgSetupApprovalWaitBody: {
+		en: "The terminal shows a code. Approve there only if it is the same as the code below.",
+		ko: "터미널에 코드가 나옵니다. 아래 코드와 같을 때만 터미널에서 승인하세요.",
+	},
+	MsgSetupApprovalCode: {
+		en: "Code",
+		ko: "코드",
+	},
+	MsgSetupApprovalWaiting: {
+		en: "Waiting for the terminal. This page continues by itself after you answer there. Without JavaScript, choose Check again.",
+		ko: "터미널의 답을 기다리는 중입니다. 터미널에서 답하면 이 페이지가 저절로 넘어갑니다. JavaScript를 쓰지 않는다면 \"다시 확인\"을 누르세요.",
+	},
+	MsgSetupApprovalAnswered: {
+		en: "The terminal answered. Opening the next page.",
+		ko: "터미널에서 답했습니다. 다음 페이지를 엽니다.",
+	},
+	MsgSetupApprovalCheck: {
+		en: "Check again",
+		ko: "다시 확인",
+	},
+	MsgSetupApprovalNotWaiting: {
+		en: "The terminal is not waiting for a browser. In the terminal, choose \"Open the web dashboard\", then try again.",
+		ko: "터미널이 브라우저를 기다리고 있지 않습니다. 터미널에서 \"웹 대시보드 열기\"를 고른 뒤 다시 시도하세요.",
+	},
+	MsgSetupApprovalBusy: {
+		en: "Another browser is already waiting for approval. Try again after the terminal answers it. If you did not send that request, reject it in the terminal.",
+		ko: "다른 브라우저가 이미 승인을 기다리고 있습니다. 터미널에서 그 요청에 답한 뒤 다시 시도하세요. 직접 보낸 요청이 아니라면 터미널에서 거절하세요.",
+	},
+	MsgSetupApprovalRejected: {
+		en: "The terminal rejected this browser. Wait a minute before asking again.",
+		ko: "터미널에서 이 브라우저를 거절했습니다. 1분쯤 지난 뒤 다시 요청하세요.",
+	},
+	MsgSetupApprovalExpired: {
+		en: "The approval request expired.",
+		ko: "승인 요청의 기한이 지났습니다.",
+	},
+	MsgSetupApprovalLimited: {
+		en: "Too many approval requests came from this address. Wait a few minutes and try again.",
+		ko: "이 주소에서 승인 요청이 너무 많이 왔습니다. 몇 분 뒤 다시 시도하세요.",
+	},
+	MsgSetupApprovalRetry: {
+		en: "Try again",
+		ko: "다시 시도",
 	},
 	MsgPrereqGitFound: {
 		en: "Git is installed.",

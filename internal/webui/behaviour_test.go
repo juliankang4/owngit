@@ -112,9 +112,26 @@ func TestScriptClearsTheSetupFragmentAndNeverStoresIt(t *testing.T) {
 	if !strings.Contains(js, "field.value = token") {
 		t.Error("the setup code is not held in the form field")
 	}
+	// The browser approval watcher is the one place that makes a request: a
+	// GET without a body for this browser's approval state. It is cut out
+	// and checked on its own; the rest of the script, the setup fragment
+	// handler included, must not send or record anything.
+	watcher := section(t, js, "(function watchApproval()", "})();")
+	rest := scriptOutsideApprovalWatcher(t)
 	for _, sink := range []string{"sessionStorage.setItem", "fetch(", "XMLHttpRequest", "console.log"} {
-		if strings.Contains(js, sink) {
+		if strings.Contains(rest, sink) {
 			t.Errorf("the script sends or records data through %q", sink)
+		}
+	}
+	if strings.Count(watcher, "fetch(") != 1 || !strings.Contains(watcher, "method: 'GET'") {
+		t.Error("the approval watcher must make exactly one kind of request, a GET")
+	}
+	for _, leak := range []string{
+		"body", "token", "csrf", "location.hash", "Storage", "sendBeacon", "XMLHttpRequest", "WebSocket", "EventSource",
+		"console.", "Observer", "import", "require(", "<script", "postMessage", "document.cookie",
+	} {
+		if strings.Contains(watcher, leak) {
+			t.Errorf("the approval watcher touches %q", leak)
 		}
 	}
 

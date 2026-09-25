@@ -1456,17 +1456,54 @@ func (s *Store) RedeemBootstrap(ctx context.Context, token, sessionToken, csrf s
 	if expiresAt < now.Unix() || !equalHash(expected, actual[:]) {
 		return false, nil
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM bootstrap WHERE singleton=1`); err != nil {
-		return false, err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE kind='setup'`); err != nil {
-		return false, err
-	}
-	sessionHash := sha256.Sum256([]byte(sessionToken))
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash,kind,csrf,version,expires_at) VALUES(?,'setup',?,1,?)`, sessionHash[:], csrf, expires.Unix()); err != nil {
+	if err := replaceSetupSession(ctx, tx, sessionToken, csrf, expires); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()
+}
+
+// StartApprovedSetupSession creates the only setup session for a browser the
+// owner approved from the terminal running OwnGit. It grants exactly what
+// redeeming the setup capability grants: any unredeemed capability and any
+// other setup session end. It fails with ErrSetupComplete after setup.
+func (s *Store) StartApprovedSetupSession(ctx context.Context, sessionToken, csrf string, expires time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var initialized string
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='initialized'`).Scan(&initialized); err != nil {
+		return err
+	}
+	if initialized == "true" {
+		return ErrSetupComplete
+	}
+	if err := replaceSetupSession(ctx, tx, sessionToken, csrf, expires); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// replaceSetupSession consumes the setup capability and makes sessionToken
+// the only setup session.
+func replaceSetupSession(ctx context.Context, tx *sql.Tx, sessionToken, csrf string, expires time.Time) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bootstrap WHERE singleton=1`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE kind='setup'`); err != nil {
+		return err
+	}
+	sessionHash := sha256.Sum256([]byte(sessionToken))
+	_, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash,kind,csrf,version,expires_at) VALUES(?,'setup',?,1,?)`, sessionHash[:], csrf, expires.Unix())
+	return err
+}
+
+// EndSetupSessions ends every browser setup session, for example when the
+// owner switches to setup in the terminal.
+func (s *Store) EndSetupSessions(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE kind='setup'`)
+	return err
 }
 
 func (s *Store) CreateSession(ctx context.Context, token, kind, csrf string, version int64, expires time.Time) error {

@@ -348,8 +348,10 @@
 
     // The server rendered both statements hidden because it cannot see the
     // fragment. Exactly one is shown here, and the button is enabled only
-    // when a code is actually in hand.
+    // when a code is actually in hand. While setup runs in the terminal the
+    // form is optional and appears only when the address held a code.
     var haveToken = !!(field && field.value);
+    if (form.hasAttribute('data-redeem-optional')) { form.hidden = !haveToken; }
     if (held) { held.hidden = !haveToken; }
     if (missing) { missing.hidden = haveToken; }
     if (start) {
@@ -369,6 +371,35 @@
         window.location.pathname + window.location.search
       );
     }
+  })();
+
+  /* Browser approval: while the terminal decides, ask the server every two
+   * seconds for the state of this browser's own request. The request is a
+   * GET with no body, sends only this site's cookies, and redeems nothing.
+   * The status line, a polite live region, changes only when the answer
+   * arrives, so a screen reader hears it once; then the setup page opens.
+   * Without scripting, Check again does the same. */
+
+  (function watchApproval() {
+    var status = document.querySelector('[data-approval-wait]');
+    if (!status || !window.fetch) { return; }
+    var statusURL = status.getAttribute('data-status-url');
+    var nextURL = status.getAttribute('data-next-url');
+    var answered = document.querySelector('[data-approval-answered]');
+    function poll() {
+      window.fetch(statusURL, { method: 'GET', credentials: 'same-origin', cache: 'no-store' })
+        .then(function (response) { return response.ok ? response.json() : null; })
+        .then(function (reply) {
+          if (!reply || reply.state === 'pending') {
+            window.setTimeout(poll, reply ? 2000 : 5000);
+            return;
+          }
+          if (answered) { status.textContent = answered.textContent; }
+          window.location.replace(nextURL);
+        })
+        .catch(function () { window.setTimeout(poll, 5000); });
+    }
+    window.setTimeout(poll, 2000);
   })();
 
   /* Settings: expand the form whose control the reader activated, and keep the

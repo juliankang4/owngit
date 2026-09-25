@@ -4,13 +4,11 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"owngit/internal/auth"
-	"owngit/internal/bootstrap"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -24,6 +22,9 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 	} else if session, ok := app.setupSession(request); ok {
 		stage = webui.SetupWizard
 		csrf = session.CSRF
+	} else if app.Approvals.Active() {
+		app.handleSetupApprovalPage(writer, request)
+		return
 	} else {
 		csrf = app.preauthCSRF(writer, request)
 	}
@@ -34,11 +35,8 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 	}
 	page := webui.SetupPage{
 		Chrome: chrome, Stage: stage, RedeemURL: "/setup/redeem", SubmitURL: "/setup",
-		Prerequisites: []webui.Prerequisite{
-			{Name: "git", Satisfied: app.GitVersion != "", Code: chooseMessage(app.GitVersion != "", webui.MsgPrereqGitFound, webui.MsgPrereqGitMissing), Detail: app.GitVersion},
-			{Name: "git-http-backend", Satisfied: app.HTTPBackendFound, Code: chooseMessage(app.HTTPBackendFound, webui.MsgPrereqHTTPFound, webui.MsgPrereqHTTPMiss)},
-		},
-		Form: webui.SetupForm{SuggestedPath: app.SuggestedRepositoryRoot, AccessMode: webui.AccessOpen},
+		Prerequisites: app.setupPrerequisites(),
+		Form:          webui.SetupForm{SuggestedPath: app.SuggestedRepositoryRoot, AccessMode: webui.AccessOpen},
 	}
 	if settings.Initialized {
 		page.Reason = webui.MsgSetupAlreadyDone
@@ -98,93 +96,51 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
 		return
 	}
-	storagePath := strings.TrimSpace(postValue(request, "storage_path"))
-	accessMode := postValue(request, "access_mode")
-	accessPassword := postValue(request, "access_password")
-	adminPassword := postValue(request, "admin_password")
-	insecureAccepted := formChecked(postValue(request, "insecure_ack"))
+	answers := SetupAnswers{
+		StoragePath:    strings.TrimSpace(postValue(request, "storage_path")),
+		AccessMode:     postValue(request, "access_mode"),
+		AccessPassword: postValue(request, "access_password"),
+		AdminPassword:  postValue(request, "admin_password"),
+		// OwnGit itself serves plain HTTP, so a browser request without TLS
+		// must acknowledge it.
+		InsecureAccepted: formChecked(postValue(request, "insecure_ack")),
+	}
 	form := webui.SetupForm{
-		StoragePath: storagePath, SuggestedPath: app.SuggestedRepositoryRoot,
-		AccessMode: webui.AccessMode(accessMode), InsecureAck: insecureAccepted,
+		StoragePath: answers.StoragePath, SuggestedPath: app.SuggestedRepositoryRoot,
+		AccessMode: webui.AccessMode(answers.AccessMode), InsecureAck: answers.InsecureAccepted,
 	}
-	var notices []webui.Notice
-	if storagePath == "" {
-		notices = append(notices, webui.Error("storage_path", webui.MsgSetupStorageMissing))
-	}
-	if accessMode != "open" && accessMode != "password" {
-		notices = append(notices, webui.Error("access_mode", webui.MsgErrBadRequest))
-	}
-	if accessMode == "password" {
-		if accessPassword == "" {
-			notices = append(notices, webui.Error("access_password", webui.MsgSetupAccessPassEmpty))
-		} else if err := auth.ValidatePassword(accessPassword); err != nil {
-			notices = append(notices, webui.Error("access_password", passwordRuleMessage(err, webui.MsgSetupAccessPassShort)))
-		}
-	}
-	if adminPassword == "" {
-		notices = append(notices, webui.Error("admin_password", webui.MsgSetupAdminEmpty))
-	} else if err := auth.ValidatePassword(adminPassword); err != nil {
-		notices = append(notices, webui.Error("admin_password", passwordRuleMessage(err, webui.MsgSetupAdminShort)))
-	}
-	if accessMode == "password" && accessPassword != "" && adminPassword == accessPassword {
-		notices = append(notices, webui.Error("admin_password", webui.MsgSetupAdminSameAsGen))
-	}
-	if request.TLS == nil && !insecureAccepted {
-		notices = append(notices, webui.Error("insecure_ack", webui.MsgSetupInsecureNeed))
-	}
-	canonical := ""
-	if len(notices) == 0 {
-		var err error
-		canonical, err = app.prepareRepositoryRoot(storagePath)
-		if err != nil {
-			notices = append(notices, webui.Error("storage_path", webui.MsgSetupStorageInvalid))
-		}
-	}
-	if len(notices) != 0 {
+	notices, err := app.CompleteSetup(request.Context(), answers, request.TLS == nil)
+	switch {
+	case len(notices) != 0:
 		app.renderSetupWizard(writer, request, session.CSRF, form, notices, http.StatusUnprocessableEntity)
 		return
-	}
-	adminHash, err := auth.HashPassword(adminPassword)
-	if err != nil {
-		app.renderSetupWizard(writer, request, session.CSRF, form, []webui.Notice{webui.Error("admin_password", webui.MsgSetupAdminShort)}, http.StatusUnprocessableEntity)
-		return
-	}
-	accessHash := ""
-	if accessMode == "password" {
-		accessHash, err = auth.HashPassword(accessPassword)
-		if err != nil {
-			app.renderSetupWizard(writer, request, session.CSRF, form, []webui.Notice{webui.Error("access_password", webui.MsgSetupAccessPassShort)}, http.StatusUnprocessableEntity)
-			return
-		}
-	}
-	unlock, err := bootstrap.AcquireSetupLock(request.Context(), app.Store.Dir())
-	if err != nil {
+	case errors.Is(err, ErrSetupUnavailable):
 		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
 		return
-	}
-	completeErr := app.Store.CompleteSetup(request.Context(), canonical, accessMode, accessHash, adminHash, insecureAccepted)
-	var cleanupErr error
-	if completeErr == nil {
-		cleanupErr = bootstrap.RemoveOwnerSetupFiles(app.Store.Dir())
-	}
-	unlock()
-	if completeErr != nil {
+	case errors.Is(err, ErrSetupNotSaved):
 		app.renderError(writer, request, http.StatusConflict, webui.MsgSetupRaceLost, "")
 		return
-	}
-	// Setup is committed, so this process serves it even when removing the
-	// obsolete owner setup files failed. The failure is still reported, and
-	// the next capability issue removes those files.
-	app.Repositories.SetRoot(canonical)
-	if app.OnSetupComplete != nil {
-		app.OnSetupComplete()
-	}
-	if cleanupErr != nil {
+	case err != nil:
+		// Committed, but the obsolete owner setup files remain.
 		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
 		return
 	}
 	app.clearCookie(writer, request, setupCookie, true)
+	// Without shared access this browser opens the dashboard at once and
+	// shows the notice there. With it, the address loses its notice at the
+	// sign-in page, so the dashboard shows the notice after sign-in instead
+	// (see handleOverview).
+	if answers.AccessMode == "open" {
+		app.setupFinished.Store(false)
+	}
 	app.noticeRedirect(writer, request, "/?notice=setup_completed", http.StatusSeeOther)
+}
+
+func (app *App) setupPrerequisites() []webui.Prerequisite {
+	return []webui.Prerequisite{
+		{Name: "git", Satisfied: app.GitVersion != "", Code: chooseMessage(app.GitVersion != "", webui.MsgPrereqGitFound, webui.MsgPrereqGitMissing), Detail: app.GitVersion},
+		{Name: "git-http-backend", Satisfied: app.HTTPBackendFound, Code: chooseMessage(app.HTTPBackendFound, webui.MsgPrereqHTTPFound, webui.MsgPrereqHTTPMiss)},
+	}
 }
 
 func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Request, csrf string, form webui.SetupForm, notices []webui.Notice, status int) {
@@ -196,48 +152,8 @@ func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Requ
 	chrome.Notices = notices
 	app.render(writer, status, webui.SetupPage{
 		Chrome: chrome, Stage: webui.SetupWizard, SubmitURL: "/setup", RedeemURL: "/setup/redeem", Form: form,
-		Prerequisites: []webui.Prerequisite{
-			{Name: "git", Satisfied: app.GitVersion != "", Code: chooseMessage(app.GitVersion != "", webui.MsgPrereqGitFound, webui.MsgPrereqGitMissing), Detail: app.GitVersion},
-			{Name: "git-http-backend", Satisfied: app.HTTPBackendFound, Code: chooseMessage(app.HTTPBackendFound, webui.MsgPrereqHTTPFound, webui.MsgPrereqHTTPMiss)},
-		},
+		Prerequisites: app.setupPrerequisites(),
 	})
-}
-
-func (app *App) prepareRepositoryRoot(value string) (string, error) {
-	if !filepath.IsAbs(value) {
-		return "", errors.New("repository root must be absolute")
-	}
-	clean := filepath.Clean(value)
-	if err := os.MkdirAll(clean, 0o700); err != nil {
-		return "", err
-	}
-	info, err := os.Stat(clean)
-	if err != nil || !info.IsDir() {
-		return "", errors.New("repository root is not a directory")
-	}
-	canonical, err := filepath.EvalSymlinks(clean)
-	if err != nil {
-		return "", err
-	}
-	stateDir, err := filepath.EvalSymlinks(app.Store.Dir())
-	if err != nil {
-		return "", err
-	}
-	if pathsOverlap(canonical, stateDir) {
-		return "", errors.New("repository root must be separate from application state")
-	}
-	probe, err := os.CreateTemp(canonical, ".owngit-write-test-*")
-	if err != nil {
-		return "", err
-	}
-	probePath := probe.Name()
-	if err := probe.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Remove(probePath); err != nil {
-		return "", err
-	}
-	return canonical, nil
 }
 
 func pathsOverlap(left, right string) bool {

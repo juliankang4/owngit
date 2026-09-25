@@ -71,7 +71,9 @@ func TestAssetPins(t *testing.T) {
 				".dfile .difftable__r.is-add .difftable__n:first-child { box-shadow: inset 3px 0 0 var(--ok); }",
 				".dfile .difftable__r.is-del .difftable__n:first-child { box-shadow: inset 3px 0 0 var(--bad); }"}},
 		{name: "a diff file header stays in view", src: rule(".dfile__h"), has: []string{"position: sticky", "top: 0"}},
-		{name: "the script adds no observers or external code", src: js,
+		// The approval watcher's one GET is checked on its own in
+		// TestScriptClearsTheSetupFragmentAndNeverStoresIt.
+		{name: "the script adds no observers or external code", src: scriptOutsideApprovalWatcher,
 			lacks: []string{"IntersectionObserver", "ResizeObserver", "MutationObserver", "import ", "require(", "fetch(", "XMLHttpRequest", "<script"}},
 
 		// The 390px toolbar defect: the language picker dropped onto its own
@@ -208,6 +210,13 @@ func cssRule(t *testing.T, selector string) string {
 		t.Fatalf("no rule for %q in the stylesheet", selector)
 	}
 	return match[1]
+}
+
+// scriptOutsideApprovalWatcher is the script without the browser approval
+// watcher, the one block allowed to make a request.
+func scriptOutsideApprovalWatcher(t *testing.T) string {
+	js := scriptSource(t)
+	return strings.Replace(js, section(t, js, "(function watchApproval()", "})();"), "", 1)
 }
 
 // section returns source from the first from up to the next to.

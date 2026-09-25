@@ -29,6 +29,13 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	if !ok {
 		return
 	}
+	// The first dashboard view after setup in this process shows "Setup
+	// finished" once: after the terminal setup, or after the sign-in that
+	// shared access asked for. The notice travels in the notice cookie.
+	if app.setupFinished.CompareAndSwap(true, false) {
+		app.noticeRedirect(writer, request, "/?notice=setup_completed", http.StatusSeeOther)
+		return
+	}
 	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
 	if err != nil {
 		app.writePlainError(writer, http.StatusServiceUnavailable)

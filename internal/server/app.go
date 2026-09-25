@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"owngit/internal/auth"
@@ -70,6 +71,15 @@ type App struct {
 	// OnSetupComplete runs once after first-run setup succeeds in this
 	// process, so work that an initialized startup begins can begin now.
 	OnSetupComplete func()
+	// setupFinished is set when first-run setup succeeds in this process, by
+	// the web page or the terminal. The next dashboard view, after sign-in
+	// when shared access needs one, takes it and shows the "Setup finished"
+	// notice once through the notice cookie.
+	setupFinished atomic.Bool
+	// Approvals is set while first-run setup runs in the terminal that
+	// started OwnGit. A browser then asks that terminal for approval instead
+	// of redeeming a setup file. Nil keeps the setup file flow.
+	Approvals *SetupApprovals
 	// WakeChecks is an advisory nonblocking reconciliation signal.
 	WakeChecks func(repositoryID string)
 	// CheckRuntimeUnavailableCode and CheckRuntimeUnavailableReason expose a
@@ -272,11 +282,11 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleAPI(writer, request, settings)
 		return
 	}
-	if !settings.Initialized && request.URL.Path != "/setup" && request.URL.Path != "/setup/redeem" {
+	if !settings.Initialized && request.URL.Path != "/setup" && request.URL.Path != "/setup/redeem" && request.URL.Path != "/setup/approval" {
 		http.Redirect(writer, request, "/setup", http.StatusSeeOther)
 		return
 	}
-	if settings.Initialized && (request.URL.Path == "/setup/redeem" || (request.URL.Path == "/setup" && request.Method != http.MethodGet)) {
+	if settings.Initialized && (request.URL.Path == "/setup/redeem" || ((request.URL.Path == "/setup" || request.URL.Path == "/setup/approval") && request.Method != http.MethodGet)) {
 		app.renderError(writer, request, http.StatusConflict, webui.MsgSetupAlreadyDone, "")
 		return
 	}
@@ -290,6 +300,10 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleSetupPost(writer, request)
 	case request.URL.Path == "/setup/redeem" && request.Method == http.MethodPost:
 		app.handleSetupRedeem(writer, request)
+	case request.URL.Path == "/setup/approval" && request.Method == http.MethodPost:
+		app.handleSetupApprovalRequest(writer, request)
+	case request.URL.Path == "/setup/approval" && request.Method == http.MethodGet:
+		app.handleSetupApprovalStatus(writer, request, settings)
 	case request.URL.Path == "/login" && request.Method == http.MethodGet:
 		app.handleLoginGet(writer, request, settings, webui.AuthGeneral)
 	case request.URL.Path == "/login" && request.Method == http.MethodPost:
