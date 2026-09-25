@@ -652,7 +652,7 @@ func TestTurningOffAfterARenameTakesBackTheSettings(t *testing.T) {
 	rename(fake)
 	report, err := app.Tailscale.Report(ctx)
 	noErr(t, err)
-	if report.Ready || !slices.Contains(report.Waiting, TailscaleWaitName) || len(report.Stale) != 1 {
+	if report.Ready || !reflect.DeepEqual(report.Waiting, []string{TailscaleWaitName}) || len(report.Stale) != 1 || !tailscaleInfo(report).CanTurnOn {
 		t.Fatalf("after the rename: %+v", report)
 	}
 	change, err := app.Tailscale.Off(ctx)

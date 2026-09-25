@@ -40,7 +40,8 @@ type TailscaleInfo struct {
 	// MacApp is true for the Tailscale app for macOS, which does not run
 	// after a restart until someone logs in.
 	MacApp bool
-	// CanTurnOn is true when sharing is off and Tailscale is ready for it.
+	// CanTurnOn is true when sharing is off and Tailscale is ready for it,
+	// or when sharing is on and waits to be turned on again.
 	CanTurnOn bool
 	// HomeNetwork is the initial state of the home network checkbox: true
 	// when OwnGit already listens on every network.

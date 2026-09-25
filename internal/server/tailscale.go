@@ -215,11 +215,13 @@ func waitingFor(report TailscaleReport, record state.TailscaleServe, observed st
 	if report.Problem != "" {
 		waiting = append(waiting, TailscaleWaitTailscale)
 	}
+	// Turning on again is the one thing that helps an unfinished turning
+	// on or a renamed computer, so nothing else is listed then.
 	if !record.Confirmed {
-		waiting = append(waiting, TailscaleWaitUnfinished)
+		return append(waiting, TailscaleWaitUnfinished)
 	}
 	if report.Name != "" && report.Name != record.Name {
-		waiting = append(waiting, TailscaleWaitName)
+		return append(waiting, TailscaleWaitName)
 	}
 	if report.Endpoint == TailscaleEndpointMissing || report.Endpoint == TailscaleEndpointChanged {
 		waiting = append(waiting, TailscaleWaitEndpoint)

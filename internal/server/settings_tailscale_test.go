@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 
+	"owngit/internal/state"
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
 	"owngit/internal/webui"
@@ -155,5 +158,42 @@ func TestConnectionNamesTailscaleOnlyForItsEndpoint(t *testing.T) {
 		if got != test.want {
 			t.Errorf("%s: through Tailscale=%v, want %v", test.name, got, test.want)
 		}
+	}
+}
+
+// An unfinished turning on asks to turn sharing on again and offers the
+// form to do so, without asking for a restart that would not help.
+func TestUnfinishedSharingOffersTurningOnAgain(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	target := tailscale.Target(7654)
+	noErr(t, app.Store.SaveTailscaleServe(ctx, state.TailscaleServe{Name: tailscaletest.Name, HTTPSPort: 443, Target: target, Created: true}))
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve = tailscale.ServeConfig{
+			TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+			Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: target}}}},
+		}
+	})
+	report, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if !reflect.DeepEqual(report.Waiting, []string{TailscaleWaitUnfinished}) {
+		t.Fatalf("waiting=%q", report.Waiting)
+	}
+	client, base, csrf, _ := networkSettingsClient(t, app)
+	body, _ := dashboardGET(t, client, base+"/settings")
+	for _, want := range []string{enText(webui.TailscaleWaitCode(TailscaleWaitUnfinished)), `value="tailscale_on"`, `value="tailscale_off"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the unfinished state lacks %q", want)
+		}
+	}
+	if strings.Contains(body, enText(webui.TailscaleWaitCode(TailscaleWaitRestart))) {
+		t.Error("the unfinished state asks for a restart")
+	}
+	result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false), base)
+	if result.status != http.StatusSeeOther {
+		t.Fatalf("turning on again: status=%d", result.status)
+	}
+	if report, err := app.Tailscale.Report(ctx); err != nil || !report.Ready {
+		t.Fatalf("after turning on again: %+v %v", report, err)
 	}
 }

@@ -303,24 +303,8 @@
     {{end}}
     {{if $ts.MacApp}}<p class="netnote netnote--info">{{icon "info"}}<span>{{bi $lang "tailscale.mac_app"}}</span></p>{{end}}
 
-    {{if $ts.On}}
-      {{$act := "tailscale_off"}}{{$fn := forAction $pending $act $n}}
-      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
-        <summary class="btn">{{bi $lang "settings.tailscale.turn_off"}}</summary>
-        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-          <input type="hidden" name="csrf" value="{{$csrf}}">
-          <input type="hidden" name="action" value="{{$act}}">
-          <p class="setblock__d">{{bi $lang "settings.tailscale.off_note"}}</p>
-          <div class="f">
-            <label for="ts-off-admin">{{bi $lang "admin.field"}}</label>
-            <input id="ts-off-admin" name="admin_password" type="password" autocomplete="current-password" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}{{if ge (firstAlert $fn "admin_password") 0}} autofocus{{end}}>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-          </div>
-          <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "settings.tailscale.turn_off_button"}}</button></div>
-        </form>
-      </details>
-    {{else if $ts.CanTurnOn}}
+    {{/* While sharing waits to be turned on again, that comes first. */}}
+    {{if $ts.CanTurnOn}}
       {{$act := "tailscale_on"}}{{$fn := forAction $pending $act $n}}
       <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
         <summary class="btn">{{bi $lang "settings.tailscale.turn_on"}}</summary>
@@ -343,6 +327,24 @@
             {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
           </div>
           <div class="actions"><button type="submit" class="btn btn--primary" aria-describedby="ts-log">{{bi $lang "settings.tailscale.turn_on_button"}}</button></div>
+        </form>
+      </details>
+    {{end}}
+    {{if $ts.On}}
+      {{$act := "tailscale_off"}}{{$fn := forAction $pending $act $n}}
+      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
+        <summary class="btn">{{bi $lang "settings.tailscale.turn_off"}}</summary>
+        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input type="hidden" name="action" value="{{$act}}">
+          <p class="setblock__d">{{bi $lang "settings.tailscale.off_note"}}</p>
+          <div class="f">
+            <label for="ts-off-admin">{{bi $lang "admin.field"}}</label>
+            <input id="ts-off-admin" name="admin_password" type="password" autocomplete="current-password" required
+                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}{{if ge (firstAlert $fn "admin_password") 0}} autofocus{{end}}>
+            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
+          </div>
+          <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "settings.tailscale.turn_off_button"}}</button></div>
         </form>
       </details>
     {{end}}
