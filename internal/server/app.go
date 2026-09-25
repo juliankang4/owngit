@@ -84,6 +84,12 @@ type App struct {
 	// when shared access needs one, takes it and shows the "Setup finished"
 	// notice once through the notice cookie.
 	setupFinished atomic.Bool
+	// setupHosts binds a setup session redeemed from an unknown Host to that
+	// Host. See setup_host.go.
+	setupHosts setupHostBinding
+	// OnHostAccepted runs after setup kept the Host it was reached by, so the
+	// serving process can record that it now accepts that Host.
+	OnHostAccepted func()
 	// Approvals is set while first-run setup runs in the terminal that
 	// started OwnGit. A browser then asks that terminal for approval instead
 	// of redeeming a setup file. Nil keeps the setup file flow.
@@ -101,7 +107,7 @@ type App struct {
 }
 
 func (app *App) Handler() http.Handler {
-	return app.Requests.Middleware(app.Hosts.Middleware(http.HandlerFunc(app.serveHTTP)))
+	return app.Requests.Middleware(app.Hosts.MiddlewareAdmitting(app.admitUnknownHost, http.HandlerFunc(app.serveHTTP)))
 }
 
 func (app *App) AuthorizeGit(request *http.Request) bool {

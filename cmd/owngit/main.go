@@ -444,7 +444,10 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		ReadTimeout: 30 * time.Second, WriteTimeout: server.ImportRunRequestTimeout(importsync.DefaultLimits().RunTimeout),
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
-	defer publishRunningNetwork(ctx, store, network, listener.Addr().String(), origin, trusted, policy, logf)()
+	publishNetwork, clearNetwork := runningNetworkRecord(store, network, listener.Addr().String(), origin, trusted, policy, logf)
+	application.OnHostAccepted = publishNetwork
+	publishNetwork()
+	defer clearNetwork()
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
 	logf("OwnGit listening on %s", listener.Addr())

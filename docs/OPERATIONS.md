@@ -38,6 +38,8 @@ When setup finishes in the browser, the terminal lists the saved answers and the
 
 When OwnGit starts without a terminal, for example under `brew services`, a LaunchAgent, or systemd, with its output redirected, or as a background job of a shell (`owngit serve &`), it writes an owner-readable setup file inside the state directory and opens it in the installation owner's browser. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. The setup secret is not printed or passed in a browser command argument. `owngit setup-link` issues a new file, and it also works while setup waits in a terminal.
 
+Before setup is finished, the setup link also works from another device by an address OwnGit was not started with, for example this computer's LAN address when OwnGit listens on every interface. `owngit setup-link --base-url http://192.168.1.20:7654` writes a setup file for that address. Until the link is used, that address shows only the page that uses it and refuses everything else. After the link is used, only that browser on that address can continue setup. The setup form then offers to keep accepting the address. If you leave it unticked, OwnGit refuses the address once setup is finished.
+
 ## Reaching the server from another device
 
 OwnGit serves plain HTTP, so the connection is not encrypted, and it has no built-in TLS. Use Tailscale or your own VPN to reach its private-network address. A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP also works: OwnGit shows a one-time warning before it accepts passwords, and the interface keeps the connection status visible. Do not expose OwnGit to the public Internet.

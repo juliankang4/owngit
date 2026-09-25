@@ -125,23 +125,29 @@ func claimRunningRecord(ctx context.Context, stateDir string, store *state.Store
 	return release
 }
 
-// publishRunningNetwork records what this serve run uses for "owngit network
-// show" and returns the function that clears the record when serving stops.
-func publishRunningNetwork(ctx context.Context, store *state.Store, network serveNetwork, address, origin string, savedHosts []string, policy *server.HostPolicy, logf func(string, ...any)) func() {
+// runningNetworkRecord publishes what this serve run uses for "owngit network
+// show". publish records it, each time with the Host names the policy accepts
+// then; unpublish removes it when serving stops.
+func runningNetworkRecord(store *state.Store, network serveNetwork, address, origin string, savedHosts []string, policy *server.HostPolicy, logf func(string, ...any)) (publish, unpublish func()) {
 	running := state.RunningNetwork{
 		PID: os.Getpid(), StartedAt: time.Now().Unix(),
 		Listen: network.Listen, Address: address, ListenSource: network.ListenSource,
 		BaseURL: network.BaseURL, BaseURLSource: network.BaseURLSource, Origin: origin,
-		SavedHosts: normalizedHosts(savedHosts), AcceptedHosts: policy.Hosts(),
+		SavedHosts: normalizedHosts(savedHosts),
 	}
-	if err := store.PublishRunningNetwork(ctx, running); err != nil {
-		logf("could not record the running network settings for \"owngit network show\": %v", err)
+	publish = func() {
+		current := running
+		current.AcceptedHosts = policy.Hosts()
+		if err := store.PublishRunningNetwork(context.Background(), current); err != nil {
+			logf("could not record the running network settings for \"owngit network show\": %v", err)
+		}
 	}
-	return func() {
+	unpublish = func() {
 		if err := store.ClearRunningNetwork(context.Background()); err != nil {
 			logf("could not clear the running network settings: %v", err)
 		}
 	}
+	return publish, unpublish
 }
 
 func networkCommand(arguments []string) error {

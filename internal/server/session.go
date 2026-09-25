@@ -226,6 +226,11 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 	if adminOK {
 		chrome.Viewer.AdminExpiresAt = admin.Expires
 	}
+	// A Host admitted only to redeem the setup link learns nothing about
+	// this server, not even its version. See setup_host.go.
+	if _, unknown := app.unknownHost(request); unknown {
+		chrome.Version = ""
+	}
 	if settings.Initialized && (chrome.Viewer.GeneralUnlocked || adminOK) {
 		repositories, err := app.Store.Repositories(request.Context())
 		if err != nil {

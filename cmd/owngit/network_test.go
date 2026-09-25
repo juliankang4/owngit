@@ -176,7 +176,7 @@ func freeLoopbackAddress(t *testing.T) string {
 
 func statusForHost(t *testing.T, base, host string) int {
 	t.Helper()
-	request, err := http.NewRequest(http.MethodGet, base+"/setup", nil)
+	request, err := http.NewRequest(http.MethodGet, base+"/", nil)
 	noErr(t, err)
 	request.Host = host
 	response, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)

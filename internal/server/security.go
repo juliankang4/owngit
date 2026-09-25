@@ -46,8 +46,15 @@ func (policy *HostPolicy) Allows(requestHost string) bool {
 }
 
 func (policy *HostPolicy) Middleware(next http.Handler) http.Handler {
+	return policy.MiddlewareAdmitting(nil, next)
+}
+
+// MiddlewareAdmitting is Middleware with one exception: a request whose Host
+// the policy refuses still passes when admit, if not nil, accepts it. The
+// Origin check and the security headers apply either way.
+func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if !policy.Allows(requestctx.Of(request).Host) {
+		if !policy.Allows(requestctx.Of(request).Host) && (admit == nil || !admit(request)) {
 			if strings.HasPrefix(request.URL.Path, "/api/") {
 				writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
 			} else {

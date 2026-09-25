@@ -18,12 +18,13 @@ import (
 func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
 	stage := webui.SetupWelcome
 	csrf := ""
+	_, unknownHost := app.unknownHost(request)
 	if settings.Initialized {
 		stage = webui.SetupUnavailable
-	} else if session, ok := app.setupSession(request); ok {
+	} else if session, ok := app.setupSessionForHost(request); ok {
 		stage = webui.SetupWizard
 		csrf = session.CSRF
-	} else if app.Approvals.Active() {
+	} else if app.Approvals.Active() && !unknownHost {
 		app.handleSetupApprovalPage(writer, request)
 		return
 	} else {
@@ -39,8 +40,12 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 		Prerequisites: app.setupPrerequisites(),
 		Form:          webui.SetupForm{SuggestedPath: app.SuggestedRepositoryRoot, AccessMode: webui.AccessOpen},
 	}
+	// Before redemption an unknown Host sees only the redemption form.
+	if unknownHost && stage != webui.SetupWizard {
+		page.Prerequisites, page.Form = nil, webui.SetupForm{}
+	}
 	if stage == webui.SetupWizard {
-		page.KeepHost = app.setupHostToKeep(request)
+		page.KeepHost, page.KeepHostSetupOnly = app.setupHostToKeep(request), unknownHost
 	}
 	if settings.Initialized {
 		page.Reason = webui.MsgSetupAlreadyDone
@@ -82,6 +87,13 @@ func (app *App) handleSetupRedeem(writer http.ResponseWriter, request *http.Requ
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgSetupLinkInvalid, "")
 		return
 	}
+	// Redemption replaced any earlier setup session, so the binding follows
+	// the new one.
+	if host, unknown := app.unknownHost(request); unknown {
+		app.setupHosts.set(sessionToken, host)
+	} else {
+		app.setupHosts.clear()
+	}
 	app.setCookie(writer, request, setupCookie, sessionToken, expires, true)
 	app.clearCookie(writer, request, preauthCookie, true)
 	http.Redirect(writer, request, "/setup", http.StatusSeeOther)
@@ -91,7 +103,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 	if !parseForm(writer, request) {
 		return
 	}
-	session, ok := app.setupSession(request)
+	session, ok := app.setupSessionForHost(request)
 	if !ok {
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgSetupSessionEnded, "")
 		return
@@ -136,6 +148,12 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	app.clearCookie(writer, request, setupCookie, true)
+	// An unknown Host that was not kept is refused from now on, so the
+	// result is shown here instead of on the dashboard.
+	if _, unknown := app.unknownHost(request); unknown {
+		app.renderSetupDoneElsewhere(writer, request)
+		return
+	}
 	// Without shared access this browser opens the dashboard at once and
 	// shows the notice there. With it, the address loses its notice at the
 	// sign-in page, so the dashboard shows the notice after sign-in instead
@@ -146,6 +164,19 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 	app.noticeRedirect(writer, request, "/?notice=setup_completed", http.StatusSeeOther)
 }
 
+// renderSetupDoneElsewhere tells a browser on an unknown Host that setup is
+// finished but its address is no longer accepted. It links nowhere, because
+// every page on this Host now answers 421.
+func (app *App) renderSetupDoneElsewhere(writer http.ResponseWriter, request *http.Request) {
+	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", "")
+	if err != nil {
+		app.writePlainError(writer, http.StatusServiceUnavailable)
+		return
+	}
+	chrome.Nav = webui.Nav{}
+	app.render(writer, http.StatusOK, webui.SetupPage{Chrome: chrome, Stage: webui.SetupUnavailable, Reason: webui.MsgSetupDoneHostNotKept, RecoveryHint: webui.MsgSetupDoneHostNotKeptHint})
+}
+
 func (app *App) setupPrerequisites() []webui.Prerequisite {
 	return []webui.Prerequisite{
 		{Name: "git", Satisfied: app.GitVersion != "", Code: chooseMessage(app.GitVersion != "", webui.MsgPrereqGitFound, webui.MsgPrereqGitMissing), Detail: app.GitVersion},
@@ -154,6 +185,7 @@ func (app *App) setupPrerequisites() []webui.Prerequisite {
 }
 
 func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Request, csrf string, form webui.SetupForm, notices []webui.Notice, status int) {
+	_, unknownHost := app.unknownHost(request)
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", csrf)
 	if err != nil {
 		app.writePlainError(writer, http.StatusServiceUnavailable)
@@ -162,7 +194,7 @@ func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Requ
 	chrome.Notices = notices
 	app.render(writer, status, webui.SetupPage{
 		Chrome: chrome, Stage: webui.SetupWizard, SubmitURL: "/setup", RedeemURL: "/setup/redeem", Form: form,
-		Prerequisites: app.setupPrerequisites(), KeepHost: app.setupHostToKeep(request),
+		Prerequisites: app.setupPrerequisites(), KeepHost: app.setupHostToKeep(request), KeepHostSetupOnly: unknownHost,
 	})
 }
 

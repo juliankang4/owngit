@@ -150,6 +150,14 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 	// obsolete owner setup files failed. The failure is still reported, and
 	// the next capability issue removes those files.
 	app.Repositories.SetRoot(canonical)
+	app.setupHosts.clear()
+	// A kept Host is accepted from now on, also by this process; for a Host
+	// the policy already accepts this changes nothing.
+	if answers.KeepHost != "" && app.Hosts != nil {
+		if err := app.Hosts.Add(answers.KeepHost); err == nil && app.OnHostAccepted != nil {
+			app.OnHostAccepted()
+		}
+	}
 	app.setupFinished.Store(true)
 	if app.Approvals != nil {
 		app.Approvals.Void()

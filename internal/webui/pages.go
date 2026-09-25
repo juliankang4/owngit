@@ -73,6 +73,9 @@ type SetupPage struct {
 	// for this run only. The wizard offers to keep accepting it after a
 	// restart ("keep_host").
 	KeepHost string
+	// KeepHostSetupOnly says that OwnGit accepts KeepHost only to finish
+	// setup, because it was reached by an address it was not started with.
+	KeepHostSetupOnly bool
 
 	// Reason explains an unavailable stage.
 	Reason MessageCode

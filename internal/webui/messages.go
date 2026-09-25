@@ -123,6 +123,13 @@ const (
 	MsgSetupInsecureNeed  MessageCode = "setup.insecure.required"
 	MsgSetupKeepHostLabel MessageCode = "setup.keep_host.label"
 	MsgSetupKeepHostHelp  MessageCode = "setup.keep_host.help"
+	// MsgSetupKeepHostHelpSetupOnly replaces MsgSetupKeepHostHelp for an
+	// address OwnGit accepts only to finish setup.
+	MsgSetupKeepHostHelpSetupOnly MessageCode = "setup.keep_host.help_setup_only"
+	// MsgSetupDoneHostNotKept and its hint answer Finish setup on an address
+	// OwnGit did not keep.
+	MsgSetupDoneHostNotKept     MessageCode = "setup.done_host_not_kept"
+	MsgSetupDoneHostNotKeptHint MessageCode = "setup.done_host_not_kept.hint"
 
 	MsgSetupSubmit    MessageCode = "setup.submit"
 	MsgSetupFailed    MessageCode = "setup.failed"
@@ -618,6 +625,18 @@ var catalog = map[MessageCode]message{
 	MsgSetupInsecureNeed: {
 		en: "Confirm that you understand OwnGit is not encrypting this connection.",
 		ko: "OwnGit이 이 연결을 암호화하지 않는다는 점을 확인해 주세요.",
+	},
+	MsgSetupKeepHostHelpSetupOnly: {
+		en: "OwnGit accepts this address only to finish setup. Unless you tick the box, it refuses this address once setup is finished. Ticking the box saves it as an allowed Host. To remove it later, use owngit network on this computer.",
+		ko: "OwnGit은 설치를 마칠 때까지만 이 주소를 받아들입니다. 선택하지 않으면 설치를 마친 뒤 이 주소를 거부합니다. 선택하면 허용한 Host로 저장합니다. 나중에 지우려면 이 컴퓨터에서 owngit network 명령을 쓰세요.",
+	},
+	MsgSetupDoneHostNotKept: {
+		en: "Setup is finished. OwnGit no longer accepts this address.",
+		ko: "설치를 마쳤습니다. 이제 OwnGit은 이 주소를 받아들이지 않습니다.",
+	},
+	MsgSetupDoneHostNotKeptHint: {
+		en: "Open OwnGit on the installation host. To use this address, allow it there with owngit network and restart OwnGit.",
+		ko: "설치 호스트에서 OwnGit을 여세요. 이 주소를 쓰려면 그곳에서 owngit network 명령으로 허용하고 OwnGit을 다시 시작하세요.",
 	},
 	MsgSetupKeepHostLabel: {
 		en: "Keep accepting this address after a restart:",

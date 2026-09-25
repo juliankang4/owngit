@@ -151,7 +151,7 @@
         <label class="check">
           <input type="checkbox" name="keep_host" value="1"{{if $p.Form.KeepHost}} checked{{end}}>
           <span class="check__t">{{bi $lang "setup.keep_host.label"}} <span class="mono">{{.}}</span></span>
-          <span class="check__d">{{bi $lang "setup.keep_host.help"}}</span>
+          <span class="check__d">{{if $p.KeepHostSetupOnly}}{{bi $lang "setup.keep_host.help_setup_only"}}{{else}}{{bi $lang "setup.keep_host.help"}}{{end}}</span>
         </label>
         {{end}}
       </div>
