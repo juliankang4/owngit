@@ -85,6 +85,10 @@ func (m *Manager) PinRepository(ctx context.Context, id, baseOID, headOID string
 		return nil, err
 	}
 	if !lock.TryRLock() {
+		// A check job retries instead of waiting, so the lock never counts
+		// it as waiting. Recording the attempt as use makes maintenance let
+		// it in after the running step.
+		m.NoteRepositoryUse(id)
 		return nil, ErrPinnedRepositoryBusy
 	}
 	defer lock.RUnlock()
@@ -388,6 +392,7 @@ func (p *PinnedRepository) withReadLock(ctx context.Context, operation func(stri
 		return err
 	}
 	if !lock.TryRLock() {
+		p.manager.NoteRepositoryUse(p.id)
 		return ErrPinnedRepositoryBusy
 	}
 	defer lock.RUnlock()

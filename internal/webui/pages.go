@@ -343,6 +343,10 @@ type RepositorySummary struct {
 	// Unreadable is true when the repository's Git data could not be read
 	// for this page. Only the name and description are known.
 	Unreadable bool
+	// Busy is true when another Git operation held the repository and no
+	// earlier listing was available. Like Preparing, only the name and
+	// description are known.
+	Busy bool
 }
 
 // ---------------------------------------------------------------------------

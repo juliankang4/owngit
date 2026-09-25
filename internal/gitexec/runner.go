@@ -35,6 +35,8 @@ type Runner struct {
 	Timeout          time.Duration
 	OutputLimit      int64
 	TerminationGrace time.Duration
+	// GitSource says how New chose GitPath, for the startup log.
+	GitSource string
 
 	// processSeam optionally injects the attachment-failure cleanup operations.
 	// Tests set it; production leaves it nil for the real operations.
@@ -61,8 +63,14 @@ func (e *LimitError) Error() string {
 	return fmt.Sprintf("git %s exceeded the %d-byte limit", e.Stream, e.Limit)
 }
 
+// New returns a runner for gitPath, or for the Git found on PATH when gitPath
+// is empty. On macOS a Git found on PATH that is the /usr/bin/git shim is
+// replaced by the same-version Git behind it; see preferGitBehindShim.
 func New(gitPath, runtimeDir string) (*Runner, error) {
-	if gitPath == "" {
+	automatic := gitPath == ""
+	source := gitSourceFlag
+	if automatic {
+		source = gitSourcePath
 		var err error
 		gitPath, err = exec.LookPath("git")
 		if err != nil {
@@ -94,7 +102,7 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 		return nil, fmt.Errorf("close isolated Git config: %w", err)
 	}
 
-	return &Runner{
+	runner := &Runner{
 		GitPath:          gitPath,
 		HomeDir:          home,
 		GlobalConfigPath: configPath,
@@ -102,7 +110,12 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 		Timeout:          2 * time.Minute,
 		OutputLimit:      defaultOutputLimit,
 		TerminationGrace: 2 * time.Second,
-	}, nil
+		GitSource:        source,
+	}
+	if automatic {
+		runner.GitPath, runner.GitSource = runner.preferGitBehindShim(gitPath)
+	}
+	return runner, nil
 }
 
 // Environment returns the complete, intentionally small environment used for Git.

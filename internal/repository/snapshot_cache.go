@@ -38,6 +38,21 @@ type snapshotEntry struct {
 // missing or unreadable repository still reports an error. Errors and
 // snapshots incomplete after a failed follow-up read are never cached.
 func (m *Manager) RefSnapshot(ctx context.Context, id string) (RefSnapshot, error) {
+	return m.refSnapshot(ctx, id, 0)
+}
+
+// RefSnapshotWithin is RefSnapshot for a page that lists many repositories.
+// When a Git operation holds the repository, it waits at most wait for the
+// lock. It then returns the last snapshot read, marked Stale, even if a write
+// changed the refs since, or, without one, an error that wraps
+// ErrRepositoryInUse. One busy repository therefore cannot hold up the whole
+// page. A read that failed since drops the last snapshot, so a repository
+// that could not be read is never shown from an older listing.
+func (m *Manager) RefSnapshotWithin(ctx context.Context, id string, wait time.Duration) (RefSnapshot, error) {
+	return m.refSnapshot(ctx, id, wait)
+}
+
+func (m *Manager) refSnapshot(ctx context.Context, id string, wait time.Duration) (RefSnapshot, error) {
 	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
 	if err != nil || !exists {
 		if err == nil {
@@ -52,11 +67,26 @@ func (m *Manager) RefSnapshot(ctx context.Context, id string) (RefSnapshot, erro
 	if snapshot, ok := m.snapshots.lookup(id, repositoryPath, lock); ok {
 		return snapshot, nil
 	}
-	lock.RLock()
+	lockContext := ctx
+	if wait > 0 {
+		var cancel context.CancelFunc
+		lockContext, cancel = context.WithTimeout(ctx, wait)
+		defer cancel()
+	}
+	if err := readLock(lockContext, lock); err != nil {
+		if snapshot, ok := m.snapshots.last(id, repositoryPath, lock); ok && wait > 0 && ctx.Err() == nil {
+			snapshot.Stale = true
+			return snapshot, nil
+		}
+		return RefSnapshot{}, err
+	}
 	defer lock.RUnlock()
 	generation := lock.Generation()
 	snapshot, complete, err := m.readRefSnapshot(ctx, repositoryPath)
 	if err != nil {
+		if ctx.Err() == nil {
+			m.snapshots.drop(id)
+		}
 		return RefSnapshot{}, err
 	}
 	// A snapshot missing a field because a follow-up read failed is returned
@@ -94,6 +124,18 @@ func (cache *snapshotCache) lookup(id, path string, lock *gitexec.RepositoryLock
 	defer cache.mu.Unlock()
 	entry, ok := cache.entries[id]
 	if !ok || entry.lock != lock || entry.path != path || entry.generation != lock.Generation() {
+		return RefSnapshot{}, false
+	}
+	return entry.snapshot.clone(), true
+}
+
+// last returns the latest stored snapshot of the repository, whatever writes
+// happened since.
+func (cache *snapshotCache) last(id, path string, lock *gitexec.RepositoryLock) (RefSnapshot, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	entry, ok := cache.entries[id]
+	if !ok || entry.lock != lock || entry.path != path {
 		return RefSnapshot{}, false
 	}
 	return entry.snapshot.clone(), true

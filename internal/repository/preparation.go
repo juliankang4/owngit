@@ -58,8 +58,9 @@ type preparationJob struct {
 }
 
 // StartPreparation marks every recorded repository as being prepared and
-// prepares each one in the background: its safety configuration, its
-// retention hook, and then step. A repository is served only after all of
+// prepares each one in the background: it removes files that interrupted Git
+// commands left before this process started (see removeStaleGitFiles), then
+// writes its safety configuration and its retention hook, and then runs step. A repository is served only after all of
 // them succeed. A failed repository is retried alone, 30 seconds after the
 // failed attempt and then at doubling intervals up to 10 minutes, while the
 // other repositories are served.
@@ -327,6 +328,10 @@ func (m *Manager) prepareAttempt(ctx context.Context, id string, job *preparatio
 	if err != nil {
 		return err
 	}
+	// Git commands that OwnGit's previous run left interrupted, for example
+	// a repository maintenance stopped by a shutdown, may have left files
+	// that nothing else removes.
+	logStaleGitFileRemoval(id, path, p.logf)
 	if err := m.configureLocked(ctx, path, m.Git); err != nil {
 		return err
 	}

@@ -203,6 +203,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if err != nil {
 		return err
 	}
+	logf("using %s at %s (%s)", strings.TrimSpace(string(versionResult.Stdout)), runner.GitPath, runner.GitSource)
 	backendPath, err := githttp.DiscoverBackend(ctx, runner)
 	if err != nil {
 		return err
@@ -216,12 +217,29 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	repositories := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: settings.RepositoryRoot}
+	// The repository folder is locked before anything writes to it, such as
+	// the retention hooks that name this state directory, and it stays
+	// locked until every user of the repositories has stopped. Another
+	// server on the folder, for example one started from a copy of this
+	// state directory, would have its hooks rewritten, so it stops the start.
+	if err := repositories.ClaimStorage(); errors.Is(err, repository.ErrStorageInUse) {
+		return fmt.Errorf("%w; stop the other server first (a copy of a state directory must not serve the same repository folder)", err)
+	} else if err != nil {
+		logf("could not check that no other OwnGit server uses the repository folder: %v", err)
+	}
+	defer repositories.ReleaseStorage()
 	pullRequests := &pullrequest.Service{Store: store, Repositories: repositories}
 	// A repository that becomes ready in the background wakes check
 	// reconciliation, so the hook is set before preparation starts. Wake does
 	// nothing until the coordinator starts.
 	checkCoordinator := &checkrun.Coordinator{Store: store, Repositories: repositories, PullRequests: pullRequests, Logf: logf}
-	repositories.OnChange = checkCoordinator.Wake
+	// Every OwnGit write wakes check reconciliation and schedules repository
+	// maintenance for when the repository is idle.
+	noteChange := func(id string) {
+		checkCoordinator.Wake(id)
+		repositories.NoteRepositoryWrite(id)
+	}
+	repositories.OnChange = noteChange
 	if settings.Initialized {
 		// Deleted repositories have no rows, so an unfinished deletion never
 		// blocks startup; it is reported and retried at the next start.
@@ -247,6 +265,18 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if err := repositories.StartPreparation(ctx, pullRequests.RecoverRepositoryLocked, preparationGrace, logf); err != nil {
 		return err
 	}
+	if err := repositories.StartMaintenance(ctx, repository.MaintenanceSchedule{}, logf); err != nil {
+		return err
+	}
+	// Registered after the store is opened and the offline lock is taken, so
+	// a maintenance command is terminated and reaped before either closes.
+	defer func() {
+		stopContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := repositories.StopMaintenance(stopContext); err != nil {
+			logf("%v", err)
+		}
+	}()
 	if _, err := store.PruneCheckLogs(ctx, time.Now()); err != nil {
 		log.Printf("could not prune expired check logs: %v", err)
 	}
@@ -331,7 +361,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		},
 	}
 	gitHandler.Authorize = application.AuthorizeGit
-	gitHandler.OnReceive = checkCoordinator.Wake
+	gitHandler.OnReceive = noteChange
 	// Activity is counted in the background under the serving lifetime, so
 	// startup does not wait for it and the dashboard finds it ready.
 	application.StartBackground(ctx)
@@ -348,7 +378,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			<-releaseDone
 		}()
 	}
-	pullRequests.OnChange = checkCoordinator.Wake
+	pullRequests.OnChange = noteChange
 	checkContext, cancelChecks := context.WithCancel(ctx)
 	defer cancelChecks()
 	if err := checkCoordinator.Start(checkContext); err != nil {

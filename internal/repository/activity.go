@@ -68,7 +68,9 @@ func (m *Manager) Activity(ctx context.Context, id string, maximumCommits int) (
 		return Activity{}, err
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return Activity{}, err
+	}
 	defer lock.RUnlock()
 	// One listing supplies the roots, the retained provenance, and the key, so
 	// the key describes exactly the refs this observation used.
@@ -240,7 +242,9 @@ func (m *Manager) RetainedRefs(ctx context.Context, id string) ([]RetainedRef, e
 		return nil, errors.New("repository not found")
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return nil, err
+	}
 	defer lock.RUnlock()
 	return retainedRefs(ctx, m.Git, repositoryPath)
 }

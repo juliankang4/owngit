@@ -49,6 +49,14 @@ type Manager struct {
 	// preparation records the repositories that are still being prepared
 	// after startup; see StartPreparation.
 	preparation preparationState
+	// maintenance schedules repository maintenance; see StartMaintenance.
+	maintenance maintenanceState
+	// maintenanceHook, when set by tests, runs before each maintenance
+	// command with the repository write lock held.
+	maintenanceHook func(ctx context.Context, id string, args []string) error
+	// storageClaim holds this server's lock on the repository folder; see
+	// ClaimStorage.
+	storageClaim storageClaimState
 	// PreparationRetry replaces the 30-second first wait after a failed
 	// preparation attempt. Tests shorten it; zero keeps the default.
 	PreparationRetry time.Duration
@@ -192,6 +200,9 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 func (m *Manager) InitBareRepository(ctx context.Context, directory string, options CreateOptions) error {
 	if options.ObjectFormat != "" && options.ObjectFormat != ObjectFormatSHA1 && options.ObjectFormat != ObjectFormatSHA256 {
 		return fmt.Errorf("%w: %q", ErrUnsupportedFormat, options.ObjectFormat)
+	}
+	if err := m.claimStorageForWrite(); err != nil {
+		return err
 	}
 	initArguments := []string{"init", "--bare", "--initial-branch=main"}
 	if options.ObjectFormat == ObjectFormatSHA256 {
@@ -385,6 +396,11 @@ func (m *Manager) prepareRepository(ctx context.Context, id string, hookRuntime 
 // settings that differ, then refreshes the retention hook. The caller holds
 // the repository write lock.
 func (m *Manager) configureLocked(ctx context.Context, path string, hookRuntime *gitexec.Runner) error {
+	// The hook names this server's runtime, so another server that serves
+	// the same folder must keep its own.
+	if err := m.claimStorageForWrite(); err != nil {
+		return err
+	}
 	current, err := m.localConfig(ctx, path)
 	if err != nil {
 		return err

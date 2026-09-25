@@ -54,7 +54,19 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 		// marked here and stays available to Git. A repository deleted while
 		// the page was built is left out.
 		err := snapshotErrs[index]
-		if err != nil && !errors.Is(err, repository.ErrRepositoryPreparing) {
+		snapshot := snapshots[index]
+		// A repository that another Git operation holds was not read for
+		// this page: it shows its last listing (Stale), or, without one, is
+		// listed as in use instead of holding up the page. It is listed only
+		// if it still exists, and one found unreadable when it was last read
+		// stays marked unreadable.
+		busy := errors.Is(err, repository.ErrRepositoryInUse) && ctx.Err() == nil
+		if busy || snapshot.Stale {
+			if _, exists, lookupErr := app.Store.Repository(ctx, stored.ID); lookupErr == nil && !exists {
+				continue
+			}
+		}
+		if err != nil && !busy && !errors.Is(err, repository.ErrRepositoryPreparing) {
 			if ctx.Err() != nil {
 				app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoUnreadable, stored.Name)
 				return
@@ -65,12 +77,18 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 				err = checked
 			}
 		}
-		if err == nil || errors.Is(err, repository.ErrRepositoryPreparing) {
+		unreadable := false
+		switch {
+		case busy:
+			unreadable = app.unreadable.reported(stored.ID)
+		case snapshot.Stale:
+			// Not read now; the listing is from the last successful read.
+		case err == nil || errors.Is(err, repository.ErrRepositoryPreparing):
 			app.unreadable.recovered(stored.ID)
-		} else {
+		default:
 			app.unreadable.report(stored.ID, err)
+			unreadable = true
 		}
-		snapshot := snapshots[index]
 		repositories[listed], snapshots[listed], snapshotErrs[listed] = stored, snapshot, err
 		listed++
 		if query == "" || strings.Contains(strings.ToLower(stored.Name), query) || strings.Contains(strings.ToLower(stored.Description), query) {
@@ -80,7 +98,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 				summary = webui.RepositorySummary{
 					ID: stored.ID, Name: stored.Name, Description: stored.Description,
 					URL: summary.URL, CloneURL: summary.CloneURL, CreatedAt: stored.CreatedAt,
-					Preparing: preparing, Unreadable: !preparing,
+					Preparing: preparing, Unreadable: unreadable, Busy: busy && !unreadable,
 				}
 			}
 			summaries = append(summaries, summary)
@@ -128,6 +146,13 @@ func (l *unreadableLog) report(id string, cause error) {
 	}
 	l.logged[id] = true
 	log.Printf("repository %q is shown as unreadable because its Git data could not be read: %v", id, cause)
+}
+
+// reported tells whether id was shown as unreadable when it was last read.
+func (l *unreadableLog) reported(id string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.logged[id]
 }
 
 func (l *unreadableLog) recovered(id string) {
@@ -296,16 +321,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	snapshot, err := app.Repositories.RefSnapshot(request.Context(), id)
 	summary := snapshot.Summary
 	if err != nil {
-		page := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
-		page.Repo.Unreadable = true
-		page.Repo.UnreadableReason = webui.MsgRepoUnreadable
-		if errors.Is(err, repository.ErrRepositoryPreparing) {
-			// The notice is fixed; the cause is only in the server log.
-			page.Repo.Preparing = true
-			page.Repo.UnreadableReason = webui.MsgRepoPreparing
-			writer.Header().Set("Retry-After", "30")
-		}
-		app.render(writer, http.StatusServiceUnavailable, page)
+		app.renderRepositoryUnavailable(writer, request, chrome, stored, err)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "pull-requests" {
@@ -409,7 +425,35 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 		return
 	}
+	// A read that ran out of time leaves parts of the page empty or marked
+	// missing, so the page explains the wait instead.
+	if err := request.Context().Err(); err != nil {
+		if app.Repositories.InUse(id) {
+			err = repository.ErrRepositoryInUse
+		}
+		app.renderRepositoryUnavailable(writer, request, chrome, stored, err)
+		return
+	}
 	app.render(writer, http.StatusOK, page)
+}
+
+// renderRepositoryUnavailable answers a repository page whose Git data could
+// not be read, with the reason when it is known.
+func (app *App) renderRepositoryUnavailable(writer http.ResponseWriter, request *http.Request, chrome webui.Chrome, stored state.Repository, cause error) {
+	page := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
+	page.Repo.Unreadable = true
+	page.Repo.UnreadableReason = webui.MsgRepoUnreadable
+	switch {
+	case errors.Is(cause, repository.ErrRepositoryPreparing):
+		// The notice is fixed; the cause is only in the server log.
+		page.Repo.Preparing = true
+		page.Repo.UnreadableReason = webui.MsgRepoPreparing
+		writer.Header().Set("Retry-After", "30")
+	case errors.Is(cause, repository.ErrRepositoryInUse):
+		page.Repo.UnreadableReason = webui.MsgRepoBusyInUse
+		writer.Header().Set("Retry-After", "10")
+	}
+	app.render(writer, http.StatusServiceUnavailable, page)
 }
 
 // administratorRepositoryScreen names the repository screens that require an

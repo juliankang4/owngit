@@ -694,7 +694,9 @@ func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, s
 		return nil, false, err
 	}
 	lock := app.Repositories.Locks.For(repositoryID)
-	lock.RLock()
+	if err := lock.RLockContext(ctx); err != nil {
+		return nil, false, fmt.Errorf("%w (%w)", repository.ErrRepositoryInUse, err)
+	}
 	defer lock.RUnlock()
 
 	statusResult, err := app.Repositories.Git.Run(ctx, repositoryPath, nil,

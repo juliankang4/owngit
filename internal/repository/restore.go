@@ -74,7 +74,9 @@ func (m *Manager) PreviewRestore(ctx context.Context, id string, request Restore
 		return RestorePreview{}, err
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return RestorePreview{}, err
+	}
 	defer lock.RUnlock()
 	plan, err := m.prepareRestore(ctx, repositoryPath, request, false)
 	if err != nil {
@@ -92,7 +94,9 @@ func (m *Manager) ApplyRestore(ctx context.Context, id string, request RestoreRe
 		return RestoreResult{}, err
 	}
 	lock := m.Locks.For(id)
-	lock.Lock()
+	if err := writeLock(ctx, lock); err != nil {
+		return RestoreResult{}, err
+	}
 	defer lock.Unlock()
 	plan, err := m.prepareRestore(ctx, repositoryPath, request, true)
 	if err != nil {

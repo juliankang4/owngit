@@ -93,6 +93,8 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 	if err := deletionBusyError(m.Store.RepositoryDeletionBusy(ctx, id)); err != nil {
 		return DeleteResult{}, err
 	}
+	// Maintenance never delays a deletion: a running one is stopped.
+	m.stopMaintenanceOf(id)
 	lock := m.Locks.For(id)
 	if err := lockWithin(ctx, lock, deleteLockWait); err != nil {
 		return DeleteResult{}, err
@@ -148,10 +150,11 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 		}
 		return DeleteResult{}, deletionBusyError(err)
 	}
-	// The repository is gone from OwnGit, so its preparation, if any, stops
-	// here under the repository lock and cannot touch a later repository
-	// with the same ID.
+	// The repository is gone from OwnGit, so its preparation and maintenance,
+	// if any, stop here under the repository lock and cannot touch a later
+	// repository with the same ID.
 	m.CancelPreparation(id)
+	m.forgetMaintenance(id)
 	if err := m.deletionStep("recorded"); err != nil {
 		return DeleteResult{}, fmt.Errorf("%w: %v", ErrDeleteIncomplete, err)
 	}
@@ -479,6 +482,35 @@ func deletionBusyError(err error) error {
 		return ErrCheckCleanupPending
 	}
 	return err
+}
+
+// readLock takes the repository read lock for a request unless ctx ends
+// first. The error then wraps ErrRepositoryInUse and the context error, so a
+// page can say that another Git operation holds the repository.
+func readLock(ctx context.Context, lock *gitexec.RepositoryLock) error {
+	if err := lock.RLockContext(ctx); err != nil {
+		return fmt.Errorf("%w (%w)", ErrRepositoryInUse, err)
+	}
+	return nil
+}
+
+// InUse reports whether a Git operation holds or waits for the write lock of
+// repository id, so a reader would have to wait.
+func (m *Manager) InUse(id string) bool {
+	lock := m.Locks.For(id)
+	if !lock.TryRLock() {
+		return true
+	}
+	lock.RUnlock()
+	return false
+}
+
+// writeLock is readLock for the write lock.
+func writeLock(ctx context.Context, lock *gitexec.RepositoryLock) error {
+	if err := lock.LockContext(ctx); err != nil {
+		return fmt.Errorf("%w (%w)", ErrRepositoryInUse, err)
+	}
+	return nil
 }
 
 // lockWithin takes the write lock unless wait or ctx ends first.

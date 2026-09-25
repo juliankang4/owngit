@@ -88,7 +88,9 @@ func (m *Manager) Summary(ctx context.Context, id string) (Summary, error) {
 		return Summary{}, err
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return Summary{}, err
+	}
 	defer lock.RUnlock()
 
 	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", "refs/heads", "refs/tags", "refs/owngit/retained")
@@ -185,7 +187,9 @@ func (m *Manager) CommitReachableFrom(ctx context.Context, id, rootOID, commitOI
 		return false, errors.New("repository not found")
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return false, err
+	}
 	defer lock.RUnlock()
 	_, err = m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "merge-base", "--is-ancestor", commitOID, rootOID)
 	if err == nil {
@@ -207,7 +211,9 @@ func (m *Manager) Tree(ctx context.Context, id, requestedRef, directory string) 
 	}
 	repositoryPath, _, _, _ := m.ExistingPath(ctx, id)
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return "", nil, err
+	}
 	defer lock.RUnlock()
 	treeOID := commitOID
 	if directory != "" {
@@ -322,7 +328,9 @@ func (m *Manager) ReadBlob(ctx context.Context, id, requestedRef, filePath strin
 	}
 	repositoryPath, _, _, _ := m.ExistingPath(ctx, id)
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return "", Blob{}, err
+	}
 	defer lock.RUnlock()
 	entry, err := m.lookupTreeEntry(ctx, repositoryPath, commitOID, filePath)
 	if err != nil {
@@ -371,7 +379,9 @@ func (m *Manager) Commits(ctx context.Context, id, requestedRef string, limit in
 		return "", nil, err
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return "", nil, err
+	}
 	defer lock.RUnlock()
 	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "log", "-z", "--no-decorate", "--max-count="+strconv.Itoa(limit), "--format="+commitLogFormat, commitOID)
 	if err != nil {
@@ -397,7 +407,9 @@ func (m *Manager) RefTips(ctx context.Context, id string, refs []Ref) (map[strin
 		return nil, err
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return nil, err
+	}
 	defer lock.RUnlock()
 	commitOIDs := make(map[string]string, len(refs))
 	var annotated []string
@@ -489,7 +501,9 @@ func (m *Manager) Commit(ctx context.Context, id, oid, filePath string) (CommitD
 		return CommitDetail{}, errors.New("repository not found")
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return CommitDetail{}, err
+	}
 	defer lock.RUnlock()
 	commit, err := m.readCommit(ctx, repositoryPath, oid)
 	if err != nil {
@@ -528,7 +542,9 @@ func (m *Manager) CommitAllFiles(ctx context.Context, id, oid string, limit, fil
 		return CommitDetail{}, errors.New("repository not found")
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return CommitDetail{}, err
+	}
 	defer lock.RUnlock()
 	commit, err := m.readCommit(ctx, repositoryPath, oid)
 	if err != nil {
@@ -645,7 +661,9 @@ func (m *Manager) ChangedFiles(ctx context.Context, id, oid string) ([]ChangedFi
 		return nil, errors.New("repository not found")
 	}
 	lock := m.Locks.For(id)
-	lock.RLock()
+	if err := readLock(ctx, lock); err != nil {
+		return nil, err
+	}
 	defer lock.RUnlock()
 	statusResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", oid)
 	if err != nil {

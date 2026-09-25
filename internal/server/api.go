@@ -361,7 +361,7 @@ func apiStatus(code string) int {
 		return http.StatusNotImplemented
 	case "result_too_large":
 		return http.StatusRequestEntityTooLarge
-	case "state_unavailable", "repository_unavailable", "repository_preparing", "merge_reconciliation_pending", "pull_request_creation_reconciliation_pending":
+	case "state_unavailable", "repository_unavailable", "repository_preparing", "repository_busy", "merge_reconciliation_pending", "pull_request_creation_reconciliation_pending":
 		return http.StatusServiceUnavailable
 	case "repository_integrity_error":
 		return http.StatusInternalServerError

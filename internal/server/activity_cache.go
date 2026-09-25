@@ -19,6 +19,9 @@ const (
 	// keep a network share from receiving a burst of Git processes.
 	activityConcurrency = 4
 	snapshotConcurrency = 8
+	// repositoryListWait is how long a page that lists repositories waits for
+	// one that a Git operation holds before it uses the last listing.
+	repositoryListWait = time.Second
 )
 
 // errRefsUnlisted reports a repository whose refs could not be listed, so its
@@ -418,7 +421,7 @@ func (app *App) refSnapshots(ctx context.Context, repositories []state.Repositor
 				return
 			}
 			defer func() { <-slots }()
-			snapshots[index], errs[index] = app.Repositories.RefSnapshot(ctx, repositories[index].ID)
+			snapshots[index], errs[index] = app.Repositories.RefSnapshotWithin(ctx, repositories[index].ID, repositoryListWait)
 		}()
 	}
 	group.Wait()

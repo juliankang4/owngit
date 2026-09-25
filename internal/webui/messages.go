@@ -247,6 +247,8 @@ const (
 	MsgRepoPreparing        MessageCode = "repo.preparing"
 	MsgRepoPreparingDetail  MessageCode = "repo.preparing.detail"
 	MsgRepoPreparingShort   MessageCode = "repo.preparing.short"
+	MsgRepoBusyShort        MessageCode = "repo.busy.short"
+	MsgRepoBusyRow          MessageCode = "repo.busy.row"
 	MsgRepoUnreadableShort  MessageCode = "repo.unreadable.short"
 	MsgActivityPreparing    MessageCode = "activity.preparing"
 	MsgActivityUnreadable   MessageCode = "activity.unreadable"
@@ -1011,6 +1013,14 @@ var catalog = map[MessageCode]message{
 	MsgRepoPreparingShort: {
 		en: "Preparing",
 		ko: "준비 중",
+	},
+	MsgRepoBusyShort: {
+		en: "In use",
+		ko: "사용 중",
+	},
+	MsgRepoBusyRow: {
+		en: "A push or clone is using this repository. Reload to see it.",
+		ko: "푸시나 클론이 이 저장소를 쓰고 있습니다. 다시 불러오면 보입니다.",
 	},
 	MsgRepoUnreadableShort: {
 		en: "Unreadable",

@@ -70,7 +70,9 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 		return nil, err
 	}
 	lock := service.Repositories.Locks.For(input.Repository)
-	lock.Lock()
+	if err := lockForRequest(ctx, lock.LockContext); err != nil {
+		return nil, err
+	}
 	defer lock.Unlock()
 	sourceHead, err := service.resolveBranch(ctx, repositoryPath, source)
 	if err != nil {
@@ -166,7 +168,9 @@ func (service *Service) List(ctx context.Context, repositoryID string) ([]*View,
 		return nil, err
 	}
 	lock := service.Repositories.Locks.For(repositoryID)
-	lock.RLock()
+	if err := lockForRequest(ctx, lock.RLockContext); err != nil {
+		return nil, err
+	}
 	defer lock.RUnlock()
 	records, err := service.Store.PullRequests(ctx, repositoryID)
 	if err != nil {
@@ -195,7 +199,9 @@ func (service *Service) Show(ctx context.Context, repositoryID string, number in
 		return nil, err
 	}
 	lock := service.Repositories.Locks.For(repositoryID)
-	lock.RLock()
+	if err := lockForRequest(ctx, lock.RLockContext); err != nil {
+		return nil, err
+	}
 	defer lock.RUnlock()
 	record, err := service.requirePullRequest(ctx, repositoryID, number)
 	if err != nil {
@@ -238,7 +244,9 @@ func (service *Service) recordReview(ctx context.Context, repositoryID string, n
 		return nil, err
 	}
 	lock := service.Repositories.Locks.For(repositoryID)
-	lock.Lock()
+	if err := lockForRequest(ctx, lock.LockContext); err != nil {
+		return nil, err
+	}
 	defer lock.Unlock()
 	record, err := service.requirePullRequest(ctx, repositoryID, number)
 	if err != nil {
@@ -291,7 +299,9 @@ func (service *Service) Merge(ctx context.Context, repositoryID string, number i
 		return nil, err
 	}
 	lock := service.Repositories.Locks.For(repositoryID)
-	lock.Lock()
+	if err := lockForRequest(ctx, lock.LockContext); err != nil {
+		return nil, err
+	}
 	defer lock.Unlock()
 	record, err := service.requirePullRequest(ctx, repositoryID, number)
 	if err != nil {
@@ -440,7 +450,9 @@ func (service *Service) setClosed(ctx context.Context, repositoryID string, numb
 		return nil, err
 	}
 	lock := service.Repositories.Locks.For(repositoryID)
-	lock.Lock()
+	if err := lockForRequest(ctx, lock.LockContext); err != nil {
+		return nil, err
+	}
 	defer lock.Unlock()
 	record, err := service.requirePullRequest(ctx, repositoryID, number)
 	if err != nil {
@@ -956,6 +968,15 @@ func (service *Service) requirePullRequest(ctx context.Context, repositoryID str
 		return state.PullRequest{}, NewProblem("pull_request_not_found", "The pull request does not exist.")
 	}
 	return record, nil
+}
+
+// lockForRequest takes a repository lock with take unless ctx ends first,
+// and then reports the repository as busy.
+func lockForRequest(ctx context.Context, take func(context.Context) error) error {
+	if err := take(ctx); err != nil {
+		return &Problem{Code: "repository_busy", Message: "Another Git operation, such as a push or a clone, is using the repository. Try again in a moment.", Cause: errors.Join(repository.ErrRepositoryInUse, err)}
+	}
+	return nil
 }
 
 func (service *Service) repositoryPath(ctx context.Context, repositoryID string) (string, error) {

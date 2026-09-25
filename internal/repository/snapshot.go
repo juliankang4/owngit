@@ -25,6 +25,9 @@ type RefSnapshot struct {
 	HeadFound bool
 	// ActivityKey equals the Key of an Activity observation of the same refs.
 	ActivityKey string
+	// Stale is set when RefSnapshotWithin returned the last snapshot read
+	// because another Git operation held the repository. It is never cached.
+	Stale bool
 }
 
 // snapshotFormat prints each ref, and for the ref HEAD points to, the tip

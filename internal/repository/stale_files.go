@@ -1,0 +1,90 @@
+package repository
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+)
+
+// processStart is when this OwnGit process started. Git files older than it
+// cannot belong to a Git command that this process runs.
+var processStart = time.Now()
+
+// gitTemporaryPackFile matches the files Git writes in objects/pack before it
+// renames them into place: pack-objects and index-pack write tmp_pack_XXXXXX
+// and tmp_idx_XXXXXX (and the matching rev, mtimes and bitmap files), and
+// repack names finished packs .tmp-PID-pack-HASH until it renames them. A
+// command that was killed, for example when OwnGit stopped during a repack,
+// leaves them behind, and nothing else ever removes them.
+var gitTemporaryPackFile = regexp.MustCompile(`^(tmp_(pack|idx|rev|mtimes|bitmap)_[A-Za-z0-9]{6}|\.tmp-[0-9]+-pack-[0-9a-f]+\.(pack|idx|rev|mtimes|bitmap|promisor))$`)
+
+// staleGitLockFiles are the Git lock files that repository maintenance
+// creates. A Git process that was killed, which on Windows ends the process
+// at once, leaves them behind, and every later pack-refs, branch deletion or
+// commit-graph then fails until they are removed. Other lock files are never
+// removed.
+var staleGitLockFiles = []string{
+	"packed-refs.lock",
+	filepath.Join("objects", "info", "commit-graphs", "commit-graph-chain.lock"),
+}
+
+// removeStaleGitFiles removes the temporary pack files and the lock files
+// above that are older than this process. The caller holds the repository
+// write lock, so no Git command of this process that uses the lock files
+// runs. The age check keeps the temporary files of an import, which indexes
+// its pack without the lock, because this process started that import. It
+// returns what it removed and any errors.
+func removeStaleGitFiles(path string) (removed []string, err error) {
+	var errs []error
+	remove := func(relative string) {
+		file := filepath.Join(path, relative)
+		info, statErr := os.Lstat(file)
+		if errors.Is(statErr, fs.ErrNotExist) {
+			return
+		}
+		if statErr != nil {
+			errs = append(errs, statErr)
+			return
+		}
+		if !info.Mode().IsRegular() || !info.ModTime().Before(processStart) {
+			return
+		}
+		if removeErr := os.Remove(file); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+			errs = append(errs, removeErr)
+			return
+		}
+		removed = append(removed, fmt.Sprintf("%s (%d bytes)", filepath.ToSlash(relative), info.Size()))
+	}
+	packDirectory := filepath.Join("objects", "pack")
+	entries, readErr := os.ReadDir(filepath.Join(path, packDirectory))
+	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+		errs = append(errs, readErr)
+	}
+	for _, entry := range entries {
+		if gitTemporaryPackFile.MatchString(entry.Name()) {
+			remove(filepath.Join(packDirectory, entry.Name()))
+		}
+	}
+	for _, name := range staleGitLockFiles {
+		remove(name)
+	}
+	return removed, errors.Join(errs...)
+}
+
+// logStaleGitFileRemoval removes stale Git files from repository id at path
+// and logs the outcome. It never fails the caller: a file that stays only
+// keeps its current effect.
+func logStaleGitFileRemoval(id, path string, logf func(string, ...any)) {
+	removed, err := removeStaleGitFiles(path)
+	if len(removed) != 0 {
+		logf("repository %q: removed files left by a Git command that was interrupted before OwnGit started: %s", id, strings.Join(removed, ", "))
+	}
+	if err != nil {
+		logf("repository %q: could not remove files left by an interrupted Git command: %v", id, err)
+	}
+}
