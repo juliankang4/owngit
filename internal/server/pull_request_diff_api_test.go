@@ -257,7 +257,7 @@ func TestDiffFromComparisonReportsCuts(t *testing.T) {
 		many[index] = repository.ChangedFile{Path: strings.Repeat("x", 30) + itoa(int64(index)), Status: "added"}
 	}
 	diff := diffFromComparison(revisions, repository.Comparison{Bases: 1, Files: many, Patch: whole})
-	fitDiff(diff, 4000)
+	diff.Fit(4000)
 	encoded, err := json.Marshal(diff)
 	noErr(t, err)
 	if len(encoded)+1 > 4000 || diff.Patch != "" || !diff.Truncated || !diff.Incomplete || diff.Reason != "response_limit" || len(diff.Files) == 0 || len(diff.Files) >= 200 {
@@ -266,41 +266,7 @@ func TestDiffFromComparisonReportsCuts(t *testing.T) {
 	// One more entry would not have fit.
 	next := many[len(diff.Files)]
 	diff.Files = append(diff.Files, pullrequest.DiffFile{Path: next.Path, Status: next.Status})
-	if size := encodedSize(diff); size <= 4000 {
+	if size := diff.EncodedSize(); size <= 4000 {
 		t.Fatalf("the list kept %d entries although %d fit (%d bytes)", len(diff.Files)-1, len(diff.Files), size)
-	}
-}
-
-// Fitting the response keeps every whole file that fits, not half of them.
-func TestFitDiffKeepsEveryWholeFileThatFits(t *testing.T) {
-	var sections []string
-	var files []pullrequest.DiffFile
-	for index := 0; index < 6; index++ {
-		name := "f" + itoa(int64(index)) + ".html"
-		// Markup is escaped to six bytes per character.
-		sections = append(sections, "diff --git a/"+name+" b/"+name+"\n+"+strings.Repeat("<&>", 100+index*50)+"\n")
-		files = append(files, pullrequest.DiffFile{Path: name, Status: "added", Additions: 1})
-	}
-	whole := strings.Join(sections, "")
-	newDiff := func() *pullrequest.Diff {
-		return &pullrequest.Diff{OK: true, Repository: "project", Number: 1, Files: append([]pullrequest.DiffFile(nil), files...), Patch: whole}
-	}
-	// With every file kept the diff is not cut and carries no reason, so the
-	// last count is the uncut case checked below.
-	for keep := 0; keep < len(sections)-1; keep++ {
-		probe := newDiff()
-		markCut(probe, false)
-		probe.Patch = strings.Join(sections[:keep+1], "")
-		// The largest limit that cannot hold keep+1 files.
-		limit := encodedSize(probe) - 1
-		diff := newDiff()
-		fitDiff(diff, limit)
-		if diff.Patch != strings.Join(sections[:keep], "") || !diff.Truncated || diff.Incomplete || diff.Reason != "response_limit" ||
-			len(diff.Files) != len(files) || encodedSize(diff) > limit {
-			t.Errorf("limit %d: kept %d sections, want %d; size=%d %+v", limit, strings.Count(diff.Patch, "diff --git "), keep, encodedSize(diff), diff.Reason)
-		}
-	}
-	if diff := newDiff(); func() bool { fitDiff(diff, encodedSize(diff)); return diff.Truncated || diff.Patch != whole }() {
-		t.Fatal("a diff that fits was cut")
 	}
 }

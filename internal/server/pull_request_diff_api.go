@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"math"
 	"net/http"
 	"strings"
 
@@ -46,7 +44,7 @@ func (app *App) pullRequestDiff(ctx context.Context, repositoryID string, number
 		return nil, &pullrequest.Problem{Code: "repository_unavailable", Message: "The pull request changes could not be read.", Cause: err}
 	}
 	diff := diffFromComparison(revisions, comparison)
-	fitDiff(diff, maximumDiffResponse)
+	diff.Fit(maximumDiffResponse)
 	return diff, nil
 }
 
@@ -87,81 +85,6 @@ func diffFromComparison(revisions pullrequest.DiffRevisions, comparison reposito
 		}
 	}
 	return diff
-}
-
-// fitDiff cuts diff until its encoding, as writeAPIJSON writes it, fits in
-// limit bytes. It keeps as many whole files of the patch as fit, counted from
-// the start, and only when the patch is gone as many entries of the file list
-// as fit. JSON escapes each character on its own and file sections begin after
-// an ASCII newline, so the encoded size of a prefix is the sum of the encoded
-// sizes of its sections.
-func fitDiff(diff *pullrequest.Diff, limit int) {
-	if encodedSize(diff) <= limit {
-		return
-	}
-	markCut(diff, false)
-	patch := diff.Patch
-	diff.Patch = ""
-	if used := encodedSize(diff); used <= limit {
-		kept := 0
-		for _, section := range patchSections(patch) {
-			encoded, _ := json.Marshal(section)
-			if used += len(encoded) - 2; used > limit {
-				break
-			}
-			kept += len(section)
-		}
-		diff.Patch = patch[:kept]
-		return
-	}
-	markCut(diff, true)
-	files := diff.Files
-	diff.Files = []pullrequest.DiffFile{}
-	used, kept := encodedSize(diff), 0
-	for index, file := range files {
-		encoded, _ := json.Marshal(file)
-		size := len(encoded)
-		if index > 0 {
-			size++ // the comma between entries
-		}
-		if used += size; used > limit {
-			break
-		}
-		kept++
-	}
-	diff.Files = files[:kept]
-}
-
-// encodedSize is the length writeAPIJSON writes for diff: the JSON with HTML
-// escaping and a newline.
-func encodedSize(diff *pullrequest.Diff) int {
-	encoded, err := json.Marshal(diff)
-	if err != nil {
-		return math.MaxInt
-	}
-	return len(encoded) + 1
-}
-
-// patchSections splits a patch at the start of each file's "diff --git " line.
-func patchSections(patch string) []string {
-	var sections []string
-	for patch != "" {
-		next := strings.Index(patch[1:], "\ndiff --git ")
-		if next < 0 {
-			return append(sections, patch)
-		}
-		sections = append(sections, patch[:next+2])
-		patch = patch[next+2:]
-	}
-	return sections
-}
-
-func markCut(diff *pullrequest.Diff, files bool) {
-	diff.Truncated = true
-	diff.Incomplete = diff.Incomplete || files
-	if diff.Reason == "" {
-		diff.Reason = "response_limit"
-	}
 }
 
 // patchSectionStart returns where the last file section that starts before

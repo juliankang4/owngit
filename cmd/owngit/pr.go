@@ -133,25 +133,29 @@ func prDiff(arguments []string) error {
 	case err != nil:
 		return err
 	case *stat:
-		return writeDiffStat(content)
+		return writeResult(diffStat(content))
 	case *patch:
 		return writeDiffPatch(content, os.Stdout, os.Stderr)
 	}
 	return writeJSON(content)
 }
 
-// writeDiffStat prints a diff result without its patch.
-func writeDiffStat(content []byte) error {
+// diffStat returns a diff result without its patch.
+func diffStat(content []byte) ([]byte, error) {
 	var diff pullrequest.Diff
 	if err := json.Unmarshal(content, &diff); err != nil {
-		return &apiclient.Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid diff.", Cause: err}
+		return nil, &apiclient.Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid diff.", Cause: err}
 	}
-	return writeJSONValue(struct {
+	encoded, err := json.Marshal(struct {
 		pullrequest.Diff
 		// A field at a shallower depth hides the embedded one of the same
 		// JSON name, and a nil pointer with omitempty is left out.
 		Patch *struct{} `json:"patch,omitempty"`
 	}{Diff: diff})
+	if err != nil {
+		return nil, &apiclient.Error{Code: "output_failed", Message: "The JSON result could not be encoded.", Cause: err}
+	}
+	return encoded, nil
 }
 
 // writeDiffPatch prints only the patch text on output, and on notes one line

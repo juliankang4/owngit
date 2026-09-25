@@ -23,9 +23,10 @@ import (
 	"owngit/internal/state"
 )
 
-// checkExit carries the process exit code for a completed check run, or for
-// an import run that kept refs differing from the source. The result is
-// already written to stdout when it is returned.
+// checkExit carries the process exit code for a completed check run, for an
+// import run that kept refs differing from the source, or for an MCP server
+// that could not start. The result or the failure is already written when it
+// is returned.
 type checkExit struct {
 	code int
 	err  error
