@@ -112,6 +112,7 @@
     <h2 class="setblock__h">{{bi $lang "settings.connection.title"}}</h2>
     <p class="setblock__now">
       {{if .Chrome.Connection.Tailscale}}{{icon "lock"}}{{bi $lang "connection.encrypted_tailscale"}}
+      {{else if .Chrome.Connection.Proxy}}{{icon "lock"}}{{bi $lang "connection.encrypted_proxy"}}
       {{else if .Chrome.Connection.Encrypted}}{{icon "lock"}}{{bi $lang "connection.encrypted"}}
       {{else}}{{icon "unlocked"}}{{bi $lang "connection.plain"}}{{end}}
     </p>

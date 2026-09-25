@@ -159,8 +159,11 @@ func TestBrowserAndGitThroughATrustedReverseProxy(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("login created no session: %v", err)
 	}
-	if _, body := fixture.send(t, client, http.MethodGet, "/", nil, ""); !strings.Contains(body, "conn--secure") {
-		t.Fatal("the connection indicator does not show an encrypted connection")
+	// The proxy, not OwnGit, encrypted the browser's connection, and the
+	// indicator says so.
+	if _, body := fixture.send(t, client, http.MethodGet, "/", nil, ""); !strings.Contains(body, "conn--secure") ||
+		!strings.Contains(body, enText(webui.MsgConnProxy)) || strings.Contains(body, enText(webui.MsgConnEncrypted)) {
+		t.Fatal("the connection indicator does not say that the proxy in front of OwnGit encrypted the connection")
 	}
 	if response, body := fixture.send(t, client, http.MethodGet, "/settings", nil, ""); response.StatusCode != http.StatusOK || strings.Contains(body, webui.ActionAcknowledgeInsecure) {
 		t.Fatal("Settings asks to acknowledge plain HTTP for an HTTPS request through the proxy")

@@ -53,7 +53,7 @@ func TestKoreanDeveloperTermsUseFamiliarWording(t *testing.T) {
 func connectionMessages() []MessageCode {
 	return []MessageCode{
 		MsgSetupInsecureLabel, MsgSetupInsecureHelp, MsgSetupInsecureNeed,
-		MsgConnEncrypted, MsgConnPlain, MsgConnPlainDetail,
+		MsgConnEncrypted, MsgConnProxy, MsgConnPlain, MsgConnPlainDetail,
 		MsgConnTailscale, MsgConnNoProof, MsgSettingsAckSubmit, MsgSettingsAckDone,
 	}
 }
@@ -147,7 +147,7 @@ func TestInsecureHelpStatesScopeAndRealRisk(t *testing.T) {
 func TestConnectionIndicatorIsScopedToOwnGit(t *testing.T) {
 	// "Encrypted" alone would read as a claim about the whole path.
 	for _, lang := range Langs() {
-		for _, code := range []MessageCode{MsgConnEncrypted, MsgConnPlain} {
+		for _, code := range []MessageCode{MsgConnEncrypted, MsgConnProxy, MsgConnPlain} {
 			if !strings.Contains(Text(lang, code), "OwnGit") {
 				t.Errorf("%s/%s does not say whose encryption it describes: %q", lang, code, Text(lang, code))
 			}

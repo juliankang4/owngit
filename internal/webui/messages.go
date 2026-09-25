@@ -241,6 +241,7 @@ const (
 // Connection indicator.
 const (
 	MsgConnEncrypted   MessageCode = "connection.encrypted"
+	MsgConnProxy       MessageCode = "connection.encrypted_proxy"
 	MsgConnPlain       MessageCode = "connection.plain"
 	MsgConnPlainDetail MessageCode = "connection.plain_detail"
 	MsgConnTailscale   MessageCode = "connection.tailscale_hint"
@@ -1011,6 +1012,10 @@ var catalog = map[MessageCode]message{
 	MsgConnEncrypted: {
 		en: "Encrypted by OwnGit",
 		ko: "OwnGit이 암호화함",
+	},
+	MsgConnProxy: {
+		en: "Encrypted by the proxy in front of OwnGit",
+		ko: "OwnGit 앞의 프록시가 암호화함",
 	},
 	MsgConnPlain: {
 		en: "Not encrypted by OwnGit",

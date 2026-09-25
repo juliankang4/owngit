@@ -151,13 +151,13 @@ owngit network set --base-url https://git.example.internal --trusted-proxy 127.0
 owngit network show
 ```
 
-`network show` lists the saved trusted proxies, and while OwnGit runs, the ones it uses. After the restart, the connection status in the page header shows an encrypted connection when you open OwnGit through the proxy.
+`network show` lists the saved trusted proxies, and while OwnGit runs, the ones it uses. After the restart, when you open OwnGit through the proxy, the connection status in the page header says "Encrypted by the proxy in front of OwnGit".
 
 `--trusted-proxy` takes the address the proxy connects from, such as `127.0.0.1` when the proxy runs on the same computer, or a CIDR range such as `172.18.0.0/16` for a Docker network. It is repeatable. OwnGit trusts no proxy by default, not even `127.0.0.1`. It refuses ranges wider than `/8` for IPv4 or `/32` for IPv6, such as `0.0.0.0/0`, `0.0.0.0/1`, and `::/0`, and the unspecified addresses `0.0.0.0` and `::`. A range trusts every computer in it, so keep it as small as you can. Trusting `127.0.0.1` also trusts every program on this computer, which can then choose the client address OwnGit sees. `owngit serve --trusted-proxy ADDRESS` replaces the saved list for one run, and `--trusted-proxy ""` trusts none for that run.
 
 From a trusted proxy, and only from one, OwnGit reads three headers:
 
-- `X-Forwarded-Proto`, when it is sent once and is exactly `https` or `http`. With `https`, OwnGit marks its cookies `Secure`, checks browser forms against the `https` address, shows the connection as encrypted, does not ask for the plain-HTTP acknowledgement, and tells Git that the request came over HTTPS.
+- `X-Forwarded-Proto`, when it is sent once and is exactly `https` or `http`. With `https`, OwnGit marks its cookies `Secure`, checks browser forms against the `https` address, shows the connection as encrypted by the proxy, does not ask for the plain-HTTP acknowledgement, and tells Git that the request came over HTTPS.
 - `X-Forwarded-For`, when its last entry is an IP address. The last entry is the one the proxy added. OwnGit uses it for password lockouts and the setup approval warning, so two devices behind the proxy lock out separately. Entries before it came from the client and are ignored.
 - `X-Forwarded-Host`, when it is sent once and OwnGit accepts both that Host and the Host of the request itself. It can only choose between names that already pass the Host check, never add one. The examples below pass the original Host instead, and the nginx example removes any `X-Forwarded-Host` that a client sends.
 

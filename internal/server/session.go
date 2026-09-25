@@ -215,6 +215,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 	if settings.AccessMode == "password" {
 		accessMode = webui.AccessPassword
 	}
+	info := requestctx.Of(request)
 	chrome := webui.Chrome{
 		Lang: lang, Appearance: appearance, Now: app.now(), CurrentURL: request.URL.RequestURI(), CSRF: csrf, Version: app.Version,
 		Viewer: webui.Viewer{
@@ -222,8 +223,8 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			AdminConfirmed: adminOK, SetupComplete: settings.Initialized,
 		},
 		Connection: webui.Connection{
-			Encrypted: requestctx.Of(request).Secure(), Tailscale: app.throughTailscale(request),
-			Host: requestctx.Of(request).Host, InsecureAcknowledged: settings.InsecureHTTPAccepted,
+			Encrypted: info.Secure(), Proxy: info.Secure() && info.Proxied, Tailscale: app.throughTailscale(request),
+			Host: info.Host, InsecureAcknowledged: settings.InsecureHTTPAccepted,
 		},
 	}
 	if adminOK {
