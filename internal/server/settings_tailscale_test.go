@@ -234,3 +234,19 @@ func TestOnlyTheAdministratorSeesWhatElseTailscaleServes(t *testing.T) {
 		}
 	}
 }
+
+// A viewer who is not the administrator gets a complete sentence for a
+// Tailscale error instead of one that ends before the hidden detail.
+func TestAViewerGetsACompleteSentenceForATailscaleError(t *testing.T) {
+	app, _ := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), StatusError: "unexpected answer secret-detail-7"})
+	report, err := app.Tailscale.Report(context.Background())
+	noErr(t, err)
+	if report.Problem != string(tailscale.KindFailed) {
+		t.Fatalf("problem=%q, want failed", report.Problem)
+	}
+	_, _, _, body := networkSettingsClient(t, app)
+	if !strings.Contains(body, enText(webui.TailscaleProblemBrief(webui.MsgTSProblemFailed))) || strings.Contains(body, "secret-detail-7") ||
+		strings.Contains(body, enText(webui.MsgTSProblemFailed)+"<") {
+		t.Fatal("a viewer does not get the complete sentence, or sees the detail")
+	}
+}

@@ -59,6 +59,16 @@ func TailscaleUseText(lang Lang, use TailscaleUse) string {
 	return fmt.Sprintf(Text(lang, TailscaleUseCode(use.Kind)), use.Address, use.Target)
 }
 
+// TailscaleProblemBrief is the message for problem without what Tailscale
+// printed, for a viewer who is not the administrator: a message that would
+// end in that detail gets a complete sentence instead.
+func TailscaleProblemBrief(problem MessageCode) MessageCode {
+	if Has(problem + "_brief") {
+		return problem + "_brief"
+	}
+	return problem
+}
+
 // TailscalePortNoteBrief is note without the list of what is on the port,
 // for a viewer who is not the administrator.
 func TailscalePortNoteBrief(note MessageCode) MessageCode {
@@ -132,6 +142,11 @@ var tailscaleCatalog = map[MessageCode]message{
 	MsgTSProblemFailed: {
 		en: "Tailscale reported an error:",
 		ko: "Tailscale이 오류를 알렸습니다:",
+	},
+	// For a viewer who does not see what Tailscale printed.
+	"tailscale.problem.failed_brief": {
+		en: "Tailscale reported an error. \"owngit tailscale status\" on this computer shows it.",
+		ko: "Tailscale이 오류를 알렸습니다. 이 컴퓨터에서 \"owngit tailscale status\"를 실행하면 내용을 볼 수 있습니다.",
 	},
 	// Detail: what is on the port.
 	"tailscale.problem.port_taken": {

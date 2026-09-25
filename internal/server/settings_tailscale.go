@@ -35,6 +35,7 @@ func (app *App) tailscaleBlock(ctx context.Context, admin bool) webui.TailscaleI
 	info := tailscaleInfo(report)
 	if !admin {
 		info.ProblemDetail, info.Stale = "", nil
+		info.Problem = webui.TailscaleProblemBrief(info.Problem)
 		if info.Found != nil {
 			info.Found = nil
 			info.FoundNote = webui.TailscalePortNoteBrief(info.FoundNote)
