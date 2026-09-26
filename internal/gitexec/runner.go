@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -118,7 +119,28 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 	return runner, nil
 }
 
-// Environment returns the complete, intentionally small environment used for Git.
+// commandConfig is configuration every Git command receives at command-line
+// scope, which overrides the system, global and repository files. It keeps
+// Git's automatic maintenance off even in a repository whose own config OwnGit
+// has not written yet, such as one a restore is still filling. OwnGit runs
+// its own maintenance with explicit commands, which these settings do not
+// affect.
+func commandConfig() [][2]string {
+	config := [][2]string{
+		{"maintenance.auto", "false"},
+		{"gc.auto", "0"},
+		{"receive.autogc", "false"},
+	}
+	if runtime.GOOS == "windows" {
+		config = append(config, [2]string{"core.longpaths", "true"})
+	}
+	return config
+}
+
+// Environment returns the complete, intentionally small environment used for
+// Git. Extra entries are appended; GIT_CONFIG_COUNT, GIT_CONFIG_KEY_n and
+// GIT_CONFIG_VALUE_n entries among them are numbered after commandConfig so
+// that Git sees both.
 func (r *Runner) Environment(extra ...string) []string {
 	path := filepath.Dir(r.GitPath)
 	if runtime.GOOS != "windows" {
@@ -140,18 +162,35 @@ func (r *Runner) Environment(extra ...string) []string {
 		"TMPDIR=" + r.TempDir,
 	}
 	if runtime.GOOS == "windows" {
-		env = append(env,
-			"GIT_CONFIG_COUNT=1",
-			"GIT_CONFIG_KEY_0=core.longpaths",
-			"GIT_CONFIG_VALUE_0=true",
-		)
 		for _, key := range []string{"SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP"} {
 			if value := os.Getenv(key); value != "" {
 				env = append(env, key+"="+value)
 			}
 		}
 	}
-	return append(env, extra...)
+	config := commandConfig()
+	for i, setting := range config {
+		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, setting[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, setting[1]))
+	}
+	count := len(config)
+	for _, entry := range extra {
+		name, value, _ := strings.Cut(entry, "=")
+		if name == "GIT_CONFIG_COUNT" {
+			if added, err := strconv.Atoi(value); err == nil && added > 0 {
+				count = len(config) + added
+			}
+			continue
+		}
+		for _, prefix := range []string{"GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"} {
+			if index, ok := strings.CutPrefix(name, prefix); ok {
+				if n, err := strconv.Atoi(index); err == nil && n >= 0 {
+					entry = prefix + strconv.Itoa(len(config)+n) + "=" + value
+				}
+			}
+		}
+		env = append(env, entry)
+	}
+	return append(env, "GIT_CONFIG_COUNT="+strconv.Itoa(count))
 }
 
 func (r *Runner) Run(ctx context.Context, dir string, stdin io.Reader, args ...string) (Result, error) {
