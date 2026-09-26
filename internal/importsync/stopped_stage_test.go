@@ -117,3 +117,78 @@ func TestAFailedStageWriteIsAStateFailure(t *testing.T) {
 		})
 	}
 }
+
+// A run whose deadline or cancellation comes while its start is being
+// recorded reports that stop and records its outcome, not a state failure.
+func TestStopWhileRecordingTheStartIsNotAStateFailure(t *testing.T) {
+	t.Run("deadline", func(t *testing.T) {
+		f := newFixture(t)
+		f.commit("one", "one\n")
+		f.service.beforeRunRecord = func(ctx context.Context) {
+			select {
+			case <-ctx.Done():
+			case <-time.After(30 * time.Second):
+				t.Error("run deadline did not expire")
+			}
+		}
+		_, err := f.importProject(ImportInput{Limits: Limits{RunTimeout: 3 * time.Second}})
+		if problemCode(err) != CodeLimit {
+			t.Fatalf("deadline while recording the start: err=%v", err)
+		}
+		run := f.lastRun()
+		if run.Status != state.ImportRunFailed || run.ErrorClass != CodeLimit || !strings.Contains(run.Message, "deadline") {
+			t.Fatalf("deadline while recording the start: err=%v status=%s class=%s message=%q", err, run.Status, run.ErrorClass, run.Message)
+		}
+	})
+	t.Run("cancel", func(t *testing.T) {
+		f := newFixture(t)
+		f.commit("one", "one\n")
+		f.service.beforeRunRecord = func(context.Context) { cancelAdmittedRun(t, f) }
+		_, err := f.importProject(ImportInput{})
+		if problemCode(err) != CodeCancelled {
+			t.Fatalf("cancel while recording the start: err=%v", err)
+		}
+		run := f.lastRun()
+		if run.Status != state.ImportRunCancelled || run.ErrorClass != CodeCancelled {
+			t.Fatalf("cancel while recording the start: err=%v status=%s class=%s message=%q", err, run.Status, run.ErrorClass, run.Message)
+		}
+	})
+}
+
+// A start record that really fails stays a state failure, also when the run
+// was stopped while it was being recorded.
+func TestAFailedStartRecordIsAStateFailure(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stopped=%v", stopped), func(t *testing.T) {
+			f := newFixture(t)
+			f.commit("one", "one\n")
+			noErr(t, f.store.Exec(context.Background(), `CREATE TRIGGER fail_start BEFORE INSERT ON import_runs
+				BEGIN SELECT RAISE(FAIL,'synthetic start failure'); END`))
+			if stopped {
+				f.service.beforeRunRecord = func(context.Context) { cancelAdmittedRun(t, f) }
+			}
+			_, err := f.importProject(ImportInput{})
+			if problemCode(err) != CodeStateUnavailable || !strings.Contains(err.Error(), "synthetic start failure") {
+				t.Fatalf("failed start record: err=%v", err)
+			}
+			if count, err := f.store.TableRowCount(context.Background(), "import_runs"); err != nil || count != 0 {
+				t.Fatalf("run rows after a failed start record=%d err=%v", count, err)
+			}
+		})
+	}
+}
+
+// cancelAdmittedRun cancels the one admitted run the way Cancel does. Cancel
+// itself cannot run here: admission holds the lifecycle lock it takes.
+func cancelAdmittedRun(t *testing.T, f *fixture) {
+	t.Helper()
+	cancelled := 0
+	f.service.active.Range(func(_, value any) bool {
+		value.(activeExecution).cancel(ErrCancelled)
+		cancelled++
+		return true
+	})
+	if cancelled != 1 {
+		t.Errorf("cancelled %d admitted runs, want 1", cancelled)
+	}
+}

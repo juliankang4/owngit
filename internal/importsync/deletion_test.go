@@ -48,7 +48,7 @@ func TestRefreshAdmittedBeforeDeletionIsSuperseded(t *testing.T) {
 	f.commit("one", "one\n")
 	f.mustImport(ImportInput{})
 	deleted := false
-	f.service.beforeRunRecord = func() {
+	f.service.beforeRunRecord = func(context.Context) {
 		f.service.beforeRunRecord = nil
 		if _, err := f.manager.Delete(ctx, "project", repository.DeleteFiles); err != nil {
 			t.Errorf("delete during admission: %v", err)

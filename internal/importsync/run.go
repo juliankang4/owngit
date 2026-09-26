@@ -147,9 +147,14 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 		},
 	}
 	if s.beforeRunRecord != nil {
-		s.beforeRunRecord()
+		s.beforeRunRecord(ctx)
 	}
-	beginErr := s.Store.BeginImportRun(ctx, run.run)
+	// Recorded without the run's cancellation (see recordContext). A run
+	// stopped meanwhile is reported by the pipeline's first authority check
+	// and finished like any other.
+	recordCtx, cancelRecord := recordContext(ctx)
+	beginErr := s.Store.BeginImportRun(recordCtx, run.run)
+	cancelRecord()
 	s.lifecycle.RUnlock()
 	if beginErr != nil {
 		finishCtx := context.WithoutCancel(parent)
@@ -336,11 +341,22 @@ func (s *Service) finishRun(ctx context.Context, run *runState, pipelineErr erro
 	return run.run, pipelineErr
 }
 
-// setStatus records the stage a run has reached. The write does not follow
-// the run's context: a deadline or cancellation that comes during it would
-// otherwise fail the write and be reported as a state failure. The stop is
-// reported once the stage is recorded, so a failed write is always a real
-// state failure.
+// runRecordTimeout bounds a run record written without the run's
+// cancellation. The database's busy_timeout (5 s) bounds each wait for a
+// lock, but not the wait for the store's single connection or a stalled disk.
+const runRecordTimeout = 30 * time.Second
+
+// recordContext is the context for recording a run's start or stage. The
+// record does not follow the run's context: a deadline or cancellation that
+// came during the write would fail it and be reported as a state failure
+// instead of the stop. So a failed record is always a real state failure,
+// and the caller reports the stop after the record.
+func recordContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), runRecordTimeout)
+}
+
+// setStatus records the stage a run has reached (see recordContext), then
+// reports a stop that came meanwhile.
 func (s *Service) setStatus(ctx context.Context, run *runState, status string) error {
 	if err := s.authorityCurrent(ctx, run); err != nil {
 		return err
@@ -348,7 +364,10 @@ func (s *Service) setStatus(ctx context.Context, run *runState, status string) e
 	if s.beforeStageRecord != nil {
 		s.beforeStageRecord(ctx, status)
 	}
-	if err := s.Store.SetImportRunStatus(context.WithoutCancel(ctx), run.run.ID, status); err != nil {
+	recordCtx, cancelRecord := recordContext(ctx)
+	err := s.Store.SetImportRunStatus(recordCtx, run.run.ID, status)
+	cancelRecord()
+	if err != nil {
 		return newProblem(CodeStateUnavailable, "import run stage could not be recorded", err)
 	}
 	run.run.Status = status
