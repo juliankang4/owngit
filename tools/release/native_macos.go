@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 )
 
 var appleBundleVersionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`)
@@ -119,13 +120,10 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 	name := fmt.Sprintf("owngit_%s_darwin_arm64_prototype.dmg", inputs.manifest.Version)
 	dmgPath := filepath.Join(outDir, name)
 	volumeName := "OwnGit Prototype " + inputs.manifest.Version
-	if _, err := runNativeCommand(inputs.hdiutil, []string{
-		"create", "-quiet", "-fs", "HFS+", "-format", "UDZO",
-		"-volname", volumeName, "-srcfolder", volume, dmgPath,
-	}, nil); err != nil {
+	if err := createDiskImage(runNativeCommand, time.Sleep, inputs.hdiutil, diskImageCreateArguments(volumeName, volume, dmgPath)); err != nil {
 		return nativeArtifact{}, err
 	}
-	if _, err := runNativeCommand(inputs.hdiutil, []string{"verify", "-quiet", dmgPath}, nil); err != nil {
+	if _, err := runNativeCommand(inputs.hdiutil, []string{"verify", dmgPath}, nil); err != nil {
 		return nativeArtifact{}, err
 	}
 	digest, err := sha256File(dmgPath)
@@ -147,6 +145,49 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 	}, nil
 }
 
+// hdiutil create sometimes fails with "Resource busy" on hosted CI runners,
+// and a later attempt succeeds, so that failure is retried a few times after
+// a pause. -ov lets a retry replace an image a failed attempt left in the
+// fresh output folder.
+const (
+	diskImageCreateAttempts = 5
+	diskImageBusyPause      = 3 * time.Second
+)
+
+// diskImageCreateArguments has no -quiet, which would also hide why hdiutil
+// failed; its output is shown only on failure.
+func diskImageCreateArguments(volumeName, source, image string) []string {
+	return []string{"create", "-ov", "-fs", "HFS+", "-format", "UDZO", "-volname", volumeName, "-srcfolder", source, image}
+}
+
+// createDiskImage runs hdiutil create and retries it only when hdiutil
+// reports that a resource is busy.
+func createDiskImage(run func(string, []string, []string) (string, error), pause func(time.Duration), hdiutil string, arguments []string) error {
+	for attempt := 1; ; attempt++ {
+		_, err := run(hdiutil, arguments, nil)
+		var failure *nativeCommandError
+		busy := errors.As(err, &failure) && strings.Contains(failure.message, "Resource busy")
+		switch {
+		case err == nil:
+			return nil
+		case !busy:
+			return err
+		case attempt == diskImageCreateAttempts:
+			return fmt.Errorf("%w (after %d attempts)", err, attempt)
+		}
+		pause(diskImageBusyPause)
+	}
+}
+
+// nativeCommandError reports a failed command with its error output, or
+// with the exit status when it wrote none.
+type nativeCommandError struct {
+	command string
+	message string
+}
+
+func (e *nativeCommandError) Error() string { return e.command + ": " + e.message }
+
 func runNativeCommand(name string, arguments []string, extraEnvironment []string) (string, error) {
 	command := exec.Command(name, arguments...)
 	if len(extraEnvironment) > 0 {
@@ -160,7 +201,7 @@ func runNativeCommand(name string, arguments []string, extraEnvironment []string
 		if message == "" {
 			message = err.Error()
 		}
-		return stdout.String(), fmt.Errorf("%s %s: %s", name, strings.Join(arguments, " "), message)
+		return stdout.String(), &nativeCommandError{command: name + " " + strings.Join(arguments, " "), message: message}
 	}
 	return stdout.String(), nil
 }

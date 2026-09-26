@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testNativeBaseline = "accepted-core-sha256=abc123;release-sha256=def456"
@@ -539,6 +540,65 @@ print("lifecycle fixture passed")
 	}
 }
 
+// hdiutil create is retried only while it reports a busy resource, with a
+// pause before each retry, and the final error keeps hdiutil's message.
+func TestDiskImageCreateRetriesOnlyABusyResource(t *testing.T) {
+	busy := &nativeCommandError{command: "hdiutil create", message: "hdiutil: create failed - Resource busy"}
+	other := &nativeCommandError{command: "hdiutil create", message: "hdiutil: create failed - No space left on device"}
+	for _, test := range []struct {
+		name     string
+		failures []error
+		calls    int
+		want     string
+	}{
+		{name: "busy then created", failures: []error{busy, busy}, calls: 3},
+		{name: "other failure", failures: []error{other, busy}, calls: 1, want: "No space left on device"},
+		{name: "busy on every attempt", failures: []error{busy, busy, busy, busy, busy, busy}, calls: diskImageCreateAttempts,
+			want: "Resource busy (after 5 attempts)"},
+		{name: "busy then another failure", failures: []error{busy, other}, calls: 2, want: "No space left on device"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls, pauses := 0, 0
+			run := func(name string, arguments []string, _ []string) (string, error) {
+				if name != "hdiutil" || arguments[0] != "create" {
+					t.Fatalf("ran %s %v", name, arguments)
+				}
+				calls++
+				if calls <= len(test.failures) {
+					return "", test.failures[calls-1]
+				}
+				return "", nil
+			}
+			pause := func(duration time.Duration) {
+				if duration != diskImageBusyPause {
+					t.Fatalf("paused %v", duration)
+				}
+				pauses++
+			}
+			err := createDiskImage(run, pause, "hdiutil", []string{"create"})
+			if calls != test.calls || pauses != test.calls-1 {
+				t.Fatalf("%d calls and %d pauses, want %d calls", calls, pauses, test.calls)
+			}
+			if test.want == "" && err != nil || test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("error %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+// A failed hdiutil create reports hdiutil's own message.
+func TestDiskImageCreateFailureShowsTheReason(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("hdiutil is a macOS tool")
+	}
+	directory := t.TempDir()
+	arguments := diskImageCreateArguments("Missing", filepath.Join(directory, "missing"), filepath.Join(directory, "missing.dmg"))
+	err := createDiskImage(runNativeCommand, func(time.Duration) { t.Fatal("retried a failure that was not busy") }, "hdiutil", arguments)
+	if err == nil || !strings.Contains(err.Error(), "create failed") {
+		t.Fatalf("error %v, want hdiutil's message", err)
+	}
+}
+
 func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("macOS prototype requires the native Apple Silicon toolchain")
@@ -559,7 +619,7 @@ func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 		t.Fatalf("macOS prototype overclaims readiness: %#v", built)
 	}
 	path := filepath.Join(out, built.Name)
-	command := exec.Command("hdiutil", "verify", "-quiet", path)
+	command := exec.Command("hdiutil", "verify", path)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("hdiutil verify: %v\n%s", err, output)
 	}
