@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -88,20 +89,45 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 		app.renderTailscaleRefusal(writer, request, settings, csrf, action, &TailscaleError{Problem: string(tailscale.KindNotInstalled)})
 		return
 	}
-	var err error
-	notice := "tailscale_off"
 	if action == webui.ActionTailscaleOn {
 		homeNetwork := formChecked(postValue(request, "home_network"))
-		_, err = app.Tailscale.On(request.Context(), &homeNetwork)
-		notice = "tailscale_on"
-	} else {
-		_, err = app.Tailscale.Off(request.Context())
+		if _, err := app.Tailscale.On(request.Context(), &homeNetwork); err != nil {
+			app.renderTailscaleRefusal(writer, request, settings, csrf, action, err)
+			return
+		}
+		app.noticeRedirect(writer, request, "/settings?notice=tailscale_on", http.StatusSeeOther)
+		return
 	}
+	// A page opened through the tailnet address is answered through it once
+	// more, but the next request would find Tailscale's address gone or
+	// OwnGit no longer accepting the name. So that answer is the result page
+	// itself instead of a redirect.
+	away := app.throughTailscale(request)
+	change, err := app.Tailscale.Off(request.Context())
 	if err != nil {
 		app.renderTailscaleRefusal(writer, request, settings, csrf, action, err)
 		return
 	}
-	app.noticeRedirect(writer, request, "/settings?notice="+notice, http.StatusSeeOther)
+	if away {
+		app.renderTailscaleOff(writer, request, change.Record.Target+"/")
+		return
+	}
+	app.noticeRedirect(writer, request, "/settings?notice=tailscale_off", http.StatusSeeOther)
+}
+
+// renderTailscaleOff answers with the page that needs nothing more from the
+// address that sharing no longer serves.
+func (app *App) renderTailscaleOff(writer http.ResponseWriter, request *http.Request, local string) {
+	var body bytes.Buffer
+	page := webui.TailscaleOffPage{Lang: app.language(writer, request), Appearance: app.appearance(writer, request), Local: local}
+	if err := app.Renderer.RenderTailscaleOff(&body, page); err != nil {
+		app.writePlainError(writer, http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.WriteHeader(http.StatusOK)
+	_, _ = writer.Write(body.Bytes())
 }
 
 // renderTailscaleRefusal shows why turning sharing on or off did nothing,

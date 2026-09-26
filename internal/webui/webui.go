@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-//go:embed templates/*.html templates/pages/*.html
+//go:embed templates/*.html templates/pages/*.html templates/standalone/*.html
 var templateFS embed.FS
 
 //go:embed assets
@@ -50,8 +50,10 @@ type Renderer struct {
 	// shell with exactly one page file, because every page file defines the
 	// same "body" template name.
 	templates map[string]*template.Template
-	assets    http.Handler
-	prints    fingerprints
+	// standalone holds pages that do not use the shared shell.
+	standalone *template.Template
+	assets     http.Handler
+	prints     fingerprints
 }
 
 // New parses the embedded templates and prepares the asset handler. It fails
@@ -73,6 +75,10 @@ func New() (*Renderer, error) {
 		}
 		sets[name] = set
 	}
+	standalone, err := template.New("standalone").Funcs(templateFuncs()).ParseFS(templateFS, "templates/standalone/*.html")
+	if err != nil {
+		return nil, fmt.Errorf("parse webui standalone pages: %w", err)
+	}
 	sub, err := fs.Sub(assetFS, "assets")
 	if err != nil {
 		return nil, fmt.Errorf("open webui assets: %w", err)
@@ -82,9 +88,10 @@ func New() (*Renderer, error) {
 		return nil, err
 	}
 	return &Renderer{
-		templates: sets,
-		assets:    assetHandler(sub, prints),
-		prints:    prints,
+		templates:  sets,
+		standalone: standalone,
+		assets:     assetHandler(sub, prints),
+		prints:     prints,
 	}, nil
 }
 

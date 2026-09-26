@@ -364,6 +364,18 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 	},
 	MsgTSTurnedOn:  {en: "Sharing on the tailnet is on.", ko: "tailnet 공유를 켰습니다."},
 	MsgTSTurnedOff: {en: "Sharing on the tailnet is off.", ko: "tailnet 공유를 껐습니다."},
+	"settings.tailscale.off_away": {
+		en: "This page was opened through the tailnet address, which no longer reaches OwnGit, so other pages will not load from here.",
+		ko: "이 페이지는 tailnet 주소로 열렸고, 이 주소로는 더 이상 OwnGit에 접속할 수 없습니다. 그래서 여기서 다른 페이지를 열 수 없습니다.",
+	},
+	"settings.tailscale.off_local": {
+		en: "On the computer where OwnGit runs, open it at",
+		ko: "OwnGit이 실행 중인 컴퓨터에서는 다음 주소로 여세요:",
+	},
+	"settings.tailscale.off_other": {
+		en: "On other devices, use another address of OwnGit if it has one. Sharing can be turned on again on the computer where OwnGit runs.",
+		ko: "다른 기기에서는 OwnGit에 다른 주소가 있다면 그 주소를 쓰세요. 공유는 OwnGit이 실행 중인 컴퓨터에서 다시 켤 수 있습니다.",
+	},
 	// The connection indicator for a request through OwnGit's Tailscale
 	// Serve endpoint: Tailscale, not OwnGit, encrypted it.
 	MsgConnTailscaleOn: {en: "Encrypted by Tailscale on this computer", ko: "이 컴퓨터의 Tailscale이 암호화함"},

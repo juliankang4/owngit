@@ -147,3 +147,33 @@ func TestTailscaleStaleAddressIsExplained(t *testing.T) {
 		}
 	}
 }
+
+// The page after turning off through the tailnet address is complete on
+// its own: it follows the language and appearance and loads nothing else.
+func TestTailscaleOffPageStandsAlone(t *testing.T) {
+	r := newRenderer(t)
+	for _, tc := range []struct {
+		page   TailscaleOffPage
+		scheme string
+	}{
+		{TailscaleOffPage{Lang: LangEN, Appearance: AppearanceSystem, Local: "http://localhost:7654/"}, `content="light dark"`},
+		{TailscaleOffPage{Lang: LangKO, Appearance: AppearanceLight, Local: "http://localhost:7654/"}, `content="light"`},
+	} {
+		var out strings.Builder
+		if err := r.RenderTailscaleOff(&out, tc.page); err != nil {
+			t.Fatal(err)
+		}
+		body := out.String()
+		for _, want := range []string{`<html lang="` + string(tc.page.Lang) + `">`, tc.scheme, Text(tc.page.Lang, MsgTSTurnedOff),
+			Text(tc.page.Lang, "settings.tailscale.off_away"), `<a href="http://localhost:7654/settings">http://localhost:7654/</a>`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: the page lacks %q", tc.page.Lang, want)
+			}
+		}
+		for _, needs := range []string{"<script", "<link", "<img", "src=", "url("} {
+			if strings.Contains(body, needs) {
+				t.Errorf("%s: the page loads %q", tc.page.Lang, needs)
+			}
+		}
+	}
+}

@@ -1,5 +1,10 @@
 package webui
 
+import (
+	"fmt"
+	"io"
+)
+
 // Actions of the Tailscale block of the Settings page. Both ask for the
 // administrator password.
 const (
@@ -61,4 +66,25 @@ type TailscaleInfo struct {
 	// with, which decides where it listens; the page then explains that
 	// instead of offering the home network checkbox.
 	ListenOption string
+}
+
+// TailscaleOffPage is shown after sharing was turned off from a page opened
+// through the tailnet address. That address stops reaching OwnGit as the
+// page arrives, so the page loads nothing else: no stylesheet, script, font
+// or image, and it names the address that works on this computer.
+type TailscaleOffPage struct {
+	Lang       Lang
+	Appearance Appearance
+	// Local is OwnGit's address on this computer with a trailing slash,
+	// the one Tailscale passed requests to.
+	Local string
+}
+
+// RenderTailscaleOff writes the complete TailscaleOffPage document. Like
+// Render, it leaves the response header to the caller.
+func (r *Renderer) RenderTailscaleOff(w io.Writer, page TailscaleOffPage) error {
+	if err := r.standalone.ExecuteTemplate(w, "tailscaleOff", page); err != nil {
+		return fmt.Errorf("render the Tailscale off page: %w", err)
+	}
+	return nil
 }

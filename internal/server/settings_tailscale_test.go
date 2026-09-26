@@ -340,3 +340,55 @@ func TestTurningOffWhileTailscaleIsStoppedSaysSo(t *testing.T) {
 		t.Fatal("a refused turning off took back the settings")
 	}
 }
+
+// Turning off from a page opened through the tailnet address ends on a page
+// that needs nothing more from that address, which then no longer reaches
+// OwnGit, and that names the address that works on this computer.
+func TestTurningOffThroughTheTailnetAddressEndsOnAPageThatLoads(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	change, err := app.Tailscale.On(t.Context(), nil)
+	noErr(t, err)
+	page := throughServe(app, "/settings?lang=ko&appearance=dark")
+	if page.Code != http.StatusOK {
+		t.Fatalf("settings through Serve: %d", page.Code)
+	}
+	var csrf string
+	for _, cookie := range page.Result().Cookies() {
+		if cookie.Name == generalCookie {
+			csrf = cookie.Value
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(tailscaleForm(csrf, webui.ActionTailscaleOff, "admin-password", false).Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", "https://"+tailscaletest.Name)
+	for _, cookie := range page.Result().Cookies() {
+		request.AddCookie(cookie)
+	}
+	response := sendThroughServe(app, request)
+	body := response.Body.String()
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("turn off through Serve: status=%d body=%s", response.Code, body)
+	}
+	for _, want := range []string{
+		`<html lang="ko">`, `content="dark"`, webui.Text(webui.LangKO, webui.MsgTSTurnedOff),
+		`href="` + change.Record.Target + `/settings"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the off page lacks %q", want)
+		}
+	}
+	for _, needs := range []string{"<script", "<link", "<img", "/assets/", "src="} {
+		if strings.Contains(body, needs) {
+			t.Errorf("the off page loads more from the address it turned off: %q", needs)
+		}
+	}
+	if len(fake.Writes()) != 2 {
+		t.Fatalf("writes=%q", fake.Writes())
+	}
+	if _, on, _ := app.Store.TailscaleServe(t.Context()); on {
+		t.Fatal("sharing is still on")
+	}
+	if next := throughServe(app, "/settings"); next.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("after turning off, the Tailscale name got %d", next.Code)
+	}
+}

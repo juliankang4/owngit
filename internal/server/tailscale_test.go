@@ -59,7 +59,11 @@ func withTailscale(t *testing.T, app *App, fakeState tailscaletest.State) (*App,
 // 127.0.0.1, with the Host the client used and the forwarded headers Serve
 // sets.
 func throughServe(app *App, path string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodGet, path, nil)
+	return sendThroughServe(app, httptest.NewRequest(http.MethodGet, path, nil))
+}
+
+// sendThroughServe sends request as Tailscale Serve passes one on.
+func sendThroughServe(app *App, request *http.Request) *httptest.ResponseRecorder {
 	request.RemoteAddr = "127.0.0.1:50123"
 	request.Host = tailscaletest.Name
 	request.Header.Set("X-Forwarded-Host", tailscaletest.Name)

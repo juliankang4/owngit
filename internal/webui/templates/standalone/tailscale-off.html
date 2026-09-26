@@ -1,0 +1,25 @@
+{{define "tailscaleOff"}}<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="{{if eq .Appearance "light"}}light{{else if eq .Appearance "dark"}}dark{{else}}light dark{{end}}">
+<title>{{t .Lang "settings.tailscale.turned_off"}}</title>
+<style>
+body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 40rem; margin: 0 auto; padding: 3rem 1.25rem; }
+h1 { font-size: 1.4rem; line-height: 1.3; margin: 0 0 1rem; }
+p { margin: 0 0 1rem; }
+a { overflow-wrap: anywhere; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+</style>
+</head>
+<body>
+<main>
+<h1>{{t .Lang "settings.tailscale.turned_off"}}</h1>
+<p>{{t .Lang "settings.tailscale.off_away"}}</p>
+<p>{{t .Lang "settings.tailscale.off_local"}} <a href="{{.Local}}settings">{{.Local}}</a></p>
+<p>{{t .Lang "settings.tailscale.off_other"}}</p>
+</main>
+</body>
+</html>
+{{end}}
