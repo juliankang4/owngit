@@ -140,12 +140,20 @@ func Open(ctx context.Context, dir string) (result *Store, err error) {
 		return nil, err
 	}
 	class := inspected.class
+	create := inspected.main == nil
 	if err := inspected.release(); err != nil {
 		return nil, err
 	}
 	inspected = nil
 	path := filepath.Join(absolute, databaseName)
-	db, err := sql.Open("sqlite", sqliteFileURI(path))
+	if create {
+		if err := createDatabase(ctx, path); err != nil {
+			return nil, err
+		}
+	}
+	// The database exists now, so SQLite must not create one in rollback
+	// journal mode if the file disappeared since.
+	db, err := sql.Open("sqlite", sqliteURI(path, "_txlock=immediate&mode=rw"))
 	if err != nil {
 		return nil, fmt.Errorf("open state database: %w", err)
 	}
