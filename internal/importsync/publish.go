@@ -678,7 +678,9 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 				} else {
 					commandErr = newProblem(CodePublishFailed, "destination ref transaction failed", err)
 				}
-			} else if err := s.Store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentApplied, "", "", intent.Reason, now); err != nil {
+			} else if err := s.recordAfterRefTransaction(ctx, "applied publication", func(recordCtx context.Context) error {
+				return s.Store.UpdateImportIntent(recordCtx, intent.ID, state.ImportIntentApplied, "", "", intent.Reason, now)
+			}); err != nil {
 				commandErr = newProblem(CodeStateUnavailable, "applied publication state could not be recorded", err)
 				finalizationBlocked = true
 			}
@@ -704,7 +706,9 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 				commandErr = newProblem(CodePublishFailed, "HEAD exact-old write failed", err)
 			} else {
 				intent.HeadOwned = true
-				if err := s.Store.UpdateImportIntentHEADOwnership(ctx, intent.ID, state.ImportIntentApplied, intent.Reason, now); err != nil {
+				if err := s.recordAfterRefTransaction(ctx, "applied HEAD", func(recordCtx context.Context) error {
+					return s.Store.UpdateImportIntentHEADOwnership(recordCtx, intent.ID, state.ImportIntentApplied, intent.Reason, now)
+				}); err != nil {
 					commandErr = newProblem(CodeStateUnavailable, "applied HEAD state could not be recorded", err)
 					finalizationBlocked = true
 				}
@@ -828,6 +832,21 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 		commandErr = errors.New(reason)
 	}
 	return newProblem(CodeUnresolved, "destination contains a partial or independently changed publication", commandErr)
+}
+
+// recordAfterRefTransaction records what a ref transaction or HEAD write
+// changed. The destination has changed by then, so the record does not follow
+// the run's cancellation (see recordContext): a stop that came during it would
+// otherwise block the finalization of refs that are already written. Whether
+// the stop still applies is decided afterwards, as for any other stop after
+// the transaction.
+func (s *Service) recordAfterRefTransaction(ctx context.Context, record string, write func(context.Context) error) error {
+	if s.beforeRecord != nil {
+		s.beforeRecord(ctx, record)
+	}
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+	return write(recordCtx)
 }
 
 func (s *Service) inspectPublicationRefKinds(ctx context.Context, run *runState, repositoryPath string, refs, symrefs map[string]string, head headIdentity) error {

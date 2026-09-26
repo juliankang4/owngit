@@ -308,10 +308,7 @@ func TestStopWhileRecordingPublicationIsNotAStateFailure(t *testing.T) {
 				if problemCode(err) != wantCode || run.Status != wantStatus || run.ErrorClass != wantCode {
 					t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
 				}
-				intents, err := f.store.PendingImportIntents(context.Background(), "project")
-				if err != nil || len(intents) != 0 {
-					t.Fatalf("%s: pending intents=%+v err=%v", name, intents, err)
-				}
+				assertIntentsSettled(t, f, name)
 				if !test.refresh {
 					assertNoLeftoverDirectories(t, f)
 					rows, err := f.store.ImportInitialDestinationsForRun(context.Background(), run.ID)
@@ -362,6 +359,105 @@ func TestAFailedPublicationRecordIsAStateFailure(t *testing.T) {
 				}
 				assertNoLeftoverDirectories(t, f)
 			})
+		}
+	}
+}
+
+// A deadline or cancellation that comes while the run records what its ref
+// transaction or HEAD write changed never blocks the finalization. A refresh,
+// whose refs are visible by then, completes: the stop comes too late. A first
+// import, whose repository is not visible until its directory is renamed into
+// place, reports the stop and leaves nothing behind.
+func TestStopWhileRecordingAnAppliedPublication(t *testing.T) {
+	for _, test := range []struct {
+		record  string
+		refresh bool
+	}{
+		{"applied publication", true},
+		{"applied HEAD", true},
+		{"applied publication", false},
+		{"applied HEAD", false},
+	} {
+		for _, stop := range []string{"deadline", "cancel"} {
+			kind := "first import"
+			if test.refresh {
+				kind = "refresh"
+			}
+			name := stop + " at " + test.record + " of a " + kind
+			t.Run(name, func(t *testing.T) {
+				f := newFixture(t)
+				f.commit("one", "one\n")
+				if test.refresh {
+					f.mustImport(ImportInput{})
+					f.commit("two", "two\n")
+				}
+				if test.record == "applied HEAD" {
+					// A new source HEAD makes the run write HEAD after its refs.
+					f.git(f.source, "branch", "trunk")
+					f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/trunk")
+				}
+				hit := false
+				f.service.beforeRecord = func(ctx context.Context, record string) {
+					if record != test.record || hit {
+						return
+					}
+					hit = true
+					if stop == "cancel" {
+						cancelAdmittedRun(t, f)
+						return
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(30 * time.Second):
+						t.Error("run deadline did not expire")
+					}
+				}
+				limits := Limits{}
+				if stop == "deadline" {
+					limits.RunTimeout = 3 * time.Second
+				}
+				var err error
+				if test.refresh {
+					_, err = f.service.Refresh(context.Background(), "project", limits)
+				} else {
+					_, err = f.importProject(ImportInput{Limits: limits})
+				}
+				if !hit {
+					t.Fatalf("%s: the run did not record the %s", name, test.record)
+				}
+				run := f.lastRun()
+				if test.refresh {
+					if err != nil || run.Status != state.ImportRunComplete {
+						t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
+					}
+				} else {
+					wantCode, wantStatus := CodeLimit, state.ImportRunFailed
+					if stop == "cancel" {
+						wantCode, wantStatus = CodeCancelled, state.ImportRunCancelled
+					}
+					if problemCode(err) != wantCode || run.Status != wantStatus || run.ErrorClass != wantCode {
+						t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
+					}
+					assertNoLeftoverDirectories(t, f)
+				}
+				assertIntentsSettled(t, f, name)
+			})
+		}
+	}
+}
+
+// assertIntentsSettled fails when a publication intent of the project is still
+// planning, applied or unresolved. A first import that published nothing
+// settles its intent as invalidated.
+func assertIntentsSettled(t *testing.T, f *fixture, name string) {
+	t.Helper()
+	intents, err := f.store.PendingImportIntents(context.Background(), "project")
+	noErr(t, err)
+	for _, intent := range intents {
+		switch intent.Status {
+		case state.ImportIntentInvalidated, state.ImportIntentNotApplied, state.ImportIntentComplete:
+		default:
+			t.Fatalf("%s: intent %s left %s (%s)", name, intent.ID, intent.Status, intent.Reason)
 		}
 	}
 }
