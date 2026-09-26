@@ -68,6 +68,8 @@ var preflightHooks struct {
 
 // Named inspection points passed to preflightHooks.at.
 const (
+	pointMainListed = "main listed"
+	pointListed     = "listed"
 	pointCapture    = "capture"
 	pointHashed     = "hashed"
 	pointClassify   = "classify"
@@ -155,6 +157,9 @@ func inspectState(ctx context.Context, dir string) (result *inspection, err erro
 	if err != nil {
 		return nil, err
 	}
+	if err := in.at(pointMainListed, ""); err != nil {
+		return nil, err
+	}
 	walInfo, err := lstatSourceEntry(mainPath + walSuffix)
 	if err != nil {
 		return nil, err
@@ -170,8 +175,19 @@ func inspectState(ctx context.Context, dir string) (result *inspection, err erro
 	if journalPresent {
 		return nil, errRollbackJournal
 	}
+	if err := in.at(pointListed, ""); err != nil {
+		return nil, err
+	}
 	if mainInfo == nil {
 		if walInfo != nil || shmInfo != nil {
+			// The entries are listed one at a time, so a database that
+			// another opener created after its listing, and then opened,
+			// can show only its recovery files here.
+			if info, err := lstatSourceEntry(mainPath); err != nil {
+				return nil, err
+			} else if info != nil {
+				return nil, unstable("%s appeared during inspection", databaseName)
+			}
 			return nil, errors.New("state database is missing but its recovery files exist; restore the database or remove the directory deliberately")
 		}
 		in.class = schemaEmpty
@@ -493,6 +509,11 @@ func closeAfter(handle *os.File, err error) error {
 // without data access, which is all the SHM index may provide.
 func bindFile(path string, entry os.FileInfo, metadataOnly bool) (*sourceObject, error) {
 	handle, err := openSourceHandle(path, metadataOnly)
+	if errors.Is(err, os.ErrNotExist) {
+		// Listed a moment ago, so it was removed during inspection, for
+		// example a WAL that another opener checkpointed and deleted.
+		return nil, unstable("%s was removed", filepath.Base(path))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", filepath.Base(path), err)
 	}

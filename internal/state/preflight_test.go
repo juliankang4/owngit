@@ -870,3 +870,40 @@ func blockPrivateRemoval(t *testing.T, privateDir string) {
 	noErr(t, os.Chmod(blocker, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(blocker, 0o700) })
 }
+
+// TestEntriesThatChangeWhileListedAreUnstable covers the moments between the
+// individual listings of the state entries, where a concurrent first start
+// can create the database and its recovery files, or a closing opener can
+// delete its WAL. Both are retryable instability, not a damaged directory.
+func TestEntriesThatChangeWhileListedAreUnstable(t *testing.T) {
+	t.Run("database and WAL appear after the database was listed", func(t *testing.T) {
+		directory := filepath.Join(t.TempDir(), "state")
+		noErr(t, os.Mkdir(directory, 0o700))
+		source := filepath.Join(t.TempDir(), "source")
+		createCrashedWALFixture(t, source, false, commitBaselineThenChangeVersion(""))
+		hookAt(t, pointMainListed, func(string) {
+			for _, name := range []string{databaseName, databaseName + walSuffix} {
+				noErr(t, os.Rename(filepath.Join(source, name), filepath.Join(directory, name)))
+			}
+		})
+		if err := openRefused(t, directory, "appeared during inspection"); !errors.Is(err, ErrInspectionUnstable) {
+			t.Fatalf("appearance is not retryable: %v", err)
+		}
+		preflightHooks.at = nil
+		store, err := Open(context.Background(), directory)
+		noErr(t, err)
+		noErr(t, store.Close())
+	})
+	t.Run("WAL removed after it was listed", func(t *testing.T) {
+		directory := filepath.Join(t.TempDir(), "state")
+		createCrashedWALFixture(t, directory, true, commitBaselineThenChangeVersion(""))
+		hookAt(t, pointListed, func(string) { noErr(t, os.Remove(filepath.Join(directory, databaseName+walSuffix))) })
+		if err := openRefused(t, directory, "was removed"); !errors.Is(err, ErrInspectionUnstable) {
+			t.Fatalf("removal is not retryable: %v", err)
+		}
+		preflightHooks.at = nil
+		store, err := Open(context.Background(), directory)
+		noErr(t, err)
+		noErr(t, store.Close())
+	})
+}
