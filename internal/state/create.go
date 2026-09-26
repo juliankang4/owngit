@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
+	"syscall"
 
 	"owngit/internal/publishdir"
 )
@@ -69,18 +71,71 @@ func createDatabase(ctx context.Context, path string) (err error) {
 	return nil
 }
 
+// createLockFile serializes publication on a filesystem that supports neither
+// an exclusive rename nor hard links.
+const createLockFile = ".database-create.lock"
+
+// publishers are the primitives publishNoReplace tries in order. Tests replace
+// them to reach the fallbacks.
+var publishers = struct {
+	renameExclusive func(oldPath, newPath string) error
+	link            func(oldPath, newPath string) error
+}{renameExclusive, os.Link}
+
 // publishNoReplace gives the temporary file the final name only when no entry
-// exists there. MoveFileEx without flags refuses an existing destination on
-// Windows. POSIX rename replaces one, so elsewhere the file is linked under
-// the final name and the temporary name removed.
+// exists there, and reports fs.ErrExist otherwise. MoveFileEx without flags
+// refuses an existing destination on Windows. Elsewhere an exclusive rename is
+// tried first. A filesystem without it falls back to a hard link, and one
+// without hard links either, such as exFAT on macOS, to a plain rename under
+// a creation lock.
 func publishNoReplace(ctx context.Context, temporary, path string) error {
 	if runtime.GOOS == "windows" {
 		return publishdir.Rename(ctx, temporary, path)
 	}
-	if err := os.Link(temporary, path); err != nil {
+	err := publishers.renameExclusive(temporary, path)
+	if !unsupported(err, syscall.EINVAL) {
 		return err
 	}
-	return os.Remove(temporary)
+	err = publishers.link(temporary, path)
+	if err == nil {
+		return os.Remove(temporary)
+	}
+	if !unsupported(err, syscall.EPERM) {
+		return err
+	}
+	return publishUnderLock(temporary, path)
+}
+
+// unsupported reports whether err says the filesystem lacks the operation.
+// extra is the additional code a filesystem uses for that on Linux: EINVAL
+// for an unknown rename flag and EPERM for a refused hard link.
+func unsupported(err, extra error) bool {
+	return err != nil && (errors.Is(err, errors.ErrUnsupported) || errors.Is(err, extra))
+}
+
+// publishUnderLock renames the temporary file into place while it holds the
+// creation lock and the final name is still absent. Every opener of this
+// version that creates a database on such a filesystem takes the same lock.
+// An older version creates the database in place without the lock, and one
+// that does so between the check and the rename has its file replaced. That
+// needs two different versions making their first start in the same new state
+// directory at the same moment, which older versions do not handle among
+// themselves either (a concurrent opener can meet their transient rollback
+// journal), so the lock does not try to cover it.
+func publishUnderLock(temporary, path string) error {
+	release, err := AcquireLockBriefly(func() (func(), error) {
+		return AcquireExclusiveFileLock(filepath.Join(filepath.Dir(path), createLockFile))
+	})
+	if err != nil {
+		return fmt.Errorf("acquire state database creation lock: %w", err)
+	}
+	defer release()
+	if _, err := os.Lstat(path); err == nil {
+		return fs.ErrExist
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return os.Rename(temporary, path)
 }
 
 // removeTemporaryDatabase removes an unpublished temporary database and any
