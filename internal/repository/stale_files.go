@@ -82,21 +82,20 @@ func removeStaleGitFiles(path string) (removed []string, err error) {
 	for _, name := range staleGitLockFiles {
 		remove(name)
 	}
-	objectEntries, readErr := os.ReadDir(filepath.Join(path, "objects"))
-	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-		errs = append(errs, readErr)
+	quarantines, listErr := IncomingQuarantines(path)
+	if listErr != nil {
+		errs = append(errs, listErr)
 	}
-	for _, entry := range objectEntries {
-		if !entry.IsDir() || !gitIncomingObjectDirectory.MatchString(entry.Name()) {
-			continue
-		}
-		relative := filepath.Join("objects", entry.Name())
-		size, stale, walkErr := staleDirectory(filepath.Join(path, relative))
+	for _, name := range quarantines {
+		relative := filepath.Join("objects", name)
+		size, newest, walkErr := directoryState(filepath.Join(path, relative))
 		if walkErr != nil {
 			errs = append(errs, walkErr)
 			continue
 		}
-		if !stale {
+		// A directory counts as older only when nothing in it changed since
+		// this process started.
+		if !newest.Before(processStart) {
 			continue
 		}
 		if removeErr := os.RemoveAll(filepath.Join(path, relative)); removeErr != nil {
@@ -108,12 +107,50 @@ func removeStaleGitFiles(path string) (removed []string, err error) {
 	return removed, errors.Join(errs...)
 }
 
-// staleDirectory reports the size of the regular files in directory and
-// whether the directory and everything in it were last changed before this
-// process started. Links inside are counted by their own times and are not
-// followed.
-func staleDirectory(directory string) (size int64, stale bool, err error) {
-	stale = true
+// IncomingQuarantines lists the push quarantine directories (see
+// gitIncomingObjectDirectory) in the objects directory of the repository at
+// path, sorted by name. Links are not listed, even to a directory.
+func IncomingQuarantines(path string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(path, "objects"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() && gitIncomingObjectDirectory.MatchString(entry.Name()) {
+			names = append(names, entry.Name())
+		}
+	}
+	return names, err
+}
+
+// RemoveIncomingQuarantine removes the push quarantine directory name, as
+// listed by IncomingQuarantines, from the repository at path and returns the
+// size of the regular files it held. The caller holds the repository write
+// lock and knows that no Git process uses the directory any more.
+func RemoveIncomingQuarantine(path, name string) (int64, error) {
+	if !gitIncomingObjectDirectory.MatchString(name) {
+		return 0, fmt.Errorf("%q is not a push quarantine directory", name)
+	}
+	directory := filepath.Join(path, "objects", name)
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return 0, err
+	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("%s is not a directory", filepath.ToSlash(filepath.Join("objects", name)))
+	}
+	size, _, err := directoryState(directory)
+	if err != nil {
+		return 0, err
+	}
+	return size, os.RemoveAll(directory)
+}
+
+// directoryState reports the size of the regular files in directory and the
+// newest modification time of the directory and everything in it. Links
+// inside are counted by their own times and are not followed.
+func directoryState(directory string) (size int64, newest time.Time, err error) {
 	err = filepath.WalkDir(directory, func(_ string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -122,15 +159,15 @@ func staleDirectory(directory string) (size int64, stale bool, err error) {
 		if err != nil {
 			return err
 		}
-		if !info.ModTime().Before(processStart) {
-			stale = false
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
 		}
 		if info.Mode().IsRegular() {
 			size += info.Size()
 		}
 		return nil
 	})
-	return size, stale, err
+	return size, newest, err
 }
 
 // logStaleGitFileRemoval removes stale Git files from repository id at path

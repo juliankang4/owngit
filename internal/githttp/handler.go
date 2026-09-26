@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -265,15 +266,23 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	defer committed.stop()
 	var report *pushReport
 	var observer io.Writer
+	var quarantinesBefore []string
+	quarantinesListed := false
 	if route.service == "git-receive-pack" && request.Method == http.MethodPost {
 		report = &pushReport{}
 		observer = report
+		var listErr error
+		quarantinesBefore, listErr = repository.IncomingQuarantines(repositoryPath)
+		quarantinesListed = listErr == nil
 	}
 	stderr, err := h.Git.Stream(streamContext, h.BackendPath, repositoryPath, input, extraEnvironment, func(stdout io.Reader) error {
 		err := h.copyCGIResponse(committed, stdout, observer)
 		consumeFailed.Store(err != nil)
 		return err
 	})
+	if quarantinesListed {
+		removeUnfinishedPushObjects(route, repositoryPath, quarantinesBefore)
+	}
 	if err == nil && route.service == "git-receive-pack" && h.OnReceive != nil {
 		h.OnReceive(route.repositoryID)
 	}
@@ -326,6 +335,35 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			status = http.StatusBadRequest
 		}
 		http.Error(committed, http.StatusText(status), status)
+	}
+}
+
+// removeUnfinishedPushObjects removes the push quarantine directories that
+// appeared in the repository at path since before lists them. receive-pack
+// keeps a push's objects in such a directory until the push completes and
+// removes it itself, but a receive-pack that was stopped, for example at the
+// request limit or when the client went away, leaves it with everything
+// received so far, up to the request limit. The caller holds the repository
+// write lock, so no other push to this repository ran meanwhile and every new
+// directory belongs to this request, whose Git processes have all ended.
+// Directories listed before, such as one left before OwnGit started, stay for
+// the startup cleanup. A directory that cannot be removed now stays for it
+// too.
+func removeUnfinishedPushObjects(route route, path string, before []string) {
+	after, err := repository.IncomingQuarantines(path)
+	if err != nil {
+		log.Printf("Git push request for repository %q: could not look for the objects of an unfinished push: %v", route.repositoryID, err)
+	}
+	for _, name := range after {
+		if slices.Contains(before, name) {
+			continue
+		}
+		size, err := repository.RemoveIncomingQuarantine(path, name)
+		if err != nil {
+			log.Printf("Git push request for repository %q: could not remove the objects of an unfinished push in objects/%s: %v", route.repositoryID, name, err)
+			continue
+		}
+		log.Printf("Git push request for repository %q: removed the objects of an unfinished push (objects/%s, %d bytes)", route.repositoryID, name, size)
 	}
 }
 

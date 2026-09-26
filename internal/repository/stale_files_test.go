@@ -150,3 +150,46 @@ func TestPreparationRemovesStalePushQuarantines(t *testing.T) {
 		t.Fatalf("unexpected failures %v", failures)
 	}
 }
+
+// IncomingQuarantines lists only receive-pack's quarantine directories, and
+// RemoveIncomingQuarantine removes only such a directory, never a link.
+func TestIncomingQuarantinesListAndRemoveOnlyPushQuarantines(t *testing.T) {
+	remote := t.TempDir()
+	objects := filepath.Join(remote, "objects")
+	for _, name := range []string{"tmp_objdir-incoming-Abc123/pack", "tmp_objdir-bulk-fsync-abcdef", "tmp_objdir-incoming-toolong1", "pack"} {
+		noErr(t, os.MkdirAll(filepath.Join(objects, filepath.FromSlash(name)), 0o700))
+	}
+	object := filepath.Join(objects, "tmp_objdir-incoming-Abc123", "pack", "tmp_pack_Xyz789")
+	noErr(t, os.WriteFile(object, []byte("synthetic pack\n"), 0o444))
+	noErr(t, os.WriteFile(filepath.Join(objects, "tmp_objdir-incoming-File01"), nil, 0o600))
+	outside := t.TempDir()
+	noErr(t, os.WriteFile(filepath.Join(outside, "kept"), []byte("outside\n"), 0o600))
+	noErr(t, os.Symlink(outside, filepath.Join(objects, "tmp_objdir-incoming-Link01")))
+
+	names, err := IncomingQuarantines(remote)
+	noErr(t, err)
+	if !slices.Equal(names, []string{"tmp_objdir-incoming-Abc123"}) {
+		t.Fatalf("listed %q", names)
+	}
+	for _, name := range []string{"tmp_objdir-incoming-Link01", "tmp_objdir-incoming-File01", "tmp_objdir-bulk-fsync-abcdef", "../outside"} {
+		if _, err := RemoveIncomingQuarantine(remote, name); err == nil {
+			t.Errorf("removed %s", name)
+		}
+	}
+	size, err := RemoveIncomingQuarantine(remote, "tmp_objdir-incoming-Abc123")
+	noErr(t, err)
+	if size != int64(len("synthetic pack\n")) {
+		t.Errorf("reported %d bytes", size)
+	}
+	for _, kept := range []string{filepath.Join(outside, "kept"), filepath.Join(objects, "tmp_objdir-incoming-Link01"), filepath.Join(objects, "tmp_objdir-bulk-fsync-abcdef")} {
+		if _, err := os.Lstat(kept); err != nil {
+			t.Errorf("%s is gone: %v", kept, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(objects, "tmp_objdir-incoming-Abc123")); !os.IsNotExist(err) {
+		t.Errorf("the quarantine remains: %v", err)
+	}
+	if names, err := IncomingQuarantines(t.TempDir()); err != nil || len(names) != 0 {
+		t.Errorf("a repository without objects: %q, %v", names, err)
+	}
+}
