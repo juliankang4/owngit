@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/pem"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,10 +16,14 @@ import (
 // slowHandshakeServer is an HTTPS server that answers every TLS handshake
 // only after delay, as Tailscale Serve does while it gets the certificate
 // for a new address, and then answers requests with handler. The client
-// trusts its certificate.
-func slowHandshakeServer(t *testing.T, delay time.Duration, handler http.HandlerFunc) *Client {
+// trusts its certificate. connState, when given, sees the server's
+// connections change state.
+func slowHandshakeServer(t *testing.T, delay time.Duration, handler http.HandlerFunc, connState ...func(net.Conn, http.ConnState)) *Client {
 	t.Helper()
 	server := httptest.NewUnstartedServer(handler)
+	if len(connState) > 0 {
+		server.Config.ConnState = connState[0]
+	}
 	server.TLS = &tls.Config{GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
 		time.Sleep(delay)
 		return nil, nil
@@ -44,13 +49,30 @@ func answerOK(writer http.ResponseWriter, _ *http.Request) {
 
 // A request's time limit starts once the connection is ready, so a TLS
 // handshake that waits longer than that limit, as the first one to a new
-// Tailscale address does, still ends in an answer.
+// Tailscale address does, still ends in an answer. The server measures how
+// long the connection took to carry the request, so the test shows that it
+// was longer than the limit; the limit leaves the request itself a full
+// second on a slow machine.
 func TestTheRequestLimitStartsWhenTheConnectionIsReady(t *testing.T) {
-	const limit = 200 * time.Millisecond
-	client := slowHandshakeServer(t, 3*limit, answerOK)
+	const limit = time.Second
+	var accepted time.Time
+	var waited time.Duration
+	client := slowHandshakeServer(t, 3*limit, func(writer http.ResponseWriter, request *http.Request) {
+		waited = time.Since(accepted)
+		answerOK(writer, request)
+	}, func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			accepted = time.Now()
+		}
+	})
 	client.Timeout = limit
 	if _, err := client.Do(context.Background(), http.MethodGet, "/api/v1/ping", nil); err != nil {
 		t.Fatalf("a handshake longer than the request limit failed the request: %v", err)
+	}
+	// The handler ran before the answer was read, and the connection
+	// opened before that, so both times are set.
+	if waited <= limit {
+		t.Fatalf("the request reached the server %s after the connection opened, not longer than the limit %s", waited, limit)
 	}
 }
 
