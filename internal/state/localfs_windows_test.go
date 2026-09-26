@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"golang.org/x/sys/windows"
+
+	"owngit/internal/testfixture"
 )
 
 func TestWindowsNetworkPathRecognizesUNCAndFinalUNCForms(t *testing.T) {
@@ -276,8 +278,8 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 	noErr(t, err)
 	const path = `C:\secrets\it's.txt`
 	setOwner := `icacls 'C:\secrets\it''s.txt' /setowner '*` + user.String() + `'`
-	replace := `$acl = Get-Acl -LiteralPath 'C:\secrets\it''s.txt'; $acl.SetAuditRuleProtection($acl.AreAccessRulesProtected, $true); $acl.SetSecurityDescriptorSddlForm('D:P(A;;FA;;;` + user.String() + `)', 'Access'); ` +
-		`Set-Acl -LiteralPath 'C:\secrets\it''s.txt' -AclObject $acl`
+	replace := `$f = Get-Item -LiteralPath 'C:\secrets\it''s.txt' -ErrorAction Stop; $io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }; ` +
+		`$acl = $io::GetAccessControl($f, 'Access'); $acl.SetSecurityDescriptorSddlForm('D:P(A;;FA;;;` + user.String() + `)', 'Access'); $io::SetAccessControl($f, $acl)`
 	for _, test := range []struct {
 		name       string
 		descriptor *windows.SECURITY_DESCRIPTOR
@@ -360,64 +362,142 @@ func TestWindowsNotPrivateFixWorks(t *testing.T) {
 	noErr(t, err)
 	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
 	noErr(t, err)
-	directory := t.TempDir()
-	workingDirectory := t.TempDir()
-	file := func(name string) string {
-		t.Helper()
-		path := filepath.Join(directory, name, "password")
-		noErr(t, os.MkdirAll(filepath.Dir(path), 0o700))
-		noErr(t, os.WriteFile(path, []byte("valid-password\n"), 0o600))
-		return path
-	}
-	// Files that inherit their folder's entries, in folders whose names are
-	// PowerShell syntax.
-	var paths []string
-	for _, folder := range []string{"plain folder", "x$(ni INJ-subexpr)y", "y$HOMEz", "back`tick", "it's", "curly\u2019s", "$(ni INJ-second)"} {
-		paths = append(paths, file(folder))
-	}
-	full := func(sid *windows.SID) windows.EXPLICIT_ACCESS {
-		return testEntry(sid, windows.GRANT_ACCESS, fileAllAccess)
-	}
-	// Explicit entries for another account.
-	shared := file("shared")
-	setRawDACL(t, shared, true, []windows.EXPLICIT_ACCESS{full(user), testEntry(everyone, windows.GRANT_ACCESS, windows.GENERIC_READ)}, false)
-	// A protected list that still holds entries marked as inherited, the
-	// state that icacls /inheritance:r left on a Windows Server 2025 runner.
-	leftover := file("inherited leftovers")
-	setRawDACL(t, leftover, true, []windows.EXPLICIT_ACCESS{full(user), full(system), full(administrators)}, true)
-	// Deny entries for the current user and for another account.
-	denied := file("denied")
-	setRawDACL(t, denied, true, []windows.EXPLICIT_ACCESS{testEntry(user, windows.DENY_ACCESS, windows.FILE_WRITE_EA), testEntry(everyone, windows.DENY_ACCESS, windows.FILE_WRITE_EA), full(user)}, false)
-	paths = append(paths, shared, leftover, denied)
-	for _, path := range paths {
-		err := ValidatePrivateInputFile(path)
-		var notPrivate *NotPrivateError
-		if !errors.As(err, &notPrivate) {
-			t.Fatalf("%s: err=%v, want *NotPrivateError", path, err)
+	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
+		directory := t.TempDir()
+		workingDirectory := t.TempDir()
+		file := func(name string) string {
+			t.Helper()
+			path := filepath.Join(directory, name, "password")
+			noErr(t, os.MkdirAll(filepath.Dir(path), 0o700))
+			noErr(t, os.WriteFile(path, []byte("valid-password\n"), 0o600))
+			return path
 		}
-		if notPrivate.Shell != "PowerShell" {
-			t.Errorf("%s: fix shell %q", path, notPrivate.Shell)
+		// Files that inherit their folder's entries, in folders whose names are
+		// PowerShell syntax.
+		var paths []string
+		for _, folder := range []string{"plain folder", "x$(ni INJ-subexpr)y", "y$HOMEz", "back`tick", "it's", "curly\u2019s", "$(ni INJ-second)"} {
+			paths = append(paths, file(folder))
 		}
-		t.Logf("%s: %s; fix: %s", path, notPrivate.Problem, notPrivate.Fix)
-		command := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", notPrivate.Fix)
-		command.Dir = workingDirectory
-		output, err := command.CombinedOutput()
-		if err != nil {
-			listing, _ := exec.Command("icacls", path).CombinedOutput()
-			t.Fatalf("%s: the fix failed: %v\n%s\n%s", path, err, output, listing)
+		full := func(sid *windows.SID) windows.EXPLICIT_ACCESS {
+			return testEntry(sid, windows.GRANT_ACCESS, fileAllAccess)
 		}
-		if err := ValidatePrivateInputFile(path); err != nil {
-			listing, _ := exec.Command("icacls", path).CombinedOutput()
-			t.Errorf("%s: still refused after the fix: %v\n%s", path, err, listing)
-		}
-	}
-	for _, place := range []string{workingDirectory, directory} {
-		entries, err := os.ReadDir(place)
-		noErr(t, err)
-		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), "INJ-") {
-				t.Errorf("the fix ran code from a folder name: %s", filepath.Join(place, entry.Name()))
+		// Explicit entries for another account.
+		shared := file("shared")
+		setRawDACL(t, shared, true, []windows.EXPLICIT_ACCESS{full(user), testEntry(everyone, windows.GRANT_ACCESS, windows.GENERIC_READ)}, false)
+		// A protected list that still holds entries marked as inherited, the
+		// state that icacls /inheritance:r left on a Windows Server 2025 runner.
+		leftover := file("inherited leftovers")
+		setRawDACL(t, leftover, true, []windows.EXPLICIT_ACCESS{full(user), full(system), full(administrators)}, true)
+		// Deny entries for the current user and for another account.
+		denied := file("denied")
+		setRawDACL(t, denied, true, []windows.EXPLICIT_ACCESS{testEntry(user, windows.DENY_ACCESS, windows.FILE_WRITE_EA), testEntry(everyone, windows.DENY_ACCESS, windows.FILE_WRITE_EA), full(user)}, false)
+		paths = append(paths, shared, leftover, denied)
+		for _, path := range paths {
+			err := ValidatePrivateInputFile(path)
+			var notPrivate *NotPrivateError
+			if !errors.As(err, &notPrivate) {
+				t.Fatalf("%s: err=%v, want *NotPrivateError", path, err)
+			}
+			if notPrivate.Shell != "PowerShell" {
+				t.Errorf("%s: fix shell %q", path, notPrivate.Shell)
+			}
+			t.Logf("%s: %s; fix: %s", path, notPrivate.Problem, notPrivate.Fix)
+			command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", notPrivate.Fix)
+			command.Dir = workingDirectory
+			output, err := command.CombinedOutput()
+			if err != nil {
+				listing, _ := exec.Command("icacls", path).CombinedOutput()
+				t.Fatalf("%s: the fix failed: %v\n%s\n%s", path, err, output, listing)
+			}
+			if err := ValidatePrivateInputFile(path); err != nil {
+				listing, _ := exec.Command("icacls", path).CombinedOutput()
+				t.Errorf("%s: still refused after the fix: %v\n%s", path, err, listing)
 			}
 		}
+		for _, place := range []string{workingDirectory, directory} {
+			entries, err := os.ReadDir(place)
+			noErr(t, err)
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), "INJ-") {
+					t.Errorf("the fix ran code from a folder name: %s", filepath.Join(place, entry.Name()))
+				}
+			}
+		}
+	})
+}
+
+// enableSecurityPrivilege enables SeSecurityPrivilege, which reading and
+// writing audit entries needs, until the test ends, and reports whether the
+// process holds it (an elevated administrator does).
+func enableSecurityPrivilege(t *testing.T) bool {
+	t.Helper()
+	var token windows.Token
+	noErr(t, windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token))
+	defer token.Close()
+	var luid windows.LUID
+	name, err := windows.UTF16PtrFromString("SeSecurityPrivilege")
+	noErr(t, err)
+	noErr(t, windows.LookupPrivilegeValue(nil, name, &luid))
+	set := func(attributes uint32) error {
+		privileges := windows.Tokenprivileges{PrivilegeCount: 1}
+		privileges.Privileges[0] = windows.LUIDAndAttributes{Luid: luid, Attributes: attributes}
+		return windows.AdjustTokenPrivileges(token, false, &privileges, 0, nil, nil)
 	}
+	if err := set(windows.SE_PRIVILEGE_ENABLED); err != nil {
+		return false
+	}
+	t.Cleanup(func() {
+		var cleanup windows.Token
+		if windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES, &cleanup) == nil {
+			privileges := windows.Tokenprivileges{PrivilegeCount: 1}
+			privileges.Privileges[0] = windows.LUIDAndAttributes{Luid: luid}
+			_ = windows.AdjustTokenPrivileges(cleanup, false, &privileges, 0, nil, nil)
+			cleanup.Close()
+		}
+	})
+	// AdjustTokenPrivileges also succeeds for a privilege the token does not
+	// hold, so the privilege is proved by using it.
+	_, err = windows.GetNamedSecurityInfo(os.Getenv("SystemRoot"), windows.SE_FILE_OBJECT, windows.SACL_SECURITY_INFORMATION)
+	return err == nil
+}
+
+// The printed fix changes only the access list: audit entries that an
+// administrator set on the file stay.
+func TestWindowsNotPrivateFixKeepsAuditEntries(t *testing.T) {
+	if !enableSecurityPrivilege(t) {
+		t.Skip("audit entries can be set only with SeSecurityPrivilege, which this process does not hold (run elevated)")
+	}
+	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
+		path := filepath.Join(t.TempDir(), "audited", "password")
+		noErr(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		noErr(t, os.WriteFile(path, []byte("valid-password\n"), 0o600))
+		const audit = "(AU;SA;FR;;;WD)"
+		audited, err := windows.SecurityDescriptorFromString("S:" + audit)
+		noErr(t, err)
+		sacl, _, err := audited.SACL()
+		noErr(t, err)
+		noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.SACL_SECURITY_INFORMATION, nil, nil, nil, sacl))
+		auditEntries := func() string {
+			t.Helper()
+			descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.SACL_SECURITY_INFORMATION)
+			noErr(t, err)
+			return descriptor.String()
+		}
+		if before := auditEntries(); !strings.Contains(before, audit) {
+			t.Fatalf("the audit entry was not set: %s", before)
+		}
+		var notPrivate *NotPrivateError
+		if err := ValidatePrivateInputFile(path); !errors.As(err, &notPrivate) {
+			t.Fatalf("err=%v, want *NotPrivateError", err)
+		}
+		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", notPrivate.Fix)
+		command.Dir = t.TempDir()
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("the fix failed: %v\n%s", err, output)
+		}
+		noErr(t, ValidatePrivateInputFile(path))
+		if after := auditEntries(); !strings.Contains(after, audit) {
+			t.Fatalf("the fix removed the audit entry: %s", after)
+		}
+	})
 }

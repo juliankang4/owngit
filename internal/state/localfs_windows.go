@@ -431,17 +431,18 @@ func describeNotPrivate(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.S
 // an inherited entry in a protected list into an explicit one instead of
 // removing it.
 //
-// Set-Acl also writes the audit list, which needs a privilege an ordinary user
-// does not have, unless the object's audit protection equals the file's
-// current access protection (Set-Acl compares those two flags). So the line
-// starts from Get-Acl and copies the file's access protection into the audit
-// protection before it replaces the access list.
+// The line writes only the access section, so the owner and any audit entries
+// stay; Set-Acl would write the whole security descriptor and, run elevated,
+// drop the audit entries. The .NET methods that do this are [IO.File] in
+// Windows PowerShell 5.1 and [IO.FileSystemAclExtensions] in PowerShell 7, so
+// the line picks one and works unchanged in both. Get-Item resolves the path
+// the PowerShell way and stops the line with a clear error if it is missing.
 func userOnlyACLCommand(path string, user *windows.SID) string {
-	quoted := powerShellQuote(path)
-	return "$acl = Get-Acl -LiteralPath " + quoted + "; " +
-		"$acl.SetAuditRuleProtection($acl.AreAccessRulesProtected, $true); " +
+	return "$f = Get-Item -LiteralPath " + powerShellQuote(path) + " -ErrorAction Stop; " +
+		"$io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }; " +
+		"$acl = $io::GetAccessControl($f, 'Access'); " +
 		"$acl.SetSecurityDescriptorSddlForm('D:P(A;;FA;;;" + user.String() + ")', 'Access'); " +
-		"Set-Acl -LiteralPath " + quoted + " -AclObject $acl"
+		"$io::SetAccessControl($f, $acl)"
 }
 
 // powerShellQuote quotes s as a PowerShell single-quoted string, in which

@@ -314,14 +314,15 @@ On Windows, a file made with Notepad or `echo` inherits its folder's access entr
 
 ```powershell
 $file = "$HOME\owngit-password.txt"
-New-Item -ItemType File -Path $file
-$acl = Get-Acl -LiteralPath $file
+$f = New-Item -ItemType File -Path $file
+$io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }
+$acl = $io::GetAccessControl($f, 'Access')
 $acl.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;$([Security.Principal.WindowsIdentity]::GetCurrent().User))", 'Access')
-Set-Acl -LiteralPath $file -AclObject $acl
+$io::SetAccessControl($f, $acl)
 [IO.File]::WriteAllText($file, [Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Password')).Password)
 ```
 
-The three `$acl` lines replace the file's access list with `D:P(A;;FA;;;SID)`: a list that inherits nothing (`P`) and allows (`A`) full access (`FA`) only to your account, named by its security identifier. `Read-Host -AsSecureString` keeps the password off the screen and out of the PowerShell history. The same commands work in an ordinary PowerShell window and in one opened with Run as administrator. In an administrator window, Windows makes the Administrators group the owner of the new file. OwnGit accepts that owner when the access entries name only your account, because administrators can take ownership of any file anyway.
+The `$io` and `$acl` lines replace the file's access list with `D:P(A;;FA;;;SID)`: a list that inherits nothing (`P`) and allows (`A`) full access (`FA`) only to your account, named by its security identifier. They write only the access list, so the owner and any audit settings stay. `$io` picks the .NET class that has these methods: `[IO.File]` in Windows PowerShell 5.1, `[IO.FileSystemAclExtensions]` in PowerShell 7. `Read-Host -AsSecureString` keeps the password off the screen and out of the PowerShell history. The same commands work in Windows PowerShell 5.1 and PowerShell 7, in an ordinary window and in one opened with Run as administrator. In an administrator window, Windows makes the Administrators group the owner of the new file. OwnGit accepts that owner when the access entries name only your account, because administrators can take ownership of any file anyway.
 
 ## Restoring repository files
 

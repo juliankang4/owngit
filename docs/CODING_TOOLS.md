@@ -167,20 +167,25 @@ to your account, write the password, and then add the line:
 
 ```powershell
 $file = "$HOME\owngit-password.txt"
-New-Item -ItemType File -Path $file
-$acl = Get-Acl -LiteralPath $file
+$f = New-Item -ItemType File -Path $file
+$io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }
+$acl = $io::GetAccessControl($f, 'Access')
 $acl.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;$([Security.Principal.WindowsIdentity]::GetCurrent().User))", 'Access')
-Set-Acl -LiteralPath $file -AclObject $acl
+$io::SetAccessControl($f, $acl)
 [IO.File]::WriteAllText($file, [Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Password')).Password)
 [IO.File]::WriteAllText($file, "owngit-server: https://owngit.example.test`n" + [IO.File]::ReadAllText($file))
 ```
 
-The three `$acl` lines replace the file's access list with `D:P(A;;FA;;;SID)`:
-a list that inherits nothing (`P`) and allows (`A`) full access (`FA`) only to
-your account. Writing into the existing file keeps that list.
+The `$io` and `$acl` lines replace the file's access list with
+`D:P(A;;FA;;;SID)`: a list that inherits nothing (`P`) and allows (`A`) full
+access (`FA`) only to your account. They write only the access list, so the
+owner and any audit settings stay. `$io` picks the .NET class that has these
+methods: `[IO.File]` in Windows PowerShell 5.1, `[IO.FileSystemAclExtensions]`
+in PowerShell 7. Writing into the existing file keeps that list.
 `Read-Host -AsSecureString` keeps the password off the screen and out of the
-PowerShell history. The commands work in an ordinary PowerShell window and in
-one opened with Run as administrator, where the Administrators group becomes
+PowerShell history. The commands work in Windows PowerShell 5.1 and
+PowerShell 7, in an ordinary window and in one opened with Run as
+administrator, where the Administrators group becomes
 the file's owner; OwnGit accepts that owner when only your account has access.
 
 Refusals are `credential_origin_required` (the server was inferred and the file

@@ -314,14 +314,15 @@ Windows에서 메모장이나 `echo`로 만든 파일은 폴더의 접근 항목
 
 ```powershell
 $file = "$HOME\owngit-password.txt"
-New-Item -ItemType File -Path $file
-$acl = Get-Acl -LiteralPath $file
+$f = New-Item -ItemType File -Path $file
+$io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }
+$acl = $io::GetAccessControl($f, 'Access')
 $acl.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;$([Security.Principal.WindowsIdentity]::GetCurrent().User))", 'Access')
-Set-Acl -LiteralPath $file -AclObject $acl
+$io::SetAccessControl($f, $acl)
 [IO.File]::WriteAllText($file, [Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Password')).Password)
 ```
 
-`$acl`이 들어간 세 줄은 파일의 접근 목록을 `D:P(A;;FA;;;SID)`로 바꿉니다. 아무것도 상속하지 않고(`P`) 본인 계정에만 모든 권한(`FA`)을 허용하는(`A`) 목록입니다. 계정은 보안 식별자(SID)로 지정합니다. `Read-Host -AsSecureString`은 비밀번호를 화면과 PowerShell 기록에 남기지 않습니다. 이 명령은 일반 PowerShell 창과 관리자 권한으로 실행한 창에서 똑같이 동작합니다. 관리자 창에서는 Windows가 새 파일의 소유자를 Administrators 그룹으로 정합니다. 관리자는 어차피 어떤 파일이든 소유권을 가져올 수 있으므로, 접근 항목에 본인 계정만 있으면 OwnGit은 이 소유자를 받아들입니다.
+`$io`와 `$acl`이 들어간 줄은 파일의 접근 목록을 `D:P(A;;FA;;;SID)`로 바꿉니다. 아무것도 상속하지 않고(`P`) 본인 계정에만 모든 권한(`FA`)을 허용하는(`A`) 목록입니다. 계정은 보안 식별자(SID)로 지정합니다. 접근 목록만 쓰므로 소유자와 감사 설정은 그대로 남습니다. `$io`는 이 메서드가 있는 .NET 클래스를 고릅니다. Windows PowerShell 5.1에서는 `[IO.File]`, PowerShell 7에서는 `[IO.FileSystemAclExtensions]`입니다. `Read-Host -AsSecureString`은 비밀번호를 화면과 PowerShell 기록에 남기지 않습니다. 이 명령은 Windows PowerShell 5.1과 PowerShell 7에서, 일반 창과 관리자 권한으로 실행한 창 모두 똑같이 동작합니다. 관리자 창에서는 Windows가 새 파일의 소유자를 Administrators 그룹으로 정합니다. 관리자는 어차피 어떤 파일이든 소유권을 가져올 수 있으므로, 접근 항목에 본인 계정만 있으면 OwnGit은 이 소유자를 받아들입니다.
 
 ## 저장소 파일 되돌리기
 

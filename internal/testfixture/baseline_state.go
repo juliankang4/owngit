@@ -1,4 +1,5 @@
-// Package testfixture provides source-controlled compatibility fixtures.
+// Package testfixture provides source-controlled compatibility fixtures and
+// helpers that tests in several packages share.
 package testfixture
 
 import (
