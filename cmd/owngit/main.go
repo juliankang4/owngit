@@ -236,7 +236,7 @@ var interactiveSetup = defaultInteractiveSetup
 
 func defaultInteractiveSetup() bool { return firstrun.Interactive(os.Stdin, os.Stdout) }
 
-func serveWithContext(ctx context.Context, arguments []string, opener func(string) error, logf func(string, ...any)) error {
+func serveWithContext(ctx context.Context, arguments []string, opener func(string) error, logf func(string, ...any)) (serveErr error) {
 	// Stopping setup in the terminal stops the server like a signal does.
 	ctx, cancelServe := context.WithCancel(ctx)
 	defer cancelServe()
@@ -270,7 +270,17 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		if err != nil {
 			return err
 		}
-		defer closeLog()
+		// The error that ends serve reaches the log before it closes; a
+		// service keeps no other output.
+		defer func() {
+			if serveErr != nil {
+				logf("error: %v", serveErr)
+			}
+			closeLog()
+		}()
+		if status := os.Getenv(restartedVariable); *asService && status != "" {
+			logf("started again after the server exited with status %s", status)
+		}
 	}
 	// Without a desktop that a person sees (a service, a scheduled task,
 	// SSH on Windows), a browser would run where nobody can see or close

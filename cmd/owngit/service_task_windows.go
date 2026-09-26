@@ -3,12 +3,16 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -198,15 +202,29 @@ func withoutAdminToken() (windows.Token, error) {
 // a restricted token (withoutAdminToken) on this console, and returns its
 // exit code.
 func platformRunWithoutAdminRights(arguments []string) (int, error) {
-	return runCopy(arguments, true, 0)
+	return runCopy(arguments, true, 0, nil, nil)
+}
+
+// platformRepositoryRootWithoutAdminRights returns the repository folder
+// saved in stateDir, or "". A copy without administrator rights reads it,
+// since opening the state with them could leave files that the service
+// cannot use.
+func platformRepositoryRootWithoutAdminRights(stateDir string) string {
+	var output bytes.Buffer
+	code, err := runCopy([]string{"service", "repository-root", "--state-dir", stateDir}, true, 0, &output, nil)
+	if err != nil || code != 0 {
+		return ""
+	}
+	return strings.TrimSpace(output.String())
 }
 
 // runCopy runs this executable with the arguments on this console, in a
 // job that ends it when this process ends, and returns its exit code. With
 // restricted it runs with withoutAdminToken. An interrupt or a console
 // close is passed on as CTRL_BREAK and, when stop is set, as the stop event
-// of the server.
-func runCopy(arguments []string, restricted bool, stop windows.Handle) (int, error) {
+// of the server. Standard output goes to output when it is not nil, and
+// environment is added to the copy's environment.
+func runCopy(arguments []string, restricted bool, stop windows.Handle, output io.Writer, environment []string) (int, error) {
 	if os.Getenv(copyVariable) != "" {
 		return 0, errors.New("this copy of owngit was started by another one and does not start a further copy")
 	}
@@ -216,7 +234,10 @@ func runCopy(arguments []string, restricted bool, stop windows.Handle) (int, err
 	}
 	command := exec.Command(executable, arguments...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-	command.Env = append(os.Environ(), copyVariable+"=1")
+	if output != nil {
+		command.Stdout = output
+	}
+	command.Env = append(append(os.Environ(), environment...), copyVariable+"=1")
 	// Suspended until it is in the job, and in its own process group so
 	// that it can get CTRL_BREAK.
 	gitexec.ConfigureOwnedProcess(command)
@@ -336,7 +357,9 @@ func watchServiceStop(stateDir string, stop func(), logf func(string, ...any)) f
 		windows.CloseHandle(event)
 		return func() {}
 	}
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer windows.CloseHandle(event)
 		index, err := windows.WaitForMultipleObjects([]windows.Handle{event, finished}, false, windows.INFINITE)
 		if err == nil && index == windows.WAIT_OBJECT_0 {
@@ -344,7 +367,11 @@ func watchServiceStop(stateDir string, stop func(), logf func(string, ...any)) f
 			stop()
 		}
 	}()
-	return func() { _ = windows.SetEvent(finished) }
+	return func() {
+		_ = windows.SetEvent(finished)
+		<-done
+		windows.CloseHandle(finished)
+	}
 }
 
 // platformSignalServiceStop sets the stop event of stateDir, if a server
@@ -405,9 +432,10 @@ func serveWithoutAdminRights(arguments []string) (handled bool, err error) {
 	// the end of the parent counts as a stop request.
 	stopWithParent(stop)
 	delay := serviceRestartDelay
+	var restarted []string
 	for {
 		started := time.Now()
-		code, err := runCopy(append([]string{"serve"}, arguments...), elevated, stop)
+		code, err := runCopy(append([]string{"serve"}, arguments...), elevated, stop, nil, restarted)
 		if err != nil {
 			return true, err
 		}
@@ -425,6 +453,9 @@ func serveWithoutAdminRights(arguments []string) (handled bool, err error) {
 		if stopRequested(stop, delay) {
 			return true, nil
 		}
+		// The supervisor does not open the state directory; the next server
+		// writes the reason for its start to the log.
+		restarted = []string{restartedVariable + "=" + strconv.Itoa(code)}
 		delay = min(2*delay, time.Minute)
 	}
 }
@@ -443,7 +474,9 @@ func stopWithParent(stop windows.Handle) {
 	}()
 }
 
-// parentProcess opens the process that started this one.
+// parentProcess opens the process that started this one. A process with
+// the parent's ID that started later took over the ID of a parent that has
+// already exited, and is not returned.
 func parentProcess() (windows.Handle, error) {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
@@ -455,10 +488,29 @@ func parentProcess() (windows.Handle, error) {
 	entry.Size = uint32(unsafe.Sizeof(entry))
 	for err = windows.Process32First(snapshot, &entry); err == nil; err = windows.Process32Next(snapshot, &entry) {
 		if entry.ProcessID == own {
-			return windows.OpenProcess(windows.SYNCHRONIZE, false, entry.ParentProcessID)
+			parent, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, entry.ParentProcessID)
+			if err != nil {
+				return 0, err
+			}
+			if !startedBefore(parent, windows.CurrentProcess()) {
+				windows.CloseHandle(parent)
+				return 0, errors.New("the parent process has exited")
+			}
+			return parent, nil
 		}
 	}
 	return 0, err
+}
+
+// startedBefore reports whether process first started before process
+// second.
+func startedBefore(first, second windows.Handle) bool {
+	var firstCreated, secondCreated, exit, kernel, user windows.Filetime
+	if windows.GetProcessTimes(first, &firstCreated, &exit, &kernel, &user) != nil ||
+		windows.GetProcessTimes(second, &secondCreated, &exit, &kernel, &user) != nil {
+		return false
+	}
+	return firstCreated.Nanoseconds() <= secondCreated.Nanoseconds()
 }
 
 // serviceRestartDelay is the first wait before a failed server starts

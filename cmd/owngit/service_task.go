@@ -1,18 +1,22 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"owngit/internal/server"
 	"owngit/internal/service"
+	"owngit/internal/state"
 )
 
 // The Windows backend of "owngit service": a Task Scheduler task that runs
@@ -50,7 +54,29 @@ var (
 	currentAccountSID = platformCurrentAccountSID
 	// windowsSystemDirectory returns the System32 directory.
 	windowsSystemDirectory = platformSystemDirectory
+	// ownerOf returns the owner of a file or folder as a SID string.
+	ownerOf = platformOwnerOf
+	// giveOwnership makes an account the owner of a folder and of what the
+	// Administrators group owns below it; see platformGiveOwnership.
+	giveOwnership = platformGiveOwnership
+	// repositoryRootWithoutAdminRights returns the repository folder saved
+	// in a state directory, read without administrator rights.
+	repositoryRootWithoutAdminRights = platformRepositoryRootWithoutAdminRights
+	// taskPollInterval is how often waiting for the server also checks
+	// whether Windows keeps the task queued.
+	taskPollInterval = 5 * time.Second
 )
+
+// administratorsSID is the BUILTIN\Administrators group.
+const administratorsSID = "S-1-5-32-544"
+
+// restartedVariable tells a server that its supervisor started it again
+// after it exited with the status in the value; the server logs that.
+const restartedVariable = "OWNGIT_SERVICE_RESTARTED"
+
+// queuedTaskMessage explains a task that Windows keeps queued. It was
+// observed on newly installed Windows 11; see docs/OPERATIONS.md.
+const queuedTaskMessage = "OwnGit has not started: Windows keeps the task queued. That happens until someone has signed in on this computer at the screen for the first time since Windows was installed (a sign-in over SSH does not count). Sign in once with any account, and OwnGit starts then and at every boot from then on.\n"
 
 // taskStopTimeout bounds the wait for a server to stop after it was asked
 // to; its own shutdown steps add up to about two minutes.
@@ -107,21 +133,23 @@ func (host *taskHost) runPowerShell(script string) ([]byte, error) {
 
 // taskServiceCommand runs one "owngit service" action on Windows.
 func taskServiceCommand(action string, arguments []string) error {
+	if strings.HasPrefix(action, "elevated-") {
+		host, err := newTaskHost()
+		if err != nil {
+			return err
+		}
+		return host.administratorStep(action, arguments)
+	}
 	flags := flag.NewFlagSet("service "+action, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var stateDir *string
-	var headless, installGit, remove *bool
-	var attach *int
+	var headless *bool
 	switch action {
-	case "install", "report":
+	case "install":
 		stateDir = flags.String("state-dir", "", "state directory the service uses (default: the one owngit uses for this account)")
-	case "elevated-install", "elevated-uninstall", "elevated-firewall":
-		// Set by the command that asked for the UAC prompt.
-		stateDir = flags.String("state-dir", "", "state directory the task passes")
-		headless = flags.Bool("headless", false, "pass --headless to the server")
-		installGit = flags.Bool("install-git", false, "install Git with winget when it is missing")
-		remove = flags.Bool("remove", false, "remove the firewall rule instead of adding it")
-		attach = flags.Int("attach", 0, "process whose console shows the output")
+		headless = flags.Bool("headless", false, "whether this computer has no screen for setup (default: kept from the installed service, or detected for a new one)")
+	case "report", "repository-root":
+		stateDir = flags.String("state-dir", "", "state directory of the service")
 	}
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
@@ -135,27 +163,23 @@ func taskServiceCommand(action string, arguments []string) error {
 	}
 	switch action {
 	case "install":
-		return host.install(*stateDir)
+		var headlessFlag *bool
+		flags.Visit(func(entry *flag.Flag) {
+			if entry.Name == "headless" {
+				headlessFlag = headless
+			}
+		})
+		return host.install(*stateDir, headlessFlag)
 	case "report":
 		return host.report(*stateDir)
-	case "elevated-install", "elevated-uninstall", "elevated-firewall":
-		if *attach != 0 {
-			attachToConsole(*attach)
-			host.out = os.Stdout
+	case "repository-root":
+		if host.env.Elevated {
+			return errors.New("this step runs only without administrator rights")
 		}
-		if !host.env.Elevated {
-			return errors.New("this step runs only with administrator rights, started by \"owngit service install\"")
+		if root := savedRepositoryRoot(*stateDir); root != "" {
+			fmt.Fprintln(host.out, root)
 		}
-		switch {
-		case action == "elevated-install":
-			return host.elevatedInstall(*stateDir, *headless, *installGit)
-		case action == "elevated-uninstall":
-			return host.elevatedUninstall()
-		case *remove:
-			return host.removeFirewallRule()
-		default:
-			return host.allowThroughFirewall()
-		}
+		return nil
 	}
 	// Everything else reads the state directory, which an elevated process
 	// must not touch: a copy of this command without administrator rights
@@ -170,6 +194,44 @@ func taskServiceCommand(action string, arguments []string) error {
 		return host.status()
 	default:
 		return host.control(action)
+	}
+}
+
+// administratorStep runs one of the steps that need administrator rights,
+// "elevated-install", "elevated-uninstall" or "elevated-firewall", with the
+// arguments that the command asking for them passed.
+func (host *taskHost) administratorStep(action string, arguments []string) error {
+	flags := flag.NewFlagSet("service "+action, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	stateDir := flags.String("state-dir", "", "state directory the task passes")
+	headless := flags.Bool("headless", false, "the --headless value the task passes to the server")
+	installGit := flags.Bool("install-git", false, "install Git with winget when it is missing")
+	remove := flags.Bool("remove", false, "remove the firewall rule instead of adding it")
+	attach := flags.Int("attach", 0, "process whose console shows the output")
+	if err := parseFlags(flags, arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("service %s takes no arguments", action)
+	}
+	if *attach != 0 {
+		attachToConsole(*attach)
+		host.out = os.Stdout
+	}
+	if !host.env.Elevated {
+		return errors.New("this step runs only with administrator rights, started by \"owngit service install\"")
+	}
+	switch {
+	case action == "elevated-install":
+		return host.elevatedInstall(*stateDir, *headless, *installGit)
+	case action == "elevated-uninstall":
+		return host.elevatedUninstall()
+	case action != "elevated-firewall":
+		return fmt.Errorf("unknown step %s", action)
+	case *remove:
+		return host.removeFirewallRule()
+	default:
+		return host.allowThroughFirewall()
 	}
 }
 
@@ -225,7 +287,9 @@ func (host *taskHost) plan(mode service.Mode, stateDir string, headless bool) se
 	}
 }
 
-func (host *taskHost) install(stateDirFlag string) error {
+// install installs or updates the service. headlessFlag is the --headless
+// option, or nil without it.
+func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
 	existing, found, err := host.installed()
 	if err != nil {
 		return err
@@ -243,7 +307,15 @@ func (host *taskHost) install(stateDirFlag string) error {
 			return err
 		}
 	}
-	headless := host.env.Headless() || (found && existing.Headless)
+	// As on Linux, the headless choice is made when the service is first
+	// installed, and only --headless changes it.
+	headless := host.env.Headless()
+	switch {
+	case headlessFlag != nil:
+		headless = *headlessFlag
+	case found:
+		headless = existing.Headless
+	}
 	mode := host.env.ChooseMode(false)
 	plan := host.plan(mode, stateDir, headless)
 	// Refuse a path the task cannot hold before anything changes.
@@ -257,26 +329,35 @@ func (host *taskHost) install(stateDirFlag string) error {
 		host.printf("OwnGit needs Git for Windows. Install it from https://git-scm.com/download/win (or run \"winget install --id Git.Git -e\"), then run \"owngit service install\" again.\n")
 		return errors.New("git is not installed")
 	}
-	if found {
-		host.stopTask(existing.StateDir)
-	}
 	switch mode {
 	case service.ModeBootTask:
-		arguments := []string{"service", "elevated-install", "--state-dir", stateDir}
-		if headless {
-			arguments = append(arguments, "--headless")
-		}
+		// The running server stops only after the approval, in the step
+		// with administrator rights, so declining changes nothing.
+		arguments := []string{"service", "elevated-install", "--state-dir", stateDir, "--headless=" + strconv.FormatBool(headless)}
 		if installGit {
 			arguments = append(arguments, "--install-git")
 		}
-		steps := "register the OwnGit task that starts at boot and allow OwnGit through Windows Firewall on private networks"
+		steps := []string{"register the OwnGit task that starts at boot", "allow OwnGit through Windows Firewall on private networks"}
 		if installGit {
-			steps += ", and install Git with winget"
+			steps = append(steps, "install Git with winget")
 		}
-		if err := host.asAdministrator(arguments, steps); err != nil {
+		if !host.env.Elevated {
+			for _, folder := range host.foldersOfAdministrators(stateDir) {
+				steps = append(steps, "make your account the owner of "+folder)
+			}
+		}
+		if err := host.asAdministrator(arguments, listSteps(steps)); err != nil {
 			return err
 		}
 	default:
+		// No administrator rights: a folder of the Administrators group
+		// stays theirs, and the command says who can change that.
+		for _, folder := range host.foldersOfAdministrators(stateDir) {
+			host.printf("%s belongs to the Administrators group, so OwnGit cannot use it. An administrator can make your account its owner with: icacls \"%s\" /setowner \"*%s\" /T /C\n", folder, folder, host.sid)
+		}
+		if found {
+			host.stopTask(existing.StateDir)
+		}
 		if err := host.registerTask(plan); err != nil {
 			return err
 		}
@@ -296,7 +377,7 @@ func (host *taskHost) install(stateDirFlag string) error {
 // that it announces in one line.
 func (host *taskHost) asAdministrator(arguments []string, steps string) error {
 	if host.env.Elevated {
-		return taskServiceCommand(arguments[1], arguments[2:])
+		return host.administratorStep(arguments[1], arguments[2:])
 	}
 	if host.env.NoDesktop {
 		host.printf("Windows asks for administrator approval to %s, and this session has no desktop to show that prompt. Run the same command in a terminal opened with \"Run as administrator\", or from the desktop.\n", steps)
@@ -318,11 +399,20 @@ func (host *taskHost) asAdministrator(arguments []string, steps string) error {
 	return nil
 }
 
+// listSteps joins steps into one sentence: "a and b", "a, b, and c".
+func listSteps(steps []string) string {
+	if len(steps) < 3 {
+		return strings.Join(steps, " and ")
+	}
+	return strings.Join(steps[:len(steps)-1], ", ") + ", and " + steps[len(steps)-1]
+}
+
 // errElevationCancelled means the owner declined the UAC prompt.
 var errElevationCancelled = errors.New("administrator approval was declined")
 
 // elevatedInstall does the steps that need administrator rights: Git if it
-// is missing, the boot task for this executable and this account, the
+// is missing, stopping the server that runs, the account's ownership of
+// its folders, the boot task for this executable and this account, the
 // firewall rule, and the start. It creates nothing in the state directory,
 // which the server creates itself without administrator rights.
 func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool) error {
@@ -336,16 +426,114 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 			return fmt.Errorf("install Git with winget: %w", err)
 		}
 	}
+	if existing, found, err := host.installed(); err == nil && found {
+		host.stopTask(existing.StateDir)
+	}
+	// Folders an earlier OwnGit with administrator rights left to the
+	// Administrators group are given back to the account, since the server
+	// runs without those rights. The state directory comes first, so that
+	// the repository folder saved in it can be read.
+	host.giveFolderToAccount(stateDir)
+	if repositories := repositoryRootWithoutAdminRights(stateDir); repositories != "" {
+		host.giveFolderToAccount(repositories)
+	}
 	if err := host.registerTask(host.plan(service.ModeBootTask, stateDir, headless)); err != nil {
 		return err
 	}
 	if err := host.allowThroughFirewall(); err != nil {
 		return err
 	}
-	// A server still running from before is stopped; the task starts the
-	// new one.
+	// A server that did not stop in time is ended; the task starts the new
+	// one.
 	_, _ = serviceRunner(context.Background(), host.schtasks(), "/End", "/TN", `\`+service.TaskName)
 	return host.runTask()
+}
+
+// foldersOfAdministrators returns the state directory and the saved
+// repository folder when the Administrators group owns them, as far as
+// this process can read them.
+func (host *taskHost) foldersOfAdministrators(stateDir string) []string {
+	var folders []string
+	for _, folder := range []string{stateDir, savedRepositoryRoot(stateDir)} {
+		if folder == "" || ownershipRefusal(folder, host.env.Getenv) != "" {
+			continue
+		}
+		if owner, err := ownerOf(folder); err == nil && owner == administratorsSID {
+			folders = append(folders, folder)
+		}
+	}
+	return folders
+}
+
+// giveFolderToAccount makes the account the owner of folder and of what the
+// Administrators group owns below it, when the Administrators group or the
+// account owns folder. It leaves alone a folder of another account, a
+// drive and the folders of Windows and installed programs, and says so in
+// one line when the folder is not the account's. It needs administrator
+// rights.
+func (host *taskHost) giveFolderToAccount(folder string) {
+	var refused string
+	changed, failed, err := giveOwnership(folder, host.sid, func(finalPath, owner string) error {
+		if owner != administratorsSID && owner != host.sid {
+			refused = "it belongs to another account"
+		} else {
+			refused = ownershipRefusal(finalPath, host.env.Getenv)
+		}
+		if refused != "" && owner != host.sid {
+			return errors.New(refused)
+		}
+		if refused != "" {
+			return errOwnershipNotNeeded
+		}
+		return nil
+	})
+	switch {
+	case errors.Is(err, errOwnershipNotNeeded), errors.Is(err, os.ErrNotExist):
+	case refused != "":
+		host.printf("OwnGit leaves the owner of %s as it is, because %s. If OwnGit cannot use it, choose a folder in your user folder.\n", folder, refused)
+	case err != nil:
+		host.printf("Your account could not be made the owner of %s: %v\n", folder, err)
+	case failed > 0:
+		host.printf("Your account is now the owner of %d files and folders in %s; %d could not be changed.\n", changed, folder, failed)
+	case changed > 0:
+		host.printf("Your account is now the owner of %d files and folders in %s that belonged to the Administrators group.\n", changed, folder)
+	}
+}
+
+// errOwnershipNotNeeded stops giveOwnership for a folder that the account
+// owns but that OwnGit does not walk, such as a drive.
+var errOwnershipNotNeeded = errors.New("the account owns the folder")
+
+// ownershipRefusal says why OwnGit never changes owners in folder, or "".
+// folder is a Windows path; getenv reads the environment.
+func ownershipRefusal(folder string, getenv func(string) string) string {
+	normalize := func(path string) string {
+		return strings.TrimRight(strings.ToLower(strings.ReplaceAll(path, "/", `\`)), `\`)
+	}
+	path := normalize(folder)
+	switch {
+	case len(path) == 2 && path[1] == ':':
+		return "it is a drive"
+	case strings.HasPrefix(path, `\\`) && strings.Count(path, `\`) <= 3:
+		return "it is a network share"
+	}
+	within := func(parent string) bool {
+		return parent != "" && (path == parent || strings.HasPrefix(path, parent+`\`))
+	}
+	for _, name := range []string{"SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"} {
+		if within(normalize(getenv(name))) {
+			return "it is a folder of Windows or of installed programs"
+		}
+	}
+	for _, name := range []string{"ProgramData", "USERPROFILE", "PUBLIC"} {
+		if parent := normalize(getenv(name)); parent != "" && path == parent {
+			return "it holds more than OwnGit's files"
+		}
+	}
+	if drive := normalize(getenv("SystemDrive")); drive != "" && (path == drive+`\users` || path == drive+`\windows`) {
+		return "it holds more than OwnGit's files"
+	}
+	return ""
 }
 
 // registerTask creates or replaces the task. The definition passes through
@@ -475,15 +663,49 @@ func (host *taskHost) report(stateDir string) error {
 	if err != nil || !found {
 		return errors.Join(err, errors.New("the OwnGit task is not registered"))
 	}
-	logFile := service.TaskLogFile(stateDir)
-	address, err := waitHealthy(stateDir, serviceStartTimeout)
+	address, err := host.waitForServer(stateDir)
 	if err != nil {
-		host.printf("OwnGit did not answer within %s: %v\nSee the log: %s\n", serviceStartTimeout, err, logFile)
-		return errors.New("the service did not start")
+		return err
 	}
 	host.printf("OwnGit is running as a %s.\n", installed.Mode.Describe())
 	host.printTaskFacts(stateDir, ownerAddresses(stateDir, address))
 	return printSetupLinkIfNeeded(stateDir, host.out)
+}
+
+// waitForServer waits until the server of the task answers and returns its
+// address. It stops early, with one line that says why, when Windows keeps
+// the task queued or the server could not start.
+func (host *taskHost) waitForServer(stateDir string) (string, error) {
+	deadline := time.Now().Add(serviceStartTimeout)
+	for {
+		address, err := waitForService(stateDir, taskPollInterval)
+		if err == nil {
+			return address, nil
+		}
+		var failed errServeFailed
+		if errors.As(err, &failed) {
+			host.printf("OwnGit could not start: %s\n", failed.message)
+			host.printLogIfWritten(stateDir)
+			return "", errors.New("the service did not start")
+		}
+		if state, _, stateErr := host.taskState(); stateErr == nil && state == service.TaskQueued {
+			host.printf(queuedTaskMessage)
+			return "", errors.New("Windows keeps the task queued")
+		}
+		if time.Now().After(deadline) {
+			host.printf("OwnGit did not answer within %s: %v\n", serviceStartTimeout, err)
+			host.printLogIfWritten(stateDir)
+			return "", errors.New("the service did not start")
+		}
+	}
+}
+
+// printLogIfWritten points to the server log when the server has written
+// something there.
+func (host *taskHost) printLogIfWritten(stateDir string) {
+	if info, err := os.Stat(service.TaskLogFile(stateDir)); err == nil && info.Size() > 0 {
+		host.printf("See the log: %s\n", service.TaskLogFile(stateDir))
+	}
 }
 
 func (host *taskHost) printTaskFacts(stateDir, address string) {
@@ -493,11 +715,34 @@ func (host *taskHost) printTaskFacts(stateDir, address string) {
 	if address != "" {
 		host.printf("  Address:  %s\n", address)
 	}
-	if rule, found := host.firewallRule(); found && rule.Allows(host.executable) {
+	switch rule, found := host.firewallRule(); {
+	case found && rule.Allows(host.executable):
 		host.printf("  Firewall: devices on private networks may connect (rule %q)\n", service.FirewallRuleName)
-	} else {
+	case listensBeyondThisComputer(stateDir):
 		host.printf("  Firewall: no rule for this owngit.exe, so other devices may be blocked\n")
 	}
+}
+
+// listensBeyondThisComputer reports whether the server of stateDir listens,
+// or will listen by its saved setting, on an address other devices reach.
+func listensBeyondThisComputer(stateDir string) bool {
+	if state.RequireExisting(stateDir) != nil {
+		return false
+	}
+	ctx := context.Background()
+	store, err := openLiveState(ctx, stateDir)
+	if err != nil {
+		return false
+	}
+	defer store.Close()
+	listen := server.DefaultListenAddress
+	if observed, err := store.ObserveRunningNetwork(ctx); err == nil && observed.Server == state.ServerRunning && observed.Record != nil {
+		listen = cmp.Or(observed.Record.Listen, observed.Record.Address)
+	} else if saved, err := store.NetworkSettings(ctx); err == nil && saved.Listen != "" {
+		listen = saved.Listen
+	}
+	host, _, err := net.SplitHostPort(listen)
+	return err == nil && !server.IsLoopbackHost(host)
 }
 
 func (host *taskHost) uninstall() error {
@@ -509,16 +754,18 @@ func (host *taskHost) uninstall() error {
 		host.printf("OwnGit is not installed as a service.\n")
 		return nil
 	}
-	host.stopTask(installed.StateDir)
 	_, ruleFound := host.firewallRule()
 	removed := "The OwnGit service is stopped and removed"
 	switch {
 	case installed.Mode == service.ModeBootTask || ruleFound && host.env.Administrator:
+		// The server stops in the step with administrator rights, so
+		// declining the prompt changes nothing.
 		if err := host.asAdministrator([]string{"service", "elevated-uninstall"}, "remove the OwnGit task and its Windows Firewall rule"); err != nil {
 			return err
 		}
 		removed += ", with its Windows Firewall rule"
 	default:
+		host.stopTask(installed.StateDir)
 		if err := host.runStep(host.schtasks(), "/Delete", "/TN", `\`+service.TaskName, "/F"); err != nil {
 			return err
 		}
@@ -527,10 +774,14 @@ func (host *taskHost) uninstall() error {
 		}
 	}
 	host.printf("%s. The state stays in %s", removed, installed.StateDir)
-	if !host.env.Elevated {
-		if repositories := savedRepositoryRoot(installed.StateDir); repositories != "" {
-			host.printf(" and the repositories in %s", repositories)
-		}
+	repositories := ""
+	if host.env.Elevated {
+		repositories = repositoryRootWithoutAdminRights(installed.StateDir)
+	} else {
+		repositories = savedRepositoryRoot(installed.StateDir)
+	}
+	if repositories != "" {
+		host.printf(" and the repositories in %s", repositories)
 	}
 	host.printf(".\nRun \"owngit service install\" to use it again.\n")
 	return nil
@@ -539,10 +790,12 @@ func (host *taskHost) uninstall() error {
 // elevatedUninstall removes the task and OwnGit's firewall rule. It keeps
 // the state directory and the repositories.
 func (host *taskHost) elevatedUninstall() error {
-	_, _ = serviceRunner(context.Background(), host.schtasks(), "/End", "/TN", `\`+service.TaskName)
-	if _, found, err := host.installed(); err != nil {
+	installed, found, err := host.installed()
+	if err != nil {
 		return err
-	} else if found {
+	}
+	if found {
+		host.stopTask(installed.StateDir)
 		if err := host.runStep(host.schtasks(), "/Delete", "/TN", `\`+service.TaskName, "/F"); err != nil {
 			return err
 		}
@@ -571,13 +824,17 @@ func (host *taskHost) status() error {
 	case answered:
 		host.printf("OwnGit is running and answers its health check.\n")
 	case state == service.TaskQueued:
-		host.printf("OwnGit has not started: Windows keeps the task queued. That happens until someone has signed in on this computer at the screen for the first time since Windows was installed (a sign-in over SSH does not count). Sign in once with any account, and OwnGit starts then and at every boot from then on.\n")
+		host.printf(queuedTaskMessage)
 	case state == service.TaskRunning:
 		host.printf("OwnGit is starting or not answering yet (task: Running).\n")
 	case stateErr != nil:
 		host.printf("OwnGit is not running, and the task state cannot be read: %v\n", stateErr)
 	default:
 		host.printf("OwnGit is not running (task: %s, last result %s).\n", taskStateName(state), taskResult(result))
+	}
+	// A server that starts listening removes the error of the last start.
+	if message, failed := serveErrorSince(installed.StateDir, time.Time{}); !answered && failed {
+		host.printf("  Last error: %s\n", message)
 	}
 	host.printf("  Mode:     %s\n", installed.Mode.Describe())
 	host.printTaskFacts(installed.StateDir, address)
@@ -629,10 +886,10 @@ func (host *taskHost) control(action string) error {
 	if err := host.runTask(); err != nil {
 		return err
 	}
-	address, err := waitHealthy(installed.StateDir, serviceStartTimeout)
+	address, err := host.waitForServer(installed.StateDir)
 	if err != nil {
-		return fmt.Errorf("OwnGit did not answer within %s: %w; see the log: %s", serviceStartTimeout, err, service.TaskLogFile(installed.StateDir))
+		return err
 	}
-	host.printf("OwnGit is running at http://%s.\n", address)
+	host.printf("OwnGit is running at %s.\n", ownerAddresses(installed.StateDir, address))
 	return nil
 }
