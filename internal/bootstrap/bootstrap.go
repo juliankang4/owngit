@@ -72,77 +72,107 @@ func RemoveOwnerSetupFiles(directory string) error {
 // owner-readable local file. Issuance is serialized across processes and a
 // hash-only recovery journal repairs interruption between SQLite and rename.
 func (issuer *Issuer) Issue(ctx context.Context) (string, error) {
-	base, err := url.Parse(issuer.BaseURL)
+	path, _, err := issuer.issue(ctx)
+	return path, err
+}
+
+// IssueLink is Issue that also returns the capability, for a caller that
+// shows the setup link on the owner's terminal. The caller must never write
+// it anywhere else. SetupLink turns it into the link for a base URL.
+func (issuer *Issuer) IssueLink(ctx context.Context) (path, capability string, err error) {
+	return issuer.issue(ctx)
+}
+
+// SetupLink is the one-time setup link for an HTTP(S) origin: the setup
+// page with the capability in the fragment, which browsers do not send.
+func SetupLink(baseURL, capability string) (string, error) {
+	base, err := setupPage(baseURL)
+	if err != nil {
+		return "", err
+	}
+	return base + "#" + capability, nil
+}
+
+func setupPage(baseURL string) (string, error) {
+	base, err := url.Parse(baseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
 		return "", errors.New("setup base URL must be an HTTP(S) origin")
 	}
 	base.Path = "/setup"
+	return base.String(), nil
+}
+
+func (issuer *Issuer) issue(ctx context.Context) (string, string, error) {
+	target, err := setupPage(issuer.BaseURL)
+	if err != nil {
+		return "", "", err
+	}
 
 	unlock, err := AcquireSetupLock(ctx, issuer.Store.Dir())
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer unlock()
 	settings, err := issuer.Store.Settings(ctx)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if settings.Initialized {
 		if err := RemoveOwnerSetupFiles(issuer.Store.Dir()); err != nil {
-			return "", fmt.Errorf("remove obsolete setup capability file: %w", err)
+			return "", "", fmt.Errorf("remove obsolete setup capability file: %w", err)
 		}
-		return "", state.ErrSetupComplete
+		return "", "", state.ErrSetupComplete
 	}
 	if err := issuer.recoverInterruptedIssue(ctx); err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	token, err := auth.RandomToken(32)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	now := time.Now()
 	if issuer.Now != nil {
 		now = issuer.Now()
 	}
 	expires := now.Add(15 * time.Minute)
-	content := setupFileContent(base.String(), token)
+	content := setupFileContent(target, token)
 	path := filepath.Join(issuer.Store.Dir(), ownerFileName)
 	temporary, err := os.CreateTemp(issuer.Store.Dir(), ".owner-setup-*")
 	if err != nil {
-		return "", fmt.Errorf("create private setup file: %w", err)
+		return "", "", fmt.Errorf("create private setup file: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err := state.ProtectPrivatePath(temporaryPath, false); err != nil {
 		temporary.Close()
-		return "", err
+		return "", "", err
 	}
 	if _, err := temporary.Write(content); err != nil {
 		temporary.Close()
-		return "", err
+		return "", "", err
 	}
 	if err := temporary.Sync(); err != nil {
 		temporary.Close()
-		return "", err
+		return "", "", err
 	}
 	if err := temporary.Close(); err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	old, err := issuer.Store.BootstrapSnapshot(ctx)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	hash := sha256.Sum256([]byte(token))
 	newSnapshot := state.BootstrapSnapshot{Present: true, TokenHash: hash[:], ExpiresAt: expires.Unix()}
 	journal := issueJournal{Old: old, New: newSnapshot}
 	if err := writeJournal(issuer.Store.Dir(), journal); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := issuer.Store.PutBootstrap(ctx, token, expires); err != nil {
 		_ = os.Remove(filepath.Join(issuer.Store.Dir(), journalName))
-		return "", err
+		return "", "", err
 	}
 	publish := issuer.Publish
 	if publish == nil {
@@ -150,10 +180,10 @@ func (issuer *Issuer) Issue(ctx context.Context) (string, error) {
 	}
 	if err := publish(temporaryPath, path); err != nil {
 		if restoreErr := issuer.Store.RestoreBootstrap(ctx, old); restoreErr != nil {
-			return "", fmt.Errorf("publish private setup file: %v; restore previous setup capability: %w", err, restoreErr)
+			return "", "", fmt.Errorf("publish private setup file: %v; restore previous setup capability: %w", err, restoreErr)
 		}
 		_ = os.Remove(filepath.Join(issuer.Store.Dir(), journalName))
-		return "", fmt.Errorf("publish private setup file: %w", err)
+		return "", "", fmt.Errorf("publish private setup file: %w", err)
 	}
 	if runtime.GOOS != "windows" {
 		if directory, openErr := os.Open(issuer.Store.Dir()); openErr == nil {
@@ -162,9 +192,9 @@ func (issuer *Issuer) Issue(ctx context.Context) (string, error) {
 		}
 	}
 	if err := os.Remove(filepath.Join(issuer.Store.Dir(), journalName)); err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("finish setup issuance: %w", err)
+		return "", "", fmt.Errorf("finish setup issuance: %w", err)
 	}
-	return path, nil
+	return path, token, nil
 }
 
 func (issuer *Issuer) recoverInterruptedIssue(ctx context.Context) error {
