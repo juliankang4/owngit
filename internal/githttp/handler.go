@@ -259,6 +259,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	committed := &responseState{ResponseWriter: writer, deadlines: deadlines,
 		bodyEnded: func() bool { return request.ContentLength == 0 || network.ended.Load() }}
 	network.onEnd = committed.requestBodyEnded
+	defer committed.stop()
 	var report *pushReport
 	var observer io.Writer
 	if route.service == "git-receive-pack" && request.Method == http.MethodPost {
@@ -643,14 +644,14 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 	writer.WriteHeader(status)
 	// While Git prepares data it writes only small keepalive and progress
 	// packets. They must reach the client, and any proxy with a read timeout,
-	// at once instead of waiting in the response buffer. So once the request
-	// body has ended (see responseState), the response is flushed whenever
-	// everything Git has written so far was passed on. Bulk data still goes
-	// out in writes of up to 32 KiB. A failed flush leaves the connection
-	// failed, so the next write reports it, and the handler reports a failure
-	// after Git's last output.
+	// soon instead of waiting in the response buffer for more data. So once
+	// the request body has ended, whenever everything Git has written so far
+	// was passed on, a flush follows within responseFlushDelay. Bulk data
+	// still goes out in writes of up to 32 KiB. A failed flush leaves the
+	// connection failed, so the next write reports it, and the handler
+	// reports a failure after Git's last output.
 	if reader.Buffered() == 0 {
-		_ = writer.flush()
+		writer.scheduleFlush()
 	}
 	body := io.Reader(reader)
 	if observer != nil {
@@ -672,7 +673,7 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 				return errResponseTooLarge
 			}
 			if reader.Buffered() == 0 {
-				_ = writer.flush()
+				writer.scheduleFlush()
 			}
 		}
 		if err == io.EOF {
@@ -693,14 +694,25 @@ func hopByHop(name string) bool {
 	}
 }
 
+// responseFlushDelay is how long Git's output may wait in the response buffer
+// once the request body has ended. It keeps the headers of a response that
+// Git starts at once from overtaking a reverse proxy that is still finishing
+// the request: Go's httputil.ReverseProxy over HTTP/1.1 reads the end of the
+// request body only after it has forwarded the last byte, and a response
+// that it passes on before that read makes it fail the request. Git sends
+// keepalives every 5 seconds, so they still reach a proxy with a read
+// timeout in time.
+const responseFlushDelay = 200 * time.Millisecond
+
 // responseState passes the backend response on under the transfer deadlines.
 //
 // It flushes nothing, not even the status line, until the request body was
 // read to its end. git-http-backend writes its headers before it reads a
 // push, and a reverse proxy that serves HTTP/1.1 half duplex, such as Go's
 // httputil.ReverseProxy with default settings, stops forwarding the request
-// body once it passes response headers on. When the body ends, and after
-// every write from then on, what Git wrote so far is flushed at once.
+// body once it passes response headers on. From the end of the body on, what
+// Git wrote is flushed responseFlushDelay later at the latest, and the rest
+// of the response when Git finishes.
 //
 // A response that goes out before the end of the body anyway, because Git
 // wrote more than net/http buffers or finished without reading the rest,
@@ -710,11 +722,14 @@ type responseState struct {
 	http.ResponseWriter
 	deadlines *transferDeadlines
 	bodyEnded func() bool
-	// mu orders the handler's writes with the flush that the end of the
-	// request body starts on the goroutine that feeds Git its input.
-	mu     sync.Mutex
-	status int
-	sent   bool
+	// mu orders the handler's writes with flushes from the timer, which the
+	// end of the request body can start on the goroutine that feeds Git its
+	// input.
+	mu      sync.Mutex
+	status  int
+	sent    bool
+	timer   *time.Timer
+	stopped bool
 }
 
 // WriteHeader sets the status. Until a body byte was written or the
@@ -748,14 +763,26 @@ func (writer *responseState) sendHeaderLocked() {
 	writer.ResponseWriter.WriteHeader(writer.status)
 }
 
-// flush sends what was written so far once the request body has ended.
-func (writer *responseState) flush() error {
+// scheduleFlush makes sure that what was written so far is flushed within
+// responseFlushDelay once the request body has ended.
+func (writer *responseState) scheduleFlush() {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
-	if !writer.bodyEnded() {
-		return nil
+	writer.scheduleLocked()
+}
+
+func (writer *responseState) scheduleLocked() {
+	if writer.stopped || writer.timer != nil || !writer.bodyEnded() || (writer.status == 0 && !writer.sent) {
+		return
 	}
-	return writer.flushLocked()
+	writer.timer = time.AfterFunc(responseFlushDelay, func() {
+		writer.mu.Lock()
+		defer writer.mu.Unlock()
+		writer.timer = nil
+		if !writer.stopped {
+			_ = writer.flushLocked()
+		}
+	})
 }
 
 func (writer *responseState) flushLocked() error {
@@ -766,13 +793,9 @@ func (writer *responseState) flushLocked() error {
 	return writer.deadlines.flush()
 }
 
-// requestBodyEnded sends the response held back while the request body was
-// read.
-func (writer *responseState) requestBodyEnded() {
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
-	_ = writer.flushLocked()
-}
+// requestBodyEnded schedules the flush of the response held back while the
+// request body was read.
+func (writer *responseState) requestBodyEnded() { writer.scheduleFlush() }
 
 // finish sends what Git wrote after its last output, whether or not the
 // request body has ended.
@@ -780,6 +803,17 @@ func (writer *responseState) finish() error {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
 	return writer.flushLocked()
+}
+
+// stop ends the timed flushes before the handler returns.
+func (writer *responseState) stop() {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	writer.stopped = true
+	if writer.timer != nil {
+		writer.timer.Stop()
+		writer.timer = nil
+	}
 }
 
 // started reports whether any part of the response was passed on, so its
