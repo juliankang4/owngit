@@ -290,13 +290,17 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 	if report.Installed {
 		fmt.Fprintf(writer, "  Tailscale: %s\n", report.Command)
 	}
+	// The verdict is the report's, as on the Settings page.
 	if report.Problem != "" {
 		fmt.Fprintf(writer, "  %s\n", tailscaleProblemText(report.Problem, report.ProblemDetail, nil, report.MacApp))
-	} else if !report.On && report.Name != "" {
+	} else if !report.On && report.CanTurnOn {
 		fmt.Fprintf(writer, "  Ready to share as https://%s/.\n", report.Name)
 	}
-	if report.Endpoint == server.TailscaleEndpointTaken || report.Endpoint == server.TailscaleEndpointChanged {
-		fmt.Fprintf(writer, "  HTTPS port %d of Tailscale also has: %s\n", server.TailscaleHTTPSPort, server.TailscaleUsesText(report.Found))
+	switch {
+	case !report.On && report.Endpoint == server.TailscaleEndpointTaken:
+		fmt.Fprintf(writer, "  %s %s\n", webui.Text(webui.LangEN, webui.MsgTSTaken), server.TailscaleUsesText(report.Found))
+	case report.On && report.Endpoint == server.TailscaleEndpointChanged:
+		fmt.Fprintf(writer, "  %s %s\n", webui.Text(webui.LangEN, webui.MsgTSChanged), server.TailscaleUsesText(report.Found))
 	}
 	for _, wait := range report.Waiting {
 		if wait != server.TailscaleWaitTailscale {
@@ -309,7 +313,10 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 	if report.MacApp {
 		fmt.Fprintf(writer, "  %s\n", webui.Text(webui.LangEN, webui.MsgTSMacApp))
 	}
-	if !report.On && report.Problem == "" {
+	switch {
+	case report.CanTurnOn && report.On:
+		fmt.Fprintln(writer, "Turn it on again with \"owngit tailscale on\", or in Settings.")
+	case report.CanTurnOn:
 		fmt.Fprintln(writer, "Turn it on with \"owngit tailscale on\", or in Settings.")
 	}
 }

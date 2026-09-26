@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"slices"
 	"strings"
 
 	"owngit/internal/state"
@@ -68,12 +67,7 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSTaken
 	}
 	info.Stale = tailscaleUses(report.Stale)
-	// Turning on is offered while sharing is off and the port is free, and
-	// while it is on but waits for exactly that: an unfinished turning on or
-	// a renamed computer.
-	again := slices.Contains(report.Waiting, TailscaleWaitUnfinished) || slices.Contains(report.Waiting, TailscaleWaitName)
-	info.CanTurnOn = report.Installed && report.Problem == "" &&
-		(!report.On && report.Endpoint == TailscaleEndpointFree || report.On && again)
+	info.CanTurnOn = report.CanTurnOn
 	// A --listen option decides where the running server listens, so the
 	// home network choice would change nothing then.
 	info.ListenOption = report.ListenOption

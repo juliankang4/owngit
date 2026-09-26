@@ -240,3 +240,33 @@ func TestTailscaleOnShowsTheCertificateLogNotice(t *testing.T) {
 		t.Fatalf("a refusal: err=%v output=%q", err, output)
 	}
 }
+
+// "status" gives the verdict the Settings page gives: with the HTTPS port
+// taken it says that sharing cannot be turned on and does not suggest it.
+func TestTailscaleStatusSharesTheVerdictOfSettings(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
+	output, err := runTailscale(t, "status", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	if !strings.Contains(output, "Ready to share as https://"+tailscaletest.Name+"/") || !strings.Contains(output, "Turn it on with") {
+		t.Fatalf("free port: %q", output)
+	}
+	if report := tailscaleJSON(t, stateDir, fake.Path); !report.CanTurnOn {
+		t.Fatalf("free port: %+v", report)
+	}
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve = tailscale.ServeConfig{
+			TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+			Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/other": {Proxy: "http://127.0.0.1:9999"}}}},
+		}
+	})
+	output, err = runTailscale(t, "status", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	if strings.Contains(output, "Ready to share") || strings.Contains(output, "Turn it on") ||
+		!strings.Contains(output, "so sharing cannot be turned on") || !strings.Contains(output, "http://127.0.0.1:9999") {
+		t.Fatalf("taken port: %q", output)
+	}
+	if report := tailscaleJSON(t, stateDir, fake.Path); report.CanTurnOn {
+		t.Fatalf("taken port: %+v", report)
+	}
+}

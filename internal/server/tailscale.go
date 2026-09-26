@@ -131,6 +131,11 @@ type TailscaleReport struct {
 	// is missing otherwise.
 	Ready   bool     `json:"ready"`
 	Waiting []string `json:"waiting,omitempty"`
+	// CanTurnOn says that turning sharing on is expected to work now: it
+	// is off and Tailscale and its HTTPS port are ready, or it is on and
+	// waits to be turned on again. The Settings page and "owngit tailscale
+	// status" offer turning on only then.
+	CanTurnOn bool `json:"can_turn_on"`
 	// Listen is the listen address of the next start, and HomeNetwork
 	// whether it reaches other devices on the home network.
 	Listen      string `json:"listen"`
@@ -191,6 +196,9 @@ func (sharing *Tailscale) Report(ctx context.Context) (TailscaleReport, error) {
 		report.Waiting = waitingFor(report, record, observed)
 		report.Ready = len(report.Waiting) == 0
 	}
+	again := slices.Contains(report.Waiting, TailscaleWaitUnfinished) || slices.Contains(report.Waiting, TailscaleWaitName)
+	report.CanTurnOn = report.Installed && report.Problem == "" &&
+		(!on && report.Endpoint == TailscaleEndpointFree || on && again)
 	return report, nil
 }
 
