@@ -46,7 +46,8 @@ type TaskPlan struct {
 	StateDir string
 	// UserSID is the security identifier of the installing account.
 	UserSID string
-	// Headless passes --headless, as for a systemd unit.
+	// Headless is passed as --headless=true or --headless=false, as in a
+	// systemd unit.
 	Headless bool
 	// Conhost is the absolute path of conhost.exe. ModeLogonTask starts
 	// OwnGit through "conhost.exe --headless", so no console window opens
@@ -65,11 +66,7 @@ func TaskLogFile(stateDir string) string {
 // override the saved network settings. --service makes the server give up
 // administrator rights and accept "owngit service stop".
 func (plan TaskPlan) ServeArguments() []string {
-	arguments := []string{"serve", "--state-dir", plan.StateDir, "--no-open", "--log-file", TaskLogFile(plan.StateDir), "--service"}
-	if plan.Headless {
-		arguments = append(arguments, "--headless")
-	}
-	return arguments
+	return []string{"serve", "--state-dir", plan.StateDir, "--no-open", "--log-file", TaskLogFile(plan.StateDir), "--service", "--headless=" + strconv.FormatBool(plan.Headless)}
 }
 
 // RenderTask writes the Task Scheduler XML of a plan.
@@ -190,7 +187,7 @@ func ParseTask(definition []byte) (Installed, error) {
 		switch {
 		case word == "--state-dir" && index+1 < len(words):
 			installed.StateDir = words[index+1]
-		case word == "--headless":
+		case word == "--headless" || word == "--headless=true":
 			installed.Headless = true
 		}
 	}

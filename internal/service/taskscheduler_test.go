@@ -38,7 +38,7 @@ func TestRenderBootTask(t *testing.T) {
 		"<RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>",
 		"<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
 		`<Command>C:\Program Files\OwnGit\owngit.exe</Command>`,
-		`<Arguments>serve --state-dir "C:\Users\you\My Files\AppData\Roaming\owngit" --no-open --log-file "C:\Users\you\My Files\AppData\Roaming\owngit\logs\service.log" --service</Arguments>`,
+		`<Arguments>serve --state-dir "C:\Users\you\My Files\AppData\Roaming\owngit" --no-open --log-file "C:\Users\you\My Files\AppData\Roaming\owngit\logs\service.log" --service --headless=false</Arguments>`,
 	} {
 		if !strings.Contains(definition, want) {
 			t.Errorf("boot task lacks %s:\n%s", want, definition)
@@ -63,7 +63,7 @@ func TestRenderLogonTaskStartsThroughHeadlessConhost(t *testing.T) {
 		"<LogonType>InteractiveToken</LogonType>",
 		`<Command>C:\Windows\System32\conhost.exe</Command>`,
 		`<Arguments>--headless "C:\Program Files\OwnGit\owngit.exe" serve --state-dir`,
-		"--service --headless</Arguments>",
+		"--service --headless=true</Arguments>",
 	} {
 		if !strings.Contains(definition, want) {
 			t.Errorf("logon task lacks %s:\n%s", want, definition)
@@ -141,6 +141,13 @@ func TestParseTask(t *testing.T) {
 	want := Installed{Mode: ModeLogonTask, UnitPath: `\OwnGit`, User: testSID, Executable: plan.Executable, StateDir: plan.StateDir}
 	if installed != want {
 		t.Errorf("ParseTask = %+v, want %+v", installed, want)
+	}
+	// A task of an earlier build passed a bare --headless.
+	for arguments, headless := range map[string]bool{"--service --headless=false": false, "--service --headless=true": true, "--service --headless": true, "--service": false} {
+		changed := strings.Replace(definition, "--service --headless=false", arguments, 1)
+		if installed, err := ParseTask([]byte(changed)); err != nil || installed.Headless != headless {
+			t.Errorf("%s: headless %v, %v; want %v", arguments, installed.Headless, err, headless)
+		}
 	}
 	foreign := strings.Replace(definition, "<Source>owngit service install</Source>", "<Source>someone else</Source>", 1)
 	if _, err := ParseTask([]byte(foreign)); !errors.Is(err, ErrForeignTask) {
