@@ -63,7 +63,10 @@ func createDatabase(ctx context.Context, path string) (err error) {
 	}
 	err = publishNoReplace(ctx, temporary, path)
 	if errors.Is(err, fs.ErrExist) {
-		return removeTemporaryDatabase(temporary)
+		// Another first start published first and its database is used. A
+		// temporary file that cannot be removed is left behind and ignored.
+		_ = removeTemporaryDatabase(temporary)
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("publish state database: %w", err)
@@ -75,12 +78,13 @@ func createDatabase(ctx context.Context, path string) (err error) {
 // an exclusive rename nor hard links.
 const createLockFile = ".database-create.lock"
 
-// publishers are the primitives publishNoReplace tries in order. Tests replace
-// them to reach the fallbacks.
+// publishers are the primitives publishNoReplace tries in order, and the
+// removal of temporary names. Tests replace them to reach the fallbacks.
 var publishers = struct {
 	renameExclusive func(oldPath, newPath string) error
 	link            func(oldPath, newPath string) error
-}{renameExclusive, os.Link}
+	remove          func(path string) error
+}{renameExclusive, os.Link, os.Remove}
 
 // publishNoReplace gives the temporary file the final name only when no entry
 // exists there, and reports fs.ErrExist otherwise. MoveFileEx without flags
@@ -98,7 +102,10 @@ func publishNoReplace(ctx context.Context, temporary, path string) error {
 	}
 	err = publishers.link(temporary, path)
 	if err == nil {
-		return os.Remove(temporary)
+		// The database is published. A temporary name that cannot be
+		// removed is a second link to it, which Open ignores.
+		_ = publishers.remove(temporary)
+		return nil
 	}
 	if !unsupported(err, syscall.EPERM) {
 		return err
@@ -143,7 +150,7 @@ func publishUnderLock(temporary, path string) error {
 func removeTemporaryDatabase(temporary string) error {
 	var err error
 	for _, name := range []string{temporary, temporary + journalSuffix, temporary + walSuffix, temporary + shmSuffix} {
-		if removeErr := os.Remove(name); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+		if removeErr := publishers.remove(name); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
 			err = errors.Join(err, fmt.Errorf("remove temporary state database: %w", removeErr))
 		}
 	}

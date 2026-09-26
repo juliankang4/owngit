@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -167,6 +168,29 @@ func TestPublishReportsOtherFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUnremovableTemporaryNameDoesNotFailTheOpen makes removing the temporary
+// name fail after the database was published. Open must still succeed.
+func TestUnremovableTemporaryNameDoesNotFailTheOpen(t *testing.T) {
+	refuseTemporaryRemoval := func(path string) error {
+		if strings.Contains(filepath.Base(path), ".new-") {
+			return &os.PathError{Op: "remove", Path: path, Err: syscall.EACCES}
+		}
+		return os.Remove(path)
+	}
+	t.Run("after the hard link", func(t *testing.T) {
+		usePublishers(t, failWith(syscall.ENOTSUP), nil)
+		publishers.remove = refuseTemporaryRemoval
+		store, err := Open(context.Background(), filepath.Join(t.TempDir(), "state"))
+		noErr(t, err)
+		noErr(t, store.Close())
+	})
+	t.Run("after another opener published", func(t *testing.T) {
+		usePublishers(t, failWith(syscall.EEXIST), nil)
+		publishers.remove = refuseTemporaryRemoval
+		noErr(t, createDatabase(context.Background(), filepath.Join(t.TempDir(), databaseName)))
+	})
 }
 
 // TestInterruptedCreationLeftoversDoNotBlockOpen places the entries that a
