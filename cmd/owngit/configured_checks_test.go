@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,49 @@ func TestRunnerLoopbackHost(t *testing.T) {
 		if runnerLoopbackHost(host) {
 			t.Fatalf("unexpected loopback host %q", host)
 		}
+	}
+}
+
+func TestDefaultRunnerWorkspaceUsesCacheAndKeepsEarlierOwnedWorkspace(t *testing.T) {
+	scratch := t.TempDir()
+	temporary := filepath.Join(scratch, "temp")
+	home := filepath.Join(scratch, "home")
+	for _, directory := range []string{temporary, home} {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(name, temporary)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("LocalAppData", filepath.Join(home, "AppData", "Local"))
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chosen, err := defaultRunnerWorkspace("https://git.example.test", "project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(chosen)
+	if !strings.HasPrefix(name, "owngit-runner-") || chosen != filepath.Join(cache, "owngit", name) {
+		t.Fatalf("default runner workspace %s, want a folder in %s", chosen, filepath.Join(cache, "owngit"))
+	}
+	if other, _ := defaultRunnerWorkspace("https://git.example.test", "other"); other == chosen {
+		t.Fatal("two repositories share one default runner workspace")
+	}
+
+	// A workspace that an earlier release made in the temporary folder, and
+	// that this account owns, stays in use.
+	earlier := filepath.Join(os.TempDir(), name)
+	if err := os.Mkdir(earlier, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := defaultRunnerWorkspace("https://git.example.test", "project"); err != nil || kept != earlier {
+		t.Fatalf("default runner workspace %s err=%v, want the earlier workspace %s", kept, err, earlier)
 	}
 }
 
@@ -121,6 +165,30 @@ func TestConfiguredCheckCLIEndToEnd(t *testing.T) {
 	}
 	if stored := fixture.readJob(t, job.ID); stored.Status != state.CheckJobPending {
 		t.Fatalf("refused runner changed job status to %s", stored.Status)
+	}
+	if runtime.GOOS != "windows" {
+		// Another account could replace a workspace inside a folder that all
+		// users can write, so the runner refuses it before claiming a job.
+		shared := filepath.Join(fixture.root, "shared")
+		if err := os.Mkdir(shared, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(shared, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		err := runnerCommand([]string{
+			"--server", fixture.httpServer.URL, "--accept-insecure-http", "--repository", fixture.repository.ID,
+			"--token-file", tokenFile, "--workspace-root", filepath.Join(shared, "work"), "--poll", "10ms", "--once",
+		})
+		if commandErrorCode(err) != "unsafe_workspace_root" || !strings.Contains(err.Error(), "--workspace-root") || strings.Contains(err.Error(), "\n") {
+			t.Fatalf("runner with a replaceable workspace parent: %v", err)
+		}
+		if _, statErr := os.Lstat(filepath.Join(shared, "work")); !os.IsNotExist(statErr) {
+			t.Fatalf("refused runner created its workspace: %v", statErr)
+		}
+		if stored := fixture.readJob(t, job.ID); stored.Status != state.CheckJobPending {
+			t.Fatalf("refused runner changed job status to %s", stored.Status)
+		}
 	}
 	if err := runnerCommand([]string{
 		"--server", fixture.httpServer.URL, "--accept-insecure-http", "--repository", fixture.repository.ID,

@@ -21,6 +21,7 @@ import (
 	"owngit/internal/apiclient"
 	"owngit/internal/checkapi"
 	"owngit/internal/checkrunner"
+	"owngit/internal/checksource"
 	"owngit/internal/state"
 )
 
@@ -296,8 +297,13 @@ func runnerCommand(arguments []string) error {
 		return err
 	}
 	if *workspaceRoot == "" {
-		identity := sha256.Sum256([]byte(parsed.String() + "\x00" + *repositoryID))
-		*workspaceRoot = filepath.Join(os.TempDir(), fmt.Sprintf("owngit-runner-%x", identity[:8]))
+		*workspaceRoot, err = defaultRunnerWorkspace(parsed.String(), *repositoryID)
+		if err != nil {
+			return cliProblem("invalid_arguments", "This account has no cache folder for the runner workspace. Pass --workspace-root with a folder this account owns.")
+		}
+	}
+	if os.Geteuid() == 0 {
+		fmt.Fprintln(os.Stderr, "Warning: the runner is running as root, so checks can change anything on this computer. Run it as a dedicated account as the automatic checks guide describes.")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -322,7 +328,37 @@ func runnerCommand(arguments []string) error {
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
+	var unsafe *checksource.UnsafeWorkspaceRootError
+	if errors.As(err, &unsafe) {
+		return cliProblem("unsafe_workspace_root", unsafeRunnerWorkspaceMessage(unsafe))
+	}
 	return err
+}
+
+// defaultRunnerWorkspace names a workspace for this server and repository in
+// the account's cache folder, which other accounts cannot write. Runners up to
+// 1.1.0 used the same name in the shared temporary folder; a workspace there
+// that this account already owns is kept, so its interrupted jobs are still
+// cleaned up. One made by another account is ignored.
+func defaultRunnerWorkspace(origin, repositoryID string) (string, error) {
+	identity := sha256.Sum256([]byte(origin + "\x00" + repositoryID))
+	name := fmt.Sprintf("owngit-runner-%x", identity[:8])
+	earlier := filepath.Join(os.TempDir(), name)
+	if checksource.OwnsWorkspaceDirectory(earlier) {
+		return earlier, nil
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cache, "owngit", name), nil
+}
+
+func unsafeRunnerWorkspaceMessage(unsafe *checksource.UnsafeWorkspaceRootError) string {
+	if unsafe.Directory == "" {
+		return fmt.Sprintf("The runner workspace %s belongs to another account. Remove that folder, or pass --workspace-root with a folder this account owns.", unsafe.Root)
+	}
+	return fmt.Sprintf("Another account can replace %s, which holds the runner workspace %s. Pass --workspace-root with a folder whose parent folders only this account or root can change.", unsafe.Directory, unsafe.Root)
 }
 
 func runnerLoopbackHost(host string) bool {

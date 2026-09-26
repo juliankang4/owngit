@@ -338,6 +338,25 @@ func validateProcessOwned(path string, user, defaultOwner *windows.SID) error {
 	return nil
 }
 
+// OwnedByCurrentUser reports whether the open file or directory belongs to the
+// current Windows user or its token owner. It reads the held handle, so a
+// pathname replacement cannot change the answer.
+func OwnedByCurrentUser(file *os.File) (bool, error) {
+	user, defaultOwner, err := processIdentity()
+	if err != nil {
+		return false, err
+	}
+	descriptor, err := windows.GetSecurityInfo(windows.Handle(file.Fd()), windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return false, fmt.Errorf("read owner: %w", err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return false, fmt.Errorf("read owner: %w", err)
+	}
+	return ownerMatchesProcess(owner, user, defaultOwner), nil
+}
+
 func ownerMatchesProcess(owner, user, defaultOwner *windows.SID) bool {
 	return owner != nil && (owner.Equals(user) || owner.Equals(defaultOwner))
 }

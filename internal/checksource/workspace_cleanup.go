@@ -42,11 +42,63 @@ type WorkspaceRoot struct {
 	release func()
 }
 
-// AcquireWorkspaceRoot adopts an empty private directory or verifies a root
-// previously created by OwnGit, then holds its process lock until Close.
+// UnsafeWorkspaceRootError reports a check workspace root that another account
+// owns or could replace. The root is left unchanged.
+type UnsafeWorkspaceRootError struct {
+	Root string
+	// Directory is the directory above Root that another account can change.
+	// It is empty when Root itself belongs to another account.
+	Directory string
+}
+
+func (e *UnsafeWorkspaceRootError) Error() string {
+	if e.Directory == "" {
+		return fmt.Sprintf("check workspace root %s belongs to another account", e.Root)
+	}
+	return fmt.Sprintf("another account can replace %s, which holds check workspace root %s", e.Directory, e.Root)
+}
+
+// ownedByCurrentUser is replaced in tests that need a root owned by another
+// account without running as root.
+var ownedByCurrentUser = state.OwnedByCurrentUser
+
+// OwnsWorkspaceDirectory reports whether path is a real directory that belongs
+// to the current account.
+func OwnsWorkspaceDirectory(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	directory, err := openWorkspaceDirectory(path)
+	if err != nil {
+		return false
+	}
+	defer directory.Close()
+	owned, err := ownedByCurrentUser(directory)
+	return err == nil && owned
+}
+
+func requireOwnedWorkspaceDirectory(directory *os.File, path string) error {
+	owned, err := ownedByCurrentUser(directory)
+	if err != nil {
+		return fmt.Errorf("inspect check workspace root owner: %w", err)
+	}
+	if !owned {
+		return &UnsafeWorkspaceRootError{Root: path}
+	}
+	return nil
+}
+
+// AcquireWorkspaceRoot adopts an empty directory that belongs to the current
+// account or verifies a root previously created by OwnGit, then holds its
+// process lock until Close. A root that another account owns or could replace
+// is refused with *UnsafeWorkspaceRootError before anything is changed.
 func AcquireWorkspaceRoot(path string) (*WorkspaceRoot, error) {
 	if path == "" || !filepath.IsAbs(path) || path != filepath.Clean(path) {
 		return nil, errors.New("check workspace root must be an absolute cleaned path")
+	}
+	if err := requireProtectedAncestors(path); err != nil {
+		return nil, err
 	}
 	info, err := os.Lstat(path)
 	switch {
@@ -58,6 +110,14 @@ func AcquireWorkspaceRoot(path string) (*WorkspaceRoot, error) {
 		return nil, fmt.Errorf("inspect check workspace root: %w", err)
 	case !info.IsDir() || info.Mode()&os.ModeSymlink != 0:
 		return nil, errors.New("check workspace root must be a real directory")
+	}
+	directory, err := openWorkspaceDirectory(path)
+	if err != nil {
+		return nil, fmt.Errorf("open check workspace root: %w", err)
+	}
+	defer directory.Close()
+	if err := requireOwnedWorkspaceDirectory(directory, path); err != nil {
+		return nil, err
 	}
 	markerPath := filepath.Join(path, workspaceRootMarker)
 	markerExists, err := workspaceMarkerExists(markerPath)
@@ -73,8 +133,11 @@ func AcquireWorkspaceRoot(path string) (*WorkspaceRoot, error) {
 			return nil, errors.New("refusing an unowned nonempty check workspace root")
 		}
 	}
-	if err := state.ProtectPrivatePath(path, true); err != nil {
+	if err := protectWorkspaceDirectory(directory, path); err != nil {
 		return nil, fmt.Errorf("protect check workspace root: %w", err)
+	}
+	if err := requireOwnedWorkspaceDirectory(directory, path); err != nil {
+		return nil, err
 	}
 	lockPath := filepath.Join(path, workspaceRootLock)
 	if err := validateWorkspaceLockPath(lockPath); err != nil {

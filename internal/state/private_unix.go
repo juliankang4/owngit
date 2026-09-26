@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 )
 
 // CreatePrivateFile creates a new owner-only file and keeps its handle open.
@@ -30,6 +31,21 @@ func ProtectPrivateHandle(file *os.File, directory bool) error {
 		mode = 0o700
 	}
 	return file.Chmod(mode)
+}
+
+// OwnedByCurrentUser reports whether the open file or directory belongs to the
+// effective user. It reads the held handle, so a pathname replacement cannot
+// change the answer.
+func OwnedByCurrentUser(file *os.File) (bool, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false, errors.New("file owner is unavailable")
+	}
+	return int(stat.Uid) == os.Geteuid(), nil
 }
 
 func ValidatePrivateFile(path string) error {
