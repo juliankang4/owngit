@@ -72,15 +72,17 @@ go build -o bin/owngit ./cmd/owngit
 
 ## Quickstart
 
-On Linux, install OwnGit as a service that runs in the background and starts at every boot:
+On Linux and Windows, install OwnGit as a service that runs in the background and starts at every boot:
 
 ```sh
 owngit service install
 ```
 
-It asks nothing, apart from the `sudo` password on a computer you reached over SSH, and it prints a one-time setup link at the end. Open that link in a browser to choose the repository folder and the passwords. The link works once, within 15 minutes; `owngit setup-link` prints a new one. On a desktop, OwnGit runs as your user and answers only on this computer, at `http://127.0.0.1:7654`. On a computer without a screen, such as a server you reach over SSH or a container, it listens on every address and the link uses this computer's LAN or tailnet address, so you open it on another device. A server with only a public address gets an SSH tunnel command instead, because the link must not cross the Internet unencrypted. Until setup is finished, that address answers only the setup page. [Run as a service](docs/OPERATIONS.md#run-as-a-service) explains who runs the service in each case and how to update, stop and remove it.
+It asks nothing, apart from the `sudo` password on a Linux computer you reached over SSH, and it prints a one-time setup link at the end. Open that link in a browser to choose the repository folder and the passwords. The link works once, within 15 minutes; `owngit setup-link` prints a new one. On a desktop, OwnGit runs as your user and answers only on this computer, at `http://127.0.0.1:7654`. On a computer without a screen, such as a server you reach over SSH or a container, it listens on every address and the link uses this computer's LAN or tailnet address, so you open it on another device. A server with only a public address gets an SSH tunnel command instead, because the link must not cross the Internet unencrypted. Until setup is finished, that address answers only the setup page. [Run as a service](docs/OPERATIONS.md#run-as-a-service) explains who runs the service in each case and how to update, stop and remove it.
 
-To run OwnGit in the foreground instead, and on macOS and Windows, where `owngit service` is not available yet, start it with:
+On Windows, from an administrator account, Windows asks once for approval (User Account Control). That approval registers the task that starts OwnGit at boot, lets devices on private networks through Windows Firewall, and installs Git with `winget` if it is missing. From a standard account, OwnGit starts when you sign in, and nothing is asked. Either way OwnGit runs as your account without administrator rights. See [On Windows](docs/OPERATIONS.md#on-windows).
+
+To run OwnGit in the foreground instead, and on macOS, where `owngit service` is not available yet, start it with:
 
 ```sh
 owngit serve

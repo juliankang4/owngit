@@ -44,7 +44,7 @@ When setup finishes in the browser, the terminal lists the saved answers and the
 
 ### Setup with a setup file
 
-When OwnGit starts without a terminal, for example under `brew services`, a LaunchAgent, or systemd, with its output redirected, or as a background job of a shell (`owngit serve &`), it writes an owner-readable setup file inside the state directory and opens it in the installation owner's browser. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. The server never writes the setup link itself to its log or passes it in a browser command argument.
+When OwnGit starts without a terminal, for example under `brew services`, a LaunchAgent, or systemd, with its output redirected, or as a background job of a shell (`owngit serve &`), it writes an owner-readable setup file inside the state directory and opens it in the installation owner's browser. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. On Windows, OwnGit opens no browser when it runs without a desktop that a person sees, as a service, a scheduled task or a program started over SSH does, and the log shows the path. The server never writes the setup link itself to its log or passes it in a browser command argument.
 
 `owngit setup-link` issues a new link, which replaces the one before, and it also works while setup waits in a terminal. When its output is a terminal, it prints the link, which works once within 15 minutes. When its output goes anywhere else, such as a pipe, a file, the system journal or `docker logs`, it prints only the path of the setup file that holds the link. Without `--base-url`, the link uses the address the running server listens on. When that is every address, it lists this computer's addresses one per line, the most likely first: the address of the default route, other private IPv4 addresses, then others such as a tailnet address. A computer with a screen lists `127.0.0.1` first. With `--no-open` it does not open the setup file in a browser; on a computer without a screen it never does.
 
@@ -78,19 +78,38 @@ As with every restore, sessions, trusted hosts and network settings are not carr
 
 | Command | What it does |
 | --- | --- |
-| `owngit service status` | Whether OwnGit runs and answers, who runs it, the unit file, the log command, the state directory and the addresses. |
+| `owngit service status` | Whether OwnGit runs and answers, who runs it, the unit file or task, the log, the state directory and the addresses. |
 | `owngit service start`, `stop`, `restart` | Start, stop or restart the service. A stopped service starts again at the next boot. |
 | `owngit service uninstall` | Stop the service and remove the unit. The state directory, the repositories and the `owngit` account stay, and the command says where the data is. For a user service it reminds you that lingering stays on (`loginctl disable-linger` turns it off). |
 
-The log goes to the systemd journal: `journalctl --user -u owngit.service -f` for a user service, `sudo journalctl -u owngit.service -f` for a system service.
+On Linux, the log goes to the systemd journal: `journalctl --user -u owngit.service -f` for a user service, `sudo journalctl -u owngit.service -f` for a system service.
 
-`owngit service` is not available on macOS and Windows yet. On macOS, use `brew services start owngit`.
+`owngit service` is not available on macOS yet. On macOS, use `brew services start owngit`. Windows is described next.
+
+### On Windows
+
+On Windows, `owngit service install` registers a Task Scheduler task named `OwnGit` that runs OwnGit in the background as your account.
+
+- From an administrator account, which the first account on a Windows computer is, the task starts at boot, before anyone signs in. Windows keeps no password for it: the task uses the logon that Task Scheduler calls "Do not store password" (S4U). Registering such a task needs administrator approval, so the command says in one line what it will do and Windows asks once, with its User Account Control prompt. The same approval adds a Windows Firewall rule named `OwnGit` that lets devices on private networks reach this `owngit.exe`, and installs Git for Windows with `winget` when Git is missing. Public networks stay closed. The approved copy of `owngit` registers only itself and creates nothing in the state directory. In a terminal opened with "Run as administrator", or over SSH as an administrator, no prompt appears. Over SSH without administrator rights the prompt cannot appear, and the command says what to do instead.
+- From a standard account, the task starts when you sign in, and installing it asks nothing. Windows lets a standard account neither create a task that starts at boot nor one that runs without a sign-in, and an administrator cannot create one for that account without its password. To start OwnGit at boot, install it from an administrator account. No firewall rule is added; see [Reaching the server from another device](#reaching-the-server-from-another-device).
+
+The task starts `owngit serve --state-dir DIR --no-open --log-file DIR\logs\service.log --service` with the absolute state directory, and adds `--headless` when you installed it over SSH. Task Scheduler keeps no output, so the server writes its log to `logs\service.log` in the state directory. The file is kept below 10 MB, with one older file beside it, and `owngit service status` shows its path.
+
+OwnGit never runs with administrator rights. Windows gives a boot task of an administrator the account's full administrator rights, whatever the task's settings say, so `--service` makes that process start the server as a copy of itself with the rights of an ordinary window of the account: the Administrators group only denies access, the integrity level is Medium, and no administrator privilege is left. The first process only waits for the server and starts it again 5 seconds after a failure; it neither listens nor opens the state directory. Git, repository hooks and checks that run on this computer inherit the reduced rights, and new files and repositories belong to your account, as Git expects. Commands that use the state directory, such as `owngit setup-link` and `owngit network`, run the same way when you start them with administrator rights.
+
+`owngit service stop` asks the server to finish what it is doing and stop, as Ctrl-C does, and ends the task only when the server has not stopped after 150 seconds. `start` and `restart` start the task again, and a stopped task starts again at the next boot or sign-in.
+
+Windows does not replace a program that is running. To update, run `owngit service stop`, replace `owngit.exe` or unpack the new release in another folder, and run `owngit service install` with the new `owngit.exe`. It replaces the task and the firewall rule, which both name the program's path, and starts the new version. `owngit service uninstall` stops OwnGit and removes the task and the firewall rule, with one approval for an administrator account. The state directory and the repositories stay.
+
+A boot task stays "Queued" and does not start until the account has signed in on this computer at least once, at the screen or through Remote Desktop; a sign-in over SSH does not count. `owngit service status` says so when it finds the task queued.
+
+If OwnGit ran with administrator rights before, for example from a terminal opened with "Run as administrator", some repositories may belong to the Administrators group. Git refuses those repositories as having "dubious ownership" for a server without administrator rights, and clones and pushes to them fail. Make your account their owner again in a terminal opened with "Run as administrator", with your repository folder in place of the example: `icacls "C:\Users\you\OwnGit-Repositories" /setowner "%USERNAME%" /T /C`.
 
 ### What the service may do
 
 A service that runs as your account can do what your account can do, including in your home folder, and so can the code that approved checks run from pushed commits. If other people can push, install OwnGit as root so that it runs as the separate `owngit` account.
 
-A system service runs with these restrictions. None of them limits Git, repository hooks, checks that run on this computer, or checks in Docker, which OwnGit reaches through the Docker socket.
+On Linux, a system service runs with these restrictions. None of them limits Git, repository hooks, checks that run on this computer, or checks in Docker, which OwnGit reaches through the Docker socket.
 
 - `ProtectSystem=full` makes the system folders `/usr`, `/boot`, `/efi` and `/etc` read-only. Everywhere else the file permissions of the service account decide, as they do outside the service: a service that runs as your account can use your home folder, where checks find your caches and tools, and a repository folder such as `/srv/git` that your account owns. `ProtectHome=yes` hides `/home`, `/root` and `/run/user` from the `owngit` account, which keeps its data in `/var/lib/owngit`. For that account, a folder such as `/srv/git` must belong to it. For a folder that does not exist yet, setup shows the command that creates it for the account (`sudo install -d -o owngit -g owngit -m 0700 /srv/git`). For a folder that already exists, such as `/opt`, it never suggests changing it, because other software may need it; it suggests a new folder inside it instead, such as `/opt/owngit-repos`.
 
@@ -110,7 +129,8 @@ When OwnGit is installed on a computer where nobody can open a browser, the setu
 
 - root runs OwnGit in a container or an LXC container;
 - the command runs in an SSH session without a display (neither `DISPLAY` nor `WAYLAND_DISPLAY` is set);
-- systemd-logind lists no graphical session (X11 or Wayland, including a login screen) on this computer, and neither `DISPLAY` nor `WAYLAND_DISPLAY` is set outside SSH.
+- systemd-logind lists no graphical session (X11 or Wayland, including a login screen) on this computer, and neither `DISPLAY` nor `WAYLAND_DISPLAY` is set outside SSH;
+- on Windows, the command runs in an SSH session.
 
 On such a computer, the first start before setup, with no listen address saved and no `--listen` option, listens on every address (`0.0.0.0:7654`) and saves that as the listen address. The service unit passes `--headless=true`, which applies the same rule even when the service itself cannot tell, because a service has no SSH session or display of its own. Until setup is finished, a request from another device reaches only the setup page, whatever address or name it uses, and every other request from it is refused, as described in [Setup with a setup file](#setup-with-a-setup-file). `localhost`, `127.0.0.1` and `::1` count as names of this computer only on connections from this computer.
 
@@ -131,6 +151,8 @@ A computer with a screen keeps listening on `127.0.0.1:7654` until you choose an
 OwnGit serves plain HTTP, so the connection is not encrypted, and it has no built-in TLS. For HTTPS, let Tailscale on this computer share it on your tailnet (see [Share on your tailnet over HTTPS](#share-on-your-tailnet-over-https)) or put a reverse proxy in front of it (see [Behind a reverse proxy](#behind-a-reverse-proxy)). Use Tailscale or your own VPN to reach its private-network address (see [Other private networks](#other-private-networks)). A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP also works: OwnGit shows a one-time warning before it accepts passwords, and the interface keeps the connection status visible. Do not expose OwnGit to the public Internet.
 
 When a device on your tailnet opens OwnGit at one of this computer's Tailscale addresses, such as `http://100.64.0.7:7654/`, the page header says "Encrypted by Tailscale", and OwnGit does not ask you to accept plain HTTP for that connection. OwnGit checks that the request came from a Tailscale address to an address that Tailscale on this computer reports as its own. The range `100.64.0.0/10` alone is not enough, because NetBird and some Internet providers use it too. Pages do not wait for Tailscale to report its addresses: they use the latest report while a new one is read in the background, so right after OwnGit starts, or while Tailscale does not answer, a page can go without the label. The label covers the path from the tailnet device that sent the request to this computer; OwnGit cannot see how that device was reached. Tailscale in userspace networking mode passes connections on from `127.0.0.1`, so they get no label.
+
+On Windows, Windows Firewall blocks connections from other devices unless a rule allows them, and OwnGit cannot tell that it is blocked. `owngit service install` from an administrator account adds the rule `OwnGit` for the Private network profile, which Windows uses for a network you marked as a home or work network. Networks marked as public stay blocked. The rule names the path of `owngit.exe`, so a new version in another folder needs `owngit service install` again. When you start `owngit serve` yourself on the desktop with a listen address that other devices reach, Windows may show its own security prompt instead; allow private networks there. A server started over SSH or as a standard account's service gets no prompt and no rule.
 
 To use a LAN name:
 
