@@ -237,7 +237,9 @@ func TestMissingDatabaseWithRecoveryFilesIsRefused(t *testing.T) {
 			directory := t.TempDir()
 			noErr(t, os.WriteFile(filepath.Join(directory, name), []byte("orphan"), 0o600))
 			before := captureSchemaDirectory(t, directory)
-			openRefused(t, directory, "recovery files exist")
+			if err := openRefused(t, directory, "recovery files exist"); errors.Is(err, ErrInspectionUnstable) {
+				t.Fatalf("a missing database with recovery files must be the permanent refusal, not instability: %v", err)
+			}
 			assertSchemaDirectoryUnchanged(t, directory, before)
 		})
 	}

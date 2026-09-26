@@ -304,6 +304,14 @@ func assertConcurrentFirstOpensShareOneDatabase(t *testing.T, locked bool) {
 			child.Stdout, child.Stderr = outputs[index], outputs[index]
 			noErr(t, child.Start())
 			children[index] = child
+			// A failed attempt stops the test before Wait; the process
+			// must not outlive it.
+			t.Cleanup(func() {
+				if child.ProcessState == nil {
+					_ = child.Process.Kill()
+					_ = child.Wait()
+				}
+			})
 		}
 		// Wait until every opener is ready, so they start together. The
 		// bound only guards against a hang.
