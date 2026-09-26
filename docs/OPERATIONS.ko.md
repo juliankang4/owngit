@@ -181,6 +181,8 @@ OwnGit이 네트워크 주소에서 연결을 받으면 다른 기기도 프록�
 
 Git 요청 하나는 최대 4 GiB를 주고받고 최대 30분까지 걸릴 수 있습니다([Git 전송 제한](#git-전송-제한) 참고). 프록시의 한도가 이보다 작으면 큰 푸시나 클론이 프록시에서 실패합니다.
 
+HTTP/1.1에서는 Caddy나 Traefik처럼 Go의 `net/http`로 만든 프록시가 응답을 넘기기 시작하면 요청을 더 읽지 않습니다. OwnGit은 요청을 끝까지 읽은 뒤에야 응답합니다. 아래 설정으로 Caddy, nginx, Traefik, Nginx Proxy Manager를 거쳐 푸시와 클론을 시험했습니다. 이런 Go 기반 프록시 안에는 아주 짧은 틈이 남아 있어 드물게 요청이 실패할 수 있습니다. Git과 프록시 사이를 HTTP/2로 연결하면 이 틈이 생기지 않습니다. Git이 HTTP/2를 쓰려면 HTTPS로 연결해야 하고, Git이 쓰는 curl 라이브러리도 HTTP/2를 지원해야 합니다. Caddy와 Traefik은 HTTPS에서 기본으로 HTTP/2를 제공합니다. nginx 예시와 Nginx Proxy Manager는 아래 설정에서는 HTTP/1.1로 응답하지만 Go로 만든 프록시가 아니므로 문제없습니다.
+
 #### Caddy
 
 ```caddyfile

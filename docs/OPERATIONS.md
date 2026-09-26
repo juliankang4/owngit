@@ -181,6 +181,8 @@ When OwnGit listens on a network address, other devices can also connect to it d
 
 Each Git request can send or receive up to 4 GiB and take up to 30 minutes (see [Git transfer limits](#git-transfer-limits)). The proxy's own limits must be at least as large, or large pushes and clones fail at the proxy.
 
+Over HTTP/1.1, proxies built on Go's `net/http`, such as Caddy and Traefik, stop reading a request once they start passing the response on. OwnGit answers only after it has read the whole request, and pushes and clones were tested through Caddy, nginx, Traefik, and Nginx Proxy Manager with the settings below. A very short window remains inside such Go-based proxies, in which a request can still fail in rare cases. HTTP/2 between Git and the proxy avoids it. Git uses HTTP/2 only over HTTPS, and only when the curl library it uses supports HTTP/2. Caddy and Traefik offer HTTP/2 on HTTPS by default. The nginx example and Nginx Proxy Manager answer over HTTP/1.1 with the settings below, which is fine because they are not built on Go.
+
 #### Caddy
 
 ```caddyfile
