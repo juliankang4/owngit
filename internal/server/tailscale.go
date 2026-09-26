@@ -892,18 +892,8 @@ func (app *App) throughTailnet(request *http.Request) bool {
 	if err != nil || !tailscale.InTailnetRange(peer.Addr()) {
 		return false
 	}
-	addresses := app.Tailscale.addresses(request.Context())
+	addresses := app.Tailscale.addresses()
 	return slices.Contains(addresses, local.Addr().Unmap()) && !slices.Contains(addresses, peer.Addr().Unmap())
-}
-
-// addresses returns this computer's Tailscale addresses from the shared
-// reading of Tailscale's state, or none when Tailscale cannot tell.
-func (sharing *Tailscale) addresses(ctx context.Context) []netip.Addr {
-	reading, err := sharing.read(ctx)
-	if err != nil || reading.commandErr != nil || reading.statusErr != nil {
-		return nil
-	}
-	return reading.status.Addresses
 }
 
 func (sharing *Tailscale) findCommand() (tailscale.Command, error) {

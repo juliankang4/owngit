@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -35,7 +36,19 @@ type readingCache struct {
 	// generation changes when forget drops the reading, so a reading that
 	// was in flight across a change is not kept.
 	generation uint64
+	// addresses are this computer's Tailscale addresses from the latest
+	// reading, none when it could not tell; known is set once a reading
+	// finished. refreshed is closed when the reading that addresses
+	// started in the background finishes, and is nil when none runs.
+	addresses []netip.Addr
+	known     bool
+	refreshed chan struct{}
 }
+
+// tailnetLabelWait bounds how long a page waits for this computer's
+// Tailscale addresses before the first reading has finished. Once one has,
+// pages use the latest addresses and never wait (addresses).
+const tailnetLabelWait = time.Second
 
 // read returns a reading no older than tailscaleReadingTTL, sharing the one
 // in flight. The shared reading does not stop when ctx does, since other
@@ -71,10 +84,52 @@ func (sharing *Tailscale) read(ctx context.Context) (tailscaleReading, error) {
 	if cache.generation == generation {
 		cache.reading, cache.at = reading, time.Now()
 	}
+	cache.addresses, cache.known = nil, true
+	if reading.commandErr == nil && reading.statusErr == nil {
+		cache.addresses = reading.status.Addresses
+	}
 	cache.pending = nil
 	close(done)
 	cache.mu.Unlock()
 	return reading, nil
+}
+
+// addresses returns this computer's Tailscale addresses for the connection
+// label of a page, without waiting for the tailscale command, which can
+// take up to its time limit when tailscaled does not answer. When the
+// latest reading is older than tailscaleReadingTTL, it starts one in the
+// background, whose addresses later pages use. Only before the first
+// reading has finished does it wait for it, up to tailnetLabelWait.
+func (sharing *Tailscale) addresses() []netip.Addr {
+	cache := &sharing.readings
+	cache.mu.Lock()
+	due := cache.at.IsZero() || time.Since(cache.at) >= tailscaleReadingTTL
+	if due && cache.refreshed == nil {
+		done := make(chan struct{})
+		cache.refreshed = done
+		go func() {
+			_, _ = sharing.read(context.Background())
+			cache.mu.Lock()
+			cache.refreshed = nil
+			cache.mu.Unlock()
+			close(done)
+		}()
+	}
+	known, addresses, refreshed := cache.known, cache.addresses, cache.refreshed
+	cache.mu.Unlock()
+	if known || refreshed == nil {
+		return addresses
+	}
+	timer := time.NewTimer(tailnetLabelWait)
+	defer timer.Stop()
+	select {
+	case <-refreshed:
+	case <-timer.C:
+		return nil
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return cache.addresses
 }
 
 // readNow runs the tailscale commands of one reading.

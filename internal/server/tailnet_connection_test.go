@@ -150,3 +150,58 @@ func TestSetupOverTheTailnetNeedsNoPlainHTTPAcknowledgement(t *testing.T) {
 		})
 	}
 }
+
+// The connection label does not wait for the tailscale command, which can
+// take up to its time limit when tailscaled does not answer. Before the
+// first reading has finished, a page waits for it only briefly and goes
+// without the label; afterwards pages use the latest addresses while a new
+// reading runs in the background.
+func TestTheTailnetLabelDoesNotWaitForTailscale(t *testing.T) {
+	// Each tailscale command answers after 3 s, so a reading takes 6 s.
+	app, fake := withTailscale(t, newUnacknowledgedApp(t), tailscaletest.State{Status: tailscaletest.Running(), ReadDelay: 3000})
+	server := serve(t, arriving(t, app, app.Handler(), tailscaletest.IPv4+":7654", "100.64.0.9:50123"))
+	client, _ := newBrowserClient(t)
+	labeled := func() bool {
+		t.Helper()
+		response, err := client.Get(server.URL + "/")
+		noErr(t, err)
+		content, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		noErr(t, err)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d", response.StatusCode)
+		}
+		return strings.Contains(string(content), enText(webui.MsgConnTailnet))
+	}
+	cache := &app.Tailscale.readings
+	reading := func() chan struct{} {
+		cache.mu.Lock()
+		defer cache.mu.Unlock()
+		return cache.refreshed
+	}
+	finished := func() {
+		t.Helper()
+		if done := reading(); done != nil {
+			select {
+			case <-done:
+			case <-time.After(time.Minute):
+				t.Fatal("the reading did not finish")
+			}
+		}
+	}
+	t.Cleanup(finished)
+
+	if labeled() || reading() == nil {
+		t.Fatal("the first page waited for the whole reading, or none runs")
+	}
+	finished()
+	if !labeled() {
+		t.Fatal("no label after the reading")
+	}
+	app.Tailscale.forget()
+	if !labeled() || reading() == nil {
+		t.Fatal("a page waited for a new reading instead of using the latest addresses")
+	}
+	finished()
+	fake.Update(func(s *tailscaletest.State) { s.ReadDelay = 0 })
+}
