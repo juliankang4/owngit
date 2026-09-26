@@ -336,16 +336,27 @@ func (s *Service) finishRun(ctx context.Context, run *runState, pipelineErr erro
 	return run.run, pipelineErr
 }
 
+// setStatus records the stage a run has reached. The write does not follow
+// the run's context: a deadline or cancellation that comes during it would
+// otherwise fail the write and be reported as a state failure. The stop is
+// reported once the stage is recorded, so a failed write is always a real
+// state failure.
 func (s *Service) setStatus(ctx context.Context, run *runState, status string) error {
 	if err := s.authorityCurrent(ctx, run); err != nil {
 		return err
 	}
-	if err := s.Store.SetImportRunStatus(ctx, run.run.ID, status); err != nil {
+	if s.beforeStageRecord != nil {
+		s.beforeStageRecord(ctx, status)
+	}
+	if err := s.Store.SetImportRunStatus(context.WithoutCancel(ctx), run.run.ID, status); err != nil {
 		return newProblem(CodeStateUnavailable, "import run stage could not be recorded", err)
 	}
 	run.run.Status = status
 	if s.afterRunStage != nil {
 		s.afterRunStage(status)
+	}
+	if err := ctx.Err(); err != nil {
+		return stoppedProblem(ctx, "while recording the "+status+" stage", err)
 	}
 	return nil
 }
