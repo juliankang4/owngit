@@ -99,7 +99,7 @@ When OwnGit is installed on a computer where nobody can open a browser, the setu
 - the command runs in an SSH session without a display (neither `DISPLAY` nor `WAYLAND_DISPLAY` is set);
 - systemd-logind lists no graphical session (X11 or Wayland, including a login screen) on this computer, and neither `DISPLAY` nor `WAYLAND_DISPLAY` is set outside SSH.
 
-On such a computer, the first start before setup, with no listen address saved and no `--listen` option, listens on every address (`0.0.0.0:7654`) and saves that as the listen address. The service unit passes `--headless=true`, which applies the same rule even when the service itself cannot tell, because a service has no SSH session or display of its own. Until setup is finished, a request by any address other than `localhost`, `127.0.0.1` or `::1` reaches only the setup page, and every other request is refused, as described in [Setup with a setup file](#setup-with-a-setup-file).
+On such a computer, the first start before setup, with no listen address saved and no `--listen` option, listens on every address (`0.0.0.0:7654`) and saves that as the listen address. The service unit passes `--headless=true`, which applies the same rule even when the service itself cannot tell, because a service has no SSH session or display of its own. Until setup is finished, a request from another device reaches only the setup page, whatever address or name it uses, and every other request from it is refused, as described in [Setup with a setup file](#setup-with-a-setup-file). `localhost`, `127.0.0.1` and `::1` count as names of this computer only on connections from this computer.
 
 The setup link is printed for this computer's addresses on private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), on a tailnet (`100.64.0.0/10`) and IPv6 unique local addresses, never for a public address, where the link and your passwords would cross the Internet unencrypted. A computer with only public addresses, such as many cloud servers, prints an SSH command instead (`ssh -L 7654:127.0.0.1:7654 USER@HOST`) and the link on `http://127.0.0.1:7654`: run the command on your own computer, keep it open, and open the link there. If you still open setup from a public address, setup selects the shared password for access and says that "this network" is the Internet.
 
@@ -109,7 +109,7 @@ A computer with a screen keeps listening on `127.0.0.1:7654` until you choose an
 
 ### Health check
 
-`GET /healthz` answers `200 OK` with an empty body while OwnGit serves HTTP, before and after setup. It reads no state and says nothing about the installation. Like every other path, it answers only a name OwnGit accepts, such as `127.0.0.1`, so a page that reaches the server through DNS rebinding is still refused.
+`GET /healthz` answers `200 OK` with an empty body while OwnGit serves HTTP, before and after setup. It reads no state and says nothing about the installation. Like every other path, it answers only a name OwnGit accepts, such as `127.0.0.1` on this computer, so a page that reaches the server through DNS rebinding, or another device that sends a loopback name, is still refused.
 
 `owngit health` checks the server of a state directory on this computer and exits with status 0 when it answers. It finds the address the running server listens on in the state directory, and connects to `127.0.0.1` when the server listens on every address. `owngit service status` and `owngit service install` use the same check.
 
