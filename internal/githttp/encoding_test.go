@@ -214,15 +214,16 @@ func TestSmartHTTPInflatesGzipBodiesWithinTheRequestLimit(t *testing.T) {
 	}
 
 	// About 64 KiB of gzip that inflates to 64 MiB: the backend must stop at
-	// the request limit instead of reading everything.
+	// the request limit instead of reading everything. The limit stops the
+	// backend before it answers, so the answer is 413 and the backend's own
+	// report of what it read never arrives.
 	bomb := gzipBytes(t, make([]byte, 64<<20))
 	if len(bomb) >= int(handler.MaximumRequest) {
 		t.Fatalf("compressed bomb is %d bytes; it must fit under the limit to test inflation", len(bomb))
 	}
 	response := postPack(t, server.URL, "git-receive-pack", "gzip", bomb)
-	read, err := strconv.ParseInt(response.Header.Get("X-Test-Stdin-Bytes"), 10, 64)
-	if err != nil || read > handler.MaximumRequest {
-		t.Fatalf("backend read %q bytes from a %d-byte gzip bomb, want at most %d", response.Header.Get("X-Test-Stdin-Bytes"), len(bomb), handler.MaximumRequest)
+	if response.StatusCode != http.StatusRequestEntityTooLarge || response.Header.Get("X-Test-Stdin-Bytes") != "" {
+		t.Fatalf("gzip bomb: status=%d, backend read %q bytes; want 413 from a backend stopped at the limit", response.StatusCode, response.Header.Get("X-Test-Stdin-Bytes"))
 	}
 	if !strings.Contains(logs.String(), `Git push request for repository "sample" failed: request body exceeded the size limit`) {
 		t.Fatalf("gzip bomb was not logged as over the limit; log:\n%s", logs.String())

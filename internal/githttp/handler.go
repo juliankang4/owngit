@@ -234,7 +234,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 		contentLength = -1
 	}
-	input = &observedBody{ReadCloser: body}
+	input = &observedBody{ReadCloser: body, stop: cancelStream, closed: make(chan struct{})}
 	extraEnvironment, err := h.cgiEnvironment(request, route, contentLength)
 	if err != nil {
 		_ = input.Close()
@@ -382,10 +382,22 @@ func (body *gzipBody) Close() error {
 
 // observedBody records the first read error of the backend input, which the
 // backend stream does not report when the backend itself also fails.
+//
+// With stop set, it is the backend's input, and a read error (the request
+// limit, a disconnect, the idle limit) stops the backend: Read cancels the
+// stream with the error and blocks until the stream closes the body, which it
+// does only after it has terminated the backend's process group. Ending the
+// input by closing it is not enough: git-http-backend copies a declared
+// Content-Length to Git and loops without end, holding the repository lock,
+// when its input ends early. The backend also never sees a cut request as
+// complete.
 type observedBody struct {
 	io.ReadCloser
-	mu  sync.Mutex
-	err error
+	stop      context.CancelCauseFunc
+	closed    chan struct{}
+	closeOnce sync.Once
+	mu        sync.Mutex
+	err       error
 }
 
 func (body *observedBody) Read(buffer []byte) (int, error) {
@@ -396,8 +408,22 @@ func (body *observedBody) Read(buffer []byte) (int, error) {
 			body.err = err
 		}
 		body.mu.Unlock()
+		if body.stop != nil {
+			body.stop(err)
+			<-body.closed
+			// Withhold bytes read together with the error.
+			return 0, err
+		}
 	}
 	return n, err
+}
+
+// Close releases a blocked Read and closes the body.
+func (body *observedBody) Close() error {
+	if body.closed != nil {
+		body.closeOnce.Do(func() { close(body.closed) })
+	}
+	return body.ReadCloser.Close()
 }
 
 func (body *observedBody) firstError() error {
