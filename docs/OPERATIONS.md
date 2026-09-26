@@ -4,12 +4,20 @@
 
 ## First-time setup
 
-From the source checkout:
+Install a release of OwnGit first. Every route needs Git with an executable `git-http-backend` on the host; Homebrew and the Arch Linux package install Git for you.
+
+- Homebrew on macOS (Apple silicon) or Linux (x64, ARM64): `brew install juliankang4/tap/owngit`
+- npm on macOS (Apple silicon), Linux (x64, ARM64), or Windows (x64): `npm install -g owngit`. This route needs Node.js to install and to start OwnGit.
+- Arch Linux (x64, ARM64) or Omarchy: build the package from the `PKGBUILD` attached to each release from 1.0.3 on. An AUR package, `owngit-bin`, is planned.
+- Any of these platforms: download the archive from [GitHub Releases](https://github.com/juliankang4/owngit/releases) and check it against `SHA256SUMS`.
+
+[Install](../README.md#install) in the README gives the full steps for each route. Then start the server:
 
 ```sh
-go build -o bin/owngit ./cmd/owngit
-./bin/owngit serve
+owngit serve
 ```
+
+The commands on this page are written as `owngit`. From an unpacked archive, run `./owngit` instead. To build OwnGit from source and run `./bin/owngit`, see [Build and run](../CONTRIBUTING.md#build-and-run).
 
 The default address is `http://127.0.0.1:7654`. Setup configures repository storage, optional shared-password protection for general access, and a separate administrator password. Every later security-setting change asks for the current administrator password. Setup finishes at an empty dashboard, where New repository creates a repository. Its clone address has the form `http://HOST:7654/git/PROJECT.git`.
 
@@ -47,7 +55,7 @@ OwnGit serves plain HTTP, so the connection is not encrypted, and it has no buil
 To use a LAN name:
 
 ```sh
-./bin/owngit serve \
+owngit serve \
   --listen 0.0.0.0:7654 \
   --base-url http://gitbox.internal:7654 \
   --allowed-host gitbox.internal \
@@ -57,7 +65,7 @@ To use a LAN name:
 The server accepts only requests whose Host is `localhost`, `127.0.0.1`, `::1`, or an approved name. `--allowed-host` is repeatable. To approve another name permanently, run this on the installation host and restart the server:
 
 ```sh
-./bin/owngit approve-host gitbox.internal
+owngit approve-host gitbox.internal
 ```
 
 ### Network settings
@@ -65,8 +73,8 @@ The server accepts only requests whose Host is `localhost`, `127.0.0.1`, `::1`, 
 OwnGit can save the listen address, the base URL, the allowed Host names, and the trusted reverse proxies. The server then uses the saved values every time it starts without options, as a background service usually does. Run these commands on the installation host. They work whether or not the server is running, and a change applies at the next start.
 
 ```sh
-./bin/owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
-./bin/owngit network show
+owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
+owngit network show
 ```
 
 - `--listen` is `host:port`. An empty host, `0.0.0.0`, or `::` listens on every interface.
@@ -88,7 +96,7 @@ The same settings are on the Settings page under Network. Everyone who can open 
 If a saved value locks you out, for example a listen address that no longer exists on this computer, reset it on the installation host and restart the server:
 
 ```sh
-./bin/owngit network reset
+owngit network reset
 ```
 
 `reset` removes the saved listen address and base URL. It keeps the allowed Host names unless you add `--clear-allowed-hosts`, and it keeps the trusted proxies unless you add `--clear-trusted-proxies`. No web page can do this; it needs access to the state directory.
@@ -115,9 +123,9 @@ Tailscale must be installed and signed in on this computer, and the tailnet need
 Turn sharing on in Settings, under "Share on your tailnet over HTTPS", with the administrator password, or on the installation host:
 
 ```sh
-./bin/owngit tailscale on
-./bin/owngit tailscale status
-./bin/owngit tailscale off
+owngit tailscale on
+owngit tailscale status
+owngit tailscale off
 ```
 
 Turning it on does the following:
@@ -283,7 +291,7 @@ To turn the check off, open Settings and use Update check, which asks for the ad
 For a deployment that must never check for new releases, start the server with `--no-update-check`. OwnGit then makes no release-check request whatever the saved setting says, and Settings reports that the start option disabled the check:
 
 ```sh
-./bin/owngit serve --no-update-check
+owngit serve --no-update-check
 ```
 
 ## Host-owner recovery
@@ -291,13 +299,13 @@ For a deployment that must never check for new releases, start the server with `
 Before setup is complete, issue a replacement setup link with:
 
 ```sh
-./bin/owngit setup-link --base-url http://127.0.0.1:7654 --no-open
+owngit setup-link --base-url http://127.0.0.1:7654 --no-open
 ```
 
 To reset a forgotten administrator password, put the new password in an owner-readable file:
 
 ```sh
-./bin/owngit reset-admin --password-file /path/to/owner-only-password-file
+owngit reset-admin --password-file /path/to/owner-only-password-file
 ```
 
 The password file must be a regular file. On Unix-like systems, it must not be readable by group or other users. On Windows, it must not inherit access entries from its folder and must give access only to your account (see [Password and token files](#password-and-token-files)). OwnGit never accepts a password as a command-line value. Resetting the administrator password signs out administrator sessions and leaves repositories unchanged.
@@ -346,7 +354,7 @@ Deleting a repository removes it from OwnGit together with its pull requests, re
 OwnGit refuses to delete a repository while an import is running, while a check job is claimed or running, while a check container still waits for OwnGit to confirm its removal, or while another Git operation (a push, clone, restore or merge) still holds the repository after a short wait. Try again once it finishes. A container cleanup that failed is retried when OwnGit starts, so restart OwnGit after Docker is available again. If the server log says the job belongs to another Docker daemon (for example after Docker was reset or reinstalled), OwnGit cannot confirm the cleanup, and it also skips removing old check workspaces at startup. Remove any leftover container labeled `com.owngit.check-job=JOB` on the daemon that ran it, or make sure that daemon no longer exists. Then release the record on the OwnGit computer:
 
 ```sh
-./bin/owngit forget-check-container --job JOB --confirm-container-removed
+owngit forget-check-container --job JOB --confirm-container-removed
 ```
 
 `JOB` is the job identifier from the server log. Add `--state-dir` if you use a non-default state directory. The command works while OwnGit is running, removes no container, and prints the recorded container name, ID, daemon and label. It refuses a job without a record, and a record that belongs to the Docker daemon running now, because the next start of OwnGit removes that container itself. It also refuses a job that has not finished (pending, claimed or started), because a running OwnGit may still be using or removing that container. Wait for the job to finish or cancel it, or start OwnGit once so that it marks the interrupted job, and then run the command again. The repository can be deleted right away, and the next start cleans up the check workspaces.
@@ -420,7 +428,7 @@ In the browser, the administrator uses Import a repository on the dashboard to s
 The same operations are available from the command line, except changing the source URL or options of an existing import, which only the Import tab does. Import commands read the administrator password from a file with the same checks as `reset-admin`, and read a source token or Basic credential from a private file or an interactive prompt. They never accept a secret as an argument or environment variable.
 
 ```sh
-./bin/owngit import add PROJECT https://example.invalid/team/project.git \
+owngit import add PROJECT https://example.invalid/team/project.git \
   --mode standalone \
   --token-file /path/to/owner-only-token \
   --ca-file /path/to/source-ca.pem \
@@ -431,16 +439,16 @@ The same operations are available from the command line, except changing the sou
 Every import command takes the same `--server`, `--accept-insecure-http`, and `--password-file` flags; they are omitted below:
 
 ```sh
-./bin/owngit import refresh PROJECT
-./bin/owngit import status PROJECT
-./bin/owngit import history PROJECT --limit 20
-./bin/owngit import cancel PROJECT
-./bin/owngit import schedule PROJECT --enable --interval 6h
-./bin/owngit import schedule PROJECT --disable
-./bin/owngit import credentials PROJECT --token-file /path/to/owner-only-token
-./bin/owngit import credentials PROJECT --ca-file /path/to/source-ca.pem
-./bin/owngit import credentials PROJECT --clear
-./bin/owngit import resolve PROJECT
+owngit import refresh PROJECT
+owngit import status PROJECT
+owngit import history PROJECT --limit 20
+owngit import cancel PROJECT
+owngit import schedule PROJECT --enable --interval 6h
+owngit import schedule PROJECT --disable
+owngit import credentials PROJECT --token-file /path/to/owner-only-token
+owngit import credentials PROJECT --ca-file /path/to/source-ca.pem
+owngit import credentials PROJECT --clear
+owngit import resolve PROJECT
 ```
 
 - `--basic-file` replaces `--token-file` for a Basic credential; the file holds the username and password on separate lines. `--ca-file` stores a source certificate authority, up to 1 MiB. `import credentials` changes only what you pass: `--ca-file` alone keeps the stored token or Basic credential, and `--token-file` or `--basic-file` alone keeps the stored CA. `--clear` removes the stored credential and CA.
@@ -507,7 +515,7 @@ If an initial import is unresolved and its repository does not exist yet, `impor
 A normal push does not create a pull request. After pushing distinct source and target branches, create one. `--review` is optional:
 
 ```sh
-./bin/owngit pr create \
+owngit pr create \
   --server http://HOST:7654 \
   --accept-insecure-http \
   --repository PROJECT \
@@ -529,16 +537,16 @@ Plain HTTP exposes the password and pull request details to the network. `--acce
 The other `pr` commands take the same `--server`, `--accept-insecure-http`, `--repository`, and `--password-file` flags; they are omitted below. Inside a clone of an OwnGit repository, `--server` and `--repository` can be left out because they come from the clone's `origin` remote, and a password file is then sent only when its first line names that server (see [Inside a clone](CODING_TOOLS.md#inside-a-clone) and [Credential files and the server line](CODING_TOOLS.md#credential-files-and-the-server-line)). `pr show` reports the current source and target object IDs, and every review decision and merge must supply both:
 
 ```sh
-./bin/owngit pr list
-./bin/owngit pr show --number 1
-./bin/owngit pr diff --number 1
-./bin/owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
-./bin/owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
+owngit pr list
+owngit pr show --number 1
+owngit pr diff --number 1
+owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
   --decision approved --reviewer "existing-tool: reviewer label"
-./bin/owngit pr review skip --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
-./bin/owngit pr merge --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
-./bin/owngit pr close --number 1
-./bin/owngit pr reopen --number 1
+owngit pr review skip --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr merge --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr close --number 1
+owngit pr reopen --number 1
 ```
 
 A submitted review is `approved` or `changes_requested`. The reviewer label records who supplied the review; it does not claim independence or that checks ran. A pending or changes-requested review does not hold a merge. When the source or target moves, earlier review and skip decisions no longer apply, so inspect the pull request again and decide for the new object IDs.
@@ -562,7 +570,7 @@ Automatic checks run as the OwnGit account, in a restricted local Docker contain
 Create a repository-scoped helper credential with the administrator password. The token is written only to the owner-readable `--output` file and stored on the server only as a hash:
 
 ```sh
-./bin/owngit helper-credential create \
+owngit helper-credential create \
   --server http://HOST:7654 --accept-insecure-http \
   --repository PROJECT --label laptop \
   --password-file /path/to/admin-password-file \
@@ -574,12 +582,12 @@ An existing file or symbolic link at `--output` is reported, not replaced. If cr
 Create a stable task, then run checks:
 
 ```sh
-./bin/owngit check task new \
+owngit check task new \
   --server http://HOST:7654 --accept-insecure-http \
   --repository PROJECT --credential-file ~/.owngit-helper-token \
   --title "Fix the failing build"
 
-./bin/owngit check run \
+owngit check run \
   --server http://HOST:7654 --accept-insecure-http \
   --repository PROJECT --credential-file ~/.owngit-helper-token \
   --task TASK_ID --check "unit=go test ./..." --check "lint=go vet ./..."
@@ -661,7 +669,7 @@ An archive download is a Git transfer with the limits below: at most 4 GiB and 3
 Kept history protects against force-pushes and deletions, but it is not a backup. A secret that was ever pushed stays visible in the browser and is included in every later backup, even after a force-push or branch deletion. Only [deleting the repository](#deleting-a-repository) with its files removes that history, and earlier backups still contain it. Rotate any secret you push by mistake. OwnGit does not schedule backups. Stop OwnGit before creating one. The output directory must not exist:
 
 ```sh
-./bin/owngit backup \
+owngit backup \
   --state-dir /path/to/owngit-state \
   --output /path/to/new-backup
 ```
@@ -682,7 +690,7 @@ The manifest is limited to 64 MiB. A backup that would exceed it fails without w
 OwnGit restores backup versions 1, 2, 9, and 10 and refuses others, including the versions 3 through 8 that only unreleased development builds wrote. Older builds refuse a newer backup instead of dropping records they do not know. Restore into new paths that do not exist:
 
 ```sh
-./bin/owngit restore \
+owngit restore \
   --input /path/to/backup \
   --state-dir /path/to/new-owngit-state \
   --repository-root /path/to/new-repositories

@@ -4,12 +4,20 @@
 
 ## 처음 설정하기
 
-소스 체크아웃에서 실행합니다.
+먼저 OwnGit 릴리스를 설치합니다. 어느 방법으로 설치하든 호스트에 실행 가능한 `git-http-backend`가 들어 있는 Git이 필요합니다. Homebrew와 Arch Linux 패키지는 Git을 함께 설치합니다.
+
+- macOS(Apple silicon)나 Linux(x64, ARM64)에서는 `brew install juliankang4/tap/owngit`으로 Homebrew에서 설치합니다.
+- macOS(Apple silicon), Linux(x64, ARM64), Windows(x64)에서는 `npm install -g owngit`으로 npm에서 설치할 수도 있습니다. 이 방법은 설치할 때와 OwnGit을 시작할 때 Node.js가 필요합니다.
+- Arch Linux(x64, ARM64)나 Omarchy에서는 1.0.3부터 각 릴리스에 첨부된 `PKGBUILD`로 패키지를 만들어 설치합니다. AUR 패키지 `owngit-bin`도 준비하고 있습니다.
+- 위 플랫폼 어디서나 [GitHub Releases](https://github.com/juliankang4/owngit/releases)에서 압축 파일을 내려받아 `SHA256SUMS`로 확인한 뒤 쓸 수 있습니다.
+
+방법별 자세한 절차는 README의 [설치](../README.ko.md#설치)에 있습니다. 설치한 뒤 서버를 시작합니다.
 
 ```sh
-go build -o bin/owngit ./cmd/owngit
-./bin/owngit serve
+owngit serve
 ```
+
+이 문서의 명령은 `owngit`으로 적습니다. 압축 파일을 풀어서 쓴다면 `./owngit`으로 실행하세요. 소스에서 빌드해 `./bin/owngit`으로 실행하는 방법은 [Build and run](../CONTRIBUTING.md#build-and-run)(영문)에 있습니다.
 
 기본 주소는 `http://127.0.0.1:7654`입니다. 설정 과정에서 저장소 저장 위치, 일반 접근을 공용 비밀번호로 보호할지 여부(선택 사항), 별도의 관리자 비밀번호를 정합니다. 이후 보안 설정을 바꿀 때마다 현재 관리자 비밀번호를 묻습니다. 설정을 마치면 빈 대시보드가 나옵니다. 대시보드의 **새 저장소**에서 저장소를 만들 수 있습니다. clone 주소는 `http://HOST:7654/git/PROJECT.git` 형식입니다.
 
@@ -47,7 +55,7 @@ OwnGit은 일반 HTTP로 동작하므로 연결이 암호화되지 않으며, TL
 LAN 이름을 쓰려면 다음과 같이 실행합니다.
 
 ```sh
-./bin/owngit serve \
+owngit serve \
   --listen 0.0.0.0:7654 \
   --base-url http://gitbox.internal:7654 \
   --allowed-host gitbox.internal \
@@ -57,7 +65,7 @@ LAN 이름을 쓰려면 다음과 같이 실행합니다.
 서버는 Host가 `localhost`, `127.0.0.1`, `::1`이거나 승인된 이름인 요청만 받습니다. `--allowed-host`는 여러 번 지정할 수 있습니다. 다른 이름을 영구히 승인하려면 설치 호스트에서 다음 명령을 실행하고 서버를 다시 시작하세요.
 
 ```sh
-./bin/owngit approve-host gitbox.internal
+owngit approve-host gitbox.internal
 ```
 
 ### 네트워크 설정
@@ -65,8 +73,8 @@ LAN 이름을 쓰려면 다음과 같이 실행합니다.
 OwnGit은 연결 주소, 기본 URL, 허용한 Host 이름, 신뢰하는 리버스 프록시를 저장할 수 있습니다. 백그라운드 서비스처럼 옵션 없이 시작한 서버도 시작할 때마다 저장된 값을 씁니다. 다음 명령은 설치 호스트에서 실행합니다. 서버가 실행 중이든 아니든 동작하며, 바꾼 값은 다음 시작부터 적용됩니다.
 
 ```sh
-./bin/owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
-./bin/owngit network show
+owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
+owngit network show
 ```
 
 - `--listen`은 `host:port` 형식입니다. host를 비우거나 `0.0.0.0`, `::`로 쓰면 모든 네트워크 인터페이스에서 연결을 받습니다.
@@ -88,7 +96,7 @@ OwnGit은 연결 주소, 기본 URL, 허용한 Host 이름, 신뢰하는 리버�
 저장한 값 때문에 접속할 수 없게 되었다면, 예를 들어 이 컴퓨터에 더 이상 없는 주소를 연결 주소로 저장했다면, 설치 호스트에서 설정을 되돌리고 서버를 다시 시작하세요.
 
 ```sh
-./bin/owngit network reset
+owngit network reset
 ```
 
 `reset`은 저장된 연결 주소와 기본 URL을 지웁니다. `--clear-allowed-hosts`를 붙이지 않으면 허용한 Host 이름은 그대로 두고, `--clear-trusted-proxies`를 붙이지 않으면 신뢰하는 프록시도 그대로 둡니다. 이 작업은 상태 디렉터리에 접근할 수 있어야 하며 웹 화면에서는 할 수 없습니다.
@@ -115,9 +123,9 @@ OwnGit을 실행하는 컴퓨터에서 Tailscale이 실행 중이면, OwnGit은 
 공유는 설정 화면의 "tailnet에서 HTTPS로 공유"에서 관리자 비밀번호를 입력해 켜거나, 설치 호스트에서 다음 명령으로 켭니다.
 
 ```sh
-./bin/owngit tailscale on
-./bin/owngit tailscale status
-./bin/owngit tailscale off
+owngit tailscale on
+owngit tailscale status
+owngit tailscale off
 ```
 
 공유를 켜면 OwnGit은 다음 순서로 동작합니다.
@@ -283,7 +291,7 @@ Nginx Proxy Manager가 접속해 오는 주소는 위에서 설명한 대로 신
 새 릴리스를 절대 확인하면 안 되는 환경이라면 서버를 `--no-update-check`로 시작하세요. 그러면 저장된 설정과 관계없이 릴리스 확인 요청을 하지 않으며, **설정** 화면에는 시작 옵션 때문에 확인이 꺼졌다고 표시됩니다.
 
 ```sh
-./bin/owngit serve --no-update-check
+owngit serve --no-update-check
 ```
 
 ## 설치 호스트에서 복구하기
@@ -291,13 +299,13 @@ Nginx Proxy Manager가 접속해 오는 주소는 위에서 설명한 대로 신
 설정을 마치기 전이라면 다음 명령으로 새 설정 링크를 발급합니다.
 
 ```sh
-./bin/owngit setup-link --base-url http://127.0.0.1:7654 --no-open
+owngit setup-link --base-url http://127.0.0.1:7654 --no-open
 ```
 
 잊어버린 관리자 비밀번호를 재설정하려면 새 비밀번호를 소유자만 읽을 수 있는 파일에 넣으세요.
 
 ```sh
-./bin/owngit reset-admin --password-file /path/to/owner-only-password-file
+owngit reset-admin --password-file /path/to/owner-only-password-file
 ```
 
 비밀번호 파일은 일반 파일이어야 합니다. Unix 계열 시스템에서는 그룹이나 다른 사용자가 읽을 수 없어야 합니다. Windows에서는 폴더의 접근 항목을 상속하지 않고 본인 계정에만 접근을 허용해야 합니다([비밀번호 파일과 토큰 파일](#비밀번호-파일과-토큰-파일) 참고). OwnGit은 비밀번호를 명령줄 값으로 받지 않습니다. 관리자 비밀번호를 재설정하면 관리자 세션이 로그아웃되고 저장소는 그대로 남습니다.
@@ -352,7 +360,7 @@ $io::SetAccessControl($f, $acl)
 다음 경우에는 삭제를 거부합니다. 가져오기가 실행 중일 때, 체크 작업이 가져감 상태이거나 실행 중일 때, 체크 컨테이너가 OwnGit의 제거 확인을 기다리고 있을 때, 다른 Git 작업(푸시, clone, 되돌리기, 병합)이 잠시 기다린 뒤에도 저장소를 쓰고 있을 때입니다. 끝난 뒤 다시 시도하세요. 실패한 컨테이너 정리는 OwnGit이 시작할 때 다시 시도하므로, Docker를 다시 쓸 수 있게 되면 OwnGit을 다시 시작하세요. 서버 로그에 작업이 다른 Docker 데몬에 속한다고 나오면(예를 들어 Docker를 초기화하거나 다시 설치한 뒤) OwnGit은 정리를 확인할 수 없으며, 시작할 때 오래된 체크 작업 공간도 지우지 않습니다. 그 작업을 실행한 데몬에서 `com.owngit.check-job=JOB` 라벨이 붙은 남은 컨테이너를 지우거나, 그 데몬이 더는 없는지 확인하세요. 그런 다음 OwnGit 컴퓨터에서 기록을 해제합니다.
 
 ```sh
-./bin/owngit forget-check-container --job JOB --confirm-container-removed
+owngit forget-check-container --job JOB --confirm-container-removed
 ```
 
 `JOB`은 서버 로그에 나온 작업 식별자입니다. 기본 위치가 아닌 상태 디렉터리를 쓴다면 `--state-dir`을 붙이세요. 이 명령은 OwnGit이 실행 중일 때도 쓸 수 있고, 컨테이너를 지우지 않으며, 기록된 컨테이너 이름, ID, 데몬, 라벨을 출력합니다. 기록이 없는 작업과, 지금 실행 중인 Docker 데몬에 속한 기록은 거부합니다. 그런 컨테이너는 OwnGit이 다음에 시작할 때 직접 지우기 때문입니다. 끝나지 않은 작업(대기, 가져감, 시작됨)도 거부합니다. 실행 중인 OwnGit이 그 컨테이너를 아직 쓰거나 지우고 있을 수 있기 때문입니다. 작업이 끝나기를 기다리거나 작업을 취소하세요. 또는 OwnGit을 한 번 시작해 중단된 작업으로 표시하게 한 뒤 명령을 다시 실행하세요. 저장소는 바로 삭제할 수 있으며, 다음에 시작할 때 체크 작업 공간을 정리합니다.
@@ -426,7 +434,7 @@ git remote set-url --add --push origin https://git.example.test/team/project.git
 이미 있는 가져오기의 원본 URL이나 옵션을 바꾸는 일은 **가져오기** 탭에서만 할 수 있고, 나머지 작업은 명령줄에서도 할 수 있습니다. 가져오기 명령은 관리자 비밀번호를 파일에서 읽으며, 그 파일은 `reset-admin`과 같은 검사를 거칩니다. 원본 토큰이나 Basic 인증 정보는 비공개 파일이나 대화형 입력에서 읽습니다. 비밀값을 인수나 환경 변수로는 받지 않습니다.
 
 ```sh
-./bin/owngit import add PROJECT https://example.invalid/team/project.git \
+owngit import add PROJECT https://example.invalid/team/project.git \
   --mode standalone \
   --token-file /path/to/owner-only-token \
   --ca-file /path/to/source-ca.pem \
@@ -437,16 +445,16 @@ git remote set-url --add --push origin https://git.example.test/team/project.git
 모든 가져오기 명령은 같은 `--server`, `--accept-insecure-http`, `--password-file` 플래그를 받습니다. 아래에서는 생략했습니다.
 
 ```sh
-./bin/owngit import refresh PROJECT
-./bin/owngit import status PROJECT
-./bin/owngit import history PROJECT --limit 20
-./bin/owngit import cancel PROJECT
-./bin/owngit import schedule PROJECT --enable --interval 6h
-./bin/owngit import schedule PROJECT --disable
-./bin/owngit import credentials PROJECT --token-file /path/to/owner-only-token
-./bin/owngit import credentials PROJECT --ca-file /path/to/source-ca.pem
-./bin/owngit import credentials PROJECT --clear
-./bin/owngit import resolve PROJECT
+owngit import refresh PROJECT
+owngit import status PROJECT
+owngit import history PROJECT --limit 20
+owngit import cancel PROJECT
+owngit import schedule PROJECT --enable --interval 6h
+owngit import schedule PROJECT --disable
+owngit import credentials PROJECT --token-file /path/to/owner-only-token
+owngit import credentials PROJECT --ca-file /path/to/source-ca.pem
+owngit import credentials PROJECT --clear
+owngit import resolve PROJECT
 ```
 
 - Basic 인증 정보를 쓰려면 `--token-file` 대신 `--basic-file`을 씁니다. 이 파일에는 사용자 이름과 비밀번호를 서로 다른 줄에 적습니다. `--ca-file`은 원본의 인증 기관(CA)을 최대 1 MiB까지 저장합니다. `import credentials`는 넘긴 것만 바꿉니다. `--ca-file`만 쓰면 저장된 토큰이나 Basic 인증 정보는 남고, `--token-file`이나 `--basic-file`만 쓰면 저장된 CA는 남습니다. `--clear`는 저장된 인증 정보와 CA를 지웁니다.
@@ -513,7 +521,7 @@ OwnGit이 게시가 어떻게 끝났는지 증명할 수 없으면 그 게시는
 일반 푸시로는 풀 리퀘스트가 생기지 않습니다. 서로 다른 원본 브랜치와 대상 브랜치를 푸시한 뒤 풀 리퀘스트를 만드세요. `--review`는 선택 사항입니다.
 
 ```sh
-./bin/owngit pr create \
+owngit pr create \
   --server http://HOST:7654 \
   --accept-insecure-http \
   --repository PROJECT \
@@ -535,16 +543,16 @@ OwnGit이 게시가 어떻게 끝났는지 증명할 수 없으면 그 게시는
 다른 `pr` 명령도 같은 `--server`, `--accept-insecure-http`, `--repository`, `--password-file` 플래그를 받습니다. 아래에서는 생략했습니다. OwnGit 저장소의 클론 안에서는 `--server`와 `--repository`를 클론의 `origin` 원격에서 가져오므로 생략할 수 있으며, 이때 비밀번호 파일은 첫 줄에 그 서버가 적혀 있을 때만 보냅니다([클론 안에서 실행하기](CODING_TOOLS.ko.md#클론-안에서-실행하기), [자격 증명 파일과 서버 줄](CODING_TOOLS.ko.md#자격-증명-파일과-서버-줄) 참고). `pr show`는 현재 원본과 대상의 객체 ID를 알려 주며, 모든 리뷰 결정과 병합에는 두 값을 모두 넘겨야 합니다.
 
 ```sh
-./bin/owngit pr list
-./bin/owngit pr show --number 1
-./bin/owngit pr diff --number 1
-./bin/owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
-./bin/owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
+owngit pr list
+owngit pr show --number 1
+owngit pr diff --number 1
+owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
   --decision approved --reviewer "existing-tool: reviewer label"
-./bin/owngit pr review skip --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
-./bin/owngit pr merge --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
-./bin/owngit pr close --number 1
-./bin/owngit pr reopen --number 1
+owngit pr review skip --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr merge --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr close --number 1
+owngit pr reopen --number 1
 ```
 
 제출하는 리뷰는 `approved` 또는 `changes_requested`입니다. 리뷰어 라벨은 누가 리뷰를 제출했는지 기록할 뿐, 독립적인 리뷰였다거나 체크를 실행했다는 뜻은 아닙니다. 대기 중이거나 변경을 요청한 리뷰가 병합을 막지는 않습니다. 원본이나 대상이 움직이면 이전 리뷰와 생략 결정은 더 이상 적용되지 않으므로, 풀 리퀘스트를 다시 살펴보고 새 객체 ID로 결정하세요.
@@ -568,7 +576,7 @@ OwnGit은 체크 에이전트(helper)로 직접 실행한 체크를 기록하고
 관리자 비밀번호로 저장소 범위의 체크 에이전트 토큰을 만듭니다. 토큰은 소유자만 읽을 수 있는 `--output` 파일에만 쓰이고, 서버에는 해시로만 저장됩니다.
 
 ```sh
-./bin/owngit helper-credential create \
+owngit helper-credential create \
   --server http://HOST:7654 --accept-insecure-http \
   --repository PROJECT --label laptop \
   --password-file /path/to/admin-password-file \
@@ -580,12 +588,12 @@ OwnGit은 체크 에이전트(helper)로 직접 실행한 체크를 기록하고
 고정된 작업을 만든 뒤 체크를 실행합니다.
 
 ```sh
-./bin/owngit check task new \
+owngit check task new \
   --server http://HOST:7654 --accept-insecure-http \
   --repository PROJECT --credential-file ~/.owngit-helper-token \
   --title "Fix the failing build"
 
-./bin/owngit check run \
+owngit check run \
   --server http://HOST:7654 --accept-insecure-http \
   --repository PROJECT --credential-file ~/.owngit-helper-token \
   --task TASK_ID --check "unit=go test ./..." --check "lint=go vet ./..."
@@ -667,7 +675,7 @@ curl --fail --get --user owngit \
 보관된 기록 덕분에 강제 푸시나 삭제를 해도 작업이 사라지지 않지만, 보관된 기록은 백업이 아닙니다. 한 번이라도 푸시한 비밀값은 강제 푸시나 브랜치 삭제 뒤에도 브라우저에 계속 보이고, 이후의 모든 백업에 들어갑니다. 그 기록을 없애는 방법은 [저장소를 파일까지 삭제](#저장소-삭제하기)하는 것뿐이며, 그 전에 만든 백업에는 여전히 남아 있습니다. 실수로 푸시한 비밀값은 새것으로 교체하세요. OwnGit은 백업을 예약해 주지 않습니다. 백업을 만들기 전에 OwnGit을 멈추세요. 출력 디렉터리는 아직 없어야 합니다.
 
 ```sh
-./bin/owngit backup \
+owngit backup \
   --state-dir /path/to/owngit-state \
   --output /path/to/new-backup
 ```
@@ -688,7 +696,7 @@ curl --fail --get --user owngit \
 OwnGit은 백업 버전 1, 2, 9, 10을 복원하고 나머지는 거부합니다. 출시되지 않은 개발 빌드만 만들었던 버전 3부터 8까지도 거부합니다. 이전 빌드는 모르는 기록을 버리지 않고 더 새로운 백업을 거부합니다. 아직 없는 새 경로에 복원하세요.
 
 ```sh
-./bin/owngit restore \
+owngit restore \
   --input /path/to/backup \
   --state-dir /path/to/new-owngit-state \
   --repository-root /path/to/new-repositories
