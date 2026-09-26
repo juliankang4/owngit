@@ -43,9 +43,11 @@ type TailscaleInfo struct {
 	// computer (MsgTSStale).
 	Stale     []TailscaleUse
 	FoundNote MessageCode
-	// FoundFix says how to undo what is on the port, with FoundFixValue as
-	// its value when it has one; only the administrator gets it.
+	// FoundFix says how to undo what is on the port; only the administrator
+	// gets it. When it concerns one port, FoundFixPort is that port, its
+	// first value, and FoundFixValue its second.
 	FoundFix      MessageCode
+	FoundFixPort  string
 	FoundFixValue string
 	// MacApp is true for the Tailscale app for macOS, which does not run
 	// after a restart until someone logs in.
@@ -66,6 +68,14 @@ type TailscaleInfo struct {
 	// with, which decides where it listens; the page then explains that
 	// instead of offering the home network checkbox.
 	ListenOption string
+	// TurnOnPort is the HTTPS port turning on will use when it is not the
+	// first choice, and PassedPorts the ports before it that something else
+	// uses; both are empty otherwise.
+	TurnOnPort, PassedPorts string
+	// BaseURLOption is the --base-url option that keeps the running server
+	// giving out another address while sharing is on; the page then says
+	// so instead of showing clone addresses under the HTTPS address.
+	BaseURLOption string
 }
 
 // TailscaleOffPage is shown after sharing was turned off from a page opened

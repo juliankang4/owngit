@@ -102,7 +102,7 @@ func TestTurningTailscaleSharingOnAndOff(t *testing.T) {
 		t.Fatalf("before sharing, a request by the Tailscale name got %d", response.Code)
 	}
 
-	change, err := app.Tailscale.On(ctx, nil)
+	change, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	if change.Endpoint != "created" || change.ListenChanged {
 		t.Fatalf("change=%+v", change)
@@ -171,45 +171,6 @@ func TestTurningTailscaleSharingOnAndOff(t *testing.T) {
 	noFunnelOrReset(t, fake)
 }
 
-// Tailscale's HTTPS port used by anything else, Funnel included, is left
-// alone and shown to the owner.
-func TestTailscaleSharingRefusesAPortInUse(t *testing.T) {
-	name := tailscaletest.Name
-	cases := map[string]tailscale.ServeConfig{
-		"another program": {
-			TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
-			Web: map[string]tailscale.WebServer{name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}}}},
-		},
-		"OwnGit's address open to Funnel": {
-			TCP:         map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
-			Web:         map[string]tailscale.WebServer{name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:7654"}}}},
-			AllowFunnel: map[string]bool{name + ":443": true},
-		},
-	}
-	for label, config := range cases {
-		t.Run(label, func(t *testing.T) {
-			app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: config})
-			_, err := app.Tailscale.On(context.Background(), nil)
-			var refusal *TailscaleError
-			if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemTaken || len(refusal.Found) == 0 {
-				t.Fatalf("err=%v", err)
-			}
-			if len(fake.Writes()) != 0 {
-				t.Fatalf("OwnGit changed Tailscale: %q", fake.Writes())
-			}
-			settings, hosts, proxies, record := savedSharing(t, app.Store)
-			if settings != (state.NetworkSettings{}) || len(hosts) != 0 || len(proxies) != 0 || record != nil {
-				t.Fatalf("a refusal saved something: %+v %v %v %+v", settings, hosts, proxies, record)
-			}
-			report, err := app.Tailscale.Report(context.Background())
-			noErr(t, err)
-			if report.Endpoint != TailscaleEndpointTaken || len(report.Found) == 0 {
-				t.Fatalf("report=%+v", report)
-			}
-		})
-	}
-}
-
 // An endpoint that points at OwnGit exactly but that OwnGit has no record
 // of making, such as one left by an interrupted change or a rename back, is
 // treated as taken: the report says so with removal steps, and turning on
@@ -230,7 +191,7 @@ func TestAnUnrecordedOwnGitEndpointIsTreatedAsTaken(t *testing.T) {
 		info.FoundNote != webui.MsgTSUnrecorded || info.FoundFix != webui.MsgTSRemoveSteps {
 		t.Fatalf("report=%+v info=%+v", report, info)
 	}
-	_, err = app.Tailscale.On(ctx, nil)
+	_, err = app.Tailscale.On(ctx, nil, 0)
 	var refusal *TailscaleError
 	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemUnrecorded || len(fake.Writes()) != 0 {
 		t.Fatalf("err=%v writes=%q", err, fake.Writes())
@@ -254,7 +215,7 @@ func TestAnUnrecordedOwnGitEndpointIsTreatedAsTaken(t *testing.T) {
 func TestTailscaleOffChangesNothingWhenTheEndpointChanged(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	ctx := context.Background()
-	_, err := app.Tailscale.On(ctx, nil)
+	_, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	key := tailscaletest.Name + ":443"
 	fake.Update(func(fakeState *tailscaletest.State) {
@@ -323,7 +284,7 @@ func TestTailscaleProblemsChangeNothing(t *testing.T) {
 			fakeState := tailscaletest.State{Status: tailscaletest.Running()}
 			test.change(&fakeState)
 			app, fake := tailscaleApp(t, fakeState)
-			_, err := app.Tailscale.On(context.Background(), nil)
+			_, err := app.Tailscale.On(context.Background(), nil, 0)
 			var refusal *TailscaleError
 			if !errors.As(err, &refusal) || refusal.Problem != test.want {
 				t.Fatalf("err=%v, want problem %s", err, test.want)
@@ -344,7 +305,7 @@ func TestTailscaleProblemsChangeNothing(t *testing.T) {
 	t.Run("not installed", func(t *testing.T) {
 		app, _ := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 		app.Tailscale.Find = func() (tailscale.Command, error) { return tailscale.Command{}, tailscale.ErrNotInstalled }
-		_, err := app.Tailscale.On(context.Background(), nil)
+		_, err := app.Tailscale.On(context.Background(), nil, 0)
 		var refusal *TailscaleError
 		if !errors.As(err, &refusal) || refusal.Problem != string(tailscale.KindNotInstalled) {
 			t.Fatalf("err=%v", err)
@@ -367,7 +328,7 @@ func TestTailscaleSharingTakesBackOnlyWhatItAdded(t *testing.T) {
 		AddHosts:   []string{strings.ToUpper(tailscaletest.Name)},
 		AddProxies: []string{"127.0.0.0/8"},
 	}))
-	change, err := app.Tailscale.On(ctx, nil)
+	change, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	if change.Record.AddedProxy != "" || change.Record.AddedHost != "" || change.Record.PreviousBaseURL != "http://gitbox.lan:7654" {
 		t.Fatalf("record=%+v", change.Record)
@@ -380,7 +341,7 @@ func TestTailscaleSharingTakesBackOnlyWhatItAdded(t *testing.T) {
 	}
 
 	// A base URL the owner changed while sharing was on is left alone.
-	_, err = app.Tailscale.On(ctx, nil)
+	_, err = app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{BaseURL: "http://other.lan:7654"}}))
 	_, err = app.Tailscale.Off(ctx)
@@ -421,7 +382,7 @@ func TestTailscaleListenChoice(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	ctx := context.Background()
 	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{Listen: "100.64.0.7:7700"}}))
-	change, err := app.Tailscale.On(ctx, nil)
+	change, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	if !change.ListenChanged || change.Listen != "127.0.0.1:7700" || !slices.Contains(fake.Writes(), "serve --bg --https=443 http://127.0.0.1:7700") {
 		t.Fatalf("change=%+v writes=%q", change, fake.Writes())
@@ -442,7 +403,7 @@ func TestTailscaleListenChoice(t *testing.T) {
 	unacknowledged, store, root := newTestApp(t)
 	noErr(t, store.CompleteSetup(ctx, root, "open", "", "synthetic-admin-hash", false))
 	app, _ = withTailscale(t, unacknowledged, tailscaletest.State{Status: tailscaletest.Running()})
-	change, err = app.Tailscale.On(ctx, &yes)
+	change, err = app.Tailscale.On(ctx, &yes, 0)
 	noErr(t, err)
 	if change.Listen != "0.0.0.0:7654" {
 		t.Fatalf("change=%+v", change)
@@ -461,7 +422,7 @@ func TestTailscaleReadinessFollowsTheRunningServer(t *testing.T) {
 	// As "owngit tailscale on" does from another process: settings and
 	// Tailscale change, the running server does not.
 	app.Tailscale.Live = nil
-	_, err := app.Tailscale.On(ctx, nil)
+	_, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	report, err := app.Tailscale.Report(ctx)
 	noErr(t, err)
@@ -503,7 +464,7 @@ func TestTailscaleReadinessFollowsTheRunningServer(t *testing.T) {
 func TestTailscaleHeadersGrantNothing(t *testing.T) {
 	app, _ := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	ctx := context.Background()
-	_, err := app.Tailscale.On(ctx, nil)
+	_, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	hash, err := auth.HashPassword("shared-password-for-tests")
 	noErr(t, err)
@@ -558,7 +519,7 @@ func TestTurningOnAfterAnInterruptionKeepsThePreviousBaseURL(t *testing.T) {
 			Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: target}}}},
 		}
 	})
-	change, err := app.Tailscale.On(ctx, nil)
+	change, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	if !change.Record.Created || change.Record.AddedProxy != loopbackProxy || change.Record.AddedHost != tailscaletest.Name {
 		t.Fatalf("record after the retry: %+v", change.Record)
@@ -577,7 +538,7 @@ func TestACancelledRequestStillFinishesTheChange(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := app.Tailscale.On(cancelled, nil)
+	_, err := app.Tailscale.On(cancelled, nil, 0)
 	noErr(t, err)
 	if _, _, _, record := savedSharing(t, app.Store); record == nil || !record.Confirmed {
 		t.Fatalf("record after a cancelled request: %+v", record)
@@ -602,7 +563,7 @@ func TestOverlappingChangesKeepWhatOwnGitAdded(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			time.Sleep(time.Duration(i) * 100 * time.Millisecond)
-			_, errs[i] = app.Tailscale.On(ctx, nil)
+			_, errs[i] = app.Tailscale.On(ctx, nil, 0)
 		}()
 	}
 	wait.Wait()
@@ -632,7 +593,7 @@ func TestAChangeWaitsForAnotherProcess(t *testing.T) {
 	noErr(t, err)
 	done := make(chan error, 1)
 	go func() {
-		_, err := app.Tailscale.On(context.Background(), nil)
+		_, err := app.Tailscale.On(context.Background(), nil, 0)
 		done <- err
 	}()
 	time.Sleep(300 * time.Millisecond)
@@ -667,7 +628,7 @@ func TestTurningOffAfterARenameTakesBackTheSettings(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	ctx := context.Background()
 	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{BaseURL: "http://gitbox.lan:7654"}}))
-	_, err := app.Tailscale.On(ctx, nil)
+	_, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	rename(fake)
 	report, err := app.Tailscale.Report(ctx)
@@ -693,7 +654,7 @@ func TestTurningOffAfterARenameTakesBackTheSettings(t *testing.T) {
 		t.Fatalf("report after off: %+v", report)
 	}
 	// Turning on again uses the new name beside the old endpoint.
-	change, err = app.Tailscale.On(ctx, nil)
+	change, err = app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	if change.Endpoint != "created" || change.Record.Name != renamed {
 		t.Fatalf("turning on after the rename: %+v", change)
@@ -709,10 +670,10 @@ func TestTurningOffAfterARenameTakesBackTheSettings(t *testing.T) {
 func TestTurningOnAfterARenameMovesToTheNewName(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	ctx := context.Background()
-	_, err := app.Tailscale.On(ctx, nil)
+	_, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	rename(fake)
-	change, err := app.Tailscale.On(ctx, nil)
+	change, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	if change.Endpoint != "created" || change.Record.Name != renamed || change.RemovedHost != tailscaletest.Name {
 		t.Fatalf("turning on after the rename: %+v", change)
@@ -746,14 +707,14 @@ func TestTurningOnAfterARenameMovesToTheNewName(t *testing.T) {
 func TestTurningOnAfterARenameDoesNotTakeOverAnEndpointForTheNewName(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	ctx := context.Background()
-	first, err := app.Tailscale.On(ctx, nil)
+	first, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	rename(fake)
 	fake.Update(func(s *tailscaletest.State) {
 		s.Serve.Web[renamed+":443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: first.Record.Target}}}
 	})
 	before := len(fake.Writes())
-	change, err := app.Tailscale.On(ctx, nil)
+	change, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	if change.Endpoint != "kept" || change.Record.Created || change.Record.Name != renamed || len(fake.Writes()) != before {
 		t.Fatalf("turning on after the rename: %+v, writes %q", change, fake.Writes()[before:])
@@ -763,7 +724,7 @@ func TestTurningOnAfterARenameDoesNotTakeOverAnEndpointForTheNewName(t *testing.
 	if change.Endpoint != "left" || len(fake.Writes()) != before {
 		t.Fatalf("turning off: %+v, writes %q", change, fake.Writes()[before:])
 	}
-	if !fake.State().Serve.Endpoint(renamed, TailscaleHTTPSPort, first.Record.Target).Exact {
+	if !fake.State().Serve.Endpoint(renamed, 443, first.Record.Target).Exact {
 		t.Fatal("turning off removed an endpoint that OwnGit did not write")
 	}
 	report, err := app.Tailscale.Report(ctx)
@@ -812,7 +773,7 @@ func TestReportsShareOneReadingOfTailscale(t *testing.T) {
 		t.Fatalf("a report within the reading's lifetime ran tailscale again: %d", got)
 	}
 	fake.Update(func(s *tailscaletest.State) { s.ReadDelay = 0 })
-	_, err = app.Tailscale.On(ctx, nil)
+	_, err = app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	before := reads(fake)
 	report, err := app.Tailscale.Report(ctx)
@@ -881,7 +842,7 @@ func TestAListenOptionDecidesInsteadOfTheHomeNetworkChoice(t *testing.T) {
 	}
 
 	yes := true
-	change, err := app.Tailscale.On(ctx, &yes)
+	change, err := app.Tailscale.On(ctx, &yes, 0)
 	noErr(t, err)
 	if change.ListenChanged || change.ListenOption != "127.0.0.1:7890" || !slices.Contains(fake.Writes(), "serve --bg --https=443 http://127.0.0.1:7890") {
 		t.Fatalf("change=%+v writes=%q", change, fake.Writes())

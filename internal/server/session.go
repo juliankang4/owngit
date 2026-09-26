@@ -364,7 +364,7 @@ func noticeFor(notice string) []webui.Notice {
 	case "network_saved":
 		return []webui.Notice{webui.Success(webui.MsgNetSaved)}
 	case "tailscale_on":
-		return []webui.Notice{webui.Success(webui.MsgTSTurnedOn)}
+		return []webui.Notice{webui.Success(webui.MsgTSTurnedOn), webui.Info(webui.MsgTSFirstVisit)}
 	case "tailscale_off":
 		return []webui.Notice{webui.Success(webui.MsgTSTurnedOff)}
 	case "access_password_saved":

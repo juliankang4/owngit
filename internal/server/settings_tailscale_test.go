@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -99,11 +100,10 @@ func TestTurningTailscaleSharingOnAndOffInSettings(t *testing.T) {
 func TestTailscaleRefusalIsExplainedOnTheBlock(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	client, base, csrf, _ := networkSettingsClient(t, app)
+	// Every port OwnGit would choose is taken, which the page did not show
+	// when it was opened.
 	fake.Update(func(fakeState *tailscaletest.State) {
-		fakeState.Serve = tailscale.ServeConfig{
-			TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
-			Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}}}},
-		}
+		fakeState.Serve = otherService(tailscale.ServeConfig{}, tailscaletest.Name, 443, 8443, 10000)
 	})
 	result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", true), base)
 	if result.status != http.StatusConflict {
@@ -114,7 +114,9 @@ func TestTailscaleRefusalIsExplainedOnTheBlock(t *testing.T) {
 		enText(webui.TailscaleRefusalCode(TailscaleProblemTaken, true)),
 		// The list below the alert, in both languages.
 		"https://" + tailscaletest.Name + ":443/ to http://127.0.0.1:3000",
-		"https://" + tailscaletest.Name + ":443/에서 http://127.0.0.1:3000(으)로 전달",
+		"https://" + tailscaletest.Name + ":8443/ to http://127.0.0.1:3000",
+		"https://" + tailscaletest.Name + ":10000/에서 http://127.0.0.1:3000(으)로 전달",
+		enText(webui.MsgTSTakenSteps),
 	} {
 		if !strings.Contains(result.body, want) {
 			t.Errorf("the refusal lacks %q", want)
@@ -137,7 +139,7 @@ func TestTailscaleRefusalIsExplainedOnTheBlock(t *testing.T) {
 // proxy forwarded for the shared name.
 func TestConnectionNamesTailscaleOnlyForItsEndpoint(t *testing.T) {
 	app, _ := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
-	_, err := app.Tailscale.On(t.Context(), nil)
+	_, err := app.Tailscale.On(t.Context(), nil, 0)
 	noErr(t, err)
 	cases := []struct {
 		name, host, proto string
@@ -206,13 +208,8 @@ func TestUnfinishedSharingOffersTurningOnAgain(t *testing.T) {
 func TestOnlyTheAdministratorSeesWhatElseTailscaleServes(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	fake.Update(func(s *tailscaletest.State) {
-		s.Serve = tailscale.ServeConfig{
-			TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
-			Web: map[string]tailscale.WebServer{
-				tailscaletest.Name + ":443":  {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}}},
-				"oldbox.tail0000.ts.net:443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:9090"}}},
-			},
-		}
+		s.Serve = otherService(tailscale.ServeConfig{}, tailscaletest.Name, 443, 8443, 10000)
+		s.Serve.Web["oldbox.tail0000.ts.net:443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:9090"}}}
 	})
 	client, base, _, body := networkSettingsClient(t, app)
 	if !strings.Contains(body, enText(webui.MsgTSTakenBrief)) {
@@ -258,7 +255,7 @@ func TestAViewerGetsACompleteSentenceForATailscaleError(t *testing.T) {
 func TestAChangedEndpointOffersTheStepsThatWork(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	ctx := context.Background()
-	change, err := app.Tailscale.On(ctx, nil)
+	change, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	changed := tailscale.ServeConfig{
 		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
@@ -273,7 +270,7 @@ func TestAChangedEndpointOffersTheStepsThatWork(t *testing.T) {
 	parsed, _ := url.Parse(base)
 	client.Jar.SetCookies(parsed, []*http.Cookie{{Name: adminCookie, Value: "changed-admin-session", Path: "/"}})
 	body, _ := dashboardGET(t, client, base+"/settings")
-	steps := fmt.Sprintf(enText(webui.MsgTSChangedSteps), change.Record.Target)
+	steps := fmt.Sprintf(enText(webui.MsgTSChangedSteps), "443", change.Record.Target)
 	for _, want := range []string{enText(webui.TailscaleWaitCode(TailscaleWaitChanged)), steps, "http://127.0.0.1:7701"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the changed state lacks %q", want)
@@ -293,13 +290,13 @@ func TestAChangedEndpointOffersTheStepsThatWork(t *testing.T) {
 	}
 	// Following the second step instead: OwnGit's address is back, and
 	// turning off removes it.
-	_, err = app.Tailscale.On(ctx, nil)
+	_, err = app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	fake.Update(func(s *tailscaletest.State) { s.Serve = changed })
 	if _, err := app.Tailscale.Off(ctx); err == nil {
 		t.Fatal("off accepted a changed endpoint")
 	}
-	_, err = app.Tailscale.On(ctx, nil)
+	_, err = app.Tailscale.On(ctx, nil, 0)
 	if err == nil {
 		t.Fatal("on accepted a changed endpoint")
 	}
@@ -316,22 +313,33 @@ func TestAChangedEndpointOffersTheStepsThatWork(t *testing.T) {
 // turn it on, and the administrator also sees what Tailscale printed.
 func TestTurningOffWhileTailscaleIsStoppedSaysSo(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
-	_, err := app.Tailscale.On(t.Context(), nil)
+	_, err := app.Tailscale.On(t.Context(), nil, 0)
 	noErr(t, err)
 	fake.Update(func(s *tailscaletest.State) {
 		s.Status.BackendState = "Stopped"
 		s.WriteError = "Tailscale is stopped."
 	})
 	app.Tailscale.forget()
-	client, base, csrf, _ := networkSettingsClient(t, app)
+	stopped := enText(webui.TailscaleProblemCode(string(tailscale.KindStopped)))
+	// The page says once that Tailscale is stopped and does not offer
+	// turning off, which would be refused.
+	client, base, csrf, page := networkSettingsClient(t, app)
+	shown := func(body string) int { return strings.Count(body, `data-en="`+stopped+`"`) }
+	if shown(page) != 1 || strings.Contains(page, `value="tailscale_off"`) {
+		t.Fatalf("while stopped the page shows the problem %d times, or offers turning off", shown(page))
+	}
+	// A page opened before Tailscale stopped still sends the form.
 	result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOff, "admin-password", false), base)
 	if result.status != http.StatusConflict {
 		t.Fatalf("turn off: status=%d", result.status)
 	}
-	for _, want := range []string{enText(webui.TailscaleProblemCode(string(tailscale.KindStopped))), "Tailscale is stopped."} {
+	for _, want := range []string{stopped, "Tailscale is stopped."} {
 		if !strings.Contains(result.body, want) {
 			t.Errorf("the refusal lacks %q", want)
 		}
+	}
+	if count := shown(result.body); count != 1 {
+		t.Errorf("the refusal shows the problem %d times", count)
 	}
 	if strings.Contains(result.body, enText(webui.MsgTSProblemFailed)) {
 		t.Error("the refusal shows Tailscale's error as an unexplained failure")
@@ -346,7 +354,7 @@ func TestTurningOffWhileTailscaleIsStoppedSaysSo(t *testing.T) {
 // OwnGit, and that names the address that works on this computer.
 func TestTurningOffThroughTheTailnetAddressEndsOnAPageThatLoads(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
-	change, err := app.Tailscale.On(t.Context(), nil)
+	change, err := app.Tailscale.On(t.Context(), nil, 0)
 	noErr(t, err)
 	page := throughServe(app, "/settings?lang=ko&appearance=dark")
 	if page.Code != http.StatusOK {
@@ -399,9 +407,10 @@ func TestTurningOffThroughTheTailnetAddressEndsOnAPageThatLoads(t *testing.T) {
 // and anything else a general one. Both languages give the same command.
 func TestTailscaleFixFitsWhatIsOnThePort(t *testing.T) {
 	const name, target = tailscaletest.Name, "http://127.0.0.1:7654"
-	https := map[string]tailscale.TCPHandler{"443": {HTTPS: true}}
+	// The steps name the port they concern, here one other than 443.
+	https := map[string]tailscale.TCPHandler{"8443": {HTTPS: true}}
 	web := func(handlers map[string]tailscale.Handler) map[string]tailscale.WebServer {
-		return map[string]tailscale.WebServer{name + ":443": {Handlers: handlers}}
+		return map[string]tailscale.WebServer{name + ":8443": {Handlers: handlers}}
 	}
 	other := web(map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}})
 	for _, tc := range []struct {
@@ -411,14 +420,14 @@ func TestTailscaleFixFitsWhatIsOnThePort(t *testing.T) {
 		changed webui.MessageCode
 		command string
 	}{
-		{"a web handler", tailscale.ServeConfig{TCP: https, Web: other}, webui.MsgTSRemoveSteps, webui.MsgTSChangedSteps, `"tailscale serve --https=443 off"`},
-		{"a web handler with Funnel", tailscale.ServeConfig{TCP: https, Web: other, AllowFunnel: map[string]bool{name + ":443": true}}, webui.MsgTSRemoveSteps, webui.MsgTSChangedSteps, `"tailscale serve --https=443 off"`},
-		{"TCP forwarding", tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"443": {TCPForward: "127.0.0.1:22"}}}, webui.MsgTSRemoveStepsTCP, webui.MsgTSChangedStepsOther, `"tailscale serve --tcp=443 off"`},
-		{"plain HTTP", tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"443": {HTTP: true}}, Web: other}, webui.MsgTSRemoveStepsHTTP, webui.MsgTSChangedStepsOther, `"tailscale serve --http=443 off"`},
+		{"a web handler", tailscale.ServeConfig{TCP: https, Web: other}, webui.MsgTSRemoveSteps, webui.MsgTSChangedSteps, `"tailscale serve --https=8443 off"`},
+		{"a web handler with Funnel", tailscale.ServeConfig{TCP: https, Web: other, AllowFunnel: map[string]bool{name + ":8443": true}}, webui.MsgTSRemoveSteps, webui.MsgTSChangedSteps, `"tailscale serve --https=8443 off"`},
+		{"TCP forwarding", tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"8443": {TCPForward: "127.0.0.1:22"}}}, webui.MsgTSRemoveStepsTCP, webui.MsgTSChangedStepsOther, `"tailscale serve --tcp=8443 off"`},
+		{"plain HTTP", tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"8443": {HTTP: true}}, Web: other}, webui.MsgTSRemoveStepsHTTP, webui.MsgTSChangedStepsOther, `"tailscale serve --http=8443 off"`},
 		{"a foreground session", tailscale.ServeConfig{Foreground: map[string]tailscale.ServeConfig{"session": {TCP: https, Web: other}}}, webui.MsgTSRemoveStepsForeground, webui.MsgTSChangedStepsOther, "Ctrl+C"},
 		{"an incomplete setting", tailscale.ServeConfig{TCP: https}, webui.MsgTSRemoveStepsOther, webui.MsgTSChangedStepsOther, `"tailscale serve status"`},
 	} {
-		found := tc.config.Endpoint(name, 443, target).Found
+		found := tc.config.Endpoint(name, 8443, target).Found
 		if len(found) == 0 {
 			t.Fatalf("%s: nothing found", tc.label)
 		}
@@ -431,19 +440,63 @@ func TestTailscaleFixFitsWhatIsOnThePort(t *testing.T) {
 			t.Errorf("%s: value %q for %s", tc.label, value, changed)
 		}
 		for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
-			text := webui.Text(lang, off)
-			if !strings.Contains(text, tc.command) {
-				t.Errorf("%s, %s: %q lacks %s", tc.label, lang, text, tc.command)
+			text := fmt.Sprintf(webui.Text(lang, off), "8443", "")
+			changedText := fmt.Sprintf(webui.Text(lang, changed), "8443", value)
+			if !strings.Contains(text, tc.command) || strings.Contains(text+changedText, "%!") || strings.Contains(text+changedText, " 443") || strings.Contains(text+changedText, "=443") {
+				t.Errorf("%s, %s: %q lacks %s, or names another port", tc.label, lang, text, tc.command)
 			}
-			if off != webui.MsgTSRemoveSteps && strings.Contains(text+webui.Text(lang, changed), "--https=443 off") {
+			if off != webui.MsgTSRemoveSteps && strings.Contains(text+changedText, "--https=8443 off") {
 				t.Errorf("%s, %s: gives a command that Tailscale refuses or that does not reach it: %q", tc.label, lang, text)
+			}
+			if changed == webui.MsgTSChangedSteps && !strings.Contains(changedText, `"tailscale serve --bg --https=8443 `+target+`"`) {
+				t.Errorf("%s, %s: %q", tc.label, lang, changedText)
 			}
 		}
 	}
-	// The Settings page and "status" use the same choice.
-	info := tailscaleInfo(TailscaleReport{Installed: true, Endpoint: TailscaleEndpointTaken,
-		Found: tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"443": {TCPForward: "127.0.0.1:22"}}}.Endpoint(name, 443, target).Found})
-	if info.FoundFix != webui.MsgTSRemoveStepsTCP {
-		t.Errorf("Settings gives %s for TCP forwarding", info.FoundFix)
+	// The Settings page and "status" use the same choice, for the port of
+	// the record.
+	record := state.TailscaleServe{Name: name, HTTPSPort: 8443, Target: target}
+	info := tailscaleInfo(TailscaleReport{Installed: true, On: true, Sharing: &record, Endpoint: TailscaleEndpointChanged,
+		Found: tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"8443": {TCPForward: "127.0.0.1:22"}}}.Endpoint(name, 8443, target).Found})
+	if info.FoundFix != webui.MsgTSChangedStepsOther || info.FoundFixPort != "8443" {
+		t.Errorf("Settings gives %s for port %q for TCP forwarding", info.FoundFix, info.FoundFixPort)
+	}
+}
+
+// While a --base-url option keeps the running server giving out another
+// address, sharing does not claim the HTTPS clone address: the report
+// names the option, and the page says so in place of the clone hint.
+func TestABaseURLOptionIsNamedInsteadOfTheHTTPSCloneAddress(t *testing.T) {
+	app := newConfiguredApp(t)
+	app, _ = withTailscale(t, app, tailscaletest.State{Status: tailscaletest.Running()})
+	const option = "http://gitbox.lan:7654"
+	app.Network = NewLiveNetwork(LiveNetworkConfig{
+		Record: state.RunningNetwork{
+			Listen: "127.0.0.1:7654", Address: "127.0.0.1:7654", ListenSource: NetworkSourceDefault,
+			BaseURL: option, BaseURLSource: NetworkSourceFlag, Origin: option,
+			SavedHosts: []string{}, TrustedProxies: []string{}, TrustedProxiesSource: NetworkSourceDefault,
+		},
+		BaseURL: option, Hosts: app.Hosts,
+		Publish: func(running state.RunningNetwork) {
+			noErr(t, app.Store.PublishRunningNetwork(context.Background(), running))
+		},
+	})
+	app.Network.Publish()
+	app.Tailscale.Live = app.Network
+	_, err := app.Tailscale.On(t.Context(), nil, 0)
+	noErr(t, err)
+	report, err := app.Tailscale.Report(t.Context())
+	noErr(t, err)
+	if report.BaseURLOption != option || !report.Ready {
+		t.Fatalf("report=%+v", report)
+	}
+	if clone := app.cloneURL(httptest.NewRequest(http.MethodGet, "/", nil), "project"); clone != option+"/git/project.git" {
+		t.Fatalf("clone address=%q", clone)
+	}
+	_, _, _, page := networkSettingsClient(t, app)
+	hint := html.EscapeString(fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSCloneHint), report.URL))
+	note := html.EscapeString(fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSBaseURLOption), option))
+	if !strings.Contains(page, note) || strings.Contains(page, hint) {
+		t.Fatal("the page claims the HTTPS clone address, or does not name the option")
 	}
 }

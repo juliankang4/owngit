@@ -167,6 +167,9 @@ type settingsView struct {
 	// AdminVerified is true when this request verified the administrator
 	// password, so the page may show what only an administrator sees.
 	AdminVerified bool
+	// TailscaleRefused is the problem of a refused Tailscale change shown
+	// on the page, which the Tailscale block then does not repeat.
+	TailscaleRefused string
 }
 
 // renderSettingsPage renders Settings. A refused Network save in view is
@@ -207,6 +210,6 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 		Chrome: chrome, SubmitURL: "/settings", AccessMode: mode, AdminRequired: true,
 		PendingAction: pending, Storage: storage, CloneHint: app.serverOrigin(request) + "/git/",
 		UpdateCheck: webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil},
-		Network:     networkBlock, Tailscale: app.tailscaleBlock(request.Context(), chrome.Viewer.AdminConfirmed || view.AdminVerified),
+		Network:     networkBlock, Tailscale: app.tailscaleBlock(request.Context(), chrome.Viewer.AdminConfirmed || view.AdminVerified, view.TailscaleRefused),
 	})
 }

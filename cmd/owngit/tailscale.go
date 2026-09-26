@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
+	"owngit/internal/apiclient"
 	"owngit/internal/server"
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
@@ -52,7 +54,9 @@ func tailscaleCommand(arguments []string) error {
 func printTailscaleUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit tailscale <status|on|off> [options]")
 	fmt.Fprintln(writer, "  tailscale status [--json]                  whether OwnGit is shared on the tailnet over HTTPS, and what is missing")
-	fmt.Fprintln(writer, "  tailscale on [--home-network[=false]]      share OwnGit at https://NAME.TAILNET.ts.net/ with Tailscale Serve")
+	fmt.Fprintln(writer, "  tailscale on [--home-network[=false]] [--https-port PORT]")
+	fmt.Fprintln(writer, "                                             share OwnGit at https://NAME.TAILNET.ts.net/ with Tailscale Serve;")
+	fmt.Fprintln(writer, "                                             if HTTPS port 443 serves something else, OwnGit uses 8443 or 10000")
 	fmt.Fprintln(writer, "  tailscale off                              remove the Tailscale address OwnGit made and the settings it changed")
 	fmt.Fprintln(writer, "Tailscale must be installed and signed in on this computer, with MagicDNS and HTTPS certificates on in the tailnet.")
 	fmt.Fprintln(writer, "on and off change the saved settings; a running OwnGit uses them after a restart. The Settings page applies them at once.")
@@ -80,6 +84,9 @@ func newTailscaleFlags(name string) tailscaleFlags {
 // sharing opens the state and returns the Tailscale sharing of it, as seen
 // from outside a running server.
 func (options tailscaleFlags) sharing(ctx context.Context) (*server.Tailscale, *state.Store, error) {
+	if err := state.RequireExisting(*options.stateDir); err != nil {
+		return nil, nil, err
+	}
 	store, err := openLiveState(ctx, *options.stateDir)
 	if err != nil {
 		return nil, nil, err
@@ -91,29 +98,74 @@ func (options tailscaleFlags) sharing(ctx context.Context) (*server.Tailscale, *
 	}, store, nil
 }
 
+// failure returns err so that it prints as a JSON error object under
+// --json: a refusal gets its problem as the code and the words of the
+// Settings page, and a missing state says how to create it. Other errors
+// get code.
+func (options tailscaleFlags) failure(code string, err error) error {
+	var refusal *server.TailscaleError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &refusal):
+		code, err = refusal.Problem, tailscaleFailure(refusal)
+	case errors.Is(err, state.ErrNotExist):
+		code, err = "state_missing", missingStateError(*options.stateDir)
+	}
+	return jsonFailure(*options.asJSON, code, err)
+}
+
+// missingStateError explains a state directory without OwnGit's state, as
+// before the first start.
+func missingStateError(stateDir string) error {
+	return fmt.Errorf("OwnGit state does not exist in %s. Start OwnGit once with this state directory, or pass the one it uses with --state-dir", stateDir)
+}
+
+// jsonFailure makes err print as a JSON error object with code when the
+// command was asked for JSON. An error that already has a code keeps it.
+func jsonFailure(asJSON bool, code string, err error) error {
+	var coded interface{ ErrorCode() string }
+	if err == nil || !asJSON || errors.As(err, &coded) {
+		return err
+	}
+	return &apiclient.Error{Code: code, Message: err.Error(), Cause: err}
+}
+
 func tailscaleStatus(arguments []string) error {
 	options := newTailscaleFlags("tailscale status")
 	if err := parseFlags(options.flags, arguments); err != nil {
 		return err
 	}
 	if options.flags.NArg() != 0 {
-		return errors.New("tailscale status accepts no positional arguments")
-	}
-	if err := state.RequireExisting(*options.stateDir); err != nil {
-		return err
+		return options.failure("invalid_arguments", errors.New("tailscale status accepts no positional arguments"))
 	}
 	ctx := context.Background()
 	sharing, store, err := options.sharing(ctx)
-	if err != nil {
-		return err
+	missing := errors.Is(err, state.ErrNotExist)
+	switch {
+	case missing:
+		// Before the first start nothing is saved: the report shows the
+		// defaults and creates nothing.
+		sharing = &server.Tailscale{Find: func() (tailscale.Command, error) { return findTailscale(*options.command) }}
+	case err != nil:
+		return options.failure("state_unavailable", err)
+	default:
+		defer store.Close()
 	}
-	defer store.Close()
 	report, err := sharing.Report(ctx)
 	if err != nil {
-		return err
+		return options.failure("state_unavailable", err)
 	}
 	if *options.asJSON {
-		return printJSON(report)
+		return printJSON(struct {
+			server.TailscaleReport
+			// StateMissing says that the state directory holds no OwnGit
+			// state yet, so the report shows the defaults.
+			StateMissing bool `json:"state_missing,omitempty"`
+		}{report, missing})
+	}
+	if missing {
+		fmt.Printf("No OwnGit state exists in %s yet, so nothing is saved and the defaults apply.\n", *options.stateDir)
 	}
 	printTailscaleReport(os.Stdout, report)
 	return nil
@@ -122,25 +174,30 @@ func tailscaleStatus(arguments []string) error {
 func tailscaleOn(arguments []string) error {
 	options := newTailscaleFlags("tailscale on")
 	homeNetwork := options.flags.Bool("home-network", false, "also let devices on the home network connect over plain HTTP; --home-network=false keeps OwnGit on this computer only. Without it the listen address stays as it is when Tailscale can reach it")
+	httpsPort := options.flags.Int("https-port", 0, "the HTTPS `port` Tailscale answers on; without it OwnGit uses 443, or 8443 or 10000 when something else is on 443")
 	if err := parseFlags(options.flags, arguments); err != nil {
 		return err
 	}
 	if options.flags.NArg() != 0 {
-		return errors.New("tailscale on accepts no positional arguments")
-	}
-	if err := state.RequireExisting(*options.stateDir); err != nil {
-		return err
+		return options.failure("invalid_arguments", errors.New("tailscale on accepts no positional arguments"))
 	}
 	var choice *bool
+	portSet := false
 	options.flags.Visit(func(entry *flag.Flag) {
-		if entry.Name == "home-network" {
+		switch entry.Name {
+		case "home-network":
 			choice = homeNetwork
+		case "https-port":
+			portSet = true
 		}
 	})
+	if portSet && (*httpsPort < 1 || *httpsPort > 65535) {
+		return options.failure("invalid_arguments", errors.New("--https-port must be a port from 1 to 65535"))
+	}
 	ctx := context.Background()
 	sharing, store, err := options.sharing(ctx)
 	if err != nil {
-		return err
+		return options.failure("state_unavailable", err)
 	}
 	defer store.Close()
 	// The certificate log notice comes before Tailscale is asked to serve
@@ -153,13 +210,13 @@ func tailscaleOn(arguments []string) error {
 			fmt.Println(certificateLog)
 		}
 	}
-	change, err := sharing.On(ctx, choice)
+	change, err := sharing.On(ctx, choice, *httpsPort)
 	if err != nil {
-		return tailscaleFailure(err)
+		return options.failure("failed", err)
 	}
 	report, err := sharing.Report(ctx)
 	if err != nil {
-		return err
+		return options.failure("state_unavailable", err)
 	}
 	if *options.asJSON {
 		return printJSON(struct {
@@ -169,13 +226,23 @@ func tailscaleOn(arguments []string) error {
 			CertificateLog string `json:"certificate_log,omitempty"`
 		}{report, certificateLog})
 	}
+	address := change.Record.Name
+	if port := change.Record.HTTPSPort; port != 443 {
+		address = fmt.Sprintf("%s on port %d", address, port)
+	}
 	switch {
 	case change.Endpoint == "created":
-		fmt.Printf("Tailscale now answers HTTPS for %s and passes it to OwnGit at %s.\n", change.Record.Name, change.Record.Target)
+		fmt.Printf("Tailscale now answers HTTPS for %s and passes it to OwnGit at %s.\n", address, change.Record.Target)
 	case change.Record.Created:
-		fmt.Printf("Tailscale already answered HTTPS for %s with the address OwnGit made, passing it to OwnGit at %s.\n", change.Record.Name, change.Record.Target)
+		fmt.Printf("Tailscale already answered HTTPS for %s with the address OwnGit made, passing it to OwnGit at %s.\n", address, change.Record.Target)
 	default:
-		fmt.Printf("Tailscale already answered HTTPS for %s with OwnGit at %s; OwnGit left that setting as it was.\n", change.Record.Name, change.Record.Target)
+		fmt.Printf("Tailscale already answered HTTPS for %s with OwnGit at %s; OwnGit left that setting as it was.\n", address, change.Record.Target)
+	}
+	if len(change.PassedPorts) > 0 {
+		fmt.Println(fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSPortNote), server.PortList(change.PassedPorts), strconv.Itoa(change.Record.HTTPSPort)))
+	}
+	if change.Endpoint == "created" {
+		fmt.Println(webui.Text(webui.LangEN, webui.MsgTSFirstVisit))
 	}
 	fmt.Printf("Saved: base URL %s, allowed name %s, trusted proxy 127.0.0.1.\n", change.Record.BaseURL, change.Record.Name)
 	if change.ListenChanged {
@@ -187,7 +254,7 @@ func tailscaleOn(arguments []string) error {
 	printTailscaleReport(os.Stdout, report)
 	observed, err := store.ObserveRunningNetwork(ctx)
 	if err != nil {
-		return err
+		return options.failure("state_unavailable", err)
 	}
 	printRunningServerNote(observed.Server)
 	return nil
@@ -208,24 +275,21 @@ func tailscaleOff(arguments []string) error {
 		return err
 	}
 	if options.flags.NArg() != 0 {
-		return errors.New("tailscale off accepts no positional arguments")
-	}
-	if err := state.RequireExisting(*options.stateDir); err != nil {
-		return err
+		return options.failure("invalid_arguments", errors.New("tailscale off accepts no positional arguments"))
 	}
 	ctx := context.Background()
 	sharing, store, err := options.sharing(ctx)
 	if err != nil {
-		return err
+		return options.failure("state_unavailable", err)
 	}
 	defer store.Close()
 	change, err := sharing.Off(ctx)
 	if err != nil {
-		return tailscaleFailure(err)
+		return options.failure("failed", err)
 	}
 	observed, err := store.ObserveRunningNetwork(ctx)
 	if err != nil {
-		return err
+		return options.failure("state_unavailable", err)
 	}
 	if *options.asJSON {
 		return printJSON(struct {
@@ -251,26 +315,22 @@ func tailscaleOff(arguments []string) error {
 }
 
 // tailscaleFailure explains a refusal in the words the Settings page uses.
-func tailscaleFailure(err error) error {
-	var refusal *server.TailscaleError
-	if !errors.As(err, &refusal) {
-		return err
-	}
+func tailscaleFailure(refusal *server.TailscaleError) error {
 	text := tailscaleProblemText(refusal.Problem, refusal.Detail, refusal.Found, refusal.MacApp)
-	if refusal.Problem == server.TailscaleProblemChanged {
-		text += " " + tailscaleFixText(refusal.Found, true, refusal.Target)
+	switch refusal.Problem {
+	case server.TailscaleProblemChanged:
+		text += " " + tailscaleFixText(refusal.Found, true, refusal.Target, refusal.Port)
+	case server.TailscaleProblemUnrecorded:
+		text += " " + tailscaleFixText(refusal.Found, false, "", refusal.Port)
 	}
 	return errors.New(text)
 }
 
-// tailscaleFixText is the English step that clears what is on the HTTPS
-// port (server.TailscaleFix).
-func tailscaleFixText(found []tailscale.Use, changed bool, target string) string {
+// tailscaleFixText is the English step that clears what is on HTTPS port
+// (server.TailscaleFix).
+func tailscaleFixText(found []tailscale.Use, changed bool, target string, port int) string {
 	code, value := server.TailscaleFix(found, changed, target)
-	if value == "" {
-		return webui.Text(webui.LangEN, code)
-	}
-	return fmt.Sprintf(webui.Text(webui.LangEN, code), value)
+	return fmt.Sprintf(webui.Text(webui.LangEN, code), strconv.Itoa(port), value)
 }
 
 // tailscaleProblemText is the English message for a problem.
@@ -303,7 +363,13 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 	}
 	if report.On {
 		fmt.Fprintf(writer, "  Address:   %s (encrypted by Tailscale on this computer)\n", report.URL)
-		fmt.Fprintf(writer, "  Clone URL: %sgit/REPOSITORY.git\n", report.URL)
+		// A --base-url option keeps the running server giving out its own
+		// address, so the HTTPS clone address is not claimed then.
+		if report.BaseURLOption != "" {
+			fmt.Fprintf(writer, "  %s\n", fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSBaseURLOption), report.BaseURLOption))
+		} else {
+			fmt.Fprintf(writer, "  Clone URL: %sgit/REPOSITORY.git\n", report.URL)
+		}
 	}
 	if report.Installed {
 		fmt.Fprintf(writer, "  Tailscale: %s\n", report.Command)
@@ -312,16 +378,19 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 	if report.Problem != "" {
 		fmt.Fprintf(writer, "  %s\n", tailscaleProblemText(report.Problem, report.ProblemDetail, nil, report.MacApp))
 	} else if !report.On && report.CanTurnOn {
-		fmt.Fprintf(writer, "  Ready to share as https://%s/.\n", report.Name)
+		fmt.Fprintf(writer, "  Ready to share as %s/.\n", server.TailscaleOrigin(report.Name, report.TurnOnPort))
+		if len(report.TurnOnPassed) > 0 {
+			fmt.Fprintf(writer, "  %s\n", fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSPortNote), server.PortList(report.TurnOnPassed), strconv.Itoa(report.TurnOnPort)))
+		}
 	}
 	switch {
-	case !report.On && report.Endpoint == server.TailscaleEndpointTaken:
-		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSTaken), server.TailscaleUsesText(report.Found), tailscaleFixText(report.Found, false, ""))
-	case !report.On && report.Endpoint == server.TailscaleEndpointUnrecorded:
-		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSUnrecorded), server.TailscaleUsesText(report.Found), tailscaleFixText(report.Found, false, ""))
 	case report.On && report.Endpoint == server.TailscaleEndpointChanged:
 		fmt.Fprintf(writer, "  %s %s\n", webui.Text(webui.LangEN, webui.MsgTSChanged), server.TailscaleUsesText(report.Found))
-		fmt.Fprintf(writer, "  %s\n", tailscaleFixText(report.Found, true, report.Sharing.Target))
+		fmt.Fprintf(writer, "  %s\n", tailscaleFixText(report.Found, true, report.Sharing.Target, report.Sharing.HTTPSPort))
+	case report.PortsTaken:
+		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSTaken), server.TailscaleUsesText(report.Found), webui.Text(webui.LangEN, webui.MsgTSTakenSteps))
+	case !report.On && report.Endpoint == server.TailscaleEndpointUnrecorded:
+		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSUnrecorded), server.TailscaleUsesText(report.Found), tailscaleFixText(report.Found, false, "", report.TurnOnPort))
 	}
 	for _, wait := range report.Waiting {
 		if wait != server.TailscaleWaitTailscale {

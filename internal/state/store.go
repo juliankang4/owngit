@@ -1275,6 +1275,12 @@ func (s *Store) TableRowCount(ctx context.Context, table string) (int, error) {
 	return count, nil
 }
 
+// ErrNotExist means that directory holds no OwnGit state yet, as before the
+// first start.
+var ErrNotExist = errors.New("OwnGit state does not exist")
+
+// RequireExisting refuses a state directory without an OwnGit state
+// database (ErrNotExist) or with one that is not a regular file.
 func RequireExisting(directory string) error {
 	absolute, err := filepath.Abs(directory)
 	if err != nil {
@@ -1283,7 +1289,7 @@ func RequireExisting(directory string) error {
 	info, err := os.Lstat(filepath.Join(absolute, databaseName))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return errors.New("OwnGit state does not exist")
+			return ErrNotExist
 		}
 		return err
 	}

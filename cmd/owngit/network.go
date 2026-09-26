@@ -225,42 +225,69 @@ func networkShow(arguments []string) error {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("network show accepts no positional arguments")
+		return jsonFailure(*asJSON, "invalid_arguments", errors.New("network show accepts no positional arguments"))
 	}
-	if err := state.RequireExisting(*stateDir); err != nil {
-		return err
+	// Before the first start nothing is saved: the report shows the
+	// defaults and creates nothing.
+	err := state.RequireExisting(*stateDir)
+	missing := errors.Is(err, state.ErrNotExist)
+	var report networkReport
+	switch {
+	case missing:
+		report = server.NewNetworkReport(state.NetworkSettings{}, nil, nil)
+		report.SetServer(state.RunningObservation{Server: state.ServerNotRunning})
+	case err != nil:
+		return jsonFailure(*asJSON, "state_unavailable", err)
+	default:
+		if report, err = savedNetworkReport(*stateDir); err != nil {
+			return jsonFailure(*asJSON, "state_unavailable", err)
+		}
 	}
-	store, err := openLiveState(context.Background(), *stateDir)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	ctx := context.Background()
-	saved, err := store.NetworkSettings(ctx)
-	if err != nil {
-		return err
-	}
-	hosts, err := store.TrustedHosts(ctx)
-	if err != nil {
-		return err
-	}
-	proxies, err := store.TrustedProxies(ctx)
-	if err != nil {
-		return err
-	}
-	observed, err := store.ObserveRunningNetwork(ctx)
-	if err != nil {
-		return err
-	}
-	report := server.NewNetworkReport(saved, hosts, proxies)
-	report.SetServer(observed)
 	if *asJSON {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(report)
+		return encoder.Encode(struct {
+			networkReport
+			// StateMissing says that the state directory holds no OwnGit
+			// state yet, so the report shows the defaults.
+			StateMissing bool `json:"state_missing,omitempty"`
+		}{report, missing})
+	}
+	if missing {
+		fmt.Printf("No OwnGit state exists in %s yet, so nothing is saved and the defaults apply.\n", *stateDir)
 	}
 	printNetworkReport(os.Stdout, report)
 	return nil
+}
+
+// savedNetworkReport reads the saved network settings and what a running
+// server uses.
+func savedNetworkReport(stateDir string) (networkReport, error) {
+	ctx := context.Background()
+	store, err := openLiveState(ctx, stateDir)
+	if err != nil {
+		return networkReport{}, err
+	}
+	defer store.Close()
+	saved, err := store.NetworkSettings(ctx)
+	if err != nil {
+		return networkReport{}, err
+	}
+	hosts, err := store.TrustedHosts(ctx)
+	if err != nil {
+		return networkReport{}, err
+	}
+	proxies, err := store.TrustedProxies(ctx)
+	if err != nil {
+		return networkReport{}, err
+	}
+	observed, err := store.ObserveRunningNetwork(ctx)
+	if err != nil {
+		return networkReport{}, err
+	}
+	report := server.NewNetworkReport(saved, hosts, proxies)
+	report.SetServer(observed)
+	return report, nil
 }
 
 func printNetworkReport(writer io.Writer, report networkReport) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"owngit/internal/state"
@@ -24,7 +25,10 @@ import (
 // endpoint: what else is on the port, addresses under earlier names and what
 // Tailscale printed, since they can name other services on this computer.
 // Other viewers see that the port is taken.
-func (app *App) tailscaleBlock(ctx context.Context, admin bool) webui.TailscaleInfo {
+//
+// refused is the problem of a refusal the page shows above the block, or
+// "": the block does not repeat the same message.
+func (app *App) tailscaleBlock(ctx context.Context, admin bool, refused string) webui.TailscaleInfo {
 	if app.Tailscale == nil {
 		return webui.TailscaleInfo{Problem: webui.TailscaleProblemCode(string(tailscale.KindNotInstalled))}
 	}
@@ -33,11 +37,14 @@ func (app *App) tailscaleBlock(ctx context.Context, admin bool) webui.TailscaleI
 		return webui.TailscaleInfo{Problem: webui.MsgTSProblemFailed}
 	}
 	info := tailscaleInfo(report)
+	if refused != "" && info.Problem == webui.TailscaleProblemCode(refused) {
+		info.Problem, info.ProblemDetail = "", ""
+	}
 	if !admin {
 		info.ProblemDetail, info.Stale = "", nil
 		info.Problem = webui.TailscaleProblemBrief(info.Problem)
 		if info.Found != nil {
-			info.Found, info.FoundFix, info.FoundFixValue = nil, "", ""
+			info.Found, info.FoundFix, info.FoundFixPort, info.FoundFixValue = nil, "", "", ""
 			info.FoundNote = webui.TailscalePortNoteBrief(info.FoundNote)
 		}
 	}
@@ -49,6 +56,11 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	info := webui.TailscaleInfo{
 		On: report.On, Ready: report.Ready, URL: report.URL, Name: report.Name,
 		MacApp: report.MacApp, HomeNetwork: report.HomeNetwork, ProblemDetail: report.ProblemDetail,
+		BaseURLOption: report.BaseURLOption,
+	}
+	// Before sharing is on, a port other than 443 is named with the reason.
+	if !report.On && report.TurnOnPort != 0 && len(report.TurnOnPassed) > 0 {
+		info.TurnOnPort, info.PassedPorts = strconv.Itoa(report.TurnOnPort), PortList(report.TurnOnPassed)
 	}
 	if report.Sharing != nil && info.Name == "" {
 		info.Name = report.Sharing.Name
@@ -65,12 +77,13 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	case report.On && report.Endpoint == TailscaleEndpointChanged:
 		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSChanged
 		info.FoundFix, info.FoundFixValue = TailscaleFix(report.Found, true, report.Sharing.Target)
-	case !report.On && report.Endpoint == TailscaleEndpointTaken:
-		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSTaken
-		info.FoundFix, _ = TailscaleFix(report.Found, false, "")
+		info.FoundFixPort = strconv.Itoa(report.Sharing.HTTPSPort)
+	case report.PortsTaken:
+		info.Found, info.FoundNote, info.FoundFix = tailscaleUses(report.Found), webui.MsgTSTaken, webui.MsgTSTakenSteps
 	case !report.On && report.Endpoint == TailscaleEndpointUnrecorded:
 		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSUnrecorded
 		info.FoundFix, _ = TailscaleFix(report.Found, false, "")
+		info.FoundFixPort = strconv.Itoa(report.TurnOnPort)
 	}
 	info.Stale = tailscaleUses(report.Stale)
 	info.CanTurnOn, info.CanTurnOff = report.CanTurnOn, report.CanTurnOff
@@ -93,7 +106,7 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 	}
 	if action == webui.ActionTailscaleOn {
 		homeNetwork := formChecked(postValue(request, "home_network"))
-		if _, err := app.Tailscale.On(request.Context(), &homeNetwork); err != nil {
+		if _, err := app.Tailscale.On(request.Context(), &homeNetwork, 0); err != nil {
 			app.renderTailscaleRefusal(writer, request, settings, csrf, action, err)
 			return
 		}
@@ -149,7 +162,16 @@ func (app *App) renderTailscaleRefusal(writer http.ResponseWriter, request *http
 	if refusal.Problem == TailscaleProblemReadBack && refusal.MacApp {
 		notices = append(notices, webui.Notice{Kind: webui.NoticeInfo, Code: webui.MsgTSReadBackMacApp, Field: "tailscale"})
 	}
-	app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusConflict, settingsView{AdminVerified: true})
+	app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusConflict, settingsView{AdminVerified: true, TailscaleRefused: refusal.Problem})
+}
+
+// PortList writes ports for a message, such as "443, 8443".
+func PortList(ports []int) string {
+	texts := make([]string, len(ports))
+	for i, port := range ports {
+		texts[i] = strconv.Itoa(port)
+	}
+	return strings.Join(texts, ", ")
 }
 
 // tailscaleUses turns what Tailscale has on its port into the page's form.
@@ -161,13 +183,14 @@ func tailscaleUses(uses []tailscale.Use) []webui.TailscaleUse {
 	return converted
 }
 
-// TailscaleFix is the step that clears what is on the HTTPS port: undoing
+// TailscaleFix is the step that clears what is on one HTTPS port: undoing
 // a changed endpoint while sharing is on (changed), or removing a use so
-// that sharing can be turned on. The value, when not empty, goes into the
-// message. "tailscale serve --https=443 off" removes only web handlers:
-// Tailscale refuses it while the port forwards TCP, it does not remove
-// plain HTTP, and a "tailscale serve" running in a terminal ends only
-// there. Other uses get the step that fits them.
+// that sharing can be turned on. Its message takes the port as the first
+// value and the returned value, when not empty, as the second.
+// "tailscale serve --https=PORT off" removes only web handlers: Tailscale
+// refuses it while the port forwards TCP, it does not remove plain HTTP,
+// and a "tailscale serve" running in a terminal ends only there. Other uses
+// get the step that fits them.
 func TailscaleFix(found []tailscale.Use, changed bool, target string) (webui.MessageCode, string) {
 	kinds := map[string]bool{}
 	for _, use := range found {

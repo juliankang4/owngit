@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/server"
 	"owngit/internal/state"
 )
 
@@ -160,8 +161,31 @@ func TestNetworkSetShowAndReset(t *testing.T) {
 	if after := networkJSON(t, stateDir); len(after.Saved.AllowedHosts) != 0 {
 		t.Fatalf("hosts after reset --clear-allowed-hosts: %v", after.Saved.AllowedHosts)
 	}
-	if _, err := runNetwork(t, "show", "--state-dir", filepath.Join(t.TempDir(), "missing")); err == nil {
-		t.Fatal("show created or accepted a missing state directory")
+	// Before the first start, show reports the defaults, as text and as
+	// JSON, and creates nothing.
+	missing := filepath.Join(t.TempDir(), "missing")
+	output, err = runNetwork(t, "show", "--state-dir", missing)
+	if err != nil || !strings.Contains(output, "No OwnGit state exists in "+missing) || !strings.Contains(output, "not saved, default 127.0.0.1:7654") {
+		t.Fatalf("show on a missing state: %q %v", output, err)
+	}
+	output, err = runNetwork(t, "show", "--state-dir", missing, "--json")
+	noErr(t, err)
+	var defaults struct {
+		networkReport
+		StateMissing bool `json:"state_missing"`
+	}
+	if err := json.Unmarshal([]byte(output), &defaults); err != nil || !defaults.StateMissing || defaults.NextStart.Listen != "127.0.0.1:7654" ||
+		defaults.Saved.AllowedHosts == nil || defaults.Server != server.NetworkNotRunning {
+		t.Fatalf("show --json on a missing state: %q %v", output, err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("show created the missing state directory")
+	}
+	// Under --json a failure is a JSON error object.
+	_, err = runNetwork(t, "show", "--state-dir", stateDir, "--json", "extra")
+	var printed strings.Builder
+	if err == nil || !writeStructuredCommandError(&printed, err) || !strings.Contains(printed.String(), `"code":"invalid_arguments"`) {
+		t.Fatalf("show --json with an extra argument: %v %q", err, printed.String())
 	}
 }
 

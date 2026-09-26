@@ -97,15 +97,22 @@ const (
 	// off works.
 	MsgTSChangedSteps = MessageCode("tailscale.changed_steps")
 	// MsgTSChangedStepsOther says the same when the port holds something
-	// that "tailscale serve --https=443 off" does not remove.
+	// that "tailscale serve --https=PORT off" does not remove.
 	MsgTSChangedStepsOther = MessageCode("tailscale.changed_steps_other")
 	// MsgTSRemoveSteps says how to remove web handlers on the port, and the
-	// others how to remove the other kinds of use.
+	// others how to remove the other kinds of use. Each of these steps
+	// takes the port as %[1]s, and MsgTSChangedSteps also OwnGit's local
+	// address as %[2]s.
 	MsgTSRemoveSteps           = MessageCode("tailscale.remove_steps")
 	MsgTSRemoveStepsTCP        = MessageCode("tailscale.remove_steps_tcp")
 	MsgTSRemoveStepsHTTP       = MessageCode("tailscale.remove_steps_http")
 	MsgTSRemoveStepsForeground = MessageCode("tailscale.remove_steps_foreground")
 	MsgTSRemoveStepsOther      = MessageCode("tailscale.remove_steps_other")
+	// MsgTSTakenSteps says what to do when every port OwnGit can choose is
+	// taken.
+	MsgTSTakenSteps = MessageCode("tailscale.taken_steps")
+	// MsgTSFirstVisit says that the first visit waits for the certificate.
+	MsgTSFirstVisit = MessageCode("tailscale.first_visit")
 )
 
 // Messages that end with a colon are followed by the detail named in their
@@ -167,12 +174,17 @@ var tailscaleCatalog = map[MessageCode]message{
 	},
 	// Detail: what is on the port.
 	"tailscale.problem.port_taken": {
-		en: "Tailscale already serves something else on HTTPS port 443 of this computer, so OwnGit changed nothing. If you no longer need it, remove it with \"tailscale serve\" and try again. On the port now:",
-		ko: "이 컴퓨터의 HTTPS 포트 443에서 Tailscale이 이미 다른 것을 제공하고 있어 OwnGit은 아무것도 바꾸지 않았습니다. 더 이상 필요 없다면 \"tailscale serve\"로 지운 뒤 다시 시도하세요. 지금 이 포트의 설정:",
+		en: "Tailscale already serves something else on each HTTPS port that OwnGit tried on this computer, so OwnGit changed nothing. Name a free port with \"owngit tailscale on --https-port PORT\", or remove what you no longer need with \"tailscale serve\", and try again. On those ports now:",
+		ko: "이 컴퓨터에서 OwnGit이 시도한 HTTPS 포트마다 Tailscale이 이미 다른 것을 제공하고 있어 OwnGit은 아무것도 바꾸지 않았습니다. \"owngit tailscale on --https-port 포트\"로 비어 있는 포트를 지정하거나, 더 이상 필요 없는 설정을 \"tailscale serve\"로 지운 뒤 다시 시도하세요. 지금 그 포트들의 설정:",
 	},
 	"tailscale.problem.port_taken_listed": {
-		en: "Tailscale already serves something else on HTTPS port 443 of this computer, so OwnGit changed nothing. If you no longer need it, remove it with \"tailscale serve\" and try again. What is on the port is listed below.",
-		ko: "이 컴퓨터의 HTTPS 포트 443에서 Tailscale이 이미 다른 것을 제공하고 있어 OwnGit은 아무것도 바꾸지 않았습니다. 더 이상 필요 없다면 \"tailscale serve\"로 지운 뒤 다시 시도하세요. 이 포트의 설정은 아래에 있습니다.",
+		en: "Tailscale already serves something else on each HTTPS port that OwnGit tried on this computer, so OwnGit changed nothing. What is on those ports, and what to do, is below.",
+		ko: "이 컴퓨터에서 OwnGit이 시도한 HTTPS 포트마다 Tailscale이 이미 다른 것을 제공하고 있어 OwnGit은 아무것도 바꾸지 않았습니다. 그 포트들의 설정과 해결 방법은 아래에 있습니다.",
+	},
+	// Detail: the address of sharing now.
+	"tailscale.problem.other_port": {
+		en: "Sharing is already on at another HTTPS port, so OwnGit changed nothing. To move it, run \"owngit tailscale off\", then \"owngit tailscale on --https-port PORT\". The address now:",
+		ko: "공유가 이미 다른 HTTPS 포트에서 켜져 있어 OwnGit은 아무것도 바꾸지 않았습니다. 포트를 옮기려면 \"owngit tailscale off\"를 실행한 뒤 \"owngit tailscale on --https-port 포트\"를 실행하세요. 지금 주소:",
 	},
 	"tailscale.problem.read_back": {
 		en: "Tailscale accepted the change but did not keep it, so OwnGit does not use it.",
@@ -194,8 +206,8 @@ var tailscaleCatalog = map[MessageCode]message{
 
 	// Followed by the addresses.
 	MsgTSStale: {
-		en: "Tailscale still has an address under a name this computer had before. It answers for nothing, because Tailscale answers only for the current name, and it does not keep OwnGit from sharing. Tailscale can remove it only while the computer has that name: rename the computer back in the Tailscale admin console, run \"tailscale serve --https=443 --set-path=/ off\", then rename it again. If Tailscale serves nothing else on this computer, \"tailscale serve reset\" also removes it. The address:",
-		ko: "Tailscale에 이 컴퓨터의 예전 이름으로 된 주소가 남아 있습니다. Tailscale은 지금 이름으로만 응답하므로 이 주소는 아무 데도 연결되지 않으며, OwnGit의 공유도 막지 않습니다. Tailscale은 컴퓨터가 그 이름일 때만 이 주소를 지울 수 있습니다. Tailscale 관리 콘솔에서 이름을 예전 이름으로 되돌리고 \"tailscale serve --https=443 --set-path=/ off\"를 실행한 뒤 다시 이름을 바꾸세요. 이 컴퓨터에서 Tailscale이 다른 것을 제공하지 않는다면 \"tailscale serve reset\"으로도 지울 수 있습니다. 남아 있는 주소:",
+		en: "Tailscale still has an address under a name this computer had before. It answers for nothing, because Tailscale answers only for the current name, and it does not keep OwnGit from sharing. Tailscale can remove it only while the computer has that name: rename the computer back, in the Tailscale admin console or with \"tailscale set --hostname=NAME\" on this computer, run \"tailscale serve --https=PORT --set-path=/ off\" with the port of the address, then rename it again. If Tailscale serves nothing else on this computer, \"tailscale serve reset\" also removes it. The address:",
+		ko: "Tailscale에 이 컴퓨터의 예전 이름으로 된 주소가 남아 있습니다. Tailscale은 지금 이름으로만 응답하므로 이 주소는 아무 데도 연결되지 않으며, OwnGit의 공유도 막지 않습니다. Tailscale은 컴퓨터가 그 이름일 때만 이 주소를 지울 수 있습니다. Tailscale 관리 콘솔이나 이 컴퓨터의 \"tailscale set --hostname=이름\"으로 이름을 예전 이름으로 되돌리고, 주소에 있는 포트로 \"tailscale serve --https=포트 --set-path=/ off\"를 실행한 뒤 다시 이름을 바꾸세요. 이 컴퓨터에서 Tailscale이 다른 것을 제공하지 않는다면 \"tailscale serve reset\"으로도 지울 수 있습니다. 남아 있는 주소:",
 	},
 
 	// What is on Tailscale's HTTPS port: %[1]s is the address and %[2]s the
@@ -239,46 +251,53 @@ var tailscaleCatalog = map[MessageCode]message{
 		ko: "OwnGit이 만든 주소가 Tailscale에 더 이상 없습니다. 다시 만들려면 공유를 다시 켜고, 일부러 지웠다면 공유를 끄세요.",
 	},
 	"tailscale.wait.endpoint_changed": {
-		en: "Tailscale's HTTPS port 443 no longer has exactly the address OwnGit made, so sharing can be turned neither on nor off until that is put back or removed with \"tailscale serve\".",
-		ko: "Tailscale의 HTTPS 포트 443에 OwnGit이 만든 주소가 그대로 남아 있지 않습니다. \"tailscale serve\"로 원래대로 되돌리거나 지우기 전에는 공유를 켜거나 끌 수 없습니다.",
+		en: "Tailscale's HTTPS port for OwnGit no longer has exactly the address OwnGit made, so sharing can be turned neither on nor off until that is put back or removed with \"tailscale serve\".",
+		ko: "OwnGit이 쓰는 Tailscale HTTPS 포트에 OwnGit이 만든 주소가 그대로 남아 있지 않습니다. \"tailscale serve\"로 원래대로 되돌리거나 지우기 전에는 공유를 켜거나 끌 수 없습니다.",
 	},
 	MsgTSRemoveSteps: {
-		en: "If you no longer need it, remove what Tailscale serves on HTTPS port 443 for this computer's name with \"tailscale serve --https=443 off\" on this computer, then turn sharing on.",
-		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve --https=443 off\"로 이 컴퓨터 이름의 HTTPS 포트 443에 있는 설정을 지운 뒤 공유를 켜세요.",
+		en: "If you no longer need it, remove what Tailscale serves on HTTPS port %[1]s for this computer's name with \"tailscale serve --https=%[1]s off\" on this computer, then turn sharing on.",
+		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve --https=%[1]s off\"로 이 컴퓨터 이름의 HTTPS 포트 %[1]s에 있는 설정을 지운 뒤 공유를 켜세요.",
 	},
 	MsgTSRemoveStepsTCP: {
-		en: "If you no longer need it, remove the TCP forwarding on port 443 with \"tailscale serve --tcp=443 off\" on this computer, then turn sharing on.",
-		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve --tcp=443 off\"로 포트 443의 TCP 전달을 지운 뒤 공유를 켜세요.",
+		en: "If you no longer need it, remove the TCP forwarding on port %[1]s with \"tailscale serve --tcp=%[1]s off\" on this computer, then turn sharing on.",
+		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve --tcp=%[1]s off\"로 포트 %[1]s의 TCP 전달을 지운 뒤 공유를 켜세요.",
 	},
 	MsgTSRemoveStepsHTTP: {
-		en: "If you no longer need it, remove what Tailscale serves over plain HTTP on port 443 for this computer's name with \"tailscale serve --http=443 off\" on this computer, then turn sharing on.",
-		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve --http=443 off\"로 이 컴퓨터 이름의 포트 443에서 일반 HTTP로 제공하는 설정을 지운 뒤 공유를 켜세요.",
+		en: "If you no longer need it, remove what Tailscale serves over plain HTTP on port %[1]s for this computer's name with \"tailscale serve --http=%[1]s off\" on this computer, then turn sharing on.",
+		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve --http=%[1]s off\"로 이 컴퓨터 이름의 포트 %[1]s에서 일반 HTTP로 제공하는 설정을 지운 뒤 공유를 켜세요.",
 	},
 	MsgTSRemoveStepsForeground: {
-		en: "A \"tailscale serve\" command running in a terminal on this computer uses the port. If you no longer need it, stop it in that terminal with Ctrl+C. If port 443 still has something, remove it with \"tailscale serve\". Then turn sharing on.",
-		ko: "이 컴퓨터의 터미널에서 실행 중인 \"tailscale serve\" 명령이 이 포트를 쓰고 있습니다. 더 이상 필요 없다면 그 터미널에서 Ctrl+C로 멈추세요. 포트 443에 아직 설정이 남아 있으면 \"tailscale serve\"로 지우세요. 그런 다음 공유를 켜세요.",
+		en: "A \"tailscale serve\" command running in a terminal on this computer uses the port. If you no longer need it, stop it in that terminal with Ctrl+C. If port %[1]s still has something, remove it with \"tailscale serve\". Then turn sharing on.",
+		ko: "이 컴퓨터의 터미널에서 실행 중인 \"tailscale serve\" 명령이 이 포트를 쓰고 있습니다. 더 이상 필요 없다면 그 터미널에서 Ctrl+C로 멈추세요. 포트 %[1]s에 아직 설정이 남아 있으면 \"tailscale serve\"로 지우세요. 그런 다음 공유를 켜세요.",
 	},
 	MsgTSRemoveStepsOther: {
-		en: "If you no longer need it, remove what Tailscale serves on port 443 with \"tailscale serve\" on this computer (\"tailscale serve status\" shows it), then turn sharing on.",
-		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve\"로 포트 443의 설정을 지운 뒤 공유를 켜세요. 무엇이 있는지는 \"tailscale serve status\"로 볼 수 있습니다.",
+		en: "If you no longer need it, remove what Tailscale serves on port %[1]s with \"tailscale serve\" on this computer (\"tailscale serve status\" shows it), then turn sharing on.",
+		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve\"로 포트 %[1]s의 설정을 지운 뒤 공유를 켜세요. 무엇이 있는지는 \"tailscale serve status\"로 볼 수 있습니다.",
+	},
+	MsgTSTakenSteps: {
+		en: "Name another free port with \"owngit tailscale on --https-port PORT\" on this computer. Or, if you no longer need one of these, remove it with \"tailscale serve\" (\"tailscale serve status\" shows them) and turn sharing on.",
+		ko: "이 컴퓨터에서 \"owngit tailscale on --https-port 포트\"로 비어 있는 다른 포트를 지정하세요. 또는 이 중 더 이상 필요 없는 설정을 \"tailscale serve\"로 지운 뒤 공유를 켜세요. 무엇이 있는지는 \"tailscale serve status\"로 볼 수 있습니다.",
 	},
 	// Detail: what is on the port.
 	"tailscale.problem.unrecorded": {
-		en: "Tailscale already answers HTTPS for this computer's name with OwnGit's local address, but OwnGit has no record of making it, so it changed nothing. Remove it with \"tailscale serve --https=443 off\" and turn sharing on again. On the port now:",
-		ko: "Tailscale이 이미 이 컴퓨터 이름의 HTTPS 요청을 OwnGit의 로컬 주소로 넘기고 있지만, OwnGit에는 이를 만든 기록이 없어 아무것도 바꾸지 않았습니다. \"tailscale serve --https=443 off\"로 지운 뒤 공유를 다시 켜세요. 지금 이 포트의 설정:",
+		en: "Tailscale already answers HTTPS for this computer's name with OwnGit's local address, but OwnGit has no record of making it, so it changed nothing. Remove it with \"tailscale serve\" and turn sharing on again. On the port now:",
+		ko: "Tailscale이 이미 이 컴퓨터 이름의 HTTPS 요청을 OwnGit의 로컬 주소로 넘기고 있지만, OwnGit에는 이를 만든 기록이 없어 아무것도 바꾸지 않았습니다. \"tailscale serve\"로 지운 뒤 공유를 다시 켜세요. 지금 이 포트의 설정:",
 	},
 	"tailscale.problem.unrecorded_listed": {
-		en: "Tailscale already answers HTTPS for this computer's name with OwnGit's local address, but OwnGit has no record of making it, so it changed nothing. Remove it with \"tailscale serve --https=443 off\" and turn sharing on again. What is on the port is listed below.",
-		ko: "Tailscale이 이미 이 컴퓨터 이름의 HTTPS 요청을 OwnGit의 로컬 주소로 넘기고 있지만, OwnGit에는 이를 만든 기록이 없어 아무것도 바꾸지 않았습니다. \"tailscale serve --https=443 off\"로 지운 뒤 공유를 다시 켜세요. 이 포트의 설정은 아래에 있습니다.",
+		en: "Tailscale already answers HTTPS for this computer's name with OwnGit's local address, but OwnGit has no record of making it, so it changed nothing. What is on the port, and the command that removes it, is below.",
+		ko: "Tailscale이 이미 이 컴퓨터 이름의 HTTPS 요청을 OwnGit의 로컬 주소로 넘기고 있지만, OwnGit에는 이를 만든 기록이 없어 아무것도 바꾸지 않았습니다. 이 포트의 설정과 지우는 명령은 아래에 있습니다.",
 	},
-	// Value: OwnGit's local address, the target of its endpoint.
 	MsgTSChangedSteps: {
-		en: "To turn sharing off, remove what Tailscale serves on HTTPS port 443 for this computer's name with \"tailscale serve --https=443 off\" on this computer, or, if only the address OwnGit passes requests to was changed, put it back with \"tailscale serve --bg --https=443 %s\". Then turn sharing off.",
-		ko: "공유를 끄려면 이 컴퓨터에서 \"tailscale serve --https=443 off\"로 이 컴퓨터 이름의 HTTPS 포트 443에 있는 설정을 지우세요. 요청을 넘길 주소만 바뀐 경우라면 \"tailscale serve --bg --https=443 %s\"로 되돌려도 됩니다. 그런 다음 공유를 끄세요.",
+		en: "To turn sharing off, remove what Tailscale serves on HTTPS port %[1]s for this computer's name with \"tailscale serve --https=%[1]s off\" on this computer, or, if only the address OwnGit passes requests to was changed, put it back with \"tailscale serve --bg --https=%[1]s %[2]s\". Then turn sharing off.",
+		ko: "공유를 끄려면 이 컴퓨터에서 \"tailscale serve --https=%[1]s off\"로 이 컴퓨터 이름의 HTTPS 포트 %[1]s에 있는 설정을 지우세요. 요청을 넘길 주소만 바뀐 경우라면 \"tailscale serve --bg --https=%[1]s %[2]s\"로 되돌려도 됩니다. 그런 다음 공유를 끄세요.",
 	},
 	MsgTSChangedStepsOther: {
-		en: "To turn sharing off, first clear port 443 on this computer: \"tailscale serve status\" shows what uses it. Remove it with \"tailscale serve\", or stop a \"tailscale serve\" running in a terminal with Ctrl+C there. Then turn sharing off.",
-		ko: "공유를 끄려면 먼저 이 컴퓨터의 포트 443을 비우세요. 무엇이 쓰고 있는지는 \"tailscale serve status\"로 볼 수 있습니다. \"tailscale serve\"로 지우거나, 터미널에서 실행 중인 \"tailscale serve\"라면 그 터미널에서 Ctrl+C로 멈추세요. 그런 다음 공유를 끄세요.",
+		en: "To turn sharing off, first clear port %[1]s on this computer: \"tailscale serve status\" shows what uses it. Remove it with \"tailscale serve\", or stop a \"tailscale serve\" running in a terminal with Ctrl+C there. Then turn sharing off.",
+		ko: "공유를 끄려면 먼저 이 컴퓨터의 포트 %[1]s을 비우세요. 무엇이 쓰고 있는지는 \"tailscale serve status\"로 볼 수 있습니다. \"tailscale serve\"로 지우거나, 터미널에서 실행 중인 \"tailscale serve\"라면 그 터미널에서 Ctrl+C로 멈추세요. 그런 다음 공유를 끄세요.",
+	},
+	MsgTSFirstVisit: {
+		en: "Tailscale gets the certificate when the address is first opened, so the first visit can take up to about a minute. Later visits do not wait.",
+		ko: "Tailscale은 주소가 처음 열릴 때 인증서를 받으므로 첫 접속은 1분 가까이 걸릴 수 있습니다. 그다음 접속은 기다리지 않습니다.",
 	},
 	"tailscale.wait.server_not_running": {
 		en: "OwnGit is not running. The address works once OwnGit starts.",
@@ -328,6 +347,8 @@ const (
 	MsgTSOffNote       MessageCode = "settings.tailscale.off_note"
 	MsgTSTurnedOn      MessageCode = "settings.tailscale.turned_on"
 	MsgTSTurnedOff     MessageCode = "settings.tailscale.turned_off"
+	MsgTSPortNote      MessageCode = "settings.tailscale.port_note"
+	MsgTSBaseURLOption MessageCode = "settings.tailscale.base_url_option"
 	MsgConnTailscaleOn MessageCode = "connection.encrypted_tailscale"
 )
 
@@ -351,20 +372,30 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 		ko: "Tailscale이 이미 이 컴퓨터 이름의 HTTPS 요청을 OwnGit의 로컬 주소로 넘기고 있지만, OwnGit에는 이를 만든 기록이 없습니다. 변경이 중간에 끊겼거나 이 컴퓨터가 예전 이름을 다시 얻으면 이렇게 됩니다. OwnGit은 이 포트를 이미 쓰이는 것으로 봅니다. 지금 이 포트의 설정:",
 	},
 	MsgTSTakenBrief: {
-		en: "Tailscale's HTTPS port 443 on this computer already serves something else, so sharing cannot be turned on. \"owngit tailscale status\" on this computer shows what is there.",
-		ko: "이 컴퓨터에서 Tailscale의 HTTPS 포트 443이 이미 다른 것을 제공하고 있어 공유를 켤 수 없습니다. 이 컴퓨터에서 \"owngit tailscale status\"를 실행하면 무엇이 있는지 볼 수 있습니다.",
+		en: "Tailscale on this computer already serves something else on each HTTPS port OwnGit can use, so sharing cannot be turned on. \"owngit tailscale status\" on this computer shows what is there.",
+		ko: "이 컴퓨터에서 OwnGit이 쓸 수 있는 HTTPS 포트마다 Tailscale이 이미 다른 것을 제공하고 있어 공유를 켤 수 없습니다. 이 컴퓨터에서 \"owngit tailscale status\"를 실행하면 무엇이 있는지 볼 수 있습니다.",
 	},
 	MsgTSChangedBrief: {
-		en: "Tailscale's HTTPS port 443 on this computer now has something other than the address OwnGit made. \"owngit tailscale status\" on this computer shows what is there.",
-		ko: "이 컴퓨터에서 Tailscale의 HTTPS 포트 443에 OwnGit이 만든 주소 대신 다른 설정이 있습니다. 이 컴퓨터에서 \"owngit tailscale status\"를 실행하면 무엇이 있는지 볼 수 있습니다.",
+		en: "Tailscale's HTTPS port for OwnGit on this computer now has something other than the address OwnGit made. \"owngit tailscale status\" on this computer shows what is there.",
+		ko: "이 컴퓨터에서 OwnGit이 쓰는 Tailscale HTTPS 포트에 OwnGit이 만든 주소 대신 다른 설정이 있습니다. 이 컴퓨터에서 \"owngit tailscale status\"를 실행하면 무엇이 있는지 볼 수 있습니다.",
 	},
 	MsgTSTaken: {
-		en: "Tailscale's HTTPS port 443 on this computer already serves something else, so sharing cannot be turned on. If you no longer need it, remove it with \"tailscale serve\". On the port now:",
-		ko: "이 컴퓨터에서 Tailscale의 HTTPS 포트 443이 이미 다른 것을 제공하고 있어 공유를 켤 수 없습니다. 더 이상 필요 없다면 \"tailscale serve\"로 지우세요. 지금 이 포트의 설정:",
+		en: "Tailscale on this computer already serves something else on each HTTPS port OwnGit can use, so sharing cannot be turned on. On those ports now:",
+		ko: "이 컴퓨터에서 OwnGit이 쓸 수 있는 HTTPS 포트마다 Tailscale이 이미 다른 것을 제공하고 있어 공유를 켤 수 없습니다. 지금 그 포트들의 설정:",
 	},
 	MsgTSChanged: {
-		en: "Tailscale's HTTPS port 443 on this computer now has something other than the address OwnGit made:",
-		ko: "이 컴퓨터에서 Tailscale의 HTTPS 포트 443에 OwnGit이 만든 주소 대신 다른 설정이 있습니다:",
+		en: "Tailscale's HTTPS port for OwnGit on this computer now has something other than the address OwnGit made:",
+		ko: "이 컴퓨터에서 OwnGit이 쓰는 Tailscale HTTPS 포트에 OwnGit이 만든 주소 대신 다른 설정이 있습니다:",
+	},
+	// Values: the ports passed over, then the port turning on uses.
+	MsgTSPortNote: {
+		en: "Tailscale already serves something else on HTTPS port %[1]s of this computer, so sharing uses port %[2]s and leaves that as it is.",
+		ko: "이 컴퓨터의 HTTPS 포트 %[1]s에서 Tailscale이 이미 다른 것을 제공하고 있어, 공유는 포트 %[2]s를 쓰고 기존 설정은 그대로 둡니다.",
+	},
+	// Value: the --base-url option.
+	MsgTSBaseURLOption: {
+		en: "The running OwnGit was started with --base-url %s, so clone addresses and links still use that address. To use the HTTPS address, remove the option from the command or service that starts OwnGit, then restart it.",
+		ko: "실행 중인 OwnGit이 --base-url %s 옵션으로 시작되어 클론 주소와 링크가 아직 그 주소를 씁니다. HTTPS 주소를 쓰려면 OwnGit을 시작하는 명령이나 서비스에서 이 옵션을 빼고 다시 시작하세요.",
 	},
 	MsgTSTurnOn:       {en: "Turn on", ko: "켜기"},
 	MsgTSTurnOnButton: {en: "Turn on sharing", ko: "공유 켜기"},
@@ -387,8 +418,8 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 		ko: "선택하면 OwnGit이 %s에서 연결을 받아 홈 네트워크의 기기도 일반 HTTP로 접속할 수 있습니다. 선택하지 않으면 %s에서 이 컴퓨터의 연결만 받고, 다른 기기는 HTTPS 주소를 씁니다. 연결을 받는 주소가 바뀌면 OwnGit을 다음에 시작할 때 적용됩니다.",
 	},
 	MsgTSOnNote: {
-		en: "OwnGit asks Tailscale on this computer to answer HTTPS for this computer's name and pass the requests to OwnGit, and saves that address as the address other devices use. If Tailscale already uses port 443 for something else, nothing changes. OwnGit also trusts this computer's loopback address as a proxy, so while sharing is on, programs on this computer can choose the client address that OwnGit uses for sign-in limits, including a reverse proxy or an ssh -L tunnel there that relays other devices.",
-		ko: "OwnGit이 이 컴퓨터의 Tailscale에 이 컴퓨터 이름으로 오는 HTTPS 요청을 받아 OwnGit에 넘기도록 요청하고, 그 주소를 다른 기기가 쓰는 주소로 저장합니다. Tailscale이 포트 443을 이미 다른 용도로 쓰고 있으면 아무것도 바꾸지 않습니다. OwnGit은 이 컴퓨터의 루프백 주소도 프록시로 믿으므로, 공유가 켜져 있는 동안 이 컴퓨터의 프로그램은 OwnGit이 로그인 제한에 쓰는 클라이언트 주소를 정할 수 있습니다. 다른 기기의 연결을 넘겨주는 이 컴퓨터의 리버스 프록시나 ssh -L 터널도 마찬가지입니다.",
+		en: "OwnGit asks Tailscale on this computer to answer HTTPS for this computer's name and pass the requests to OwnGit, and saves that address as the address other devices use. If Tailscale already serves something else on HTTPS port 443, OwnGit uses port 8443 or 10000 instead and leaves what is there as it is. OwnGit also trusts this computer's loopback address as a proxy, so while sharing is on, programs on this computer can choose the client address that OwnGit uses for sign-in limits, including a reverse proxy or an ssh -L tunnel there that relays other devices.",
+		ko: "OwnGit이 이 컴퓨터의 Tailscale에 이 컴퓨터 이름으로 오는 HTTPS 요청을 받아 OwnGit에 넘기도록 요청하고, 그 주소를 다른 기기가 쓰는 주소로 저장합니다. Tailscale이 HTTPS 포트 443에서 이미 다른 것을 제공하고 있으면 대신 포트 8443이나 10000을 쓰고, 기존 설정은 그대로 둡니다. OwnGit은 이 컴퓨터의 루프백 주소도 프록시로 믿으므로, 공유가 켜져 있는 동안 이 컴퓨터의 프로그램은 OwnGit이 로그인 제한에 쓰는 클라이언트 주소를 정할 수 있습니다. 다른 기기의 연결을 넘겨주는 이 컴퓨터의 리버스 프록시나 ssh -L 터널도 마찬가지입니다.",
 	},
 	MsgTSOffNote: {
 		en: "Turning off removes the Tailscale address that OwnGit made, if it is still as OwnGit made it, and takes back the address, name and proxy that sharing added. The listen address stays as it is.",

@@ -18,6 +18,17 @@ import (
 	"owngit/internal/webui"
 )
 
+// everyPortTaken is a Serve configuration in which another program answers
+// HTTPS on each port OwnGit would choose.
+func everyPortTaken() tailscale.ServeConfig {
+	config := tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{}, Web: map[string]tailscale.WebServer{}}
+	for _, port := range []string{"443", "8443", "10000"} {
+		config.TCP[port] = tailscale.TCPHandler{HTTPS: true}
+		config.Web[tailscaletest.Name+":"+port] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}}}
+	}
+	return config
+}
+
 func runTailscale(t *testing.T, arguments ...string) (string, error) {
 	t.Helper()
 	return captureStdout(func() error { return run(append([]string{"tailscale"}, arguments...)) })
@@ -128,15 +139,14 @@ func TestTailscaleCommandBesideARunningServer(t *testing.T) {
 	}
 }
 
-// A refusal says what is on the port, and a problem says how to fix it.
+// A refusal says what is on the ports, and a problem says how to fix it.
 func TestTailscaleCommandExplainsRefusals(t *testing.T) {
 	stateDir := initializedState(t, false)
-	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: tailscale.ServeConfig{
-		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
-		Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}}}},
-	}})
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: everyPortTaken()})
 	_, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path)
-	if err == nil || !strings.Contains(err.Error(), "OwnGit changed nothing") || !strings.Contains(err.Error(), "https://"+tailscaletest.Name+":443/ to http://127.0.0.1:3000") {
+	if err == nil || !strings.Contains(err.Error(), "OwnGit changed nothing") || !strings.Contains(err.Error(), "--https-port PORT") ||
+		!strings.Contains(err.Error(), "https://"+tailscaletest.Name+":443/ to http://127.0.0.1:3000") ||
+		!strings.Contains(err.Error(), "https://"+tailscaletest.Name+":10000/ to http://127.0.0.1:3000") {
 		t.Fatalf("err=%v", err)
 	}
 	if len(fake.Writes()) != 0 {
@@ -155,11 +165,17 @@ func TestTailscaleCommandExplainsRefusals(t *testing.T) {
 		t.Fatalf("off while off: err=%v", err)
 	}
 	// A mistyped state directory is refused before Tailscale is changed,
-	// as by every other command.
+	// as by every other command, and "status" reports the defaults; none
+	// creates the directory.
 	for _, command := range []string{"on", "status", "off"} {
 		missing := filepath.Join(t.TempDir(), "missing")
-		if _, err := runTailscale(t, command, "--state-dir", missing, "--tailscale", fake.Path); err == nil {
-			t.Errorf("tailscale %s accepted a missing state directory", command)
+		output, err := runTailscale(t, command, "--state-dir", missing, "--tailscale", fake.Path)
+		if command == "status" {
+			if err != nil || !strings.Contains(output, "No OwnGit state exists in "+missing) || !strings.Contains(output, "Sharing on the tailnet over HTTPS: off.") {
+				t.Errorf("tailscale status on a missing state: %q %v", output, err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), "Start OwnGit once") {
+			t.Errorf("tailscale %s on a missing state directory: %v", command, err)
 		}
 		if _, err := os.Stat(missing); !os.IsNotExist(err) {
 			t.Errorf("tailscale %s created the missing state directory", command)
@@ -232,17 +248,15 @@ func TestTailscaleOnShowsTheCertificateLogNotice(t *testing.T) {
 	}
 
 	taken := initializedState(t, false)
-	busy := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: tailscale.ServeConfig{
-		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
-		Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}}}},
-	}})
+	busy := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: everyPortTaken()})
 	if output, err := runTailscale(t, "on", "--state-dir", taken, "--tailscale", busy.Path); err == nil || strings.Contains(output, "certificate log") {
 		t.Fatalf("a refusal: err=%v output=%q", err, output)
 	}
 }
 
-// "status" gives the verdict the Settings page gives: with the HTTPS port
-// taken it says that sharing cannot be turned on and does not suggest it.
+// "status" gives the verdict the Settings page gives: with every HTTPS port
+// OwnGit would choose taken, it says that sharing cannot be turned on and
+// does not suggest it.
 func TestTailscaleStatusSharesTheVerdictOfSettings(t *testing.T) {
 	stateDir := initializedState(t, false)
 	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
@@ -255,15 +269,14 @@ func TestTailscaleStatusSharesTheVerdictOfSettings(t *testing.T) {
 		t.Fatalf("free port: %+v", report)
 	}
 	fake.Update(func(s *tailscaletest.State) {
-		s.Serve = tailscale.ServeConfig{
-			TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
-			Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/other": {Proxy: "http://127.0.0.1:9999"}}}},
-		}
+		s.Serve = everyPortTaken()
+		s.Serve.Web[tailscaletest.Name+":443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/other": {Proxy: "http://127.0.0.1:9999"}}}
 	})
 	output, err = runTailscale(t, "status", "--state-dir", stateDir, "--tailscale", fake.Path)
 	noErr(t, err)
 	if strings.Contains(output, "Ready to share") || strings.Contains(output, "Turn it on") ||
-		!strings.Contains(output, "so sharing cannot be turned on") || !strings.Contains(output, "http://127.0.0.1:9999") {
+		!strings.Contains(output, "so sharing cannot be turned on") || !strings.Contains(output, "http://127.0.0.1:9999") ||
+		!strings.Contains(output, "--https-port PORT") {
 		t.Fatalf("taken port: %q", output)
 	}
 	if report := tailscaleJSON(t, stateDir, fake.Path); report.CanTurnOn {
@@ -333,16 +346,145 @@ func TestTailscaleOffWhileTailscaleIsStopped(t *testing.T) {
 	}
 }
 
-// With TCP forwarding on the port, "status" gives the command that removes
-// it, not the one for web handlers, which Tailscale refuses then.
-func TestTailscaleStatusGivesTheStepForTCPForwarding(t *testing.T) {
+// With TCP forwarding on 443, "status" says that sharing will use 8443 and
+// leave 443 alone, and "on" does so, saying why and that the first visit
+// waits for the certificate. Port 443 is not touched.
+func TestTailscaleCommandUsesAnotherPortWhen443IsTaken(t *testing.T) {
 	stateDir := initializedState(t, false)
 	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: tailscale.ServeConfig{
 		TCP: map[string]tailscale.TCPHandler{"443": {TCPForward: "127.0.0.1:22"}},
 	}})
 	output, err := runTailscale(t, "status", "--state-dir", stateDir, "--tailscale", fake.Path)
 	noErr(t, err)
-	if !strings.Contains(output, `"tailscale serve --tcp=443 off"`) || strings.Contains(output, "--https=443 off") {
+	note := fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSPortNote), "443", "8443")
+	if !strings.Contains(output, "Ready to share as https://"+tailscaletest.Name+":8443/.") || !strings.Contains(output, note) ||
+		strings.Contains(output, "tailscale serve --tcp=443 off") {
 		t.Fatalf("status printed %q", output)
+	}
+	output, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	for _, want := range []string{
+		"Tailscale now answers HTTPS for " + tailscaletest.Name + " on port 8443", note, webui.Text(webui.LangEN, webui.MsgTSFirstVisit),
+		"Saved: base URL https://" + tailscaletest.Name + ":8443,", "Clone URL: https://" + tailscaletest.Name + ":8443/git/REPOSITORY.git",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("on printed %q, lacking %q", output, want)
+		}
+	}
+	if strings.Count(output, webui.Text(webui.LangEN, webui.MsgTSFirstVisit)) != 1 {
+		t.Errorf("on says more than once that the first visit waits: %q", output)
+	}
+	if want := []string{"serve --bg --https=8443 http://127.0.0.1:7654"}; !reflect.DeepEqual(fake.Writes(), want) {
+		t.Fatalf("writes=%q", fake.Writes())
+	}
+	output, err = runTailscale(t, "off", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	if !strings.Contains(output, "Tailscale no longer answers HTTPS for "+tailscaletest.Name) {
+		t.Fatalf("off printed %q", output)
+	}
+	if got := fake.State().Serve.TCP["443"]; got != (tailscale.TCPHandler{TCPForward: "127.0.0.1:22"}) {
+		t.Fatalf("port 443 changed: %+v", got)
+	}
+}
+
+// "on --https-port" uses the port named, and refuses a port that is not
+// one, or that something else uses, without writing.
+func TestTailscaleOnWithANamedPort(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
+	for _, bad := range []string{"0", "65536", "-1"} {
+		if _, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--https-port", bad); err == nil || !strings.Contains(err.Error(), "--https-port") {
+			t.Errorf("--https-port %s: %v", bad, err)
+		}
+	}
+	output, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--https-port", "9443")
+	noErr(t, err)
+	if !strings.Contains(output, "https://"+tailscaletest.Name+":9443/") || strings.Contains(output, "leaves that as it is") {
+		t.Fatalf("on printed %q", output)
+	}
+	report := tailscaleJSON(t, stateDir, fake.Path)
+	if !report.On || report.Sharing == nil || report.Sharing.HTTPSPort != 9443 || report.URL != "https://"+tailscaletest.Name+":9443/" {
+		t.Fatalf("report=%+v", report)
+	}
+	// Moving sharing that is on to another port needs turning it off first.
+	_, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--https-port", "443")
+	if err == nil || !strings.Contains(err.Error(), "owngit tailscale off") {
+		t.Fatalf("moving: %v", err)
+	}
+	if want := []string{"serve --bg --https=9443 http://127.0.0.1:7654"}; !reflect.DeepEqual(fake.Writes(), want) {
+		t.Fatalf("writes=%q", fake.Writes())
+	}
+}
+
+// Under --json every failure is a JSON error object with a code, and
+// "status" on a state directory that does not exist yet reports the
+// defaults as JSON.
+func TestTailscaleCommandJSONErrors(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: everyPortTaken()})
+	missing := filepath.Join(t.TempDir(), "missing")
+	for _, test := range []struct {
+		arguments []string
+		code      string
+	}{
+		{[]string{"on", "--state-dir", stateDir}, server.TailscaleProblemTaken},
+		{[]string{"off", "--state-dir", stateDir}, server.TailscaleProblemNotOn},
+		{[]string{"on", "--state-dir", missing}, "state_missing"},
+		{[]string{"on", "--state-dir", stateDir, "--https-port", "70000"}, "invalid_arguments"},
+		{[]string{"status", "--state-dir", stateDir, "--json", "extra"}, "invalid_arguments"},
+	} {
+		arguments := append([]string{test.arguments[0], "--tailscale", fake.Path, "--json"}, test.arguments[1:]...)
+		var printed strings.Builder
+		_, err := runTailscale(t, arguments...)
+		if err == nil || !writeStructuredCommandError(&printed, err) {
+			t.Errorf("%q: err=%v is not a JSON error", test.arguments, err)
+			continue
+		}
+		var envelope struct {
+			OK    bool `json:"ok"`
+			Error struct{ Code, Message string }
+		}
+		if json.Unmarshal([]byte(printed.String()), &envelope) != nil || envelope.OK || envelope.Error.Code != test.code || envelope.Error.Message == "" {
+			t.Errorf("%q printed %q, want code %s", test.arguments, printed.String(), test.code)
+		}
+	}
+	output, err := runTailscale(t, "status", "--state-dir", missing, "--tailscale", fake.Path, "--json")
+	noErr(t, err)
+	var report struct {
+		server.TailscaleReport
+		StateMissing bool `json:"state_missing"`
+	}
+	if err := json.Unmarshal([]byte(output), &report); err != nil || !report.StateMissing || report.On || report.Server != state.ServerNotRunning ||
+		report.Listen != server.DefaultListenAddress || !report.PortsTaken {
+		t.Fatalf("status on a missing state: %q %v", output, err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("status created the state directory")
+	}
+}
+
+// While the running server was started with --base-url, "status" and "on"
+// name the option instead of claiming the HTTPS clone address.
+func TestTailscaleCommandNamesABaseURLOption(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
+	_, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "127.0.0.1:7822")
+	noErr(t, err)
+	const option = "http://gitbox.lan:7822"
+	instance := startServedWith(t, []string{"--state-dir", stateDir, "--no-open", "--tailscale", fake.Path, "--base-url", option})
+	defer instance.stop()
+	note := fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSBaseURLOption), option)
+	output, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	if !strings.Contains(output, note) || strings.Contains(output, "Clone URL: https://") {
+		t.Fatalf("on printed %q", output)
+	}
+	output, err = runTailscale(t, "status", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	if !strings.Contains(output, note) || strings.Contains(output, "Clone URL: https://") {
+		t.Fatalf("status printed %q", output)
+	}
+	if report := tailscaleJSON(t, stateDir, fake.Path); report.BaseURLOption != option {
+		t.Fatalf("report=%+v", report)
 	}
 }

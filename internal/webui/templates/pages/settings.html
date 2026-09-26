@@ -292,20 +292,27 @@
           <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
           <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
         </p>
-        <p class="f__help" id="ts-url-help">{{biF $lang "settings.tailscale.clone_hint" $ts.URL}}</p>
+        {{/* A --base-url option keeps the running server giving out its own
+             address, so the HTTPS address is not claimed for clones then. */}}
+        {{if $ts.BaseURLOption}}
+          <p class="netnote" id="ts-url-help">{{icon "warning"}}<span>{{biF $lang "settings.tailscale.base_url_option" $ts.BaseURLOption}}</span></p>
+        {{else}}
+          <p class="f__help" id="ts-url-help">{{biF $lang "settings.tailscale.clone_hint" $ts.URL}}</p>
+        {{end}}
       </div>
     {{end}}
     {{/* A refusal about the port points to this list. */}}
     {{if $ts.FoundNote}}
       <div class="netnote">{{icon "warning"}}<div><span>{{bi $lang $ts.FoundNote}}</span>
         {{with $ts.Found}}<ul class="tsfound">{{range .}}<li>{{tsUse $lang .}}</li>{{end}}</ul>{{end}}
-        {{with $ts.FoundFix}}<span>{{if $ts.FoundFixValue}}{{biF $lang . $ts.FoundFixValue}}{{else}}{{bi $lang .}}{{end}}</span>{{end}}</div></div>
+        {{with $ts.FoundFix}}<span>{{if $ts.FoundFixPort}}{{biF $lang . $ts.FoundFixPort $ts.FoundFixValue}}{{else}}{{bi $lang .}}{{end}}</span>{{end}}</div></div>
     {{end}}
     {{if $ts.Stale}}
       <div class="netnote netnote--info">{{icon "info"}}<div><span>{{bi $lang "tailscale.stale"}}</span>
         <ul class="tsfound">{{range $ts.Stale}}<li>{{tsUse $lang .}}</li>{{end}}</ul></div></div>
     {{end}}
     {{if $ts.MacApp}}<p class="netnote netnote--info">{{icon "info"}}<span>{{bi $lang "tailscale.mac_app"}}</span></p>{{end}}
+    {{if $ts.TurnOnPort}}<p class="netnote netnote--info">{{icon "info"}}<span>{{biF $lang "settings.tailscale.port_note" $ts.PassedPorts $ts.TurnOnPort}}</span></p>{{end}}
 
     {{/* While sharing waits to be turned on again, that comes first. */}}
     {{if $ts.CanTurnOn}}
