@@ -392,3 +392,58 @@ func TestTurningOffThroughTheTailnetAddressEndsOnAPageThatLoads(t *testing.T) {
 		t.Fatalf("after turning off, the Tailscale name got %d", next.Code)
 	}
 }
+
+// The step that clears the HTTPS port fits what is on it: "tailscale serve
+// --https=443 off" removes only web handlers, so TCP forwarding, plain HTTP
+// and a "tailscale serve" running in a terminal each get their own step,
+// and anything else a general one. Both languages give the same command.
+func TestTailscaleFixFitsWhatIsOnThePort(t *testing.T) {
+	const name, target = tailscaletest.Name, "http://127.0.0.1:7654"
+	https := map[string]tailscale.TCPHandler{"443": {HTTPS: true}}
+	web := func(handlers map[string]tailscale.Handler) map[string]tailscale.WebServer {
+		return map[string]tailscale.WebServer{name + ":443": {Handlers: handlers}}
+	}
+	other := web(map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}})
+	for _, tc := range []struct {
+		label   string
+		config  tailscale.ServeConfig
+		off     webui.MessageCode
+		changed webui.MessageCode
+		command string
+	}{
+		{"a web handler", tailscale.ServeConfig{TCP: https, Web: other}, webui.MsgTSRemoveSteps, webui.MsgTSChangedSteps, `"tailscale serve --https=443 off"`},
+		{"a web handler with Funnel", tailscale.ServeConfig{TCP: https, Web: other, AllowFunnel: map[string]bool{name + ":443": true}}, webui.MsgTSRemoveSteps, webui.MsgTSChangedSteps, `"tailscale serve --https=443 off"`},
+		{"TCP forwarding", tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"443": {TCPForward: "127.0.0.1:22"}}}, webui.MsgTSRemoveStepsTCP, webui.MsgTSChangedStepsOther, `"tailscale serve --tcp=443 off"`},
+		{"plain HTTP", tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"443": {HTTP: true}}, Web: other}, webui.MsgTSRemoveStepsHTTP, webui.MsgTSChangedStepsOther, `"tailscale serve --http=443 off"`},
+		{"a foreground session", tailscale.ServeConfig{Foreground: map[string]tailscale.ServeConfig{"session": {TCP: https, Web: other}}}, webui.MsgTSRemoveStepsForeground, webui.MsgTSChangedStepsOther, "Ctrl+C"},
+		{"an incomplete setting", tailscale.ServeConfig{TCP: https}, webui.MsgTSRemoveStepsOther, webui.MsgTSChangedStepsOther, `"tailscale serve status"`},
+	} {
+		found := tc.config.Endpoint(name, 443, target).Found
+		if len(found) == 0 {
+			t.Fatalf("%s: nothing found", tc.label)
+		}
+		off, _ := TailscaleFix(found, false, "")
+		changed, value := TailscaleFix(found, true, target)
+		if off != tc.off || changed != tc.changed {
+			t.Errorf("%s (%q): off=%s changed=%s, want %s %s", tc.label, found, off, changed, tc.off, tc.changed)
+		}
+		if (changed == webui.MsgTSChangedSteps) != (value == target) {
+			t.Errorf("%s: value %q for %s", tc.label, value, changed)
+		}
+		for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+			text := webui.Text(lang, off)
+			if !strings.Contains(text, tc.command) {
+				t.Errorf("%s, %s: %q lacks %s", tc.label, lang, text, tc.command)
+			}
+			if off != webui.MsgTSRemoveSteps && strings.Contains(text+webui.Text(lang, changed), "--https=443 off") {
+				t.Errorf("%s, %s: gives a command that Tailscale refuses or that does not reach it: %q", tc.label, lang, text)
+			}
+		}
+	}
+	// The Settings page and "status" use the same choice.
+	info := tailscaleInfo(TailscaleReport{Installed: true, Endpoint: TailscaleEndpointTaken,
+		Found: tailscale.ServeConfig{TCP: map[string]tailscale.TCPHandler{"443": {TCPForward: "127.0.0.1:22"}}}.Endpoint(name, 443, target).Found})
+	if info.FoundFix != webui.MsgTSRemoveStepsTCP {
+		t.Errorf("Settings gives %s for TCP forwarding", info.FoundFix)
+	}
+}

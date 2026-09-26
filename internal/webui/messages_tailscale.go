@@ -96,8 +96,16 @@ const (
 	// MsgTSChangedSteps says how to undo a changed endpoint so that turning
 	// off works.
 	MsgTSChangedSteps = MessageCode("tailscale.changed_steps")
-	// MsgTSRemoveSteps says how to remove what is on the port.
-	MsgTSRemoveSteps = MessageCode("tailscale.remove_steps")
+	// MsgTSChangedStepsOther says the same when the port holds something
+	// that "tailscale serve --https=443 off" does not remove.
+	MsgTSChangedStepsOther = MessageCode("tailscale.changed_steps_other")
+	// MsgTSRemoveSteps says how to remove web handlers on the port, and the
+	// others how to remove the other kinds of use.
+	MsgTSRemoveSteps           = MessageCode("tailscale.remove_steps")
+	MsgTSRemoveStepsTCP        = MessageCode("tailscale.remove_steps_tcp")
+	MsgTSRemoveStepsHTTP       = MessageCode("tailscale.remove_steps_http")
+	MsgTSRemoveStepsForeground = MessageCode("tailscale.remove_steps_foreground")
+	MsgTSRemoveStepsOther      = MessageCode("tailscale.remove_steps_other")
 )
 
 // Messages that end with a colon are followed by the detail named in their
@@ -234,6 +242,22 @@ var tailscaleCatalog = map[MessageCode]message{
 		en: "If you no longer need it, remove what Tailscale serves on HTTPS port 443 for this computer's name with \"tailscale serve --https=443 off\" on this computer, then turn sharing on.",
 		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve --https=443 off\"로 이 컴퓨터 이름의 HTTPS 포트 443에 있는 설정을 지운 뒤 공유를 켜세요.",
 	},
+	MsgTSRemoveStepsTCP: {
+		en: "If you no longer need it, remove the TCP forwarding on port 443 with \"tailscale serve --tcp=443 off\" on this computer, then turn sharing on.",
+		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve --tcp=443 off\"로 포트 443의 TCP 전달을 지운 뒤 공유를 켜세요.",
+	},
+	MsgTSRemoveStepsHTTP: {
+		en: "If you no longer need it, remove what Tailscale serves over plain HTTP on port 443 for this computer's name with \"tailscale serve --http=443 off\" on this computer, then turn sharing on.",
+		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve --http=443 off\"로 이 컴퓨터 이름의 포트 443에서 일반 HTTP로 제공하는 설정을 지운 뒤 공유를 켜세요.",
+	},
+	MsgTSRemoveStepsForeground: {
+		en: "A \"tailscale serve\" command running in a terminal on this computer uses the port. If you no longer need it, stop it in that terminal with Ctrl+C. If port 443 still has something, remove it with \"tailscale serve\". Then turn sharing on.",
+		ko: "이 컴퓨터의 터미널에서 실행 중인 \"tailscale serve\" 명령이 이 포트를 쓰고 있습니다. 더 이상 필요 없다면 그 터미널에서 Ctrl+C로 멈추세요. 포트 443에 아직 설정이 남아 있으면 \"tailscale serve\"로 지운 뒤 공유를 켜세요.",
+	},
+	MsgTSRemoveStepsOther: {
+		en: "If you no longer need it, remove what Tailscale serves on port 443 with \"tailscale serve\" on this computer (\"tailscale serve status\" shows it), then turn sharing on.",
+		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve\"로 포트 443의 설정을 지운 뒤 공유를 켜세요. 무엇이 있는지는 \"tailscale serve status\"로 볼 수 있습니다.",
+	},
 	// Detail: what is on the port.
 	"tailscale.problem.unrecorded": {
 		en: "Tailscale already answers HTTPS for this computer's name with OwnGit's local address, but OwnGit has no record of making it, so it changed nothing. Remove it with \"tailscale serve --https=443 off\" and turn sharing on again. On the port now:",
@@ -247,6 +271,10 @@ var tailscaleCatalog = map[MessageCode]message{
 	MsgTSChangedSteps: {
 		en: "To turn sharing off, remove what Tailscale serves on HTTPS port 443 for this computer's name with \"tailscale serve --https=443 off\" on this computer, or, if only the address OwnGit passes requests to was changed, put it back with \"tailscale serve --bg --https=443 %s\". Then turn sharing off.",
 		ko: "공유를 끄려면 이 컴퓨터에서 \"tailscale serve --https=443 off\"로 이 컴퓨터 이름의 HTTPS 포트 443에 있는 설정을 지우세요. 요청을 넘길 주소만 바뀐 경우라면 \"tailscale serve --bg --https=443 %s\"로 되돌려도 됩니다. 그런 다음 공유를 끄세요.",
+	},
+	MsgTSChangedStepsOther: {
+		en: "To turn sharing off, first clear port 443 on this computer: \"tailscale serve status\" shows what uses it. Remove it with \"tailscale serve\", or stop a \"tailscale serve\" running in a terminal with Ctrl+C there. Then turn sharing off.",
+		ko: "공유를 끄려면 먼저 이 컴퓨터의 포트 443을 비우세요. 무엇이 쓰고 있는지는 \"tailscale serve status\"로 볼 수 있습니다. \"tailscale serve\"로 지우거나, 터미널에서 실행 중인 \"tailscale serve\"라면 그 터미널에서 Ctrl+C로 멈추세요. 그런 다음 공유를 끄세요.",
 	},
 	"tailscale.wait.server_not_running": {
 		en: "OwnGit is not running. The address works once OwnGit starts.",

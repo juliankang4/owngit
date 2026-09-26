@@ -258,9 +258,19 @@ func tailscaleFailure(err error) error {
 	}
 	text := tailscaleProblemText(refusal.Problem, refusal.Detail, refusal.Found, refusal.MacApp)
 	if refusal.Problem == server.TailscaleProblemChanged {
-		text += " " + fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSChangedSteps), refusal.Target)
+		text += " " + tailscaleFixText(refusal.Found, true, refusal.Target)
 	}
 	return errors.New(text)
+}
+
+// tailscaleFixText is the English step that clears what is on the HTTPS
+// port (server.TailscaleFix).
+func tailscaleFixText(found []tailscale.Use, changed bool, target string) string {
+	code, value := server.TailscaleFix(found, changed, target)
+	if value == "" {
+		return webui.Text(webui.LangEN, code)
+	}
+	return fmt.Sprintf(webui.Text(webui.LangEN, code), value)
 }
 
 // tailscaleProblemText is the English message for a problem.
@@ -306,12 +316,12 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 	}
 	switch {
 	case !report.On && report.Endpoint == server.TailscaleEndpointTaken:
-		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSTaken), server.TailscaleUsesText(report.Found), webui.Text(webui.LangEN, webui.MsgTSRemoveSteps))
+		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSTaken), server.TailscaleUsesText(report.Found), tailscaleFixText(report.Found, false, ""))
 	case !report.On && report.Endpoint == server.TailscaleEndpointUnrecorded:
-		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSUnrecorded), server.TailscaleUsesText(report.Found), webui.Text(webui.LangEN, webui.MsgTSRemoveSteps))
+		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSUnrecorded), server.TailscaleUsesText(report.Found), tailscaleFixText(report.Found, false, ""))
 	case report.On && report.Endpoint == server.TailscaleEndpointChanged:
 		fmt.Fprintf(writer, "  %s %s\n", webui.Text(webui.LangEN, webui.MsgTSChanged), server.TailscaleUsesText(report.Found))
-		fmt.Fprintf(writer, "  %s\n", fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSChangedSteps), report.Sharing.Target))
+		fmt.Fprintf(writer, "  %s\n", tailscaleFixText(report.Found, true, report.Sharing.Target))
 	}
 	for _, wait := range report.Waiting {
 		if wait != server.TailscaleWaitTailscale {

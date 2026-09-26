@@ -64,11 +64,13 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	switch {
 	case report.On && report.Endpoint == TailscaleEndpointChanged:
 		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSChanged
-		info.FoundFix, info.FoundFixValue = webui.MsgTSChangedSteps, report.Sharing.Target
+		info.FoundFix, info.FoundFixValue = TailscaleFix(report.Found, true, report.Sharing.Target)
 	case !report.On && report.Endpoint == TailscaleEndpointTaken:
-		info.Found, info.FoundNote, info.FoundFix = tailscaleUses(report.Found), webui.MsgTSTaken, webui.MsgTSRemoveSteps
+		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSTaken
+		info.FoundFix, _ = TailscaleFix(report.Found, false, "")
 	case !report.On && report.Endpoint == TailscaleEndpointUnrecorded:
-		info.Found, info.FoundNote, info.FoundFix = tailscaleUses(report.Found), webui.MsgTSUnrecorded, webui.MsgTSRemoveSteps
+		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSUnrecorded
+		info.FoundFix, _ = TailscaleFix(report.Found, false, "")
 	}
 	info.Stale = tailscaleUses(report.Stale)
 	info.CanTurnOn, info.CanTurnOff = report.CanTurnOn, report.CanTurnOff
@@ -157,6 +159,53 @@ func tailscaleUses(uses []tailscale.Use) []webui.TailscaleUse {
 		converted[i] = webui.TailscaleUse{Kind: use.Kind, Address: use.Address, Target: use.Target}
 	}
 	return converted
+}
+
+// TailscaleFix is the step that clears what is on the HTTPS port: undoing
+// a changed endpoint while sharing is on (changed), or removing a use so
+// that sharing can be turned on. The value, when not empty, goes into the
+// message. "tailscale serve --https=443 off" removes only web handlers:
+// Tailscale refuses it while the port forwards TCP, it does not remove
+// plain HTTP, and a "tailscale serve" running in a terminal ends only
+// there. Other uses get the step that fits them.
+func TailscaleFix(found []tailscale.Use, changed bool, target string) (webui.MessageCode, string) {
+	kinds := map[string]bool{}
+	for _, use := range found {
+		kinds[use.Kind] = true
+	}
+	web := func(kind string) bool {
+		switch kind {
+		case tailscale.UseProxy, tailscale.UseFiles, tailscale.UseRedirect, tailscale.UseText, tailscale.UseEmpty, tailscale.UseFunnel:
+			return true
+		}
+		return false
+	}
+	onlyWebAnd := func(extra string) bool {
+		for kind := range kinds {
+			if kind != extra && !web(kind) {
+				return false
+			}
+		}
+		return true
+	}
+	code := webui.MsgTSRemoveStepsOther
+	switch {
+	case kinds[tailscale.UseForeground]:
+		code = webui.MsgTSRemoveStepsForeground
+	case len(kinds) == 1 && kinds[tailscale.UseTCPForward]:
+		code = webui.MsgTSRemoveStepsTCP
+	case kinds[tailscale.UsePlainHTTP] && onlyWebAnd(tailscale.UsePlainHTTP):
+		code = webui.MsgTSRemoveStepsHTTP
+	case onlyWebAnd(""):
+		if changed {
+			return webui.MsgTSChangedSteps, target
+		}
+		return webui.MsgTSRemoveSteps, ""
+	}
+	if changed {
+		return webui.MsgTSChangedStepsOther, ""
+	}
+	return code, ""
 }
 
 // TailscaleUsesText describes what Tailscale has on its port in English,

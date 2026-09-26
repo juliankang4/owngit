@@ -332,3 +332,17 @@ func TestTailscaleOffWhileTailscaleIsStopped(t *testing.T) {
 		t.Fatalf("off: %v", err)
 	}
 }
+
+// With TCP forwarding on the port, "status" gives the command that removes
+// it, not the one for web handlers, which Tailscale refuses then.
+func TestTailscaleStatusGivesTheStepForTCPForwarding(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: tailscale.ServeConfig{
+		TCP: map[string]tailscale.TCPHandler{"443": {TCPForward: "127.0.0.1:22"}},
+	}})
+	output, err := runTailscale(t, "status", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	if !strings.Contains(output, `"tailscale serve --tcp=443 off"`) || strings.Contains(output, "--https=443 off") {
+		t.Fatalf("status printed %q", output)
+	}
+}
