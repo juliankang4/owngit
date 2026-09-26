@@ -158,9 +158,7 @@ func TestChildLimits(t *testing.T) {
 			if result.state == nil || !result.state.Exited() && c.reason != "time" && c.reason != "output" {
 				t.Fatalf("the child was not reaped: %v", result.state)
 			}
-			if peak := peakMemory(result.state); peak > (childMemoryLimit+peakAllowance)*memoryScale {
-				t.Errorf("the child reached %d MiB", peak>>20)
-			}
+			checkChildMemory(t, c.mode, result)
 			t.Logf("%s stopped by %s after %v, cpu %v, peak %d MiB", c.mode, result.reason, elapsed.Round(time.Millisecond), result.cpu().Round(time.Millisecond), peakMemory(result.state)>>20)
 
 			// Render has not seen this source yet. Memory, output and a
@@ -218,37 +216,69 @@ func forgetSlow(source []byte) {
 	delete(slow.seen, sha256.Sum256(source))
 }
 
-// peakAllowance is how far past childMemoryLimit a child's resident memory
-// may go: the runtime's own memory and what is allocated between two samples.
-const peakAllowance = 96 << 20
+// runtimeAllowance is how much memory a child may hold beside its heap
+// objects: the runtime's span and collector metadata, stacks, and freed pages
+// not yet returned. Measured at 20 to 30 MiB on macOS.
+const runtimeAllowance = 64 << 20
+
+// checkChildMemory checks what the memory limit guarantees. A child stopped
+// by it saw a heap past childMemoryLimit, and its peak resident memory is that
+// heap plus the runtime's own memory, so the peak measures the heap and not
+// memory the process had given back. How far the heap got past the limit
+// depends on when the watcher could run (see the comment on the containment in
+// child.go), so it is logged, not bounded. A child stopped otherwise never
+// had its heap pass the limit at a sample.
+func checkChildMemory(t *testing.T, name string, result childResult) {
+	t.Helper()
+	peak := uint64(peakMemory(result.state))
+	if result.reason != "memory" {
+		if peak > (childMemoryLimit+runtimeAllowance)*memoryScale {
+			t.Errorf("%s: stopped by %s, the child reached %d MiB", name, result.reason, peak>>20)
+		}
+		return
+	}
+	if result.heapAtStop <= childMemoryLimit {
+		t.Errorf("%s: stopped for memory with a reported heap of %d MiB, not past the %d MiB limit", name, result.heapAtStop>>20, childMemoryLimit>>20)
+		return
+	}
+	t.Logf("%s: heap %d MiB at the stop (%d MiB past the limit), peak %d MiB", name, result.heapAtStop>>20, (result.heapAtStop-childMemoryLimit)>>20, peak>>20)
+	if peak > (result.heapAtStop+runtimeAllowance)*memoryScale {
+		t.Errorf("%s: peak %d MiB, more than the %d MiB heap at the stop and the runtime's own memory", name, peak>>20, result.heapAtStop>>20)
+	}
+}
 
 // The review's documents: a small table whose rows are padded to thousands
 // of cells, and reference links that multiply the output. Rendered in a
-// child without the estimate, each is stopped by the memory or output limit
-// and the child's peak memory stays near the limit.
+// child without the estimate, each is stopped by the memory or output limit.
+// The tables never reach a child in the product, because the estimate
+// refuses them first.
 func TestAmplifyingDocumentsStayWithinTheChildLimits(t *testing.T) {
 	cases := map[string]string{
-		"padded table (24 KB)":          tableRows(4000, 2000),
-		"padded table (17 KB)":          tableRows(4000, 400) + strings.Repeat("a\n", 4000),
-		"reused reference links":        referenceAmplifier(40000, 10000, 20),
-		"reference links, one per line": referenceAmplifier(40000, 10000, 1),
+		"padded table, 2000 short rows (20 KB)":      tableRows(4000, 2000),
+		"padded table, 400 short rows, text (24 KB)": tableRows(4000, 400) + strings.Repeat("a\n", 4000),
+		"reused reference links":                     referenceAmplifier(40000, 10000, 20),
+		"reference links, one per line":              referenceAmplifier(40000, 10000, 1),
 	}
 	for name, source := range cases {
 		source := []byte(source)
-		if estimateCost(source) <= maxCost && !strings.Contains(name, "reference") {
-			t.Errorf("%s: the estimate should refuse this table", name)
+		if !strings.Contains(name, "reference") {
+			forget(source)
+			starts := childStarts.Load()
+			if _, err := Render(context.Background(), source, testLinks); !errors.Is(err, ErrTooComplex) || childStarts.Load() != starts {
+				t.Errorf("%s: Render returned %v after starting %d children; the estimate should refuse it first", name, err, childStarts.Load()-starts)
+			}
 		}
 		start := time.Now()
 		result := renderInChild(source, testLinks)
 		elapsed := time.Since(start)
-		peak := peakMemory(result.state)
-		t.Logf("%s: %d bytes, %s after %v, peak %d MiB", name, len(source), result.reason, elapsed.Round(time.Millisecond), peak>>20)
+		t.Logf("%s: %d bytes, %s after %v", name, len(source), result.reason, elapsed.Round(time.Millisecond))
 		if !errors.Is(result.err, ErrTooComplex) || !result.documentFault {
 			t.Errorf("%s: got %v", name, result.err)
 		}
-		if peak > (childMemoryLimit+peakAllowance)*memoryScale {
-			t.Errorf("%s: the child reached %d MiB", name, peak>>20)
+		if !strings.Contains(name, "reference") && result.reason != "memory" {
+			t.Errorf("%s: stopped by %s, want the memory limit", name, result.reason)
 		}
+		checkChildMemory(t, name, result)
 	}
 }
 

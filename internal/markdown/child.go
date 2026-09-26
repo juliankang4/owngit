@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"runtime/debug"
 	"runtime/metrics"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +30,17 @@ import (
 // stops its processor use for real, and the child stops itself when its heap
 // passes childMemoryLimit. A document that fails any of these is remembered
 // and not rendered again while the server runs.
+//
+// These limits are the second line of defense. estimateCost refuses the known
+// costly shapes before any child starts. The memory limit is sampled: the
+// child runs Go on one processor, so its watcher runs only when the renderer
+// is preempted, and the heap can grow past the limit by what the renderer
+// allocates in between. For the padded tables in the tests, the heap at the
+// stop was measured at 256 to 303 MiB on an idle Mac and up to 320 MiB with
+// every core busy, with the peak resident memory 10 to 44 MiB above it. A
+// second processor for the watcher would shorten the gaps but let garbage
+// collection use two cores. The stop is certain; how far past the limit it
+// comes depends on scheduling.
 const (
 	// ChildCommand is the hidden first argument that makes the owngit binary
 	// render one document from stdin. It is not a user command.
@@ -109,7 +122,11 @@ func runChild(stdin io.Reader, stdout io.Writer, render func([]byte, Resolver) (
 	// The collector works harder as the heap nears the limit, which keeps
 	// ordinary garbage from counting against it.
 	debug.SetMemoryLimit(childMemoryLimit / 2)
-	go watchMemory(childMemoryLimit, childMemoryCheck, func() { os.Exit(exitMemory) })
+	go watchMemory(childMemoryLimit, childMemoryCheck, func(heap uint64) {
+		// The parent reads this line; the tests check the heap it reports.
+		fmt.Fprintf(os.Stderr, "%s%d\n", heapAtStopPrefix, heap)
+		os.Exit(exitMemory)
+	})
 	time.AfterFunc(childDeadline, func() { os.Exit(exitTimeout) })
 	return serveRequest(stdin, stdout, render)
 }
@@ -148,15 +165,19 @@ func serveRequest(stdin io.Reader, stdout io.Writer, render func([]byte, Resolve
 	return exitRendered
 }
 
-// watchMemory calls exceeded when the heap passes limit. It reads the heap
-// size the runtime keeps current on every allocation, without stopping the
-// program.
-func watchMemory(limit uint64, every time.Duration, exceeded func()) {
+// heapAtStopPrefix starts the stderr line on which a child stopped by the
+// memory limit reports the heap it saw.
+const heapAtStopPrefix = "owngit-render-heap-at-stop: "
+
+// watchMemory calls exceeded with the heap size when the heap passes limit.
+// It reads the heap size the runtime keeps current on every allocation,
+// without stopping the program.
+func watchMemory(limit uint64, every time.Duration, exceeded func(heap uint64)) {
 	sample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
 	for {
 		metrics.Read(sample)
 		if sample[0].Value.Kind() == metrics.KindUint64 && sample[0].Value.Uint64() > limit {
-			exceeded()
+			exceeded(sample[0].Value.Uint64())
 			return
 		}
 		time.Sleep(every)
@@ -173,7 +194,10 @@ type childResult struct {
 	// reason says which limit stopped the child, or why no child could
 	// render, for tests and the log.
 	reason string
-	state  *os.ProcessState
+	// heapAtStop is the heap the child saw when its memory limit stopped
+	// it, or zero.
+	heapAtStop uint64
+	state      *os.ProcessState
 }
 
 // timedOut reports a child stopped for time, and cpu is the processor time
@@ -209,6 +233,8 @@ func renderInChild(source []byte, links Links) childResult {
 	cmd := exec.Command(path, ChildCommand)
 	cmd.Env = append(os.Environ(), extraEnv...)
 	cmd.Stdout = stdout
+	stderr := &headWriter{limit: 4 << 10}
+	cmd.Stderr = stderr
 	input := io.MultiReader(bytes.NewReader(header), bytes.NewReader([]byte{'\n'}), bytes.NewReader(source))
 	childStarts.Add(1)
 	runErr := gitexec.RunOwned(ctx, cmd, input, childGrace)
@@ -230,6 +256,7 @@ func renderInChild(source []byte, links Links) childResult {
 		case exitTooLarge:
 			return complex("output")
 		case exitMemory:
+			result.heapAtStop = parseHeapAtStop(stderr.String())
 			return complex("memory")
 		case exitFailed:
 			return complex("failed")
@@ -255,6 +282,18 @@ func renderInChild(source []byte, links Links) childResult {
 	}
 	result.html = stdout.String()
 	return result
+}
+
+// parseHeapAtStop returns the heap a child reported on stderr when its memory
+// limit stopped it, or zero.
+func parseHeapAtStop(stderr string) uint64 {
+	_, value, found := strings.Cut(stderr, heapAtStopPrefix)
+	if !found {
+		return 0
+	}
+	value, _, _ = strings.Cut(value, "\n")
+	heap, _ := strconv.ParseUint(value, 10, 64)
+	return heap
 }
 
 var (
@@ -291,6 +330,29 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 }
 
 func (w *cappedWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+// headWriter keeps the first limit bytes and accepts the rest without keeping
+// it, so a child is never blocked on its stderr.
+type headWriter struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	limit int
+}
+
+func (w *headWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if room := w.limit - w.buf.Len(); room > 0 {
+		w.buf.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+func (w *headWriter) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.buf.String()
