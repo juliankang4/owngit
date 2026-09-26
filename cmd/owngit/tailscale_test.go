@@ -270,3 +270,25 @@ func TestTailscaleStatusSharesTheVerdictOfSettings(t *testing.T) {
 		t.Fatalf("taken port: %+v", report)
 	}
 }
+
+// After the endpoint was changed by hand, "status" and a refused "off" give
+// the commands that make turning off work.
+func TestTailscaleCommandGivesStepsForAChangedEndpoint(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
+	_, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve.Web[tailscaletest.Name+":443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:7701"}}}
+	})
+	for _, command := range []string{"status", "off"} {
+		output, err := runTailscale(t, command, "--state-dir", stateDir, "--tailscale", fake.Path)
+		if err != nil {
+			output += err.Error()
+		}
+		if !strings.Contains(output, `"tailscale serve --https=443 off"`) || !strings.Contains(output, `"tailscale serve --bg --https=443 http://127.0.0.1:7654"`) ||
+			strings.Contains(output, "Turn it on") {
+			t.Errorf("%s printed %q", command, output)
+		}
+	}
+}

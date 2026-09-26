@@ -88,7 +88,8 @@ const (
 	TailscaleWaitTailscale  = "tailscale"          // Problem says what
 	TailscaleWaitUnfinished = "unfinished"         // turning on did not finish; turn on again
 	TailscaleWaitName       = "name_changed"       // the computer's name changed; turn on again
-	TailscaleWaitEndpoint   = "endpoint"           // Endpoint says what
+	TailscaleWaitEndpoint   = "endpoint"           // the endpoint is gone; turn on again or off
+	TailscaleWaitChanged    = "endpoint_changed"   // the endpoint changed; undo that first
 	TailscaleWaitStopped    = "server_not_running" // start OwnGit
 	TailscaleWaitUnknown    = "server_unknown"     // the running server cannot be confirmed
 	TailscaleWaitRestart    = "restart"            // restart OwnGit
@@ -134,8 +135,11 @@ type TailscaleReport struct {
 	// CanTurnOn says that turning sharing on is expected to work now: it
 	// is off and Tailscale and its HTTPS port are ready, or it is on and
 	// waits to be turned on again. The Settings page and "owngit tailscale
-	// status" offer turning on only then.
-	CanTurnOn bool `json:"can_turn_on"`
+	// status" offer turning on only then. CanTurnOff says the same of
+	// turning off: it is on, and Tailscale's endpoint was not changed into
+	// something turning off refuses to remove.
+	CanTurnOn  bool `json:"can_turn_on"`
+	CanTurnOff bool `json:"can_turn_off"`
 	// Listen is the listen address of the next start, and HomeNetwork
 	// whether it reaches other devices on the home network.
 	Listen      string `json:"listen"`
@@ -196,9 +200,12 @@ func (sharing *Tailscale) Report(ctx context.Context) (TailscaleReport, error) {
 		report.Waiting = waitingFor(report, record, observed)
 		report.Ready = len(report.Waiting) == 0
 	}
-	again := slices.Contains(report.Waiting, TailscaleWaitUnfinished) || slices.Contains(report.Waiting, TailscaleWaitName)
+	again := slices.ContainsFunc(report.Waiting, func(wait string) bool {
+		return wait == TailscaleWaitUnfinished || wait == TailscaleWaitName || wait == TailscaleWaitEndpoint
+	})
 	report.CanTurnOn = report.Installed && report.Problem == "" &&
 		(!on && report.Endpoint == TailscaleEndpointFree || on && again)
+	report.CanTurnOff = on && report.Endpoint != TailscaleEndpointChanged
 	return report, nil
 }
 
@@ -249,8 +256,11 @@ func waitingFor(report TailscaleReport, record state.TailscaleServe, observed st
 	if report.Name != "" && report.Name != record.Name {
 		return append(waiting, TailscaleWaitName)
 	}
-	if report.Endpoint == TailscaleEndpointMissing || report.Endpoint == TailscaleEndpointChanged {
+	switch report.Endpoint {
+	case TailscaleEndpointMissing:
 		waiting = append(waiting, TailscaleWaitEndpoint)
+	case TailscaleEndpointChanged:
+		waiting = append(waiting, TailscaleWaitChanged)
 	}
 	switch observed.Server {
 	case state.ServerNotRunning:
@@ -281,6 +291,9 @@ type TailscaleError struct {
 	Detail string
 	// Found is what is on the HTTPS port.
 	Found []tailscale.Use
+	// Target is OwnGit's local address that its endpoint passes requests
+	// to, for the steps that undo a changed endpoint.
+	Target string
 	// MacApp is true for the Tailscale app for macOS.
 	MacApp bool
 }
@@ -595,7 +608,7 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 		case endpoint.Free:
 			change.Endpoint = "gone"
 		default:
-			return TailscaleChange{}, "", &TailscaleError{Problem: TailscaleProblemChanged, Found: endpoint.Found}
+			return TailscaleChange{}, "", &TailscaleError{Problem: TailscaleProblemChanged, Found: endpoint.Found, Target: record.Target}
 		}
 	}
 

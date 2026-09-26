@@ -38,12 +38,19 @@ type TailscaleInfo struct {
 	// computer (MsgTSStale).
 	Stale     []TailscaleUse
 	FoundNote MessageCode
+	// FoundFix says how to undo what is on the port, with FoundFixValue as
+	// its value when it has one; only the administrator gets it.
+	FoundFix      MessageCode
+	FoundFixValue string
 	// MacApp is true for the Tailscale app for macOS, which does not run
 	// after a restart until someone logs in.
 	MacApp bool
 	// CanTurnOn is true when sharing is off and Tailscale is ready for it,
-	// or when sharing is on and waits to be turned on again.
-	CanTurnOn bool
+	// or when sharing is on and waits to be turned on again. CanTurnOff is
+	// true while sharing is on, unless its endpoint was changed into
+	// something turning off refuses to remove (FoundFix says what to do).
+	CanTurnOff bool
+	CanTurnOn  bool
 	// HomeNetwork is the initial state of the home network checkbox: true
 	// when OwnGit already listens on every network.
 	HomeNetwork bool

@@ -295,7 +295,8 @@
     {{/* A refusal about the port points to this list. */}}
     {{if $ts.FoundNote}}
       <div class="netnote">{{icon "warning"}}<div><span>{{bi $lang $ts.FoundNote}}</span>
-        {{with $ts.Found}}<ul class="tsfound">{{range .}}<li>{{tsUse $lang .}}</li>{{end}}</ul>{{end}}</div></div>
+        {{with $ts.Found}}<ul class="tsfound">{{range .}}<li>{{tsUse $lang .}}</li>{{end}}</ul>{{end}}
+        {{with $ts.FoundFix}}<span>{{biF $lang . $ts.FoundFixValue}}</span>{{end}}</div></div>
     {{end}}
     {{if $ts.Stale}}
       <div class="netnote netnote--info">{{icon "info"}}<div><span>{{bi $lang "tailscale.stale"}}</span>
@@ -334,7 +335,7 @@
         </form>
       </details>
     {{end}}
-    {{if $ts.On}}
+    {{if $ts.CanTurnOff}}
       {{$act := "tailscale_off"}}{{$fn := forAction $pending $act $n}}
       <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
         <summary class="btn">{{bi $lang "settings.tailscale.turn_off"}}</summary>

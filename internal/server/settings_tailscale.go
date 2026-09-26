@@ -36,7 +36,7 @@ func (app *App) tailscaleBlock(ctx context.Context, admin bool) webui.TailscaleI
 		info.ProblemDetail, info.Stale = "", nil
 		info.Problem = webui.TailscaleProblemBrief(info.Problem)
 		if info.Found != nil {
-			info.Found = nil
+			info.Found, info.FoundFix, info.FoundFixValue = nil, "", ""
 			info.FoundNote = webui.TailscalePortNoteBrief(info.FoundNote)
 		}
 	}
@@ -63,11 +63,12 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	switch {
 	case report.On && report.Endpoint == TailscaleEndpointChanged:
 		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSChanged
+		info.FoundFix, info.FoundFixValue = webui.MsgTSChangedSteps, report.Sharing.Target
 	case !report.On && report.Endpoint == TailscaleEndpointTaken:
 		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSTaken
 	}
 	info.Stale = tailscaleUses(report.Stale)
-	info.CanTurnOn = report.CanTurnOn
+	info.CanTurnOn, info.CanTurnOff = report.CanTurnOn, report.CanTurnOff
 	// A --listen option decides where the running server listens, so the
 	// home network choice would change nothing then.
 	info.ListenOption = report.ListenOption

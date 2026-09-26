@@ -93,6 +93,9 @@ const (
 	// MsgTSStale introduces what Tailscale keeps under an earlier name of
 	// this computer, and how to remove it.
 	MsgTSStale = MessageCode("tailscale.stale")
+	// MsgTSChangedSteps says how to undo a changed endpoint so that turning
+	// off works.
+	MsgTSChangedSteps = MessageCode("tailscale.changed_steps")
 )
 
 // Messages that end with a colon are followed by the detail named in their
@@ -218,8 +221,17 @@ var tailscaleCatalog = map[MessageCode]message{
 		ko: "tailnet에서 이 컴퓨터의 이름이 바뀌었습니다. 새 이름을 쓰려면 공유를 다시 켜세요.",
 	},
 	"tailscale.wait.endpoint": {
-		en: "Tailscale no longer has the address OwnGit made. Turn sharing on again, or off if you changed it on purpose.",
-		ko: "OwnGit이 만든 주소가 Tailscale에 더 이상 없습니다. 공유를 다시 켜거나, 일부러 바꿨다면 끄세요.",
+		en: "Tailscale no longer has the address OwnGit made. Turn sharing on again to make it again, or off if you removed it on purpose.",
+		ko: "OwnGit이 만든 주소가 Tailscale에 더 이상 없습니다. 다시 만들려면 공유를 다시 켜고, 일부러 지웠다면 공유를 끄세요.",
+	},
+	"tailscale.wait.endpoint_changed": {
+		en: "Tailscale's HTTPS port 443 no longer has exactly the address OwnGit made, so sharing can be turned neither on nor off until that is put back or removed with \"tailscale serve\".",
+		ko: "Tailscale의 HTTPS 포트 443에 OwnGit이 만든 주소가 그대로 남아 있지 않습니다. \"tailscale serve\"로 원래대로 되돌리거나 지우기 전에는 공유를 켜거나 끌 수 없습니다.",
+	},
+	// Value: OwnGit's local address, the target of its endpoint.
+	MsgTSChangedSteps: {
+		en: "To turn sharing off, remove what Tailscale serves on HTTPS port 443 for this computer's name with \"tailscale serve --https=443 off\" on this computer, or, if only the address OwnGit passes requests to was changed, put it back with \"tailscale serve --bg --https=443 %s\". Then turn sharing off.",
+		ko: "공유를 끄려면 이 컴퓨터에서 \"tailscale serve --https=443 off\"로 이 컴퓨터 이름의 HTTPS 포트 443에 있는 설정을 지우세요. 요청을 넘길 주소만 바뀐 경우라면 \"tailscale serve --bg --https=443 %s\"로 되돌려도 됩니다. 그런 다음 공유를 끄세요.",
 	},
 	"tailscale.wait.server_not_running": {
 		en: "OwnGit is not running. The address works once OwnGit starts.",

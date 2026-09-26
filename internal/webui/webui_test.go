@@ -148,7 +148,7 @@ func allPages(lang Lang) map[string]Page {
 		"settings-tailscale": SettingsPage{
 			Chrome: c, SubmitURL: "/settings", AccessMode: AccessOpen,
 			Tailscale: TailscaleInfo{
-				On: true, URL: "https://owngit.tail0000.ts.net/", Name: "owngit.tail0000.ts.net",
+				On: true, CanTurnOff: true, URL: "https://owngit.tail0000.ts.net/", Name: "owngit.tail0000.ts.net",
 				Problem: TailscaleProblemCode("logged_out"),
 				Waiting: []MessageCode{TailscaleWaitCode("restart"), TailscaleWaitCode("endpoint")},
 				Found:   []TailscaleUse{{Kind: "proxy", Address: "https://owngit.tail0000.ts.net:443/", Target: "http://localhost:3000"}}, FoundNote: MsgTSChanged,

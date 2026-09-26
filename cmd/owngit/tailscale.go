@@ -256,7 +256,11 @@ func tailscaleFailure(err error) error {
 	if !errors.As(err, &refusal) {
 		return err
 	}
-	return errors.New(tailscaleProblemText(refusal.Problem, refusal.Detail, refusal.Found, refusal.MacApp))
+	text := tailscaleProblemText(refusal.Problem, refusal.Detail, refusal.Found, refusal.MacApp)
+	if refusal.Problem == server.TailscaleProblemChanged {
+		text += " " + fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSChangedSteps), refusal.Target)
+	}
+	return errors.New(text)
 }
 
 // tailscaleProblemText is the English message for a problem.
@@ -301,6 +305,7 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 		fmt.Fprintf(writer, "  %s %s\n", webui.Text(webui.LangEN, webui.MsgTSTaken), server.TailscaleUsesText(report.Found))
 	case report.On && report.Endpoint == server.TailscaleEndpointChanged:
 		fmt.Fprintf(writer, "  %s %s\n", webui.Text(webui.LangEN, webui.MsgTSChanged), server.TailscaleUsesText(report.Found))
+		fmt.Fprintf(writer, "  %s\n", fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSChangedSteps), report.Sharing.Target))
 	}
 	for _, wait := range report.Waiting {
 		if wait != server.TailscaleWaitTailscale {

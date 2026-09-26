@@ -245,7 +245,7 @@ func TestTailscaleOffChangesNothingWhenTheEndpointChanged(t *testing.T) {
 	})
 	report, err := app.Tailscale.Report(ctx)
 	noErr(t, err)
-	if report.Ready || report.Endpoint != TailscaleEndpointChanged || !slices.Contains(report.Waiting, TailscaleWaitEndpoint) {
+	if report.Ready || report.Endpoint != TailscaleEndpointChanged || !slices.Contains(report.Waiting, TailscaleWaitChanged) || report.CanTurnOn || report.CanTurnOff {
 		t.Fatalf("report after a change=%+v", report)
 	}
 	before, hostsBefore, proxiesBefore, recordBefore := savedSharing(t, app.Store)

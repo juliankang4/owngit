@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -248,5 +249,64 @@ func TestAViewerGetsACompleteSentenceForATailscaleError(t *testing.T) {
 	if !strings.Contains(body, enText(webui.TailscaleProblemBrief(webui.MsgTSProblemFailed))) || strings.Contains(body, "secret-detail-7") ||
 		strings.Contains(body, enText(webui.MsgTSProblemFailed)+"<") {
 		t.Fatal("a viewer does not get the complete sentence, or sees the detail")
+	}
+}
+
+// After the endpoint was changed by hand, neither turning on nor off would
+// work, so neither is offered: the administrator gets the exact commands
+// that make turning off work, and after following one, turning off works.
+func TestAChangedEndpointOffersTheStepsThatWork(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	change, err := app.Tailscale.On(ctx, nil)
+	noErr(t, err)
+	changed := tailscale.ServeConfig{
+		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+		Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:7701"}}}},
+	}
+	fake.Update(func(s *tailscaletest.State) { s.Serve = changed })
+	app.Tailscale.forget()
+	client, base, _, _ := networkSettingsClient(t, app)
+	settings, err := app.Store.Settings(ctx)
+	noErr(t, err)
+	noErr(t, app.Store.CreateSession(ctx, "changed-admin-session", "admin", "changed-admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
+	parsed, _ := url.Parse(base)
+	client.Jar.SetCookies(parsed, []*http.Cookie{{Name: adminCookie, Value: "changed-admin-session", Path: "/"}})
+	body, _ := dashboardGET(t, client, base+"/settings")
+	steps := fmt.Sprintf(enText(webui.MsgTSChangedSteps), change.Record.Target)
+	for _, want := range []string{enText(webui.TailscaleWaitCode(TailscaleWaitChanged)), steps, "http://127.0.0.1:7701"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the changed state lacks %q", want)
+		}
+	}
+	for _, refused := range []string{`value="tailscale_on"`, `value="tailscale_off"`} {
+		if strings.Contains(body, refused) {
+			t.Errorf("the changed state offers %s, which would be refused", refused)
+		}
+	}
+	// Following the first step: the entry is removed, and turning off works.
+	fake.Update(func(s *tailscaletest.State) { s.Serve = tailscale.ServeConfig{} })
+	off, err := app.Tailscale.Off(ctx)
+	noErr(t, err)
+	if off.Endpoint != "gone" {
+		t.Fatalf("off after removing the entry: %+v", off)
+	}
+	// Following the second step instead: OwnGit's address is back, and
+	// turning off removes it.
+	_, err = app.Tailscale.On(ctx, nil)
+	noErr(t, err)
+	fake.Update(func(s *tailscaletest.State) { s.Serve = changed })
+	if _, err := app.Tailscale.Off(ctx); err == nil {
+		t.Fatal("off accepted a changed endpoint")
+	}
+	_, err = app.Tailscale.On(ctx, nil)
+	if err == nil {
+		t.Fatal("on accepted a changed endpoint")
+	}
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve.Web[tailscaletest.Name+":443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: change.Record.Target}}}
+	})
+	if off, err := app.Tailscale.Off(ctx); err != nil || off.Endpoint != "removed" {
+		t.Fatalf("off after putting OwnGit's address back: %+v %v", off, err)
 	}
 }
