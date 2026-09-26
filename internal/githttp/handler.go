@@ -259,7 +259,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	// closes the connection after a body left unread, so responseState does:
 	// otherwise a client that reuses the connection gets EOF.
 	_ = controller.EnableFullDuplex()
-	committed := &responseState{ResponseWriter: writer, deadlines: deadlines,
+	committed := &responseState{ResponseWriter: writer, deadlines: deadlines, flushDelay: responseFlushDelay,
 		bodyEnded: func() bool { return request.ContentLength == 0 || network.ended.Load() }}
 	network.onEnd = committed.requestBodyEnded
 	defer committed.stop()
@@ -677,7 +677,8 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 	// packets. They must reach the client, and any proxy with a read timeout,
 	// soon instead of waiting in the response buffer for more data. So once
 	// the request body has ended, whenever everything Git has written so far
-	// was passed on, a flush follows within responseFlushDelay. Bulk data
+	// was passed on, a flush follows: the first after responseFlushDelay, the
+	// others at once. Bulk data
 	// still goes out in writes of up to 32 KiB. A failed flush leaves the
 	// connection failed, so the next write reports it, and the handler
 	// reports a failure after Git's last output.
@@ -725,14 +726,14 @@ func hopByHop(name string) bool {
 	}
 }
 
-// responseFlushDelay is how long Git's output may wait in the response buffer
-// once the request body has ended. It keeps the headers of a response that
-// Git starts at once from overtaking a reverse proxy that is still finishing
-// the request: Go's httputil.ReverseProxy over HTTP/1.1 reads the end of the
-// request body only after it has forwarded the last byte, and a response
-// that it passes on before that read makes it fail the request. Git sends
-// keepalives every 5 seconds, so they still reach a proxy with a read
-// timeout in time.
+// responseFlushDelay is how long the first flush after the end of the request
+// body waits, the one that sends the status line and headers. It keeps the
+// headers of a response that Git starts at once from overtaking a reverse
+// proxy that is still finishing the request: Go's httputil.ReverseProxy over
+// HTTP/1.1 reads the end of the request body only after it has forwarded the
+// last byte, and a response that it passes on before that read makes it fail
+// the request. Later flushes cannot overtake that read, so they go out at
+// once, and Git's keepalives reach a proxy with a read timeout in time.
 const responseFlushDelay = 200 * time.Millisecond
 
 // responseState passes the backend response on under the transfer deadlines.
@@ -741,9 +742,9 @@ const responseFlushDelay = 200 * time.Millisecond
 // read to its end. git-http-backend writes its headers before it reads a
 // push, and a reverse proxy that serves HTTP/1.1 half duplex, such as Go's
 // httputil.ReverseProxy with default settings, stops forwarding the request
-// body once it passes response headers on. From the end of the body on, what
-// Git wrote is flushed responseFlushDelay later at the latest, and the rest
-// of the response when Git finishes.
+// body once it passes response headers on. After the end of the body, the
+// first flush waits responseFlushDelay; later flushes go out at once, and the
+// rest of the response when Git finishes.
 //
 // A response that goes out before the end of the body anyway, because Git
 // wrote more than net/http buffers or finished without reading the rest,
@@ -756,11 +757,13 @@ type responseState struct {
 	// mu orders the handler's writes with flushes from the timer, which the
 	// end of the request body can start on the goroutine that feeds Git its
 	// input.
-	mu      sync.Mutex
-	status  int
-	sent    bool
-	timer   *time.Timer
-	stopped bool
+	mu         sync.Mutex
+	status     int
+	sent       bool
+	flushed    bool
+	flushDelay time.Duration
+	timer      *time.Timer
+	stopped    bool
 }
 
 // WriteHeader sets the status. Until a body byte was written or the
@@ -794,8 +797,8 @@ func (writer *responseState) sendHeaderLocked() {
 	writer.ResponseWriter.WriteHeader(writer.status)
 }
 
-// scheduleFlush makes sure that what was written so far is flushed within
-// responseFlushDelay once the request body has ended.
+// scheduleFlush flushes what was written so far once the request body has
+// ended: after flushDelay the first time, at once after that.
 func (writer *responseState) scheduleFlush() {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
@@ -803,10 +806,17 @@ func (writer *responseState) scheduleFlush() {
 }
 
 func (writer *responseState) scheduleLocked() {
-	if writer.stopped || writer.timer != nil || !writer.bodyEnded() || (writer.status == 0 && !writer.sent) {
+	if writer.stopped || !writer.bodyEnded() || (writer.status == 0 && !writer.sent) {
 		return
 	}
-	writer.timer = time.AfterFunc(responseFlushDelay, func() {
+	if writer.flushed {
+		_ = writer.flushLocked()
+		return
+	}
+	if writer.timer != nil {
+		return
+	}
+	writer.timer = time.AfterFunc(writer.flushDelay, func() {
 		writer.mu.Lock()
 		defer writer.mu.Unlock()
 		writer.timer = nil
@@ -821,6 +831,7 @@ func (writer *responseState) flushLocked() error {
 		return nil
 	}
 	writer.sendHeaderLocked()
+	writer.flushed = true
 	return writer.deadlines.flush()
 }
 
