@@ -85,6 +85,9 @@ func run(arguments []string) error {
 		command, arguments = arguments[0], arguments[1:]
 	}
 	if serviceStateCommands[command] && !helpRequested(arguments) {
+		if handled, err := stateCommandWithoutAdminRights(command, arguments); handled {
+			return err
+		}
 		stateDir := stateDirArgument(arguments)
 		if stateDir == "" {
 			stateDir = defaultStateDir()

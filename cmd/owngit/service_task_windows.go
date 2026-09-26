@@ -29,10 +29,9 @@ var (
 	procFreeConsole           = kernel32.NewProc("FreeConsole")
 )
 
-// withoutAdminVariable marks a process that runWithoutAdminRights started.
-// Such a process must not have administrator rights, and never starts
-// another copy of itself.
-const withoutAdminVariable = "OWNGIT_WITHOUT_ADMIN_RIGHTS"
+// copyVariable marks a copy of owngit that another one started (see
+// runCopy). A copy never starts a further copy.
+const copyVariable = "OWNGIT_STARTED_BY_OWNGIT"
 
 func platformCurrentAccountSID() (string, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
@@ -196,31 +195,41 @@ func withoutAdminToken() (windows.Token, error) {
 }
 
 // platformRunWithoutAdminRights runs this executable with the arguments and
-// a restricted token (withoutAdminToken) on this console, in a job that
-// ends it when this process ends, and returns its exit code. Interrupts
-// and a console close are passed on as the stop request of the server.
+// a restricted token (withoutAdminToken) on this console, and returns its
+// exit code.
 func platformRunWithoutAdminRights(arguments []string) (int, error) {
-	if os.Getenv(withoutAdminVariable) != "" {
-		return 0, errors.New("this copy of owngit still has administrator rights, so it does not start another")
+	return runCopy(arguments, true, 0)
+}
+
+// runCopy runs this executable with the arguments on this console, in a
+// job that ends it when this process ends, and returns its exit code. With
+// restricted it runs with withoutAdminToken. An interrupt or a console
+// close is passed on as CTRL_BREAK and, when stop is set, as the stop event
+// of the server.
+func runCopy(arguments []string, restricted bool, stop windows.Handle) (int, error) {
+	if os.Getenv(copyVariable) != "" {
+		return 0, errors.New("this copy of owngit was started by another one and does not start a further copy")
 	}
 	executable, err := os.Executable()
 	if err != nil {
 		return 0, err
 	}
-	token, err := withoutAdminToken()
-	if err != nil {
-		return 0, err
-	}
-	defer token.Close()
 	command := exec.Command(executable, arguments...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-	command.Env = append(os.Environ(), withoutAdminVariable+"=1")
+	command.Env = append(os.Environ(), copyVariable+"=1")
 	// Suspended until it is in the job, and in its own process group so
 	// that it can get CTRL_BREAK.
 	gitexec.ConfigureOwnedProcess(command)
-	command.SysProcAttr.Token = syscall.Token(token)
+	if restricted {
+		token, err := withoutAdminToken()
+		if err != nil {
+			return 0, err
+		}
+		defer token.Close()
+		command.SysProcAttr.Token = syscall.Token(token)
+	}
 	if err := command.Start(); err != nil {
-		return 0, fmt.Errorf("start owngit without administrator rights: %w", err)
+		return 0, fmt.Errorf("start a copy of owngit: %w", err)
 	}
 	owner, err := gitexec.AttachOwnedProcess(command)
 	if err != nil {
@@ -243,11 +252,11 @@ func platformRunWithoutAdminRights(arguments []string) (int, error) {
 			}
 			return 0, err
 		case <-interrupts:
-			// Ask the server to stop in order; the job ends whatever is left
+			// Ask the copy to stop in order; the job ends whatever is left
 			// when this process returns.
 			_ = windows.GenerateConsoleCtrlEvent(windows.CTRL_BREAK_EVENT, uint32(command.Process.Pid))
-			if stateDir := stateDirArgument(arguments); stateDir != "" {
-				_, _ = platformSignalServiceStop(stateDir)
+			if stop != 0 {
+				_ = windows.SetEvent(stop)
 			}
 			go func() {
 				time.Sleep(taskStopTimeout)
@@ -348,34 +357,70 @@ func platformSignalServiceStop(stateDir string) (bool, error) {
 	return false, lastErr
 }
 
-// serveWithoutAdminRights runs "owngit serve --service" without
-// administrator rights when this process has them, as an S4U task of an
-// administrator does: it creates the stop event and runs the server as a
-// restricted copy of itself, and returns its result. This process neither
-// listens nor opens the state directory. handled is false when this process
-// has no administrator rights and serves by itself.
+// serveWithoutAdminRights runs "owngit serve --service" as a supervisor:
+// it creates the stop event, runs the server as a copy of itself and starts
+// it again after a failure, until "owngit service stop" or the end of the
+// task. When this process has administrator rights, as an S4U task of an
+// administrator does, the copy runs without them. The supervisor neither
+// listens nor opens the state directory. handled is false in the copy,
+// which serves.
 func serveWithoutAdminRights(arguments []string) (handled bool, err error) {
-	if !windows.GetCurrentProcessToken().IsElevated() {
+	if os.Getenv(copyVariable) != "" {
+		if probeEnvironment().Elevated {
+			return true, errors.New("the server could not give up administrator rights, so it does not start")
+		}
 		return false, nil
-	}
-	if os.Getenv(withoutAdminVariable) != "" {
-		return true, errors.New("the server could not give up administrator rights, so it does not start")
 	}
 	stateDir := stateDirArgument(arguments)
 	if stateDir == "" {
 		return true, errors.New("serve --service needs --state-dir")
 	}
-	event, err := createGlobalStopEvent(stateDir)
+	elevated := probeEnvironment().Elevated
+	var stop windows.Handle
+	if elevated {
+		stop, err = createGlobalStopEvent(stateDir)
+	} else {
+		var name *uint16
+		if name, err = windows.UTF16PtrFromString(stopEventNames(stateDir)[1]); err == nil {
+			stop, err = windows.CreateEvent(nil, 1, 0, name)
+		}
+	}
 	if err != nil {
 		return true, fmt.Errorf("create the stop event: %w", err)
 	}
-	defer windows.CloseHandle(event)
-	code, err := platformRunWithoutAdminRights(append([]string{"serve"}, arguments...))
-	if err != nil {
-		return true, err
+	defer windows.CloseHandle(stop)
+	delay := serviceRestartDelay
+	for {
+		started := time.Now()
+		code, err := runCopy(append([]string{"serve"}, arguments...), elevated, stop)
+		if err != nil {
+			return true, err
+		}
+		if code == 0 || stopRequested(stop, 0) {
+			if code != 0 {
+				return true, &checkExit{code: code, err: fmt.Errorf("the server exited with status %d", code)}
+			}
+			return true, nil
+		}
+		// Task Scheduler restarts a task only when it cannot start it, not
+		// when its program fails later, so the supervisor does.
+		if time.Since(started) > time.Minute {
+			delay = serviceRestartDelay
+		}
+		if stopRequested(stop, delay) {
+			return true, nil
+		}
+		delay = min(2*delay, time.Minute)
 	}
-	if code != 0 {
-		return true, &checkExit{code: code, err: fmt.Errorf("the server exited with status %d", code)}
-	}
-	return true, nil
+}
+
+// serviceRestartDelay is the first wait before a failed server starts
+// again. It doubles while the server keeps failing, up to a minute.
+const serviceRestartDelay = 5 * time.Second
+
+// stopRequested waits up to wait for the stop event and reports whether it
+// is set.
+func stopRequested(stop windows.Handle, wait time.Duration) bool {
+	result, err := windows.WaitForSingleObject(stop, uint32(wait/time.Millisecond))
+	return err == nil && result == windows.WAIT_OBJECT_0
 }

@@ -176,15 +176,30 @@ func taskServiceCommand(action string, arguments []string) error {
 // withoutAdminRights runs an owngit command without administrator rights on
 // this console and passes its result on.
 func (host *taskHost) withoutAdminRights(arguments []string) error {
-	code, err := runWithoutAdminRights(arguments)
+	_, err := stateCommandWithoutAdminRights(arguments[0], arguments[1:])
+	return err
+}
+
+// stateCommandWithoutAdminRights runs a command that works on a state
+// directory as a copy of this process without administrator rights, when
+// this process has them on Windows (a terminal opened with "Run as
+// administrator", or SSH as an administrator). Files it creates then
+// belong to the account, as those of the service do, and Git accepts the
+// repositories as the account's own. "serve --service" does the same in
+// serve, where it also passes on the stop request.
+func stateCommandWithoutAdminRights(command string, arguments []string) (bool, error) {
+	environment := probeEnvironment()
+	if !environment.Windows || !environment.Elevated || command == "serve" && flagGiven(arguments, "service") {
+		return false, nil
+	}
+	code, err := runWithoutAdminRights(append([]string{command}, arguments...))
 	if err != nil {
-		return fmt.Errorf("run owngit without administrator rights: %w", err)
+		return true, fmt.Errorf("run owngit without administrator rights: %w", err)
 	}
 	if code != 0 {
-		// The copy already printed why; this command ends with its code.
-		return &checkExit{code: code, err: fmt.Errorf("exit status %d", code)}
+		return true, &checkExit{code: code, err: fmt.Errorf("exit status %d", code)}
 	}
-	return nil
+	return true, nil
 }
 
 // installed finds the task of an earlier install.
