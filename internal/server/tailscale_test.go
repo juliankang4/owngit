@@ -52,7 +52,28 @@ func withTailscale(t *testing.T, app *App, fakeState tailscaletest.State) (*App,
 		},
 		Live: app.Network,
 	}
+	// A page may have started a reading of Tailscale's addresses in the
+	// background (Tailscale.addresses). It must end before the fake does,
+	// or it would run the fake of a later test.
+	t.Cleanup(func() { finishAddressReading(t, app.Tailscale) })
 	return app, fake
+}
+
+// finishAddressReading waits for the reading of Tailscale's addresses that
+// a page started in the background, if one runs.
+func finishAddressReading(t *testing.T, sharing *Tailscale) {
+	t.Helper()
+	sharing.readings.mu.Lock()
+	done := sharing.readings.refreshed
+	sharing.readings.mu.Unlock()
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Minute):
+		t.Error("the background reading of Tailscale's addresses did not finish")
+	}
 }
 
 // throughServe sends a request as Tailscale Serve passes it on: from

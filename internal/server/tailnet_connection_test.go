@@ -59,6 +59,7 @@ func TestTheConnectionLabelNamesTheTailnet(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			app, _ := withTailscale(t, newUnacknowledgedApp(t), tailscaletest.State{Status: tailscaletest.Running()})
+			readAddresses(t, app)
 			if test.proxied {
 				app.Network = NewLiveNetwork(LiveNetworkConfig{Proxies: []netip.Prefix{netip.MustParsePrefix("100.64.0.9/32")}, Hosts: app.Hosts})
 			}
@@ -90,6 +91,15 @@ func TestTheConnectionLabelNamesTheTailnet(t *testing.T) {
 	}
 }
 
+// readAddresses reads Tailscale's state once, as a page does in the
+// background, so that pages know this computer's Tailscale addresses
+// however long the fake takes to answer.
+func readAddresses(t *testing.T, app *App) {
+	t.Helper()
+	_, err := app.Tailscale.read(context.Background())
+	noErr(t, err)
+}
+
 // newUnacknowledgedApp is newConfiguredApp without plain HTTP accepted.
 func newUnacknowledgedApp(t *testing.T) *App {
 	t.Helper()
@@ -117,6 +127,7 @@ func TestSetupOverTheTailnetNeedsNoPlainHTTPAcknowledgement(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			app, store, repositoryRoot := newTestApp(t)
 			app, _ = withTailscale(t, app, tailscaletest.State{Status: tailscaletest.Running()})
+			readAddresses(t, app)
 			noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
 			noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 			// Only the answers arrive from the other device; the setup link
@@ -179,17 +190,7 @@ func TestTheTailnetLabelDoesNotWaitForTailscale(t *testing.T) {
 		defer cache.mu.Unlock()
 		return cache.refreshed
 	}
-	finished := func() {
-		t.Helper()
-		if done := reading(); done != nil {
-			select {
-			case <-done:
-			case <-time.After(time.Minute):
-				t.Fatal("the reading did not finish")
-			}
-		}
-	}
-	t.Cleanup(finished)
+	finished := func() { finishAddressReading(t, app.Tailscale) }
 
 	if labeled() || reading() == nil {
 		t.Fatal("the first page waited for the whole reading, or none runs")
