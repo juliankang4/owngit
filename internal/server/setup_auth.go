@@ -50,9 +50,11 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 		page.KeepHost, page.KeepHostSetupOnly = app.setupHostToKeep(request), unknownHost
 		// On a computer without a screen the owner sets up from another
 		// device and nearly always wants to keep using it, so the address
-		// stays unless the owner unticks it.
-		page.Form.KeepHost = page.KeepHost != "" && app.HeadlessListen != ""
-		if publicPeer(request) {
+		// stays unless the owner unticks it. Not from the public Internet,
+		// where the notice below advises against it.
+		public := publicPeer(request)
+		page.Form.KeepHost = page.KeepHost != "" && app.HeadlessListen != "" && !public
+		if public {
 			page.Form.AccessMode = webui.AccessPassword
 			page.Chrome.Notices = append(page.Chrome.Notices, publicNetworkNotice())
 		}

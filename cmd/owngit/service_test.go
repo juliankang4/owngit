@@ -690,3 +690,21 @@ func TestUninstallOfAUserServiceMentionsLingering(t *testing.T) {
 		t.Fatalf("uninstall output:\n%s", out)
 	}
 }
+
+// The serve error file belongs to the service account, and root may read
+// it after switching accounts: only a regular file counts, at most 4 KiB is
+// read, and control characters never reach the terminal.
+func TestServeErrorReadsOnlyABoundedRegularFile(t *testing.T) {
+	stateDir := t.TempDir()
+	path := filepath.Join(stateDir, serveErrorFile)
+	noErr(t, os.WriteFile(path, []byte("port in use\x1b]0;owned\x07"+strings.Repeat("x", 10000)), 0o600))
+	message, found := serveErrorSince(stateDir, time.Time{})
+	if !found || len(message) > maxServeError || strings.ContainsAny(message, "\x1b\x07") || !strings.HasPrefix(message, "port in use?]0;owned?") {
+		t.Fatalf("serve error %d bytes, found=%v: %.40q", len(message), found, message)
+	}
+	noErr(t, os.Rename(path, filepath.Join(stateDir, "elsewhere")))
+	noErr(t, os.Symlink(filepath.Join(stateDir, "elsewhere"), path))
+	if _, found := serveErrorSince(stateDir, time.Time{}); found {
+		t.Fatal("followed a link")
+	}
+}

@@ -98,6 +98,11 @@ const (
 	// MsgSetupStorageDeniedGive is MsgSetupStorageDenied on the setup page,
 	// followed by the command that gives OwnGit's account the folder.
 	MsgSetupStorageDeniedGive MessageCode = "setup.storage.denied_give"
+	// MsgSetupStorageDeniedExisting is MsgSetupStorageDenied on the setup
+	// page for a folder that exists, followed by a new folder to use inside
+	// it when one is free. OwnGit never suggests changing an existing
+	// folder, which may belong to the system or other software.
+	MsgSetupStorageDeniedExisting MessageCode = "setup.storage.denied_existing"
 	// MsgSetupStorageReadOnly is a folder on a read-only file system, which
 	// includes the folders a service unit makes read-only.
 	MsgSetupStorageReadOnly MessageCode = "setup.storage.read_only"
@@ -552,6 +557,10 @@ var catalog = map[MessageCode]message{
 	MsgSetupStorageDeniedGive: {
 		en: "The account OwnGit runs as cannot write to that folder. Choose another folder, or give it this one by running this command on the OwnGit computer:",
 		ko: "OwnGit이 실행되는 계정은 그 폴더에 쓸 수 없습니다. 다른 폴더를 고르거나, OwnGit 컴퓨터에서 이 명령을 실행해 이 폴더를 맡기세요:",
+	},
+	MsgSetupStorageDeniedExisting: {
+		en: "The account OwnGit runs as cannot write to that existing folder. Leave the folder as it is and enter a new folder inside it instead; OwnGit then shows how to create it. For example:",
+		ko: "OwnGit이 실행되는 계정은 이미 있는 그 폴더에 쓸 수 없습니다. 그 폴더는 그대로 두고 그 안의 새 폴더를 입력하세요. 그러면 새 폴더를 만드는 방법을 알려 줍니다. 예:",
 	},
 	MsgSetupStorageReadOnly: {
 		en: "That folder is read-only for OwnGit. A service may not write in system folders, and the owngit account service not in home folders either. Choose the suggested folder or one such as /srv/git.",

@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -207,10 +208,12 @@ func storageProblem(err error) webui.MessageCode {
 }
 
 // storageNotice is the setup form's notice for a repository folder
-// problem. A folder the account cannot write comes with the command that
-// gives it the folder, because a service runs as an account the owner may
-// not know; other problems the owner cannot read from the page come with
-// the system's message.
+// problem. A service runs as an account the owner may not know, so a folder
+// that account cannot write comes with the next step: for a missing folder,
+// the command that creates it for that account; for an existing folder,
+// which may be a system folder that other software needs, a new folder
+// inside it, never a command that changes the existing one. Other problems
+// the owner cannot read from the page come with the system's message.
 func storageNotice(folder string, err error) webui.Notice {
 	code := storageProblem(err)
 	if code == webui.MsgSetupStorageDenied && hiddenFolder(folder) {
@@ -222,16 +225,39 @@ func storageNotice(folder string, err error) webui.Notice {
 		if runtime.GOOS == "windows" {
 			break
 		}
+		clean := filepath.Clean(folder)
+		if _, statErr := os.Lstat(clean); !errors.Is(statErr, fs.ErrNotExist) {
+			// It exists, or this account cannot even tell.
+			notice.Code = webui.MsgSetupStorageDeniedExisting
+			notice.Detail = freeSubfolder(clean)
+			break
+		}
 		if account, err := user.Current(); err == nil {
 			if group, err := user.LookupGroupId(account.Gid); err == nil {
 				notice.Code = webui.MsgSetupStorageDeniedGive
-				notice.Detail = fmt.Sprintf("sudo install -d -o %s -g %s -m 0700 %s", account.Username, group.Name, shellWord(filepath.Clean(folder)))
+				notice.Detail = fmt.Sprintf("sudo install -d -o %s -g %s -m 0700 %s", account.Username, group.Name, shellWord(clean))
 			}
 		}
 	case webui.MsgSetupStorageUnusable:
 		notice.Detail = err.Error()
 	}
 	return notice
+}
+
+// freeSubfolder suggests a new folder inside parent: owngit-repos, or with
+// a number when that name is taken. A name this account cannot check counts
+// as free; entering it again gets the same kind of advice, never a command.
+func freeSubfolder(parent string) string {
+	for number := 1; ; number++ {
+		name := "owngit-repos"
+		if number > 1 {
+			name += "-" + strconv.Itoa(number)
+		}
+		candidate := filepath.Join(parent, name)
+		if _, err := os.Lstat(candidate); err != nil || number == 99 {
+			return candidate
+		}
+	}
 }
 
 // hiddenFolder reports whether a folder on the path is inaccessible to

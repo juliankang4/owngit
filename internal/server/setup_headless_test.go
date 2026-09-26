@@ -15,12 +15,20 @@ import (
 )
 
 // browserFrom drives setup through a server that sees every connection as
-// coming from peer, as a device at that address would.
-func browserFrom(t *testing.T, app *App, peer string) *hostBrowser {
+// coming from peer, as a device at that address would. A host other than ""
+// replaces the Host and Origin the browser sends, as when the device used
+// that address.
+func browserFrom(t *testing.T, app *App, peer string, host ...string) *hostBrowser {
 	t.Helper()
 	handler := app.Handler()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		request.RemoteAddr = peer
+		if len(host) == 1 {
+			request.Host = host[0]
+			if request.Header.Get("Origin") != "" {
+				request.Header.Set("Origin", "http://"+host[0])
+			}
+		}
 		handler.ServeHTTP(writer, request)
 	}))
 	t.Cleanup(server.Close)
@@ -147,4 +155,21 @@ func (browser *hostBrowser) finishPage(store *state.Store, repositoryRoot string
 		values[key] = value
 	}
 	return browser.do(http.MethodPost, "/setup", values)
+}
+
+// On a computer without a screen the keep-address box starts ticked for a
+// private peer and unticked for a public one, which matches the notice.
+func TestHeadlessKeepDefaultFollowsThePeer(t *testing.T) {
+	for peer, ticked := range map[string]bool{"192.168.1.30:40000": true, "203.0.113.9:40000": false} {
+		app, store, _ := newTestApp(t)
+		app.HeadlessListen = HeadlessListenAddress
+		noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
+		page := browserFrom(t, app, peer, "192.168.1.20:7654").redeem("synthetic-owner-token")
+		if !strings.Contains(page, `name="keep_host"`) {
+			t.Fatalf("peer %s: the keep box is not offered", peer)
+		}
+		if got := strings.Contains(page, keptBox); got != ticked {
+			t.Errorf("peer %s: keep box ticked=%v, want %v", peer, got, ticked)
+		}
+	}
 }

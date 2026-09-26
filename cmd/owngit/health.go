@@ -127,19 +127,33 @@ func clearServeError(stateDir string) {
 	_ = os.Remove(filepath.Join(stateDir, serveErrorFile))
 }
 
+// maxServeError bounds how much of serveErrorFile is read.
+const maxServeError = 4 << 10
+
 // serveErrorSince returns the recorded serve error when it was written at or
-// after since.
+// after since. The file belongs to the account that runs the service, which
+// may not be the one reading it (root after switching accounts), so only a
+// regular file is read, at most maxServeError bytes, and control characters
+// are replaced before the text reaches a terminal.
 func serveErrorSince(stateDir string, since time.Time) (string, bool) {
 	path := filepath.Join(stateDir, serveErrorFile)
-	info, err := os.Stat(path)
-	if err != nil || info.ModTime().Before(since) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.ModTime().Before(since) {
 		return "", false
 	}
-	content, err := os.ReadFile(path)
+	file, err := os.OpenFile(path, os.O_RDONLY|serveErrorOpenFlags, 0)
 	if err != nil {
 		return "", false
 	}
-	return strings.TrimSpace(string(content)), true
+	defer file.Close()
+	if opened, err := file.Stat(); err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return "", false
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxServeError))
+	if err != nil {
+		return "", false
+	}
+	return printable(strings.TrimSpace(string(content))), true
 }
 
 // errServeFailed is a service that ended with an error while starting.
