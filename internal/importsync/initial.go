@@ -167,10 +167,19 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 		Name: name, RepositoryID: run.run.RepositoryID, RunID: run.run.ID, RootID: root.rootID, Token: token,
 		DisplayName: run.name, Description: run.description, State: state.ImportInitialPreparing, CreatedAt: now,
 	}
-	if err := s.Store.RegisterImportInitialDestination(ctx, record); err != nil {
+	// The record and its read-back do not follow the run's cancellation (see
+	// recordContext). A run stopped meanwhile still creates the directory it
+	// now owns, and the next step that uses the run's context reports the
+	// stop and removes it, so no record is left without its directory.
+	if s.beforeRecord != nil {
+		s.beforeRecord(ctx, "initial destination")
+	}
+	recordCtx, cancelRecord := recordContext(ctx)
+	defer cancelRecord()
+	if err := s.Store.RegisterImportInitialDestination(recordCtx, record); err != nil {
 		return "", newProblem(CodeStateUnavailable, "unpublished destination ownership could not be recorded", err)
 	}
-	stored, exists, err := s.Store.ImportInitialDestination(ctx, name)
+	stored, exists, err := s.Store.ImportInitialDestination(recordCtx, name)
 	if err != nil || !exists || stored.Token != token || stored.RunID != run.run.ID || stored.RootID != root.rootID || stored.State != state.ImportInitialPreparing {
 		return "", newProblem(CodeUnresolved, "unpublished destination ownership could not be read back", err)
 	}

@@ -556,7 +556,16 @@ func (s *Service) publishRepositoryLocked(ctx context.Context, run *runState, re
 		}
 	}
 	intent.HeadOwned = plan.headOwned && !plan.headChange
-	if err := s.Store.CreateImportIntent(ctx, intent); err != nil {
+	// The intent is recorded without the run's cancellation (see
+	// recordContext); applyIntent reports a stop that came meanwhile and
+	// settles the intent.
+	if s.beforeRecord != nil {
+		s.beforeRecord(ctx, "publication intent")
+	}
+	recordCtx, cancelRecord := recordContext(ctx)
+	err = s.Store.CreateImportIntent(recordCtx, intent)
+	cancelRecord()
+	if err != nil {
 		return *plan, newProblem(CodeStateUnavailable, "publication intent could not be recorded", err)
 	}
 	run.run.RefsCreated = plan.created

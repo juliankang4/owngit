@@ -384,8 +384,8 @@ func (s *Service) setStatus(ctx context.Context, run *runState, status string) e
 	if err := s.authorityCurrent(ctx, run); err != nil {
 		return err
 	}
-	if s.beforeStageRecord != nil {
-		s.beforeStageRecord(ctx, status)
+	if s.beforeRecord != nil {
+		s.beforeRecord(ctx, status)
 	}
 	recordCtx, cancelRecord := recordContext(ctx)
 	err := s.Store.SetImportRunStatus(recordCtx, run.run.ID, status)

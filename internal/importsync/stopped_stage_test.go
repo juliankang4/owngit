@@ -56,7 +56,7 @@ func TestStopWhileRecordingAStageIsNotAStateFailure(t *testing.T) {
 		t.Run("deadline at "+stage, func(t *testing.T) {
 			f := newFixture(t)
 			f.commit("one", "one\n")
-			f.service.beforeStageRecord = func(ctx context.Context, status string) {
+			f.service.beforeRecord = func(ctx context.Context, status string) {
 				if status != stage {
 					return
 				}
@@ -75,7 +75,7 @@ func TestStopWhileRecordingAStageIsNotAStateFailure(t *testing.T) {
 		t.Run("cancel at "+stage, func(t *testing.T) {
 			f := newFixture(t)
 			f.commit("one", "one\n")
-			f.service.beforeStageRecord = func(_ context.Context, status string) {
+			f.service.beforeRecord = func(_ context.Context, status string) {
 				if status != stage {
 					return
 				}
@@ -102,7 +102,7 @@ func TestAFailedStageWriteIsAStateFailure(t *testing.T) {
 			noErr(t, f.store.Exec(context.Background(), `CREATE TRIGGER fail_stage BEFORE UPDATE ON import_runs
 				WHEN NEW.status='fetching' BEGIN SELECT RAISE(FAIL,'synthetic stage failure'); END`))
 			if stopped {
-				f.service.beforeStageRecord = func(_ context.Context, status string) {
+				f.service.beforeRecord = func(_ context.Context, status string) {
 					if status == state.ImportRunFetching {
 						if cancelled, err := f.service.Cancel(context.Background(), "project"); err != nil || !cancelled {
 							t.Errorf("cancel while recording fetching cancelled=%v err=%v", cancelled, err)
@@ -237,6 +237,126 @@ func TestDeadlineDuringAdmissionIsTheTimeLimit(t *testing.T) {
 			before := rows()
 			_, err := f.service.Refresh(context.Background(), "project", Limits{RunTimeout: timeout})
 			check("refresh", timeout, before, err)
+		}
+	}
+}
+
+// A run whose deadline or cancellation comes while its initial destination or
+// its publication intent is being recorded reports that stop, records its
+// outcome and leaves nothing behind: no unpublished directory and no pending
+// intent.
+func TestStopWhileRecordingPublicationIsNotAStateFailure(t *testing.T) {
+	for _, test := range []struct {
+		record  string
+		refresh bool
+	}{
+		{"initial destination", false},
+		{"publication intent", false},
+		{"publication intent", true},
+	} {
+		for _, stop := range []string{"deadline", "cancel"} {
+			name := stop + " at " + test.record
+			if test.refresh {
+				name += " of a refresh"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := newFixture(t)
+				f.commit("one", "one\n")
+				if test.refresh {
+					f.mustImport(ImportInput{})
+					f.commit("two", "two\n")
+				}
+				hit := false
+				f.service.beforeRecord = func(ctx context.Context, record string) {
+					if record != test.record || hit {
+						return
+					}
+					hit = true
+					if stop == "cancel" {
+						cancelAdmittedRun(t, f)
+						return
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(30 * time.Second):
+						t.Error("run deadline did not expire")
+					}
+				}
+				limits := Limits{}
+				if stop == "deadline" {
+					limits.RunTimeout = 3 * time.Second
+				}
+				var err error
+				if test.refresh {
+					_, err = f.service.Refresh(context.Background(), "project", limits)
+				} else {
+					_, err = f.importProject(ImportInput{Limits: limits})
+				}
+				if !hit {
+					t.Fatalf("the run did not record the %s", test.record)
+				}
+				wantCode, wantStatus := CodeLimit, state.ImportRunFailed
+				if stop == "cancel" {
+					wantCode, wantStatus = CodeCancelled, state.ImportRunCancelled
+				}
+				run := f.lastRun()
+				if problemCode(err) != wantCode || run.Status != wantStatus || run.ErrorClass != wantCode {
+					t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
+				}
+				intents, err := f.store.PendingImportIntents(context.Background(), "project")
+				if err != nil || len(intents) != 0 {
+					t.Fatalf("%s: pending intents=%+v err=%v", name, intents, err)
+				}
+				if !test.refresh {
+					assertNoLeftoverDirectories(t, f)
+					rows, err := f.store.ImportInitialDestinationsForRun(context.Background(), run.ID)
+					noErr(t, err)
+					for _, row := range rows {
+						if row.State == state.ImportInitialPreparing || row.State == state.ImportInitialReady {
+							t.Fatalf("%s: initial destination %s left %s", name, row.Name, row.State)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// An initial destination or publication intent record that really fails
+// stays a state failure, also when the run was stopped while it was being
+// recorded, and nothing is left behind once the run or the next
+// reconciliation has cleaned up.
+func TestAFailedPublicationRecordIsAStateFailure(t *testing.T) {
+	for _, test := range []struct{ record, table string }{
+		{"initial destination", "import_initial_destinations"},
+		{"publication intent", "import_publication_intents"},
+	} {
+		for _, stopped := range []bool{false, true} {
+			name := fmt.Sprintf("%s stopped=%v", test.record, stopped)
+			t.Run(name, func(t *testing.T) {
+				f := newFixture(t)
+				f.commit("one", "one\n")
+				noErr(t, f.store.Exec(context.Background(), `CREATE TRIGGER fail_record BEFORE INSERT ON `+test.table+`
+					BEGIN SELECT RAISE(FAIL,'synthetic record failure'); END`))
+				if stopped {
+					f.service.beforeRecord = func(_ context.Context, record string) {
+						if record == test.record {
+							cancelAdmittedRun(t, f)
+						}
+					}
+				}
+				_, err := f.importProject(ImportInput{})
+				run := f.lastRun()
+				if problemCode(err) != CodeStateUnavailable || run.Status != state.ImportRunFailed || run.ErrorClass != CodeStateUnavailable || !strings.Contains(run.Message, "synthetic record failure") {
+					t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
+				}
+				// A stopped first import removes its unpublished directory
+				// itself; after a state failure the next reconciliation does.
+				if !stopped {
+					noErr(t, f.service.Reconcile(context.Background()), "reconcile after the failed record")
+				}
+				assertNoLeftoverDirectories(t, f)
+			})
 		}
 	}
 }

@@ -110,9 +110,11 @@ type Service struct {
 	// afterRunStage runs outside every lock each time a run records a stage,
 	// starting with preparing.
 	afterRunStage func(status string)
-	// beforeStageRecord runs with the run context after the authority check
-	// and before a stage after preparing is recorded.
-	beforeStageRecord func(ctx context.Context, status string)
+	// beforeRecord runs with the run context before a run record is written
+	// with recordContext: a stage after preparing (named by its status), the
+	// initial destination ("initial destination") or the publication intent
+	// ("publication intent").
+	beforeRecord func(ctx context.Context, record string)
 	// beforeInitialPublication runs after the unpublished initial directory
 	// exists and before objects are indexed. It is outside the repository lock.
 	beforeInitialPublication func() error
