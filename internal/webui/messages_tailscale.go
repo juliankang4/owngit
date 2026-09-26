@@ -252,7 +252,7 @@ var tailscaleCatalog = map[MessageCode]message{
 	},
 	MsgTSRemoveStepsForeground: {
 		en: "A \"tailscale serve\" command running in a terminal on this computer uses the port. If you no longer need it, stop it in that terminal with Ctrl+C. If port 443 still has something, remove it with \"tailscale serve\". Then turn sharing on.",
-		ko: "이 컴퓨터의 터미널에서 실행 중인 \"tailscale serve\" 명령이 이 포트를 쓰고 있습니다. 더 이상 필요 없다면 그 터미널에서 Ctrl+C로 멈추세요. 포트 443에 아직 설정이 남아 있으면 \"tailscale serve\"로 지운 뒤 공유를 켜세요.",
+		ko: "이 컴퓨터의 터미널에서 실행 중인 \"tailscale serve\" 명령이 이 포트를 쓰고 있습니다. 더 이상 필요 없다면 그 터미널에서 Ctrl+C로 멈추세요. 포트 443에 아직 설정이 남아 있으면 \"tailscale serve\"로 지우세요. 그런 다음 공유를 켜세요.",
 	},
 	MsgTSRemoveStepsOther: {
 		en: "If you no longer need it, remove what Tailscale serves on port 443 with \"tailscale serve\" on this computer (\"tailscale serve status\" shows it), then turn sharing on.",
