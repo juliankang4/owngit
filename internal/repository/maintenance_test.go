@@ -269,32 +269,53 @@ func TestMaintenanceWaitsUntilTheRepositoryIsIdle(t *testing.T) {
 		t.Fatalf("maintenance ran without a write: %v", lines)
 	}
 
+	// Uses arrive every idle/4, so maintenance must wait until they stop. A
+	// late wake-up of this goroutine really leaves the repository idle, and
+	// maintenance may then start in the gap, so the test checks every start
+	// it sees against the use before it instead of assuming when uses end.
+	// A run clears the pending flag when it starts, and nothing else does
+	// here. A start between two readings of the flag saw a last use no
+	// earlier than the use noted before the first reading, and happened no
+	// later than the second reading.
+	startedAfter := func(use time.Time, where string) {
+		t.Helper()
+		if gap := time.Since(use); gap < idle {
+			t.Fatalf("maintenance started %s: at most %s after a use, want at least %s", where, gap, idle)
+		}
+	}
+	use := time.Now()
 	manager.NoteRepositoryWrite("sample")
-	var lastUse time.Time
+	pending := true
 	for range 10 {
 		time.Sleep(idle / 4)
+		next := time.Now()
 		manager.NoteRepositoryUse("sample")
-		lastUse = time.Now()
+		still := manager.pendingMaintenance("sample")
+		if pending && !still {
+			startedAfter(use, "while uses arrived")
+		}
+		pending, use = still, next
 	}
 	waitFor(t, "small maintenance", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) == 1 })
+	if pending {
+		// The run that completed started after the last reading.
+		startedAfter(use, "after the last use")
+	}
 	if files := looseRefFiles(t, fixture.remote); len(files) != 0 {
 		t.Fatalf("loose refs remain: %v", files)
-	}
-	// The last recorded use postponed the run by the idle time. The log
-	// line follows the three commands, so it cannot be earlier.
-	if elapsed := time.Since(lastUse); elapsed < idle {
-		t.Fatalf("maintenance completed %s after the last use, want at least %s", elapsed, idle)
 	}
 	if manager.pendingMaintenance("sample") {
 		t.Fatal("maintenance still pending")
 	}
 
-	// A repository in use defers maintenance without a log line.
+	// A repository in use defers maintenance without a log line. A run the
+	// uses above paused has already logged, so count only new lines.
+	logged := len(log.matching("(small)"))
 	lock := manager.Locks.For("sample")
 	lock.RLock()
 	manager.NoteRepositoryWrite("sample")
 	time.Sleep(3 * idle)
-	if len(log.matching("(small)")) != 1 || !manager.pendingMaintenance("sample") {
+	if len(log.matching("(small)")) != logged || !manager.pendingMaintenance("sample") {
 		lock.RUnlock()
 		t.Fatalf("maintenance did not wait for the reader: %v", log.matching("maintenance"))
 	}
