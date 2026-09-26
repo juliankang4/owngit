@@ -312,3 +312,77 @@ func TestTailscaleSharingOnAnotherPortAfterARename(t *testing.T) {
 		t.Fatal("turning off under the new name removed the old name's entry")
 	}
 }
+
+// A turning on that was interrupted after Tailscale made OwnGit's address
+// on 8443 left a record that was never confirmed. Naming another port then
+// is refused as for sharing that is on, because a record for the new port
+// would replace the only record of the address on 8443. Turning off
+// removes that address, and the named port works afterwards. Without the
+// address, the named port is used at once.
+func TestTailscaleSharingNamedPortAfterAnInterruptedTurningOn(t *testing.T) {
+	name := tailscaletest.Name
+	target := "http://127.0.0.1:7654"
+	interrupted := state.TailscaleServe{Name: name, HTTPSPort: 8443, Target: target, Created: true, CreatedAt: 1}
+	madeOn8443 := tailscale.ServeConfig{
+		TCP: map[string]tailscale.TCPHandler{"8443": {HTTPS: true}},
+		Web: map[string]tailscale.WebServer{name + ":8443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: target}}}},
+	}
+	ctx := context.Background()
+
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: madeOn8443})
+	noErr(t, app.Store.SaveTailscaleServe(ctx, interrupted))
+	report, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if !report.On || !report.CanTurnOff || report.Endpoint != TailscaleEndpointOwnGit || !slices.Contains(report.Waiting, TailscaleWaitUnfinished) {
+		t.Fatalf("report of the interrupted turning on=%+v", report)
+	}
+	_, err = app.Tailscale.On(ctx, nil, 10000)
+	var refusal *TailscaleError
+	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemOtherPort || refusal.Detail != "https://"+name+":8443/" || len(fake.Writes()) != 0 {
+		t.Fatalf("another named port: err=%v writes=%q", err, fake.Writes())
+	}
+	if _, _, _, record := savedSharing(t, app.Store); record == nil || *record != interrupted {
+		t.Fatalf("the refusal changed the record: %+v", record)
+	}
+	change, err := app.Tailscale.Off(ctx)
+	noErr(t, err)
+	if change.Endpoint != "removed" || !reflect.DeepEqual(fake.Writes(), []string{"serve --https=8443 --set-path=/ off"}) {
+		t.Fatalf("off: %+v %q", change, fake.Writes())
+	}
+	change, err = app.Tailscale.On(ctx, nil, 10000)
+	noErr(t, err)
+	if change.Endpoint != "created" || change.Record.HTTPSPort != 10000 {
+		t.Fatalf("on after off: %+v", change)
+	}
+
+	// The interrupted turning on left no address.
+	app, fake = tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	noErr(t, app.Store.SaveTailscaleServe(ctx, interrupted))
+	change, err = app.Tailscale.On(ctx, nil, 10000)
+	noErr(t, err)
+	if change.Endpoint != "created" || change.Record.HTTPSPort != 10000 || !reflect.DeepEqual(fake.Writes(), []string{"serve --bg --https=10000 " + target}) {
+		t.Fatalf("with no address left: %+v %q", change, fake.Writes())
+	}
+}
+
+// OwnGit's address on a named port under an earlier name is shown after
+// turning off, which leaves it because Tailscale removes it only under that
+// name, although no record names the port any more.
+func TestTailscaleSharingShowsAnEarlierNameOnANamedPort(t *testing.T) {
+	name := tailscaletest.Name
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	_, err := app.Tailscale.On(ctx, nil, 4443)
+	noErr(t, err)
+	rename(fake)
+	change, err := app.Tailscale.Off(ctx)
+	noErr(t, err)
+	if change.Endpoint != "stale" {
+		t.Fatalf("off after the rename: %+v", change)
+	}
+	report, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if report.On || !slices.ContainsFunc(report.Stale, func(use tailscale.Use) bool { return use.Address == "https://"+name+":4443/" }) {
+		t.Fatalf("report after off=%+v", report)
+	}
+}

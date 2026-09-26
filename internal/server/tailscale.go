@@ -295,6 +295,20 @@ func offNeedsTailscale(report TailscaleReport, record state.TailscaleServe) bool
 	return true
 }
 
+// webPorts lists the ports that have web handlers in config, in order.
+func webPorts(config tailscale.ServeConfig) []int {
+	var ports []int
+	for key := range config.Web {
+		if _, text, err := net.SplitHostPort(key); err == nil {
+			if port, err := strconv.Atoi(text); err == nil && !slices.Contains(ports, port) {
+				ports = append(ports, port)
+			}
+		}
+	}
+	slices.Sort(ports)
+	return ports
+}
+
 // readEndpoint fills the Endpoint fields of sharing that is on, and Stale,
 // from Tailscale's Serve configuration.
 func readEndpoint(reading tailscaleReading, report *TailscaleReport, record state.TailscaleServe) {
@@ -305,12 +319,11 @@ func readEndpoint(reading tailscaleReading, report *TailscaleReport, record stat
 		}
 		return
 	}
+	// An address under an earlier name can be on any port, also one that
+	// was named and is no longer recorded, so every port with web handlers
+	// is read.
 	if report.Name != "" {
-		ports := slices.Clone(tailscaleHTTPSPorts)
-		if report.On && !slices.Contains(ports, record.HTTPSPort) {
-			ports = append(ports, record.HTTPSPort)
-		}
-		for _, port := range ports {
+		for _, port := range webPorts(config) {
 			report.Stale = append(report.Stale, config.Endpoint(report.Name, port, "").Stale...)
 		}
 	}
@@ -604,8 +617,11 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 		return TailscaleChange{}, tailscaleError(err, command.MacApp)
 	}
 	// Sharing that is on moves to another port only by turning it off
-	// first, which removes the endpoint on the old one.
-	if httpsPort != 0 && wasOn && previous.Confirmed && previous.Name == status.Name && httpsPort != previous.HTTPSPort {
+	// first, which removes the endpoint on the old one. The same holds for
+	// an interrupted turning on whose endpoint is still there: a record for
+	// the new port would replace the only record of it.
+	if httpsPort != 0 && wasOn && previous.Name == status.Name && httpsPort != previous.HTTPSPort &&
+		(previous.Confirmed || previous.Created && config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact) {
 		return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemOtherPort, Detail: TailscaleOrigin(previous.Name, previous.HTTPSPort) + "/"}
 	}
 	plan := planEndpoint(config, status.Name, target, httpsPorts(httpsPort, previous, wasOn, status.Name), previous, wasOn)
