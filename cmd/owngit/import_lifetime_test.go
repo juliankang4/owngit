@@ -51,17 +51,25 @@ func startServedWith(t *testing.T, arguments []string) *servedInstance {
 	go func() {
 		instance.result <- serveWithContext(ctx, arguments, func(string) error { return nil }, logf)
 	}()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
+	// Wait for the listening line, however slow a busy machine makes the
+	// start. A serve that returns instead failed to start, and says why; the
+	// bound only keeps a hung start from reaching the test binary's timeout.
+	bound := time.After(2 * time.Minute)
+	for {
 		if match := listeningLine.FindStringSubmatch(instance.log()); match != nil {
 			instance.url = "http://" + match[1]
 			return instance
 		}
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case err := <-instance.result:
+			cancel()
+			t.Fatalf("serve returned before it listened: %v\n%s", err, instance.log())
+		case <-bound:
+			cancel()
+			t.Fatalf("serve did not listen within 2 minutes: %s", instance.log())
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
-	cancel()
-	t.Fatalf("serve did not listen: %s", instance.log())
-	return nil
 }
 
 func (instance *servedInstance) log() string {
