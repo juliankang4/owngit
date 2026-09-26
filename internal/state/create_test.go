@@ -3,8 +3,10 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -13,6 +15,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // TestCreatingADatabaseNeverShowsARollbackJournal watches the state directory
@@ -218,42 +221,112 @@ func TestInterruptedCreationLeftoversDoNotBlockOpen(t *testing.T) {
 	noErr(t, store.Close())
 }
 
-// TestConcurrentFirstOpensShareOneDatabase starts several openers on the same
-// missing database. Each must either open it or report retryable instability,
-// and none may see a rollback journal.
+// TestConcurrentFirstOpensShareOneDatabase starts several processes that open
+// the same missing database at once. Each must either open it or report
+// retryable instability, and none may see a rollback journal. The openers are
+// separate processes, as concurrent first starts are: SQLite's POSIX locks
+// belong to a process, and the preflight closing its own handle to a database
+// file would release the locks of another connection in the same process.
 func TestConcurrentFirstOpensShareOneDatabase(t *testing.T) {
-	assertConcurrentFirstOpensShareOneDatabase(t)
+	assertConcurrentFirstOpensShareOneDatabase(t, false)
 }
 
 // TestConcurrentFirstOpensShareOneDatabaseUnderTheCreationLock repeats the
 // concurrent first opens where only the locked rename can publish.
 func TestConcurrentFirstOpensShareOneDatabaseUnderTheCreationLock(t *testing.T) {
-	usePublishers(t, failWith(syscall.ENOTSUP), failWith(syscall.EPERM))
-	assertConcurrentFirstOpensShareOneDatabase(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows publishes with MoveFileEx only")
+	}
+	assertConcurrentFirstOpensShareOneDatabase(t, true)
 }
 
-func assertConcurrentFirstOpensShareOneDatabase(t *testing.T) {
+const (
+	firstOpenStateEnv  = "OWNGIT_FIRST_OPEN_HELPER_STATE"
+	firstOpenSignalEnv = "OWNGIT_FIRST_OPEN_HELPER_SIGNAL"
+	firstOpenLockedEnv = "OWNGIT_FIRST_OPEN_HELPER_LOCKED"
+	firstOpenResult    = "first-open-result: "
+)
+
+// TestFirstOpenHelperProcess is one opener of the concurrent first-open
+// tests. It announces itself with SIGNAL.ready-PID, waits for SIGNAL.go, opens
+// the state directory and prints the outcome.
+func TestFirstOpenHelperProcess(t *testing.T) {
+	directory := os.Getenv(firstOpenStateEnv)
+	if directory == "" {
+		t.Skip("helper process only")
+	}
+	if os.Getenv(firstOpenLockedEnv) != "" {
+		publishers.renameExclusive = failWith(syscall.ENOTSUP)
+		publishers.link = failWith(syscall.EPERM)
+	}
+	signal := os.Getenv(firstOpenSignalEnv)
+	noErr(t, os.WriteFile(fmt.Sprintf("%s.ready-%d", signal, os.Getpid()), nil, 0o600))
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(time.Millisecond) {
+		if _, err := os.Stat(signal + ".go"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			fmt.Println(firstOpenResult + "error: no start signal")
+			return
+		}
+	}
+	store, err := Open(context.Background(), directory)
+	if err == nil {
+		err = store.Close()
+	}
+	switch {
+	case err == nil:
+		fmt.Println(firstOpenResult + "ok")
+	case errors.Is(err, ErrInspectionUnstable):
+		fmt.Println(firstOpenResult + "unstable: " + err.Error())
+	default:
+		fmt.Println(firstOpenResult + "error: " + err.Error())
+	}
+}
+
+func assertConcurrentFirstOpensShareOneDatabase(t *testing.T, locked bool) {
 	t.Helper()
 	ctx := context.Background()
-	for attempt := 0; attempt < 10; attempt++ {
-		directory := filepath.Join(t.TempDir(), "state")
-		var wait sync.WaitGroup
-		errs := make([]error, 6)
-		for index := range errs {
-			wait.Add(1)
-			go func() {
-				defer wait.Done()
-				store, err := Open(ctx, directory)
-				if err == nil {
-					err = store.Close()
-				}
-				errs[index] = err
-			}()
+	const openers = 6
+	for attempt := 0; attempt < 5; attempt++ {
+		root := t.TempDir()
+		directory := filepath.Join(root, "state")
+		signal := filepath.Join(root, "signal")
+		children := make([]*exec.Cmd, openers)
+		outputs := make([]*strings.Builder, openers)
+		for index := range children {
+			child := exec.Command(os.Args[0], "-test.run=^TestFirstOpenHelperProcess$", "-test.count=1", "-test.v")
+			child.Env = append(os.Environ(), firstOpenStateEnv+"="+directory, firstOpenSignalEnv+"="+signal)
+			if locked {
+				child.Env = append(child.Env, firstOpenLockedEnv+"=1")
+			}
+			outputs[index] = &strings.Builder{}
+			child.Stdout, child.Stderr = outputs[index], outputs[index]
+			noErr(t, child.Start())
+			children[index] = child
 		}
-		wait.Wait()
-		for index, err := range errs {
-			if err != nil && !errors.Is(err, ErrInspectionUnstable) {
-				t.Fatalf("attempt %d opener %d: %v", attempt, index, err)
+		// Wait until every opener is ready, so they start together. The
+		// bound only guards against a hang.
+		for deadline := time.Now().Add(time.Minute); ; time.Sleep(5 * time.Millisecond) {
+			ready, err := filepath.Glob(signal + ".ready-*")
+			noErr(t, err)
+			if len(ready) == openers {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("attempt %d: %d of %d openers became ready", attempt, len(ready), openers)
+			}
+		}
+		noErr(t, os.WriteFile(signal+".go", nil, 0o600))
+		for index, child := range children {
+			waitErr := child.Wait()
+			output := outputs[index].String()
+			line := ""
+			if at := strings.Index(output, firstOpenResult); at >= 0 {
+				line, _, _ = strings.Cut(output[at+len(firstOpenResult):], "\n")
+			}
+			if waitErr != nil || !(line == "ok" || strings.HasPrefix(line, "unstable: ")) {
+				t.Fatalf("attempt %d opener %d: %q (exit: %v)\n%s", attempt, index, line, waitErr, output)
 			}
 		}
 		store, err := Open(ctx, directory)
