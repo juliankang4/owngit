@@ -3,9 +3,13 @@
 package githttp
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -184,5 +188,63 @@ func TestPushResponseHeadersLeaveWhenTheRequestBodyEnds(t *testing.T) {
 	}
 	if got, want := httpGitOutput(t, "", "--git-dir", repositoryPath, "rev-parse", "refs/heads/main"), httpGitOutput(t, work, "rev-parse", "HEAD"); got != want {
 		t.Fatalf("main is %s after the push, want %s:\n%s", got, want, output)
+	}
+}
+
+// The response headers of a fetch leave once the request body has ended,
+// however the body is framed, so a proxy sees the transfer move while Git
+// prepares the pack. The pack-objects hook waits until the client has the
+// headers; the chunked bodies send their last chunk in a later write.
+func TestFetchResponseHeadersLeaveWhenTheRequestBodyEndsForEveryFraming(t *testing.T) {
+	handler, _, head := idleFixture(t, 16, time.Minute)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	packHook := filepath.Join(t.TempDir(), "pack-objects-hook")
+	noErr(t, os.WriteFile(handler.Git.GlobalConfigPath, []byte("[uploadpack]\n\tpackObjectsHook = "+packHook+"\n"), 0o600))
+	t.Cleanup(func() { _ = os.WriteFile(handler.Git.GlobalConfigPath, nil, 0o600) })
+
+	want := fmt.Sprintf("want %s side-band-64k\n", head)
+	plain := []byte(fmt.Sprintf("%04x%s0000%04xdone\n", 4+len(want), want, 4+len("done\n")))
+	for _, framing := range []struct {
+		name          string
+		gzip, chunked bool
+	}{{"length", false, false}, {"length gzip", true, false}, {"chunked", false, true}, {"chunked gzip", true, true}} {
+		t.Run(framing.name, func(t *testing.T) {
+			release := filepath.Join(t.TempDir(), "headers-arrived")
+			// The bound only keeps a failing run from hanging.
+			noErr(t, os.WriteFile(packHook, []byte("#!/bin/sh\ni=0\nwhile [ ! -e "+quoteShell(release)+" ]; do\n"+
+				"\ti=$((i+1))\n\tif [ $i -gt 600 ]; then echo 'no response headers while pack-objects waited' >&2; exit 1; fi\n\tsleep 0.05\ndone\n"+
+				"exec \"$@\"\n"), 0o700))
+			body := plain
+			header := "POST /git/sample.git/git-upload-pack HTTP/1.1\r\nHost: example.test\r\nContent-Type: application/x-git-upload-pack-request\r\n"
+			if framing.gzip {
+				body = gzipBytes(t, plain)
+				header += "Content-Encoding: gzip\r\n"
+			}
+			connection, err := net.Dial("tcp", server.Listener.Addr().String())
+			noErr(t, err)
+			defer connection.Close()
+			noErr(t, connection.SetDeadline(time.Now().Add(20*time.Second)))
+			if framing.chunked {
+				_, err = fmt.Fprintf(connection, "%sTransfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n", header, len(body), body)
+				noErr(t, err)
+				// A separate, later last chunk: sent together, net/http
+				// reports the end of the body with the data.
+				time.Sleep(100 * time.Millisecond)
+				_, err = io.WriteString(connection, "0\r\n\r\n")
+			} else {
+				_, err = fmt.Fprintf(connection, "%sContent-Length: %d\r\n\r\n%s", header, len(body), body)
+			}
+			noErr(t, err)
+			reader := bufio.NewReader(connection)
+			response, err := http.ReadResponse(reader, nil)
+			noErr(t, err, "read the response headers while pack-objects waits")
+			noErr(t, os.WriteFile(release, nil, 0o600))
+			content, err := io.ReadAll(response.Body)
+			noErr(t, err)
+			if response.StatusCode != http.StatusOK || !bytes.Contains(content, []byte("PACK")) {
+				t.Fatalf("status %d, %d bytes without a pack", response.StatusCode, len(content))
+			}
+		})
 	}
 }

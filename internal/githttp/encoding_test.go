@@ -236,8 +236,9 @@ func TestSmartHTTPInflatesGzipBodiesWithinTheRequestLimit(t *testing.T) {
 	}
 }
 
-// A gzip body that is truncated or fails its checksum on a connection that
-// stays open must not reach the backend as a complete request.
+// A gzip body that is truncated, fails its checksum or is followed by more
+// data, on a connection that stays open, must not reach the backend as a
+// complete request.
 func TestSmartHTTPStopsBackendOnCorruptGzipBody(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
@@ -257,6 +258,8 @@ func TestSmartHTTPStopsBackendOnCorruptGzipBody(t *testing.T) {
 	}{
 		{"truncated stream", valid[:len(valid)/2]},
 		{"bad checksum", badGzipChecksum(valid)},
+		{"data after the stream", append(append([]byte{}, valid...), "trailing"...)},
+		{"a second gzip stream", append(append([]byte{}, valid...), valid...)},
 	} {
 		before := strings.Count(logs.String(), "\n")
 		response := postPack(t, server.URL, "git-receive-pack", "gzip", corrupt.body)

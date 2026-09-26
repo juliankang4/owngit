@@ -221,7 +221,10 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		// same MaximumRequest also bounds the inflated bytes the backend reads.
 		// git-http-backend's own inflation has no output bound.
 		source := &observedBody{ReadCloser: body}
-		inflated, err := gzip.NewReader(source)
+		// gzip.Reader reads through this buffer, so what follows the gzip
+		// stream stays in it for gzipBody to check.
+		buffered := bufio.NewReader(source)
+		inflated, err := gzip.NewReader(buffered)
 		if err != nil {
 			_ = body.Close()
 			status, reason := http.StatusBadRequest, "could not read the request body"
@@ -236,7 +239,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		inflated.Multistream(false)
-		body = &gzipBody{inflated: inflated, source: source, cancel: cancelStream, closed: make(chan struct{})}
+		body = &gzipBody{inflated: inflated, buffered: buffered, source: source, cancel: cancelStream, closed: make(chan struct{})}
 		if h.MaximumRequest > 0 {
 			body = http.MaxBytesReader(nil, body, h.MaximumRequest)
 		}
@@ -361,14 +364,20 @@ const requestTooLarge = "request body exceeded the size limit"
 var errResponseTooLarge = errors.New("Git response exceeded the configured limit")
 
 // gzipBody inflates a request body. When the network body ended cleanly but
-// the gzip stream is corrupt, truncated or fails its checksum, Read cancels
-// the operation and blocks until the backend stream closes the body. The
-// stream terminates the backend before that close, so the backend never sees
-// the end of its input and cannot take a partial request as complete. Errors
-// of the network body itself, such as a disconnect or the size limit, keep
-// their existing handling.
+// the gzip stream is corrupt, truncated or fails its checksum, or data follows
+// it, Read cancels the operation and blocks until the backend stream closes
+// the body. The stream terminates the backend before that close, so the
+// backend never sees the end of its input and cannot take a partial request
+// as complete. Errors of the network body itself, such as a disconnect or the
+// size limit, keep their existing handling.
+//
+// At the end of the gzip stream, Read also reads the network body to its end.
+// Otherwise the end of a chunked body, which arrives after the gzip stream,
+// would stay unread, and the response would wait for Git to finish instead of
+// for the end of the request.
 type gzipBody struct {
 	inflated  *gzip.Reader
+	buffered  *bufio.Reader
 	source    *observedBody
 	cancel    context.CancelCauseFunc
 	closed    chan struct{}
@@ -377,6 +386,12 @@ type gzipBody struct {
 
 func (body *gzipBody) Read(buffer []byte) (int, error) {
 	n, err := body.inflated.Read(buffer)
+	if err == io.EOF {
+		if endErr := body.confirmEnd(); endErr != io.EOF {
+			// Withhold bytes decoded before the failed end.
+			n, err = 0, endErr
+		}
+	}
 	if err != nil && err != io.EOF && body.source.firstError() == nil {
 		body.cancel(errInvalidGzip)
 		<-body.closed
@@ -385,6 +400,22 @@ func (body *gzipBody) Read(buffer []byte) (int, error) {
 	}
 	return n, err
 }
+
+// confirmEnd returns io.EOF when the network body ends with the gzip stream.
+func (body *gzipBody) confirmEnd() error {
+	var next [1]byte
+	for {
+		n, err := body.buffered.Read(next[:])
+		if n > 0 {
+			return errGzipTrailingData
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+var errGzipTrailingData = errors.New("data follows the gzip request body")
 
 // Close releases a blocked Read and closes only the network body: the backend
 // stream calls Close concurrently with Read, which the network body allows
