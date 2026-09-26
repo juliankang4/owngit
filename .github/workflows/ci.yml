@@ -22,6 +22,8 @@ on:
       - "!docs/images/**"
       - "docs/CODING_TOOLS.md"
       - "docs/CODING_TOOLS.ko.md"
+      - "docs/OPERATIONS.md"
+      - "docs/OPERATIONS.ko.md"
       - "integrations/**"
       - "THIRD_PARTY_NOTICES/**"
   workflow_dispatch:
