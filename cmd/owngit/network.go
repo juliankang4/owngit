@@ -12,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"owngit/internal/requestctx"
@@ -110,7 +111,15 @@ func effectiveTrustedProxies(saved []string, flags *flag.FlagSet, flagValues []s
 }
 
 // listenError explains a listen failure; a saved address names its recovery.
+// A port that another program uses is said plainly, with the way to move
+// OwnGit to another port, which keeps the address it listens on.
 func (network serveNetwork) listenError(err error) error {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		host, port, splitErr := net.SplitHostPort(network.Listen)
+		if splitErr == nil {
+			return fmt.Errorf("another program already uses port %s; stop it, or move OwnGit to a free port with \"owngit network set --listen %s\" and start OwnGit again", port, net.JoinHostPort(host, "PORT"))
+		}
+	}
 	if network.ListenSource == sourceSaved {
 		return fmt.Errorf("listen on %s (saved with \"owngit network set\"): %w; run \"owngit network reset\" to go back to %s", network.Listen, err, server.DefaultListenAddress)
 	}

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math/rand/v2"
 	"net"
@@ -33,6 +35,7 @@ import (
 	"owngit/internal/releasecheck"
 	"owngit/internal/repository"
 	"owngit/internal/server"
+	"owngit/internal/service"
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
 	"owngit/internal/version"
@@ -86,13 +89,29 @@ func run(arguments []string) error {
 		if stateDir == "" {
 			stateDir = defaultStateDir()
 		}
-		if err := actAsStateOwner(stateDir); err != nil {
+		dropped, err := actAsStateOwner(stateDir)
+		if err != nil {
 			return err
+		}
+		if dropped {
+			return accountPathHint(runCommand(command, arguments))
 		}
 	}
 	err := runCommand(command, arguments)
 	if errors.Is(err, errUsageShown) {
 		return nil
+	}
+	return err
+}
+
+// accountPathHint explains a permission error of a command that root runs
+// as the owngit account, which cannot open root's own folders.
+func accountPathHint(err error) error {
+	switch {
+	case errors.Is(err, errUsageShown):
+		return nil
+	case errors.Is(err, fs.ErrPermission):
+		return fmt.Errorf("%w; this command runs as the %s account, which cannot open that path: use a folder it can use, such as %s, and give it as an absolute path", err, service.AccountName, filepath.Join(service.AccountHome, "backups"))
 	}
 	return err
 }
@@ -179,7 +198,11 @@ func serve(arguments []string) error {
 func serveWithOpener(arguments []string, opener func(string) error, logf func(string, ...any)) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return serveWithContext(ctx, arguments, opener, logf)
+	err := serveWithContext(ctx, arguments, opener, logf)
+	if err != nil {
+		recordServeError(cmp.Or(stateDirArgument(arguments), defaultStateDir()), err)
+	}
+	return err
 }
 
 // interactiveSetup reports whether first-run setup can ask its questions in
@@ -201,7 +224,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	gitPath := flags.String("git", "", "Git executable path")
 	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
-	headless := flags.Bool("headless", false, "this computer has no screen for setup: before setup, with no saved listen address, listen on every address and save that")
+	headless := flags.Bool("headless", false, "whether this computer has no screen for setup (default: detected); before setup, with no saved listen address, a computer without a screen listens on every address and saves that")
 	noUpdateCheck := flags.Bool("no-update-check", false, "never contact GitHub to check for a newer OwnGit release, whatever the Settings page says")
 	var allowedHosts, trustedProxies stringList
 	flags.Var(&allowedHosts, "allowed-host", "additional accepted `host` name (repeatable)")
@@ -267,7 +290,10 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// Without a screen, setup happens on another device, so the first start
 	// listens on every address. Until setup is done every request except
 	// the setup link is refused, as for any unknown Host.
-	if network.ListenSource == sourceDefault && !settings.Initialized && (*headless || probeEnvironment().Headless()) {
+	// A service passes --headless=true or --headless=false, decided at
+	// install time, because the service may start before a desktop session.
+	headlessSetup := !settings.Initialized && headlessChoice(flags, *headless)
+	if network.ListenSource == sourceDefault && headlessSetup {
 		saved, err := applyHeadlessListen(ctx, store)
 		if err != nil {
 			return err
@@ -359,6 +385,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return network.listenError(err)
 	}
 	defer listener.Close()
+	clearServeError(*stateDir)
 
 	policy := server.NewHostPolicy(allowedHosts...)
 	trusted, err := store.TrustedHosts(ctx)
@@ -431,6 +458,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		WakeChecks: checkCoordinator.Wake, Imports: imports, RunningRecordLive: runningLive,
 		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
 		Releases:         releases,
+		HeadlessListen:   headlessListenInUse(headlessSetup, network),
 		// First-run setup inside this process starts the same import runtime
 		// that an initialized startup starts above, and lets the release
 		// check run without waiting a day.
@@ -692,7 +720,7 @@ func resetAdmin(arguments []string) error {
 	}
 	// Root reads its own password file first, then acts as the account that
 	// owns the state directory; see actAsStateOwner.
-	if err := actAsStateOwner(*stateDir); err != nil {
+	if _, err := actAsStateOwner(*stateDir); err != nil {
 		return err
 	}
 	encoded, err := auth.HashPassword(password)

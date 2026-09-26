@@ -70,12 +70,12 @@ type Config struct {
 // and output must be terminals, and OwnGit must be in their foreground. A
 // background job, such as `owngit serve &` from a shell, keeps the setup
 // file flow, because using the terminal would stop it.
-// IsTerminal reports whether file is a terminal.
-func IsTerminal(file *os.File) bool { return isTerminal(file) }
-
 func Interactive(input, output *os.File) bool {
 	return isTerminal(input) && isTerminal(output) && foreground(input) && foreground(output)
 }
+
+// IsTerminal reports whether file is a terminal.
+func IsTerminal(file *os.File) bool { return isTerminal(file) }
 
 // Run asks the setup questions in the terminal. It returns nil once setup is
 // complete, by the terminal or by an approved browser, and ErrStopped when

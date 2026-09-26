@@ -55,11 +55,13 @@ owngit serve
 Linux에서 `owngit service install`은 systemd로 OwnGit을 백그라운드에서 실행하고, 로그인하지 않아도 부팅할 때마다 켭니다. 아무것도 묻지 않으며, 명령을 어떻게 실행했는지에 따라 누가 서비스를 실행할지 정합니다.
 
 - 데스크톱의 그래픽 세션 터미널에서 실행하면 내 계정의 systemd 사용자 서비스(`~/.config/systemd/user/owngit.service`)가 되고, 상태는 평소 쓰던 상태 디렉터리에 둡니다. 부팅할 때 서비스가 켜지도록 내 계정의 lingering(`loginctl enable-linger`)을 켭니다. 확인한 배포판(Debian 13, Ubuntu 24.04와 26.04, Arch Linux)은 내 계정에 대해서는 비밀번호 없이 이를 허용합니다. lingering에 비밀번호가 필요한 곳에서는 아래의 시스템 서비스로 설치합니다.
-- SSH로 접속했거나 그래픽 세션이 없는 컴퓨터에서는 내 계정으로 실행되는 시스템 서비스(`User=`와 `Group=`이 있는 `/etc/systemd/system/owngit.service`)가 되고, 상태는 평소 쓰던 상태 디렉터리에 그대로 둡니다. 유닛을 쓰려면 root 권한이 한 번 필요하므로, 명령은 root가 할 일을 한 줄로 알려 준 뒤 유닛 쓰기, systemd 다시 읽기, 서비스 켜기와 시작을 `sudo` 한 번으로 처리합니다. 비밀번호는 `sudo`가 직접 묻고 OwnGit은 보지 않습니다. root가 할 일은 짧은 셸 스크립트에 들어 있고 명령이 그 경로를 출력합니다. `sudo`가 없거나 끝나지 않으면 root로 실행할 명령 하나(`sh /tmp/owngit-service-NNNN.sh`)를 출력합니다. 그 뒤 `owngit service status`로 결과를 보고 `owngit setup-link`로 설정 링크를 받으면 됩니다.
-- root로 실행하면(예: Proxmox LXC 컨테이너나 클라우드 서버) 홈이 `/var/lib/owngit`인 시스템 계정 `owngit`을 만들고, 상태를 `/var/lib/owngit/state`에 두며, 서비스를 그 계정으로 실행합니다. 상태 디렉터리 경로를 `/etc/owngit/state-dir`에 적어 두므로, root, `owngit` 계정, `owngit` 그룹의 구성원은 `owngit setup-link`, `owngit network` 등 상태 디렉터리를 쓰는 명령을 `--state-dir` 없이 쓸 수 있습니다. root는 이 명령을 `owngit` 계정으로 실행하므로 서비스가 열지 못하는 파일을 상태 디렉터리에 남기지 않습니다. 그래서 `backup --output`처럼 넘기는 위치는 `owngit` 계정이 쓸 수 있는 곳이어야 합니다. `reset-admin --password-file`은 root만 읽을 수 있는 파일도 읽습니다. root가 아닌 `owngit` 그룹 구성원에게는 `sudo`를 쓰라고 안내합니다. 상태 디렉터리는 계속 그 계정만 열 수 있기 때문입니다.
+- SSH로 접속했거나 그래픽 세션이 없는 컴퓨터에서는 내 계정으로 실행되는 시스템 서비스(`User=`와 `Group=`이 있는 `/etc/systemd/system/owngit.service`)가 되고, 상태는 평소 쓰던 상태 디렉터리에 그대로 둡니다. 유닛을 쓰려면 root 권한이 한 번 필요하므로, 명령은 root가 할 일을 한 줄로 알려 준 뒤 유닛 쓰기, systemd 다시 읽기, 서비스 켜기와 시작을 `sudo` 한 번으로 처리합니다. 비밀번호는 `sudo`가 직접 묻고 OwnGit은 보지 않습니다. root가 할 일은 셸의 표준 입력으로 넘기므로 어떤 파일에도 남지 않습니다. `sudo`가 없거나 끝나지 않으면 관리자가 읽어 보고 root 셸에 붙여 넣을 수 있도록 스크립트 전체를 명령 하나로 출력합니다. 그 뒤 `owngit service status`로 결과를 보고 `owngit setup-link`로 설정 링크를 받으면 됩니다.
+- root로 실행하면(예: Proxmox LXC 컨테이너나 클라우드 서버) 홈이 `/var/lib/owngit`인 시스템 계정 `owngit`을 만들고, 상태를 `/var/lib/owngit/state`에 두며(`--state-dir`도 `/var/lib/owngit` 안이어야 합니다), 서비스를 그 계정으로 실행합니다. root가 나중에도 같은 `owngit` 실행 파일을 실행하므로, 그 파일과 그 파일이 든 폴더는 root만 바꿀 수 있어야 합니다(예: `/usr/local/bin/owngit`). 홈 폴더에 있는 실행 파일은 거부하고 설치 방법을 알려 줍니다. root는 `/var/lib/owngit`이 없을 때 그 폴더만 직접 만들고, 그 안의 상태 디렉터리는 `owngit` 계정이 만듭니다. 상태 디렉터리 경로를 `/etc/owngit/state-dir`에 적어 두므로, root, `owngit` 계정, `owngit` 그룹의 구성원은 `owngit setup-link`, `owngit network` 등 상태 디렉터리를 쓰는 명령을 `--state-dir` 없이 쓸 수 있습니다. root는 이 명령을 `owngit` 계정으로 실행하므로 서비스가 열지 못하는 파일을 상태 디렉터리에 남기지 않습니다. 그 전에 상태 디렉터리가 링크가 아닌 `owngit` 계정의 실제 디렉터리인지 확인하고, 아니면 거부합니다. 그래서 `backup --output`처럼 넘기는 위치는 `/var/lib/owngit/backups`처럼 `owngit` 계정이 쓸 수 있는 곳을 절대 경로로 적어야 하며, 열 수 없는 경로면 그렇게 하라고 알려 줍니다. `reset-admin --password-file`은 root만 읽을 수 있는 파일도 읽습니다. 또 이 명령은 계정을 바꾸기 전에 root의 터미널을 제어 터미널에서 떼어 내므로, 이 명령이 실행하는 프로그램은 root의 셸에 입력을 넣을 수 없습니다. root가 아닌 `owngit` 그룹 구성원에게는 `sudo`를 쓰라고 안내합니다. 상태 디렉터리는 계속 그 계정만 열 수 있기 때문입니다.
 - Homebrew로 설치했다면 `owngit service install`이 `brew services restart owngit`을 실행하므로, OwnGit을 업그레이드하는 Homebrew가 계속 서비스를 관리합니다. 가능하면 데스크톱처럼 lingering을 켭니다.
 
-모든 유닛은 절대 경로의 상태 디렉터리를 넘겨 `owngit serve --state-dir DIR --no-open`을 실행하고, `--listen`이나 `--base-url`은 넘기지 않으므로 저장된 [네트워크 설정](#네트워크-설정)이 적용됩니다. 화면이 없는 컴퓨터에 설치한 유닛에는 아래에서 설명하는 `--headless`가 붙습니다.
+모든 유닛은 절대 경로의 상태 디렉터리를 넘겨 `owngit serve --state-dir DIR --no-open --headless=true` 또는 `--headless=false`를 실행하고, `--listen`이나 `--base-url`은 넘기지 않으므로 저장된 [네트워크 설정](#네트워크-설정)이 적용됩니다. `--headless`는 서비스를 설치할 때 화면이 있었는지를 적어 두는 값이므로(아래 참고), 데스크톱 세션보다 먼저 켜진 서비스도 다시 판단하지 않습니다.
+
+`owngit service install`은 서비스가 응답할 때까지 기다립니다. 기다리는 동안 다른 프로그램이 포트를 쓰는 등의 이유로 서비스가 오류로 멈추면, 그 오류와 다음에 할 일을 바로 출력합니다.
 
 `owngit service install`은 언제든 다시 실행할 수 있습니다. 예를 들어 `owngit` 실행 파일을 새 릴리스로 바꾼 뒤 실행하면, 같은 방식과 같은 상태 디렉터리로 유닛을 다시 쓰고 서비스를 다시 시작합니다. 데스크톱에서 설치한 서비스는 나중에 SSH로 명령을 다시 실행해도 사용자 서비스로 남습니다.
 
@@ -67,7 +69,7 @@ Linux에서 `owngit service install`은 systemd로 OwnGit을 백그라운드에�
 | --- | --- |
 | `owngit service status` | OwnGit이 실행 중이고 응답하는지, 누가 실행하는지, 유닛 파일, 로그 명령, 상태 디렉터리, 주소를 보여 줍니다. |
 | `owngit service start`, `stop`, `restart` | 서비스를 시작하거나 멈추거나 다시 시작합니다. 멈춘 서비스는 다음 부팅 때 다시 켜집니다. |
-| `owngit service uninstall` | 서비스를 멈추고 유닛을 지웁니다. 상태 디렉터리, 저장소, `owngit` 계정은 남으며 데이터가 어디 있는지 알려 줍니다. |
+| `owngit service uninstall` | 서비스를 멈추고 유닛을 지웁니다. 상태 디렉터리, 저장소, `owngit` 계정은 남으며 데이터가 어디 있는지 알려 줍니다. 사용자 서비스라면 lingering이 켜진 채 남는다고 알려 줍니다(`loginctl disable-linger`로 끕니다). |
 
 로그는 systemd 저널에 남습니다. 사용자 서비스는 `journalctl --user -u owngit.service -f`, 시스템 서비스는 `sudo journalctl -u owngit.service -f`로 봅니다.
 
@@ -77,18 +79,14 @@ Linux에서 `owngit service install`은 systemd로 OwnGit을 백그라운드에�
 
 시스템 서비스에는 다음 제한이 걸립니다. 어느 것도 Git, 저장소 hook, 이 컴퓨터에서 실행하는 검사, Docker 소켓으로 실행하는 Docker 검사를 막지 않습니다.
 
-- `ProtectSystem=strict`는 OwnGit이 쓰는 디렉터리를 빼고 파일 시스템 전체를 읽기 전용으로 만듭니다. 쓸 수 있는 곳은 내 계정으로 실행하는 서비스라면 내 홈 폴더, `owngit` 계정이라면 `/var/lib/owngit`, 그리고 그 밖에 있는 상태 디렉터리와 저장된 저장소 폴더입니다. `owngit` 계정에는 `ProtectHome=yes`로 `/home`도 보이지 않게 합니다. 설치 화면은 이 안에 있는 저장소 폴더를 제안합니다. 설치할 때 그 밖의 폴더를 고르면 설치 화면이 그곳에 쓸 수 없다고 알려 줍니다. 제안한 폴더를 고르거나 `sudo systemctl edit owngit.service`로 그 폴더를 유닛에 더하세요.
+- `ProtectSystem=full`은 시스템 폴더 `/usr`, `/boot`, `/efi`, `/etc`를 읽기 전용으로 만듭니다. 나머지 곳은 서비스 밖에서와 같이 서비스 계정의 파일 권한이 정합니다. 내 계정으로 실행하는 서비스는 검사가 캐시와 도구를 찾는 내 홈 폴더와, `/srv/git`처럼 내 계정이 가진 저장소 폴더를 쓸 수 있습니다. `owngit` 계정은 데이터를 `/var/lib/owngit`에 두므로 `ProtectHome=yes`로 `/home`, `/root`, `/run/user`를 보이지 않게 합니다. 이 계정에게 `/srv/git` 같은 폴더를 쓰게 하려면 폴더를 이 계정에 맡겨야 하며, 설치 화면이 그 명령(`sudo install -d -o owngit -g owngit -m 0700 /srv/git`)을 보여 줍니다.
 
-  ```ini
-  [Service]
-  ReadWritePaths=-/srv/git
-  ```
-
-  내 계정으로 실행하는 서비스를 설치할 때 이미 설치를 마친 상태라면(예: 전에 `owngit serve`로 쓰던 경우) `owngit service install`이 저장된 저장소 폴더를 위치와 관계없이 유닛에 더합니다. `owngit` 계정의 경우 root로는 그 폴더를 읽지 않으므로, 폴더가 `/var/lib/owngit` 밖에 있으면 위의 `systemctl edit` 내용을 출력합니다.
+  설치 화면은 고른 폴더를 쓸 수 없으면 까닭을 한 줄로 알려 줍니다. OwnGit이 실행되는 계정이 그곳에 쓸 수 없거나(위 명령과 함께), 그 폴더가 OwnGit에게 읽기 전용이거나(시스템 폴더, `owngit` 계정에게는 홈 폴더), 시스템이 알린 오류입니다.
 - `NoNewPrivileges=yes`와 `RestrictSUIDSGID=yes`는 OwnGit이 실행하는 어떤 프로그램도 권한을 얻지 못하게 합니다. 그래서 검사 명령은 `sudo`를 쓸 수 없습니다.
 - `PrivateTmp=yes`는 OwnGit에게 따로 `/tmp`를 줍니다. 검사 작업 공간은 상태 디렉터리에 있으므로 Docker 검사도 그대로 볼 수 있습니다.
 - `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`, `LockPersonality`, `RestrictRealtime`: OwnGit은 커널, 시계, 호스트 이름을 바꿀 일이 없습니다.
 - `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`는 네트워크, Docker와 Tailscale 같은 로컬 소켓, 네트워크 인터페이스 목록만 허용합니다.
+- `CapabilityBoundingSet=`(빈 값), `SystemCallArchitectures=native`, `ProtectProc=invisible`: 서비스는 root로 실행되지 않으므로 특권(capability)이 필요 없고, 자기 프로세스만 봅니다.
 - `UMask=0077`은 새 파일을 서비스 계정만 읽을 수 있게 만듭니다.
 
 사용자 서비스에는 `NoNewPrivileges`, `RestrictSUIDSGID`, `LockPersonality`, `RestrictRealtime`, `UMask=0077`만 겁니다. 나머지 설정은 사용자 서비스에서 사용자 네임스페이스가 필요한데, 이를 제한하는 배포판이 있기 때문입니다. 컨테이너가 어떤 설정에 필요한 기능을 허용하지 않으면 systemd는 그 설정을 빼고 OwnGit을 시작합니다.
@@ -99,9 +97,13 @@ Linux에서 `owngit service install`은 systemd로 OwnGit을 백그라운드에�
 
 - root가 컨테이너나 LXC 컨테이너 안에서 실행합니다.
 - 명령이 디스플레이 없는 SSH 세션에서 실행됩니다(`DISPLAY`와 `WAYLAND_DISPLAY`가 모두 없음).
-- systemd-logind에 그래픽 세션(X11이나 Wayland, 로그인 화면 포함)이 하나도 없습니다.
+- systemd-logind에 그래픽 세션(X11이나 Wayland, 로그인 화면 포함)이 하나도 없고, SSH 밖에서 `DISPLAY`와 `WAYLAND_DISPLAY`도 설정되어 있지 않습니다.
 
-이런 컴퓨터에서 설치 전에, 저장된 연결 주소도 `--listen` 옵션도 없이 처음 시작하면 모든 주소(`0.0.0.0:7654`)에서 연결을 받고 이를 연결 주소로 저장합니다. 서비스 자체에는 SSH 세션도 디스플레이도 없어 스스로 판단할 수 없으므로, 서비스 유닛이 같은 규칙을 적용하라고 `--headless`를 넘깁니다. 설치를 마치기 전까지 `localhost`, `127.0.0.1`, `::1`이 아닌 주소로 온 요청은 설정 페이지에만 닿고, 나머지 요청은 [설정 파일로 설치하기](#설정-파일로-설치하기)에서 설명한 대로 모두 거부됩니다. 설정 페이지는 암호화되지 않은 HTTP를 받아들일지 묻고, 비밀번호를 정하게 하며, 사용한 주소를 계속 받아들일지 묻습니다. OwnGit을 이 컴퓨터에서만 쓰려면 `owngit network set --listen 127.0.0.1:7654`를 실행하고 다시 시작하세요.
+이런 컴퓨터에서 설치 전에, 저장된 연결 주소도 `--listen` 옵션도 없이 처음 시작하면 모든 주소(`0.0.0.0:7654`)에서 연결을 받고 이를 연결 주소로 저장합니다. 서비스 자체에는 SSH 세션도 디스플레이도 없어 스스로 판단할 수 없으므로, 서비스 유닛이 같은 규칙을 적용하라고 `--headless=true`를 넘깁니다. 설치를 마치기 전까지 `localhost`, `127.0.0.1`, `::1`이 아닌 주소로 온 요청은 설정 페이지에만 닿고, 나머지 요청은 [설정 파일로 설치하기](#설정-파일로-설치하기)에서 설명한 대로 모두 거부됩니다.
+
+설정 링크는 이 컴퓨터의 사설 네트워크 주소(`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), tailnet 주소(`100.64.0.0/10`), IPv6 고유 로컬 주소로만 출력합니다. 공인 주소로는 출력하지 않습니다. 링크와 비밀번호가 암호화되지 않은 채 인터넷을 지나기 때문입니다. 많은 클라우드 서버처럼 공인 주소만 있는 컴퓨터에서는 SSH 명령(`ssh -L 7654:127.0.0.1:7654 USER@HOST`)과 `http://127.0.0.1:7654`의 링크를 대신 출력합니다. 내 컴퓨터에서 그 명령을 실행해 열어 둔 채 그 링크를 여세요. 그래도 공인 주소에서 설정 화면을 열면 접근 방식으로 공용 비밀번호를 골라 두고, 여기서 "이 네트워크"는 인터넷이라고 알려 줍니다.
+
+설정 페이지는 암호화되지 않은 HTTP를 받아들일지 묻고, 비밀번호를 정하게 하며, 사용한 주소를 계속 받아들일지 묻습니다. 이런 컴퓨터에서는 이 항목이 처음부터 선택되어 있습니다. 선택을 풀면 설치 후 그 주소를 거부하고, 다음 시작부터 `127.0.0.1:7654`에서만 연결을 받으므로 연결을 받는 주소와 받아들이는 주소가 일치합니다. 처음부터 이 컴퓨터에서만 쓰려면 `owngit network set --listen 127.0.0.1:7654`를 실행하고 다시 시작하세요.
 
 화면이 있는 컴퓨터는 다른 주소를 고를 때까지 `127.0.0.1:7654`에서만 연결을 받습니다.
 

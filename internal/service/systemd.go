@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -27,11 +27,9 @@ type Plan struct {
 	StateDir string
 	// User, Group and Home name the account of a system unit.
 	User, Group, Home string
-	// Writable are the directories a system unit may write; everything else
-	// is read-only for it (ProtectSystem=strict).
-	Writable []string
-	// Headless passes --headless, so the first start before setup listens
-	// on every address when no listen address is saved.
+	// Headless is passed as --headless=true or --headless=false: with
+	// true, the first start before setup listens on every address when no
+	// listen address is saved.
 	Headless bool
 	// Path is the PATH of the service. Empty keeps the systemd default.
 	Path string
@@ -93,10 +91,9 @@ func RenderUnit(plan Plan) (string, error) {
 	line("")
 	line("[Service]")
 	line("Type=exec")
-	command := []string{plan.Executable, "serve", "--state-dir", plan.StateDir, "--no-open"}
-	if plan.Headless {
-		command = append(command, "--headless")
-	}
+	// --headless is always explicit, because the service can start before
+	// a desktop session and must not guess again.
+	command := []string{plan.Executable, "serve", "--state-dir", plan.StateDir, "--no-open", "--headless=" + strconv.FormatBool(plan.Headless)}
 	execStart, err := execWords(command)
 	if err != nil {
 		return "", err
@@ -138,26 +135,15 @@ func RenderUnit(plan Plan) (string, error) {
 	if system {
 		// These need file system namespaces, which only system units get
 		// without unprivileged user namespaces.
-		line("ProtectSystem=strict")
-		writable := compactWritable(plan.Writable)
-		if len(writable) == 0 {
-			return "", errors.New("a system unit needs at least one writable directory")
-		}
-		for _, path := range writable {
-			if err := checkAbsolute("writable directory", path); err != nil {
-				return "", err
-			}
-			// "-" keeps the service starting when a folder, such as a
-			// repository folder on an unplugged drive, is missing.
-			value, err := quoteUnitValue("-"+path, false)
-			if err != nil {
-				return "", err
-			}
-			line("ReadWritePaths=%s", value)
-		}
+		// System folders are read-only. Everything else follows the file
+		// permissions of the account, so a repository folder that the
+		// account may write, such as /srv/git, works as it does outside
+		// the service. The home folder of a system unit stays writable,
+		// because checks run there with that account's caches and tools.
+		line("ProtectSystem=full")
 		line("PrivateTmp=yes")
 		if plan.Mode == ModeAccount {
-			// The account keeps everything under its own home.
+			// The account keeps everything in its own home, outside /home.
 			line("ProtectHome=yes")
 		}
 		line("ProtectKernelTunables=yes")
@@ -167,6 +153,11 @@ func RenderUnit(plan Plan) (string, error) {
 		line("ProtectClock=yes")
 		line("ProtectHostname=yes")
 		line("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK")
+		// The service never runs as root, so it needs no capabilities, and
+		// it sees only its own processes.
+		line("CapabilityBoundingSet=")
+		line("SystemCallArchitectures=native")
+		line("ProtectProc=invisible")
 	}
 	line("")
 	line("[Install]")
@@ -180,28 +171,6 @@ func RenderUnit(plan Plan) (string, error) {
 		return "", errors.New("unit text contains the script delimiter")
 	}
 	return text, nil
-}
-
-// compactWritable sorts the directories and drops each one that lies
-// inside another.
-func compactWritable(paths []string) []string {
-	sorted := slices.Clone(paths)
-	slices.Sort(sorted)
-	sorted = slices.Compact(sorted)
-	var kept []string
-	for _, path := range sorted {
-		inside := false
-		for _, parent := range kept {
-			if path == parent || strings.HasPrefix(path, strings.TrimSuffix(parent, "/")+"/") {
-				inside = true
-				break
-			}
-		}
-		if !inside {
-			kept = append(kept, path)
-		}
-	}
-	return kept
 }
 
 // validAccountName accepts the portable subset of Linux user names.
@@ -355,7 +324,7 @@ func ReadUnit(path string) (Installed, error) {
 				switch {
 				case word == "--state-dir" && index+1 < len(words):
 					installed.StateDir = words[index+1]
-				case word == "--headless":
+				case word == "--headless" || word == "--headless=true":
 					installed.Headless = true
 				}
 			}
@@ -389,10 +358,18 @@ func RootInstallScript(plan Plan, unit string) (string, error) {
 	line("set -eu")
 	line("umask 022")
 	if plan.Mode == ModeAccount {
+		if !strings.HasPrefix(plan.StateDir, strings.TrimSuffix(plan.Home, "/")+"/") {
+			return "", fmt.Errorf("the state directory of the %s account must be inside %s", plan.User, plan.Home)
+		}
 		group, user, home, stateDir := shellQuote(plan.Group), shellQuote(plan.User), shellQuote(plan.Home), shellQuote(plan.StateDir)
 		line("getent group %s >/dev/null || groupadd --system %s", group, group)
 		line(`getent passwd %s >/dev/null || useradd --system --gid %s --home-dir %s --no-create-home --shell "$(command -v nologin || echo /bin/false)" --comment 'OwnGit service' %s`, user, group, home, user)
-		line("install -d -m 0700 -o %s -g %s %s %s", user, group, home, stateDir)
+		// Root creates only the home, in a folder only root can change, and
+		// only when it is missing. Everything inside belongs to the account,
+		// which could have replaced any of it with a link, so the account
+		// creates the state directory itself.
+		line("[ -d %s ] || install -d -m 0700 -o %s -g %s %s", home, user, group, home)
+		line("setpriv --reuid=%s --regid=%s --init-groups mkdir -p -m 0700 %s", user, group, stateDir)
 		line("install -d -m 0755 %s", shellQuote(filepath.Dir(PointerPath)))
 		line("printf '%%s\\n' %s >%s", stateDir, shellQuote(PointerPath+".new"))
 		line("mv -f %s %s", shellQuote(PointerPath+".new"), shellQuote(PointerPath))

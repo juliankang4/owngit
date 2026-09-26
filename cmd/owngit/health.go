@@ -9,6 +9,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"owngit/internal/server"
@@ -107,11 +110,54 @@ func checkHealth(target string) error {
 	return nil
 }
 
+// serveErrorFile, in the state directory, holds the error that ended the
+// last serve that could not start, so "owngit service install" can report it
+// without reading the service log, which the installing account may not be
+// allowed to read. A serve that starts listening removes it.
+const serveErrorFile = "serve-error.txt"
+
+// recordServeError writes the serve error, when the state directory exists.
+func recordServeError(stateDir string, err error) {
+	if info, statErr := os.Stat(stateDir); statErr == nil && info.IsDir() {
+		_ = os.WriteFile(filepath.Join(stateDir, serveErrorFile), []byte(err.Error()+"\n"), 0o600)
+	}
+}
+
+func clearServeError(stateDir string) {
+	_ = os.Remove(filepath.Join(stateDir, serveErrorFile))
+}
+
+// serveErrorSince returns the recorded serve error when it was written at or
+// after since.
+func serveErrorSince(stateDir string, since time.Time) (string, bool) {
+	path := filepath.Join(stateDir, serveErrorFile)
+	info, err := os.Stat(path)
+	if err != nil || info.ModTime().Before(since) {
+		return "", false
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(content)), true
+}
+
+// errServeFailed is a service that ended with an error while starting.
+type errServeFailed struct{ message string }
+
+func (failed errServeFailed) Error() string { return failed.message }
+
 // waitHealthy waits until the server of stateDir has published its address
-// and answers there, and returns that address.
+// and answers there, and returns that address. It stops early with an
+// errServeFailed when a serve started during the wait ended with an error.
 func waitHealthy(stateDir string, timeout time.Duration) (string, error) {
+	// File times can be a little coarser than the clock.
+	since := time.Now().Add(-time.Second)
 	deadline := time.Now().Add(timeout)
 	for {
+		if message, failed := serveErrorSince(stateDir, since); failed {
+			return "", errServeFailed{message}
+		}
 		target, running, err := healthAddress(stateDir)
 		if err == nil && !running {
 			err = errors.New("no running server has published its address yet")

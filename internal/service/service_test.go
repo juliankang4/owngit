@@ -29,6 +29,8 @@ func TestHeadlessDetection(t *testing.T) {
 		{"SSH_TTY alone", Environment{Getenv: environ(map[string]string{"SSH_TTY": "/dev/pts/1"}), EUID: 1000, Linux: true, GraphicalSession: true}, true},
 		{"SSH with X forwarding", Environment{Getenv: environ(sshWithDisplay), EUID: 1000, Linux: true, GraphicalSession: true}, false},
 		{"no graphical session", Environment{Getenv: environ(nil), EUID: 1000, Linux: true}, true},
+		{"a display without logind", Environment{Getenv: environ(desktop), EUID: 1000, Linux: true}, false},
+		{"X forwarding without logind", Environment{Getenv: environ(sshWithDisplay), EUID: 1000, Linux: true}, true},
 		{"root in a container", Environment{Getenv: environ(desktop), EUID: 0, Linux: true, InContainer: true, GraphicalSession: true}, true},
 		{"user in a container with a desktop", Environment{Getenv: environ(desktop), EUID: 1000, Linux: true, InContainer: true, GraphicalSession: true}, false},
 		{"root at a desktop", Environment{Getenv: environ(desktop), EUID: 0, Linux: true, GraphicalSession: true}, false},
@@ -94,7 +96,7 @@ func TestRenderUnitForEachMode(t *testing.T) {
 	if !strings.HasPrefix(user, unitMarker+"\n") {
 		t.Errorf("user unit does not start with the marker:\n%s", user)
 	}
-	if got := lines["ExecStart"]; !reflect.DeepEqual(got, []string{`"/usr/bin/owngit" "serve" "--state-dir" "/home/you/.config/owngit" "--no-open"`}) {
+	if got := lines["ExecStart"]; !reflect.DeepEqual(got, []string{`"/usr/bin/owngit" "serve" "--state-dir" "/home/you/.config/owngit" "--no-open" "--headless=false"`}) {
 		t.Errorf("user ExecStart = %q", got)
 	}
 	if lines["WantedBy"][0] != "default.target" || lines["User"] != nil || lines["ProtectSystem"] != nil || lines["NoNewPrivileges"][0] != "yes" {
@@ -107,36 +109,45 @@ func TestRenderUnitForEachMode(t *testing.T) {
 	system, err := RenderUnit(Plan{
 		Mode: ModeSystem, Executable: "/usr/local/bin/owngit", StateDir: "/home/you/.config/owngit", Headless: true,
 		User: "owner", Group: "owner", Home: "/home/you",
-		Writable: []string{"/home/you", "/home/you/.config/owngit", "/srv/git", "/home/you"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines = unitLines(system)
-	if got := lines["ExecStart"][0]; !strings.HasSuffix(got, `"--no-open" "--headless"`) {
+	if got := lines["ExecStart"][0]; !strings.HasSuffix(got, `"--no-open" "--headless=true"`) {
 		t.Errorf("headless ExecStart = %q", got)
 	}
-	if lines["User"][0] != "owner" || lines["Group"][0] != "owner" || lines["WantedBy"][0] != "multi-user.target" || lines["ProtectSystem"][0] != "strict" || lines["PrivateTmp"][0] != "yes" {
+	if lines["User"][0] != "owner" || lines["Group"][0] != "owner" || lines["WantedBy"][0] != "multi-user.target" || lines["ProtectSystem"][0] != "full" || lines["PrivateTmp"][0] != "yes" {
 		t.Errorf("system unit:\n%s", system)
 	}
-	// Folders inside another writable folder are not repeated.
-	if got := lines["ReadWritePaths"]; !reflect.DeepEqual(got, []string{`"-/home/you"`, `"-/srv/git"`}) {
-		t.Errorf("system ReadWritePaths = %q", got)
-	}
-	if lines["ProtectHome"] != nil {
+	// Outside the system folders the account's own file permissions
+	// decide, so a repository folder such as /srv/git works.
+	if lines["ReadWritePaths"] != nil || lines["ProtectHome"] != nil {
 		t.Errorf("a system unit of the installing user must keep its home writable:\n%s", system)
 	}
 
 	account, err := RenderUnit(Plan{
 		Mode: ModeAccount, Executable: "/usr/local/bin/owngit", StateDir: AccountStateDir,
-		User: AccountName, Group: AccountName, Home: AccountHome, Writable: []string{AccountHome, AccountStateDir},
+		User: AccountName, Group: AccountName, Home: AccountHome,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines = unitLines(account)
-	if lines["User"][0] != AccountName || lines["ProtectHome"][0] != "yes" || !reflect.DeepEqual(lines["ReadWritePaths"], []string{`"-/var/lib/owngit"`}) {
+	if lines["User"][0] != AccountName || lines["ProtectHome"][0] != "yes" || lines["ProtectSystem"][0] != "full" || lines["ReadWritePaths"] != nil {
 		t.Errorf("account unit:\n%s", account)
+	}
+	// Units that systemd starts as another account also drop every
+	// capability, native system calls only, and hide other processes.
+	// These need namespaces, which a user unit may not have.
+	for name, unit := range map[string]string{"system": system, "account": account, "user": user} {
+		lines := unitLines(unit)
+		hardened := lines["CapabilityBoundingSet"] != nil && lines["CapabilityBoundingSet"][0] == "" &&
+			lines["SystemCallArchitectures"] != nil && lines["SystemCallArchitectures"][0] == "native" &&
+			lines["ProtectProc"] != nil && lines["ProtectProc"][0] == "invisible"
+		if hardened != (name != "user") {
+			t.Errorf("%s unit hardened=%v:\n%s", name, hardened, unit)
+		}
 	}
 	for _, unit := range []string{user, system, account} {
 		for _, override := range []string{"--listen", "--base-url", "--allowed-host", "--trusted-proxy"} {
@@ -168,8 +179,8 @@ func TestRenderUnitQuotesAndRefuses(t *testing.T) {
 		{Mode: ModeUser, Executable: "/usr/bin/owngit", StateDir: "/home/you/new\nline"},
 		{Mode: ModeUser, Executable: "owngit", StateDir: "/home/you/state"},
 		{Mode: ModeUser, Executable: "/usr/bin/owngit", StateDir: "relative/state"},
-		{Mode: ModeSystem, Executable: "/usr/bin/owngit", StateDir: "/s", User: "bad name", Group: "g", Writable: []string{"/s"}},
-		{Mode: ModeSystem, Executable: "/usr/bin/owngit", StateDir: "/s", User: "u", Group: "g"},
+		{Mode: ModeSystem, Executable: "/usr/bin/owngit", StateDir: "/s", User: "bad name", Group: "g"},
+		{Mode: ModeSystem, Executable: "/usr/bin/owngit", StateDir: "/s", User: "", Group: "g"},
 		{Mode: ModeHomebrew, Executable: "/usr/bin/owngit", StateDir: "/s"},
 	} {
 		if _, err := RenderUnit(plan); err == nil {
@@ -195,6 +206,19 @@ func TestReadUnitRecognizesModesAndForeignUnits(t *testing.T) {
 	if err != nil || installed.Mode != ModeUser || installed.StateDir != "/home/you/.config/owngit" || installed.Headless {
 		t.Errorf("user unit read as %+v, %v", installed, err)
 	}
+	// The headless choice survives a re-install, including from a unit of
+	// an earlier version that passed a bare --headless.
+	for execStart, want := range map[string]bool{
+		`"/usr/bin/owngit" "serve" "--state-dir" "/s" "--no-open" "--headless=true"`:  true,
+		`"/usr/bin/owngit" "serve" "--state-dir" "/s" "--no-open" "--headless"`:       true,
+		`"/usr/bin/owngit" "serve" "--state-dir" "/s" "--no-open" "--headless=false"`: false,
+		`"/usr/bin/owngit" "serve" "--state-dir" "/s" "--no-open"`:                    false,
+	} {
+		noErr(t, os.WriteFile(userPath, []byte(unitMarker+"\n[Service]\nExecStart="+execStart+"\n"), 0o644))
+		if installed, err := ReadUnit(userPath); err != nil || installed.Headless != want {
+			t.Errorf("ReadUnit(%s): Headless=%v, %v; want %v", execStart, installed.Headless, err, want)
+		}
+	}
 	foreign := filepath.Join(dir, "foreign.service")
 	if err := os.WriteFile(foreign, []byte("[Service]\nExecStart=/usr/bin/owngit serve\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -210,7 +234,7 @@ func TestReadUnitRecognizesModesAndForeignUnits(t *testing.T) {
 func TestRootScripts(t *testing.T) {
 	plan := Plan{
 		Mode: ModeAccount, Executable: "/usr/local/bin/owngit", StateDir: AccountStateDir,
-		User: AccountName, Group: AccountName, Home: AccountHome, Writable: []string{AccountHome},
+		User: AccountName, Group: AccountName, Home: AccountHome,
 	}
 	unit, err := RenderUnit(plan)
 	if err != nil {
@@ -230,13 +254,27 @@ func TestRootScripts(t *testing.T) {
 	for _, want := range []string{
 		"set -eu", "getent group 'owngit' >/dev/null || groupadd --system 'owngit'",
 		"getent passwd 'owngit' >/dev/null || useradd --system --gid 'owngit' --home-dir '/var/lib/owngit' --no-create-home",
-		"install -d -m 0700 -o 'owngit' -g 'owngit' '/var/lib/owngit' '/var/lib/owngit/state'",
+		"[ -d '/var/lib/owngit' ] || install -d -m 0700 -o 'owngit' -g 'owngit' '/var/lib/owngit'",
+		"setpriv --reuid='owngit' --regid='owngit' --init-groups mkdir -p -m 0700 '/var/lib/owngit/state'",
 		"printf '%s\\n' '/var/lib/owngit/state' >'/etc/owngit/state-dir.new'", "mv -f '/etc/owngit/state-dir.new' '/etc/owngit/state-dir'",
 		"systemctl daemon-reload\nsystemctl enable --quiet owngit.service\nsystemctl restart owngit.service\n",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("account script lacks %q:\n%s", want, script)
 		}
+	}
+	// Root creates nothing inside the account's home and changes no owner
+	// there, because the account may have replaced what is inside with a
+	// link to a file of root's.
+	for _, line := range strings.Split(strings.Replace(script, unit, "", 1), "\n") {
+		if strings.Contains(line, "chown") || strings.Contains(line, AccountStateDir) && !strings.HasPrefix(line, "setpriv ") && !strings.HasPrefix(line, "printf ") {
+			t.Errorf("root touches the state directory: %q", line)
+		}
+	}
+	outside := plan
+	outside.StateDir = "/etc/owngit-state"
+	if _, err := RootInstallScript(outside, unit); err == nil || !strings.Contains(err.Error(), AccountHome) {
+		t.Errorf("an account state directory outside its home got a script: %v", err)
 	}
 	plan.Mode, plan.User, plan.Group = ModeSystem, "owner", "owner"
 	systemUnit, err := RenderUnit(plan)
@@ -354,5 +392,12 @@ func TestReadPointer(t *testing.T) {
 	}
 	if _, err := ReadPointer(path); err == nil {
 		t.Error("a relative pointer was accepted")
+	}
+}
+
+func noErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }

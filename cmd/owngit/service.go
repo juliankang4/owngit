@@ -138,12 +138,22 @@ func newServiceHost() (*serviceHost, error) {
 	}, nil
 }
 
-func (host *serviceHost) printf(format string, args ...any) { fmt.Fprintf(host.out, format, args...) }
+// printf prints to the owner. Text arguments can come from a state
+// directory that the service account controls, so their control and
+// direction characters are replaced before they reach root's terminal.
+func (host *serviceHost) printf(format string, args ...any) {
+	for index, arg := range args {
+		if text, ok := arg.(string); ok {
+			args[index] = printable(text)
+		}
+	}
+	fmt.Fprintf(host.out, format, args...)
+}
 
 // installed finds the unit of an earlier install, so that a new install
 // keeps its mode and state directory.
 func (host *serviceHost) installed() (service.Installed, bool, error) {
-	installed, found, err := service.FindInstalled(host.userConfigDir)
+	installed, found, err := findInstalled(host.userConfigDir)
 	if errors.Is(err, service.ErrForeignUnit) {
 		return installed, found, fmt.Errorf("%w; OwnGit leaves it alone. Remove or rename it first", err)
 	}
@@ -206,24 +216,10 @@ func (host *serviceHost) install(stateDirFlag string) error {
 		plan.Path = servicePath()
 	case service.ModeSystem:
 		plan.User, plan.Group, plan.Home, plan.Path = host.account.Username, host.group, host.account.HomeDir, servicePath()
-		plan.Writable = []string{host.account.HomeDir, stateDir}
-		// The state directory must exist before the unit starts, since
-		// only the listed directories are writable for the service.
-		if err := os.MkdirAll(stateDir, 0o700); err != nil {
-			return fmt.Errorf("create state directory: %w", err)
-		}
 	case service.ModeAccount:
 		plan.User, plan.Group, plan.Home = service.AccountName, service.AccountName, service.AccountHome
-		plan.Writable = []string{service.AccountHome, stateDir}
-		if err := readableByOthers(host.executable); err != nil {
-			return fmt.Errorf("the %s account cannot run %s (%v); put the binary in a folder such as /usr/local/bin and run it from there", service.AccountName, host.executable, err)
-		}
-	}
-	// Root never opens the account's state directory itself; see the
-	// check after the root steps below.
-	if mode != service.ModeAccount {
-		if repositoryRoot := savedRepositoryRoot(stateDir); repositoryRoot != "" {
-			plan.Writable = append(plan.Writable, repositoryRoot)
+		if err := rootControlledExecutable(host.executable); err != nil {
+			return fmt.Errorf("a service installed by root must run a binary that only root can change (%v); install it, for example with \"install -m 0755 owngit /usr/local/bin/\", and run it from there", err)
 		}
 	}
 	unit, err := service.RenderUnit(plan)
@@ -245,7 +241,7 @@ func (host *serviceHost) install(stateDirFlag string) error {
 		}
 		steps := "write the unit " + unitPath + " and start it"
 		if mode == service.ModeAccount {
-			steps = "create the " + service.AccountName + " account and " + service.AccountHome + ", write " + service.PointerPath + " and the unit " + unitPath + ", and start it"
+			steps = "make sure the " + service.AccountName + " account and " + service.AccountHome + " exist, write " + service.PointerPath + " and the unit " + unitPath + ", and start it"
 		}
 		explanation := "Installing OwnGit as a " + mode.Describe() + ": root will " + steps + "."
 		if !root {
@@ -259,9 +255,6 @@ func (host *serviceHost) install(stateDirFlag string) error {
 			// account, so the rest runs as the account.
 			if err := dropToAccount(service.AccountName); err != nil {
 				return err
-			}
-			if repositories := savedRepositoryRoot(stateDir); repositories != "" && !withinAny(repositories, plan.Writable) {
-				host.printf("Note: the repositories are in %s, which the service may not write. Run \"sudo systemctl edit owngit.service\" and add these two lines:\n  [Service]\n  ReadWritePaths=-%s\n", repositories, repositories)
 			}
 		}
 	}
@@ -326,8 +319,13 @@ func (host *serviceHost) installHomebrew(stateDir string, headless bool) error {
 // reportStarted waits for the service to answer, then prints where it
 // runs and, while setup is not done, the setup link.
 func (host *serviceHost) reportStarted(mode service.Mode, unitPath, stateDir string) error {
-	address, err := waitHealthy(stateDir, serviceStartTimeout)
-	if err != nil {
+	address, err := waitForService(stateDir, serviceStartTimeout)
+	var failed errServeFailed
+	switch {
+	case errors.As(err, &failed):
+		host.printf("OwnGit could not start: %s\nIt tries again every few seconds; after fixing this, \"owngit service status\" shows whether it runs.\n", failed.message)
+		return errors.New("the service did not start")
+	case err != nil:
 		host.printf("OwnGit did not answer within %s: %v\nSee the log: %s\n", serviceStartTimeout, err, mode.JournalCommand())
 		return errors.New("the service did not start")
 	}
@@ -342,7 +340,7 @@ func ownerAddresses(stateDir, checked string) string {
 	ctx := context.Background()
 	if store, err := openLiveState(ctx, stateDir); err == nil {
 		defer store.Close()
-		if bases, err := setupBases(ctx, store); err == nil {
+		if bases, _, err := setupBases(ctx, store); err == nil {
 			return strings.Join(bases, ", ")
 		}
 	}
@@ -418,6 +416,9 @@ func (host *serviceHost) uninstall() error {
 		host.printf(", and the %s account stays", service.AccountName)
 	}
 	host.printf(".\nRun \"owngit service install\" to use it again.\n")
+	if installed.Mode == service.ModeUser {
+		host.printf("Lingering stays on for this account, so its other user services still start at boot. \"loginctl disable-linger\" turns it off.\n")
+	}
 	return nil
 }
 
@@ -552,47 +553,62 @@ func (host *serviceHost) actForService(installed service.Installed) (bool, error
 	}
 }
 
-// withinAny reports whether path is one of dirs or inside one of them.
-func withinAny(path string, dirs []string) bool {
-	for _, dir := range dirs {
-		if path == dir || strings.HasPrefix(path, strings.TrimSuffix(dir, "/")+"/") {
-			return true
-		}
-	}
-	return false
-}
-
 // runAsRoot runs a root script: directly for root, otherwise through sudo,
-// which asks for the password itself; OwnGit never sees it. Without sudo,
-// or when sudo does not finish, it prints the one command to run as root.
+// which asks for the password itself; OwnGit never sees it. The script goes
+// to the shell on standard input, so no file holds it. Without sudo, or
+// when sudo does not finish, it prints the whole script for root to paste,
+// so root runs exactly what it reads and nothing that another account can
+// change afterwards.
 func (host *serviceHost) runAsRoot(script, explanation string) error {
-	file, err := os.CreateTemp("", "owngit-service-*.sh")
-	if err != nil {
-		return err
-	}
-	path := file.Name()
-	_, writeErr := file.WriteString(script)
-	if closeErr := file.Close(); writeErr != nil || closeErr != nil {
-		os.Remove(path)
-		return errors.Join(writeErr, closeErr)
-	}
 	host.printf("%s\n", explanation)
 	if host.env.EUID == 0 {
-		defer os.Remove(path)
-		return runAttached("/bin/sh", path)
+		return runScript(script, "/bin/sh", "-s")
 	}
-	if _, err := exec.LookPath("sudo"); err != nil {
-		host.printf("sudo is not available. Run this command as root, then \"owngit service status\" here:\n  sh %s\n", service.ShellQuote(path))
+	if _, err := lookPath("sudo"); err != nil {
+		host.printf("sudo is not available.\n")
+		host.printRootFallback(script)
 		return errors.New("the root steps have not run yet")
 	}
-	host.printf("Running: sudo /bin/sh %s\n", service.ShellQuote(path))
-	if err := runAttached("sudo", "/bin/sh", path); err != nil {
-		host.printf("The root steps did not finish. Fix the problem shown above and try again, or run this command as root, then \"owngit service status\" here:\n  sh %s\n", service.ShellQuote(path))
+	host.printf("Running: sudo /bin/sh -s (the steps above)\n")
+	if err := runScript(script, "sudo", "/bin/sh", "-s"); err != nil {
+		host.printf("The root steps did not finish. Fix the problem shown above and try again.\n")
+		host.printRootFallback(script)
 		return fmt.Errorf("the root steps did not finish: %w", err)
 	}
-	os.Remove(path)
 	return nil
 }
+
+// rootStepsEnd ends the pasted root script.
+const rootStepsEnd = "OWNGIT_ROOT_STEPS_END"
+
+// printRootFallback prints the root script as one command to paste into a
+// root shell.
+func (host *serviceHost) printRootFallback(script string) {
+	host.printf("Or ask an administrator to read these lines and paste them into a root shell. They install the OwnGit service to run as %s:\n", host.account.Username)
+	// The script is built here, not read from state, and its line breaks
+	// are its structure.
+	fmt.Fprintf(host.out, "sh <<'%s'\n%s%s\n", rootStepsEnd, script, rootStepsEnd)
+	host.printf("Then run \"owngit service status\" here.\n")
+}
+
+// findInstalled and waitForService are service.FindInstalled and
+// waitHealthy; tests replace them.
+var (
+	findInstalled  = service.FindInstalled
+	waitForService = waitHealthy
+)
+
+// lookPath and runScript are exec.LookPath and a command that reads a
+// script on standard input with this terminal for everything else. Tests
+// replace them.
+var (
+	lookPath  = exec.LookPath
+	runScript = func(script, name string, args ...string) error {
+		command := exec.Command(name, args...)
+		command.Stdin, command.Stdout, command.Stderr = strings.NewReader(script), os.Stdout, os.Stderr
+		return command.Run()
+	}
+)
 
 // runRootCommand runs one command through sudo, saying so first.
 func (host *serviceHost) runRootCommand(name string, args ...string) error {
@@ -606,7 +622,7 @@ func (host *serviceHost) runRootCommand(name string, args ...string) error {
 // rerunWithSudo runs this owngit command again as root through sudo.
 func (host *serviceHost) rerunWithSudo(args ...string) error {
 	host.printf("The OwnGit service runs as the %s account, so this needs root.\n", service.AccountName)
-	if _, err := exec.LookPath("sudo"); err != nil {
+	if _, err := lookPath("sudo"); err != nil {
 		return fmt.Errorf("sudo is not available; run as root: %s %s", host.executable, strings.Join(args, " "))
 	}
 	return runAttached("sudo", append([]string{host.executable}, args...)...)
@@ -633,26 +649,26 @@ func servicePath() string {
 	return strings.Join(entries, string(os.PathListSeparator))
 }
 
-// readableByOthers checks that an account other than the owner can reach
-// and run the file: every folder on the way lets others through and the
-// file lets others run it.
-func readableByOthers(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode().Perm()&0o001 == 0 {
-		return fmt.Errorf("%s is not executable by other accounts", path)
-	}
-	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
-		info, err := os.Stat(dir)
+// rootControlledExecutable checks the binary a root-installed service
+// runs: the owngit account must be able to run it, and only root may change
+// it or any folder on its path, because root runs the same binary to
+// update and manage the service.
+func rootControlledExecutable(path string) error {
+	for current := path; ; current = filepath.Dir(current) {
+		info, err := os.Stat(current)
 		if err != nil {
 			return err
 		}
-		if info.Mode().Perm()&0o001 == 0 {
-			return fmt.Errorf("the folder %s is closed to other accounts", dir)
+		if uid, _, ok := service.FileOwner(info); !ok || uid != 0 {
+			return fmt.Errorf("%s does not belong to root", current)
 		}
-		if parent := filepath.Dir(dir); parent == dir {
+		if info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("accounts other than root can change %s", current)
+		}
+		if info.Mode().Perm()&0o001 == 0 {
+			return fmt.Errorf("other accounts cannot run or enter %s", current)
+		}
+		if parent := filepath.Dir(current); parent == current {
 			return nil
 		}
 	}
@@ -771,30 +787,61 @@ func defaultPointerApplies() bool {
 }
 
 // actAsStateOwner lets root use the state directory of the account service
-// without leaving files there that the service cannot open: root switches
-// to the account that owns the directory before the command starts. For a
-// member of the owngit group who cannot enter the directory, it explains
-// that sudo is needed.
-func actAsStateOwner(stateDir string) error {
+// without leaving files there that the service cannot open: root becomes
+// the owngit account before the command starts. The account controls what
+// is inside its home, so root first checks that the directory is the
+// account's own real directory, reached through no link the account could
+// have made. For a member of the owngit group who cannot enter the
+// directory, it explains that sudo is needed.
+func actAsStateOwner(stateDir string) (dropped bool, err error) {
 	pointed := pointerStateDir()
 	if pointed == "" || filepath.Clean(mustAbs(stateDir)) != pointed {
-		return nil
+		return false, nil
 	}
-	info, err := os.Stat(pointed)
 	if os.Geteuid() != 0 {
-		if err != nil && errors.Is(err, os.ErrPermission) || err == nil && !accessible(pointed) {
-			return fmt.Errorf("the OwnGit service keeps its state in %s, which only the %s account can open; run this command with sudo", pointed, service.AccountName)
+		if _, err := os.Stat(pointed); err != nil && errors.Is(err, os.ErrPermission) || err == nil && !accessible(pointed) {
+			return false, fmt.Errorf("the OwnGit service keeps its state in %s, which only the %s account can open; run this command with sudo", pointed, service.AccountName)
 		}
-		return nil
+		return false, nil
 	}
+	account, err := user.Lookup(service.AccountName)
 	if err != nil {
-		return nil
+		return false, fmt.Errorf("the state directory %s belongs to the OwnGit service, but the %s account is missing: %w", pointed, service.AccountName, err)
 	}
-	uid, gid, ok := service.FileOwner(info)
-	if !ok || uid == 0 {
-		return nil
+	uid, _ := strconv.Atoi(account.Uid)
+	gid, _ := strconv.Atoi(account.Gid)
+	if err := accountStateDirectory(pointed, uid); err != nil {
+		return false, fmt.Errorf("refusing to use %s as root: %w", pointed, err)
 	}
-	return dropToAccountID(uid, gid)
+	return true, dropToAccountID(uid, gid)
+}
+
+// accountStateDirectory checks that dir is a real directory owned by the
+// account uid and that no folder on its path is a symbolic link that
+// anyone but root made.
+func accountStateDirectory(dir string, uid int) error {
+	for path := dir; ; path = filepath.Dir(path) {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if owner, _, ok := service.FileOwner(info); !ok || owner != 0 {
+				return fmt.Errorf("%s is a symbolic link that root did not make", path)
+			}
+		}
+		if path == dir {
+			if !info.IsDir() {
+				return errors.New("it is not a directory")
+			}
+			if owner, _, ok := service.FileOwner(info); !ok || owner != uid {
+				return fmt.Errorf("it does not belong to the %s account", service.AccountName)
+			}
+		}
+		if parent := filepath.Dir(path); parent == path {
+			return nil
+		}
+	}
 }
 
 func dropToAccountID(uid, gid int) error {

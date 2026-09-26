@@ -3,13 +3,18 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 
 	"owngit/internal/auth"
 	"owngit/internal/bootstrap"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
@@ -112,7 +117,7 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 		var err error
 		canonical, err = app.repositoryRoot(answers.StoragePath, true)
 		if err != nil {
-			notices = append(notices, webui.Error("storage_path", webui.MsgSetupStorageInvalid))
+			notices = append(notices, storageNotice(answers.StoragePath, err))
 		}
 	}
 	if len(notices) != 0 {
@@ -176,21 +181,68 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 // questions. It returns the message for the problem, or "". Setup
 // completion checks the folder again and creates it.
 func (app *App) CheckRepositoryFolder(value string) webui.MessageCode {
-	_, err := app.repositoryRoot(value, false)
+	if _, err := app.repositoryRoot(value, false); err != nil {
+		return storageProblem(err)
+	}
+	return ""
+}
+
+// storageProblem names what is wrong with a repository folder.
+func storageProblem(err error) webui.MessageCode {
 	switch {
-	case err == nil:
-		return ""
-	case errors.Is(err, fs.ErrPermission), errors.Is(err, syscall.EROFS):
+	case errors.Is(err, syscall.EROFS):
+		// Also a service's system folders, and the home folders for the
+		// owngit account, which the unit makes read-only.
+		return webui.MsgSetupStorageReadOnly
+	case errors.Is(err, fs.ErrPermission):
 		return webui.MsgSetupStorageDenied
 	case errors.Is(err, errNotDirectory), errors.Is(err, syscall.ENOTDIR):
 		return webui.MsgSetupStorageNotDir
 	case errors.Is(err, errOverlapsState):
 		return webui.MsgSetupStorageOverlap
+	case errors.Is(err, errRelativeRoot):
+		return webui.MsgSetupStorageInvalid
 	}
-	return webui.MsgSetupStorageInvalid
+	return webui.MsgSetupStorageUnusable
+}
+
+// storageNotice is the setup form's notice for a repository folder
+// problem. A folder the account cannot write comes with the command that
+// gives it the folder, because a service runs as an account the owner may
+// not know; other problems the owner cannot read from the page come with
+// the system's message.
+func storageNotice(folder string, err error) webui.Notice {
+	code := storageProblem(err)
+	notice := webui.Error("storage_path", code)
+	switch code {
+	case webui.MsgSetupStorageDenied:
+		if runtime.GOOS == "windows" {
+			break
+		}
+		if account, err := user.Current(); err == nil {
+			if group, err := user.LookupGroupId(account.Gid); err == nil {
+				notice.Code = webui.MsgSetupStorageDeniedGive
+				notice.Detail = fmt.Sprintf("sudo install -d -o %s -g %s -m 0700 %s", account.Username, group.Name, shellWord(filepath.Clean(folder)))
+			}
+		}
+	case webui.MsgSetupStorageUnusable:
+		notice.Detail = err.Error()
+	}
+	return notice
+}
+
+// shellWord quotes a word for a POSIX shell when it needs quoting.
+func shellWord(word string) string {
+	if word != "" && strings.IndexFunc(word, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._-+:@", r))
+	}) < 0 {
+		return word
+	}
+	return "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 }
 
 var (
+	errRelativeRoot  = errors.New("repository root must be absolute")
 	errNotDirectory  = errors.New("repository root is not a directory")
 	errOverlapsState = errors.New("repository root must be separate from application state")
 )
@@ -202,7 +254,7 @@ var (
 // nothing is left behind.
 func (app *App) repositoryRoot(value string, create bool) (string, error) {
 	if !filepath.IsAbs(value) {
-		return "", errors.New("repository root must be absolute")
+		return "", errRelativeRoot
 	}
 	clean := filepath.Clean(value)
 	if create {
@@ -255,4 +307,27 @@ func (app *App) repositoryRoot(value string, create bool) (string, error) {
 		return "", err
 	}
 	return canonical, nil
+}
+
+// returnToLocalListen saves DefaultListenAddress after web setup on a
+// computer without a screen that kept no address: every address the
+// listener was opened for is refused from now on, so from the next start
+// OwnGit listens only where it still answers. The terminal setup shows the
+// network address as the one other devices use and keeps it. A saved base URL or allowed Host means the
+// owner wants other devices, and then nothing changes.
+func (app *App) returnToLocalListen(ctx context.Context, keptHost string) {
+	if app.HeadlessListen == "" || keptHost != "" {
+		return
+	}
+	saved, err := app.Store.NetworkSettings(ctx)
+	if err != nil || saved.Listen != app.HeadlessListen || saved.BaseURL != "" {
+		return
+	}
+	if hosts, err := app.Store.TrustedHosts(ctx); err != nil || len(hosts) != 0 {
+		return
+	}
+	saved.Listen = DefaultListenAddress
+	if app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: saved}) == nil {
+		app.listenReturned.Store(true)
+	}
 }

@@ -2,7 +2,9 @@ package server
 
 import (
 	"errors"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -46,6 +48,14 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 	}
 	if stage == webui.SetupWizard {
 		page.KeepHost, page.KeepHostSetupOnly = app.setupHostToKeep(request), unknownHost
+		// On a computer without a screen the owner sets up from another
+		// device and nearly always wants to keep using it, so the address
+		// stays unless the owner unticks it.
+		page.Form.KeepHost = page.KeepHost != "" && app.HeadlessListen != ""
+		if publicPeer(request) {
+			page.Form.AccessMode = webui.AccessPassword
+			page.Chrome.Notices = append(page.Chrome.Notices, publicNetworkNotice())
+		}
 	}
 	if settings.Initialized {
 		page.Reason = webui.MsgSetupAlreadyDone
@@ -148,6 +158,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	app.clearCookie(writer, request, setupCookie, true)
+	app.returnToLocalListen(request.Context(), answers.KeepHost)
 	// An unknown Host that was not kept is refused from now on, so the
 	// result is shown here instead of on the dashboard.
 	if _, unknown := app.unknownHost(request); unknown {
@@ -174,7 +185,35 @@ func (app *App) renderSetupDoneElsewhere(writer http.ResponseWriter, request *ht
 		return
 	}
 	chrome.Nav = webui.Nav{}
-	app.render(writer, http.StatusOK, webui.SetupPage{Chrome: chrome, Stage: webui.SetupUnavailable, Reason: webui.MsgSetupDoneHostNotKept, RecoveryHint: webui.MsgSetupDoneHostNotKeptHint})
+	hint := webui.MsgSetupDoneHostNotKeptHint
+	if app.listenReturned.Load() {
+		hint = webui.MsgSetupDoneLocalOnlyHint
+	}
+	app.render(writer, http.StatusOK, webui.SetupPage{Chrome: chrome, Stage: webui.SetupUnavailable, Reason: webui.MsgSetupDoneHostNotKept, RecoveryHint: hint})
+}
+
+// publicPeer reports whether the request comes from a public Internet
+// address: not loopback, not a private or tailnet range, not link-local.
+// Behind a trusted reverse proxy it is the client the proxy names.
+func publicPeer(request *http.Request) bool {
+	host := requestctx.Of(request).ClientAddress
+	if split, _, err := net.SplitHostPort(host); err == nil {
+		host = split
+	}
+	address, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	address = address.Unmap()
+	return !(address.IsLoopback() || address.IsPrivate() || tailnetRange.Contains(address) ||
+		address.IsLinkLocalUnicast() || address.IsUnspecified())
+}
+
+// tailnetRange is the shared address space (RFC 6598) that Tailscale uses.
+var tailnetRange = netip.MustParsePrefix("100.64.0.0/10")
+
+func publicNetworkNotice() webui.Notice {
+	return webui.Notice{Kind: webui.NoticeInfo, Code: webui.MsgSetupPublicNetwork, Field: "access_mode"}
 }
 
 func (app *App) setupPrerequisites() []webui.Prerequisite {
@@ -192,6 +231,9 @@ func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	chrome.Notices = notices
+	if publicPeer(request) {
+		chrome.Notices = append(chrome.Notices, publicNetworkNotice())
+	}
 	app.render(writer, status, webui.SetupPage{
 		Chrome: chrome, Stage: webui.SetupWizard, SubmitURL: "/setup", RedeemURL: "/setup/redeem", Form: form,
 		Prerequisites: app.setupPrerequisites(), KeepHost: app.setupHostToKeep(request), KeepHostSetupOnly: unknownHost,

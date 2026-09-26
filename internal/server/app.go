@@ -91,6 +91,14 @@ type App struct {
 	// OnSetupComplete runs once after first-run setup succeeds in this
 	// process, so work that an initialized startup begins can begin now.
 	OnSetupComplete func()
+	// HeadlessListen is the every-address listen address that this start
+	// saved or kept for a computer without a screen before setup, or ""
+	// otherwise. On such a computer the setup form keeps the address it was
+	// opened by unless the owner unticks it, and setup that keeps no address
+	// saves DefaultListenAddress, so the listener matches what setup says.
+	HeadlessListen string
+	// listenReturned records that setup saved DefaultListenAddress.
+	listenReturned atomic.Bool
 	// setupFinished is set when first-run setup succeeds in this process, by
 	// the web page or the terminal. The next dashboard view, after sign-in
 	// when shared access needs one, takes it and shows the "Setup finished"

@@ -68,10 +68,10 @@ func setupLink(arguments []string) error {
 // for each address of this computer that the server can be reached by, the
 // most likely first. Elsewhere it shows only the setup file path.
 func issueAndShowSetupLink(ctx context.Context, store *state.Store, baseURL string, out io.Writer, terminal bool) (string, error) {
-	bases := []string{baseURL}
+	bases, tunnel := []string{baseURL}, ""
 	if baseURL == "" {
 		var err error
-		if bases, err = setupBases(ctx, store); err != nil {
+		if bases, tunnel, err = setupBases(ctx, store); err != nil {
 			return "", err
 		}
 	}
@@ -80,13 +80,18 @@ func issueAndShowSetupLink(ctx context.Context, store *state.Store, baseURL stri
 		return "", err
 	}
 	if !terminal {
-		fmt.Fprintf(out, "Owner setup file written to %s\n", path)
+		fmt.Fprintf(out, "Owner setup file written to %s\n", printable(path))
 		fmt.Fprintln(out, "Run \"owngit setup-link\" in a terminal to see the setup link there.")
 		return path, nil
 	}
-	if len(bases) == 1 {
+	switch {
+	case tunnel != "":
+		fmt.Fprintln(out, "This computer has no address on a private network or a tailnet. The setup link is not shown for a public address, where it and your passwords would cross the Internet unencrypted. On your own computer, open an SSH tunnel:")
+		fmt.Fprintf(out, "  %s\n", printable(tunnel))
+		fmt.Fprintln(out, "Keep it open, and open this one-time setup link there. It works once, within 15 minutes:")
+	case len(bases) == 1:
 		fmt.Fprintln(out, "Open this one-time setup link in a browser. It works once, within 15 minutes:")
-	} else {
+	default:
 		fmt.Fprintln(out, "Open this one-time setup link in a browser, with an address of this computer that your device reaches (the most likely first). It works once, within 15 minutes:")
 	}
 	for _, base := range bases {
@@ -94,20 +99,22 @@ func issueAndShowSetupLink(ctx context.Context, store *state.Store, baseURL stri
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(out, "  %s\n", link)
+		fmt.Fprintf(out, "  %s\n", printable(link))
 	}
-	fmt.Fprintf(out, "Whoever opens it first can set up OwnGit, so do not share it. The same link is in %s, and \"owngit setup-link\" makes a new one.\n", path)
+	fmt.Fprintf(out, "Whoever opens it first can set up OwnGit, so do not share it. The same link is in %s, and \"owngit setup-link\" makes a new one.\n", printable(path))
 	return path, nil
 }
 
 // setupBases returns the origins a setup link can use: the saved or
 // running base URL, then the listen address, where listening on every
-// address means this computer's LAN addresses. A computer with a screen
-// lists 127.0.0.1 before them.
-func setupBases(ctx context.Context, store *state.Store) ([]string, error) {
+// address means this computer's private and tailnet addresses. A computer
+// with a screen lists 127.0.0.1 before them. A computer without a screen
+// and without such an address gets the link on 127.0.0.1 and, as tunnel,
+// the SSH command that forwards it from the owner's own computer.
+func setupBases(ctx context.Context, store *state.Store) (bases []string, tunnel string, err error) {
 	observed, err := store.ObserveRunningNetwork(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	listen, base := server.DefaultListenAddress, ""
 	if observed.Server == state.ServerRunning && observed.Record != nil {
@@ -115,33 +122,73 @@ func setupBases(ctx context.Context, store *state.Store) ([]string, error) {
 	} else {
 		saved, err := store.NetworkSettings(ctx)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		listen = cmp.Or(saved.Listen, listen)
 		base = saved.BaseURL
 	}
-	var bases []string
 	if base != "" {
 		bases = append(bases, base)
 	}
 	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
-		return nil, fmt.Errorf("listen address %q: %w", listen, err)
+		return nil, "", fmt.Errorf("listen address %q: %w", listen, err)
 	}
+	loopback := "http://" + net.JoinHostPort("127.0.0.1", port)
 	if ip, err := netip.ParseAddr(host); host != "" && (err != nil || !ip.IsUnspecified()) {
-		bases = append(bases, "http://"+net.JoinHostPort(host, port))
-	} else {
-		if !probeEnvironment().Headless() {
-			bases = append(bases, "http://"+net.JoinHostPort("127.0.0.1", port))
-		}
-		for _, address := range lanAddresses() {
-			bases = append(bases, "http://"+net.JoinHostPort(address.String(), port))
-		}
-		if len(bases) == 0 {
-			bases = append(bases, "http://"+net.JoinHostPort("127.0.0.1", port))
+		return append(bases, "http://"+net.JoinHostPort(host, port)), "", nil
+	}
+	headless := probeEnvironment().Headless()
+	if !headless {
+		bases = append(bases, loopback)
+	}
+	private := lanAddresses()
+	for _, address := range private {
+		bases = append(bases, "http://"+net.JoinHostPort(address.String(), port))
+	}
+	if headless && len(private) == 0 {
+		bases = append(bases, loopback)
+		tunnel = sshTunnelCommand(port)
+	}
+	if len(bases) == 0 {
+		bases = append(bases, loopback)
+	}
+	return slices.Compact(bases), tunnel, nil
+}
+
+// sshTunnelCommand is the command that forwards port on the owner's own
+// computer to this computer's loopback. It names the address and account
+// of the current SSH session when there is one.
+func sshTunnelCommand(port string) string {
+	host := ""
+	if fields := strings.Fields(os.Getenv("SSH_CONNECTION")); len(fields) >= 3 {
+		host = fields[2]
+	}
+	if host == "" {
+		if address, ok := defaultRouteAddress(); ok {
+			host = address.String()
 		}
 	}
-	return slices.Compact(bases), nil
+	if host == "" {
+		host, _ = os.Hostname()
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	account := cmp.Or(os.Getenv("SUDO_USER"), os.Getenv("USER"), os.Getenv("LOGNAME"), "USER")
+	return fmt.Sprintf("ssh -L %s:127.0.0.1:%s %s@%s", port, port, account, cmp.Or(host, "HOST"))
+}
+
+// printable replaces control and text direction characters, which could
+// rewrite what a terminal shows, with "?".
+func printable(text string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r < 0x20, r >= 0x7f && r < 0xa0, r >= 0x200e && r <= 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+			return '?'
+		}
+		return r
+	}, text)
 }
 
 // interfaceAddress is one address of a network interface.
@@ -150,21 +197,14 @@ type interfaceAddress struct {
 	address netip.Addr
 }
 
-// lanAddresses lists the addresses other devices may reach this computer
-// by, the most likely first: the address of the default route, then
-// private IPv4, other IPv4 (such as a tailnet), unique local IPv6 and
-// global IPv6. Container and virtual bridges are left out.
-func lanAddresses() []netip.Addr {
-	var preferred netip.Addr
-	// Connecting a UDP socket sends nothing; it only selects the source
-	// address of the default route.
-	if connection, err := net.Dial("udp4", "192.0.2.1:9"); err == nil {
-		if local, ok := connection.LocalAddr().(*net.UDPAddr); ok {
-			preferred, _ = netip.AddrFromSlice(local.IP)
-			preferred = preferred.Unmap()
-		}
-		connection.Close()
-	}
+// lanAddresses lists the addresses other devices on a private network may
+// reach this computer by, the most likely first: the address of the default
+// route when it is private, then private IPv4, tailnet (100.64.0.0/10) and
+// unique local IPv6 addresses. Public addresses are left out, so a setup
+// link never sends its capability and the first passwords unencrypted over
+// the Internet. Container and virtual bridges are left out too.
+var lanAddresses = func() []netip.Addr {
+	preferred, _ := defaultRouteAddress()
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil
@@ -189,8 +229,33 @@ func lanAddresses() []netip.Addr {
 	return orderAddresses(preferred, candidates)
 }
 
+// defaultRouteAddress is the source address of the default IPv4 route.
+// Connecting a UDP socket sends nothing; it only selects that address.
+func defaultRouteAddress() (netip.Addr, bool) {
+	connection, err := net.Dial("udp4", "192.0.2.1:9")
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	defer connection.Close()
+	local, ok := connection.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	address, ok := netip.AddrFromSlice(local.IP)
+	return address.Unmap(), ok
+}
+
 // maxSetupAddresses bounds how many addresses a setup link is shown for.
 const maxSetupAddresses = 6
+
+// tailnetPrefix is the shared address space (RFC 6598) that Tailscale uses.
+var tailnetPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
+// privateAddress reports whether address belongs to a private network: a
+// private IPv4 range, the tailnet range, or unique local IPv6.
+func privateAddress(address netip.Addr) bool {
+	return address.IsPrivate() || tailnetPrefix.Contains(address)
+}
 
 func orderAddresses(preferred netip.Addr, candidates []interfaceAddress) []netip.Addr {
 	rank := func(candidate interfaceAddress) int {
@@ -202,16 +267,13 @@ func orderAddresses(preferred netip.Addr, candidates []interfaceAddress) []netip
 			return 1
 		case address.Is4():
 			return 2
-		case address.IsPrivate():
-			return 3
 		default:
-			return 4
+			return 3
 		}
 	}
 	var kept []interfaceAddress
 	for _, candidate := range candidates {
-		address := candidate.address
-		if !address.IsValid() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsMulticast() || address.IsUnspecified() || virtualInterface(candidate.name) {
+		if !privateAddress(candidate.address) || virtualInterface(candidate.name) {
 			continue
 		}
 		kept = append(kept, candidate)
@@ -240,6 +302,27 @@ func virtualInterface(name string) bool {
 // headlessListen is server.HeadlessListenAddress; tests use a free port on
 // loopback instead.
 var headlessListen = server.HeadlessListenAddress
+
+// headlessChoice is the value of serve's --headless flag when it was given,
+// and otherwise whether this computer looks like it has no screen.
+func headlessChoice(flags *flag.FlagSet, value bool) bool {
+	given := false
+	flags.Visit(func(entry *flag.Flag) { given = given || entry.Name == "headless" })
+	if given {
+		return value
+	}
+	return probeEnvironment().Headless()
+}
+
+// headlessListenInUse returns the every-address listen address when this
+// start before setup on a computer without a screen uses the one the
+// headless rule saves, and "" otherwise.
+func headlessListenInUse(headlessSetup bool, network serveNetwork) string {
+	if headlessSetup && network.ListenSource == sourceSaved && network.Listen == headlessListen {
+		return network.Listen
+	}
+	return ""
+}
 
 // applyHeadlessListen saves the every-address listen address for an
 // installation that is not set up and has no saved listen address. It

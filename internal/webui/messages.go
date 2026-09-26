@@ -95,9 +95,18 @@ const (
 	MsgSetupStorageInvalid MessageCode = "setup.storage.invalid"
 	MsgSetupStorageDenied  MessageCode = "setup.storage.denied"
 	MsgSetupStorageNotDir  MessageCode = "setup.storage.not_directory"
-	MsgSetupStorageInUse   MessageCode = "setup.storage.in_use"
-	MsgSetupStorageOverlap MessageCode = "setup.storage.overlaps_state"
-	MsgSetupStorageRemote  MessageCode = "setup.storage.network_share"
+	// MsgSetupStorageDeniedGive is MsgSetupStorageDenied on the setup page,
+	// followed by the command that gives OwnGit's account the folder.
+	MsgSetupStorageDeniedGive MessageCode = "setup.storage.denied_give"
+	// MsgSetupStorageReadOnly is a folder on a read-only file system, which
+	// includes the folders a service unit makes read-only.
+	MsgSetupStorageReadOnly MessageCode = "setup.storage.read_only"
+	// MsgSetupStorageUnusable is any other failure; the system's message
+	// follows it.
+	MsgSetupStorageUnusable MessageCode = "setup.storage.unusable"
+	MsgSetupStorageInUse    MessageCode = "setup.storage.in_use"
+	MsgSetupStorageOverlap  MessageCode = "setup.storage.overlaps_state"
+	MsgSetupStorageRemote   MessageCode = "setup.storage.network_share"
 
 	MsgSetupAccessLabel     MessageCode = "setup.access.label"
 	MsgSetupAccessHelp      MessageCode = "setup.access.help"
@@ -133,6 +142,13 @@ const (
 	// MsgHostRefusedHint follows "unrecognized host" on the plain-text page
 	// for a Host that OwnGit refuses.
 	MsgHostRefusedHint MessageCode = "host.refused.hint"
+	// MsgSetupDoneLocalOnlyHint replaces MsgSetupDoneHostNotKeptHint when
+	// setup on a computer without a screen kept no address, so OwnGit
+	// listens only on that computer from its next start.
+	MsgSetupDoneLocalOnlyHint MessageCode = "setup.done_local_only.hint"
+	// MsgSetupPublicNetwork explains why shared-password access is selected
+	// for setup opened from a public Internet address.
+	MsgSetupPublicNetwork MessageCode = "setup.access.public_network"
 
 	MsgSetupSubmit    MessageCode = "setup.submit"
 	MsgSetupFailed    MessageCode = "setup.failed"
@@ -533,6 +549,18 @@ var catalog = map[MessageCode]message{
 		en: "This account cannot write to that folder. Choose another folder or change its permissions.",
 		ko: "이 계정으로는 그 폴더에 쓸 수 없습니다. 다른 폴더를 고르거나 권한을 바꿔 주세요.",
 	},
+	MsgSetupStorageDeniedGive: {
+		en: "The account OwnGit runs as cannot write to that folder. Choose another folder, or give it this one by running this command on the OwnGit computer:",
+		ko: "OwnGit이 실행되는 계정은 그 폴더에 쓸 수 없습니다. 다른 폴더를 고르거나, OwnGit 컴퓨터에서 이 명령을 실행해 이 폴더를 맡기세요:",
+	},
+	MsgSetupStorageReadOnly: {
+		en: "That folder is read-only for OwnGit. A service may not write in system folders, and the owngit account service not in home folders either. Choose the suggested folder or one such as /srv/git.",
+		ko: "그 폴더는 OwnGit에게 읽기 전용입니다. 서비스는 시스템 폴더에 쓸 수 없고, owngit 계정 서비스는 홈 폴더에도 쓸 수 없습니다. 제안된 폴더나 /srv/git 같은 폴더를 고르세요.",
+	},
+	MsgSetupStorageUnusable: {
+		en: "OwnGit cannot use that folder. The system reported:",
+		ko: "OwnGit이 그 폴더를 쓸 수 없습니다. 시스템이 알린 내용:",
+	},
 	MsgSetupStorageNotDir: {
 		en: "That path is a file. Choose a folder.",
 		ko: "그 경로는 파일입니다. 폴더를 선택하세요.",
@@ -649,6 +677,14 @@ var catalog = map[MessageCode]message{
 	MsgHostRefusedHint: {
 		en: "To use this address, add it to Allowed names in OwnGit's network settings, or run owngit network set --allowed-host on the computer running OwnGit, then restart OwnGit. Names for that computer itself, such as localhost, work only on that computer.",
 		ko: "이 주소를 쓰려면 OwnGit 네트워크 설정의 허용한 이름에 추가하거나, OwnGit이 실행 중인 컴퓨터에서 owngit network set --allowed-host 명령으로 허용한 뒤 OwnGit을 다시 시작하세요. localhost처럼 그 컴퓨터 자신을 가리키는 이름은 그 컴퓨터에서만 쓸 수 있습니다.",
+	},
+	MsgSetupDoneLocalOnlyHint: {
+		en: "From its next start OwnGit listens only on the installation host, so open it there. To use this address, set the listen address and allow the address there with owngit network, and restart OwnGit.",
+		ko: "OwnGit은 다음 시작부터 설치 호스트에서만 연결을 받으므로 그곳에서 여세요. 이 주소를 쓰려면 그곳에서 owngit network 명령으로 받을 주소를 정하고 이 주소를 허용한 뒤 OwnGit을 다시 시작하세요.",
+	},
+	MsgSetupPublicNetwork: {
+		en: "You opened setup from a public Internet address, so \"Anyone on this network\" would mean anyone on the Internet. OwnGit selected the shared password instead.",
+		ko: "공인 인터넷 주소에서 설치 화면을 열었으므로 \"이 네트워크의 모든 사람\"은 인터넷의 모든 사람을 뜻합니다. 그래서 공용 비밀번호를 선택해 두었습니다.",
 	},
 	MsgSetupKeepHostLabel: {
 		en: "Keep accepting this address after a restart:",

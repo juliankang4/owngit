@@ -83,7 +83,8 @@ type Environment struct {
 // on Linux when any of these holds:
 //   - root runs inside a container or LXC;
 //   - an SSH session without a display (neither DISPLAY nor WAYLAND_DISPLAY);
-//   - no graphical session exists on this computer.
+//   - no graphical session exists on this computer, and no display is set
+//     outside SSH (WSLg and desktops without logind set only a display).
 //
 // Other platforms are never headless here yet.
 func (env Environment) Headless() bool {
@@ -98,7 +99,7 @@ func (env Environment) Headless() bool {
 	if ssh && !display {
 		return true
 	}
-	return !env.GraphicalSession
+	return !env.GraphicalSession && !(display && !ssh)
 }
 
 // ChooseMode picks the mode for a new installation: Homebrew when it
