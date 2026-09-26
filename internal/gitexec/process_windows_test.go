@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -392,33 +393,106 @@ func startWindowsJobFixture(t *testing.T) (*ProcessOwner, *exec.Cmd) {
 	return owner, cmd
 }
 
-// When the job's first accounting read comes back empty while its process
-// runs, the error shows that the listed process is the one assigned at
-// creation, that it is still in the job, and what a later read returns.
-func TestTerminateOwnedProcessDescribesAnEmptyAccountingRead(t *testing.T) {
-	owner, cmd := startWindowsJobFixture(t)
-	originalAccounting := jobAccountingQuery
-	t.Cleanup(func() { jobAccountingQuery = originalAccounting })
-	calls := 0
+// replacedJobReads passes the real job queries through, except for the
+// accounting reads that replace answers, such as the all-zero read Windows
+// once returned under load. replace sees the read's number and how many reads
+// followed the latest process list query (-1 before the first one). Real
+// reads under load can differ between captures, so tests count captures
+// with a lower bound.
+type replacedJobReads struct {
+	reads, lists, sinceList int
+	replace                 func(read, sinceList int) (windowsJobAccounting, bool)
+}
+
+// zeroReads replaces the given reads with an all-zero answer.
+func zeroReads(numbers ...int) func(read, sinceList int) (windowsJobAccounting, bool) {
+	return func(read, _ int) (windowsJobAccounting, bool) {
+		return windowsJobAccounting{}, slices.Contains(numbers, read)
+	}
+}
+
+func (z *replacedJobReads) install(t *testing.T) {
+	t.Helper()
+	originalAccounting, originalList := jobAccountingQuery, jobProcessIDsQuery
+	t.Cleanup(func() { jobAccountingQuery, jobProcessIDsQuery = originalAccounting, originalList })
+	z.sinceList = -1
 	jobAccountingQuery = func(job windows.Handle) (windowsJobAccounting, error) {
-		calls++
-		if calls == 1 {
-			return windowsJobAccounting{}, nil
+		z.reads++
+		if z.sinceList >= 0 {
+			z.sinceList++
+		}
+		if accounting, replaced := z.replace(z.reads, z.sinceList); replaced {
+			return accounting, nil
 		}
 		return originalAccounting(job)
 	}
+	jobProcessIDsQuery = func(job windows.Handle, expected uint32) ([]uint32, error) {
+		z.lists++
+		z.sinceList = 0
+		return originalList(job, expected)
+	}
+}
+
+// An all-zero first read while the assigned process runs in the job cannot
+// be right. Cleanup captures again instead of reporting growth.
+func TestTerminateOwnedProcessRecapturesAfterAnEmptyAccountingRead(t *testing.T) {
+	owner, _ := startWindowsJobFixture(t)
+	reads := &replacedJobReads{replace: zeroReads(1)}
+	reads.install(t)
+	if err := terminateWindowsOwnedProcess(owner, time.Now().Add(2*time.Second)); err != nil {
+		t.Fatalf("termination error=%v, want the empty read to be captured again", err)
+	}
+	if reads.lists < 2 {
+		t.Fatalf("capture ran %d times, want a recapture after the empty read", reads.lists)
+	}
+}
+
+// When every capture starts with an empty read, cleanup stops retrying within
+// its settle budget and reports what it saw.
+func TestTerminateOwnedProcessReportsAnEmptyAccountingReadThatPersists(t *testing.T) {
+	owner, cmd := startWindowsJobFixture(t)
+	// No real read is used, so nothing can settle: the read right after each
+	// process list reports the running process, and every other read is
+	// empty.
+	reads := &replacedJobReads{replace: func(_, sinceList int) (windowsJobAccounting, bool) {
+		if sinceList == 1 {
+			return jobCounts(1, 1), true
+		}
+		return windowsJobAccounting{}, true
+	}}
+	reads.install(t)
 	err := terminateWindowsOwnedProcess(owner, time.Now().Add(2*time.Second))
 	pid := cmd.Process.Pid
 	for _, want := range []string{
 		"membership changed during process capture: total=0/1 active=0/1",
 		"before={total=0 active=0 terminated=0 user=0 kernel=0 faults=0}",
-		"after={total=1 active=1",
-		"later={total=1 active=1",
+		"after={total=1 active=1 terminated=0 user=0 kernel=0 faults=0}",
+		"later={total=0 active=0",
 		fmt.Sprintf("listed=[%d] retained=[%d] assigned=%d in job: true", pid, pid, pid),
 	} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("termination error=%v, want %q", err, want)
 		}
+	}
+	if reads.lists < 2 {
+		t.Fatalf("capture ran %d times, want retries before reporting", reads.lists)
+	}
+}
+
+// After a stable capture, an all-zero read while cleanup waits for the job to
+// empty is read again instead of being reported as a changed lifetime.
+func TestTerminateOwnedProcessRereadsAnEmptyAccountingReadAfterTermination(t *testing.T) {
+	owner, _ := startWindowsJobFixture(t)
+	// Reads 1 and 2 belong to the capture; read 3 is the first after
+	// termination. If a real read made the capture run again, read 3 is a
+	// capture read instead, which is captured again as well.
+	reads := &replacedJobReads{replace: zeroReads(3)}
+	reads.install(t)
+	if err := terminateWindowsOwnedProcess(owner, time.Now().Add(2*time.Second)); err != nil {
+		t.Fatalf("termination error=%v, want the empty read to be read again", err)
+	}
+	if reads.reads < 4 {
+		t.Fatalf("job accounting read %d times, want a read after the empty one", reads.reads)
 	}
 }
 

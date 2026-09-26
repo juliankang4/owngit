@@ -300,7 +300,13 @@ func terminateWindowsOwnedProcess(owner *ProcessOwner, deadline time.Time) (resu
 	}
 	waitErr := waitForWindowsTrackedProcesses(capture.processes, deadline)
 
-	accounting, accountingErr := awaitWindowsJobEmpty(owner.job, deadline)
+	// The total of a stable capture is a floor: the total counts every
+	// process ever assigned, so a later read below it cannot be right.
+	var totalFloor uint32
+	if capture.stable {
+		totalFloor = capture.stableTotal
+	}
+	accounting, accountingErr := awaitWindowsJobEmpty(owner.job, totalFloor, deadline)
 	if accountingErr != nil {
 		accountingErr = fmt.Errorf("query owned job after termination: %w", accountingErr)
 	} else {
@@ -323,11 +329,14 @@ func terminateWindowsOwnedProcess(owner *ProcessOwner, deadline time.Time) (resu
 
 // awaitWindowsJobEmpty returns the job accounting once no process is active,
 // or the last accounting at the deadline. A terminated process can remain
-// counted for a moment after its handle is signaled.
-func awaitWindowsJobEmpty(job windows.Handle, deadline time.Time) (windowsJobAccounting, error) {
+// counted for a moment after its handle is signaled. A read whose total is
+// below totalFloor cannot be right, as under load Windows has returned an
+// all-zero read once, and is read again.
+func awaitWindowsJobEmpty(job windows.Handle, totalFloor uint32, deadline time.Time) (windowsJobAccounting, error) {
 	for {
 		accounting, err := jobAccountingQuery(job)
-		if err != nil || accounting.activeProcesses == 0 || !time.Now().Before(deadline) {
+		settled := accounting.activeProcesses == 0 && accounting.totalProcesses >= totalFloor
+		if err != nil || settled || !time.Now().Before(deadline) {
 			return accounting, err
 		}
 		time.Sleep(windowsJobSettleInterval)
@@ -336,15 +345,16 @@ func awaitWindowsJobEmpty(job windows.Handle, deadline time.Time) (windowsJobAcc
 
 // captureWindowsJobProcesses retains a handle to every process in the job.
 // An inconsistent capture in which the job only lost members, such as a main
-// process that exited just before cleanup, is retried until it is consistent.
+// process that exited just before cleanup, or in which a read cannot be right,
+// is retried until it is consistent.
 // Retries use at most half of the remaining cleanup time, so termination can
 // still be confirmed. Growth, failed queries and inconsistencies that persist
 // are reported.
 func captureWindowsJobProcesses(owner *ProcessOwner, deadline time.Time) (windowsJobCapture, error) {
 	settleBy := time.Now().Add(time.Until(deadline) / 2)
 	for {
-		capture, onlyDeparted, err := captureWindowsJobProcessesOnce(owner, deadline)
-		if err == nil || !onlyDeparted || !time.Now().Before(settleBy) {
+		capture, settles, err := captureWindowsJobProcessesOnce(owner, deadline)
+		if err == nil || !settles || !time.Now().Before(settleBy) {
 			return capture, err
 		}
 		if closeErr := closeWindowsTrackedProcesses(capture.processes); closeErr != nil {
@@ -354,10 +364,11 @@ func captureWindowsJobProcesses(owner *ProcessOwner, deadline time.Time) (window
 	}
 }
 
-// captureWindowsJobProcessesOnce makes one capture. onlyDeparted reports that
-// both accounting queries succeeded and no process joined the job between
-// them, so any inconsistency can come from processes leaving it.
-func captureWindowsJobProcessesOnce(owner *ProcessOwner, deadline time.Time) (capture windowsJobCapture, onlyDeparted bool, captureErr error) {
+// captureWindowsJobProcessesOnce makes one capture. settles reports that both
+// accounting queries succeeded and an inconsistency can settle: no process
+// joined the job between them, so it can come from processes leaving it, or
+// one of the reads cannot be right.
+func captureWindowsJobProcessesOnce(owner *ProcessOwner, deadline time.Time) (capture windowsJobCapture, settles bool, captureErr error) {
 	job := owner.job
 	if err := windowsCaptureDeadlineError(deadline); err != nil {
 		return capture, false, err
@@ -409,7 +420,7 @@ func captureWindowsJobProcessesOnce(owner *ProcessOwner, deadline time.Time) (ca
 	}
 	// The total counts every process ever assigned, so it grows whenever a
 	// process joins; the active count can then only have fallen by departures.
-	onlyDeparted = after.totalProcesses == before.totalProcesses
+	onlyDeparted := after.totalProcesses == before.totalProcesses
 	if before.totalProcesses != after.totalProcesses || before.activeProcesses != after.activeProcesses {
 		captureErr = errors.Join(captureErr, fmt.Errorf(
 			"owned job membership changed during process capture: total=%d/%d active=%d/%d (%s)",
@@ -437,8 +448,14 @@ func captureWindowsJobProcessesOnce(owner *ProcessOwner, deadline time.Time) (ca
 	if captureErr == nil {
 		capture.stable = true
 		capture.stableTotal = after.totalProcesses
+		return capture, true, nil
 	}
-	return capture, onlyDeparted, captureErr
+	// A job that holds a process has a nonzero total, so a zero total while
+	// the assigned process is confirmed in the job is a read that cannot be
+	// right, not growth. Under load Windows has returned such an all-zero read
+	// once. Growth is only reported from two reads that can both be right.
+	impossible := (before.totalProcesses == 0 || after.totalProcesses == 0) && windowsAssignedProcessInJob(owner)
+	return capture, onlyDeparted || impossible, captureErr
 }
 
 // describeWindowsJobChange records what cleanup saw when the job's accounting
@@ -461,7 +478,7 @@ func describeWindowsJobChange(owner *ProcessOwner, before, after windowsJobAccou
 	}
 	assigned := "unknown"
 	if owner.processID != 0 {
-		assigned = windowsProcessStillInJob(owner.job, owner.processID)
+		assigned = describeWindowsProcessInJob(owner.job, owner.processID)
 	}
 	return fmt.Sprintf("job=%#x before=%s after=%s later=%s listed=%v retained=%v assigned=%d in job: %s",
 		uintptr(owner.job), before.describe(), after.describe(), laterText, listed, retainedIDs, owner.processID, assigned)
@@ -473,19 +490,39 @@ func (accounting windowsJobAccounting) describe() string {
 		accounting.totalUserTime, accounting.totalKernelTime, accounting.totalPageFaultCount)
 }
 
-// windowsProcessStillInJob reports whether processID is a member of job, or
-// why that could not be read.
-func windowsProcessStillInJob(job windows.Handle, processID uint32) string {
+// describeWindowsProcessInJob reports whether processID is a member of job,
+// or why that could not be read.
+func describeWindowsProcessInJob(job windows.Handle, processID uint32) string {
+	inJob, err := windowsProcessIDInJob(job, processID)
+	if err != nil {
+		return err.Error()
+	}
+	return strconv.FormatBool(inJob)
+}
+
+// windowsAssignedProcessInJob reports whether the process assigned when the
+// job was created is confirmed to be in the job behind the owner's handle. If
+// its ID now names another process, that process can only be in this job as
+// its descendant, and then the job holds a process too.
+func windowsAssignedProcessInJob(owner *ProcessOwner) bool {
+	if owner.processID == 0 {
+		return false
+	}
+	inJob, err := windowsProcessIDInJob(owner.job, owner.processID)
+	return err == nil && inJob
+}
+
+func windowsProcessIDInJob(job windows.Handle, processID uint32) (bool, error) {
 	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, processID)
 	if err != nil {
-		return "open failed: " + err.Error()
+		return false, fmt.Errorf("open failed: %w", err)
 	}
 	defer windows.CloseHandle(process)
 	inJob, err := windowsProcessInJob(process, job)
 	if err != nil {
-		return "check failed: " + err.Error()
+		return false, fmt.Errorf("check failed: %w", err)
 	}
-	return strconv.FormatBool(inJob)
+	return inJob, nil
 }
 
 func windowsCaptureDeadlineError(deadline time.Time) error {
