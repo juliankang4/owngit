@@ -110,9 +110,11 @@ checks on. Container settings appear only when the container is selected.
 Limits sit under **Advanced limits** with working values filled in. Times are
 entered in seconds, minutes, or hours and sizes in bytes, KB, MB, or GB, where
 1 KB is 1024 bytes. Each field shows its accepted range and, where the backend
-has one, its default. A refused value is explained next to its field. An
-amount that does not convert to a whole number of milliseconds, bytes, or
-thousandths of a core is refused. The time and output limits are maximums: a
+has one, its default. A refused value is explained next to its field. Amounts
+are never rounded: a time must come to a whole number of milliseconds and a
+size to a whole number of bytes, and a CPU amount can have at most three
+decimal places (thousandths of a core), such as 1.5 or 0.25. Any other amount
+is refused. The time and output limits are maximums: a
 check gets 10 minutes and keeps 64 KiB of output unless its check file asks
 for a different value under `limits`. In container and runner modes the next
 step never promises that checks will run, because the screen cannot see

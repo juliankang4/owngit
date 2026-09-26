@@ -517,11 +517,11 @@ user's permissions and environment and are not sandboxed. One run at a time is
 allowed; a second call fails with `check_run_busy`.
 
 The checks are commands that come from the repository. Anyone or anything that
-can commit to the clone or edit it, including its `.git/config`, attribute
-files, and filters, can therefore make `check_run` start a program: through
-the committed checks, or through a clean filter that runs while the worktree is
-inspected. When an agent may edit files but must not run commands, start the
-server with `--no-run-check`.
+can commit to the clone, or edit it (including its `.git/config`, attribute
+files, and filters), can therefore make `check_run` start a program. That
+program can be one of the committed checks, or a clean filter that runs while
+the worktree is inspected. When an agent may edit files but must not run
+commands, start the server with `--no-run-check`.
 
 A cancellation from the coding tool, or the end of its input, stops the checks
 and their child processes. The attempt is still recorded as cancelled before
