@@ -279,17 +279,21 @@ func (sharing *Tailscale) Report(ctx context.Context) (TailscaleReport, error) {
 
 // offNeedsTailscale reports whether turning off would have to change
 // Tailscale's Serve configuration while a problem with Tailscale keeps it
-// from doing so, such as Tailscale being stopped: turning off would be
-// refused, so it is not offered until the problem is fixed. Without the
-// endpoint, or after a rename, turning off changes only OwnGit's settings.
-// Missing HTTPS certificates do not keep an endpoint from being removed.
+// from doing so: turning off would be refused, so it is not offered until
+// the problem is fixed. Without the endpoint, or after a rename, turning
+// off changes only OwnGit's settings. Tailscale changes its Serve
+// configuration only while it has this computer's node (its network map),
+// which it lacks when stopped, signed out or starting; the tailscale
+// command cannot help when it is missing or does not answer. Other
+// problems, such as MagicDNS or HTTPS certificates being off, do not show
+// that removing the endpoint fails, so turning off stays offered.
 func offNeedsTailscale(report TailscaleReport, record state.TailscaleServe) bool {
 	switch {
 	case !record.Created, report.Endpoint == TailscaleEndpointMissing, report.Name != "" && report.Name != record.Name:
 		return false
 	}
 	switch tailscale.Kind(report.Problem) {
-	case "", tailscale.KindHTTPSOff, tailscale.KindHTTPSUnavailable:
+	case "", tailscale.KindHTTPSOff, tailscale.KindHTTPSUnavailable, tailscale.KindMagicDNSOff, tailscale.KindNeedsApproval:
 		return false
 	}
 	return true

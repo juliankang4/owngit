@@ -349,6 +349,45 @@ func TestTurningOffWhileTailscaleIsStoppedSaysSo(t *testing.T) {
 	}
 }
 
+// Turning off is not offered only while it would have to remove OwnGit's
+// address and Tailscale cannot change its configuration: when it is
+// stopped, signed out, starting, or its command does not work. Without the
+// address, after a rename, or with a problem that does not keep the address
+// from being removed, turning off changes what it can and stays offered.
+func TestTurningOffIsHiddenOnlyWhenTailscaleWouldRefuse(t *testing.T) {
+	record := state.TailscaleServe{Name: tailscaletest.Name, HTTPSPort: 443, Created: true}
+	here := TailscaleReport{Name: tailscaletest.Name, Endpoint: TailscaleEndpointOwnGit}
+	for _, test := range []struct {
+		name    string
+		problem tailscale.Kind
+		change  func(*TailscaleReport, *state.TailscaleServe)
+		refused bool
+	}{
+		{"no problem", "", nil, false},
+		{"stopped", tailscale.KindStopped, nil, true},
+		{"signed out", tailscale.KindLoggedOut, nil, true},
+		{"starting", tailscale.KindNotRunning, nil, true},
+		{"not installed", tailscale.KindNotInstalled, nil, true},
+		{"not answering", tailscale.KindTimeout, nil, true},
+		{"stopped without a name", tailscale.KindStopped, func(report *TailscaleReport, _ *state.TailscaleServe) { report.Name = "" }, true},
+		{"waiting for approval", tailscale.KindNeedsApproval, nil, false},
+		{"MagicDNS off", tailscale.KindMagicDNSOff, nil, false},
+		{"certificates off", tailscale.KindHTTPSOff, nil, false},
+		{"stopped, address gone", tailscale.KindStopped, func(report *TailscaleReport, _ *state.TailscaleServe) { report.Endpoint = TailscaleEndpointMissing }, false},
+		{"stopped, renamed", tailscale.KindStopped, func(report *TailscaleReport, _ *state.TailscaleServe) { report.Name = renamed }, false},
+		{"stopped, address not made by OwnGit", tailscale.KindStopped, func(_ *TailscaleReport, record *state.TailscaleServe) { record.Created = false }, false},
+	} {
+		report, record := here, record
+		report.Problem = string(test.problem)
+		if test.change != nil {
+			test.change(&report, &record)
+		}
+		if got := offNeedsTailscale(report, record); got != test.refused {
+			t.Errorf("%s: turning off hidden=%v, want %v", test.name, got, test.refused)
+		}
+	}
+}
+
 // Turning off from a page opened through the tailnet address ends on a page
 // that needs nothing more from that address, which then no longer reaches
 // OwnGit, and that names the address that works on this computer.
