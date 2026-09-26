@@ -1,8 +1,8 @@
 // Package service installs OwnGit as a background service that starts at
 // boot. It chooses who runs the service from the environment, without
 // asking: a desktop user, the user who installs it over SSH, or a dedicated
-// account when root installs it. Linux uses systemd. Other platforms plug
-// in later through the same modes and commands.
+// account when root installs it. Linux uses systemd and Windows the Task
+// Scheduler. Other platforms plug in through the same modes and commands.
 package service
 
 import (
@@ -28,6 +28,14 @@ const (
 	// ModeHomebrew leaves the service to "brew services", because Homebrew
 	// installed the binary and upgrades it.
 	ModeHomebrew Mode = "homebrew"
+	// ModeBootTask is a Windows scheduled task that starts at boot as the
+	// installing administrator account, without a stored password (S4U).
+	ModeBootTask Mode = "boot-task"
+	// ModeLogonTask is a Windows scheduled task that starts when the
+	// installing standard account signs in. Windows lets only that account
+	// itself register a task for it without its password, and a standard
+	// account may not use S4U or a boot trigger.
+	ModeLogonTask Mode = "logon-task"
 )
 
 // Describe says in a few words who runs the service.
@@ -41,6 +49,10 @@ func (mode Mode) Describe() string {
 		return "systemd system service that runs as the " + AccountName + " account"
 	case ModeHomebrew:
 		return "Homebrew service (brew services)"
+	case ModeBootTask:
+		return "scheduled task that starts at boot as this account"
+	case ModeLogonTask:
+		return "scheduled task that starts when this account signs in"
 	}
 	return string(mode)
 }
@@ -76,6 +88,20 @@ type Environment struct {
 	// could show graphics is not enough: every virtual machine with a
 	// virtual display adapter has one.
 	GraphicalSession bool
+
+	// Windows is true on Windows, where the scheduled task modes apply.
+	Windows bool
+	// NoDesktop is true on Windows when this process has no desktop that a
+	// person sees: session 0 (services, scheduled tasks without a sign-in,
+	// SSH) or an invisible window station. A browser started from there
+	// runs where nobody can see or close it.
+	NoDesktop bool
+	// Administrator is true on Windows when the account belongs to the
+	// Administrators group, elevated or not.
+	Administrator bool
+	// Elevated is true on Windows when this process has administrator
+	// rights now.
+	Elevated bool
 }
 
 // Headless reports whether the owner is likely not sitting at this
@@ -86,8 +112,13 @@ type Environment struct {
 //   - no graphical session exists on this computer, and no display is set
 //     outside SSH (WSLg and desktops without logind set only a display).
 //
-// Other platforms are never headless here yet.
+// On Windows it is true in an SSH session, which has no desktop of its
+// own. Other platforms are never headless here yet.
 func (env Environment) Headless() bool {
+	ssh := env.Getenv("SSH_CONNECTION") != "" || env.Getenv("SSH_CLIENT") != "" || env.Getenv("SSH_TTY") != ""
+	if env.Windows {
+		return ssh
+	}
 	if !env.Linux {
 		return false
 	}
@@ -95,7 +126,6 @@ func (env Environment) Headless() bool {
 		return true
 	}
 	display := env.Getenv("DISPLAY") != "" || env.Getenv("WAYLAND_DISPLAY") != ""
-	ssh := env.Getenv("SSH_CONNECTION") != "" || env.Getenv("SSH_CLIENT") != "" || env.Getenv("SSH_TTY") != ""
 	if ssh && !display {
 		return true
 	}
@@ -106,9 +136,14 @@ func (env Environment) Headless() bool {
 // installed the binary, the dedicated account for root, a user service on
 // a desktop, and a system service running as the installing user
 // otherwise. A user service that cannot start at boot falls back to
-// ModeSystem when it is installed.
+// ModeSystem when it is installed. On Windows an administrator account
+// gets ModeBootTask and a standard account ModeLogonTask.
 func (env Environment) ChooseMode(homebrew bool) Mode {
 	switch {
+	case env.Windows && env.Administrator:
+		return ModeBootTask
+	case env.Windows:
+		return ModeLogonTask
 	case homebrew && env.EUID != 0:
 		return ModeHomebrew
 	case env.EUID == 0:
