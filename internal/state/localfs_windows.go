@@ -178,16 +178,25 @@ func ProtectPrivatePath(path string, directory bool) error {
 	if err != nil {
 		return err
 	}
-	if err := validateProcessOwned(path, user, defaultOwner); err != nil {
+	owner, err := validateProcessOwned(path, user, defaultOwner)
+	if err != nil {
 		return err
 	}
 	acl, err := ownerOnlyACL(user, directory)
 	if err != nil {
 		return err
 	}
-	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		user, nil, acl, nil); err != nil {
+	// Setting the owner needs WRITE_OWNER, which the inherited ACL of a
+	// folder outside the profile does not grant a process without
+	// administrator rights. When the user already owns the path, only the
+	// DACL changes, which its owner may always do.
+	information := windows.SECURITY_INFORMATION(windows.OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION)
+	newOwner := user
+	if owner.Equals(user) {
+		information &^= windows.OWNER_SECURITY_INFORMATION
+		newOwner = nil
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, information, newOwner, nil, acl, nil); err != nil {
 		return fmt.Errorf("set owner-only ACL: %w", err)
 	}
 	return validateOwnerOnly(path, user, directory)
@@ -323,19 +332,21 @@ func processIdentity() (*windows.SID, *windows.SID, error) {
 	return user, defaultOwner, nil
 }
 
-func validateProcessOwned(path string, user, defaultOwner *windows.SID) error {
+// validateProcessOwned returns the owner of path when it is the current user
+// or its token owner.
+func validateProcessOwned(path string, user, defaultOwner *windows.SID) (*windows.SID, error) {
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
-		return fmt.Errorf("read private-file owner: %w", err)
+		return nil, fmt.Errorf("read private-file owner: %w", err)
 	}
 	if descriptor == nil {
-		return errors.New("private file has no security descriptor")
+		return nil, errors.New("private file has no security descriptor")
 	}
 	owner, _, err := descriptor.Owner()
 	if err != nil || !ownerMatchesProcess(owner, user, defaultOwner) {
-		return errors.New("private file must be owned by the current Windows user or its token owner")
+		return nil, errors.New("private file must be owned by the current Windows user or its token owner")
 	}
-	return nil
+	return owner, nil
 }
 
 // OwnedByCurrentUser reports whether the open file or directory belongs to the
