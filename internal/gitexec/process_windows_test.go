@@ -312,6 +312,18 @@ func TestTerminateOwnedProcessReportsGrowthAndUnsettledCapture(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "membership changed during process capture: total=1/2") {
 			t.Fatalf("termination error=%v, want reported membership growth", err)
 		}
+		// The raw reads and one more read are reported, so the cause of a
+		// growth can be told apart later.
+		for _, want := range []string{
+			"before={total=1 active=1 terminated=0",
+			"after={total=2 active=2 terminated=0",
+			"later={total=2 active=0 terminated=0",
+			"listed=[] retained=[] assigned=0 in job: unknown",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("termination error=%v, want %q", err, want)
+			}
+		}
 		if replay.listCalls != 1 {
 			t.Fatalf("capture ran %d times, want growth reported without a retry", replay.listCalls)
 		}
@@ -346,10 +358,10 @@ func TestTerminateOwnedProcessReportsGrowthAndUnsettledCapture(t *testing.T) {
 	})
 }
 
-// A terminated process can stay counted by its job for a moment after its
-// handle is signaled. Cleanup waits for the count to reach zero instead of
-// reporting the process as a survivor.
-func TestTerminateOwnedProcessWaitsForTerminatedProcessToLeaveTheJob(t *testing.T) {
+// startWindowsJobFixture starts a process that stays alive in its own job
+// and waits until it runs.
+func startWindowsJobFixture(t *testing.T) (*ProcessOwner, *exec.Cmd) {
+	t.Helper()
 	ready := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestWindowsOwnedProcessFailureFixture$")
 	cmd.Env = append(os.Environ(),
@@ -373,9 +385,48 @@ func TestTerminateOwnedProcessWaitsForTerminatedProcessToLeaveTheJob(t *testing.
 			t.Errorf("fixture cleanup: exited=%v err=%v", exited, cleanupErr)
 		}
 	})
-	if !waitForWindowsTestFile(ready, 5*time.Second) {
+	// The bound is a hang guard; a loaded machine can start processes slowly.
+	if !waitForWindowsTestFile(ready, 30*time.Second) {
 		t.Fatal("fixture did not report ready")
 	}
+	return owner, cmd
+}
+
+// When the job's first accounting read comes back empty while its process
+// runs, the error shows that the listed process is the one assigned at
+// creation, that it is still in the job, and what a later read returns.
+func TestTerminateOwnedProcessDescribesAnEmptyAccountingRead(t *testing.T) {
+	owner, cmd := startWindowsJobFixture(t)
+	originalAccounting := jobAccountingQuery
+	t.Cleanup(func() { jobAccountingQuery = originalAccounting })
+	calls := 0
+	jobAccountingQuery = func(job windows.Handle) (windowsJobAccounting, error) {
+		calls++
+		if calls == 1 {
+			return windowsJobAccounting{}, nil
+		}
+		return originalAccounting(job)
+	}
+	err := terminateWindowsOwnedProcess(owner, time.Now().Add(2*time.Second))
+	pid := cmd.Process.Pid
+	for _, want := range []string{
+		"membership changed during process capture: total=0/1 active=0/1",
+		"before={total=0 active=0 terminated=0 user=0 kernel=0 faults=0}",
+		"after={total=1 active=1",
+		"later={total=1 active=1",
+		fmt.Sprintf("listed=[%d] retained=[%d] assigned=%d in job: true", pid, pid, pid),
+	} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("termination error=%v, want %q", err, want)
+		}
+	}
+}
+
+// A terminated process can stay counted by its job for a moment after its
+// handle is signaled. Cleanup waits for the count to reach zero instead of
+// reporting the process as a survivor.
+func TestTerminateOwnedProcessWaitsForTerminatedProcessToLeaveTheJob(t *testing.T) {
+	owner, _ := startWindowsJobFixture(t)
 
 	// The capture reads the real job twice. The first read after termination
 	// still counts the killed process; later reads are real.

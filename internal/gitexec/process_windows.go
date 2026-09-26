@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -47,6 +48,10 @@ type windowsJobCapture struct {
 
 type ProcessOwner struct {
 	job windows.Handle
+	// processID is the process assigned when the job was created. Cleanup
+	// reports whether it is still in the job when the job's accounting
+	// changes unexpectedly.
+	processID uint32
 }
 
 // Job queries are variables so a focused test can replay what a job reports
@@ -98,6 +103,9 @@ func AttachOwnedProcessObserved(cmd *exec.Cmd, observeStarted func() error) (*Pr
 			return
 		}
 		assigned, attachErr = assignAndResumeWindowsProcess(owner.job, process, processID)
+		if assigned {
+			owner.processID = processID
+		}
 	})
 	if handleErr != nil {
 		return nil, abortWindowsProcessOwner(owner, assigned, fmt.Errorf("access started process handle: %w", handleErr))
@@ -281,7 +289,7 @@ func TerminateOwnedProcess(owner *ProcessOwner, grace time.Duration) error {
 }
 
 func terminateWindowsOwnedProcess(owner *ProcessOwner, deadline time.Time) (result error) {
-	capture, captureErr := captureWindowsJobProcesses(owner.job, deadline)
+	capture, captureErr := captureWindowsJobProcesses(owner, deadline)
 	defer func() {
 		result = errors.Join(result, closeWindowsTrackedProcesses(capture.processes))
 	}()
@@ -332,10 +340,10 @@ func awaitWindowsJobEmpty(job windows.Handle, deadline time.Time) (windowsJobAcc
 // Retries use at most half of the remaining cleanup time, so termination can
 // still be confirmed. Growth, failed queries and inconsistencies that persist
 // are reported.
-func captureWindowsJobProcesses(job windows.Handle, deadline time.Time) (windowsJobCapture, error) {
+func captureWindowsJobProcesses(owner *ProcessOwner, deadline time.Time) (windowsJobCapture, error) {
 	settleBy := time.Now().Add(time.Until(deadline) / 2)
 	for {
-		capture, onlyDeparted, err := captureWindowsJobProcessesOnce(job, deadline)
+		capture, onlyDeparted, err := captureWindowsJobProcessesOnce(owner, deadline)
 		if err == nil || !onlyDeparted || !time.Now().Before(settleBy) {
 			return capture, err
 		}
@@ -349,7 +357,8 @@ func captureWindowsJobProcesses(job windows.Handle, deadline time.Time) (windows
 // captureWindowsJobProcessesOnce makes one capture. onlyDeparted reports that
 // both accounting queries succeeded and no process joined the job between
 // them, so any inconsistency can come from processes leaving it.
-func captureWindowsJobProcessesOnce(job windows.Handle, deadline time.Time) (capture windowsJobCapture, onlyDeparted bool, captureErr error) {
+func captureWindowsJobProcessesOnce(owner *ProcessOwner, deadline time.Time) (capture windowsJobCapture, onlyDeparted bool, captureErr error) {
+	job := owner.job
 	if err := windowsCaptureDeadlineError(deadline); err != nil {
 		return capture, false, err
 	}
@@ -403,11 +412,12 @@ func captureWindowsJobProcessesOnce(job windows.Handle, deadline time.Time) (cap
 	onlyDeparted = after.totalProcesses == before.totalProcesses
 	if before.totalProcesses != after.totalProcesses || before.activeProcesses != after.activeProcesses {
 		captureErr = errors.Join(captureErr, fmt.Errorf(
-			"owned job membership changed during process capture: total=%d/%d active=%d/%d",
+			"owned job membership changed during process capture: total=%d/%d active=%d/%d (%s)",
 			before.totalProcesses,
 			after.totalProcesses,
 			before.activeProcesses,
 			after.activeProcesses,
+			describeWindowsJobChange(owner, before, after, processIDs, capture.processes),
 		))
 	}
 	if uint64(len(uniqueProcessIDs)) != uint64(after.activeProcesses) {
@@ -429,6 +439,53 @@ func captureWindowsJobProcessesOnce(job windows.Handle, deadline time.Time) (cap
 		capture.stableTotal = after.totalProcesses
 	}
 	return capture, onlyDeparted, captureErr
+}
+
+// describeWindowsJobChange records what cleanup saw when the job's accounting
+// changed during a capture: the raw accounting of both reads and of one more
+// read, the listed and retained process IDs, and whether the process assigned
+// when the job was created is still in the job behind this handle. A handle
+// that refers to another job lists other processes than the assigned one;
+// accounting that briefly reads zero lists the assigned process and reads its
+// counts again later. Cleanup has not terminated anything yet, but a process
+// that exited by itself may have left its ID to an unrelated process.
+func describeWindowsJobChange(owner *ProcessOwner, before, after windowsJobAccounting, listed []uint32, retained []windowsTrackedProcess) string {
+	later, laterErr := jobAccountingQuery(owner.job)
+	laterText := later.describe()
+	if laterErr != nil {
+		laterText = "error: " + laterErr.Error()
+	}
+	retainedIDs := make([]uint32, 0, len(retained))
+	for _, process := range retained {
+		retainedIDs = append(retainedIDs, process.processID)
+	}
+	assigned := "unknown"
+	if owner.processID != 0 {
+		assigned = windowsProcessStillInJob(owner.job, owner.processID)
+	}
+	return fmt.Sprintf("job=%#x before=%s after=%s later=%s listed=%v retained=%v assigned=%d in job: %s",
+		uintptr(owner.job), before.describe(), after.describe(), laterText, listed, retainedIDs, owner.processID, assigned)
+}
+
+func (accounting windowsJobAccounting) describe() string {
+	return fmt.Sprintf("{total=%d active=%d terminated=%d user=%d kernel=%d faults=%d}",
+		accounting.totalProcesses, accounting.activeProcesses, accounting.totalTerminatedProcesses,
+		accounting.totalUserTime, accounting.totalKernelTime, accounting.totalPageFaultCount)
+}
+
+// windowsProcessStillInJob reports whether processID is a member of job, or
+// why that could not be read.
+func windowsProcessStillInJob(job windows.Handle, processID uint32) string {
+	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, processID)
+	if err != nil {
+		return "open failed: " + err.Error()
+	}
+	defer windows.CloseHandle(process)
+	inJob, err := windowsProcessInJob(process, job)
+	if err != nil {
+		return "check failed: " + err.Error()
+	}
+	return strconv.FormatBool(inJob)
 }
 
 func windowsCaptureDeadlineError(deadline time.Time) error {
