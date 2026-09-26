@@ -249,15 +249,16 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "invalid Git protocol request", http.StatusBadRequest)
 		return
 	}
-	// git-http-backend writes its response headers before it reads a push,
-	// and the response is flushed as Git writes it. Without full duplex,
-	// net/http would read and discard the rest of the request body at the
-	// first flush. In full duplex it neither does that nor announces that it
-	// closes the connection after a body left unread, so the response does:
+	// The response can still go out before the end of the request body, when
+	// Git writes more than net/http buffers or stops reading early. Without
+	// full duplex, net/http would then read and discard the rest of the
+	// request body. In full duplex it neither does that nor announces that it
+	// closes the connection after a body left unread, so responseState does:
 	// otherwise a client that reuses the connection gets EOF.
 	_ = controller.EnableFullDuplex()
 	committed := &responseState{ResponseWriter: writer, deadlines: deadlines,
-		bodyUnfinished: func() bool { return request.ContentLength != 0 && !network.ended.Load() }}
+		bodyEnded: func() bool { return request.ContentLength == 0 || network.ended.Load() }}
+	network.onEnd = committed.requestBodyEnded
 	var report *pushReport
 	var observer io.Writer
 	if route.service == "git-receive-pack" && request.Method == http.MethodPost {
@@ -283,7 +284,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		// Make sure the end of the response went out while the transfer still
 		// holds its deadlines; the copy does not report a failed flush after
 		// Git's last output. A failure here changes nothing Git already did.
-		if flushErr := deadlines.flush(); flushErr != nil && deadlines.stalled.Load() {
+		if flushErr := committed.finish(); flushErr != nil && deadlines.stalled.Load() {
 			logGitFailure(route, request.Method, deadlines.reason())
 			return
 		}
@@ -313,7 +314,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if reason != "" {
 		logGitFailure(route, request.Method, reason)
 	}
-	if err != nil && !committed.wroteHeader {
+	if err != nil && !committed.started() {
 		status := http.StatusBadGateway
 		if tooLarge {
 			status = http.StatusRequestEntityTooLarge
@@ -642,13 +643,14 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 	writer.WriteHeader(status)
 	// While Git prepares data it writes only small keepalive and progress
 	// packets. They must reach the client, and any proxy with a read timeout,
-	// at once instead of waiting in the response buffer. So the response is
-	// flushed whenever everything Git has written so far was passed on. Bulk
-	// data still goes out in writes of up to 32 KiB. A failed flush leaves the
-	// connection failed, so the next write reports it, and the handler reports
-	// a failure after Git's last output.
+	// at once instead of waiting in the response buffer. So once the request
+	// body has ended (see responseState), the response is flushed whenever
+	// everything Git has written so far was passed on. Bulk data still goes
+	// out in writes of up to 32 KiB. A failed flush leaves the connection
+	// failed, so the next write reports it, and the handler reports a failure
+	// after Git's last output.
 	if reader.Buffered() == 0 {
-		_ = writer.deadlines.flush()
+		_ = writer.flush()
 	}
 	body := io.Reader(reader)
 	if observer != nil {
@@ -670,7 +672,7 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 				return errResponseTooLarge
 			}
 			if reader.Buffered() == 0 {
-				_ = writer.deadlines.flush()
+				_ = writer.flush()
 			}
 		}
 		if err == io.EOF {
@@ -691,33 +693,101 @@ func hopByHop(name string) bool {
 	}
 }
 
-// responseState writes the backend response under the transfer deadlines and
-// records whether the status was sent. A response sent before the request
-// body was read to its end says Connection: close, because the rest may never
-// be read and the connection then cannot carry another request.
+// responseState passes the backend response on under the transfer deadlines.
+//
+// It flushes nothing, not even the status line, until the request body was
+// read to its end. git-http-backend writes its headers before it reads a
+// push, and a reverse proxy that serves HTTP/1.1 half duplex, such as Go's
+// httputil.ReverseProxy with default settings, stops forwarding the request
+// body once it passes response headers on. When the body ends, and after
+// every write from then on, what Git wrote so far is flushed at once.
+//
+// A response that goes out before the end of the body anyway, because Git
+// wrote more than net/http buffers or finished without reading the rest,
+// says Connection: close: the rest may never be read, so the connection
+// cannot carry another request.
 type responseState struct {
 	http.ResponseWriter
-	deadlines      *transferDeadlines
-	bodyUnfinished func() bool
-	wroteHeader    bool
+	deadlines *transferDeadlines
+	bodyEnded func() bool
+	// mu orders the handler's writes with the flush that the end of the
+	// request body starts on the goroutine that feeds Git its input.
+	mu     sync.Mutex
+	status int
+	sent   bool
 }
 
+// WriteHeader sets the status. Until a body byte was written or the
+// response was flushed, a later call replaces it.
 func (writer *responseState) WriteHeader(status int) {
-	if writer.wroteHeader {
-		return
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	if !writer.sent {
+		writer.status = status
 	}
-	writer.wroteHeader = true
-	if writer.bodyUnfinished() {
-		writer.Header().Set("Connection", "close")
-	}
-	writer.ResponseWriter.WriteHeader(status)
 }
 
 func (writer *responseState) Write(content []byte) (int, error) {
-	if !writer.wroteHeader {
-		writer.WriteHeader(http.StatusOK)
-	}
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	writer.sendHeaderLocked()
 	return writer.deadlines.write(writer.ResponseWriter, content)
+}
+
+func (writer *responseState) sendHeaderLocked() {
+	if writer.sent {
+		return
+	}
+	writer.sent = true
+	if writer.status == 0 {
+		writer.status = http.StatusOK
+	}
+	if !writer.bodyEnded() {
+		writer.Header().Set("Connection", "close")
+	}
+	writer.ResponseWriter.WriteHeader(writer.status)
+}
+
+// flush sends what was written so far once the request body has ended.
+func (writer *responseState) flush() error {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	if !writer.bodyEnded() {
+		return nil
+	}
+	return writer.flushLocked()
+}
+
+func (writer *responseState) flushLocked() error {
+	if writer.status == 0 && !writer.sent {
+		return nil
+	}
+	writer.sendHeaderLocked()
+	return writer.deadlines.flush()
+}
+
+// requestBodyEnded sends the response held back while the request body was
+// read.
+func (writer *responseState) requestBodyEnded() {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	_ = writer.flushLocked()
+}
+
+// finish sends what Git wrote after its last output, whether or not the
+// request body has ended.
+func (writer *responseState) finish() error {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.flushLocked()
+}
+
+// started reports whether any part of the response was passed on, so its
+// status can no longer change.
+func (writer *responseState) started() bool {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.sent
 }
 
 func executableName(name string) string {

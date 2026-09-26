@@ -3,11 +3,14 @@ package githttp
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,5 +109,62 @@ func TestABodyThatEndsEarlyStopsGitAtOnce(t *testing.T) {
 	runHTTPGit(t, work, "push", "-q", server.URL+"/git/sample.git", "HEAD:refs/heads/main")
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Fatalf("push after the cut requests took %s", elapsed)
+	}
+}
+
+// git-http-backend writes its headers before it reads a push, but they wait
+// for the end of the request body. So when the request limit stops a push
+// sent without a length before Git answered, the client gets 413 instead of
+// an empty success.
+func TestAChunkedPushOverTheRequestLimitGets413(t *testing.T) {
+	handler, _, head := idleFixture(t, 16, time.Minute)
+	handler.MaximumRequest = 256 << 10
+	logs := captureLog(t)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	// One command without capabilities, so Git sends nothing while it
+	// reads, then a pack whose only object is larger than the limit.
+	command := fmt.Sprintf("%s %s refs/heads/large\n", strings.Repeat("0", len(head)), head)
+	var body bytes.Buffer
+	fmt.Fprintf(&body, "%04x%s0000PACK\x00\x00\x00\x02\x00\x00\x00\x01", 4+len(command), command)
+	content := make([]byte, 1<<20)
+	_, err := rand.Read(content)
+	noErr(t, err)
+	size := len(content)
+	body.WriteByte(byte(0x80 | 3<<4 | size&15))
+	for size >>= 4; size > 0; size >>= 7 {
+		next := byte(size & 0x7f)
+		if size > 0x7f {
+			next |= 0x80
+		}
+		body.WriteByte(next)
+	}
+	compressor := zlib.NewWriter(&body)
+	_, err = compressor.Write(content)
+	noErr(t, err)
+	noErr(t, compressor.Close())
+
+	connection, err := net.Dial("tcp", server.Listener.Addr().String())
+	noErr(t, err)
+	defer connection.Close()
+	noErr(t, connection.SetDeadline(time.Now().Add(20*time.Second)))
+	_, err = io.WriteString(connection, "POST /git/sample.git/git-receive-pack HTTP/1.1\r\nHost: example.test\r\n"+
+		"Content-Type: application/x-git-receive-pack-request\r\nTransfer-Encoding: chunked\r\n\r\n")
+	noErr(t, err)
+	go func() {
+		chunked := httputil.NewChunkedWriter(connection)
+		_, _ = chunked.Write(body.Bytes())
+		_ = chunked.Close()
+		_, _ = io.WriteString(connection, "\r\n")
+	}()
+	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
+	noErr(t, err, "read the response")
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413; log:\n%s", response.StatusCode, logs.String())
+	}
+	if !strings.Contains(logs.String(), `Git push request for repository "sample" failed: request body exceeded the size limit`) {
+		t.Fatalf("the log does not name the request limit:\n%s", logs.String())
 	}
 }

@@ -4,6 +4,7 @@ package githttp
 
 import (
 	"context"
+	"crypto/rand"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,7 +64,9 @@ func (body *rearmingBody) Close() error {
 
 // Git's keepalive packets reach the client while Git prepares a pack or runs
 // a hook, so a proxy whose read timeout is shorter than that quiet phase, but
-// longer than Git's keepalive interval, keeps the transfer.
+// longer than Git's keepalive interval, keeps the transfer. The response
+// still waits for the end of the request body, which a half-duplex proxy
+// stops forwarding once it passes response headers on.
 func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
 	const proxyTimeout = 2500 * time.Millisecond
 	const quiet = "4"
@@ -115,7 +118,13 @@ func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
 	noErr(t, err)
 	noErr(t, os.WriteFile(hook+".owngit", original, 0o700))
 	noErr(t, os.WriteFile(hook, []byte("#!/bin/sh\nsleep "+quiet+"\nexec "+quoteShell(hook+".owngit")+" \"$@\"\n"), 0o700))
-	noErr(t, os.WriteFile(filepath.Join(work, "keepalive.txt"), []byte("keepalive\n"), 0o600))
+	// A push larger than Git's 1 MiB post buffer is sent chunked, and the
+	// proxy, which serves HTTP/1.1 half duplex, forwards it only until it
+	// passes response headers on.
+	content := make([]byte, 4<<20)
+	_, err = rand.Read(content)
+	noErr(t, err)
+	noErr(t, os.WriteFile(filepath.Join(work, "keepalive.bin"), content, 0o600))
 	runHTTPGit(t, work, "add", ".")
 	runHTTPGit(t, work, "commit", "-q", "-m", "keepalive")
 	started = time.Now()
@@ -123,5 +132,57 @@ func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
 	check("push", started, output, err)
 	if got, want := httpGitOutput(t, "", "--git-dir", repositoryPath, "rev-parse", "refs/heads/main"), httpGitOutput(t, work, "rev-parse", "HEAD"); got != want {
 		t.Fatalf("main is %s after the push, want %s", got, want)
+	}
+}
+
+// The response headers leave when the request body ends, not with Git's first
+// output after it, so a proxy waiting for them sees the transfer move while a
+// hook runs. Here keepalives are off and the update hook waits until the
+// proxy has received the headers.
+func TestPushResponseHeadersLeaveWhenTheRequestBodyEnds(t *testing.T) {
+	handler, work, _ := idleFixture(t, 1<<10, time.Minute)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	target, err := url.Parse(server.URL)
+	noErr(t, err)
+	release := filepath.Join(t.TempDir(), "headers-arrived")
+	proxy := httptest.NewServer(&httputil.ReverseProxy{
+		Rewrite: func(request *httputil.ProxyRequest) { request.SetURL(target) },
+		ModifyResponse: func(response *http.Response) error {
+			// Git probes with a small POST before it streams a large one.
+			if response.Request.Method == http.MethodPost && response.Request.ContentLength < 0 {
+				return os.WriteFile(release, nil, 0o600)
+			}
+			return nil
+		},
+	})
+	defer proxy.Close()
+	repositoryPath, err := handler.Repositories.Path("sample")
+	noErr(t, err)
+	runHTTPGit(t, "", "--git-dir", repositoryPath, "config", "receive.keepAlive", "0")
+	hook := filepath.Join(repositoryPath, "hooks", "update")
+	original, err := os.ReadFile(hook)
+	noErr(t, err)
+	noErr(t, os.WriteFile(hook+".owngit", original, 0o700))
+	// The bound only keeps a failing run from hanging.
+	script := "#!/bin/sh\ni=0\nwhile [ ! -e " + quoteShell(release) + " ]; do\n" +
+		"\ti=$((i+1))\n\tif [ $i -gt 600 ]; then echo 'no response headers while the hook ran' >&2; exit 1; fi\n\tsleep 0.05\ndone\n" +
+		"exec " + quoteShell(hook+".owngit") + " \"$@\"\n"
+	noErr(t, os.WriteFile(hook, []byte(script), 0o700))
+
+	// A chunked push, so the body is still arriving when git-http-backend
+	// writes its headers. With -q, Git writes nothing until the hook ends.
+	content := make([]byte, 4<<20)
+	_, err = rand.Read(content)
+	noErr(t, err)
+	noErr(t, os.WriteFile(filepath.Join(work, "hook.bin"), content, 0o600))
+	runHTTPGit(t, work, "add", ".")
+	runHTTPGit(t, work, "commit", "-q", "-m", "hook")
+	output, err := httpGitCombined(work, "push", "-q", proxy.URL+"/git/sample.git", "HEAD:refs/heads/main")
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, output)
+	}
+	if got, want := httpGitOutput(t, "", "--git-dir", repositoryPath, "rev-parse", "refs/heads/main"), httpGitOutput(t, work, "rev-parse", "HEAD"); got != want {
+		t.Fatalf("main is %s after the push, want %s:\n%s", got, want, output)
 	}
 }

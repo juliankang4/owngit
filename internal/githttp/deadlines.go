@@ -119,6 +119,8 @@ type networkBody struct {
 	abandoned func() bool
 	deadlines *transferDeadlines
 	ended     atomic.Bool
+	// onEnd, when set, runs once when a Read reaches the end of the body.
+	onEnd func()
 	// mu keeps a Read from arming a new deadline after Close expired it.
 	mu      sync.Mutex
 	expired bool
@@ -135,8 +137,11 @@ func (body *networkBody) Read(buffer []byte) (int, error) {
 	n, err := body.ReadCloser.Read(buffer)
 	switch {
 	case err == io.EOF:
-		body.ended.Store(true)
+		first := body.ended.CompareAndSwap(false, true)
 		_ = body.deadlines.controller.SetReadDeadline(body.deadlines.overall)
+		if first && body.onEnd != nil {
+			body.onEnd()
+		}
 	case err != nil:
 		body.deadlines.observe(err, armed)
 	}
