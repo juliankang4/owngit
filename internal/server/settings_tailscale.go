@@ -107,11 +107,17 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 	}
 	if action == webui.ActionTailscaleOn {
 		homeNetwork := formChecked(postValue(request, "home_network"))
-		if _, err := app.Tailscale.On(request.Context(), &homeNetwork, 0); err != nil {
+		change, err := app.Tailscale.On(request.Context(), &homeNetwork, 0)
+		if err != nil {
 			app.renderTailscaleRefusal(writer, request, settings, csrf, action, err)
 			return
 		}
-		app.noticeRedirect(writer, request, "/settings?notice=tailscale_on", http.StatusSeeOther)
+		// Only a new address waits for a certificate on its first visit.
+		notice := "tailscale_on"
+		if change.Endpoint != endpointCreated {
+			notice = "tailscale_on_kept"
+		}
+		app.noticeRedirect(writer, request, "/settings?notice="+notice, http.StatusSeeOther)
 		return
 	}
 	// A page opened through the tailnet address is answered through it once

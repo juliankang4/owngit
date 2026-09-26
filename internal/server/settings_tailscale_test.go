@@ -71,10 +71,20 @@ func TestTurningTailscaleSharingOnAndOffInSettings(t *testing.T) {
 		t.Fatalf("turn on: status=%d location=%q body=%s", result.status, result.header.Get("Location"), result.body)
 	}
 	body, _ := dashboardGET(t, client, base+result.header.Get("Location"))
-	for _, want := range []string{enText(webui.MsgTSTurnedOn), enText(webui.MsgTSReady), `value="https://` + tailscaletest.Name + `/"`, `value="tailscale_off"`} {
+	for _, want := range []string{enText(webui.MsgTSTurnedOn), enText(webui.MsgTSFirstVisit), enText(webui.MsgTSReady), `value="https://` + tailscaletest.Name + `/"`, `value="tailscale_off"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("after turning on, Settings lacks %q", want)
 		}
+	}
+	// Turning on again keeps the address, which has its certificate, so
+	// the first-visit note is left out.
+	result = browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false), base)
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings?notice=tailscale_on_kept" {
+		t.Fatalf("turn on again: status=%d location=%q", result.status, result.header.Get("Location"))
+	}
+	body, _ = dashboardGET(t, client, base+result.header.Get("Location"))
+	if !strings.Contains(body, enText(webui.MsgTSTurnedOn)) || strings.Contains(body, enText(webui.MsgTSFirstVisit)) {
+		t.Error("turning on again: the notice lacks \"on\" or has the first-visit note")
 	}
 	// A page reached through the Tailscale endpoint says that Tailscale on
 	// this computer encrypted it.
