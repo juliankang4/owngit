@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
@@ -23,9 +24,22 @@ import (
 const (
 	maximumRequest  = 64 << 10
 	maximumResponse = 4 << 20
-	// DefaultTimeout bounds one ordinary API request, including the response.
+	// DefaultTimeout bounds one ordinary API request, including the
+	// response, from when the connection is ready.
 	DefaultTimeout = 35 * time.Second
+	// TLSHandshakeTimeout bounds the TLS handshake of a new connection.
+	// Tailscale Serve answers the first handshake to an address only once
+	// it has the certificate, and waits up to one minute for it
+	// (ipn/ipnlocal getTLSServeCertForPort), which took 36 seconds in a
+	// real tailnet. This bound lets Tailscale's own limit decide.
+	TLSHandshakeTimeout = 75 * time.Second
+	// dialTimeout bounds opening the TCP connection, as Go's default
+	// transport does.
+	dialTimeout = 30 * time.Second
 )
+
+// errRequestTimeout ends a request that took longer than its time limit.
+var errRequestTimeout = errors.New("the server did not answer in time")
 
 var errRedirectRefused = errors.New("redirect refused")
 
@@ -129,6 +143,14 @@ type Client struct {
 	Timeout time.Duration
 }
 
+// newTransport is Go's default transport with a TLS handshake that may wait
+// for Tailscale to get a certificate (TLSHandshakeTimeout).
+func newTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSHandshakeTimeout = TLSHandshakeTimeout
+	return transport
+}
+
 // New returns a client that authenticates with the shared general-access
 // password, or with no credentials when the password is empty.
 func New(server *url.URL, password string) *Client {
@@ -164,20 +186,42 @@ func newClient(server *url.URL) *Client {
 	return &Client{
 		server: server,
 		httpClient: &http.Client{
-			Timeout:       DefaultTimeout,
+			Transport:     newTransport(),
 			CheckRedirect: func(*http.Request, []*http.Request) error { return errRedirectRefused },
 		},
 	}
 }
 
-// http returns the HTTP client with this client's request timeout.
-func (client *Client) http() *http.Client {
-	if client.Timeout <= 0 {
-		return client.httpClient
+// send sends request and returns the response with the function that ends
+// its time limit, to call once the body is read. The limit, Timeout or
+// DefaultTimeout, starts when the connection is ready, so a TLS handshake
+// that waits for a certificate does not use it up; opening the connection
+// has the transport's own limits, and this one only guards against a hang
+// before them.
+func (client *Client) send(request *http.Request) (*http.Response, func(), error) {
+	limit := client.Timeout
+	if limit <= 0 {
+		limit = DefaultTimeout
 	}
-	configured := *client.httpClient
-	configured.Timeout = client.Timeout
-	return &configured
+	ctx, cancel := context.WithCancelCause(request.Context())
+	timer := time.AfterFunc(dialTimeout+TLSHandshakeTimeout+limit, func() { cancel(errRequestTimeout) })
+	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { timer.Reset(limit) }}
+	done := func() {
+		timer.Stop()
+		cancel(nil)
+	}
+	response, err := client.httpClient.Do(request.WithContext(httptrace.WithClientTrace(ctx, trace)))
+	if err != nil {
+		if response != nil {
+			response.Body.Close()
+		}
+		if errors.Is(context.Cause(ctx), errRequestTimeout) {
+			err = &url.Error{Op: request.Method, URL: request.URL.String(), Err: errRequestTimeout}
+		}
+		done()
+		return nil, nil, err
+	}
+	return response, done, nil
 }
 
 // AddCertificateAuthorities extends the system trust store for a private CA
@@ -193,11 +237,7 @@ func (client *Client) AddCertificateAuthorities(pem []byte) error {
 	if !roots.AppendCertsFromPEM(pem) {
 		return &Error{Code: "invalid_certificate_authority", Message: "The certificate authority file contains no valid certificates."}
 	}
-	transport, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return &Error{Code: "http_transport_unavailable", Message: "The default HTTP transport is unavailable."}
-	}
-	configured := transport.Clone()
+	configured := newTransport()
 	configured.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
 	client.httpClient.Transport = configured
 	return nil
@@ -266,16 +306,14 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 	if client.authorize != nil {
 		client.authorize(request)
 	}
-	response, err := client.http().Do(request)
+	response, done, err := client.send(request)
 	if err != nil {
-		if response != nil {
-			response.Body.Close()
-		}
 		if errors.Is(err, errRedirectRefused) {
 			return nil, &Error{Code: "redirect_refused", Message: "The OwnGit API returned a redirect. Credentials were not sent to the redirect target.", Cause: err}
 		}
 		return nil, connectionFailed(err)
 	}
+	defer done()
 	defer response.Body.Close()
 	responseLimit := client.MaximumResponse
 	if responseLimit <= 0 {
@@ -329,13 +367,11 @@ func (client *Client) GetBytes(ctx context.Context, apiPath string, headers map[
 	if client.authorize != nil {
 		client.authorize(request)
 	}
-	response, err := client.http().Do(request)
+	response, done, err := client.send(request)
 	if err != nil {
-		if response != nil {
-			response.Body.Close()
-		}
 		return nil, nil, connectionFailed(err)
 	}
+	defer done()
 	defer response.Body.Close()
 	content, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if readErr != nil {
