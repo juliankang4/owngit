@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
@@ -168,6 +169,45 @@ func TestSmartHTTPGatesEveryEndpointAndRejectsDumbPaths(t *testing.T) {
 			t.Errorf("GET %s status=%d, want 404", target, response.StatusCode)
 		}
 	}
+}
+
+// A push holds the repository write lock only while the handler runs, and
+// the Git client finishes only after the handler returned, so the lock is
+// free when the push returns and maintenance can start right after it. The
+// pause after the handler would let a client that finishes early see the
+// push end first.
+func TestPushReleasesTheRepositoryBeforeTheClientFinishes(t *testing.T) {
+	manager, runner := newHTTPTestRepository(t)
+	handler, err := New(runner, manager, "", 2)
+	noErr(t, err)
+	handler.Authorize = func(*http.Request) bool { return true }
+	var finished atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		handler.ServeHTTP(writer, request)
+		if strings.HasSuffix(request.URL.Path, "/git-receive-pack") {
+			time.Sleep(200 * time.Millisecond)
+			finished.Store(true)
+		}
+	}))
+	defer server.Close()
+
+	work := filepath.Join(t.TempDir(), "work")
+	runHTTPGit(t, "", "init", "--initial-branch=main", work)
+	runHTTPGit(t, work, "config", "user.name", "HTTP Test")
+	runHTTPGit(t, work, "config", "user.email", "http@example.invalid")
+	noErr(t, os.WriteFile(filepath.Join(work, "README.md"), []byte("one\n"), 0o600))
+	runHTTPGit(t, work, "add", "README.md")
+	runHTTPGit(t, work, "commit", "-m", "one")
+	runHTTPGit(t, work, "push", server.URL+"/git/sample.git", "HEAD:refs/heads/main")
+
+	lock := manager.Locks.For("sample")
+	if !finished.Load() {
+		t.Fatal("the push returned before the handler finished")
+	}
+	if lock.Waiting() || !lock.TryLock() {
+		t.Fatal("the repository is still locked after the push returned")
+	}
+	lock.Unlock()
 }
 
 func newHTTPTestRepository(t *testing.T) (*repository.Manager, *gitexec.Runner) {

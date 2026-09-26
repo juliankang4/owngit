@@ -425,19 +425,23 @@ func TestWaitingPushRunsBeforeTheNextMaintenanceCommand(t *testing.T) {
 			}()
 			<-started
 			// A push, like the Git HTTP handler, takes the write lock and
-			// waits for the running command only.
+			// waits for the running command only. It reports its result
+			// after releasing the lock, as the handler releases it before
+			// the client sees the end of the response.
 			commitFile(t, fixture.work, "during maintenance\n", "during", "2024-02-01T00:00:00Z")
 			oid := gitOutput(t, fixture.work, "rev-parse", "HEAD")
 			pushed := make(chan error, 1)
 			go func() {
-				lock.Lock()
-				defer lock.Unlock()
-				record("push")
-				output, err := gitCombined(fixture.work, "push", "origin", "HEAD:refs/heads/during")
-				if err != nil {
-					err = fmt.Errorf("%w: %s", err, output)
-				}
-				pushed <- err
+				pushed <- func() error {
+					lock.Lock()
+					defer lock.Unlock()
+					record("push")
+					output, err := gitCombined(fixture.work, "push", "origin", "HEAD:refs/heads/during")
+					if err != nil {
+						err = fmt.Errorf("%w: %s", err, output)
+					}
+					return err
+				}()
 			}()
 			waitFor(t, "the push to wait for the lock", lock.Waiting)
 			select {
