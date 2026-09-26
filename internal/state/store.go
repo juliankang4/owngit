@@ -213,8 +213,14 @@ func (s *Store) initialize(ctx context.Context, expected schemaClass) error {
 	if class != schemaCurrent && class != expected {
 		return unstable("state database changed between inspection and open")
 	}
-	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode=WAL`); err != nil {
+	// SQLite reports the mode it kept when it cannot switch. Writing in
+	// rollback journal mode would leave journals that the preflight refuses.
+	var mode string
+	if err := s.db.QueryRowContext(ctx, `PRAGMA journal_mode=WAL`).Scan(&mode); err != nil {
 		return fmt.Errorf("initialize state database: %w", err)
+	}
+	if mode != "wal" {
+		return fmt.Errorf("initialize state database: journal mode is %q, not write-ahead logging", mode)
 	}
 	if class == schemaCurrent {
 		// Another accepted opener may have completed the migration first, so
