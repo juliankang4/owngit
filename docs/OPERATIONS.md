@@ -101,7 +101,7 @@ OwnGit never runs with administrator rights. Windows gives a boot task of an adm
 
 Windows does not replace a program that is running. To update, run `owngit service stop`, replace `owngit.exe` or unpack the new release in another folder, and run `owngit service install` with the new `owngit.exe`. It replaces the task and the firewall rule, which both name the program's path, and starts the new version. `owngit service uninstall` stops OwnGit and removes the task and the firewall rule, with one approval for an administrator account. The state directory and the repositories stay.
 
-A boot task stays "Queued" and does not start until the account has signed in on this computer at least once, at the screen or through Remote Desktop; a sign-in over SSH does not count. `owngit service status` says so when it finds the task queued.
+On a newly installed Windows, a boot task stays "Queued" and does not start until someone signs in at the screen for the first time, with any account. A sign-in over SSH does not count. After that first sign-in the task starts at once, and at every boot from then on, before anyone signs in. `owngit service status` says so when it finds the task queued.
 
 If OwnGit ran with administrator rights before, for example from a terminal opened with "Run as administrator", some repositories may belong to the Administrators group. Git refuses those repositories as having "dubious ownership" for a server without administrator rights, and clones and pushes to them fail. Make your account their owner again in a terminal opened with "Run as administrator", with your repository folder in place of the example: `icacls "C:\Users\you\OwnGit-Repositories" /setowner "%USERNAME%" /T /C`.
 

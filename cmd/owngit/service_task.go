@@ -571,7 +571,7 @@ func (host *taskHost) status() error {
 	case answered:
 		host.printf("OwnGit is running and answers its health check.\n")
 	case state == service.TaskQueued:
-		host.printf("OwnGit has not started: Windows keeps the task queued. That happens while this account has never signed in on this computer (at the screen or through Remote Desktop); sign in once, and it starts at every boot from then on.\n")
+		host.printf("OwnGit has not started: Windows keeps the task queued. That happens until someone has signed in on this computer at the screen for the first time since Windows was installed (a sign-in over SSH does not count). Sign in once with any account, and OwnGit starts then and at every boot from then on.\n")
 	case state == service.TaskRunning:
 		host.printf("OwnGit is starting or not answering yet (task: Running).\n")
 	case stateErr != nil:

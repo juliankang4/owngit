@@ -353,7 +353,7 @@ func TestTaskStatusExplainsAQueuedTask(t *testing.T) {
 	host, out := testTaskHost(service.Environment{Administrator: true})
 	noErr(t, host.status())
 	for _, want := range []string{
-		"Windows keeps the task queued", "never signed in on this computer",
+		"Windows keeps the task queued", "until someone has signed in on this computer",
 		"  Log:      " + service.TaskLogFile(stateDir), "  State:    " + stateDir,
 		"no rule for this owngit.exe", "Setup is not complete.",
 	} {

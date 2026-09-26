@@ -101,7 +101,7 @@ OwnGit은 관리자 권한으로 돌지 않습니다. Windows는 작업 설정�
 
 Windows는 실행 중인 프로그램을 바꾸지 못하게 합니다. 업데이트하려면 `owngit service stop`을 실행하고, `owngit.exe`를 바꾸거나 새 릴리스를 다른 폴더에 풀고, 새 `owngit.exe`로 `owngit service install`을 실행하세요. 둘 다 프로그램 경로를 적어 두는 작업과 방화벽 규칙을 바꾸고 새 버전을 시작합니다. `owngit service uninstall`은 OwnGit을 멈추고 작업과 방화벽 규칙을 지우며, 관리자 계정이라면 한 번 승인을 받습니다. 상태 디렉터리와 저장소는 남습니다.
 
-부팅 작업은 그 계정이 이 컴퓨터에 화면이나 원격 데스크톱으로 한 번 이상 로그인하기 전까지 "큐에 대기됨" 상태로 남고 시작하지 않습니다. SSH 로그인은 여기에 들어가지 않습니다. `owngit service status`는 작업이 대기 중이면 이를 알려 줍니다.
+새로 설치한 Windows에서는 누군가 어떤 계정으로든 화면에서 처음 로그인하기 전까지 부팅 작업이 "큐에 대기됨" 상태로 남고 시작하지 않습니다. SSH 로그인은 여기에 들어가지 않습니다. 처음 로그인하면 작업이 바로 시작하고, 그 뒤로는 부팅할 때마다 아무도 로그인하지 않아도 시작합니다. `owngit service status`는 작업이 대기 중이면 이를 알려 줍니다.
 
 예전에 "관리자 권한으로 실행"으로 연 터미널처럼 관리자 권한으로 OwnGit을 실행한 적이 있다면 일부 저장소의 소유자가 Administrators 그룹일 수 있습니다. 관리자 권한 없는 서버에서는 Git이 이런 저장소를 "dubious ownership"으로 거부하므로 clone과 push가 실패합니다. "관리자 권한으로 실행"으로 연 터미널에서 예시 대신 내 저장소 폴더를 넣어 내 계정을 다시 소유자로 만드세요. `icacls "C:\Users\you\OwnGit-Repositories" /setowner "%USERNAME%" /T /C`
 
