@@ -132,10 +132,11 @@
            the whole network. */}}
       {{/* Keeping the address is offered only for a Host this run accepts
            that would be refused after a restart. Unticked saves nothing. */}}
-      {{if or (not .Chrome.Connection.Encrypted) $p.KeepHost}}
+      {{$protected := or .Chrome.Connection.Encrypted .Chrome.Connection.Tailnet}}
+      {{if or (not $protected) $p.KeepHost}}
       <div class="setblock">
         <h2 class="setblock__h">{{bi $lang "settings.connection.title"}}</h2>
-        {{if not .Chrome.Connection.Encrypted}}
+        {{if not $protected}}
         {{/* What OwnGit does, then what it cannot know, then the choice. */}}
         <p class="setblock__d">{{bi $lang "setup.insecure.help"}}</p>
         <p class="setblock__d">{{bi $lang "connection.no_proof"}}</p>

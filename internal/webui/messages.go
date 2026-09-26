@@ -274,6 +274,10 @@ const (
 	// the connection, in place of MsgConnNoProof.
 	MsgConnProxyNote     MessageCode = "connection.proxy_note"
 	MsgConnTailscaleNote MessageCode = "connection.tailscale_note"
+	// A plain HTTP request that came straight over the tailnet to this
+	// computer's Tailscale address.
+	MsgConnTailnet     MessageCode = "connection.encrypted_tailnet"
+	MsgConnTailnetNote MessageCode = "connection.tailnet_note"
 )
 
 // Repositories.
@@ -1082,8 +1086,8 @@ var catalog = map[MessageCode]message{
 		ko: "이 페이지는 일반 HTTP로 전달되었으며 OwnGit이 암호화하지 않습니다.",
 	},
 	MsgConnTailscale: {
-		en: "Tailscale is a straightforward way to protect access from another device. When Tailscale runs on this computer, the administrator can share OwnGit on the tailnet over HTTPS in Settings.",
-		ko: "다른 기기에서 접속할 때는 Tailscale로 보호하는 방법이 간단합니다. 이 컴퓨터에서 Tailscale이 실행되고 있다면 관리자가 설정에서 OwnGit을 tailnet에 HTTPS로 공유할 수 있습니다.",
+		en: "A private network such as Tailscale, NetBird or WireGuard protects access from other devices, and so does a reverse proxy with HTTPS. The operations guide explains each. When Tailscale runs on this computer, the administrator can share OwnGit on the tailnet over HTTPS in Settings.",
+		ko: "Tailscale, NetBird, WireGuard 같은 비공개 네트워크나 HTTPS를 쓰는 리버스 프록시를 쓰면 다른 기기에서의 접속을 보호할 수 있습니다. 방법은 운영 안내서에 있습니다. 이 컴퓨터에서 Tailscale이 실행되고 있다면 관리자가 설정에서 OwnGit을 tailnet에 HTTPS로 공유할 수 있습니다.",
 	},
 	// A host name is not evidence. A Tailscale-style name can be served over
 	// plain HTTP, and a plain name can sit inside a protected network.
@@ -1094,6 +1098,16 @@ var catalog = map[MessageCode]message{
 	MsgConnTailscaleNote: {
 		en: "OwnGit receives this request over plain HTTP from Tailscale on this computer. The encrypted part is between your device and Tailscale on this computer.",
 		ko: "OwnGit은 이 컴퓨터의 Tailscale에서 이 요청을 일반 HTTP로 받습니다. 암호화되는 구간은 사용 중인 기기와 이 컴퓨터의 Tailscale 사이입니다.",
+	},
+	// The page cannot see the other device, so the note names only what the
+	// connection shows: the addresses at both ends are Tailscale's.
+	MsgConnTailnet: {
+		en: "Encrypted by Tailscale",
+		ko: "Tailscale이 암호화함",
+	},
+	MsgConnTailnetNote: {
+		en: "This request came over the tailnet to this computer's Tailscale address, so Tailscale encrypted it between the tailnet device that sent it and this computer. OwnGit itself received it over plain HTTP.",
+		ko: "이 요청은 tailnet을 거쳐 이 컴퓨터의 Tailscale 주소로 왔으므로, 요청을 보낸 tailnet 기기와 이 컴퓨터 사이는 Tailscale이 암호화했습니다. OwnGit 자체는 이 요청을 일반 HTTP로 받았습니다.",
 	},
 	MsgConnNoProof: {
 		en: "OwnGit reports only its own connection. It cannot tell whether a VPN or other protection covers the rest of the path, and a host name alone does not prove one.",

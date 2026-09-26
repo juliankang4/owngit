@@ -688,6 +688,48 @@ func (app *App) throughTailscale(request *http.Request) bool {
 	return err == nil && peer == loopbackProxy
 }
 
+// throughTailnet reports whether a plain HTTP request came to OwnGit
+// directly over the tailnet: from a Tailscale address to one of this
+// computer's own Tailscale addresses, as Tailscale reports them. Tailscale
+// then encrypted it between the tailnet device that sent it and this
+// computer. The address ranges alone do not show that, since other private
+// networks and some carriers use 100.64.0.0/10 too. A request from this
+// computer itself, or forwarded by a trusted proxy, is not counted, and
+// neither is Tailscale in userspace networking mode, which connects from
+// 127.0.0.1.
+func (app *App) throughTailnet(request *http.Request) bool {
+	info := requestctx.Of(request)
+	if app.Tailscale == nil || info.Secure() || info.Proxied {
+		return false
+	}
+	// The address the connection reached, as the listener reports it; a
+	// request built by a test has none.
+	address, _ := request.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if address == nil {
+		return false
+	}
+	local, err := netip.ParseAddrPort(address.String())
+	if err != nil || !tailscale.InTailnetRange(local.Addr()) {
+		return false
+	}
+	peer, err := netip.ParseAddrPort(info.Peer)
+	if err != nil || !tailscale.InTailnetRange(peer.Addr()) {
+		return false
+	}
+	addresses := app.Tailscale.addresses(request.Context())
+	return slices.Contains(addresses, local.Addr().Unmap()) && !slices.Contains(addresses, peer.Addr().Unmap())
+}
+
+// addresses returns this computer's Tailscale addresses from the shared
+// reading of Tailscale's state, or none when Tailscale cannot tell.
+func (sharing *Tailscale) addresses(ctx context.Context) []netip.Addr {
+	reading, err := sharing.read(ctx)
+	if err != nil || reading.commandErr != nil || reading.statusErr != nil {
+		return nil
+	}
+	return reading.status.Addresses
+}
+
 func (sharing *Tailscale) findCommand() (tailscale.Command, error) {
 	if sharing.Find == nil {
 		return tailscale.Command{}, tailscale.ErrNotInstalled

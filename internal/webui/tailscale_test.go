@@ -103,6 +103,57 @@ func TestConnectionThroughTailscaleNamesTailscale(t *testing.T) {
 	}
 }
 
+// Plain HTTP that came over the tailnet to this computer's Tailscale
+// address is shown as encrypted by Tailscale, with what the page can tell,
+// and the page does not ask to accept plain HTTP for it.
+func TestConnectionOverTheTailnetNamesTailscale(t *testing.T) {
+	r := newRenderer(t)
+	for _, lang := range Langs() {
+		chrome := fullChrome(lang)
+		chrome.Connection = Connection{Tailnet: true, Host: "100.64.0.7:7654"}
+		out := render(t, r, SettingsPage{Chrome: chrome, SubmitURL: "/settings"})
+		for _, want := range []string{wantText(lang, MsgConnTailnet), wantText(lang, MsgConnTailnetNote), "conn--secure"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s: the page lacks %q", lang, want)
+			}
+		}
+		for _, unwanted := range []string{wantText(lang, MsgConnPlain), wantText(lang, MsgConnPlainDetail), wantText(lang, MsgConnTailscale), `value="acknowledge_insecure"`} {
+			if strings.Contains(out, unwanted) {
+				t.Errorf("%s: a tailnet connection shows %q", lang, unwanted)
+			}
+		}
+		setup := render(t, r, SetupPage{Chrome: chrome, Stage: SetupWizard, SubmitURL: "/setup"})
+		chrome.Connection = Connection{Host: "192.168.1.5:7654"}
+		lan := render(t, r, SetupPage{Chrome: chrome, Stage: SetupWizard, SubmitURL: "/setup"})
+		if strings.Contains(setup, `name="insecure_ack"`) || !strings.Contains(lan, `name="insecure_ack"`) {
+			t.Errorf("%s: setup asks to accept plain HTTP over the tailnet, or not on the home network", lang)
+		}
+	}
+	// It names Tailscale, not OwnGit, and claims nothing about the device
+	// beyond the tailnet.
+	if text := Text(LangEN, MsgConnTailnetNote); !strings.Contains(text, "tailnet device that sent it") || !strings.Contains(text, "plain HTTP") {
+		t.Errorf("note %q", text)
+	}
+}
+
+// With another control server than Tailscale's, the refusal does not
+// point to a Tailscale admin console page that does not exist there, and
+// the plain HTTP notice names private networks in general.
+func TestPrivateNetworkWording(t *testing.T) {
+	for _, lang := range Langs() {
+		text := Text(lang, TailscaleProblemCode("https_unavailable"))
+		if strings.Contains(text, "admin console") || strings.Contains(text, "관리 콘솔") || !strings.Contains(text, "Headscale") {
+			t.Errorf("%s: %q", lang, text)
+		}
+		hint := Text(lang, MsgConnTailscale)
+		for _, name := range []string{"Tailscale", "NetBird", "WireGuard"} {
+			if !strings.Contains(hint, name) {
+				t.Errorf("%s: the plain HTTP notice does not name %s: %q", lang, name, hint)
+			}
+		}
+	}
+}
+
 // What is on the port is described in the page's language, with the
 // addresses kept as they are.
 func TestTailscalePortListIsTranslated(t *testing.T) {

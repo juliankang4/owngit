@@ -1,0 +1,152 @@
+package server
+
+import (
+	"context"
+	"io"
+	"net"
+	"net/http"
+	"net/netip"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"owngit/internal/auth"
+	"owngit/internal/tailscale/tailscaletest"
+	"owngit/internal/webui"
+)
+
+// arriving makes every request look as if its connection came from peer to
+// this server's local address, as the listener reports them, and names that
+// address as the Host, as a browser that opened it does. The Host is
+// allowed, as if it had been approved.
+func arriving(t *testing.T, app *App, handler http.Handler, local, peer string) http.Handler {
+	t.Helper()
+	noErr(t, app.Hosts.Add(local))
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		address, err := net.ResolveTCPAddr("tcp", local)
+		if err != nil {
+			panic(err)
+		}
+		request.RemoteAddr = peer
+		request.Host = local
+		handler.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey, address)))
+	})
+}
+
+// A plain HTTP request that came from another tailnet device straight to
+// one of this computer's Tailscale addresses, as Tailscale lists them, is
+// labeled as encrypted by Tailscale and needs no acknowledgement of plain
+// HTTP. The same request on the LAN, from this computer, to an address in
+// the range that Tailscale does not list (another private network), or
+// from a tailnet device through a trusted proxy is not.
+func TestTheConnectionLabelNamesTheTailnet(t *testing.T) {
+	cases := []struct {
+		name, local, peer string
+		proxied, tailnet  bool
+	}{
+		{"tailnet IPv4", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", false, true},
+		{"tailnet IPv6", "[" + tailscaletest.IPv6 + "]:7654", "[fd7a:115c:a1e0::9]:50123", false, true},
+		{"home network", "192.168.1.5:7654", "192.168.1.9:50123", false, false},
+		{"loopback", "127.0.0.1:7654", "127.0.0.1:50123", false, false},
+		{"an address Tailscale does not list", "100.64.0.8:7654", "100.64.0.9:50123", false, false},
+		{"this computer at its own Tailscale address", tailscaletest.IPv4 + ":7654", tailscaletest.IPv4 + ":50123", false, false},
+		{"a device outside the tailnet ranges", tailscaletest.IPv4 + ":7654", "192.168.1.9:50123", false, false},
+		{"a tailnet proxy that forwarded plain HTTP", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", true, false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			app, _ := withTailscale(t, newUnacknowledgedApp(t), tailscaletest.State{Status: tailscaletest.Running()})
+			if test.proxied {
+				app.Network = NewLiveNetwork(LiveNetworkConfig{Proxies: []netip.Prefix{netip.MustParsePrefix("100.64.0.9/32")}, Hosts: app.Hosts})
+			}
+			server := serve(t, arriving(t, app, app.Handler(), test.local, test.peer))
+			client, _ := newBrowserClient(t)
+			request, err := http.NewRequest(http.MethodGet, server.URL+"/settings", nil)
+			noErr(t, err)
+			if test.proxied {
+				request.Header.Set("X-Forwarded-Proto", "http")
+			}
+			response, err := client.Do(request)
+			noErr(t, err)
+			content, err := io.ReadAll(response.Body)
+			response.Body.Close()
+			noErr(t, err)
+			body := string(content)
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("status=%d", response.StatusCode)
+			}
+			label := strings.Contains(body, enText(webui.MsgConnTailnet)) && strings.Contains(body, enText(webui.MsgConnTailnetNote))
+			ack := strings.Contains(body, `name="action" value="acknowledge_insecure"`)
+			if label != test.tailnet || ack == test.tailnet || strings.Contains(body, "conn--secure") != test.tailnet {
+				t.Fatalf("label=%v acknowledgement offered=%v, want the tailnet label %v", label, ack, test.tailnet)
+			}
+			if test.tailnet && strings.Contains(body, enText(webui.MsgConnPlain)) {
+				t.Fatal("a tailnet request is also called not encrypted by OwnGit")
+			}
+		})
+	}
+}
+
+// newUnacknowledgedApp is newConfiguredApp without plain HTTP accepted.
+func newUnacknowledgedApp(t *testing.T) *App {
+	t.Helper()
+	app, store, repositoryRoot := newTestApp(t)
+	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
+	canonical, err := filepath.EvalSymlinks(repositoryRoot)
+	noErr(t, err)
+	adminHash, err := auth.HashPassword("admin-password")
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, false))
+	app.Repositories.SetRoot(canonical)
+	return app
+}
+
+// Web setup over the tailnet finishes without the plain HTTP
+// acknowledgement; the same setup on the home network still needs it.
+func TestSetupOverTheTailnetNeedsNoPlainHTTPAcknowledgement(t *testing.T) {
+	for _, test := range []struct {
+		name, local, peer string
+		want              int
+	}{
+		{"tailnet", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", http.StatusSeeOther},
+		{"home network", "192.168.1.5:7654", "192.168.1.9:50123", http.StatusUnprocessableEntity},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app, store, repositoryRoot := newTestApp(t)
+			app, _ = withTailscale(t, app, tailscaletest.State{Status: tailscaletest.Running()})
+			noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
+			noErr(t, os.MkdirAll(repositoryRoot, 0o700))
+			// Only the answers arrive from the other device; the setup link
+			// is redeemed on this computer as usual.
+			handler := app.Handler()
+			remote := arriving(t, app, handler, test.local, test.peer)
+			server := serve(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method == http.MethodPost && request.URL.Path == "/setup" {
+					remote.ServeHTTP(writer, request)
+					return
+				}
+				handler.ServeHTTP(writer, request)
+			}))
+			client, jar := newBrowserClient(t)
+			request(t, client, http.MethodGet, server.URL+"/setup", nil, "").Body.Close()
+			response := request(t, client, http.MethodPost, server.URL+"/setup/redeem", url.Values{
+				"csrf": {cookieValue(t, jar, server.URL, preauthCookie)}, "token": {"synthetic-owner-token"},
+			}, server.URL)
+			response.Body.Close()
+			session, ok, err := store.Session(context.Background(), cookieValue(t, jar, server.URL, setupCookie), "setup", time.Now())
+			if err != nil || !ok {
+				t.Fatalf("setup session ok=%v err=%v", ok, err)
+			}
+			response = request(t, client, http.MethodPost, server.URL+"/setup", url.Values{
+				"csrf": {session.CSRF}, "storage_path": {repositoryRoot}, "access_mode": {"open"}, "admin_password": {"admin-password-one"},
+			}, "http://"+test.local)
+			response.Body.Close()
+			if response.StatusCode != test.want {
+				t.Fatalf("setup without the acknowledgement: status=%d, want %d", response.StatusCode, test.want)
+			}
+		})
+	}
+}

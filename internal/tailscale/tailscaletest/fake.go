@@ -63,22 +63,28 @@ type Status struct {
 }
 
 type Self struct {
-	DNSName string `json:"DNSName"`
+	DNSName      string   `json:"DNSName"`
+	TailscaleIPs []string `json:"TailscaleIPs,omitempty"`
 }
 
 type CurrentTailnet struct {
 	MagicDNSEnabled bool `json:"MagicDNSEnabled"`
 }
 
-// Name is the synthetic MagicDNS name of the fake computer.
-const Name = "gitbox.tail0000.ts.net"
+// Name is the synthetic MagicDNS name of the fake computer, and IPv4 and
+// IPv6 its Tailscale addresses.
+const (
+	Name = "gitbox.tail0000.ts.net"
+	IPv4 = "100.64.0.7"
+	IPv6 = "fd7a:115c:a1e0::7"
+)
 
 // Running is the status of a signed-in computer with MagicDNS and HTTPS
 // certificates.
 func Running() Status {
 	return Status{
 		BackendState: "Running", Version: "1.102.5-test",
-		Self: &Self{DNSName: Name + "."}, CertDomains: []string{Name},
+		Self: &Self{DNSName: Name + ".", TailscaleIPs: []string{IPv4, IPv6}}, CertDomains: []string{Name},
 		CurrentTailnet: &CurrentTailnet{MagicDNSEnabled: true},
 	}
 }

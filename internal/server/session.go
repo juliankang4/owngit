@@ -223,7 +223,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			AdminConfirmed: adminOK, SetupComplete: settings.Initialized,
 		},
 		Connection: webui.Connection{
-			Encrypted: info.Secure(), Proxy: info.Secure() && info.Proxied, Tailscale: app.throughTailscale(request),
+			Encrypted: info.Secure(), Proxy: info.Secure() && info.Proxied, Tailscale: app.throughTailscale(request), Tailnet: app.throughTailnet(request),
 			Host: info.Host, InsecureAcknowledged: settings.InsecureHTTPAccepted,
 		},
 	}

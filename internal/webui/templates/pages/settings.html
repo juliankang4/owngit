@@ -114,22 +114,25 @@
       {{if .Chrome.Connection.Tailscale}}{{icon "lock"}}{{bi $lang "connection.encrypted_tailscale"}}
       {{else if .Chrome.Connection.Proxy}}{{icon "lock"}}{{bi $lang "connection.encrypted_proxy"}}
       {{else if .Chrome.Connection.Encrypted}}{{icon "lock"}}{{bi $lang "connection.encrypted"}}
+      {{else if .Chrome.Connection.Tailnet}}{{icon "lock"}}{{bi $lang "connection.encrypted_tailnet"}}
       {{else}}{{icon "unlocked"}}{{bi $lang "connection.plain"}}{{end}}
     </p>
     {{/* Explain the situation first, then the limit of what OwnGit can
          actually observe about the rest of the path. */}}
-    {{if not .Chrome.Connection.Encrypted}}
+    {{$protected := or .Chrome.Connection.Encrypted .Chrome.Connection.Tailnet}}
+    {{if not $protected}}
       <p class="setblock__d">{{bi $lang "connection.plain_detail"}}</p>
     {{end}}
     {{/* Through a proxy or Tailscale, OwnGit sees plain HTTP from it, and the
          encrypted part ends there. */}}
     {{if .Chrome.Connection.Tailscale}}<p class="setblock__d">{{bi $lang "connection.tailscale_note"}}</p>
     {{else if .Chrome.Connection.Proxy}}<p class="setblock__d">{{bi $lang "connection.proxy_note"}}</p>
+    {{else if .Chrome.Connection.Tailnet}}<p class="setblock__d">{{bi $lang "connection.tailnet_note"}}</p>
     {{else}}<p class="setblock__d">{{bi $lang "connection.no_proof"}}</p>{{end}}
 
     {{/* Acknowledging plain HTTP is a security setting, so it also verifies
          the administrator password. */}}
-    {{if and (not .Chrome.Connection.Encrypted) (not .Chrome.Connection.InsecureAcknowledged)}}
+    {{if and (not $protected) (not .Chrome.Connection.InsecureAcknowledged)}}
       <p class="setblock__d">{{bi $lang "setup.insecure.help"}}</p>
       {{$act := "acknowledge_insecure"}}{{$fn := forAction $pending $act $n}}
       <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}" open>
@@ -153,7 +156,7 @@
           <div class="actions"><button type="submit" class="btn">{{bi $lang "settings.connection.acknowledge"}}</button></div>
         </form>
       </details>
-    {{else if not .Chrome.Connection.Encrypted}}
+    {{else if not $protected}}
       <p class="f__help">{{bi $lang "connection.tailscale_hint"}}</p>
     {{end}}
   </div>

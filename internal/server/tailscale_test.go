@@ -306,6 +306,9 @@ func TestTailscaleProblemsChangeNothing(t *testing.T) {
 	}{
 		{"signed out", func(fakeState *tailscaletest.State) { fakeState.Status.BackendState = "NeedsLogin" }, string(tailscale.KindLoggedOut), 0},
 		{"HTTPS off", func(fakeState *tailscaletest.State) { fakeState.Status.CertDomains = nil }, string(tailscale.KindHTTPSOff), 0},
+		{"another control server", func(fakeState *tailscaletest.State) {
+			fakeState.Status.Self.DNSName, fakeState.Status.CertDomains = "gitbox.headscale.internal.", nil
+		}, string(tailscale.KindHTTPSUnavailable), 0},
 		{"MagicDNS off", func(fakeState *tailscaletest.State) { fakeState.Status.CurrentTailnet.MagicDNSEnabled = false }, string(tailscale.KindMagicDNSOff), 0},
 		{"daemon down", func(fakeState *tailscaletest.State) {
 			fakeState.StatusError = "failed to connect to local Tailscale daemon; it doesn't appear to be running"

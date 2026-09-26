@@ -143,7 +143,9 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		StoragePath: answers.StoragePath, SuggestedPath: app.SuggestedRepositoryRoot,
 		AccessMode: webui.AccessMode(answers.AccessMode), InsecureAck: answers.InsecureAccepted, KeepHost: keepHost,
 	}
-	notices, err := app.CompleteSetup(request.Context(), answers, !requestctx.Of(request).Secure())
+	// Plain HTTP needs the acknowledgement, unless it came over the
+	// tailnet, which Tailscale encrypted.
+	notices, err := app.CompleteSetup(request.Context(), answers, !requestctx.Of(request).Secure() && !app.throughTailnet(request))
 	switch {
 	case len(notices) != 0:
 		app.renderSetupWizard(writer, request, session.CSRF, form, notices, http.StatusUnprocessableEntity)

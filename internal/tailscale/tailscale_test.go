@@ -3,6 +3,7 @@ package tailscale_test
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -48,6 +49,11 @@ func TestStatusNamesWhatKeepsHTTPSFromWorking(t *testing.T) {
 		{"MagicDNS off", func(state *tailscaletest.State) { state.Status.CurrentTailnet.MagicDNSEnabled = false }, tailscale.KindMagicDNSOff},
 		{"HTTPS off", func(state *tailscaletest.State) { state.Status.CertDomains = nil }, tailscale.KindHTTPSOff},
 		{"certificate for another name", func(state *tailscaletest.State) { state.Status.CertDomains = []string{"other.tail0000.ts.net"} }, tailscale.KindHTTPSOff},
+		// Headscale gives names under its own domain and no certificates;
+		// no Tailscale admin console setting changes that.
+		{"another control server", func(state *tailscaletest.State) {
+			state.Status.Self.DNSName, state.Status.CertDomains = "gitbox.headscale.internal.", nil
+		}, tailscale.KindHTTPSUnavailable},
 		{"daemon not running", func(state *tailscaletest.State) {
 			state.StatusError = "failed to connect to local Tailscale daemon for /localapi/v0/status; not running? Is tailscaled running?"
 		}, tailscale.KindNotRunning},
@@ -68,8 +74,9 @@ func TestStatusNamesWhatKeepsHTTPSFromWorking(t *testing.T) {
 			if got != test.want {
 				t.Fatalf("problem=%q, want %q (err=%v)", got, test.want, err)
 			}
-			if test.want == "" && status.Name != tailscaletest.Name {
-				t.Fatalf("name=%q", status.Name)
+			if test.want == "" && (status.Name != tailscaletest.Name ||
+				!reflect.DeepEqual(status.Addresses, []netip.Addr{netip.MustParseAddr(tailscaletest.IPv4), netip.MustParseAddr(tailscaletest.IPv6)})) {
+				t.Fatalf("name=%q addresses=%v", status.Name, status.Addresses)
 			}
 		})
 	}
@@ -188,5 +195,25 @@ func TestEndpointTellsOwnGitsFromEverythingElse(t *testing.T) {
 	}
 	if _, err := tailscale.ParseServeConfig([]byte("{not json")); tailscale.KindOf(err) != tailscale.KindUnreadable {
 		t.Fatalf("unreadable configuration: %v", err)
+	}
+}
+
+// Only Tailscale's address ranges count as tailnet addresses, and only
+// such addresses of this computer are kept from its status.
+func TestTailnetAddresses(t *testing.T) {
+	for address, want := range map[string]bool{
+		"100.64.0.1": true, "100.127.255.254": true, "::ffff:100.100.1.2": true, "fd7a:115c:a1e0::1": true, "fd7a:115c:a1e0:ab12::9": true,
+		"100.63.255.255": false, "100.128.0.1": false, "192.168.1.5": false, "127.0.0.1": false, "fd7a:115c:a1e1::1": false, "::1": false,
+	} {
+		if got := tailscale.InTailnetRange(netip.MustParseAddr(address)); got != want {
+			t.Errorf("%s: %v, want %v", address, got, want)
+		}
+	}
+	state := tailscaletest.State{Status: tailscaletest.Running()}
+	state.Status.Self.TailscaleIPs = []string{"100.64.0.7", "not an address", "192.168.1.5"}
+	fake := tailscaletest.New(t, state)
+	status, err := tailscale.Command{Path: fake.Path}.Status(context.Background())
+	if err != nil || !reflect.DeepEqual(status.Addresses, []netip.Addr{netip.MustParseAddr("100.64.0.7")}) {
+		t.Fatalf("addresses=%v err=%v", status.Addresses, err)
 	}
 }

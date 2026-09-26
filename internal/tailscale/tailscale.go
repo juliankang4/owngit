@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,6 +132,10 @@ const (
 	KindMagicDNSOff Kind = "magicdns_off"
 	// KindHTTPSOff: HTTPS certificates are not enabled in the tailnet.
 	KindHTTPSOff Kind = "https_off"
+	// KindHTTPSUnavailable: the tailnet's control server is not
+	// Tailscale's, such as Headscale, and gives this computer no
+	// certificate name, so no admin console setting can turn HTTPS on.
+	KindHTTPSUnavailable Kind = "https_unavailable"
 	// KindPermission: the daemon refused a change for this user, such as a
 	// user who is not the operator on Linux.
 	KindPermission Kind = "permission"
@@ -181,7 +186,35 @@ type Status struct {
 	CertDomains []string
 	// Version is the daemon's version.
 	Version string
+	// Addresses are this computer's own Tailscale IP addresses.
+	Addresses []netip.Addr
 }
+
+// tailnetRanges are the address ranges Tailscale gives its devices: the
+// shared address space for IPv4 and Tailscale's own IPv6 prefix.
+var tailnetRanges = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("fd7a:115c:a1e0::/48"),
+}
+
+// InTailnetRange reports whether addr is in the ranges Tailscale gives its
+// devices. Other networks, such as NetBird or a carrier's NAT, can use the
+// IPv4 range too, so this alone does not show that Tailscale carried a
+// connection.
+func InTailnetRange(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	for _, prefix := range tailnetRanges {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// suffixTailscale is the end of every MagicDNS name that Tailscale's own
+// control server gives out. Another control server, such as Headscale,
+// uses a domain of its own.
+const suffixTailscale = ".ts.net"
 
 // Usable returns nil when Tailscale can serve this computer over HTTPS, or
 // an Error that names what is missing.
@@ -207,6 +240,9 @@ func (status Status) Usable() error {
 			return nil
 		}
 	}
+	if !strings.HasSuffix(status.Name, suffixTailscale) {
+		return &Error{Kind: KindHTTPSUnavailable}
+	}
 	return &Error{Kind: KindHTTPSOff}
 }
 
@@ -217,7 +253,11 @@ func (command Command) Status(ctx context.Context) (Status, error) {
 	var raw struct {
 		BackendState string
 		Version      string
-		Self         *struct{ DNSName string }
+		Self         *struct {
+			DNSName      string
+			TailscaleIPs []string
+		}
+		TailscaleIPs []string
 		CertDomains  []string
 		// CurrentTailnet is missing from old clients, which then report
 		// MagicDNS through the legacy suffix only.
@@ -231,8 +271,17 @@ func (command Command) Status(ctx context.Context) (Status, error) {
 		return Status{}, &Error{Kind: KindUnreadable}
 	}
 	status := Status{BackendState: raw.BackendState, Version: raw.Version, CertDomains: raw.CertDomains}
+	addresses := raw.TailscaleIPs
 	if raw.Self != nil {
 		status.Name = strings.ToLower(strings.TrimSuffix(raw.Self.DNSName, "."))
+		if len(raw.Self.TailscaleIPs) > 0 {
+			addresses = raw.Self.TailscaleIPs
+		}
+	}
+	for _, text := range addresses {
+		if addr, err := netip.ParseAddr(text); err == nil && InTailnetRange(addr) {
+			status.Addresses = append(status.Addresses, addr.Unmap())
+		}
 	}
 	if raw.CurrentTailnet != nil {
 		status.MagicDNS = raw.CurrentTailnet.MagicDNSEnabled

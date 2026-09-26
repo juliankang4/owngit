@@ -139,6 +139,10 @@ var tailscaleCatalog = map[MessageCode]message{
 		en: "HTTPS certificates are not enabled in your tailnet. Turn on HTTPS Certificates on the DNS page of the Tailscale admin console and try again.",
 		ko: "tailnet에서 HTTPS 인증서가 켜져 있지 않습니다. Tailscale 관리 콘솔의 DNS 페이지에서 HTTPS Certificates를 켠 뒤 다시 시도하세요.",
 	},
+	"tailscale.problem.https_unavailable": {
+		en: "This computer's tailnet does not offer HTTPS certificates. Its control server is not Tailscale's, for example Headscale, and gives this computer no certificate name, so OwnGit cannot share it over HTTPS with Tailscale. For an HTTPS address on such a network, see \"Other private networks\" in the operations guide.",
+		ko: "이 컴퓨터의 tailnet은 HTTPS 인증서를 제공하지 않습니다. Headscale처럼 Tailscale이 아닌 제어 서버를 쓰고 있어 이 컴퓨터에 인증서 이름을 주지 않으므로, OwnGit은 Tailscale로 HTTPS 공유를 할 수 없습니다. 이런 네트워크에서 HTTPS 주소를 쓰는 방법은 운영 안내서의 \"다른 비공개 네트워크\"를 보세요.",
+	},
 	"tailscale.problem.permission": {
 		en: "Tailscale did not let OwnGit change its settings. On Linux, allow your user once in a terminal with \"sudo tailscale set --operator=$USER\", then try again. OwnGit never runs sudo itself.",
 		ko: "Tailscale이 OwnGit의 설정 변경을 거부했습니다. Linux에서는 터미널에서 \"sudo tailscale set --operator=$USER\"를 한 번 실행해 사용자를 허용한 뒤 다시 시도하세요. OwnGit은 sudo를 직접 실행하지 않습니다.",

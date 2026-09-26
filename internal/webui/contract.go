@@ -151,6 +151,11 @@ type Connection struct {
 	// endpoint of this computer, which OwnGit set up: Tailscale on this
 	// computer encrypted it, not OwnGit.
 	Tailscale bool
+	// Tailnet is true when this plain HTTP request came from another
+	// device on the tailnet straight to this computer's Tailscale address:
+	// Tailscale encrypted it between that device and this computer, not
+	// OwnGit. Plain HTTP then needs no acknowledgement.
+	Tailnet bool
 	// Host is the host name the browser used.
 	Host string
 	// InsecureAcknowledged is true once the owner accepted plain HTTP, which
