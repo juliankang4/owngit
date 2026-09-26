@@ -314,3 +314,21 @@ func TestTailscaleStatusShowsAnUnrecordedEndpointAsTaken(t *testing.T) {
 		t.Fatalf("writes=%q", writes)
 	}
 }
+
+// "off" while Tailscale is stopped says how to fix it, and what Tailscale
+// printed.
+func TestTailscaleOffWhileTailscaleIsStopped(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
+	_, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	fake.Update(func(s *tailscaletest.State) {
+		s.Status.BackendState = "Stopped"
+		s.WriteError = "Tailscale is stopped."
+	})
+	_, err = runTailscale(t, "off", "--state-dir", stateDir, "--tailscale", fake.Path)
+	want := webui.Text(webui.LangEN, webui.TailscaleProblemCode("stopped")) + " Tailscale said: Tailscale is stopped."
+	if err == nil || err.Error() != want {
+		t.Fatalf("off: %v", err)
+	}
+}

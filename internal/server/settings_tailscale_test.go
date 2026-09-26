@@ -310,3 +310,33 @@ func TestAChangedEndpointOffersTheStepsThatWork(t *testing.T) {
 		t.Fatalf("off after putting OwnGit's address back: %+v %v", off, err)
 	}
 }
+
+// When Tailscale is stopped it may still show its configuration and refuse
+// only the change. Turning off then says that Tailscale is off and how to
+// turn it on, and the administrator also sees what Tailscale printed.
+func TestTurningOffWhileTailscaleIsStoppedSaysSo(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	_, err := app.Tailscale.On(t.Context(), nil)
+	noErr(t, err)
+	fake.Update(func(s *tailscaletest.State) {
+		s.Status.BackendState = "Stopped"
+		s.WriteError = "Tailscale is stopped."
+	})
+	app.Tailscale.forget()
+	client, base, csrf, _ := networkSettingsClient(t, app)
+	result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOff, "admin-password", false), base)
+	if result.status != http.StatusConflict {
+		t.Fatalf("turn off: status=%d", result.status)
+	}
+	for _, want := range []string{enText(webui.TailscaleProblemCode(string(tailscale.KindStopped))), "Tailscale is stopped."} {
+		if !strings.Contains(result.body, want) {
+			t.Errorf("the refusal lacks %q", want)
+		}
+	}
+	if strings.Contains(result.body, enText(webui.MsgTSProblemFailed)) {
+		t.Error("the refusal shows Tailscale's error as an unexplained failure")
+	}
+	if _, on, _ := app.Store.TailscaleServe(t.Context()); !on {
+		t.Fatal("a refused turning off took back the settings")
+	}
+}

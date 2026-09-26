@@ -269,8 +269,12 @@ func tailscaleProblemText(problem, detail string, found []tailscale.Use, macApp 
 	if len(found) > 0 {
 		detail = server.TailscaleUsesText(found)
 	}
-	if detail != "" && strings.HasSuffix(text, ":") {
+	switch {
+	case detail == "":
+	case strings.HasSuffix(text, ":"):
 		text += " " + detail
+	default:
+		text += " Tailscale said: " + detail
 	}
 	if problem == server.TailscaleProblemReadBack && macApp {
 		text += " " + webui.Text(webui.LangEN, webui.MsgTSReadBackMacApp)

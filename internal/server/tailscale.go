@@ -481,7 +481,7 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 		if sharing.BeforeServe != nil {
 			sharing.BeforeServe(record.Name)
 		}
-		writeErr := command.ServeHTTPS(ctx, TailscaleHTTPSPort, target)
+		writeErr := whyWriteFailed(ctx, command, command.ServeHTTPS(ctx, TailscaleHTTPSPort, target))
 		after, readErr := command.ServeConfig(ctx)
 		if writeErr == nil && readErr == nil && !after.Endpoint(record.Name, TailscaleHTTPSPort, target).Exact {
 			writeErr = &TailscaleError{Problem: TailscaleProblemReadBack, MacApp: command.MacApp}
@@ -609,7 +609,7 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 				change.Endpoint = "stale"
 			}
 		case endpoint.Exact:
-			if err := command.RemoveHTTPS(ctx, record.HTTPSPort); err != nil {
+			if err := whyWriteFailed(ctx, command, command.RemoveHTTPS(ctx, record.HTTPSPort)); err != nil {
 				return TailscaleChange{}, "", tailscaleError(err, command.MacApp)
 			}
 			after, err := command.ServeConfig(ctx)
@@ -701,6 +701,26 @@ func tailscaleError(err error, macApp bool) error {
 	var failure *tailscale.Error
 	if errors.As(err, &failure) {
 		return &TailscaleError{Problem: string(failure.Kind), Detail: failure.Detail, MacApp: macApp}
+	}
+	return err
+}
+
+// whyWriteFailed names the cause of a failed Serve change when Tailscale's
+// state explains it, such as Tailscale being stopped: Tailscale may accept
+// reading its configuration then and refuse only the change. What Tailscale
+// printed stays as the detail for the administrator.
+func whyWriteFailed(ctx context.Context, command tailscale.Command, err error) error {
+	var failure *tailscale.Error
+	if !errors.As(err, &failure) || failure.Kind != tailscale.KindFailed {
+		return err
+	}
+	status, statusErr := command.Status(ctx)
+	if statusErr != nil {
+		return err
+	}
+	switch kind := tailscale.KindOf(status.Usable()); kind {
+	case tailscale.KindStopped, tailscale.KindLoggedOut, tailscale.KindNeedsApproval, tailscale.KindNotRunning:
+		return &tailscale.Error{Kind: kind, Detail: failure.Detail}
 	}
 	return err
 }
