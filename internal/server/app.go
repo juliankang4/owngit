@@ -282,6 +282,10 @@ type failedReader struct{ err error }
 func (reader failedReader) Read([]byte) (int, error) { return 0, reader.err }
 
 func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path == HealthPath {
+		app.handleHealth(writer, request)
+		return
+	}
 	// A request for a repository postpones its maintenance, from the start
 	// until the end of the request.
 	if id := repositoryIDInPath(request.URL.Path); id != "" {
