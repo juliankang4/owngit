@@ -168,13 +168,16 @@ to your account, write the password, and then add the line:
 ```powershell
 $file = "$HOME\owngit-password.txt"
 New-Item -ItemType File -Path $file
-icacls $file /inheritance:r /grant:r "*$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value):F"
+$acl = Get-Acl -LiteralPath $file
+$acl.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;$([Security.Principal.WindowsIdentity]::GetCurrent().User))", 'Access')
+Set-Acl -LiteralPath $file -AclObject $acl
 [IO.File]::WriteAllText($file, [Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Password')).Password)
 [IO.File]::WriteAllText($file, "owngit-server: https://owngit.example.test`n" + [IO.File]::ReadAllText($file))
 ```
 
-`icacls` removes the inherited entries and gives full control only to your
-account, and writing into the existing file keeps that.
+The three `$acl` lines replace the file's access list with `D:P(A;;FA;;;SID)`:
+a list that inherits nothing (`P`) and allows (`A`) full access (`FA`) only to
+your account. Writing into the existing file keeps that list.
 `Read-Host -AsSecureString` keeps the password off the screen and out of the
 PowerShell history. The commands work in an ordinary PowerShell window and in
 one opened with Run as administrator, where the Administrators group becomes

@@ -402,29 +402,46 @@ func validatePrivateInput(descriptor *windows.SECURITY_DESCRIPTOR, user *windows
 // describeNotPrivate explains why validatePrivateInputDescriptor refused a
 // file: an owner other than the current user or Administrators, inherited
 // entries, other accounts that can access it, or a missing or partial grant
-// to the current user. It also builds the icacls command that fixes it. It
+// to the current user. It also builds the PowerShell line that fixes it. It
 // only reports; the decision stays with validatePrivateInputDescriptor.
 func describeNotPrivate(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, path string, refused error) *NotPrivateError {
 	var problems, fixes []string
-	userTrustee := powerShellQuote("*" + user.String())
-	quoted := powerShellQuote(path)
 	if owner, _, err := descriptor.Owner(); err != nil || !privateInputOwner(owner, user) {
 		name := "unknown"
 		if err == nil && owner != nil {
 			name = accountName(owner)
 		}
 		problems = append(problems, "its owner is "+name+", not your account or Administrators")
-		fixes = append(fixes, "icacls "+quoted+" /setowner "+userTrustee)
+		fixes = append(fixes, "icacls "+powerShellQuote(path)+" /setowner "+powerShellQuote("*"+user.String()))
 	}
 	if validateUserOnlyDACL(descriptor, user, false) != nil {
-		aclProblems, fix := describeACL(descriptor, user, quoted, userTrustee)
-		problems = append(problems, aclProblems...)
-		fixes = append(fixes, fix)
+		problems = append(problems, describeACL(descriptor, user)...)
+		fixes = append(fixes, userOnlyACLCommand(path, user))
 	}
 	if len(problems) == 0 {
 		problems = append(problems, refused.Error())
 	}
 	return &NotPrivateError{Problem: strings.Join(problems, "; "), Fix: strings.Join(fixes, "; "), Shell: "PowerShell"}
+}
+
+// userOnlyACLCommand is a PowerShell line that replaces the whole access list
+// of path with one full-control entry for user and no inherited entries
+// (SDDL "D:P(A;;FA;;;SID)"). It writes the complete list instead of editing
+// entries with icacls, because icacls can leave entries behind: /remove turns
+// an inherited entry in a protected list into an explicit one instead of
+// removing it.
+//
+// Set-Acl also writes the audit list, which needs a privilege an ordinary user
+// does not have, unless the object's audit protection equals the file's
+// current access protection (Set-Acl compares those two flags). So the line
+// starts from Get-Acl and copies the file's access protection into the audit
+// protection before it replaces the access list.
+func userOnlyACLCommand(path string, user *windows.SID) string {
+	quoted := powerShellQuote(path)
+	return "$acl = Get-Acl -LiteralPath " + quoted + "; " +
+		"$acl.SetAuditRuleProtection($acl.AreAccessRulesProtected, $true); " +
+		"$acl.SetSecurityDescriptorSddlForm('D:P(A;;FA;;;" + user.String() + ")', 'Access'); " +
+		"Set-Acl -LiteralPath " + quoted + " -AclObject $acl"
 }
 
 // powerShellQuote quotes s as a PowerShell single-quoted string, in which
@@ -446,10 +463,9 @@ func powerShellQuote(s string) string {
 }
 
 // describeACL names what makes the file's access list more than one full
-// grant to user, and returns the icacls command that leaves only that grant.
-// quoted and userTrustee are already quoted for PowerShell.
-func describeACL(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, quoted, userTrustee string) ([]string, string) {
-	var problems, others, explicitOthers []string
+// grant to user.
+func describeACL(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID) []string {
+	var problems, others, deniedOthers []string
 	userDenied, userFull, userFlags, unknownEntries := false, false, false, false
 	control, _, _ := descriptor.Control()
 	if control&windows.SE_DACL_PROTECTED == 0 {
@@ -472,33 +488,27 @@ func describeACL(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, quo
 			}
 			sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 			inherited := ace.Header.AceFlags&windows.INHERITED_ACE != 0
-			if sid.Equals(user) {
-				switch {
-				case ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE:
-					userDenied = true
-				case !inherited && ace.Header.AceFlags != 0:
-					userFlags = true
-				case ace.Header.AceFlags&windows.INHERIT_ONLY_ACE == 0 && hasFullFileAccess(ace.Mask):
+			switch {
+			case sid.Equals(user) && ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE:
+				userDenied = true
+			case sid.Equals(user) && !inherited && ace.Header.AceFlags != 0:
+				userFlags = true
+			case sid.Equals(user):
+				if ace.Header.AceFlags&windows.INHERIT_ONLY_ACE == 0 && hasFullFileAccess(ace.Mask) {
 					userFull = true
 				}
-				continue
-			}
-			if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE && !inherited {
-				// A deny entry for another account takes access away, but
-				// the file should still name only the current user.
-				explicitOthers = appendNew(explicitOthers, powerShellQuote("*"+sid.String()))
-				continue
-			}
-			if ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE {
+			case ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE:
+				deniedOthers = appendNew(deniedOthers, accountName(sid))
+			default:
 				others = appendNew(others, accountName(sid))
-			}
-			if !inherited {
-				explicitOthers = appendNew(explicitOthers, powerShellQuote("*"+sid.String()))
 			}
 		}
 	}
 	if len(others) != 0 {
 		problems = append(problems, strings.Join(others, ", ")+" can also access it")
+	}
+	if len(deniedOthers) != 0 {
+		problems = append(problems, "its access list also has deny entries for "+strings.Join(deniedOthers, ", "))
 	}
 	if userDenied {
 		problems = append(problems, "it denies your account some access")
@@ -512,15 +522,7 @@ func describeACL(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID, quo
 	if unknownEntries {
 		problems = append(problems, "its access list has entries OwnGit cannot check")
 	}
-	fix := "icacls " + quoted + " /inheritance:r"
-	if userDenied {
-		fix += " /remove:d " + userTrustee
-	}
-	fix += " /grant:r " + powerShellQuote("*"+user.String()+":F")
-	if len(explicitOthers) != 0 {
-		fix += " /remove " + strings.Join(explicitOthers, " ")
-	}
-	return problems, fix
+	return problems
 }
 
 func appendNew(list []string, item string) []string {

@@ -25,7 +25,7 @@ func TestSecretFileRefusalSaysWhatIsWrongAndHowToFixIt(t *testing.T) {
 	var problem, run, fix string
 	switch runtime.GOOS {
 	case "windows":
-		problem, run, fix = "can also access it", ". In PowerShell, run: icacls '", ` /remove '*S-1-1-0'`
+		problem, run, fix = "can also access it", ". In PowerShell, run: $acl = Get-Acl -LiteralPath '", "Set-Acl -LiteralPath '"+path+"' -AclObject $acl"
 	default:
 		problem, run, fix = "its mode 0644 gives access to its group and all other users", ". To fix it, run: ", "chmod 600 '"+path+"'"
 	}

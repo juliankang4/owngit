@@ -306,7 +306,7 @@ OwnGit has no email or account recovery. Both procedures require access to the i
 
 ### Password and token files
 
-Every command that reads a password or token file you wrote yourself checks it this way, including `reset-admin`, `import`, `pr` and `repo`. When it refuses a file as not private, it says what is wrong, for example which accounts can also read the file, and gives a command that fixes it.
+Every command that reads a password or token file you wrote yourself checks it this way, including `reset-admin`, `import`, `pr` and `repo`. When it refuses a file as not private, it says what is wrong, for example which accounts can also read the file, and gives a command that fixes it (on Windows, a PowerShell line).
 
 On macOS and Linux, the file must not give its group or other users any access. Create it while `umask 077` is in effect, or fix an existing file with `chmod 600 FILE`.
 
@@ -315,11 +315,13 @@ On Windows, a file made with Notepad or `echo` inherits its folder's access entr
 ```powershell
 $file = "$HOME\owngit-password.txt"
 New-Item -ItemType File -Path $file
-icacls $file /inheritance:r /grant:r "*$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value):F"
+$acl = Get-Acl -LiteralPath $file
+$acl.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;$([Security.Principal.WindowsIdentity]::GetCurrent().User))", 'Access')
+Set-Acl -LiteralPath $file -AclObject $acl
 [IO.File]::WriteAllText($file, [Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Password')).Password)
 ```
 
-`icacls` removes the inherited entries and gives full control to your account, named by its security identifier. `Read-Host -AsSecureString` keeps the password off the screen and out of the PowerShell history. The same commands work in an ordinary PowerShell window and in one opened with Run as administrator. In an administrator window, Windows makes the Administrators group the owner of the new file. OwnGit accepts that owner when the access entries name only your account, because administrators can take ownership of any file anyway.
+The three `$acl` lines replace the file's access list with `D:P(A;;FA;;;SID)`: a list that inherits nothing (`P`) and allows (`A`) full access (`FA`) only to your account, named by its security identifier. `Read-Host -AsSecureString` keeps the password off the screen and out of the PowerShell history. The same commands work in an ordinary PowerShell window and in one opened with Run as administrator. In an administrator window, Windows makes the Administrators group the owner of the new file. OwnGit accepts that owner when the access entries name only your account, because administrators can take ownership of any file anyway.
 
 ## Restoring repository files
 

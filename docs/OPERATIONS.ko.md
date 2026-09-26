@@ -306,7 +306,7 @@ OwnGit에는 이메일 복구나 계정 복구 기능이 없습니다. 두 절�
 
 ### 비밀번호 파일과 토큰 파일
 
-직접 만든 비밀번호 파일이나 토큰 파일을 읽는 명령은 모두 이 방식으로 검사합니다. `reset-admin`, `import`, `pr`, `repo`도 마찬가지입니다. 비공개가 아니라는 이유로 파일을 거부할 때는 어떤 계정이 파일을 더 읽을 수 있는지처럼 무엇이 문제인지와 이를 고치는 명령을 함께 알려 줍니다.
+직접 만든 비밀번호 파일이나 토큰 파일을 읽는 명령은 모두 이 방식으로 검사합니다. `reset-admin`, `import`, `pr`, `repo`도 마찬가지입니다. 비공개가 아니라는 이유로 파일을 거부할 때는 어떤 계정이 파일을 더 읽을 수 있는지처럼 무엇이 문제인지와 이를 고치는 명령(Windows에서는 PowerShell 한 줄)을 함께 알려 줍니다.
 
 macOS와 Linux에서는 파일이 그룹이나 다른 사용자에게 어떤 권한도 주지 않아야 합니다. `umask 077`을 적용한 상태에서 파일을 만들거나, 이미 있는 파일은 `chmod 600 FILE`로 고치세요.
 
@@ -315,11 +315,13 @@ Windows에서 메모장이나 `echo`로 만든 파일은 폴더의 접근 항목
 ```powershell
 $file = "$HOME\owngit-password.txt"
 New-Item -ItemType File -Path $file
-icacls $file /inheritance:r /grant:r "*$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value):F"
+$acl = Get-Acl -LiteralPath $file
+$acl.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;$([Security.Principal.WindowsIdentity]::GetCurrent().User))", 'Access')
+Set-Acl -LiteralPath $file -AclObject $acl
 [IO.File]::WriteAllText($file, [Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Password')).Password)
 ```
 
-`icacls`는 상속된 항목을 지우고 본인 계정에 모든 권한을 줍니다. 계정은 보안 식별자(SID)로 지정합니다. `Read-Host -AsSecureString`은 비밀번호를 화면과 PowerShell 기록에 남기지 않습니다. 이 명령은 일반 PowerShell 창과 관리자 권한으로 실행한 창에서 똑같이 동작합니다. 관리자 창에서는 Windows가 새 파일의 소유자를 Administrators 그룹으로 정합니다. 관리자는 어차피 어떤 파일이든 소유권을 가져올 수 있으므로, 접근 항목에 본인 계정만 있으면 OwnGit은 이 소유자를 받아들입니다.
+`$acl`이 들어간 세 줄은 파일의 접근 목록을 `D:P(A;;FA;;;SID)`로 바꿉니다. 아무것도 상속하지 않고(`P`) 본인 계정에만 모든 권한(`FA`)을 허용하는(`A`) 목록입니다. 계정은 보안 식별자(SID)로 지정합니다. `Read-Host -AsSecureString`은 비밀번호를 화면과 PowerShell 기록에 남기지 않습니다. 이 명령은 일반 PowerShell 창과 관리자 권한으로 실행한 창에서 똑같이 동작합니다. 관리자 창에서는 Windows가 새 파일의 소유자를 Administrators 그룹으로 정합니다. 관리자는 어차피 어떤 파일이든 소유권을 가져올 수 있으므로, 접근 항목에 본인 계정만 있으면 OwnGit은 이 소유자를 받아들입니다.
 
 ## 저장소 파일 되돌리기
 

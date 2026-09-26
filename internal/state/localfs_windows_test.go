@@ -274,9 +274,10 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 	noErr(t, err)
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	noErr(t, err)
-	const path = `C:\secrets\password.txt`
-	trustee := `'*` + user.String() + `'`
-	grant := `icacls '` + path + `' /inheritance:r /grant:r '*` + user.String() + `:F'`
+	const path = `C:\secrets\it's.txt`
+	setOwner := `icacls 'C:\secrets\it''s.txt' /setowner '*` + user.String() + `'`
+	replace := `$acl = Get-Acl -LiteralPath 'C:\secrets\it''s.txt'; $acl.SetAuditRuleProtection($acl.AreAccessRulesProtected, $true); $acl.SetSecurityDescriptorSddlForm('D:P(A;;FA;;;` + user.String() + `)', 'Access'); ` +
+		`Set-Acl -LiteralPath 'C:\secrets\it''s.txt' -AclObject $acl`
 	for _, test := range []struct {
 		name       string
 		descriptor *windows.SECURITY_DESCRIPTOR
@@ -284,20 +285,20 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 		fix        string
 	}{
 		{"foreign owner", testDescriptor(t, users, true, user),
-			"its owner is " + accountName(users) + ", not your account or Administrators",
-			`icacls '` + path + `' /setowner ` + trustee},
+			"its owner is " + accountName(users) + ", not your account or Administrators", setOwner},
 		{"inherited entries", testDescriptor(t, user, false, user),
-			"it inherits access entries from its folder", grant},
+			"it inherits access entries from its folder", replace},
 		{"another account", testDescriptor(t, user, true, user, everyone),
-			accountName(everyone) + " can also access it", grant + ` /remove '*` + everyone.String() + `'`},
+			accountName(everyone) + " can also access it", replace},
 		{"two other accounts and a foreign owner", testDescriptor(t, users, true, user, everyone, users),
 			"its owner is " + accountName(users) + ", not your account or Administrators; " + accountName(everyone) + ", " + accountName(users) + " can also access it",
-			`icacls '` + path + `' /setowner ` + trustee + "; " + grant + ` /remove '*` + everyone.String() + `' '*` + users.String() + `'`},
+			setOwner + "; " + replace},
 		{"read only", testDescriptorWith(t, user, []windows.EXPLICIT_ACCESS{testEntry(user, windows.GRANT_ACCESS, windows.GENERIC_READ)}),
-			"your account does not have full control of it", grant},
+			"your account does not have full control of it", replace},
 		{"denied", testDescriptorWith(t, user, []windows.EXPLICIT_ACCESS{testEntry(user, windows.DENY_ACCESS, windows.FILE_WRITE_DATA), testEntry(user, windows.GRANT_ACCESS, fileAllAccess)}),
-			"it denies your account some access",
-			`icacls '` + path + `' /inheritance:r /remove:d ` + trustee + ` /grant:r '*` + user.String() + `:F'`},
+			"it denies your account some access", replace},
+		{"another account denied", testDescriptorWith(t, user, []windows.EXPLICIT_ACCESS{testEntry(everyone, windows.DENY_ACCESS, windows.FILE_WRITE_DATA), testEntry(user, windows.GRANT_ACCESS, fileAllAccess)}),
+			"its access list also has deny entries for " + accountName(everyone), replace},
 	} {
 		err := validatePrivateInput(test.descriptor, user, path)
 		var notPrivate *NotPrivateError
@@ -314,34 +315,80 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 	}
 }
 
+// setRawDACL stores entries as the DACL of path exactly as given, including
+// entries marked as inherited in a protected list, which icacls does not
+// remove reliably. The entries are full-access grants; inherited marks the
+// ones after the first as inherited.
+func setRawDACL(t *testing.T, path string, protected bool, entries []windows.EXPLICIT_ACCESS, inherited bool) {
+	t.Helper()
+	acl, err := windows.ACLFromEntries(entries, nil)
+	noErr(t, err)
+	if inherited {
+		for index := uint32(1); index < uint32(acl.AceCount); index++ {
+			var ace *windows.ACCESS_ALLOWED_ACE
+			noErr(t, windows.GetAce(acl, index, &ace))
+			ace.Header.AceFlags |= windows.INHERITED_ACE
+		}
+	}
+	descriptor, err := windows.NewSecurityDescriptor()
+	noErr(t, err)
+	noErr(t, descriptor.SetDACL(acl, true, false))
+	control := windows.SECURITY_DESCRIPTOR_CONTROL(windows.SE_DACL_AUTO_INHERITED)
+	if protected {
+		control |= windows.SE_DACL_PROTECTED
+	}
+	noErr(t, descriptor.SetControl(windows.SE_DACL_PROTECTED|windows.SE_DACL_AUTO_INHERITED, control))
+	name, err := windows.UTF16PtrFromString(path)
+	noErr(t, err)
+	handle, err := windows.CreateFile(name, windows.WRITE_DAC|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, 0, 0)
+	noErr(t, err)
+	defer windows.CloseHandle(handle)
+	noErr(t, windows.SetKernelObjectSecurity(handle, windows.DACL_SECURITY_INFORMATION, descriptor))
+}
+
 // The fix OwnGit prints makes a hand-made file private: running it in
-// PowerShell is enough for the file to be accepted. Folder names with
-// PowerShell syntax stay text: the fix neither runs them nor changes another
-// file.
+// PowerShell is enough for the file to be accepted, whatever entries the
+// file had. Folder names with PowerShell syntax stay text: the fix neither
+// runs them nor changes another file.
 func TestWindowsNotPrivateFixWorks(t *testing.T) {
 	user, _, err := processIdentity()
 	noErr(t, err)
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	noErr(t, err)
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	noErr(t, err)
+	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	noErr(t, err)
 	directory := t.TempDir()
 	workingDirectory := t.TempDir()
+	file := func(name string) string {
+		t.Helper()
+		path := filepath.Join(directory, name, "password")
+		noErr(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		noErr(t, os.WriteFile(path, []byte("valid-password\n"), 0o600))
+		return path
+	}
+	// Files that inherit their folder's entries, in folders whose names are
+	// PowerShell syntax.
 	var paths []string
 	for _, folder := range []string{"plain folder", "x$(ni INJ-subexpr)y", "y$HOMEz", "back`tick", "it's", "curly\u2019s", "$(ni INJ-second)"} {
-		noErr(t, os.MkdirAll(filepath.Join(directory, folder), 0o700))
-		path := filepath.Join(directory, folder, "password")
-		noErr(t, os.WriteFile(path, []byte("valid-password\n"), 0o600))
-		paths = append(paths, path)
+		paths = append(paths, file(folder))
 	}
-	shared := filepath.Join(directory, "shared password")
-	noErr(t, os.WriteFile(shared, []byte("valid-password\n"), 0o600))
-	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
-		testEntry(user, windows.GRANT_ACCESS, fileAllAccess),
-		testEntry(everyone, windows.GRANT_ACCESS, windows.GENERIC_READ),
-	}, nil)
-	noErr(t, err)
-	noErr(t, windows.SetNamedSecurityInfo(shared, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
-	paths = append(paths, shared)
+	full := func(sid *windows.SID) windows.EXPLICIT_ACCESS {
+		return testEntry(sid, windows.GRANT_ACCESS, fileAllAccess)
+	}
+	// Explicit entries for another account.
+	shared := file("shared")
+	setRawDACL(t, shared, true, []windows.EXPLICIT_ACCESS{full(user), testEntry(everyone, windows.GRANT_ACCESS, windows.GENERIC_READ)}, false)
+	// A protected list that still holds entries marked as inherited, the
+	// state that icacls /inheritance:r left on a Windows Server 2025 runner.
+	leftover := file("inherited leftovers")
+	setRawDACL(t, leftover, true, []windows.EXPLICIT_ACCESS{full(user), full(system), full(administrators)}, true)
+	// Deny entries for the current user and for another account.
+	denied := file("denied")
+	setRawDACL(t, denied, true, []windows.EXPLICIT_ACCESS{testEntry(user, windows.DENY_ACCESS, windows.FILE_WRITE_EA), testEntry(everyone, windows.DENY_ACCESS, windows.FILE_WRITE_EA), full(user)}, false)
+	paths = append(paths, shared, leftover, denied)
 	for _, path := range paths {
 		err := ValidatePrivateInputFile(path)
 		var notPrivate *NotPrivateError
@@ -356,9 +403,13 @@ func TestWindowsNotPrivateFixWorks(t *testing.T) {
 		command.Dir = workingDirectory
 		output, err := command.CombinedOutput()
 		if err != nil {
-			t.Fatalf("%s: the fix failed: %v\n%s", path, err, output)
+			listing, _ := exec.Command("icacls", path).CombinedOutput()
+			t.Fatalf("%s: the fix failed: %v\n%s\n%s", path, err, output, listing)
 		}
-		noErr(t, ValidatePrivateInputFile(path))
+		if err := ValidatePrivateInputFile(path); err != nil {
+			listing, _ := exec.Command("icacls", path).CombinedOutput()
+			t.Errorf("%s: still refused after the fix: %v\n%s", path, err, listing)
+		}
 	}
 	for _, place := range []string{workingDirectory, directory} {
 		entries, err := os.ReadDir(place)
