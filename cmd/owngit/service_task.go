@@ -307,12 +307,13 @@ func (host *taskHost) asAdministrator(arguments []string, steps string) error {
 	switch {
 	case errors.Is(err, errElevationCancelled):
 		host.printf("Nothing changed, because the administrator approval was not given.\n")
-		return err
+		return &checkExit{code: 1, err: err}
 	case err != nil:
 		return err
 	case code != 0:
-		host.printf("The administrator steps did not finish (exit status %d). To see why, run the same command in a terminal opened with \"Run as administrator\".\n", code)
-		return errors.New("the administrator steps did not finish")
+		// The elevated copy printed why on this console when it could.
+		host.printf("The administrator steps did not finish (exit status %d). If no reason is shown above, run the same command in a terminal opened with \"Run as administrator\".\n", code)
+		return &checkExit{code: 1, err: errors.New("the administrator steps did not finish")}
 	}
 	return nil
 }
@@ -510,11 +511,13 @@ func (host *taskHost) uninstall() error {
 	}
 	host.stopTask(installed.StateDir)
 	_, ruleFound := host.firewallRule()
+	removed := "The OwnGit service is stopped and removed"
 	switch {
 	case installed.Mode == service.ModeBootTask || ruleFound && host.env.Administrator:
 		if err := host.asAdministrator([]string{"service", "elevated-uninstall"}, "remove the OwnGit task and its Windows Firewall rule"); err != nil {
 			return err
 		}
+		removed += ", with its Windows Firewall rule"
 	default:
 		if err := host.runStep(host.schtasks(), "/Delete", "/TN", `\`+service.TaskName, "/F"); err != nil {
 			return err
@@ -523,7 +526,7 @@ func (host *taskHost) uninstall() error {
 			host.printf("The Windows Firewall rule %q stays; an administrator can remove it with \"owngit service uninstall\".\n", service.FirewallRuleName)
 		}
 	}
-	host.printf("The OwnGit service is stopped and removed. The state stays in %s", installed.StateDir)
+	host.printf("%s. The state stays in %s", removed, installed.StateDir)
 	if !host.env.Elevated {
 		if repositories := savedRepositoryRoot(installed.StateDir); repositories != "" {
 			host.printf(" and the repositories in %s", repositories)

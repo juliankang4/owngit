@@ -426,8 +426,8 @@ func (rule FirewallRule) Allows(program string) bool {
 // nothing when there is none.
 const TaskDefinitionScript = `$ErrorActionPreference = 'Stop'
 $scheduler = New-Object -ComObject Schedule.Service; $scheduler.Connect()
-try { $task = $scheduler.GetFolder('\').GetTask('` + TaskName + `') } catch { if ($_.Exception.HResult -eq -2147024894) { return }; throw }
-$task.Xml
+$task = $scheduler.GetFolder('\').GetTasks(1) | Where-Object { $_.Name -eq '` + TaskName + `' }
+if ($task) { $task.Xml }
 `
 
 // TaskStateScript prints the state of the task (TASK_STATE: 1 Disabled,

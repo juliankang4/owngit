@@ -302,7 +302,18 @@ func createGlobalStopEvent(stateDir string) (windows.Handle, error) {
 	if err != nil {
 		return 0, err
 	}
-	return windows.CreateEvent(&attributes, 1, 0, name)
+	return createEvent(&attributes, name)
+}
+
+// createEvent creates a manual-reset event, or opens it when it exists.
+// windows.CreateEvent reports an existing event as an error along with a
+// valid handle.
+func createEvent(attributes *windows.SecurityAttributes, name *uint16) (windows.Handle, error) {
+	handle, err := windows.CreateEvent(attributes, 1, 0, name)
+	if handle != 0 && errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		err = nil
+	}
+	return handle, err
 }
 
 // watchServiceStop calls stop when the stop event of stateDir is set, for
@@ -315,7 +326,7 @@ func watchServiceStop(stateDir string, stop func(), logf func(string, ...any)) f
 	event, err := windows.OpenEvent(windows.SYNCHRONIZE, false, global)
 	if err != nil {
 		local, _ := windows.UTF16PtrFromString(names[1])
-		if event, err = windows.CreateEvent(nil, 1, 0, local); err != nil {
+		if event, err = createEvent(nil, local); err != nil {
 			logf("\"owngit service stop\" cannot reach this server (%v); it stops when its task ends", err)
 			return func() {}
 		}
@@ -382,13 +393,17 @@ func serveWithoutAdminRights(arguments []string) (handled bool, err error) {
 	} else {
 		var name *uint16
 		if name, err = windows.UTF16PtrFromString(stopEventNames(stateDir)[1]); err == nil {
-			stop, err = windows.CreateEvent(nil, 1, 0, name)
+			stop, err = createEvent(nil, name)
 		}
 	}
 	if err != nil {
 		return true, fmt.Errorf("create the stop event: %w", err)
 	}
 	defer windows.CloseHandle(stop)
+	// The sign-in task starts "conhost.exe --headless", which starts this
+	// process. When Task Scheduler ends the task it ends conhost only, so
+	// the end of the parent counts as a stop request.
+	stopWithParent(stop)
 	delay := serviceRestartDelay
 	for {
 		started := time.Now()
@@ -412,6 +427,38 @@ func serveWithoutAdminRights(arguments []string) (handled bool, err error) {
 		}
 		delay = min(2*delay, time.Minute)
 	}
+}
+
+// stopWithParent sets stop when the process that started this one exits.
+func stopWithParent(stop windows.Handle) {
+	parent, err := parentProcess()
+	if err != nil {
+		return
+	}
+	go func() {
+		defer windows.CloseHandle(parent)
+		if result, err := windows.WaitForSingleObject(parent, windows.INFINITE); err == nil && result == windows.WAIT_OBJECT_0 {
+			_ = windows.SetEvent(stop)
+		}
+	}()
+}
+
+// parentProcess opens the process that started this one.
+func parentProcess() (windows.Handle, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(snapshot)
+	own := windows.GetCurrentProcessId()
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	for err = windows.Process32First(snapshot, &entry); err == nil; err = windows.Process32Next(snapshot, &entry) {
+		if entry.ProcessID == own {
+			return windows.OpenProcess(windows.SYNCHRONIZE, false, entry.ParentProcessID)
+		}
+	}
+	return 0, err
 }
 
 // serviceRestartDelay is the first wait before a failed server starts
