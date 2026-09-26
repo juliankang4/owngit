@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -448,6 +450,29 @@ func TestTailscaleCommandJSONErrors(t *testing.T) {
 			t.Errorf("%q printed %q, want code %s", test.arguments, printed.String(), test.code)
 		}
 	}
+	// An option that cannot be read, before --json or after it.
+	for _, arguments := range [][]string{
+		{"tailscale", "on", "--https-port", "abc", "--json"},
+		{"tailscale", "on", "-json", "--home-network=maybe"},
+		{"tailscale", "status", "--unknown", "--json=true"},
+		{"tailscale", "off", "--state-dir"},
+		{"network", "show", "--bogus", "--json"},
+	} {
+		run := runTailscale
+		if arguments[0] == "network" {
+			run = runNetwork
+		}
+		_, err := run(t, arguments[1:]...)
+		var printed strings.Builder
+		asJSON := slices.Contains(arguments, "--json") || slices.Contains(arguments, "-json") || slices.Contains(arguments, "--json=true")
+		if err == nil || writeStructuredCommandError(&printed, err) != asJSON || asJSON && !strings.Contains(printed.String(), `"code":"invalid_arguments"`) {
+			t.Errorf("%q: err=%v printed %q, want a JSON error %v", arguments, err, printed.String(), asJSON)
+		}
+	}
+	if _, err := runTailscale(t, "on", "--https-port", "abc", "--json=false"); err == nil || writeStructuredCommandError(io.Discard, err) {
+		t.Errorf("--json=false: err=%v is a JSON error", err)
+	}
+
 	output, err := runTailscale(t, "status", "--state-dir", missing, "--tailscale", fake.Path, "--json")
 	noErr(t, err)
 	var report struct {

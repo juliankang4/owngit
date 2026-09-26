@@ -131,9 +131,40 @@ func jsonFailure(asJSON bool, code string, err error) error {
 	return &apiclient.Error{Code: code, Message: err.Error(), Cause: err}
 }
 
+// parseFlagsJSON is parseFlags for a command with a --json option: an
+// option it cannot read is a JSON error object when --json was given,
+// wherever it appears, although parsing stopped before it.
+func parseFlagsJSON(flags *flag.FlagSet, arguments []string) error {
+	err := parseFlags(flags, arguments)
+	if err == nil || errors.Is(err, errUsageShown) {
+		return err
+	}
+	return jsonFailure(jsonRequested(arguments), "invalid_arguments", err)
+}
+
+// jsonRequested reports whether arguments give the --json option as true,
+// before any "--".
+func jsonRequested(arguments []string) bool {
+	requested := false
+	for _, argument := range arguments {
+		if argument == "--" {
+			break
+		}
+		name, value, hasValue := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(argument, "-"), "-"), "=")
+		if !strings.HasPrefix(argument, "-") || name != "json" {
+			continue
+		}
+		requested = true
+		if hasValue {
+			requested, _ = strconv.ParseBool(value)
+		}
+	}
+	return requested
+}
+
 func tailscaleStatus(arguments []string) error {
 	options := newTailscaleFlags("tailscale status")
-	if err := parseFlags(options.flags, arguments); err != nil {
+	if err := parseFlagsJSON(options.flags, arguments); err != nil {
 		return err
 	}
 	if options.flags.NArg() != 0 {
@@ -175,7 +206,7 @@ func tailscaleOn(arguments []string) error {
 	options := newTailscaleFlags("tailscale on")
 	homeNetwork := options.flags.Bool("home-network", false, "also let devices on the home network connect over plain HTTP; --home-network=false keeps OwnGit on this computer only. Without it the listen address stays as it is when Tailscale can reach it")
 	httpsPort := options.flags.Int("https-port", 0, "the HTTPS `port` Tailscale answers on; without it OwnGit uses 443, or 8443 or 10000 when something else is on 443")
-	if err := parseFlags(options.flags, arguments); err != nil {
+	if err := parseFlagsJSON(options.flags, arguments); err != nil {
 		return err
 	}
 	if options.flags.NArg() != 0 {
@@ -271,7 +302,7 @@ func printRunningServerNote(server string) {
 
 func tailscaleOff(arguments []string) error {
 	options := newTailscaleFlags("tailscale off")
-	if err := parseFlags(options.flags, arguments); err != nil {
+	if err := parseFlagsJSON(options.flags, arguments); err != nil {
 		return err
 	}
 	if options.flags.NArg() != 0 {

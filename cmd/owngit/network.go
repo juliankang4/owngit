@@ -221,7 +221,7 @@ type networkReport = server.NetworkReport
 func networkShow(arguments []string) error {
 	flags, stateDir := newNetworkFlags("network show")
 	asJSON := flags.Bool("json", false, "print JSON")
-	if err := parseFlags(flags, arguments); err != nil {
+	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
