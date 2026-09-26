@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -31,8 +33,8 @@ func protectWorkspaceDirectory(directory *os.File, _ string) error {
 // requireProtectedAncestors refuses a root when another account could rename
 // or replace a directory on the way to it. Every directory passed through,
 // including the targets of symbolic links, must belong to this account or to
-// root and must not be writable by its group or others unless it is sticky: in
-// a sticky directory only an entry's owner may rename that entry. The root's
+// root and must not be writable by others or by a shared group unless it is
+// sticky: in a sticky directory only an entry's owner may rename that entry. The root's
 // path then keeps naming the same directory, so the path-based marker, lock,
 // job and command steps that follow stay inside it. A missing tail is allowed
 // because only this account or root can create it in such a directory.
@@ -106,10 +108,32 @@ func requireProtectedAncestor(path string, info os.FileInfo, root string) error 
 	if !ok {
 		return errors.New("check workspace parent owner is unavailable")
 	}
-	trustedOwner := stat.Uid == 0 || int(stat.Uid) == os.Geteuid()
-	replaceable := info.Mode().Perm()&0o022 != 0 && info.Mode()&os.ModeSticky == 0
-	if !trustedOwner || replaceable {
+	if stat.Uid != 0 && int(stat.Uid) != os.Geteuid() {
 		return &UnsafeWorkspaceRootError{Root: root, Directory: path}
 	}
-	return nil
+	permissions := info.Mode().Perm()
+	if info.Mode()&os.ModeSticky != 0 || permissions&0o022 == 0 ||
+		(permissions&0o002 == 0 && ownPrivateGroup(stat.Gid)) {
+		return nil
+	}
+	return &UnsafeWorkspaceRootError{
+		Root: root, Directory: path,
+		Fix: "chmod g-w,o-w '" + strings.ReplaceAll(path, "'", `'\''`) + "'",
+	}
+}
+
+// ownPrivateGroup reports whether gid is this account's own group: its
+// effective group, named like the account. Many Linux systems give each user
+// such a group and a umask of 002, so group write access there is the user's
+// own. A failed lookup counts as a shared group.
+func ownPrivateGroup(gid uint32) bool {
+	if int(gid) != os.Getegid() {
+		return false
+	}
+	account, err := user.LookupId(strconv.Itoa(os.Geteuid()))
+	if err != nil {
+		return false
+	}
+	group, err := user.LookupGroupId(strconv.FormatUint(uint64(gid), 10))
+	return err == nil && group.Name == account.Username
 }

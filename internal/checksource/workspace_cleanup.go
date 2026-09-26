@@ -49,6 +49,9 @@ type UnsafeWorkspaceRootError struct {
 	// Directory is the directory above Root that another account can change.
 	// It is empty when Root itself belongs to another account.
 	Directory string
+	// Fix is a shell command that removes the extra write access from
+	// Directory, or empty when changing the mode does not help.
+	Fix string
 }
 
 func (e *UnsafeWorkspaceRootError) Error() string {

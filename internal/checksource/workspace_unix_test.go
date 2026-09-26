@@ -55,11 +55,15 @@ func TestAcquireWorkspaceRootAdoptsEmptyRootOwnedByCurrentAccount(t *testing.T) 
 }
 
 func TestAcquireWorkspaceRootRefusesReplaceableParent(t *testing.T) {
-	for _, mode := range []os.FileMode{0o777, 0o775} {
+	for _, mode := range []os.FileMode{0o777, 0o757} {
 		shared := directoryWithMode(t, filepath.Join(resolvedTempDir(t), "shared"), mode)
 		missing := filepath.Join(shared, "new")
 		_, err := AcquireWorkspaceRoot(missing)
 		requireUnsafeParent(t, err, missing, shared)
+		var unsafe *UnsafeWorkspaceRootError
+		if errors.As(err, &unsafe) && unsafe.Fix != "chmod g-w,o-w '"+shared+"'" {
+			t.Fatalf("refusal fix %q, want a chmod of %s", unsafe.Fix, shared)
+		}
 		if _, err := os.Lstat(missing); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("refused root was created: %v", err)
 		}
@@ -74,6 +78,43 @@ func TestAcquireWorkspaceRootRefusesReplaceableParent(t *testing.T) {
 		_, err = AcquireWorkspaceRoot(nested)
 		requireUnsafeParent(t, err, nested, shared)
 	}
+}
+
+// sharedGroup returns a group of this process that is not its own private
+// group, so a directory writable by that group is writable by others.
+func sharedGroup(t *testing.T) int {
+	t.Helper()
+	groups, err := os.Getgroups()
+	noErr(t, err)
+	for _, gid := range append([]int{os.Getegid()}, groups...) {
+		if !ownPrivateGroup(uint32(gid)) {
+			return gid
+		}
+	}
+	if os.Geteuid() == 0 {
+		return 65534
+	}
+	t.Skip("this account belongs to no shared group")
+	return -1
+}
+
+func TestAcquireWorkspaceRootRefusesParentWritableBySharedGroup(t *testing.T) {
+	shared := directoryWithMode(t, filepath.Join(resolvedTempDir(t), "shared"), 0o775)
+	noErr(t, os.Chown(shared, -1, sharedGroup(t)))
+	root := filepath.Join(shared, "workspace")
+	_, err := AcquireWorkspaceRoot(root)
+	requireUnsafeParent(t, err, root, shared)
+}
+
+func TestAcquireWorkspaceRootAcceptsParentWritableByOwnPrivateGroup(t *testing.T) {
+	if !ownPrivateGroup(uint32(os.Getegid())) {
+		t.Skip("this account has no private group of its own")
+	}
+	private := directoryWithMode(t, filepath.Join(resolvedTempDir(t), "private-group"), 0o775)
+	noErr(t, os.Chown(private, -1, os.Getegid()))
+	workspace, err := AcquireWorkspaceRoot(filepath.Join(private, "workspace"))
+	noErr(t, err)
+	workspace.Close()
 }
 
 func TestAcquireWorkspaceRootAcceptsStickySharedParent(t *testing.T) {
@@ -117,7 +158,7 @@ func TestAcquireWorkspaceRootAsRootRefusesAnotherAccountsRoot(t *testing.T) {
 		t.Skip("needs root to create a directory owned by another account")
 	}
 	const otherUID, otherGID = 65534, 65534
-	parent := t.TempDir()
+	parent := resolvedTempDir(t)
 	root := directoryWithMode(t, filepath.Join(parent, "workspace"), 0o700)
 	noErr(t, os.Chown(root, otherUID, otherGID))
 
@@ -131,6 +172,16 @@ func TestAcquireWorkspaceRootAsRootRefusesAnotherAccountsRoot(t *testing.T) {
 	noErr(t, err)
 	if stat := info.Sys().(*syscall.Stat_t); stat.Uid != otherUID || stat.Gid != otherGID {
 		t.Fatalf("refused root owner changed to %d:%d", stat.Uid, stat.Gid)
+	}
+
+	// A parent that belongs to another account is refused even when only
+	// that account can write it, and changing its mode would not help.
+	foreign := directoryWithMode(t, filepath.Join(parent, "foreign"), 0o755)
+	noErr(t, os.Chown(foreign, otherUID, otherGID))
+	inside := filepath.Join(foreign, "workspace")
+	_, err = AcquireWorkspaceRoot(inside)
+	if !errors.As(err, &unsafe) || unsafe.Directory != foreign || unsafe.Fix != "" {
+		t.Fatalf("root accepted a workspace under another account's folder: err=%v", err)
 	}
 
 	// Control: root's own empty directory is still adopted.
