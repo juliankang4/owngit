@@ -291,12 +291,25 @@ proxy for runners and open the browser interface directly. Plain HTTP with
 
 The runner claims jobs for its repository only, downloads the exact source
 files, runs the commands, cleans its workspace, and reports the results. The
-workspace root must be an absolute path that is empty or was used by an OwnGit
-runner before. Without `--workspace-root`, the runner picks a temporary
-directory. A nonempty root that OwnGit does not own, or one another runner is
-using, is refused and left untouched. The runner never receives repository
-storage paths. Commands run as the runner's account and are not sandboxed
-unless you confine that account or machine yourself.
+workspace root must be an absolute path to a folder that is empty or was used
+by an OwnGit runner before, and it must belong to the account that runs the
+runner. Without `--workspace-root`, the runner makes one for the server and
+repository in that account's cache folder, inside `~/.cache/owngit` on Linux
+(or `$XDG_CACHE_HOME/owngit`), `~/Library/Caches/owngit` on macOS or
+`%LOCALAPPDATA%\owngit` on Windows. A workspace that OwnGit 1.1.0 or earlier
+made for the same account in the temporary folder stays in use while it exists.
+
+The runner refuses a root and leaves it untouched when the root is nonempty and
+OwnGit does not own it, when another runner is using it, or when another
+account owns it. On Linux and macOS it also refuses a root when another account
+could rename or replace a folder above it. Each of those folders must belong to
+the runner's account or to root. Other accounts may write to one only when it
+has the sticky bit, as `/tmp` does, and group write access is accepted only for
+the account's own group of the same name. The message names the folder and
+says how to fix it. The runner never receives repository storage paths.
+Commands run as the runner's account and are not sandboxed unless you confine
+that account or machine yourself. The runner prints a warning when it runs as
+root; run it as a dedicated account, as in the service example below.
 
 List or revoke runner tokens with `owngit runner-credential list` and
 `owngit runner-credential revoke --credential ID`. The server stores only a

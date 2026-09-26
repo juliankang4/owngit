@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - `localhost`, `127.0.0.1` and `::1` are accepted as the Host only on connections from the computer running OwnGit. When OwnGit listened on a network address, another device could use one of these names to get past the Host check, and with open access it could read and push every repository. Such a request now gets "unrecognized host", and the page says how to allow an address. Tailscale Serve, a reverse proxy on the same computer, and the command line, MCP server and runner on that computer keep working. OwnGit 1.1.0 and earlier are affected when OwnGit listens on a network address.
+- `owngit runner` refuses a workspace folder that belongs to another account, or one inside a folder that another account can change, and leaves it untouched. Before, a runner started as root took over an empty folder that another local account had made, including the default one in the shared temporary folder, and that account could swap the source files a check ran. The refusal names the folder and says how to fix it. Without `--workspace-root` the runner now uses a folder in its account's cache folder; a workspace that an earlier release made in the temporary folder and that the account owns stays in use. The runner also warns when it runs as root. OwnGit 1.1.0 and earlier are affected on Linux and macOS when the runner runs as root.
 
 ## [1.1.0] - 2026-09-27
 
