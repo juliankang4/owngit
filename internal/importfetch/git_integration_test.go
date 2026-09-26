@@ -21,6 +21,7 @@ import (
 
 	"owngit/internal/importfetch"
 	"owngit/internal/importgit"
+	"owngit/internal/testfixture"
 )
 
 const (
@@ -213,6 +214,7 @@ func TestFetchRealGitCGIIndexesExactSnapshot(t *testing.T) {
 					environment = append(environment, key+"="+value)
 				}
 			}
+			environment = testfixture.GitEnvironment(environment)
 			git := &localGit{t: t, path: gitPath, environment: environment}
 
 			source := filepath.Join(root, "source.git")

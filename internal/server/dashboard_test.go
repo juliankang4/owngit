@@ -15,6 +15,7 @@ import (
 
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
+	"owngit/internal/testfixture"
 	"owngit/internal/webui"
 )
 
@@ -70,7 +71,7 @@ func TestDashboardRendersRealEscapedGitDataAndRetainedHistory(t *testing.T) {
 	apiRunGit(t, work, "add", ".")
 	commit := exec.Command("git", "commit", "-m", "Render actual repository data")
 	commit.Dir = work
-	commit.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2024-04-05T23:30:00-07:00", "GIT_COMMITTER_DATE=2024-04-06T08:00:00Z")
+	commit.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_AUTHOR_DATE=2024-04-05T23:30:00-07:00", "GIT_COMMITTER_DATE=2024-04-06T08:00:00Z"))
 	if output, err := commit.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v\n%s", err, output)
 	}
@@ -484,7 +485,7 @@ func dashboardGET(t *testing.T, client *http.Client, target string) (string, int
 func gitCombined(directory string, arguments ...string) (string, error) {
 	command := exec.Command("git", arguments...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"))
 	output, err := command.CombinedOutput()
 	return string(output), err
 }

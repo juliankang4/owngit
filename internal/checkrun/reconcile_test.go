@@ -14,6 +14,7 @@ import (
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/testfixture"
 )
 
 type pushFixture struct {
@@ -79,7 +80,9 @@ func newPushFixture(t *testing.T, queueLimit int) *pushFixture {
 
 func (fixture *pushFixture) git(arguments ...string) string {
 	fixture.t.Helper()
-	output, err := exec.Command("git", arguments...).CombinedOutput()
+	command := exec.Command("git", arguments...)
+	command.Env = testfixture.GitEnvironment(os.Environ())
+	output, err := command.CombinedOutput()
 	if err != nil {
 		fixture.t.Fatalf("git %v: %v\n%s", arguments, err, output)
 	}

@@ -14,6 +14,7 @@ import (
 
 	"owngit/internal/gitexec"
 	"owngit/internal/pullrequest"
+	"owngit/internal/testfixture"
 	"owngit/internal/webui"
 )
 
@@ -72,7 +73,7 @@ func commitTo(t *testing.T, app *App, id, work, branch string, files map[string]
 	commit := exec.Command("git", "commit", "-q", "-m", message)
 	commit.Dir = work
 	stamp := when.Format(time.RFC3339)
-	commit.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+	commit.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp))
 	if output, err := commit.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v\n%s", err, output)
 	}

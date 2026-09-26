@@ -17,6 +17,7 @@ import (
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/testfixture"
 )
 
 func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
@@ -251,7 +252,7 @@ func httpGitCombined(directory string, arguments ...string) (string, error) {
 func httpGitBytes(directory string, arguments ...string) ([]byte, error) {
 	command := exec.Command("git", arguments...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"))
 	return command.CombinedOutput()
 }
 

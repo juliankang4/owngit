@@ -21,6 +21,7 @@ import (
 	"owngit/internal/repository"
 	"owngit/internal/server"
 	"owngit/internal/state"
+	"owngit/internal/testfixture"
 )
 
 type runnerIntegrationFixture struct {
@@ -222,6 +223,7 @@ func stateIDForTest(t *testing.T) string {
 func runGit(t *testing.T, arguments ...string) string {
 	t.Helper()
 	command := exec.Command("git", arguments...)
+	command.Env = testfixture.GitEnvironment(os.Environ())
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", arguments, err, output)

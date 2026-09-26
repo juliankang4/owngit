@@ -24,6 +24,7 @@ import (
 	"owngit/internal/repository"
 	"owngit/internal/server"
 	"owngit/internal/state"
+	"owngit/internal/testfixture"
 )
 
 func TestPRCommandsUseRemoteJSONAPIAndPrivatePasswordFile(t *testing.T) {
@@ -232,7 +233,7 @@ func runPRGit(t *testing.T, directory string, arguments ...string) {
 	t.Helper()
 	command := exec.Command("git", arguments...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"))
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(arguments, " "), err, output)
@@ -243,7 +244,7 @@ func prGitOutput(t *testing.T, directory string, arguments ...string) string {
 	t.Helper()
 	command := exec.Command("git", arguments...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"))
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	output, err := command.Output()

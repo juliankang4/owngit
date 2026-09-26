@@ -22,6 +22,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/requestctx"
+	"owngit/internal/testfixture"
 	"owngit/internal/webui"
 )
 
@@ -228,9 +229,9 @@ func (fixture *proxiedOwnGit) gitClient(t *testing.T) func(t *testing.T, directo
 		"-c", "http.sslCAInfo=" + certificate, "-c", "http.schannelUseSSLCAInfo=true", "-c", "http.schannelCheckRevoke=false",
 		"-c", "credential.helper=", "-c", "credential.helper=store --file=" + filepath.ToSlash(credentials),
 	}
-	environment := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+emptyConfig,
+	environment := testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+emptyConfig,
 		"HOME="+home, "GIT_AUTHOR_NAME=Proxy Test", "GIT_AUTHOR_EMAIL=proxy@example.invalid",
-		"GIT_COMMITTER_NAME=Proxy Test", "GIT_COMMITTER_EMAIL=proxy@example.invalid")
+		"GIT_COMMITTER_NAME=Proxy Test", "GIT_COMMITTER_EMAIL=proxy@example.invalid"))
 	return func(t *testing.T, directory string, arguments ...string) string {
 		t.Helper()
 		command := exec.Command("git", append(append([]string{}, options...), arguments...)...)

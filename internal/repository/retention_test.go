@@ -12,6 +12,7 @@ import (
 
 	"owngit/internal/gitexec"
 	"owngit/internal/state"
+	"owngit/internal/testfixture"
 )
 
 func TestActivityRevisionInputAvoidsOptionsInStdin(t *testing.T) {
@@ -581,7 +582,7 @@ func commitFile(t *testing.T, directory, content, message, authored string) {
 	runGit(t, directory, "add", "file.txt")
 	command := exec.Command("git", "commit", "-m", message)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+authored, "GIT_COMMITTER_DATE="+authored)
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_AUTHOR_DATE="+authored, "GIT_COMMITTER_DATE="+authored))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %v\n%s", err, output)
 	}
@@ -606,7 +607,7 @@ func gitOutput(t *testing.T, directory string, arguments ...string) string {
 func gitCombined(directory string, arguments ...string) (string, error) {
 	command := exec.Command("git", arguments...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"))
 	output, err := command.CombinedOutput()
 	return string(output), err
 }

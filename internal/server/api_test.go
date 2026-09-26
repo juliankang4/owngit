@@ -18,6 +18,7 @@ import (
 	"owngit/internal/auth"
 	"owngit/internal/pullrequest"
 	"owngit/internal/state"
+	"owngit/internal/testfixture"
 )
 
 func TestPullRequestAPIJourneyUsesJSONAndExactRevisions(t *testing.T) {
@@ -303,7 +304,7 @@ func apiGitOutput(t *testing.T, directory string, arguments ...string) string {
 	t.Helper()
 	command := exec.Command("git", arguments...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"))
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	output, err := command.Output()

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"owngit/internal/repository"
+	"owngit/internal/testfixture"
 )
 
 // Real Git clients gzip upload-pack requests larger than 1 KiB. Each case below
@@ -430,9 +431,9 @@ func isolatedGit(t *testing.T, options ...string) gitClient {
 	home := t.TempDir()
 	emptyConfig := filepath.Join(home, "gitconfig")
 	noErr(t, os.WriteFile(emptyConfig, nil, 0o600))
-	environment := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+emptyConfig,
+	environment := testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+emptyConfig,
 		"HOME="+home, "GIT_AUTHOR_NAME=HTTP Test", "GIT_AUTHOR_EMAIL=http@example.invalid",
-		"GIT_COMMITTER_NAME=HTTP Test", "GIT_COMMITTER_EMAIL=http@example.invalid")
+		"GIT_COMMITTER_NAME=HTTP Test", "GIT_COMMITTER_EMAIL=http@example.invalid"))
 	return func(t testing.TB, directory string, arguments ...string) string {
 		t.Helper()
 		command := exec.Command("git", append(append([]string{}, options...), arguments...)...)

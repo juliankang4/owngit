@@ -14,6 +14,7 @@ import (
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/testfixture"
 )
 
 // These tests build synthetic repositories with Git plumbing in a temporary
@@ -44,12 +45,12 @@ func git(t *testing.T, stdin []byte, arguments ...string) string {
 	t.Helper()
 	command := exec.Command("git", arguments...)
 	command.Dir = t.TempDir()
-	command.Env = append(os.Environ(),
+	command.Env = testfixture.GitEnvironment(append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_AUTHOR_NAME=Check Source", "GIT_AUTHOR_EMAIL=checksource@example.invalid",
 		"GIT_COMMITTER_NAME=Check Source", "GIT_COMMITTER_EMAIL=checksource@example.invalid",
 		"GIT_AUTHOR_DATE=2024-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2024-01-01T00:00:00Z",
-	)
+	))
 	if stdin != nil {
 		command.Stdin = strings.NewReader(string(stdin))
 	}

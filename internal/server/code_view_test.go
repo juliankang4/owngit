@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/testfixture"
 )
 
 // seedRepository creates a repository named id whose main branch holds files,
@@ -48,7 +49,7 @@ func commitFiles(t *testing.T, work string, files map[string]string, message str
 	commit := exec.Command("git", "commit", "-q", "-m", message)
 	commit.Dir = work
 	stamp := when.Format(time.RFC3339)
-	commit.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+	commit.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp))
 	if output, err := commit.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v\n%s", err, output)
 	}

@@ -15,6 +15,7 @@ import (
 	"owngit/internal/importgit"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/testfixture"
 )
 
 // fixture starts one service over fresh state, a bare-repository root, and a
@@ -52,6 +53,7 @@ func newFixture(t *testing.T) *fixture {
 		"GIT_AUTHOR_NAME=Import Test", "GIT_AUTHOR_EMAIL=import@example.invalid",
 		"GIT_COMMITTER_NAME=Import Test", "GIT_COMMITTER_EMAIL=import@example.invalid",
 		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z")
+	env = testfixture.GitEnvironment(env)
 	instance := &fixture{t: t, root: root, gitPath: runner.GitPath, env: env, store: store, manager: manager, now: time.Unix(1_800_000_000, 0).UTC()}
 	instance.transport = &fakeTransport{fixture: instance}
 	instance.service = &Service{

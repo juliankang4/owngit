@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/testfixture"
 )
 
 func TestFullyQualifiedRefsDisambiguateCollidingBranchAndTag(t *testing.T) {
@@ -244,7 +245,7 @@ func gitInputOutput(t *testing.T, directory string, input []byte, arguments ...s
 	t.Helper()
 	command := exec.Command("git", arguments...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"))
 	command.Stdin = strings.NewReader(string(input))
 	output, err := command.CombinedOutput()
 	if err != nil {
