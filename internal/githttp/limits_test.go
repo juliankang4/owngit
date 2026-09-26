@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -146,12 +147,22 @@ func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) 
 	noErr(t, handler.Wait(waitContext), "Wait after stalled response")
 }
 
+// A push over the request limit fails without changing a ref, and the log
+// names the limit. Git sends a push above http.postBuffer without a length,
+// so the limit stops the body while receive-pack still reads the pack; Git
+// cannot exit first and hide the cause.
 func TestUploadLimitRejectsPushWithoutChangingRef(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) bool { return true }
-	server := httptest.NewServer(handler)
+	var chunkedPushes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost && request.ContentLength < 0 {
+			chunkedPushes.Add(1)
+		}
+		handler.ServeHTTP(writer, request)
+	}))
 	defer server.Close()
 	work := filepath.Join(t.TempDir(), "work")
 	runHTTPGit(t, "", "init", "--initial-branch=main", work)
@@ -166,6 +177,7 @@ func TestUploadLimitRejectsPushWithoutChangingRef(t *testing.T) {
 	old := httpGitOutput(t, work, "rev-parse", "HEAD")
 
 	handler.MaximumRequest = 64 << 10
+	logs := captureLog(t)
 	payload := make([]byte, 1<<20)
 	if _, err := rand.Read(payload); err != nil {
 		t.Fatal(err)
@@ -181,5 +193,11 @@ func TestUploadLimitRejectsPushWithoutChangingRef(t *testing.T) {
 	got := httpGitOutput(t, "", "--git-dir", remotePath, "rev-parse", "refs/heads/main")
 	if got != old {
 		t.Fatalf("oversized push changed public ref to %s, want %s", got, old)
+	}
+	if chunkedPushes.Load() == 0 {
+		t.Fatal("the oversized push was not sent without a length")
+	}
+	if want := `Git push request for repository "sample" failed: request body exceeded the size limit`; !strings.Contains(logs.String(), want) {
+		t.Fatalf("log does not name the request limit: %s", logs.String())
 	}
 }
