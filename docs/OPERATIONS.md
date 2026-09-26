@@ -50,7 +50,7 @@ Before setup is finished, the setup link also works from another device by an ad
 
 ## Reaching the server from another device
 
-OwnGit serves plain HTTP, so the connection is not encrypted, and it has no built-in TLS. For HTTPS, let Tailscale on this computer share it on your tailnet (see [Share on your tailnet over HTTPS](#share-on-your-tailnet-over-https)) or put a reverse proxy in front of it (see [Behind a reverse proxy](#behind-a-reverse-proxy)). Use Tailscale or your own VPN to reach its private-network address. A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP also works: OwnGit shows a one-time warning before it accepts passwords, and the interface keeps the connection status visible. Do not expose OwnGit to the public Internet.
+OwnGit serves plain HTTP, so the connection is not encrypted, and it has no built-in TLS. For HTTPS, let Tailscale on this computer share it on your tailnet (see [Share on your tailnet over HTTPS](#share-on-your-tailnet-over-https)) or put a reverse proxy in front of it (see [Behind a reverse proxy](#behind-a-reverse-proxy)). Use Tailscale or your own VPN to reach its private-network address (see [Other private networks](#other-private-networks)). A Tailscale-related name alone does not prove that the whole path is protected. Ordinary LAN HTTP also works: OwnGit shows a one-time warning before it accepts passwords, and the interface keeps the connection status visible. Do not expose OwnGit to the public Internet.
 
 To use a LAN name:
 
@@ -151,6 +151,34 @@ OwnGit refuses every request that carries the `Tailscale-Funnel-Request` header,
 With the Tailscale app for macOS (the App Store or standalone app, as opposed to Homebrew's `tailscaled`), Tailscale runs only while someone is logged in. After the Mac restarts, HTTPS does not work until someone logs in. Turn on automatic login, or use Homebrew's `tailscaled`, which runs without a login. The Settings page shows this line when it detects the app.
 
 The sharing record belongs to this installation host, like the network settings. An offline backup does not carry it.
+
+### Other private networks
+
+OwnGit also works over other private networks, such as NetBird with a self-hosted management server, Headscale with the Tailscale client, or plain WireGuard. Let OwnGit listen on this computer's address in that network, use the name other devices use as the base URL, and restart OwnGit:
+
+```sh
+owngit network set --listen 100.64.0.7:7654 --base-url http://gitbox.netbird.selfhosted:7654
+```
+
+OwnGit accepts the base URL's name and the listen address as Hosts. Other names, such as a short name, get "unrecognized host" until you add them with `owngit network set --allowed-host NAME` and restart OwnGit. OwnGit then does not answer on this computer's LAN address. A device on the LAN can still reach the network address if it routes it to this computer, so to keep LAN devices out, allow the port only on the private network's interface, for example with a firewall rule. NetBird gives each device a name such as `gitbox.netbird.selfhosted`, and Headscale a name under the `base_domain` of its MagicDNS settings. Plain WireGuard has no names, so use the address or a name in each device's hosts file or your own DNS.
+
+The private network encrypts the traffic between devices. OwnGit cannot see that, so setup still asks you to accept plain HTTP and the page header says "Not encrypted by OwnGit". For an HTTPS address, run a reverse proxy on this computer that listens on the network address, and keep OwnGit on `127.0.0.1` (see [Behind a reverse proxy](#behind-a-reverse-proxy)). For example, with Caddy:
+
+```caddyfile
+gitbox.netbird.selfhosted {
+	bind 100.64.0.7
+	tls internal
+	reverse_proxy 127.0.0.1:7654
+}
+```
+
+```sh
+owngit network set --listen 127.0.0.1:7654 --base-url https://gitbox.netbird.selfhosted --trusted-proxy 127.0.0.1
+```
+
+Restart OwnGit after saving. `bind` stops Caddy from answering on the LAN address, and `tls internal` makes Caddy sign the certificate with its own local certificate authority. Through the proxy, the page header says "Encrypted by the proxy in front of OwnGit". Each device must trust that authority, as described under [Caddy](#caddy). For a single command you can pass its certificate instead, for example `curl --cacert root.crt` or `git -c http.sslCAInfo=root.crt clone`. These steps were tested with NetBird 0.79, Headscale 0.29, and WireGuard on Linux.
+
+The Settings switch [Share on your tailnet over HTTPS](#share-on-your-tailnet-over-https) works only with Tailscale. It asks Tailscale on this computer to serve HTTPS with a certificate for the computer's tailnet name, and the other networks above offer no such service on the computer. Headscale does not issue these certificates, so on a computer signed in to Headscale OwnGit leaves sharing off and says that HTTPS certificates are not enabled in your tailnet. The message's pointer to the Tailscale admin console does not apply to Headscale.
 
 ### Behind a reverse proxy
 

@@ -50,7 +50,7 @@ owngit serve
 
 ## 다른 기기에서 서버에 접속하기
 
-OwnGit은 일반 HTTP로 동작하므로 연결이 암호화되지 않으며, TLS를 내장하지 않습니다. HTTPS로 접속하려면 이 컴퓨터의 Tailscale로 tailnet에 공유하거나([tailnet에서 HTTPS로 공유하기](#tailnet에서-https로-공유하기) 참고) OwnGit 앞에 리버스 프록시를 두세요([리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기) 참고). 비공개 네트워크 주소로 접속하려면 Tailscale이나 직접 운영하는 VPN을 쓰세요. 이름이 Tailscale과 관련되어 보인다는 것만으로 전체 경로가 보호된다고 볼 수는 없습니다. 일반 LAN에서 HTTP로 접속해도 됩니다. 이때 OwnGit은 비밀번호를 받기 전에 한 번 경고를 보여 주고, 화면에 연결 상태를 계속 표시합니다. OwnGit을 공개 인터넷에 노출하지 마세요.
+OwnGit은 일반 HTTP로 동작하므로 연결이 암호화되지 않으며, TLS를 내장하지 않습니다. HTTPS로 접속하려면 이 컴퓨터의 Tailscale로 tailnet에 공유하거나([tailnet에서 HTTPS로 공유하기](#tailnet에서-https로-공유하기) 참고) OwnGit 앞에 리버스 프록시를 두세요([리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기) 참고). 비공개 네트워크 주소로 접속하려면 Tailscale이나 직접 운영하는 VPN을 쓰세요([다른 비공개 네트워크](#다른-비공개-네트워크) 참고). 이름이 Tailscale과 관련되어 보인다는 것만으로 전체 경로가 보호된다고 볼 수는 없습니다. 일반 LAN에서 HTTP로 접속해도 됩니다. 이때 OwnGit은 비밀번호를 받기 전에 한 번 경고를 보여 주고, 화면에 연결 상태를 계속 표시합니다. OwnGit을 공개 인터넷에 노출하지 마세요.
 
 LAN 이름을 쓰려면 다음과 같이 실행합니다.
 
@@ -151,6 +151,34 @@ OwnGit은 `Tailscale-Funnel-Request` 헤더가 붙은 요청을 모두 거부하
 macOS용 Tailscale 앱(App Store 앱이나 독립 실행형 앱으로, Homebrew의 `tailscaled`와는 다릅니다)은 누군가 로그인해 있을 때만 실행됩니다. Mac을 다시 시작하면 누군가 로그인할 때까지 HTTPS가 동작하지 않습니다. 자동 로그인을 켜거나, 로그인 없이 실행되는 Homebrew의 `tailscaled`를 쓰세요. 설정 화면은 이 앱을 감지하면 같은 안내를 한 줄로 보여 줍니다.
 
 공유 기록은 네트워크 설정처럼 이 설치 호스트에 속하며 오프라인 백업에 포함되지 않습니다.
+
+### 다른 비공개 네트워크
+
+OwnGit은 관리 서버를 직접 운영하는 NetBird, Tailscale 클라이언트와 함께 쓰는 Headscale, 일반 WireGuard 같은 다른 비공개 네트워크에서도 동작합니다. 그 네트워크에서 이 컴퓨터가 쓰는 주소로 연결을 받게 하고, 다른 기기가 쓰는 이름을 기본 URL로 저장한 뒤 OwnGit을 다시 시작하세요.
+
+```sh
+owngit network set --listen 100.64.0.7:7654 --base-url http://gitbox.netbird.selfhosted:7654
+```
+
+OwnGit은 기본 URL의 이름과 연결을 받는 주소를 Host로 받아들입니다. 짧은 이름처럼 그 밖의 이름으로 접속하면 "unrecognized host"로 거부됩니다. 이런 이름은 `owngit network set --allowed-host 이름`으로 추가하고 OwnGit을 다시 시작하세요. 그러면 OwnGit은 이 컴퓨터의 LAN 주소로는 응답하지 않습니다. 다만 LAN의 기기가 이 네트워크 주소로 가는 경로를 이 컴퓨터로 잡으면 접속할 수 있으므로, LAN의 기기를 확실히 막으려면 방화벽 규칙 등으로 비공개 네트워크 인터페이스에서만 이 포트를 허용하세요. NetBird는 각 기기에 `gitbox.netbird.selfhosted` 같은 이름을 붙이고, Headscale은 MagicDNS 설정의 `base_domain` 아래 이름을 붙입니다. 일반 WireGuard에는 이름이 없으니 주소를 쓰거나, 각 기기의 hosts 파일이나 직접 운영하는 DNS에 이름을 등록하세요.
+
+비공개 네트워크가 기기 사이의 트래픽을 암호화합니다. OwnGit은 이를 알 수 없으므로 설정 과정에서 여전히 일반 HTTP를 받아들일지 묻고, 화면 위쪽에는 "OwnGit이 암호화하지 않음"이라고 표시합니다. HTTPS 주소를 쓰려면 이 컴퓨터에서 네트워크 주소로 연결을 받는 리버스 프록시를 실행하고, OwnGit은 `127.0.0.1`에 두세요([리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기) 참고). Caddy를 쓰면 다음과 같습니다.
+
+```caddyfile
+gitbox.netbird.selfhosted {
+	bind 100.64.0.7
+	tls internal
+	reverse_proxy 127.0.0.1:7654
+}
+```
+
+```sh
+owngit network set --listen 127.0.0.1:7654 --base-url https://gitbox.netbird.selfhosted --trusted-proxy 127.0.0.1
+```
+
+저장한 뒤 OwnGit을 다시 시작하세요. `bind`는 Caddy가 LAN 주소로는 응답하지 않게 하고, `tls internal`은 Caddy 자체 인증 기관으로 인증서에 서명하게 합니다. 프록시를 거쳐 열면 화면 위쪽에 "OwnGit 앞의 프록시가 암호화함"이라고 표시됩니다. 각 기기는 [Caddy](#caddy)에 적힌 대로 그 인증 기관을 신뢰해야 합니다. 명령 하나에만 쓰려면 `curl --cacert root.crt`나 `git -c http.sslCAInfo=root.crt clone`처럼 그 인증 기관의 인증서를 직접 지정해도 됩니다. 이 절차는 Linux에서 NetBird 0.79, Headscale 0.29, WireGuard로 시험했습니다.
+
+설정 화면의 [tailnet에서 HTTPS로 공유하기](#tailnet에서-https로-공유하기) 스위치는 Tailscale에서만 동작합니다. 이 스위치는 이 컴퓨터의 Tailscale에 tailnet 이름용 인증서로 HTTPS를 제공하게 하는데, 위의 다른 네트워크에는 컴퓨터 안에서 이렇게 하는 기능이 없습니다. Headscale은 이 인증서를 발급하지 않으므로, Headscale에 로그인한 컴퓨터에서는 OwnGit이 공유를 켜지 않고 tailnet에서 HTTPS 인증서가 켜져 있지 않다고 알립니다. 이 메시지가 안내하는 Tailscale 관리 콘솔은 Headscale에는 해당하지 않습니다.
 
 ### 리버스 프록시 뒤에서 운영하기
 
