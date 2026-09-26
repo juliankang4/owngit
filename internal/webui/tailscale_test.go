@@ -53,17 +53,18 @@ func TestTailscaleBlockSaysWhatSharingDoes(t *testing.T) {
 }
 
 // The certificate log notice says that only the fact that the address was
-// opened is recorded, not code or other content, and the name can be
-// changed.
+// opened is recorded, not code or other content, that the name can be
+// changed before turning sharing on, and that a rename does not take an
+// issued name out of the log.
 func TestTailscaleCertificateNoticeSaysWhatIsAndIsNotRecorded(t *testing.T) {
 	en := Text(LangEN, MsgTSCertLog)
-	for _, part := range []string{"public certificate log", "Only the fact that the address was opened is recorded", "not your code, repositories, passwords", "Tailscale admin console"} {
+	for _, part := range []string{"public certificate log", "Only the fact that the address was opened is recorded", "not your code, repositories, passwords", "Tailscale admin console before turning sharing on", "stay in the log, even after a rename"} {
 		if !strings.Contains(en, part) {
 			t.Errorf("English notice lacks %q: %q", part, en)
 		}
 	}
 	ko := Text(LangKO, MsgTSCertLog)
-	for _, part := range []string{"공개 인증서 로그", "주소를 열었다는 기록만 남을 뿐", "기록되지 않습니다", "관리 콘솔"} {
+	for _, part := range []string{"공개 인증서 로그", "주소를 열었다는 기록만 남을 뿐", "기록되지 않습니다", "공유를 켜기 전에 Tailscale 관리 콘솔에서", "이름을 바꿔도 로그에 남습니다"} {
 		if !strings.Contains(ko, part) {
 			t.Errorf("Korean notice lacks %q: %q", part, ko)
 		}

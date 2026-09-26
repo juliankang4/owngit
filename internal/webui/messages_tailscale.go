@@ -340,8 +340,8 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 	MsgTSTurnOffBtn:   {en: "Turn off sharing", ko: "공유 끄기"},
 	// Value: this computer's MagicDNS name.
 	MsgTSCertLog: {
-		en: "When Tailscale issues the certificate for this address, the names of this computer and your tailnet, as in %s, are recorded in a public certificate log. Only the fact that the address was opened is recorded, not your code, repositories, passwords or other content. This computer's name can be changed in the Tailscale admin console.",
-		ko: "Tailscale이 이 주소의 인증서를 발급하면 %s처럼 이 컴퓨터와 tailnet의 이름이 공개 인증서 로그에 기록됩니다. 주소를 열었다는 기록만 남을 뿐 코드, 저장소, 비밀번호 같은 내용은 기록되지 않습니다. 이 컴퓨터의 이름은 Tailscale 관리 콘솔에서 바꿀 수 있습니다.",
+		en: "When Tailscale issues the certificate for this address, the names of this computer and your tailnet, as in %s, are recorded in a public certificate log. Only the fact that the address was opened is recorded, not your code, repositories, passwords or other content. To use another name, change it in the Tailscale admin console before turning sharing on. Names that already got a certificate stay in the log, even after a rename.",
+		ko: "Tailscale이 이 주소의 인증서를 발급하면 %s처럼 이 컴퓨터와 tailnet의 이름이 공개 인증서 로그에 기록됩니다. 주소를 열었다는 기록만 남을 뿐 코드, 저장소, 비밀번호 같은 내용은 기록되지 않습니다. 다른 이름을 쓰려면 공유를 켜기 전에 Tailscale 관리 콘솔에서 바꾸세요. 이미 인증서를 받은 이름은 이름을 바꿔도 로그에 남습니다.",
 	},
 	// Value: the --listen option.
 	MsgTSListenOption: {
