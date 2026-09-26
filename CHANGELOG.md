@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `owngit service install` runs OwnGit in the background on Linux and starts it at every boot, without questions. On a desktop it installs a systemd user service and turns on lingering; over SSH or on a computer without a graphical session it installs a system service that runs as your account, with one `sudo`; as root, for example in an LXC container, it creates an `owngit` account with its state in `/var/lib/owngit/state`, which the command line then finds on its own. A Homebrew install is handed to `brew services`. Running the command again updates the unit and restarts the service. `owngit service status`, `start`, `stop`, `restart` and `uninstall` manage it; `uninstall` keeps the data and says where it is. The system units run with systemd's file system and kernel protections. macOS and Windows follow in a later release.
+- `owngit service install` and `owngit setup-link` print the one-time setup link when their output is a terminal. Anywhere else, such as a pipe, the journal or `docker logs`, they print only the path of the setup file, as before.
+- On a computer without a screen, such as a server reached over SSH, root in a container, or a machine without a graphical session, the first start before setup listens on every address and saves `0.0.0.0:7654`, and the setup link names this computer's LAN addresses. Until setup is finished, those addresses answer only the setup page. A computer with a screen still listens on `127.0.0.1:7654`.
+- `GET /healthz` answers 200 with an empty body before and after setup, and `owngit health` exits 0 when the local server answers.
+
+### Changed
+
+- `owngit setup-link` without `--base-url` makes the link for the address the running server listens on, or the saved listen address, instead of always `http://127.0.0.1:7654`.
+
 ### Security
 
 - `localhost`, `127.0.0.1` and `::1` are accepted as the Host only on connections from the computer running OwnGit. When OwnGit listened on a network address, another device could use one of these names to get past the Host check, and with open access it could read and push every repository. Such a request now gets "unrecognized host", and the page says how to allow an address. Tailscale Serve, a reverse proxy on the same computer, and the command line, MCP server and runner on that computer keep working. OwnGit 1.1.0 and earlier are affected when OwnGit listens on a network address.

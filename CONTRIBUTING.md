@@ -78,7 +78,7 @@ A change must keep the following behavior.
 ### Defaults
 
 - Everything works by default. A restriction on what owners do with their own installation is an option they can turn on, not a default that blocks them.
-- Protections against other people stay on. These include local-only listening until the owner chooses another address, the administrator password, the shared access password when the owner sets one, the one-time setup link, Host, Origin and CSRF checks, and the plain-HTTP acknowledgement. Make these steps easier instead of removing them.
+- Protections against other people stay on. These include local-only listening until the owner chooses another address (a computer without a screen, where setup has to happen on another device, listens on every address from the first start and answers only the one-time setup link until setup is finished), the administrator password, the shared access password when the owner sets one, the one-time setup link, Host, Origin and CSRF checks, and the plain-HTTP acknowledgement. Make these steps easier instead of removing them.
 - This rule does not replace the consent rules below. Running checks on the storage host and sending code to an external service still need the owner's explicit choice.
 
 ### Private Git storage
@@ -125,7 +125,7 @@ A change must keep the following behavior.
 
 ## Security rules for code
 
-- Never put setup tokens, passwords, or credentials in command-line values, environment variables, URLs, fixtures, or logs. Secrets come from owner-only files or interactive prompts. Tests use synthetic credentials and disposable repositories.
+- Never put setup tokens, passwords, or credentials in command-line values, environment variables, URLs, fixtures, or logs. Secrets come from owner-only files or interactive prompts. The one exception is the one-time setup link, which OwnGit may print when standard output is a terminal and nowhere else: never to a pipe, a file, the system journal, or a container log. Tests use synthetic credentials and disposable repositories.
 - Do not weaken Host, exact-Origin, CSRF, access-mode, or administrator-confirmation checks. Mutating JSON endpoints accept JSON only, and the CLI client never follows redirects or retries authentication.
 - Git subprocesses use an app-owned HOME and empty global and system config. Do not reintroduce inherited hooks, credential helpers, filters, or client environment variables.
 - Treat repository paths, symbolic-link blobs, binary blobs, and modes as data. Pass paths to Git as literal pathspecs and never resolve them on the host filesystem.

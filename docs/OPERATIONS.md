@@ -44,9 +44,72 @@ When setup finishes in the browser, the terminal lists the saved answers and the
 
 ### Setup with a setup file
 
-When OwnGit starts without a terminal, for example under `brew services`, a LaunchAgent, or systemd, with its output redirected, or as a background job of a shell (`owngit serve &`), it writes an owner-readable setup file inside the state directory and opens it in the installation owner's browser. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. The setup secret is not printed or passed in a browser command argument. `owngit setup-link` issues a new file, and it also works while setup waits in a terminal.
+When OwnGit starts without a terminal, for example under `brew services`, a LaunchAgent, or systemd, with its output redirected, or as a background job of a shell (`owngit serve &`), it writes an owner-readable setup file inside the state directory and opens it in the installation owner's browser. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. The server never writes the setup link itself to its log or passes it in a browser command argument.
 
-Before setup is finished, the setup link also works from another device by an address OwnGit was not started with, for example this computer's LAN address when OwnGit listens on every interface. `owngit setup-link --base-url http://192.168.1.20:7654` writes a setup file for that address. Until the link is used, that address shows only the page that uses it and refuses everything else. After the link is used, only that browser on that address can continue setup. The setup form then offers to keep accepting the address. If you leave it unticked, OwnGit refuses the address once setup is finished.
+`owngit setup-link` issues a new link, which replaces the one before, and it also works while setup waits in a terminal. When its output is a terminal, it prints the link, which works once within 15 minutes. When its output goes anywhere else, such as a pipe, a file, the system journal or `docker logs`, it prints only the path of the setup file that holds the link. Without `--base-url`, the link uses the address the running server listens on. When that is every address, it lists this computer's addresses one per line, the most likely first: the address of the default route, other private IPv4 addresses, then others such as a tailnet address. A computer with a screen lists `127.0.0.1` first. With `--no-open` it does not open the setup file in a browser; on a computer without a screen it never does.
+
+Before setup is finished, the setup link also works from another device by an address OwnGit was not started with, for example this computer's LAN address when OwnGit listens on every interface. `owngit setup-link --base-url http://192.168.1.20:7654` makes the link for that address. Until the link is used, that address shows only the page that uses it and refuses everything else. After the link is used, only that browser on that address can continue setup. The setup form then offers to keep accepting the address. If you leave it unticked, OwnGit refuses the address once setup is finished.
+
+## Run as a service
+
+On Linux, `owngit service install` runs OwnGit in the background with systemd and starts it at every boot, without a login. It asks no questions: who runs the service follows from how you run the command.
+
+- On a desktop, in a terminal of your graphical session, OwnGit becomes a systemd user service of your account (`~/.config/systemd/user/owngit.service`) and keeps its state in your usual state directory. It turns on lingering for your account (`loginctl enable-linger`) so that the service starts at boot. The distributions tested (Debian 13, Ubuntu 24.04 and 26.04, Arch Linux) allow this for your own account without a password. Where lingering needs a password, OwnGit installs a system service as described next.
+- Over SSH, or on a computer without a graphical session, OwnGit becomes a system service that runs as your account (`/etc/systemd/system/owngit.service` with `User=` and `Group=`), and the state stays in your usual state directory. Writing the unit needs root once, so the command says in one line what root will do and runs one `sudo` for all of it: write the unit, reload systemd, enable the service and start it. `sudo` asks for your password itself; OwnGit never sees it. The root steps are in a short shell script whose path the command prints. If `sudo` is not available or does not finish, the command prints the one command to run as root (`sh /tmp/owngit-service-NNNN.sh`); after that, `owngit service status` shows the result and `owngit setup-link` prints the setup link.
+- As root, for example in a Proxmox LXC container or on a cloud server, OwnGit creates a system account `owngit` with the home `/var/lib/owngit`, keeps the state in `/var/lib/owngit/state` and runs the service as that account. It writes the state directory path to `/etc/owngit/state-dir`, so `owngit setup-link`, `owngit network` and the other commands that use the state directory find it without `--state-dir` when root, the `owngit` account or a member of the `owngit` group runs them. Root runs these commands as the `owngit` account, so it never leaves files in the state directory that the service cannot open. A file you pass, such as `backup --output`, must therefore be a place the `owngit` account can write; `reset-admin --password-file` still reads a file only root can read. A member of the `owngit` group who is not root is told to use `sudo`, since the state directory stays private to the account.
+- When Homebrew installed OwnGit, `owngit service install` runs `brew services restart owngit`, so that Homebrew keeps managing the service it upgrades. It turns on lingering, as for a desktop, where it can.
+
+Every unit starts `owngit serve --state-dir DIR --no-open`, with the absolute state directory, and never with `--listen` or `--base-url`, so the saved [network settings](#network-settings) apply. A unit installed on a computer without a screen adds `--headless`, described below.
+
+Run `owngit service install` again at any time, for example after you replace the `owngit` binary with a new release. It rewrites the unit and restarts the service in the same mode, with the same state directory. A service installed on the desktop stays a user service when you run the command again over SSH.
+
+| Command | What it does |
+| --- | --- |
+| `owngit service status` | Whether OwnGit runs and answers, who runs it, the unit file, the log command, the state directory and the addresses. |
+| `owngit service start`, `stop`, `restart` | Start, stop or restart the service. A stopped service starts again at the next boot. |
+| `owngit service uninstall` | Stop the service and remove the unit. The state directory, the repositories and the `owngit` account stay, and the command says where the data is. |
+
+The log goes to the systemd journal: `journalctl --user -u owngit.service -f` for a user service, `sudo journalctl -u owngit.service -f` for a system service.
+
+`owngit service` is not available on macOS and Windows yet. On macOS, use `brew services start owngit`.
+
+### What the service may do
+
+A system service runs with these restrictions. None of them limits Git, repository hooks, checks that run on this computer, or checks in Docker, which OwnGit reaches through the Docker socket.
+
+- `ProtectSystem=strict` makes the whole file system read-only for OwnGit except the directories it needs: your home folder for a service that runs as your account, `/var/lib/owngit` for the `owngit` account, and the state directory and the saved repository folder when they lie elsewhere. `ProtectHome=yes` also hides `/home` from the `owngit` account. Setup suggests a repository folder inside these directories. If you choose a folder outside them during setup, setup reports that it cannot write there. Choose the suggested folder, or add the folder to the unit with `sudo systemctl edit owngit.service`:
+
+  ```ini
+  [Service]
+  ReadWritePaths=-/srv/git
+  ```
+
+  If setup is already done when you install a service that runs as your account, for example because you ran `owngit serve` before, `owngit service install` adds the saved repository folder to the unit wherever it is. For the `owngit` account it cannot read that folder as root, so it prints the `systemctl edit` lines above when the folder lies outside `/var/lib/owngit`.
+- `NoNewPrivileges=yes` and `RestrictSUIDSGID=yes`: nothing OwnGit starts can gain privileges, so a check command cannot use `sudo`.
+- `PrivateTmp=yes`: OwnGit has its own `/tmp`. Check workspaces live in the state directory, so Docker checks still see them.
+- `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`, `LockPersonality` and `RestrictRealtime`: OwnGit has no reason to change the kernel, the clock or the host name.
+- `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`: network, local sockets such as Docker's and Tailscale's, and the interface list.
+- `UMask=0077` keeps new files private to the service account.
+
+A user service has only `NoNewPrivileges`, `RestrictSUIDSGID`, `LockPersonality`, `RestrictRealtime` and `UMask=0077`, because the other settings need user namespaces in a user service, which some distributions restrict. In a container that does not allow what a setting needs, systemd leaves that setting out and still starts OwnGit.
+
+### A computer without a screen
+
+When OwnGit is installed on a computer where nobody can open a browser, the setup link has to work from another device. OwnGit counts a computer as headless in any of these cases:
+
+- root runs OwnGit in a container or an LXC container;
+- the command runs in an SSH session without a display (neither `DISPLAY` nor `WAYLAND_DISPLAY` is set);
+- systemd-logind lists no graphical session (X11 or Wayland, including a login screen) on this computer.
+
+On such a computer, the first start before setup, with no listen address saved and no `--listen` option, listens on every address (`0.0.0.0:7654`) and saves that as the listen address. The service unit passes `--headless`, which applies the same rule even when the service itself cannot tell, because a service has no SSH session or display of its own. Until setup is finished, a request by any address other than `localhost`, `127.0.0.1` or `::1` reaches only the setup page, and every other request is refused, as described in [Setup with a setup file](#setup-with-a-setup-file). The setup page asks you to accept plain HTTP and to set the passwords, and it offers to keep accepting the address you used. To keep OwnGit on this computer only, run `owngit network set --listen 127.0.0.1:7654` and restart it.
+
+A computer with a screen keeps listening on `127.0.0.1:7654` until you choose another address.
+
+### Health check
+
+`GET /healthz` answers `200 OK` with an empty body while OwnGit serves HTTP, before and after setup. It reads no state and says nothing about the installation. Like every other path, it answers only a name OwnGit accepts, such as `127.0.0.1`, so a page that reaches the server through DNS rebinding is still refused.
+
+`owngit health` checks the server of a state directory on this computer and exits with status 0 when it answers. It finds the address the running server listens on in the state directory, and connects to `127.0.0.1` when the server listens on every address. `owngit service status` and `owngit service install` use the same check.
 
 ## Reaching the server from another device
 
@@ -105,7 +168,7 @@ Network settings belong to this installation host. An offline backup does not ca
 
 ### Options for a background service
 
-`--listen`, `--base-url`, `--allowed-host`, and `--trusted-proxy` are options of `owngit serve`, so they apply only to the command that starts the server. A service manager that passes them in the service definition (the `ProgramArguments` of a LaunchAgent, or the `ExecStart` line of a systemd unit) overrides the saved values at every start. To use saved settings, leave these options out of the service definition.
+`--listen`, `--base-url`, `--allowed-host`, and `--trusted-proxy` are options of `owngit serve`, so they apply only to the command that starts the server. A service manager that passes them in the service definition (the `ProgramArguments` of a LaunchAgent, or the `ExecStart` line of a systemd unit) overrides the saved values at every start. To use saved settings, leave these options out of the service definition. The units that [`owngit service install`](#run-as-a-service) writes never pass them.
 
 The Homebrew service (`brew services start owngit`) runs `owngit serve --no-open` without other options, so it uses the saved settings. To reach it from other devices:
 
@@ -326,11 +389,13 @@ owngit serve --no-update-check
 
 ## Host-owner recovery
 
-Before setup is complete, issue a replacement setup link with:
+Before setup is complete, issue a replacement setup link in a terminal on the installation host with:
 
 ```sh
-owngit setup-link --base-url http://127.0.0.1:7654 --no-open
+owngit setup-link --no-open
 ```
+
+It prints the link when its output is a terminal, and otherwise the path of the setup file that holds it. `--base-url http://127.0.0.1:7654` makes the link for that address instead of the one the server listens on.
 
 To reset a forgotten administrator password, put the new password in an owner-readable file:
 

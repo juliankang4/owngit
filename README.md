@@ -72,15 +72,25 @@ go build -o bin/owngit ./cmd/owngit
 
 ## Quickstart
 
+On Linux, install OwnGit as a service that runs in the background and starts at every boot:
+
+```sh
+owngit service install
+```
+
+It asks nothing, apart from the `sudo` password on a computer you reached over SSH, and it prints a one-time setup link at the end. Open that link in a browser to choose the repository folder and the passwords. The link works once, within 15 minutes; `owngit setup-link` prints a new one. On a desktop, OwnGit runs as your user and answers only on this computer, at `http://127.0.0.1:7654`. On a computer without a screen, such as a server you reach over SSH or a container, it listens on every address and the link uses this computer's LAN address, so you open it on another device. Until setup is finished, that address answers only the setup page. [Run as a service](docs/OPERATIONS.md#run-as-a-service) explains who runs the service in each case and how to update, stop and remove it.
+
+To run OwnGit in the foreground instead, and on macOS and Windows, where `owngit service` is not available yet, start it with:
+
 ```sh
 owngit serve
 ```
 
-From a source build, run `./bin/owngit serve`; from an unpacked archive, `./owngit serve`. The first time OwnGit starts from a terminal, setup runs in that terminal: choose English or 한국어, then "Continue in this terminal" or "Open the web dashboard". In the terminal, passwords stay hidden as you type. On the web dashboard, the browser shows a short code, and you approve that browser in the terminal before it can continue. The default address is `http://127.0.0.1:7654`. See [First-time setup](docs/OPERATIONS.md#first-time-setup).
+From a source build, run `./bin/owngit serve`; from an unpacked archive, `./owngit serve`. The first time OwnGit starts from a terminal, setup runs in that terminal: choose English or 한국어, then "Continue in this terminal" or "Open the web dashboard". In the terminal, passwords stay hidden as you type. On the web dashboard, the browser shows a short code, and you approve that browser in the terminal before it can continue. See [First-time setup](docs/OPERATIONS.md#first-time-setup).
 
-When OwnGit starts without a terminal, as under `brew services`, it writes an owner-readable setup file inside the state directory instead and opens it in your browser. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. The setup secret is never printed or passed as a browser argument.
+When OwnGit starts without a terminal, as under `brew services`, it writes an owner-readable setup file inside the state directory instead and opens it in your browser. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. OwnGit shows the setup link itself only on a terminal: `owngit setup-link` prints it when its output is a terminal and names the setup file otherwise, so the link never reaches a log file, the system journal or a pipe.
 
-To start OwnGit at login with Homebrew, run `brew services start owngit`. Its log, including the setup file path on first start, is `$(brew --prefix)/var/log/owngit.log`.
+To start OwnGit at login with Homebrew on macOS, run `brew services start owngit`. Its log, including the setup file path on first start, is `$(brew --prefix)/var/log/owngit.log`. On Linux, `owngit service install` hands a Homebrew install to `brew services` the same way.
 
 Create a repository from the dashboard, then use its clone address, for example `http://127.0.0.1:7654/git/project.git`, with any Git client. [Operations](docs/OPERATIONS.md) covers access from other devices, moving existing repositories, recovery, and backups.
 
@@ -98,7 +108,7 @@ Each password check needs about 70 MB more for a moment, because passwords are h
 
 ## Access and security
 
-- The server is local-only by default. General repository access can be password-free or protected by one shared password. There are no individual accounts.
+- On a computer with a screen, the server is local-only by default. A computer without one, such as a server reached over SSH or a container, listens on every address from the first start so that setup can happen on another device; until setup is finished it answers only the one-time setup link. General repository access can be password-free or protected by one shared password. There are no individual accounts.
 - A separate administrator password protects security settings, and every security change asks for it again.
 - After setup, OwnGit asks GitHub once a day whether a newer release exists and shows a notice on the dashboard. It sends no repository data and never updates itself. Turn it off in Settings, or start with `--no-update-check` so it never checks. See [New-release notice](docs/OPERATIONS.md#new-release-notice).
 - OwnGit serves plain HTTP, which is not encrypted, and has no built-in TLS. TLS comes from Tailscale on this computer (see [Share on your tailnet over HTTPS](docs/OPERATIONS.md#share-on-your-tailnet-over-https)) or a reverse proxy in front of OwnGit, and OwnGit believes forwarded headers only from proxies you configure (see [Behind a reverse proxy](docs/OPERATIONS.md#behind-a-reverse-proxy)). Prefer Tailscale or your own VPN for connections from another device. Public Internet hosting is out of scope.
