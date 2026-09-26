@@ -460,7 +460,10 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 		return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemUnrecorded, Found: endpoint.Found}
 	case endpoint.Exact:
 		change.Endpoint = "kept"
-		record.Created = previous.Created
+		// What OwnGit created belongs to the name it was created for. After
+		// a rename the endpoint for the new name was not made by this
+		// record, so turning off leaves it.
+		record.Created = previous.Created && previous.Name == status.Name
 	case endpoint.Free || ours:
 		change.Endpoint = "created"
 		record.Created = true

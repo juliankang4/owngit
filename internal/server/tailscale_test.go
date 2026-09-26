@@ -737,6 +737,39 @@ func TestTurningOnAfterARenameMovesToTheNewName(t *testing.T) {
 	}
 }
 
+// After a rename, an endpoint for the new name that is exactly what OwnGit
+// would make, but that OwnGit did not write, is used without taking it
+// over: turning off leaves it, and it then shows as not made by OwnGit.
+func TestTurningOnAfterARenameDoesNotTakeOverAnEndpointForTheNewName(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	first, err := app.Tailscale.On(ctx, nil)
+	noErr(t, err)
+	rename(fake)
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve.Web[renamed+":443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: first.Record.Target}}}
+	})
+	before := len(fake.Writes())
+	change, err := app.Tailscale.On(ctx, nil)
+	noErr(t, err)
+	if change.Endpoint != "kept" || change.Record.Created || change.Record.Name != renamed || len(fake.Writes()) != before {
+		t.Fatalf("turning on after the rename: %+v, writes %q", change, fake.Writes()[before:])
+	}
+	change, err = app.Tailscale.Off(ctx)
+	noErr(t, err)
+	if change.Endpoint != "left" || len(fake.Writes()) != before {
+		t.Fatalf("turning off: %+v, writes %q", change, fake.Writes()[before:])
+	}
+	if !fake.State().Serve.Endpoint(renamed, TailscaleHTTPSPort, first.Record.Target).Exact {
+		t.Fatal("turning off removed an endpoint that OwnGit did not write")
+	}
+	report, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if report.On || report.Endpoint != TailscaleEndpointUnrecorded || report.CanTurnOn {
+		t.Fatalf("report after off: %+v", report)
+	}
+}
+
 // reads counts the fake's read commands.
 func reads(fake *tailscaletest.Fake) int {
 	count := 0
