@@ -75,6 +75,9 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 	ctx := parent
 	source, exists, err := s.Store.ImportSource(ctx, repositoryID)
 	if err != nil {
+		if stop := admissionStop(ctx, err); stop != nil {
+			return state.ImportRun{}, stop
+		}
 		return state.ImportRun{}, newProblem(CodeStateUnavailable, "import source could not be read", err)
 	}
 	if !exists {
@@ -114,6 +117,9 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 	currentSource, currentExists, currentErr := s.Store.ImportSource(ctx, repositoryID)
 	if currentErr != nil {
 		s.lifecycle.RUnlock()
+		if stop := admissionStop(ctx, currentErr); stop != nil {
+			return state.ImportRun{}, stop
+		}
 		return state.ImportRun{}, newProblem(CodeStateUnavailable, "import authority could not be confirmed at admission", currentErr)
 	}
 	currentCredentialRevision, currentCredentialBlocked := s.Store.ImportCredentialAuthority(repositoryID)
@@ -136,6 +142,9 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 	staging, err := s.acquireStaging(ctx, runID, repositoryID, now)
 	if err != nil {
 		s.lifecycle.RUnlock()
+		if stop := admissionStop(ctx, err); stop != nil {
+			return state.ImportRun{}, stop
+		}
 		return state.ImportRun{}, err
 	}
 	run := &runState{
@@ -177,6 +186,20 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 	}
 	pipelineErr = stoppedStageFailure(ctx, run.run.Status, pipelineErr)
 	return s.finishRun(context.WithoutCancel(parent), run, pipelineErr)
+}
+
+// admissionStop reports an admission step that failed because the run's
+// context ended (its deadline passed or it was cancelled) as that stop, so
+// the client gets the time limit or the cancellation instead of a state or
+// internal failure. It returns nil for any other failure, including one that
+// is already classified. No run is recorded yet, so there is nothing to
+// finish.
+func admissionStop(ctx context.Context, err error) *Problem {
+	var problem *Problem
+	if ctx.Err() == nil || !errors.Is(err, ctx.Err()) || errors.As(err, &problem) {
+		return nil
+	}
+	return stoppedProblem(ctx, "during admission", err)
 }
 
 // activeCancel returns the stored cancel function for a run.

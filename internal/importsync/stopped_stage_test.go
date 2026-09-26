@@ -2,6 +2,7 @@ package importsync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -190,5 +191,52 @@ func cancelAdmittedRun(t *testing.T, f *fixture) {
 	})
 	if cancelled != 1 {
 		t.Errorf("cancelled %d admitted runs, want 1", cancelled)
+	}
+}
+
+// A run deadline that passes during admission, before the run is recorded,
+// is reported as the time limit, never as a state or unclassified failure.
+// Deadlines from 1 ns to 30 ms end the run at different admission steps.
+func TestDeadlineDuringAdmissionIsTheTimeLimit(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	// A run stopped after its start was recorded must be recorded as the
+	// time limit; one stopped before leaves no run.
+	check := func(what string, timeout time.Duration, rowsBefore int, err error) {
+		t.Helper()
+		var problem *Problem
+		if !errors.As(err, &problem) || problem.Code != CodeLimit {
+			t.Errorf("%s with a %s deadline: err=%v", what, timeout, err)
+			return
+		}
+		rows, countErr := f.store.TableRowCount(context.Background(), "import_runs")
+		noErr(t, countErr)
+		if rows == rowsBefore {
+			return
+		}
+		if run := f.lastRun(); rows != rowsBefore+1 || run.Status != state.ImportRunFailed || run.ErrorClass != CodeLimit {
+			t.Fatalf("%s with a %s deadline: %d new runs, last status=%s class=%s", what, timeout, rows-rowsBefore, run.Status, run.ErrorClass)
+		}
+	}
+	rows := func() int {
+		count, err := f.store.TableRowCount(context.Background(), "import_runs")
+		noErr(t, err)
+		return count
+	}
+	for _, timeout := range []time.Duration{time.Nanosecond, time.Millisecond, 3 * time.Millisecond, 10 * time.Millisecond, 30 * time.Millisecond} {
+		for round := 0; round < 3; round++ {
+			before := rows()
+			_, err := f.importProject(ImportInput{Limits: Limits{RunTimeout: timeout}})
+			check("first import", timeout, before, err)
+		}
+	}
+	f.mustImport(ImportInput{})
+	f.commit("two", "two\n")
+	for _, timeout := range []time.Duration{time.Nanosecond, time.Millisecond, 3 * time.Millisecond, 10 * time.Millisecond, 30 * time.Millisecond} {
+		for round := 0; round < 3; round++ {
+			before := rows()
+			_, err := f.service.Refresh(context.Background(), "project", Limits{RunTimeout: timeout})
+			check("refresh", timeout, before, err)
+		}
 	}
 }
