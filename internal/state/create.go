@@ -97,7 +97,7 @@ func publishNoReplace(ctx context.Context, temporary, path string) error {
 		return publishdir.Rename(ctx, temporary, path)
 	}
 	err := publishers.renameExclusive(temporary, path)
-	if !unsupported(err, syscall.EINVAL) {
+	if !unsupported(err, syscall.EINVAL, syscall.EPERM) {
 		return err
 	}
 	err = publishers.link(temporary, path)
@@ -113,11 +113,24 @@ func publishNoReplace(ctx context.Context, temporary, path string) error {
 	return publishUnderLock(temporary, path)
 }
 
-// unsupported reports whether err says the filesystem lacks the operation.
-// extra is the additional code a filesystem uses for that on Linux: EINVAL
-// for an unknown rename flag and EPERM for a refused hard link.
-func unsupported(err, extra error) bool {
-	return err != nil && (errors.Is(err, errors.ErrUnsupported) || errors.Is(err, extra))
+// unsupported reports whether err says the operation is unavailable here.
+// extra lists the other codes Linux uses for that: EINVAL for an unknown
+// rename flag, EPERM for a refused hard link and for renameat2 under older
+// container seccomp profiles. A real permission problem still fails at the
+// last fallback, which returns its error.
+func unsupported(err error, extra ...error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errors.ErrUnsupported) {
+		return true
+	}
+	for _, code := range extra {
+		if errors.Is(err, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // publishUnderLock renames the temporary file into place while it holds the

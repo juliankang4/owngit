@@ -61,8 +61,10 @@ func TestCreatedDatabaseIsPublishedInWALModeWithoutReplacing(t *testing.T) {
 
 // assertPublishesOnceInWALMode creates a database twice in a new directory.
 // The first creation must publish a WAL database, the second must keep it and
-// leave no temporary entry. extra names the other entries the directory may
-// hold afterwards.
+// leave no temporary entry. extra names the other entries the directory must
+// hold afterwards. AppleDouble entries ("._*") that macOS adds on exFAT and
+// FAT volumes are ignored, and so is a creation lock that extra does not
+// require, so the check also runs on such volumes.
 func assertPublishesOnceInWALMode(t *testing.T, extra ...string) {
 	t.Helper()
 	ctx := context.Background()
@@ -88,10 +90,14 @@ func assertPublishesOnceInWALMode(t *testing.T, extra ...string) {
 	entries, err := os.ReadDir(directory)
 	noErr(t, err)
 	var names []string
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-	}
 	want := append([]string{databaseName}, extra...)
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, "._") || name == createLockFile && !slices.Contains(want, name) {
+			continue
+		}
+		names = append(names, name)
+	}
 	slices.Sort(want)
 	if !slices.Equal(names, want) {
 		t.Fatalf("entries after two creations: %v, want %v", names, want)
@@ -122,7 +128,7 @@ func failWith(err error) func(string, string) error {
 // TestPublishFallsBackToAHardLink covers filesystems without an exclusive
 // rename, which report one of these codes.
 func TestPublishFallsBackToAHardLink(t *testing.T) {
-	for _, code := range []syscall.Errno{syscall.ENOTSUP, syscall.EOPNOTSUPP, syscall.EINVAL, syscall.ENOSYS} {
+	for _, code := range []syscall.Errno{syscall.ENOTSUP, syscall.EOPNOTSUPP, syscall.EINVAL, syscall.ENOSYS, syscall.EPERM} {
 		t.Run(code.Error(), func(t *testing.T) {
 			links := 0
 			usePublishers(t, failWith(code), func(oldPath, newPath string) error {
@@ -146,6 +152,11 @@ func TestPublishFallsBackToALockedRename(t *testing.T) {
 			assertPublishesOnceInWALMode(t, createLockFile)
 		})
 	}
+	// Older container seccomp profiles refuse renameat2 with EPERM.
+	t.Run("exclusive rename refused with EPERM", func(t *testing.T) {
+		usePublishers(t, failWith(syscall.EPERM), failWith(syscall.EPERM))
+		assertPublishesOnceInWALMode(t, createLockFile)
+	})
 }
 
 // TestPublishReportsOtherFailures keeps a real failure of a primitive from
