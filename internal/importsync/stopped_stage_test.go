@@ -461,3 +461,99 @@ func assertIntentsSettled(t *testing.T, f *fixture, name string) {
 		}
 	}
 }
+
+// A refresh that also moves HEAD and is stopped after its ref transaction,
+// before its HEAD write, completes and writes HEAD: its refs are visible, so
+// the stop comes too late for the HEAD write that finishes the publication.
+// The stop comes while the applied refs are recorded or just before the HEAD
+// lock.
+func TestStopBetweenARefreshsRefsAndItsHEADCompletesIt(t *testing.T) {
+	for _, at := range []string{"applied publication", "final HEAD lock"} {
+		for _, stop := range []string{"deadline", "cancel"} {
+			name := stop + " at " + at
+			t.Run(name, func(t *testing.T) {
+				f := newFixture(t)
+				f.commit("one", "one\n")
+				f.mustImport(ImportInput{})
+				f.commit("two", "two\n")
+				f.git(f.source, "branch", "trunk")
+				f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/trunk")
+				stopRun := func(ctx context.Context) {
+					if stop == "cancel" {
+						cancelAdmittedRun(t, f)
+						return
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(30 * time.Second):
+						t.Error("run deadline did not expire")
+					}
+				}
+				// The HEAD lock seam has no context; the run's context is
+				// taken from the record just before it.
+				var runCtx context.Context
+				hit := false
+				f.service.beforeRecord = func(ctx context.Context, record string) {
+					if record != "applied publication" {
+						return
+					}
+					runCtx = ctx
+					if at == record && !hit {
+						hit = true
+						stopRun(ctx)
+					}
+				}
+				f.service.beforeFinalHEADLock = func() {
+					if at == "final HEAD lock" && !hit && runCtx != nil {
+						hit = true
+						stopRun(runCtx)
+					}
+				}
+				limits := Limits{}
+				if stop == "deadline" {
+					limits.RunTimeout = 3 * time.Second
+				}
+				_, err := f.service.Refresh(context.Background(), "project", limits)
+				if !hit {
+					t.Fatalf("%s: the run did not reach the stop point", name)
+				}
+				run := f.lastRun()
+				if err != nil || run.Status != state.ImportRunComplete {
+					t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
+				}
+				if head := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); head != "refs/heads/trunk" {
+					t.Fatalf("%s: destination HEAD=%s, want refs/heads/trunk", name, head)
+				}
+				assertIntentsSettled(t, f, name)
+				// Nothing is left for the owner to resolve: the next refresh runs.
+				f.service.beforeRecord, f.service.beforeFinalHEADLock = nil, nil
+				f.commit("three", "three\n")
+				if _, err := f.service.Refresh(context.Background(), "project", Limits{}); err != nil {
+					t.Fatalf("%s: the next refresh: %v", name, err)
+				}
+			})
+		}
+	}
+}
+
+// A changed import authority still stops the HEAD write of a refresh after
+// its ref transaction: only a cancellation or deadline comes too late.
+func TestAuthorityChangeBeforeARefreshsHEADWriteStopsIt(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.mustImport(ImportInput{})
+	f.commit("two", "two\n")
+	f.git(f.source, "branch", "trunk")
+	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/trunk")
+	f.service.beforeFinalHEADLock = func() {
+		f.service.beforeFinalHEADLock = nil
+		noErr(t, f.store.Exec(context.Background(), `UPDATE import_sources SET authority_revision=authority_revision+1 WHERE repository_id='project'`))
+	}
+	_, err := f.service.Refresh(context.Background(), "project", Limits{})
+	if !errors.Is(err, ErrSuperseded) {
+		t.Fatalf("authority change before the HEAD write: err=%v", err)
+	}
+	if head := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); head != "refs/heads/main" {
+		t.Fatalf("destination HEAD=%s after the authority changed, want refs/heads/main", head)
+	}
+}

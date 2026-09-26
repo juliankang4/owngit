@@ -266,6 +266,11 @@ func (s *Service) repositoryRefStorage(ctx context.Context, run *runState, repos
 		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
 			return "files", nil
 		}
+		// A Git command cut by the run's own stop says nothing about the
+		// repository.
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return "", stoppedProblem(ctx, "while identifying the destination ref storage", err)
+		}
 		return "", newProblem(CodeRepositoryMissing, "destination ref storage could not be identified", err)
 	}
 	storage := strings.TrimSpace(string(result.Stdout))

@@ -691,15 +691,28 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 	// Git's implicit HEAD lock when the transaction advances its current branch.
 	// Exact readback below classifies the intentionally sequential boundary.
 	if commandErr == nil && plan.headChange {
+		// Once a refresh's ref transaction has written visible refs, the HEAD
+		// write finishes that publication: a cancellation or deadline comes
+		// too late for it, and only a changed authority still stops it. A
+		// first import is not visible until its directory is renamed, and a
+		// HEAD change without a ref transaction has written nothing yet, so
+		// both still honor the stop.
+		headCtx, headAuthority := ctx, s.authorityCurrent
+		if refTransaction && run.initialDestination == nil {
+			var cancelHEAD context.CancelFunc
+			headCtx, cancelHEAD = context.WithTimeout(context.WithoutCancel(ctx), run.limits.PublishTimeout)
+			defer cancelHEAD()
+			headAuthority = s.authorityUnchanged
+		}
 		if s.beforeFinalHEADLock != nil {
 			s.beforeFinalHEADLock()
 		}
-		lock, commandErr = s.acquireHEADLock(ctx, run, repositoryPath, plan.headExpected)
+		lock, commandErr = s.acquireHEADLock(headCtx, run, repositoryPath, plan.headExpected)
 		if commandErr != nil {
 			finalizationBlocked = true
 		}
 		if commandErr == nil {
-			if err := s.authorityCurrent(ctx, run); err != nil {
+			if err := headAuthority(headCtx, run); err != nil {
 				commandErr = err
 				finalizationBlocked = true
 			} else if err := lock.commit(plan.headDesired); err != nil {

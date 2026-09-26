@@ -88,13 +88,27 @@ func TestStopWithGenuineBookkeepingFailureStaysStateUnavailable(t *testing.T) {
 			// A HEAD change makes the publication stop between refs and HEAD.
 			f.git(f.source, "branch", "trunk")
 			f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/trunk")
-			f.service.beforeFinalHEADLock = func() {
-				f.service.beforeFinalHEADLock = nil
+			stopAndBreak := func() {
 				if _, err := f.service.Cancel(context.Background(), "project"); err != nil {
 					t.Errorf("cancel: %v", err)
 				}
 				if err := f.store.Close(); err != nil {
 					t.Errorf("close store: %v", err)
+				}
+			}
+			if kind == "refresh" {
+				// A refresh's visible refs make it finish its HEAD write
+				// despite the stop, so the store fails at the HEAD record.
+				f.service.beforeRecord = func(_ context.Context, record string) {
+					if record == "applied HEAD" {
+						f.service.beforeRecord = nil
+						stopAndBreak()
+					}
+				}
+			} else {
+				f.service.beforeFinalHEADLock = func() {
+					f.service.beforeFinalHEADLock = nil
+					stopAndBreak()
 				}
 			}
 			var err error
