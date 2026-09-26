@@ -69,14 +69,14 @@ func TestPreparedAttachmentFailureCleanupIsBoundedAndPreservesCauses(t *testing.
 			if stalled {
 				select {
 				case <-entered:
-				case <-time.After(3 * time.Second):
+				case <-time.After(10 * time.Second):
 					t.Fatal("controlled attachment cleanup was not reached")
 				}
 			}
 			var err error
 			select {
 			case err = <-result:
-			case <-time.After(3 * time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("attachment cleanup did not return within its bound")
 			}
 			if callbacks.Load() != 0 {
@@ -95,7 +95,7 @@ func TestPreparedAttachmentFailureCleanupIsBoundedAndPreservesCauses(t *testing.
 				unblock()
 				select {
 				case <-waitFinished:
-				case <-time.After(3 * time.Second):
+				case <-time.After(10 * time.Second):
 					t.Fatal("delayed wait was not rejoined after release")
 				}
 				return

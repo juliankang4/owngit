@@ -46,13 +46,13 @@ func TestPreparedUnstartedCallbackCannotBeReportedDetached(t *testing.T) {
 	}()
 	select {
 	case <-entered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("protocol did not reach the pre-admission check")
 	}
 	var err error
 	select {
 	case err = <-result:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("runner did not return within its bounded cleanup window")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -64,7 +64,7 @@ func TestPreparedUnstartedCallbackCannotBeReportedDetached(t *testing.T) {
 	unblock()
 	select {
 	case <-protocolExited:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("protocol did not finish after finite recovery")
 	}
 	if calls.Load() != 0 {
@@ -124,7 +124,7 @@ func TestPreparedAdmittedCallbackIsStillReportedDetached(t *testing.T) {
 	unblock()
 	select {
 	case <-finished:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("callback did not finish after release")
 	}
 }

@@ -567,12 +567,34 @@ func TestMaintenanceKeepsCachedRefSnapshots(t *testing.T) {
 		done <- err
 	}()
 	<-started
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	during, err := manager.RefSnapshot(ctx, "sample")
-	cancel()
-	noErr(t, err, "ref snapshot during repack")
-	if during.Summary.DefaultOID != cached.Summary.DefaultOID || lock.Waiting() {
-		t.Fatalf("snapshot during repack %s, want %s without waiting", during.Summary.DefaultOID, cached.Summary.DefaultOID)
+	// The snapshot must come from the cache: a read that waits for the lock
+	// shows up as a waiter while repack holds it. The bound is a hang guard.
+	type snapshotResult struct {
+		snapshot RefSnapshot
+		err      error
+	}
+	read := make(chan snapshotResult, 1)
+	go func() {
+		snapshot, err := manager.RefSnapshot(context.Background(), "sample")
+		read <- snapshotResult{snapshot, err}
+	}()
+	var during snapshotResult
+	for bound := time.Now().Add(30 * time.Second); ; time.Sleep(time.Millisecond) {
+		select {
+		case during = <-read:
+		default:
+			if waiting := lock.Waiting(); waiting || time.Now().After(bound) {
+				close(release)
+				<-done
+				t.Fatalf("snapshot during repack did not return from the cache (waiting for the lock: %v)", waiting)
+			}
+			continue
+		}
+		break
+	}
+	noErr(t, during.err, "ref snapshot during repack")
+	if during.snapshot.Summary.DefaultOID != cached.Summary.DefaultOID || lock.Waiting() {
+		t.Fatalf("snapshot during repack %s, want %s without waiting", during.snapshot.Summary.DefaultOID, cached.Summary.DefaultOID)
 	}
 	close(release)
 	noErr(t, <-done, "maintenance")

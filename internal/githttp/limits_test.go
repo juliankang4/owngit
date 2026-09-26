@@ -122,27 +122,42 @@ func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) 
 	runner.TerminationGrace = 25 * time.Millisecond
 	server := httptest.NewServer(handler)
 	defer server.Close()
+	lock := manager.Locks.For("sample")
+	lock.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			lock.Unlock()
+		}
+	}()
 	connection, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
 	noErr(t, err)
 	defer connection.Close()
 	if _, err := io.WriteString(connection, "GET /git/sample.git/info/refs?service=git-upload-pack HTTP/1.1\r\nHost: example.test\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(time.Second)
+	// The operation lives only for its 75 ms deadline, which a late poll of
+	// Active can miss. Holding the repository keeps the counted operation
+	// waiting before its deadline starts, so the test sees it begin. The
+	// bounds below only keep a hung operation from hanging the test.
+	const bound = 30 * time.Second
+	deadline := time.Now().Add(bound)
 	for handler.Active() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if handler.Active() == 0 {
-		t.Fatal("endless response operation did not start")
+		t.Fatalf("endless response operation did not start within %s", bound)
 	}
-	deadline = time.Now().Add(2 * time.Second)
+	lock.Unlock()
+	locked = false
+	deadline = time.Now().Add(bound)
 	for handler.Active() != 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if active := handler.Active(); active != 0 {
-		t.Fatalf("write deadline left %d active Git operation(s)", active)
+		t.Fatalf("write deadline left %d active Git operation(s) after %s", active, bound)
 	}
-	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	waitContext, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
 	noErr(t, handler.Wait(waitContext), "Wait after stalled response")
 }

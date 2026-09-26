@@ -974,7 +974,9 @@ func TestMCPCancellationDuringRegistrationRecordsTheAttempt(t *testing.T) {
 		_, _ = writer.Write(recorder.Body.Bytes())
 	}))
 	t.Cleanup(proxy.Close)
-	session := startMCPSession(t, mcpOptions{server: proxy.URL, repository: "project", credentialFile: remoteFlags[6], acceptInsecureHTTP: true, workdir: work})
+	mcp, err := newMCPServer(context.Background(), mcpOptions{server: proxy.URL, repository: "project", credentialFile: remoteFlags[6], acceptInsecureHTTP: true, workdir: work, resultLimit: defaultMCPResultLimit})
+	noErr(t, err)
+	session := serveMCPSession(t, mcp)
 	session.send(`{"jsonrpc":"2.0","id":"run","method":"tools/call","params":{"name":"check_run","arguments":{"task":"` + taskID + `"}}}`)
 	select {
 	case <-registering:
@@ -982,8 +984,19 @@ func TestMCPCancellationDuringRegistrationRecordsTheAttempt(t *testing.T) {
 		t.Fatal("the registration did not arrive")
 	}
 	session.send(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"run"}}`)
-	// Give the cancellation time to reach the call, then answer.
-	time.Sleep(300 * time.Millisecond)
+	// Answer only once the cancellation has reached the call. The call cannot
+	// finish before the answer, so it is still registered.
+	cancelled := func() bool {
+		mcp.mu.Lock()
+		defer mcp.mu.Unlock()
+		call := mcp.calls[`"run"`]
+		return call != nil && call.cancelled
+	}
+	for bound := time.Now().Add(30 * time.Second); !cancelled(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(bound) {
+			t.Fatal("the cancellation did not reach the call within 30 seconds")
+		}
+	}
 	close(proceed)
 	deadline := time.Now().Add(30 * time.Second)
 	for {

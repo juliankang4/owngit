@@ -33,7 +33,8 @@ func TestStreamCancellationAfterStdoutEOFStillReapsProcess(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Stream error=%v, want deadline", err)
 	}
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
+	// The backend sleeps 60 seconds; 10 seconds only allows for a busy machine.
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("Stream took %v to reap a process after stdout EOF", elapsed)
 	}
 }
@@ -57,8 +58,10 @@ func TestStreamCancellationTerminatesOwnedProcessGroup(t *testing.T) {
 		done <- err
 	}()
 
+	// The bounds below are hang guards; the child sleeps 60 seconds, so a
+	// child left running still fails the last one.
 	var childPID int
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(pidFile)
 		if err == nil {
@@ -80,10 +83,10 @@ func TestStreamCancellationTerminatesOwnedProcessGroup(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Stream error=%v, want context cancellation", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("Stream did not return after cancellation")
 	}
-	deadline = time.Now().Add(2 * time.Second)
+	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		err := syscall.Kill(childPID, 0)
 		if errors.Is(err, syscall.ESRCH) {
@@ -128,7 +131,7 @@ func TestTerminateOwnedProcessReportsRealFailures(t *testing.T) {
 		_ = cmd.Process.Kill()
 		select {
 		case <-waitCh:
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Error("owned sleep did not finish during test cleanup")
 		}
 	})
@@ -139,7 +142,7 @@ func TestTerminateOwnedProcessReportsRealFailures(t *testing.T) {
 	select {
 	case waitErr = <-waitCh:
 		waited = true
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("terminated process was not reaped")
 	}
 	if waitErr == nil {

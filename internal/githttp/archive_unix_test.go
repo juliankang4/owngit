@@ -40,9 +40,10 @@ func slowArchiveGit(t *testing.T, handler *Handler) string {
 	return pidFile
 }
 
+// waitForPID waits for the fixture's PID file; the bound is a hang guard.
 func waitForPID(t *testing.T, pidFile string) int {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if content, err := os.ReadFile(pidFile); err == nil {
 			if pid, _ := strconv.Atoi(strings.TrimSpace(string(content))); pid > 0 {
@@ -55,9 +56,11 @@ func waitForPID(t *testing.T, pidFile string) int {
 	return 0
 }
 
+// requireProcessGone allows a busy machine 10 seconds; the fixture child
+// would otherwise sleep for 60.
 func requireProcessGone(t *testing.T, pid int) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
 			return
@@ -83,7 +86,7 @@ func TestArchiveCancellationStopsGit(t *testing.T) {
 	pid := waitForPID(t, pidFile)
 	cancel()
 	requireProcessGone(t, pid)
-	waitContext, waitCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	waitContext, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer waitCancel()
 	noErr(t, handler.Wait(waitContext), "wait for the archive operation")
 	if handler.Active() != 0 {

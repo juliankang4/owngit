@@ -42,6 +42,10 @@ func TestCoordinatorStartStopAndRestartReturn(t *testing.T) {
 		Store: store, Repositories: &repository.Manager{Store: store},
 		WorkspaceRoot: filepath.Join(root, "workspaces"), Interval: time.Hour,
 	}
+	// Start and Stop must return instead of running for the scheduler's
+	// lifetime. The bound only keeps a call that never returns from hanging
+	// the test; a busy machine may make startup work slow.
+	const bound = 30 * time.Second
 	for cycle := 0; cycle < 2; cycle++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		started := make(chan error, 1)
@@ -52,11 +56,11 @@ func TestCoordinatorStartStopAndRestartReturn(t *testing.T) {
 				cancel()
 				t.Fatalf("cycle %d start: %v", cycle, err)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(bound):
 			cancel()
-			t.Fatalf("cycle %d start did not return", cycle)
+			t.Fatalf("cycle %d start did not return within %s", cycle, bound)
 		}
-		stopContext, stopCancel := context.WithTimeout(context.Background(), time.Second)
+		stopContext, stopCancel := context.WithTimeout(context.Background(), bound)
 		if err := coordinator.Stop(stopContext); err != nil {
 			stopCancel()
 			cancel()

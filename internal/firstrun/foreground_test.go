@@ -169,7 +169,9 @@ func TestForegroundHelper(t *testing.T) {
 }
 
 // readFor runs the terminal reader on stdin for d, then closes done, and
-// reports whether the reader ended within a second and what it read.
+// reports whether the reader ended and what it read. The reader checks done
+// every readTick; the 10-second bound only separates a reader that ends from
+// one blocked in a read, however slow the machine is.
 func readFor(d time.Duration) string {
 	done := make(chan struct{})
 	input := make(chan []byte, 16)
@@ -177,7 +179,7 @@ func readFor(d time.Duration) string {
 	time.Sleep(d)
 	close(done)
 	read := 0
-	deadline := time.After(time.Second)
+	deadline := time.After(10 * time.Second)
 	for {
 		select {
 		case chunk, ok := <-input:

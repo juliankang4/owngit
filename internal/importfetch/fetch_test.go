@@ -521,7 +521,24 @@ func TestBoundedReadersConsumeOnlyOneOverflowByte(t *testing.T) {
 	}
 }
 
+// The total deadline also stops a consumer that is still reading the pack.
+// The deadline starts with the fetch, so on a busy machine it can pass
+// before the pack reaches the consumer. Such an attempt shows nothing about
+// the consumer and is repeated with a longer deadline.
 func TestFetchCancellationCoversConsumer(t *testing.T) {
+	for timeout := 100 * time.Millisecond; !fetchCancellationCoversConsumer(t, timeout); timeout *= 4 {
+		if timeout >= 10*time.Second {
+			t.Fatalf("the pack never reached the consumer before a %s deadline", timeout)
+		}
+		t.Logf("the %s deadline passed before the pack reached the consumer; trying a longer one", timeout)
+	}
+}
+
+// fetchCancellationCoversConsumer runs one attempt and reports whether the
+// consumer was reading when the deadline passed. The waits are hang guards.
+func fetchCancellationCoversConsumer(t *testing.T, timeout time.Duration) bool {
+	t.Helper()
+	const bound = 10 * time.Second
 	postStarted := make(chan struct{})
 	serverCanceled := make(chan struct{})
 	handlerDone := make(chan struct{})
@@ -534,7 +551,7 @@ func TestFetchCancellationCoversConsumer(t *testing.T) {
 		close(postStarted)
 		defer close(handlerDone)
 		if _, err := io.Copy(io.Discard, request.Body); err != nil {
-			t.Errorf("consume upload request body: %v", err)
+			// The deadline can end the request while its body is read.
 			return true
 		}
 		_ = request.Body.Close()
@@ -557,34 +574,40 @@ func TestFetchCancellationCoversConsumer(t *testing.T) {
 		case <-postStarted:
 			select {
 			case <-handlerDone:
-			case <-time.After(time.Second):
+			case <-time.After(bound):
 				t.Errorf("cancellation fixture handler did not stop during cleanup")
 			}
 		default:
 		}
 	})
-	request.Limits.TotalTimeout = 100 * time.Millisecond
+	request.Limits.TotalTimeout = timeout
+	consuming := false
 	_, err := Fetch(context.Background(), request, func(ctx context.Context, _ *importgit.Advertisement, reader io.Reader) error {
 		var signature [4]byte
 		if _, readErr := io.ReadFull(reader, signature[:]); readErr != nil {
 			return readErr
 		}
+		consuming = true
 		<-ctx.Done()
 		return ctx.Err()
 	})
+	if !consuming {
+		return false
+	}
 	if !errors.Is(err, ErrConsumer) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("error = %v, want bounded consumer deadline", err)
 	}
 	select {
 	case <-serverCanceled:
-	case <-time.After(time.Second):
+	case <-time.After(bound):
 		t.Error("source request context was not canceled after the fetch deadline")
 	}
 	select {
 	case <-handlerDone:
-	case <-time.After(time.Second):
+	case <-time.After(bound):
 		t.Error("canceled source handler did not exit")
 	}
+	return true
 }
 
 func TestEndpointPreservesRepositoryPathEscaping(t *testing.T) {

@@ -38,8 +38,10 @@ func TestClientCancellationReapsBackendProcessTreeBeforeReleasingSlot(t *testing
 		close(done)
 	}()
 
+	// The bounds below are hang guards; the child sleeps 60 seconds, so a
+	// child left running still fails the last one.
 	var childPID int
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		content, err := os.ReadFile(pidFile)
 		if err == nil {
@@ -58,16 +60,16 @@ func TestClientCancellationReapsBackendProcessTreeBeforeReleasingSlot(t *testing
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("handler did not return after cancellation")
 	}
 	if handler.Active() != 0 {
 		t.Fatalf("handler released response but still reports %d active process(es)", handler.Active())
 	}
-	waitContext, waitCancel := context.WithTimeout(context.Background(), time.Second)
+	waitContext, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer waitCancel()
 	noErr(t, handler.Wait(waitContext), "wait for owned Git operations")
-	deadline = time.Now().Add(2 * time.Second)
+	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := syscall.Kill(childPID, 0); errors.Is(err, syscall.ESRCH) {
 			return
@@ -109,7 +111,10 @@ func TestAbandonedOperationWithStalledUploadReturnsPromptly(t *testing.T) {
 			handler.Authorize = func(*http.Request) bool { return true }
 			handler.MaximumResponse = 16
 			handler.MaximumRequest = test.maximumRequest
-			handler.OperationTimeout = 5 * time.Second
+			// A handler that waited for the operation deadline would take 30
+			// seconds, far beyond the 10-second bound below, however slowly a
+			// busy machine starts the backend.
+			handler.OperationTimeout = 30 * time.Second
 			returned := make(chan time.Time, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				handler.ServeHTTP(writer, request)
@@ -126,10 +131,10 @@ func TestAbandonedOperationWithStalledUploadReturnsPromptly(t *testing.T) {
 			noErr(t, err)
 			select {
 			case finished := <-returned:
-				if elapsed := finished.Sub(started); elapsed > 2*time.Second {
-					t.Fatalf("handler returned after %s, want well before the 5s operation deadline", elapsed)
+				if elapsed := finished.Sub(started); elapsed > 10*time.Second {
+					t.Fatalf("handler returned after %s, want well before the %s operation deadline", elapsed, handler.OperationTimeout)
 				}
-			case <-time.After(10 * time.Second):
+			case <-time.After(60 * time.Second):
 				t.Fatal("handler did not return")
 			}
 			if handler.Active() != 0 {

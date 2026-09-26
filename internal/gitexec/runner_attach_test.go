@@ -184,10 +184,15 @@ func TestRunAttachmentFailureKeepsOrDropsCopiedOutput(t *testing.T) {
 		unblock := func() { releaseOnce.Do(func() { close(release) }) }
 		child := &exactChild{}
 		child.installCleanup(t, unblock)
+		// The bound is measured from the start of cleanup, once the output
+		// arrived, so a slow process start does not count against it.
+		var cleanupStarted time.Time
 		runner.processSeam = &processCleanupSeam{
 			attachFunc: child.attachFailure(attachErr),
 			killFunc: child.killFailure(killErr, func(*exec.Cmd) error {
-				return waitForCopiedOutput(stdoutReady)
+				err := waitForCopiedOutput(stdoutReady)
+				cleanupStarted = time.Now()
+				return err
 			}),
 			waitFunc: func(cmd *exec.Cmd) error {
 				defer close(finished)
@@ -197,16 +202,15 @@ func TestRunAttachmentFailureKeepsOrDropsCopiedOutput(t *testing.T) {
 				return errors.Join(waitErr, child.reap(cmd))
 			},
 		}
-		started := time.Now()
 		result, err := runner.RunWithLimits(context.Background(), t.TempDir(), nil, CommandLimits{
 			Timeout: 2 * time.Second, Environment: []string{streamFixtureEnv + "=hold-stdout"},
 		})
-		if time.Since(started) > 3*time.Second {
-			t.Fatalf("pending cleanup exceeded its bound: %s", time.Since(started))
+		if elapsed := time.Since(cleanupStarted); cleanupStarted.IsZero() || elapsed > 3*time.Second {
+			t.Fatalf("pending cleanup exceeded its bound: started=%v elapsed=%s", !cleanupStarted.IsZero(), elapsed)
 		}
 		select {
 		case <-entered:
-		case <-time.After(3 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("controlled wait was not entered")
 		}
 		if errors.Is(err, errOutputNotReady) {
@@ -227,7 +231,7 @@ func TestRunAttachmentFailureKeepsOrDropsCopiedOutput(t *testing.T) {
 		unblock()
 		select {
 		case <-finished:
-		case <-time.After(3 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("delayed wait was not rejoined after release")
 		}
 	})
@@ -291,7 +295,7 @@ func TestStreamAttachmentFailureSkipsConsumer(t *testing.T) {
 				unblock()
 				select {
 				case <-finished:
-				case <-time.After(3 * time.Second):
+				case <-time.After(10 * time.Second):
 					t.Fatal("delayed wait was not rejoined after release")
 				}
 				return

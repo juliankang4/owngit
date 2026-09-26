@@ -18,11 +18,13 @@ import (
 // TestStreamEarlyConsumerErrorReapsBeforeTermination reproduces the Linux
 // ordering defect: terminating an unreaped group leader keeps the group alive
 // through both grace periods. Wait must start before termination so the leader
-// is reaped first.
+// is reaped first. The defect waits out both grace intervals; the correct
+// order returns at once, so a long grace keeps the two far apart on a busy
+// machine.
 func TestStreamEarlyConsumerErrorReapsBeforeTermination(t *testing.T) {
 	root := t.TempDir()
 	runner := streamTestRunner(t, root)
-	runner.TerminationGrace = 500 * time.Millisecond
+	runner.TerminationGrace = 5 * time.Second
 	pidFile := filepath.Join(root, "backend.pid")
 	script := filepath.Join(root, "backend")
 	content := "#!/bin/sh\nprintf '%s' \"$$\" > " + shellEscape(pidFile) + "\nprintf 'ready\\n'\nexec sleep 60\n"
@@ -42,8 +44,8 @@ func TestStreamEarlyConsumerErrorReapsBeforeTermination(t *testing.T) {
 		t.Fatalf("Stream error=%v, want consumer sentinel", err)
 	}
 	t.Logf("abort path returned after %v", abortElapsed)
-	if abortElapsed > 400*time.Millisecond {
-		t.Fatalf("abort path took %v; Wait must reap the leader before termination", abortElapsed)
+	if abortElapsed > runner.TerminationGrace {
+		t.Fatalf("abort path took %v, a grace interval of %v or more; Wait must reap the leader before termination", abortElapsed, runner.TerminationGrace)
 	}
 	waitForStreamGroupGone(t, readStreamPID(t, pidFile))
 }
@@ -94,7 +96,7 @@ func TestStreamCancellationWithPipeHoldingDescendantTerminatesOnce(t *testing.T)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Stream error=%v, want context cancellation", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("Stream did not return after cancellation")
 	}
 	if terminations != 1 {
@@ -104,9 +106,10 @@ func TestStreamCancellationWithPipeHoldingDescendantTerminatesOnce(t *testing.T)
 	waitForStreamProcessGone(t, readStreamPID(t, childPIDFile))
 }
 
+// readStreamPID waits for a fixture's PID file; the bound is a hang guard.
 func readStreamPID(t *testing.T, path string) int {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(path)
 		if err == nil {
@@ -121,9 +124,11 @@ func readStreamPID(t *testing.T, path string) int {
 	return 0
 }
 
+// waitForStreamProcessGone and waitForStreamGroupGone allow a busy machine 10
+// seconds; the fixtures they watch would otherwise sleep for 60.
 func waitForStreamProcessGone(t *testing.T, pid int) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
 			return
@@ -135,7 +140,7 @@ func waitForStreamProcessGone(t *testing.T, pid int) {
 
 func waitForStreamGroupGone(t *testing.T, pgid int) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := syscall.Kill(-pgid, 0); errors.Is(err, syscall.ESRCH) {
 			return

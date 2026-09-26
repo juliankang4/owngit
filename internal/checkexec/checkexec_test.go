@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -132,7 +133,11 @@ func TestRunBoundsWaitWhenTerminationFails(t *testing.T) {
 		}
 	})
 
-	command := "ping -n 3 127.0.0.1"
+	// The process tree lives for about 30 seconds unless it is stopped, so a
+	// Run that waited for it could not return within the 10-second bound
+	// below, however slowly the machine starts processes.
+	const treeLifetime, runBound = 30 * time.Second, 10 * time.Second
+	command := "ping -n 30 127.0.0.1"
 	var childPID int
 	var leakMarker string
 	if runtime.GOOS != "windows" {
@@ -143,11 +148,13 @@ func TestRunBoundsWaitWhenTerminationFails(t *testing.T) {
 			return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 		}
 		command = fmt.Sprintf(
-			"(sleep 1; printf leaked > %s) & child=$!; printf '%%s' \"$child\" > %s; wait \"$child\"",
-			quote(leakMarker), quote(childPIDPath),
+			"(sleep %d; printf leaked > %s) & child=$!; printf '%%s' \"$child\" > %s; wait \"$child\"",
+			int(treeLifetime.Seconds()), quote(leakMarker), quote(childPIDPath),
 		)
+		// The observer waits until the shell has started its background
+		// child; the bound only keeps a broken fixture from hanging.
 		ownedProcessStartedObserver = func() error {
-			deadline := time.Now().Add(300 * time.Millisecond)
+			deadline := time.Now().Add(30 * time.Second)
 			for time.Now().Before(deadline) {
 				data, err := os.ReadFile(childPIDPath)
 				if err == nil {
@@ -183,8 +190,8 @@ func TestRunBoundsWaitWhenTerminationFails(t *testing.T) {
 	}
 	cleaned = true
 
-	if elapsed > 750*time.Millisecond {
-		t.Fatalf("termination failure left Run waiting for %v", elapsed)
+	if elapsed > runBound {
+		t.Fatalf("termination failure left Run waiting for %v, want less than %v of a %v process tree", elapsed, runBound, treeLifetime)
 	}
 	if cancelled || len(results) != 1 || results[0].Status != StatusError {
 		t.Fatalf("timeout results=%+v cancelled=%v", results, cancelled)
@@ -205,10 +212,30 @@ func TestRunBoundsWaitWhenTerminationFails(t *testing.T) {
 				t.Fatalf("cleanup error %q does not contain %q", results[0].CleanupError, message)
 			}
 		}
-		time.Sleep(time.Until(started.Add(1200 * time.Millisecond)))
-		if _, err := os.Stat(leakMarker); !os.IsNotExist(err) {
-			t.Fatalf("owned background child %d survived cleanup: %v", childPID, err)
+		// The real cleanup above stopped the group; the child must be gone
+		// without having written its marker.
+		if alive := processAliveAfter(childPID, 10*time.Second); alive {
+			t.Fatalf("owned background child %d survived cleanup", childPID)
 		}
+		if _, err := os.Stat(leakMarker); !os.IsNotExist(err) {
+			t.Fatalf("owned background child %d wrote its marker: %v", childPID, err)
+		}
+	}
+}
+
+// processAliveAfter waits up to bound for a Unix process to be gone and
+// reports whether it was still running then.
+func processAliveAfter(pid int, bound time.Duration) bool {
+	deadline := time.Now().Add(bound)
+	for {
+		process, err := os.FindProcess(pid)
+		if err != nil || process.Signal(syscall.Signal(0)) != nil {
+			return false
+		}
+		if time.Now().After(deadline) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

@@ -48,7 +48,7 @@ func TestRunFailedAttachmentDoesNotOutliveBorrowedStdin(t *testing.T) {
 		}
 		select {
 		case <-waitFinished:
-		case <-time.After(3 * time.Second):
+		case <-time.After(10 * time.Second):
 		}
 	})
 	var returned atomic.Bool
@@ -71,7 +71,7 @@ func TestRunFailedAttachmentDoesNotOutliveBorrowedStdin(t *testing.T) {
 	unblock()
 	select {
 	case <-waitFinished:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("real Wait did not finish after releasing the input fixture")
 	}
 	if !errors.Is(err, attachErr) {

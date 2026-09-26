@@ -33,27 +33,36 @@ func TestNetworkShowAfterKill9WithAForeignLockHolder(t *testing.T) {
 	child := exec.Command(os.Args[0], "-test.run=^TestNetworkServeHelperProcess$")
 	child.Env = append(os.Environ(), "OWNGIT_NETWORK_SERVE_HELPER_STATE="+stateDir)
 	noErr(t, child.Start())
+	exited := make(chan error, 1)
+	go func() { exited <- child.Wait() }()
 	killed := false
 	t.Cleanup(func() {
 		if !killed {
 			_ = child.Process.Kill()
-			_ = child.Wait()
+			<-exited
 		}
 	})
-	deadline := time.Now().Add(30 * time.Second)
+	// Wait until the helper reports running, however slowly a busy machine
+	// starts it. A helper that exits instead failed to start; the bound only
+	// keeps a hung start from reaching the test binary's timeout.
+	bound := time.After(2 * time.Minute)
 	for {
 		if _, err := os.Stat(filepath.Join(stateDir, "owngit.sqlite")); err == nil {
 			if report := networkJSON(t, stateDir); report.Server == "running" && report.Running.PID == child.Process.Pid {
 				break
 			}
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("the helper server did not report running")
+		select {
+		case err := <-exited:
+			killed = true
+			t.Fatalf("the helper server exited before it reported running: %v", err)
+		case <-bound:
+			t.Fatal("the helper server did not report running within 2 minutes")
+		case <-time.After(50 * time.Millisecond):
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 	noErr(t, child.Process.Kill())
-	_ = child.Wait()
+	<-exited
 	killed = true
 
 	release, err := state.AcquireOfflineLock(stateDir)

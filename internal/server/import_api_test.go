@@ -263,27 +263,49 @@ func TestImportRunRouteOutlivesOrdinaryDeadline(t *testing.T) {
 		t.Fatalf("slow import did not outlive the ordinary deadline: status=%d body=%s", created.StatusCode, body)
 	}
 
+	// The observer runs once the request's deadline is set, so it reads the
+	// deadline itself instead of timing how long the request takes to end.
+	// The bound only keeps a request that never ends from hanging the test.
+	type observedDeadline struct {
+		remaining time.Duration
+		set       bool
+	}
+	observedDeadlines := make(chan observedDeadline, 1)
 	finished := make(chan struct{})
 	fixture.app.requestObserver = func(request *http.Request) {
 		if request.URL.Path == "/setup" {
+			observed := time.Now()
+			deadline, set := request.Context().Deadline()
+			observedDeadlines <- observedDeadline{remaining: deadline.Sub(observed), set: set}
 			<-request.Context().Done()
 			close(finished)
 		}
 	}
-	started := time.Now()
+	// A failing check must not leave the server waiting for a long deadline.
+	clientContext, cancelClient := context.WithCancel(context.Background())
+	defer cancelClient()
 	go func() {
-		response, err := http.Get(server.URL + "/setup")
-		if err == nil {
+		request, err := http.NewRequestWithContext(clientContext, http.MethodGet, server.URL+"/setup", nil)
+		if err != nil {
+			return
+		}
+		if response, err := http.DefaultClient.Do(request); err == nil {
 			response.Body.Close()
 		}
 	}()
+	var observed observedDeadline
+	select {
+	case observed = <-observedDeadlines:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the ordinary request did not arrive")
+	}
+	if !observed.set || observed.remaining > fixture.app.HTTPTimeout {
+		t.Fatalf("ordinary route deadline set=%v was %s away, want at most %s", observed.set, observed.remaining, fixture.app.HTTPTimeout)
+	}
 	select {
 	case <-finished:
-		if elapsed := time.Since(started); elapsed > 2*time.Second {
-			t.Fatalf("ordinary route kept the import deadline: %s", elapsed)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("ordinary route did not time out at the short deadline")
+	case <-time.After(30 * time.Second):
+		t.Fatal("ordinary route did not time out at its deadline")
 	}
 }
 

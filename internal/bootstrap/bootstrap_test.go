@@ -106,7 +106,7 @@ func TestCompletionBarrierPreventsLateCapabilityPublication(t *testing.T) {
 		if !errors.Is(err, state.ErrSetupComplete) {
 			t.Fatalf("late Issue error=%v, want setup complete", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("late Issue did not cross the completion barrier")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
