@@ -3,11 +3,13 @@ package server
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
 
 	"owngit/internal/requestctx"
+	"owngit/internal/webui"
 )
 
 type HostPolicy struct {
@@ -45,9 +47,15 @@ func (policy *HostPolicy) Remove(value string) {
 	policy.mu.Unlock()
 }
 
-func (policy *HostPolicy) Allows(requestHost string) bool {
+// Allows reports whether the policy accepts requestHost on a connection from
+// peer, the raw address of the connection's other end (requestctx.Info.Peer,
+// never a forwarded client address). A name that points at this computer,
+// such as localhost, 127.0.0.1 or ::1, is accepted only when peer is a
+// loopback address: any device can send it as Host, and only this computer's
+// own connections, including a proxy or Tailscale Serve running here, use it.
+func (policy *HostPolicy) Allows(requestHost, peer string) bool {
 	host, err := normalizeHost(requestHost)
-	if err != nil {
+	if err != nil || loopbackName(host) && !loopbackPeer(peer) {
 		return false
 	}
 	policy.mu.RLock()
@@ -65,11 +73,11 @@ func (policy *HostPolicy) Middleware(next http.Handler) http.Handler {
 // Origin check and the security headers apply either way.
 func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if !policy.Allows(requestctx.Of(request).Host) && (admit == nil || !admit(request)) {
+		if info := requestctx.Of(request); !policy.Allows(info.Host, info.Peer) && (admit == nil || !admit(request)) {
 			if strings.HasPrefix(request.URL.Path, "/api/") {
 				writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
 			} else {
-				http.Error(writer, "unrecognized host", http.StatusMisdirectedRequest)
+				http.Error(writer, "unrecognized host\n"+webui.Text(refusedHostLang(request), webui.MsgHostRefusedHint), http.StatusMisdirectedRequest)
 			}
 			return
 		}
@@ -87,6 +95,38 @@ func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) bool, ne
 		writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		next.ServeHTTP(writer, request)
 	})
+}
+
+// refusedHostLang is the language of the refused-Host page: the saved
+// language choice for this address, if any, otherwise the default.
+func refusedHostLang(request *http.Request) webui.Lang {
+	if cookie, err := request.Cookie(languageCookie); err == nil {
+		if lang, valid := webui.ParseLang(cookie.Value); valid {
+			return lang
+		}
+	}
+	return webui.DefaultLang
+}
+
+// loopbackName reports whether a normalized Host names this computer itself:
+// localhost, a name under localhost, or a loopback IP address. normalizeHost
+// has already turned an IPv4-mapped IPv6 address into its IPv4 form.
+func loopbackName(host string) bool {
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	address, err := netip.ParseAddr(host)
+	return err == nil && address.Unmap().IsLoopback()
+}
+
+// loopbackPeer reports whether a connection's raw peer address, with or
+// without a port, is a loopback address, IPv4-mapped IPv6 included.
+func loopbackPeer(peer string) bool {
+	if host, _, err := net.SplitHostPort(peer); err == nil {
+		peer = host
+	}
+	address, err := netip.ParseAddr(peer)
+	return err == nil && address.Unmap().IsLoopback()
 }
 
 // refuseFunnel refuses every request that carries Tailscale's Funnel header.

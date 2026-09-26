@@ -279,8 +279,9 @@ put a TLS-terminating proxy in front of it. `--ca-file /path/to/private-ca.pem`
 trusts a private certificate authority in addition to the system roots. The
 proxy must:
 
-- send a Host that OwnGit accepts: `localhost`, `127.0.0.1`, `::1`, or a name approved with
-  `--allowed-host` or `approve-host` (see
+- send a Host that OwnGit accepts: a name approved with `--allowed-host`
+  or `approve-host`, or `localhost`, `127.0.0.1` or `::1` when the proxy runs
+  on the same computer as OwnGit (see
   [Reaching the server from another device](OPERATIONS.md#reaching-the-server-from-another-device));
 - pass large request and response bodies without a size cap.
 

@@ -719,7 +719,7 @@ func TestTurningOnAfterARenameMovesToTheNewName(t *testing.T) {
 		record == nil || record.AddedHost != renamed || record.AddedProxy != loopbackProxy {
 		t.Fatalf("after moving: base URL %q, hosts %v, proxies %v, record %+v", settings.BaseURL, hosts, proxies, record)
 	}
-	if app.Hosts.Allows(tailscaletest.Name) || !app.Hosts.Allows(renamed) || app.Network.TailscaleName() != renamed {
+	if app.Hosts.Allows(tailscaletest.Name, remotePeer) || !app.Hosts.Allows(renamed, remotePeer) || app.Network.TailscaleName() != renamed {
 		t.Fatal("the running server does not follow the new name")
 	}
 	report, err := app.Tailscale.Report(ctx)

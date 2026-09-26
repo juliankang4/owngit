@@ -17,6 +17,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/requestctx"
+	"owngit/internal/webui"
 )
 
 func TestStalledOrdinaryFormTimesOutAndShutdownCompletes(t *testing.T) {
@@ -183,5 +184,179 @@ func forwardedHeadersChangeNothing(t *testing.T, trusted []netip.Prefix) {
 		if err := app.Auth.VerifyCredential(context.Background(), "admin", "admin-password", "203.0.113."+strconv.Itoa(attempt)); err != nil {
 			t.Fatalf("forwarded address 203.0.113.%d was charged: %v", attempt, err)
 		}
+	}
+}
+
+// remotePeer is the address of a connection from another device, the one
+// httptest.NewRequest gives by default.
+const remotePeer = "192.0.2.1:1234"
+
+// Host values that name this computer, in the forms a client can send.
+var loopbackHostValues = []string{
+	"localhost", "LOCALHOST", "localhost.", "localhost:7654", "LocalHost.:7654",
+	"127.0.0.1", "127.0.0.1:7654", "127.0.0.1.:7654",
+	"::1", "[::1]", "[::1]:7654", "[0:0:0:0:0:0:0:1]:7654",
+	"[::ffff:127.0.0.1]:7654", "::ffff:7f00:1",
+}
+
+// Peers of connections that do not come from this computer.
+var nonLoopbackPeers = []string{
+	remotePeer, "10.0.0.5:40000", "[2001:db8::5]:40000", "[fe80::1%eth0]:40000",
+	"[::ffff:192.0.2.1]:40000", "192.0.2.1", "", "not-an-address",
+}
+
+// Any device can send Host: localhost, so a name that points at this computer
+// is accepted only from a connection that comes from this computer.
+func TestLoopbackHostNamesAreAcceptedOnlyFromLoopbackPeers(t *testing.T) {
+	policy := NewHostPolicy("gitbox.lan", "dev.localhost", "127.0.0.2")
+	names := append([]string{"dev.localhost:7654", "127.0.0.2:7654"}, loopbackHostValues...)
+	for _, name := range names {
+		for _, peer := range nonLoopbackPeers {
+			if policy.Allows(name, peer) {
+				t.Errorf("Host %q from peer %q is accepted", name, peer)
+			}
+		}
+		for _, peer := range []string{"127.0.0.1:40000", "127.0.0.2:40000", "[::1]:40000", "[::ffff:127.0.0.1]:40000", "::1"} {
+			if !policy.Allows(name, peer) {
+				t.Errorf("Host %q from loopback peer %q is refused", name, peer)
+			}
+		}
+	}
+	// Other names do not depend on the peer.
+	for _, peer := range append([]string{"127.0.0.1:40000"}, nonLoopbackPeers...) {
+		if !policy.Allows("GitBox.lan:7654", peer) || policy.Allows("attacker.invalid", peer) {
+			t.Errorf("peer %q changed the answer for a name that is not loopback", peer)
+		}
+	}
+	// Removing a loopback name keeps it for this computer.
+	policy.Remove("localhost")
+	if !policy.Allows("localhost", "127.0.0.1:40000") {
+		t.Fatal("Remove dropped localhost")
+	}
+}
+
+// A device that sends a loopback Host is refused on every path, before and
+// after setup, even in open access mode where Git needs no password. The
+// loopback peer and a kept name from another device still work.
+func TestRemotePeerWithLoopbackHostIsRefused(t *testing.T) {
+	for _, initialized := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before setup", true: "after setup"}[initialized], func(t *testing.T) {
+			var app *App
+			if initialized {
+				app = newConfiguredApp(t)
+				_, err := app.Repositories.Create(context.Background(), "demo", "")
+				noErr(t, err)
+			} else {
+				app, _, _ = newTestApp(t)
+				app.Version = "9.9.9-test"
+			}
+			app.Hosts = NewHostPolicy("gitbox.lan")
+			handler := app.Handler()
+			send := func(path, host, peer string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+				request := httptest.NewRequest(http.MethodGet, path, nil)
+				request.Host, request.RemoteAddr = host, peer
+				for _, cookie := range cookies {
+					request.AddCookie(cookie)
+				}
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				return response
+			}
+			gitRefs := "/git/demo.git/info/refs?service=git-upload-pack"
+			for _, host := range loopbackHostValues {
+				for _, peer := range nonLoopbackPeers {
+					for _, path := range []string{"/", "/api/v1/repositories", gitRefs, "/healthz", "/settings", "/login"} {
+						if response := send(path, host, peer); response.Code != http.StatusMisdirectedRequest {
+							t.Fatalf("GET %s with Host %q from %q: status=%d, want 421", path, host, peer, response.Code)
+						}
+					}
+				}
+			}
+
+			page := send("/", "localhost", remotePeer)
+			if body := page.Body.String(); !strings.HasPrefix(body, "unrecognized host\n") || !strings.Contains(body, webui.Text(webui.LangEN, webui.MsgHostRefusedHint)) {
+				t.Fatalf("refused page does not say how to allow the address:\n%s", body)
+			}
+			korean := send("/", "localhost", remotePeer, &http.Cookie{Name: languageCookie, Value: string(webui.LangKO)})
+			if !strings.Contains(korean.Body.String(), webui.Text(webui.LangKO, webui.MsgHostRefusedHint)) {
+				t.Fatalf("refused page ignores the Korean language choice:\n%s", korean.Body.String())
+			}
+			if api := send("/api/v1/repositories", "localhost", remotePeer); !strings.Contains(api.Body.String(), `"unrecognized_host"`) {
+				t.Fatalf("API refusal body: %s", api.Body.String())
+			}
+
+			// This computer and a kept name keep working.
+			for _, host := range []string{"localhost:7654", "[::1]:7654"} {
+				if response := send("/", host, "127.0.0.1:40000"); response.Code == http.StatusMisdirectedRequest {
+					t.Fatalf("GET / with Host %q from this computer: status=%d", host, response.Code)
+				}
+			}
+			if response := send("/", "gitbox.lan:7654", remotePeer); response.Code == http.StatusMisdirectedRequest {
+				t.Fatalf("GET / with a kept Host from another device: status=%d", response.Code)
+			}
+			if initialized {
+				for _, request := range []struct{ host, peer string }{{"localhost:7654", "[::1]:40000"}, {"gitbox.lan:7654", remotePeer}} {
+					if response := send(gitRefs, request.host, request.peer); response.Code != http.StatusOK {
+						t.Fatalf("Git from Host %q and peer %q: status=%d, want 200", request.host, request.peer, response.Code)
+					}
+				}
+				return
+			}
+			// Before setup, the setup link works from a loopback Host as from
+			// any other unknown Host: a redemption page that reveals nothing.
+			setup := send("/setup", "localhost:7654", remotePeer)
+			if body := setup.Body.String(); setup.Code != http.StatusOK || !strings.Contains(body, `action="/setup/redeem"`) ||
+				strings.Contains(body, "9.9.9-test") || strings.Contains(body, "git version test") {
+				t.Fatalf("setup from another device with Host localhost: status=%d\n%s", setup.Code, body)
+			}
+			if local := send("/setup", "localhost:7654", "127.0.0.1:40000"); !strings.Contains(local.Body.String(), "9.9.9-test") {
+				t.Fatalf("setup on this computer lost the full page: status=%d", local.Code)
+			}
+		})
+	}
+}
+
+// A trusted proxy on this computer, such as Tailscale Serve or a local
+// reverse proxy, connects from loopback and may pass a loopback Host. A
+// trusted proxy on another computer is judged by its own address: its kept
+// Host works, a loopback Host is refused, and its X-Forwarded-Host cannot
+// choose a loopback name.
+func TestTrustedProxiesAndLoopbackHosts(t *testing.T) {
+	app := newConfiguredApp(t)
+	app.Hosts = NewHostPolicy("gitbox.lan")
+	app.Requests = requestctx.Resolver{
+		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32"), netip.MustParsePrefix("10.0.0.5/32")},
+		HostAllowed:    app.Hosts.Allows,
+	}
+	handler := app.Handler()
+	send := func(host, peer string, headers ...string) int {
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Host, request.RemoteAddr = host, peer
+		for index := 0; index+1 < len(headers); index += 2 {
+			request.Header.Set(headers[index], headers[index+1])
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+	forwarded := []string{"X-Forwarded-For", "203.0.113.9", "X-Forwarded-Proto", "https"}
+	if status := send("localhost:7654", "127.0.0.1:40000", forwarded...); status == http.StatusMisdirectedRequest {
+		t.Fatalf("local proxy with Host localhost: status=%d", status)
+	}
+	if status := send("gitbox.lan", "10.0.0.5:40000", forwarded...); status == http.StatusMisdirectedRequest {
+		t.Fatalf("remote proxy with its kept Host: status=%d", status)
+	}
+	if status := send("localhost", "10.0.0.5:40000", forwarded...); status != http.StatusMisdirectedRequest {
+		t.Fatalf("remote proxy with Host localhost: status=%d, want 421", status)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Host, request.RemoteAddr = "gitbox.lan", "10.0.0.5:40000"
+	request.Header.Set("X-Forwarded-Host", "localhost")
+	if host := app.Requests.Resolve(request).Host; host != "gitbox.lan" {
+		t.Fatalf("remote proxy's X-Forwarded-Host chose %q", host)
+	}
+	request.RemoteAddr = "127.0.0.1:40000"
+	if host := app.Requests.Resolve(request).Host; host != "localhost" {
+		t.Fatalf("local proxy's X-Forwarded-Host localhost was ignored: %q", host)
 	}
 }

@@ -169,7 +169,7 @@ owngit runner \
 
 `runner`와 `runner-credential`은 HTTPS가 필요합니다. OwnGit은 일반 HTTP로 동작하므로 앞에 TLS를 처리하는 프록시를 두세요. `--ca-file /path/to/private-ca.pem`을 쓰면 시스템 루트에 더해 비공개 인증 기관도 신뢰합니다. 프록시는 다음 조건을 지켜야 합니다.
 
-- OwnGit이 받아들이는 Host를 보내야 합니다. `localhost`, `127.0.0.1`, `::1`, 또는 `--allowed-host`나 `approve-host`로 승인한 이름입니다([다른 기기에서 서버에 접속하기](OPERATIONS.ko.md#다른-기기에서-서버에-접속하기) 참고).
+- OwnGit이 받아들이는 Host를 보내야 합니다. `--allowed-host`나 `approve-host`로 승인한 이름이거나, 프록시가 OwnGit과 같은 컴퓨터에서 실행되면 `localhost`, `127.0.0.1`, `::1`도 됩니다([다른 기기에서 서버에 접속하기](OPERATIONS.ko.md#다른-기기에서-서버에-접속하기) 참고).
 - 큰 요청 본문과 응답 본문을 크기 제한 없이 전달해야 합니다.
 
 OwnGit은 HTTPS 프록시를 거쳐 들어온 브라우저 변경을 거부합니다. 프록시는 러너용으로 쓰고 브라우저 화면은 직접 여세요. `--accept-insecure-http`를 붙인 일반 HTTP는 루프백 주소에서만 받아들입니다.

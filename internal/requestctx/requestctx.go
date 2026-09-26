@@ -52,10 +52,11 @@ type Resolver struct {
 	// TrustedProxies are the peers whose forwarded headers are believed.
 	// Nothing is trusted by default, not even loopback addresses.
 	TrustedProxies []netip.Prefix
-	// HostAllowed reports whether the Host check accepts a Host. A trusted
-	// proxy's X-Forwarded-Host is used only when it accepts both that value
-	// and the request's own Host; nil ignores that header.
-	HostAllowed func(host string) bool
+	// HostAllowed reports whether the Host check accepts a Host on a
+	// connection from peer, the raw connection address. A trusted proxy's
+	// X-Forwarded-Host is used only when it accepts both that value and the
+	// request's own Host; nil ignores that header.
+	HostAllowed func(host, peer string) bool
 }
 
 // Resolve derives the Info of request. When the raw peer is a trusted proxy,
@@ -86,7 +87,7 @@ func (resolver Resolver) Resolve(request *http.Request) Info {
 	if client, ok := lastForwardedFor(request.Header); ok {
 		info.ClientAddress = client
 	}
-	if host, ok := singleValue(request.Header, "X-Forwarded-Host"); ok && resolver.HostAllowed != nil && resolver.HostAllowed(info.Host) && resolver.HostAllowed(host) {
+	if host, ok := singleValue(request.Header, "X-Forwarded-Host"); ok && resolver.HostAllowed != nil && resolver.HostAllowed(info.Host, info.Peer) && resolver.HostAllowed(host, info.Peer) {
 		info.Host = host
 	}
 	return info

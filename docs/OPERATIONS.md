@@ -62,7 +62,7 @@ owngit serve \
   --no-open
 ```
 
-The server accepts only requests whose Host is `localhost`, `127.0.0.1`, `::1`, or an approved name. `--allowed-host` is repeatable. To approve another name permanently, run this on the installation host and restart the server:
+The server accepts only requests whose Host is an approved name, or `localhost`, `127.0.0.1` or `::1` from this computer. A request from another device with one of those three names gets "unrecognized host", because any device can send them. `--allowed-host` is repeatable. To approve another name permanently, run this on the installation host and restart the server:
 
 ```sh
 owngit approve-host gitbox.internal
@@ -87,7 +87,7 @@ When you finish web setup from another device by a name that OwnGit accepts only
 
 `set` prints a note when the listen address leaves this computer, because other devices then use plain HTTP. A reverse proxy with HTTPS or [Tailscale HTTPS](#share-on-your-tailnet-over-https) encrypts that connection. It also prints a note when the base URL uses `https` but no reverse proxy is trusted.
 
-For each value, `owngit serve` uses its option if one is given, then the saved value, then the default (`127.0.0.1:7654`, with the base URL taken from the listen address). An option applies to that run only and does not change what is saved. `localhost`, `127.0.0.1`, and `::1` are always accepted, whatever is saved.
+For each value, `owngit serve` uses its option if one is given, then the saved value, then the default (`127.0.0.1:7654`, with the base URL taken from the listen address). An option applies to that run only and does not change what is saved. `localhost`, `127.0.0.1`, and `::1` are always accepted from this computer, whatever is saved, and never from another device.
 
 `owngit network show` lists the saved values. When a server is running on that state directory, it also shows what that server actually uses and whether a restart is needed for saved changes to apply. `--json` prints the same report as JSON.
 

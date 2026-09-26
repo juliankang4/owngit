@@ -239,7 +239,7 @@ func TestUnknownHostReachesSetupOnlyWithTheSetupLink(t *testing.T) {
 					t.Fatalf("token posted to %s status=%d, want 421", path, status)
 				}
 			}
-			if trusted := trustedHosts(t, store); len(trusted) != 0 || app.Hosts.Allows("192.168.1.20") {
+			if trusted := trustedHosts(t, store); len(trusted) != 0 || app.Hosts.Allows("192.168.1.20", remotePeer) {
 				t.Fatal("a refused attempt changed the accepted Hosts")
 			}
 
@@ -274,15 +274,15 @@ func TestUnknownHostReachesSetupOnlyWithTheSetupLink(t *testing.T) {
 				t.Fatal("setup did not finish")
 			}
 			if keep {
-				if status != http.StatusSeeOther || !app.Hosts.Allows("192.168.1.20:7720") || accepted != 1 ||
+				if status != http.StatusSeeOther || !app.Hosts.Allows("192.168.1.20:7720", remotePeer) || accepted != 1 ||
 					!reflect.DeepEqual(trustedHosts(t, store), []string{"192.168.1.20"}) {
-					t.Fatalf("kept: status=%d allowed=%v accepted=%d trusted=%v", status, app.Hosts.Allows("192.168.1.20"), accepted, trustedHosts(t, store))
+					t.Fatalf("kept: status=%d allowed=%v accepted=%d trusted=%v", status, app.Hosts.Allows("192.168.1.20", remotePeer), accepted, trustedHosts(t, store))
 				}
 				if status := browser.status(http.MethodGet, "/", nil); status != http.StatusOK {
 					t.Fatalf("kept Host dashboard status=%d", status)
 				}
 			} else {
-				if status != http.StatusOK || app.Hosts.Allows("192.168.1.20") || accepted != 0 || len(trustedHosts(t, store)) != 0 {
+				if status != http.StatusOK || app.Hosts.Allows("192.168.1.20", remotePeer) || accepted != 0 || len(trustedHosts(t, store)) != 0 {
 					t.Fatalf("not kept: status=%d accepted=%d trusted=%v", status, accepted, trustedHosts(t, store))
 				}
 				for _, path := range []string{"/", "/setup", "/assets/owngit.css"} {

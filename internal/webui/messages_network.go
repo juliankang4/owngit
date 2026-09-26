@@ -99,8 +99,8 @@ var networkCatalog = map[MessageCode]message{
 		ko: "다른 기기가 여는 주소입니다. 예: http://gitbox.local:7654. 클론 주소에도 이 주소를 씁니다. 비워 두면 각 기기가 연 주소를 그대로 씁니다.",
 	},
 	MsgNetHostsHelp: {
-		en: "Other names OwnGit accepts, one per line. This computer's own names, such as localhost, are always accepted, as are the names in the two addresses above.",
-		ko: "OwnGit이 받아들일 다른 이름을 한 줄에 하나씩 적습니다. localhost처럼 이 컴퓨터 자신을 가리키는 이름과 위 두 주소에 든 이름은 항상 받아들입니다.",
+		en: "Other names OwnGit accepts, one per line. This computer's own names, such as localhost, are always accepted from this computer, and the names in the two addresses above are always accepted.",
+		ko: "OwnGit이 받아들일 다른 이름을 한 줄에 하나씩 적습니다. localhost처럼 이 컴퓨터 자신을 가리키는 이름은 이 컴퓨터에서 접속할 때 항상 받아들이고, 위 두 주소에 든 이름도 항상 받아들입니다.",
 	},
 
 	MsgNetProxiesHelp: {

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- `localhost`, `127.0.0.1` and `::1` are accepted as the Host only on connections from the computer running OwnGit. When OwnGit listened on a network address, another device could use one of these names to get past the Host check, and with open access it could read and push every repository. Such a request now gets "unrecognized host", and the page says how to allow an address. Tailscale Serve, a reverse proxy on the same computer, and the command line, MCP server and runner on that computer keep working. OwnGit 1.1.0 and earlier are affected when OwnGit listens on a network address.
+
 ## [1.1.0] - 2026-09-27
 
 This release fixes a security problem in `owngit check run`: it no longer starts a clone's `core.fsmonitor` program or index hooks while it inspects the worktree. See Security below.

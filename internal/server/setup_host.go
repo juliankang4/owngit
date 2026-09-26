@@ -69,11 +69,11 @@ func (binding *setupHostBinding) matches(sessionToken, host string) bool {
 // unknownHost reports whether the policy refuses the request's Host, and
 // returns that Host normalized, or "" when it is not a valid name.
 func (app *App) unknownHost(request *http.Request) (string, bool) {
-	value := requestctx.Of(request).Host
-	if app.Hosts.Allows(value) {
+	info := requestctx.Of(request)
+	if app.Hosts.Allows(info.Host, info.Peer) {
 		return "", false
 	}
-	host, _ := NormalizeHost(value)
+	host, _ := NormalizeHost(info.Host)
 	return host, true
 }
 

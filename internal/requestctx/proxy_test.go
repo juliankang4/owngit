@@ -79,7 +79,7 @@ func proxyRequest(peer string, headers [][2]string) *http.Request {
 
 func trustingResolver(t *testing.T, proxies ...string) Resolver {
 	t.Helper()
-	resolver := Resolver{HostAllowed: func(host string) bool {
+	resolver := Resolver{HostAllowed: func(host, _ string) bool {
 		return host == "gitbox.test" || host == "gitbox.test:8443" || host == "127.0.0.1:7654"
 	}}
 	for _, value := range proxies {

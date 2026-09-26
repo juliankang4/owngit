@@ -267,7 +267,7 @@ func TestSavedNetworkSettingsApplyAtTheNextStart(t *testing.T) {
 		t.Fatalf("saved hosts=%v proxies=%v", hosts, proxies)
 	}
 	// Saving does not change the running server.
-	if app.Hosts.Allows("lan.test") || app.Hosts.Allows("gitbox.test:7795") || app.BaseURL != "" {
+	if app.Hosts.Allows("lan.test", remotePeer) || app.Hosts.Allows("gitbox.test:7795", remotePeer) || app.BaseURL != "" {
 		t.Fatal("saving network settings changed the running server")
 	}
 	body, _ = dashboardGET(t, client, base+"/settings?notice=network_saved")

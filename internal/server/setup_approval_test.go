@@ -227,8 +227,11 @@ func TestApprovalRequestNeedsCSRFAndOrigin(t *testing.T) {
 
 func TestApprovalFromAnotherDeviceIsMarked(t *testing.T) {
 	app, _, _ := approvalApp(t)
+	// Another device reaches OwnGit by a name it accepts; a loopback name
+	// from another device is refused before setup sees it.
+	noErr(t, app.Hosts.Add("gitbox.test"))
 	recorder := httptest.NewRecorder()
-	get := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/setup", nil)
+	get := httptest.NewRequest(http.MethodGet, "http://gitbox.test/setup", nil)
 	get.RemoteAddr = "192.0.2.10:50000"
 	app.Handler().ServeHTTP(recorder, get)
 	csrf := ""
@@ -237,9 +240,9 @@ func TestApprovalFromAnotherDeviceIsMarked(t *testing.T) {
 			csrf = cookie.Value
 		}
 	}
-	post := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/setup/approval", strings.NewReader(url.Values{"csrf": {csrf}}.Encode()))
+	post := httptest.NewRequest(http.MethodPost, "http://gitbox.test/setup/approval", strings.NewReader(url.Values{"csrf": {csrf}}.Encode()))
 	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	post.Header.Set("Origin", "http://127.0.0.1")
+	post.Header.Set("Origin", "http://gitbox.test")
 	post.AddCookie(&http.Cookie{Name: preauthCookie, Value: csrf})
 	post.RemoteAddr = "192.0.2.10:50000"
 	recorder = httptest.NewRecorder()

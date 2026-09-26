@@ -130,6 +130,9 @@ const (
 	// OwnGit did not keep.
 	MsgSetupDoneHostNotKept     MessageCode = "setup.done_host_not_kept"
 	MsgSetupDoneHostNotKeptHint MessageCode = "setup.done_host_not_kept.hint"
+	// MsgHostRefusedHint follows "unrecognized host" on the plain-text page
+	// for a Host that OwnGit refuses.
+	MsgHostRefusedHint MessageCode = "host.refused.hint"
 
 	MsgSetupSubmit    MessageCode = "setup.submit"
 	MsgSetupFailed    MessageCode = "setup.failed"
@@ -642,6 +645,10 @@ var catalog = map[MessageCode]message{
 	MsgSetupDoneHostNotKeptHint: {
 		en: "Open OwnGit on the installation host. To use this address, allow it there with owngit network and restart OwnGit.",
 		ko: "설치 호스트에서 OwnGit을 여세요. 이 주소를 쓰려면 그곳에서 owngit network 명령으로 허용하고 OwnGit을 다시 시작하세요.",
+	},
+	MsgHostRefusedHint: {
+		en: "To use this address, add it to Allowed names in OwnGit's network settings, or run owngit network set --allowed-host on the computer running OwnGit, then restart OwnGit. Names for that computer itself, such as localhost, work only on that computer.",
+		ko: "이 주소를 쓰려면 OwnGit 네트워크 설정의 허용한 이름에 추가하거나, OwnGit이 실행 중인 컴퓨터에서 owngit network set --allowed-host 명령으로 허용한 뒤 OwnGit을 다시 시작하세요. localhost처럼 그 컴퓨터 자신을 가리키는 이름은 그 컴퓨터에서만 쓸 수 있습니다.",
 	},
 	MsgSetupKeepHostLabel: {
 		en: "Keep accepting this address after a restart:",
