@@ -196,10 +196,13 @@ func cancelAdmittedRun(t *testing.T, f *fixture) {
 
 // A run deadline that passes during admission, before the run is recorded,
 // is reported as the time limit, never as a state or unclassified failure.
-// Deadlines from 1 ns to 30 ms end the run at different admission steps.
+// Deadlines from 1 ns to 30 ms end the run at different admission steps. The
+// source transfer never ends, so a run that gets past admission ends by its
+// deadline too instead of finishing first.
 func TestDeadlineDuringAdmissionIsTheTimeLimit(t *testing.T) {
 	f := newFixture(t)
 	f.commit("one", "one\n")
+	f.transport.gate = make(chan struct{})
 	// A run stopped after its start was recorded must be recorded as the
 	// time limit; one stopped before leaves no run.
 	check := func(what string, timeout time.Duration, rowsBefore int, err error) {
@@ -230,8 +233,10 @@ func TestDeadlineDuringAdmissionIsTheTimeLimit(t *testing.T) {
 			check("first import", timeout, before, err)
 		}
 	}
+	f.transport.gate = nil
 	f.mustImport(ImportInput{})
 	f.commit("two", "two\n")
+	f.transport.gate = make(chan struct{})
 	for _, timeout := range []time.Duration{time.Nanosecond, time.Millisecond, 3 * time.Millisecond, 10 * time.Millisecond, 30 * time.Millisecond} {
 		for round := 0; round < 3; round++ {
 			before := rows()
