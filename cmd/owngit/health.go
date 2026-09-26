@@ -54,8 +54,16 @@ func healthAddress(stateDir string) (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
-		if observed.Server == state.ServerRunning && observed.Record != nil && observed.Record.Address != "" {
-			address, running = observed.Record.Address, true
+		if record := observed.Record; observed.Server == state.ServerRunning && record != nil && record.Address != "" {
+			// The listen setting says which family to use: 0.0.0.0 is
+			// reached at 127.0.0.1 even when the socket reports [::].
+			// The bound address has the actual port.
+			address, running = record.Address, true
+			listenHost, _, listenErr := net.SplitHostPort(record.Listen)
+			_, port, addressErr := net.SplitHostPort(record.Address)
+			if listenErr == nil && addressErr == nil {
+				address = net.JoinHostPort(listenHost, port)
+			}
 		} else if saved, err := store.NetworkSettings(ctx); err == nil && saved.Listen != "" {
 			address = saved.Listen
 		}

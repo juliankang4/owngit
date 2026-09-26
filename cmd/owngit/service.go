@@ -219,8 +219,12 @@ func (host *serviceHost) install(stateDirFlag string) error {
 			return fmt.Errorf("the %s account cannot run %s (%v); put the binary in a folder such as /usr/local/bin and run it from there", service.AccountName, host.executable, err)
 		}
 	}
-	if repositoryRoot := savedRepositoryRoot(stateDir); repositoryRoot != "" {
-		plan.Writable = append(plan.Writable, repositoryRoot)
+	// Root never opens the account's state directory itself; see the
+	// check after the root steps below.
+	if mode != service.ModeAccount {
+		if repositoryRoot := savedRepositoryRoot(stateDir); repositoryRoot != "" {
+			plan.Writable = append(plan.Writable, repositoryRoot)
+		}
 	}
 	unit, err := service.RenderUnit(plan)
 	if err != nil {
@@ -239,11 +243,15 @@ func (host *serviceHost) install(stateDirFlag string) error {
 		if err != nil {
 			return err
 		}
-		what := "the unit " + unitPath
+		steps := "write the unit " + unitPath + " and start it"
 		if mode == service.ModeAccount {
-			what = "the " + service.AccountName + " account, " + service.AccountHome + ", " + service.PointerPath + " and " + what
+			steps = "create the " + service.AccountName + " account and " + service.AccountHome + ", write " + service.PointerPath + " and the unit " + unitPath + ", and start it"
 		}
-		if err := host.runAsRoot(script, "Installing OwnGit as a "+mode.Describe()+" needs root once to write "+what+" and start it."); err != nil {
+		explanation := "Installing OwnGit as a " + mode.Describe() + ": root will " + steps + "."
+		if !root {
+			explanation = "Installing OwnGit as a " + mode.Describe() + " needs root once to " + steps + "."
+		}
+		if err := host.runAsRoot(script, explanation); err != nil {
 			return err
 		}
 		if mode == service.ModeAccount {
@@ -251,6 +259,9 @@ func (host *serviceHost) install(stateDirFlag string) error {
 			// account, so the rest runs as the account.
 			if err := dropToAccount(service.AccountName); err != nil {
 				return err
+			}
+			if repositories := savedRepositoryRoot(stateDir); repositories != "" && !withinAny(repositories, plan.Writable) {
+				host.printf("Note: the repositories are in %s, which the service may not write. Run \"sudo systemctl edit owngit.service\" and add these two lines:\n  [Service]\n  ReadWritePaths=-%s\n", repositories, repositories)
 			}
 		}
 	}
@@ -321,8 +332,21 @@ func (host *serviceHost) reportStarted(mode service.Mode, unitPath, stateDir str
 		return errors.New("the service did not start")
 	}
 	host.printf("OwnGit is running as a %s.\n", mode.Describe())
-	host.printServiceFacts(mode, unitPath, stateDir, "http://"+address)
+	host.printServiceFacts(mode, unitPath, stateDir, ownerAddresses(stateDir, address))
 	return printSetupLinkIfNeeded(stateDir, host.out)
+}
+
+// ownerAddresses lists the addresses a browser can open OwnGit at, the
+// most likely first, or the checked address when they cannot be read.
+func ownerAddresses(stateDir, checked string) string {
+	ctx := context.Background()
+	if store, err := openLiveState(ctx, stateDir); err == nil {
+		defer store.Close()
+		if bases, err := setupBases(ctx, store); err == nil {
+			return strings.Join(bases, ", ")
+		}
+	}
+	return "http://" + checked
 }
 
 func (host *serviceHost) printServiceFacts(mode service.Mode, unitPath, stateDir, address string) {
@@ -378,13 +402,20 @@ func (host *serviceHost) uninstall() error {
 			return err
 		}
 	default:
-		if err := host.runAsRoot(service.RootUninstallScript(), "Removing the system service needs root to stop it and remove "+installed.UnitPath+"."); err != nil {
+		if err := host.runAsRoot(service.RootUninstallScript(), "Removing the system service: root stops it and removes "+installed.UnitPath+"."); err != nil {
 			return err
 		}
 	}
-	host.printf("The OwnGit service is stopped and removed. The data stays in %s", installed.StateDir)
+	readable, err := host.actForService(installed)
+	if err != nil {
+		return err
+	}
+	host.printf("The OwnGit service is stopped and removed. The state stays in %s", installed.StateDir)
+	if repositories := savedRepositoryRoot(installed.StateDir); readable && repositories != "" {
+		host.printf(" and the repositories in %s", repositories)
+	}
 	if installed.Mode == service.ModeAccount {
-		host.printf(" (repositories set up with the defaults are in %s), and the %s account stays", service.AccountHome, service.AccountName)
+		host.printf(", and the %s account stays", service.AccountName)
 	}
 	host.printf(".\nRun \"owngit service install\" to use it again.\n")
 	return nil
@@ -409,15 +440,9 @@ func (host *serviceHost) status() error {
 	}
 	output, _ := serviceRunner(context.Background(), "systemctl", arguments...)
 	active := strings.TrimSpace(string(output))
-	readable := true
-	if installed.Mode == service.ModeAccount {
-		if host.env.EUID == 0 {
-			if err := dropToAccount(service.AccountName); err != nil {
-				return err
-			}
-		} else {
-			readable = false
-		}
+	readable, err := host.actForService(installed)
+	if err != nil {
+		return err
 	}
 	address, answered := "", false
 	if readable {
@@ -428,7 +453,10 @@ func (host *serviceHost) status() error {
 	}
 	switch {
 	case answered:
-		host.printf("OwnGit is running (systemd: %s) and answers at %s.\n", active, address)
+		host.printf("OwnGit is running (systemd: %s) and answers its health check.\n", active)
+		address = ownerAddresses(installed.StateDir, strings.TrimPrefix(address, "http://"))
+	case active == "active" && !readable:
+		host.printf("OwnGit is running (systemd: active).\n")
 	case active == "active":
 		host.printf("OwnGit is starting or not answering yet (systemd: active).\n")
 	default:
@@ -439,9 +467,28 @@ func (host *serviceHost) status() error {
 	if answered {
 		host.printf("  Address: %s\n", address)
 	} else if !readable {
-		host.printf("  Address: run \"sudo owngit service status\" to read it from the state directory\n")
+		host.printf("  Address: run \"sudo owngit service status\" to read it from the state directory of %s\n", installed.User)
+	}
+	if readable && !setupComplete(installed.StateDir) {
+		host.printf("Setup is not complete. Run \"owngit setup-link\" in a terminal for the one-time setup link.\n")
 	}
 	return nil
+}
+
+// setupComplete reports whether setup of the state directory is complete.
+// A state directory that cannot be read counts as complete, so nothing
+// suggests setting up an installation that may already be in use.
+func setupComplete(stateDir string) bool {
+	if err := state.RequireExisting(stateDir); err != nil {
+		return true
+	}
+	store, err := openLiveState(context.Background(), stateDir)
+	if err != nil {
+		return true
+	}
+	defer store.Close()
+	settings, err := store.Settings(context.Background())
+	return err != nil || settings.Initialized
 }
 
 func (host *serviceHost) control(action string) error {
@@ -474,14 +521,13 @@ func (host *serviceHost) control(action string) error {
 		host.printf("OwnGit is stopped. It starts again at the next boot, or with \"owngit service start\".\n")
 		return nil
 	}
-	if installed.Mode == service.ModeAccount && host.env.EUID != 0 {
+	readable, err := host.actForService(installed)
+	if err != nil {
+		return err
+	}
+	if !readable {
 		host.printf("OwnGit is %s. Run \"sudo owngit service status\" to see its address.\n", map[string]string{"start": "started", "restart": "restarted"}[action])
 		return nil
-	}
-	if installed.Mode == service.ModeAccount {
-		if err := dropToAccount(service.AccountName); err != nil {
-			return err
-		}
 	}
 	address, err := waitHealthy(installed.StateDir, serviceStartTimeout)
 	if err != nil {
@@ -489,6 +535,31 @@ func (host *serviceHost) control(action string) error {
 	}
 	host.printf("OwnGit is running at http://%s.\n", address)
 	return nil
+}
+
+// actForService prepares to read the state directory of an installed
+// service and reports whether this process may. Root continues as the
+// account the unit runs as, so it never leaves files in that directory
+// that the service cannot open. Another account cannot read it.
+func (host *serviceHost) actForService(installed service.Installed) (bool, error) {
+	switch {
+	case installed.User == "" || installed.User == host.account.Username:
+		return true, nil
+	case host.env.EUID == 0:
+		return true, dropToAccount(installed.User)
+	default:
+		return false, nil
+	}
+}
+
+// withinAny reports whether path is one of dirs or inside one of them.
+func withinAny(path string, dirs []string) bool {
+	for _, dir := range dirs {
+		if path == dir || strings.HasPrefix(path, strings.TrimSuffix(dir, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // runAsRoot runs a root script: directly for root, otherwise through sudo,
@@ -505,19 +576,19 @@ func (host *serviceHost) runAsRoot(script, explanation string) error {
 		os.Remove(path)
 		return errors.Join(writeErr, closeErr)
 	}
+	host.printf("%s\n", explanation)
 	if host.env.EUID == 0 {
 		defer os.Remove(path)
 		return runAttached("/bin/sh", path)
 	}
-	host.printf("%s\n", explanation)
 	if _, err := exec.LookPath("sudo"); err != nil {
-		host.printf("sudo is not available. Run this command as root, then \"owngit service status\":\n  sh %s\n", service.ShellQuote(path))
+		host.printf("sudo is not available. Run this command as root, then \"owngit service status\" here:\n  sh %s\n", service.ShellQuote(path))
 		return errors.New("the root steps have not run yet")
 	}
-	host.printf("Running: sudo sh %s\n", service.ShellQuote(path))
+	host.printf("Running: sudo /bin/sh %s\n", service.ShellQuote(path))
 	if err := runAttached("sudo", "/bin/sh", path); err != nil {
-		host.printf("The root steps did not finish. Fix the problem shown above and run \"owngit service install\" again, or run this command as root:\n  sh %s\n", service.ShellQuote(path))
-		return err
+		host.printf("The root steps did not finish. Fix the problem shown above and try again, or run this command as root, then \"owngit service status\" here:\n  sh %s\n", service.ShellQuote(path))
+		return fmt.Errorf("the root steps did not finish: %w", err)
 	}
 	os.Remove(path)
 	return nil
