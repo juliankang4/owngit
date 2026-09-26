@@ -213,6 +213,9 @@ func storageProblem(err error) webui.MessageCode {
 // the system's message.
 func storageNotice(folder string, err error) webui.Notice {
 	code := storageProblem(err)
+	if code == webui.MsgSetupStorageDenied && hiddenFolder(folder) {
+		code = webui.MsgSetupStorageReadOnly
+	}
 	notice := webui.Error("storage_path", code)
 	switch code {
 	case webui.MsgSetupStorageDenied:
@@ -229,6 +232,20 @@ func storageNotice(folder string, err error) webui.Notice {
 		notice.Detail = err.Error()
 	}
 	return notice
+}
+
+// hiddenFolder reports whether a folder on the path is inaccessible to
+// everyone (no permission bits), which is how a service unit's ProtectHome
+// hides the home folders. Giving the account such a folder would not help.
+func hiddenFolder(path string) bool {
+	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
+		if info, err := os.Stat(current); err == nil && info.IsDir() && info.Mode().Perm() == 0 {
+			return true
+		}
+		if filepath.Dir(current) == current {
+			return false
+		}
+	}
 }
 
 // shellWord quotes a word for a POSIX shell when it needs quoting.

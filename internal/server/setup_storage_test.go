@@ -66,3 +66,19 @@ func TestSetupExplainsAFolderTheAccountCannotWrite(t *testing.T) {
 		t.Fatal("setup page asks for a full path")
 	}
 }
+
+// A folder below one that nobody may enter, as ProtectHome makes the home
+// folders for the owngit account, is read-only for OwnGit, and the command
+// that gives the account the folder would not help.
+func TestSetupCallsAHiddenFolderReadOnly(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a folder this account cannot enter")
+	}
+	hidden := filepath.Join(t.TempDir(), "home")
+	noErr(t, os.Mkdir(hidden, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(hidden, 0o700) })
+	notice := storageNotice(filepath.Join(hidden, "alice", "git"), &fs.PathError{Op: "mkdir", Path: hidden, Err: syscall.EACCES})
+	if notice.Code != webui.MsgSetupStorageReadOnly || notice.Detail != "" {
+		t.Fatalf("notice = %+v", notice)
+	}
+}

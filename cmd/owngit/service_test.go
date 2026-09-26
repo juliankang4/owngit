@@ -535,7 +535,7 @@ func TestListenErrorForAPortInUse(t *testing.T) {
 // says what to do instead.
 func TestAccountPathHint(t *testing.T) {
 	denied := &fs.PathError{Op: "lstat", Path: "/root/bk", Err: fs.ErrPermission}
-	if err := accountPathHint(denied); !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "runs as the owngit account") || !strings.Contains(err.Error(), "/var/lib/owngit/backups") {
+	if err := accountPathHint(denied); !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "runs as the owngit account") || !strings.Contains(err.Error(), "/var/lib/owngit/backup") {
 		t.Fatalf("accountPathHint = %v", err)
 	}
 	other := errors.New("state is locked")
