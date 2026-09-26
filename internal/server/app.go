@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"mime"
 	"net/http"
@@ -85,8 +84,9 @@ type App struct {
 	ImportRunTimeout time.Duration
 	ActivityLimit    int
 	Now              func() time.Time
-	// requestObserver runs after the per-request deadline is installed. Tests
-	// use it to observe that deadline. Production leaves it nil.
+	// requestObserver runs after a per-request deadline is installed: when
+	// the request starts and when an operation begins. Tests use it to
+	// observe that deadline. Production leaves it nil.
 	requestObserver func(*http.Request)
 	// OnSetupComplete runs once after first-run setup succeeds in this
 	// process, so work that an initialized startup begins can begin now.
@@ -175,7 +175,9 @@ const replyReserve = 5 * time.Second
 // time is reserved after the handler's work deadline for writing the
 // response. Work that runs out of time, such as Git on slow storage, then
 // still produces an error page instead of an empty reply. An import run keeps
-// ImportResponseMargin beyond its own run deadline instead.
+// ImportResponseMargin beyond its own run deadline instead. The longer limits
+// of import runs and archives apply only once the handler begins the
+// operation; see beginOperation.
 func (app *App) requestTimeout(request *http.Request) (time.Duration, time.Duration) {
 	if importRunRequest(request) {
 		return ImportRunRequestTimeout(app.importRunTimeout()), 0
@@ -186,6 +188,12 @@ func (app *App) requestTimeout(request *http.Request) (time.Duration, time.Durat
 	if archiveRoute(request) && app.GitHTTP != nil && app.GitHTTP.OperationTimeout > 0 {
 		return app.GitHTTP.OperationTimeout + 2*replyReserve, replyReserve
 	}
+	return app.pageTimeout()
+}
+
+// pageTimeout returns the time limit and reply reserve of an ordinary
+// request. Every request reads its body within this limit.
+func (app *App) pageTimeout() (time.Duration, time.Duration) {
 	timeout := 30 * time.Second
 	if app.HTTPTimeout > 0 {
 		timeout = app.HTTPTimeout
@@ -285,25 +293,14 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	timeout, reserve := app.requestTimeout(request)
-	deadline := time.Now().Add(timeout)
-	requestContext, cancel := context.WithDeadline(request.Context(), deadline.Add(-reserve))
+	pageTimeout, pageReserve := app.pageTimeout()
+	operationTimeout, operationReserve := app.requestTimeout(request)
+	request, deadlines, cancel := startDeadlines(writer, request, pageTimeout, pageReserve, operationTimeout, operationReserve)
 	defer cancel()
-	request = request.WithContext(requestContext)
-	controller := http.NewResponseController(writer)
-	_ = controller.SetReadDeadline(deadline)
-	_ = controller.SetWriteDeadline(deadline)
+	defer deadlines.finish()
 	if app.requestObserver != nil {
 		app.requestObserver(request)
 	}
-	defer func() {
-		if time.Now().Before(deadline) {
-			_ = controller.SetReadDeadline(time.Time{})
-			_ = controller.SetWriteDeadline(time.Time{})
-			return
-		}
-		_ = request.Body.Close()
-	}()
 	if strings.HasPrefix(request.URL.Path, "/assets/") {
 		app.Renderer.Assets().ServeHTTP(writer, cloneWithPath(request, strings.TrimPrefix(request.URL.Path, "/assets")))
 		return

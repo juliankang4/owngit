@@ -125,6 +125,8 @@ func (app *App) handleArchive(writer http.ResponseWriter, request *http.Request,
 		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
 		return
 	}
+	// The browser guard authorized the reader before this handler.
+	request = app.beginOperation(writer, request)
 	target, status := app.resolveArchive(request, stored.ID)
 	switch status {
 	case http.StatusOK:
@@ -183,6 +185,7 @@ func (app *App) handleArchiveAPI(writer http.ResponseWriter, request *http.Reque
 		writeAPIError(writer, http.StatusServiceUnavailable, "service_unavailable", "The Git service is unavailable.", nil)
 		return
 	}
+	request = app.beginOperation(writer, request)
 	target, status := app.resolveArchive(request, repositoryID)
 	switch status {
 	case http.StatusOK:

@@ -115,6 +115,7 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 	if !decodeAPIJSONLimit(writer, request, &input, MaximumImportCredentialRequest) {
 		return
 	}
+	request = app.beginOperation(writer, request)
 	_, _, exists, err := app.Repositories.ExistingPath(request.Context(), repositoryID)
 	if err != nil {
 		writeAPIError(writer, http.StatusServiceUnavailable, importsync.CodeStateUnavailable, "The repository destination could not be read.", nil)

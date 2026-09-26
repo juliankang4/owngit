@@ -83,6 +83,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		app.render(writer, http.StatusUnprocessableEntity, page)
 		return
 	}
+	request = app.beginOperation(writer, request)
 	result, err := app.Imports.Import(request.Context(), importsync.ImportInput{
 		Name: page.Name, Description: page.Description, URL: page.URL, Mode: importsync.Mode(page.Mode),
 		GitOnlyConsent: page.GitOnlyConsent, AllowPrivateNetwork: page.PrivateNetwork, Credentials: credential, Limits: app.importRunLimits(),
@@ -210,6 +211,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		err = app.Imports.SetCredentials(request.Context(), stored.ID, nil)
 		notice = "import_credentials_cleared"
 	case webui.ActionImportRefresh:
+		request = app.beginOperation(writer, request)
 		_, err = app.Imports.Refresh(request.Context(), stored.ID, app.importRunLimits())
 		refresh = true
 		notice = "import_refreshed"
