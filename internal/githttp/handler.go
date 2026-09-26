@@ -120,6 +120,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.NotFound(writer, request)
 		return
 	}
+	if h.MaximumRequest > 0 && request.ContentLength > h.MaximumRequest {
+		// The limit would stop the body anyway. Refusing it here is certain:
+		// a backend that stops reading early can exit before the body reaches
+		// the limit, and its failure would hide the cause.
+		logGitFailure(route, request.Method, requestTooLarge)
+		http.Error(writer, requestTooLarge, http.StatusRequestEntityTooLarge)
+		return
+	}
 	h.operationMu.Lock()
 	if h.closing {
 		h.operationMu.Unlock()
@@ -222,7 +230,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 				reason = errInvalidGzip.Error()
 				logGitFailure(route, request.Method, reason)
 			} else if errors.As(source.firstError(), &maxErr) {
-				status, reason = http.StatusRequestEntityTooLarge, "request body exceeded the size limit"
+				status, reason = http.StatusRequestEntityTooLarge, requestTooLarge
 			}
 			http.Error(writer, reason, status)
 			return
@@ -344,6 +352,10 @@ func requestBodyEncoding(request *http.Request) (gzipped bool, ok bool) {
 
 var errInvalidGzip = errors.New("request body is not valid gzip")
 
+// requestTooLarge is the reason logged and sent for a request body over
+// MaximumRequest.
+const requestTooLarge = "request body exceeded the size limit"
+
 var errResponseTooLarge = errors.New("Git response exceeded the configured limit")
 
 // gzipBody inflates a request body. When the network body ended cleanly but
@@ -443,7 +455,7 @@ func failureReason(err error, stderr []byte, tooLarge, invalidGzip, timedOut boo
 	var exitErr *exec.ExitError
 	switch {
 	case tooLarge:
-		return "request body exceeded the size limit"
+		return requestTooLarge
 	case invalidGzip:
 		return errInvalidGzip.Error()
 	case errors.Is(err, errResponseTooLarge):
