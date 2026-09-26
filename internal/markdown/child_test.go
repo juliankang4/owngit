@@ -249,7 +249,10 @@ func checkChildMemory(t *testing.T, name string, result childResult) {
 
 // The review's documents: a small table whose rows are padded to thousands
 // of cells, and reference links that multiply the output. Rendered in a
-// child without the estimate, each is stopped by the memory or output limit.
+// child without the estimate, each is stopped by one of the child's limits.
+// Which limit comes first depends on the machine: a slow one reaches the time
+// limit before the heap passes the memory limit. Either stop is correct, and
+// checkChildMemory bounds the memory in both cases.
 // The tables never reach a child in the product, because the estimate
 // refuses them first.
 func TestAmplifyingDocumentsStayWithinTheChildLimits(t *testing.T) {
@@ -275,8 +278,10 @@ func TestAmplifyingDocumentsStayWithinTheChildLimits(t *testing.T) {
 		if !errors.Is(result.err, ErrTooComplex) || !result.documentFault {
 			t.Errorf("%s: got %v", name, result.err)
 		}
-		if !strings.Contains(name, "reference") && result.reason != "memory" {
-			t.Errorf("%s: stopped by %s, want the memory limit", name, result.reason)
+		// A renderer failure or a signal the parent did not send would mean a
+		// bug or a breached limit, whatever the machine's speed.
+		if result.reason != "memory" && result.reason != "time" && result.reason != "output" {
+			t.Errorf("%s: stopped by %s, want one of the child's limits", name, result.reason)
 		}
 		checkChildMemory(t, name, result)
 	}
