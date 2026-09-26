@@ -140,3 +140,20 @@ func TestTheTLSHandshakeMayWaitForACertificate(t *testing.T) {
 		t.Fatalf("a handshake of %s failed: %v", defaultTimeout+time.Second, err)
 	}
 }
+
+// Clients without a private certificate authority share one transport, and
+// so its open connections; adding a certificate authority gives a client
+// its own transport and leaves the shared one as it is.
+func TestClientsShareTheirConnections(t *testing.T) {
+	first, second := New(nil, ""), New(nil, "")
+	if first.httpClient.Transport != second.httpClient.Transport {
+		t.Fatal("two clients have their own transports")
+	}
+	withAuthority := slowHandshakeServer(t, 0, answerOK)
+	// The transport fills in its TLS settings on first use; only a
+	// certificate authority sets RootCAs.
+	shared := first.httpClient.Transport.(*http.Transport).TLSClientConfig
+	if withAuthority.httpClient.Transport == first.httpClient.Transport || shared != nil && shared.RootCAs != nil {
+		t.Fatal("a certificate authority changed the shared transport")
+	}
+}

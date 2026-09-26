@@ -151,6 +151,11 @@ func newTransport() *http.Transport {
 	return transport
 }
 
+// sharedTransport serves every client without a private certificate
+// authority, so clients made one after another, as the MCP server makes one
+// per tool call, reuse open connections.
+var sharedTransport = newTransport()
+
 // New returns a client that authenticates with the shared general-access
 // password, or with no credentials when the password is empty.
 func New(server *url.URL, password string) *Client {
@@ -186,7 +191,7 @@ func newClient(server *url.URL) *Client {
 	return &Client{
 		server: server,
 		httpClient: &http.Client{
-			Transport:     newTransport(),
+			Transport:     sharedTransport,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return errRedirectRefused },
 		},
 	}
