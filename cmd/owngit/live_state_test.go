@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"owngit/internal/auth"
@@ -97,5 +98,55 @@ func TestOfflineCommandsStopRetryingAfterFiveAttempts(t *testing.T) {
 	err = approveHost([]string{"--state-dir", stateDir, "gitbox.test"})
 	if err == nil || !strings.Contains(err.Error(), "newer") || *attempts != 1 {
 		t.Fatalf("err=%v after %d attempts, want the error after one attempt", err, *attempts)
+	}
+}
+
+// A starting server retries a state open that met a change during
+// inspection, as the commands next to it do (R2-1).
+func TestServeRetriesAnUnstableStateOpen(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	attempts := 0
+	original := openServeStateAttempt
+	openServeStateAttempt = func(ctx context.Context, dir string, report func(string, ...any)) (*state.Store, error) {
+		attempts++
+		if attempts <= 3 {
+			return nil, fmt.Errorf("%w: owngit.sqlite-wal appeared during inspection", state.ErrInspectionUnstable)
+		}
+		return original(ctx, dir, report)
+	}
+	t.Cleanup(func() { openServeStateAttempt = original })
+	instance := startServedWith(t, []string{"--state-dir", stateDir, "--no-open", "--listen", "127.0.0.1:0"})
+	instance.stop()
+	if attempts != 4 {
+		t.Fatalf("serve opened the state %d times, want 4", attempts)
+	}
+}
+
+// The real race: "owngit service install" polls the state of a server that
+// is starting. Every start succeeds.
+func TestServeStartsWhileACommandPollsItsState(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, err := state.Open(context.Background(), stateDir)
+	noErr(t, err)
+	noErr(t, store.Close())
+	for round := 0; round < 10; round++ {
+		stop := make(chan struct{})
+		var pollers sync.WaitGroup
+		for range 4 {
+			pollers.Go(func() {
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					_, _, _ = healthAddress(stateDir)
+				}
+			})
+		}
+		instance := startServedWith(t, []string{"--state-dir", stateDir, "--no-open", "--listen", "127.0.0.1:0"})
+		close(stop)
+		pollers.Wait()
+		instance.stop()
 	}
 }

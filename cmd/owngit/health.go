@@ -169,7 +169,9 @@ func waitHealthy(stateDir string, timeout time.Duration) (string, error) {
 	since := time.Now().Add(-time.Second)
 	deadline := time.Now().Add(timeout)
 	for {
-		if message, failed := serveErrorSince(stateDir, since); failed {
+		// A serve that met a retryable state error is started again by
+		// systemd, so only other errors end the wait.
+		if message, failed := serveErrorSince(stateDir, since); failed && !strings.Contains(message, state.ErrInspectionUnstable.Error()) {
 			return "", errServeFailed{message}
 		}
 		target, running, err := healthAddress(stateDir)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/netip"
@@ -601,7 +602,7 @@ var (
 // before the desktop session stays on this computer.
 func TestInstallOnADesktopWritesAnExplicitNotHeadlessUserUnit(t *testing.T) {
 	fixture := newInstallFixture(t, desktopEnv, nil, false)
-	if err := fixture.host.install(filepath.Join(t.TempDir(), "state")); err == nil || !strings.Contains(fixture.out.String(), "stopped by the test") {
+	if err := fixture.host.install(filepath.Join(t.TempDir(), "state"), nil); err == nil || !strings.Contains(fixture.out.String(), "stopped by the test") {
 		t.Fatalf("install = %v\n%s", err, fixture.out.String())
 	}
 	installed, err := service.ReadUnit(service.UserUnitPath(fixture.host.userConfigDir))
@@ -620,7 +621,7 @@ func TestInstallOnADesktopWritesAnExplicitNotHeadlessUserUnit(t *testing.T) {
 func TestInstallFallsBackToASystemUnitWithoutAUserManager(t *testing.T) {
 	fixture := newInstallFixture(t, desktopEnv, nil, true)
 	lookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	_ = fixture.host.install(filepath.Join(t.TempDir(), "state"))
+	_ = fixture.host.install(filepath.Join(t.TempDir(), "state"), nil)
 	if !strings.Contains(fixture.out.String(), "installs a system service instead") || len(fixture.scripts) != 1 {
 		t.Fatalf("no system fallback:\n%s", fixture.out.String())
 	}
@@ -637,7 +638,7 @@ func TestInstallKeepsTheFoundUnitsChoices(t *testing.T) {
 	existing := &service.Installed{Mode: service.ModeSystem, User: "alice", StateDir: stateDir, Headless: true, UnitPath: service.SystemUnitPath}
 	fixture := newInstallFixture(t, desktopEnv, existing, false)
 	lookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	_ = fixture.host.install("")
+	_ = fixture.host.install("", nil)
 	if len(fixture.scripts) != 1 {
 		t.Fatalf("root scripts %d:\n%s", len(fixture.scripts), fixture.out.String())
 	}
@@ -652,12 +653,12 @@ func TestInstallKeepsTheFoundUnitsChoices(t *testing.T) {
 func TestInstallRefusesOtherOwnersAndRerunsAccountUnitsWithSudo(t *testing.T) {
 	bob := &service.Installed{Mode: service.ModeSystem, User: "bob", StateDir: "/home/example/.config/owngit", UnitPath: service.SystemUnitPath}
 	fixture := newInstallFixture(t, sshEnv, bob, false)
-	if err := fixture.host.install(""); err == nil || !strings.Contains(err.Error(), "runs as bob") || len(fixture.scripts) != 0 {
+	if err := fixture.host.install("", nil); err == nil || !strings.Contains(err.Error(), "runs as bob") || len(fixture.scripts) != 0 {
 		t.Fatalf("install over bob's unit: %v", err)
 	}
 	account := &service.Installed{Mode: service.ModeAccount, User: service.AccountName, StateDir: service.AccountStateDir, UnitPath: service.SystemUnitPath}
 	fixture = newInstallFixture(t, sshEnv, account, false)
-	err := fixture.host.install("")
+	err := fixture.host.install("", nil)
 	if err == nil || !strings.Contains(err.Error(), "run as root: /usr/local/bin/owngit service install") || len(fixture.scripts) != 0 {
 		t.Fatalf("install over the account unit as a user: %v", err)
 	}
@@ -667,7 +668,7 @@ func TestInstallRefusesOtherOwnersAndRerunsAccountUnitsWithSudo(t *testing.T) {
 func TestInstallOverSSHWritesAHeadlessSystemUnit(t *testing.T) {
 	fixture := newInstallFixture(t, sshEnv, nil, false)
 	lookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	_ = fixture.host.install(filepath.Join(t.TempDir(), "state"))
+	_ = fixture.host.install(filepath.Join(t.TempDir(), "state"), nil)
 	if len(fixture.scripts) != 1 || !strings.Contains(fixture.scripts[0], `"--headless=true"`) || !strings.Contains(fixture.scripts[0], "User=alice") {
 		t.Fatalf("SSH install:\n%s\n%q", fixture.out.String(), fixture.scripts)
 	}
@@ -708,3 +709,51 @@ func TestServeErrorReadsOnlyABoundedRegularFile(t *testing.T) {
 		t.Fatal("followed a link")
 	}
 }
+
+// A retryable state error of a starting serve does not end the wait: systemd
+// starts it again (R2-1).
+func TestWaitHealthyWaitsOutARetryableServeError(t *testing.T) {
+	stateDir := t.TempDir()
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		recordServeError(stateDir, fmt.Errorf("%w: owngit.sqlite-wal appeared during inspection", state.ErrInspectionUnstable))
+	}()
+	_, err := waitHealthy(stateDir, 1500*time.Millisecond)
+	if err == nil || errors.As(err, new(errServeFailed)) {
+		t.Fatalf("waitHealthy = %v, want the ordinary timeout", err)
+	}
+}
+
+// A desktop unit run again over SSH stays not headless (R2-2): the choice
+// made at the first install is kept, and only --headless changes it.
+func TestInstallKeepsTheHeadlessChoiceUnlessTheFlagChangesIt(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		flag *bool
+		want string
+	}{
+		{"over SSH, no flag", nil, `"--headless=false"`},
+		{"--headless=true", ptr(true), `"--headless=true"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newInstallFixture(t, sshEnv, nil, false)
+			unitPath := service.UserUnitPath(fixture.host.userConfigDir)
+			noErr(t, os.MkdirAll(filepath.Dir(unitPath), 0o755))
+			stateDir := filepath.Join(t.TempDir(), "state")
+			unit, err := service.RenderUnit(service.Plan{Mode: service.ModeUser, Executable: fixture.host.executable, StateDir: stateDir})
+			noErr(t, err)
+			noErr(t, os.WriteFile(unitPath, []byte(unit), 0o644))
+			installed, err := service.ReadUnit(unitPath)
+			noErr(t, err)
+			findInstalled = func(string) (service.Installed, bool, error) { return installed, true, nil }
+			_ = fixture.host.install("", test.flag)
+			written, err := os.ReadFile(unitPath)
+			noErr(t, err)
+			if !strings.Contains(string(written), test.want) || len(fixture.scripts) != 0 {
+				t.Fatalf("unit after the re-install:\n%s", written)
+			}
+		})
+	}
+}
+
+func ptr[T any](value T) *T { return &value }

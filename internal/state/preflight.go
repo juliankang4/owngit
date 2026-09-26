@@ -525,6 +525,10 @@ func bindFile(path string, entry os.FileInfo, metadataOnly bool) (*sourceObject,
 		return nil, closeAfter(handle, unstable("%s was replaced", filepath.Base(path)))
 	}
 	fingerprint, err := protectionFingerprint(path)
+	if errors.Is(err, os.ErrNotExist) {
+		// Removed after it was opened, as above.
+		return nil, closeAfter(handle, unstable("%s was removed", filepath.Base(path)))
+	}
 	if err != nil {
 		return nil, closeAfter(handle, fmt.Errorf("inspect %s: %w", filepath.Base(path), err))
 	}

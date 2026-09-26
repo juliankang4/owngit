@@ -164,9 +164,16 @@ func serviceInstall(arguments []string) error {
 	flags := flag.NewFlagSet("service install", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDirFlag := flags.String("state-dir", "", "state directory the service uses (default: the one owngit uses for this account, or "+service.AccountStateDir+" when root installs)")
+	headlessFlag := flags.Bool("headless", false, "whether this computer has no screen for setup (default: kept from the installed service, or detected for a new one)")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
+	var headless *bool
+	flags.Visit(func(entry *flag.Flag) {
+		if entry.Name == "headless" {
+			headless = headlessFlag
+		}
+	})
 	if flags.NArg() != 0 {
 		return errors.New("service install takes no positional arguments")
 	}
@@ -177,10 +184,12 @@ func serviceInstall(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	return host.install(*stateDirFlag)
+	return host.install(*stateDirFlag, headless)
 }
 
-func (host *serviceHost) install(stateDirFlag string) error {
+// install installs or updates the service. headless is the --headless
+// option, or nil without it.
+func (host *serviceHost) install(stateDirFlag string, headlessFlag *bool) error {
 	existing, found, err := host.installed()
 	if err != nil {
 		return err
@@ -191,7 +200,11 @@ func (host *serviceHost) install(stateDirFlag string) error {
 		mode = existing.Mode
 		switch {
 		case mode == service.ModeAccount && !root:
-			return host.rerunWithSudo("service", "install")
+			arguments := []string{"service", "install"}
+			if headlessFlag != nil {
+				arguments = append(arguments, "--headless="+strconv.FormatBool(*headlessFlag))
+			}
+			return host.rerunWithSudo(arguments...)
 		case mode == service.ModeSystem && existing.User != host.account.Username:
 			return fmt.Errorf("the OwnGit service at %s runs as %s; run \"owngit service install\" as %s, or \"owngit service uninstall\" first", existing.UnitPath, existing.User, existing.User)
 		}
@@ -200,7 +213,16 @@ func (host *serviceHost) install(stateDirFlag string) error {
 	if err != nil {
 		return err
 	}
-	headless := host.env.Headless() || (found && existing.Headless)
+	// The headless choice is made once, when the service is first
+	// installed, and only --headless changes it; a later run from another
+	// place, such as SSH on a desktop, keeps it.
+	headless := host.env.Headless()
+	switch {
+	case headlessFlag != nil:
+		headless = *headlessFlag
+	case found:
+		headless = existing.Headless
+	}
 	if mode == service.ModeHomebrew {
 		return host.installHomebrew(stateDir, headless)
 	}
@@ -569,7 +591,7 @@ func (host *serviceHost) runAsRoot(script, explanation string) error {
 		host.printRootFallback(script)
 		return errors.New("the root steps have not run yet")
 	}
-	host.printf("Running: sudo /bin/sh -s (the steps above)\n")
+	host.printf("Running: sudo /bin/sh -s (the root steps)\n")
 	if err := runScript(script, "sudo", "/bin/sh", "-s"); err != nil {
 		host.printf("The root steps did not finish. Fix the problem shown above and try again.\n")
 		host.printRootFallback(script)

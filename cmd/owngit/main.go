@@ -251,7 +251,12 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	defer unlock()
-	store, err := openState(ctx, *stateDir, logf)
+	// Commands next to the server, such as "owngit service install" waiting
+	// for this start, may open the state while it is inspected, so serve
+	// retries as they do.
+	store, err := retryUnstableOpen(serveStateAttempts, func() (*state.Store, error) {
+		return openServeStateAttempt(ctx, *stateDir, logf)
+	})
 	if err != nil {
 		return err
 	}
@@ -933,12 +938,18 @@ func openState(ctx context.Context, dir string, report func(string, ...any)) (*s
 // to. Opening refuses a directory that changed while it was inspected and
 // says the operation can be retried, so the commands that work next to a
 // running server retry a few times instead of failing because the server
-// wrote at that moment. The wait between attempts varies, so a retry does not
-// keep meeting writes that repeat at a steady interval.
+// wrote at that moment.
 func openLiveState(ctx context.Context, stateDir string) (*state.Store, error) {
+	return retryUnstableOpen(liveStateAttempts, func() (*state.Store, error) { return openLiveStateAttempt(ctx, stateDir) })
+}
+
+// retryUnstableOpen runs open up to attempts times while it fails with
+// state.ErrInspectionUnstable. The wait between attempts varies, so a retry
+// does not keep meeting writes that repeat at a steady interval.
+func retryUnstableOpen(attempts int, open func() (*state.Store, error)) (*state.Store, error) {
 	for attempt := 1; ; attempt++ {
-		store, err := openLiveStateAttempt(ctx, stateDir)
-		if !errors.Is(err, state.ErrInspectionUnstable) || attempt == liveStateAttempts {
+		store, err := open()
+		if !errors.Is(err, state.ErrInspectionUnstable) || attempt == attempts {
 			return store, err
 		}
 		time.Sleep(liveStateRetryDelay/2 + rand.N(liveStateRetryDelay))
@@ -946,15 +957,23 @@ func openLiveState(ctx context.Context, stateDir string) (*state.Store, error) {
 }
 
 const (
-	liveStateAttempts   = 5
+	liveStateAttempts = 5
+	// serveStateAttempts is larger, about ten seconds: a starting server
+	// has no one to report a retryable error to, and commands may open the
+	// state the whole time it starts.
+	serveStateAttempts  = 100
 	liveStateRetryDelay = 100 * time.Millisecond
 )
 
-// openLiveStateAttempt is one attempt of openLiveState; tests replace it to
-// make the state directory change during inspection.
-var openLiveStateAttempt = func(ctx context.Context, stateDir string) (*state.Store, error) {
-	return openState(ctx, stateDir, stderrf)
-}
+// openLiveStateAttempt and openServeStateAttempt are one attempt of
+// openLiveState and of serve's open; tests replace them to make the state
+// directory change during inspection.
+var (
+	openLiveStateAttempt = func(ctx context.Context, stateDir string) (*state.Store, error) {
+		return openState(ctx, stateDir, stderrf)
+	}
+	openServeStateAttempt = openState
+)
 
 // stderrf writes one line to standard error.
 func stderrf(format string, args ...any) {

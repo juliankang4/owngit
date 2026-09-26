@@ -563,8 +563,8 @@ var catalog = map[MessageCode]message{
 		ko: "OwnGit이 실행되는 계정은 이미 있는 그 폴더에 쓸 수 없습니다. 그 폴더는 그대로 두고 그 안의 새 폴더를 입력하세요. 그러면 새 폴더를 만드는 방법을 알려 줍니다. 예:",
 	},
 	MsgSetupStorageReadOnly: {
-		en: "That folder is read-only for OwnGit. A service may not write in system folders, and the owngit account service not in home folders either. Choose the suggested folder or one such as /srv/git.",
-		ko: "그 폴더는 OwnGit에게 읽기 전용입니다. 서비스는 시스템 폴더에 쓸 수 없고, owngit 계정 서비스는 홈 폴더에도 쓸 수 없습니다. 제안된 폴더나 /srv/git 같은 폴더를 고르세요.",
+		en: "That folder is read-only for OwnGit. A service may not write in system folders, and the owngit account may not write in home folders either. Choose the suggested folder or one such as /srv/git.",
+		ko: "그 폴더는 OwnGit에게 읽기 전용입니다. 서비스는 시스템 폴더에 쓸 수 없고, owngit 계정은 홈 폴더에도 쓸 수 없습니다. 제안된 폴더나 /srv/git 같은 폴더를 고르세요.",
 	},
 	MsgSetupStorageUnusable: {
 		en: "OwnGit cannot use that folder. The system reported:",
