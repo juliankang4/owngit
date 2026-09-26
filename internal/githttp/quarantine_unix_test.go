@@ -30,6 +30,8 @@ func TestARefusedPushKeepsTheQuarantineOfAnotherPush(t *testing.T) {
 	// quarantine. It waits for the release file; the bound only keeps a
 	// failing run from hanging.
 	release := filepath.Join(t.TempDir(), "release")
+	// Let the other push end before the server closes, also on failure.
+	defer func() { _ = os.WriteFile(release, nil, 0o600) }()
 	noErr(t, os.WriteFile(filepath.Join(otherPath, "hooks", "pre-receive"), []byte("#!/bin/sh\ncat >/dev/null\ni=0\n"+
 		"while [ ! -e "+quoteShell(release)+" ]; do i=$((i+1)); if [ $i -gt 600 ]; then exit 1; fi; sleep 0.05; done\n"), 0o700))
 	pushed := make(chan string, 1)
@@ -55,6 +57,8 @@ func TestARefusedPushKeepsTheQuarantineOfAnotherPush(t *testing.T) {
 	defer limitedServer.Close()
 	large := filepath.Join(t.TempDir(), "large")
 	runHTTPGit(t, "", "clone", "-q", server.URL+"/git/sample.git", large)
+	runHTTPGit(t, large, "config", "user.name", "Quarantine Test")
+	runHTTPGit(t, large, "config", "user.email", "quarantine-test@example.invalid")
 	content := make([]byte, 1<<20)
 	_, err = rand.Read(content)
 	noErr(t, err)
