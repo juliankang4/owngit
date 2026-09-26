@@ -86,15 +86,15 @@ Create a repository from the dashboard, then use its clone address, for example 
 
 ## Resource use
 
-OwnGit is one program of about 30 MB (an 18 MB download) plus the Git already on the computer. Measured with OwnGit 1.0.3 after setup, once memory had settled with nobody using it:
+OwnGit is one program of about 30 MB (an 18 MB download) plus the Git already on the computer. Measured with OwnGit 1.1.0 after setup, once memory had settled with nobody using it:
 
 | | Linux x64 | macOS (Apple silicon) |
 | --- | --- | --- |
-| Memory, no repositories | about 45 MB | about 55 MB |
-| Memory, 100 small repositories | about 50 MB | about 50 to 70 MB |
+| Memory, no repositories | about 45 MB | about 35 MB |
+| Memory, 100 small repositories | about 50 MB | about 50 MB |
 | CPU | under 0.1% of one core | under 0.1% of one core |
 
-Each password check needs about 70 MB more for a moment, because passwords are hashed with Argon2id. OwnGit checks a password when you set one or sign in, when you confirm a settings change with the administrator password, and on Git and API requests when a shared access password is set. After the shared password is checked once, OwnGit accepts the same password for five minutes without hashing it again, so the several requests of one clone or push need one check. It runs at most four checks at once and gives the memory back to the system a few minutes later. Each clone or push also runs Git, whose memory depends on the repository. Memory is the resident set size reported by `/proc` and `ps`; Activity Monitor on macOS can show a larger number.
+Each password check needs about 70 MB more for a moment, because passwords are hashed with Argon2id. OwnGit checks a password when you set one or sign in, when you confirm a settings change with the administrator password, and on Git and API requests when a shared access password is set. After the shared password is checked once, OwnGit accepts the same password for five minutes without hashing it again, so the several requests of one clone or push need one check. It runs at most four checks at once. On Linux, OwnGit gives the memory back to the system a few minutes later; on macOS, Activity Monitor can keep showing it for longer. Each clone or push also runs Git, whose memory depends on the repository. On Linux, memory is the resident set size reported by `/proc` and `ps`. On macOS it is the Memory column of Activity Monitor. There `ps` can show about 120 MB, because macOS keeps memory that OwnGit gave back in the resident set until it needs that memory.
 
 ## Access and security
 
