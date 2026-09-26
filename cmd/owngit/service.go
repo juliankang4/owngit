@@ -49,6 +49,15 @@ func serviceCommand(arguments []string) error {
 		return nil
 	}
 	action, rest := arguments[0], arguments[1:]
+	if runtime.GOOS == "windows" {
+		switch action {
+		case "install", "uninstall", "status", "start", "stop", "restart",
+			// Internal steps: the report after an elevated install, and the
+			// steps that run after the UAC prompt.
+			"report", "elevated-install", "elevated-uninstall", "elevated-firewall":
+			return taskServiceCommand(action, rest)
+		}
+	}
 	switch action {
 	case "install":
 		return serviceInstall(rest)
@@ -86,7 +95,7 @@ func printServiceUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit service <install|uninstall|status|start|stop|restart> [options]")
 	fmt.Fprintln(writer, "  service install     run OwnGit in the background from now on and at every boot; run again to update")
 	fmt.Fprintln(writer, "  service uninstall   stop the service and remove it; the data stays")
-	fmt.Fprintln(writer, "  service status      whether it runs, who runs it, its unit, log, state directory and address")
+	fmt.Fprintln(writer, "  service status      whether it runs, who runs it, its unit or task, log, state directory and address")
 	fmt.Fprintln(writer, "  service start | stop | restart")
 }
 

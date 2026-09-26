@@ -192,7 +192,28 @@ var (
 const preparationGrace = 10 * time.Second
 
 func serve(arguments []string) error {
+	// On Windows the task of an administrator runs with administrator
+	// rights; the server itself then runs as a copy without them.
+	if flagGiven(arguments, "service") {
+		if handled, err := serveWithoutAdminRights(arguments); handled {
+			return err
+		}
+	}
 	return serveWithOpener(arguments, bootstrap.Open, log.Printf)
+}
+
+// flagGiven reports whether a boolean flag is among the arguments.
+func flagGiven(arguments []string, name string) bool {
+	for _, argument := range arguments {
+		if argument == "--" {
+			break
+		}
+		flagName, value, hasValue := strings.Cut(strings.TrimLeft(argument, "-"), "=")
+		if strings.HasPrefix(argument, "-") && flagName == name && (!hasValue || value == "true") {
+			return true
+		}
+	}
+	return false
 }
 
 func serveWithOpener(arguments []string, opener func(string) error, logf func(string, ...any)) error {
@@ -225,6 +246,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
 	headless := flags.Bool("headless", false, "whether this computer has no screen for setup (default: detected); before setup, with no saved listen address, a computer without a screen listens on every address and saves that")
+	logFile := flags.String("log-file", "", "also write the server log to this `file` (kept below 10 MB, with one older file beside it)")
+	asService := flags.Bool("service", false, "run as the service that \"owngit service install\" set up (on Windows: without administrator rights, and \"owngit service stop\" stops it in order)")
 	noUpdateCheck := flags.Bool("no-update-check", false, "never contact GitHub to check for a newer OwnGit release, whatever the Settings page says")
 	var allowedHosts, trustedProxies stringList
 	flags.Var(&allowedHosts, "allowed-host", "additional accepted `host` name (repeatable)")
@@ -238,6 +261,22 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	if *openOwner && *noOpen {
 		return errors.New("serve --open and --no-open cannot be used together")
+	}
+	if *logFile != "" {
+		closeLog, err := writeLogTo(*logFile)
+		if err != nil {
+			return err
+		}
+		defer closeLog()
+	}
+	// Without a desktop that a person sees (a service, a scheduled task,
+	// SSH on Windows), a browser would run where nobody can see or close
+	// it; the log shows the setup file's path instead.
+	if probeEnvironment().NoDesktop {
+		*openOwner, *noOpen = false, true
+	}
+	if *asService {
+		defer watchServiceStop(*stateDir, cancelServe, logf)()
 	}
 
 	// The offline lock is taken before the state is opened, so a migration
@@ -477,7 +516,9 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// First-run setup asks its questions in the terminal when OwnGit was
 	// started from one. Otherwise, as under a service manager, it keeps the
 	// private setup file. The terminal flow issues no setup file at all.
-	terminalSetup := !settings.Initialized && interactiveSetup()
+	// A service has no one at its console, even where Windows gives it a
+	// hidden one; its setup always goes through the setup file.
+	terminalSetup := !settings.Initialized && !*asService && interactiveSetup()
 	if terminalSetup {
 		application.Approvals = server.NewSetupApprovals()
 	}

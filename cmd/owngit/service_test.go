@@ -312,8 +312,8 @@ func TestHealthCommand(t *testing.T) {
 }
 
 func TestServiceCommandsAreRefusedOffLinux(t *testing.T) {
-	if runtime.GOOS == "linux" {
-		t.Skip("Linux has the systemd backend")
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+		t.Skip("Linux and Windows have a backend")
 	}
 	for _, action := range []string{"install", "uninstall", "status", "start", "stop", "restart"} {
 		_, err := captureStdout(func() error { return run([]string{"service", action}) })
