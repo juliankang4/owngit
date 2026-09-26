@@ -1,7 +1,9 @@
 package webui
 
 import (
+	"fmt"
 	"html"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -236,6 +238,35 @@ func TestTailscaleOffPageStandsAlone(t *testing.T) {
 			if strings.Contains(body, needs) {
 				t.Errorf("%s: the page loads %q", tc.page.Lang, needs)
 			}
+		}
+	}
+}
+
+// A Korean particle after a port number or another value would have to
+// follow how the value is read (8443 and 10000 take 을, 7652 takes 를), so
+// the Tailscale messages put none there. The note about passed ports says
+// "port" for one and "ports" for several.
+func TestTailscaleMessagesFitAnyPort(t *testing.T) {
+	particle := regexp.MustCompile(`%(\[\d\])?[sdv](을|를|이|가|은|는|와|과|로|으로)`)
+	for _, catalog := range []map[MessageCode]message{tailscaleCatalog, tailscaleBlockCatalog} {
+		for code, text := range catalog {
+			if match := particle.FindString(text.ko); match != "" {
+				t.Errorf("%s: Korean %q has a particle right after a value", code, match)
+			}
+		}
+	}
+	for _, test := range []struct {
+		passed       []string
+		port, en, ko string
+	}{
+		{[]string{"443"}, "8443", "on HTTPS port 443 of this computer, so sharing uses port 8443", "HTTPS 포트 443에서"},
+		{[]string{"443", "8443"}, "10000", "on each of these HTTPS ports of this computer: 443, 8443. Sharing uses port 10000", "HTTPS 포트 443, 8443에서"},
+	} {
+		code := TailscalePortNote(len(test.passed))
+		list := strings.Join(test.passed, ", ")
+		en, ko := fmt.Sprintf(Text(LangEN, code), list, test.port), fmt.Sprintf(Text(LangKO, code), list, test.port)
+		if !strings.Contains(en, test.en) || !strings.Contains(ko, test.ko) || !strings.Contains(ko, test.port+" 포트를 쓰고") {
+			t.Errorf("%d passed ports:\nEN %s\nKO %s", len(test.passed), en, ko)
 		}
 	}
 }

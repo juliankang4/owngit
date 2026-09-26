@@ -72,6 +72,8 @@ type TailscaleInfo struct {
 	// first choice, and PassedPorts the ports before it that something else
 	// uses; both are empty otherwise.
 	TurnOnPort, PassedPorts string
+	// PortNote is the note that names them, by the number of passed ports.
+	PortNote MessageCode
 	// BaseURLOption is the --base-url option that keeps the running server
 	// giving out another address while sharing is on; the page then says
 	// so instead of showing clone addresses under the HTTPS address.

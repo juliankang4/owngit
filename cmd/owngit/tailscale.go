@@ -239,7 +239,7 @@ func tailscaleOn(arguments []string) error {
 		fmt.Printf("Tailscale already answered HTTPS for %s with OwnGit at %s; OwnGit left that setting as it was.\n", address, change.Record.Target)
 	}
 	if len(change.PassedPorts) > 0 {
-		fmt.Println(fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSPortNote), server.PortList(change.PassedPorts), strconv.Itoa(change.Record.HTTPSPort)))
+		fmt.Println(fmt.Sprintf(webui.Text(webui.LangEN, webui.TailscalePortNote(len(change.PassedPorts))), server.PortList(change.PassedPorts), strconv.Itoa(change.Record.HTTPSPort)))
 	}
 	if change.Endpoint == "created" {
 		fmt.Println(webui.Text(webui.LangEN, webui.MsgTSFirstVisit))
@@ -380,7 +380,7 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 	} else if !report.On && report.CanTurnOn {
 		fmt.Fprintf(writer, "  Ready to share as %s/.\n", server.TailscaleOrigin(report.Name, report.TurnOnPort))
 		if len(report.TurnOnPassed) > 0 {
-			fmt.Fprintf(writer, "  %s\n", fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSPortNote), server.PortList(report.TurnOnPassed), strconv.Itoa(report.TurnOnPort)))
+			fmt.Fprintf(writer, "  %s\n", fmt.Sprintf(webui.Text(webui.LangEN, webui.TailscalePortNote(len(report.TurnOnPassed))), server.PortList(report.TurnOnPassed), strconv.Itoa(report.TurnOnPort)))
 		}
 	}
 	switch {

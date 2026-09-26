@@ -61,6 +61,7 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	// Before sharing is on, a port other than 443 is named with the reason.
 	if !report.On && report.TurnOnPort != 0 && len(report.TurnOnPassed) > 0 {
 		info.TurnOnPort, info.PassedPorts = strconv.Itoa(report.TurnOnPort), PortList(report.TurnOnPassed)
+		info.PortNote = webui.TailscalePortNote(len(report.TurnOnPassed))
 	}
 	if report.Sharing != nil && info.Name == "" {
 		info.Name = report.Sharing.Name

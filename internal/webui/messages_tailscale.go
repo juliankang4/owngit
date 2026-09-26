@@ -69,6 +69,15 @@ func TailscaleProblemBrief(problem MessageCode) MessageCode {
 	return problem
 }
 
+// TailscalePortNote is the note that names the passed ports when turning on
+// uses another port: one message for a single passed port, another for several.
+func TailscalePortNote(passed int) MessageCode {
+	if passed > 1 {
+		return MsgTSPortsNote
+	}
+	return MsgTSPortNote
+}
+
 // TailscalePortNoteBrief is note without the list of what is on the port,
 // for a viewer who is not the administrator.
 func TailscalePortNoteBrief(note MessageCode) MessageCode {
@@ -293,7 +302,7 @@ var tailscaleCatalog = map[MessageCode]message{
 	},
 	MsgTSChangedStepsOther: {
 		en: "To turn sharing off, first clear port %[1]s on this computer: \"tailscale serve status\" shows what uses it. Remove it with \"tailscale serve\", or stop a \"tailscale serve\" running in a terminal with Ctrl+C there. Then turn sharing off.",
-		ko: "공유를 끄려면 먼저 이 컴퓨터의 포트 %[1]s을 비우세요. 무엇이 쓰고 있는지는 \"tailscale serve status\"로 볼 수 있습니다. \"tailscale serve\"로 지우거나, 터미널에서 실행 중인 \"tailscale serve\"라면 그 터미널에서 Ctrl+C로 멈추세요. 그런 다음 공유를 끄세요.",
+		ko: "공유를 끄려면 먼저 이 컴퓨터의 %[1]s 포트를 비우세요. 무엇이 쓰고 있는지는 \"tailscale serve status\"로 볼 수 있습니다. \"tailscale serve\"로 지우거나, 터미널에서 실행 중인 \"tailscale serve\"라면 그 터미널에서 Ctrl+C로 멈추세요. 그런 다음 공유를 끄세요.",
 	},
 	MsgTSFirstVisit: {
 		en: "Tailscale gets the certificate when the address is first opened, so the first visit can take up to about a minute. Later visits do not wait.",
@@ -348,6 +357,7 @@ const (
 	MsgTSTurnedOn      MessageCode = "settings.tailscale.turned_on"
 	MsgTSTurnedOff     MessageCode = "settings.tailscale.turned_off"
 	MsgTSPortNote      MessageCode = "settings.tailscale.port_note"
+	MsgTSPortsNote     MessageCode = "settings.tailscale.ports_note"
 	MsgTSBaseURLOption MessageCode = "settings.tailscale.base_url_option"
 	MsgConnTailscaleOn MessageCode = "connection.encrypted_tailscale"
 )
@@ -387,10 +397,17 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 		en: "Tailscale's HTTPS port for OwnGit on this computer now has something other than the address OwnGit made:",
 		ko: "이 컴퓨터에서 OwnGit이 쓰는 Tailscale HTTPS 포트에 OwnGit이 만든 주소 대신 다른 설정이 있습니다:",
 	},
-	// Values: the ports passed over, then the port turning on uses.
+	// Values: the port passed over, then the port turning on uses. Korean
+	// puts no particle right after a port number, because its form depends
+	// on how the number is read.
 	MsgTSPortNote: {
 		en: "Tailscale already serves something else on HTTPS port %[1]s of this computer, so sharing uses port %[2]s and leaves that as it is.",
-		ko: "이 컴퓨터의 HTTPS 포트 %[1]s에서 Tailscale이 이미 다른 것을 제공하고 있어, 공유는 포트 %[2]s를 쓰고 기존 설정은 그대로 둡니다.",
+		ko: "이 컴퓨터의 HTTPS 포트 %[1]s에서 Tailscale이 이미 다른 것을 제공하고 있어, 공유는 %[2]s 포트를 쓰고 기존 설정은 그대로 둡니다.",
+	},
+	// Values: the ports passed over, as a list, then the port turning on uses.
+	MsgTSPortsNote: {
+		en: "Tailscale already serves something else on each of these HTTPS ports of this computer: %[1]s. Sharing uses port %[2]s and leaves those as they are.",
+		ko: "이 컴퓨터의 HTTPS 포트 %[1]s에서 Tailscale이 이미 다른 것을 제공하고 있어, 공유는 %[2]s 포트를 쓰고 기존 설정은 그대로 둡니다.",
 	},
 	// Value: the --base-url option.
 	MsgTSBaseURLOption: {

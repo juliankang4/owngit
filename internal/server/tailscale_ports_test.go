@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -137,6 +139,18 @@ func TestTailscaleSharingPortOrder(t *testing.T) {
 	name := tailscaletest.Name
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: otherService(tailscale.ServeConfig{}, name, 443, 8443)})
 	ctx := context.Background()
+	report, err := app.Tailscale.Report(ctx)
+	noErr(t, err)
+	if info := tailscaleInfo(report); info.TurnOnPort != "10000" || info.PassedPorts != "443, 8443" || info.PortNote != webui.MsgTSPortsNote {
+		t.Fatalf("Settings block before turning on=%+v", info)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	request.RemoteAddr, request.Host = "127.0.0.1:50123", "127.0.0.1:7654"
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	if note := html.EscapeString(fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSPortsNote), "443, 8443", "10000")); !strings.Contains(response.Body.String(), note) {
+		t.Fatalf("the Settings page (%d) lacks %q", response.Code, note)
+	}
 	change, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
 	if change.Record.HTTPSPort != 10000 || !reflect.DeepEqual(change.PassedPorts, []int{443, 8443}) {
@@ -147,7 +161,7 @@ func TestTailscaleSharingPortOrder(t *testing.T) {
 
 	fake.Update(func(s *tailscaletest.State) { s.Serve = otherService(s.Serve, name, 10000) })
 	writes := len(fake.Writes())
-	report, err := app.Tailscale.Report(ctx)
+	report, err = app.Tailscale.Report(ctx)
 	noErr(t, err)
 	if report.CanTurnOn || !report.PortsTaken || report.Endpoint != TailscaleEndpointTaken || len(report.Found) != 3 {
 		t.Fatalf("report with every port taken=%+v", report)
