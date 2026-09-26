@@ -206,7 +206,17 @@ func (s *Store) initialize(ctx context.Context, expected schemaClass) error {
 			return fmt.Errorf("initialize state database: %w", err)
 		}
 	}
-	class, err := classifySchema(ctx, s.db)
+	// classifySchema reads the schema in several queries. One read
+	// transaction gives them one snapshot, so a migration that another
+	// process commits in between cannot mix an empty and a finished schema.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return fmt.Errorf("initialize state database: %w", err)
+	}
+	class, err := classifySchema(ctx, tx)
+	if rollbackErr := tx.Rollback(); rollbackErr != nil {
+		err = errors.Join(err, fmt.Errorf("end state database classification: %w", rollbackErr))
+	}
 	if err != nil {
 		return err
 	}
@@ -244,14 +254,26 @@ func closeRows(rows *sql.Rows) error {
 	return errors.Join(rows.Err(), rows.Close())
 }
 
+// schemaHooks is a test seam: versionRead runs after classifySchema found no
+// schema version and before it reads the rest of the schema. Production
+// leaves it nil.
+var schemaHooks struct {
+	versionRead func()
+}
+
 // classifySchema returns the accepted class of the visible schema or the
-// compatibility error that refuses it.
+// compatibility error that refuses it. It runs several queries, so a database
+// that another connection can change must be classified inside one
+// transaction. The preflight reads an immutable view or a private copy.
 func classifySchema(ctx context.Context, db queryRower) (schemaClass, error) {
 	version, versioned, err := readSchemaVersion(ctx, db)
 	if err != nil {
 		return schemaClass{}, err
 	}
 	if !versioned {
+		if schemaHooks.versionRead != nil {
+			schemaHooks.versionRead()
+		}
 		return validateUnversionedSchema(ctx, db)
 	}
 	current := currentSchemaVersion()

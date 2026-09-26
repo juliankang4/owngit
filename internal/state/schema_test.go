@@ -481,3 +481,44 @@ func infoMode(info os.FileInfo) os.FileMode {
 	}
 	return info.Mode().Perm()
 }
+
+// TestInitializeClassifiesOneSnapshot lets another connection commit the
+// schema migration after initialize read that the new database has no schema
+// version and before it reads the rest of the schema. Mixing the two views
+// would refuse the database as an unknown unversioned schema; one snapshot
+// sees it empty and then finds it current inside the migration.
+func TestInitializeClassifiesOneSnapshot(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	path := filepath.Join(directory, databaseName)
+	noErr(t, createDatabase(ctx, path))
+	db, err := sql.Open("sqlite", sqliteFileURI(path))
+	noErr(t, err)
+	db.SetMaxOpenConns(1)
+	store := &Store{db: db, dir: directory}
+	defer store.Close()
+
+	migrated := false
+	t.Cleanup(func() { schemaHooks.versionRead = nil })
+	schemaHooks.versionRead = func() {
+		if migrated {
+			return
+		}
+		migrated = true
+		otherDB, err := sql.Open("sqlite", sqliteFileURI(path))
+		noErr(t, err)
+		otherDB.SetMaxOpenConns(1)
+		other := &Store{db: otherDB, dir: directory}
+		defer other.Close()
+		noErr(t, other.migrate(ctx, schemaEmpty))
+	}
+	noErr(t, store.initialize(ctx, schemaEmpty))
+	if !migrated {
+		t.Fatal("the hook did not run, so the race was not exercised")
+	}
+	version, err := store.schemaVersion(ctx)
+	noErr(t, err)
+	if version != currentSchemaVersion() {
+		t.Fatalf("schema version %d, want %d", version, currentSchemaVersion())
+	}
+}
