@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/service"
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
@@ -31,6 +33,16 @@ func TestMain(m *testing.M) {
 	releaseCheckEndpoint = "http://127.0.0.1:0/owngit-tests-never-contact-github"
 	// A test run from a terminal must not ask setup questions there.
 	interactiveSetup = func() bool { return false }
+	// The machine running the tests never decides a result: it counts as a
+	// computer with a screen, no account service exists, and no test runs
+	// a service manager.
+	probeEnvironment = func() service.Environment {
+		return service.Environment{Getenv: func(string) string { return "" }, EUID: os.Geteuid()}
+	}
+	pointerFile = filepath.Join(os.TempDir(), "owngit-tests-have-no-service-pointer", "state-dir")
+	serviceRunner = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("tests never run a service manager")
+	}
 	os.Exit(m.Run())
 }
 

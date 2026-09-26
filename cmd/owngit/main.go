@@ -81,6 +81,15 @@ func run(arguments []string) error {
 	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
 		command, arguments = arguments[0], arguments[1:]
 	}
+	if serviceStateCommands[command] && !helpRequested(arguments) {
+		stateDir := stateDirArgument(arguments)
+		if stateDir == "" {
+			stateDir = defaultStateDir()
+		}
+		if err := actAsStateOwner(stateDir); err != nil {
+			return err
+		}
+	}
 	err := runCommand(command, arguments)
 	if errors.Is(err, errUsageShown) {
 		return nil
@@ -94,6 +103,10 @@ func runCommand(command string, arguments []string) error {
 		return serve(arguments)
 	case "setup-link":
 		return setupLink(arguments)
+	case "service":
+		return serviceCommand(arguments)
+	case "health":
+		return healthCommand(arguments)
 	case "reset-admin":
 		return resetAdmin(arguments)
 	case "approve-host":
@@ -188,6 +201,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	gitPath := flags.String("git", "", "Git executable path")
 	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
+	headless := flags.Bool("headless", false, "this computer has no screen for setup: before setup, with no saved listen address, listen on every address and save that")
 	noUpdateCheck := flags.Bool("no-update-check", false, "never contact GitHub to check for a newer OwnGit release, whatever the Settings page says")
 	var allowedHosts, trustedProxies stringList
 	flags.Var(&allowedHosts, "allowed-host", "additional accepted `host` name (repeatable)")
@@ -249,6 +263,19 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	network, err := effectiveServeNetwork(savedNetwork, flags, *listenAddress, *baseURL)
 	if err != nil {
 		return err
+	}
+	// Without a screen, setup happens on another device, so the first start
+	// listens on every address. Until setup is done every request except
+	// the setup link is refused, as for any unknown Host.
+	if network.ListenSource == sourceDefault && !settings.Initialized && (*headless || probeEnvironment().Headless()) {
+		saved, err := applyHeadlessListen(ctx, store)
+		if err != nil {
+			return err
+		}
+		if saved {
+			network.Listen, network.ListenSource = headlessListen, sourceSaved
+			logf("this computer has no screen for setup, so OwnGit listens on every address (%s) and saved that; run \"owngit network set --listen %s\" to keep it on this computer", headlessListen, server.DefaultListenAddress)
+		}
 	}
 	savedProxies, err := store.TrustedProxies(ctx)
 	if err != nil {
@@ -645,41 +672,6 @@ func (lifetime *importLifetime) stop() {
 	}
 }
 
-func setupLink(arguments []string) error {
-	flags := flag.NewFlagSet("setup-link", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
-	baseURL := flags.String("base-url", "http://127.0.0.1:7654", "owner-facing HTTP origin")
-	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
-	if err := parseFlags(flags, arguments); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("setup-link takes no positional arguments")
-	}
-	store, err := openLiveState(context.Background(), *stateDir)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	settings, err := store.Settings(context.Background())
-	if err != nil {
-		return err
-	}
-	if settings.Initialized {
-		return errors.New("setup is already complete")
-	}
-	path, err := (&bootstrap.Issuer{Store: store, BaseURL: *baseURL}).Issue(context.Background())
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Owner setup file written to %s\n", path)
-	if !*noOpen {
-		return bootstrap.Open(path)
-	}
-	return nil
-}
-
 func resetAdmin(arguments []string) error {
 	flags := flag.NewFlagSet("reset-admin", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -696,6 +688,11 @@ func resetAdmin(arguments []string) error {
 	}
 	password, err := readPrivatePassword(*passwordFile)
 	if err != nil {
+		return err
+	}
+	// Root reads its own password file first, then acts as the account that
+	// owns the state directory; see actAsStateOwner.
+	if err := actAsStateOwner(*stateDir); err != nil {
 		return err
 	}
 	encoded, err := auth.HashPassword(password)
@@ -974,6 +971,9 @@ func ownerOrigin(configured, listenAddress string) (string, error) {
 }
 
 func defaultStateDir() string {
+	if pointed := pointerStateDir(); pointed != "" {
+		return pointed
+	}
 	if configured, err := os.UserConfigDir(); err == nil {
 		return defaultStatePath(configured, "")
 	}
@@ -989,13 +989,27 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|skill|mcp|version] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|service|health|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|skill|mcp|version] [options]")
 	fmt.Fprintln(writer, "Run owngit <command> --help for the options of a command.")
 }
 
 // errUsageShown ends a command that printed its usage because -h or --help
 // was given. run turns it into success.
 var errUsageShown = errors.New("usage shown")
+
+// helpRequested reports whether a command's arguments ask for its usage
+// instead of running it.
+func helpRequested(arguments []string) bool {
+	for index, argument := range arguments {
+		switch {
+		case argument == "--":
+			return false
+		case argument == "-h" || argument == "--help" || argument == "-help" || index == 0 && argument == "help":
+			return true
+		}
+	}
+	return false
+}
 
 // isHelpArgument reports whether a command group's first argument asks for
 // its usage.
@@ -1055,6 +1069,12 @@ func printFlagUsage(writer io.Writer, flags *flag.FlagSet) {
 	synopsis := "owngit " + flags.Name()
 	if operands := commandOperands[flags.Name()]; operands != "" {
 		synopsis += " " + operands
+	}
+	defined := false
+	flags.VisitAll(func(*flag.Flag) { defined = true })
+	if !defined {
+		fmt.Fprintf(writer, "Usage: %s\n\nThis command takes no options.\n", synopsis)
+		return
 	}
 	fmt.Fprintf(writer, "Usage: %s [options]\n\nOptions:\n", synopsis)
 	flags.VisitAll(func(entry *flag.Flag) {

@@ -14,7 +14,7 @@ var helpCommands = []struct {
 	path string
 	leaf bool
 }{
-	{"serve", true}, {"setup-link", true}, {"reset-admin", true}, {"approve-host", true},
+	{"serve", true}, {"service", false}, {"service install", true}, {"health", true}, {"setup-link", true}, {"reset-admin", true}, {"approve-host", true},
 	{"network", false}, {"network show", true}, {"network set", true}, {"network reset", true},
 	{"tailscale", false}, {"tailscale status", true}, {"tailscale on", true}, {"tailscale off", true},
 	{"forget-check-container", true}, {"backup", true}, {"restore", true},
@@ -155,5 +155,21 @@ func TestActionHelpListsOnlyItsOwnOptions(t *testing.T) {
 	var problem *apiclient.Error
 	if !errors.As(err, &problem) || problem.Code != "invalid_arguments" {
 		t.Errorf("check-policy show --policy-file err=%v, want invalid_arguments", err)
+	}
+}
+
+// The service actions other than install take no options. Their help says
+// so, and an option is refused before anything runs.
+func TestOptionlessServiceActionsPrintHelpAndRefuseOptions(t *testing.T) {
+	for _, action := range []string{"uninstall", "status", "start", "stop", "restart"} {
+		for _, flag := range []string{"-h", "--help"} {
+			output, err := captureStdout(func() error { return run([]string{"service", action, flag}) })
+			if err != nil || !strings.HasPrefix(output, "Usage: owngit service "+action) || !strings.Contains(output, "takes no options") {
+				t.Errorf("owngit service %s %s = %q, %v; want its usage", action, flag, output, err)
+			}
+		}
+		if _, err := captureStdout(func() error { return run([]string{"service", action, "--no-such-flag"}) }); err == nil {
+			t.Errorf("owngit service %s --no-such-flag succeeded", action)
+		}
 	}
 }

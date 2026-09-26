@@ -17,6 +17,10 @@ import (
 // saved setting names an address.
 const DefaultListenAddress = "127.0.0.1:7654"
 
+// HeadlessListenAddress is saved at the first start of a computer without a
+// screen for setup, so the setup link works from another device.
+const HeadlessListenAddress = "0.0.0.0:7654"
+
 // ValidateListenAddress checks a listen address to be saved: host:port with a
 // port from 1 to 65535, and a host that is empty (every interface), an IP
 // address or a host name.
