@@ -302,7 +302,9 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 	}
 	switch {
 	case !report.On && report.Endpoint == server.TailscaleEndpointTaken:
-		fmt.Fprintf(writer, "  %s %s\n", webui.Text(webui.LangEN, webui.MsgTSTaken), server.TailscaleUsesText(report.Found))
+		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSTaken), server.TailscaleUsesText(report.Found), webui.Text(webui.LangEN, webui.MsgTSRemoveSteps))
+	case !report.On && report.Endpoint == server.TailscaleEndpointUnrecorded:
+		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSUnrecorded), server.TailscaleUsesText(report.Found), webui.Text(webui.LangEN, webui.MsgTSRemoveSteps))
 	case report.On && report.Endpoint == server.TailscaleEndpointChanged:
 		fmt.Fprintf(writer, "  %s %s\n", webui.Text(webui.LangEN, webui.MsgTSChanged), server.TailscaleUsesText(report.Found))
 		fmt.Fprintf(writer, "  %s\n", fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSChangedSteps), report.Sharing.Target))

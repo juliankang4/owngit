@@ -79,6 +79,10 @@ const (
 	// While sharing is off:
 	TailscaleEndpointFree  = "free"  // the port can be used
 	TailscaleEndpointTaken = "taken" // something else uses the port
+	// OwnGit's exact endpoint is there, but OwnGit has no record of making
+	// it, such as after an interrupted change or a rename back to an
+	// earlier name. It is treated as taken.
+	TailscaleEndpointUnrecorded = "unrecorded"
 	// Either way:
 	TailscaleEndpointUnknown = "unknown" // the configuration could not be read
 )
@@ -236,8 +240,12 @@ func readEndpoint(reading tailscaleReading, report *TailscaleReport, record stat
 	}
 	port, _ := targetPort(report.Listen, observed)
 	endpoint := config.Endpoint(report.Name, TailscaleHTTPSPort, tailscale.Target(port))
-	report.Endpoint = TailscaleEndpointFree
-	if !endpoint.Free && !endpoint.Exact {
+	switch {
+	case endpoint.Free:
+		report.Endpoint = TailscaleEndpointFree
+	case endpoint.Exact:
+		report.Endpoint, report.Found = TailscaleEndpointUnrecorded, endpoint.Found
+	default:
 		report.Endpoint, report.Found = TailscaleEndpointTaken, endpoint.Found
 	}
 }
@@ -302,6 +310,9 @@ type TailscaleError struct {
 const (
 	// TailscaleProblemTaken: something else uses the HTTPS port.
 	TailscaleProblemTaken = "port_taken"
+	// TailscaleProblemUnrecorded: OwnGit's exact endpoint is there without
+	// a record of OwnGit making it.
+	TailscaleProblemUnrecorded = "unrecorded"
 	// TailscaleProblemReadBack: Tailscale did not keep the endpoint.
 	TailscaleProblemReadBack = "read_back"
 	// TailscaleProblemChanged: the endpoint changed since OwnGit made it.
@@ -422,8 +433,10 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 	}
 	target := tailscale.Target(port)
 
-	// Read before writing: the port must be free, or hold exactly OwnGit's
-	// endpoint, whether from this record or set up the same way by hand.
+	// Read before writing: the port must be free, or hold exactly the
+	// endpoint this record describes. An exact endpoint without a record is
+	// refused like any other use of the port, since nothing shows that
+	// OwnGit made it.
 	config, err := command.ServeConfig(ctx)
 	if err != nil {
 		return TailscaleChange{}, tailscaleError(err, command.MacApp)
@@ -443,9 +456,11 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool) (TailscaleC
 	}
 	record.Name, record.HTTPSPort, record.Target = status.Name, TailscaleHTTPSPort, target
 	switch {
+	case endpoint.Exact && !wasOn:
+		return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemUnrecorded, Found: endpoint.Found}
 	case endpoint.Exact:
 		change.Endpoint = "kept"
-		record.Created = wasOn && previous.Created
+		record.Created = previous.Created
 	case endpoint.Free || ours:
 		change.Endpoint = "created"
 		record.Created = true

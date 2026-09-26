@@ -17,6 +17,7 @@ import (
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
+	"owngit/internal/webui"
 )
 
 // tailscaleApp is a configured app that runs like serve with a live network
@@ -205,30 +206,42 @@ func TestTailscaleSharingRefusesAPortInUse(t *testing.T) {
 	}
 }
 
-// An endpoint that already points at OwnGit exactly is used, and left in
-// place when sharing is turned off, since OwnGit did not create it.
-func TestTailscaleSharingLeavesAnEndpointItDidNotCreate(t *testing.T) {
+// An endpoint that points at OwnGit exactly but that OwnGit has no record
+// of making, such as one left by an interrupted change or a rename back, is
+// treated as taken: the report says so with removal steps, and turning on
+// refuses and writes nothing. A record that says OwnGit did not create its
+// endpoint (kept by an earlier version) still leaves it when turning off.
+func TestAnUnrecordedOwnGitEndpointIsTreatedAsTaken(t *testing.T) {
 	name := tailscaletest.Name
-	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: tailscale.ServeConfig{
+	exact := tailscale.ServeConfig{
 		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
 		Web: map[string]tailscale.WebServer{name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:7654"}}}},
-	}})
+	}
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: exact})
 	ctx := context.Background()
-	change, err := app.Tailscale.On(ctx, nil)
+	report, err := app.Tailscale.Report(ctx)
 	noErr(t, err)
-	if change.Endpoint != "kept" || change.Record.Created {
-		t.Fatalf("change=%+v", change)
+	info := tailscaleInfo(report)
+	if report.Endpoint != TailscaleEndpointUnrecorded || report.CanTurnOn || len(report.Found) != 1 ||
+		info.FoundNote != webui.MsgTSUnrecorded || info.FoundFix != webui.MsgTSRemoveSteps {
+		t.Fatalf("report=%+v info=%+v", report, info)
 	}
-	change, err = app.Tailscale.Off(ctx)
+	_, err = app.Tailscale.On(ctx, nil)
+	var refusal *TailscaleError
+	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemUnrecorded || len(fake.Writes()) != 0 {
+		t.Fatalf("err=%v writes=%q", err, fake.Writes())
+	}
+	if _, _, _, record := savedSharing(t, app.Store); record != nil {
+		t.Fatalf("a refusal saved %+v", record)
+	}
+
+	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Tailscale: &state.TailscaleServe{
+		Name: name, HTTPSPort: 443, Target: "http://127.0.0.1:7654", Confirmed: true, BaseURL: "https://" + name,
+	}}))
+	change, err := app.Tailscale.Off(ctx)
 	noErr(t, err)
-	if change.Endpoint != "left" || len(fake.Writes()) != 0 {
+	if change.Endpoint != "left" || len(fake.Writes()) != 0 || !fake.State().Serve.Endpoint(name, 443, "http://127.0.0.1:7654").Exact {
 		t.Fatalf("change=%+v writes=%q", change, fake.Writes())
-	}
-	if config := fake.State().Serve; !config.Endpoint(name, 443, "http://127.0.0.1:7654").Exact {
-		t.Fatalf("the endpoint OwnGit did not create is gone: %+v", config)
-	}
-	if settings, _, _, record := savedSharing(t, app.Store); settings.BaseURL != "" || record != nil {
-		t.Fatalf("settings=%+v record=%+v", settings, record)
 	}
 }
 

@@ -292,3 +292,25 @@ func TestTailscaleCommandGivesStepsForAChangedEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// An address to OwnGit that OwnGit has no record of making is shown as
+// taking the port, with the command that removes it, and "on" refuses it.
+func TestTailscaleStatusShowsAnUnrecordedEndpointAsTaken(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: tailscale.ServeConfig{
+		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+		Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:7654"}}}},
+	}})
+	output, err := runTailscale(t, "status", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	if strings.Contains(output, "Ready to share") || strings.Contains(output, "Turn it on") ||
+		!strings.Contains(output, "no record of making it") || !strings.Contains(output, `"tailscale serve --https=443 off"`) {
+		t.Fatalf("status printed %q", output)
+	}
+	if _, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path); err == nil || !strings.Contains(err.Error(), "no record of making it") {
+		t.Fatalf("on: %v", err)
+	}
+	if writes := fake.Writes(); len(writes) != 0 {
+		t.Fatalf("writes=%q", writes)
+	}
+}

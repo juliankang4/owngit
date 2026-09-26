@@ -296,7 +296,7 @@
     {{if $ts.FoundNote}}
       <div class="netnote">{{icon "warning"}}<div><span>{{bi $lang $ts.FoundNote}}</span>
         {{with $ts.Found}}<ul class="tsfound">{{range .}}<li>{{tsUse $lang .}}</li>{{end}}</ul>{{end}}
-        {{with $ts.FoundFix}}<span>{{biF $lang . $ts.FoundFixValue}}</span>{{end}}</div></div>
+        {{with $ts.FoundFix}}<span>{{if $ts.FoundFixValue}}{{biF $lang . $ts.FoundFixValue}}{{else}}{{bi $lang .}}{{end}}</span>{{end}}</div></div>
     {{end}}
     {{if $ts.Stale}}
       <div class="netnote netnote--info">{{icon "info"}}<div><span>{{bi $lang "tailscale.stale"}}</span>

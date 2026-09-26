@@ -122,7 +122,7 @@ OwnGit을 실행하는 컴퓨터에서 Tailscale이 실행 중이면, OwnGit은 
 
 공유를 켜면 OwnGit은 다음 순서로 동작합니다.
 
-1. 먼저 현재 Tailscale Serve 설정을 읽습니다. 이 컴퓨터의 HTTPS 443 포트가 이미 다른 용도로 쓰이고 있으면 아무것도 바꾸지 않고 그 포트에 무엇이 있는지 보여 줍니다. 설정 화면은 이 목록을 예전 이름의 주소, Tailscale이 출력한 내용과 마찬가지로 관리자 세션이거나 관리자 비밀번호를 방금 입력한 경우에만 보여 줍니다. 다른 사용자에게는 포트가 이미 쓰이고 있다는 사실만 보입니다. `owngit tailscale status`는 항상 목록을 보여 줍니다. Tailscale Funnel도 여기에 해당합니다.
+1. 먼저 현재 Tailscale Serve 설정을 읽습니다. 이 컴퓨터의 HTTPS 443 포트가 이미 다른 용도로 쓰이고 있으면 아무것도 바꾸지 않고 그 포트에 무엇이 있는지를 지우는 명령과 함께 보여 줍니다. 이미 OwnGit으로 연결되지만 OwnGit에 만든 기록이 없는 주소도 마찬가지입니다. 변경이 중간에 끊겨 남은 주소나, 이 컴퓨터가 예전 이름을 다시 얻어 살아난 그 이름의 주소가 그런 예입니다. 설정 화면은 이 목록을 예전 이름의 주소, Tailscale이 출력한 내용과 마찬가지로 관리자 세션이거나 관리자 비밀번호를 방금 입력한 경우에만 보여 줍니다. 다른 사용자에게는 포트가 이미 쓰이고 있다는 사실만 보입니다. `owngit tailscale status`는 항상 목록을 보여 줍니다. Tailscale Funnel도 여기에 해당합니다.
 2. `tailscale serve --bg --https=443 http://127.0.0.1:PORT`를 실행합니다. PORT는 OwnGit의 포트입니다. 그런 다음 설정을 다시 읽어 이 주소가 OwnGit을 가리키는지 확인합니다.
 3. HTTPS 주소를 기본 URL로, Tailscale 이름을 허용한 Host 이름으로, `127.0.0.1`을 신뢰하는 프록시로 저장합니다. 이미 저장된 값은 다시 넣지 않습니다. 공유를 끌 때 정확히 그만큼만 되돌릴 수 있도록 OwnGit이 만든 내용도 기록합니다.
 
@@ -136,7 +136,7 @@ Tailscale이 인증서를 발급할 때 `gitbox.tail0000.ts.net`처럼 이 컴�
 
 이름을 바꾼 뒤에는 새 이름을 쓰도록 공유를 다시 켜세요. OwnGit은 새 이름으로 주소를 만들고, 새 기본 URL과 허용한 Host 이름을 저장하며, 예전 이름을 자신이 추가했다면 지웁니다. 예전 주소는 예전 이름으로 Tailscale에 남습니다. Tailscale은 지금 이름으로만 응답하므로 이 주소는 아무 데도 연결되지 않지만, `tailscale serve`는 컴퓨터가 그 이름일 때만 이 주소를 지울 수 있습니다(Tailscale 이슈 16992). 지우려면 이름을 예전 이름으로 되돌리고 `tailscale serve --https=443 --set-path=/ off`를 실행한 뒤 다시 이름을 바꾸세요. 이 컴퓨터에서 Tailscale이 다른 것을 제공하지 않는다면 `tailscale serve reset`으로도 지울 수 있습니다. 설정 화면과 `owngit tailscale status`는 이런 주소를 이 방법과 함께 보여 줍니다. 이름을 바꾼 뒤 공유를 끄면 OwnGit은 자신의 설정을 되돌리고 예전 주소는 그대로 둡니다.
 
-공유를 끄면 OwnGit은 자신이 만든 Tailscale 주소가 만들 때 모습 그대로 남아 있을 때만 그 주소를 지웁니다. 그 뒤에 누가 주소를 바꿨다면 아무것도 바꾸지 않고 이유를 알려 줍니다. 원래대로 되돌리거나 `tailscale serve`로 지운 뒤 다시 끄세요. OwnGit이 공유를 켜기 전부터 있던 주소는 그대로 두고, 이미 없어진 주소는 지울 것이 없습니다. 끌 때도 먼저 Tailscale에 확인하므로 Tailscale이 응답해야 합니다. 그다음 HTTPS 주소가 아직 기본 URL로 저장되어 있으면 그 전에 저장되어 있던 기본 URL로 되돌리고, OwnGit이 추가한 허용 Host 이름과 신뢰하는 프록시를 지웁니다. 연결 주소는 바꾸지 않습니다. OwnGit은 `tailscale serve reset`이나 `tailscale funnel`을 실행하지 않습니다.
+공유를 끄면 OwnGit은 자신이 만든 Tailscale 주소가 만들 때 모습 그대로 남아 있을 때만 그 주소를 지웁니다. 그 뒤에 누가 주소를 바꿨다면 아무것도 바꾸지 않고 이유를 알려 줍니다. 원래대로 되돌리거나 `tailscale serve`로 지운 뒤 다시 끄세요. 이미 없어진 주소는 지울 것이 없습니다. 끌 때도 먼저 Tailscale에 확인하므로 Tailscale이 응답해야 합니다. 그다음 HTTPS 주소가 아직 기본 URL로 저장되어 있으면 그 전에 저장되어 있던 기본 URL로 되돌리고, OwnGit이 추가한 허용 Host 이름과 신뢰하는 프록시를 지웁니다. 연결 주소는 바꾸지 않습니다. OwnGit은 `tailscale serve reset`이나 `tailscale funnel`을 실행하지 않습니다.
 
 OwnGit은 `Tailscale-Funnel-Request` 헤더가 붙은 요청을 모두 거부하므로 이 주소가 Funnel을 통해 인터넷에 열리지 않습니다. `Tailscale-User-Login` 같은 `Tailscale-User-*` 헤더는 무시합니다. 누가 읽고 쓰고 관리할 수 있는지는 여전히 비밀번호로 정합니다.
 

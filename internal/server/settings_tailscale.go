@@ -65,7 +65,9 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSChanged
 		info.FoundFix, info.FoundFixValue = webui.MsgTSChangedSteps, report.Sharing.Target
 	case !report.On && report.Endpoint == TailscaleEndpointTaken:
-		info.Found, info.FoundNote = tailscaleUses(report.Found), webui.MsgTSTaken
+		info.Found, info.FoundNote, info.FoundFix = tailscaleUses(report.Found), webui.MsgTSTaken, webui.MsgTSRemoveSteps
+	case !report.On && report.Endpoint == TailscaleEndpointUnrecorded:
+		info.Found, info.FoundNote, info.FoundFix = tailscaleUses(report.Found), webui.MsgTSUnrecorded, webui.MsgTSRemoveSteps
 	}
 	info.Stale = tailscaleUses(report.Stale)
 	info.CanTurnOn, info.CanTurnOff = report.CanTurnOn, report.CanTurnOff
