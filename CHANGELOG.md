@@ -24,6 +24,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `owngit runner` refuses a workspace folder that belongs to another account, or one inside a folder that another account can change, and leaves it untouched. Before, a runner started as root took over an empty folder that another local account had made, including the default one in the shared temporary folder, and that account could swap the source files a check ran. The refusal names the folder and says how to fix it. Without `--workspace-root` the runner now uses a folder in its account's cache folder; a workspace that an earlier release made in the temporary folder and that the account owns stays in use. The runner also warns when it runs as root. OwnGit 1.1.0 and earlier are affected on Linux and macOS when the runner runs as root.
 - A client that sent the headers of a request but held back its body could keep a connection to OwnGit open without any password: for up to an hour on the import and archive download addresses, and without a limit on addresses that refuse a request before reading its body. Many such connections could make OwnGit unreachable. OwnGit now waits at most 30 seconds for a request body on every address and then answers or closes the connection. An import or archive download gets its longer time limit only after the password check and after its request body has arrived. OwnGit 1.1.0 and earlier are affected.
 
+### Changed
+
+- Sharing on your tailnet no longer stops when Tailscale already serves something else on HTTPS port 443 of this computer. OwnGit uses port 8443, or 10000 if 8443 is taken too, and leaves what is on the other ports as it is; the address then carries the port, such as `https://NAME.TAILNET.ts.net:8443/`. `owngit tailscale on --https-port PORT` chooses the port yourself. Sharing turned on by 1.1.0 keeps port 443.
+- A page opened over the tailnet at one of this computer's Tailscale addresses, such as `http://100.64.0.7:7654/`, says "Encrypted by Tailscale" instead of "Not encrypted by OwnGit", and plain HTTP needs no acknowledgement for that connection. OwnGit checks the address against the ones Tailscale on this computer reports, so other networks in the same address range do not get the label.
+- `owngit tailscale on` and the notice after turning sharing on in Settings say that the first visit to the HTTPS address can take up to about a minute while Tailscale gets the certificate.
+- Before OwnGit's first start, `owngit network show` and `owngit tailscale status` report the defaults instead of failing, and with `--json` every failure of these commands and of `owngit tailscale on|off` is a JSON error object.
+- The plain HTTP notice names private networks such as Tailscale, NetBird or WireGuard, and a reverse proxy with HTTPS, instead of Tailscale only.
+
+### Fixed
+
+- The `owngit` commands, the MCP server and the runner gave up after 10 seconds while Tailscale got the certificate for a newly shared address, which can take longer. They now wait up to 75 seconds for the TLS handshake, and the time limit of each request starts once the connection is ready.
+- While the running OwnGit was started with `--base-url`, `owngit tailscale status`, `owngit tailscale on` and the Settings card showed the HTTPS clone address although OwnGit gave out the option's address. They now name the option and say to remove it.
+- Settings showed "Tailscale is stopped" twice after a refused change, and offered turning sharing off while Tailscale was stopped, which is refused. It now says it once and offers turning off again when Tailscale runs.
+- On a computer signed in to Headscale or another control server, the refusal pointed to a Tailscale admin console page that does not exist there. It now says that the control server offers no HTTPS certificates.
+- After a rename, Settings offered turning sharing on again while the new name's ports were taken. It now lists what is on them, as for a taken port.
+- The note about an address under an earlier name says the computer can be renamed back with `tailscale set --hostname` as well as in the admin console.
+
 ## [1.1.0] - 2026-09-27
 
 This release fixes a security problem in `owngit check run`: it no longer starts a clone's `core.fsmonitor` program or index hooks while it inspects the worktree. See Security below.
