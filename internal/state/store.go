@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -108,9 +109,11 @@ func Open(ctx context.Context, dir string) (result *Store, err error) {
 	if err := os.MkdirAll(absolute, 0o700); err != nil {
 		return nil, fmt.Errorf("create state directory: %w", err)
 	}
-	absolute, err = resolveStatePath(absolute)
-	if err != nil {
-		return nil, fmt.Errorf("resolve state directory identity: %w", err)
+	if runtime.GOOS != "windows" {
+		absolute, err = filepath.EvalSymlinks(absolute)
+		if err != nil {
+			return nil, fmt.Errorf("resolve state directory identity: %w", err)
+		}
 	}
 	if err := RequireProtectedParent(absolute); err != nil {
 		return nil, fmt.Errorf("state directory parent is not protected: %w; choose a parent that other accounts cannot change", err)

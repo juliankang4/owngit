@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // This file classifies an existing state database before Open changes any
@@ -494,8 +495,14 @@ func bindDirectory(dir string) (*sourceObject, error) {
 	if !info.IsDir() {
 		return nil, closeAfter(handle, errors.New("state path is not a directory"))
 	}
-	if err := requireAcceptableStateOwner(info); err != nil {
-		return nil, closeAfter(handle, err)
+	if runtime.GOOS != "windows" {
+		owned, err := OwnedByCurrentUser(handle)
+		if err != nil {
+			return nil, closeAfter(handle, err)
+		}
+		if !owned {
+			return nil, closeAfter(handle, errors.New("state directory must be owned by this account; run the command as its owner"))
+		}
 	}
 	fingerprint, err := protectionFingerprint(dir)
 	if err != nil {

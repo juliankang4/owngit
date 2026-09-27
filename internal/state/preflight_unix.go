@@ -5,8 +5,6 @@ package state
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -19,16 +17,6 @@ func protectionFingerprint(path string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("mode=%04o", info.Mode().Perm()), nil
-}
-
-func resolveStatePath(path string) (string, error) { return filepath.EvalSymlinks(path) }
-
-func requireAcceptableStateOwner(info os.FileInfo) error {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != 0 && int(stat.Uid) != os.Geteuid() {
-		return fmt.Errorf("state directory must be owned by this account or root; run the command as its owner")
-	}
-	return nil
 }
 
 func openSourceHandle(path string, _ bool) (*os.File, error) {
