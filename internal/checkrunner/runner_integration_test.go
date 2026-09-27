@@ -169,7 +169,7 @@ func newRunnerIntegrationFixtureWithFormat(t *testing.T, command, objectFormat s
 		t: t, ctx: ctx, root: root, store: store, manager: manager, repository: stored,
 		job: job, credential: credential, token: token, hosts: hosts,
 	}
-	fixture.app = &server.App{Store: store, Repositories: manager, Hosts: hosts}
+	fixture.app = &server.App{Store: store, Repositories: manager, Hosts: hosts, Network: server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts})}
 	return fixture
 }
 

@@ -291,6 +291,7 @@ func newConfiguredCheckCLIFixture(t *testing.T) *configuredCheckCLIFixture {
 		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
 		PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
 		GitHTTP:      gitHandler, Hosts: hosts,
+		Network: server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts}),
 	}
 	gitHandler.Authorize = application.AuthorizeGit
 	adminPasswordFile := filepath.Join(root, "admin-password")

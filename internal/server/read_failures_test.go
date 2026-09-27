@@ -146,6 +146,62 @@ func TestUnreadableRepositoryPageStatesItOnce(t *testing.T) {
 	}
 }
 
+// Each read that fails is logged once with its cause where its answer is
+// decided: the unavailable page, a panel that says it could not be read, and
+// a raw file or archive download answered as unavailable. The branch and tag
+// tips are two reads, so one Git failure behind both is two lines. A page
+// that could be read logs nothing.
+func TestRepositoryReadFailuresLogTheirCauseOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the failing Git wrapper is a Unix test fixture")
+	}
+	app := newConfiguredApp(t)
+	_, _, commit, _, _ := readFailureRepository(t, app, "logged")
+	server := serve(t, app.Handler())
+	client, _ := newBrowserClient(t)
+	base := server.URL + "/repositories/logged"
+	serverLog := captureServerLog(t)
+
+	// Each failing read is the first of its kind, so no cache answers it.
+	for _, check := range []struct {
+		pattern, path string
+		status        int
+		steps         []string
+	}{
+		{"--max-count=8", "", http.StatusServiceUnavailable, []string{"GET /repositories/logged: repository read"}},
+		{"blob", "", http.StatusOK, []string{"GET /repositories/logged: README read"}},
+		{"refs/owngit/retained", "", http.StatusOK, []string{"GET /repositories/logged: kept history read"}},
+		{"--stdin", "", http.StatusOK, []string{"GET /repositories/logged: branch tip read", "GET /repositories/logged: tag tip read"}},
+		{"ls-tree", "/raw?ref=refs/heads/main&path=docs/a.txt", http.StatusServiceUnavailable, []string{"GET /repositories/logged/raw: file read"}},
+		{"cat-file", "/archive?format=zip&ref=" + commit, http.StatusServiceUnavailable, []string{"GET /repositories/logged/archive: archive ref read"}},
+	} {
+		since := len(serverLog.String())
+		failPath := failGitWhile(t, app, check.pattern)
+		noErr(t, os.WriteFile(failPath, nil, 0o600))
+		_, status := dashboardGET(t, client, base+check.path)
+		noErr(t, os.Remove(failPath))
+		lines := loggedUnavailable(serverLog, since)
+		if status != check.status || len(lines) != len(check.steps) {
+			t.Errorf("GET %s with failing %s status=%d logged %d lines, want %d with %d:\n%s", check.path, check.pattern, status, len(lines), check.status, len(check.steps), strings.Join(lines, "\n"))
+			continue
+		}
+		// The cause is the failed Git command and its exit status.
+		for _, step := range check.steps {
+			if logged := strings.Join(lines, "\n"); !strings.Contains(logged, step+" could not be completed: git ") || !strings.Contains(logged, "exit status 128") {
+				t.Errorf("GET %s with failing %s logged %q, want %q with its cause", check.path, check.pattern, lines, step)
+			}
+		}
+	}
+
+	since := len(serverLog.String())
+	for _, path := range []string{"", "/raw?ref=refs/heads/main&path=docs/a.txt", "/archive?format=zip&ref=" + commit} {
+		if _, status := dashboardGET(t, client, base+path); status != http.StatusOK {
+			t.Errorf("GET %s after Git recovered status=%d, want 200", path, status)
+		}
+	}
+	checkLoggedSteps(t, "pages that could be read", loggedUnavailable(serverLog, since))
+}
+
 // The overview's body, the recent commits and the top folder, is required:
 // when it cannot be read, the page says the repository cannot be read. A side
 // panel that cannot be read says so and keeps the rest of the page; it is

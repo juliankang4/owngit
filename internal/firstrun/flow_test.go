@@ -74,9 +74,11 @@ func newApp(t *testing.T) (*server.App, *state.Store, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	hosts := server.NewHostPolicy()
 	app := &server.App{
 		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour, AdminSessionLife: time.Minute},
-		Repositories: manager, GitHTTP: gitHandler, Renderer: renderer, Hosts: server.NewHostPolicy(),
+		Repositories: manager, GitHTTP: gitHandler, Renderer: renderer, Hosts: hosts,
+		Network:                 server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts}),
 		SuggestedRepositoryRoot: filepath.Join(base, "suggested"), GitVersion: "git version test", HTTPBackendFound: true,
 		Approvals: server.NewSetupApprovals(),
 	}

@@ -62,8 +62,11 @@ const tailscaleChangeTimeout = 2 * time.Minute
 // Tailscale reports and changes Tailscale sharing. The Settings page and
 // "owngit tailscale" use it with the same rules.
 type Tailscale struct {
+	// Store is OwnGit's state, or nil before it exists; Report then shows
+	// the defaults.
 	Store *state.Store
-	// Find returns the tailscale command.
+	// Find returns the tailscale command, or an error such as
+	// tailscale.ErrNotInstalled that says why there is none.
 	Find func() (tailscale.Command, error)
 	// Observe tells whether a server uses the state directory and what it
 	// runs with: state.ObserveRunningNetwork from another process, or
@@ -579,7 +582,7 @@ func (sharing *Tailscale) lock(ctx context.Context) (context.Context, func(), er
 }
 
 func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort int) (TailscaleChange, error) {
-	command, err := sharing.findCommand()
+	command, err := sharing.Find()
 	if err != nil {
 		return TailscaleChange{}, tailscaleError(err, false)
 	}
@@ -795,7 +798,7 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 	}
 	change := TailscaleChange{Record: record, Endpoint: "left"}
 	if record.Created {
-		command, err := sharing.findCommand()
+		command, err := sharing.Find()
 		if err != nil {
 			return TailscaleChange{}, "", tailscaleError(err, false)
 		}
@@ -882,9 +885,6 @@ func matchingHosts(hosts []string, name string) []string {
 // connection indicator then says that Tailscale on this computer encrypted
 // it.
 func (app *App) throughTailscale(request *http.Request) bool {
-	if app.Network == nil {
-		return false
-	}
 	name := app.Network.TailscaleName()
 	info := requestctx.Of(request)
 	if name == "" || !info.Secure() || !info.Proxied {
@@ -909,7 +909,7 @@ func (app *App) throughTailscale(request *http.Request) bool {
 // mode, which connects from 127.0.0.1.
 func (app *App) throughTailnet(request *http.Request) bool {
 	info := requestctx.Of(request)
-	if app.Tailscale == nil || info.Secure() || info.FromProxy {
+	if info.Secure() || info.FromProxy {
 		return false
 	}
 	// The address the connection reached, as the listener reports it; a
@@ -928,13 +928,6 @@ func (app *App) throughTailnet(request *http.Request) bool {
 	}
 	addresses := app.Tailscale.addresses()
 	return slices.Contains(addresses, local.Addr().Unmap()) && !slices.Contains(addresses, peer.Addr().Unmap())
-}
-
-func (sharing *Tailscale) findCommand() (tailscale.Command, error) {
-	if sharing.Find == nil {
-		return tailscale.Command{}, tailscale.ErrNotInstalled
-	}
-	return sharing.Find()
 }
 
 // tailscaleError turns a failure into a TailscaleError.

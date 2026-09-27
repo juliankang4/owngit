@@ -12,8 +12,7 @@ import (
 // LiveNetwork holds the network values of the running server that turning
 // Tailscale sharing on or off changes without a restart: the base URL, the
 // trusted proxies and the accepted Host names, together with the running
-// record that reports them. serve creates it. Without one, as in most tests,
-// App.Requests and App.BaseURL apply unchanged.
+// record that reports them. serve creates it.
 //
 // A value the server took from a start option is never changed: the option
 // wins for that run, as it does over every saved value.

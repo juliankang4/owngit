@@ -100,8 +100,12 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 			} else {
 				chrome.Notices = []webui.Notice{importFailureNotice(err, result.Run.ErrorClass)}
 			}
+			status := importProblemStatus(err)
+			if status == http.StatusServiceUnavailable {
+				logUnavailable(request, "import start", err)
+			}
 			page.Chrome = chrome
-			app.render(writer, importProblemStatus(err), page)
+			app.render(writer, status, page)
 			return
 		}
 		notice = "import_run_cancelled"
@@ -237,7 +241,11 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		} else {
 			chrome.Notices = append(chrome.Notices, importFailureNotice(err, ""))
 		}
-		app.renderImportPage(writer, request, stored, summary, chrome, importProblemStatus(err))
+		status := importProblemStatus(err)
+		if status == http.StatusServiceUnavailable {
+			logUnavailable(request, "import change", err)
+		}
+		app.renderImportPage(writer, request, stored, summary, chrome, status)
 		return
 	}
 	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(stored.ID)+"/import?notice="+notice, status)

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"owngit/internal/auth"
-	"owngit/internal/requestctx"
 	"owngit/internal/testfixture"
 	"owngit/internal/webui"
 )
@@ -59,10 +58,7 @@ func newProxiedOwnGit(t *testing.T) *proxiedOwnGit {
 // behindProxy puts app behind the proxy and trusts it.
 func behindProxy(t *testing.T, app *App) *proxiedOwnGit {
 	t.Helper()
-	app.Requests = requestctx.Resolver{
-		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
-		HostAllowed:    app.Hosts.Allows,
-	}
+	app.Network = NewLiveNetwork(LiveNetworkConfig{Proxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Hosts: app.Hosts})
 	fixture := &proxiedOwnGit{app: app}
 	handler := app.Handler()
 	backend := serve(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

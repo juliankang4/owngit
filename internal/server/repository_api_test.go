@@ -176,7 +176,7 @@ func fixtureRepositoryExists(t *testing.T, fixture apiFixture, id string) bool {
 // and says so.
 func TestRepositoryAPIUsesTheCloneAddressAndBoundsTheList(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	fixture.app.BaseURL = "https://owngit.example.test"
+	fixture.app.Network = NewLiveNetwork(LiveNetworkConfig{BaseURL: "https://owngit.example.test", Hosts: fixture.app.Hosts})
 	server := serve(t, fixture.app.Handler())
 	ctx := context.Background()
 	for index := 0; index < maximumListedRepositories; index++ {

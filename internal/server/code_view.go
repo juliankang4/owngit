@@ -87,6 +87,7 @@ func (app *App) folderReadme(request *http.Request, repositoryID, ref, dir strin
 	// The listing already names the README's object, so it is read directly.
 	blob, err := app.Repositories.BlobAt(request.Context(), repositoryID, *found, markdown.MaxSource)
 	if err != nil {
+		logUnavailable(request, "README read", err)
 		view.Note = webui.MsgReadmeUnreadable
 		return view
 	}
@@ -200,6 +201,7 @@ func (app *App) handleRaw(writer http.ResponseWriter, request *http.Request, sto
 			app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 			return
 		}
+		logUnavailable(request, "file read", err)
 		writer.Header().Set("Retry-After", "10")
 		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
 		return

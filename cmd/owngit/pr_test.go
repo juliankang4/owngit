@@ -116,10 +116,12 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	gitHandler, err := githttp.New(runner, manager, "", 2)
 	noErr(t, err)
 	authentication := &auth.Manager{Store: store, SessionLife: time.Hour}
+	hosts := server.NewHostPolicy()
 	application := &server.App{
 		Store: store, Auth: authentication, Repositories: manager,
 		PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
-		GitHTTP:      gitHandler, Hosts: server.NewHostPolicy(),
+		GitHTTP:      gitHandler, Hosts: hosts,
+		Network: server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts}),
 	}
 	gitHandler.Authorize = application.AuthorizeGit
 	httpServer := httptest.NewServer(application.Handler())

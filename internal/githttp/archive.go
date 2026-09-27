@@ -74,6 +74,9 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 	case errors.Is(err, repository.ErrRepositoryPreparing):
 		return &ArchiveError{Status: http.StatusServiceUnavailable, RetryAfter: 30 * time.Second, Message: "The repository is being prepared. Try again later."}
 	case err != nil:
+		if !errors.Is(err, context.Canceled) {
+			log.Printf("Git archive request for repository %q failed: repository storage is unavailable: %v", repositoryID, err)
+		}
 		return &ArchiveError{Status: http.StatusServiceUnavailable, Message: "The repository storage is unavailable."}
 	case !exists:
 		return &ArchiveError{Status: http.StatusNotFound, Message: "The repository does not exist."}

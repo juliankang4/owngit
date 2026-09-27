@@ -55,7 +55,11 @@ func (app *App) resolveArchive(request *http.Request, repositoryID string) (arch
 	}
 	resolved, commitOID, err := app.Repositories.ResolveRevision(request.Context(), repositoryID, query.Get("ref"))
 	if err != nil {
-		return archiveTarget{}, downloadReadStatus(err)
+		status := downloadReadStatus(err)
+		if status == http.StatusServiceUnavailable {
+			logUnavailable(request, "archive ref read", err)
+		}
+		return archiveTarget{}, status
 	}
 	return archiveTarget{commitOID: commitOID, format: format, name: archiveName(repositoryID, displayRef(resolved))}, http.StatusOK
 }
@@ -179,6 +183,7 @@ func (app *App) handleArchiveAPI(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	if _, exists, err := app.visibleRepository(request, repositoryID); err != nil {
+		logUnavailable(request, "repository record read", err)
 		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "Repository metadata could not be read.", nil)
 		return
 	} else if !exists {

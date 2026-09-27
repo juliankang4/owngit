@@ -23,6 +23,9 @@ func (app *App) handlePullRequestsGet(writer http.ResponseWriter, request *http.
 		page.Unavailable = true
 		page.UnavailableReason = webui.MsgErrUnavailable
 		status = browserProblemStatus(err)
+		if status == http.StatusServiceUnavailable {
+			logUnavailable(request, "pull request list read", err)
+		}
 	} else {
 		for _, view := range views {
 			page.Items = append(page.Items, app.pullRequestRow(stored.ID, view))
@@ -115,6 +118,8 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 	} else {
 		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
 		if err != nil {
+			// Every failed comparison is shown as unavailable.
+			logUnavailable(request, "pull request comparison", err)
 			page.ChangesUnavailable = true
 			page.ChangesReason = webui.MsgErrUnavailable
 			if status == http.StatusOK {
@@ -158,6 +163,9 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 	created, err := app.PullRequests.Create(request.Context(), input)
 	if err != nil {
 		notice, status := browserPullRequestProblem(err, "")
+		if status == http.StatusServiceUnavailable {
+			logUnavailable(request, "pull request creation", err)
+		}
 		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
 			notice = notice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.ID, existing.Number))
 		}
@@ -212,6 +220,9 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 	}
 	if err != nil {
 		problemNotice, status := browserPullRequestProblem(err, action)
+		if status == http.StatusServiceUnavailable {
+			logUnavailable(request, "pull request "+strings.ReplaceAll(action, "_", " "), err)
+		}
 		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
 			problemNotice = problemNotice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.ID, existing.Number))
 		}
@@ -236,7 +247,11 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 				app.renderError(writer, request, http.StatusNotFound, webui.MsgPRNotFound, "")
 				return
 			}
-			app.renderError(writer, request, browserProblemStatus(err), webui.MsgPRFailed, "")
+			status := browserProblemStatus(err)
+			if status == http.StatusServiceUnavailable {
+				logUnavailable(request, "pull request read", err)
+			}
+			app.renderError(writer, request, status, webui.MsgPRFailed, "")
 			return
 		}
 	}
@@ -303,6 +318,8 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 	} else {
 		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
 		if err != nil {
+			// Every failed comparison is shown as unavailable.
+			logUnavailable(request, "pull request comparison", err)
 			page.ChangesUnavailable = true
 			page.ChangesReason = webui.MsgErrUnavailable
 			if status == http.StatusOK {

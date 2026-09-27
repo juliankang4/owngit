@@ -114,9 +114,10 @@ func startImportCLIServer(t *testing.T, fetchDelay ...time.Duration) *importCLIS
 	gitHandler, err := githttp.New(runner, manager, "", 1)
 	noErr(t, err)
 	fixture := &importCLIServer{}
+	hosts := server.NewHostPolicy()
 	application := &server.App{
 		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
-		GitHTTP: gitHandler, Hosts: server.NewHostPolicy(),
+		GitHTTP: gitHandler, Hosts: hosts,
 		Imports: &importsync.Service{Store: store, Repositories: manager, Fetch: func(ctx context.Context, request importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 			fixture.token = request.Authentication.BearerToken
 			select {
@@ -126,6 +127,7 @@ func startImportCLIServer(t *testing.T, fetchDelay ...time.Duration) *importCLIS
 			}
 			return &importfetch.Result{Advertisement: &importgit.Advertisement{Empty: true, ObjectFormat: importgit.FormatSHA1}}, nil
 		}},
+		Network: server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts}),
 	}
 	// The service lease keeps its marker open; Windows cannot remove the
 	// temporary directory until it is released.

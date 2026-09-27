@@ -43,33 +43,27 @@ const (
 )
 
 type App struct {
-	// Store through Hosts are required. The serving process always sets
+	// Store through Tailscale are required. The serving process always sets
 	// them, so no handler treats one as absent.
-	Store                   *state.Store
-	Auth                    *auth.Manager
-	Repositories            *repository.Manager
-	PullRequests            *pullrequest.Service
-	Imports                 *importsync.Service
-	GitHTTP                 *githttp.Handler
-	Renderer                *webui.Renderer
-	Hosts                   *HostPolicy
+	Store        *state.Store
+	Auth         *auth.Manager
+	Repositories *repository.Manager
+	PullRequests *pullrequest.Service
+	Imports      *importsync.Service
+	GitHTTP      *githttp.Handler
+	Renderer     *webui.Renderer
+	Hosts        *HostPolicy
+	// Network holds the base URL, trusted proxies and accepted Host names
+	// the running server uses now, which Tailscale sharing can change
+	// without a restart. It derives each request's scheme, Host and client
+	// address, and the addresses shown to people. See serverOrigin.
+	Network *LiveNetwork
+	// Tailscale shares this OwnGit on the tailnet with Tailscale Serve.
+	// Whether Tailscale is installed is what its Find reports.
+	Tailscale               *Tailscale
 	SuggestedRepositoryRoot string
 	GitVersion              string
 	HTTPBackendFound        bool
-	// Requests derives each request's scheme, Host and client address. The
-	// zero value trusts only the connection itself.
-	Requests requestctx.Resolver
-	// BaseURL is the configured owner-facing origin, from the serve flag or
-	// the saved network setting, or "" when addresses shown to people are
-	// derived from each request. See serverOrigin.
-	BaseURL string
-	// Network, when set, holds the base URL, trusted proxies and accepted
-	// Host names the running server uses now, which Tailscale sharing can
-	// change without a restart; it then replaces Requests and BaseURL.
-	Network *LiveNetwork
-	// Tailscale shares this OwnGit on the tailnet with Tailscale Serve. Nil
-	// shows Tailscale as not installed.
-	Tailscale *Tailscale
 	// RunningRecordLive is true when this process holds the running-record
 	// lock, so the stored running network record is its own and the Settings
 	// page may show it as what the server uses. See
@@ -133,13 +127,9 @@ type App struct {
 
 func (app *App) Handler() http.Handler {
 	next := app.Hosts.MiddlewareAdmitting(app.admitUnknownHost, http.HandlerFunc(app.serveHTTP))
-	resolved := app.Requests.Middleware(next)
 	return refuseFunnel(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if app.Network != nil {
-			app.Network.Resolver().Middleware(next).ServeHTTP(writer, request)
-			return
-		}
-		resolved.ServeHTTP(writer, request)
+		// The proxies trusted now, which Tailscale sharing can change.
+		app.Network.Resolver().Middleware(next).ServeHTTP(writer, request)
 	}))
 }
 
@@ -342,6 +332,7 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	settings, err := app.Store.Settings(request.Context())
 	if err != nil {
+		logUnavailable(request, "settings read", err)
 		if strings.HasPrefix(request.URL.Path, "/api/") {
 			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "OwnGit state is unavailable.", nil)
 		} else {
@@ -432,13 +423,33 @@ func (app *App) renderError(writer http.ResponseWriter, request *http.Request, s
 // logUnavailable records why a request is answered as unavailable, so the
 // operator can read the cause of every such answer. step names what could
 // not be completed. The line holds only the method and escaped path, never
-// the request's password, cookie or token. A client that went away
-// (context.Canceled) caused nothing to fix, so it is not logged.
+// the request's password, cookie or token. Each failed read or write is
+// logged once, where its answer is decided.
 func logUnavailable(request *http.Request, step string, err error) {
-	if errors.Is(err, context.Canceled) {
+	if !unloggedCause(err) {
 		return
 	}
-	log.Printf("%s %s: %s could not be completed: %v", request.Method, request.URL.EscapedPath(), step, err)
+	log.Printf("%s %s: %s could not be completed: %s", request.Method, request.URL.EscapedPath(), step, causeText(err))
+}
+
+// causeText is err's text followed by each wrapped cause that text leaves
+// out. An error written for the client, such as a pull request problem,
+// carries the operator's cause only in its chain.
+func causeText(err error) string {
+	text := err.Error()
+	for cause := errors.Unwrap(err); cause != nil; cause = errors.Unwrap(cause) {
+		if detail := cause.Error(); !strings.Contains(text, detail) {
+			text += ": " + detail
+		}
+	}
+	return text
+}
+
+// unloggedCause reports whether err is a cause the log does not hold yet. A
+// client that went away (context.Canceled) caused nothing to fix, and a
+// repository being prepared had its cause logged when preparation locked it.
+func unloggedCause(err error) bool {
+	return !errors.Is(err, context.Canceled) && !errors.Is(err, repository.ErrRepositoryPreparing)
 }
 
 func (app *App) writePlainError(writer http.ResponseWriter, status int) {

@@ -137,6 +137,12 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 // unreadableLog logs the cause once when a repository is first shown as
 // unreadable, and again only after it was read successfully in between. The
 // cause goes only to the server log; pages show a fixed notice.
+//
+// This differs on purpose from logUnavailable, which logs every failed read
+// behind an unavailable answer. The dashboard lists every repository on each
+// view, so one damaged repository would otherwise repeat the same line on
+// every visit to the dashboard, while its own repository page is one read
+// that one person asked for.
 type unreadableLog struct {
 	mu     sync.Mutex
 	logged map[string]bool
@@ -226,6 +232,7 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 		case errors.Is(err, repository.ErrInvalidDescription):
 			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("description", webui.MsgRepoDescriptionTooLong)})
 		default:
+			logUnavailable(request, "repository creation", err)
 			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoCreateFail, "")
 		}
 		return
@@ -293,7 +300,14 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	}
 	id := parts[0]
 	stored, exists, err := app.Store.Repository(request.Context(), id)
-	if err != nil || !exists {
+	if err != nil {
+		// A record that could not be read says nothing about whether the
+		// repository exists.
+		logUnavailable(request, "repository record read", err)
+		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
+		return
+	}
+	if !exists {
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgRepoNotFound, id)
 		return
 	}
@@ -482,6 +496,7 @@ func (app *App) renderRepositoryReadFailure(writer http.ResponseWriter, request 
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgRepoNotFound, stored.ID)
 		return
 	}
+	logUnavailable(request, "repository read", cause)
 	page := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
 	page.Repo.Unreadable = true
 	switch {
@@ -675,8 +690,14 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	showAll := request.URL.Query().Get(overviewAllRefsQuery) == overviewAllRefsValue
 	branchTips, err := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Branches)
 	page.Overview.BranchTipsKnown = err == nil
+	if err != nil {
+		logUnavailable(request, "branch tip read", err)
+	}
 	tagTips, err := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Tags)
 	page.Overview.TagTipsKnown = err == nil
+	if err != nil {
+		logUnavailable(request, "tag tip read", err)
+	}
 	var branches, tags, retainedLines []webui.RefLine
 	for _, branch := range summary.Branches {
 		full := "refs/heads/" + branch.Name
@@ -698,6 +719,9 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	}
 	retained, err := app.Repositories.RetainedRefs(request.Context(), page.Repo.ID)
 	page.Overview.RetainedKnown = err == nil
+	if err != nil {
+		logUnavailable(request, "kept history read", err)
+	}
 	for _, ref := range retained {
 		line := webui.RefLine{Name: shortOID(ref.OID), Kind: ref.Kind, Retained: true}
 		if ref.CommitOID != "" {
@@ -745,6 +769,8 @@ func (app *App) fillOverviewEvidence(request *http.Request, page *webui.Reposito
 		page.Overview.OpenPullRequests = len(open)
 		page.Overview.OpenPullRequestsMore = more
 		page.Overview.OpenPullRequestsKnown = true
+	} else {
+		logUnavailable(request, "open pull request count read", err)
 	}
 	if summary.DefaultOID == "" {
 		return
@@ -752,6 +778,7 @@ func (app *App) fillOverviewEvidence(request *http.Request, page *webui.Reposito
 	page.Overview.DefaultCheckRev = summary.DefaultOID
 	attempt, exists, err := app.Store.LatestCheckAttemptForRevision(request.Context(), page.Repo.ID, summary.DefaultOID)
 	if err != nil {
+		logUnavailable(request, "default branch check read", err)
 		return
 	}
 	page.Overview.DefaultCheckKnown = true
@@ -1289,6 +1316,7 @@ func (app *App) overviewLanguages(request *http.Request, id, commitOID string) w
 		// answered from what could be read (QA-058).
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesBusy}
 	case err != nil:
+		logUnavailable(request, "language count", err)
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesUnavailable}
 	case stats.TooLarge:
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesTooLarge}

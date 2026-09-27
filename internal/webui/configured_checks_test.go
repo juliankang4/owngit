@@ -766,6 +766,11 @@ func TestConfiguredCheckScreenStates(t *testing.T) {
 				page: runnerPage(fullChrome(lang), false),
 				want: []MessageCode{MsgRTRevoked, MsgRTNeverUsed, MsgRTNotPassword, MsgRTScope}, markup: []string{"old-runner"},
 				extra: countIs(`value="`+ActionRevokeRunnerToken+`"`, 2)},
+			// A token's identifier is named as a token's, not as a job's.
+			screen{name: l + "runner token rows name their token ID", lang: lang,
+				page:     runnerPage(fullChrome(lang), false),
+				markup:   []string{bilingual(MsgRTID, lang) + `</dt><dd class="mono">rc1abcd</dd>`},
+				noMarkup: []string{bilingual(MsgCCJobIdentifier, lang)}},
 			screen{name: l + "the policy screen states the advisory contract and the manual path", lang: lang,
 				page: cc(lang, ccFixtureEnabled, unchanged), want: []MessageCode{MsgCCAdvisory, MsgCCManual}},
 			screen{name: l + "host mode states the access it grants and no fallback", lang: lang,

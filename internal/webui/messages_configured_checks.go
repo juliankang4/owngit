@@ -276,6 +276,7 @@ const (
 	MsgRTNeverUsed MessageCode = "runner.never_used"
 	MsgRTRevokedAt MessageCode = "runner.revoked_at"
 	MsgRTGen       MessageCode = "runner.generation"
+	MsgRTID        MessageCode = "runner.identifier"
 
 	MsgRTTokenTitle MessageCode = "runner.token.title"
 	MsgRTTokenOnce  MessageCode = "runner.token.once"
@@ -838,6 +839,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgRTNeverUsed: {en: "Never used", ko: "사용한 적 없음"},
 	MsgRTRevokedAt: {en: "Revoked", ko: "취소"},
 	MsgRTGen:       {en: "Generation", ko: "세대"},
+	MsgRTID:        {en: "Token ID", ko: "토큰 ID"},
 
 	MsgRTTokenTitle: {en: "Copy this now", ko: "지금 토큰을 복사하세요"},
 	MsgRTTokenOnce: {

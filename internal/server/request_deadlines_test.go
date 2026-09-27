@@ -145,7 +145,8 @@ func TestAuthorizedOperationReadsItsBodyUnderThePageDeadline(t *testing.T) {
 
 // A request whose handler returns after the connection deadline cannot be
 // answered. The server log names it, so the client's empty reply has an
-// explanation.
+// explanation. The settings read the handler then tried ran out of time, and
+// is logged as the unavailable answer it was, once.
 func TestReplyLostAtTheDeadlineIsLogged(t *testing.T) {
 	const page = 400 * time.Millisecond
 	app := newConfiguredApp(t)
@@ -164,7 +165,8 @@ func TestReplyLostAtTheDeadlineIsLogged(t *testing.T) {
 		t.Fatalf("a request past its deadline was answered %d", response.StatusCode)
 	}
 	logged := serverLog.String()
-	if !strings.Contains(logged, "GET /settings%0Aforged ended ") || !strings.Contains(logged, "after its connection deadline") || strings.Count(logged, "\n") != 1 {
+	if !strings.Contains(logged, "GET /settings%0Aforged ended ") || !strings.Contains(logged, "after its connection deadline") ||
+		!strings.Contains(logged, "GET /settings%0Aforged: settings read could not be completed: context deadline exceeded\n") || strings.Count(logged, "\n") != 2 {
 		t.Fatalf("server log after a lost reply: %q", logged)
 	}
 }

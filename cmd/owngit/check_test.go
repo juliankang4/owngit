@@ -59,10 +59,12 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 	}
 	gitHandler, err := githttp.New(runner, manager, "", 2)
 	noErr(t, err)
+	hosts := server.NewHostPolicy()
 	application := &server.App{
 		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
 		PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
-		GitHTTP:      gitHandler, Hosts: server.NewHostPolicy(),
+		GitHTTP:      gitHandler, Hosts: hosts,
+		Network: server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts}),
 	}
 	gitHandler.Authorize = application.AuthorizeGit
 	httpServer := httptest.NewServer(application.Handler())
@@ -483,10 +485,12 @@ func TestCompensatingRevokeIsScopedAndIdempotent(t *testing.T) {
 	}
 	gitHandler, err := githttp.New(runner, manager, "", 2)
 	noErr(t, err)
+	hosts := server.NewHostPolicy()
 	application := &server.App{
 		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
 		PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
-		GitHTTP:      gitHandler, Hosts: server.NewHostPolicy(),
+		GitHTTP:      gitHandler, Hosts: hosts,
+		Network: server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts}),
 	}
 	httpServer := httptest.NewServer(application.Handler())
 	defer httpServer.Close()

@@ -52,6 +52,9 @@ func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.R
 		return
 	}
 	if err != nil {
+		if restoreStatus(err) == http.StatusServiceUnavailable {
+			logUnavailable(request, "restore preview", err)
+		}
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Error(restoreField(err), restoreMessage(err)))
 		page.Previewed = false
 		page.CanApply = false
@@ -95,6 +98,9 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 		}
 		app.noticeRedirect(writer, request, location+separator+"notice=restore_success", http.StatusSeeOther)
 		return
+	}
+	if restoreStatus(err) == http.StatusServiceUnavailable {
+		logUnavailable(request, "restore apply", err)
 	}
 
 	current, previewErr := app.Repositories.PreviewRestore(request.Context(), stored.ID, repository.RestoreRequest{

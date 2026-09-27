@@ -192,9 +192,13 @@ func (app *App) clearCookie(writer http.ResponseWriter, request *http.Request, n
 	})
 }
 
+// chrome builds the frame every page shares. A read it needs that fails is
+// logged here, once: every caller answers that error as unavailable, except
+// an error page, which is then shown without the frame.
 func (app *App) chrome(writer http.ResponseWriter, request *http.Request, section webui.NavSection, activeRepository, csrf string) (webui.Chrome, error) {
 	settings, err := app.Store.Settings(request.Context())
 	if err != nil {
+		logUnavailable(request, "settings read", err)
 		return webui.Chrome{}, err
 	}
 	lang := app.language(writer, request)
@@ -237,6 +241,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 	if settings.Initialized && (chrome.Viewer.GeneralUnlocked || adminOK) {
 		repositories, err := app.visibleRepositories(request)
 		if err != nil {
+			logUnavailable(request, "repository list read", err)
 			return webui.Chrome{}, err
 		}
 		query := strings.TrimSpace(request.URL.Query().Get("q"))

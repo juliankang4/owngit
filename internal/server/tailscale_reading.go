@@ -135,7 +135,7 @@ func (sharing *Tailscale) addresses() []netip.Addr {
 // readNow runs the tailscale commands of one reading.
 func (sharing *Tailscale) readNow(ctx context.Context) tailscaleReading {
 	var reading tailscaleReading
-	reading.command, reading.commandErr = sharing.findCommand()
+	reading.command, reading.commandErr = sharing.Find()
 	if reading.commandErr != nil {
 		return reading
 	}

@@ -29,9 +29,6 @@ import (
 // refused is the problem of a refusal the page shows above the block, or
 // "": the block does not repeat the same message.
 func (app *App) tailscaleBlock(ctx context.Context, admin bool, refused string) webui.TailscaleInfo {
-	if app.Tailscale == nil {
-		return webui.TailscaleInfo{Problem: webui.TailscaleProblemCode(string(tailscale.KindNotInstalled))}
-	}
 	report, err := app.Tailscale.Report(ctx)
 	if err != nil {
 		return webui.TailscaleInfo{Problem: webui.MsgTSProblemFailed}
@@ -101,10 +98,6 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 // changeTailscale handles ActionTailscaleOn and ActionTailscaleOff after the
 // administrator password was verified.
 func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, action string) {
-	if app.Tailscale == nil {
-		app.renderTailscaleRefusal(writer, request, settings, csrf, action, &TailscaleError{Problem: string(tailscale.KindNotInstalled)})
-		return
-	}
 	if action == webui.ActionTailscaleOn {
 		homeNetwork := formChecked(postValue(request, "home_network"))
 		change, err := app.Tailscale.On(request.Context(), &homeNetwork, 0)

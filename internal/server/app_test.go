@@ -22,6 +22,7 @@ import (
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/tailscale"
 	"owngit/internal/webui"
 )
 
@@ -270,11 +271,25 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	// are of the serving process. The import fetch answers locally, so no
 	// test reaches a network.
 	imports := &importsync.Service{Store: store, Repositories: manager, Fetch: emptySourceFetch}
+	hosts := NewHostPolicy()
 	app := &App{
 		Store: store, Auth: authentication, Repositories: manager, GitHTTP: gitHandler,
 		PullRequests: &pullrequest.Service{Store: store, Repositories: manager}, Imports: imports,
-		Renderer: renderer, Hosts: NewHostPolicy(), SuggestedRepositoryRoot: repositoryRoot,
+		Renderer: renderer, Hosts: hosts, SuggestedRepositoryRoot: repositoryRoot,
 		GitVersion: "git version test", HTTPBackendFound: true,
+		// The network the serving process starts with when nothing is
+		// configured: no base URL and no trusted proxy.
+		Network: NewLiveNetwork(LiveNetworkConfig{Hosts: hosts}),
+	}
+	// Tailscale as the serving process sees it on a computer without
+	// Tailscale installed.
+	app.Tailscale = &Tailscale{
+		Store: store,
+		Find:  func() (tailscale.Command, error) { return tailscale.Command{}, tailscale.ErrNotInstalled },
+		Observe: func(ctx context.Context) (state.RunningObservation, error) {
+			return store.OwnRunningNetwork(ctx, app.RunningRecordLive)
+		},
+		Live: app.Network,
 	}
 	gitHandler.Authorize = app.AuthorizeGit
 	// Background activity counting ends before the store and directories go.

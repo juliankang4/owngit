@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"owngit/internal/auth"
-	"owngit/internal/requestctx"
 	"owngit/internal/webui"
 )
 
@@ -111,7 +110,7 @@ func TestForwardedHeadersFromDirectPeersChangeNothing(t *testing.T) {
 func forwardedHeadersChangeNothing(t *testing.T, trusted []netip.Prefix) {
 	app := newConfiguredApp(t)
 	app.Hosts = NewHostPolicy("owngit.internal")
-	app.Requests = requestctx.Resolver{TrustedProxies: trusted, HostAllowed: app.Hosts.Allows}
+	app.Network = NewLiveNetwork(LiveNetworkConfig{Proxies: trusted, Hosts: app.Hosts})
 	handler := app.Handler()
 	spoof := func(request *http.Request, client string) {
 		request.Header.Set("X-Forwarded-For", client)
@@ -324,10 +323,10 @@ func TestRemotePeerWithLoopbackHostIsRefused(t *testing.T) {
 func TestTrustedProxiesAndLoopbackHosts(t *testing.T) {
 	app := newConfiguredApp(t)
 	app.Hosts = NewHostPolicy("gitbox.lan")
-	app.Requests = requestctx.Resolver{
-		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32"), netip.MustParsePrefix("10.0.0.5/32")},
-		HostAllowed:    app.Hosts.Allows,
-	}
+	app.Network = NewLiveNetwork(LiveNetworkConfig{
+		Proxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32"), netip.MustParsePrefix("10.0.0.5/32")},
+		Hosts:   app.Hosts,
+	})
 	handler := app.Handler()
 	send := func(host, peer string, headers ...string) int {
 		request := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -352,11 +351,11 @@ func TestTrustedProxiesAndLoopbackHosts(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Host, request.RemoteAddr = "gitbox.lan", "10.0.0.5:40000"
 	request.Header.Set("X-Forwarded-Host", "localhost")
-	if host := app.Requests.Resolve(request).Host; host != "gitbox.lan" {
+	if host := app.Network.Resolver().Resolve(request).Host; host != "gitbox.lan" {
 		t.Fatalf("remote proxy's X-Forwarded-Host chose %q", host)
 	}
 	request.RemoteAddr = "127.0.0.1:40000"
-	if host := app.Requests.Resolve(request).Host; host != "localhost" {
+	if host := app.Network.Resolver().Resolve(request).Host; host != "localhost" {
 		t.Fatalf("local proxy's X-Forwarded-Host localhost was ignored: %q", host)
 	}
 }

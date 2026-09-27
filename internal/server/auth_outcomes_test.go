@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -308,12 +310,14 @@ func TestSignOutThatCouldNotBeRecordedIsNotReportedAsDone(t *testing.T) {
 	}
 }
 
-// A client that went away caused nothing an operator could fix, so it is
-// not logged as an unavailable answer.
+// A client that went away caused nothing an operator could fix, and a
+// repository being prepared had its cause logged by preparation, so neither
+// is logged again as an unavailable answer.
 func TestClientThatLeftIsNotLoggedAsUnavailable(t *testing.T) {
 	serverLog := captureServerLog(t)
 	logUnavailable(httptest.NewRequest(http.MethodPost, "/login", nil), "sign-in", context.Canceled)
+	logUnavailable(httptest.NewRequest(http.MethodGet, "/repositories/project", nil), "repository read", fmt.Errorf("read: %w", repository.ErrRepositoryPreparing))
 	if logged := serverLog.String(); logged != "" {
-		t.Fatalf("a client that left was logged: %q", logged)
+		t.Fatalf("a cause already accounted for was logged: %q", logged)
 	}
 }

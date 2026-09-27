@@ -134,10 +134,14 @@ func (app *App) saveCheckPolicy(writer http.ResponseWriter, request *http.Reques
 	}
 	saved, err := app.Store.SetCheckPolicy(request.Context(), input, app.now())
 	if err != nil {
+		status := policySaveStatus(err)
+		if status == http.StatusServiceUnavailable {
+			logUnavailable(request, "configured check policy save", err)
+		}
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: webui.ActionSaveCheckPolicy, form: &form,
 			notices: policySaveNotices(err),
-		}, policySaveStatus(err))
+		}, status)
 		return
 	}
 	app.wakeChecks(stored.ID)
@@ -184,6 +188,8 @@ func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Req
 			code, status = webui.MsgCCPolicyMissing, http.StatusConflict
 		case errors.Is(err, state.ErrInvalidCheckPolicy):
 			code, status = webui.MsgCCPolicyRefused, http.StatusConflict
+		default:
+			logUnavailable(request, "configured check consent change", err)
 		}
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: action, notices: []webui.Notice{webui.Error("", code)},
@@ -247,6 +253,8 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 		case errors.Is(err, state.ErrCheckJobState), errors.Is(err, state.ErrCheckConsentRequired),
 			errors.Is(err, state.ErrCheckQueueFull), errors.Is(err, state.ErrCheckEventNotAllowed):
 			code, status = webui.MsgCCJobRefused, http.StatusConflict
+		default:
+			logUnavailable(request, "configured check job change", err)
 		}
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: action, notices: []webui.Notice{webui.Error("", code)},

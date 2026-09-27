@@ -75,7 +75,7 @@ func TestCloneAddressesPreferTheConfiguredBaseURL(t *testing.T) {
 	if body := repositoryPage(); !strings.Contains(body, server.URL+"/git/demo.git") {
 		t.Fatalf("derived clone URL %s/git/demo.git missing", server.URL)
 	}
-	app.BaseURL = "http://gitbox.internal:7654"
+	app.Network = NewLiveNetwork(LiveNetworkConfig{BaseURL: "http://gitbox.internal:7654", Hosts: app.Hosts})
 	body := repositoryPage()
 	if !strings.Contains(body, "http://gitbox.internal:7654/git/demo.git") || strings.Contains(body, server.URL+"/git/") {
 		t.Fatal("clone URL does not use the configured base URL")
