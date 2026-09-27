@@ -127,8 +127,8 @@ func TestImportRejectsUnsupportedHEADTargetsAndRecordsRawFact(t *testing.T) {
 			if result.Run.HeadSymref != target || !result.Run.HeadAdvertised {
 				t.Fatalf("raw HEAD facts were lost: %+v", result.Run)
 			}
-			if result.Status.LastRun == nil || result.Status.LastRun.HeadSymref != target || result.Status.LastRun.Status != state.ImportRunFailed {
-				t.Fatalf("stored raw HEAD facts were lost: %+v", result.Status.LastRun)
+			if stored := f.lastRun(); stored.HeadSymref != target || stored.Status != state.ImportRunFailed {
+				t.Fatalf("stored raw HEAD facts were lost: %+v", stored)
 			}
 			assertImportDestinationAbsent(t, f)
 			if after := f.sourceRefs(); !reflect.DeepEqual(before, after) {
@@ -308,8 +308,9 @@ func TestIncompleteLFSInspectionRequiresConsentForInitialImport(t *testing.T) {
 	if got := f.destinationRefs()["refs/heads/main"]; got != tip {
 		t.Fatalf("destination main=%s want %s", got, tip)
 	}
-	if !accepted.Status.Content.Incomplete || accepted.Status.Content.InspectionComplete || accepted.Status.Content.LFSDetected != 0 {
-		t.Fatalf("content status=%+v", accepted.Status.Content)
+	status, err := f.service.Status(context.Background(), "project")
+	if err != nil || !status.Content.Incomplete || status.Content.InspectionComplete || status.Content.LFSDetected != 0 {
+		t.Fatalf("content status=%+v err=%v", status.Content, err)
 	}
 }
 

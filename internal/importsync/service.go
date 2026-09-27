@@ -412,12 +412,11 @@ type ImportInput struct {
 	Limits              Limits
 }
 
-// ImportResult always reports the run record and a bounded status, including
-// when the run failed.
+// ImportResult reports the repository and the run record of an import,
+// including when the run failed.
 type ImportResult struct {
 	RepositoryID string
 	Run          state.ImportRun
-	Status       Status
 }
 
 // Import refuses an existing repository row or final directory before any
@@ -464,11 +463,10 @@ func (s *Service) Import(ctx context.Context, input ImportInput) (ImportResult, 
 		return ImportResult{}, err
 	}
 	run, runErr := s.execute(ctx, repositoryID, name, input.Description, kind, input.Limits, true, snapshot, written)
-	status := s.mustStatus(ctx, repositoryID)
 	if runErr != nil {
 		s.forgetFailedNewImport(context.WithoutCancel(ctx), repositoryID, written)
 	}
-	return ImportResult{RepositoryID: repositoryID, Run: run, Status: status}, runErr
+	return ImportResult{RepositoryID: repositoryID, Run: run}, runErr
 }
 
 // forgetFailedNewImport removes the source binding and credentials that a
@@ -859,14 +857,6 @@ func (s *Service) Status(ctx context.Context, repositoryID string) (Status, erro
 		return Status{}, err
 	}
 	return status, nil
-}
-
-func (s *Service) mustStatus(ctx context.Context, repositoryID string) Status {
-	status, err := s.Status(ctx, repositoryID)
-	if err != nil {
-		return Status{RepositoryID: repositoryID}
-	}
-	return status
 }
 
 func (s *Service) boundedRunViews(ctx context.Context, repositoryID string) (*RunView, *RunView, *RunView, error) {

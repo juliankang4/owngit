@@ -20,6 +20,8 @@
 
 {{if not $p.Available}}
 <p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "import.unavailable"}}</span></p>
+{{else if $p.StatusUnreadable}}
+<p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "import.status_unreadable"}}</span></p>
 {{else}}
 
 {{if $p.SchedulerFailed}}

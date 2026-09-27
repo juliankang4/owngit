@@ -281,7 +281,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	page.Available = true
 	importStatus, err := app.Imports.Status(request.Context(), stored.ID)
 	if err != nil {
-		page.Available = false
+		page.StatusUnreadable = true
 		app.render(writer, http.StatusServiceUnavailable, page)
 		return
 	}

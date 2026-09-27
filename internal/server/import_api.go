@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"owngit/internal/importsync"
+	"owngit/internal/pullrequest"
 	"owngit/internal/state"
 )
 
@@ -167,31 +168,42 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 	app.writeImportRunResult(writer, request, result.RepositoryID, result.Run, runErr)
 }
 
+// writeImportRunResult reports a finished or cancelled run with its
+// repository and run record, and any other outcome as its error.
 func (app *App) writeImportRunResult(writer http.ResponseWriter, request *http.Request, repositoryID string, run state.ImportRun, runErr error) {
-	status, statusErr := app.Imports.Status(request.Context(), repositoryID)
-	if statusErr != nil && runErr == nil {
-		runErr = statusErr
+	cancelled := importsyncProblemCode(runErr) == importsync.CodeCancelled
+	if runErr != nil && !cancelled {
+		writeImportProblem(writer, runErr)
+		return
 	}
 	body := struct {
-		OK           bool               `json:"ok"`
-		Code         string             `json:"code,omitempty"`
-		RepositoryID string             `json:"repository_id,omitempty"`
-		Run          importsync.RunView `json:"run"`
-		Status       importsync.Status  `json:"status"`
-	}{RepositoryID: repositoryID, Run: importsync.RunRecordView(run), Status: status}
-	if runErr == nil {
-		body.OK = true
-		writeAPIJSON(writer, http.StatusOK, body)
-		return
+		OK           bool                          `json:"ok"`
+		Code         string                        `json:"code,omitempty"`
+		RepositoryID string                        `json:"repository_id,omitempty"`
+		Run          importsync.RunView            `json:"run"`
+		Status       *importsync.Status            `json:"status"`
+		StatusError  *pullrequest.ErrorDescription `json:"status_error,omitempty"`
+	}{OK: true, RepositoryID: repositoryID, Run: importsync.RunRecordView(run)}
+	if cancelled {
+		body.Code = importsync.CodeCancelled
 	}
-	code := importsyncProblemCode(runErr)
-	if code == importsync.CodeCancelled {
-		body.OK = true
-		body.Code = code
-		writeAPIJSON(writer, http.StatusOK, body)
-		return
+	body.Status, body.StatusError = app.importStatusAfter(request, repositoryID)
+	writeAPIJSON(writer, http.StatusOK, body)
+}
+
+// importStatusAfter reads the current import status for a response that
+// already reports a committed outcome. The read can fail on its own; then the
+// status is nil and the reason says why, since a guessed status would
+// misdescribe the import and an error would hide what was committed. Status
+// reports every failure as an import problem, so the reason is its own code
+// and safe message.
+func (app *App) importStatusAfter(request *http.Request, repositoryID string) (*importsync.Status, *pullrequest.ErrorDescription) {
+	status, err := app.Imports.Status(request.Context(), repositoryID)
+	if err != nil {
+		_, code, message, _ := importProblemHTTP(err)
+		return nil, &pullrequest.ErrorDescription{Code: code, Message: message}
 	}
-	writeImportProblem(writer, runErr)
+	return &status, nil
 }
 
 func (app *App) handleImportCancelAPI(writer http.ResponseWriter, request *http.Request, repositoryID string) {
@@ -242,11 +254,13 @@ func (app *App) handleImportResolveAPI(writer http.ResponseWriter, request *http
 		writeImportProblem(writer, err)
 		return
 	}
+	status, statusErr := app.importStatusAfter(request, repositoryID)
 	writeAPIJSON(writer, http.StatusOK, struct {
-		OK       bool              `json:"ok"`
-		Resolved []string          `json:"resolved"`
-		Status   importsync.Status `json:"status"`
-	}{OK: true, Resolved: result.Resolved, Status: result.Status})
+		OK          bool                          `json:"ok"`
+		Resolved    []string                      `json:"resolved"`
+		Status      *importsync.Status            `json:"status"`
+		StatusError *pullrequest.ErrorDescription `json:"status_error,omitempty"`
+	}{OK: true, Resolved: result.Resolved, Status: status, StatusError: statusErr})
 }
 
 func (app *App) handleImportHistoryAPI(writer http.ResponseWriter, request *http.Request, repositoryID string) {
@@ -401,17 +415,20 @@ func (app *App) clearOrphanImportCredentials(writer http.ResponseWriter, request
 	return true
 }
 
+// writeImportCredentialState reports a committed credential change with the
+// stored credential state, which comes from the status read after it.
 func (app *App) writeImportCredentialState(writer http.ResponseWriter, request *http.Request, repositoryID string) {
-	status, err := app.Imports.Status(request.Context(), repositoryID)
-	if err != nil {
-		writeImportProblem(writer, err)
-		return
+	status, statusErr := app.importStatusAfter(request, repositoryID)
+	body := struct {
+		OK              bool                          `json:"ok"`
+		CredentialForm  *string                       `json:"credential_form"`
+		CredentialBound *bool                         `json:"credential_bound"`
+		StatusError     *pullrequest.ErrorDescription `json:"status_error,omitempty"`
+	}{OK: true, StatusError: statusErr}
+	if status != nil {
+		body.CredentialForm, body.CredentialBound = &status.CredentialForm, &status.CredentialBound
 	}
-	writeAPIJSON(writer, http.StatusOK, struct {
-		OK              bool   `json:"ok"`
-		CredentialForm  string `json:"credential_form"`
-		CredentialBound bool   `json:"credential_bound"`
-	}{OK: true, CredentialForm: status.CredentialForm, CredentialBound: status.CredentialBound})
+	writeAPIJSON(writer, http.StatusOK, body)
 }
 
 func (app *App) importRepositoryExists(writer http.ResponseWriter, request *http.Request, repositoryID string) bool {

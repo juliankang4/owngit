@@ -288,6 +288,85 @@ func TestImportResolveAcceptsTheDestination(t *testing.T) {
 	}
 }
 
+// A committed change succeeds even when the server could not read the status
+// after it. The CLI then says what was saved, warns, and names the read-only
+// status command instead of suggesting that nothing happened.
+func TestCommittedImportChangeWarnsWhenStatusIsUnavailable(t *testing.T) {
+	const unavailable = `"status_error":{"code":"state_unavailable","message":"import schedule could not be read"}}`
+	const warning = "Warning: the import status after the change could not be read (import schedule could not be read). Check it with owngit import status project.\n"
+	resolved := `{"ok":true,"resolved":["` + strings.Repeat("2", 32) + `"],`
+	resolvedLine := "Accepted the current state of project for 1 unresolved publication intent(s). No ref was changed; the next refresh plans from the repository as it is.\n"
+	passwordPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "admin"), "admin-password\n")
+	for _, test := range []struct {
+		name, method, path string
+		arguments          []string
+		response           string
+		printed, warning   string
+	}{
+		{"resolve with status", http.MethodPost, "/resolve", []string{"resolve", "project"},
+			resolved + `"status":{"configured":true,"unresolved_intents":0}}`, resolvedLine, ""},
+		{"resolve without status", http.MethodPost, "/resolve", []string{"resolve", "project"},
+			resolved + `"status":null,` + unavailable, resolvedLine, warning},
+		{"credentials with status", http.MethodDelete, "/credentials", []string{"credentials", "project", "--clear"},
+			`{"ok":true,"credential_form":"none","credential_bound":false}`, "Credential none, bound: no.\n", ""},
+		{"credentials without status", http.MethodDelete, "/credentials", []string{"credentials", "project", "--clear"},
+			`{"ok":true,"credential_form":null,"credential_bound":null,` + unavailable, "The credential change for project was saved.\n", warning},
+		{"refresh with status", http.MethodPost, "/run", []string{"refresh", "project"},
+			`{"ok":true,"run":{"status":"complete","refs_divergent":0},"status":{"refs":[]}}`, "Import for project finished: complete.\n", ""},
+		{"refresh without status", http.MethodPost, "/run", []string{"refresh", "project"},
+			`{"ok":true,"run":{"status":"complete","refs_divergent":0},"status":null,` + unavailable, "Import for project finished: complete.\n", warning},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method != test.method || request.URL.Path != "/api/v1/repositories/project/import"+test.path {
+					http.NotFound(writer, request)
+					return
+				}
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(test.response))
+			}))
+			defer server.Close()
+			var printed string
+			warned, err := captureStderr(func() error {
+				var runErr error
+				printed, runErr = captureStdout(func() error {
+					return importCommand(append(test.arguments, "--server", server.URL, "--accept-insecure-http", "--password-file", passwordPath))
+				})
+				return runErr
+			})
+			if err != nil || printed != test.printed || warned != test.warning {
+				t.Fatalf("output=%q warning=%q err=%v", printed, warned, err)
+			}
+		})
+	}
+}
+
+// A finished run still exits with the divergence status when the names of
+// its differing refs could not all be read: without a status, with a
+// truncated ref list, or with local refs that could not be read. The output
+// says so instead of describing the rest as refs without a listable name.
+func TestImportRunSaysWhenRefNamesCouldNotBeRead(t *testing.T) {
+	const head = "Import for project finished: complete.\n2 refs differ from the source and were left unchanged here:\n"
+	const unread = " not named here because the ref names could not be read in full. List them with owngit import status project.\n"
+	for _, test := range []struct {
+		name, status, want string
+	}{
+		{"no status", `null,"status_error":{"code":"state_unavailable","message":"import schedule could not be read"}`, head + "  2" + unread},
+		{"truncated", `{"refs":[{"name":"refs/heads/main","state":"diverged"}],"refs_truncated":true}`, head + "  refs/heads/main\n  1" + unread},
+		{"local refs unread", `{"refs":[{"name":"refs/heads/main","state":"unknown_local"},{"name":"refs/tags/v1","state":"diverged"}]}`, head + "  refs/tags/v1\n  1" + unread},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output, err := captureStdout(func() error {
+				return printImportRun("project", []byte(`{"ok":true,"run":{"status":"complete","refs_divergent":2},"status":`+test.status+`}`))
+			})
+			var exit *checkExit
+			if !errors.As(err, &exit) || exit.code != importDivergedExit || output != test.want {
+				t.Fatalf("run output=%q err=%v", output, err)
+			}
+		})
+	}
+}
+
 // A cancelled run used to print its outcome and exit 0, as if it had finished.
 func TestCancelledImportRunExitsWithTheCancelledStatus(t *testing.T) {
 	output, err := captureStdout(func() error {

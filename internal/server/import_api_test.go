@@ -94,6 +94,70 @@ func TestImportAPIMapsNotConfiguredAndImportsNewRepository(t *testing.T) {
 	}
 }
 
+// A finished import stays reported with its repository and run when the
+// status read after it fails. The response says the status is unavailable
+// instead of turning the finished run into an error, and the run is not
+// repeated.
+func TestImportRunResultKeepsTheFinishedRunWhenStatusIsUnavailable(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	failImportStatusAfter(t, fixture.store, `UPDATE OF status ON import_runs WHEN NEW.status='`+state.ImportRunComplete+`'`, "fresh")
+	server := serve(t, fixture.app.Handler())
+	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/fresh/import/run", map[string]any{
+		"name": "fresh", "url": "https://example.invalid/team/fresh.git", "mode": "standalone",
+	}, "admin-password", "", "")
+	fields := decodeImportFields(t, response)
+	var run struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(fields["run"], &run)
+	if response.StatusCode != http.StatusOK || string(fields["ok"]) != "true" || string(fields["repository_id"]) != `"fresh"` ||
+		run.ID == "" || run.Status != state.ImportRunComplete || fields["code"] != nil || !statusUnavailable(t, fields, "status") {
+		t.Fatalf("run status=%d fields=%s", response.StatusCode, fields)
+	}
+	ctx := context.Background()
+	runs, _, err := fixture.store.ImportRuns(ctx, "fresh", 10)
+	if err != nil || len(runs) != 1 || runs[0].ID != run.ID || runs[0].Status != state.ImportRunComplete {
+		t.Fatalf("stored runs=%+v err=%v", runs, err)
+	}
+	if _, exists, err := fixture.store.Repository(ctx, "fresh"); err != nil || !exists {
+		t.Fatalf("imported repository exists=%v err=%v", exists, err)
+	}
+}
+
+// A saved or cleared credential stays reported as saved when the status read
+// after it fails. The credential state the response would show is then null,
+// with the reason, instead of an error that says the change failed.
+func TestImportCredentialChangeStaysSavedWhenStatusIsUnavailable(t *testing.T) {
+	fixture := newImportAPIFixture(t)
+	server := serve(t, fixture.app.Handler())
+	base := server.URL + "/api/v1/repositories/project/import"
+	configured := importAPIRequest(t, http.MethodPut, base, map[string]any{"url": "https://example.invalid/team/project.git", "mode": "standalone"}, "admin-password", "", "")
+	if configured.StatusCode != http.StatusOK {
+		t.Fatalf("configure status=%d body=%s", configured.StatusCode, importAPIBody(t, configured))
+	}
+	failImportStatusAfter(t, fixture.store, "UPDATE OF credential_generation ON import_sources", "project")
+	ctx := context.Background()
+	for _, change := range []struct {
+		method string
+		body   any
+		stored bool
+	}{
+		{http.MethodPut, map[string]any{"form": "bearer", "token": "import-secret-token"}, true},
+		{http.MethodDelete, nil, false},
+	} {
+		response := importAPIRequest(t, change.method, base+"/credentials", change.body, "admin-password", "", "")
+		fields := decodeImportFields(t, response)
+		if response.StatusCode != http.StatusOK || string(fields["ok"]) != "true" || !statusUnavailable(t, fields, "credential_form", "credential_bound") {
+			t.Fatalf("%s credentials status=%d fields=%s", change.method, response.StatusCode, fields)
+		}
+		credential, stored, err := fixture.store.LoadImportCredentials(ctx, "project")
+		if err != nil || stored != change.stored || (stored && credential.BearerToken != "import-secret-token") {
+			t.Fatalf("%s credentials stored=%v err=%v", change.method, stored, err)
+		}
+	}
+}
+
 // An add request for a repository that already exists is refused. It must not
 // silently refresh the stored source instead of importing the given one.
 func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
@@ -198,6 +262,9 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 	type outcome struct {
 		status int
 		code   string
+		// The status read after the run succeeded and genuinely found no
+		// source, because the cancelled first import forgot it.
+		unconfigured bool
 	}
 	added := make(chan outcome, 1)
 	go func() {
@@ -207,10 +274,15 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 		}, "admin-password", "", "")
 		defer response.Body.Close()
 		var body struct {
-			Code string `json:"code"`
+			Code   string `json:"code"`
+			Status *struct {
+				Configured bool `json:"configured"`
+			} `json:"status"`
+			StatusError json.RawMessage `json:"status_error"`
 		}
 		_ = json.NewDecoder(response.Body).Decode(&body)
-		added <- outcome{response.StatusCode, body.Code}
+		unconfigured := body.Status != nil && !body.Status.Configured && body.StatusError == nil
+		added <- outcome{response.StatusCode, body.Code, unconfigured}
 	}()
 	select {
 	case <-fetching:
@@ -223,8 +295,8 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 	}
 	select {
 	case result := <-added:
-		if result.code != importsync.CodeCancelled {
-			t.Fatalf("first import after cancel status=%d code=%s", result.status, result.code)
+		if result.code != importsync.CodeCancelled || !result.unconfigured {
+			t.Fatalf("first import after cancel %+v", result)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the first import kept running after cancel")

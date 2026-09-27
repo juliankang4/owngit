@@ -15,10 +15,10 @@ import (
 // what happened without claiming that the planned publication completed.
 const ownerResolvedReason = "owner resolved: the destination was accepted as found; the planned publication was not confirmed"
 
-// ResolveResult reports an owner resolution and the resulting status.
+// ResolveResult reports what an owner resolution committed: the intents it
+// moved to owner_resolved.
 type ResolveResult struct {
-	Resolved []string `json:"resolved"`
-	Status   Status   `json:"status"`
+	Resolved []string
 }
 
 // ResolveUnresolved records the owner's decision to accept the repository as
@@ -60,7 +60,7 @@ func (s *Service) ResolveUnresolved(ctx context.Context, repositoryID string) (R
 		return ResolveResult{}, err
 	}
 	s.forgetResolvedStartupProblem(repositoryID)
-	return ResolveResult{Resolved: resolved, Status: s.mustStatus(ctx, repositoryID)}, nil
+	return ResolveResult{Resolved: resolved}, nil
 }
 
 // lockBeforeDeadline takes the repository write lock unless ctx ends first,

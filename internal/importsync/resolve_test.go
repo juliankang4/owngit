@@ -52,8 +52,11 @@ func TestOwnerResolutionLetsTheNextRefreshPlanFromTheDestination(t *testing.T) {
 	}
 
 	result, err := f.service.ResolveUnresolved(ctx, "project")
-	if err != nil || len(result.Resolved) != 1 || result.Status.UnresolvedIntents != 0 {
+	if err != nil || len(result.Resolved) != 1 {
 		t.Fatalf("resolve result=%+v err=%v", result, err)
+	}
+	if status, err := f.service.Status(ctx, "project"); err != nil || status.UnresolvedIntents != 0 {
+		t.Fatalf("status after resolve unresolved=%d err=%v", status.UnresolvedIntents, err)
 	}
 	intent, exists, err := f.store.ImportIntent(ctx, result.Resolved[0])
 	if err != nil || !exists || intent.Status != state.ImportIntentOwnerResolved || !strings.HasPrefix(intent.Reason, "owner resolved") {

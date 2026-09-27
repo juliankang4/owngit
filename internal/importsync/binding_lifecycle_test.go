@@ -110,8 +110,8 @@ func TestFailedFirstImportForgetsItsBinding(t *testing.T) {
 	if err == nil {
 		t.Fatal("the failing import succeeded")
 	}
-	if result.Status.LastRun == nil || result.Status.LastRun.Status != state.ImportRunFailed {
-		t.Fatalf("the result lost the failed run: %+v", result.Status.LastRun)
+	if result.Run.Status != state.ImportRunFailed {
+		t.Fatalf("the result lost the failed run: %+v", result.Run)
 	}
 	if _, exists, err := f.store.ImportSource(ctx, "project"); err != nil || exists {
 		t.Fatalf("the failed import kept its source exists=%v err=%v", exists, err)

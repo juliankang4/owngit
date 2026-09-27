@@ -5,6 +5,7 @@ const (
 	MsgImportTitle              MessageCode = "import.title"
 	MsgImportIntro              MessageCode = "import.intro"
 	MsgImportUnavailable        MessageCode = "import.unavailable"
+	MsgImportStatusUnreadable   MessageCode = "import.status_unreadable"
 	MsgImportNotConfigured      MessageCode = "import.not_configured"
 	MsgImportURL                MessageCode = "import.url"
 	MsgImportMode               MessageCode = "import.mode"
@@ -156,6 +157,7 @@ var importCatalog = map[MessageCode]message{
 	MsgImportTitle:              {en: "Import", ko: "가져오기"},
 	MsgImportIntro:              {en: "OwnGit keeps its own copy. It never writes to the source.", ko: "OwnGit은 자기 복사본을 둡니다. 원본에는 쓰지 않습니다."},
 	MsgImportUnavailable:        {en: "Import is not available in this process.", ko: "이 프로세스에서는 가져오기를 사용할 수 없습니다."},
+	MsgImportStatusUnreadable:   {en: "The import status of this repository could not be read. This does not mean that import is off or not configured.", ko: "이 저장소의 가져오기 상태를 읽지 못했습니다. 가져오기가 꺼져 있거나 설정되지 않았다는 뜻은 아닙니다."},
 	MsgImportNotConfigured:      {en: "This repository has no import source.", ko: "이 저장소에는 가져오기 원본이 없습니다."},
 	MsgImportURL:                {en: "Source URL", ko: "원본 주소"},
 	MsgImportMode:               {en: "Mode", ko: "방식"},

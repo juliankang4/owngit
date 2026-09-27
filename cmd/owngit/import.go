@@ -407,12 +407,14 @@ func importResolve(arguments []string) error {
 		return err
 	}
 	var response struct {
-		Resolved []string `json:"resolved"`
+		Resolved    []string           `json:"resolved"`
+		StatusError *importStatusError `json:"status_error"`
 	}
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import resolution could not be read.")
 	}
 	fmt.Printf("Accepted the current state of %s for %d unresolved publication intent(s). No ref was changed; the next refresh plans from the repository as it is.\n", name, len(response.Resolved))
+	response.StatusError.warn(name)
 	return nil
 }
 
@@ -525,11 +527,17 @@ func importCredentials(arguments []string) error {
 		return err
 	}
 	var response struct {
-		CredentialForm  string `json:"credential_form"`
-		CredentialBound bool   `json:"credential_bound"`
+		CredentialForm  string             `json:"credential_form"`
+		CredentialBound bool               `json:"credential_bound"`
+		StatusError     *importStatusError `json:"status_error"`
 	}
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import credential state could not be read.")
+	}
+	if response.StatusError != nil {
+		fmt.Printf("The credential change for %s was saved.\n", flags.Arg(0))
+		response.StatusError.warn(flags.Arg(0))
+		return nil
 	}
 	bound := "no"
 	if response.CredentialBound {
@@ -761,6 +769,21 @@ type importRefView struct {
 	State string `json:"state"`
 }
 
+// importStatusError is why the server could not read the import status after
+// a change it committed.
+type importStatusError struct {
+	Message string `json:"message"`
+}
+
+// warn tells the owner that the change was saved but its status is unknown,
+// and how to read it. It prints nothing when the status was read.
+func (problem *importStatusError) warn(name string) {
+	if problem == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Warning: the import status after the change could not be read (%s). Check it with owngit import status %s.\n", problem.Message, name)
+}
+
 func printImportRun(name string, content []byte) error {
 	var response struct {
 		Code string `json:"code"`
@@ -770,13 +793,16 @@ func printImportRun(name string, content []byte) error {
 			RefsDeletedUpstream int64      `json:"refs_deleted_upstream"`
 			CancelRequestedAt   *time.Time `json:"cancel_requested_at"`
 		} `json:"run"`
-		Status struct {
-			Refs []importRefView `json:"refs"`
+		Status *struct {
+			Refs          []importRefView `json:"refs"`
+			RefsTruncated bool            `json:"refs_truncated"`
 		} `json:"status"`
+		StatusError *importStatusError `json:"status_error"`
 	}
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import run result could not be read.")
 	}
+	response.StatusError.warn(name)
 	if response.Code == "cancelled" {
 		fmt.Printf("Import for %s was cancelled.\n", name)
 		return &checkExit{code: importCancelledExit, err: errors.New("the import was cancelled")}
@@ -793,15 +819,29 @@ func printImportRun(name string, content []byte) error {
 		return nil
 	}
 	fmt.Printf("%d %s from the source and %s left unchanged here:\n", divergent, plural(divergent, "ref differs", "refs differ"), plural(divergent, "was", "were"))
+	// Unlisted refs are HEAD or case-differing names only when the status
+	// read every ref name: it was read, not truncated, and saw each local ref.
+	var refs []importRefView
+	namesRead := false
+	if response.Status != nil {
+		refs, namesRead = response.Status.Refs, !response.Status.RefsTruncated
+	}
 	listed := int64(0)
-	for _, ref := range response.Status.Refs {
-		if ref.State == "diverged" {
+	for _, ref := range refs {
+		switch ref.State {
+		case "diverged":
 			fmt.Printf("  %s\n", ref.Name)
 			listed++
+		case "unknown_local":
+			namesRead = false
 		}
 	}
 	if divergent > listed {
-		fmt.Printf("  %d more not listed by name, such as HEAD or a name that differs only by case.\n", divergent-listed)
+		if namesRead {
+			fmt.Printf("  %d more not listed by name, such as HEAD or a name that differs only by case.\n", divergent-listed)
+		} else {
+			fmt.Printf("  %d not named here because the ref names could not be read in full. List them with owngit import status %s.\n", divergent-listed, name)
+		}
 	}
 	return &checkExit{code: importDivergedExit, err: errors.New("refs differ from the import source")}
 }

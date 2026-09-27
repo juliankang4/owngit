@@ -431,8 +431,9 @@ func TestLFSGateNeedsExplicitGitOnlyConsent(t *testing.T) {
 	if !bytes.Equal(content, []byte(pointer)) {
 		t.Fatalf("pointer bytes changed: got %q want %q", content, pointer)
 	}
-	if !accepted.Status.Content.Incomplete || !accepted.Status.Content.InspectionComplete || accepted.Status.Content.LFSDetected != 1 {
-		t.Fatalf("content status=%+v", accepted.Status.Content)
+	status, err := f.service.Status(context.Background(), "project")
+	if err != nil || !status.Content.Incomplete || !status.Content.InspectionComplete || status.Content.LFSDetected != 1 {
+		t.Fatalf("content status=%+v err=%v", status.Content, err)
 	}
 }
 
