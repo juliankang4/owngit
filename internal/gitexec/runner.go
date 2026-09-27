@@ -20,13 +20,6 @@ import (
 
 const defaultOutputLimit = 8 << 20
 
-// Stream cleanup seams. Tests replace these to inject termination and owner
-// close failures; production uses the real implementations.
-var (
-	streamTerminateOwnedProcess = TerminateOwnedProcess
-	streamCloseOwnedProcess     = CloseOwnedProcess
-)
-
 // Runner executes Git with an app-owned configuration and environment.
 type Runner struct {
 	GitPath          string
@@ -39,7 +32,7 @@ type Runner struct {
 	// GitSource says how New chose GitPath, for the startup log.
 	GitSource string
 
-	// processSeam optionally injects the attachment-failure cleanup operations.
+	// processSeam optionally injects the owned-process cleanup operations.
 	// Tests set it; production leaves it nil for the real operations.
 	processSeam *processCleanupSeam
 
@@ -207,8 +200,9 @@ type CommandLimits struct {
 	// StopAtOutputLimit ends the command as soon as its output passes
 	// OutputLimit instead of letting it run to the end with the rest of its
 	// output discarded. The result is then the output up to the limit and a
-	// *LimitError, as for a command that finished. Use it only for a read
-	// whose partial output is shown as incomplete, such as a diff.
+	// *LimitError, as for a command that finished, provided the stopped
+	// process was cleaned up. Use it only for a read whose partial output is
+	// shown as incomplete, such as a diff.
 	StopAtOutputLimit bool
 }
 
@@ -283,13 +277,19 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	result := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
 	// A command stopped at its output limit ends with the cancellation that
 	// stopped it. That cancellation came from the limit only when neither the
-	// caller's context nor the timeout ended first.
+	// caller's context nor the timeout ended first. If stopping it failed, the
+	// limit is only named in the message, not wrapped, so no caller takes the
+	// partial output for a usable prefix.
 	if err != nil && stopAtLimit && stdout.hasExceeded() && ctx.Err() == nil && errors.Is(runCtx.Err(), context.Canceled) {
-		return result, &LimitError{Stream: "stdout", Limit: limit}
+		limitErr := &LimitError{Stream: "stdout", Limit: limit}
+		if !errors.Is(err, ErrProcessCleanup) {
+			return result, limitErr
+		}
+		return result, fmt.Errorf("git %s: %s: %w", commandName(args), limitErr.Error(), err)
 	}
-	// A limit describes only a command that completed successfully. Process
-	// failure and timeout remain authoritative even when captured output also
-	// reached its bound.
+	// A limit describes only a command that completed successfully and was
+	// cleaned up. Process failure, timeout and cleanup failure remain
+	// authoritative even when captured output also reached its bound.
 	if err != nil {
 		message := strings.TrimSpace(string(result.Stderr))
 		if message != "" {
@@ -413,7 +413,7 @@ func (r *Runner) stream(ctx context.Context, cmd *exec.Cmd, dir string, stdin io
 			return
 		}
 		terminated = true
-		if err := streamTerminateOwnedProcess(owner, grace); err != nil {
+		if err := r.processSeam.terminate(owner, grace); err != nil {
 			cleanupErr = errors.Join(cleanupErr, err)
 		}
 	}
@@ -466,7 +466,7 @@ func (r *Runner) stream(ctx context.Context, cmd *exec.Cmd, dir string, stdin io
 		waitErr = <-waitCh
 	}
 	inputErr := <-inputCh
-	if err := streamCloseOwnedProcess(owner); err != nil {
+	if err := r.processSeam.close(owner); err != nil {
 		cleanupErr = errors.Join(cleanupErr, err)
 	}
 	var primary error
@@ -538,7 +538,8 @@ func windowsStdinPipeErrno(err error) bool {
 // after attachment succeeds, and that copy finishes before a successful
 // return. Attachment failure closes the child pipe and does not read the
 // caller. waited is false only when attachment cleanup returns with Wait
-// still pending.
+// still pending. After attachment, a failed termination or owner release is
+// joined to the command's own error under ErrProcessCleanup.
 func runOwnedProcess(ctx context.Context, cmd *exec.Cmd, grace time.Duration, seam *processCleanupSeam, stdin io.Reader, stdinPipe io.WriteCloser) (bool, error) {
 	ConfigureOwnedProcess(cmd)
 	if err := cmd.Start(); err != nil {
@@ -550,7 +551,6 @@ func runOwnedProcess(ctx context.Context, cmd *exec.Cmd, grace time.Duration, se
 		closeOwnedStdin(stdinPipe)
 		return cleanupUnattachedStartedProcess(cmd, grace, err, seam)
 	}
-	defer CloseOwnedProcess(owner)
 
 	copyDone := make(chan struct{})
 	var copyErr error
@@ -573,19 +573,28 @@ func runOwnedProcess(ctx context.Context, cmd *exec.Cmd, grace time.Duration, se
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
+	var runErr, cleanupErr error
 	select {
-	case waitErr := <-waitCh:
+	case runErr = <-waitCh:
 		<-copyDone
-		if waitErr == nil {
-			waitErr = copyErr
+		if runErr == nil {
+			runErr = copyErr
 		}
-		return true, waitErr
 	case <-ctx.Done():
-		TerminateOwnedProcess(owner, grace)
+		if err := seam.terminate(owner, grace); err != nil {
+			cleanupErr = fmt.Errorf("terminate owned process: %w", err)
+		}
 		<-waitCh
 		<-copyDone
-		return true, ctx.Err()
+		runErr = ctx.Err()
 	}
+	if err := seam.close(owner); err != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("release process owner: %w", err))
+	}
+	if cleanupErr != nil {
+		return true, errors.Join(runErr, fmt.Errorf("%w: %w", ErrProcessCleanup, cleanupErr))
+	}
+	return true, runErr
 }
 
 type limitedBuffer struct {
@@ -637,7 +646,13 @@ func (b *limitedBuffer) Bytes() []byte {
 	return bytes.Clone(b.buf.Bytes())
 }
 
+// ExitCode reports the exit status carried by err. A command whose owned
+// process cleanup failed has no status to report, even if it also exited
+// with one, so a caller never reads that failure as Git's answer.
 func ExitCode(err error) (int, bool) {
+	if errors.Is(err, ErrProcessCleanup) {
+		return 0, false
+	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode(), true

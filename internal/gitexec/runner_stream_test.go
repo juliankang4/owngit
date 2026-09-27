@@ -95,33 +95,6 @@ func streamTestRunner(t *testing.T, root string) *Runner {
 	}
 }
 
-// streamCleanupSeams records the real cleanup results while injecting sentinel
-// failures. Tests that install seams must not run in parallel.
-type streamCleanupSeams struct {
-	terminateErr error
-	closeErr     error
-}
-
-func installStreamCleanupSeams(t *testing.T, terminateErr, closeErr error) *streamCleanupSeams {
-	t.Helper()
-	seams := &streamCleanupSeams{}
-	originalTerminate := streamTerminateOwnedProcess
-	originalClose := streamCloseOwnedProcess
-	streamTerminateOwnedProcess = func(owner *ProcessOwner, grace time.Duration) error {
-		seams.terminateErr = TerminateOwnedProcess(owner, grace)
-		return errors.Join(seams.terminateErr, terminateErr)
-	}
-	streamCloseOwnedProcess = func(owner *ProcessOwner) error {
-		seams.closeErr = CloseOwnedProcess(owner)
-		return errors.Join(seams.closeErr, closeErr)
-	}
-	t.Cleanup(func() {
-		streamTerminateOwnedProcess = originalTerminate
-		streamCloseOwnedProcess = originalClose
-	})
-	return seams
-}
-
 // awaitStreamConsumerStart waits for the consumer to report readiness. A
 // premature Stream return or a bounded timeout fails the test. Cancellation is
 // followed by a bounded join attempt; continued blockage is reported explicitly.
@@ -170,7 +143,7 @@ func TestStreamPreservesConsumerErrorWithCleanupFailures(t *testing.T) {
 	consumerErr := errors.New("consumer stopped early")
 	terminateErr := errors.New("termination failed")
 	closeErr := errors.New("owner close failed")
-	seams := installStreamCleanupSeams(t, terminateErr, closeErr)
+	seams := injectCleanupFaults(runner, terminateErr, closeErr)
 	_, err := runner.Stream(context.Background(), runner.GitPath, root, nil,
 		[]string{streamFixtureEnv + "=hold-stdout"},
 		func(reader io.Reader) error {
@@ -201,7 +174,7 @@ func TestStreamReturnsCloseFailureWithoutPrimaryError(t *testing.T) {
 	root := t.TempDir()
 	runner := streamTestRunner(t, root)
 	closeErr := errors.New("owner close failed")
-	seams := installStreamCleanupSeams(t, nil, closeErr)
+	seams := injectCleanupFaults(runner, nil, closeErr)
 	_, err := runner.Stream(context.Background(), runner.GitPath, root, nil,
 		[]string{streamFixtureEnv + "=success"},
 		func(reader io.Reader) error {
@@ -223,7 +196,7 @@ func TestStreamPreservesStderrLimitWithCleanupFailures(t *testing.T) {
 	consumerErr := errors.New("consumer stopped early")
 	terminateErr := errors.New("termination failed")
 	closeErr := errors.New("owner close failed")
-	seams := installStreamCleanupSeams(t, terminateErr, closeErr)
+	seams := injectCleanupFaults(runner, terminateErr, closeErr)
 	_, err := runner.Stream(context.Background(), runner.GitPath, root, nil,
 		[]string{streamFixtureEnv + "=stderr-limit"},
 		func(reader io.Reader) error {
@@ -253,7 +226,7 @@ func TestStreamPreservesCancellationWithCleanupFailures(t *testing.T) {
 	runner := streamTestRunner(t, root)
 	terminateErr := errors.New("termination failed")
 	closeErr := errors.New("owner close failed")
-	seams := installStreamCleanupSeams(t, terminateErr, closeErr)
+	seams := injectCleanupFaults(runner, terminateErr, closeErr)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	consumerStarted := make(chan struct{})
@@ -299,16 +272,14 @@ func TestStreamCancellationTerminatesBeforeClosingStdout(t *testing.T) {
 	runner := streamTestRunner(t, root)
 	consumerReturned := make(chan struct{})
 	readPendingAtTermination := false
-	originalTerminate := streamTerminateOwnedProcess
-	streamTerminateOwnedProcess = func(owner *ProcessOwner, grace time.Duration) error {
+	runner.processSeam = &processCleanupSeam{terminateFunc: func(owner *ProcessOwner, grace time.Duration) error {
 		select {
 		case <-consumerReturned:
 		case <-time.After(200 * time.Millisecond):
 			readPendingAtTermination = true
 		}
-		return originalTerminate(owner, grace)
-	}
-	t.Cleanup(func() { streamTerminateOwnedProcess = originalTerminate })
+		return TerminateOwnedProcess(owner, grace)
+	}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -375,12 +346,10 @@ func (input *cancelOnSecondRead) Close() error {
 func TestStreamCancellationTerminatesBeforeClosingStdin(t *testing.T) {
 	root := t.TempDir()
 	runner := streamTestRunner(t, root)
-	originalTerminate := streamTerminateOwnedProcess
-	streamTerminateOwnedProcess = func(owner *ProcessOwner, grace time.Duration) error {
+	runner.processSeam = &processCleanupSeam{terminateFunc: func(owner *ProcessOwner, grace time.Duration) error {
 		time.Sleep(300 * time.Millisecond)
-		return originalTerminate(owner, grace)
-	}
-	t.Cleanup(func() { streamTerminateOwnedProcess = originalTerminate })
+		return TerminateOwnedProcess(owner, grace)
+	}}
 
 	run := func(stdin io.ReadCloser, ctx context.Context, marker string) error {
 		_, err := runner.Stream(ctx, runner.GitPath, root, stdin,

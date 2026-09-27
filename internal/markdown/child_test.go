@@ -461,3 +461,34 @@ func TestUnavailableHelperIsLoggedAndNotRemembered(t *testing.T) {
 		t.Fatal("the document was remembered as refused")
 	}
 }
+
+// A child whose cleanup failed is the server's failure even when a document
+// limit stopped it: the page gets ErrUnavailable, and the source is neither
+// refused nor marked slow, so a later view renders it again.
+func TestCleanupFailureIsNotADocumentFault(t *testing.T) {
+	injected := errors.New("injected owner release failure")
+	saved := runOwned
+	runOwned = func(ctx context.Context, cmd *exec.Cmd, stdin io.Reader, grace time.Duration) error {
+		return errors.Join(saved(ctx, cmd, stdin, grace), fmt.Errorf("%w: %w", gitexec.ErrProcessCleanup, injected))
+	}
+	t.Cleanup(func() { runOwned = saved })
+	for _, mode := range []string{"spin", "flood"} {
+		t.Run(mode, func(t *testing.T) {
+			withChild(t, mode)
+			withKillAfter(t, 300*time.Millisecond)
+			source := []byte("# cleanup " + mode + fmt.Sprint(time.Now().UnixNano()))
+			defer forget(source)
+			defer forgetSlow(source)
+			if _, err := Render(context.Background(), source, testLinks); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("Render error %v, want ErrUnavailable", err)
+			}
+			if refused.has(sha256.Sum256(source)) || slow.has(sha256.Sum256(source)) {
+				t.Fatal("a cleanup failure was remembered against the document")
+			}
+			result := renderInChild(source, testLinks)
+			if !errors.Is(result.err, ErrUnavailable) || result.documentFault || !strings.Contains(result.reason, injected.Error()) {
+				t.Fatalf("got %v, fault %v, reason %q", result.err, result.documentFault, result.reason)
+			}
+		})
+	}
+}

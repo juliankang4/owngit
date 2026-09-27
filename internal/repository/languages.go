@@ -196,8 +196,9 @@ func (m *Manager) Languages(ctx context.Context, id, commitOID string) (Language
 	stats, err := m.countLanguages(limited, repositoryPath, commitOID)
 	if err != nil {
 		// Only the count's own limit is a result worth remembering. The
-		// request ending first, or Git failing, is tried again next time.
-		if ctx.Err() != nil || !errors.Is(limited.Err(), context.DeadlineExceeded) {
+		// request ending first, Git failing, or a Git stopped at the limit
+		// but not cleaned up, is tried again next time.
+		if ctx.Err() != nil || !errors.Is(limited.Err(), context.DeadlineExceeded) || errors.Is(err, gitexec.ErrProcessCleanup) {
 			return LanguageStats{}, err
 		}
 		stats = LanguageStats{TimedOut: true}
@@ -250,6 +251,10 @@ func (m *Manager) countLanguages(ctx context.Context, repositoryPath, commitOID 
 	if hasAttributes && len(files) > 0 {
 		attributes, err = m.readLanguageAttributes(ctx, repositoryPath, commitOID, files)
 		switch {
+		// A Git that was not cleaned up says nothing about the attributes,
+		// even when the count's limit stopped it.
+		case errors.Is(err, gitexec.ErrProcessCleanup):
+			return LanguageStats{}, err
 		case ctx.Err() != nil:
 			return LanguageStats{}, ctx.Err()
 		case errors.As(err, &limitErr):

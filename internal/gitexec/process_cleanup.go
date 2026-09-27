@@ -13,12 +13,23 @@ import (
 // buffers shared with the command are still mutable.
 var errStartedProcessUnreaped = errors.New("started process was not reaped within the termination grace")
 
-// processCleanupSeam injects the attachment-failure cleanup operations for
-// tests. A nil seam or a nil field uses the real operation.
+// ErrProcessCleanup marks a buffered command (Run, the RunWith variants and
+// RunOwned) whose owned process could not be stopped or whose owner could not
+// be released. The error keeps the original causes. Removal of the process
+// and its descendants is not confirmed, so neither the output nor the exit
+// status is a complete answer: the error is never a *LimitError, and ExitCode
+// reports no status for it. Stream returns its cleanup causes without this
+// mark; its callers only describe a transfer that already failed.
+var ErrProcessCleanup = errors.New("owned process cleanup failed")
+
+// processCleanupSeam injects the owned-process cleanup operations for tests.
+// A nil seam or a nil field uses the real operation.
 type processCleanupSeam struct {
-	attachFunc func(*exec.Cmd) (*ProcessOwner, error)
-	killFunc   func(*exec.Cmd) error
-	waitFunc   func(*exec.Cmd) error
+	attachFunc    func(*exec.Cmd) (*ProcessOwner, error)
+	killFunc      func(*exec.Cmd) error
+	waitFunc      func(*exec.Cmd) error
+	terminateFunc func(*ProcessOwner, time.Duration) error
+	closeFunc     func(*ProcessOwner) error
 }
 
 func (s *processCleanupSeam) attach(cmd *exec.Cmd) (*ProcessOwner, error) {
@@ -40,6 +51,20 @@ func (s *processCleanupSeam) wait(cmd *exec.Cmd) error {
 		return cmd.Wait()
 	}
 	return s.waitFunc(cmd)
+}
+
+func (s *processCleanupSeam) terminate(owner *ProcessOwner, grace time.Duration) error {
+	if s == nil || s.terminateFunc == nil {
+		return TerminateOwnedProcess(owner, grace)
+	}
+	return s.terminateFunc(owner, grace)
+}
+
+func (s *processCleanupSeam) close(owner *ProcessOwner) error {
+	if s == nil || s.closeFunc == nil {
+		return CloseOwnedProcess(owner)
+	}
+	return s.closeFunc(owner)
 }
 
 // cleanupUnattachedStartedProcess handles a successful Start followed by an

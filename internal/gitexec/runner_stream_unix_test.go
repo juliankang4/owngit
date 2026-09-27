@@ -66,12 +66,10 @@ func TestStreamCancellationWithPipeHoldingDescendantTerminatesOnce(t *testing.T)
 		"\nprintf 'ready\\n'\nwait \"$child\"\n"
 	noErr(t, os.WriteFile(script, []byte(content), 0o700))
 	terminations := 0
-	originalTerminate := streamTerminateOwnedProcess
-	streamTerminateOwnedProcess = func(owner *ProcessOwner, grace time.Duration) error {
+	runner.processSeam = &processCleanupSeam{terminateFunc: func(owner *ProcessOwner, grace time.Duration) error {
 		terminations++
 		return TerminateOwnedProcess(owner, grace)
-	}
-	t.Cleanup(func() { streamTerminateOwnedProcess = originalTerminate })
+	}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

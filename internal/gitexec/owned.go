@@ -13,7 +13,10 @@ import (
 // process group on Unix and a job object on Windows. It copies stdin to the
 // process, if not nil, and waits for it. When ctx ends first, the process and
 // everything it started are terminated, with grace between the polite and the
-// forced stop, and RunOwned returns ctx.Err() once they are gone.
+// forced stop, and RunOwned returns ctx.Err() once they are confirmed gone.
+// When stopping them or releasing their owner fails, the returned error also
+// matches ErrProcessCleanup and keeps the original causes; their removal is
+// then not confirmed.
 //
 // The caller sets cmd.Path, arguments, environment and output writers. The
 // output writers may still be called while RunOwned returns an error for a

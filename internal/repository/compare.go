@@ -74,9 +74,10 @@ func (m *Manager) Compare(ctx context.Context, id, targetOID, sourceOID string) 
 			return cachedResult{data: output.Stdout}, true, nil
 		case errors.As(err, &limitErr):
 			return cachedResult{data: output.Stdout, truncated: true}, true, nil
-		case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
+		case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && !errors.Is(err, gitexec.ErrProcessCleanup):
 			// The time limit, not the request, ended the diff. What Git wrote
-			// so far is shown as incomplete.
+			// so far is shown as incomplete, provided the stopped Git was
+			// cleaned up.
 			return cachedResult{data: output.Stdout, truncated: true, timedOut: true}, false, nil
 		}
 		return cachedResult{}, false, err

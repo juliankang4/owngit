@@ -69,6 +69,9 @@ var childDeadline = renderBudget + time.Second
 // killAfter is renderBudget, as a variable so tests can shorten it.
 var killAfter = renderBudget
 
+// runOwned runs a child. A variable only so tests can add a cleanup failure.
+var runOwned = gitexec.RunOwned
+
 // Child exit codes. Every code other than exitRendered means the document
 // is shown as source.
 const (
@@ -237,10 +240,16 @@ func renderInChild(source []byte, links Links) childResult {
 	cmd.Stderr = stderr
 	input := io.MultiReader(bytes.NewReader(header), bytes.NewReader([]byte{'\n'}), bytes.NewReader(source))
 	childStarts.Add(1)
-	runErr := gitexec.RunOwned(ctx, cmd, input, childGrace)
+	runErr := runOwned(ctx, cmd, input, childGrace)
 	result := childResult{state: cmd.ProcessState}
 	complex := func(reason string) childResult {
 		result.err, result.documentFault, result.reason = ErrTooComplex, true, reason
+		return result
+	}
+	// A child that could not be confirmed stopped is the server's failure,
+	// whatever limit it reached, so the document is not remembered.
+	if errors.Is(runErr, gitexec.ErrProcessCleanup) {
+		result.err, result.reason = ErrUnavailable, "the helper process was not cleaned up: "+runErr.Error()
 		return result
 	}
 	if ctx.Err() != nil {
