@@ -205,8 +205,10 @@ func runnerCredentialCommand(arguments []string) error {
 		if *label == "" || *tokenFile == "" {
 			return cliProblem("invalid_arguments", "--label and --token-file are required for issue.")
 		}
-		if *creationID == "" {
-			*creationID, err = state.RandomID()
+		issuance := credentialIssuance{client: client, credentialsPath: path, creationID: *creationID,
+			chosenCreationID: *creationID != "", command: "owngit runner-credential", idFlag: "--credential"}
+		if issuance.creationID == "" {
+			issuance.creationID, err = state.RandomID()
 			if err != nil {
 				return err
 			}
@@ -215,46 +217,42 @@ func runnerCredentialCommand(arguments []string) error {
 		if err != nil {
 			return err
 		}
-		fail := func(cause error, compensate bool) error {
+		fail := func(cause error) error {
 			closeErr := reserved.preserve()
-			failure := cause
-			if compensate {
-				failure = compensateCreation(client, path, *creationID, cause)
-			}
-			return preservedOutputError(failure, closeErr)
+			return preservedOutputError(issuance.compensate(cause), closeErr)
 		}
-		content, err := client.Do(context.Background(), http.MethodPost, path, checkapi.CreateCredentialInput{Label: *label, CreationID: *creationID})
+		content, err := client.Do(context.Background(), http.MethodPost, path, checkapi.CreateCredentialInput{Label: *label, CreationID: issuance.creationID})
 		if err != nil {
-			return fail(err, !isCreationConflict(err))
+			return fail(err)
 		}
 		var response checkapi.RunnerCredentialResponse
 		if err := json.Unmarshal(content, &response); err != nil || response.Credential == nil {
-			return fail(cliProblem("invalid_response", "The server did not return a runner credential."), true)
+			return fail(cliProblem("invalid_response", "The server did not return a runner credential."))
 		}
-		if response.Credential.RepositoryID != admin.repository || response.Credential.CreationID != *creationID {
-			return fail(cliProblem("mismatched_response", "The server returned a runner credential for another repository or creation identity."), true)
+		if response.Credential.RepositoryID != admin.repository || response.Credential.CreationID != issuance.creationID {
+			return fail(cliProblem("mismatched_response", "The server returned a runner credential for another repository or creation identity."))
 		}
 		if response.Token == "" {
-			return fail(cliProblem("token_unavailable", "The server returned an existing runner credential without its token."), true)
+			return preservedOutputError(issuance.replayed(response.Credential.ID, response.Credential.RevokedAt != nil), reserved.preserve())
 		}
 		if reserved.replaced() {
-			return fail(outputReplaced(), true)
+			return fail(outputReplaced())
 		}
 		// The first line binds the token to the server that issued it, as
 		// helper-credential create does; the runner refuses it for another.
 		tokenFileServer := canonicalOrigin(origin)
 		if err := reserved.write(credentialOriginPrefix + " " + tokenFileServer + "\n" + response.Token); err != nil {
-			return fail(&apiclient.Error{Code: "token_delivery_failed", Message: "The token could not be written.", Cause: err}, true)
+			return fail(&apiclient.Error{Code: "token_delivery_failed", Message: "The token could not be written.", Cause: err})
 		}
 		if reserved.replaced() {
-			return fail(outputReplaced(), true)
+			return fail(outputReplaced())
 		}
 		if err := reserved.preserve(); err != nil {
-			return preservedOutputError(compensateCreation(client, path, *creationID,
+			return preservedOutputError(issuance.compensate(
 				&apiclient.Error{Code: "token_delivery_failed", Message: "The token file could not be closed.", Cause: err}), err)
 		}
 		if reserved.replaced() {
-			return preservedOutputError(compensateCreation(client, path, *creationID, outputReplaced()), nil)
+			return preservedOutputError(issuance.compensate(outputReplaced()), nil)
 		}
 		response.Token = ""
 		return writeJSONValue(struct {

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -239,6 +240,10 @@ type configuredCheckCLIFixture struct {
 	sourceOID     string
 	adminPassword string
 	httpServer    *httptest.Server
+	// creationRevokes counts revoke-by-creation requests the server received.
+	creationRevokes atomic.Int64
+	// beforeIssue, when set, runs as the server receives a credential POST.
+	beforeIssue func()
 }
 
 func newConfiguredCheckCLIFixture(t *testing.T) *configuredCheckCLIFixture {
@@ -288,15 +293,24 @@ func newConfiguredCheckCLIFixture(t *testing.T) *configuredCheckCLIFixture {
 		GitHTTP:      gitHandler, Hosts: hosts,
 	}
 	gitHandler.Authorize = application.AuthorizeGit
-	httpServer := httptest.NewServer(application.Handler())
-	t.Cleanup(httpServer.Close)
 	adminPasswordFile := filepath.Join(root, "admin-password")
 	noErr(t, os.WriteFile(adminPasswordFile, []byte(adminPassword+"\n"), 0o600))
 	noErr(t, state.ProtectPrivatePath(adminPasswordFile, false))
-	return &configuredCheckCLIFixture{
-		ctx: ctx, root: root, store: store, repository: stored, sourceOID: sourceOID,
-		adminPassword: adminPasswordFile, httpServer: httpServer,
+	fixture := &configuredCheckCLIFixture{
+		ctx: ctx, root: root, store: store, repository: stored, sourceOID: sourceOID, adminPassword: adminPasswordFile,
 	}
+	handler := application.Handler()
+	fixture.httpServer = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodDelete && strings.Contains(request.URL.Path, "/by-creation/") {
+			fixture.creationRevokes.Add(1)
+		}
+		if request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "-credentials") && fixture.beforeIssue != nil {
+			fixture.beforeIssue()
+		}
+		handler.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(fixture.httpServer.Close)
+	return fixture
 }
 
 func (fixture *configuredCheckCLIFixture) adminArguments(arguments ...string) []string {
@@ -374,15 +388,20 @@ func policyConsent(policy *checkapi.Policy) bool {
 }
 
 // TestCredentialIssuanceReportsItsCompensation covers failed helper and runner
-// credential issuance. The final CLI error states why issuance failed and what
-// the compensating revoke achieved. It suggests a retry only when a retry can
-// help, names the creation identity when the revoke is unconfirmed, and never
-// carries the token or the password file's content.
+// credential issuance. Only an attempt that may have created a credential is
+// revoked by its creation identity: an OwnGit refusal and a replay without a
+// token created nothing. The final CLI error states why issuance failed and
+// what the compensating revoke achieved, names the creation identity when the
+// owner must act, and never carries the token or the password file's content.
 func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
 	const token = "synthetic-issued-token"
 	const password = "synthetic-admin-password"
+	const credentialID = "ffffffffffffffffffffffffffffffff"
 	malformed := func(writer http.ResponseWriter, _, _ string) {
 		_, _ = io.WriteString(writer, `{"ok":true}`)
+	}
+	replay := func(writer http.ResponseWriter, creationID, _ string) {
+		_, _ = fmt.Fprintf(writer, `{"ok":true,"credential":{"id":%q,"repository_id":"project","creation_id":%q}}`, credentialID, creationID)
 	}
 	replacedOutput := func(writer http.ResponseWriter, creationID, output string) {
 		if err := os.Rename(output, output+".moved"); err != nil {
@@ -391,7 +410,7 @@ func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
 		if err := os.WriteFile(output, []byte("replacement\n"), 0o600); err != nil {
 			t.Errorf("write the replacement: %v", err)
 		}
-		_, _ = fmt.Fprintf(writer, `{"ok":true,"token":%q,"credential":{"id":"%s","repository_id":"project","creation_id":%q}}`, token, strings.Repeat("f", 32), creationID)
+		_, _ = fmt.Fprintf(writer, `{"ok":true,"token":%q,"credential":{"id":%q,"repository_id":"project","creation_id":%q}}`, token, credentialID, creationID)
 	}
 	refusal := func(status int, code, message string) func(http.ResponseWriter, string, string) {
 		return func(writer http.ResponseWriter, _, _ string) {
@@ -399,17 +418,24 @@ func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
 			_, _ = fmt.Fprintf(writer, `{"ok":false,"error":{"code":%q,"message":%q}}`, code, message)
 		}
 	}
-	const disabled = "Credentials are disabled for this repository."
+	// A proxy page is not an OwnGit answer, so it settles nothing.
+	proxyPage := func(writer http.ResponseWriter, _, _ string) {
+		writer.Header().Set("Content-Type", "text/html")
+		writer.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(writer, "<html>forbidden by proxy</html>")
+	}
 	const unavailable = "The state store is unavailable."
 	for _, command := range []struct {
 		name       string
 		collection string
+		command    string // lists and revokes the credentials
+		idFlag     string
 		run        func(output string, flags []string) error
 	}{
-		{"helper", "helper-credentials", func(output string, flags []string) error {
+		{"helper", "helper-credentials", "owngit helper-credential", "--id", func(output string, flags []string) error {
 			return helperCredentialCommand(append([]string{"create", "--label", "laptop", "--output", output}, flags...))
 		}},
-		{"runner", "runner-credentials", func(output string, flags []string) error {
+		{"runner", "runner-credentials", "owngit runner-credential", "--credential", func(output string, flags []string) error {
 			return runnerCredentialCommand(append([]string{"issue", "--label", "runner", "--token-file", output}, flags...))
 		}},
 	} {
@@ -419,23 +445,32 @@ func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
 			revokeFails bool
 			code        string
 			reason      string
-			outcome     string
-			revokes     int
+			revokes     int  // compensating DELETE requests
+			identity    bool // the message names the creation identity
+			retry       bool // the message suggests a retry
 		}{
-			{"refusal and confirmed revoke", refusal(http.StatusForbidden, "forbidden", disabled), false,
-				"forbidden", disabled, "Any credential this attempt created was revoked. The reserved", 1},
-			{"refusal and failed revoke", refusal(http.StatusForbidden, "forbidden", disabled), true,
-				"credential_creation_unconfirmed", disabled, "unconfirmed", 1},
+			{"unauthorized", refusal(http.StatusUnauthorized, "unauthorized", "The administrator password is incorrect."), true,
+				"unauthorized", "password is incorrect", 0, false, false},
+			{"forbidden", refusal(http.StatusForbidden, "forbidden", "Credentials are disabled for this repository."), true,
+				"forbidden", "disabled", 0, false, false},
+			{"not found", refusal(http.StatusNotFound, "check_policy_not_found", "The repository has no configured-check policy."), true,
+				"check_policy_not_found", "no configured-check policy", 0, false, false},
+			{"creation conflict", refusal(http.StatusConflict, "creation_conflict", "The creation identity has different content."), true,
+				"creation_conflict", "different content", 0, false, false},
+			{"invalid input", refusal(http.StatusUnprocessableEntity, "invalid_credential", "The label is invalid."), true,
+				"invalid_credential", "label is invalid", 0, false, false},
+			{"replay without a token", replay, true,
+				"token_unavailable", command.command + " revoke " + command.idFlag + " " + credentialID, 0, true, false},
+			{"proxy page and confirmed revoke", proxyPage, false,
+				"invalid_response", "non-JSON", 1, false, true},
 			{"server failure and failed revoke", refusal(http.StatusServiceUnavailable, "state_unavailable", unavailable), true,
-				"credential_creation_unconfirmed", unavailable, "unconfirmed", 1},
+				"credential_creation_unconfirmed", unavailable, 1, true, true},
 			{"malformed response and confirmed revoke", malformed, false,
-				"invalid_response", "did not return", "Any credential this attempt created was revoked. Retry the command.", 1},
+				"invalid_response", "did not return", 1, false, true},
 			{"malformed response and failed revoke", malformed, true,
-				"credential_creation_unconfirmed", "did not return", "unconfirmed", 1},
+				"credential_creation_unconfirmed", "did not return", 1, true, true},
 			{"replaced output and failed revoke", replacedOutput, true,
-				"credential_creation_unconfirmed", "output path was replaced", "unconfirmed", 1},
-			{"creation conflict", refusal(http.StatusConflict, "creation_conflict", "The creation identity has different content."), false,
-				"creation_conflict", "different content", "preserved", 0},
+				"credential_creation_unconfirmed", "output path was replaced", 1, true, true},
 		} {
 			t.Run(command.name+" "+test.name, func(t *testing.T) {
 				if runtime.GOOS == "windows" && strings.HasPrefix(test.name, "replaced output") {
@@ -476,10 +511,16 @@ func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
 				var envelope pullrequest.ErrorEnvelope
 				noErr(t, json.Unmarshal(final.Bytes(), &envelope))
 				message := envelope.Error.Message
-				unconfirmed := test.code == "credential_creation_unconfirmed"
-				if envelope.Error.Code != test.code || !strings.Contains(message, test.reason) || !strings.Contains(message, test.outcome) ||
-					!strings.Contains(message, "preserved") || strings.Contains(message, creationID) != unconfirmed ||
-					strings.Contains(message, "Retry the command") != (test.name == "malformed response and confirmed revoke") {
+				revoked := test.revokes == 1 && !test.revokeFails
+				// No command revokes by creation identity, so the owner is sent
+				// to the list, which shows each credential's creation_id.
+				find := "The creation outcome is unconfirmed and the compensating revoke failed. Run " + command.command +
+					" list, and if a credential with creation_id " + creationID + " is listed without revoked_at, revoke it with " +
+					command.command + " revoke " + command.idFlag + " <id>. Retry the command."
+				if envelope.Error.Code != test.code || !strings.Contains(message, test.reason) || !strings.Contains(message, "preserved") ||
+					strings.Contains(message, creationID) != test.identity || strings.Contains(message, "was revoked") != revoked ||
+					strings.Contains(message, "Retry the command") != test.retry ||
+					strings.Contains(message, find) != (test.code == "credential_creation_unconfirmed") {
 					t.Fatalf("final error=%s", final.Bytes())
 				}
 				if strings.Contains(final.String(), token) || strings.Contains(final.String(), password) {
@@ -492,4 +533,123 @@ func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestRunnerCredentialReuseKeepsTheEarlierCredential reuses a creation
+// identity against a real server. Neither a refused request nor a replay
+// created anything, so nothing is revoked by that identity. An active
+// credential stays active and the replay names it. A revoked credential is
+// reported as revoked, with a new --creation-id as the next step.
+func TestRunnerCredentialReuseKeepsTheEarlierCredential(t *testing.T) {
+	fixture := newRunnerIssuanceFixture(t)
+	activeID := strings.Repeat("c", 32)
+	active, failure := fixture.issue(t, activeID, "build-host", "active-token")
+	if failure != "" {
+		t.Fatal(failure)
+	}
+	// An invalid label is refused before the creation identity is looked up.
+	if _, failure := fixture.issue(t, activeID, "bad\nlabel", "refused-token"); !strings.HasPrefix(failure, "invalid_runner_credential: ") {
+		t.Fatalf("refused reuse: %s", failure)
+	}
+	// The same content replays the earlier creation without its token.
+	_, failure = fixture.issue(t, activeID, "build-host", "replayed-token")
+	if !strings.HasPrefix(failure, "token_unavailable: ") || !strings.Contains(failure, activeID) ||
+		!strings.Contains(failure, "owngit runner-credential revoke --credential "+active.Credential.ID) {
+		t.Fatalf("replayed reuse: %s", failure)
+	}
+	// The list shows the creation identity, which unconfirmed compensation
+	// guidance relies on.
+	listed := fixture.runCredentialList(t)
+	if len(listed.Credentials) != 1 || listed.Credentials[0].ID != active.Credential.ID || listed.Credentials[0].RevokedAt != nil ||
+		listed.Credentials[0].CreationID != activeID {
+		t.Fatalf("earlier credential count=%d still active=%v", len(listed.Credentials),
+			len(listed.Credentials) == 1 && listed.Credentials[0].ID == active.Credential.ID && listed.Credentials[0].RevokedAt == nil)
+	}
+
+	// A replay of a credential the owner revoked names it as revoked and asks
+	// for a new creation identity instead of an impossible revoke.
+	revokedID := strings.Repeat("d", 32)
+	revoked, failure := fixture.issue(t, revokedID, "revoked-host", "revoked-token")
+	if failure != "" {
+		t.Fatal(failure)
+	}
+	configuredCheckCLIOutput(t, func() error {
+		return runnerCredentialCommand(fixture.adminArguments("revoke", "--credential", revoked.Credential.ID))
+	})
+	_, failure = fixture.issue(t, revokedID, "revoked-host", "after-revoke-token")
+	if !strings.HasPrefix(failure, "token_unavailable: ") || !strings.Contains(failure, revoked.Credential.ID+", which is revoked") ||
+		!strings.Contains(failure, newCreationIdentity) || strings.Contains(failure, "revoke the credential with") {
+		t.Fatalf("replay of a revoked credential: %s", failure)
+	}
+	if revokes := fixture.creationRevokes.Load(); revokes != 0 {
+		t.Fatalf("a refusal or replay sent %d revokes by creation identity", revokes)
+	}
+}
+
+// TestCompensatedRunnerIssuanceAsksForANewCreationIdentity covers a confirmed
+// compensation against a real server when the owner chose the creation
+// identity. That identity now names the revoked credential, so the guidance
+// asks for a new identity, and following it issues a working credential.
+func TestCompensatedRunnerIssuanceAsksForANewCreationIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows denies path replacement while the private handle is open")
+	}
+	fixture := newRunnerIssuanceFixture(t)
+	output := filepath.Join(fixture.root, "compensated-token")
+	fixture.beforeIssue = func() {
+		if err := os.Rename(output, output+".moved"); err != nil {
+			t.Errorf("replace the reserved path: %v", err)
+		}
+	}
+	_, failure := fixture.issue(t, strings.Repeat("e", 32), "compensated-host", "compensated-token")
+	fixture.beforeIssue = nil
+	if !strings.HasPrefix(failure, "output_replaced: ") || !strings.Contains(failure, "was revoked. "+newCreationIdentity) {
+		t.Fatalf("compensated issuance: %s", failure)
+	}
+	if revokes := fixture.creationRevokes.Load(); revokes != 1 {
+		t.Fatalf("revokes by creation identity=%d, want the compensation only", revokes)
+	}
+	if _, failure := fixture.issue(t, "", "compensated-host", "fresh-token"); failure != "" {
+		t.Fatalf("issuance without a chosen identity: %s", failure)
+	}
+}
+
+const newCreationIdentity = "Run the command again with a new --creation-id, or without it."
+
+type runnerIssuanceFixture struct {
+	*configuredCheckCLIFixture
+}
+
+// newRunnerIssuanceFixture starts a real server whose repository has an
+// external-runner policy, so runner credentials can be issued.
+func newRunnerIssuanceFixture(t *testing.T) runnerIssuanceFixture {
+	fixture := newConfiguredCheckCLIFixture(t)
+	policyFile := filepath.Join(fixture.root, "policy.json")
+	policyJSON, err := json.Marshal(checkapi.PolicyInput{
+		Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{checkworkflow.EventPush},
+		MaxTimeoutMS: 5_000, MaxOutputLimitBytes: 64 << 10, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 10_000,
+	})
+	noErr(t, err)
+	noErr(t, os.WriteFile(policyFile, policyJSON, 0o600))
+	fixture.runPolicy(t, "set", "--policy-file", policyFile)
+	return runnerIssuanceFixture{fixture}
+}
+
+// issue runs "runner-credential issue" with an optional chosen creation
+// identity. It returns the credential, or the failure as "code: message".
+func (fixture runnerIssuanceFixture) issue(t *testing.T, creationID, label, tokenFile string) (checkapi.RunnerCredentialResponse, string) {
+	t.Helper()
+	arguments := []string{"issue", "--label", label, "--token-file", filepath.Join(fixture.root, tokenFile)}
+	if creationID != "" {
+		arguments = append(arguments, "--creation-id", creationID)
+	}
+	stdout, err := captureStdout(func() error { return runnerCredentialCommand(fixture.adminArguments(arguments...)) })
+	var issued checkapi.RunnerCredentialResponse
+	if err != nil {
+		return issued, commandErrorCode(err) + ": " + err.Error()
+	}
+	if err := json.Unmarshal([]byte(stdout), &issued); err != nil || issued.Credential == nil {
+		t.Fatal("issuance did not return a credential")
+	}
+	return issued, ""
 }

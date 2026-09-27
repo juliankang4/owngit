@@ -501,13 +501,13 @@ func TestCompensatingRevokeIsScopedAndIdempotent(t *testing.T) {
 	}
 	// A lost response is compensated with a scoped revoke, and the caller is
 	// told to retry.
-	err = compensateCreation(client, path, creationID, errors.New("lost response"))
+	err = credentialIssuance{client: client, credentialsPath: path, creationID: creationID}.compensate(errors.New("lost response"))
 	var problem *apiclient.Error
 	if !errors.As(err, &problem) || problem.Code != "credential_creation_failed" {
 		t.Fatalf("compensation error=%v", err)
 	}
 	// The revoke is idempotent, so a second compensation is safe.
-	if err := compensateCreation(client, path, creationID, errors.New("lost response")); err == nil {
+	if err := (credentialIssuance{client: client, credentialsPath: path, creationID: creationID}).compensate(errors.New("lost response")); err == nil {
 		t.Fatal("second compensation reported success")
 	}
 	credentials, err := store.HelperCredentials(ctx, "project")
@@ -517,8 +517,15 @@ func TestCompensatingRevokeIsScopedAndIdempotent(t *testing.T) {
 	// An unreachable server cannot confirm the revoke, so the creation
 	// identity is reported instead of the token.
 	dead := apiclient.NewAdmin(&url.URL{Scheme: "http", Host: "127.0.0.1:1"}, "admin-password")
-	err = compensateCreation(dead, path, creationID, errors.New("lost response"))
-	if !errors.As(err, &problem) || problem.Code != "credential_creation_unconfirmed" || !strings.Contains(problem.Message, creationID) {
+	// The guidance names real commands, since none revokes by creation
+	// identity, and a chosen identity must not be reused.
+	err = credentialIssuance{client: dead, credentialsPath: path, creationID: creationID, chosenCreationID: true,
+		command: "owngit runner-credential", idFlag: "--credential"}.compensate(errors.New("lost response"))
+	want := "Credential creation failed. The creation outcome is unconfirmed and the compensating revoke failed. " +
+		"Run owngit runner-credential list, and if a credential with creation_id " + creationID +
+		" is listed without revoked_at, revoke it with owngit runner-credential revoke --credential <id>. " +
+		"Run the command again with a new --creation-id, or without it."
+	if !errors.As(err, &problem) || problem.Code != "credential_creation_unconfirmed" || problem.Message != want {
 		t.Fatalf("unconfirmed compensation error=%v", err)
 	}
 }
@@ -542,12 +549,12 @@ func TestCredentialCreateConflictPreservesExistingAuthority(t *testing.T) {
 }
 
 func TestCredentialCreateCompensatesAMalformedResponse(t *testing.T) {
-	// A success body without a token, as a lost token would look.
-	create := runCredentialCreate(t, func(writer http.ResponseWriter, input checkapi.CreateCredentialInput, _ string) {
-		_, _ = fmt.Fprintf(writer, `{"ok":true,"credential":{"id":"0123456789abcdef0123456789abcdef","repository_id":"project","creation_id":%q}}`, input.CreationID)
+	// A success body without a credential leaves open whether one was created.
+	create := runCredentialCreate(t, func(writer http.ResponseWriter, _ checkapi.CreateCredentialInput, _ string) {
+		_, _ = io.WriteString(writer, `{"ok":true}`)
 	})
 	var problem *apiclient.Error
-	if !errors.As(create.err, &problem) || problem.Code != "token_unavailable" {
+	if !errors.As(create.err, &problem) || problem.Code != "invalid_response" {
 		t.Fatalf("malformed response error=%v", create.err)
 	}
 	// The compensation is scoped by the creation identity, not by a credential

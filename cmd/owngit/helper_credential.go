@@ -101,49 +101,46 @@ func helperCredentialCreate(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	credentialsPath := admin.repositoryPath() + "/helper-credentials"
-	fail := func(cause error, compensate bool) error {
+	// Each run generates its own creation identity, so a plain retry is new.
+	issuance := credentialIssuance{client: client, credentialsPath: admin.repositoryPath() + "/helper-credentials",
+		creationID: creationID, command: "owngit helper-credential", idFlag: "--id"}
+	fail := func(cause error) error {
 		closeErr := reserved.preserve()
-		failure := cause
-		if compensate {
-			failure = compensateCreation(client, credentialsPath, creationID, cause)
-		}
-		return preservedOutputError(failure, closeErr)
+		return preservedOutputError(issuance.compensate(cause), closeErr)
 	}
 
-	content, err := client.Do(context.Background(), "POST", credentialsPath,
+	content, err := client.Do(context.Background(), "POST", issuance.credentialsPath,
 		checkapi.CreateCredentialInput{Label: *label, CreationID: creationID})
 	if err != nil {
-		// A definite conflicting creation keeps the existing authority.
-		return fail(err, !isCreationConflict(err))
+		return fail(err)
 	}
 	var response checkapi.CredentialResponse
 	if err := json.Unmarshal(content, &response); err != nil || response.Credential == nil {
-		return fail(cliProblem("invalid_response", "The server did not return a helper credential."), true)
+		return fail(cliProblem("invalid_response", "The server did not return a helper credential."))
 	}
 	if response.Credential.RepositoryID != admin.repository || response.Credential.CreationID != creationID {
-		return fail(cliProblem("mismatched_response", "The server returned a credential for another repository or creation identity."), true)
+		return fail(cliProblem("mismatched_response", "The server returned a credential for another repository or creation identity."))
 	}
 	if response.Token == "" {
-		return fail(cliProblem("token_unavailable", "The server returned an existing credential without its token."), true)
+		return preservedOutputError(issuance.replayed(response.Credential.ID, response.Credential.RevokedAt != nil), reserved.preserve())
 	}
 	if reserved.replaced() {
-		return fail(outputReplaced(), true)
+		return fail(outputReplaced())
 	}
 	// The first line binds the token to the server that issued it, so a
 	// command that infers the server from a clone sends it only there.
 	if err := reserved.write(credentialOriginPrefix + " " + origin + "\n" + response.Token); err != nil {
-		return fail(&apiclient.Error{Code: "token_delivery_failed", Message: "The token could not be written.", Cause: err}, true)
+		return fail(&apiclient.Error{Code: "token_delivery_failed", Message: "The token could not be written.", Cause: err})
 	}
 	if reserved.replaced() {
-		return fail(outputReplaced(), true)
+		return fail(outputReplaced())
 	}
 	if err := reserved.preserve(); err != nil {
-		return preservedOutputError(compensateCreation(client, credentialsPath, creationID,
+		return preservedOutputError(issuance.compensate(
 			&apiclient.Error{Code: "token_delivery_failed", Message: "The token file could not be closed.", Cause: err}), err)
 	}
 	if reserved.replaced() {
-		return preservedOutputError(compensateCreation(client, credentialsPath, creationID, outputReplaced()), nil)
+		return preservedOutputError(issuance.compensate(outputReplaced()), nil)
 	}
 	// The token is delivered only through the file, so stdout never carries it.
 	response.Token = ""
@@ -170,48 +167,91 @@ func preservedOutputError(err, closeErr error) error {
 	}
 }
 
-// isCreationConflict reports a definite conflicting creation rejection, which
-// preserves the existing operation's authority.
-func isCreationConflict(err error) bool {
-	var problem *apiclient.Error
-	return errors.As(err, &problem) && problem.Code == "creation_conflict"
-}
-
 // outputReplaced reports a token output path that another writer replaced
 // while a credential was issued.
 func outputReplaced() error {
 	return cliProblem("output_replaced", "The output path was replaced while the credential was created. The replacement was left untouched.")
 }
 
-// compensateCreation revokes the helper or runner credential that one failed
-// operation may have created in the credentials collection at credentialsPath.
-// The revoke is scoped by the creation identity sent with the request, so it
-// never trusts a returned credential identifier, and it is idempotent when
-// nothing was created.
+// credentialIssuance is one helper or runner credential issuance, as its
+// failure reports need it.
+type credentialIssuance struct {
+	client          *apiclient.Client
+	credentialsPath string // the helper or runner credentials collection
+	creationID      string
+	// chosenCreationID is set when the caller supplied the creation identity.
+	// That identity keeps naming its credential after a revoke, so a retry
+	// needs a new one.
+	chosenCreationID bool
+	command          string // the command that lists and revokes these credentials
+	idFlag           string // its revoke option that names a credential
+}
+
+// retry tells the owner how to issue again after nothing usable was issued.
+func (issuance credentialIssuance) retry() string {
+	if issuance.chosenCreationID {
+		return "Run the command again with a new --creation-id, or without it."
+	}
+	return "Retry the command."
+}
+
+// findAndRevoke tells the owner how to revoke the credential the creation
+// identity may name. No command revokes by creation identity, but the list
+// shows each credential's creation_id and revoked_at.
+func (issuance credentialIssuance) findAndRevoke() string {
+	return "Run " + issuance.command + " list, and if a credential with creation_id " + issuance.creationID +
+		" is listed without revoked_at, revoke it with " + issuance.command + " revoke " + issuance.idFlag + " <id>."
+}
+
+// replayed reports a creation replay: the creation identity already names a
+// credential, and the server does not disclose its token again. The request
+// created nothing, so nothing is revoked. An active credential may belong to
+// an owner who holds its token from the earlier creation, so it is left for
+// the owner to revoke. A revoked one cannot issue again under this identity.
+func (issuance credentialIssuance) replayed(credentialID string, revoked bool) error {
+	message := "Creation " + issuance.creationID + " already names credential " + credentialID
+	if revoked {
+		message += ", which is revoked, so it cannot issue a new token. " + issuance.retry()
+	} else {
+		message += ", and its token is not shown again. If you do not hold that token, revoke the credential with " +
+			issuance.command + " revoke " + issuance.idFlag + " " + credentialID + "."
+	}
+	return cliProblem("token_unavailable", message)
+}
+
+// compensate reports a failed issuance and revokes the credential this
+// attempt may have created.
 //
-// The result states why creation failed and then what compensation achieved,
-// so neither fact hides the other. A confirmed revoke keeps the failure's code
-// and suggests a retry only when the server did not definitely refuse the
-// request, since the same request would be refused again. An unconfirmed
-// revoke becomes credential_creation_unconfirmed and names the non-secret
-// creation identity the owner must revoke.
-func compensateCreation(client *apiclient.Client, credentialsPath, creationID string, cause error) error {
+// Only an attempt that may have created a credential is compensated. An
+// OwnGit refusal (a 4xx error object, including a creation conflict) settles
+// that nothing was created, so it is reported as received and nothing is
+// revoked. This also keeps a reused creation identity from revoking the
+// earlier credential it names. The revoke is scoped by the creation identity
+// sent with the request, so it never trusts a returned credential identifier.
+//
+// The result states why creation failed and then what compensation achieved.
+// A confirmed revoke keeps the failure's code and tells the owner how to
+// retry, since the server did not refuse the request and nothing from it
+// remains. An unconfirmed revoke becomes credential_creation_unconfirmed and
+// tells the owner how to find and revoke the credential by its non-secret
+// creation identity before retrying.
+func (issuance credentialIssuance) compensate(cause error) error {
+	if definiteRefusal(cause) {
+		return cause
+	}
 	failure := apiclient.Error{Code: "credential_creation_failed", Message: "Credential creation failed."}
 	var problem *apiclient.Error
 	if errors.As(cause, &problem) {
 		failure = *problem
 	}
 	failure.Cause = cause
-	if revokeErr := revokeCredentialByCreation(client, credentialsPath, creationID); revokeErr != nil {
+	if revokeErr := revokeCredentialByCreation(issuance.client, issuance.credentialsPath, issuance.creationID); revokeErr != nil {
 		failure.Code = "credential_creation_unconfirmed"
-		failure.Message += " The creation outcome is unconfirmed and the compensating revoke failed. Revoke creation " + creationID + " before retrying."
+		failure.Message += " The creation outcome is unconfirmed and the compensating revoke failed. " + issuance.findAndRevoke() + " " + issuance.retry()
 		failure.Cause = errors.Join(cause, revokeErr)
 		return &failure
 	}
-	failure.Message += " Any credential this attempt created was revoked."
-	if !definiteRefusal(cause) {
-		failure.Message += " Retry the command."
-	}
+	failure.Message += " Any credential this attempt created was revoked. " + issuance.retry()
 	return &failure
 }
 
