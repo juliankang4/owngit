@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1263,11 +1264,62 @@ func TestParseLangRejectsUnknownValues(t *testing.T) {
 	}
 }
 
+// strayPage satisfies the Page contract but names a template the renderer
+// does not have, which is the only way a page can still be refused.
+type strayPage struct{ Chrome Chrome }
+
+func (strayPage) page() string     { return "stray" }
+func (p strayPage) chrome() Chrome { return p.Chrome }
+
 func TestRenderRejectsAnUnknownPage(t *testing.T) {
 	r := newRenderer(t)
 	var buf bytes.Buffer
 	if err := r.Render(&buf, nil); err == nil {
 		t.Error("rendering a nil page succeeded")
+	}
+	err := r.Render(&buf, strayPage{Chrome: fullChrome(LangEN)})
+	if err == nil || !strings.Contains(err.Error(), `"stray": unknown page`) {
+		t.Errorf("rendering a page without a template gave %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Error("a refused page still wrote output")
+	}
+}
+
+// TestEveryPageRendersTheSameByValueAndByPointer covers the Page contract:
+// the backend passes some pages by pointer, and the shared chrome (language,
+// version, navigation, notices) must come out identical either way.
+func TestEveryPageRendersTheSameByValueAndByPointer(t *testing.T) {
+	r := newRenderer(t)
+	for _, lang := range Langs() {
+		for name, page := range allPages(lang) {
+			ptr := reflect.New(reflect.TypeOf(page))
+			ptr.Elem().Set(reflect.ValueOf(page))
+			byValue, byPointer := render(t, r, page), render(t, r, ptr.Interface().(Page))
+			if byValue != byPointer {
+				t.Errorf("%s/%s: rendering by pointer differs from rendering by value", lang, name)
+			}
+			if version := page.chrome().Version; version != "" && !strings.Contains(byPointer, version) {
+				t.Errorf("%s/%s: the shared chrome did not reach the pointer rendering", lang, name)
+			}
+		}
+	}
+}
+
+func TestChromeDefaultsDoNotChangeTheCallersPage(t *testing.T) {
+	// An empty language and a zero clock are filled in for the rendering
+	// only. The backend's page value, and the struct behind a pointer, stay
+	// exactly as supplied, so a later rendering of the same page sees the
+	// same inputs.
+	r := newRenderer(t)
+	page := &ErrorPage{Chrome: Chrome{CurrentURL: "/nope"}, Status: 404, Code: MsgErrNotFound, RetryURL: "/"}
+	supplied := *page
+	out := render(t, r, page)
+	if !strings.Contains(out, `lang="en"`) || !strings.Contains(out, wantText(LangEN, MsgErrNotFound)) {
+		t.Error("an empty language did not render as the default language")
+	}
+	if !reflect.DeepEqual(*page, supplied) {
+		t.Errorf("rendering changed the caller's page: %+v", page.Chrome)
 	}
 }
 

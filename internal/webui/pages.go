@@ -6,11 +6,14 @@ import (
 )
 
 // Page is one renderable screen. Every page type in this package implements it.
-// The method reports the template name the renderer executes, which keeps the
-// set of pages closed: the backend cannot invent a page the renderer does not
-// know.
+// page reports the template name the renderer executes, which keeps the set
+// of pages closed: the backend cannot invent a page the renderer does not
+// know. chrome returns the page's shared Chrome field, so a page cannot be
+// added without the data the shell needs. Both are value methods, so a page
+// renders the same whether the backend passes it by value or by pointer.
 type Page interface {
 	page() string
+	chrome() Chrome
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +88,8 @@ type SetupPage struct {
 	RecoveryHint MessageCode
 }
 
-func (SetupPage) page() string { return "setup" }
+func (SetupPage) page() string     { return "setup" }
+func (p SetupPage) chrome() Chrome { return p.Chrome }
 
 // SetupForm is the redisplayed wizard state. Password fields are deliberately
 // absent: a validation failure must not echo a submitted password.
@@ -155,7 +159,8 @@ type AuthPage struct {
 	Tabs RepoTabs
 }
 
-func (AuthPage) page() string { return "auth" }
+func (AuthPage) page() string     { return "auth" }
+func (p AuthPage) chrome() Chrome { return p.Chrome }
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -220,7 +225,8 @@ type UpdateCheckInfo struct {
 	ForcedOff bool
 }
 
-func (SettingsPage) page() string { return "settings" }
+func (SettingsPage) page() string     { return "settings" }
+func (p SettingsPage) chrome() Chrome { return p.Chrome }
 
 // ---------------------------------------------------------------------------
 // Overview and activity
@@ -244,7 +250,8 @@ type OverviewPage struct {
 	Release *ReleaseNotice
 }
 
-func (OverviewPage) page() string { return "overview" }
+func (OverviewPage) page() string     { return "overview" }
+func (p OverviewPage) chrome() Chrome { return p.Chrome }
 
 // ReleaseNotice is the dashboard notice for a newer OwnGit release. Every
 // URL is set by the backend; NotesURL is built from the checked version.
@@ -273,7 +280,8 @@ type ActivityPage struct {
 	NewerURL string
 }
 
-func (ActivityPage) page() string { return "activity" }
+func (ActivityPage) page() string     { return "activity" }
+func (p ActivityPage) chrome() Chrome { return p.Chrome }
 
 // ActivityGraph is the annual daily commit graph.
 //
@@ -465,7 +473,8 @@ type RepositoryPage struct {
 	Commits CommitsView
 }
 
-func (RepositoryPage) page() string { return "repository" }
+func (RepositoryPage) page() string     { return "repository" }
+func (p RepositoryPage) chrome() Chrome { return p.Chrome }
 
 // RepositoryHeader identifies the repository on every tab.
 type RepositoryHeader struct {
@@ -866,7 +875,8 @@ type NewRepositoryPage struct {
 	NameRules MessageCode
 }
 
-func (NewRepositoryPage) page() string { return "new-repository" }
+func (NewRepositoryPage) page() string     { return "new-repository" }
+func (p NewRepositoryPage) chrome() Chrome { return p.Chrome }
 
 // ---------------------------------------------------------------------------
 // Restore
@@ -956,7 +966,8 @@ type RestorePage struct {
 	CancelURL  string
 }
 
-func (RestorePage) page() string { return "restore" }
+func (RestorePage) page() string     { return "restore" }
+func (p RestorePage) chrome() Chrome { return p.Chrome }
 
 // RestorePath is one file of the source commit offered for selection.
 //
@@ -990,4 +1001,5 @@ type ErrorPage struct {
 	RetryURL string
 }
 
-func (ErrorPage) page() string { return "error" }
+func (ErrorPage) page() string     { return "error" }
+func (p ErrorPage) chrome() Chrome { return p.Chrome }

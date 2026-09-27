@@ -3,8 +3,7 @@ package webui
 // Text for the configured-check policy, job, and runner-token screens.
 //
 // These entries are merged into the shared catalog at startup, exactly like
-// the evidence entries, so Text, Has, MissingMessages, and the client-side
-// bundle all see one catalog.
+// the evidence entries, so Text, Has, and MissingMessages all see one catalog.
 //
 // Wording rule for this file: it describes what OwnGit actually does. Host
 // commands run with the service account's access, container limits are the

@@ -1,7 +1,5 @@
 package webui
 
-import "encoding/json"
-
 // MessageCode names one localized sentence. The backend reports outcomes with
 // these codes instead of English strings, so both languages stay complete and
 // the wording can change without touching handler code.
@@ -1695,19 +1693,4 @@ func MissingMessages() []MessageCode {
 		}
 	}
 	return missing
-}
-
-// bundle renders the whole catalog as the JSON the browser downloads once to
-// switch language without leaving the page. It is generated from the same
-// catalog the server renders from, so the two can never drift apart.
-func bundle() ([]byte, error) {
-	byLang := map[string]map[string]string{
-		string(LangEN): make(map[string]string, len(catalog)),
-		string(LangKO): make(map[string]string, len(catalog)),
-	}
-	for code, entry := range catalog {
-		byLang[string(LangEN)][string(code)] = entry.en
-		byLang[string(LangKO)][string(code)] = entry.ko
-	}
-	return json.Marshal(byLang)
 }

@@ -28,7 +28,8 @@ type PullRequestsPage struct {
 	UnavailableReason MessageCode
 }
 
-func (PullRequestsPage) page() string { return "pull-requests" }
+func (PullRequestsPage) page() string     { return "pull-requests" }
+func (p PullRequestsPage) chrome() Chrome { return p.Chrome }
 
 // PullRequestRow is one entry in the list.
 type PullRequestRow struct {
@@ -109,7 +110,8 @@ func (p NewPullRequestPage) Comparable() bool {
 	return p.Observed && p.Source.Resolved() && p.Target.Resolved()
 }
 
-func (NewPullRequestPage) page() string { return "new-pull-request" }
+func (NewPullRequestPage) page() string     { return "new-pull-request" }
+func (p NewPullRequestPage) chrome() Chrome { return p.Chrome }
 
 // Review choices submitted in the "review" field of the create form.
 const (
@@ -185,7 +187,8 @@ type PullRequestPage struct {
 	UpdatedAt time.Time
 }
 
-func (PullRequestPage) page() string { return "pull-request" }
+func (PullRequestPage) page() string     { return "pull-request" }
+func (p PullRequestPage) chrome() Chrome { return p.Chrome }
 
 // Tasks and check evidence
 
@@ -222,7 +225,8 @@ type TasksPage struct {
 	UnavailableReason MessageCode
 }
 
-func (TasksPage) page() string { return "tasks" }
+func (TasksPage) page() string     { return "tasks" }
+func (p TasksPage) chrome() Chrome { return p.Chrome }
 
 // TaskDetail is one opened task with its recorded attempts.
 type TaskDetail struct {
@@ -286,7 +290,8 @@ type HelperCredentialsPage struct {
 	IssuedToken string
 }
 
-func (HelperCredentialsPage) page() string { return "helper-credentials" }
+func (HelperCredentialsPage) page() string     { return "helper-credentials" }
+func (p HelperCredentialsPage) chrome() Chrome { return p.Chrome }
 
 // HasIssuedToken reports whether this response is the one-time handover.
 func (p HelperCredentialsPage) HasIssuedToken() bool { return p.IssuedToken != "" }

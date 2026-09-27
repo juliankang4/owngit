@@ -138,7 +138,8 @@ type ConfiguredChecksPage struct {
 	RunnerTokensKnown  bool
 }
 
-func (ConfiguredChecksPage) page() string { return "configured-checks" }
+func (ConfiguredChecksPage) page() string     { return "configured-checks" }
+func (p ConfiguredChecksPage) chrome() Chrome { return p.Chrome }
 
 // CheckPolicyView is the stored policy as the backend read it.
 type CheckPolicyView struct {
@@ -494,7 +495,8 @@ type RunnerCredentialsPage struct {
 	PendingLabel string
 }
 
-func (RunnerCredentialsPage) page() string { return "runner-credentials" }
+func (RunnerCredentialsPage) page() string     { return "runner-credentials" }
+func (p RunnerCredentialsPage) chrome() Chrome { return p.Chrome }
 
 // HasIssuedToken reports whether this response is the one-time handover.
 func (p RunnerCredentialsPage) HasIssuedToken() bool { return p.IssuedToken != "" }

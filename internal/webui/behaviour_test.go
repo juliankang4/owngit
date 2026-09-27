@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -196,5 +197,47 @@ func TestMissingURLsDoNotBecomeDeadLinks(t *testing.T) {
 	code.Code.Crumbs = []Crumb{{Name: "forge-cli"}, {Name: "internal", Current: true}}
 	if out := render(t, r, code); strings.Contains(out, `href=""`) {
 		t.Error("a breadcrumb without a target rendered as an empty link")
+	}
+}
+
+// TestLanguageClickTranslatesRefGroupsAndImportWords drives the shipped script
+// over the renderer's real markup: the ref picker's group labels and the import
+// mode, run and ref words switch in place; an unknown token stays escaped data.
+func TestLanguageClickTranslatesRefGroupsAndImportWords(t *testing.T) {
+	r := newRenderer(t)
+	c := fullChrome(LangEN)
+	imp := allPages(LangEN)["import-admin"].(ImportPage)
+	imp.Refs = []ImportRefRow{{Name: "main", State: "diverged"}, {Name: "odd", State: "<not & a state>"}}
+	out := render(t, r, repoPage(c, RepoTabCode)) + render(t, r, imp)
+
+	// The unknown token is data in both languages: escaped once, no carrier.
+	if strings.Contains(out, "<not & a state>") || !strings.Contains(out, `&lt;not &amp; a state&gt;</span>`) {
+		t.Fatal("an unknown import token is not shown as escaped text")
+	}
+	if strings.Contains(out, `data-en="&lt;not`) {
+		t.Error("an unknown import token was offered for translation")
+	}
+
+	// Watch the real tags: both optgroups and the import words on their spans.
+	tags := regexp.MustCompile(`<optgroup [^>]*>`).FindAllString(out, -1)
+	for _, en := range []string{"Coexistence", "Refresh", "Failed", "Diverged", "Access token"} {
+		tag := regexp.MustCompile(`<span data-en="` + en + `" data-ko="[^"]*">` + en).FindString(out)
+		if tag == "" {
+			t.Fatalf("%q is rendered without both languages", en)
+		}
+		tags = append(tags, tag)
+	}
+	_, lang, nodes := clickLanguage(t, out, c.CurrentURL, tags...)
+	if lang != string(LangKO) || len(nodes) != len(tags) {
+		t.Fatalf("the click left lang=%q with %d of %d watched elements", lang, len(nodes), len(tags))
+	}
+	if got := []string{nodes[0].Attrs["label"], nodes[1].Attrs["label"]}; got[0] != "브랜치" || got[1] != "태그" {
+		t.Errorf("ref group labels after the click: %q", got)
+	}
+	want := []string{"공존", "새로고침", "실패", "원본과 다름", "액세스 토큰"}
+	for i, node := range nodes[2:] {
+		if node.Text != want[i] {
+			t.Errorf("import word %d after the click = %q, want %q", i, node.Text, want[i])
+		}
 	}
 }

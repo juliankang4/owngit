@@ -43,7 +43,11 @@ func templateFuncs() template.FuncMap {
 		"withLang":     withLang,
 		"withQuery":    withQuery,
 		"level":        activityLevel,
-		"importToken":  importToken,
+		// Known import words switch in place like any other catalog text; an
+		// unknown token is the same escaped data in both languages.
+		"importToken": func(lang Lang, token string) template.HTML {
+			return biText(lang, importToken(LangEN, token), importToken(LangKO, token))
+		},
 		"importError":  func(lang Lang, class string) template.HTML { return bi(lang, ImportErrorCode(class)) },
 		"weeks":        activityWeeks,
 		"monthLabel":   monthLabel,

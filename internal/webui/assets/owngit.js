@@ -158,7 +158,7 @@
    * Without JavaScript the same links are ordinary navigation, which the
    * backend answers with the other language. */
 
-  var TEXT_ATTRS = ['placeholder', 'title', 'aria-label', 'value', 'alt'];
+  var TEXT_ATTRS = ['placeholder', 'title', 'aria-label', 'value', 'alt', 'label'];
 
   /* target is the link the reader followed, when there was one. Its href is
    * the server's own address for this screen in the chosen language, so it is

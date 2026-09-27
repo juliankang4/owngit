@@ -107,11 +107,7 @@ func (r *Renderer) Render(w io.Writer, page Page) error {
 	if !ok {
 		return fmt.Errorf("render webui page %q: unknown page", name)
 	}
-	data, err := newViewData(page, r.prints)
-	if err != nil {
-		return err
-	}
-	if err := set.ExecuteTemplate(w, "layout", data); err != nil {
+	if err := set.ExecuteTemplate(w, "layout", newViewData(page, r.prints)); err != nil {
 		return fmt.Errorf("render webui page %q: %w", name, err)
 	}
 	return nil
@@ -170,11 +166,10 @@ type LangLink struct {
 	Selected bool
 }
 
-func newViewData(page Page, prints fingerprints) (*viewData, error) {
-	chrome, ok := chromeOf(page)
-	if !ok {
-		return nil, fmt.Errorf("render webui page %q: page has no Chrome field", page.page())
-	}
+// newViewData normalizes a copy of the page's Chrome: the defaults below
+// never touch the caller's page.
+func newViewData(page Page, prints fingerprints) *viewData {
+	chrome := page.chrome()
 	if chrome.Lang == "" {
 		chrome.Lang = DefaultLang
 	}
@@ -217,7 +212,7 @@ func newViewData(page Page, prints fingerprints) (*viewData, error) {
 		TitleEN:     titleEN,
 		TitleKO:     titleKO,
 		prints:      prints,
-	}, nil
+	}
 }
 
 // hiddenFormFields name inputs the reader never fills in. A notice about one
@@ -234,96 +229,6 @@ var hiddenFormFields = map[string]bool{
 // beside a field.
 func isPageNotice(n Notice) bool {
 	return n.Field == "" || hiddenFormFields[n.Field]
-}
-
-// chromeOf reads the Chrome field from a page value. Every page type in this
-// package embeds one; the check keeps a future page from rendering without it.
-// Pages may be passed by value or by pointer.
-func chromeOf(page Page) (Chrome, bool) {
-	switch p := page.(type) {
-	case SetupPage:
-		return p.Chrome, true
-	case *SetupPage:
-		return p.Chrome, true
-	case AuthPage:
-		return p.Chrome, true
-	case *AuthPage:
-		return p.Chrome, true
-	case SettingsPage:
-		return p.Chrome, true
-	case *SettingsPage:
-		return p.Chrome, true
-	case OverviewPage:
-		return p.Chrome, true
-	case *OverviewPage:
-		return p.Chrome, true
-	case ActivityPage:
-		return p.Chrome, true
-	case *ActivityPage:
-		return p.Chrome, true
-	case RepositoryPage:
-		return p.Chrome, true
-	case *RepositoryPage:
-		return p.Chrome, true
-	case NewRepositoryPage:
-		return p.Chrome, true
-	case *NewRepositoryPage:
-		return p.Chrome, true
-	case NewImportPage:
-		return p.Chrome, true
-	case *NewImportPage:
-		return p.Chrome, true
-	case ImportPage:
-		return p.Chrome, true
-	case *ImportPage:
-		return p.Chrome, true
-	case RestorePage:
-		return p.Chrome, true
-	case *RestorePage:
-		return p.Chrome, true
-	case PullRequestsPage:
-		return p.Chrome, true
-	case *PullRequestsPage:
-		return p.Chrome, true
-	case NewPullRequestPage:
-		return p.Chrome, true
-	case *NewPullRequestPage:
-		return p.Chrome, true
-	case PullRequestPage:
-		return p.Chrome, true
-	case *PullRequestPage:
-		return p.Chrome, true
-	case TasksPage:
-		return p.Chrome, true
-	case *TasksPage:
-		return p.Chrome, true
-	case HelperCredentialsPage:
-		return p.Chrome, true
-	case *HelperCredentialsPage:
-		return p.Chrome, true
-	case ConfiguredChecksPage:
-		return p.Chrome, true
-	case *ConfiguredChecksPage:
-		return p.Chrome, true
-	case RunnerCredentialsPage:
-		return p.Chrome, true
-	case RepositorySettingsPage:
-		return p.Chrome, true
-	case *RepositorySettingsPage:
-		return p.Chrome, true
-	case RepositoryDeletePage:
-		return p.Chrome, true
-	case *RepositoryDeletePage:
-		return p.Chrome, true
-	case *RunnerCredentialsPage:
-		return p.Chrome, true
-	case ErrorPage:
-		return p.Chrome, true
-	case *ErrorPage:
-		return p.Chrome, true
-	default:
-		return Chrome{}, false
-	}
 }
 
 // documentTitle builds the <title> for a page.

@@ -11,8 +11,10 @@
  * built from the renderer's real output, which is passed in on argv, so the
  * links here are the ones the server emits.
  *
- * Input  (argv[2]): {"script": path, "currentURL": str, "links": [{lang, href}]}
- * Output (stdout) : {"address": str, "lang": str, "cookie": str}
+ * Input  (argv[2]): {"script": path, "currentURL": str, "links": [{lang, href}],
+ *                    "nodes": [rendered opening tag plus text, optional]}
+ * Output (stdout) : {"address": str, "lang": str, "cookie": str,
+ *                    "nodes": [{text, attrs}] after the click, in input order}
  */
 
 import { readFileSync } from 'node:fs';
@@ -85,6 +87,18 @@ for (const link of input.links) {
 // A form field the switch keeps in step, as on a real page.
 body.append(new Node('input', { name: 'lang', value: 'en' }));
 
+// Elements copied from the renderer's real output, to observe what the switch
+// does to their text and attributes. Each is an opening tag and its text.
+const unescape = (s) => s.replace(/&(amp|lt|gt|#34|#39);/g, (_, e) => ({ amp: '&', lt: '<', gt: '>', '#34': '"', '#39': "'" })[e]);
+const nodes = (input.nodes || []).map((tag) => {
+  const m = /^<(\w+)((?:\s+[\w-]+="[^"]*")*)\s*>([^<]*)/.exec(tag);
+  const attrs = {};
+  for (const a of m[2].matchAll(/([\w-]+)="([^"]*)"/g)) { attrs[a[1]] = unescape(a[2]); }
+  const node = body.append(new Node(m[1], attrs));
+  node.textContent = unescape(m[3]);
+  return node;
+});
+
 let cookie = '';
 const documentListeners = {};
 
@@ -138,4 +152,5 @@ process.stdout.write(JSON.stringify({
   prevented,
   lang: root.getAttribute('data-lang'),
   cookie,
+  nodes: nodes.map((n) => ({ text: n.textContent, attrs: n.attrs })),
 }));

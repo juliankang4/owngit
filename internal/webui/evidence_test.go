@@ -401,8 +401,8 @@ func TestVersionIsVisibleOnEveryDashboardScreen(t *testing.T) {
 	r := newRenderer(t)
 	for _, lang := range Langs() {
 		for name, page := range allPages(lang) {
-			chrome, ok := chromeOf(page)
-			if !ok || chrome.Version == "" {
+			chrome := page.chrome()
+			if chrome.Version == "" {
 				continue // setup and sign-in render without the dashboard chrome
 			}
 			if out := render(t, r, page); !strings.Contains(out, chrome.Version) {

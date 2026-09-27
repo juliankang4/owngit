@@ -5,7 +5,7 @@ package webui
 // These entries live beside the rest of the catalog rather than inside it so
 // one large map does not have to be edited for every new screen. They are
 // merged at startup and are indistinguishable afterwards: Text, Has,
-// MissingMessages, and the client-side bundle all see one catalog.
+// and MissingMessages all see one catalog.
 
 // Shared evidence vocabulary.
 const (

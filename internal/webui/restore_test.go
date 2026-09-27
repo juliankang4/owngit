@@ -906,7 +906,7 @@ func TestRestoreTypedTargetSurvivesTheRoundTrip(t *testing.T) {
 	}
 
 	out := render(t, r, page)
-	address, _ := clickLanguage(t, out, c.CurrentURL)
+	address, _, _ := clickLanguage(t, out, c.CurrentURL)
 	if !strings.Contains(address, "target=recovered%2F9a8b154") {
 		t.Errorf("switching language loses the typed branch: %q", address)
 	}
@@ -1264,7 +1264,7 @@ func TestRestoreLinksNeverDescribeTwoScopesAtOnce(t *testing.T) {
 	}
 
 	// And so does the address the script leaves behind.
-	address, _ := clickLanguage(t, out, c.CurrentURL)
+	address, _, _ := clickLanguage(t, out, c.CurrentURL)
 	if strings.Contains(address, "path=") {
 		t.Errorf("switching language produced a mixed-scope address: %q", address)
 	}
@@ -1333,13 +1333,20 @@ func attrEscape(url string) string {
 // langLinkPattern pulls the rendered language links out of a page.
 var langLinkPattern = regexp.MustCompile(`data-lang-set="(\w+)"`)
 
+// switchedNode is a watched element's text and attributes after the click.
+type switchedNode struct {
+	Text  string            `json:"text"`
+	Attrs map[string]string `json:"attrs"`
+}
+
 // clickLanguage runs the shipped owngit.js against the page's real language
-// links and reports where its click handler leaves the address bar.
+// links and reports where its click handler leaves the address bar, plus the
+// state of any rendered tags handed in to watch.
 //
 // The anchor markup is only half the answer. The script intercepts the click
 // and rewrites the address itself, so the address a reader can reload or share
 // is decided by the handler, not by the href. That is what this drives.
-func clickLanguage(t *testing.T, out, currentURL string) (address string, lang string) {
+func clickLanguage(t *testing.T, out, currentURL string, tags ...string) (address string, lang string, nodes []switchedNode) {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -1369,7 +1376,7 @@ func clickLanguage(t *testing.T, out, currentURL string) (address string, lang s
 	script, err := filepath.Abs("assets/owngit.js")
 	noErr(t, err)
 	input, err := json.Marshal(map[string]any{
-		"script": script, "currentURL": currentURL, "links": links,
+		"script": script, "currentURL": currentURL, "links": links, "nodes": tags,
 	})
 	noErr(t, err)
 
@@ -1378,15 +1385,16 @@ func clickLanguage(t *testing.T, out, currentURL string) (address string, lang s
 	stdout, err := cmd.Output()
 	noErrf(t, err, "running the shipped script")
 	var result struct {
-		Address   string `json:"address"`
-		Prevented bool   `json:"prevented"`
-		Lang      string `json:"lang"`
+		Address   string         `json:"address"`
+		Prevented bool           `json:"prevented"`
+		Lang      string         `json:"lang"`
+		Nodes     []switchedNode `json:"nodes"`
 	}
 	noErrf(t, json.Unmarshal(stdout, &result), "reading the script's result")
 	if !result.Prevented {
 		t.Fatal("the language click was not intercepted")
 	}
-	return result.Address, result.Lang
+	return result.Address, result.Lang, result.Nodes
 }
 
 func TestRestoreLanguageClickLandsOnAFollowableAddress(t *testing.T) {
@@ -1400,7 +1408,7 @@ func TestRestoreLanguageClickLandsOnAFollowableAddress(t *testing.T) {
 	c.CurrentURL = "/repositories/r1/restore/preview"
 	out := render(t, r, restorePage(c, true))
 
-	address, lang := clickLanguage(t, out, c.CurrentURL)
+	address, lang, _ := clickLanguage(t, out, c.CurrentURL)
 
 	if lang != string(LangKO) {
 		t.Errorf("the click did not switch the language: %q", lang)
@@ -1430,7 +1438,7 @@ func TestLanguageClickKeepsAnOrdinaryPageWhereItIs(t *testing.T) {
 	c.CurrentURL = "/repositories/r1/code?ref=main&path=internal"
 	out := render(t, r, repoPage(c, RepoTabCode))
 
-	address, lang := clickLanguage(t, out, c.CurrentURL)
+	address, lang, _ := clickLanguage(t, out, c.CurrentURL)
 	if lang != string(LangKO) {
 		t.Errorf("the click did not switch the language: %q", lang)
 	}

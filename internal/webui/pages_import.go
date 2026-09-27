@@ -84,7 +84,8 @@ type ImportPage struct {
 	History          []ImportRunRow
 }
 
-func (ImportPage) page() string { return "import" }
+func (ImportPage) page() string     { return "import" }
+func (p ImportPage) chrome() Chrome { return p.Chrome }
 
 // NewImportPage renders GET /repositories/new-import.
 type NewImportPage struct {
@@ -101,4 +102,5 @@ type NewImportPage struct {
 	CredentialForm string
 }
 
-func (NewImportPage) page() string { return "new-import" }
+func (NewImportPage) page() string     { return "new-import" }
+func (p NewImportPage) chrome() Chrome { return p.Chrome }

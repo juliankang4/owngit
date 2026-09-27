@@ -48,7 +48,8 @@ type RepositorySettingsPage struct {
 	DeleteURL            string
 }
 
-func (RepositorySettingsPage) page() string { return "repository-settings" }
+func (RepositorySettingsPage) page() string     { return "repository-settings" }
+func (p RepositorySettingsPage) chrome() Chrome { return p.Chrome }
 
 // RepositoryDeletePage renders /repositories/{id}/delete, the confirmation
 // that asks for a mode, the typed repository name, and the administrator
@@ -72,4 +73,5 @@ type RepositoryDeletePage struct {
 	CancelURL string
 }
 
-func (RepositoryDeletePage) page() string { return "repository-delete" }
+func (RepositoryDeletePage) page() string     { return "repository-delete" }
+func (p RepositoryDeletePage) chrome() Chrome { return p.Chrome }

@@ -609,7 +609,7 @@ func TestTheLanguageClickKeepsTheOpenedJobInTheAddressBar(t *testing.T) {
 	c.CurrentURL = jobURL
 	out := render(t, r, configuredChecksPage(c, ccFixtureJobDetail))
 
-	address, lang := clickLanguage(t, out, c.CurrentURL)
+	address, lang, _ := clickLanguage(t, out, c.CurrentURL)
 	if lang != string(LangKO) {
 		t.Errorf("the click did not switch the language: %q", lang)
 	}
