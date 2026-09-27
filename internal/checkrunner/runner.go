@@ -205,13 +205,29 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-// runOne claims and runs at most one job. It returns the ID of the claimed
-// job, or "" when it claimed none, and any failure after the claim concerns
-// that job.
+// runOne claims and runs at most one job. A returned job ID names a job it
+// handled; with an error, that job's outcome is still open. An error without a
+// job ID means the runner knows of no job whose outcome it still owes: it
+// claimed nothing, it already reported the claimed job as not run, or the
+// claim answer was lost or unusable so it never learned the job. The server
+// marks such an unknown claim ambiguous when its lease expires.
 func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.WorkspaceRoot) (string, error) {
 	base := "/api/v1/repositories/" + url.PathEscape(runner.RepositoryID) + "/runner"
 	content, err := runner.Client.Do(ctx, http.MethodPost, base+"/claim", nil)
 	if err != nil {
+		claimed, committed := claimedJob(err)
+		if !committed {
+			return "", err
+		}
+		// The claim committed, but the server could not hand the job over,
+		// so it ran nothing.
+		if reportErr := runner.reportNotRun(ctx, base, claimed.JobID, claimed.LeaseID, state.CheckJobUnavailable,
+			"The claimed job could not be handed to the runner: "+err.Error()); reportErr != nil {
+			return claimed.JobID, errors.Join(err, reportErr)
+		}
+		// The job is settled, but the server's answer was still that it is
+		// unavailable, so the loop waits as it does for any such answer.
+		runner.log("reported configured-check job %s unavailable: %v", claimed.JobID, err)
 		return "", err
 	}
 	var claimed checkapi.JobResponse
@@ -259,8 +275,8 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 		if ctx.Err() != nil {
 			status = state.CheckJobInterrupted
 		}
-		input := checkapi.RunnerUnavailableInput{LeaseID: job.LeaseID, Status: status, Summary: bounded("Exact configured-check source is unavailable or workspace ownership is uncertain: " + materializeErr.Error())}
-		_, reportErr := runner.Client.DoWithHeaders(context.WithoutCancel(ctx), http.MethodPost, base+"/jobs/"+job.ID+"/unavailable", input, leaseHeaders(job.LeaseID))
+		reportErr := runner.reportNotRun(ctx, base, job.ID, job.LeaseID, status,
+			"Exact configured-check source is unavailable or workspace ownership is uncertain: "+materializeErr.Error())
 		if reportErr != nil {
 			return job.ID, errors.Join(materializeErr, reportErr)
 		}
@@ -326,6 +342,27 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 		runner.log("completed configured-check job %s", job.ID)
 	}
 	return job.ID, err
+}
+
+// claimedJob returns the job and lease that a failed claim still committed.
+// The server names them in the error details; any other claim error claimed
+// nothing.
+func claimedJob(err error) (checkapi.ClaimedJob, bool) {
+	var problem *apiclient.Error
+	var claimed checkapi.ClaimedJob
+	if !errors.As(err, &problem) || len(problem.Details) == 0 || json.Unmarshal(problem.Details, &claimed) != nil {
+		return checkapi.ClaimedJob{}, false
+	}
+	return claimed, claimed.JobID != "" && claimed.LeaseID != ""
+}
+
+// reportNotRun records the outcome of a claimed job that ran nothing, so the
+// server does not wait for its lease to expire and call it ambiguous. The
+// report is sent even when the runner is stopping.
+func (runner *Runner) reportNotRun(ctx context.Context, base, jobID, leaseID, status, summary string) error {
+	input := checkapi.RunnerUnavailableInput{LeaseID: leaseID, Status: status, Summary: bounded(summary)}
+	_, err := runner.Client.DoWithHeaders(context.WithoutCancel(ctx), http.MethodPost, base+"/jobs/"+jobID+"/unavailable", input, leaseHeaders(leaseID))
+	return err
 }
 
 func (runner *Runner) renewLease(ctx context.Context, cancel context.CancelFunc, base string, job *checkapi.Job, done chan<- error) {

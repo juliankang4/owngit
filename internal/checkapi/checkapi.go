@@ -404,6 +404,14 @@ type RunnerStartInput struct {
 	AttemptID string `json:"attempt_id"`
 }
 
+// ClaimedJob names a job and lease that a claim committed to the runner. When
+// the server cannot hand the job over, it sends ClaimedJob as the details of
+// the claim error, so the runner can still end the job it holds.
+type ClaimedJob struct {
+	JobID   string `json:"job_id"`
+	LeaseID string `json:"lease_id"`
+}
+
 type RunnerUnavailableInput struct {
 	LeaseID string `json:"lease_id"`
 	Status  string `json:"status"`

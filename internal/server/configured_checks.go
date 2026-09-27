@@ -318,7 +318,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			// The claim is committed and its lease belongs to this runner. The
 			// answer names both, so the claim is not mistaken for an empty
 			// queue, and it never hands out the job without its commands.
-			writeJobRecordError(writer, request, err, jobChecksUnreadable, map[string]string{"job_id": job.ID, "lease_id": job.LeaseID})
+			writeJobRecordError(writer, request, err, jobChecksUnreadable, checkapi.ClaimedJob{JobID: job.ID, LeaseID: job.LeaseID})
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(job, checks)})
