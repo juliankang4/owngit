@@ -25,6 +25,11 @@ import (
 // test. The operation deadlines in these tests are an hour.
 const hangBound = 15 * time.Second
 
+// verifiedPage is a page deadline that leaves room for password
+// verification, SQLite and Git work on a loaded test machine, so an
+// authorized request only runs out of it when a test holds it past it.
+const verifiedPage = 3 * time.Second
+
 // emptySourceFetch answers every import fetch with an empty source.
 func emptySourceFetch(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
 	return &importfetch.Result{Advertisement: &importgit.Advertisement{Service: "git-upload-pack", ObjectFormat: importgit.FormatSHA1, Empty: true}}, nil
@@ -129,8 +134,7 @@ func TestWithheldBodyIsAnsweredAtThePageDeadline(t *testing.T) {
 // import body is still read under the page deadline, and an archive request
 // whose body is left unread closes the connection instead of reading it.
 func TestAuthorizedOperationReadsItsBodyUnderThePageDeadline(t *testing.T) {
-	// The page deadline leaves room for password verification.
-	_, address := longOperationServer(t, 3*time.Second)
+	_, address := longOperationServer(t, verifiedPage)
 	t.Run("import API", func(t *testing.T) {
 		t.Parallel()
 		response, closed := withheldBody(t, address, http.MethodPost, "/api/v1/repositories/fresh/import/run", basicCredential("admin", "admin-password"))
@@ -149,8 +153,9 @@ func TestAuthorizedOperationReadsItsBodyUnderThePageDeadline(t *testing.T) {
 	})
 }
 
-// slowSourceFetch answers an import fetch with an empty source after wait,
-// so the run outlasts a shorter page deadline.
+// slowSourceFetch answers an import fetch with an empty source after wait.
+// The fetch starts after its request did, so a wait of one page deadline
+// holds the run past that deadline.
 func slowSourceFetch(wait time.Duration) func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
 	return func(ctx context.Context, request importfetch.Request, consumer importfetch.PackConsumer) (*importfetch.Result, error) {
 		select {
@@ -164,12 +169,12 @@ func slowSourceFetch(wait time.Duration) func(context.Context, importfetch.Reque
 
 // An authorized import that runs past the page deadline completes on the
 // API, the new import page and the refresh action, and the API connection
-// then serves the next request.
+// then serves the next request under its own page deadline.
 func TestAuthorizedImportOutlivesThePageDeadline(t *testing.T) {
-	const page = 300 * time.Millisecond
+	const page = verifiedPage
 	fixture := newImportAPIFixture(t)
 	fixture.app.HTTPTimeout = page
-	fixture.app.Imports.Fetch = slowSourceFetch(3 * page)
+	fixture.app.Imports.Fetch = slowSourceFetch(page)
 	server := serve(t, fixture.app.Handler())
 	address := server.Listener.Addr().String()
 
@@ -194,7 +199,7 @@ func TestAuthorizedImportOutlivesThePageDeadline(t *testing.T) {
 	run := send(http.MethodPost, "/api/v1/repositories/apislow/import/run", `{"name":"apislow","url":"https://example.invalid/team/apislow.git","mode":"standalone"}`)
 	content, err := io.ReadAll(run.Body)
 	noErr(t, err)
-	if run.StatusCode != http.StatusOK || !strings.Contains(string(content), `"status":"complete"`) || time.Since(started) < 3*page || run.Close {
+	if run.StatusCode != http.StatusOK || !strings.Contains(string(content), `"status":"complete"`) || time.Since(started) < page || run.Close {
 		t.Fatalf("API import after %s: status=%d close=%v body=%s", time.Since(started), run.StatusCode, run.Close, content)
 	}
 	next := send(http.MethodGet, "/api/v1/repositories/apislow/import", "")
@@ -211,14 +216,14 @@ func TestAuthorizedImportOutlivesThePageDeadline(t *testing.T) {
 		"csrf": {csrf}, "name": {"pageslow"}, "url": {"https://example.invalid/team/pageslow.git"},
 		"mode": {"standalone"}, "admin_password": {"admin-password"},
 	}, server.URL)
-	if created.status != http.StatusSeeOther || !strings.HasSuffix(created.header.Get("Location"), "/repositories/pageslow/import?notice=import_started") || time.Since(started) < 3*page {
+	if created.status != http.StatusSeeOther || !strings.HasSuffix(created.header.Get("Location"), "/repositories/pageslow/import?notice=import_started") || time.Since(started) < page {
 		t.Fatalf("new import page after %s: status=%d location=%q", time.Since(started), created.status, created.header.Get("Location"))
 	}
 	started = time.Now()
 	refreshed := browserForm(t, client, server.URL+"/repositories/pageslow/import", url.Values{
 		"csrf": {csrf}, "action": {webui.ActionImportRefresh}, "admin_password": {"admin-password"},
 	}, server.URL)
-	if refreshed.status != http.StatusSeeOther || !strings.HasSuffix(refreshed.header.Get("Location"), "/repositories/pageslow/import?notice=import_refreshed") || time.Since(started) < 3*page {
+	if refreshed.status != http.StatusSeeOther || !strings.HasSuffix(refreshed.header.Get("Location"), "/repositories/pageslow/import?notice=import_refreshed") || time.Since(started) < page {
 		t.Fatalf("refresh after %s: status=%d location=%q", time.Since(started), refreshed.status, refreshed.header.Get("Location"))
 	}
 }
