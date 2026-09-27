@@ -34,7 +34,7 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	page := webui.SetupPage{
@@ -92,7 +92,7 @@ func (app *App) handleSetupRedeem(writer http.ResponseWriter, request *http.Requ
 	expires := app.now().Add(20 * time.Minute)
 	redeemed, err := app.Store.RedeemBootstrap(request.Context(), token, sessionToken, csrf, app.now(), expires)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "bootstrap redemption", err))
 		return
 	}
 	if !redeemed {
@@ -151,14 +151,14 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		app.renderSetupWizard(writer, request, session.CSRF, form, notices, http.StatusUnprocessableEntity)
 		return
 	case errors.Is(err, ErrSetupUnavailable):
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
+		app.renderError(writer, request, unavailable(request, "setup completion", err), webui.MsgErrUnavailable, "")
 		return
 	case errors.Is(err, ErrSetupNotSaved):
 		app.renderError(writer, request, http.StatusConflict, webui.MsgSetupRaceLost, "")
 		return
 	case err != nil:
 		// Committed, but the obsolete owner setup files remain.
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
+		app.renderError(writer, request, unavailable(request, "setup file removal", err), webui.MsgErrUnavailable, "")
 		return
 	}
 	app.clearCookie(writer, request, setupCookie, true)
@@ -185,7 +185,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 func (app *App) renderSetupDoneElsewhere(writer http.ResponseWriter, request *http.Request) {
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", "")
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	chrome.Nav = webui.Nav{}
@@ -231,7 +231,7 @@ func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Requ
 	_, unknownHost := app.unknownHost(request)
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	chrome.Notices = notices
@@ -261,7 +261,7 @@ func (app *App) handleLoginGet(writer http.ResponseWriter, request *http.Request
 	csrf := app.preauthCSRF(writer, request)
 	chrome, err := app.chrome(writer, request, webui.SectionAuth, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	submitURL := "/login"
@@ -351,8 +351,7 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 			app.renderLoginFailure(writer, request, scope, field, next, chooseMessage(admin, webui.MsgAdminFailed, webui.MsgLoginFailed), false, http.StatusUnauthorized)
 		default:
 			// The password was not judged, or the session could not be saved.
-			logUnavailable(request, "sign-in", err)
-			app.renderLoginFailure(writer, request, scope, "", next, webui.MsgErrUnavailable, false, http.StatusServiceUnavailable)
+			app.renderLoginFailure(writer, request, scope, "", next, webui.MsgErrUnavailable, false, unavailable(request, "sign-in", err))
 		}
 		return
 	}
@@ -365,7 +364,7 @@ func (app *App) renderLoginFailure(writer http.ResponseWriter, request *http.Req
 	csrf := app.preauthCSRF(writer, request)
 	chrome, err := app.chrome(writer, request, webui.SectionAuth, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	chrome.Notices = []webui.Notice{webui.Error(field, code)}
@@ -385,8 +384,7 @@ func adminPasswordNotice(request *http.Request, err error, field string) (webui.
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		return webui.Error(field, webui.MsgAdminFailed), http.StatusUnauthorized
 	}
-	logUnavailable(request, "administrator password check", err)
-	return webui.Error("", webui.MsgErrUnavailable), http.StatusServiceUnavailable
+	return webui.Error("", webui.MsgErrUnavailable), unavailable(request, "administrator password check", err)
 }
 
 func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, scope webui.AuthScope) {
@@ -410,8 +408,7 @@ func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, 
 	// this browser can no longer end.
 	if cookie, err := request.Cookie(cookieName); err == nil {
 		if err := app.Store.DeleteSession(request.Context(), cookie.Value, kind); err != nil {
-			logUnavailable(request, "sign-out", err)
-			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgLogoutFailed, "")
+			app.renderError(writer, request, unavailable(request, "sign-out", err), webui.MsgLogoutFailed, "")
 			return
 		}
 	}

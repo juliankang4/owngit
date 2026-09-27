@@ -3,6 +3,7 @@ package firstrun
 import (
 	"context"
 	"errors"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"owngit/internal/logtext"
 	"owngit/internal/server"
 	"owngit/internal/webui"
 )
@@ -533,8 +535,10 @@ func (f *flow) save() (bool, error) {
 		f.screen.notice("err", f.text(webui.MsgSetupFailed))
 		return true, nil
 	case errors.Is(err, server.ErrSetupCleanup):
-		// Setup is saved; the leftover setup file is reported in the log and
-		// removed at the next capability issue.
+		// Setup is saved. The obsolete setup file stays until the next
+		// capability issue removes it, so the log names it and why, as the
+		// browser path does.
+		log.Printf("terminal setup: setup file removal could not be completed: %s", logtext.Cause(err))
 	case err != nil:
 		return false, err
 	}

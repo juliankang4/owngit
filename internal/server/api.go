@@ -12,6 +12,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/pullrequest"
+	"owngit/internal/repository"
 	"owngit/internal/requestctx"
 	"owngit/internal/state"
 )
@@ -200,7 +201,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 	}
 	if err != nil {
 		problem := pullrequest.AsProblem(err)
-		writeAPIError(writer, apiStatus(problem.Code), problem.Code, problem.Message, problem.Details)
+		writeAPIError(writer, apiStatus(request, "pull request "+strings.ReplaceAll(operation, "_", " "), err), problem.Code, problem.Message, problem.Details)
 		return
 	}
 	writeAPIJSON(writer, http.StatusOK, result)
@@ -238,8 +239,7 @@ func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Reque
 		writer.Header().Set("WWW-Authenticate", realm)
 		writeAPIError(writer, http.StatusUnauthorized, code, message, nil)
 	default:
-		logUnavailable(request, kind+" password check", err)
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The password could not be verified. Try again later.", nil)
+		writeAPIError(writer, unavailable(request, kind+" password check", err), "state_unavailable", "The password could not be verified. Try again later.", nil)
 	}
 	return false
 }
@@ -329,12 +329,12 @@ func decodeAPIJSONLimit(writer http.ResponseWriter, request *http.Request, desti
 // prepared after startup with a fixed 503 and reports whether it did. Call it
 // after authorization, so the answer does not reveal the repository to an
 // unauthenticated caller.
-func (app *App) refusePreparingAPI(writer http.ResponseWriter, repositoryID string) bool {
+func (app *App) refusePreparingAPI(writer http.ResponseWriter, request *http.Request, repositoryID string) bool {
 	if !app.Repositories.Preparing(repositoryID) {
 		return false
 	}
 	writer.Header().Set("Retry-After", "30")
-	writeAPIError(writer, http.StatusServiceUnavailable, "repository_preparing", "The repository is being prepared. Try again later.", nil)
+	writeAPIError(writer, unavailable(request, "repository read", repository.ErrRepositoryPreparing), "repository_preparing", "The repository is being prepared. Try again later.", nil)
 	return true
 }
 
@@ -370,8 +370,10 @@ func writeAPIJSON(writer http.ResponseWriter, status int, value any) {
 	_, _ = writer.Write(output.Bytes())
 }
 
-func apiStatus(code string) int {
-	switch code {
+// apiStatus is the status that answers err by its pull request problem
+// code. An unavailable one is logged as step of request.
+func apiStatus(request *http.Request, step string, err error) int {
+	switch pullrequest.AsProblem(err).Code {
 	case "invalid_repository", "invalid_pull_request_number", "invalid_title", "invalid_branch", "reserved_ref", "same_branch", "invalid_review_choice", "invalid_review_decision", "invalid_reviewer_label", "invalid_revision",
 		"invalid_task", "invalid_credential", "invalid_attempt", "invalid_attempt_id", "invalid_check_definition", "invalid_worktree_state", "invalid_revision_oid", "invalid_cycle_id", "revision_not_recorded":
 		return http.StatusUnprocessableEntity
@@ -391,7 +393,7 @@ func apiStatus(code string) int {
 	case "result_too_large":
 		return http.StatusRequestEntityTooLarge
 	case "state_unavailable", "repository_unavailable", "repository_preparing", "repository_busy", "merge_reconciliation_pending", "pull_request_creation_reconciliation_pending":
-		return http.StatusServiceUnavailable
+		return unavailable(request, step, err)
 	case "repository_integrity_error":
 		return http.StatusInternalServerError
 	default:

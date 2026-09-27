@@ -68,7 +68,7 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionRepository, stored.ID, adminSession.CSRF)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	// A GET is a plain read. It never admits a job, never reserves a
@@ -134,14 +134,10 @@ func (app *App) saveCheckPolicy(writer http.ResponseWriter, request *http.Reques
 	}
 	saved, err := app.Store.SetCheckPolicy(request.Context(), input, app.now())
 	if err != nil {
-		status := policySaveStatus(err)
-		if status == http.StatusServiceUnavailable {
-			logUnavailable(request, "configured check policy save", err)
-		}
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: webui.ActionSaveCheckPolicy, form: &form,
 			notices: policySaveNotices(err),
-		}, status)
+		}, policySaveStatus(request, err))
 		return
 	}
 	app.wakeChecks(stored.ID)
@@ -180,7 +176,8 @@ func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Req
 		_, err = app.Store.RevokeCheckConsent(request.Context(), stored.ID, app.now())
 	}
 	if err != nil {
-		code, status := webui.MsgCCFailed, http.StatusServiceUnavailable
+		var code webui.MessageCode
+		var status int
 		switch {
 		case errors.Is(err, state.ErrCheckPolicyStale):
 			code, status = webui.MsgCCPolicyStale, http.StatusConflict
@@ -189,7 +186,7 @@ func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Req
 		case errors.Is(err, state.ErrInvalidCheckPolicy):
 			code, status = webui.MsgCCPolicyRefused, http.StatusConflict
 		default:
-			logUnavailable(request, "configured check consent change", err)
+			code, status = webui.MsgCCFailed, unavailable(request, "configured check consent change", err)
 		}
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: action, notices: []webui.Notice{webui.Error("", code)},
@@ -246,7 +243,8 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 		}
 	}
 	if err != nil {
-		code, status := webui.MsgCCFailed, http.StatusServiceUnavailable
+		var code webui.MessageCode
+		var status int
 		switch {
 		case errors.Is(err, state.ErrCheckJobNotFound):
 			code, status = webui.MsgCCJobMissing, http.StatusNotFound
@@ -254,7 +252,7 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 			errors.Is(err, state.ErrCheckQueueFull), errors.Is(err, state.ErrCheckEventNotAllowed):
 			code, status = webui.MsgCCJobRefused, http.StatusConflict
 		default:
-			logUnavailable(request, "configured check job change", err)
+			code, status = webui.MsgCCFailed, unavailable(request, "configured check job change", err)
 		}
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: action, notices: []webui.Notice{webui.Error("", code)},
@@ -296,7 +294,7 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 
 	policy, exists, err := app.Store.CheckPolicy(request.Context(), stored.ID)
 	if err != nil {
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgCCFailed, "")
+		app.renderError(writer, request, unavailable(request, "configured check policy read", err), webui.MsgCCFailed, "")
 		return
 	}
 	page.Policy = browserCheckPolicy(policy, exists)
@@ -896,11 +894,13 @@ func policySaveNotices(err error) []webui.Notice {
 	return notices
 }
 
-func policySaveStatus(err error) int {
+// policySaveStatus is the status of a policy save that failed: 422 for a
+// policy the store refused, and unavailable otherwise.
+func policySaveStatus(request *http.Request, err error) int {
 	if errors.Is(err, state.ErrInvalidCheckPolicy) {
 		return http.StatusUnprocessableEntity
 	}
-	return http.StatusServiceUnavailable
+	return unavailable(request, "configured check policy save", err)
 }
 
 // handleRunnerTokens serves the runner token screen and its forms.
@@ -912,7 +912,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionRepository, stored.ID, adminSession.CSRF)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	if request.Method == http.MethodGet {
@@ -959,20 +959,20 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 		// response is its only delivery, so no later read may replace it.
 		listed, err := app.readRunnerTokenList(request.Context(), stored.ID)
 		if err != nil {
-			logUnavailable(request, "runner credential list read", err)
-			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRTFailed, "")
+			app.renderError(writer, request, unavailable(request, "runner credential list read", err), webui.MsgRTFailed, "")
 			return
 		}
 		credential, token, created, err := app.Store.IssueCheckRunnerToken(request.Context(), stored.ID, label, creationID, app.now())
 		if err != nil {
-			code, status := webui.MsgRTFailed, http.StatusServiceUnavailable
+			var code webui.MessageCode
+			var status int
 			switch {
 			case errors.Is(err, state.ErrCheckPolicyMissing):
 				code, status = webui.MsgCCPolicyMissing, http.StatusConflict
 			case errors.Is(err, state.ErrCheckRunnerCreationConflict), errors.Is(err, state.ErrInvalidCheckJob):
 				code, status = webui.MsgRTLabelInvalid, http.StatusConflict
 			default:
-				logUnavailable(request, "runner credential issue", err)
+				code, status = webui.MsgRTFailed, unavailable(request, "runner credential issue", err)
 			}
 			app.renderRunnerTokens(writer, request, stored, summary, chrome, action, "", label,
 				[]webui.Notice{webui.Error("", code)}, status)
@@ -1003,9 +1003,8 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 				[]webui.Notice{webui.Error("", webui.MsgRTNotFound)}, http.StatusConflict)
 			return
 		} else if err != nil {
-			logUnavailable(request, "runner credential revoke", err)
 			app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, "",
-				[]webui.Notice{webui.Error("", webui.MsgRTRevokeFailed)}, http.StatusServiceUnavailable)
+				[]webui.Notice{webui.Error("", webui.MsgRTRevokeFailed)}, unavailable(request, "runner credential revoke", err))
 			return
 		}
 		app.wakeChecks(stored.ID)
@@ -1040,8 +1039,7 @@ func (app *App) readRunnerTokenList(ctx context.Context, repositoryID string) (r
 func (app *App) renderRunnerTokens(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, pendingAction, pendingCredentialID, pendingLabel string, notices []webui.Notice, status int) {
 	listed, err := app.readRunnerTokenList(request.Context(), stored.ID)
 	if err != nil {
-		logUnavailable(request, "runner credential list read", err)
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRTUnreadable, "")
+		app.renderError(writer, request, unavailable(request, "runner credential list read", err), webui.MsgRTUnreadable, "")
 		return
 	}
 	page := app.runnerTokensPage(request, stored, summary, chrome, listed)

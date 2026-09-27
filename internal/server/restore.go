@@ -52,13 +52,10 @@ func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.R
 		return
 	}
 	if err != nil {
-		if restoreStatus(err) == http.StatusServiceUnavailable {
-			logUnavailable(request, "restore preview", err)
-		}
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Error(restoreField(err), restoreMessage(err)))
 		page.Previewed = false
 		page.CanApply = false
-		app.render(writer, restoreStatus(err), page)
+		app.render(writer, restoreStatus(request, "restore preview", err), page)
 		return
 	}
 	if !preview.CanApply {
@@ -99,9 +96,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 		app.noticeRedirect(writer, request, location+separator+"notice=restore_success", http.StatusSeeOther)
 		return
 	}
-	if restoreStatus(err) == http.StatusServiceUnavailable {
-		logUnavailable(request, "restore apply", err)
-	}
+	status := restoreStatus(request, "restore apply", err)
 
 	current, previewErr := app.Repositories.PreviewRestore(request.Context(), stored.ID, repository.RestoreRequest{
 		Source: selection.Source, Target: selection.Target, Mode: selection.Mode, Paths: selection.Paths,
@@ -112,8 +107,8 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 		// promise that the branch stayed as it was, and the reader must hear
 		// that first. A refused restore changed nothing, so the page failure
 		// is then the news.
-		if restoreStatus(err) == http.StatusServiceUnavailable {
-			app.renderError(writer, request, http.StatusServiceUnavailable, restoreMessage(err), "")
+		if restoreRefusal(err) == 0 {
+			app.renderError(writer, request, status, restoreMessage(err), "")
 			return
 		}
 		app.renderRestorePageError(writer, request, chrome, stored, pageErr)
@@ -121,7 +116,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 	}
 	page.Chrome.Notices = append(page.Chrome.Notices, webui.Error(restoreField(err), restoreMessage(err)))
 	page.CanApply = false
-	app.render(writer, restoreStatus(err), page)
+	app.render(writer, status, page)
 }
 
 // restorePage builds the restore page for selection. A source that names no
@@ -200,7 +195,7 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 // other failure is a read that could not tell, so the page says the
 // repository cannot be read now, as the other repository pages do.
 func (app *App) renderRestorePageError(writer http.ResponseWriter, request *http.Request, chrome webui.Chrome, stored state.Repository, err error) {
-	if status := restoreStatus(err); status != http.StatusServiceUnavailable {
+	if status := restoreRefusal(err); status != 0 {
 		app.renderError(writer, request, status, restoreMessage(err), "")
 		return
 	}
@@ -270,15 +265,26 @@ func restoreMessage(err error) webui.MessageCode {
 	}
 }
 
-func restoreStatus(err error) int {
+// restoreStatus is the status that answers err, a failed restore step of
+// request: a refusal's own status, and otherwise unavailable.
+func restoreStatus(request *http.Request, step string, err error) int {
+	if status := restoreRefusal(err); status != 0 {
+		return status
+	}
+	return unavailable(request, step, err)
+}
+
+// restoreRefusal is the status of a selection the repository refused, and 0
+// for any other failure, which is a read or write that could not be
+// completed.
+func restoreRefusal(err error) int {
 	switch {
 	case errors.Is(err, repository.ErrRestoreConflict):
 		return http.StatusConflict
 	case errors.Is(err, repository.ErrRestoreInvalid), errors.Is(err, repository.ErrRestoreUnsupported), errors.Is(err, repository.ErrRestoreNoChanges):
 		return http.StatusUnprocessableEntity
-	default:
-		return http.StatusServiceUnavailable
 	}
+	return 0
 }
 
 func restoreField(err error) string {

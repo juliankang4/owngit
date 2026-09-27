@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"owngit/internal/logtext"
 )
 
 // Request deadlines
@@ -84,7 +86,7 @@ func startDeadlines(writer http.ResponseWriter, request *http.Request, pageTimeo
 	deadlines := &requestDeadlines{
 		controller: http.NewResponseController(writer), body: body, parent: request.Context(),
 		page: page, operation: started.Add(operationTimeout), reserve: operationReserve, current: page,
-		name: request.Method + " " + request.URL.EscapedPath(),
+		name: request.Method + " " + logtext.Path(request.URL.EscapedPath()),
 	}
 	_ = deadlines.controller.SetReadDeadline(page)
 	_ = deadlines.controller.SetWriteDeadline(page)

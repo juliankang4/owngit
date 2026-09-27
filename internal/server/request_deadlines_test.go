@@ -166,7 +166,7 @@ func TestReplyLostAtTheDeadlineIsLogged(t *testing.T) {
 	}
 	logged := serverLog.String()
 	if !strings.Contains(logged, "GET /settings%0Aforged ended ") || !strings.Contains(logged, "after its connection deadline") ||
-		!strings.Contains(logged, "GET /settings%0Aforged: settings read could not be completed: context deadline exceeded\n") || strings.Count(logged, "\n") != 2 {
+		!strings.Contains(logged, `GET /settings%0Aforged: settings read could not be completed: "context deadline exceeded"`+"\n") || strings.Count(logged, "\n") != 2 {
 		t.Fatalf("server log after a lost reply: %q", logged)
 	}
 }

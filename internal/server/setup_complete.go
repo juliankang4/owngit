@@ -33,6 +33,7 @@ type SetupAnswers struct {
 	KeepHost string
 }
 
+// CompleteSetup's errors wrap their cause, so the server log can name it.
 var (
 	// ErrSetupUnavailable means setup could not be attempted now, for
 	// example because the setup lock was unavailable. Nothing was saved.
@@ -137,7 +138,7 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 	}
 	unlock, err := bootstrap.AcquireSetupLock(ctx, app.Store.Dir())
 	if err != nil {
-		return nil, ErrSetupUnavailable
+		return nil, fmt.Errorf("%w: %w", ErrSetupUnavailable, err)
 	}
 	var keepHosts []string
 	if answers.KeepHost != "" {
@@ -150,7 +151,7 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 	}
 	unlock()
 	if completeErr != nil {
-		return nil, ErrSetupNotSaved
+		return nil, fmt.Errorf("%w: %w", ErrSetupNotSaved, completeErr)
 	}
 	// Setup is committed, so this process serves it even when removing the
 	// obsolete owner setup files failed. The failure is still reported, and
@@ -172,7 +173,7 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 		app.OnSetupComplete()
 	}
 	if cleanupErr != nil {
-		return nil, ErrSetupCleanup
+		return nil, fmt.Errorf("%w: %w", ErrSetupCleanup, cleanupErr)
 	}
 	return nil, nil
 }

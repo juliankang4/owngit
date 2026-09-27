@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"owngit/internal/checkapi"
+	"owngit/internal/logtext"
 	"owngit/internal/pullrequest"
 	"owngit/internal/state"
 )
@@ -28,13 +29,13 @@ func (app *App) handleCheckAPI(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	if _, exists, err := app.Store.Repository(request.Context(), repositoryID); err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "OwnGit state is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "repository record read", err), "state_unavailable", "OwnGit state is unavailable.", nil)
 		return
 	} else if !exists {
 		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
 		return
 	}
-	if app.refusePreparingAPI(writer, repositoryID) {
+	if app.refusePreparingAPI(writer, request, repositoryID) {
 		return
 	}
 	parts := strings.Split(remainder, "/")
@@ -102,7 +103,7 @@ func (app *App) createTask(writer http.ResponseWriter, request *http.Request, re
 func (app *App) listTasks(writer http.ResponseWriter, request *http.Request, repositoryID string) {
 	tasks, err := app.Store.Tasks(request.Context(), repositoryID)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "Task records could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "task list read", err), "state_unavailable", "Task records could not be read.", nil)
 		return
 	}
 	response := checkapi.TaskListResponse{OK: true, Tasks: make([]*checkapi.Task, 0, len(tasks))}
@@ -115,7 +116,7 @@ func (app *App) listTasks(writer http.ResponseWriter, request *http.Request, rep
 func (app *App) showTask(writer http.ResponseWriter, request *http.Request, repositoryID, taskID string) {
 	task, exists, err := app.Store.Task(request.Context(), repositoryID, taskID)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The task record could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "task record read", err), "state_unavailable", "The task record could not be read.", nil)
 		return
 	}
 	if !exists {
@@ -125,7 +126,7 @@ func (app *App) showTask(writer http.ResponseWriter, request *http.Request, repo
 	response := checkapi.TaskResponse{OK: true, Task: taskJSON(task)}
 	attempt, hasAttempt, err := app.Store.LatestCheckAttemptForTask(request.Context(), repositoryID, taskID)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The latest attempt could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "latest attempt read", err), "state_unavailable", "The latest attempt could not be read.", nil)
 		return
 	}
 	if hasAttempt {
@@ -142,7 +143,7 @@ func (app *App) registerAttempt(writer http.ResponseWriter, request *http.Reques
 	}
 	attempt, problem := attemptFromRegistration(registration, repositoryID, taskID, credentialID, app.now())
 	if problem != nil {
-		writeAPIError(writer, apiStatus(problem.Code), problem.Code, problem.Message, nil)
+		writeAPIError(writer, apiStatus(request, "check attempt registration", problem), problem.Code, problem.Message, nil)
 		return
 	}
 	task, stored, err := app.Store.RegisterCheckAttempt(request.Context(), attempt)
@@ -157,7 +158,7 @@ func (app *App) registerAttempt(writer http.ResponseWriter, request *http.Reques
 		case errors.Is(err, state.ErrCycleNotFound):
 			writeAPIError(writer, http.StatusNotFound, "cycle_not_found", "The correction cycle was not reserved.", nil)
 		default:
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The check attempt could not be registered.", nil)
+			writeAPIError(writer, unavailable(request, "check attempt registration", err), "state_unavailable", "The check attempt could not be registered.", nil)
 		}
 		return
 	}
@@ -172,7 +173,7 @@ func (app *App) completeAttempt(writer http.ResponseWriter, request *http.Reques
 	}
 	completion, problem := completionFromUpload(upload, repositoryID, taskID, attemptID)
 	if problem != nil {
-		writeAPIError(writer, apiStatus(problem.Code), problem.Code, problem.Message, nil)
+		writeAPIError(writer, apiStatus(request, "check attempt completion", problem), problem.Code, problem.Message, nil)
 		return
 	}
 	task, stored, err := app.Store.CompleteCheckAttempt(request.Context(), completion, app.now())
@@ -187,14 +188,14 @@ func (app *App) completeAttempt(writer http.ResponseWriter, request *http.Reques
 		case errors.Is(err, state.ErrResultMismatch):
 			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_attempt", "The results do not match the registered checks.", nil)
 		default:
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The check attempt could not be saved.", nil)
+			writeAPIError(writer, unavailable(request, "check attempt completion", err), "state_unavailable", "The check attempt could not be saved.", nil)
 		}
 		return
 	}
 	// Keep disposable logs bounded while the server runs for a long time. A
 	// prune failure must not fail the upload, but it must not be silent.
 	if _, err := app.Store.PruneCheckLogs(request.Context(), app.now()); err != nil {
-		log.Printf("could not prune expired check logs: %v", err)
+		log.Printf("could not prune expired check logs: %s", logtext.Cause(err))
 	}
 	writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: attemptJSON(stored)})
 }
@@ -218,7 +219,7 @@ func (app *App) reserveCycle(writer http.ResponseWriter, request *http.Request, 
 		case errors.Is(err, state.ErrCorrectionBudgetExhausted):
 			writeAPIError(writer, http.StatusConflict, "correction_budget_exhausted", "The task has no automatic correction cycle left. A manual check can still be recorded.", nil)
 		default:
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The correction cycle could not be reserved.", nil)
+			writeAPIError(writer, unavailable(request, "correction cycle reservation", err), "state_unavailable", "The correction cycle could not be reserved.", nil)
 		}
 		return
 	}
@@ -227,7 +228,7 @@ func (app *App) reserveCycle(writer http.ResponseWriter, request *http.Request, 
 
 func (app *App) listCycles(writer http.ResponseWriter, request *http.Request, repositoryID, taskID string) {
 	if _, exists, err := app.Store.Task(request.Context(), repositoryID, taskID); err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The task record could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "task record read", err), "state_unavailable", "The task record could not be read.", nil)
 		return
 	} else if !exists {
 		writeAPIError(writer, http.StatusNotFound, "task_not_found", "The task does not exist.", nil)
@@ -235,7 +236,7 @@ func (app *App) listCycles(writer http.ResponseWriter, request *http.Request, re
 	}
 	cycles, err := app.Store.CheckCycles(request.Context(), repositoryID, taskID)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "Correction cycles could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "correction cycle list read", err), "state_unavailable", "Correction cycles could not be read.", nil)
 		return
 	}
 	response := checkapi.CycleListResponse{OK: true, Cycles: make([]*checkapi.Cycle, 0, len(cycles))}
@@ -248,7 +249,7 @@ func (app *App) listCycles(writer http.ResponseWriter, request *http.Request, re
 func (app *App) latestCheckConfiguration(writer http.ResponseWriter, request *http.Request, repositoryID string) {
 	configuration, exists, err := app.Store.LatestCheckConfiguration(request.Context(), repositoryID)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The check configuration could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "check configuration read", err), "state_unavailable", "The check configuration could not be read.", nil)
 		return
 	}
 	if !exists {
@@ -265,7 +266,7 @@ func (app *App) handleCheckAttemptLog(writer http.ResponseWriter, request *http.
 	if _, ok := app.authorizeHelper(writer, request, repositoryID); !ok {
 		return
 	}
-	if app.refusePreparingAPI(writer, repositoryID) {
+	if app.refusePreparingAPI(writer, request, repositoryID) {
 		return
 	}
 	parts := strings.Split(remainder, "/")
@@ -279,24 +280,24 @@ func (app *App) handleCheckAttemptLog(writer http.ResponseWriter, request *http.
 	}
 	attempt, exists, err := app.Store.CheckAttemptByID(request.Context(), repositoryID, parts[0])
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The attempt record could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "attempt record read", err), "state_unavailable", "The attempt record could not be read.", nil)
 		return
 	}
 	if !exists {
 		writeAPIError(writer, http.StatusNotFound, "attempt_not_found", "The check attempt does not exist.", nil)
 		return
 	}
-	app.writeCheckAttemptLog(writer, attempt)
+	app.writeCheckAttemptLog(writer, request, attempt)
 }
 
-func (app *App) writeCheckAttemptLog(writer http.ResponseWriter, attempt state.CheckAttempt) {
+func (app *App) writeCheckAttemptLog(writer http.ResponseWriter, request *http.Request, attempt state.CheckAttempt) {
 	if attempt.LogID == "" {
 		writeAPIError(writer, http.StatusNotFound, "log_not_recorded", "The attempt has no raw log.", nil)
 		return
 	}
 	content, logState, err := app.Store.ReadCheckLog(attempt.LogID, attempt.LogExpiresAt, app.now())
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The raw log could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "raw log read", err), "state_unavailable", "The raw log could not be read.", nil)
 		return
 	}
 	switch logState {
@@ -321,7 +322,7 @@ func (app *App) handleHelperCredentialAPI(writer http.ResponseWriter, request *h
 		return
 	}
 	if _, exists, err := app.Store.Repository(request.Context(), repositoryID); err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "OwnGit state is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "repository record read", err), "state_unavailable", "OwnGit state is unavailable.", nil)
 		return
 	} else if !exists {
 		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
@@ -334,7 +335,7 @@ func (app *App) handleHelperCredentialAPI(writer http.ResponseWriter, request *h
 		case http.MethodGet:
 			credentials, err := app.Store.HelperCredentials(request.Context(), repositoryID)
 			if err != nil {
-				writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "Helper credentials could not be read.", nil)
+				writeAPIError(writer, unavailable(request, "helper credential list read", err), "state_unavailable", "Helper credentials could not be read.", nil)
 				return
 			}
 			response := checkapi.CredentialListResponse{OK: true, Credentials: make([]*checkapi.Credential, 0, len(credentials))}
@@ -355,7 +356,7 @@ func (app *App) handleHelperCredentialAPI(writer http.ResponseWriter, request *h
 			return
 		}
 		if err := app.Store.RevokeHelperCredentialByCreation(request.Context(), repositoryID, parts[1], app.now()); err != nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The helper credential could not be revoked.", nil)
+			writeAPIError(writer, unavailable(request, "helper credential revoke", err), "state_unavailable", "The helper credential could not be revoked.", nil)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.OKResponse{OK: true})
@@ -368,8 +369,7 @@ func (app *App) handleHelperCredentialAPI(writer http.ResponseWriter, request *h
 			writeAPIError(writer, http.StatusConflict, "credential_not_found", "The helper credential was not found or was already revoked.", nil)
 			return
 		} else if err != nil {
-			logUnavailable(request, "helper credential revoke", err)
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The helper credential could not be revoked.", nil)
+			writeAPIError(writer, unavailable(request, "helper credential revoke", err), "state_unavailable", "The helper credential could not be revoked.", nil)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.OKResponse{OK: true})
@@ -394,8 +394,7 @@ func (app *App) createHelperCredential(writer http.ResponseWriter, request *http
 		case errors.Is(err, state.ErrCreationConflict):
 			writeAPIError(writer, http.StatusConflict, "creation_conflict", "The creation identity was already used with a different label.", nil)
 		default:
-			logUnavailable(request, "helper credential issue", err)
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The helper credential could not be created.", nil)
+			writeAPIError(writer, unavailable(request, "helper credential issue", err), "state_unavailable", "The helper credential could not be created.", nil)
 		}
 		return
 	}
@@ -422,7 +421,7 @@ func (app *App) authorizeHelper(writer http.ResponseWriter, request *http.Reques
 	hash := sha256.Sum256([]byte(token))
 	credential, ok, err := app.Store.HelperCredentialByToken(request.Context(), hash[:], app.now())
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The helper credential could not be verified.", nil)
+		writeAPIError(writer, unavailable(request, "helper credential check", err), "state_unavailable", "The helper credential could not be verified.", nil)
 		return state.HelperCredential{}, false
 	}
 	if !ok {

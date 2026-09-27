@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"owngit/internal/logtext"
 	"owngit/internal/markdown"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -38,7 +39,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	if app.resultNotice(writer, request) == removedNotice {
@@ -46,7 +47,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	}
 	repositories, err := app.visibleRepositories(request)
 	if err != nil {
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
+		app.renderError(writer, request, unavailable(request, "repository list read", err), webui.MsgErrUnavailable, "")
 		return
 	}
 	ctx := request.Context()
@@ -75,7 +76,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 		}
 		if err != nil && !busy && !errors.Is(err, repository.ErrRepositoryPreparing) {
 			if ctx.Err() != nil {
-				app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoUnreadable, stored.Name)
+				app.renderError(writer, request, unavailable(request, "repository read", err), webui.MsgRepoUnreadable, stored.Name)
 				return
 			}
 			if checked := app.Repositories.PrepareUnavailable(ctx, stored.ID); errors.Is(checked, repository.ErrRepositoryNotFound) {
@@ -138,11 +139,11 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 // unreadable, and again only after it was read successfully in between. The
 // cause goes only to the server log; pages show a fixed notice.
 //
-// This differs on purpose from logUnavailable, which logs every failed read
-// behind an unavailable answer. The dashboard lists every repository on each
-// view, so one damaged repository would otherwise repeat the same line on
-// every visit to the dashboard, while its own repository page is one read
-// that one person asked for.
+// This differs on purpose from unavailable and logUnavailable, which log
+// every failed read behind an unavailable answer or panel. The dashboard
+// lists every repository on each view, so one damaged repository would
+// otherwise repeat the same line on every visit to the dashboard, while its
+// own repository page is one read that one person asked for.
 type unreadableLog struct {
 	mu     sync.Mutex
 	logged map[string]bool
@@ -158,7 +159,7 @@ func (l *unreadableLog) report(id string, cause error) {
 		l.logged = make(map[string]bool)
 	}
 	l.logged[id] = true
-	log.Printf("repository %q is shown as unreadable because its Git data could not be read: %v", id, cause)
+	log.Printf("repository %q is shown as unreadable because its Git data could not be read: %s", id, logtext.Cause(cause))
 }
 
 // reported tells whether id was shown as unreadable when it was last read.
@@ -192,7 +193,7 @@ func (app *App) handleNewRepositoryGet(writer http.ResponseWriter, request *http
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	chrome.Notices = notices
@@ -232,8 +233,7 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 		case errors.Is(err, repository.ErrInvalidDescription):
 			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("description", webui.MsgRepoDescriptionTooLong)})
 		default:
-			logUnavailable(request, "repository creation", err)
-			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoCreateFail, "")
+			app.renderError(writer, request, unavailable(request, "repository creation", err), webui.MsgRepoCreateFail, "")
 		}
 		return
 	}
@@ -247,12 +247,12 @@ func (app *App) handleActivity(writer http.ResponseWriter, request *http.Request
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionActivity, "", session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	repositories, err := app.visibleRepositories(request)
 	if err != nil {
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgActivityUnavail, "")
+		app.renderError(writer, request, unavailable(request, "repository list read", err), webui.MsgActivityUnavail, "")
 		return
 	}
 	year := selectedYear(request, app.now().Year())
@@ -303,8 +303,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	if err != nil {
 		// A record that could not be read says nothing about whether the
 		// repository exists.
-		logUnavailable(request, "repository record read", err)
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
+		app.renderError(writer, request, unavailable(request, "repository record read", err), webui.MsgErrUnavailable, "")
 		return
 	}
 	if !exists {
@@ -313,7 +312,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionRepository, id, session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	// Deleting does not need the Git data, so it is routed before that read:
@@ -496,7 +495,6 @@ func (app *App) renderRepositoryReadFailure(writer http.ResponseWriter, request 
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgRepoNotFound, stored.ID)
 		return
 	}
-	logUnavailable(request, "repository read", cause)
 	page := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
 	page.Repo.Unreadable = true
 	switch {
@@ -508,7 +506,7 @@ func (app *App) renderRepositoryReadFailure(writer http.ResponseWriter, request 
 		page.Repo.UnreadableReason = webui.MsgRepoBusyInUse
 		writer.Header().Set("Retry-After", "10")
 	}
-	app.render(writer, http.StatusServiceUnavailable, page)
+	app.render(writer, unavailable(request, "repository read", cause), page)
 }
 
 // administratorRepositoryScreen names the repository screens that require an

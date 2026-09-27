@@ -164,10 +164,10 @@ func TestStateFailuresBehindRepositoryPagesAreLogged(t *testing.T) {
 		steps []string
 	}{
 		{"settings", hidden("metadata", "/"), []string{"settings read"}},
-		{"repository list", hidden("repositories", "/"), []string{"repository list read"}},
+		{"repository list", hidden("repositories", "/"), []string{"page frame read"}},
 		// The error page after the failed record read shows no frame, since
 		// its repository list cannot be read either.
-		{"repository record", hidden("repositories", "/repositories/project"), []string{"repository record read", "repository list read"}},
+		{"repository record", hidden("repositories", "/repositories/project"), []string{"repository record read", "page frame read"}},
 		{"archive API repository record", hidden("repositories", "/api/v1/repositories/project/archive?format=zip"), []string{"repository record read"}},
 		{"pull request list", hidden("pull_requests", "/repositories/project/pull-requests"), []string{"pull request list read"}},
 		{"pull request", hidden("pull_requests", "/repositories/project/pull-requests/1"), []string{"pull request read"}},

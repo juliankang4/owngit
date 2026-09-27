@@ -22,10 +22,7 @@ func (app *App) handlePullRequestsGet(writer http.ResponseWriter, request *http.
 	if err != nil {
 		page.Unavailable = true
 		page.UnavailableReason = webui.MsgErrUnavailable
-		status = browserProblemStatus(err)
-		if status == http.StatusServiceUnavailable {
-			logUnavailable(request, "pull request list read", err)
-		}
+		status = browserProblemStatus(request, "pull request list read", err)
 	} else {
 		for _, view := range views {
 			page.Items = append(page.Items, app.pullRequestRow(stored.ID, view))
@@ -118,12 +115,13 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 	} else {
 		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
 		if err != nil {
-			// Every failed comparison is shown as unavailable.
-			logUnavailable(request, "pull request comparison", err)
+			// Every failed comparison is shown as unavailable, and makes the
+			// page's answer unavailable unless it already has another status.
+			comparison := unavailable(request, "pull request comparison", err)
 			page.ChangesUnavailable = true
 			page.ChangesReason = webui.MsgErrUnavailable
 			if status == http.StatusOK {
-				status = http.StatusServiceUnavailable
+				status = comparison
 			}
 		} else {
 			page.Changes = changes.Files
@@ -162,10 +160,7 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 	}
 	created, err := app.PullRequests.Create(request.Context(), input)
 	if err != nil {
-		notice, status := browserPullRequestProblem(err, "")
-		if status == http.StatusServiceUnavailable {
-			logUnavailable(request, "pull request creation", err)
-		}
+		notice, status := browserPullRequestProblem(request, "pull request creation", err, "")
 		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
 			notice = notice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.ID, existing.Number))
 		}
@@ -219,10 +214,7 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 		return
 	}
 	if err != nil {
-		problemNotice, status := browserPullRequestProblem(err, action)
-		if status == http.StatusServiceUnavailable {
-			logUnavailable(request, "pull request "+strings.ReplaceAll(action, "_", " "), err)
-		}
+		problemNotice, status := browserPullRequestProblem(request, "pull request "+strings.ReplaceAll(action, "_", " "), err, action)
 		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
 			problemNotice = problemNotice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.ID, existing.Number))
 		}
@@ -247,11 +239,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 				app.renderError(writer, request, http.StatusNotFound, webui.MsgPRNotFound, "")
 				return
 			}
-			status := browserProblemStatus(err)
-			if status == http.StatusServiceUnavailable {
-				logUnavailable(request, "pull request read", err)
-			}
-			app.renderError(writer, request, status, webui.MsgPRFailed, "")
+			app.renderError(writer, request, browserProblemStatus(request, "pull request read", err), webui.MsgPRFailed, "")
 			return
 		}
 	}
@@ -318,12 +306,13 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 	} else {
 		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
 		if err != nil {
-			// Every failed comparison is shown as unavailable.
-			logUnavailable(request, "pull request comparison", err)
+			// Every failed comparison is shown as unavailable, and makes the
+			// page's answer unavailable unless it already has another status.
+			comparison := unavailable(request, "pull request comparison", err)
 			page.ChangesUnavailable = true
 			page.ChangesReason = webui.MsgErrUnavailable
 			if status == http.StatusOK {
-				status = http.StatusServiceUnavailable
+				status = comparison
 			}
 		} else {
 			page.Changes = changes.Files
@@ -485,7 +474,7 @@ func browserMergeProblemBlockers(err error) []webui.MergeBlocker {
 	}
 }
 
-func browserPullRequestProblem(err error, action string) (webui.Notice, int) {
+func browserPullRequestProblem(request *http.Request, step string, err error, action string) (webui.Notice, int) {
 	problem := pullrequest.AsProblem(err)
 	field := ""
 	code := webui.MsgPRFailed
@@ -534,15 +523,16 @@ func browserPullRequestProblem(err error, action string) (webui.Notice, int) {
 	if action == "merge" && field == "" && (problem.Code == "stale_revision" || problem.Code == "invalid_revision") {
 		field = "merge"
 	}
-	return webui.Error(field, code), browserProblemStatus(err)
+	return webui.Error(field, code), browserProblemStatus(request, step, err)
 }
 
-func browserProblemStatus(err error) int {
-	status := apiStatus(pullrequest.AsProblem(err).Code)
-	if status == http.StatusInternalServerError {
-		return http.StatusServiceUnavailable
+// browserProblemStatus is apiStatus for a page, which also answers a
+// problem OwnGit did not classify as unavailable.
+func browserProblemStatus(request *http.Request, step string, err error) int {
+	if status := apiStatus(request, step, err); status != http.StatusInternalServerError {
+		return status
 	}
-	return status
+	return unavailable(request, step, err)
 }
 
 func observedBranch(summary repository.Summary, name string) webui.RevisionState {

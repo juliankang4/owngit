@@ -46,7 +46,8 @@ func archiveLinks(repositoryID, ref string) []webui.ArchiveLink {
 // resolveArchive checks the format and resolves the ref of an archive
 // request: a branch or tag as the Code tab names it, a full commit ID, or the
 // default branch when ref is empty. It returns 404 for an unknown format or
-// ref, and 503 when the repository cannot be read now.
+// ref, and unavailable, with the cause logged, when the repository cannot be
+// read now.
 func (app *App) resolveArchive(request *http.Request, repositoryID string) (archiveTarget, int) {
 	query := request.URL.Query()
 	format := query.Get("format")
@@ -55,24 +56,21 @@ func (app *App) resolveArchive(request *http.Request, repositoryID string) (arch
 	}
 	resolved, commitOID, err := app.Repositories.ResolveRevision(request.Context(), repositoryID, query.Get("ref"))
 	if err != nil {
-		status := downloadReadStatus(err)
-		if status == http.StatusServiceUnavailable {
-			logUnavailable(request, "archive ref read", err)
+		if downloadNotFound(err) {
+			return archiveTarget{}, http.StatusNotFound
 		}
-		return archiveTarget{}, status
+		return archiveTarget{}, unavailable(request, "archive ref read", err)
 	}
 	return archiveTarget{commitOID: commitOID, format: format, name: archiveName(repositoryID, displayRef(resolved))}, http.StatusOK
 }
 
-// downloadReadStatus is the status of a download whose Git read failed: 404
-// when the read established that the ref, commit or file does not exist, or
-// that the repository itself is gone, and 503 when it could not tell, as
-// when the repository is busy, being prepared, or its storage failed.
-func downloadReadStatus(err error) int {
-	if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrRepositoryNotFound) {
-		return http.StatusNotFound
-	}
-	return http.StatusServiceUnavailable
+// downloadNotFound reports whether the failed Git read of a download
+// established that the ref, commit or file does not exist, or that the
+// repository itself is gone. Any other failure could not tell, as when the
+// repository is busy, being prepared, or its storage failed, and is answered
+// as unavailable.
+func downloadNotFound(err error) bool {
+	return errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrRepositoryNotFound)
 }
 
 // archiveName is REPOSITORY-REF with every character other than a letter, a
@@ -179,12 +177,11 @@ func (app *App) handleArchiveAPI(writer http.ResponseWriter, request *http.Reque
 		writeAPIMethodError(writer, http.MethodGet)
 		return
 	}
-	if !app.authorizeAPI(writer, request, settings) || app.refusePreparingAPI(writer, repositoryID) {
+	if !app.authorizeAPI(writer, request, settings) || app.refusePreparingAPI(writer, request, repositoryID) {
 		return
 	}
 	if _, exists, err := app.visibleRepository(request, repositoryID); err != nil {
-		logUnavailable(request, "repository record read", err)
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "Repository metadata could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "repository record read", err), "state_unavailable", "Repository metadata could not be read.", nil)
 		return
 	} else if !exists {
 		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)

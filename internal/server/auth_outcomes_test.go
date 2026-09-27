@@ -315,7 +315,9 @@ func TestSignOutThatCouldNotBeRecordedIsNotReportedAsDone(t *testing.T) {
 // is logged again as an unavailable answer.
 func TestClientThatLeftIsNotLoggedAsUnavailable(t *testing.T) {
 	serverLog := captureServerLog(t)
-	logUnavailable(httptest.NewRequest(http.MethodPost, "/login", nil), "sign-in", context.Canceled)
+	left, cancel := context.WithCancel(context.Background())
+	cancel()
+	logUnavailable(httptest.NewRequestWithContext(left, http.MethodPost, "/login", nil), "sign-in", context.Canceled)
 	logUnavailable(httptest.NewRequest(http.MethodGet, "/repositories/project", nil), "repository read", fmt.Errorf("read: %w", repository.ErrRepositoryPreparing))
 	if logged := serverLog.String(); logged != "" {
 		t.Fatalf("a cause already accounted for was logged: %q", logged)

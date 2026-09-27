@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/checkrun"
 	"owngit/internal/githttp"
 	"owngit/internal/importsync"
+	"owngit/internal/logtext"
 	"owngit/internal/pullrequest"
 	"owngit/internal/releasecheck"
 	"owngit/internal/repository"
@@ -332,11 +334,11 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	settings, err := app.Store.Settings(request.Context())
 	if err != nil {
-		logUnavailable(request, "settings read", err)
+		status := unavailable(request, "settings read", err)
 		if strings.HasPrefix(request.URL.Path, "/api/") {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "OwnGit state is unavailable.", nil)
+			writeAPIError(writer, status, "state_unavailable", "OwnGit state is unavailable.", nil)
 		} else {
-			app.writePlainError(writer, http.StatusServiceUnavailable)
+			app.writePlainError(writer, status)
 		}
 		return
 	}
@@ -415,41 +417,57 @@ func (app *App) render(writer http.ResponseWriter, status int, page webui.Page) 
 	_, _ = writer.Write(output.Bytes())
 }
 
+// renderError answers with an error page. A page frame that cannot be read
+// is left out and logged, and the page is shown without it.
 func (app *App) renderError(writer http.ResponseWriter, request *http.Request, status int, code webui.MessageCode, detail string) {
-	chrome, _ := app.chrome(writer, request, webui.SectionNone, "", "")
+	chrome, err := app.chrome(writer, request, webui.SectionNone, "", "")
+	if err != nil {
+		logUnavailable(request, "page frame read", err)
+	}
 	app.render(writer, status, webui.ErrorPage{Chrome: chrome, Status: status, Code: code, Detail: detail, RetryURL: "/"})
 }
 
-// logUnavailable records why a request is answered as unavailable, so the
-// operator can read the cause of every such answer. step names what could
-// not be completed. The line holds only the method and escaped path, never
-// the request's password, cookie or token. Each failed read or write is
-// logged once, where its answer is decided.
+// unavailable logs why step of request could not be completed and returns
+// 503 Service Unavailable, the status that answers it. It is the only source
+// of that status in this package (TestOnlyUnavailableAnswersUnavailable), so
+// the cause of every unavailable answer is in the server log, once. A state
+// that is working as intended, such as a repository being prepared, is
+// passed as its error and not logged (see intendedCause).
+func unavailable(request *http.Request, step string, err error) int {
+	logUnavailable(request, step, err)
+	return http.StatusServiceUnavailable
+}
+
+// logUnavailable logs why step of request could not be completed. An answer
+// logs through unavailable. What logs here is not answered in this package
+// as unavailable: a part of a page shown as unavailable, such as a side
+// panel, and a Git request, which githttp answers. The line holds only the
+// method and escaped path, cut when long, never the request's password,
+// cookie or token, and the cause is quoted onto it (see logtext).
 func logUnavailable(request *http.Request, step string, err error) {
-	if !unloggedCause(err) {
+	if intendedCause(request.Context(), err) {
 		return
 	}
-	log.Printf("%s %s: %s could not be completed: %s", request.Method, request.URL.EscapedPath(), step, causeText(err))
+	log.Printf("%s %s: %s could not be completed: %s", request.Method, logtext.Path(request.URL.EscapedPath()), step, logtext.Cause(err))
 }
 
-// causeText is err's text followed by each wrapped cause that text leaves
-// out. An error written for the client, such as a pull request problem,
-// carries the operator's cause only in its chain.
-func causeText(err error) string {
-	text := err.Error()
-	for cause := errors.Unwrap(err); cause != nil; cause = errors.Unwrap(cause) {
-		if detail := cause.Error(); !strings.Contains(text, detail) {
-			text += ": " + detail
-		}
+// intendedCause reports whether err, from work done under ctx, holds only
+// states that work as intended, which the log leaves out; one real failure
+// beside them is logged. A server that is stopping (importsync's
+// ErrShuttingDown) leaves nothing to fix. A repository being prepared had
+// its cause logged when preparation locked it, and an unavailable check
+// runtime when OwnGit started. A cancellation is intended only when ctx
+// itself was cancelled: the client went away or the work was dropped. One
+// from another context left this request waiting for an answer. Then a busy
+// repository is intended too: it names only why the work was waiting when
+// it ended. A busy repository while the client still waits, or when the
+// wait ran out of time, is logged.
+func intendedCause(ctx context.Context, err error) bool {
+	states := []error{importsync.ErrShuttingDown, repository.ErrRepositoryPreparing, checkrun.ErrRuntimeUnavailable}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		states = append(states, context.Canceled, repository.ErrRepositoryInUse)
 	}
-	return text
-}
-
-// unloggedCause reports whether err is a cause the log does not hold yet. A
-// client that went away (context.Canceled) caused nothing to fix, and a
-// repository being prepared had its cause logged when preparation locked it.
-func unloggedCause(err error) bool {
-	return !errors.Is(err, context.Canceled) && !errors.Is(err, repository.ErrRepositoryPreparing)
+	return logtext.Intended(err, states...)
 }
 
 func (app *App) writePlainError(writer http.ResponseWriter, status int) {

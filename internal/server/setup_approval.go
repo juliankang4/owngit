@@ -369,8 +369,7 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 		case err != nil:
 			// The cookie stays: an approval that was not used up can still be
 			// redeemed from the retry link, and a used one is refused there.
-			logUnavailable(request, "approved setup session", err)
-			page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgErrUnavailable, http.StatusServiceUnavailable
+			page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgErrUnavailable, unavailable(request, "approved setup session", err)
 		case started:
 			http.Redirect(writer, request, "/setup", http.StatusSeeOther)
 			return
@@ -398,7 +397,7 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 	csrf := app.preauthCSRF(writer, request)
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	page.Chrome = chrome
@@ -474,7 +473,7 @@ func (app *App) handleSetupApprovalRequest(writer http.ResponseWriter, request *
 func (app *App) renderApprovalRefusal(writer http.ResponseWriter, request *http.Request, refusal approvalRefusal) {
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", "")
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	app.render(writer, refusal.status, webui.SetupPage{

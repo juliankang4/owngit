@@ -49,10 +49,12 @@ func TestCompletionClipsOverlongTextInsteadOfRefusing(t *testing.T) {
 // An unclassified runner failure can name internal state or host paths. The
 // runner receives a fixed message; the cause stays in the server log.
 func TestRunnerErrorDoesNotExposeInternalCause(t *testing.T) {
+	serverLog := captureServerLog(t)
 	recorder := httptest.NewRecorder()
-	writeRunnerError(recorder, errors.New("open /private/state/owngit.db: disk I/O error"))
+	writeRunnerError(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/repositories/project/runner/claim", nil), errors.New("open /private/state/owngit.db: disk I/O error"))
 	body := recorder.Body.String()
 	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(body, `"state_unavailable"`) || strings.Contains(body, "/private/state") {
 		t.Fatalf("runner error status=%d body=%s", recorder.Code, body)
 	}
+	requireLogged(t, serverLog, `POST /api/v1/repositories/project/runner/claim: runner operation could not be completed: "open /private/state/owngit.db: disk I/O error"`)
 }

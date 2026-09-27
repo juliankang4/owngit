@@ -197,13 +197,12 @@ func (app *App) handleRaw(writer http.ResponseWriter, request *http.Request, sto
 	filePath := query.Get("path")
 	_, blob, err := app.Repositories.ReadBlob(request.Context(), stored.ID, query.Get("ref"), filePath, maximumRawBytes)
 	if err != nil {
-		if downloadReadStatus(err) == http.StatusNotFound {
+		if downloadNotFound(err) {
 			app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 			return
 		}
-		logUnavailable(request, "file read", err)
 		writer.Header().Set("Retry-After", "10")
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
+		app.renderError(writer, request, unavailable(request, "file read", err), webui.MsgErrUnavailable, "")
 		return
 	}
 	if blob.Truncated {

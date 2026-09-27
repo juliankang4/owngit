@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"owngit/internal/logtext"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
@@ -172,8 +173,8 @@ func (cache *activityCache) scheduleLocked(manager *repository.Manager, id, key 
 		if err != nil {
 			// The count runs for no one request, so its failure is logged
 			// here, once, and not by each page that shows it.
-			if unloggedCause(err) {
-				log.Printf("activity of repository %q could not be counted: %v", id, err)
+			if !intendedCause(ctx, err) {
+				log.Printf("activity of repository %q could not be counted: %s", id, logtext.Cause(err))
 			}
 			entry.err, entry.failedKey = err, key
 		} else {

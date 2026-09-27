@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/logtext"
 	"owngit/internal/repository"
 	"owngit/internal/requestctx"
 )
@@ -124,6 +125,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if err != nil {
+		logCause(request.Context(), fmt.Sprintf("Git %s request for repository %q failed: repository storage is unavailable", requestKind(route, request.Method), route.repositoryID), err)
 		http.Error(writer, "repository storage is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -291,7 +293,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return err
 	})
 	if quarantinesListed {
-		removeUnfinishedPushObjects(route, repositoryPath, quarantinesBefore)
+		removeUnfinishedPushObjects(request.Context(), route, repositoryPath, quarantinesBefore)
 	}
 	if err == nil && route.service == "git-receive-pack" && h.OnReceive != nil {
 		h.OnReceive(route.repositoryID)
@@ -359,10 +361,10 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 // Directories listed before, such as one left before OwnGit started, stay for
 // the startup cleanup. A directory that cannot be removed now stays for it
 // too.
-func removeUnfinishedPushObjects(route route, path string, before []string) {
+func removeUnfinishedPushObjects(ctx context.Context, route route, path string, before []string) {
 	after, err := repository.IncomingQuarantines(path)
 	if err != nil {
-		log.Printf("Git push request for repository %q: could not look for the objects of an unfinished push: %v", route.repositoryID, err)
+		logCause(ctx, fmt.Sprintf("Git push request for repository %q: could not look for the objects of an unfinished push", route.repositoryID), err)
 	}
 	for _, name := range after {
 		if slices.Contains(before, name) {
@@ -370,7 +372,7 @@ func removeUnfinishedPushObjects(route route, path string, before []string) {
 		}
 		size, err := repository.RemoveIncomingQuarantine(path, name)
 		if err != nil {
-			log.Printf("Git push request for repository %q: could not remove the objects of an unfinished push in objects/%s: %v", route.repositoryID, name, err)
+			logCause(ctx, fmt.Sprintf("Git push request for repository %q: could not remove the objects of an unfinished push in objects/%s", route.repositoryID, name), err)
 			continue
 		}
 		log.Printf("Git push request for repository %q: removed the objects of an unfinished push (objects/%s, %d bytes)", route.repositoryID, name, size)
@@ -558,7 +560,27 @@ func failureReason(err error, stderr []byte, tooLarge, invalidGzip, timedOut boo
 	}
 }
 
+// logGitFailure logs why a Git request failed. reason is githttp's own
+// text, such as a limit that was reached.
 func logGitFailure(route route, method string, reason string) {
+	log.Printf("Git %s request for repository %q failed: %s", requestKind(route, method), route.repositoryID, reason)
+}
+
+// logCause logs line followed by err, the error that explains it, quoted
+// by the server log's rule (see logtext). Every githttp line that carries an
+// error goes through here. Work under ctx whose client went away caused
+// nothing to fix, so an error that is only that cancellation is not logged;
+// a cancellation beside a real failure, or from another context, is.
+func logCause(ctx context.Context, line string, err error) {
+	if errors.Is(ctx.Err(), context.Canceled) && logtext.Intended(err, context.Canceled) {
+		return
+	}
+	log.Printf("%s: %s", line, logtext.Cause(err))
+}
+
+// requestKind names a Smart HTTP request in the log: fetch or push, and
+// whether it asked for the ref advertisement.
+func requestKind(route route, method string) string {
 	kind := "fetch"
 	if route.service == "git-receive-pack" {
 		kind = "push"
@@ -566,7 +588,7 @@ func logGitFailure(route route, method string, reason string) {
 	if method == http.MethodGet {
 		kind += " ref advertisement"
 	}
-	log.Printf("Git %s request for repository %q failed: %s", kind, route.repositoryID, reason)
+	return kind
 }
 
 func (h *Handler) Active() int64 { return h.active.Load() }

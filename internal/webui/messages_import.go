@@ -75,6 +75,7 @@ const (
 	MsgImportErrorNothing     MessageCode = "import.error.nothing_to_resolve"
 	MsgImportRunCancelled     MessageCode = "import.run_cancelled"
 	MsgImportCancelledNoRepo  MessageCode = "import.cancelled_no_repository"
+	MsgImportCancelledUnsure  MessageCode = "import.cancelled_unconfirmed"
 	MsgImportTechnicalDetails MessageCode = "import.technical_details"
 
 	// The Import tab's read-only status and its set-up step.
@@ -222,6 +223,7 @@ var importCatalog = map[MessageCode]message{
 	MsgImportErrorNothing:       {en: "There is no unresolved publication to accept.", ko: "인정할 미해결 게시가 없습니다."},
 	MsgImportRunCancelled:       {en: "The import run was cancelled.", ko: "가져오기 실행이 취소되었습니다."},
 	MsgImportCancelledNoRepo:    {en: "The import was cancelled before the repository was created. No repository was added.", ko: "저장소가 만들어지기 전에 가져오기가 취소되었습니다. 추가된 저장소는 없습니다."},
+	MsgImportCancelledUnsure:    {en: "The import was cancelled, but OwnGit could not check whether the repository was added. Check the repository list before you import it again.", ko: "가져오기가 취소되었지만 저장소가 추가되었는지 확인하지 못했습니다. 다시 가져오기 전에 저장소 목록을 확인하세요."},
 	MsgImportTechnicalDetails:   {en: "Technical details", ko: "기술 세부 정보"},
 
 	MsgImportStatusHeading:         {en: "Status", ko: "상태"},

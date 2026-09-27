@@ -150,7 +150,7 @@ func (app *App) renderTailscaleOff(writer http.ResponseWriter, request *http.Req
 func (app *App) renderTailscaleRefusal(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, action string, err error) {
 	var refusal *TailscaleError
 	if !errors.As(err, &refusal) {
-		app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("tailscale", webui.MsgErrUnavailable)}, http.StatusServiceUnavailable, settingsView{AdminVerified: true})
+		app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("tailscale", webui.MsgErrUnavailable)}, unavailable(request, "Tailscale sharing change", err), settingsView{AdminVerified: true})
 		return
 	}
 	// What is on the port is listed in the block, in the page's language.

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"owngit/internal/logtext"
 	"owngit/internal/repository"
 	"owngit/internal/requestctx"
 	"owngit/internal/state"
@@ -123,7 +124,7 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 			app.renderError(writer, request, http.StatusNotFound, webui.MsgRepoNotFound, stored.ID)
 		default:
 			// The cause can name host paths, so it goes to the server log.
-			log.Printf("default branch of repository %s was not changed: %v", stored.ID, err)
+			log.Printf("default branch of repository %s was not changed: %s", stored.ID, logtext.Cause(err))
 			chrome.Notices = append(chrome.Notices, webui.Error("", webui.MsgRepoDefaultBranchFailed))
 			app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, http.StatusInternalServerError)
 		}
@@ -230,7 +231,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		// The cause can name storage paths and the deletion token, so it goes
 		// to the server log, which the pages point the administrator to, and
 		// never into a page.
-		log.Printf("deletion of repository %s: %v", stored.ID, err)
+		log.Printf("deletion of repository %s: %s", stored.ID, logtext.Cause(err))
 	}
 	incomplete := errors.Is(err, repository.ErrDeleteIncomplete)
 	if incomplete {

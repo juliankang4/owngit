@@ -29,7 +29,7 @@ func (app *App) handleImportAPI(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	// Cancelling needs no repository data and stays available.
-	if remainder != "cancel" && app.refusePreparingAPI(writer, repositoryID) {
+	if remainder != "cancel" && app.refusePreparingAPI(writer, request, repositoryID) {
 		return
 	}
 	switch remainder {
@@ -60,7 +60,7 @@ func (app *App) handleImportSourceAPI(writer http.ResponseWriter, request *http.
 	case http.MethodGet:
 		status, err := app.Imports.Status(request.Context(), repositoryID)
 		if err != nil {
-			writeImportProblem(writer, err)
+			writeImportProblem(writer, request, "import status read", err)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, struct {
@@ -82,7 +82,7 @@ func (app *App) handleImportSourceAPI(writer http.ResponseWriter, request *http.
 			GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork,
 		})
 		if err != nil {
-			writeImportProblem(writer, err)
+			writeImportProblem(writer, request, "import source change", err)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, importSourceJSON(source))
@@ -115,7 +115,7 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 	request = app.beginOperation(writer, request)
 	_, _, exists, err := app.Repositories.ExistingPath(request.Context(), repositoryID)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, importsync.CodeStateUnavailable, "The repository destination could not be read.", nil)
+		writeAPIError(writer, unavailable(request, "repository storage read", err), importsync.CodeStateUnavailable, "The repository destination could not be read.", nil)
 		return
 	}
 	// A request that names a source is a new import. It must not turn into a
@@ -169,7 +169,7 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 func (app *App) writeImportRunResult(writer http.ResponseWriter, request *http.Request, repositoryID string, run state.ImportRun, runErr error) {
 	cancelled := importsyncProblemCode(runErr) == importsync.CodeCancelled
 	if runErr != nil && !cancelled {
-		writeImportProblem(writer, runErr)
+		writeImportProblem(writer, request, "import run", runErr)
 		return
 	}
 	body := struct {
@@ -196,7 +196,7 @@ func (app *App) writeImportRunResult(writer http.ResponseWriter, request *http.R
 func (app *App) importStatusAfter(request *http.Request, repositoryID string) (*importsync.Status, *pullrequest.ErrorDescription) {
 	status, err := app.Imports.Status(request.Context(), repositoryID)
 	if err != nil {
-		_, code, message, _ := importProblemHTTP(err)
+		_, code, message, _ := importProblemHTTP(request, "import status read", err)
 		return nil, &pullrequest.ErrorDescription{Code: code, Message: message}
 	}
 	return &status, nil
@@ -211,7 +211,7 @@ func (app *App) handleImportCancelAPI(writer http.ResponseWriter, request *http.
 	// repository still reaches its running import.
 	_, exists, err := app.Store.Repository(request.Context(), repositoryID)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "repository record read", err), importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
 		return
 	}
 	if !decodeAPIJSON(writer, request, &struct{}{}) {
@@ -219,7 +219,7 @@ func (app *App) handleImportCancelAPI(writer http.ResponseWriter, request *http.
 	}
 	cancelled, err := app.Imports.Cancel(request.Context(), repositoryID)
 	if err != nil {
-		writeImportProblem(writer, err)
+		writeImportProblem(writer, request, "import cancel", err)
 		return
 	}
 	if !cancelled && !exists {
@@ -247,7 +247,7 @@ func (app *App) handleImportResolveAPI(writer http.ResponseWriter, request *http
 	}
 	result, err := app.Imports.ResolveUnresolved(request.Context(), repositoryID)
 	if err != nil {
-		writeImportProblem(writer, err)
+		writeImportProblem(writer, request, "import resolution", err)
 		return
 	}
 	status, statusErr := app.importStatusAfter(request, repositoryID)
@@ -287,7 +287,7 @@ func (app *App) handleImportHistoryAPI(writer http.ResponseWriter, request *http
 	}
 	runs, more, err := app.Imports.HistoryBefore(request.Context(), repositoryID, limit, cursor)
 	if err != nil {
-		writeImportProblem(writer, err)
+		writeImportProblem(writer, request, "import history read", err)
 		return
 	}
 	var next int64
@@ -310,7 +310,7 @@ func (app *App) handleImportScheduleAPI(writer http.ResponseWriter, request *htt
 	case http.MethodGet:
 		schedule, exists, err := app.Imports.Schedule(request.Context(), repositoryID)
 		if err != nil {
-			writeImportProblem(writer, err)
+			writeImportProblem(writer, request, "import schedule read", err)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, importScheduleJSON(schedule, exists))
@@ -329,7 +329,7 @@ func (app *App) handleImportScheduleAPI(writer http.ResponseWriter, request *htt
 		}
 		schedule, err := app.Imports.SetSchedule(request.Context(), repositoryID, input.Enabled, interval)
 		if err != nil {
-			writeImportProblem(writer, err)
+			writeImportProblem(writer, request, "import schedule change", err)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, importScheduleJSON(schedule, true))
@@ -363,13 +363,13 @@ func (app *App) handleImportCredentialsAPI(writer http.ResponseWriter, request *
 			return
 		}
 		if err := app.Imports.SetCredentials(request.Context(), repositoryID, credential); err != nil {
-			writeImportProblem(writer, err)
+			writeImportProblem(writer, request, "import credential change", err)
 			return
 		}
 		app.writeImportCredentialState(writer, request, repositoryID)
 	case http.MethodDelete:
 		if err := app.Imports.SetCredentials(request.Context(), repositoryID, nil); err != nil {
-			writeImportProblem(writer, err)
+			writeImportProblem(writer, request, "import credential change", err)
 			return
 		}
 		app.writeImportCredentialState(writer, request, repositoryID)
@@ -385,7 +385,7 @@ func (app *App) handleImportCredentialsAPI(writer http.ResponseWriter, request *
 func (app *App) clearOrphanImportCredentials(writer http.ResponseWriter, request *http.Request, repositoryID string) bool {
 	_, exists, err := app.Store.Repository(request.Context(), repositoryID)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "repository record read", err), importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
 		return true
 	}
 	if exists {
@@ -396,7 +396,7 @@ func (app *App) clearOrphanImportCredentials(writer http.ResponseWriter, request
 		return false
 	}
 	if err != nil {
-		writeImportProblem(writer, err)
+		writeImportProblem(writer, request, "orphan import removal", err)
 		return true
 	}
 	if !forgotten {
@@ -430,7 +430,7 @@ func (app *App) writeImportCredentialState(writer http.ResponseWriter, request *
 func (app *App) importRepositoryExists(writer http.ResponseWriter, request *http.Request, repositoryID string) bool {
 	_, exists, err := app.Store.Repository(request.Context(), repositoryID)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "repository record read", err), importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
 		return false
 	}
 	if !exists {
@@ -502,12 +502,16 @@ func importScheduleJSON(schedule state.ImportSchedule, exists bool) any {
 	}{OK: true, Configured: exists, Enabled: schedule.Enabled, IntervalSeconds: schedule.IntervalSeconds}
 }
 
-func writeImportProblem(writer http.ResponseWriter, err error) {
-	status, code, message, details := importProblemHTTP(err)
+// writeImportProblem answers err, an import problem, as step of request.
+func writeImportProblem(writer http.ResponseWriter, request *http.Request, step string, err error) {
+	status, code, message, details := importProblemHTTP(request, step, err)
 	writeAPIError(writer, status, code, message, details)
 }
 
-func importProblemHTTP(err error) (int, string, string, any) {
+// importProblemHTTP is the status, code, message and details that answer
+// err by its import problem code. An unavailable one is logged as step of
+// request.
+func importProblemHTTP(request *http.Request, step string, err error) (int, string, string, any) {
 	var problem *importsync.Problem
 	if !errors.As(err, &problem) {
 		return http.StatusInternalServerError, importsync.CodeUnsupported, "import failed", nil
@@ -523,7 +527,7 @@ func importProblemHTTP(err error) (int, string, string, any) {
 	case importsync.CodeRepositoryMissing:
 		status = http.StatusNotFound
 	case importsync.CodeRuntimeUnavailable, importsync.CodeStateUnavailable, importsync.CodeRuntimeUnsafe:
-		status = http.StatusServiceUnavailable
+		status = unavailable(request, step, err)
 	case importsync.CodeInvalidSource, importsync.CodeInvalidSchedule, importsync.CodeUnsupportedFormat, importsync.CodeUnsupportedRefs, importsync.CodeUnsupported:
 		status = http.StatusUnprocessableEntity
 	case importsync.CodeTooLarge:

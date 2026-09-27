@@ -97,7 +97,7 @@ func (app *App) handleRepositoryAPI(writer http.ResponseWriter, request *http.Re
 func (app *App) listRepositoriesAPI(writer http.ResponseWriter, request *http.Request) {
 	repositories, err := app.visibleRepositories(request)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "OwnGit state is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "repository list read", err), "state_unavailable", "OwnGit state is unavailable.", nil)
 		return
 	}
 	response := repositoryListResponse{OK: true, Repositories: []repositoryAPIItem{}}
@@ -113,7 +113,7 @@ func (app *App) listRepositoriesAPI(writer http.ResponseWriter, request *http.Re
 func (app *App) showRepositoryAPI(writer http.ResponseWriter, request *http.Request, id string) {
 	stored, exists, err := app.visibleRepository(request, id)
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "OwnGit state is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "repository record read", err), "state_unavailable", "OwnGit state is unavailable.", nil)
 		return
 	}
 	if !exists {
@@ -152,7 +152,7 @@ func (app *App) createRepositoryAPI(writer http.ResponseWriter, request *http.Re
 		case errors.Is(err, repository.ErrInvalidDescription):
 			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_repository_description", "The description can be at most 500 bytes.", nil)
 		default:
-			writeAPIError(writer, http.StatusServiceUnavailable, "repository_create_failed", "The repository could not be created.", nil)
+			writeAPIError(writer, unavailable(request, "repository creation", err), "repository_create_failed", "The repository could not be created.", nil)
 		}
 		return
 	}

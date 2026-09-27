@@ -27,22 +27,20 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 
 	configuration, configured, err := app.Store.LatestCheckConfiguration(request.Context(), stored.ID)
 	if err != nil {
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgTasksUnavail, "")
+		app.renderError(writer, request, unavailable(request, "check configuration read", err), webui.MsgTasksUnavail, "")
 		return
 	}
 	page.Configuration = browserCheckConfiguration(configuration, configured)
 
+	answerUnavailable := func(step string, err error) {
+		page.Unavailable = true
+		page.UnavailableReason = webui.MsgErrUnavailable
+		app.render(writer, unavailable(request, step, err), page)
+	}
 	tasks, err := app.Store.Tasks(request.Context(), stored.ID)
 	if err != nil {
-		page.Unavailable = true
-		page.UnavailableReason = webui.MsgErrUnavailable
-		app.render(writer, http.StatusServiceUnavailable, page)
+		answerUnavailable("task list read", err)
 		return
-	}
-	unavailable := func() {
-		page.Unavailable = true
-		page.UnavailableReason = webui.MsgErrUnavailable
-		app.render(writer, http.StatusServiceUnavailable, page)
 	}
 
 	// An opened task reads only its newest attempts, bounded by the display
@@ -55,7 +53,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 			}
 			attempts, more, err := app.Store.RecentCheckAttemptsForTask(request.Context(), stored.ID, task.ID, maximumBrowserTaskAttempts)
 			if err != nil {
-				unavailable()
+				answerUnavailable("task attempt read", err)
 				return
 			}
 			detail := &webui.TaskDetail{Task: browserTaskSummary(task), AttemptsTruncated: more}
@@ -88,7 +86,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 		latest, exists, err := app.Store.LatestCheckAttemptForTask(request.Context(), stored.ID, task.ID)
 		if err != nil {
 			page.Tasks = nil
-			unavailable()
+			answerUnavailable("latest attempt read", err)
 			return
 		}
 		if exists {

@@ -22,7 +22,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	page := webui.NewImportPage{Chrome: chrome, SubmitURL: "/repositories/new-import"}
@@ -83,9 +83,22 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 	})
 	notice := "import_started"
 	if err != nil {
+		// A cancelled run may have added the repository before it stopped.
 		cancelled := importsyncProblemCode(err) == importsync.CodeCancelled
-		_, repositoryExists, lookupErr := app.Store.Repository(request.Context(), result.RepositoryID)
-		if !cancelled || result.RepositoryID == "" || lookupErr != nil || !repositoryExists {
+		repositoryExists := false
+		if cancelled && result.RepositoryID != "" {
+			var lookupErr error
+			_, repositoryExists, lookupErr = app.Store.Repository(request.Context(), result.RepositoryID)
+			if lookupErr != nil {
+				// Whether it did is unknown, so the form says so rather than
+				// stating either outcome.
+				chrome.Notices = []webui.Notice{webui.Error("", webui.MsgImportCancelledUnsure)}
+				page.Chrome = chrome
+				app.render(writer, unavailable(request, "repository record read", lookupErr), page)
+				return
+			}
+		}
+		if !repositoryExists {
 			// Nothing to show on a repository page: keep the form and explain.
 			if cancelled {
 				chrome.Notices = []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgImportCancelledNoRepo}}
@@ -100,12 +113,8 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 			} else {
 				chrome.Notices = []webui.Notice{importFailureNotice(err, result.Run.ErrorClass)}
 			}
-			status := importProblemStatus(err)
-			if status == http.StatusServiceUnavailable {
-				logUnavailable(request, "import start", err)
-			}
 			page.Chrome = chrome
-			app.render(writer, status, page)
+			app.render(writer, importProblemStatus(request, "import start", err), page)
 			return
 		}
 		notice = "import_run_cancelled"
@@ -132,7 +141,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 			var err error
 			chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, session.CSRF)
 			if err != nil {
-				app.writePlainError(writer, http.StatusServiceUnavailable)
+				app.writePlainError(writer, unavailable(request, "page frame read", err))
 				return
 			}
 		}
@@ -146,7 +155,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 	var err error
 	chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	if !parseForm(writer, request) {
@@ -176,7 +185,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		})
 		if importsyncProblemCode(err) == importsync.CodeInvalidSource {
 			chrome.Notices = append(chrome.Notices, webui.Error("url", webui.MsgImportErrorInvalidSource))
-			app.renderImportPage(writer, request, stored, summary, chrome, importProblemStatus(err))
+			app.renderImportPage(writer, request, stored, summary, chrome, importProblemStatus(request, "import change", err))
 			return
 		}
 		notice = "import_saved"
@@ -241,11 +250,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		} else {
 			chrome.Notices = append(chrome.Notices, importFailureNotice(err, ""))
 		}
-		status := importProblemStatus(err)
-		if status == http.StatusServiceUnavailable {
-			logUnavailable(request, "import change", err)
-		}
-		app.renderImportPage(writer, request, stored, summary, chrome, status)
+		app.renderImportPage(writer, request, stored, summary, chrome, importProblemStatus(request, "import change", err))
 		return
 	}
 	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(stored.ID)+"/import?notice="+notice, status)
@@ -274,7 +279,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	importStatus, err := app.Imports.Status(request.Context(), stored.ID)
 	if err != nil {
 		page.StatusUnreadable = true
-		app.render(writer, http.StatusServiceUnavailable, page)
+		app.render(writer, unavailable(request, "import status read", err), page)
 		return
 	}
 	page.Configured = importStatus.Configured
@@ -317,6 +322,9 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	// above, never as no runs.
 	runs, more, err := app.Imports.HistoryBefore(request.Context(), stored.ID, 20, cursor)
 	page.HistoryAvailable = err == nil
+	if err != nil {
+		logUnavailable(request, "import history read", err)
+	}
 	for _, run := range runs {
 		row := run
 		page.History = append(page.History, *importRunRow(&row, admin))
@@ -480,8 +488,11 @@ func shortImportInterval(value string) string {
 	}
 }
 
-func importProblemStatus(err error) int {
-	status, _, _, _ := importProblemHTTP(err)
+// importProblemStatus is the status of an import page answering err as step
+// of request. A problem without an error status, a cancellation, is a
+// conflict with what the page asked for.
+func importProblemStatus(request *http.Request, step string, err error) int {
+	status, _, _, _ := importProblemHTTP(request, step, err)
 	if status < 400 {
 		return http.StatusConflict
 	}

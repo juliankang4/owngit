@@ -185,9 +185,9 @@ func TestRepositoryReadFailuresLogTheirCauseOnce(t *testing.T) {
 			t.Errorf("GET %s with failing %s status=%d logged %d lines, want %d with %d:\n%s", check.path, check.pattern, status, len(lines), check.status, len(check.steps), strings.Join(lines, "\n"))
 			continue
 		}
-		// The cause is the failed Git command and its exit status.
+		// The cause is the failed Git command and its exit status, quoted.
 		for _, step := range check.steps {
-			if logged := strings.Join(lines, "\n"); !strings.Contains(logged, step+" could not be completed: git ") || !strings.Contains(logged, "exit status 128") {
+			if logged := strings.Join(lines, "\n"); !strings.Contains(logged, step+` could not be completed: "git `) || !strings.Contains(logged, "exit status 128") {
 				t.Errorf("GET %s with failing %s logged %q, want %q with its cause", check.path, check.pattern, lines, step)
 			}
 		}

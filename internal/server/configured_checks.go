@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"owngit/internal/checkapi"
+	"owngit/internal/checkrun"
 	"owngit/internal/checksource"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -25,7 +25,7 @@ func (app *App) handleConfiguredCheckOwnerAPI(writer http.ResponseWriter, reques
 		return
 	}
 	if _, exists, err := app.Store.Repository(request.Context(), repositoryID); err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "OwnGit state is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "repository record read", err), "state_unavailable", "OwnGit state is unavailable.", nil)
 		return
 	} else if !exists {
 		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
@@ -33,7 +33,7 @@ func (app *App) handleConfiguredCheckOwnerAPI(writer http.ResponseWriter, reques
 	}
 	// Runner credentials are credential management, not repository use, so
 	// they stay manageable (and revocable) while the repository is locked.
-	if resource != "runner-credentials" && app.refusePreparingAPI(writer, repositoryID) {
+	if resource != "runner-credentials" && app.refusePreparingAPI(writer, request, repositoryID) {
 		return
 	}
 	switch resource {
@@ -52,7 +52,7 @@ func (app *App) handleCheckPolicy(writer http.ResponseWriter, request *http.Requ
 	if remainder == "" && request.Method == http.MethodGet {
 		policy, exists, err := app.Store.CheckPolicy(request.Context(), repositoryID)
 		if err != nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The configured-check policy could not be read.", nil)
+			writeAPIError(writer, unavailable(request, "configured check policy read", err), "state_unavailable", "The configured-check policy could not be read.", nil)
 			return
 		}
 		if !exists {
@@ -92,14 +92,15 @@ func (app *App) handleCheckPolicy(writer http.ResponseWriter, request *http.Requ
 			policy, err = app.Store.RevokeCheckConsent(request.Context(), repositoryID, app.now())
 		}
 		if err != nil {
-			status := http.StatusServiceUnavailable
-			code := "state_unavailable"
-			if errors.Is(err, state.ErrCheckPolicyMissing) {
-				status, code = http.StatusNotFound, "check_policy_not_found"
-			} else if errors.Is(err, state.ErrInvalidCheckPolicy) {
-				status, code = http.StatusConflict, "check_policy_incomplete"
+			switch {
+			case errors.Is(err, state.ErrCheckPolicyMissing):
+				writeAPIError(writer, http.StatusNotFound, "check_policy_not_found", err.Error(), nil)
+			case errors.Is(err, state.ErrInvalidCheckPolicy):
+				writeAPIError(writer, http.StatusConflict, "check_policy_incomplete", err.Error(), nil)
+			default:
+				// The cause can name internal state, so it stays in the server log.
+				writeAPIError(writer, unavailable(request, "configured check consent change", err), "state_unavailable", "The configured-check consent could not be changed.", nil)
 			}
-			writeAPIError(writer, status, code, err.Error(), nil)
 			return
 		}
 		app.wakeChecks(repositoryID)
@@ -121,7 +122,7 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 		}
 		jobs, err := app.Store.LatestCheckJobs(request.Context(), repositoryID, 100)
 		if err != nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "Configured-check jobs could not be read.", nil)
+			writeAPIError(writer, unavailable(request, "configured check job list read", err), "state_unavailable", "Configured-check jobs could not be read.", nil)
 			return
 		}
 		response := checkapi.JobListResponse{OK: true, Jobs: make([]*checkapi.Job, 0, len(jobs))}
@@ -140,7 +141,7 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 	if len(parts) == 1 && request.Method == http.MethodGet {
 		job, exists, err := app.Store.CheckJob(request.Context(), repositoryID, jobID)
 		if err != nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The configured-check job could not be read.", nil)
+			writeAPIError(writer, unavailable(request, "configured check job read", err), "state_unavailable", "The configured-check job could not be read.", nil)
 			return
 		}
 		if !exists {
@@ -167,7 +168,7 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 	if len(parts) == 2 && parts[1] == "log" && request.Method == http.MethodGet {
 		job, exists, err := app.Store.CheckJob(request.Context(), repositoryID, jobID)
 		if err != nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The configured-check job could not be read.", nil)
+			writeAPIError(writer, unavailable(request, "configured check job read", err), "state_unavailable", "The configured-check job could not be read.", nil)
 			return
 		}
 		if !exists {
@@ -183,7 +184,7 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 			writeJobRecordError(writer, request, err, jobAttemptUnreadable, nil)
 			return
 		}
-		app.writeCheckAttemptLog(writer, attempt)
+		app.writeCheckAttemptLog(writer, request, attempt)
 		return
 	}
 	if len(parts) == 2 && request.Method == http.MethodPost {
@@ -203,7 +204,7 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		if err != nil {
-			writeConfiguredJobError(writer, err)
+			writeConfiguredJobError(writer, request, err)
 			return
 		}
 		if parts[1] == "cancel" && job.Status != state.CheckJobCancelled && job.CancelRequestedAt == nil {
@@ -228,7 +229,7 @@ func (app *App) handleRunnerCredentials(writer http.ResponseWriter, request *htt
 	case remainder == "" && request.Method == http.MethodGet:
 		credentials, err := app.Store.CheckRunnerCredentials(request.Context(), repositoryID)
 		if err != nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "Runner credentials could not be read.", nil)
+			writeAPIError(writer, unavailable(request, "runner credential list read", err), "state_unavailable", "Runner credentials could not be read.", nil)
 			return
 		}
 		response := checkapi.RunnerCredentialListResponse{OK: true, Credentials: make([]*checkapi.RunnerCredential, 0, len(credentials))}
@@ -254,8 +255,7 @@ func (app *App) handleRunnerCredentials(writer http.ResponseWriter, request *htt
 			case errors.Is(err, state.ErrCheckRunnerCreationConflict):
 				writeAPIError(writer, http.StatusConflict, "creation_conflict", "The creation identity already belongs to different runner credential content.", nil)
 			default:
-				logUnavailable(request, "runner credential issue", err)
-				writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The runner credential could not be created.", nil)
+				writeAPIError(writer, unavailable(request, "runner credential issue", err), "state_unavailable", "The runner credential could not be created.", nil)
 			}
 			return
 		}
@@ -269,15 +269,14 @@ func (app *App) handleRunnerCredentials(writer http.ResponseWriter, request *htt
 			writeAPIError(writer, http.StatusConflict, "runner_credential_not_found", "The runner credential was not found or was already revoked.", nil)
 			return
 		} else if err != nil {
-			logUnavailable(request, "runner credential revoke", err)
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The runner credential could not be revoked.", nil)
+			writeAPIError(writer, unavailable(request, "runner credential revoke", err), "state_unavailable", "The runner credential could not be revoked.", nil)
 			return
 		}
 		app.wakeChecks(repositoryID)
 		writeAPIJSON(writer, http.StatusOK, checkapi.OKResponse{OK: true})
 	case len(parts) == 2 && parts[0] == "by-creation" && parts[1] != "" && request.Method == http.MethodDelete:
 		if err := app.Store.RevokeCheckRunnerTokenByCreation(request.Context(), repositoryID, parts[1], app.now()); err != nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The runner credential could not be revoked.", nil)
+			writeAPIError(writer, unavailable(request, "runner credential revoke", err), "state_unavailable", "The runner credential could not be revoked.", nil)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.OKResponse{OK: true})
@@ -291,12 +290,12 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 	if !ok {
 		return
 	}
-	if app.refusePreparingAPI(writer, repositoryID) {
+	if app.refusePreparingAPI(writer, request, repositoryID) {
 		return
 	}
 	status := app.checkRuntimeStatus()
 	if !status.Available {
-		writeAPIError(writer, http.StatusServiceUnavailable, "check_runtime_unavailable", status.UnavailableReason, map[string]string{"reason": status.UnavailableCode})
+		writeAPIError(writer, unavailable(request, "configured check runtime", checkrun.ErrRuntimeUnavailable), "check_runtime_unavailable", status.UnavailableReason, map[string]string{"reason": status.UnavailableCode})
 		return
 	}
 	if remainder == "claim" {
@@ -306,7 +305,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 		}
 		job, claimed, err := app.Store.ClaimCheckJob(request.Context(), repositoryID, credential.ID, app.now())
 		if err != nil {
-			writeRunnerError(writer, err)
+			writeRunnerError(writer, request, err)
 			return
 		}
 		if !claimed {
@@ -348,7 +347,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 	case "renew":
 		job, err := app.Store.RenewCheckJobLease(request.Context(), authority, app.now())
 		if err != nil {
-			writeRunnerError(writer, err)
+			writeRunnerError(writer, request, err)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(job, nil)})
@@ -367,7 +366,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			Protection: state.ProtectionRunnerReported,
 		}, app.now())
 		if err != nil {
-			writeRunnerError(writer, err)
+			writeRunnerError(writer, request, err)
 			return
 		}
 		checks, err := app.jobChecks(request.Context(), started)
@@ -382,7 +381,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 		}
 		_, stored, err := app.Store.RegisterCheckAttempt(request.Context(), attempt)
 		if err != nil {
-			writeRunnerError(writer, err)
+			writeRunnerError(writer, request, err)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(started, checks), Attempt: attemptJSON(stored)})
@@ -397,21 +396,21 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 		}
 		job, exists, err := app.Store.CheckJob(request.Context(), repositoryID, jobID)
 		if err != nil {
-			writeRunnerError(writer, err)
+			writeRunnerError(writer, request, err)
 			return
 		}
 		if !exists || job.AttemptID == "" {
-			writeRunnerError(writer, state.ErrCheckJobNotFound)
+			writeRunnerError(writer, request, state.ErrCheckJobNotFound)
 			return
 		}
 		completion, problem := completionFromUpload(input.Completion, repositoryID, job.TaskID, job.AttemptID)
 		if problem != nil {
-			writeAPIError(writer, apiStatus(problem.Code), problem.Code, problem.Message, nil)
+			writeAPIError(writer, apiStatus(request, "runner check completion", problem), problem.Code, problem.Message, nil)
 			return
 		}
 		task, attempt, err := app.Store.CompleteCheckJobAttempt(request.Context(), completion, authority, app.now())
 		if err != nil {
-			writeRunnerError(writer, err)
+			writeRunnerError(writer, request, err)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: attemptJSON(attempt)})
@@ -426,7 +425,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 		}
 		job, err := app.Store.FailCheckJobBeforeStart(request.Context(), authority, input.Status, input.Summary, app.now())
 		if err != nil {
-			writeRunnerError(writer, err)
+			writeRunnerError(writer, request, err)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(job, nil)})
@@ -438,7 +437,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 func (app *App) runnerSourceManifest(writer http.ResponseWriter, request *http.Request, repositoryID, jobID, leaseID string, credential state.RunnerCredential) {
 	job, err := app.Store.AuthorizeCheckJobSource(request.Context(), repositoryID, jobID, leaseID, credential.ID, credential.Generation, app.now())
 	if err != nil {
-		writeRunnerError(writer, err)
+		writeRunnerError(writer, request, err)
 		return
 	}
 	// A busy repository is retried; any other listing failure is the source's
@@ -461,7 +460,7 @@ func (app *App) runnerSourceManifest(writer http.ResponseWriter, request *http.R
 		return nil
 	})
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "check_source_unavailable", "The exact configured-check source is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "configured check source read", err), "check_source_unavailable", "The exact configured-check source is unavailable.", nil)
 		return
 	}
 	if listErr != nil || checksource.ValidateEntries(entries, sourceLimits(job.Execution.Source)) != nil {
@@ -478,7 +477,7 @@ func (app *App) runnerSourceManifest(writer http.ResponseWriter, request *http.R
 func (app *App) runnerSourceBlob(writer http.ResponseWriter, request *http.Request, repositoryID, jobID, leaseID, encodedPath, oid string, credential state.RunnerCredential) {
 	job, err := app.Store.AuthorizeCheckJobSource(request.Context(), repositoryID, jobID, leaseID, credential.ID, credential.Generation, app.now())
 	if err != nil {
-		writeRunnerError(writer, err)
+		writeRunnerError(writer, request, err)
 		return
 	}
 	decodedPath, err := base64.RawURLEncoding.DecodeString(encodedPath)
@@ -496,9 +495,12 @@ func (app *App) runnerSourceBlob(writer http.ResponseWriter, request *http.Reque
 			job.Execution.Source.MetadataLimit, job.Execution.Source.MaxFileBytes+1, job.Execution.Source.MaxFileBytes+1)
 		return err
 	})
-	if err != nil || blob.HasMore || blob.OID != oid || blob.Size != int64(len(blob.Content)) ||
-		blob.Symlink || (blob.Mode != "100644" && blob.Mode != "100755") {
-		writeAPIError(writer, http.StatusServiceUnavailable, "check_source_unavailable", "The authorized exact source blob is unavailable.", nil)
+	if err == nil && (blob.HasMore || blob.OID != oid || blob.Size != int64(len(blob.Content)) ||
+		blob.Symlink || (blob.Mode != "100644" && blob.Mode != "100755")) {
+		err = errSourceBlobMismatch
+	}
+	if err != nil {
+		writeAPIError(writer, unavailable(request, "configured check source blob read", err), "check_source_unavailable", "The authorized exact source blob is unavailable.", nil)
 		return
 	}
 	writer.Header().Set("Content-Type", "application/octet-stream")
@@ -525,7 +527,7 @@ func (app *App) authorizeRunner(writer http.ResponseWriter, request *http.Reques
 		return state.RunnerCredential{}, false
 	}
 	if err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The runner token could not be verified.", nil)
+		writeAPIError(writer, unavailable(request, "runner token check", err), "state_unavailable", "The runner token could not be verified.", nil)
 		return state.RunnerCredential{}, false
 	}
 	if !ok || credential.Role != state.RunnerRoleExternal {
@@ -605,13 +607,12 @@ func (app *App) jobAttempt(ctx context.Context, job state.CheckJob) (state.Check
 // cause can name internal state, so it stays in the server log, and the client
 // receives unreadable or the missing record's fixed message.
 func writeJobRecordError(writer http.ResponseWriter, request *http.Request, err error, unreadable string, details any) {
-	logUnavailable(request, "job record read", err)
 	message := unreadable
 	var missing jobRecordMissing
 	if errors.As(err, &missing) {
 		message = string(missing)
 	}
-	writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", message, details)
+	writeAPIError(writer, unavailable(request, "job record read", err), "state_unavailable", message, details)
 }
 
 func (app *App) policyResponse(policy state.CheckPolicy) checkapi.PolicyResponse {
@@ -658,6 +659,11 @@ func runnerCredentialJSON(credential state.RunnerCredential) *checkapi.RunnerCre
 // runner's request timeout, so the runner receives an answer.
 const runnerSourceBusyWait = 20 * time.Second
 
+// errSourceBlobMismatch is a source blob read that did not return the
+// authorized entry whole: another object, a symbolic link or special mode,
+// or more bytes than the read could hold.
+var errSourceBlobMismatch = errors.New("the source blob read does not match the authorized entry")
+
 func sourceLimits(limits state.CheckSourceLimits) checksource.Limits {
 	return checksource.Limits{
 		MaxEntries: limits.MaxEntries, MaxFileBytes: limits.MaxFileBytes, MaxTotalBytes: limits.MaxTotalBytes,
@@ -666,18 +672,18 @@ func sourceLimits(limits state.CheckSourceLimits) checksource.Limits {
 	}
 }
 
-func writeConfiguredJobError(writer http.ResponseWriter, err error) {
+func writeConfiguredJobError(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, state.ErrCheckJobNotFound):
 		writeAPIError(writer, http.StatusNotFound, "check_job_not_found", "The configured-check job does not exist.", nil)
 	case errors.Is(err, state.ErrCheckJobState), errors.Is(err, state.ErrCheckConsentRequired):
 		writeAPIError(writer, http.StatusConflict, "check_job_state", err.Error(), nil)
 	default:
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The configured-check job could not be changed.", nil)
+		writeAPIError(writer, unavailable(request, "configured check job change", err), "state_unavailable", "The configured-check job could not be changed.", nil)
 	}
 }
 
-func writeRunnerError(writer http.ResponseWriter, err error) {
+func writeRunnerError(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, state.ErrCheckJobNotFound):
 		writeAPIError(writer, http.StatusNotFound, "check_job_not_found", "The configured-check job does not exist.", nil)
@@ -692,7 +698,6 @@ func writeRunnerError(writer http.ResponseWriter, err error) {
 	default:
 		// The cause can name internal state or host paths, so it stays in the
 		// server log and the runner receives a fixed message.
-		log.Printf("configured-check runner operation failed: %v", err)
-		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The runner operation failed.", nil)
+		writeAPIError(writer, unavailable(request, "runner operation", err), "state_unavailable", "The runner operation failed.", nil)
 	}
 }

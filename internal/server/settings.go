@@ -71,7 +71,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		}
 		accessHash, hashErr := app.Store.PasswordHash(request.Context(), "access")
 		if hashErr != nil {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgErrUnavailable)}, http.StatusServiceUnavailable)
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgErrUnavailable)}, unavailable(request, "shared password read", hashErr))
 			return
 		}
 		if accessHash != "" && auth.CheckPassword(accessHash, newPassword) {
@@ -114,7 +114,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if err != nil {
-		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgErrUnavailable)}, http.StatusServiceUnavailable)
+		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgErrUnavailable)}, unavailable(request, "settings save", err))
 		return
 	}
 	// A new shared password signs out every general session, this browser's
@@ -175,12 +175,12 @@ type settingsView struct {
 func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, pending string, notices []webui.Notice, status int, view settingsView) {
 	chrome, err := app.chrome(writer, request, webui.SectionSettings, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	report, err := app.networkReport(request.Context())
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "network settings read", err))
 		return
 	}
 	networkBlock := networkInfo(report)

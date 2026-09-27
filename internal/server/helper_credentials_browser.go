@@ -25,7 +25,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 	var err error
 	chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, adminSession.CSRF)
 	if err != nil {
-		app.writePlainError(writer, http.StatusServiceUnavailable)
+		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
 	if request.Method == http.MethodGet {
@@ -66,17 +66,15 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 		// response is its only delivery, so no later read may replace it.
 		credentials, err := app.Store.HelperCredentials(request.Context(), stored.ID)
 		if err != nil {
-			logUnavailable(request, "helper credential list read", err)
-			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgHelperFailed, "")
+			app.renderError(writer, request, unavailable(request, "helper credential list read", err), webui.MsgHelperFailed, "")
 			return
 		}
 		// Without a creation identity every success creates a credential and
 		// its token, so an error is the only other outcome.
 		credential, token, _, err := app.issueHelperCredential(request.Context(), stored.ID, label, "")
 		if err != nil {
-			logUnavailable(request, "helper credential issue", err)
 			app.renderHelperCredentials(writer, request, stored, summary, chrome, action, "", label,
-				[]webui.Notice{webui.Error("", webui.MsgHelperFailed)}, http.StatusServiceUnavailable)
+				[]webui.Notice{webui.Error("", webui.MsgHelperFailed)}, unavailable(request, "helper credential issue", err))
 			return
 		}
 		page := app.helperCredentialsPage(request, stored, summary, chrome, append(credentials, credential))
@@ -94,9 +92,8 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 				[]webui.Notice{webui.Error("", webui.MsgHelperNotFound)}, http.StatusConflict)
 			return
 		} else if err != nil {
-			logUnavailable(request, "helper credential revoke", err)
 			app.renderHelperCredentials(writer, request, stored, summary, chrome, action, credentialID, "",
-				[]webui.Notice{webui.Error("", webui.MsgHelperFailed)}, http.StatusServiceUnavailable)
+				[]webui.Notice{webui.Error("", webui.MsgHelperFailed)}, unavailable(request, "helper credential revoke", err))
 			return
 		}
 		app.noticeRedirect(writer, request, baseHelperCredentialsURL(stored.ID)+"?notice=helper_credential_revoked", http.StatusSeeOther)
@@ -112,8 +109,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 func (app *App) renderHelperCredentials(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, pendingAction, pendingCredentialID, pendingLabel string, notices []webui.Notice, status int) {
 	credentials, err := app.Store.HelperCredentials(request.Context(), stored.ID)
 	if err != nil {
-		logUnavailable(request, "helper credential list read", err)
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgHelperUnreadable, "")
+		app.renderError(writer, request, unavailable(request, "helper credential list read", err), webui.MsgHelperUnreadable, "")
 		return
 	}
 	page := app.helperCredentialsPage(request, stored, summary, chrome, credentials)
