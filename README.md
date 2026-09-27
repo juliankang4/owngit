@@ -72,17 +72,17 @@ go build -o bin/owngit ./cmd/owngit
 
 ## Quickstart
 
-On Linux and Windows, install OwnGit as a service that runs in the background and starts at every boot:
+On Linux, macOS and Windows, install OwnGit as a service that runs in the background and starts again by itself:
 
 ```sh
 owngit service install
 ```
 
-It asks nothing, apart from the `sudo` password on a Linux computer you reached over SSH, and it prints a one-time setup link at the end. Open that link in a browser to choose the repository folder and the passwords. The link works once, within 15 minutes; `owngit setup-link` prints a new one. On a desktop, OwnGit runs as your user and answers only on this computer, at `http://127.0.0.1:7654`. On a computer without a screen, such as a server you reach over SSH or a container, it listens on every address and the link uses this computer's LAN or tailnet address, so you open it on another device. A server with only a public address gets an SSH tunnel command instead, because the link must not cross the Internet unencrypted. Until setup is finished, that address answers only the setup page. [Run as a service](docs/OPERATIONS.md#run-as-a-service) explains who runs the service in each case and how to update, stop and remove it.
+It asks nothing, apart from the `sudo` password on a Linux computer you reached over SSH, and it prints a one-time setup link at the end. Open that link in a browser to choose the repository folder and the passwords. The link works once, within 15 minutes; `owngit setup-link` prints a new one. On a desktop, OwnGit runs as your user and answers only on this computer, at `http://127.0.0.1:7654`. A Mac with FileVault needs a login after every restart anyway, so there OwnGit is running as soon as you can use the Mac. On a computer without a screen, such as a server you reach over SSH, a Mac you reach over SSH while nobody is logged in on its screen, or a container, it listens on every address and the link uses this computer's LAN or tailnet address, so you open it on another device. A server with only a public address gets an SSH tunnel command instead, because the link must not cross the Internet unencrypted. Until setup is finished, that address answers only the setup page. [Run as a service](docs/OPERATIONS.md#run-as-a-service) explains who runs the service in each case and how to update, stop and remove it.
 
 On Windows, from an administrator account, Windows asks once for approval (User Account Control). That approval copies OwnGit into a protected folder under Program Files, registers the task that starts the protected copy at boot, lets devices on private networks through Windows Firewall, and installs Git with a verified App Installer copy of `winget` if Git is missing. The protected supervisor has administrator rights, but the server, Git, hooks and checks run as your account without them. From a standard account, OwnGit starts when you sign in, and nothing is asked. See [On Windows](docs/OPERATIONS.md#on-windows).
 
-To run OwnGit in the foreground instead, and on macOS, where `owngit service` is not available yet, start it with:
+To run OwnGit in the foreground instead, start it with:
 
 ```sh
 owngit serve
@@ -92,7 +92,7 @@ From a source build, run `./bin/owngit serve`; from an unpacked archive, `./owng
 
 When OwnGit starts without a terminal, as under `brew services`, it writes an owner-readable setup file inside the state directory instead and opens it in your browser. With `--no-open`, or when the browser cannot be opened, the server log shows the file's path. OwnGit shows the setup link itself only on a terminal: `owngit setup-link` prints it when its output is a terminal and names the setup file otherwise, so the link never reaches a log file, the system journal or a pipe.
 
-To start OwnGit at login with Homebrew on macOS, run `brew services start owngit`. Its log, including the setup file path on first start, is `$(brew --prefix)/var/log/owngit.log`. On Linux, `owngit service install` hands a Homebrew install to `brew services` the same way.
+When Homebrew installed OwnGit, `owngit service install` hands the service to `brew services`, which starts OwnGit at login on macOS. Its log, including the setup file path on first start, is `$(brew --prefix)/var/log/owngit.log`.
 
 Create a repository from the dashboard, then use its clone address, for example `http://127.0.0.1:7654/git/project.git`, with any Git client. [Operations](docs/OPERATIONS.md) covers access from other devices, moving existing repositories, recovery, and backups.
 

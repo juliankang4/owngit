@@ -52,7 +52,15 @@ Before setup is finished, the setup link also works from another device by an ad
 
 ## Run as a service
 
-On Linux, `owngit service install` runs OwnGit in the background with systemd and starts it at every boot, without a login. It asks no questions: who runs the service follows from how you run the command.
+`owngit service install` runs OwnGit in the background and starts it again by itself: on Linux with systemd at every boot, on macOS with launchd whenever you log in, and on Windows with Task Scheduler at every boot for an administrator account or whenever a standard account signs in. It chooses who runs the service from how you run the command.
+
+| Command | What it does |
+| --- | --- |
+| `owngit service status` | Whether OwnGit runs and answers, who runs it, the unit, agent or task, where the log is, the state directory and the addresses. |
+| `owngit service start`, `stop`, `restart` | Start, stop or restart the service. A stopped service starts again at its next boot or login trigger. |
+| `owngit service uninstall` | Stop the service and remove its unit, agent or task. The state directory and repositories stay, and the command says where the data is. For a Linux user service it reminds you that lingering stays on (`loginctl disable-linger` turns it off). |
+
+### Linux
 
 - On a desktop, in a terminal of your graphical session, OwnGit becomes a systemd user service of your account (`~/.config/systemd/user/owngit.service`) and keeps its state in your usual state directory. It turns on lingering for your account (`loginctl enable-linger`) so that the service starts at boot. The distributions tested (Debian 13, Ubuntu 24.04 and 26.04, Arch Linux) allow this for your own account without a password. Where lingering needs a password, OwnGit installs a system service as described next.
 - Over SSH, or on a computer without a graphical session, OwnGit becomes a system service that runs as your account (`/etc/systemd/system/owngit.service` with `User=` and `Group=`), and the state stays in your usual state directory. Writing the unit needs root once, so the command says in one line what root will do and runs one `sudo` for all of it: write the unit, reload systemd, enable the service and start it. `sudo` asks for your password itself; OwnGit never sees it. The root steps reach the shell on its standard input, so no file holds them. If `sudo` is not available or does not finish, the command prints the whole script as one command for an administrator to read and paste into a root shell; after that, `owngit service status` shows the result and `owngit setup-link` prints the setup link.
@@ -84,8 +92,6 @@ As with every restore, sessions, trusted hosts and network settings are not carr
 
 On Linux, the log goes to the systemd journal: `journalctl --user -u owngit.service -f` for a user service, `sudo journalctl -u owngit.service -f` for a system service.
 
-`owngit service` is not available on macOS yet. On macOS, use `brew services start owngit`. Windows is described next.
-
 ### On Windows
 
 On Windows, `owngit service install` registers a Task Scheduler task named `OwnGit` that runs OwnGit in the background as your account.
@@ -104,6 +110,27 @@ To update an administrator account's service, unpack or install the new release 
 On a newly installed Windows, a boot task stays "Queued" and does not start until someone signs in at the screen for the first time, with any account. A sign-in over SSH does not count. After that first sign-in the task starts at once, and at every boot from then on, before anyone signs in. `owngit service install` and `owngit service status` say so when they find the task queued.
 
 A state directory or a repository folder outside your user folder, such as `C:\OwnGit` or a folder on another drive, works too. If OwnGit ran with administrator rights before, for example from a terminal opened with "Run as administrator", such a folder, or some repositories in it, may belong to the Administrators group. A server without administrator rights then cannot protect its files there, and Git refuses those repositories as having "dubious ownership". So the approval of `owngit service install` from an administrator account also makes your account the owner of what the Administrators group owns in the state directory and in the repository folder, and the command says how many files and folders it changed. It changes nothing in a folder that belongs to another account, a whole drive, or a folder of Windows or of installed programs, and it does not follow links. From a standard account, the command names such a folder with the command an administrator can run. To do it yourself, run this in a PowerShell opened with "Run as administrator", with your folder in place of the example: `icacls "C:\Users\you\OwnGit-Repositories" /setowner "$env:USERNAME" /T /C`. In Command Prompt, write `%USERNAME%` instead of `$env:USERNAME`.
+
+### macOS
+
+On a Mac, `owngit service install` writes a LaunchAgent for your account, `~/Library/LaunchAgents/app.owngit.server.plist`, and starts it. It needs no administrator password. launchd starts OwnGit whenever you log in and starts it again if it stops. The state stays in your usual state directory, `~/Library/Application Support/owngit`, and the log is `~/Library/Logs/owngit/owngit.log`.
+
+A LaunchAgent starts at login, not at boot. On a Mac with FileVault, the usual setup, you log in after every restart to unlock the disk anyway, so in practice OwnGit runs as soon as the Mac is ready to use. A Mac that restarts to its login window, for example after a power cut, runs OwnGit again once you log in. With automatic login turned on in System Settings, it starts right after a restart.
+
+- Over SSH while you are logged in on the Mac's screen, the command does what it does in a Terminal window there.
+- Over SSH while you are not logged in on the Mac's screen, OwnGit starts in the background right away and keeps running after you leave the SSH session, until the Mac restarts. After a restart it starts at your next login on the Mac. Such a Mac counts as [a computer without a screen](#a-computer-without-a-screen).
+- As root, for example with `sudo`, the command refuses and asks you to run it as the user who uses OwnGit.
+- When Homebrew installed OwnGit and you are logged in on the Mac's screen, the command runs `brew services restart owngit`, as on Linux. `owngit service status`, `start`, `stop`, `restart` and `uninstall` use `brew services` too, and the log is `$(brew --prefix)/var/log/owngit.log`. A Homebrew install always uses the default state directory, `~/Library/Application Support/owngit`, so the command refuses `--state-dir` there.
+- Homebrew's service starts only in a desktop login. Over SSH while you are not logged in on the Mac's screen, the command installs the OwnGit LaunchAgent for a Homebrew install instead. The agent runs `$(brew --prefix)/opt/owngit/bin/owngit`, a path that stays the same across `brew upgrade`, and `owngit service status` says that Homebrew installed OwnGit and the OwnGit LaunchAgent runs it. When you later run `owngit service install` on the desktop, or turn on `brew services start owngit` there, brew services takes over and removes the OwnGit LaunchAgent, so only one server runs.
+- When npm installed OwnGit, the LaunchAgent starts the executable from the platform package, for example `/opt/homebrew/lib/node_modules/owngit/node_modules/owngit-darwin-arm64/bin/owngit`, instead of the Node.js launcher. Node.js does not keep running, and the [launcher's signal limits](../packaging/README.md#homebrew-winget-npm-and-arch-linux) do not apply. After `npm update -g owngit`, or after installing OwnGit under another Node.js version, run `owngit service install` again.
+
+Like the Linux units, the agent runs `owngit serve --state-dir DIR --no-open` with `--headless=true` when you installed it without being logged in on the Mac's screen and `--headless=false` otherwise, so a desktop install that later starts over SSH still keeps to this computer. As on Linux, installing again keeps that choice, and `owngit service install --headless=true` or `--headless=false` changes it. The agent never passes `--listen` or `--base-url`. It starts OwnGit by the path you ran the command with, for example `/usr/local/bin/owngit`. When you replace the binary at that path with a new release, run `owngit service install` again: it rewrites the agent, stops the running server and starts the new binary. Nothing in the agent depends on how the binary is signed.
+
+If launchd does not load the agent, for example because `owngit` is turned off under Login Items, the command says why, puts back the agent that was there before, and saves nothing else.
+
+If a launchd job that `owngit service` did not create already runs `owngit serve`, such as a LaunchAgent you wrote yourself or the Homebrew service of another install, `owngit service install` says in one line which job it found and changes nothing, so no second server starts. When that job is only a file that launchd has not loaded, the command says so and names the file instead of calling it running. To let `owngit service` manage OwnGit, unload and remove that job first, for example with `launchctl bootout gui/$(id -u)/LABEL`.
+
+macOS lists the agent as `owngit` in System Settings under General, Login Items & Extensions, Allow in the Background. Turned off there, it does not start at login.
 
 ### What the service may do
 
@@ -130,9 +157,12 @@ When OwnGit is installed on a computer where nobody can open a browser, the setu
 - root runs OwnGit in a container or an LXC container;
 - the command runs in an SSH session without a display (neither `DISPLAY` nor `WAYLAND_DISPLAY` is set);
 - systemd-logind lists no graphical session (X11 or Wayland, including a login screen) on this computer, and neither `DISPLAY` nor `WAYLAND_DISPLAY` is set outside SSH;
-- on Windows, the command runs in an SSH session.
+- on Windows, the command runs in an SSH session;
+- on a Mac, the user who runs OwnGit is not logged in on the Mac's screen, for example when you reach it over SSH while it shows the login window or someone else's desktop.
 
-On such a computer, the first start before setup, with no listen address saved and no `--listen` option, listens on every address (`0.0.0.0:7654`) and saves that as the listen address. The service unit passes `--headless=true`, which applies the same rule even when the service itself cannot tell, because a service has no SSH session or display of its own. Until setup is finished, a request from another device reaches only the setup page, whatever address or name it uses, and every other request from it is refused, as described in [Setup with a setup file](#setup-with-a-setup-file). `localhost`, `127.0.0.1` and `::1` count as names of this computer only on connections from this computer.
+A Mac where you are logged in on the screen counts as having one, even when you run the command over SSH. For root, as with `sudo owngit serve`, OwnGit looks at the user logged in on the screen instead.
+
+On such a computer, the first start before setup, with no listen address saved and no `--listen` option, listens on every address (`0.0.0.0:7654`) and saves that as the listen address. The service unit or agent passes `--headless=true`, which applies the same rule even when the service itself cannot tell, because a service has no SSH session or display of its own. Until setup is finished, a request from another device reaches only the setup page, whatever address or name it uses, and every other request from it is refused, as described in [Setup with a setup file](#setup-with-a-setup-file). `localhost`, `127.0.0.1` and `::1` count as names of this computer only on connections from this computer.
 
 The setup link is printed for this computer's addresses on private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), on a tailnet (`100.64.0.0/10`) and IPv6 unique local addresses, never for a public address, where the link and your passwords would cross the Internet unencrypted. A computer with only public addresses, such as many cloud servers, prints an SSH command instead (`ssh -L 7654:127.0.0.1:7654 USER@HOST`) and the link on `http://127.0.0.1:7654`: run the command on your own computer, keep it open, and open the link there. If you still open setup from a public address, setup selects the shared password for access and says that "this network" is the Internet.
 

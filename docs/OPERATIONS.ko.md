@@ -52,7 +52,15 @@ owngit serve
 
 ## 서비스로 실행하기
 
-Linux에서 `owngit service install`은 systemd로 OwnGit을 백그라운드에서 실행하고, 로그인하지 않아도 부팅할 때마다 켭니다. 아무것도 묻지 않으며, 명령을 어떻게 실행했는지에 따라 누가 서비스를 실행할지 정합니다.
+`owngit service install`은 OwnGit을 백그라운드에서 실행하고 알아서 다시 켜지게 합니다. Linux에서는 systemd가 부팅할 때마다, macOS에서는 launchd가 로그인할 때마다 켭니다. Windows에서는 작업 스케줄러가 관리자 계정이면 부팅할 때마다, 표준 계정이면 로그인할 때마다 켭니다. 명령을 어떻게 실행했는지에 따라 누가 서비스를 실행할지 정합니다.
+
+| 명령 | 하는 일 |
+| --- | --- |
+| `owngit service status` | OwnGit이 실행 중이고 응답하는지, 누가 실행하는지, 유닛, 에이전트 또는 작업, 로그 위치, 상태 디렉터리, 주소를 보여 줍니다. |
+| `owngit service start`, `stop`, `restart` | 서비스를 시작하거나 멈추거나 다시 시작합니다. 멈춘 서비스는 다음 부팅 또는 로그인 조건에 맞으면 다시 켜집니다. |
+| `owngit service uninstall` | 서비스를 멈추고 유닛, 에이전트 또는 작업을 지웁니다. 상태 디렉터리와 저장소는 남으며 데이터가 어디 있는지 알려 줍니다. Linux 사용자 서비스라면 lingering이 켜진 채 남는다고 알려 줍니다(`loginctl disable-linger`로 끕니다). |
+
+### Linux
 
 - 데스크톱의 그래픽 세션 터미널에서 실행하면 내 계정의 systemd 사용자 서비스(`~/.config/systemd/user/owngit.service`)가 되고, 상태는 평소 쓰던 상태 디렉터리에 둡니다. 부팅할 때 서비스가 켜지도록 내 계정의 lingering(`loginctl enable-linger`)을 켭니다. 확인한 배포판(Debian 13, Ubuntu 24.04와 26.04, Arch Linux)은 내 계정에 대해서는 비밀번호 없이 이를 허용합니다. lingering에 비밀번호가 필요한 곳에서는 아래의 시스템 서비스로 설치합니다.
 - SSH로 접속했거나 그래픽 세션이 없는 컴퓨터에서는 내 계정으로 실행되는 시스템 서비스(`User=`와 `Group=`이 있는 `/etc/systemd/system/owngit.service`)가 되고, 상태는 평소 쓰던 상태 디렉터리에 그대로 둡니다. 유닛을 쓰려면 root 권한이 한 번 필요하므로, 명령은 root가 할 일을 한 줄로 알려 준 뒤 유닛 쓰기, systemd 다시 읽기, 서비스 켜기와 시작을 `sudo` 한 번으로 처리합니다. 비밀번호는 `sudo`가 직접 묻고 OwnGit은 보지 않습니다. root가 할 일은 셸의 표준 입력으로 넘기므로 어떤 파일에도 남지 않습니다. `sudo`가 없거나 끝나지 않으면 관리자가 읽어 보고 root 셸에 붙여 넣을 수 있도록 스크립트 전체를 명령 하나로 출력합니다. 그 뒤 `owngit service status`로 결과를 보고 `owngit setup-link`로 설정 링크를 받으면 됩니다.
@@ -84,8 +92,6 @@ sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 
 Linux에서 로그는 systemd 저널에 남습니다. 사용자 서비스는 `journalctl --user -u owngit.service -f`, 시스템 서비스는 `sudo journalctl -u owngit.service -f`로 봅니다.
 
-`owngit service`는 아직 macOS에서 쓸 수 없습니다. macOS에서는 `brew services start owngit`을 쓰세요. Windows는 다음 절에서 설명합니다.
-
 ### Windows에서
 
 Windows에서 `owngit service install`은 `OwnGit`이라는 작업 스케줄러 작업을 등록하고, 이 작업이 내 계정으로 OwnGit을 백그라운드에서 실행합니다.
@@ -104,6 +110,27 @@ Windows는 작업 설정과 관계없이 관리자 계정의 부팅 작업에 �
 새로 설치한 Windows에서는 누군가 어떤 계정으로든 화면에서 처음 로그인하기 전까지 부팅 작업이 "큐에 대기됨" 상태로 남고 시작하지 않습니다. SSH 로그인은 여기에 들어가지 않습니다. 처음 로그인하면 작업이 바로 시작하고, 그 뒤로는 부팅할 때마다 아무도 로그인하지 않아도 시작합니다. `owngit service install`과 `owngit service status`는 작업이 대기 중이면 이를 알려 줍니다.
 
 상태 디렉터리나 저장소 폴더를 `C:\OwnGit`이나 다른 드라이브의 폴더처럼 사용자 폴더 밖에 두어도 됩니다. 예전에 "관리자 권한으로 실행"으로 연 터미널처럼 관리자 권한으로 OwnGit을 실행한 적이 있다면 이런 폴더나 그 안의 일부 저장소의 소유자가 Administrators 그룹일 수 있습니다. 그러면 관리자 권한 없는 서버가 그곳의 파일을 보호하지 못하고, Git도 이런 저장소를 "dubious ownership"으로 거부합니다. 그래서 관리자 계정에서 `owngit service install`을 승인하면 상태 디렉터리와 저장소 폴더에서 Administrators 그룹이 소유한 것을 내 계정 소유로 바꾸고, 몇 개의 파일과 폴더를 바꿨는지 알려 줍니다. 다른 계정의 폴더, 드라이브 전체, Windows나 설치된 프로그램의 폴더는 바꾸지 않으며 링크도 따라가지 않습니다. 표준 계정에서는 이런 폴더와 관리자가 실행할 명령을 알려 줍니다. 직접 바꾸려면 "관리자 권한으로 실행"으로 연 PowerShell에서 예시 대신 내 폴더를 넣어 `icacls "C:\Users\you\OwnGit-Repositories" /setowner "$env:USERNAME" /T /C`를 실행하세요. 명령 프롬프트에서는 `$env:USERNAME` 대신 `%USERNAME%`을 씁니다.
+
+### macOS
+
+Mac에서 `owngit service install`은 내 계정의 LaunchAgent `~/Library/LaunchAgents/app.owngit.server.plist`를 쓰고 시작합니다. 관리자 비밀번호는 필요 없습니다. launchd는 로그인할 때마다 OwnGit을 켜고, 멈추면 다시 켭니다. 상태는 평소 쓰던 상태 디렉터리 `~/Library/Application Support/owngit`에 두고, 로그는 `~/Library/Logs/owngit/owngit.log`에 남습니다.
+
+LaunchAgent는 부팅이 아니라 로그인할 때 켜집니다. 흔히 쓰는 FileVault를 켠 Mac은 다시 시작할 때마다 디스크를 풀려고 어차피 로그인하므로, 실제로는 Mac을 쓸 수 있게 되자마자 OwnGit도 실행됩니다. 정전 뒤처럼 로그인 화면에서 멈춘 Mac은 로그인하면 OwnGit이 다시 실행됩니다. 시스템 설정에서 자동 로그인을 켜 두었다면 다시 시작한 직후에 켜집니다.
+
+- Mac 화면에 로그인해 있는 상태에서 SSH로 실행하면 그 Mac의 터미널 창에서 실행한 것과 같습니다.
+- Mac 화면에 로그인하지 않은 상태에서 SSH로 실행하면 OwnGit이 바로 백그라운드에서 시작하고, SSH 세션을 끝내도 Mac을 다시 시작할 때까지 계속 실행됩니다. 다시 시작한 뒤에는 그 Mac에 다음으로 로그인할 때 켜집니다. 이런 Mac은 [화면이 없는 컴퓨터](#화면이-없는-컴퓨터)로 봅니다.
+- `sudo` 등으로 root가 실행하면 거부하고, OwnGit을 쓰는 사용자로 실행하라고 안내합니다.
+- Homebrew로 설치했고 Mac 화면에 로그인해 있다면 Linux처럼 `brew services restart owngit`을 실행합니다. `owngit service status`, `start`, `stop`, `restart`, `uninstall`도 `brew services`를 쓰며, 로그는 `$(brew --prefix)/var/log/owngit.log`에 있습니다. Homebrew 설치는 항상 기본 상태 디렉터리 `~/Library/Application Support/owngit`를 쓰므로, 이때는 `--state-dir`를 받지 않습니다.
+- Homebrew 서비스는 화면에 로그인한 상태에서만 켜집니다. Mac 화면에 로그인하지 않은 상태에서 SSH로 실행하면 Homebrew 설치라도 대신 OwnGit LaunchAgent를 설치합니다. 에이전트는 `brew upgrade` 뒤에도 바뀌지 않는 경로 `$(brew --prefix)/opt/owngit/bin/owngit`를 실행하고, `owngit service status`는 Homebrew로 설치했고 OwnGit LaunchAgent가 실행한다고 알려 줍니다. 나중에 화면에서 `owngit service install`을 실행하거나 `brew services start owngit`을 켜면 brew services가 넘겨받고 OwnGit LaunchAgent를 지우므로 서버는 하나만 돕니다.
+- npm으로 설치했다면 LaunchAgent는 Node.js 실행기 대신 플랫폼 패키지의 실행 파일(예: `/opt/homebrew/lib/node_modules/owngit/node_modules/owngit-darwin-arm64/bin/owngit`)을 직접 실행합니다. Node.js는 계속 떠 있지 않고, [실행기의 신호 처리 한계](../packaging/README.md#homebrew-winget-npm-and-arch-linux)도 해당하지 않습니다. `npm update -g owngit`을 실행했거나 다른 Node.js 버전에 OwnGit을 다시 설치했다면 `owngit service install`을 다시 실행하세요.
+
+Linux 유닛처럼 에이전트는 `owngit serve --state-dir DIR --no-open`을 실행하면서, Mac 화면에 로그인하지 않은 상태에서 설치했다면 `--headless=true`, 그 밖에는 `--headless=false`를 넘깁니다. 그래서 데스크톱에서 설치한 서비스가 나중에 SSH로 켜져도 이 컴퓨터에서만 연결을 받습니다. Linux처럼 다시 설치해도 이 선택은 유지되고, `owngit service install --headless=true`나 `--headless=false`로 바꿀 수 있습니다. `--listen`이나 `--base-url`은 넘기지 않습니다. OwnGit은 명령을 실행한 경로(예: `/usr/local/bin/owngit`)로 시작합니다. 그 경로의 실행 파일을 새 릴리스로 바꿨다면 `owngit service install`을 다시 실행하세요. 에이전트를 다시 쓰고, 실행 중인 서버를 멈춘 뒤 새 실행 파일로 시작합니다. 에이전트는 실행 파일의 서명 방식에 기대는 부분이 없습니다.
+
+launchd가 에이전트를 올리지 못하면(예: 로그인 항목에서 `owngit`을 끈 경우) 명령은 이유를 알려 주고, 원래 있던 에이전트를 되돌려 놓으며, 다른 것은 저장하지 않습니다.
+
+`owngit service`가 만들지 않은 launchd 작업이 이미 `owngit serve`를 실행하고 있다면(직접 만든 LaunchAgent나 다른 방법으로 설치한 Homebrew 서비스 등), `owngit service install`은 찾은 작업을 한 줄로 알려 주고 아무것도 바꾸지 않으므로 서버가 두 개 뜨지 않습니다. 그 작업이 launchd에 올라가지 않은 파일뿐이라면 실행 중이라고 하지 않고, 올라가 있지 않다는 사실과 파일 경로를 알려 줍니다. `owngit service`로 관리하려면 먼저 그 작업을 내리고 지우세요. 예를 들어 `launchctl bootout gui/$(id -u)/LABEL`로 내릴 수 있습니다.
+
+macOS는 시스템 설정의 일반 > 로그인 항목 및 확장 프로그램 > 백그라운드에서 허용에 이 에이전트를 `owngit`으로 표시합니다. 그곳에서 끄면 로그인할 때 켜지지 않습니다.
 
 ### 서비스가 할 수 있는 일
 
@@ -131,8 +158,11 @@ Linux의 시스템 서비스에는 다음 제한이 걸립니다. 어느 것도 
 - 명령이 디스플레이 없는 SSH 세션에서 실행됩니다(`DISPLAY`와 `WAYLAND_DISPLAY`가 모두 없음).
 - systemd-logind에 그래픽 세션(X11이나 Wayland, 로그인 화면 포함)이 하나도 없고, SSH 밖에서 `DISPLAY`와 `WAYLAND_DISPLAY`도 설정되어 있지 않습니다.
 - Windows에서 명령이 SSH 세션에서 실행됩니다.
+- Mac에서 OwnGit을 실행하는 사용자가 Mac 화면에 로그인해 있지 않습니다. 예를 들어 로그인 화면이나 다른 사람의 데스크톱이 떠 있는 Mac에 SSH로 접속한 경우입니다.
 
-이런 컴퓨터에서 설치 전에, 저장된 연결 주소도 `--listen` 옵션도 없이 처음 시작하면 모든 주소(`0.0.0.0:7654`)에서 연결을 받고 이를 연결 주소로 저장합니다. 서비스 자체에는 SSH 세션도 디스플레이도 없어 스스로 판단할 수 없으므로, 서비스 유닛이 같은 규칙을 적용하라고 `--headless=true`를 넘깁니다. 설치를 마치기 전까지 다른 기기에서 온 요청은 어떤 주소나 이름을 쓰든 설정 페이지에만 닿고, 그 밖의 요청은 [설정 파일로 설치하기](#설정-파일로-설치하기)에서 설명한 대로 모두 거부됩니다. `localhost`, `127.0.0.1`, `::1`은 이 컴퓨터에서 온 연결에서만 이 컴퓨터의 이름으로 인정됩니다.
+Mac 화면에 로그인해 있다면 SSH로 명령을 실행해도 화면이 있는 컴퓨터로 봅니다. `sudo owngit serve`처럼 root로 실행하면 화면에 로그인한 사용자를 기준으로 판단합니다.
+
+이런 컴퓨터에서 설치 전에, 저장된 연결 주소도 `--listen` 옵션도 없이 처음 시작하면 모든 주소(`0.0.0.0:7654`)에서 연결을 받고 이를 연결 주소로 저장합니다. 서비스 자체에는 SSH 세션도 디스플레이도 없어 스스로 판단할 수 없으므로, 서비스 유닛이나 에이전트가 같은 규칙을 적용하라고 `--headless=true`를 넘깁니다. 설치를 마치기 전까지 다른 기기에서 온 요청은 어떤 주소나 이름을 쓰든 설정 페이지에만 닿고, 그 밖의 요청은 [설정 파일로 설치하기](#설정-파일로-설치하기)에서 설명한 대로 모두 거부됩니다. `localhost`, `127.0.0.1`, `::1`은 이 컴퓨터에서 온 연결에서만 이 컴퓨터의 이름으로 인정됩니다.
 
 설정 링크는 이 컴퓨터의 사설 네트워크 주소(`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), tailnet 주소(`100.64.0.0/10`), IPv6 고유 로컬 주소로만 출력합니다. 공인 주소로는 출력하지 않습니다. 링크와 비밀번호가 암호화되지 않은 채 인터넷을 지나기 때문입니다. 많은 클라우드 서버처럼 공인 주소만 있는 컴퓨터에서는 SSH 명령(`ssh -L 7654:127.0.0.1:7654 USER@HOST`)과 `http://127.0.0.1:7654`의 링크를 대신 출력합니다. 내 컴퓨터에서 그 명령을 실행해 열어 둔 채 그 링크를 여세요. 그래도 공인 주소에서 설정 화면을 열면 접근 방식으로 공용 비밀번호를 골라 두고, 여기서 "이 네트워크"는 인터넷이라고 알려 줍니다.
 
