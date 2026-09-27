@@ -5,6 +5,10 @@ package state
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // protectionFingerprint describes the permission state that a refusal must
@@ -17,9 +21,20 @@ func protectionFingerprint(path string) (string, error) {
 	return fmt.Sprintf("mode=%04o", info.Mode().Perm()), nil
 }
 
-// openSourceHandle opens a source entry read-only. The caller compares the
-// handle identity with the directory entry, so no data is read from a handle
-// that is only used for identity.
+func resolveStatePath(path string) (string, error) { return filepath.EvalSymlinks(path) }
+
+func requireAcceptableStateOwner(info os.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != 0 && int(stat.Uid) != os.Geteuid() {
+		return fmt.Errorf("state directory must be owned by this account or root; run the command as its owner")
+	}
+	return nil
+}
+
 func openSourceHandle(path string, _ bool) (*os.File, error) {
-	return os.Open(path)
+	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open protected state entry", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(descriptor), path), nil
 }

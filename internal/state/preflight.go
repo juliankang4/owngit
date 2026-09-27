@@ -494,6 +494,9 @@ func bindDirectory(dir string) (*sourceObject, error) {
 	if !info.IsDir() {
 		return nil, closeAfter(handle, errors.New("state path is not a directory"))
 	}
+	if err := requireAcceptableStateOwner(info); err != nil {
+		return nil, closeAfter(handle, err)
+	}
 	fingerprint, err := protectionFingerprint(dir)
 	if err != nil {
 		return nil, closeAfter(handle, fmt.Errorf("inspect state directory: %w", err))

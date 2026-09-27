@@ -9,6 +9,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func resolveStatePath(path string) (string, error)  { return path, nil }
+func requireAcceptableStateOwner(os.FileInfo) error { return nil }
+
 // protectionFingerprint describes the owner and DACL that a refusal must leave
 // unchanged. It is compared as an opaque SDDL string.
 func protectionFingerprint(path string) (string, error) {

@@ -637,29 +637,37 @@ func TestAcceptanceProtectsInspectedHandles(t *testing.T) {
 	})
 }
 
+func createMarkedState(t *testing.T, directory, marker string) {
+	t.Helper()
+	createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
+	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
+	_, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('exchange_marker',?)`, marker)
+	noErr(t, err)
+	noErr(t, db.Close())
+}
+
+func openStateMarker(t *testing.T, directory string) (string, string) {
+	t.Helper()
+	store, err := Open(context.Background(), directory)
+	noErr(t, err)
+	values, err := store.metadataValues(context.Background(), "exchange_marker")
+	noErr(t, err)
+	noErr(t, store.Close())
+	return values["exchange_marker"], store.Dir()
+}
+
 func TestOpenRefusesStateInExchangeableParent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix parent permissions")
 	}
-	ctx := context.Background()
 	parent := filepath.Join(t.TempDir(), "shared")
 	checked := filepath.Join(parent, "state")
 	replacement := filepath.Join(parent, "replacement")
 	noErr(t, os.Mkdir(parent, 0o755))
-	for directory, marker := range map[string]string{checked: "checked", replacement: "replacement"} {
-		createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
-		db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-		_, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('exchange_marker',?)`, marker)
-		noErr(t, err)
-		noErr(t, db.Close())
-	}
-	store, err := Open(ctx, checked)
-	noErr(t, err)
-	values, err := store.metadataValues(ctx, "exchange_marker")
-	noErr(t, err)
-	noErr(t, store.Close())
-	if values["exchange_marker"] != "checked" {
-		t.Fatalf("no-exchange control opened marker %q", values["exchange_marker"])
+	createMarkedState(t, checked, "checked")
+	createMarkedState(t, replacement, "replacement")
+	if marker, _ := openStateMarker(t, checked); marker != "checked" {
+		t.Fatalf("no-exchange control opened marker %q", marker)
 	}
 	noErr(t, os.Chmod(parent, 0o777))
 	useHooks(t)
@@ -667,13 +675,45 @@ func TestOpenRefusesStateInExchangeableParent(t *testing.T) {
 		noErr(t, os.Rename(checked, checked+".inspected"))
 		noErr(t, os.Rename(replacement, checked))
 	}
-	store, err = Open(ctx, checked)
+	store, err := Open(context.Background(), checked)
 	if store != nil {
 		_ = store.Close()
 		t.Fatal("opened the replacement state after exchange")
 	}
 	if err == nil || !strings.Contains(err.Error(), "another account can change "+parent) {
 		t.Fatalf("exchangeable state parent: %v", err)
+	}
+}
+
+func TestOpenPinsResolvedStateLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix symbolic links")
+	}
+	root := t.TempDir()
+	checked := filepath.Join(root, "checked")
+	replacement := filepath.Join(root, "replacement")
+	createMarkedState(t, checked, "checked")
+	createMarkedState(t, replacement, "replacement")
+	shared := filepath.Join(root, "shared")
+	noErr(t, os.Mkdir(shared, 0o755))
+	noErr(t, os.Chmod(shared, 0o777|os.ModeSticky))
+	link := filepath.Join(shared, "state")
+	next := filepath.Join(shared, "next")
+	noErr(t, os.Symlink(checked, link))
+	noErr(t, os.Symlink(replacement, next))
+	if marker, resolved := openStateMarker(t, link); marker != "checked" || resolved != checked {
+		t.Fatalf("link control marker=%q directory=%q", marker, resolved)
+	}
+	useHooks(t)
+	preflightHooks.afterRelease = func(directory string) {
+		if directory != checked {
+			t.Fatalf("preflight used %q, want %q", directory, checked)
+		}
+		noErr(t, os.Rename(link, link+".old"))
+		noErr(t, os.Rename(next, link))
+	}
+	if marker, resolved := openStateMarker(t, link); marker != "checked" || resolved != checked {
+		t.Fatalf("exchanged link marker=%q directory=%q", marker, resolved)
 	}
 }
 

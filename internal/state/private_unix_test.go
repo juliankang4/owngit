@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -87,6 +88,25 @@ func TestRequireProtectedPath(t *testing.T) {
 			t.Error("staff-writable folder was accepted")
 		}
 	}
+}
+
+type stateOwnerInfo struct {
+	os.FileInfo
+	stat syscall.Stat_t
+}
+
+func (info stateOwnerInfo) Sys() any { return &info.stat }
+
+func TestStateDirectoryOwnerRule(t *testing.T) {
+	info, err := os.Stat(t.TempDir())
+	noErr(t, err)
+	foreign := stateOwnerInfo{FileInfo: info, stat: *info.Sys().(*syscall.Stat_t)}
+	foreign.stat.Uid = uint32(os.Geteuid() + 1)
+	if err := requireAcceptableStateOwner(foreign); err == nil {
+		t.Fatal("state directory owned by another account was accepted")
+	}
+	foreign.stat.Uid = 0
+	noErr(t, requireAcceptableStateOwner(foreign))
 }
 
 func TestProtectPrivatePathRefusesFinalLink(t *testing.T) {

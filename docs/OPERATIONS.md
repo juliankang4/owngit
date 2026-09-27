@@ -809,7 +809,7 @@ An archive download is a Git transfer with the limits below: at most 4 GiB and 3
 
 ## Storage
 
-- The state directory is the platform config directory joined with `owngit`, or `~/.owngit` when no config directory is available. It holds `owngit.sqlite` and, while the database is in use, its `-wal` and `-shm` files. Keep it on local storage, never on a network share used by other computers. Windows network (UNC) paths are refused.
+- The state directory is the platform config directory joined with `owngit`, or `~/.owngit` when no config directory is available. It holds `owngit.sqlite` and, while the database is in use, its `-wal` and `-shm` files. Keep it on local storage, never on a network share used by other computers. Windows network (UNC) paths are refused. On Unix, OwnGit resolves a state-directory link once and refuses the resolved directory when another account could replace it through its owner or a parent folder; use the printed `chmod` command or choose another location.
 - Import source credentials (tokens, Basic passwords, and source CAs) are stored unencrypted as JSON in `import-credentials/NAME.json` inside the state directory, one file per repository. OwnGit restricts that folder and its files to the account that runs OwnGit, and backups never include them. Anyone who can read the state directory as that account can read these secrets, so protect it like the credentials themselves.
 - Choose the repository folder during setup. It can be on a separate disk or a mounted SMB or NFS share, with one OwnGit writer at a time. OwnGit leaves existing files in the folder alone and creates repositories there as bare repositories ending in `.git`.
 - While it serves, OwnGit keeps a `.owngit-serve.lock` file in the repository folder locked. A second server on the same folder, for example one started from a copy of the state directory, refuses to start and names the folder, because it would rewrite the running server's repository hooks. Moving a stopped state directory works as before. If the folder is empty or missing when OwnGit starts, for example because the share is not mounted yet, OwnGit locks it before it first writes there. If the lock fails for another reason when OwnGit starts, the server log says that OwnGit could not check, and OwnGit starts anyway. On a network share, whether a server on another computer is detected depends on the share's file locking.
@@ -859,6 +859,8 @@ owngit restore \
   --state-dir /path/to/new-owngit-state \
   --repository-root /path/to/new-repositories
 ```
+
+On Unix, the new state directory follows the same parent-folder rule, so use the printed `chmod` command or choose another state path if it is refused; the repository root may still be in a shared folder.
 
 Restore checks every bundle, ref, object, and record before it publishes the new state. The SHA-256 hashes detect corruption but cannot detect a backup that someone replaced along with its manifest.
 
