@@ -321,6 +321,9 @@ func validateCheckJobTimelineAndLease(job CheckJob) error {
 		return errors.New("non-interrupted check job has interruption evidence")
 	}
 
+	// Preflight can finish a claim without granting execution or registering an attempt.
+	preStartFailure := hasClaim && hasLease && hasFinish && !hasStart && !hasAttempt && job.CredentialGeneration > 0 &&
+		job.LeaseLostAt == nil && job.InterruptedAt == nil && job.CancelRequestedAt == nil
 	switch job.Status {
 	case CheckJobPending:
 		if hasClaim || hasStart || hasFinish || hasLease || job.LeaseLostAt != nil || hasAttempt || job.CancelRequestedAt != nil {
@@ -339,7 +342,7 @@ func validateCheckJobTimelineAndLease(job CheckJob) error {
 			return errors.New("ambiguous check job is missing lease loss evidence")
 		}
 	case CheckJobInterrupted:
-		if !hasFinish || hasLease || job.LeaseLostAt != nil || job.InterruptedAt == nil || !job.InterruptedAt.Equal(*job.FinishedAt) {
+		if !preStartFailure && (!hasFinish || hasLease || job.LeaseLostAt != nil || job.InterruptedAt == nil || !job.InterruptedAt.Equal(*job.FinishedAt)) {
 			return errors.New("interrupted check job has inconsistent facts")
 		}
 	case CheckJobCancelled:
@@ -348,7 +351,12 @@ func validateCheckJobTimelineAndLease(job CheckJob) error {
 			(!hasClaim && (hasStart || hasLease || hasAttempt)) {
 			return errors.New("cancelled check job has inconsistent facts")
 		}
-	case CheckJobPassed, CheckJobFailed, CheckJobError, CheckJobIncomplete, CheckJobUnavailable:
+	case CheckJobError, CheckJobUnavailable:
+		if preStartFailure {
+			break
+		}
+		fallthrough
+	case CheckJobPassed, CheckJobFailed, CheckJobIncomplete:
 		if !hasClaim || !hasStart || !hasFinish || !hasLease || !hasAttempt {
 			return errors.New("terminal check job has inconsistent facts")
 		}
@@ -361,14 +369,18 @@ func validateCheckJobTimelineAndLease(job CheckJob) error {
 	if hasStart && job.StartedAt.Before(*job.ClaimedAt) {
 		return errors.New("check job start precedes its claim")
 	}
-	if (hasFinish && job.FinishedAt.Before(job.AdmittedAt)) || (hasStart && hasFinish && job.FinishedAt.Before(*job.StartedAt)) {
+	if hasFinish && (job.FinishedAt.Before(job.AdmittedAt) || (hasClaim && job.FinishedAt.Before(*job.ClaimedAt)) ||
+		(hasStart && job.FinishedAt.Before(*job.StartedAt))) {
 		return errors.New("check job finish precedes its execution")
 	}
 	if hasLease && !job.LeaseExpiresAt.After(*job.ClaimedAt) {
 		return errors.New("check job lease does not follow its claim")
 	}
-	if job.LeaseLostAt != nil && (!job.LeaseLostAt.Equal(*job.LeaseExpiresAt) || job.LeaseLostAt.Before(*job.ClaimedAt)) {
-		return errors.New("check job lease loss does not match its expiry")
+	// Started execution can lose authority at restart, before or after expiry.
+	// An unstarted expired claim still records the lease deadline as its loss.
+	if job.LeaseLostAt != nil && ((!hasStart && !job.LeaseLostAt.Equal(*job.LeaseExpiresAt)) ||
+		job.LeaseLostAt.Before(*job.ClaimedAt) || (hasStart && job.LeaseLostAt.Before(*job.StartedAt))) {
+		return errors.New("check job lease loss does not match its execution or expiry")
 	}
 	if job.CancelRequestedAt != nil && job.CancelRequestedAt.Before(job.AdmittedAt) {
 		return errors.New("check job cancellation precedes admission")
