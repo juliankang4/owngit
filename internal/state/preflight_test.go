@@ -615,6 +615,27 @@ func TestFreshDirectoryAcceptanceDetectsAppearanceAndReplacement(t *testing.T) {
 	}
 }
 
+func TestAcceptanceProtectsInspectedHandles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix mode check")
+	}
+	root := t.TempDir()
+	directory := filepath.Join(root, "state")
+	createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
+	database := filepath.Join(directory, databaseName)
+	noErr(t, os.Chmod(directory, 0o755))
+	noErr(t, os.Chmod(database, 0o644))
+	moved := filepath.Join(root, "inspected")
+	hookAt(t, pointProtect, func(string) {
+		noErr(t, os.Rename(directory, moved))
+		noErr(t, os.Mkdir(directory, 0o755))
+	})
+	openRefused(t, directory, ErrInspectionUnstable.Error())
+	assertProtectionFingerprints(t, map[string]string{
+		moved: "mode=0700", filepath.Join(moved, databaseName): "mode=0600",
+	})
+}
+
 func TestBaselineReplacedBeforeAcceptanceIsNotMigrated(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

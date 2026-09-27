@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"owngit/internal/service"
+	"owngit/internal/state"
 )
 
 // On macOS "owngit service" writes a LaunchAgent for the user who runs it;
@@ -29,6 +30,8 @@ var launchdFolders = []string{"/Library/LaunchAgents", "/Library/LaunchDaemons"}
 // Logs folders when it is not empty. Tests set it, so that no test touches
 // the real ones.
 var launchAgentHome = ""
+
+var requireProtectedPath = state.RequireProtectedPath
 
 // launchAgentHost is the macOS service backend.
 type launchAgentHost struct {
@@ -368,10 +371,11 @@ func (host *launchAgentHost) status() error {
 	}
 	host.printf("  Mode:    %s, started when %s logs in on this Mac\n", installed.Mode.Describe(), host.account.Username)
 	host.printServiceFacts(installed.Mode, installed.UnitPath, installed.StateDir, address)
+	_, complete := setupStatus(installed.StateDir)
 	switch {
 	case state.Domain == "":
 		host.printf("Run \"owngit service start\" to start it.\n")
-	case !setupComplete(installed.StateDir):
+	case !complete:
 		host.printf("Setup is not complete. Run \"owngit setup-link\" in a terminal for the one-time setup link.\n")
 	}
 	return nil

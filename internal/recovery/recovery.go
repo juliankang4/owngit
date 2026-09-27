@@ -396,12 +396,6 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 			if _, err := runner.Run(ctx, repositoryPath, nil, arguments...); err != nil {
 				return fmt.Errorf("bundle repository %q: %w", stored.ID, err)
 			}
-			if err := os.Chmod(bundlePath, 0o600); err != nil {
-				return err
-			}
-			if err := state.ProtectPrivatePath(bundlePath, false); err != nil {
-				return err
-			}
 			if err := syncRegularFile(bundlePath); err != nil {
 				return err
 			}
@@ -416,7 +410,7 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 		return fmt.Errorf("validate completed backup manifest: %w", err)
 	}
 	manifestPath := filepath.Join(stage, manifestName)
-	file, err := os.OpenFile(manifestPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	file, err := state.CreatePrivateFile(manifestPath)
 	if err != nil {
 		return err
 	}
@@ -429,9 +423,6 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 		return err
 	}
 	if err := file.Close(); err != nil {
-		return err
-	}
-	if err := state.ProtectPrivatePath(manifestPath, false); err != nil {
 		return err
 	}
 	if err := syncDirectory(bundles); err != nil {
@@ -832,7 +823,7 @@ func requireAbsent(target, label string) error {
 
 func writePendingRestore(root string, pending pendingRestore) error {
 	markerPath := filepath.Join(root, pendingRestoreName)
-	file, err := os.OpenFile(markerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	file, err := state.CreatePrivateFile(markerPath)
 	if err != nil {
 		return fmt.Errorf("create incomplete restore marker: %w", err)
 	}
@@ -849,15 +840,16 @@ func writePendingRestore(root string, pending pendingRestore) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := state.ProtectPrivatePath(markerPath, false); err != nil {
-		return err
-	}
 	return nil
 }
 
 func syncRegularFile(filePath string) error {
 	file, err := os.OpenFile(filePath, os.O_RDWR, 0)
 	if err != nil {
+		return err
+	}
+	if err := state.ProtectPrivateHandle(file, false); err != nil {
+		file.Close()
 		return err
 	}
 	syncErr := file.Sync()

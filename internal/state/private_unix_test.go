@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -73,5 +74,29 @@ func TestRequireProtectedPath(t *testing.T) {
 			t.Errorf("%s writable by others: %v", changeable, err)
 		}
 		noErr(t, os.Chmod(changeable, 0o755))
+	}
+	noErr(t, os.Chmod(folder, 0o777|os.ModeSticky))
+	noErr(t, RequireProtectedPath(binary))
+	if err := RequireProtectedPath(folder); err == nil || !strings.Contains(err.Error(), "another account can change "+folder) {
+		t.Errorf("sticky final folder: %v", err)
+	}
+	if runtime.GOOS == "darwin" {
+		noErr(t, os.Chown(folder, -1, 20))
+		noErr(t, os.Chmod(folder, 0o775))
+		if err := RequireProtectedPath(folder); err == nil {
+			t.Error("staff-writable folder was accepted")
+		}
+	}
+}
+
+func TestProtectPrivatePathRefusesFinalLink(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target")
+	link := filepath.Join(directory, "link")
+	noErr(t, os.WriteFile(target, nil, 0o644))
+	noErr(t, os.Chmod(target, 0o644))
+	noErr(t, os.Symlink(target, link))
+	if err := ProtectPrivatePath(link, false); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("protect link: %v", err)
 	}
 }

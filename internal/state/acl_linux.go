@@ -62,17 +62,6 @@ func accessListFix(path string, info os.FileInfo) (string, error) {
 	return "", nil
 }
 
-// ChangeAccessListFix accepts a folder or file of this account: its
-// owner-only mode sets the mask to no access, so named entries in its access
-// list no longer apply.
-func ChangeAccessListFix(string) (string, error) { return "", nil }
-
-func adminGroup(uint32) bool { return false }
-
-func clearPathAccessList(string) error { return nil }
-
-func clearAccessList(*os.File) error { return nil }
-
 // posixAccessACL reads the access list of path, without following a final
 // link. It returns nothing when there is none.
 func posixAccessACL(path string) ([]byte, error) {

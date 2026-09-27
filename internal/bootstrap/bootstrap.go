@@ -44,7 +44,7 @@ func AcquireSetupLock(ctx context.Context, directory string) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("open setup issuance lock: %w", err)
 	}
-	if err := state.ProtectPrivatePath(lockPath, false); err != nil {
+	if err := state.ProtectPrivateHandle(lock, false); err != nil {
 		lock.Close()
 		return nil, fmt.Errorf("protect setup issuance lock: %w", err)
 	}
@@ -144,7 +144,7 @@ func (issuer *Issuer) issue(ctx context.Context) (string, string, error) {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := state.ProtectPrivatePath(temporaryPath, false); err != nil {
+	if err := state.ProtectPrivateHandle(temporary, false); err != nil {
 		temporary.Close()
 		return "", "", err
 	}
@@ -238,7 +238,7 @@ func writeJournal(directory string, journal issueJournal) error {
 	}
 	name := temporary.Name()
 	defer os.Remove(name)
-	if err := state.ProtectPrivatePath(name, false); err != nil {
+	if err := state.ProtectPrivateHandle(temporary, false); err != nil {
 		temporary.Close()
 		return err
 	}

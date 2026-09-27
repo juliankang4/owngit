@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -96,12 +97,13 @@ func walkProtected(current, relative string, check func(string, os.FileInfo) err
 // whose members are treated as the account itself. Access list entries that
 // let another account write are refused as well.
 func OthersCanChange(path string, info os.FileInfo) (bool, string, error) {
-	return othersCanChange(path, info, false)
+	return othersCanChange(path, info, false, true)
 }
 
 // othersCanChange is OthersCanChange; with rootGroups it also accepts group
-// write for the groups whose members may act as root.
-func othersCanChange(path string, info os.FileInfo, rootGroups bool) (bool, string, error) {
+// write for macOS groups whose members may act as root. allowSticky accepts a
+// writable sticky directory when only its existing entries need protection.
+func othersCanChange(path string, info os.FileInfo, rootGroups, allowSticky bool) (bool, string, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return false, "", errors.New("owner is unavailable")
@@ -113,8 +115,9 @@ func othersCanChange(path string, info os.FileInfo, rootGroups bool) (bool, stri
 		return false, "", nil
 	}
 	permissions := info.Mode().Perm()
-	if info.Mode()&os.ModeSticky == 0 && (permissions&0o002 != 0 ||
-		permissions&0o020 != 0 && !OwnPrivateGroup(stat.Gid) && !(rootGroups && adminGroup(stat.Gid))) {
+	adminGroup := runtime.GOOS == "darwin" && (stat.Gid == 0 || stat.Gid == 80)
+	if (!allowSticky || info.Mode()&os.ModeSticky == 0) && (permissions&0o002 != 0 ||
+		permissions&0o020 != 0 && !OwnPrivateGroup(stat.Gid) && !(rootGroups && adminGroup)) {
 		return true, "chmod g-w,o-w " + shellQuote(path), nil
 	}
 	fix, err := accessListFix(path, info)
@@ -123,20 +126,37 @@ func othersCanChange(path string, info os.FileInfo, rootGroups bool) (bool, stri
 
 // RequireProtectedPath refuses path when another account could change it or
 // anything on the way to it; see WalkProtected and OthersCanChange. On macOS
-// it accepts group write for wheel and admin, like Homebrew's folders.
-func RequireProtectedPath(path string) error {
-	_, missing, err := WalkProtected(path, func(name string, info os.FileInfo) error {
-		changeable, fix, err := othersCanChange(name, info, true)
-		if err == nil && changeable {
-			err = fmt.Errorf("another account can change %s", name)
-			if fix != "" {
-				err = fmt.Errorf("%w (%s fixes that)", err, fix)
-			}
-		}
+// it accepts group write for wheel and admin, like Homebrew's folders. A
+// writable sticky directory is accepted only as an ancestor, not as path.
+func RequireProtectedPath(path string) error { return requireProtectedPath(path, true) }
+
+func requireProtectedPath(path string, strictFinal bool) error {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
 		return err
-	})
+	}
+	check := func(allowSticky bool) func(string, os.FileInfo) error {
+		return func(name string, info os.FileInfo) error {
+			changeable, fix, err := othersCanChange(name, info, true, allowSticky)
+			if err == nil && changeable {
+				err = fmt.Errorf("another account can change %s", name)
+				if fix != "" {
+					err = fmt.Errorf("%w (%s fixes that)", err, fix)
+				}
+			}
+			return err
+		}
+	}
+	resolved, missing, err := WalkProtected(absolute, check(true))
 	if err == nil && missing != "" {
-		err = fmt.Errorf("%s does not exist", path)
+		return fmt.Errorf("%s does not exist", path)
+	}
+	if err == nil && strictFinal {
+		info, statErr := os.Lstat(resolved)
+		if statErr != nil {
+			return statErr
+		}
+		err = check(false)(resolved, info)
 	}
 	return err
 }

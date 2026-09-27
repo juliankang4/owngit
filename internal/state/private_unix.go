@@ -6,26 +6,37 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // CreatePrivateFile creates a new owner-only file and keeps its handle open.
 func CreatePrivateFile(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := ProtectPrivateHandle(file, false); err != nil {
+		return nil, errors.Join(err, file.Close(), os.Remove(path))
+	}
+	return file, nil
 }
 
-// ProtectPrivatePath applies the private mode to path. On macOS it also
-// removes an access list that allows anything; see clearAccessList.
+// ProtectPrivatePath opens a non-link entry in a protected parent, then protects that handle.
 func ProtectPrivatePath(path string, directory bool) error {
-	mode := os.FileMode(0o600)
-	if directory {
-		mode = 0o700
+	if err := requireProtectedPath(filepath.Dir(path), false); err != nil {
+		return fmt.Errorf("protect parent of %s: %w", path, err)
 	}
-	if err := os.Chmod(path, mode); err != nil {
-		return err
+	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return &os.PathError{Op: "open private path without following a link", Path: path, Err: err}
 	}
-	return clearPathAccessList(path)
+	file := os.NewFile(uintptr(descriptor), path)
+	defer file.Close()
+	return ProtectPrivateHandle(file, directory)
 }
 
 // ProtectPrivateHandle applies the private mode to the open file, so a

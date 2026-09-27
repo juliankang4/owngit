@@ -14,6 +14,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func RequireProtectedPath(string) error {
+	return errors.New("protected paths are unavailable on Windows")
+}
+
 func ensureLocalStateFilesystem(path string) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

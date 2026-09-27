@@ -163,12 +163,6 @@ func Open(ctx context.Context, dir string) (result *Store, err error) {
 		db.Close()
 		return nil, err
 	}
-	for _, protectedPath := range []string{path, path + walSuffix, path + shmSuffix} {
-		if err := ProtectPrivatePath(protectedPath, false); err != nil && !errors.Is(err, os.ErrNotExist) {
-			db.Close()
-			return nil, fmt.Errorf("protect state database file: %w", err)
-		}
-	}
 	return store, nil
 }
 

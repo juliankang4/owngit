@@ -292,9 +292,6 @@ func (s *Store) writeImportCredentials(ctx context.Context, credential ImportCre
 		return fmt.Errorf("publish import credential file: %w", err)
 	}
 	removeTemporary = false
-	if err := ProtectPrivatePath(path, false); err != nil {
-		return fmt.Errorf("protect import credential file: %w", err)
-	}
 	return nil
 }
 
@@ -585,5 +582,5 @@ func (s *Store) writeImportCredentialBytes(ctx context.Context, repositoryID str
 		return err
 	}
 	removeTemporary = false
-	return ProtectPrivatePath(path, false)
+	return nil
 }

@@ -48,22 +48,12 @@ func ChangeAccessListFix(path string) (string, error) {
 	return "chmod -N " + shellQuote(path), nil
 }
 
-// adminGroup reports whether members of gid may act as root: wheel holds
-// only root, and members of admin may use sudo.
-func adminGroup(gid uint32) bool { return gid == 0 || gid == 80 }
+func clearAccessList(file *os.File) error { return clearAccessListOf(file) }
 
-// clearPathAccessList is clearAccessList for a path, following a final link
-// like chmod. It never opens the file: closing a descriptor of a file drops
-// the fcntl locks this process holds on it, such as SQLite's.
-func clearPathAccessList(path string) error { return clearAccessListOf(path, nil) }
-
-func clearAccessList(file *os.File) error { return clearAccessListOf(file.Name(), file) }
-
-// clearAccessListOf removes the access list of a file of this account when an
-// entry allows anything, because an owner-only mode leaves it in place: a
-// folder can pass an entry that lets other accounts read to every file made
-// in it. A list that stays is refused before anything secret is written.
-func clearAccessListOf(path string, file *os.File) error {
+// clearAccessListOf removes the access list of an open file of this account
+// when an entry allows anything. The explicit owner check keeps this fail closed.
+func clearAccessListOf(file *os.File) error {
+	path := file.Name()
 	allows := func() (bool, error) {
 		filesec, err := extendedSecurity(path, file, 0)
 		if err != nil {
@@ -75,21 +65,12 @@ func clearAccessListOf(path string, file *os.File) error {
 	if err != nil || !found {
 		return err
 	}
-	info, err := os.Stat(path)
-	if file != nil {
-		info, err = file.Stat()
-	}
+	info, err := file.Stat()
 	if err != nil {
 		return err
 	}
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) == os.Geteuid() {
-		// (f)chmod_extended with _FILESEC_REMOVE_ACL removes the list and
-		// keeps the owner, group and mode. A failure shows in the check below.
-		if file != nil {
-			unix.Syscall6(unix.SYS_FCHMOD_EXTENDED, file.Fd(), kauthUIDNone, kauthUIDNone, ^uintptr(0), 1, 0)
-		} else if name, err := unix.BytePtrFromString(path); err == nil {
-			unix.Syscall6(unix.SYS_CHMOD_EXTENDED, uintptr(unsafe.Pointer(name)), kauthUIDNone, kauthUIDNone, ^uintptr(0), 1, 0)
-		}
+		unix.Syscall6(unix.SYS_FCHMOD_EXTENDED, file.Fd(), kauthUIDNone, kauthUIDNone, ^uintptr(0), 1, 0)
 		if found, err = allows(); err != nil {
 			return err
 		}

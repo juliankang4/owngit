@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"owngit/internal/service"
+	"owngit/internal/state"
 )
 
 // testLaunchAgentHost is a macOS service backend for a home folder in a
@@ -282,7 +283,8 @@ func TestLaunchAgentInstallRefusals(t *testing.T) {
 	}
 
 	// A binary or a PATH folder that another account could change.
-	t.Cleanup(func() { requireProtectedPath = func(string) error { return nil } })
+	pathCheck := requireProtectedPath
+	t.Cleanup(func() { requireProtectedPath = pathCheck })
 	requireProtectedPath = func(path string) error {
 		if path == host.agentExecutable || path == "/shared" {
 			return errors.New("another account can change it")
@@ -296,6 +298,16 @@ func TestLaunchAgentInstallRefusals(t *testing.T) {
 	noErr(t, os.Remove(host.agentPath))
 	if err := host.install("", nil); err == nil || !strings.Contains(err.Error(), "only you or root can change") {
 		t.Fatalf("install of a binary that others can change: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		requireProtectedPath = state.RequireProtectedPath
+		sticky := filepath.Join(t.TempDir(), "sticky")
+		noErr(t, os.Mkdir(sticky, 0o755))
+		noErr(t, os.Chmod(sticky, 0o777|os.ModeSticky))
+		t.Setenv("PATH", sticky+string(os.PathListSeparator)+"/usr/bin")
+		if path := host.agentPlan("", nil, service.Installed{}, false).Path; path != "/usr/bin" {
+			t.Errorf("agent PATH with a sticky directory is %q", path)
+		}
 	}
 }
 

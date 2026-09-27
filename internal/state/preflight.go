@@ -75,6 +75,7 @@ const (
 	pointClassify   = "classify"
 	pointClassified = "classified"
 	pointAccept     = "accept"
+	pointProtect    = "protect"
 )
 
 // sourceObject binds one inspected filesystem object to the identity observed
@@ -336,12 +337,17 @@ func (in *inspection) accept(ctx context.Context, dir string) error {
 	if err := in.validateSource(exact, true); err != nil {
 		return err
 	}
-	if err := ProtectPrivatePath(dir, true); err != nil {
+	if err := in.at(pointProtect, ""); err != nil {
+		return err
+	}
+	if err := ProtectPrivateHandle(in.dir.handle, true); err != nil {
 		return fmt.Errorf("protect state directory: %w", err)
 	}
-	if in.main != nil {
-		if err := ProtectPrivatePath(in.main.path, false); err != nil {
-			return fmt.Errorf("protect state database file: %w", err)
+	for _, object := range []*sourceObject{in.main, in.wal, in.shm} {
+		if object != nil {
+			if err := ProtectPrivateHandle(object.handle, false); err != nil {
+				return fmt.Errorf("protect state database file: %w", err)
+			}
 		}
 	}
 	if err := in.validateSource(exact, false); err != nil {
@@ -476,7 +482,7 @@ func (in *inspection) verifyHashes(ctx context.Context) error {
 }
 
 func bindDirectory(dir string) (*sourceObject, error) {
-	handle, err := os.Open(dir)
+	handle, err := openSourceHandle(dir, true)
 	if err != nil {
 		return nil, fmt.Errorf("open state directory: %w", err)
 	}

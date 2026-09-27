@@ -25,7 +25,7 @@ func AcquireExclusiveFileLockHandle(lockPath string) (*os.File, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("open exclusive operation lock: %w", err)
 	}
-	if err := ProtectPrivatePath(lockPath, false); err != nil {
+	if err := ProtectPrivateHandle(file, false); err != nil {
 		file.Close()
 		return nil, nil, fmt.Errorf("protect exclusive operation lock: %w", err)
 	}
