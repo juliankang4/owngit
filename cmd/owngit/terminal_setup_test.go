@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -27,8 +28,7 @@ func TestNonTerminalStartKeepsTheSetupFile(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	instance := startServed(t, stateDir)
 	defer instance.stop()
-	stateDir, err = filepath.EvalSymlinks(stateDir)
-	noErr(t, err)
+	stateDir = canonicalStateDir(t, stateDir)
 	if !strings.Contains(instance.log(), "owner setup file: "+filepath.Join(stateDir, "owner-setup.html")) {
 		t.Fatalf("no setup file was issued:\n%s", instance.log())
 	}
@@ -57,8 +57,7 @@ func TestUnusableTerminalFallsBackToTheSetupFilePage(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	instance := startServed(t, stateDir)
 	defer instance.stop()
-	stateDir, err = filepath.EvalSymlinks(stateDir)
-	noErr(t, err)
+	stateDir = canonicalStateDir(t, stateDir)
 	path := filepath.Join(stateDir, "owner-setup.html")
 	deadline := time.Now().Add(30 * time.Second)
 	for !strings.Contains(instance.log(), "owner setup file: "+path) {
@@ -86,4 +85,16 @@ func requireSetupFilePage(t *testing.T, base string) {
 		strings.Contains(string(body), "/setup/approval") {
 		t.Fatal("the setup page does not offer the setup file flow")
 	}
+}
+
+// canonicalStateDir returns the state directory as OwnGit reports it: Unix
+// resolves links (macOS /var is /private/var); Windows keeps the path as given.
+func canonicalStateDir(t *testing.T, dir string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return dir
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	noErr(t, err)
+	return resolved
 }
