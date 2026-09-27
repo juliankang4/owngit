@@ -355,7 +355,9 @@ func TestLaunchAgentInstallWritesTheAgent(t *testing.T) {
 func TestLaunchAgentReinstallKeepsHeadless(t *testing.T) {
 	fake := recordLaunchctl(t)
 	host, out := testLaunchAgentHost(t, macDesktop(), "")
-	stateDir := filepath.Join(t.TempDir(), "state")
+	stateParent := filepath.Join(t.TempDir(), "not-a-directory")
+	noErr(t, os.WriteFile(stateParent, nil, 0o600))
+	stateDir := filepath.Join(stateParent, "state")
 	earlier := host.agentPlan(stateDir, nil, service.Installed{}, false)
 	if earlier.Headless {
 		t.Fatal("a desktop install is headless")

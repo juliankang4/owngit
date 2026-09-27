@@ -107,6 +107,11 @@ func permitEntry(filesec []byte, rights uint32) (bool, error) {
 	return false, nil
 }
 
+var getattrlistErr = func(trap, a1, a2, a3, a4, a5, a6 uintptr) unix.Errno {
+	_, _, errno := unix.Syscall6(trap, a1, a2, a3, a4, a5, a6)
+	return errno
+}
+
 // extendedSecurity returns the kauth_filesec of the open file, or of path
 // with the getattrlist options, or nothing when it has no access list.
 // golang.org/x/sys/unix does not wrap getattrlist, so it is called directly.
@@ -115,15 +120,18 @@ func extendedSecurity(path string, file *os.File, options uintptr) ([]byte, erro
 	buffer := make([]byte, 64<<10)
 	var errno unix.Errno
 	if file != nil {
-		_, _, errno = unix.Syscall6(unix.SYS_FGETATTRLIST, file.Fd(), uintptr(unsafe.Pointer(&request)),
+		errno = getattrlistErr(unix.SYS_FGETATTRLIST, file.Fd(), uintptr(unsafe.Pointer(&request)),
 			uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)), 0, 0)
 	} else {
 		name, err := unix.BytePtrFromString(path)
 		if err != nil {
 			return nil, err
 		}
-		_, _, errno = unix.Syscall6(unix.SYS_GETATTRLIST, uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(&request)),
+		errno = getattrlistErr(unix.SYS_GETATTRLIST, uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(&request)),
 			uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)), options, 0)
+	}
+	if errno == unix.EINVAL || errno == unix.ENOTSUP || errno == unix.EOPNOTSUPP {
+		return nil, nil
 	}
 	if errno != 0 {
 		return nil, errno

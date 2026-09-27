@@ -9,7 +9,42 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
+
+func TestMacOSVolumesWithoutAccessLists(t *testing.T) {
+	original := getattrlistErr
+	t.Cleanup(func() { getattrlistErr = original })
+	file, err := os.Open(t.TempDir())
+	noErr(t, err)
+	defer file.Close()
+
+	for _, test := range []struct {
+		name  string
+		errno unix.Errno
+	}{
+		{"EINVAL", unix.EINVAL},
+		{"ENOTSUP", unix.ENOTSUP},
+		{"EOPNOTSUPP", unix.EOPNOTSUPP},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls []uintptr
+			getattrlistErr = func(trap, _, _, _, _, _, _ uintptr) unix.Errno {
+				calls = append(calls, trap)
+				return test.errno
+			}
+			fix, err := ChangeAccessListFix("unused")
+			if err != nil || fix != "" {
+				t.Fatalf("check returned fix %q, error %v", fix, err)
+			}
+			noErr(t, clearAccessListOf(file))
+			if len(calls) != 2 || calls[0] != unix.SYS_GETATTRLIST || calls[1] != unix.SYS_FGETATTRLIST {
+				t.Fatalf("getattrlist calls = %v", calls)
+			}
+		})
+	}
+}
 
 // An access list that a folder passes on survives the owner-only mode, so
 // protecting a private folder or file removes it, and a file made in the
