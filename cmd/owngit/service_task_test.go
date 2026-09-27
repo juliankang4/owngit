@@ -756,7 +756,8 @@ func TestServeWithoutADesktopOpensNothing(t *testing.T) {
 	}
 	// A console that looks interactive, as Windows gives a task.
 	interactiveSetup = func() bool { return true }
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	noErr(t, err)
 	stateDir, logFile := filepath.Join(dir, "state"), filepath.Join(dir, "logs", "service.log")
 	var opened []string
 	logs := make(chan string, 100)

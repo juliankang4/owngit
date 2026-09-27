@@ -27,6 +27,8 @@ func TestNonTerminalStartKeepsTheSetupFile(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	instance := startServed(t, stateDir)
 	defer instance.stop()
+	stateDir, err = filepath.EvalSymlinks(stateDir)
+	noErr(t, err)
 	if !strings.Contains(instance.log(), "owner setup file: "+filepath.Join(stateDir, "owner-setup.html")) {
 		t.Fatalf("no setup file was issued:\n%s", instance.log())
 	}
@@ -55,6 +57,8 @@ func TestUnusableTerminalFallsBackToTheSetupFilePage(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	instance := startServed(t, stateDir)
 	defer instance.stop()
+	stateDir, err = filepath.EvalSymlinks(stateDir)
+	noErr(t, err)
 	path := filepath.Join(stateDir, "owner-setup.html")
 	deadline := time.Now().Add(30 * time.Second)
 	for !strings.Contains(instance.log(), "owner setup file: "+path) {

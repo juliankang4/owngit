@@ -169,7 +169,8 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 	stateParent := filepath.Join(root, "shared-state")
 	noErr(t, os.Mkdir(stateParent, 0o755))
 	noErr(t, os.Chmod(stateParent, 0o777))
-	stateTarget := filepath.Join(stateParent, "state")
+	stateTarget := canonicalTestTarget(t, filepath.Join(stateParent, "state"))
+	stateParent = filepath.Dir(stateTarget)
 	repositoryTarget := filepath.Join(root, "unused-repositories")
 	err := Restore(ctx, backup, stateTarget, repositoryTarget, "")
 	if err == nil || !strings.Contains(err.Error(), "state destination parent is not protected: another account can change "+stateParent) {

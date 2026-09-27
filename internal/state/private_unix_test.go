@@ -61,9 +61,9 @@ func TestUnixNotPrivateFixKeepsADashPathAnOperand(t *testing.T) {
 // A path is refused when another account could change it, a folder above it
 // or the target of a link on the way.
 func TestRequireProtectedPath(t *testing.T) {
-	folder := filepath.Join(t.TempDir(), "bin")
+	folder := filepath.Join(resolveTestPath(t, t.TempDir()), "bin")
 	binary := filepath.Join(folder, "owngit")
-	link := filepath.Join(t.TempDir(), "owngit")
+	link := filepath.Join(resolveTestPath(t, t.TempDir()), "owngit")
 	noErr(t, os.Mkdir(folder, 0o755))
 	noErr(t, os.WriteFile(binary, nil, 0o755))
 	noErr(t, os.Symlink(binary, link))

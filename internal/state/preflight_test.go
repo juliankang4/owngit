@@ -68,6 +68,13 @@ func commitBaselineThenChangeVersion(version string) func(*testing.T, string, *s
 	}
 }
 
+func resolveTestPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	noErr(t, err)
+	return resolved
+}
+
 func useHooks(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -660,7 +667,7 @@ func TestOpenRefusesStateInExchangeableParent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix parent permissions")
 	}
-	parent := filepath.Join(t.TempDir(), "shared")
+	parent := filepath.Join(resolveTestPath(t, t.TempDir()), "shared")
 	checked := filepath.Join(parent, "state")
 	replacement := filepath.Join(parent, "replacement")
 	noErr(t, os.Mkdir(parent, 0o755))
@@ -689,7 +696,7 @@ func TestOpenPinsResolvedStateLink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix symbolic links")
 	}
-	root := t.TempDir()
+	root := resolveTestPath(t, t.TempDir())
 	checked := filepath.Join(root, "checked")
 	replacement := filepath.Join(root, "replacement")
 	createMarkedState(t, checked, "checked")
