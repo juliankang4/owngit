@@ -302,11 +302,18 @@ made for the same account in the temporary folder stays in use while it exists.
 The runner refuses a root and leaves it untouched when the root is nonempty and
 OwnGit does not own it, when another runner is using it, or when another
 account owns it. On Linux and macOS it also refuses a root when another account
-could rename or replace a folder above it. Each of those folders must belong to
-the runner's account or to root. Other accounts may write to one only when it
-has the sticky bit, as `/tmp` does, and group write access is accepted only for
-the account's own group of the same name. The message names the folder and
-says how to fix it. The runner never receives repository storage paths.
+could rename or replace a folder above it. Each of those folders, and each
+link on the way, must belong to the runner's account or to root. Other
+accounts may write to a folder only when it has the sticky bit, as `/tmp`
+does. A runner started as root refuses any group write access. A runner under
+another account accepts group write only for its private group, the primary
+group named after the account, and treats members of that group as the account
+itself. A folder whose access control list lets another account make changes
+is refused too. On macOS any list entry that allows changes counts, because
+OwnGit cannot tell which account an entry names. Folders the runner creates
+for the workspace are checked the same way as it creates them. The message
+names the folder and says how to fix it. The runner never receives repository
+storage paths.
 Commands run as the runner's account and are not sandboxed unless you confine
 that account or machine yourself. The runner prints a warning when it runs as
 root; run it as a dedicated account, as in the service example below.
