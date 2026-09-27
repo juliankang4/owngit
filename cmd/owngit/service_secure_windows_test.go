@@ -96,6 +96,19 @@ func TestTrustedWingetRejectsAnOrdinaryFolder(t *testing.T) {
 	}
 }
 
+func TestRegisteredAppInstallerWinget(t *testing.T) {
+	system, _ := windows.GetSystemDirectory()
+	output, _ := exec.Command(filepath.Join(system, `WindowsPowerShell\v1.0\powershell.exe`), "-NoProfile", "-Command", `(Get-AppxPackage Microsoft.DesktopAppInstaller).InstallLocation`).Output()
+	registered := strings.TrimSpace(string(output))
+	if registered == "" {
+		t.Skip("App Installer is not registered for this account")
+	}
+	winget, err := platformTrustedWinget()
+	if err != nil || !strings.EqualFold(winget, filepath.Join(registered, "winget.exe")) {
+		t.Fatalf("trusted winget = %q, %v; registered in %q", winget, err, registered)
+	}
+}
+
 func TestRepositoryRootInternalServiceActionIsDispatched(t *testing.T) {
 	err := serviceCommand([]string{"repository-root", "--not-a-flag"})
 	if err == nil || strings.Contains(err.Error(), `unknown service command "repository-root"`) {

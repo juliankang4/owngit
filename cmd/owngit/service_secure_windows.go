@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"unsafe"
 
@@ -181,36 +180,43 @@ func verifyProtectedServiceACL(path string, directory, usersRead bool) error {
 	return nil
 }
 
-// platformTrustedWinget finds winget only in a verified App Installer package.
-// A package and its executable must be owned by TrustedInstaller, have no
-// reparse point and grant write access only to TrustedInstaller,
-// Administrators or SYSTEM.
+// platformTrustedWinget accepts only the Store-signed App Installer package
+// registered for this account. Registration supplies the install location;
+// a similarly named Administrators-owned file is never searched or accepted.
 func platformTrustedWinget() (string, error) {
+	system, err := windows.GetSystemDirectory()
+	if err != nil {
+		return "", err
+	}
+	const lookup = `$ErrorActionPreference = 'Stop'
+Import-Module "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\Appx\Appx.psd1"
+$package = @(Appx\Get-AppxPackage -Name Microsoft.DesktopAppInstaller -PackageTypeFilter Main | Where-Object { $_.PackageFamilyName -eq 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe' -and $_.SignatureKind -eq 'Store' -and $_.Status -eq 'Ok' })
+if ($package.Count -ne 1) { exit 1 }
+$package[0].InstallLocation`
+	output, err := exec.Command(filepath.Join(system, `WindowsPowerShell\v1.0\powershell.exe`),
+		"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", lookup).Output()
+	if err != nil {
+		return "", errors.New("no registered Store copy of App Installer was found")
+	}
+	packageDir := filepath.Clean(strings.TrimSpace(string(output)))
 	programFiles, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
 	if err != nil {
 		return "", err
 	}
 	windowsApps := filepath.Join(programFiles, "WindowsApps")
-	entries, err := os.ReadDir(windowsApps)
-	if err != nil {
-		return "", fmt.Errorf("read the App Installer packages: %w", err)
+	if packageDir == "." || !strings.EqualFold(filepath.Dir(packageDir), windowsApps) {
+		return "", errors.New("App Installer has an unexpected registered location")
 	}
-	var candidates []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasPrefix(name, "Microsoft.DesktopAppInstaller_") || !strings.HasSuffix(name, "__8wekyb3d8bbwe") {
-			continue
-		}
-		candidates = append(candidates, filepath.Join(windowsApps, name))
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(candidates)))
-	for _, packageDir := range candidates {
-		winget := filepath.Join(packageDir, "winget.exe")
-		if verifyTrustedInstallerPath(packageDir, true) == nil && verifyTrustedInstallerPath(winget, false) == nil {
-			return winget, nil
+	winget := filepath.Join(packageDir, "winget.exe")
+	for _, path := range []struct {
+		name      string
+		directory bool
+	}{{windowsApps, true}, {packageDir, true}, {winget, false}} {
+		if err := verifyTrustedInstallerPath(path.name, path.directory); err != nil {
+			return "", err
 		}
 	}
-	return "", errors.New("no trusted App Installer copy of winget was found")
+	return winget, nil
 }
 
 func verifyTrustedInstallerPath(path string, directory bool) error {
@@ -242,8 +248,8 @@ func verifyTrustedInstallerPath(path string, directory bool) error {
 		return err
 	}
 	owner, _, err := descriptor.Owner()
-	if err != nil || owner == nil || owner.String() != trustedInstallerSID {
-		return errors.New("App Installer is not owned by TrustedInstaller")
+	if err != nil || owner == nil || owner.String() != trustedInstallerSID && owner.String() != administratorsSID {
+		return errors.New("App Installer has an unexpected owner")
 	}
 	dacl, _, err := descriptor.DACL()
 	if err != nil || dacl == nil {
@@ -261,7 +267,8 @@ func verifyTrustedInstallerPath(path string, directory bool) error {
 		if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE {
 			continue
 		}
-		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+		const accessAllowedCallbackACEType = 0x09
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE && ace.Header.AceType != accessAllowedCallbackACEType {
 			return errors.New("App Installer has an unsupported access entry")
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String()
