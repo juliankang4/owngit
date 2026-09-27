@@ -261,8 +261,8 @@ func TestBrowserHelperCredentialsRequireSessionPasswordAndDeliverTokenOnce(t *te
 
 	issueValues := url.Values{"csrf": {adminCSRF}, "action": {webui.ActionIssueHelperCredential}, "label": {"browser helper"}}
 	missingPassword := browserForm(t, client, helperURL, issueValues, server.URL)
-	if missingPassword.status != http.StatusUnauthorized {
-		t.Fatalf("remembered session issued without password: status=%d", missingPassword.status)
+	if missingPassword.status != http.StatusUnauthorized || !strings.Contains(missingPassword.body, `value="browser helper"`) {
+		t.Fatalf("remembered session issued without password, or the refusal lost the label: status=%d", missingPassword.status)
 	}
 	credentials, err := fixture.store.HelperCredentials(context.Background(), "project")
 	if err != nil || len(credentials) != 0 {

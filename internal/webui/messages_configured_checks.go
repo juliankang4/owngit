@@ -334,6 +334,8 @@ const (
 	MsgRTNotFound     MessageCode = "runner.result.not_found"
 	MsgRTLabelInvalid MessageCode = "runner.result.invalid_label"
 	MsgRTFailed       MessageCode = "runner.result.failed"
+	MsgRTRevokeFailed MessageCode = "runner.result.revoke_failed"
+	MsgRTUnreadable   MessageCode = "runner.result.unreadable"
 	MsgRTExisting     MessageCode = "runner.result.existing"
 )
 
@@ -983,6 +985,14 @@ var configuredCheckCatalog = map[MessageCode]message{
 		ko: "한 줄 이름을 UTF-8 기준 100바이트 이내로 입력하세요. 한글만 쓰면 최대 33자입니다.",
 	},
 	MsgRTFailed: {en: "The runner token could not be issued.", ko: "러너 토큰을 발급하지 못했습니다."},
+	MsgRTUnreadable: {
+		en: "The runner token records could not be read, so this screen could not be shown. Reload the page to try again.",
+		ko: "러너 토큰 기록을 읽지 못해 이 화면을 열 수 없습니다. 페이지를 다시 불러오세요.",
+	},
+	MsgRTRevokeFailed: {
+		en: "The runner token could not be revoked. Try again.",
+		ko: "러너 토큰을 취소하지 못했습니다. 다시 시도하세요.",
+	},
 	MsgRTExisting: {
 		en: "This request was already handled, so the existing token was kept and no new value was created.",
 		ko: "이미 처리된 요청이어서 기존 토큰을 유지했고 새 값을 만들지 않았습니다.",

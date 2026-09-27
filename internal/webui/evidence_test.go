@@ -284,6 +284,23 @@ func TestHelperCredentialLabelShowsTheStoredUTF8ByteBoundary(t *testing.T) {
 	}
 }
 
+// A refused form shows the label the operator typed, escaped as an attribute
+// value, and never a password.
+func TestHelperCredentialFormKeepsTheTypedLabel(t *testing.T) {
+	page := helperPage(fullChrome(LangEN), false)
+	page.PendingAction = ActionIssueHelperCredential
+	page.PendingLabel = `build "host" <a&b>`
+	page.Chrome.Notices = []Notice{Error("admin_password", MsgAdminFailed)}
+	out := render(t, newRenderer(t), page)
+	tag := regexp.MustCompile(`<input id="helper-label"[^>]*>`).FindString(out)
+	if !strings.Contains(tag, `value="build &#34;host&#34; &lt;a&amp;b&gt;"`) {
+		t.Fatalf("label input does not carry the escaped typed label: %s", tag)
+	}
+	if password := regexp.MustCompile(`<input id="helper-issue-password"[^>]*>`).FindString(out); strings.Contains(password, "value=") {
+		t.Fatalf("password input carries a value: %s", password)
+	}
+}
+
 func TestEveryAdminPasswordFieldOnTheCredentialScreenIsUnique(t *testing.T) {
 	// Several forms collect the same field name. Duplicate ids would point
 	// every aria-describedby at the first one, announcing the wrong form's

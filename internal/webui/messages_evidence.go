@@ -302,6 +302,7 @@ const (
 	MsgHelperNotFound     MessageCode = "helper.result.not_found"
 	MsgHelperLabelInvalid MessageCode = "helper.result.invalid_label"
 	MsgHelperFailed       MessageCode = "helper.result.failed"
+	MsgHelperUnreadable   MessageCode = "helper.result.unreadable"
 )
 
 // evidenceCatalog holds the text for the screens above. It is merged into the
@@ -861,6 +862,10 @@ var evidenceCatalog = map[MessageCode]message{
 		ko: "한 줄 이름을 UTF-8 기준 100바이트 이내로 입력하세요. 한글만 쓰면 최대 33자입니다.",
 	},
 	MsgHelperFailed: {en: "The credential operation did not complete.", ko: "토큰 작업을 끝내지 못했습니다."},
+	MsgHelperUnreadable: {
+		en: "The helper credential records could not be read, so this screen could not be shown. Reload the page to try again.",
+		ko: "헬퍼 토큰 기록을 읽지 못해 이 화면을 열 수 없습니다. 페이지를 다시 불러오세요.",
+	},
 
 	// -- summary relevance ---------------------------------------------
 	// Four distinct answers to one question: which code does this result

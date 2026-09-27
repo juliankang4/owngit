@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"math"
 	"net/http"
@@ -907,8 +908,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if request.Method == http.MethodGet {
-		app.renderRunnerTokens(writer, request, stored, summary, chrome, "", "", "", nil,
-			state.RunnerCredential{}, "", http.StatusOK)
+		app.renderRunnerTokens(writer, request, stored, summary, chrome, "", "", "", nil, http.StatusOK)
 		return
 	}
 
@@ -930,7 +930,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, label,
-			[]webui.Notice{notice}, state.RunnerCredential{}, "", status)
+			[]webui.Notice{notice}, status)
 		return
 	}
 
@@ -938,71 +938,113 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 	case webui.ActionIssueRunnerToken:
 		if !validBrowserCredentialLabel(label) {
 			app.renderRunnerTokens(writer, request, stored, summary, chrome, action, "", label,
-				[]webui.Notice{webui.Error("label", webui.MsgRTLabelInvalid)}, state.RunnerCredential{}, "", http.StatusUnprocessableEntity)
+				[]webui.Notice{webui.Error("label", webui.MsgRTLabelInvalid)}, http.StatusUnprocessableEntity)
 			return
 		}
 		creationID := postValue(request, "creation_id")
 		if !validAttemptID(creationID) {
 			app.renderRunnerTokens(writer, request, stored, summary, chrome, action, "", label,
-				[]webui.Notice{webui.Error("", webui.MsgRTFailed)}, state.RunnerCredential{}, "", http.StatusUnprocessableEntity)
+				[]webui.Notice{webui.Error("", webui.MsgRTFailed)}, http.StatusUnprocessableEntity)
+			return
+		}
+		// The list is read before issuing. Once the token exists, this
+		// response is its only delivery, so no later read may replace it.
+		listed, err := app.readRunnerTokenList(request.Context(), stored.ID)
+		if err != nil {
+			logUnavailable(request, "runner credential list read", err)
+			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRTFailed, "")
 			return
 		}
 		credential, token, created, err := app.Store.IssueCheckRunnerToken(request.Context(), stored.ID, label, creationID, app.now())
 		if err != nil {
 			code, status := webui.MsgRTFailed, http.StatusServiceUnavailable
-			if errors.Is(err, state.ErrCheckPolicyMissing) {
+			switch {
+			case errors.Is(err, state.ErrCheckPolicyMissing):
 				code, status = webui.MsgCCPolicyMissing, http.StatusConflict
-			} else if errors.Is(err, state.ErrCheckRunnerCreationConflict) || errors.Is(err, state.ErrInvalidCheckJob) {
+			case errors.Is(err, state.ErrCheckRunnerCreationConflict), errors.Is(err, state.ErrInvalidCheckJob):
 				code, status = webui.MsgRTLabelInvalid, http.StatusConflict
+			default:
+				logUnavailable(request, "runner credential issue", err)
 			}
 			app.renderRunnerTokens(writer, request, stored, summary, chrome, action, "", label,
-				[]webui.Notice{webui.Error("", code)}, state.RunnerCredential{}, "", status)
+				[]webui.Notice{webui.Error("", code)}, status)
 			return
 		}
 		if !created || token == "" {
 			// The same request was already handled. Saying so is honest;
 			// minting a second token silently would not be.
 			app.renderRunnerTokens(writer, request, stored, summary, chrome, "", "", "",
-				[]webui.Notice{webui.Info(webui.MsgRTExisting)}, state.RunnerCredential{}, "", http.StatusOK)
+				[]webui.Notice{webui.Info(webui.MsgRTExisting)}, http.StatusOK)
 			return
 		}
-		app.renderRunnerTokens(writer, request, stored, summary, chrome, "", "", "",
-			[]webui.Notice{webui.Success(webui.MsgRTIssued)}, credential, token, http.StatusOK)
+		// Issuing requires a policy, so it exists now whatever the earlier
+		// read saw.
+		listed.credentials, listed.policyExists = append(listed.credentials, credential), true
+		page := app.runnerTokensPage(request, stored, summary, chrome, listed)
+		page.Chrome.Notices = []webui.Notice{webui.Success(webui.MsgRTIssued)}
+		page.Issued, page.IssuedToken = browserRunnerCredential(credential), token
+		app.render(writer, http.StatusOK, page)
 	case webui.ActionRevokeRunnerToken:
 		if !validAttemptID(credentialID) {
 			app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, "",
-				[]webui.Notice{webui.Error("", webui.MsgRTNotFound)}, state.RunnerCredential{}, "", http.StatusConflict)
+				[]webui.Notice{webui.Error("", webui.MsgRTNotFound)}, http.StatusConflict)
 			return
 		}
-		if err := app.Store.RevokeCheckRunnerToken(request.Context(), stored.ID, credentialID, app.now()); err != nil {
+		if err := app.Store.RevokeCheckRunnerToken(request.Context(), stored.ID, credentialID, app.now()); errors.Is(err, state.ErrCheckRunnerRevoked) {
 			app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, "",
-				[]webui.Notice{webui.Error("", webui.MsgRTNotFound)}, state.RunnerCredential{}, "", http.StatusConflict)
+				[]webui.Notice{webui.Error("", webui.MsgRTNotFound)}, http.StatusConflict)
+			return
+		} else if err != nil {
+			logUnavailable(request, "runner credential revoke", err)
+			app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, "",
+				[]webui.Notice{webui.Error("", webui.MsgRTRevokeFailed)}, http.StatusServiceUnavailable)
 			return
 		}
 		app.wakeChecks(stored.ID)
 		app.noticeRedirect(writer, request, runnerTokensURL(stored.ID)+"?notice=runner_token_revoked", http.StatusSeeOther)
 	default:
 		app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, "",
-			[]webui.Notice{webui.Error("", webui.MsgRTFailed)}, state.RunnerCredential{}, "", http.StatusBadRequest)
+			[]webui.Notice{webui.Error("", webui.MsgRTFailed)}, http.StatusBadRequest)
 	}
 }
 
-// renderRunnerTokens draws the runner token screen.
+// runnerTokenList is what the runner token screen lists besides a result.
+type runnerTokenList struct {
+	credentials  []state.RunnerCredential
+	policyExists bool
+}
+
+func (app *App) readRunnerTokenList(ctx context.Context, repositoryID string) (runnerTokenList, error) {
+	credentials, err := app.Store.CheckRunnerCredentials(ctx, repositoryID)
+	if err != nil {
+		return runnerTokenList{}, err
+	}
+	_, policyExists, err := app.Store.CheckPolicy(ctx, repositoryID)
+	return runnerTokenList{credentials: credentials, policyExists: policyExists}, err
+}
+
+// renderRunnerTokens draws the runner token screen with the current list, for
+// a visit or a refusal.
 //
 // pendingLabel is the label the operator typed. It is not sensitive and is put
 // back into the form on a refusal so a failed attempt does not make them type
 // it again. No token value is ever carried this way.
-func (app *App) renderRunnerTokens(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, pendingAction, pendingCredentialID, pendingLabel string, notices []webui.Notice, issued state.RunnerCredential, issuedToken string, status int) {
-	credentials, err := app.Store.CheckRunnerCredentials(request.Context(), stored.ID)
+func (app *App) renderRunnerTokens(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, pendingAction, pendingCredentialID, pendingLabel string, notices []webui.Notice, status int) {
+	listed, err := app.readRunnerTokenList(request.Context(), stored.ID)
 	if err != nil {
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRTFailed, "")
+		logUnavailable(request, "runner credential list read", err)
+		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRTUnreadable, "")
 		return
 	}
-	_, policyExists, err := app.Store.CheckPolicy(request.Context(), stored.ID)
-	if err != nil {
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRTFailed, "")
-		return
+	page := app.runnerTokensPage(request, stored, summary, chrome, listed)
+	page.PendingAction, page.PendingCredentialID, page.PendingLabel = pendingAction, pendingCredentialID, pendingLabel
+	if notices != nil {
+		page.Chrome.Notices = notices
 	}
+	app.render(writer, status, page)
+}
+
+func (app *App) runnerTokensPage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, listed runnerTokenList) webui.RunnerCredentialsPage {
 	basePage := app.baseRepositoryPage(request, chrome, stored, summary)
 	self := runnerTokensURL(stored.ID)
 	page := webui.RunnerCredentialsPage{
@@ -1012,16 +1054,8 @@ func (app *App) renderRunnerTokens(writer http.ResponseWriter, request *http.Req
 		SelfURL:             self,
 		SubmitURL:           self,
 		ConfiguredChecksURL: configuredChecksURL(stored.ID),
-		PolicyMissing:       !policyExists,
-		Issued:              browserRunnerCredential(issued),
-		IssuedToken:         issuedToken,
-		PendingAction:       pendingAction,
-		PendingCredentialID: pendingCredentialID,
-		PendingLabel:        pendingLabel,
+		PolicyMissing:       !listed.policyExists,
 		Commands:            runnerCommands(app.serverOrigin(request), stored.ID),
-	}
-	if notices != nil {
-		page.Chrome.Notices = notices
 	}
 	// A fresh creation identity per rendered form. A resubmitted form carries
 	// the identity it was rendered with, so the backend can recognise the
@@ -1029,26 +1063,29 @@ func (app *App) renderRunnerTokens(writer http.ResponseWriter, request *http.Req
 	if creationID, err := state.RandomID(); err == nil {
 		page.CreationID = creationID
 	}
-	for _, credential := range credentials {
+	for _, credential := range listed.credentials {
 		page.Credentials = append(page.Credentials, browserRunnerCredential(credential))
 	}
-	app.render(writer, status, page)
+	return page
 }
 
+// browserRunnerCredential builds one row. Every time is shown in the server's
+// local time, as a row read from the state is; a credential just issued
+// carries whatever location its producer gave it.
 func browserRunnerCredential(credential state.RunnerCredential) webui.RunnerCredentialRow {
 	row := webui.RunnerCredentialRow{
 		ID:         credential.ID,
 		ShortID:    shortOpaqueID(credential.ID),
 		Label:      credential.Label,
 		Generation: credential.Generation,
-		CreatedAt:  credential.CreatedAt,
+		CreatedAt:  credential.CreatedAt.Local(),
 		Revoked:    credential.RevokedAt != nil,
 	}
 	if credential.RevokedAt != nil {
-		row.RevokedAt = *credential.RevokedAt
+		row.RevokedAt = credential.RevokedAt.Local()
 	}
 	if credential.LastUsedAt != nil {
-		row.LastUsedAt = *credential.LastUsedAt
+		row.LastUsedAt = credential.LastUsedAt.Local()
 	}
 	return row
 }

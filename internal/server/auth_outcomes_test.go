@@ -214,7 +214,7 @@ func TestAdminFormsReportAPasswordCheckThatCouldNotFinish(t *testing.T) {
 			encoded, err := fixture.store.PasswordHash(ctx, "admin")
 			return err == nil && auth.CheckPassword(encoded, "admin-password")
 		}},
-		{"helper credentials", baseHelperCredentialsURL("project"), url.Values{"action": {webui.ActionIssueHelperCredential}, "label": {"unverified"}}, "", func() bool {
+		{"helper credentials", baseHelperCredentialsURL("project"), url.Values{"action": {webui.ActionIssueHelperCredential}, "label": {"unverified"}}, `value="unverified"`, func() bool {
 			credentials, err := fixture.store.HelperCredentials(ctx, "project")
 			return err == nil && len(credentials) == 0
 		}},

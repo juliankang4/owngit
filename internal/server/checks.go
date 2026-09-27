@@ -364,8 +364,12 @@ func (app *App) handleHelperCredentialAPI(writer http.ResponseWriter, request *h
 			writeAPIMethodError(writer, http.MethodDelete)
 			return
 		}
-		if err := app.Store.RevokeHelperCredential(request.Context(), repositoryID, parts[0], app.now()); err != nil {
+		if err := app.Store.RevokeHelperCredential(request.Context(), repositoryID, parts[0], app.now()); errors.Is(err, state.ErrHelperCredentialRevoked) {
 			writeAPIError(writer, http.StatusConflict, "credential_not_found", "The helper credential was not found or was already revoked.", nil)
+			return
+		} else if err != nil {
+			logUnavailable(request, "helper credential revoke", err)
+			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The helper credential could not be revoked.", nil)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.OKResponse{OK: true})
@@ -379,17 +383,20 @@ func (app *App) createHelperCredential(writer http.ResponseWriter, request *http
 	if !decodeAPIJSON(writer, request, &input) {
 		return
 	}
-	if input.CreationID != "" && !validAttemptID(input.CreationID) {
-		writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_credential", "A 32 character lowercase hex creation identifier is required.", nil)
-		return
-	}
 	credential, token, created, err := app.issueHelperCredential(request.Context(), repositoryID, input.Label, input.CreationID)
 	if err != nil {
-		if errors.Is(err, state.ErrCreationConflict) {
+		// Every 4xx answer here means nothing was created, so a client can
+		// take it as final. Only the unavailable answer leaves open whether a
+		// credential exists.
+		switch {
+		case errors.Is(err, state.ErrInvalidHelperCredential):
+			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_credential", invalidCredentialInput, nil)
+		case errors.Is(err, state.ErrCreationConflict):
 			writeAPIError(writer, http.StatusConflict, "creation_conflict", "The creation identity was already used with a different label.", nil)
-			return
+		default:
+			logUnavailable(request, "helper credential issue", err)
+			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The helper credential could not be created.", nil)
 		}
-		writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_credential", "The helper credential could not be created.", nil)
 		return
 	}
 	response := checkapi.CredentialResponse{OK: true, Credential: credentialJSON(credential)}

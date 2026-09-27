@@ -643,6 +643,31 @@ func TestHelperCredentialsAreScopedHashedAndRevocable(t *testing.T) {
 	if err != nil || len(credentials) != 1 || credentials[0].RevokedAt == nil {
 		t.Fatalf("credential list=%+v err=%v", credentials, err)
 	}
+
+	// Refused input and a known absence have their own results; a storage
+	// failure is neither.
+	if _, _, err := store.CreateHelperCredential(ctx, "project", "two\nlines", "", hash[:], now); !errors.Is(err, ErrInvalidHelperCredential) {
+		t.Fatalf("invalid label err=%v", err)
+	}
+	if _, _, err := store.CreateHelperCredential(ctx, "project", "laptop", "not-hex", hash[:], now); !errors.Is(err, ErrInvalidHelperCredential) {
+		t.Fatalf("invalid creation identity err=%v", err)
+	}
+	for _, id := range []string{credential.ID, cycleIDFor(8)} {
+		if err := store.RevokeHelperCredential(ctx, "project", id, now); !errors.Is(err, ErrHelperCredentialRevoked) {
+			t.Fatalf("revoke of revoked or unknown %s err=%v", id, err)
+		}
+	}
+	live, _, err := store.CreateHelperCredential(ctx, "project", "desktop", "", bytes.Repeat([]byte{1}, sha256.Size), now)
+	noErr(t, err)
+	noErr(t, store.Exec(ctx, `CREATE TRIGGER refuse_helper_update BEFORE UPDATE ON helper_credentials BEGIN SELECT RAISE(ABORT, 'injected failure'); END`))
+	if err := store.RevokeHelperCredential(ctx, "project", live.ID, now); err == nil || errors.Is(err, ErrHelperCredentialRevoked) {
+		t.Fatalf("failed revoke err=%v", err)
+	}
+	noErr(t, store.Exec(ctx, `DROP TRIGGER refuse_helper_update`))
+	noErr(t, store.Exec(ctx, `CREATE TRIGGER refuse_helper_insert BEFORE INSERT ON helper_credentials BEGIN SELECT RAISE(ABORT, 'injected failure'); END`))
+	if _, _, err := store.CreateHelperCredential(ctx, "project", "refused", "", bytes.Repeat([]byte{2}, sha256.Size), now); err == nil || errors.Is(err, ErrInvalidHelperCredential) {
+		t.Fatalf("failed creation err=%v", err)
+	}
 }
 
 func TestCheckLogsAreDisposableAndPruned(t *testing.T) {

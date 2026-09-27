@@ -280,6 +280,10 @@ type HelperCredentialsPage struct {
 	// row submits the same action. Empty means the notices belong to the form
 	// named by PendingAction alone.
 	PendingCredentialID string
+	// PendingLabel is the label the operator typed when an attempt was
+	// refused, so they do not have to type it again. It is a name they chose
+	// and carries no token value.
+	PendingLabel string
 
 	// Issued carries the credential just created, and IssuedToken its secret.
 	//

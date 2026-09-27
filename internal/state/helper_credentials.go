@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -30,23 +31,31 @@ type HelperCredential struct {
 // it.
 var ErrCreationConflict = errors.New("helper credential creation identity was reused with different content")
 
+// ErrInvalidHelperCredential reports creation input the store refuses.
+// Nothing was created.
+var ErrInvalidHelperCredential = errors.New("invalid helper credential")
+
+// ErrHelperCredentialRevoked reports a revoke of a credential that this
+// repository does not have or that was already revoked.
+var ErrHelperCredentialRevoked = errors.New("helper credential was not found or was already revoked")
+
 // CreateHelperCredential stores a new credential in one immediate transaction.
 // A retransmit with the same creation identity and payload returns the existing
 // credential instead of creating duplicate authority, and a changed payload is
 // rejected instead of being silently accepted.
 func (s *Store) CreateHelperCredential(ctx context.Context, repositoryID, label, creationID string, tokenHash []byte, now time.Time) (HelperCredential, bool, error) {
 	if repositoryID == "" || len(tokenHash) != sha256.Size || now.IsZero() {
-		return HelperCredential{}, false, errors.New("invalid helper credential")
+		return HelperCredential{}, false, ErrInvalidHelperCredential
 	}
 	if creationID != "" && !validAttemptID(creationID) {
-		return HelperCredential{}, false, errors.New("invalid helper credential creation identity")
+		return HelperCredential{}, false, fmt.Errorf("%w creation identity", ErrInvalidHelperCredential)
 	}
 	label = trimLabel(label)
 	if label == "" {
 		label = "check helper"
 	}
 	if !validText(label, 100) {
-		return HelperCredential{}, false, errors.New("invalid helper credential label")
+		return HelperCredential{}, false, fmt.Errorf("%w label", ErrInvalidHelperCredential)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -164,7 +173,7 @@ func (s *Store) RevokeHelperCredential(ctx context.Context, repositoryID, id str
 		return err
 	}
 	if affected != 1 {
-		return errors.New("helper credential was not found or was already revoked")
+		return ErrHelperCredentialRevoked
 	}
 	return nil
 }

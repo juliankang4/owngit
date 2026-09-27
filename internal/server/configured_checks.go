@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"log"
@@ -125,7 +126,7 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 		}
 		response := checkapi.JobListResponse{OK: true, Jobs: make([]*checkapi.Job, 0, len(jobs))}
 		for _, job := range jobs {
-			response.Jobs = append(response.Jobs, app.jobJSON(request, job, false))
+			response.Jobs = append(response.Jobs, jobJSON(job, nil))
 		}
 		writeAPIJSON(writer, http.StatusOK, response)
 		return
@@ -146,11 +147,19 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 			writeAPIError(writer, http.StatusNotFound, "check_job_not_found", "The configured-check job does not exist.", nil)
 			return
 		}
-		response := checkapi.JobResponse{OK: true, Job: app.jobJSON(request, job, true)}
+		checks, err := app.jobChecks(request.Context(), job)
+		if err != nil {
+			writeJobRecordError(writer, request, err, jobChecksUnreadable, nil)
+			return
+		}
+		response := checkapi.JobResponse{OK: true, Job: jobJSON(job, checks)}
 		if job.AttemptID != "" {
-			if attempt, exists, err := app.Store.CheckAttemptByID(request.Context(), repositoryID, job.AttemptID); err == nil && exists {
-				response.Attempt = attemptJSON(attempt)
+			attempt, err := app.jobAttempt(request.Context(), job)
+			if err != nil {
+				writeJobRecordError(writer, request, err, jobAttemptUnreadable, nil)
+				return
 			}
+			response.Attempt = attemptJSON(attempt)
 		}
 		writeAPIJSON(writer, http.StatusOK, response)
 		return
@@ -169,13 +178,9 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 			writeAPIError(writer, http.StatusNotFound, "attempt_not_found", "The configured-check job has no attempt.", nil)
 			return
 		}
-		attempt, exists, err := app.Store.CheckAttemptByID(request.Context(), repositoryID, job.AttemptID)
+		attempt, err := app.jobAttempt(request.Context(), job)
 		if err != nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The configured-check attempt could not be read.", nil)
-			return
-		}
-		if !exists {
-			writeAPIError(writer, http.StatusNotFound, "attempt_not_found", "The configured-check attempt does not exist.", nil)
+			writeJobRecordError(writer, request, err, jobAttemptUnreadable, nil)
 			return
 		}
 		app.writeCheckAttemptLog(writer, attempt)
@@ -208,7 +213,10 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		app.wakeChecks(repositoryID)
-		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: app.jobJSON(request, job, true)})
+		// The answer reports the committed change. The job's commands did not
+		// change and are in its detail, so a failed read of them cannot turn
+		// this success into an error.
+		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(job, nil)})
 		return
 	}
 	writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
@@ -235,10 +243,19 @@ func (app *App) handleRunnerCredentials(writer http.ResponseWriter, request *htt
 		}
 		credential, token, created, err := app.Store.IssueCheckRunnerToken(request.Context(), repositoryID, input.Label, input.CreationID, app.now())
 		if err != nil {
-			if errors.Is(err, state.ErrCheckRunnerCreationConflict) {
+			// Every 4xx answer here means nothing was created, so a client can
+			// take it as final. Only the unavailable answer leaves open whether
+			// a credential exists.
+			switch {
+			case errors.Is(err, state.ErrInvalidCheckJob):
+				writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_runner_credential", invalidCredentialInput, nil)
+			case errors.Is(err, state.ErrCheckPolicyMissing):
+				writeAPIError(writer, http.StatusNotFound, "check_policy_not_found", "The repository has no configured-check policy.", nil)
+			case errors.Is(err, state.ErrCheckRunnerCreationConflict):
 				writeAPIError(writer, http.StatusConflict, "creation_conflict", "The creation identity already belongs to different runner credential content.", nil)
-			} else {
-				writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_runner_credential", err.Error(), nil)
+			default:
+				logUnavailable(request, "runner credential issue", err)
+				writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The runner credential could not be created.", nil)
 			}
 			return
 		}
@@ -248,8 +265,12 @@ func (app *App) handleRunnerCredentials(writer http.ResponseWriter, request *htt
 		}
 		writeAPIJSON(writer, http.StatusOK, response)
 	case len(parts) == 1 && parts[0] != "" && request.Method == http.MethodDelete:
-		if err := app.Store.RevokeCheckRunnerToken(request.Context(), repositoryID, parts[0], app.now()); err != nil {
+		if err := app.Store.RevokeCheckRunnerToken(request.Context(), repositoryID, parts[0], app.now()); errors.Is(err, state.ErrCheckRunnerRevoked) {
 			writeAPIError(writer, http.StatusConflict, "runner_credential_not_found", "The runner credential was not found or was already revoked.", nil)
+			return
+		} else if err != nil {
+			logUnavailable(request, "runner credential revoke", err)
+			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The runner credential could not be revoked.", nil)
 			return
 		}
 		app.wakeChecks(repositoryID)
@@ -292,7 +313,15 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true})
 			return
 		}
-		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: app.jobJSON(request, job, true)})
+		checks, err := app.jobChecks(request.Context(), job)
+		if err != nil {
+			// The claim is committed and its lease belongs to this runner. The
+			// answer names both, so the claim is not mistaken for an empty
+			// queue, and it never hands out the job without its commands.
+			writeJobRecordError(writer, request, err, jobChecksUnreadable, map[string]string{"job_id": job.ID, "lease_id": job.LeaseID})
+			return
+		}
+		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(job, checks)})
 		return
 	}
 	parts := strings.Split(remainder, "/")
@@ -322,7 +351,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			writeRunnerError(writer, err)
 			return
 		}
-		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: app.jobJSON(request, job, false)})
+		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(job, nil)})
 	case "start":
 		var input checkapi.RunnerStartInput
 		if !decodeAPIJSON(writer, request, &input) {
@@ -341,14 +370,14 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			writeRunnerError(writer, err)
 			return
 		}
-		configuration, exists, err := app.Store.CheckConfiguration(request.Context(), repositoryID, started.ConfigurationVersion)
-		if err != nil || !exists {
-			writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The job configuration is unavailable.", nil)
+		checks, err := app.jobChecks(request.Context(), started)
+		if err != nil {
+			writeJobRecordError(writer, request, err, jobChecksUnreadable, nil)
 			return
 		}
 		attempt := state.CheckAttempt{
 			ID: input.AttemptID, TaskID: started.TaskID, RepositoryID: repositoryID, RevisionOID: started.SourceOID,
-			WorktreeState: state.WorktreeClean, JobID: started.ID, Checks: configuration.Checks,
+			WorktreeState: state.WorktreeClean, JobID: started.ID, Checks: checks,
 			StartedAt: *started.StartedAt, CreatedAt: app.now(), CredentialID: credential.ID,
 		}
 		_, stored, err := app.Store.RegisterCheckAttempt(request.Context(), attempt)
@@ -356,7 +385,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			writeRunnerError(writer, err)
 			return
 		}
-		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: app.jobJSON(request, started, true), Attempt: attemptJSON(stored)})
+		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(started, checks), Attempt: attemptJSON(stored)})
 	case "complete":
 		var input checkapi.RunnerCompletionInput
 		if !decodeAPIJSONLimit(writer, request, &input, maximumCheckUpload) {
@@ -367,8 +396,12 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		job, exists, err := app.Store.CheckJob(request.Context(), repositoryID, jobID)
-		if err != nil || !exists || job.AttemptID == "" {
-			writeRunnerError(writer, errors.Join(err, state.ErrCheckJobNotFound))
+		if err != nil {
+			writeRunnerError(writer, err)
+			return
+		}
+		if !exists || job.AttemptID == "" {
+			writeRunnerError(writer, state.ErrCheckJobNotFound)
 			return
 		}
 		completion, problem := completionFromUpload(input.Completion, repositoryID, job.TaskID, job.AttemptID)
@@ -396,7 +429,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			writeRunnerError(writer, err)
 			return
 		}
-		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: app.jobJSON(request, job, false)})
+		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(job, nil)})
 	default:
 		writeAPIError(writer, http.StatusNotFound, "not_found", "The runner endpoint does not exist.", nil)
 	}
@@ -502,7 +535,9 @@ func (app *App) authorizeRunner(writer http.ResponseWriter, request *http.Reques
 	return credential, true
 }
 
-func (app *App) jobJSON(request *http.Request, job state.CheckJob, includeChecks bool) *checkapi.Job {
+// jobJSON describes a job. checks are its captured commands when the answer
+// carries them; see jobChecks.
+func jobJSON(job state.CheckJob, checks []state.CheckDefinition) *checkapi.Job {
 	result := &checkapi.Job{
 		ID: job.ID, RepositoryID: job.RepositoryID, TaskID: job.TaskID, Trigger: job.Trigger, EventKey: job.EventKey,
 		SourceOID: job.SourceOID, BaseOID: job.BaseOID, PullRequestNumber: job.PullRequestNumber, TriggerRef: job.TriggerRef,
@@ -513,14 +548,70 @@ func (app *App) jobJSON(request *http.Request, job state.CheckJob, includeChecks
 		Protection: job.Protection, CancelRequested: job.CancelRequestedAt != nil, Summary: job.Summary,
 		AdmittedAt: job.AdmittedAt, StartedAt: job.StartedAt, FinishedAt: job.FinishedAt,
 	}
-	if includeChecks {
-		if configuration, exists, err := app.Store.CheckConfiguration(request.Context(), job.RepositoryID, job.ConfigurationVersion); err == nil && exists {
-			for _, check := range configuration.Checks {
-				result.Checks = append(result.Checks, checkapi.CheckDefinition{Name: check.Name, Command: check.Command})
-			}
-		}
+	for _, check := range checks {
+		result.Checks = append(result.Checks, checkapi.CheckDefinition{Name: check.Name, Command: check.Command})
 	}
 	return result
+}
+
+// jobRecordMissing is a record a job names that does not exist. Its text is
+// the message the client receives.
+//
+// A job's captured configuration is stored in the transaction that admits the
+// job, and the attempt it names in the transaction that binds it. Only
+// repository deletion removes either, and it removes the job with them. So a
+// job whose configuration or named attempt is missing is a damaged record. It
+// is answered as unavailable, like a failed read, and never as a job without
+// commands or a job that did not run.
+type jobRecordMissing string
+
+func (missing jobRecordMissing) Error() string { return string(missing) }
+
+const (
+	errJobChecksMissing  jobRecordMissing = "The job's captured commands are missing."
+	errJobAttemptMissing jobRecordMissing = "The attempt this job names is missing."
+
+	jobChecksUnreadable  = "The job's captured commands could not be read."
+	jobAttemptUnreadable = "The configured-check attempt could not be read."
+)
+
+// jobChecks reads the commands a job captured when it was admitted. A runner
+// executes them and an owner reads them.
+func (app *App) jobChecks(ctx context.Context, job state.CheckJob) ([]state.CheckDefinition, error) {
+	configuration, exists, err := app.Store.CheckConfiguration(ctx, job.RepositoryID, job.ConfigurationVersion)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errJobChecksMissing
+	}
+	return configuration.Checks, nil
+}
+
+// jobAttempt reads the attempt a job names. The caller checks that the job
+// names one; a job without an attempt is the one honest "nothing ran".
+func (app *App) jobAttempt(ctx context.Context, job state.CheckJob) (state.CheckAttempt, error) {
+	attempt, exists, err := app.Store.CheckAttemptByID(ctx, job.RepositoryID, job.AttemptID)
+	if err != nil {
+		return state.CheckAttempt{}, err
+	}
+	if !exists {
+		return state.CheckAttempt{}, errJobAttemptMissing
+	}
+	return attempt, nil
+}
+
+// writeJobRecordError answers a request that needed a record of a job. The
+// cause can name internal state, so it stays in the server log, and the client
+// receives unreadable or the missing record's fixed message.
+func writeJobRecordError(writer http.ResponseWriter, request *http.Request, err error, unreadable string, details any) {
+	logUnavailable(request, "job record read", err)
+	message := unreadable
+	var missing jobRecordMissing
+	if errors.As(err, &missing) {
+		message = string(missing)
+	}
+	writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", message, details)
 }
 
 func (app *App) policyResponse(policy state.CheckPolicy) checkapi.PolicyResponse {
@@ -550,6 +641,10 @@ func policyJSON(policy state.CheckPolicy) *checkapi.Policy {
 		RunnerGeneration: policy.RunnerGeneration, CreatedAt: policy.CreatedAt, UpdatedAt: policy.UpdatedAt,
 	}
 }
+
+// invalidCredentialInput states the input rules shared by runner and helper
+// credential issuance.
+const invalidCredentialInput = "The label must be one line of UTF-8 text of at most 100 bytes, and a creation identifier must be 32 lowercase hex characters."
 
 func runnerCredentialJSON(credential state.RunnerCredential) *checkapi.RunnerCredential {
 	return &checkapi.RunnerCredential{
