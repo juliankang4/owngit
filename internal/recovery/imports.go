@@ -180,11 +180,12 @@ func attachImportState(snapshot *state.RecoveryState, manifest Manifest) {
 }
 
 // validateImportManifest validates decoded import metadata and its internal
-// consistency before a backup is published or restored.
+// consistency before a backup is published or restored. snapshot is
+// recoveryState(manifest), the same state a restore would write.
 // The current format records run order whenever runs exist and the HEAD
 // ownership version whenever intents exist. Only unreleased development
 // builds omitted them.
-func validateImportManifest(manifest Manifest) error {
+func validateImportManifest(manifest Manifest, snapshot state.RecoveryState) error {
 	if manifest.ImportHEADOwnershipVersion != 0 && manifest.ImportHEADOwnershipVersion != importHEADOwnershipVersion {
 		return errors.New("backup import HEAD ownership version is unsupported")
 	}
@@ -194,11 +195,6 @@ func validateImportManifest(manifest Manifest) error {
 	if len(manifest.ImportIntents) > 0 && manifest.ImportHEADOwnershipVersion != importHEADOwnershipVersion {
 		return errors.New("backup import intents have no HEAD ownership version; it was written by an unreleased development build")
 	}
-	var snapshot state.RecoveryState
-	for _, item := range manifest.Repositories {
-		snapshot.Repositories = append(snapshot.Repositories, state.Repository{ID: item.ID, Name: item.Name, CreatedAt: item.CreatedAt})
-	}
-	attachImportState(&snapshot, manifest)
 	if err := state.ValidateImportRecovery(snapshot); err != nil {
 		return fmt.Errorf("backup import metadata is invalid: %w", err)
 	}

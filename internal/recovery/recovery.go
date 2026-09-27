@@ -551,12 +551,6 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 		return err
 	}
 	snapshot := recoveryState(manifest)
-	for _, item := range manifest.Repositories {
-		snapshot.Repositories = append(snapshot.Repositories, state.Repository{
-			ID: item.ID, Name: item.Name, Description: item.Description, CreatedAt: item.CreatedAt,
-			AttemptSequence: item.AttemptSequence,
-		})
-	}
 	if err := store.RestoreRecoveryState(ctx, repositoryTarget, snapshot); err != nil {
 		store.Close()
 		return err
@@ -1089,6 +1083,12 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 	snapshot := state.RecoveryState{
 		AccessMode: manifest.AccessMode, AccessPasswordHash: manifest.AccessHash, AdminPasswordHash: manifest.AdminHash,
 	}
+	for _, item := range manifest.Repositories {
+		snapshot.Repositories = append(snapshot.Repositories, state.Repository{
+			ID: item.ID, Name: item.Name, Description: item.Description, CreatedAt: item.CreatedAt,
+			AttemptSequence: item.AttemptSequence,
+		})
+	}
 	attachImportState(&snapshot, manifest)
 	for _, record := range manifest.PullRequests {
 		snapshot.PullRequests = append(snapshot.PullRequests, state.PullRequest{
@@ -1308,12 +1308,6 @@ func validateManifest(manifest Manifest) error {
 		}
 	}
 	snapshot := recoveryState(manifest)
-	for _, item := range manifest.Repositories {
-		snapshot.Repositories = append(snapshot.Repositories, state.Repository{
-			ID: item.ID, Name: item.Name, Description: item.Description, CreatedAt: item.CreatedAt,
-			AttemptSequence: item.AttemptSequence,
-		})
-	}
 	if err := state.ValidatePullRequestRecovery(snapshot); err != nil {
 		return fmt.Errorf("backup pull request metadata is invalid: %w", err)
 	}
@@ -1349,7 +1343,7 @@ func validateManifest(manifest Manifest) error {
 	if err := state.ValidateCheckRecovery(snapshot); err != nil {
 		return fmt.Errorf("backup check metadata is invalid: %w", err)
 	}
-	if err := validateImportManifest(manifest); err != nil {
+	if err := validateImportManifest(manifest, snapshot); err != nil {
 		return err
 	}
 	return nil

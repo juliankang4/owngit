@@ -243,6 +243,12 @@ func TestBackupPreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 		!reflect.DeepEqual(rebacked.CheckResults, manifest.CheckResults) {
 		t.Fatalf("restore and re-backup changed check facts:\nfirst=%+v\nagain=%+v", manifest, rebacked)
 	}
+	// Restore writes every portable repository fact, including the description
+	// and the attempt counter, so the next backup records them unchanged.
+	if len(manifest.Repositories) != 1 || manifest.Repositories[0].Description != "check records" || manifest.Repositories[0].AttemptSequence != 1 ||
+		!reflect.DeepEqual(rebacked.Repositories, manifest.Repositories) {
+		t.Fatalf("restore and re-backup changed repository facts:\nfirst=%+v\nagain=%+v", manifest.Repositories, rebacked.Repositories)
+	}
 }
 
 func TestBackupForwardVersionIsRejectedAndVersionTwoStillRestores(t *testing.T) {

@@ -106,11 +106,10 @@ func TestImportManifestRoundTripsExactHEADFacts(t *testing.T) {
 	manifest.ImportIntents[0].HeadOwned = true
 	manifest.ImportIntents[0].ReceiptJSON = `{"HEAD":"` + head + `","refs/heads/main":"` + oid + `"}`
 	manifest.ImportIntents[0].ReceiptDigest = state.ImportReceiptDigest(manifest.ImportIntents[0].ReceiptJSON)
-	if err := validateImportManifest(manifest); err != nil {
+	snapshot := recoveryState(manifest)
+	if err := validateImportManifest(manifest, snapshot); err != nil {
 		t.Fatalf("exact HEAD manifest rejected: %v", err)
 	}
-	var snapshot state.RecoveryState
-	attachImportState(&snapshot, manifest)
 	var rebuilt Manifest
 	addImportState(&rebuilt, snapshot)
 	got := rebuilt.ImportIntents[0]
@@ -137,8 +136,7 @@ func TestImportManifestRoundTripClearsMachineLocalConsent(t *testing.T) {
 	if len(manifest.ImportSources) != 1 || !manifest.ImportSources[0].GitOnlyConsent || !manifest.ImportRunOrderKnown {
 		t.Fatalf("manifest import metadata=%+v order_known=%v", manifest.ImportSources, manifest.ImportRunOrderKnown)
 	}
-	var restored state.RecoveryState
-	attachImportState(&restored, manifest)
+	restored := recoveryState(manifest)
 	if len(restored.ImportSources) != 1 {
 		t.Fatalf("restored sources=%+v", restored.ImportSources)
 	}
