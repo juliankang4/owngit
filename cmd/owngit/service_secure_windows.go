@@ -37,24 +37,31 @@ func platformServiceInstallPaths() (serviceInstallPaths, error) {
 	}, nil
 }
 
-func platformPrepareServiceInstall(paths serviceInstallPaths, keepExisting bool) (string, error) {
-	_, err := os.Lstat(paths.Directory)
-	if err != nil && !os.IsNotExist(err) {
+func platformPrepareServiceInstall(paths serviceInstallPaths) (string, error) {
+	moved := ""
+	if _, err := os.Lstat(paths.Directory); err == nil {
+		moved = paths.Directory + ".old-" + time.Now().UTC().Format("20060102T150405.000000000")
+		if err := os.Rename(paths.Directory, moved); err != nil {
+			return "", err
+		}
+	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	if keepExisting || err != nil {
-		return "", nil
+	descriptor, err := protectedServiceDescriptor(true, true)
+	if err != nil {
+		return moved, err
 	}
-	moved := paths.Directory + ".old-" + time.Now().UTC().Format("20060102T150405.000000000")
-	return moved, os.Rename(paths.Directory, moved)
+	name, err := windows.UTF16PtrFromString(paths.Directory)
+	if err != nil {
+		return moved, err
+	}
+	attributes := windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: descriptor}
+	return moved, windows.CreateDirectory(name, &attributes)
 }
 
 func platformPrepareServiceStorage(paths serviceInstallPaths) error {
-	for _, path := range []struct {
-		name      string
-		directory bool
-	}{{paths.Directory, true}, {paths.Temp, true}, {paths.Executable, false}} {
-		if _, err := administratorControlledDescriptor(path.name, path.directory); err != nil && !os.IsNotExist(err) {
+	for _, path := range []string{paths.Directory, paths.Temp} {
+		if _, err := administratorControlledDescriptor(path, true); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("refuse an unsafe OwnGit service path: %w", err)
 		}
 	}

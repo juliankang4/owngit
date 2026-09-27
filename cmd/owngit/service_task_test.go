@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -160,7 +161,7 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 	previousRunner, previousElevated, previousLook, previousStop := serviceRunner, runElevated, lookPath, signalServiceStop
 	previousOwner, previousGive, previousRoot, previousPoll := ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval
 	previousInstallStorage, previousPrepare, previousReplace := prepareServiceInstall, prepareServiceStorage, replaceServiceCopy
-	previousWinget, previousTaskDefinition := trustedWinget, readTaskDefinition
+	previousWinget := trustedWinget
 	previousEnvironment, previousApply := serviceEnvironment, applyServiceEnvironment
 	previousEnvironmentRunner, previousAttached, previousGit := runWithEnvironment, runAttachedWithEnvironment, gitOnServicePath
 	t.Cleanup(func() {
@@ -168,7 +169,7 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		serviceRunner, runElevated, lookPath, signalServiceStop = previousRunner, previousElevated, previousLook, previousStop
 		ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval = previousOwner, previousGive, previousRoot, previousPoll
 		prepareServiceInstall, prepareServiceStorage, replaceServiceCopy = previousInstallStorage, previousPrepare, previousReplace
-		trustedWinget, readTaskDefinition = previousWinget, previousTaskDefinition
+		trustedWinget = previousWinget
 		serviceEnvironment, applyServiceEnvironment = previousEnvironment, previousApply
 		runWithEnvironment, runAttachedWithEnvironment = previousEnvironmentRunner, previousAttached
 	})
@@ -192,30 +193,24 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		return changed, 0, nil
 	}
 	repositoryRootWithoutAdminRights = func(string) string { return fake.repositories }
-	prepareServiceInstall = func(paths serviceInstallPaths, keepExisting bool) (string, error) {
+	prepareServiceInstall = func(paths serviceInstallPaths) (string, error) {
 		if !fake.serviceFolder {
 			return "", nil
 		}
-		action := map[bool]string{false: "move ", true: "keep "}[keepExisting]
-		fake.calls = append(fake.calls, action+paths.Directory)
-		if fake.moveErr != nil || keepExisting {
+		fake.calls = append(fake.calls, "move "+paths.Directory)
+		if fake.moveErr != nil {
 			return "", fake.moveErr
 		}
-		return paths.Directory + ".old-test", nil
+		moved := paths.Directory + ".old-test"
+		return moved, os.Rename(paths.Directory, moved)
 	}
 	prepareServiceStorage = func(paths serviceInstallPaths) error {
 		fake.calls = append(fake.calls, "protect "+paths.Directory)
-		return nil
+		return os.MkdirAll(paths.Temp, 0o700)
 	}
 	replaceServiceCopy = func(source string, paths serviceInstallPaths) error {
 		fake.calls = append(fake.calls, "copy "+source+" to "+paths.Executable)
 		return nil
-	}
-	readTaskDefinition = func(string) ([]byte, error) {
-		if fake.definition == "" {
-			return nil, os.ErrNotExist
-		}
-		return []byte(fake.definition), nil
 	}
 	trustedWinget = func() (string, error) {
 		if !fake.winget {
@@ -400,7 +395,7 @@ func TestTaskInstallGit(t *testing.T) {
 // Git counts as installed when the task will find it on the PATH saved in
 // Windows, although this terminal's PATH may be older. winget saying that
 // Git is already installed is no failure; when the task still would not
-// find Git, one line says what to do and nothing changes.
+// find Git, one line says what to do and no new task is registered.
 func TestTaskInstallLooksForGitAsTheTaskDoes(t *testing.T) {
 	fake := newFakeWindows(t)
 	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
@@ -421,7 +416,7 @@ func TestTaskInstallLooksForGitAsTheTaskDoes(t *testing.T) {
 	err := elevated.elevatedInstall(testStateDir, false, true)
 	const line = "Git for Windows is installed but not on PATH. Add its cmd folder (for example C:\\Program Files\\Git\\cmd) to PATH, then run \"owngit service install\" again.\n"
 	var exit *checkExit
-	if !errors.As(err, &exit) || exit.code != elevatedMessageExit || !strings.HasSuffix(out.String(), "winget.\n"+line) || slicesContainPrefix(fake.calls, "schtasks") {
+	if !errors.As(err, &exit) || exit.code != elevatedMessageExit || !strings.HasSuffix(out.String(), "winget.\n"+line) || slicesContainPrefix(fake.calls, "schtasks /Create") {
 		t.Errorf("Git not on PATH: %v, calls %q, output:\n%s", err, fake.calls, out.String())
 	}
 	// The command that asked for approval adds nothing to that line.
@@ -494,13 +489,15 @@ func TestTaskElevatedInstall(t *testing.T) {
 	fake.owners[fake.repositories] = administratorsSID
 	fake.adminOwned[fake.repositories] = 41
 	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	serviceFolder(t, host)
+	host.serviceInstall.Executable = testServiceExecutable
 	noErr(t, host.elevatedInstall(testStateDir, true, false))
 	if !reflect.DeepEqual(fake.stopAsked, []string{testStateDir}) {
 		t.Errorf("stop asked %q", fake.stopAsked)
 	}
 	want := []string{
-		"keep " + host.serviceInstall.Directory, "protect " + host.serviceInstall.Directory,
 		"powershell state", "powershell state",
+		"move " + host.serviceInstall.Directory, "protect " + host.serviceInstall.Directory,
 		"copy " + host.executable + " to " + host.serviceInstall.Executable,
 		"give " + testStateDir, "give " + fake.repositories,
 		"schtasks /Create", "powershell firewall-allow " + host.serviceInstall.Executable, "schtasks /End /TN \\OwnGit", "schtasks /Run /TN \\OwnGit",
@@ -528,21 +525,55 @@ func TestTaskElevatedInstall(t *testing.T) {
 	}
 }
 
-func TestTaskElevatedInstallMovesUnclaimedServiceFolder(t *testing.T) {
-	fake := newFakeWindows(t)
-	fake.serviceFolder = true
-	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
-	noErr(t, host.elevatedInstall(testStateDir, false, false))
-	if len(fake.calls) == 0 || fake.calls[0] != "move "+host.serviceInstall.Directory || !strings.Contains(out.String(), "service folder was moved to "+host.serviceInstall.Directory+".old-test") {
-		t.Fatalf("calls=%q, output=%q", fake.calls, out.String())
+func TestTaskElevatedInstallCreatesFreshServiceFolder(t *testing.T) {
+	for _, mode := range []service.Mode{service.ModeBootTask, service.ModeLogonTask} {
+		for _, foreign := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/foreign=%t", mode, foreign), func(t *testing.T) {
+				fake := newFakeWindows(t)
+				fake.existing(t, mode, testSID, testStateDir)
+				fake.serviceFolder = true
+				host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+				serviceFolder(t, host)
+				host.serviceInstall.Executable = testServiceExecutable
+				if foreign {
+					noErr(t, os.WriteFile(filepath.Join(host.serviceInstall.Directory, "notes.txt"), []byte("keep"), 0o600))
+				}
+				noErr(t, host.elevatedInstall(testStateDir, false, false))
+				moved := host.serviceInstall.Directory + ".old-test"
+				if !slices.Contains(fake.calls, "move "+host.serviceInstall.Directory) || fake.created == "" {
+					t.Fatalf("calls=%q, task=%q", fake.calls, fake.created)
+				}
+				if _, err := os.Stat(host.serviceInstall.Temp); err != nil {
+					t.Fatalf("fresh storage: %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(host.serviceInstall.Directory, "notes.txt")); !os.IsNotExist(err) {
+					t.Fatalf("fresh folder reused old contents: %v", err)
+				}
+				if foreign {
+					data, err := os.ReadFile(filepath.Join(moved, "notes.txt"))
+					if err != nil || string(data) != "keep" || !strings.Contains(out.String(), moved+" stays:") {
+						t.Fatalf("content=%q, error=%v, output=%q", data, err, out.String())
+					}
+				} else if _, err := os.Stat(moved); !os.IsNotExist(err) || out.Len() != 0 {
+					t.Fatalf("old folder remains: %v, output=%q", err, out.String())
+				}
+			})
+		}
 	}
-	fake = newFakeWindows(t)
-	fake.existing(t, service.ModeLogonTask, testSID, testStateDir)
-	fake.serviceFolder = true
-	host, _ = testTaskHost(service.Environment{Administrator: true, Elevated: true})
+}
+
+func TestTaskElevatedInstallContinuesAfterCleanupFailure(t *testing.T) {
+	fake := newFakeWindows(t)
+	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	moved := filepath.Join(t.TempDir(), "old-service")
+	noErr(t, os.WriteFile(moved, []byte("keep"), 0o600))
+	prepareServiceInstall = func(serviceInstallPaths) (string, error) { return moved, nil }
 	noErr(t, host.elevatedInstall(testStateDir, false, false))
-	if len(fake.calls) == 0 || fake.calls[0] != "move "+host.serviceInstall.Directory {
-		t.Fatalf("a sign-in task kept the folder: %q", fake.calls)
+	if !strings.Contains(out.String(), moved+" stays:") || strings.Count(out.String(), "\n") != 1 || fake.created == "" || fake.firewall == "" {
+		t.Fatalf("output=%q, task=%q, firewall=%q", out.String(), fake.created, fake.firewall)
+	}
+	if data, err := os.ReadFile(moved); err != nil || string(data) != "keep" {
+		t.Fatalf("old file=%q, error=%v", data, err)
 	}
 }
 
@@ -550,13 +581,17 @@ func TestTaskElevatedInstallRefusesFolderItCannotMove(t *testing.T) {
 	fake := newFakeWindows(t)
 	fake.serviceFolder, fake.moveErr = true, errors.New("held open")
 	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	serviceFolder(t, host)
 	err := host.elevatedInstall(testStateDir, false, false)
 	var exit *checkExit
-	if !errors.As(err, &exit) || exit.code != elevatedMessageExit || out.String() != "The existing OwnGit service folder could not be moved aside. Move or rename "+host.serviceInstall.Directory+", then run \"owngit service install\" again.\n" {
+	if !errors.As(err, &exit) || exit.code != elevatedMessageExit || out.String() != "OwnGit could not prepare a fresh service folder at "+host.serviceInstall.Directory+". Check that folder, then run \"owngit service install\" again.\n" {
 		t.Fatalf("error=%v, output=%q", err, out.String())
 	}
-	if want := []string{"move " + host.serviceInstall.Directory}; !reflect.DeepEqual(fake.calls, want) || fake.definition != "" {
+	if want := []string{"powershell state", "move " + host.serviceInstall.Directory}; !reflect.DeepEqual(fake.calls, want) || fake.definition != "" {
 		t.Fatalf("calls=%q, task=%q", fake.calls, fake.definition)
+	}
+	if _, err := os.Stat(host.serviceInstall.Executable); err != nil {
+		t.Fatalf("existing copy changed: %v", err)
 	}
 }
 

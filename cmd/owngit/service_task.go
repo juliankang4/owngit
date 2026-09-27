@@ -60,7 +60,6 @@ var (
 	servicePaths          = platformServiceInstallPaths
 	prepareServiceInstall = platformPrepareServiceInstall
 	prepareServiceStorage = platformPrepareServiceStorage
-	readTaskDefinition    = os.ReadFile
 	// replaceServiceCopy refreshes the protected executable from this one.
 	replaceServiceCopy = platformReplaceServiceCopy
 	// trustedWinget finds winget only in a verified App Installer package.
@@ -479,31 +478,16 @@ func listSteps(steps []string) string {
 // errElevationCancelled means the owner declined the UAC prompt.
 var errElevationCancelled = errors.New("administrator approval was declined")
 
-// elevatedInstall does the steps that need administrator rights: Git if it
-// is missing, stopping the server that runs, refreshing the protected service
-// copy, the account's ownership of its folders, the boot task for this account,
-// the firewall rule, and the start. It creates nothing in the state directory,
-// which the server creates itself without administrator rights.
+// elevatedInstall stops the old server, creates fresh protected storage,
+// installs Git if needed, copies the program, repairs ownership, and registers
+// the boot task and firewall rule before starting the service. It creates
+// nothing in the state directory, which the restricted server creates itself.
 func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool) error {
-	definition, err := readTaskDefinition(filepath.Join(host.system, "Tasks", service.TaskName))
-	found := err == nil
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read the protected task definition: %w", err)
-	}
-	var existing service.Installed
-	if found {
-		if existing, err = service.ParseTask(definition); err != nil {
-			return err
-		}
-	}
-	keepExisting := found && existing.Mode == service.ModeBootTask && existing.User == host.sid && strings.EqualFold(filepath.Clean(existing.Executable), filepath.Clean(host.serviceInstall.Executable))
-	moved, err := prepareServiceInstall(host.serviceInstall, keepExisting)
+	host.stopTask(stateDir)
+	moved, err := prepareServiceInstall(host.serviceInstall)
 	if err != nil {
-		host.printf("The existing OwnGit service folder could not be moved aside. Move or rename %s, then run \"owngit service install\" again.\n", host.serviceInstall.Directory)
-		return &checkExit{code: elevatedMessageExit, err: fmt.Errorf("move the existing service folder: %w", err)}
-	}
-	if moved != "" {
-		host.printf("The existing OwnGit service folder was moved to %s.\n", moved)
+		host.printf("OwnGit could not prepare a fresh service folder at %s. Check that folder, then run \"owngit service install\" again.\n", host.serviceInstall.Directory)
+		return &checkExit{code: elevatedMessageExit, err: fmt.Errorf("prepare the service folder: %w", err)}
 	}
 	if err := host.prepareAdministrator(); err != nil {
 		return err
@@ -530,9 +514,6 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 			return &checkExit{code: elevatedMessageExit, err: errors.New("git is not on PATH")}
 		}
 	}
-	if found {
-		host.stopTask(existing.StateDir)
-	}
 	if err := replaceServiceCopy(host.executable, host.serviceInstall); err != nil {
 		return err
 	}
@@ -546,6 +527,21 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 	}
 	if err := host.registerTask(host.plan(service.ModeBootTask, stateDir, headless)); err != nil {
 		return err
+	}
+	if moved != "" {
+		entries, err := os.ReadDir(moved)
+		for _, entry := range entries {
+			if entry.Name() != "owngit.exe" && entry.Name() != "temp" {
+				err = errors.New("it holds files OwnGit did not create")
+				break
+			}
+		}
+		if err == nil {
+			err = os.RemoveAll(moved)
+		}
+		if err != nil {
+			host.printf("%s stays: %v.\n", moved, err)
+		}
 	}
 	if err := host.allowThroughFirewallFor(host.serviceInstall.Executable); err != nil {
 		return err

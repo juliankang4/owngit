@@ -67,15 +67,19 @@ func TestServiceStorageRefusesUnsafeExistingPaths(t *testing.T) {
 	})
 }
 
-func TestFirstInstallMovesExistingServiceFolder(t *testing.T) {
+func TestInstallCreatesFreshServiceFolder(t *testing.T) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("creating protected storage needs administrator rights")
+	}
 	root := t.TempDir()
 	directory := filepath.Join(root, "OwnGit")
 	noErr(t, os.Mkdir(directory, 0o700))
 	noErr(t, os.WriteFile(filepath.Join(directory, "owner.txt"), []byte("keep"), 0o600))
-	moved, err := platformPrepareServiceInstall(serviceInstallPaths{Directory: directory}, false)
+	moved, err := platformPrepareServiceInstall(serviceInstallPaths{Directory: directory})
 	noErr(t, err)
-	if _, err := os.Stat(directory); moved == "" || !os.IsNotExist(err) {
-		t.Fatalf("folder moved to %q but old path remains: %v", moved, err)
+	noErr(t, verifyProtectedServiceACL(directory, true, true))
+	if _, err := os.Stat(filepath.Join(directory, "owner.txt")); moved == "" || !os.IsNotExist(err) {
+		t.Fatalf("fresh folder reused old content: %v", err)
 	}
 	if data, err := os.ReadFile(filepath.Join(moved, "owner.txt")); err != nil || string(data) != "keep" {
 		t.Fatalf("moved content=%q, error=%v", data, err)

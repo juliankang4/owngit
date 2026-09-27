@@ -29,7 +29,7 @@ func platformServiceInstallPaths() (serviceInstallPaths, error) {
 		Temp:       `C:\Program Files\OwnGit\temp`,
 	}, nil
 }
-func platformPrepareServiceInstall(serviceInstallPaths, bool) (string, error) {
+func platformPrepareServiceInstall(serviceInstallPaths) (string, error) {
 	return "", errNotWindows
 }
 func platformPrepareServiceStorage(serviceInstallPaths) error      { return errNotWindows }
