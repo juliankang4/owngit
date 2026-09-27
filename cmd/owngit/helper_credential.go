@@ -74,11 +74,11 @@ func (admin *helperAdminFlags) repositoryPath() string {
 // helperCredentialCreate issues one credential and delivers its token through
 // an exclusively created private file.
 func helperCredentialCreate(arguments []string) error {
-	flags := newCheckFlagSet("helper-credential create")
+	flags := newCommandFlagSet("helper-credential create")
 	admin := addHelperAdminFlags(flags)
 	label := flags.String("label", "", "credential label")
 	output := flags.String("output", "", "owner-readable file that receives the token")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *output == "" {
@@ -101,53 +101,49 @@ func helperCredentialCreate(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	fail := func(code string, cause error, compensate bool) error {
+	credentialsPath := admin.repositoryPath() + "/helper-credentials"
+	fail := func(cause error, compensate bool) error {
 		closeErr := reserved.preserve()
 		failure := cause
 		if compensate {
-			failure = compensateCreation(client, admin.repositoryPath(), creationID, code, cause)
+			failure = compensateCreation(client, credentialsPath, creationID, cause)
 		}
 		return preservedOutputError(failure, closeErr)
 	}
 
-	content, err := client.Do(context.Background(), "POST", admin.repositoryPath()+"/helper-credentials",
+	content, err := client.Do(context.Background(), "POST", credentialsPath,
 		checkapi.CreateCredentialInput{Label: *label, CreationID: creationID})
 	if err != nil {
 		// A definite conflicting creation keeps the existing authority.
-		return fail("credential_creation_failed", err, !isCreationConflict(err))
+		return fail(err, !isCreationConflict(err))
 	}
 	var response checkapi.CredentialResponse
 	if err := json.Unmarshal(content, &response); err != nil || response.Credential == nil {
-		return fail("credential_creation_failed", cliProblem("invalid_response", "The server did not return a helper credential."), true)
+		return fail(cliProblem("invalid_response", "The server did not return a helper credential."), true)
 	}
 	if response.Credential.RepositoryID != admin.repository || response.Credential.CreationID != creationID {
-		return fail("credential_creation_failed",
-			cliProblem("mismatched_response", "The server returned a credential for another repository or creation identity."), true)
+		return fail(cliProblem("mismatched_response", "The server returned a credential for another repository or creation identity."), true)
 	}
 	if response.Token == "" {
-		return fail("credential_creation_failed", cliProblem("token_unavailable", "The server returned an existing credential without its token."), true)
+		return fail(cliProblem("token_unavailable", "The server returned an existing credential without its token."), true)
 	}
 	if reserved.replaced() {
-		return fail("output_replaced",
-			cliProblem("output_replaced", "The output path was replaced while the credential was created. The replacement was left untouched."), true)
+		return fail(outputReplaced(), true)
 	}
 	// The first line binds the token to the server that issued it, so a
 	// command that infers the server from a clone sends it only there.
 	if err := reserved.write(credentialOriginPrefix + " " + origin + "\n" + response.Token); err != nil {
-		return fail("token_delivery_failed",
-			&apiclient.Error{Code: "token_delivery_failed", Message: "The token could not be written.", Cause: err}, true)
+		return fail(&apiclient.Error{Code: "token_delivery_failed", Message: "The token could not be written.", Cause: err}, true)
 	}
 	if reserved.replaced() {
-		return fail("output_replaced",
-			cliProblem("output_replaced", "The output path was replaced while the credential was created. The replacement was left untouched."), true)
+		return fail(outputReplaced(), true)
 	}
 	if err := reserved.preserve(); err != nil {
-		return preservedOutputError(compensateCreation(client, admin.repositoryPath(), creationID, "token_delivery_failed",
+		return preservedOutputError(compensateCreation(client, credentialsPath, creationID,
 			&apiclient.Error{Code: "token_delivery_failed", Message: "The token file could not be closed.", Cause: err}), err)
 	}
 	if reserved.replaced() {
-		return preservedOutputError(compensateCreation(client, admin.repositoryPath(), creationID, "output_replaced",
-			cliProblem("output_replaced", "The output path was replaced while the credential was created. The replacement was left untouched.")), nil)
+		return preservedOutputError(compensateCreation(client, credentialsPath, creationID, outputReplaced()), nil)
 	}
 	// The token is delivered only through the file, so stdout never carries it.
 	response.Token = ""
@@ -181,26 +177,48 @@ func isCreationConflict(err error) bool {
 	return errors.As(err, &problem) && problem.Code == "creation_conflict"
 }
 
-// compensateCreation revokes the credential created by one operation. The
-// revoke is scoped by the locally generated creation identity, so it never
-// trusts a returned credential identifier, and it is idempotent when nothing
-// was created. When the revoke cannot be confirmed, the non-secret creation
-// identity is disclosed with an actionable instruction.
-func compensateCreation(client *apiclient.Client, repositoryPath, creationID, code string, cause error) error {
-	if revokeErr := revokeCredentialByCreation(client, repositoryPath, creationID); revokeErr != nil {
-		return &apiclient.Error{
-			Code:    "credential_creation_unconfirmed",
-			Message: "The creation outcome is unconfirmed and the compensating revoke failed. Revoke creation " + creationID + " before retrying.",
-			Cause:   cause,
-		}
+// outputReplaced reports a token output path that another writer replaced
+// while a credential was issued.
+func outputReplaced() error {
+	return cliProblem("output_replaced", "The output path was replaced while the credential was created. The replacement was left untouched.")
+}
+
+// compensateCreation revokes the helper or runner credential that one failed
+// operation may have created in the credentials collection at credentialsPath.
+// The revoke is scoped by the creation identity sent with the request, so it
+// never trusts a returned credential identifier, and it is idempotent when
+// nothing was created.
+//
+// The result states why creation failed and then what compensation achieved,
+// so neither fact hides the other. A confirmed revoke keeps the failure's code
+// and suggests a retry only when the server did not definitely refuse the
+// request, since the same request would be refused again. An unconfirmed
+// revoke becomes credential_creation_unconfirmed and names the non-secret
+// creation identity the owner must revoke.
+func compensateCreation(client *apiclient.Client, credentialsPath, creationID string, cause error) error {
+	failure := apiclient.Error{Code: "credential_creation_failed", Message: "Credential creation failed."}
+	var problem *apiclient.Error
+	if errors.As(cause, &problem) {
+		failure = *problem
 	}
-	return &apiclient.Error{Code: code, Message: "The credential was revoked, so retry.", Cause: cause}
+	failure.Cause = cause
+	if revokeErr := revokeCredentialByCreation(client, credentialsPath, creationID); revokeErr != nil {
+		failure.Code = "credential_creation_unconfirmed"
+		failure.Message += " The creation outcome is unconfirmed and the compensating revoke failed. Revoke creation " + creationID + " before retrying."
+		failure.Cause = errors.Join(cause, revokeErr)
+		return &failure
+	}
+	failure.Message += " Any credential this attempt created was revoked."
+	if !definiteRefusal(cause) {
+		failure.Message += " Retry the command."
+	}
+	return &failure
 }
 
 func helperCredentialList(arguments []string) error {
-	flags := newCheckFlagSet("helper-credential list")
+	flags := newCommandFlagSet("helper-credential list")
 	admin := addHelperAdminFlags(flags)
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	client, err := admin.client()
@@ -215,10 +233,10 @@ func helperCredentialList(arguments []string) error {
 }
 
 func helperCredentialRevoke(arguments []string) error {
-	flags := newCheckFlagSet("helper-credential revoke")
+	flags := newCommandFlagSet("helper-credential revoke")
 	admin := addHelperAdminFlags(flags)
 	id := flags.String("id", "", "credential identifier")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *id == "" {
@@ -239,8 +257,8 @@ func revokeCredential(client *apiclient.Client, repositoryPath, id string) error
 	return err
 }
 
-func revokeCredentialByCreation(client *apiclient.Client, repositoryPath, creationID string) error {
-	_, err := client.Do(context.Background(), "DELETE", repositoryPath+"/helper-credentials/by-creation/"+url.PathEscape(creationID), nil)
+func revokeCredentialByCreation(client *apiclient.Client, credentialsPath, creationID string) error {
+	_, err := client.Do(context.Background(), "DELETE", credentialsPath+"/by-creation/"+url.PathEscape(creationID), nil)
 	return err
 }
 

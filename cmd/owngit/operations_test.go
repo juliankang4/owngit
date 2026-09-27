@@ -71,9 +71,9 @@ func TestPostWithRetryStopsWhenTheContextIsCancelled(t *testing.T) {
 // the worktree and is recorded by the completion step with its own context.
 func TestCheckAttemptStepsRecordACancelledExecution(t *testing.T) {
 	remoteFlags, taskID, work := startCheckCLIServer(t)
-	flags := newCheckFlagSet("check run")
+	flags := newCommandFlagSet("check run")
 	remote := addCheckRemoteFlags(flags)
-	noErr(t, parseCheckFlags(flags, remoteFlags))
+	noErr(t, parseFlagsWithoutOperands(flags, remoteFlags))
 	target, err := remote.connection(".")
 	noErr(t, err)
 	attempt, err := prepareCheckAttempt(context.Background(), &target, checkRunRequest{

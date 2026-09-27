@@ -166,10 +166,6 @@ func normalizeHost(value string) (string, error) {
 	value = strings.TrimSpace(strings.ToLower(value))
 	if host, _, err := net.SplitHostPort(value); err == nil {
 		value = host
-	} else if strings.Count(value, ":") == 1 {
-		if host, _, splitErr := net.SplitHostPort(value); splitErr == nil {
-			value = host
-		}
 	}
 	value = strings.TrimSuffix(strings.Trim(value, "[]"), ".")
 	if value == "" || strings.ContainsAny(value, "/\\@\x00\r\n \t") {

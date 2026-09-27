@@ -83,9 +83,9 @@ func checkTaskCommand(arguments []string) error {
 }
 
 func checkTaskList(arguments []string) error {
-	flags := newCheckFlagSet("check task list")
+	flags := newCommandFlagSet("check task list")
 	remote := addCheckRemoteFlags(flags)
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	target, err := remote.connection(".")
@@ -96,10 +96,10 @@ func checkTaskList(arguments []string) error {
 }
 
 func checkTaskNew(arguments []string) error {
-	flags := newCheckFlagSet("check task new")
+	flags := newCommandFlagSet("check task new")
 	remote := addCheckRemoteFlags(flags)
 	title := flags.String("title", "", "task title")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	target, err := remote.connection(".")
@@ -136,10 +136,10 @@ func checkCycleCommand(arguments []string) error {
 }
 
 func checkCycleReserve(arguments []string) error {
-	flags := newCheckFlagSet("check cycle reserve")
+	flags := newCommandFlagSet("check cycle reserve")
 	remote := addCheckRemoteFlags(flags)
 	taskID := flags.String("task", "", "stable task identifier")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *taskID == "" {
@@ -153,10 +153,10 @@ func checkCycleReserve(arguments []string) error {
 }
 
 func checkCycleList(arguments []string) error {
-	flags := newCheckFlagSet("check cycle list")
+	flags := newCommandFlagSet("check cycle list")
 	remote := addCheckRemoteFlags(flags)
 	taskID := flags.String("task", "", "stable task identifier")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *taskID == "" {
@@ -170,10 +170,10 @@ func checkCycleList(arguments []string) error {
 }
 
 func checkStatus(arguments []string) error {
-	flags := newCheckFlagSet("check status")
+	flags := newCommandFlagSet("check status")
 	remote := addCheckRemoteFlags(flags)
 	taskID := flags.String("task", "", "task identifier")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *taskID == "" {
@@ -187,10 +187,10 @@ func checkStatus(arguments []string) error {
 }
 
 func checkLog(arguments []string) error {
-	flags := newCheckFlagSet("check log")
+	flags := newCommandFlagSet("check log")
 	remote := addCheckRemoteFlags(flags)
 	attemptID := flags.String("attempt", "", "check attempt identifier")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *attemptID == "" {
@@ -216,9 +216,9 @@ func checkConfigCommand(arguments []string) error {
 	if arguments[0] != "show" {
 		return cliProblem("invalid_arguments", "check config requires show.")
 	}
-	flags := newCheckFlagSet("check config show")
+	flags := newCommandFlagSet("check config show")
 	remote := addCheckRemoteFlags(flags)
-	if err := parseCheckFlags(flags, arguments[1:]); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments[1:]); err != nil {
 		return err
 	}
 	target, err := remote.connection(".")
@@ -242,7 +242,7 @@ type checkRunOutput struct {
 }
 
 func checkRun(arguments []string) error {
-	flags := newCheckFlagSet("check run")
+	flags := newCommandFlagSet("check run")
 	remote := addCheckRemoteFlags(flags)
 	taskID := flags.String("task", "", "stable task identifier")
 	cycleID := flags.String("cycle", "", "reserved correction cycle identifier")
@@ -252,7 +252,7 @@ func checkRun(arguments []string) error {
 	noUpload := flags.Bool("no-upload", false, "run locally without registering the attempt")
 	var checks stringList
 	flags.Var(&checks, "check", "check as `name=command` (repeatable)")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *taskID == "" {
@@ -571,18 +571,19 @@ func inspectWorktree(ctx context.Context, directory string) (string, string, err
 	return revision, state.WorktreeClean, nil
 }
 
-// confirmWorktree re-observes the worktree after execution. A changed revision
-// or a newly dirty tree downgrades the attempt to dirty, and an unreadable tree
-// becomes unknown.
+// confirmWorktree re-observes the worktree after execution and keeps the more
+// pessimistic of the two observations: dirty, then unknown, then clean. A
+// moved revision counts as dirty. An unreadable revision or tree is unknown,
+// since it neither shows nor rules out a change.
 func confirmWorktree(ctx context.Context, directory, revision, before string) string {
-	afterRevision, afterState, err := inspectWorktree(ctx, directory)
-	if err != nil {
+	afterRevision, after, err := inspectWorktree(ctx, directory)
+	switch {
+	case err == nil && afterRevision != revision, before == state.WorktreeDirty, after == state.WorktreeDirty:
+		return state.WorktreeDirty
+	case before == state.WorktreeUnknown, after == state.WorktreeUnknown:
 		return state.WorktreeUnknown
 	}
-	if afterRevision != revision || afterState != state.WorktreeClean {
-		return state.WorktreeDirty
-	}
-	return before
+	return state.WorktreeClean
 }
 
 // runGit runs Git in the working directory with the user's configuration,
@@ -721,25 +722,6 @@ func (remote *checkRemoteFlags) connection(dir string) (connection, error) {
 	}
 	noteInference(resolved)
 	return connection{server: resolved.server, repository: resolved.repository, credential: credential{kind: credentialHelperToken, secret: token}}, nil
-}
-
-func newCheckFlagSet(name string) *flag.FlagSet {
-	flags := flag.NewFlagSet(name, flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	return flags
-}
-
-func parseCheckFlags(flags *flag.FlagSet, arguments []string) error {
-	if err := parseFlags(flags, arguments); err != nil {
-		if errors.Is(err, errUsageShown) {
-			return err
-		}
-		return cliProblem("invalid_arguments", err.Error())
-	}
-	if flags.NArg() != 0 {
-		return cliProblem("invalid_arguments", "Unexpected positional arguments were supplied.")
-	}
-	return nil
 }
 
 // writeResult prints an operation's JSON result, or returns its error.

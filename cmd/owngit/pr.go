@@ -53,13 +53,13 @@ func prCommand(arguments []string) error {
 }
 
 func prCreate(arguments []string) error {
-	flags := newPRFlagSet("pr create")
+	flags := newCommandFlagSet("pr create")
 	remote := addGeneralRemoteFlags(flags, true)
 	title := flags.String("title", "", "pull request title")
 	source := flags.String("source", "", "source branch")
 	targetBranch := flags.String("target", "", "target branch")
 	review := flags.String("review", "", "optional review choice: request or skip")
-	if err := parsePRFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *title == "" || *source == "" || *targetBranch == "" {
@@ -75,9 +75,9 @@ func prCreate(arguments []string) error {
 }
 
 func prList(arguments []string) error {
-	flags := newPRFlagSet("pr list")
+	flags := newCommandFlagSet("pr list")
 	remote := addGeneralRemoteFlags(flags, true)
-	if err := parsePRFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	target, err := remote.connection()
@@ -88,10 +88,10 @@ func prList(arguments []string) error {
 }
 
 func prShow(arguments []string) error {
-	flags := newPRFlagSet("pr show")
+	flags := newCommandFlagSet("pr show")
 	remote := addGeneralRemoteFlags(flags, true)
 	number := flags.Int64("number", 0, "pull request number")
-	if err := parsePRFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *number <= 0 {
@@ -105,14 +105,14 @@ func prShow(arguments []string) error {
 }
 
 func prDiff(arguments []string) error {
-	flags := newPRFlagSet("pr diff")
+	flags := newCommandFlagSet("pr diff")
 	remote := addGeneralRemoteFlags(flags, true)
 	number := flags.Int64("number", 0, "pull request number")
 	sourceOID := flags.String("source-oid", "", "pin this exact source commit object ID (with --target-oid)")
 	targetOID := flags.String("target-oid", "", "pin this exact target commit object ID (with --source-oid)")
 	stat := flags.Bool("stat", false, "print the JSON result without the patch")
 	patch := flags.Bool("patch", false, "print only the patch text; the revisions and any cut are noted on standard error")
-	if err := parsePRFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *number <= 0 {
@@ -220,14 +220,14 @@ func prReview(arguments []string) error {
 	if action != "request" && action != "submit" && action != "skip" {
 		return cliProblem("invalid_arguments", "pr review requires request, submit, or skip.")
 	}
-	flags := newPRFlagSet("pr review " + action)
+	flags := newCommandFlagSet("pr review " + action)
 	remote := addGeneralRemoteFlags(flags, true)
 	number := flags.Int64("number", 0, "pull request number")
 	sourceOID := flags.String("source-oid", "", "exact source commit object ID")
 	targetOID := flags.String("target-oid", "", "exact target commit object ID")
 	decision := flags.String("decision", "", "review result: approved or changes_requested")
 	reviewer := flags.String("reviewer", "", "supplied reviewer label")
-	if err := parsePRFlags(flags, arguments[1:]); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments[1:]); err != nil {
 		return err
 	}
 	if *number <= 0 || *sourceOID == "" || *targetOID == "" {
@@ -252,12 +252,12 @@ func prReview(arguments []string) error {
 }
 
 func prMerge(arguments []string) error {
-	flags := newPRFlagSet("pr merge")
+	flags := newCommandFlagSet("pr merge")
 	remote := addGeneralRemoteFlags(flags, true)
 	number := flags.Int64("number", 0, "pull request number")
 	sourceOID := flags.String("source-oid", "", "exact source commit object ID")
 	targetOID := flags.String("target-oid", "", "exact target commit object ID")
-	if err := parsePRFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *number <= 0 || *sourceOID == "" || *targetOID == "" {
@@ -273,10 +273,10 @@ func prMerge(arguments []string) error {
 // prSetClosed closes or reopens a pull request. Neither changes a branch, so
 // no object IDs are needed.
 func prSetClosed(action string, arguments []string) error {
-	flags := newPRFlagSet("pr " + action)
+	flags := newCommandFlagSet("pr " + action)
 	remote := addGeneralRemoteFlags(flags, true)
 	number := flags.Int64("number", 0, "pull request number")
-	if err := parsePRFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *number <= 0 {
@@ -289,7 +289,10 @@ func prSetClosed(action string, arguments []string) error {
 	return writeResult(setPullRequestClosed(context.Background(), target, *number, action == "close"))
 }
 
-func newPRFlagSet(name string) *flag.FlagSet {
+// newCommandFlagSet returns an empty flag set for a client command. The flag
+// package's own error output is discarded because the command reports a
+// structured error instead.
+func newCommandFlagSet(name string) *flag.FlagSet {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	return flags
@@ -308,7 +311,10 @@ func addGeneralRemoteFlags(flags *flag.FlagSet, withRepository bool) *generalRem
 	return remote
 }
 
-func parsePRFlags(flags *flag.FlagSet, arguments []string) error {
+// parseFlagsWithoutOperands parses a client command that takes options only.
+// A flag error or any positional argument becomes an invalid_arguments
+// problem, and -h or --help still ends the command through errUsageShown.
+func parseFlagsWithoutOperands(flags *flag.FlagSet, arguments []string) error {
 	if err := parseFlags(flags, arguments); err != nil {
 		if errors.Is(err, errUsageShown) {
 			return err

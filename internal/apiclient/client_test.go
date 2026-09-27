@@ -172,3 +172,47 @@ func TestErrorsCarryTheResponseStatusAndRetryAfter(t *testing.T) {
 		t.Fatalf("proxy err=%+v", problem)
 	}
 }
+
+// An unusable success response still arrived, so its status is kept for the
+// caller while the code and message describe what was wrong with it.
+func TestUnusableSuccessResponsesKeepTheirStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/invalid-success":
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"ok":false}`))
+		case "/wrong-blob-type":
+			writer.Header().Set("Content-Type", "text/plain")
+			_, _ = writer.Write([]byte("blob"))
+		default:
+			writer.Header().Set("Content-Type", "application/octet-stream")
+			writer.WriteHeader(http.StatusPartialContent)
+			_, _ = writer.Write([]byte("oversized blob"))
+		}
+	}))
+	defer server.Close()
+	origin, err := ValidateServer(server.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := New(origin, "")
+	_, err = client.Do(context.Background(), http.MethodGet, "/invalid-success", nil)
+	_, _, typeErr := client.GetBytes(context.Background(), "/wrong-blob-type", nil, 64)
+	_, _, sizeErr := client.GetBytes(context.Background(), "/oversized-blob", nil, 4)
+	for _, test := range []struct {
+		err     error
+		code    string
+		message string
+		status  int
+	}{
+		{err, "invalid_response", "The OwnGit API returned an invalid success object.", http.StatusOK},
+		{typeErr, "invalid_response", "The OwnGit API returned an invalid source blob type.", http.StatusOK},
+		{sizeErr, "response_too_large", "The OwnGit source blob exceeds its declared bound.", http.StatusPartialContent},
+	} {
+		var problem *Error
+		if !errors.As(test.err, &problem) || problem.Code != test.code || problem.Message != test.message ||
+			problem.Status != 0 || problem.ResponseStatus != test.status {
+			t.Fatalf("err=%+v, want code %s status %d", problem, test.code, test.status)
+		}
+	}
+}

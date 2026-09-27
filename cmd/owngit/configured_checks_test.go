@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -367,4 +371,125 @@ func policyExecutor(policy *checkapi.Policy) string {
 
 func policyConsent(policy *checkapi.Policy) bool {
 	return policy != nil && policy.ConsentActive
+}
+
+// TestCredentialIssuanceReportsItsCompensation covers failed helper and runner
+// credential issuance. The final CLI error states why issuance failed and what
+// the compensating revoke achieved. It suggests a retry only when a retry can
+// help, names the creation identity when the revoke is unconfirmed, and never
+// carries the token or the password file's content.
+func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
+	const token = "synthetic-issued-token"
+	const password = "synthetic-admin-password"
+	malformed := func(writer http.ResponseWriter, _, _ string) {
+		_, _ = io.WriteString(writer, `{"ok":true}`)
+	}
+	replacedOutput := func(writer http.ResponseWriter, creationID, output string) {
+		if err := os.Rename(output, output+".moved"); err != nil {
+			t.Errorf("replace the reserved path: %v", err)
+		}
+		if err := os.WriteFile(output, []byte("replacement\n"), 0o600); err != nil {
+			t.Errorf("write the replacement: %v", err)
+		}
+		_, _ = fmt.Fprintf(writer, `{"ok":true,"token":%q,"credential":{"id":"%s","repository_id":"project","creation_id":%q}}`, token, strings.Repeat("f", 32), creationID)
+	}
+	refusal := func(status int, code, message string) func(http.ResponseWriter, string, string) {
+		return func(writer http.ResponseWriter, _, _ string) {
+			writer.WriteHeader(status)
+			_, _ = fmt.Fprintf(writer, `{"ok":false,"error":{"code":%q,"message":%q}}`, code, message)
+		}
+	}
+	const disabled = "Credentials are disabled for this repository."
+	const unavailable = "The state store is unavailable."
+	for _, command := range []struct {
+		name       string
+		collection string
+		run        func(output string, flags []string) error
+	}{
+		{"helper", "helper-credentials", func(output string, flags []string) error {
+			return helperCredentialCommand(append([]string{"create", "--label", "laptop", "--output", output}, flags...))
+		}},
+		{"runner", "runner-credentials", func(output string, flags []string) error {
+			return runnerCredentialCommand(append([]string{"issue", "--label", "runner", "--token-file", output}, flags...))
+		}},
+	} {
+		for _, test := range []struct {
+			name        string
+			answer      func(writer http.ResponseWriter, creationID, output string)
+			revokeFails bool
+			code        string
+			reason      string
+			outcome     string
+			revokes     int
+		}{
+			{"refusal and confirmed revoke", refusal(http.StatusForbidden, "forbidden", disabled), false,
+				"forbidden", disabled, "Any credential this attempt created was revoked. The reserved", 1},
+			{"refusal and failed revoke", refusal(http.StatusForbidden, "forbidden", disabled), true,
+				"credential_creation_unconfirmed", disabled, "unconfirmed", 1},
+			{"server failure and failed revoke", refusal(http.StatusServiceUnavailable, "state_unavailable", unavailable), true,
+				"credential_creation_unconfirmed", unavailable, "unconfirmed", 1},
+			{"malformed response and confirmed revoke", malformed, false,
+				"invalid_response", "did not return", "Any credential this attempt created was revoked. Retry the command.", 1},
+			{"malformed response and failed revoke", malformed, true,
+				"credential_creation_unconfirmed", "did not return", "unconfirmed", 1},
+			{"replaced output and failed revoke", replacedOutput, true,
+				"credential_creation_unconfirmed", "output path was replaced", "unconfirmed", 1},
+			{"creation conflict", refusal(http.StatusConflict, "creation_conflict", "The creation identity has different content."), false,
+				"creation_conflict", "different content", "preserved", 0},
+		} {
+			t.Run(command.name+" "+test.name, func(t *testing.T) {
+				if runtime.GOOS == "windows" && strings.HasPrefix(test.name, "replaced output") {
+					t.Skip("Windows denies path replacement while the private handle is open")
+				}
+				root := t.TempDir()
+				passwordFile := filepath.Join(root, "password")
+				noErr(t, os.WriteFile(passwordFile, []byte(password+"\n"), 0o600))
+				noErr(t, state.ProtectPrivatePath(passwordFile, false))
+				output := filepath.Join(root, "token")
+				var creationID string
+				var revokes []string
+				server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					writer.Header().Set("Content-Type", "application/json")
+					if request.Method == http.MethodDelete {
+						revokes = append(revokes, request.URL.Path)
+						if test.revokeFails {
+							writer.WriteHeader(http.StatusServiceUnavailable)
+							_, _ = io.WriteString(writer, `{"ok":false,"error":{"code":"state_unavailable","message":"The revoke failed."}}`)
+							return
+						}
+						_, _ = io.WriteString(writer, `{"ok":true}`)
+						return
+					}
+					var input checkapi.CreateCredentialInput
+					_ = json.NewDecoder(request.Body).Decode(&input)
+					creationID = input.CreationID
+					test.answer(writer, creationID, output)
+				}))
+				defer server.Close()
+				stdout, err := captureStdout(func() error {
+					return command.run(output, []string{"--server", server.URL, "--accept-insecure-http", "--repository", "project", "--password-file", passwordFile})
+				})
+				var final bytes.Buffer
+				if stdout != "" || !writeStructuredCommandError(&final, err) {
+					t.Fatalf("issue stdout=%q err=%v", stdout, err)
+				}
+				var envelope pullrequest.ErrorEnvelope
+				noErr(t, json.Unmarshal(final.Bytes(), &envelope))
+				message := envelope.Error.Message
+				unconfirmed := test.code == "credential_creation_unconfirmed"
+				if envelope.Error.Code != test.code || !strings.Contains(message, test.reason) || !strings.Contains(message, test.outcome) ||
+					!strings.Contains(message, "preserved") || strings.Contains(message, creationID) != unconfirmed ||
+					strings.Contains(message, "Retry the command") != (test.name == "malformed response and confirmed revoke") {
+					t.Fatalf("final error=%s", final.Bytes())
+				}
+				if strings.Contains(final.String(), token) || strings.Contains(final.String(), password) {
+					t.Fatalf("final error exposed a secret: %s", final.Bytes())
+				}
+				revoke := "/api/v1/repositories/project/" + command.collection + "/by-creation/" + creationID
+				if len(revokes) != test.revokes || (test.revokes == 1 && revokes[0] != revoke) {
+					t.Fatalf("compensating revokes=%v", revokes)
+				}
+			})
+		}
+	}
 }

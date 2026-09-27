@@ -105,7 +105,7 @@ func importRepositoryPath(name string) (string, error) {
 }
 
 func importAdd(arguments []string) error {
-	flags := newCheckFlagSet("import add")
+	flags := newCommandFlagSet("import add")
 	remote := addImportFlags(flags)
 	mode := flags.String("mode", "standalone", "standalone or coexistence")
 	gitOnly := flags.Bool("git-only-consent", false, "accept Git LFS pointers as incomplete content")
@@ -304,7 +304,7 @@ func importStatus(arguments []string) error {
 }
 
 func importHistory(arguments []string) error {
-	flags := newCheckFlagSet("import history")
+	flags := newCommandFlagSet("import history")
 	remote := addImportFlags(flags)
 	limit := flags.Int("limit", 20, "print at most `N` runs")
 	cursor := flags.Int64("cursor", 0, "print runs older than this `ROW`, as named by the previous page")
@@ -417,7 +417,7 @@ func importResolve(arguments []string) error {
 }
 
 func importSchedule(arguments []string) error {
-	flags := newCheckFlagSet("import schedule")
+	flags := newCommandFlagSet("import schedule")
 	remote := addImportFlags(flags)
 	enable := flags.Bool("enable", false, "enable scheduled refresh")
 	disable := flags.Bool("disable", false, "disable scheduled refresh")
@@ -465,7 +465,7 @@ func importSchedule(arguments []string) error {
 }
 
 func importCredentials(arguments []string) error {
-	flags := newCheckFlagSet("import credentials")
+	flags := newCommandFlagSet("import credentials")
 	remote := addImportFlags(flags)
 	tokenFile := flags.String("token-file", "", "private file containing a bearer token")
 	basicFile := flags.String("basic-file", "", "private file containing a username and password on separate lines")
@@ -549,7 +549,7 @@ func readImportCA(path string) (string, error) {
 }
 
 func parseNamedImport(name string, arguments []string) (string, *importFlags, error) {
-	flags := newCheckFlagSet(name)
+	flags := newCommandFlagSet(name)
 	remote := addImportFlags(flags)
 	if err := parseImportFlags(flags, arguments); err != nil {
 		return "", nil, err

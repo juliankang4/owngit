@@ -347,7 +347,7 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 		OK bool `json:"ok"`
 	}
 	if err := json.Unmarshal(content, &success); err != nil || !success.OK {
-		return nil, &Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid success object."}
+		return nil, responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid success object."})
 	}
 	return content, nil
 }
@@ -391,10 +391,10 @@ func (client *Client) GetBytes(ctx context.Context, apiPath string, headers map[
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if mediaErr != nil || mediaType != "application/octet-stream" {
-		return nil, nil, &Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid source blob type."}
+		return nil, nil, responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid source blob type."})
 	}
 	if int64(len(content)) > limit {
-		return nil, nil, &Error{Code: "response_too_large", Message: "The OwnGit source blob exceeds its declared bound."}
+		return nil, nil, responseError(response, &Error{Code: "response_too_large", Message: "The OwnGit source blob exceeds its declared bound."})
 	}
 	return content, response.Header.Clone(), nil
 }

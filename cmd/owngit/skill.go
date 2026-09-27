@@ -27,11 +27,11 @@ type skillInstallResult struct {
 }
 
 func skillCommand(arguments []string) error {
-	flags := newCheckFlagSet("skill")
+	flags := newCommandFlagSet("skill")
 	install := flags.String("install", "", "skills `directory` of a coding tool; the skill is written to DIR/"+owngitchecks.Name+"/SKILL.md")
 	printSkill := flags.Bool("print", false, "print the skill shipped with this binary")
 	replace := flags.Bool("replace", false, "with --install, replace a changed SKILL.md after keeping a copy beside it")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	switch {

@@ -29,9 +29,9 @@ func repoCommand(arguments []string) error {
 }
 
 func repoList(arguments []string) error {
-	flags := newPRFlagSet("repo list")
+	flags := newCommandFlagSet("repo list")
 	remote := addGeneralRemoteFlags(flags, false)
-	if err := parsePRFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	target, err := remote.connection()
@@ -42,9 +42,9 @@ func repoList(arguments []string) error {
 }
 
 func repoShow(arguments []string) error {
-	flags := newPRFlagSet("repo show")
+	flags := newCommandFlagSet("repo show")
 	remote := addGeneralRemoteFlags(flags, true)
-	if err := parsePRFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	target, err := remote.connection()
@@ -55,11 +55,11 @@ func repoShow(arguments []string) error {
 }
 
 func repoCreate(arguments []string) error {
-	flags := newPRFlagSet("repo create")
+	flags := newCommandFlagSet("repo create")
 	remote := addGeneralRemoteFlags(flags, false)
 	name := flags.String("name", "", "repository name")
 	description := flags.String("description", "", "optional repository description")
-	if err := parsePRFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *name == "" {

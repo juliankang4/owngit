@@ -302,6 +302,61 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 	}
 }
 
+// TestConfirmWorktreeKeepsUnknownApartFromChanges covers the observation after
+// execution. An unreadable tree or revision shows no change, so it stays
+// unknown, while a moved revision or observed change stays dirty.
+func TestConfirmWorktreeKeepsUnknownApartFromChanges(t *testing.T) {
+	ctx := context.Background()
+	newWork := func(t *testing.T) (string, string) {
+		work := filepath.Join(t.TempDir(), "work")
+		runPRGit(t, "", "init", "--initial-branch=main", work)
+		runPRGit(t, work, "config", "user.name", "Check Test")
+		runPRGit(t, work, "config", "user.email", "check-test@example.invalid")
+		noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("base\n"), 0o600))
+		runPRGit(t, work, "add", ".")
+		runPRGit(t, work, "commit", "-m", "base")
+		return work, prGitOutput(t, work, "rev-parse", "HEAD")
+	}
+	unreadableTree := func(t *testing.T, work string) {
+		// Git status refuses a truncated index while HEAD still resolves.
+		noErr(t, os.WriteFile(filepath.Join(work, ".git", "index"), []byte("truncated"), 0o600))
+	}
+	unreadableRevision := func(t *testing.T, work string) {
+		noErr(t, os.WriteFile(filepath.Join(work, ".git", "HEAD"), []byte("ref: refs/heads/missing\n"), 0o600))
+	}
+	movedRevision := func(t *testing.T, work string) {
+		runPRGit(t, work, "commit", "--allow-empty", "-m", "moved")
+	}
+	changedTree := func(t *testing.T, work string) {
+		noErr(t, os.WriteFile(filepath.Join(work, "generated.txt"), []byte("changed\n"), 0o600))
+	}
+	unchanged := func(*testing.T, string) {}
+	for _, test := range []struct {
+		name   string
+		before string
+		after  func(*testing.T, string)
+		want   string
+	}{
+		{"unreadable tree at the same revision", state.WorktreeClean, unreadableTree, state.WorktreeUnknown},
+		{"unreadable revision", state.WorktreeClean, unreadableRevision, state.WorktreeUnknown},
+		{"unreadable revision after a dirty start", state.WorktreeDirty, unreadableRevision, state.WorktreeDirty},
+		{"unreadable tree after a dirty start", state.WorktreeDirty, unreadableTree, state.WorktreeDirty},
+		{"moved revision", state.WorktreeClean, movedRevision, state.WorktreeDirty},
+		{"observed change", state.WorktreeClean, changedTree, state.WorktreeDirty},
+		{"clean after an unknown start", state.WorktreeUnknown, unchanged, state.WorktreeUnknown},
+		{"clean after a dirty start", state.WorktreeDirty, unchanged, state.WorktreeDirty},
+		{"clean throughout", state.WorktreeClean, unchanged, state.WorktreeClean},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			work, revision := newWork(t)
+			test.after(t, work)
+			if got := confirmWorktree(ctx, work, revision, test.before); got != test.want {
+				t.Fatalf("confirmWorktree(before=%s)=%s, want %s", test.before, got, test.want)
+			}
+		})
+	}
+}
+
 func TestCleanupFailureOutranksSeparateCancellationInCLI(t *testing.T) {
 	zero := 0
 	cleanup := checkexec.Result{
@@ -438,21 +493,21 @@ func TestCompensatingRevokeIsScopedAndIdempotent(t *testing.T) {
 	parsed, err := apiclient.ValidateServer(httpServer.URL, true)
 	noErr(t, err)
 	client := apiclient.NewAdmin(parsed, "admin-password")
-	path := "/api/v1/repositories/project"
+	path := "/api/v1/repositories/project/helper-credentials"
 	creationID := "0123456789abcdef0123456789abcdef"
 	// Create the credential directly, as a lost response would leave it.
-	if _, err := client.Do(ctx, "POST", path+"/helper-credentials", checkapi.CreateCredentialInput{Label: "laptop", CreationID: creationID}); err != nil {
+	if _, err := client.Do(ctx, "POST", path, checkapi.CreateCredentialInput{Label: "laptop", CreationID: creationID}); err != nil {
 		t.Fatal(err)
 	}
 	// A lost response is compensated with a scoped revoke, and the caller is
 	// told to retry.
-	err = compensateCreation(client, path, creationID, "credential_creation_failed", errors.New("lost response"))
+	err = compensateCreation(client, path, creationID, errors.New("lost response"))
 	var problem *apiclient.Error
 	if !errors.As(err, &problem) || problem.Code != "credential_creation_failed" {
 		t.Fatalf("compensation error=%v", err)
 	}
 	// The revoke is idempotent, so a second compensation is safe.
-	if err := compensateCreation(client, path, creationID, "credential_creation_failed", errors.New("lost response")); err == nil {
+	if err := compensateCreation(client, path, creationID, errors.New("lost response")); err == nil {
 		t.Fatal("second compensation reported success")
 	}
 	credentials, err := store.HelperCredentials(ctx, "project")
@@ -462,7 +517,7 @@ func TestCompensatingRevokeIsScopedAndIdempotent(t *testing.T) {
 	// An unreachable server cannot confirm the revoke, so the creation
 	// identity is reported instead of the token.
 	dead := apiclient.NewAdmin(&url.URL{Scheme: "http", Host: "127.0.0.1:1"}, "admin-password")
-	err = compensateCreation(dead, path, creationID, "credential_creation_failed", errors.New("lost response"))
+	err = compensateCreation(dead, path, creationID, errors.New("lost response"))
 	if !errors.As(err, &problem) || problem.Code != "credential_creation_unconfirmed" || !strings.Contains(problem.Message, creationID) {
 		t.Fatalf("unconfirmed compensation error=%v", err)
 	}
@@ -492,7 +547,7 @@ func TestCredentialCreateCompensatesAMalformedResponse(t *testing.T) {
 		_, _ = fmt.Fprintf(writer, `{"ok":true,"credential":{"id":"0123456789abcdef0123456789abcdef","repository_id":"project","creation_id":%q}}`, input.CreationID)
 	})
 	var problem *apiclient.Error
-	if !errors.As(create.err, &problem) || problem.Code != "credential_creation_failed" {
+	if !errors.As(create.err, &problem) || problem.Code != "token_unavailable" {
 		t.Fatalf("malformed response error=%v", create.err)
 	}
 	// The compensation is scoped by the creation identity, not by a credential
@@ -555,7 +610,7 @@ func TestCredentialCreateRejectsAMismatchedResponseIdentity(t *testing.T) {
 		_, _ = io.WriteString(writer, `{"ok":true,"token":"secret","credential":{"id":"0123456789abcdef0123456789abcdef","repository_id":"other","creation_id":"ffffffffffffffffffffffffffffffff"}}`)
 	})
 	var problem *apiclient.Error
-	if !errors.As(create.err, &problem) || problem.Code != "credential_creation_failed" {
+	if !errors.As(create.err, &problem) || problem.Code != "mismatched_response" {
 		t.Fatalf("mismatched response error=%v", create.err)
 	}
 	if len(create.deleted) != 1 || !strings.Contains(create.deleted[0], "/helper-credentials/by-creation/") {

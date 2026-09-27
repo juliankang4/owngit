@@ -38,14 +38,14 @@ func checkPolicyCommand(arguments []string) error {
 	if !slices.Contains([]string{"show", "set", "enable", "disable"}, action) {
 		return cliProblem("invalid_arguments", "Unknown check-policy action.")
 	}
-	flags := newCheckFlagSet("check-policy " + action)
+	flags := newCommandFlagSet("check-policy " + action)
 	admin := addHelperAdminFlags(flags)
 	// Each action accepts, and its help lists, only the options it uses.
 	policyFile := new(string)
 	if action == "set" {
 		flags.StringVar(policyFile, "policy-file", "", "JSON file containing the complete configured-check policy")
 	}
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	client, err := admin.client()
@@ -94,13 +94,13 @@ func checkJobCommand(arguments []string) error {
 	if !slices.Contains([]string{"list", "show", "log", "cancel", "rerun"}, action) {
 		return cliProblem("invalid_arguments", "Unknown check-job action.")
 	}
-	flags := newCheckFlagSet("check-job " + action)
+	flags := newCommandFlagSet("check-job " + action)
 	admin := addHelperAdminFlags(flags)
 	jobID := new(string)
 	if action != "list" {
 		flags.StringVar(jobID, "job", "", "configured-check job identifier")
 	}
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	client, err := admin.client()
@@ -146,7 +146,7 @@ func runnerCredentialCommand(arguments []string) error {
 	if !slices.Contains([]string{"issue", "list", "revoke"}, action) {
 		return cliProblem("invalid_arguments", "Unknown runner-credential action.")
 	}
-	flags := newCheckFlagSet("runner-credential " + action)
+	flags := newCommandFlagSet("runner-credential " + action)
 	admin := addHelperAdminFlags(flags)
 	label, creationID, tokenFile, credentialID := new(string), new(string), new(string), new(string)
 	switch action {
@@ -158,7 +158,7 @@ func runnerCredentialCommand(arguments []string) error {
 		flags.StringVar(credentialID, "credential", "", "runner credential identifier")
 	}
 	caFile := flags.String("ca-file", "", "PEM certificate authority file for private HTTPS")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	origin, err := apiclient.ValidateServer(admin.server, admin.acceptInsecureHTTP)
@@ -219,7 +219,7 @@ func runnerCredentialCommand(arguments []string) error {
 			closeErr := reserved.preserve()
 			failure := cause
 			if compensate {
-				failure = compensateRunnerCreation(client, path, *creationID, cause)
+				failure = compensateCreation(client, path, *creationID, cause)
 			}
 			return preservedOutputError(failure, closeErr)
 		}
@@ -229,31 +229,32 @@ func runnerCredentialCommand(arguments []string) error {
 		}
 		var response checkapi.RunnerCredentialResponse
 		if err := json.Unmarshal(content, &response); err != nil || response.Credential == nil {
-			return fail(errors.New("server did not return a runner credential"), true)
+			return fail(cliProblem("invalid_response", "The server did not return a runner credential."), true)
 		}
 		if response.Credential.RepositoryID != admin.repository || response.Credential.CreationID != *creationID {
-			return fail(errors.New("server returned a runner credential for another repository or creation identity"), true)
+			return fail(cliProblem("mismatched_response", "The server returned a runner credential for another repository or creation identity."), true)
 		}
 		if response.Token == "" {
-			return fail(errors.New("runner credential issuance did not return a new token"), true)
+			return fail(cliProblem("token_unavailable", "The server returned an existing runner credential without its token."), true)
 		}
 		if reserved.replaced() {
-			return fail(errors.New("runner token path was replaced during issuance; the replacement was left untouched"), true)
+			return fail(outputReplaced(), true)
 		}
 		// The first line binds the token to the server that issued it, as
 		// helper-credential create does; the runner refuses it for another.
 		tokenFileServer := canonicalOrigin(origin)
 		if err := reserved.write(credentialOriginPrefix + " " + tokenFileServer + "\n" + response.Token); err != nil {
-			return fail(fmt.Errorf("write runner token file: %w", err), true)
+			return fail(&apiclient.Error{Code: "token_delivery_failed", Message: "The token could not be written.", Cause: err}, true)
 		}
 		if reserved.replaced() {
-			return fail(errors.New("runner token path was replaced during delivery; the replacement was left untouched"), true)
+			return fail(outputReplaced(), true)
 		}
 		if err := reserved.preserve(); err != nil {
-			return preservedOutputError(compensateRunnerCreation(client, path, *creationID, fmt.Errorf("close runner token file: %w", err)), err)
+			return preservedOutputError(compensateCreation(client, path, *creationID,
+				&apiclient.Error{Code: "token_delivery_failed", Message: "The token file could not be closed.", Cause: err}), err)
 		}
 		if reserved.replaced() {
-			return preservedOutputError(compensateRunnerCreation(client, path, *creationID, errors.New("runner token path was replaced after delivery; the replacement was left untouched")), nil)
+			return preservedOutputError(compensateCreation(client, path, *creationID, outputReplaced()), nil)
 		}
 		response.Token = ""
 		return writeJSONValue(struct {
@@ -267,7 +268,7 @@ func runnerCredentialCommand(arguments []string) error {
 }
 
 func runnerCommand(arguments []string) error {
-	flags := newCheckFlagSet("runner")
+	flags := newCommandFlagSet("runner")
 	server := flags.String("server", "", "OwnGit HTTP(S) origin")
 	repositoryID := flags.String("repository", "", "repository identifier")
 	tokenFile := flags.String("token-file", "", "owner-only runner token file")
@@ -276,7 +277,7 @@ func runnerCommand(arguments []string) error {
 	poll := flags.Duration("poll", 5*time.Second, "idle polling interval")
 	once := flags.Bool("once", false, "claim at most one job, then exit")
 	insecure := flags.Bool("accept-insecure-http", false, "accept unencrypted HTTP for this runner")
-	if err := parseCheckFlags(flags, arguments); err != nil {
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *server == "" || *repositoryID == "" || *tokenFile == "" {
@@ -390,14 +391,6 @@ func readBoundedFile(path string, limit int64) ([]byte, error) {
 		return nil, errors.New("file exceeds the supported size")
 	}
 	return content, nil
-}
-
-func compensateRunnerCreation(client *apiclient.Client, path, creationID string, cause error) error {
-	_, revokeErr := client.Do(context.Background(), http.MethodDelete, path+"/by-creation/"+creationID, nil)
-	if revokeErr != nil {
-		return fmt.Errorf("runner credential issuance failed and compensation for creation %s was not confirmed: %w", creationID, errors.Join(cause, revokeErr))
-	}
-	return fmt.Errorf("runner credential issuance failed and its authority was revoked: %w", cause)
 }
 
 func readPolicyInput(path string) (checkapi.PolicyInput, error) {
