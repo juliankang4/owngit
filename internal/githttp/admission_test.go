@@ -94,7 +94,7 @@ func TestBusyGitRequestGets503WithRetryAfter(t *testing.T) {
 	backend, err := os.Executable()
 	noErr(t, err)
 	handler.BackendPath = backend
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	handler.QueueWait = 100 * time.Millisecond
 	logs := captureLog(t)
 	// With one slot per repository, two other repositories fill both slots.

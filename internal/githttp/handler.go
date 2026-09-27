@@ -32,7 +32,10 @@ type Handler struct {
 	Git          *gitexec.Runner
 	Repositories *repository.Manager
 	BackendPath  string
-	Authorize    func(*http.Request) bool
+	// Authorize reports whether a request may use Git. An error means that
+	// could not be decided: the client is told to try later and is not asked
+	// for another password. Authorize logs the cause of that error.
+	Authorize func(*http.Request) (bool, error)
 	// OnReceive wakes check reconciliation after git-receive-pack exits. It is
 	// advisory and must never change the already completed Git response.
 	OnReceive        func(string)
@@ -90,10 +93,17 @@ func DiscoverBackend(ctx context.Context, git *gitexec.Runner) (string, error) {
 }
 
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	if h.Authorize != nil && !h.Authorize(request) {
-		writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit"`)
-		http.Error(writer, "authentication required", http.StatusUnauthorized)
-		return
+	if h.Authorize != nil {
+		allowed, err := h.Authorize(request)
+		if err != nil {
+			http.Error(writer, "authentication is unavailable; try again later", http.StatusServiceUnavailable)
+			return
+		}
+		if !allowed {
+			writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit"`)
+			http.Error(writer, "authentication required", http.StatusUnauthorized)
+			return
+		}
 	}
 	route, ok := parseRoute(request)
 	if !ok {

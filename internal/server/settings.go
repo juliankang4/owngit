@@ -33,11 +33,8 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	action := postValue(request, "action")
 	adminPassword := postValue(request, "admin_password")
 	if err := app.Auth.VerifyCredential(request.Context(), "admin", adminPassword, requestctx.Of(request).ClientAddress); err != nil {
-		code := webui.MsgAdminFailed
-		if errors.Is(err, auth.ErrRateLimited) {
-			code = webui.MsgAdminLocked
-		}
-		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("admin_password", code)}, http.StatusUnauthorized)
+		notice, status := adminPasswordNotice(request, err, "admin_password")
+		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{notice}, status)
 		return
 	}
 

@@ -198,6 +198,7 @@ const (
 	MsgLoginLocked      MessageCode = "login.locked"
 	MsgLoginNotRequired MessageCode = "login.not_required"
 	MsgLogoutDone       MessageCode = "login.logged_out"
+	MsgLogoutFailed     MessageCode = "login.logout_failed"
 
 	MsgAdminTitle     MessageCode = "admin.title"
 	MsgAdminBody      MessageCode = "admin.body"
@@ -861,6 +862,10 @@ var catalog = map[MessageCode]message{
 	MsgLogoutDone: {
 		en: "Signed out of shared access.",
 		ko: "공용 접근에서 나왔습니다.",
+	},
+	MsgLogoutFailed: {
+		en: "Sign-out could not be completed. You are still signed in. Try signing out again.",
+		ko: "로그아웃을 마치지 못했습니다. 아직 로그인된 상태입니다. 다시 로그아웃하세요.",
 	},
 	MsgAdminTitle: {
 		en: "Confirm as administrator",

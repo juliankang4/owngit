@@ -79,7 +79,7 @@ func TestStalledChunkedBodyTimesOutAndReapsOperation(t *testing.T) {
 	backend, err := os.Executable()
 	noErr(t, err)
 	handler.BackendPath = backend
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	handler.OperationTimeout = 75 * time.Millisecond
 	runner.TerminationGrace = 25 * time.Millisecond
 	body := &stalledRequestBody{closed: make(chan struct{})}
@@ -117,7 +117,7 @@ func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) 
 	backend, err := os.Executable()
 	noErr(t, err)
 	handler.BackendPath = backend
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	handler.OperationTimeout = 75 * time.Millisecond
 	runner.TerminationGrace = 25 * time.Millisecond
 	server := httptest.NewServer(handler)
@@ -170,7 +170,7 @@ func TestUploadLimitRejectsPushWithoutChangingRef(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	var chunkedPushes atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodPost && request.ContentLength < 0 {

@@ -8,10 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/checkapi"
 	"owngit/internal/pullrequest"
-	"owngit/internal/requestctx"
 	"owngit/internal/state"
 )
 
@@ -454,7 +452,7 @@ func (app *App) authorizeAdminAPI(writer http.ResponseWriter, request *http.Requ
 			writeAPIError(writer, http.StatusUnauthorized, "admin_authentication_required", "The administrator password is required.", nil)
 			return false
 		}
-		return app.verifyAdminPassword(writer, request, password)
+		return app.checkAPIPassword(writer, request, "admin", password)
 	}
 
 	if _, ok := app.cookieSession(request, "admin", adminCookie); !ok {
@@ -473,20 +471,7 @@ func (app *App) authorizeAdminAPI(writer http.ResponseWriter, request *http.Requ
 		return false
 	}
 	if password != "" {
-		return app.verifyAdminPassword(writer, request, password)
-	}
-	return true
-}
-
-func (app *App) verifyAdminPassword(writer http.ResponseWriter, request *http.Request, password string) bool {
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", password, requestctx.Of(request).ClientAddress); err != nil {
-		if errors.Is(err, auth.ErrRateLimited) {
-			writeAPIError(writer, http.StatusTooManyRequests, "authentication_rate_limited", "Too many authentication attempts. Try again later.", nil)
-			return false
-		}
-		writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit admin"`)
-		writeAPIError(writer, http.StatusUnauthorized, "invalid_admin_credentials", "The administrator password is invalid.", nil)
-		return false
+		return app.checkAPIPassword(writer, request, "admin", password)
 	}
 	return true
 }

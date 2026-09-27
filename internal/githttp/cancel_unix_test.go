@@ -28,7 +28,7 @@ func TestClientCancellationReapsBackendProcessTreeBeforeReleasingSlot(t *testing
 	noErr(t, os.WriteFile(backend, []byte(script), 0o700))
 	handler, err := New(runner, manager, backend, 1)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	request := httptest.NewRequest(http.MethodGet, "http://localhost/git/sample.git/info/refs?service=git-upload-pack", nil).WithContext(ctx)
 	response := httptest.NewRecorder()
@@ -108,7 +108,7 @@ func TestAbandonedOperationWithStalledUploadReturnsPromptly(t *testing.T) {
 			runner.TerminationGrace = 25 * time.Millisecond
 			handler, err := New(runner, manager, test.backend, 1)
 			noErr(t, err)
-			handler.Authorize = func(*http.Request) bool { return true }
+			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 			handler.MaximumResponse = 16
 			handler.MaximumRequest = test.maximumRequest
 			// A handler that waited for the operation deadline would take 30

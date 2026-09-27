@@ -26,7 +26,14 @@ const (
 	argonKeyLen  uint32 = 32
 )
 
-var ErrRateLimited = errors.New("too many authentication attempts")
+// A password check has three outcomes besides success. ErrInvalidCredentials
+// means the check was completed and the password is wrong. ErrRateLimited
+// means the client may not try now. Any other error means the check could
+// not be completed, which says nothing about the password.
+var (
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrRateLimited        = errors.New("too many authentication attempts")
+)
 
 // Failed password limit per client address and kind: the fourth wrong
 // password within the window refuses that address for the block time.
@@ -187,11 +194,16 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 	if err != nil {
 		return err
 	}
+	// A missing or damaged stored password cannot tell a right password
+	// from a wrong one.
+	if err := ValidatePasswordHash(encoded); err != nil {
+		return fmt.Errorf("stored %s password: %w", kind, err)
+	}
 	// Only the shared access password is remembered. Administrator
 	// confirmations are rare and typed by a person, so they keep the full
 	// check and no fast digest of that password stays in memory.
 	var remembered []byte
-	if kind == "general" && encoded != "" && withinMaximum(password) {
+	if kind == "general" && withinMaximum(password) {
 		remembered = m.remembered.digest(kind, encoded, password)
 		if m.remembered.contains(remembered, m.now()) {
 			return m.Store.ClearAttempts(ctx, kind, address)
@@ -205,12 +217,13 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 	if check == nil {
 		check = CheckPassword
 	}
-	if encoded == "" || !check(encoded, password) {
-		// A client that leaves after its guess was checked still counts.
+	if !check(encoded, password) {
+		// A client that leaves after its guess was checked still counts. A
+		// guess that could not be counted is not reported as checked.
 		if err := m.Store.RecordFailedAttempt(context.WithoutCancel(ctx), kind, address, m.now(), maximumFailures, failureWindow, failureBlock); err != nil {
 			return err
 		}
-		return errors.New("invalid credentials")
+		return ErrInvalidCredentials
 	}
 	if err := m.Store.ClearAttempts(ctx, kind, address); err != nil {
 		return err

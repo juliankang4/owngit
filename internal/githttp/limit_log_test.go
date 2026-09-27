@@ -21,7 +21,7 @@ func TestTransferLimitsAreLogged(t *testing.T) {
 	backend, err := os.Executable()
 	noErr(t, err)
 	handler.BackendPath = backend
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	runner.TerminationGrace = 25 * time.Millisecond
 	server := httptest.NewServer(handler)
 	defer server.Close()

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -46,12 +45,9 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 		return
 	}
 	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
-		code, status := webui.MsgAdminFailed, http.StatusUnauthorized
-		if errors.Is(err, auth.ErrRateLimited) {
-			code, status = webui.MsgAdminLocked, http.StatusTooManyRequests
-		}
+		notice, status := adminPasswordNotice(request, err, "admin_password")
 		app.renderHelperCredentials(writer, request, stored, summary, chrome, action, credentialID,
-			[]webui.Notice{webui.Error("admin_password", code)}, state.HelperCredential{}, "", status)
+			[]webui.Notice{notice}, state.HelperCredential{}, "", status)
 		return
 	}
 

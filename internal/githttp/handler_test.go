@@ -24,7 +24,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 2)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	var sawChunked atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodPost && len(request.TransferEncoding) == 1 && request.TransferEncoding[0] == "chunked" {
@@ -128,7 +128,7 @@ func TestSmartHTTPGatesEveryEndpointAndRejectsDumbPaths(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return false }
+	handler.Authorize = func(*http.Request) (bool, error) { return false, nil }
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
@@ -156,7 +156,7 @@ func TestSmartHTTPGatesEveryEndpointAndRejectsDumbPaths(t *testing.T) {
 		}
 	}
 
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	for _, target := range []string{
 		"/git/sample.git/HEAD",
 		"/git/sample.git/objects/info/packs",
@@ -181,7 +181,7 @@ func TestPushReleasesTheRepositoryBeforeTheClientFinishes(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 2)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	var finished atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		handler.ServeHTTP(writer, request)
@@ -262,7 +262,7 @@ func TestSmartHTTPServesEveryCreatableRepositoryName(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
 	defer server.Close()
 

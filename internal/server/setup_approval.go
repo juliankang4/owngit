@@ -354,18 +354,30 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 	}
 	status := http.StatusOK
 	hash, hasCookie := app.approvalCookieHash(request)
-	state, code := approvalNone, ""
+	approval, code := approvalNone, ""
 	if hasCookie {
-		state, code = app.Approvals.status(hash)
+		approval, code = app.Approvals.status(hash)
 	}
-	switch state {
+	switch approval {
 	case approvalApproved:
-		if app.startApprovedSession(writer, request, hash) {
+		started, err := app.startApprovedSession(writer, request, hash)
+		switch {
+		case errors.Is(err, state.ErrSetupComplete):
+			// Another browser or the terminal finished setup meanwhile.
+			app.clearCookie(writer, request, approvalCookie, true)
+			page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupAlreadyDone, http.StatusConflict
+		case err != nil:
+			// The cookie stays: an approval that was not used up can still be
+			// redeemed from the retry link, and a used one is refused there.
+			logUnavailable(request, "approved setup session", err)
+			page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgErrUnavailable, http.StatusServiceUnavailable
+		case started:
 			http.Redirect(writer, request, "/setup", http.StatusSeeOther)
 			return
+		default:
+			app.clearCookie(writer, request, approvalCookie, true)
+			page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupApprovalExpired, http.StatusGone
 		}
-		app.clearCookie(writer, request, approvalCookie, true)
-		page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupApprovalExpired, http.StatusGone
 	case approvalPending:
 		page.Stage, page.ApprovalCode = webui.SetupApprovalWait, code
 	case approvalRejected:
@@ -395,27 +407,29 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 }
 
 // startApprovedSession redeems the approval for a setup session, like
-// redeeming the setup file.
-func (app *App) startApprovedSession(writer http.ResponseWriter, request *http.Request, hash [32]byte) bool {
+// redeeming the setup file. It reports false when the approval can no
+// longer be redeemed, and an error when the session could not be started.
+// The approval is used up once redeemed, even if saving the session fails.
+func (app *App) startApprovedSession(writer http.ResponseWriter, request *http.Request, hash [32]byte) (bool, error) {
 	sessionToken, err := auth.RandomToken(32)
 	if err != nil {
-		return false
+		return false, err
 	}
 	csrf, err := auth.RandomToken(32)
 	if err != nil {
-		return false
+		return false, err
 	}
 	if !app.Approvals.redeem(hash) {
-		return false
+		return false, nil
 	}
 	expires := app.now().Add(20 * time.Minute)
 	if err := app.Store.StartApprovedSetupSession(request.Context(), sessionToken, csrf, expires); err != nil {
-		return false
+		return false, err
 	}
 	app.setCookie(writer, request, setupCookie, sessionToken, expires, true)
 	app.clearCookie(writer, request, approvalCookie, true)
 	app.clearCookie(writer, request, preauthCookie, true)
-	return true
+	return true, nil
 }
 
 // handleSetupApprovalRequest asks the terminal to approve this browser.

@@ -137,6 +137,52 @@ func TestApprovedBrowserGetsExactlyOneSetupSession(t *testing.T) {
 	}
 }
 
+// An approved browser whose setup session cannot be saved is told setup is
+// unavailable, not that its approval expired. The approval stays used up.
+func TestApprovedSessionThatCannotBeSavedIsNotReportedAsExpired(t *testing.T) {
+	app, server, _ := approvalApp(t)
+	browser := newSetupBrowser(t, server)
+	browser.ask()
+	request, _ := app.Approvals.Pending()
+	noErr(t, app.Approvals.Decide(request.ID, true))
+	refuseWrites(t, app.Store, "refuse_setup_session", "INSERT ON sessions")
+	serverLog := captureServerLog(t)
+	status, _, body := browser.get("/setup")
+	if status != http.StatusServiceUnavailable || strings.Contains(body, browserText(webui.MsgSetupApprovalExpired)) ||
+		!strings.Contains(body, browserText(webui.MsgErrUnavailable)) || browser.cookie(setupCookie) != "" {
+		t.Fatalf("unsaved approved session status=%d:\n%s", status, body)
+	}
+	requireLogged(t, serverLog, "GET /setup: approved setup session could not be completed: ")
+	noErr(t, app.Store.Exec(context.Background(), `DROP TRIGGER refuse_setup_session`))
+	if browser.get("/setup"); browser.cookie(setupCookie) != "" {
+		t.Fatal("a used approval started a setup session later")
+	}
+}
+
+// An approved browser that arrives after setup was finished elsewhere is
+// told so, not that its approval expired or that setup is unavailable.
+func TestApprovedBrowserAfterSetupFinishedElsewhereIsToldSo(t *testing.T) {
+	app, server, _ := approvalApp(t)
+	browser := newSetupBrowser(t, server)
+	browser.ask()
+	request, _ := app.Approvals.Pending()
+	noErr(t, app.Approvals.Decide(request.ID, true))
+	adminHash, err := auth.HashPassword("admin-password")
+	noErr(t, err)
+	noErr(t, app.Store.CompleteSetup(context.Background(), t.TempDir(), "open", "", adminHash, true))
+	// The page is served directly: through the router, a finished setup is
+	// answered before approvals are looked at. This is the moment between
+	// that check and saving the session.
+	arriving := httptest.NewRequest(http.MethodGet, "/setup", nil)
+	arriving.AddCookie(&http.Cookie{Name: approvalCookie, Value: browser.cookie(approvalCookie)})
+	recorder := httptest.NewRecorder()
+	app.handleSetupApprovalPage(recorder, arriving)
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusConflict || !strings.Contains(body, browserText(webui.MsgSetupAlreadyDone)) {
+		t.Fatalf("approved browser after setup status=%d:\n%s", recorder.Code, body)
+	}
+}
+
 func TestRejectedBrowserCannotContinueOrRetryAtOnce(t *testing.T) {
 	app, server, now := approvalApp(t)
 	browser := newSetupBrowser(t, server)

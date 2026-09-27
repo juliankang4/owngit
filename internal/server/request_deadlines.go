@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -20,6 +21,13 @@ import (
 // its request body, or is refused, therefore holds the connection no longer
 // than the page deadline, and so does the rest of a body the handler left
 // unread, which net/http reads after the handler to reuse the connection.
+//
+// The reply is written under the same deadline. The work stops a reply
+// reserve earlier, so a request that runs out of time can still get an
+// error page. Work that cannot be interrupted, such as a password hash, can
+// outlast the reserve. A handler that returns after the deadline cannot
+// answer any more: the connection closes, the client gets no reply or a
+// cut-off one, and finish logs the request.
 
 // requestDeadlinesKey finds a request's requestDeadlines in its context.
 type requestDeadlinesKey struct{}
@@ -40,6 +48,9 @@ type requestDeadlines struct {
 	reserve   time.Duration
 	// current is the connection deadline in force.
 	current time.Time
+	// name is the request's method and escaped path, for the log. The
+	// escaping keeps a decoded line break in the path out of the log.
+	name string
 	// cancel ends the operation context once an operation began.
 	cancel context.CancelFunc
 }
@@ -73,6 +84,7 @@ func startDeadlines(writer http.ResponseWriter, request *http.Request, pageTimeo
 	deadlines := &requestDeadlines{
 		controller: http.NewResponseController(writer), body: body, parent: request.Context(),
 		page: page, operation: started.Add(operationTimeout), reserve: operationReserve, current: page,
+		name: request.Method + " " + request.URL.EscapedPath(),
 	}
 	_ = deadlines.controller.SetReadDeadline(page)
 	_ = deadlines.controller.SetWriteDeadline(page)
@@ -125,6 +137,8 @@ func (deadlines *requestDeadlines) finish() {
 	live := time.Now().Before(deadlines.current)
 	if live {
 		_ = deadlines.controller.SetWriteDeadline(time.Time{})
+	} else {
+		log.Printf("%s ended %s after its connection deadline; its reply may be missing or cut off", deadlines.name, time.Since(deadlines.current).Round(time.Millisecond))
 	}
 	ended := deadlines.body.ended.Load()
 	switch {

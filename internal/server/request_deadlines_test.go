@@ -153,6 +153,32 @@ func TestAuthorizedOperationReadsItsBodyUnderThePageDeadline(t *testing.T) {
 	})
 }
 
+// A request whose handler returns after the connection deadline cannot be
+// answered. The server log names it, so the client's empty reply has an
+// explanation.
+func TestReplyLostAtTheDeadlineIsLogged(t *testing.T) {
+	const page = 400 * time.Millisecond
+	app := newConfiguredApp(t)
+	app.HTTPTimeout = page
+	app.requestObserver = func(request *http.Request) {
+		// Uninterruptible work, such as a password hash, that outlasts the
+		// reply reserve.
+		time.Sleep(page + 100*time.Millisecond)
+	}
+	serverLog := captureServerLog(t)
+	server := serve(t, app.Handler())
+	// The path is logged escaped, so a line break in it cannot start a
+	// forged log line.
+	if response, err := http.Get(server.URL + "/settings%0Aforged"); err == nil {
+		response.Body.Close()
+		t.Fatalf("a request past its deadline was answered %d", response.StatusCode)
+	}
+	logged := serverLog.String()
+	if !strings.Contains(logged, "GET /settings%0Aforged ended ") || !strings.Contains(logged, "after its connection deadline") || strings.Count(logged, "\n") != 1 {
+		t.Fatalf("server log after a lost reply: %q", logged)
+	}
+}
+
 // slowSourceFetch answers an import fetch with an empty source after wait.
 // The fetch starts after its request did, so a wait of one page deadline
 // holds the run past that deadline.

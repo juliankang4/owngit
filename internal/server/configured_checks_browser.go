@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"owngit/internal/auth"
 	"owngit/internal/checkapi"
 	"owngit/internal/checkworkflow"
 	"owngit/internal/repository"
@@ -95,13 +94,9 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 		form = &submitted
 	}
 	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
-		code, status := webui.MsgAdminFailed, http.StatusUnauthorized
-		if errors.Is(err, auth.ErrRateLimited) {
-			code, status = webui.MsgAdminLocked, http.StatusTooManyRequests
-		}
+		notice, status := adminPasswordNotice(request, err, "admin_password")
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
-			action: action, form: form,
-			notices: []webui.Notice{webui.Error("admin_password", code)},
+			action: action, form: form, notices: []webui.Notice{notice},
 		}, status)
 		return
 	}
@@ -933,12 +928,9 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
-		code, status := webui.MsgAdminFailed, http.StatusUnauthorized
-		if errors.Is(err, auth.ErrRateLimited) {
-			code, status = webui.MsgAdminLocked, http.StatusTooManyRequests
-		}
+		notice, status := adminPasswordNotice(request, err, "admin_password")
 		app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, label,
-			[]webui.Notice{webui.Error("admin_password", code)}, state.RunnerCredential{}, "", status)
+			[]webui.Notice{notice}, state.RunnerCredential{}, "", status)
 		return
 	}
 

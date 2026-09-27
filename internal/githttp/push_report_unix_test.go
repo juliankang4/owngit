@@ -21,7 +21,7 @@ func TestRefusedPushIsLoggedWithoutRequestContent(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	logs := captureLog(t)

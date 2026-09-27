@@ -220,16 +220,32 @@ func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, 
 		writeAPIError(writer, http.StatusUnauthorized, "authentication_required", "A shared general-access password is required.", nil)
 		return false
 	}
-	if err := app.Auth.VerifyCredential(request.Context(), "general", password, requestctx.Of(request).ClientAddress); err != nil {
-		if errors.Is(err, auth.ErrRateLimited) {
-			writeAPIError(writer, http.StatusTooManyRequests, "authentication_rate_limited", "Too many authentication attempts. Try again later.", nil)
-			return false
+	return app.checkAPIPassword(writer, request, "general", password)
+}
+
+// checkAPIPassword verifies an API request's password of kind ("general" or
+// "admin") and answers when it is not accepted: 401 with a challenge only
+// for a wrong password, 429 for a rate limit, and 503 without a challenge
+// when the check could not be completed, because the password may be right.
+func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Request, kind, password string) bool {
+	err := app.Auth.VerifyCredential(request.Context(), kind, password, requestctx.Of(request).ClientAddress)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, auth.ErrRateLimited):
+		writeAPIError(writer, http.StatusTooManyRequests, "authentication_rate_limited", "Too many authentication attempts. Try again later.", nil)
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		realm, code, message := `Basic realm="OwnGit"`, "invalid_credentials", "The shared general-access password is invalid."
+		if kind == "admin" {
+			realm, code, message = `Basic realm="OwnGit admin"`, "invalid_admin_credentials", "The administrator password is invalid."
 		}
-		writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit"`)
-		writeAPIError(writer, http.StatusUnauthorized, "invalid_credentials", "The shared general-access password is invalid.", nil)
-		return false
+		writer.Header().Set("WWW-Authenticate", realm)
+		writeAPIError(writer, http.StatusUnauthorized, code, message, nil)
+	default:
+		logUnavailable(request, kind+" password check", err)
+		writeAPIError(writer, http.StatusServiceUnavailable, "state_unavailable", "The password could not be verified. Try again later.", nil)
 	}
-	return true
+	return false
 }
 
 func parseRepositoryAPIRoute(requestPath string) (string, string, string, bool) {

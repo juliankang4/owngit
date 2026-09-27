@@ -81,7 +81,7 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 		t.Fatalf("setup changed an unrelated storage file: content=%q err=%v", content, err)
 	}
 	openGitRequest := httptest.NewRequest(http.MethodGet, "http://localhost/git/project.git/info/refs?service=git-upload-pack", nil)
-	if !app.AuthorizeGit(openGitRequest) {
+	if allowed, err := app.AuthorizeGit(openGitRequest); !allowed || err != nil {
 		t.Fatal("password-free mode did not authorize Git discovery")
 	}
 
@@ -139,17 +139,17 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 		t.Fatalf("access mode=%q, want password", settings.AccessMode)
 	}
 	unauthenticatedGit := httptest.NewRequest(http.MethodGet, "http://localhost/git/project.git/info/refs?service=git-upload-pack", nil)
-	if app.AuthorizeGit(unauthenticatedGit) {
+	if allowed, err := app.AuthorizeGit(unauthenticatedGit); allowed || err != nil {
 		t.Fatal("protected mode authorized Git without Basic credentials")
 	}
 	wrongGit := httptest.NewRequest(http.MethodGet, "http://localhost/git/project.git/info/refs?service=git-upload-pack", nil)
 	wrongGit.SetBasicAuth("owngit", "wrong-password")
-	if app.AuthorizeGit(wrongGit) {
+	if allowed, err := app.AuthorizeGit(wrongGit); allowed || err != nil {
 		t.Fatal("protected mode authorized an incorrect shared password")
 	}
 	validGit := httptest.NewRequest(http.MethodGet, "http://localhost/git/project.git/info/refs?service=git-upload-pack", nil)
 	validGit.SetBasicAuth("owngit", "shared-password-one")
-	if !app.AuthorizeGit(validGit) {
+	if allowed, err := app.AuthorizeGit(validGit); !allowed || err != nil {
 		t.Fatal("protected mode rejected the correct shared password")
 	}
 	gitDiscoveryURL := server.URL + "/git/project-one.git/info/refs?service=git-upload-pack"
@@ -213,7 +213,7 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 	if settings.AccessMode != "open" {
 		t.Fatalf("access mode=%q, want open", settings.AccessMode)
 	}
-	if !app.AuthorizeGit(unauthenticatedGit) {
+	if allowed, err := app.AuthorizeGit(unauthenticatedGit); !allowed || err != nil {
 		t.Fatal("Git remained protected after shared password was disabled")
 	}
 	gitRequest, _ = http.NewRequest(http.MethodGet, gitDiscoveryURL, nil)

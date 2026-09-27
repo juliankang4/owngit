@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/base64"
 	"net/http"
 	"net/url"
@@ -434,11 +433,5 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgRepoDefaultBranchSaved)}
 	default:
 		return nil
-	}
-}
-
-func (app *App) deleteSessionCookie(ctx context.Context, request *http.Request, kind, name string) {
-	if cookie, err := request.Cookie(name); err == nil {
-		_ = app.Store.DeleteSession(ctx, cookie.Value, kind)
 	}
 }

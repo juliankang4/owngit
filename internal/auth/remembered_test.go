@@ -108,7 +108,7 @@ func TestRememberedPasswordDoesNotPassABlockedAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	for attempt := 0; attempt < maximumFailures; attempt++ {
-		if err := manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.20:4000"); err == nil || errors.Is(err, ErrRateLimited) {
+		if err := manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.20:4000"); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("wrong password %d: %v, want an ordinary failure", attempt+1, err)
 		}
 	}
@@ -130,8 +130,8 @@ func TestWrongPasswordsAndAdministratorChecksAreNotRemembered(t *testing.T) {
 	manager, _, runs, _ := countingManager(t)
 	ctx := context.Background()
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.30:4000"); err == nil {
-			t.Fatal("a wrong password was accepted")
+		if err := manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.30:4000"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("a wrong password gave %v", err)
 		}
 	}
 	if got := runs.Load(); got != 2 {

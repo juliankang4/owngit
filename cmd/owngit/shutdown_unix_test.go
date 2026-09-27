@@ -45,7 +45,7 @@ func TestStopServingEndsARunningTransferAndSucceeds(t *testing.T) {
 	noErr(t, os.WriteFile(backend, []byte("#!/bin/sh\nprintf 'Content-Type: application/x-git-upload-pack-advertisement\\r\\n\\r\\n'\nexec yes\n"), 0o700))
 	gitHandler, err := githttp.New(runner, manager, backend, 4)
 	noErr(t, err)
-	gitHandler.Authorize = func(*http.Request) bool { return true }
+	gitHandler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	noErr(t, err)
 	httpServer := &http.Server{Handler: gitHandler}

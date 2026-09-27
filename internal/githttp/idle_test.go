@@ -49,7 +49,7 @@ func idleFixture(t *testing.T, size int, idle time.Duration) (*Handler, string, 
 	runHTTPGit(t, work, "push", "-q", repositoryPath, "HEAD:refs/heads/main")
 	handler, err := New(runner, manager, "", 2)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	handler.IdleTimeout = idle
 	handler.OperationTimeout = 20 * time.Second
 	return handler, work, httpGitOutput(t, work, "rev-parse", "HEAD")

@@ -343,19 +343,17 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 	}
 	session, err := app.Auth.Authenticate(request.Context(), kind, password, requestctx.Of(request).ClientAddress)
 	if err != nil {
-		code := webui.MsgLoginFailed
-		if scope == webui.AuthAdmin {
-			code = webui.MsgAdminFailed
+		admin := scope == webui.AuthAdmin
+		switch {
+		case errors.Is(err, auth.ErrRateLimited):
+			app.renderLoginFailure(writer, request, scope, field, next, chooseMessage(admin, webui.MsgAdminLocked, webui.MsgLoginLocked), true, http.StatusTooManyRequests)
+		case errors.Is(err, auth.ErrInvalidCredentials):
+			app.renderLoginFailure(writer, request, scope, field, next, chooseMessage(admin, webui.MsgAdminFailed, webui.MsgLoginFailed), false, http.StatusUnauthorized)
+		default:
+			// The password was not judged, or the session could not be saved.
+			logUnavailable(request, "sign-in", err)
+			app.renderLoginFailure(writer, request, scope, "", next, webui.MsgErrUnavailable, false, http.StatusServiceUnavailable)
 		}
-		locked := errors.Is(err, auth.ErrRateLimited)
-		if locked {
-			if scope == webui.AuthAdmin {
-				code = webui.MsgAdminLocked
-			} else {
-				code = webui.MsgLoginLocked
-			}
-		}
-		app.renderLoginFailure(writer, request, scope, field, next, code, locked, http.StatusUnauthorized)
 		return
 	}
 	app.setCookie(writer, request, cookieName, session.Token, session.Expires, true)
@@ -376,6 +374,21 @@ func (app *App) renderLoginFailure(writer http.ResponseWriter, request *http.Req
 	app.render(writer, status, page)
 }
 
+// adminPasswordNotice is the notice and status of a browser form whose
+// administrator password was not accepted. A wrong or rate-limited password
+// belongs to field. A check that could not be completed is a page-level
+// unavailable notice, because the password may well be right.
+func adminPasswordNotice(request *http.Request, err error, field string) (webui.Notice, int) {
+	switch {
+	case errors.Is(err, auth.ErrRateLimited):
+		return webui.Error(field, webui.MsgAdminLocked), http.StatusTooManyRequests
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		return webui.Error(field, webui.MsgAdminFailed), http.StatusUnauthorized
+	}
+	logUnavailable(request, "administrator password check", err)
+	return webui.Error("", webui.MsgErrUnavailable), http.StatusServiceUnavailable
+}
+
 func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, scope webui.AuthScope) {
 	if !parseForm(writer, request) {
 		return
@@ -391,7 +404,17 @@ func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, 
 	if scope == webui.AuthAdmin {
 		kind, cookieName, target = "admin", adminCookie, "/?notice=admin_logout"
 	}
-	app.deleteSessionCookie(request.Context(), request, kind, cookieName)
+	// The browser forgets the session only after the server ended it. A
+	// failed sign-out says the reader is still signed in, and the kept
+	// cookie lets them try again; a cleared one would leave a live session
+	// this browser can no longer end.
+	if cookie, err := request.Cookie(cookieName); err == nil {
+		if err := app.Store.DeleteSession(request.Context(), cookie.Value, kind); err != nil {
+			logUnavailable(request, "sign-out", err)
+			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgLogoutFailed, "")
+			return
+		}
+	}
 	app.clearCookie(writer, request, cookieName, true)
 	app.noticeRedirect(writer, request, target, http.StatusSeeOther)
 }

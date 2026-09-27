@@ -2,7 +2,10 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -138,16 +141,33 @@ func (app *App) Handler() http.Handler {
 	}))
 }
 
-func (app *App) AuthorizeGit(request *http.Request) bool {
+// AuthorizeGit reports whether a Git request may proceed. An error means
+// that could not be decided. Git clients get a rate limit as a refusal.
+func (app *App) AuthorizeGit(request *http.Request) (bool, error) {
 	settings, err := app.Store.Settings(request.Context())
-	if err != nil || !settings.Initialized {
-		return false
+	if err != nil {
+		logUnavailable(request, "Git access check", err)
+		return false, err
+	}
+	if !settings.Initialized {
+		return false, nil
 	}
 	if settings.AccessMode == "open" {
-		return true
+		return true, nil
 	}
 	_, password, ok := request.BasicAuth()
-	return ok && app.Auth.VerifyCredential(request.Context(), "general", password, requestctx.Of(request).ClientAddress) == nil
+	if !ok {
+		return false, nil
+	}
+	err = app.Auth.VerifyCredential(request.Context(), "general", password, requestctx.Of(request).ClientAddress)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, auth.ErrRateLimited):
+		return false, nil
+	}
+	logUnavailable(request, "Git password check", err)
+	return false, err
 }
 
 // ImportResponseMargin is how long an import run request outlives the run's
@@ -405,6 +425,18 @@ func (app *App) render(writer http.ResponseWriter, status int, page webui.Page) 
 func (app *App) renderError(writer http.ResponseWriter, request *http.Request, status int, code webui.MessageCode, detail string) {
 	chrome, _ := app.chrome(writer, request, webui.SectionNone, "", "")
 	app.render(writer, status, webui.ErrorPage{Chrome: chrome, Status: status, Code: code, Detail: detail, RetryURL: "/"})
+}
+
+// logUnavailable records why a request is answered as unavailable, so the
+// operator can read the cause of every such answer. step names what could
+// not be completed. The line holds only the method and escaped path, never
+// the request's password, cookie or token. A client that went away
+// (context.Canceled) caused nothing to fix, so it is not logged.
+func logUnavailable(request *http.Request, step string, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	log.Printf("%s %s: %s could not be completed: %v", request.Method, request.URL.EscapedPath(), step, err)
 }
 
 func (app *App) writePlainError(writer http.ResponseWriter, status int) {

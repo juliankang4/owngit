@@ -112,7 +112,7 @@ func newGzipFetchFixture(t *testing.T, protocol string) *gzipFetchFixture {
 	}
 	handler, err := New(runner, manager, "", 2)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	fixture := &gzipFetchFixture{manager: manager, gzipRequests: &atomic.Int64{},
 		git: isolatedGit(t, "-c", "protocol.version="+protocol)}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -172,7 +172,7 @@ func TestSmartHTTPRefusesUnsupportedContentEncoding(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	for _, encoding := range []string{"br", "deflate", "zstd", "gzip, gzip", "gzip, br", "compress"} {
@@ -196,7 +196,7 @@ func TestSmartHTTPInflatesGzipBodiesWithinTheRequestLimit(t *testing.T) {
 	backend, err := os.Executable()
 	noErr(t, err)
 	handler.BackendPath = backend
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	handler.MaximumRequest = 1 << 20
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -247,7 +247,7 @@ func TestSmartHTTPStopsBackendOnCorruptGzipBody(t *testing.T) {
 	backend, err := os.Executable()
 	noErr(t, err)
 	handler.BackendPath = backend
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	logs := captureLog(t)
@@ -281,7 +281,7 @@ func TestSmartHTTPCorruptGzipPushDoesNotUpdateRefs(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	logs := captureLog(t)
@@ -333,7 +333,7 @@ func TestSmartHTTPBoundsGzipUploadPackBombAtTheBackendBuffer(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	logs := captureLog(t)
@@ -350,7 +350,7 @@ func TestSmartHTTPLogsBackendProtocolErrorsWithoutRequestContent(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)
 	noErr(t, err)
-	handler.Authorize = func(*http.Request) bool { return true }
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	logs := captureLog(t)
