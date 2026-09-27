@@ -1,0 +1,392 @@
+//go:build windows
+
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
+)
+
+const (
+	trustedInstallerSID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+	systemSID           = "S-1-5-18"
+	usersSID            = "S-1-5-32-545"
+)
+
+func platformServiceInstallPaths() (serviceInstallPaths, error) {
+	programFiles, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+	if err != nil {
+		return serviceInstallPaths{}, fmt.Errorf("find Program Files: %w", err)
+	}
+	directory := filepath.Join(programFiles, "OwnGit")
+	return serviceInstallPaths{
+		Directory:  directory,
+		Executable: filepath.Join(directory, "owngit.exe"),
+		Temp:       filepath.Join(directory, "temp"),
+	}, nil
+}
+
+// platformPrepareServiceStorage creates administrator-controlled locations for
+// the task executable, task XML and elevated temporary files. The service
+// directory lets Users read and execute the installed binary. The temporary
+// directory is available only to Administrators and SYSTEM.
+func platformPrepareServiceStorage(paths serviceInstallPaths) error {
+	if err := os.MkdirAll(paths.Directory, 0o755); err != nil {
+		return fmt.Errorf("create the OwnGit service folder: %w", err)
+	}
+	if err := setProtectedServiceACL(paths.Directory, true, true); err != nil {
+		return fmt.Errorf("protect the OwnGit service folder: %w", err)
+	}
+	if err := os.MkdirAll(paths.Temp, 0o700); err != nil {
+		return fmt.Errorf("create the OwnGit administrator temporary folder: %w", err)
+	}
+	if err := setProtectedServiceACL(paths.Temp, true, false); err != nil {
+		return fmt.Errorf("protect the OwnGit administrator temporary folder: %w", err)
+	}
+	return nil
+}
+
+// platformReplaceServiceCopy replaces the task executable with the running
+// executable. The UAC caller and this copy both hold source without write or
+// delete sharing, so its path stays stable. The temporary file is created in
+// the administrator-only directory and moved into place only after it is
+// complete and protected.
+func platformReplaceServiceCopy(source string, paths serviceInstallPaths) error {
+	if strings.EqualFold(filepath.Clean(source), filepath.Clean(paths.Executable)) {
+		return verifyProtectedServiceACL(paths.Executable, false, true)
+	}
+	input, err := openServiceSource(source)
+	if err != nil {
+		return fmt.Errorf("open this owngit.exe: %w", err)
+	}
+	defer input.Close()
+	output, err := os.CreateTemp(paths.Temp, "owngit-*.exe")
+	if err != nil {
+		return fmt.Errorf("create the protected service copy: %w", err)
+	}
+	temporary := output.Name()
+	defer os.Remove(temporary)
+	if _, err := io.Copy(output, input); err != nil {
+		output.Close()
+		return fmt.Errorf("copy owngit.exe into Program Files: %w", err)
+	}
+	if err := output.Sync(); err != nil {
+		output.Close()
+		return fmt.Errorf("finish the protected service copy: %w", err)
+	}
+	if err := output.Close(); err != nil {
+		return fmt.Errorf("close the protected service copy: %w", err)
+	}
+	if err := setProtectedServiceACL(temporary, false, true); err != nil {
+		return fmt.Errorf("protect the service copy: %w", err)
+	}
+	from, err := windows.UTF16PtrFromString(temporary)
+	if err != nil {
+		return err
+	}
+	to, err := windows.UTF16PtrFromString(paths.Executable)
+	if err != nil {
+		return err
+	}
+	if err := windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH); err != nil {
+		return fmt.Errorf("replace the OwnGit service copy: %w", err)
+	}
+	if err := verifyProtectedServiceACL(paths.Executable, false, true); err != nil {
+		return fmt.Errorf("verify the OwnGit service copy: %w", err)
+	}
+	return nil
+}
+
+// openServiceSource holds the executable without write or delete sharing, so
+// its path cannot be replaced while an elevated helper copies it.
+func openServiceSource(path string) (*os.File, error) {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(name, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil,
+		windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(handle), path), nil
+}
+
+func protectedServiceDescriptor(directory, usersRead bool) (*windows.SECURITY_DESCRIPTOR, error) {
+	inherit := ""
+	if directory {
+		inherit = "OICI"
+	}
+	sddl := "O:BAD:P" +
+		"(A;" + inherit + ";FA;;;SY)" +
+		"(A;" + inherit + ";FA;;;BA)"
+	if usersRead {
+		sddl += "(A;" + inherit + ";0x1200a9;;;BU)"
+	}
+	return windows.SecurityDescriptorFromString(sddl)
+}
+
+func setProtectedServiceACL(path string, directory, usersRead bool) error {
+	descriptor, err := protectedServiceDescriptor(directory, usersRead)
+	if err != nil {
+		return err
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return err
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		return err
+	}
+	enablePrivileges("SeRestorePrivilege", "SeTakeOwnershipPrivilege")
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		owner, nil, dacl, nil); err != nil {
+		return err
+	}
+	return verifyProtectedServiceACL(path, directory, usersRead)
+}
+
+func verifyProtectedServiceACL(path string, directory, usersRead bool) error {
+	expected, err := protectedServiceDescriptor(directory, usersRead)
+	if err != nil {
+		return err
+	}
+	actual, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	actualText := "<none>"
+	normalized := actualText
+	if actual != nil {
+		actualText = actual.String()
+		normalized = strings.Replace(actualText, "D:PAI", "D:P", 1)
+	}
+	if normalized != expected.String() {
+		return fmt.Errorf("owner or access list is %s, want %s", actualText, expected.String())
+	}
+	return nil
+}
+
+// platformTrustedWinget finds winget only in a verified App Installer package.
+// A package and its executable must be owned by TrustedInstaller, have no
+// reparse point and grant write access only to TrustedInstaller,
+// Administrators or SYSTEM.
+func platformTrustedWinget() (string, error) {
+	programFiles, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+	if err != nil {
+		return "", err
+	}
+	windowsApps := filepath.Join(programFiles, "WindowsApps")
+	entries, err := os.ReadDir(windowsApps)
+	if err != nil {
+		return "", fmt.Errorf("read the App Installer packages: %w", err)
+	}
+	var candidates []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "Microsoft.DesktopAppInstaller_") || !strings.HasSuffix(name, "__8wekyb3d8bbwe") {
+			continue
+		}
+		candidates = append(candidates, filepath.Join(windowsApps, name))
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(candidates)))
+	for _, packageDir := range candidates {
+		winget := filepath.Join(packageDir, "winget.exe")
+		if verifyTrustedInstallerPath(packageDir, true) == nil && verifyTrustedInstallerPath(winget, false) == nil {
+			return winget, nil
+		}
+	}
+	return "", errors.New("no trusted App Installer copy of winget was found")
+}
+
+func verifyTrustedInstallerPath(path string, directory bool) error {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	flags := uint32(windows.FILE_FLAG_OPEN_REPARSE_POINT)
+	if directory {
+		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS
+	}
+	handle, err := windows.CreateFile(name, windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
+		windows.OPEN_EXISTING, flags, 0)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle)
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+		return err
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || (info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0) != directory {
+		return errors.New("unexpected App Installer file type")
+	}
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || owner == nil || owner.String() != trustedInstallerSID {
+		return errors.New("App Installer is not owned by TrustedInstaller")
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil {
+		return errors.New("App Installer has no inspectable access list")
+	}
+	trustedWriters := map[string]bool{trustedInstallerSID: true, administratorsSID: true, systemSID: true}
+	const writeAccess = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA |
+		windows.FILE_WRITE_ATTRIBUTES | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER |
+		windows.GENERIC_WRITE | windows.GENERIC_ALL | 0x40 // FILE_DELETE_CHILD for a directory
+	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, index, &ace); err != nil || ace == nil {
+			return errors.New("App Installer access list cannot be inspected")
+		}
+		if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE {
+			continue
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			return errors.New("App Installer has an unsupported access entry")
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String()
+		if ace.Mask&writeAccess != 0 && !trustedWriters[sid] {
+			return fmt.Errorf("App Installer grants write access to %s", sid)
+		}
+	}
+	return nil
+}
+
+// platformServiceEnvironment returns the complete environment of a process
+// started while the installer has administrator rights. It contains the
+// machine PATH, system PowerShell modules and an administrator-only TEMP/TMP,
+// with no value from the user's persistent environment.
+func platformServiceEnvironment(paths serviceInstallPaths, extra []string) ([]string, error) {
+	windowsDir, err := windows.KnownFolderPath(windows.FOLDERID_Windows, 0)
+	if err != nil {
+		return nil, err
+	}
+	programFiles, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+	if err != nil {
+		return nil, err
+	}
+	programFilesX86, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFilesX86, 0)
+	if err != nil {
+		return nil, err
+	}
+	programData, err := windows.KnownFolderPath(windows.FOLDERID_ProgramData, 0)
+	if err != nil {
+		return nil, err
+	}
+	system, err := windows.GetSystemDirectory()
+	if err != nil {
+		return nil, err
+	}
+	machinePath := system + ";" + windowsDir + ";" + filepath.Join(system, "Wbem") + ";" + filepath.Join(system, "WindowsPowerShell", "v1.0")
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`, registry.QUERY_VALUE)
+	if err == nil {
+		defer key.Close()
+		if value, _, valueErr := key.GetStringValue("Path"); valueErr == nil {
+			if expanded, expandErr := expandSystemPath(value, map[string]string{
+				"SystemRoot": windowsDir, "windir": windowsDir, "SystemDrive": filepath.VolumeName(windowsDir),
+				"ProgramFiles": programFiles, "ProgramW6432": programFiles, "ProgramFiles(x86)": programFilesX86,
+			}); expandErr == nil {
+				machinePath = expanded
+			}
+		}
+	}
+	environment := []string{
+		"ALLUSERSPROFILE=" + programData,
+		"ComSpec=" + filepath.Join(system, "cmd.exe"),
+		"OS=Windows_NT",
+		"Path=" + machinePath,
+		"PATHEXT=.COM;.EXE;.BAT;.CMD",
+		"ProgramData=" + programData,
+		"ProgramFiles=" + programFiles,
+		"ProgramFiles(x86)=" + programFilesX86,
+		"ProgramW6432=" + programFiles,
+		"PSModulePath=" + filepath.Join(programFiles, "WindowsPowerShell", "Modules") + ";" + filepath.Join(system, "WindowsPowerShell", "v1.0", "Modules"),
+		"SystemDrive=" + filepath.VolumeName(windowsDir),
+		"SystemRoot=" + windowsDir,
+		"TEMP=" + paths.Temp,
+		"TMP=" + paths.Temp,
+		"windir=" + windowsDir,
+	}
+	for _, entry := range extra {
+		if name, value, found := strings.Cut(entry, "="); !found || name == "" || strings.ContainsAny(name, "\x00=") || strings.ContainsRune(value, '\x00') {
+			return nil, fmt.Errorf("invalid administrator environment entry %q", entry)
+		}
+		environment = append(environment, entry)
+	}
+	return environment, nil
+}
+
+func expandSystemPath(value string, variables map[string]string) (string, error) {
+	var expanded strings.Builder
+	for len(value) > 0 {
+		start := strings.IndexByte(value, '%')
+		if start < 0 {
+			expanded.WriteString(value)
+			break
+		}
+		expanded.WriteString(value[:start])
+		value = value[start+1:]
+		end := strings.IndexByte(value, '%')
+		if end < 0 {
+			return "", errors.New("machine PATH has an unmatched percent sign")
+		}
+		name := value[:end]
+		replacement := ""
+		for candidate, content := range variables {
+			if strings.EqualFold(candidate, name) {
+				replacement = content
+				break
+			}
+		}
+		if replacement == "" {
+			return "", fmt.Errorf("machine PATH uses unsupported variable %%%s%%", name)
+		}
+		expanded.WriteString(replacement)
+		value = value[end+1:]
+	}
+	return expanded.String(), nil
+}
+
+func platformApplyServiceEnvironment(environment []string) error {
+	os.Clearenv()
+	for _, entry := range environment {
+		name, value, _ := strings.Cut(entry, "=")
+		if err := os.Setenv(name, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func platformRunWithEnvironment(ctx context.Context, environment []string, name string, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Env = append([]string(nil), environment...)
+	return command.CombinedOutput()
+}
+
+func platformRunAttachedWithEnvironment(environment []string, name string, args ...string) error {
+	command := exec.Command(name, args...)
+	command.Env = append([]string(nil), environment...)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return command.Run()
+}

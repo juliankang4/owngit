@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strconv"
@@ -21,6 +22,24 @@ func platformSystemDirectory() (string, error)               { return "", errNot
 func attachToConsole(int)                                    {}
 func platformOwnerOf(string) (string, error)                 { return "", errNotWindows }
 func platformRepositoryRootWithoutAdminRights(string) string { return "" }
+func platformServiceInstallPaths() (serviceInstallPaths, error) {
+	return serviceInstallPaths{
+		Directory:  `C:\Program Files\OwnGit`,
+		Executable: `C:\Program Files\OwnGit\owngit.exe`,
+		Temp:       `C:\Program Files\OwnGit\temp`,
+	}, nil
+}
+func platformPrepareServiceStorage(serviceInstallPaths) error      { return errNotWindows }
+func platformReplaceServiceCopy(string, serviceInstallPaths) error { return errNotWindows }
+func platformTrustedWinget() (string, error)                       { return "", errNotWindows }
+func platformServiceEnvironment(serviceInstallPaths, []string) ([]string, error) {
+	return nil, errNotWindows
+}
+func platformApplyServiceEnvironment([]string) error { return errNotWindows }
+func platformRunWithEnvironment(context.Context, []string, string, ...string) ([]byte, error) {
+	return nil, errNotWindows
+}
+func platformRunAttachedWithEnvironment([]string, string, ...string) error { return errNotWindows }
 
 func platformGiveOwnership(string, string, func(string, string) error) (int, int, error) {
 	return 0, 0, errNotWindows

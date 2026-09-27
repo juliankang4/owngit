@@ -52,9 +52,9 @@ func serviceCommand(arguments []string) error {
 	if runtime.GOOS == "windows" {
 		switch action {
 		case "install", "uninstall", "status", "start", "stop", "restart",
-			// Internal steps: the report after an elevated install, and the
-			// steps that run after the UAC prompt.
-			"report", "elevated-install", "elevated-uninstall", "elevated-firewall":
+			// Internal steps: the report and restricted state read used by an
+			// elevated install, and the steps that run after the UAC prompt.
+			"report", "repository-root", "elevated-install", "elevated-uninstall", "elevated-firewall":
 			return taskServiceCommand(action, rest)
 		}
 	}

@@ -187,15 +187,18 @@ func TestWindowsCommandLineRoundTrip(t *testing.T) {
 
 func TestFirewallRule(t *testing.T) {
 	program := `C:\Program Files\OwnGit\owngit.exe`
-	rule, found := ParseFirewallRule("C:\\Program Files\\OwnGit\\OWNGIT.EXE\r\n2\r\nTrue\r\n")
+	rule, found := ParseFirewallRule("C:\\Program Files\\OwnGit\\OWNGIT.EXE\r\n2\r\nTrue\r\n1\r\n1\r\n")
 	if !found || !rule.Allows(program) {
-		t.Errorf("private rule %+v found=%v does not allow %s", rule, found, program)
+		t.Errorf("private inbound allow rule %+v found=%v does not allow %s", rule, found, program)
 	}
 	for output, why := range map[string]string{
-		"":                             "no rule",
-		program + "\r\n4\r\nTrue\r\n":  "Public profile only",
-		program + "\r\n2\r\nFalse\r\n": "disabled",
-		`C:\old\owngit.exe` + "\r\n2\r\nTrue\r\n": "another path",
+		"":                                                  "no rule",
+		program + "\r\n4\r\nTrue\r\n1\r\n1\r\n":             "Public profile only",
+		program + "\r\n6\r\nTrue\r\n1\r\n1\r\n":             "Private and Public profiles",
+		program + "\r\n2\r\nFalse\r\n1\r\n1\r\n":            "disabled",
+		program + "\r\n2\r\nTrue\r\n2\r\n1\r\n":             "outbound",
+		program + "\r\n2\r\nTrue\r\n1\r\n0\r\n":             "block",
+		`C:\old\owngit.exe` + "\r\n2\r\nTrue\r\n1\r\n1\r\n": "another path",
 	} {
 		if rule, _ := ParseFirewallRule(output); rule.Allows(program) {
 			t.Errorf("%s: %+v allows %s", why, rule, program)
@@ -204,14 +207,18 @@ func TestFirewallRule(t *testing.T) {
 }
 
 // The scripts that run with administrator rights never hold a path; the
-// program arrives in an environment variable.
+// program arrives in an environment variable, and the Windows Firewall COM
+// API avoids loading a module through PSModulePath.
 func TestFirewallScriptsTakeTheProgramFromTheEnvironment(t *testing.T) {
-	if !strings.Contains(FirewallAllowScript, "-Program $env:"+FirewallProgramVariable) ||
-		!strings.Contains(FirewallAllowScript, "-Profile Private ") ||
-		strings.Contains(FirewallAllowScript, "Public") || strings.Contains(FirewallAllowScript, `\`) {
+	if !strings.Contains(FirewallAllowScript, "$rule.ApplicationName = $env:"+FirewallProgramVariable) ||
+		!strings.Contains(FirewallAllowScript, "$rule.Profiles = 2") ||
+		!strings.Contains(FirewallAllowScript, "$rule.Direction = 1") ||
+		!strings.Contains(FirewallAllowScript, "$rule.Action = 1") ||
+		!strings.Contains(FirewallAllowScript, "HNetCfg.FWRule") ||
+		strings.Contains(FirewallAllowScript, "Import-Module") || strings.Contains(FirewallAllowScript, "NetSecurity") {
 		t.Errorf("unexpected allow script:\n%s", FirewallAllowScript)
 	}
-	if !strings.Contains(FirewallRemoveScript, "-Name '"+FirewallRuleName+"'") {
+	if !strings.Contains(FirewallRemoveScript, "HNetCfg.FwPolicy2") || strings.Contains(FirewallRemoveScript, "NetSecurity") {
 		t.Errorf("unexpected remove script:\n%s", FirewallRemoveScript)
 	}
 }

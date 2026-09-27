@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"owngit/internal/server"
 	"owngit/internal/service"
 	"owngit/internal/state"
+	"owngit/internal/version"
 )
 
 // The Windows backend of "owngit service": a Task Scheduler task that runs
@@ -37,8 +39,15 @@ import (
 // Likewise, an elevated "owngit service" leaves everything that reads or
 // writes the state directory to a copy of itself without those rights.
 
+type serviceInstallPaths struct {
+	Directory  string
+	Executable string
+	Temp       string
+}
+
 // Operating system operations of the Windows backend. The functions live
-// in service_task_windows.go; tests replace them.
+// in service_task_windows.go and service_secure_windows.go; tests replace
+// them.
 var (
 	// runElevated runs this executable with the arguments after the owner
 	// approves it in the UAC prompt, and returns its exit code.
@@ -62,6 +71,21 @@ var (
 	// repositoryRootWithoutAdminRights returns the repository folder saved
 	// in a state directory, read without administrator rights.
 	repositoryRootWithoutAdminRights = platformRepositoryRootWithoutAdminRights
+	// servicePaths locates the administrator-protected service copy.
+	servicePaths = platformServiceInstallPaths
+	// prepareServiceStorage creates and verifies its protected folders.
+	prepareServiceStorage = platformPrepareServiceStorage
+	// replaceServiceCopy refreshes the protected executable from this one.
+	replaceServiceCopy = platformReplaceServiceCopy
+	// trustedWinget finds winget only in a verified App Installer package.
+	trustedWinget = platformTrustedWinget
+	// serviceEnvironment is the explicit environment of elevated children.
+	serviceEnvironment         = platformServiceEnvironment
+	applyServiceEnvironment    = platformApplyServiceEnvironment
+	runWithEnvironment         = platformRunWithEnvironment
+	runAttachedWithEnvironment = platformRunAttachedWithEnvironment
+	// readExecutableVersion reads the version reported by a protected copy.
+	readExecutableVersion = executableVersion
 	// taskPollInterval is how often waiting for the server also checks
 	// whether Windows keeps the task queued.
 	taskPollInterval = 5 * time.Second
@@ -84,11 +108,13 @@ const taskStopTimeout = 150 * time.Second
 
 // taskHost is this Windows computer and the account running the command.
 type taskHost struct {
-	env        service.Environment
-	executable string
-	sid        string
-	system     string
-	out        io.Writer
+	env                   service.Environment
+	executable            string
+	serviceInstall        serviceInstallPaths
+	sid                   string
+	system                string
+	out                   io.Writer
+	administratorPrepared bool
 }
 
 func newTaskHost() (*taskHost, error) {
@@ -107,7 +133,11 @@ func newTaskHost() (*taskHost, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &taskHost{env: probeEnvironment(), executable: executable, sid: sid, system: system, out: os.Stdout}, nil
+	install, err := servicePaths()
+	if err != nil {
+		return nil, err
+	}
+	return &taskHost{env: probeEnvironment(), executable: executable, serviceInstall: install, sid: sid, system: system, out: os.Stdout}, nil
 }
 
 // printf prints to the owner, with control and direction characters of
@@ -126,9 +156,41 @@ func (host *taskHost) powershell() string {
 	return host.system + `\WindowsPowerShell\v1.0\powershell.exe`
 }
 
+// administratorEnvironment is the complete explicit environment for a child
+// that keeps this process's administrator token.
+func (host *taskHost) administratorEnvironment(extra ...string) ([]string, error) {
+	return serviceEnvironment(host.serviceInstall, extra)
+}
+
+func (host *taskHost) prepareAdministrator() error {
+	if host.administratorPrepared {
+		return nil
+	}
+	if err := prepareServiceStorage(host.serviceInstall); err != nil {
+		return err
+	}
+	environment, err := host.administratorEnvironment()
+	if err != nil {
+		return err
+	}
+	if err := applyServiceEnvironment(environment); err != nil {
+		return fmt.Errorf("set the administrator environment: %w", err)
+	}
+	host.administratorPrepared = true
+	return nil
+}
+
 // runPowerShell runs one of the fixed scripts of the service package.
-func (host *taskHost) runPowerShell(script string) ([]byte, error) {
-	return serviceRunner(context.Background(), host.powershell(), service.PowerShellArguments(script)...)
+func (host *taskHost) runPowerShell(script string, extra ...string) ([]byte, error) {
+	arguments := service.PowerShellArguments(script)
+	if !host.env.Elevated {
+		return serviceRunner(context.Background(), host.powershell(), arguments...)
+	}
+	environment, err := host.administratorEnvironment(extra...)
+	if err != nil {
+		return nil, err
+	}
+	return runWithEnvironment(context.Background(), environment, host.powershell(), arguments...)
 }
 
 // taskServiceCommand runs one "owngit service" action on Windows.
@@ -221,6 +283,9 @@ func (host *taskHost) administratorStep(action string, arguments []string) error
 	if !host.env.Elevated {
 		return errors.New("this step runs only with administrator rights, started by \"owngit service install\"")
 	}
+	if err := host.prepareAdministrator(); err != nil {
+		return err
+	}
 	switch {
 	case action == "elevated-install":
 		return host.elevatedInstall(*stateDir, *headless, *installGit)
@@ -281,8 +346,12 @@ func (host *taskHost) installed() (service.Installed, bool, error) {
 }
 
 func (host *taskHost) plan(mode service.Mode, stateDir string, headless bool) service.TaskPlan {
+	executable := host.executable
+	if mode == service.ModeBootTask {
+		executable = host.serviceInstall.Executable
+	}
 	return service.TaskPlan{
-		Mode: mode, Executable: host.executable, StateDir: stateDir, UserSID: host.sid,
+		Mode: mode, Executable: executable, StateDir: stateDir, UserSID: host.sid,
 		Headless: headless, Conhost: host.system + `\conhost.exe`,
 	}
 }
@@ -323,10 +392,9 @@ func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
 		return err
 	}
 	_, gitErr := lookPath("git")
-	_, wingetErr := lookPath("winget")
 	installGit := gitErr != nil
-	if installGit && (wingetErr != nil || mode == service.ModeLogonTask) {
-		host.printf("OwnGit needs Git for Windows. Install it from https://git-scm.com/download/win (or run \"winget install --id Git.Git -e\"), then run \"owngit service install\" again.\n")
+	if installGit && mode == service.ModeLogonTask {
+		host.printf("OwnGit needs Git for Windows. Install it from https://git-scm.com/download/win, then run \"owngit service install\" again.\n")
 		return errors.New("git is not installed")
 	}
 	switch mode {
@@ -337,7 +405,7 @@ func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
 		if installGit {
 			arguments = append(arguments, "--install-git")
 		}
-		steps := []string{"register the OwnGit task that starts at boot", "allow OwnGit through Windows Firewall on private networks"}
+		steps := []string{"copy OwnGit into Program Files", "register the OwnGit task that starts at boot", "allow OwnGit through Windows Firewall on private networks"}
 		if installGit {
 			steps = append(steps, "install Git with winget")
 		}
@@ -411,23 +479,33 @@ func listSteps(steps []string) string {
 var errElevationCancelled = errors.New("administrator approval was declined")
 
 // elevatedInstall does the steps that need administrator rights: Git if it
-// is missing, stopping the server that runs, the account's ownership of
-// its folders, the boot task for this executable and this account, the
-// firewall rule, and the start. It creates nothing in the state directory,
+// is missing, stopping the server that runs, refreshing the protected service
+// copy, the account's ownership of its folders, the boot task for this account,
+// the firewall rule, and the start. It creates nothing in the state directory,
 // which the server creates itself without administrator rights.
 func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool) error {
-	if _, err := lookPath("git"); err != nil && installGit {
-		host.printf("Installing Git for Windows with winget.\n")
-		winget, err := lookPath("winget")
+	if err := host.prepareAdministrator(); err != nil {
+		return err
+	}
+	if installGit {
+		winget, err := trustedWinget()
 		if err != nil {
-			return errors.New("winget is not available; install Git for Windows from https://git-scm.com/download/win")
+			return errors.New("OwnGit needs Git for Windows. Install it from https://git-scm.com/download/win, then run \"owngit service install\" again")
 		}
-		if err := runAttached(winget, "install", "--id", "Git.Git", "-e", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"); err != nil {
+		host.printf("Installing Git for Windows with the trusted App Installer copy of winget.\n")
+		environment, err := host.administratorEnvironment()
+		if err != nil {
+			return err
+		}
+		if err := runAttachedWithEnvironment(environment, winget, "install", "--id", "Git.Git", "-e", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"); err != nil {
 			return fmt.Errorf("install Git with winget: %w", err)
 		}
 	}
 	if existing, found, err := host.installed(); err == nil && found {
 		host.stopTask(existing.StateDir)
+	}
+	if err := replaceServiceCopy(host.executable, host.serviceInstall); err != nil {
+		return err
 	}
 	// Folders an earlier OwnGit with administrator rights left to the
 	// Administrators group are given back to the account, since the server
@@ -440,12 +518,12 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 	if err := host.registerTask(host.plan(service.ModeBootTask, stateDir, headless)); err != nil {
 		return err
 	}
-	if err := host.allowThroughFirewall(); err != nil {
+	if err := host.allowThroughFirewallFor(host.serviceInstall.Executable); err != nil {
 		return err
 	}
 	// A server that did not stop in time is ended; the task starts the new
 	// one.
-	_, _ = serviceRunner(context.Background(), host.schtasks(), "/End", "/TN", `\`+service.TaskName)
+	_ = host.runStep(host.schtasks(), "/End", "/TN", `\`+service.TaskName)
 	return host.runTask()
 }
 
@@ -536,14 +614,20 @@ func ownershipRefusal(folder string, getenv func(string) string) string {
 	return ""
 }
 
-// registerTask creates or replaces the task. The definition passes through
-// a private temporary file, since schtasks reads it from a file.
+// registerTask creates or replaces the task. An administrator's definition
+// passes through the protected service folder, since schtasks reads it from a
+// file. A standard account's task has no administrator token and may use its
+// private temporary folder.
 func (host *taskHost) registerTask(plan service.TaskPlan) error {
 	definition, err := service.RenderTask(plan)
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp("", "owngit-task-*.xml")
+	directory := ""
+	if host.env.Elevated {
+		directory = host.serviceInstall.Temp
+	}
+	file, err := os.CreateTemp(directory, "owngit-task-*.xml")
 	if err != nil {
 		return err
 	}
@@ -561,7 +645,17 @@ func (host *taskHost) runTask() error {
 }
 
 func (host *taskHost) runStep(name string, args ...string) error {
-	output, err := serviceRunner(context.Background(), name, args...)
+	var output []byte
+	var err error
+	if host.env.Elevated {
+		environment, environmentErr := host.administratorEnvironment()
+		if environmentErr != nil {
+			return environmentErr
+		}
+		output, err = runWithEnvironment(context.Background(), environment, name, args...)
+	} else {
+		output, err = serviceRunner(context.Background(), name, args...)
+	}
 	if err != nil {
 		detail := strings.TrimSpace(string(output))
 		return fmt.Errorf("%s %s: %w: %s", filepath.Base(strings.ReplaceAll(name, `\`, "/")), strings.Join(args, " "), err, detail)
@@ -572,10 +666,12 @@ func (host *taskHost) runStep(name string, args ...string) error {
 // allowThroughFirewall replaces OwnGit's inbound rule with one for this
 // owngit.exe on the Private profile. It needs administrator rights.
 func (host *taskHost) allowThroughFirewall() error {
-	if err := os.Setenv(service.FirewallProgramVariable, host.executable); err != nil {
-		return err
-	}
-	if output, err := host.runPowerShell(service.FirewallAllowScript); err != nil {
+	return host.allowThroughFirewallFor(host.executable)
+}
+
+func (host *taskHost) allowThroughFirewallFor(program string) error {
+	output, err := host.runPowerShell(service.FirewallAllowScript, service.FirewallProgramVariable+"="+program)
+	if err != nil {
 		return fmt.Errorf("add the Windows Firewall rule %q: %w: %s", service.FirewallRuleName, err, strings.TrimSpace(string(output)))
 	}
 	return nil
@@ -629,7 +725,7 @@ func (host *taskHost) stopTask(stateDir string) {
 			time.Sleep(time.Second)
 		}
 	}
-	_, _ = serviceRunner(context.Background(), host.schtasks(), "/End", "/TN", `\`+service.TaskName)
+	_ = host.runStep(host.schtasks(), "/End", "/TN", `\`+service.TaskName)
 }
 
 // taskState returns the task's state (service.TaskReady and the others)
@@ -668,7 +764,7 @@ func (host *taskHost) report(stateDir string) error {
 		return err
 	}
 	host.printf("OwnGit is running as a %s.\n", installed.Mode.Describe())
-	host.printTaskFacts(stateDir, ownerAddresses(stateDir, address))
+	host.printTaskFacts(stateDir, ownerAddresses(stateDir, address), installed.Executable)
 	return printSetupLinkIfNeeded(stateDir, host.out)
 }
 
@@ -708,7 +804,7 @@ func (host *taskHost) printLogIfWritten(stateDir string) {
 	}
 }
 
-func (host *taskHost) printTaskFacts(stateDir, address string) {
+func (host *taskHost) printTaskFacts(stateDir, address, executable string) {
 	host.printf("  Task:     %s (Task Scheduler)\n", `\`+service.TaskName)
 	host.printf("  Log:      %s\n", service.TaskLogFile(stateDir))
 	host.printf("  State:    %s\n", stateDir)
@@ -716,7 +812,7 @@ func (host *taskHost) printTaskFacts(stateDir, address string) {
 		host.printf("  Address:  %s\n", address)
 	}
 	switch rule, found := host.firewallRule(); {
-	case found && rule.Allows(host.executable):
+	case found && rule.Allows(executable):
 		host.printf("  Firewall: devices on private networks may connect (rule %q)\n", service.FirewallRuleName)
 	case listensBeyondThisComputer(stateDir):
 		host.printf("  Firewall: no rule for this owngit.exe, so other devices may be blocked\n")
@@ -790,6 +886,9 @@ func (host *taskHost) uninstall() error {
 // elevatedUninstall removes the task and OwnGit's firewall rule. It keeps
 // the state directory and the repositories.
 func (host *taskHost) elevatedUninstall() error {
+	if err := host.prepareAdministrator(); err != nil {
+		return err
+	}
 	installed, found, err := host.installed()
 	if err != nil {
 		return err
@@ -837,7 +936,14 @@ func (host *taskHost) status() error {
 		host.printf("  Last error: %s\n", message)
 	}
 	host.printf("  Mode:     %s\n", installed.Mode.Describe())
-	host.printTaskFacts(installed.StateDir, address)
+	host.printTaskFacts(installed.StateDir, address, installed.Executable)
+	if installed.Mode == service.ModeBootTask {
+		if !strings.EqualFold(installed.Executable, host.serviceInstall.Executable) {
+			host.printf("  Update:   this task does not use the protected service copy; run \"owngit service install\" to refresh it\n")
+		} else if installedVersion, err := readExecutableVersion(installed.Executable); err == nil && installedVersion != version.Version {
+			host.printf("  Update:   the service copy is version %s; run \"owngit service install\" to refresh it to version %s\n", installedVersion, version.Version)
+		}
+	}
 	if read, complete := setupStatus(installed.StateDir); read && !complete {
 		host.printf("Setup is not complete. Run \"owngit setup-link\" in a terminal for the one-time setup link.\n")
 	}
@@ -862,6 +968,19 @@ func taskStateName(state int) string {
 // taskResult shows a task's last result as Task Scheduler does.
 func taskResult(result int64) string {
 	return fmt.Sprintf("0x%X", uint32(result))
+}
+
+func executableVersion(path string) (string, error) {
+	output, err := exec.Command(path, "version").Output()
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(string(output))
+	value, found := strings.CutPrefix(value, "owngit ")
+	if !found || value == "" || strings.ContainsAny(value, "\r\n") {
+		return "", fmt.Errorf("unexpected version output %q", value)
+	}
+	return value, nil
 }
 
 func (host *taskHost) control(action string) error {

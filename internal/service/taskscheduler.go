@@ -358,27 +358,40 @@ func SplitWindowsCommandLine(line string) []string {
 
 // Firewall scripts for Windows PowerShell. The program path is read from
 // the environment variable FirewallProgramVariable, never from the text.
+// They use the Windows Firewall COM API, not PowerShell modules found through
+// a user-controlled module path.
 
 // FirewallAllowScript replaces OwnGit's rule with one that lets
 // connections from the Private network profile reach the program. Public
 // networks stay closed.
 const FirewallAllowScript = `$ErrorActionPreference = 'Stop'
-Remove-NetFirewallRule -Name '` + FirewallRuleName + `' -ErrorAction SilentlyContinue
-New-NetFirewallRule -Name '` + FirewallRuleName + `' -DisplayName '` + FirewallRuleName + `' -Description 'Lets devices on private networks reach OwnGit. Added by owngit service install; owngit service uninstall removes it.' -Direction Inbound -Action Allow -Profile Private -Program $env:` + FirewallProgramVariable + ` -Enabled True | Out-Null
+$policy = New-Object -ComObject HNetCfg.FwPolicy2
+@($policy.Rules) | Where-Object { $_.Name -eq '` + FirewallRuleName + `' } | ForEach-Object { $policy.Rules.Remove($_.Name) }
+$rule = New-Object -ComObject HNetCfg.FWRule
+$rule.Name = '` + FirewallRuleName + `'
+$rule.Description = 'Lets devices on private networks reach OwnGit. Added by owngit service install; owngit service uninstall removes it.'
+$rule.Direction = 1
+$rule.Action = 1
+$rule.Enabled = $true
+$rule.Profiles = 2
+$rule.Protocol = 256
+$rule.ApplicationName = $env:` + FirewallProgramVariable + `
+$policy.Rules.Add($rule)
 `
 
 // FirewallRemoveScript removes OwnGit's rule and nothing else.
 const FirewallRemoveScript = `$ErrorActionPreference = 'Stop'
-Remove-NetFirewallRule -Name '` + FirewallRuleName + `' -ErrorAction SilentlyContinue
+$policy = New-Object -ComObject HNetCfg.FwPolicy2
+@($policy.Rules) | Where-Object { $_.Name -eq '` + FirewallRuleName + `' } | ForEach-Object { $policy.Rules.Remove($_.Name) }
 `
 
-// FirewallShowScript prints the program, profiles and enabled state of
-// OwnGit's rule, one per line, or nothing when there is no rule. It uses
-// the firewall's COM interface, which any account may read, also from an
-// SSH session where the NetSecurity cmdlets are refused.
+// FirewallShowScript prints the program, profiles, enabled state, direction
+// and action of OwnGit's rule, one per line, or nothing when there is no rule.
+// The COM interface works for any account, including an SSH session where
+// administrator-only firewall writes are unavailable.
 const FirewallShowScript = `$ErrorActionPreference = 'Stop'
 $rule = (New-Object -ComObject HNetCfg.FwPolicy2).Rules | Where-Object { $_.Name -eq '` + FirewallRuleName + `' } | Select-Object -First 1
-if ($rule) { $rule.ApplicationName; $rule.Profiles; $rule.Enabled }
+if ($rule) { $rule.ApplicationName; $rule.Profiles; $rule.Enabled; $rule.Direction; $rule.Action }
 `
 
 // FirewallRule is OwnGit's rule as FirewallShowScript prints it.
@@ -386,33 +399,43 @@ type FirewallRule struct {
 	Program string
 	// Profiles is the NET_FW_PROFILE_TYPE2 mask: 1 Domain, 2 Private,
 	// 4 Public.
-	Profiles int
-	Enabled  bool
+	Profiles  int
+	Enabled   bool
+	Direction int
+	Action    int
 }
 
-// firewallPrivateProfile is NET_FW_PROFILE2_PRIVATE.
-const firewallPrivateProfile = 2
+const (
+	firewallPrivateProfile = 2 // NET_FW_PROFILE2_PRIVATE
+	firewallDirectionIn    = 1 // NET_FW_RULE_DIRECTION_IN
+	firewallActionAllow    = 1 // NET_FW_ACTION_ALLOW
+)
 
 // ParseFirewallRule reads FirewallShowScript's output. found is false when
 // there is no rule.
 func ParseFirewallRule(output string) (rule FirewallRule, found bool) {
 	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(output, "\r", "")), "\n")
-	if len(lines) < 3 || strings.TrimSpace(lines[0]) == "" {
+	if len(lines) < 5 || strings.TrimSpace(lines[0]) == "" {
 		return FirewallRule{}, false
 	}
-	profiles, err := strconv.Atoi(strings.TrimSpace(lines[1]))
-	if err != nil {
+	profiles, profileErr := strconv.Atoi(strings.TrimSpace(lines[1]))
+	direction, directionErr := strconv.Atoi(strings.TrimSpace(lines[3]))
+	action, actionErr := strconv.Atoi(strings.TrimSpace(lines[4]))
+	if profileErr != nil || directionErr != nil || actionErr != nil {
 		return FirewallRule{}, false
 	}
 	return FirewallRule{
 		Program: strings.TrimSpace(lines[0]), Profiles: profiles,
-		Enabled: strings.EqualFold(strings.TrimSpace(lines[2]), "True"),
+		Enabled:   strings.EqualFold(strings.TrimSpace(lines[2]), "True"),
+		Direction: direction, Action: action,
 	}, true
 }
 
-// Allows reports whether the rule lets the Private profile reach program.
+// Allows reports whether the rule is an enabled inbound allow rule for only
+// the Private profile and program.
 func (rule FirewallRule) Allows(program string) bool {
-	return rule.Enabled && strings.EqualFold(rule.Program, program) && rule.Profiles&firewallPrivateProfile != 0
+	return rule.Enabled && strings.EqualFold(rule.Program, program) &&
+		rule.Profiles == firewallPrivateProfile && rule.Direction == firewallDirectionIn && rule.Action == firewallActionAllow
 }
 
 // The task scripts use the Task Scheduler COM interface, which works for

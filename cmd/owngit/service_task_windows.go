@@ -24,6 +24,10 @@ import (
 )
 
 var (
+	// inheritedEnvironment is captured before an elevated helper replaces its
+	// own environment. Restricted copies need the caller's ordinary user
+	// environment, not the administrator-only TEMP and module paths.
+	inheritedEnvironment      = os.Environ()
 	advapi32                  = windows.NewLazySystemDLL("advapi32.dll")
 	procCreateRestrictedToken = advapi32.NewProc("CreateRestrictedToken")
 	shell32                   = windows.NewLazySystemDLL("shell32.dll")
@@ -74,6 +78,11 @@ func platformRunElevated(arguments []string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	lockedExecutable, err := openServiceSource(executable)
+	if err != nil {
+		return 0, fmt.Errorf("hold this owngit.exe while administrator approval runs: %w", err)
+	}
+	defer lockedExecutable.Close()
 	verb, _ := windows.UTF16PtrFromString("runas")
 	file, err := windows.UTF16PtrFromString(executable)
 	if err != nil {
@@ -237,7 +246,11 @@ func runCopy(arguments []string, restricted bool, stop windows.Handle, output io
 	if output != nil {
 		command.Stdout = output
 	}
-	command.Env = append(append(os.Environ(), environment...), copyVariable+"=1")
+	baseEnvironment := os.Environ()
+	if restricted {
+		baseEnvironment = inheritedEnvironment
+	}
+	command.Env = append(append(append([]string(nil), baseEnvironment...), environment...), copyVariable+"=1")
 	// Suspended until it is in the job, and in its own process group so
 	// that it can get CTRL_BREAK.
 	gitexec.ConfigureOwnedProcess(command)

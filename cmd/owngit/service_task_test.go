@@ -25,20 +25,22 @@ import (
 // Windows backend runs on every platform. It keeps the one task and the one
 // firewall rule that the backend manages.
 type fakeWindows struct {
-	t          *testing.T
-	calls      []string
-	definition string // the task XML, "" when there is none
-	state      string // TaskStateScript output
-	firewall   string // FirewallShowScript output
-	created    string // XML read from the file given to schtasks /Create
-	failRun    bool
-	runState   string // the state after schtasks /Run (default: Running)
-	elevated   [][]string
-	elevate    func([]string) (int, error)
-	stopAsked  []string
-	listening  bool // whether a server listens for the stop event
-	git        bool
-	winget     bool
+	t            *testing.T
+	calls        []string
+	definition   string // the task XML, "" when there is none
+	state        string // TaskStateScript output
+	firewall     string // FirewallShowScript output
+	created      string // XML read from the file given to schtasks /Create
+	failRun      bool
+	runState     string // the state after schtasks /Run (default: Running)
+	elevated     [][]string
+	elevate      func([]string) (int, error)
+	stopAsked    []string
+	listening    bool // whether a server listens for the stop event
+	git          bool
+	winget       bool
+	environments [][]string
+	commandEnv   map[string]string
 	// owners maps folders to owner SIDs (default: the test account);
 	// adminOwned counts what the Administrators group owns below them.
 	owners       map[string]string
@@ -77,7 +79,7 @@ func (fake *fakeWindows) run(_ context.Context, name string, args ...string) ([]
 		script := fake.script(args)
 		call := "powershell " + script
 		if script == "firewall-allow" {
-			call += " " + os.Getenv(service.FirewallProgramVariable)
+			call += " " + fake.commandEnv[service.FirewallProgramVariable]
 		}
 		fake.calls = append(fake.calls, call)
 		switch script {
@@ -91,13 +93,13 @@ func (fake *fakeWindows) run(_ context.Context, name string, args ...string) ([]
 		case "firewall-show":
 			return []byte(fake.firewall), nil
 		case "firewall-allow":
-			// Like New-NetFirewallRule, a second rule with the same name
-			// fails unless the script removes the first one.
-			remove := strings.Index(service.FirewallAllowScript, "Remove-NetFirewallRule -Name '"+service.FirewallRuleName+"'")
-			if fake.firewall != "" && (remove < 0 || remove > strings.Index(service.FirewallAllowScript, "New-NetFirewallRule")) {
+			// Like the COM API, the script removes the named rule before it
+			// adds the replacement.
+			remove := strings.Index(service.FirewallAllowScript, "$policy.Rules.Remove")
+			if fake.firewall != "" && (remove < 0 || remove > strings.Index(service.FirewallAllowScript, "$policy.Rules.Add")) {
 				return []byte("already exists"), errors.New("exit status 1")
 			}
-			fake.firewall = os.Getenv(service.FirewallProgramVariable) + "\n2\nTrue\n"
+			fake.firewall = fake.commandEnv[service.FirewallProgramVariable] + "\n2\nTrue\n1\n1\n"
 		case "firewall-remove":
 			fake.firewall = ""
 		}
@@ -154,9 +156,15 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 	fake := &fakeWindows{t: t, git: true, winget: true, owners: map[string]string{}, adminOwned: map[string]int{}}
 	previousRunner, previousElevated, previousLook, previousStop := serviceRunner, runElevated, lookPath, signalServiceStop
 	previousOwner, previousGive, previousRoot, previousPoll := ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval
+	previousPrepare, previousReplace, previousWinget := prepareServiceStorage, replaceServiceCopy, trustedWinget
+	previousEnvironment, previousApply := serviceEnvironment, applyServiceEnvironment
+	previousEnvironmentRunner, previousAttached := runWithEnvironment, runAttachedWithEnvironment
 	t.Cleanup(func() {
 		serviceRunner, runElevated, lookPath, signalServiceStop = previousRunner, previousElevated, previousLook, previousStop
 		ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval = previousOwner, previousGive, previousRoot, previousPoll
+		prepareServiceStorage, replaceServiceCopy, trustedWinget = previousPrepare, previousReplace, previousWinget
+		serviceEnvironment, applyServiceEnvironment = previousEnvironment, previousApply
+		runWithEnvironment, runAttachedWithEnvironment = previousEnvironmentRunner, previousAttached
 	})
 	taskPollInterval = 10 * time.Millisecond
 	ownerOf = func(path string) (string, error) {
@@ -178,6 +186,40 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		return changed, 0, nil
 	}
 	repositoryRootWithoutAdminRights = func(string) string { return fake.repositories }
+	prepareServiceStorage = func(paths serviceInstallPaths) error {
+		fake.calls = append(fake.calls, "protect "+paths.Directory)
+		return nil
+	}
+	replaceServiceCopy = func(source string, paths serviceInstallPaths) error {
+		fake.calls = append(fake.calls, "copy "+source+" to "+paths.Executable)
+		return nil
+	}
+	trustedWinget = func() (string, error) {
+		if !fake.winget {
+			return "", errors.New("not found")
+		}
+		return `C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_1.0.0.0_x64__8wekyb3d8bbwe\winget.exe`, nil
+	}
+	serviceEnvironment = func(paths serviceInstallPaths, extra []string) ([]string, error) {
+		environment := []string{`SystemRoot=C:\Windows`, `Path=C:\Windows\System32`, `PSModulePath=C:\Windows\System32\WindowsPowerShell\v1.0\Modules`, "TEMP=" + paths.Temp, "TMP=" + paths.Temp}
+		return append(environment, extra...), nil
+	}
+	applyServiceEnvironment = func([]string) error { return nil }
+	runWithEnvironment = func(ctx context.Context, environment []string, name string, args ...string) ([]byte, error) {
+		fake.environments = append(fake.environments, append([]string(nil), environment...))
+		fake.commandEnv = map[string]string{}
+		for _, entry := range environment {
+			key, value, _ := strings.Cut(entry, "=")
+			fake.commandEnv[key] = value
+		}
+		defer func() { fake.commandEnv = nil }()
+		return fake.run(ctx, name, args...)
+	}
+	runAttachedWithEnvironment = func(environment []string, name string, args ...string) error {
+		fake.environments = append(fake.environments, append([]string(nil), environment...))
+		fake.calls = append(fake.calls, "attached "+name+" "+strings.Join(args, " "))
+		return nil
+	}
 	serviceRunner = fake.run
 	runElevated = func(arguments []string) (int, error) {
 		fake.elevated = append(fake.elevated, arguments)
@@ -209,19 +251,31 @@ func testTaskHost(environment service.Environment) (*taskHost, *bytes.Buffer) {
 	}
 	var out bytes.Buffer
 	return &taskHost{
-		env: environment, executable: `C:\Program Files\OwnGit\owngit.exe`,
+		env: environment, executable: testUserExecutable,
+		serviceInstall: serviceInstallPaths{
+			Directory: `C:\Program Files\OwnGit`, Executable: testServiceExecutable,
+			Temp: os.TempDir(),
+		},
 		sid: testSID, system: fakeSystem, out: &out,
 	}, &out
 }
 
-const testSID = "S-1-5-21-1-2-3-1001"
+const (
+	testSID               = "S-1-5-21-1-2-3-1001"
+	testUserExecutable    = `C:\Users\you\Downloads\owngit.exe`
+	testServiceExecutable = `C:\Program Files\OwnGit\owngit.exe`
+)
 
 // An existing task keeps its state directory, so these tests need no
 // Windows path from filepath.Abs.
 func (fake *fakeWindows) existing(t *testing.T, mode service.Mode, sid, stateDir string) {
 	t.Helper()
+	executable := testServiceExecutable
+	if mode == service.ModeLogonTask {
+		executable = testUserExecutable
+	}
 	definition, err := service.RenderTask(service.TaskPlan{
-		Mode: mode, Executable: `C:\Program Files\OwnGit\owngit.exe`, StateDir: stateDir,
+		Mode: mode, Executable: executable, StateDir: stateDir,
 		UserSID: sid, Conhost: fakeSystem + `\conhost.exe`,
 	})
 	noErr(t, err)
@@ -246,7 +300,7 @@ func TestTaskInstallAsksOnceForAdministratorApproval(t *testing.T) {
 	if !reflect.DeepEqual(fake.elevated, want) {
 		t.Errorf("elevated %q, want %q", fake.elevated, want)
 	}
-	if got := strings.Count(out.String(), "Windows asks once for administrator approval to register the OwnGit task that starts at boot and allow OwnGit through Windows Firewall on private networks.\n"); got != 1 {
+	if got := strings.Count(out.String(), "Windows asks once for administrator approval to copy OwnGit into Program Files, register the OwnGit task that starts at boot, and allow OwnGit through Windows Firewall on private networks.\n"); got != 1 {
 		t.Errorf("output:\n%s", out.String())
 	}
 	// The server keeps running until the approved step stops it, so a
@@ -271,9 +325,9 @@ func slicesContainPrefix(values []string, prefix string) bool {
 	return false
 }
 
-// Git that is missing is installed inside the same prompt when winget
-// exists; without winget the command says where to get Git and changes
-// nothing.
+// Git that is missing is installed inside the same prompt. The parent does
+// not trust winget from PATH; the elevated helper finds the verified App
+// Installer copy or tells the owner where to get Git without changing the task.
 func TestTaskInstallGit(t *testing.T) {
 	fake := newFakeWindows(t)
 	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
@@ -285,10 +339,12 @@ func TestTaskInstallGit(t *testing.T) {
 	if len(fake.elevated) != 1 || !reflect.DeepEqual(fake.elevated[0][4:6], []string{"--headless=false", "--install-git"}) || !strings.Contains(out.String(), ", and install Git with winget.") {
 		t.Errorf("elevated %q, output:\n%s", fake.elevated, out.String())
 	}
-	fake.winget, fake.elevated, fake.calls = false, nil, nil
-	out.Reset()
-	if err := host.install("", nil); err == nil || len(fake.elevated) != 0 || slicesContainPrefix(fake.calls, "schtasks") || !strings.Contains(out.String(), "https://git-scm.com/download/win") {
-		t.Errorf("without winget: %v, elevated %q, calls %q\n%s", err, fake.elevated, fake.calls, out.String())
+
+	fake.winget, fake.calls = false, nil
+	elevated, _ := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	err := elevated.elevatedInstall(testStateDir, false, true)
+	if err == nil || slicesContainPrefix(fake.calls, "schtasks") || !strings.Contains(err.Error(), "https://git-scm.com/download/win") {
+		t.Errorf("without trusted winget: %v, calls %q", err, fake.calls)
 	}
 }
 
@@ -347,7 +403,7 @@ func TestTaskInstallRefusesOtherTasks(t *testing.T) {
 func TestTaskElevatedInstall(t *testing.T) {
 	fake := newFakeWindows(t)
 	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
-	fake.firewall = `C:\Old\owngit.exe` + "\n2\nTrue\n"
+	fake.firewall = `C:\Old\owngit.exe` + "\n2\nTrue\n1\n1\n"
 	fake.state, fake.listening = "4\n267009", true
 	fake.repositories = `D:\Repositories`
 	fake.owners[fake.repositories] = administratorsSID
@@ -358,9 +414,11 @@ func TestTaskElevatedInstall(t *testing.T) {
 		t.Errorf("stop asked %q", fake.stopAsked)
 	}
 	want := []string{
+		"protect " + host.serviceInstall.Directory,
 		"powershell definition", "powershell state", "powershell state",
+		"copy " + host.executable + " to " + host.serviceInstall.Executable,
 		"give " + testStateDir, "give " + fake.repositories,
-		"schtasks /Create", "powershell firewall-allow " + host.executable, "schtasks /End /TN \\OwnGit", "schtasks /Run /TN \\OwnGit",
+		"schtasks /Create", "powershell firewall-allow " + host.serviceInstall.Executable, "schtasks /End /TN \\OwnGit", "schtasks /Run /TN \\OwnGit",
 	}
 	if len(fake.calls) != len(want) {
 		t.Fatalf("calls %q, want %q", fake.calls, want)
@@ -372,23 +430,55 @@ func TestTaskElevatedInstall(t *testing.T) {
 	}
 	installed, err := service.ParseTask([]byte(fake.created))
 	noErr(t, err)
-	if installed.Mode != service.ModeBootTask || !installed.Headless || installed.User != host.sid || !strings.Contains(fake.created, "<LogonType>S4U</LogonType>") {
+	if installed.Mode != service.ModeBootTask || installed.Executable != host.serviceInstall.Executable || !installed.Headless || installed.User != host.sid || !strings.Contains(fake.created, "<LogonType>S4U</LogonType>") {
 		t.Errorf("registered %+v:\n%s", installed, fake.created)
 	}
 	if !strings.Contains(out.String(), `Your account is now the owner of 42 files and folders in D:\Repositories that belonged to the Administrators group.`) {
 		t.Errorf("output:\n%s", out.String())
 	}
 	// The temporary definition file is gone.
-	path := strings.Fields(fake.calls[5])[5]
+	path := strings.Fields(fake.calls[7])[5]
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("definition file %s stayed: %v", path, err)
+	}
+}
+
+func TestElevatedCommandsIgnoreTheUserEnvironment(t *testing.T) {
+	fake := newFakeWindows(t)
+	serviceRunner = func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("elevated child ran without an explicit environment")
+		return nil, nil
+	}
+	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
+	fake.state = "3\n0"
+	host, _ := testTaskHost(service.Environment{
+		Administrator: true, Elevated: true,
+		Getenv: func(string) string { return `C:\attacker` },
+	})
+	noErr(t, host.elevatedInstall(testStateDir, false, true))
+	if len(fake.environments) == 0 {
+		t.Fatal("no explicit administrator environments were recorded")
+	}
+	for _, environment := range fake.environments {
+		joined := strings.Join(environment, "\n")
+		if strings.Contains(strings.ToLower(joined), `c:\attacker`) || strings.Contains(strings.ToLower(joined), "userprofile=") {
+			t.Errorf("user-controlled value reached an elevated child:\n%s", joined)
+		}
+		for _, want := range []string{`Path=C:\Windows\System32`, `PSModulePath=C:\Windows\System32\WindowsPowerShell\v1.0\Modules`, "TEMP=" + host.serviceInstall.Temp, "TMP=" + host.serviceInstall.Temp} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("administrator environment lacks %q:\n%s", want, joined)
+			}
+		}
+	}
+	if !slicesContainPrefix(fake.calls, `attached C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_`) {
+		t.Errorf("winget did not use the verified absolute package path: %q", fake.calls)
 	}
 }
 
 func TestTaskElevatedUninstallKeepsTheData(t *testing.T) {
 	fake := newFakeWindows(t)
 	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
-	fake.firewall = `C:\Program Files\OwnGit\owngit.exe` + "\n2\nTrue\n"
+	fake.firewall = testServiceExecutable + "\n2\nTrue\n1\n1\n"
 	host, _ := testTaskHost(service.Environment{Administrator: true, Elevated: true})
 	noErr(t, host.elevatedUninstall())
 	if fake.definition != "" || fake.firewall != "" {
@@ -433,6 +523,36 @@ func TestTaskStatusExplainsAQueuedTask(t *testing.T) {
 	noErr(t, host.status())
 	if !strings.Contains(out.String(), "  Firewall: no rule for this owngit.exe, so other devices may be blocked") {
 		t.Errorf("no firewall warning for a server on every address:\n%s", out.String())
+	}
+}
+
+func TestTaskStatusExplainsHowToRefreshTheServiceCopy(t *testing.T) {
+	fake := newFakeWindows(t)
+	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
+	fake.state = "3\n0"
+	host, out := testTaskHost(service.Environment{Administrator: true})
+	previousVersion := readExecutableVersion
+	t.Cleanup(func() { readExecutableVersion = previousVersion })
+	readExecutableVersion = func(path string) (string, error) {
+		if path != host.serviceInstall.Executable {
+			t.Fatalf("read version from %q", path)
+		}
+		return "1.0.9", nil
+	}
+	noErr(t, host.status())
+	if want := `the service copy is version 1.0.9; run "owngit service install" to refresh it`; !strings.Contains(out.String(), want) {
+		t.Errorf("status lacks %q:\n%s", want, out.String())
+	}
+
+	fake.definition = strings.Replace(fake.definition, host.serviceInstall.Executable, testUserExecutable, 1)
+	readExecutableVersion = func(string) (string, error) {
+		t.Fatal("an unprotected task executable was run to read its version")
+		return "", nil
+	}
+	out.Reset()
+	noErr(t, host.status())
+	if want := `this task does not use the protected service copy; run "owngit service install" to refresh it`; !strings.Contains(out.String(), want) {
+		t.Errorf("status lacks %q:\n%s", want, out.String())
 	}
 }
 
@@ -726,7 +846,7 @@ func TestTaskInstallNamesFoldersOfTheAdministrators(t *testing.T) {
 	fake.owners[testStateDir] = administratorsSID
 	host, out = testTaskHost(service.Environment{Administrator: true})
 	_ = host.install("", nil)
-	if !strings.Contains(out.String(), "Windows asks once for administrator approval to register the OwnGit task that starts at boot, allow OwnGit through Windows Firewall on private networks, and make your account the owner of "+testStateDir+".\n") {
+	if !strings.Contains(out.String(), "Windows asks once for administrator approval to copy OwnGit into Program Files, register the OwnGit task that starts at boot, allow OwnGit through Windows Firewall on private networks, and make your account the owner of "+testStateDir+".\n") {
 		t.Errorf("administrator:\n%s", out.String())
 	}
 }
