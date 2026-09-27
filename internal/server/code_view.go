@@ -63,8 +63,8 @@ func (app *App) renderMarkdown(ctx context.Context, repositoryID, ref, dir strin
 }
 
 // folderReadme renders the README of a folder listing, if it has one that is
-// a Markdown file. A README that cannot be rendered is still named, with the
-// reason and a link to open it. A failure to read it leaves it out.
+// a Markdown file. A README that cannot be read or rendered is still named,
+// with the reason and a link to open it.
 func (app *App) folderReadme(request *http.Request, repositoryID, ref, dir string, entries []repository.TreeEntry) *webui.ReadmeView {
 	var found *repository.TreeEntry
 	for index := range entries {
@@ -86,7 +86,11 @@ func (app *App) folderReadme(request *http.Request, repositoryID, ref, dir strin
 	}
 	// The listing already names the README's object, so it is read directly.
 	blob, err := app.Repositories.BlobAt(request.Context(), repositoryID, *found, markdown.MaxSource)
-	if err != nil || blob.Binary {
+	if err != nil {
+		view.Note = webui.MsgReadmeUnreadable
+		return view
+	}
+	if blob.Binary {
 		return nil
 	}
 	if blob.Truncated {
@@ -192,7 +196,12 @@ func (app *App) handleRaw(writer http.ResponseWriter, request *http.Request, sto
 	filePath := query.Get("path")
 	_, blob, err := app.Repositories.ReadBlob(request.Context(), stored.ID, query.Get("ref"), filePath, maximumRawBytes)
 	if err != nil {
-		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
+		if downloadReadStatus(err) == http.StatusNotFound {
+			app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
+			return
+		}
+		writer.Header().Set("Retry-After", "10")
+		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
 		return
 	}
 	if blob.Truncated {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -29,7 +30,7 @@ func (app *App) handleRestoreGet(writer http.ResponseWriter, request *http.Reque
 	selection := repository.RestoreRequest{Source: source, Target: target, Mode: mode, Paths: paths}
 	page, err := app.restorePage(request, stored, summary, chrome, selection, nil, false)
 	if err != nil {
-		app.renderError(writer, request, restoreStatus(err), restoreMessage(err), "")
+		app.renderRestorePageError(writer, request, chrome, stored, err)
 		return
 	}
 	app.render(writer, http.StatusOK, page)
@@ -47,7 +48,7 @@ func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.R
 	preview, err := app.Repositories.PreviewRestore(request.Context(), stored.ID, selection)
 	page, pageErr := app.restorePage(request, stored, summary, chrome, selection, previewOrNil(preview, err), true)
 	if pageErr != nil {
-		app.renderError(writer, request, restoreStatus(pageErr), restoreMessage(pageErr), "")
+		app.renderRestorePageError(writer, request, chrome, stored, pageErr)
 		return
 	}
 	if err != nil {
@@ -78,7 +79,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 	if postValue(request, "confirm") != "restore" {
 		page, err := app.restorePage(request, stored, summary, chrome, selection, nil, true)
 		if err != nil {
-			app.renderError(writer, request, restoreStatus(err), restoreMessage(err), "")
+			app.renderRestorePageError(writer, request, chrome, stored, err)
 			return
 		}
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Error("confirm", webui.MsgRestoreInvalid))
@@ -101,7 +102,15 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 	})
 	page, pageErr := app.restorePage(request, stored, summary, chrome, selection, previewOrNil(current, previewErr), previewErr == nil)
 	if pageErr != nil {
-		app.renderError(writer, request, restoreStatus(pageErr), restoreMessage(pageErr), "")
+		// A restore that failed for a reason other than a refusal cannot
+		// promise that the branch stayed as it was, and the reader must hear
+		// that first. A refused restore changed nothing, so the page failure
+		// is then the news.
+		if restoreStatus(err) == http.StatusServiceUnavailable {
+			app.renderError(writer, request, http.StatusServiceUnavailable, restoreMessage(err), "")
+			return
+		}
+		app.renderRestorePageError(writer, request, chrome, stored, pageErr)
 		return
 	}
 	page.Chrome.Notices = append(page.Chrome.Notices, webui.Error(restoreField(err), restoreMessage(err)))
@@ -109,10 +118,16 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 	app.render(writer, restoreStatus(err), page)
 }
 
+// restorePage builds the restore page for selection. A source that names no
+// commit of the repository is an invalid selection; a read that failed is
+// returned as it is.
 func (app *App) restorePage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selection repository.RestoreRequest, selectedPreview *repository.RestorePreview, previewed bool) (webui.RestorePage, error) {
 	sourceCommit, _, err := app.Repositories.CommitFiles(request.Context(), stored.ID, selection.Source)
+	if errors.Is(err, repository.ErrNotFound) {
+		return webui.RestorePage{}, fmt.Errorf("%w: %w", repository.ErrRestoreInvalid, err)
+	}
 	if err != nil {
-		return webui.RestorePage{}, repository.ErrRestoreInvalid
+		return webui.RestorePage{}, err
 	}
 	available, err := app.Repositories.PreviewRestore(request.Context(), stored.ID, repository.RestoreRequest{
 		Source: selection.Source, Target: selection.Target, Mode: repository.RestoreAll,
@@ -172,6 +187,18 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 		}
 	}
 	return page, nil
+}
+
+// renderRestorePageError answers a restore page that could not be built. A
+// selection the repository refuses keeps its own message and status. Any
+// other failure is a read that could not tell, so the page says the
+// repository cannot be read now, as the other repository pages do.
+func (app *App) renderRestorePageError(writer http.ResponseWriter, request *http.Request, chrome webui.Chrome, stored state.Repository, err error) {
+	if status := restoreStatus(err); status != http.StatusServiceUnavailable {
+		app.renderError(writer, request, status, restoreMessage(err), "")
+		return
+	}
+	app.renderRepositoryReadFailure(writer, request, chrome, stored, err)
 }
 
 func restoreFormRequest(request *http.Request) repository.RestoreRequest {

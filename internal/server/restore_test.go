@@ -205,8 +205,11 @@ func TestRestoreApplyReportsPageConstructionFailure(t *testing.T) {
 		"csrf": {csrf}, "source": {sourceOID}, "target": {"main"}, "mode": {"all"},
 		"expected_head": {strings.Repeat("0", len(sourceOID))}, "confirm": {"restore"},
 	}, server.URL)
-	if status != http.StatusUnprocessableEntity || !strings.Contains(body, "That selection cannot be restored") {
-		t.Fatalf("page construction failure status=%d invalid_message=%v", status, strings.Contains(body, "That selection cannot be restored"))
+	// A read that failed says nothing about the selection, so it is not
+	// called invalid: the page says the repository cannot be read now.
+	unreadable := "This repository&#39;s Git data could not be read."
+	if status != http.StatusServiceUnavailable || !strings.Contains(body, unreadable) || strings.Contains(body, "That selection cannot be restored") {
+		t.Fatalf("page construction failure status=%d unreadable_message=%v invalid_message=%v", status, strings.Contains(body, unreadable), strings.Contains(body, "That selection cannot be restored"))
 	}
 	if strings.Contains(body, "The branch changed after the preview") {
 		t.Fatalf("page construction failure reported the earlier apply error")

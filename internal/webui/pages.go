@@ -558,11 +558,18 @@ type RepositoryOverview struct {
 	// Branches and Tags are the ref rows shown in the side column, newest
 	// first. With many refs only the newest few are listed; BranchCount and
 	// TagCount keep the real totals, and AllRefsURL shows every ref.
-	Branches      []RefLine
-	Tags          []RefLine
-	BranchCount   int
-	TagCount      int
+	// BranchTipsKnown and TagTipsKnown are false when the rows' latest
+	// commits could not be read; the rows are then not in date order.
+	Branches        []RefLine
+	Tags            []RefLine
+	BranchCount     int
+	TagCount        int
+	BranchTipsKnown bool
+	TagTipsKnown    bool
+	// RetainedCount counts the kept history. RetainedKnown is false when it
+	// could not be read, and RetainedCount and RetainedRefs are then empty.
 	RetainedCount int
+	RetainedKnown bool
 	// AllRefsURL lists every branch and tag. Empty when nothing is hidden.
 	// FewerRefsURL returns to the short lists while every ref is shown.
 	AllRefsURL   string

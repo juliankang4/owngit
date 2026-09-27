@@ -328,7 +328,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	snapshot, err := app.Repositories.RefSnapshot(request.Context(), id)
 	summary := snapshot.Summary
 	if err != nil {
-		app.renderRepositoryUnavailable(writer, request, chrome, stored, err)
+		app.renderRepositoryReadFailure(writer, request, chrome, stored, err)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "pull-requests" {
@@ -423,13 +423,13 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	switch {
 	case len(parts) == 1:
 		page.Tab = webui.RepoTabOverview
-		app.fillRepositoryOverview(request, &page, summary, snapshot.ActivityKey, requestedRef)
+		err = app.fillRepositoryOverview(request, &page, summary, snapshot.ActivityKey, requestedRef)
 		if requestedRef != "" && page.Ref.Missing {
 			status = http.StatusNotFound
 		}
 	case len(parts) == 2 && parts[1] == "code":
 		page.Tab = webui.RepoTabCode
-		app.fillCode(request, &page, summary, requestedRef, request.URL.Query().Get("path"))
+		err = app.fillCode(request, &page, summary, requestedRef, request.URL.Query().Get("path"))
 		// A path or a requested branch or tag that does not exist is not
 		// found. The page keeps the repository and links back to it. A
 		// default branch that has gone is the repository's state, not a bad
@@ -439,7 +439,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		}
 	case len(parts) == 2 && parts[1] == "commits":
 		page.Tab = webui.RepoTabCommits
-		app.fillCommits(request, &page, summary, requestedRef, "")
+		err = app.fillCommits(request, &page, summary, requestedRef, "")
 		if page.Commits.NotFound || (requestedRef != "" && page.Ref.Missing) {
 			status = http.StatusNotFound
 		}
@@ -449,7 +449,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		// another repository has, is not found. A commit that exists opens
 		// even when the address names a missing branch: the page then shows
 		// it as a bare revision.
-		app.fillCommits(request, &page, summary, requestedRef, parts[2])
+		err = app.fillCommits(request, &page, summary, requestedRef, parts[2])
 		if page.Commits.NotFound {
 			status = http.StatusNotFound
 		}
@@ -457,23 +457,31 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 		return
 	}
-	// A read that ran out of time leaves parts of the page empty or marked
-	// missing, so the page explains the wait instead, before any 404: a
-	// timed-out read is never reported as a missing ref or commit.
-	if err := request.Context().Err(); err != nil {
-		if app.Repositories.InUse(id) {
+	// A read that failed is explained instead of the page, before any 404:
+	// it is never reported as a missing ref, commit or path. So is one that
+	// ran out of time, since it can leave a side panel unread too.
+	if err == nil {
+		err = request.Context().Err()
+	}
+	if err != nil {
+		if request.Context().Err() != nil && app.Repositories.InUse(id) {
 			err = repository.ErrRepositoryInUse
 		}
-		app.renderRepositoryUnavailable(writer, request, chrome, stored, err)
+		app.renderRepositoryReadFailure(writer, request, chrome, stored, err)
 		return
 	}
 	page.NotFound = status == http.StatusNotFound
 	app.render(writer, status, page)
 }
 
-// renderRepositoryUnavailable answers a repository page whose Git data could
-// not be read, with the reason when it is known.
-func (app *App) renderRepositoryUnavailable(writer http.ResponseWriter, request *http.Request, chrome webui.Chrome, stored state.Repository, cause error) {
+// renderRepositoryReadFailure answers a repository page whose Git data could
+// not be read: not found when the repository was deleted meanwhile, and
+// otherwise unavailable, with the reason when it is known.
+func (app *App) renderRepositoryReadFailure(writer http.ResponseWriter, request *http.Request, chrome webui.Chrome, stored state.Repository, cause error) {
+	if errors.Is(cause, repository.ErrRepositoryNotFound) {
+		app.renderError(writer, request, http.StatusNotFound, webui.MsgRepoNotFound, stored.ID)
+		return
+	}
 	page := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
 	page.Repo.Unreadable = true
 	page.Repo.UnreadableReason = webui.MsgRepoUnreadable
@@ -525,16 +533,25 @@ func (app *App) baseRepositoryPage(request *http.Request, chrome webui.Chrome, s
 	return page
 }
 
-func (app *App) selectRef(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested string) (string, bool) {
+// selectRef resolves the requested ref, or the default branch, for a page
+// and fills its ref picker. It reports whether the ref resolved; one that
+// does not exist is marked Missing. A lookup that failed is returned as an
+// error, since it tells nothing about the ref.
+func (app *App) selectRef(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested string) (string, bool, error) {
 	selected := requested
 	if selected == "" && summary.DefaultBranch != "" {
 		selected = "refs/heads/" + summary.DefaultBranch
 	}
-	canonical, oid, resolveErr := "", "", errors.New("branch or tag not found")
+	canonical, oid, resolved := "", "", false
 	if selected != "" {
-		canonical, oid, resolveErr = app.Repositories.ResolveRef(request.Context(), page.Repo.ID, selected)
+		var err error
+		canonical, oid, err = app.Repositories.ResolveRef(request.Context(), page.Repo.ID, selected)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return "", false, err
+		}
+		resolved = err == nil
 	}
-	if resolveErr == nil {
+	if resolved {
 		selected = canonical
 	}
 	page.Ref.Name = displayRef(selected)
@@ -552,21 +569,21 @@ func (app *App) selectRef(request *http.Request, page *webui.RepositoryPage, sum
 	// The tabs keep only a ref that resolves. A missing one would send each
 	// tab to a not-found page (QA-054), so they then open the repository's
 	// default addresses; the picker still shows the missing name.
-	if selected != "" && resolveErr == nil {
+	if resolved {
 		page.OverviewURL = withRef(page.OverviewURL, selected)
 		page.CodeURL = withRef(page.CodeURL, selected)
 		page.CommitsURL = withRef(page.CommitsURL, selected)
 	}
 	if summary.Empty {
-		return "", false
+		return "", false, nil
 	}
-	if selected == "" || resolveErr != nil {
+	if !resolved {
 		page.Ref.Missing = true
-		return "", false
+		return "", false, nil
 	}
 	page.Ref.Revision = oid
 	page.Ref.ShortRevision = shortOID(oid)
-	return canonical, true
+	return canonical, true, nil
 }
 
 func displayRef(ref string) string {
@@ -599,8 +616,17 @@ const (
 	overviewRefsFragment  = "#refs"
 )
 
-func (app *App) fillRepositoryOverview(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, activityKey, requested string) {
-	selectedRef, resolved := app.selectRef(request, page, summary, requested)
+// fillRepositoryOverview fills the overview. Its body, the recent commits
+// and the top folder of the selected ref, is required: a failed read of it
+// is returned, and the page then says the repository cannot be read. Each
+// side panel (languages, activity, open pull requests, the default branch
+// check, ref tips and kept history) is read on its own, and one that cannot
+// be read says so on the page. It is never shown as empty, zero or absent.
+func (app *App) fillRepositoryOverview(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, activityKey, requested string) error {
+	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
+	if err != nil {
+		return err
+	}
 	if page.Ref.Missing {
 		code := webui.MsgRepoRefMissing
 		if requested == "" {
@@ -619,13 +645,16 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 			"git push -u origin main",
 		}
 		page.Overview.Activity = emptyActivityGraph(selectedYear(request, app.now().Year()), app.now(), page.Repo.Name)
-		return
+		return nil
 	}
 	page.Overview.Languages = app.overviewLanguages(request, page.Repo.ID, summary.DefaultOID)
 	if resolved {
 		// One extra commit says whether older history exists without counting it.
 		commits, err := app.Repositories.CommitsAt(request.Context(), page.Repo.ID, page.Ref.Revision, overviewRecentCommits+1)
-		if err == nil && len(commits) > 0 {
+		if err != nil {
+			return err
+		}
+		if len(commits) > 0 {
 			if len(commits) > overviewRecentCommits {
 				page.Overview.RecentMore = true
 				commits = commits[:overviewRecentCommits]
@@ -637,15 +666,19 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		}
 		// The README answers what the repository is. It is found and
 		// rendered exactly as the code view does for the top folder.
-		if entries, err := app.Repositories.TreeAt(request.Context(), page.Repo.ID, page.Ref.Revision, ""); err == nil {
-			page.Overview.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, "", entries)
+		entries, err := app.Repositories.TreeAt(request.Context(), page.Repo.ID, page.Ref.Revision, "")
+		if err != nil {
+			return err
 		}
+		page.Overview.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, "", entries)
 	}
 	app.fillOverviewEvidence(request, page, summary)
 
 	showAll := request.URL.Query().Get(overviewAllRefsQuery) == overviewAllRefsValue
-	branchTips, _ := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Branches)
-	tagTips, _ := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Tags)
+	branchTips, err := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Branches)
+	page.Overview.BranchTipsKnown = err == nil
+	tagTips, err := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Tags)
+	page.Overview.TagTipsKnown = err == nil
 	var branches, tags, retainedLines []webui.RefLine
 	for _, branch := range summary.Branches {
 		full := "refs/heads/" + branch.Name
@@ -666,16 +699,15 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		tags = append(tags, line)
 	}
 	retained, err := app.Repositories.RetainedRefs(request.Context(), page.Repo.ID)
-	if err == nil {
-		for _, ref := range retained {
-			line := webui.RefLine{Name: shortOID(ref.OID), Kind: ref.Kind, Retained: true}
-			if ref.CommitOID != "" {
-				line.Tip = app.commitSummary(page.Repo.ID, "", ref.Commit)
-				line.URL = line.Tip.URL
-				line.RestoreURL = restoreURL(page.Repo.ID, ref.CommitOID, recoveredTarget(ref.OID, summary.Branches), "")
-			}
-			retainedLines = append(retainedLines, line)
+	page.Overview.RetainedKnown = err == nil
+	for _, ref := range retained {
+		line := webui.RefLine{Name: shortOID(ref.OID), Kind: ref.Kind, Retained: true}
+		if ref.CommitOID != "" {
+			line.Tip = app.commitSummary(page.Repo.ID, "", ref.Commit)
+			line.URL = line.Tip.URL
+			line.RestoreURL = restoreURL(page.Repo.ID, ref.CommitOID, recoveredTarget(ref.OID, summary.Branches), "")
 		}
+		retainedLines = append(retainedLines, line)
 	}
 	// Newest first, so a repository with many releases shows its recent ones
 	// rather than the first names in alphabetical order.
@@ -702,6 +734,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	}
 
 	page.Overview.Activity = app.repositoryActivityGraph(request, page.Repo.ID, page.Repo.Name, activityKey)
+	return nil
 }
 
 // fillOverviewEvidence reads the two summary figures that come from OwnGit's
@@ -788,26 +821,33 @@ func recoveredTarget(oid string, branches []repository.Ref) string {
 	}
 }
 
-func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, requestedPath string) {
-	selectedRef, resolved := app.selectRef(request, page, summary, requested)
+// fillCode fills the Code tab. A ref or path that does not exist is marked
+// on the page; a read that failed is returned.
+func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, requestedPath string) error {
+	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
+	if err != nil {
+		return err
+	}
 	if !resolved {
 		if requested == "" && page.Ref.Missing {
 			page.Chrome.Notices = append(page.Chrome.Notices, webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgRepoDefaultGone})
 		}
-		return
+		return nil
 	}
 	// The ref was resolved once, above; every read below names its commit.
 	commitOID := page.Ref.Revision
 	lookup, err := app.Repositories.PathAt(request.Context(), page.Repo.ID, commitOID, requestedPath)
-	if err != nil {
+	if errors.Is(err, repository.ErrNotFound) {
 		page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
-		return
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	if !lookup.Folder {
 		blob, err := app.Repositories.BlobAt(request.Context(), page.Repo.ID, lookup.File, 2<<20)
 		if err != nil {
-			page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
-			return
+			return err
 		}
 		binary := blob.Binary || !utf8.Valid(blob.Content)
 		target := summary.DefaultBranch
@@ -855,7 +895,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 			file.Image, file.ImageWidth, file.ImageHeight = inlineImage(requestedPath, blob.Content)
 		}
 		page.Code = view
-		return
+		return nil
 	}
 	view := webui.CodeView{Path: requestedPath, Dir: requestedPath, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
 	if requestedPath != "" {
@@ -869,35 +909,44 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 	if requestedPath == "" {
 		page.Downloads = archiveLinks(page.Repo.ID, selectedRef)
 	}
+	return nil
 }
 
-func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, openedOID string) {
-	selectedRef, resolved := app.selectRef(request, page, summary, requested)
+// fillCommits fills the Commits tab: the list, or the commit openedOID. A
+// ref, commit or path that does not exist is marked on the page; a read that
+// failed is returned.
+func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, openedOID string) error {
+	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
+	if err != nil {
+		return err
+	}
 	if !resolved && requested == "" && page.Ref.Missing {
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgRepoDefaultGone})
 	}
 	if openedOID == "" {
 		if !resolved {
-			return
+			return nil
 		}
 		commits, err := app.Repositories.CommitsAt(request.Context(), page.Repo.ID, page.Ref.Revision, repository.CommitPageSize)
 		if err != nil {
-			page.Commits.NotFound = true
-			return
+			return err
 		}
 		for _, commit := range commits {
 			page.Commits.List = append(page.Commits.List, app.commitSummary(page.Repo.ID, selectedRef, commit))
 		}
-		return
+		return nil
 	}
 	// One commit. The page names the selected branch or tag only when the
 	// commit is part of its history. The list of commits is one link away
 	// and is not read here.
 	if resolved {
 		reachable, err := app.Repositories.CommitReachableFrom(request.Context(), page.Repo.ID, page.Ref.Revision, openedOID)
-		if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
 			page.Commits.NotFound = true
-			return
+			return nil
+		}
+		if err != nil {
+			return err
 		}
 		if !reachable {
 			resolved = false
@@ -911,9 +960,12 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		page.Ref = webui.RefSelection{Name: shortOID(openedOID), Kind: "revision", Detached: true, Revision: openedOID, ShortRevision: shortOID(openedOID)}
 	}
 	commit, files, err := app.Repositories.CommitFiles(request.Context(), page.Repo.ID, openedOID)
-	if err != nil {
+	if errors.Is(err, repository.ErrNotFound) {
 		page.Commits.NotFound = true
-		return
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	// A commit opens with every file's diff. An address naming one file, as
 	// the note on a file left out of a large commit does, loads that file's
@@ -929,7 +981,7 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		}
 		if !found {
 			page.Commits.NotFound = true
-			return
+			return nil
 		}
 	}
 	target := summary.DefaultBranch
@@ -953,14 +1005,13 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		view.Unavailable = true
 		view.UnavailableReason = webui.MsgCommitDiffMerge
 		page.Commits.Detail = &view
-		return
+		return nil
 	}
 	fileURL := func(filePath string) string { return commitURL(page.Repo.ID, selectedRef, openedOID, filePath) }
 	if requestedPath != "" {
 		patch, truncated, err := app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, requestedPath, nil, maximumSingleFilePatchBytes)
 		if err != nil {
-			page.Commits.NotFound = true
-			return
+			return err
 		}
 		view.Truncated = truncated
 		for _, file := range files {
@@ -975,7 +1026,7 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 			view.Files = append(view.Files, item)
 		}
 		page.Commits.Detail = &view
-		return
+		return nil
 	}
 	// A file with more changed lines than the page shows is left out of the
 	// diff read, so it cannot use up the size limit of the files after it.
@@ -992,13 +1043,13 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	if len(excluded) < len(files) {
 		patch, truncated, err = app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, "", excluded, maximumCommitPatchBytes)
 		if err != nil {
-			page.Commits.NotFound = true
-			return
+			return err
 		}
 	}
 	view.Truncated = truncated
 	view.Files, _ = diffFileItems(files, patch, truncated, deferred, fileURL)
 	page.Commits.Detail = &view
+	return nil
 }
 
 // Bounds for one commit or pull request diff. A commit's diff read stops at

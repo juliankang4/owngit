@@ -83,7 +83,10 @@
 
     {{/* The side column lists the newest refs. A long list is cut to the
          newest few and says how many exist; "Show all" reloads with every
-         ref, so nothing depends on the script. */}}
+         ref, so nothing depends on the script. When the refs' latest commits
+         could not be read, the list says so instead of claiming an order.
+         Kept history that could not be read says so too, and is never
+         left out as if there were none. */}}
     <aside class="ov-side" id="refs" {{biAttr $lang "aria-label" "repo.overview.side_label"}}>
       <section class="ov-panel" aria-labelledby="ov-branches-h">
         <div class="sec__bar">
@@ -93,7 +96,8 @@
         </div>
         {{if $o.Branches}}
           {{template "sideRefs" dict "Lang" $lang "Now" $now "Rows" $o.Branches}}
-          {{if gt $o.BranchCount 1}}<p class="ov-order">{{bi $lang "repo.overview.newest_shown"}}</p>{{end}}
+          {{if not $o.BranchTipsKnown}}<p class="ov-order">{{bi $lang "repo.overview.tips_unreadable"}}</p>
+          {{else if gt $o.BranchCount 1}}<p class="ov-order">{{bi $lang "repo.overview.newest_shown"}}</p>{{end}}
         {{else}}
           <p class="empty">{{bi $lang "repo.no_branches"}}</p>
         {{end}}
@@ -107,7 +111,8 @@
           {{if and $o.AllRefsURL (gt $o.TagCount (len $o.Tags))}}<a class="sec__hint" href="{{$o.AllRefsURL}}">{{bi $lang "repo.overview.show_all_refs"}}</a>{{end}}
         </div>
         {{template "sideRefs" dict "Lang" $lang "Now" $now "Rows" $o.Tags}}
-        {{if gt $o.TagCount 1}}<p class="ov-order">{{bi $lang "repo.overview.newest_shown"}}</p>{{end}}
+        {{if not $o.TagTipsKnown}}<p class="ov-order">{{bi $lang "repo.overview.tips_unreadable"}}</p>
+        {{else if gt $o.TagCount 1}}<p class="ov-order">{{bi $lang "repo.overview.newest_shown"}}</p>{{end}}
       </section>
       {{else}}
       <section class="ov-panel" aria-labelledby="ov-tags-h">
@@ -150,7 +155,14 @@
       {{/* History kept after a force push or a deleted ref. It is listed as
            kept history, never as a live branch, and each entry offers restore
            only when the backend supplied an address for it. */}}
-      {{if $o.RetainedRefs}}
+      {{if not $o.RetainedKnown}}
+      <section class="ov-panel" aria-labelledby="ov-kept-h">
+        <div class="sec__bar sec__bar--flat">
+          <h2 id="ov-kept-h">{{bi $lang "repo.retained.title"}}</h2>
+          <span class="sec__n">{{icon "slash"}}{{bi $lang "repo.overview.unreadable"}}</span>
+        </div>
+      </section>
+      {{else if $o.RetainedRefs}}
       <section class="ov-panel" aria-labelledby="ov-kept-h">
         <div class="sec__bar">
           <h2 id="ov-kept-h">{{bi $lang "repo.retained.title"}}</h2>

@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -56,11 +55,11 @@ func (m *Manager) RefSnapshotWithin(ctx context.Context, id string, wait time.Du
 
 func (m *Manager) refSnapshot(ctx context.Context, id string, wait time.Duration) (RefSnapshot, error) {
 	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
-	if err != nil || !exists {
-		if err == nil {
-			err = errors.New("repository not found")
-		}
+	if err != nil {
 		return RefSnapshot{}, err
+	}
+	if !exists {
+		return RefSnapshot{}, ErrRepositoryNotFound
 	}
 	lock := m.Locks.For(id)
 	// Without the lock, a writer may be in progress. The cached snapshot then

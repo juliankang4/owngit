@@ -54,13 +54,21 @@ func (app *App) resolveArchive(request *http.Request, repositoryID string) (arch
 		return archiveTarget{}, http.StatusNotFound
 	}
 	resolved, commitOID, err := app.Repositories.ResolveRevision(request.Context(), repositoryID, query.Get("ref"))
-	switch {
-	case errors.Is(err, repository.ErrRepositoryPreparing), errors.Is(err, repository.ErrRepositoryInUse):
-		return archiveTarget{}, http.StatusServiceUnavailable
-	case err != nil:
-		return archiveTarget{}, http.StatusNotFound
+	if err != nil {
+		return archiveTarget{}, downloadReadStatus(err)
 	}
 	return archiveTarget{commitOID: commitOID, format: format, name: archiveName(repositoryID, displayRef(resolved))}, http.StatusOK
+}
+
+// downloadReadStatus is the status of a download whose Git read failed: 404
+// when the read established that the ref, commit or file does not exist, or
+// that the repository itself is gone, and 503 when it could not tell, as
+// when the repository is busy, being prepared, or its storage failed.
+func downloadReadStatus(err error) int {
+	if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrRepositoryNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusServiceUnavailable
 }
 
 // archiveName is REPOSITORY-REF with every character other than a letter, a

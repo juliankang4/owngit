@@ -67,11 +67,11 @@ type restoreTreeEntry struct {
 
 func (m *Manager) PreviewRestore(ctx context.Context, id string, request RestoreRequest) (RestorePreview, error) {
 	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
-	if err != nil || !exists {
-		if err == nil {
-			err = errors.New("repository not found")
-		}
+	if err != nil {
 		return RestorePreview{}, err
+	}
+	if !exists {
+		return RestorePreview{}, ErrRepositoryNotFound
 	}
 	lock := m.Locks.For(id)
 	if err := readLock(ctx, lock); err != nil {
@@ -87,11 +87,11 @@ func (m *Manager) PreviewRestore(ctx context.Context, id string, request Restore
 
 func (m *Manager) ApplyRestore(ctx context.Context, id string, request RestoreRequest) (RestoreResult, error) {
 	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
-	if err != nil || !exists {
-		if err == nil {
-			err = errors.New("repository not found")
-		}
+	if err != nil {
 		return RestoreResult{}, err
+	}
+	if !exists {
+		return RestoreResult{}, ErrRepositoryNotFound
 	}
 	lock := m.Locks.For(id)
 	if err := writeLock(ctx, lock); err != nil {
@@ -235,25 +235,23 @@ func (m *Manager) restoreSourceCommit(ctx context.Context, repositoryPath, sourc
 	if !isOID(source) {
 		return "", fmt.Errorf("%w: source must be a full object ID", ErrRestoreInvalid)
 	}
-	objectType, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-t", source)
-	if err != nil || strings.TrimSpace(string(objectType.Stdout)) != "commit" {
-		return "", fmt.Errorf("%w: source is not a commit", ErrRestoreInvalid)
-	}
-	resolved, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", source+"^{commit}")
+	// The source must be a commit itself, not a tag that points to one. Only
+	// Git's answer makes the source invalid; a lookup that failed is not an
+	// answer about the source.
+	commitOID, err := m.peelCommit(ctx, repositoryPath, source)
 	if err != nil {
-		return "", fmt.Errorf("%w: source commit is unavailable", ErrRestoreInvalid)
+		return "", fmt.Errorf("read restore source: %w", err)
 	}
-	oid := strings.TrimSpace(string(resolved.Stdout))
-	if oid != source {
-		return "", fmt.Errorf("%w: source object did not resolve exactly", ErrRestoreInvalid)
+	if commitOID != source {
+		return "", fmt.Errorf("%w: source is not a commit of this repository", ErrRestoreInvalid)
 	}
-	return oid, nil
+	return source, nil
 }
 
 func (m *Manager) readBranch(ctx context.Context, repositoryPath, targetRef string) (string, bool, error) {
 	_, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show-ref", "--verify", "--quiet", targetRef)
 	if err != nil {
-		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
+		if gitAnsweredNo(ctx, err) {
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("read target branch: %w", err)

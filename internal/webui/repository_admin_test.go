@@ -186,6 +186,60 @@ func TestOverviewSideColumnSaysWhenRefsAreHidden(t *testing.T) {
 	}
 }
 
+// A side panel that could not be read says so in both languages. Kept
+// history is not left out and has no count, and ref rows without their
+// latest commits do not claim to be newest first.
+func TestOverviewSidePanelsSayWhatCouldNotBeRead(t *testing.T) {
+	r := newRenderer(t)
+	for _, lang := range []Lang{LangEN, LangKO} {
+		page := repoPage(fullChrome(lang), RepoTabOverview)
+		page.Overview.BranchCount, page.Overview.TagCount = 2, 2
+		page.Overview.BranchTipsKnown, page.Overview.TagTipsKnown, page.Overview.RetainedKnown = false, false, false
+		page.Overview.RetainedRefs, page.Overview.RetainedCount = nil, 0
+		page.Overview.Readme = &ReadmeView{Path: "README.md", URL: "/repositories/r1/code?path=README.md", Note: MsgReadmeUnreadable}
+		out := render(t, r, page)
+		panel := func(id string) string {
+			start := strings.Index(out, `id="`+id+`"`)
+			if start < 0 {
+				t.Fatalf("%s overview has no %s panel", lang, id)
+			}
+			section := out[start:]
+			return section[:strings.Index(section, "</section>")]
+		}
+		kept := panel("ov-kept-h")
+		if !strings.Contains(kept, Text(lang, MsgRepoRetainTitle)) || !strings.Contains(kept, Text(lang, MsgRepoFactUnreadable)) || strings.Contains(kept, `data-en="0 item`) {
+			t.Errorf("%s unreadable kept history panel:\n%s", lang, kept)
+		}
+		for _, id := range []string{"ov-branches-h", "ov-tags-h"} {
+			if refs := panel(id); !strings.Contains(refs, Text(lang, MsgRepoTipsUnreadable)) || strings.Contains(refs, Text(lang, MsgRepoNewestShown)) {
+				t.Errorf("%s %s without tips:\n%s", lang, id, refs)
+			}
+		}
+		if readme := panel("readme-h"); !strings.Contains(readme, ">README.md</a>") || !strings.Contains(readme, Text(lang, MsgReadmeUnreadable)) {
+			t.Errorf("%s unreadable README:\n%s", lang, readme)
+		}
+	}
+}
+
+// Import history that could not be read is not "no runs". The last run is
+// known here, so "no run" can only come from the history.
+func TestImportHistorySaysWhenItCouldNotBeRead(t *testing.T) {
+	r := newRenderer(t)
+	for _, lang := range []Lang{LangEN, LangKO} {
+		page := ImportPage{Chrome: fullChrome(lang), Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabImport), Available: true, Configured: true,
+			Last: &ImportRunRow{ID: "run1", Kind: "refresh", Status: "failed", ErrorClass: "network"}}
+		out := render(t, r, page)
+		if !strings.Contains(out, Text(lang, MsgImportHistoryUnavailable)) || strings.Contains(out, Text(lang, MsgImportNoRun)) {
+			t.Errorf("%s unreadable history is not reported as unreadable", lang)
+		}
+		page.HistoryAvailable = true
+		out = render(t, r, page)
+		if strings.Contains(out, Text(lang, MsgImportHistoryUnavailable)) || !strings.Contains(out, Text(lang, MsgImportNoRun)) {
+			t.Errorf("%s readable empty history does not say there are no runs", lang)
+		}
+	}
+}
+
 func TestSidebarScrollsOnItsOwnOnlyOnWideScreens(t *testing.T) {
 	wide := cssRule(t, ".sidebar__inner")
 	for _, want := range []string{"position: sticky", "overflow-y: auto", "overscroll-behavior: contain", "max-height: 100dvh", "calc(24px + 47px)"} {

@@ -43,6 +43,7 @@ const (
 	MsgImportIntervalHelp       MessageCode = "import.interval_help"
 	MsgImportSaveSchedule       MessageCode = "import.save_schedule"
 	MsgImportHistory            MessageCode = "import.history"
+	MsgImportHistoryUnavailable MessageCode = "import.history_unavailable"
 	MsgImportOlder              MessageCode = "import.older"
 	MsgImportRefs               MessageCode = "import.refs"
 	MsgImportRefsTruncated      MessageCode = "import.refs_truncated"
@@ -193,6 +194,7 @@ var importCatalog = map[MessageCode]message{
 	MsgImportIntervalHelp:       {en: "Use a duration from 60s to 168h, for example 1h.", ko: "60s에서 168h 사이의 간격을 입력합니다. 예: 1h."},
 	MsgImportSaveSchedule:       {en: "Save schedule", ko: "예약 저장"},
 	MsgImportHistory:            {en: "History", ko: "기록"},
+	MsgImportHistoryUnavailable: {en: "The import history could not be read.", ko: "가져오기 기록을 읽지 못했습니다."},
 	MsgImportOlder:              {en: "Older runs", ko: "이전 실행"},
 	MsgImportRefs:               {en: "Observed refs", ko: "관측된 ref"},
 	MsgImportRefsTruncated:      {en: "The ref list is truncated.", ko: "ref 목록이 잘렸습니다."},

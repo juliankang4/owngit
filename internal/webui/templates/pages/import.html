@@ -154,7 +154,9 @@
 
 <section class="sec">
   <h2>{{bi $lang "import.history"}}</h2>
-  {{if $p.History}}
+  {{if not $p.HistoryAvailable}}
+  <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "import.history_unavailable"}}</span></p>
+  {{else if $p.History}}
   <ul>
     {{range $p.History}}
       <li><span class="mono">{{.ID}}</span> <span class="pill pill--off">{{importToken $lang .Status}}</span> {{importToken $lang .Kind}}</li>

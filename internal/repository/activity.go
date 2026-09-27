@@ -61,11 +61,11 @@ func (m *Manager) Activity(ctx context.Context, id string, maximumCommits int) (
 		maximumCommits = 200_000
 	}
 	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
-	if err != nil || !exists {
-		if err == nil {
-			err = errors.New("repository not found")
-		}
+	if err != nil {
 		return Activity{}, err
+	}
+	if !exists {
+		return Activity{}, ErrRepositoryNotFound
 	}
 	lock := m.Locks.For(id)
 	if err := readLock(ctx, lock); err != nil {
@@ -238,8 +238,11 @@ func parseRetainedProvenance(listing []byte, kind string) map[string]string {
 
 func (m *Manager) RetainedRefs(ctx context.Context, id string) ([]RetainedRef, error) {
 	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
-	if err != nil || !exists {
-		return nil, errors.New("repository not found")
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrRepositoryNotFound
 	}
 	lock := m.Locks.For(id)
 	if err := readLock(ctx, lock); err != nil {

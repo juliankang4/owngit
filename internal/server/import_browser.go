@@ -321,16 +321,17 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	if cursor < 0 {
 		cursor = 0
 	}
+	// History that could not be read is reported as such beside the status
+	// above, never as no runs.
 	runs, more, err := app.Imports.HistoryBefore(request.Context(), stored.ID, 20, cursor)
-	if err == nil {
-		for _, run := range runs {
-			row := run
-			page.History = append(page.History, *importRunRow(&row, admin))
-		}
-		if more && len(runs) > 0 {
-			page.OlderURL = page.SelfURL + "?cursor=" + strconv.FormatInt(runs[len(runs)-1].RowID, 10)
-			page.SelfURL = page.SelfURL + "?cursor=" + strconv.FormatInt(cursor, 10)
-		}
+	page.HistoryAvailable = err == nil
+	for _, run := range runs {
+		row := run
+		page.History = append(page.History, *importRunRow(&row, admin))
+	}
+	if err == nil && more && len(runs) > 0 {
+		page.OlderURL = page.SelfURL + "?cursor=" + strconv.FormatInt(runs[len(runs)-1].RowID, 10)
+		page.SelfURL = page.SelfURL + "?cursor=" + strconv.FormatInt(cursor, 10)
 	}
 	_ = summary
 	app.render(writer, status, page)

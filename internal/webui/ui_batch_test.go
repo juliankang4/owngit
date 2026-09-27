@@ -26,7 +26,7 @@ func TestUIBatchScreens(t *testing.T) {
 			Chrome: fullChrome(lang), Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabImport), Admin: admin,
 			SubmitURL: "/repositories/r1/import", SelfURL: "/repositories/r1/import",
 			AdminLoginURL: "/admin/login?next=%2Frepositories%2Fr1%2Fimport", SetupURL: "/admin/login?next=%2Frepositories%2Fr1%2Fimport%3Fsetup%3D1",
-			Available: true, Configured: true, Mode: "standalone",
+			Available: true, Configured: true, Mode: "standalone", HistoryAvailable: true,
 		}
 	}
 	picture := func(p *RepositoryPage) {

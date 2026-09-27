@@ -81,7 +81,10 @@ type ImportPage struct {
 	Refs             []ImportRefRow
 	Last             *ImportRunRow
 	Active           *ImportRunRow
+	// History lists earlier runs. HistoryAvailable is false when they could
+	// not be read, which is not the same as no runs.
 	History          []ImportRunRow
+	HistoryAvailable bool
 }
 
 func (ImportPage) page() string     { return "import" }

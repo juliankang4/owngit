@@ -31,6 +31,7 @@ const (
 	MsgRepoShowAllRefs    MessageCode = "repo.overview.show_all_refs"
 	MsgRepoShowFewerRefs  MessageCode = "repo.overview.show_fewer_refs"
 	MsgRepoNewestShown    MessageCode = "repo.overview.newest_shown"
+	MsgRepoTipsUnreadable MessageCode = "repo.overview.tips_unreadable"
 	MsgRepoNoTagsYet      MessageCode = "repo.overview.no_tags_yet"
 	// Languages panel.
 	MsgRepoLanguagesTitle       MessageCode = "repo.languages.title"
@@ -129,6 +130,7 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoShowAllRefs:       {en: "Show all", ko: "모두 보기"},
 	MsgRepoShowFewerRefs:     {en: "Show newest only", ko: "최신만 보기"},
 	MsgRepoNewestShown:       {en: "Newest first", ko: "최신순"},
+	MsgRepoTipsUnreadable:    {en: "Latest commits could not be read, so the list is by name", ko: "최근 커밋을 읽지 못해 이름순으로 보여 줍니다"},
 	MsgRepoNoTagsYet:         {en: "None yet", ko: "아직 없음"},
 	MsgRepoLanguagesTitle:    {en: "Languages", ko: "언어"},
 	MsgRepoLanguagesBarLabel: {en: "Language shares", ko: "언어 비율"},

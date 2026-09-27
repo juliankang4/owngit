@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -16,11 +17,19 @@ import (
 // on object IDs, so they are kept in the object cache (object_cache.go) and a
 // repeated view starts no Git process.
 
-// errDirectoryNotFound and errFileNotFound report a folder or a file that a
-// commit does not have.
+// ErrNotFound marks a read that established that the branch, tag, commit,
+// file or folder it was asked for does not exist in the repository. A name
+// that no such object can have, such as an invalid branch name or path, is
+// not found either. Every other read error means the read could not tell.
+var ErrNotFound = errors.New("not found")
+
+// These say which kind of object was not found.
 var (
-	errDirectoryNotFound = errors.New("directory not found")
-	errFileNotFound      = errors.New("file not found")
+	errRefNotFound       = fmt.Errorf("branch or tag %w", ErrNotFound)
+	errCommitNotFound    = fmt.Errorf("commit %w", ErrNotFound)
+	errDirectoryNotFound = fmt.Errorf("directory %w", ErrNotFound)
+	errFileNotFound      = fmt.Errorf("file %w", ErrNotFound)
+	errInvalidCommitID   = fmt.Errorf("%w: invalid commit ID", errCommitNotFound)
 )
 
 // ResolveRef returns the full ref name and commit ID of requested, a branch
@@ -31,7 +40,9 @@ var (
 // such as an annotated or nested tag, is peeled to its commit with Git, as
 // rev-parse's ^{commit} does, and that answer is cached by the tag's object
 // ID. Refs written to the storage folder without OwnGit are seen after OwnGit
-// next writes to the repository, as for the ref snapshot.
+// next writes to the repository, as for the ref snapshot. A ref that is
+// missing or names no commit wraps ErrNotFound; a failed peel stops the
+// lookup, so a branch that could not be read never falls back to a tag.
 func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string, string, error) {
 	snapshot, err := m.RefSnapshot(ctx, id)
 	if err != nil {
@@ -39,18 +50,18 @@ func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string,
 	}
 	if requested == "" {
 		if snapshot.Summary.DefaultBranch == "" {
-			return "", "", errors.New("repository has no default branch")
+			return "", "", fmt.Errorf("%w: the repository has no default branch", errRefNotFound)
 		}
 		requested = "refs/heads/" + snapshot.Summary.DefaultBranch
 	}
 	candidates := []string{requested}
 	if strings.HasPrefix(requested, "refs/heads/") || strings.HasPrefix(requested, "refs/tags/") {
 		if err := validateShortRef(strings.TrimPrefix(strings.TrimPrefix(requested, "refs/heads/"), "refs/tags/")); err != nil {
-			return "", "", err
+			return "", "", fmt.Errorf("%w: %w", errRefNotFound, err)
 		}
 	} else {
 		if err := validateShortRef(requested); err != nil {
-			return "", "", err
+			return "", "", fmt.Errorf("%w: %w", errRefNotFound, err)
 		}
 		// Keep accepting historical short URLs, with the documented
 		// branch-first precedence. Newly generated URLs always carry the full
@@ -65,11 +76,15 @@ func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string,
 		if ref.Type == "commit" && isOID(ref.OID) {
 			return full, ref.OID, nil
 		}
-		if commitOID, ok := m.peelToCommit(ctx, id, ref.OID); ok {
+		commitOID, err := m.peelToCommit(ctx, id, ref.OID)
+		if err != nil {
+			return "", "", err
+		}
+		if commitOID != "" {
 			return full, commitOID, nil
 		}
 	}
-	return "", "", errors.New("branch or tag not found")
+	return "", "", errRefNotFound
 }
 
 // ResolveRevision is ResolveRef that also accepts a full commit ID, which
@@ -84,10 +99,14 @@ func (m *Manager) ResolveRevision(ctx context.Context, id, requested string) (st
 		// The same answer as ResolveRef for a repository that cannot be read.
 		return "", "", err
 	}
-	if commitOID, ok := m.peelToCommit(ctx, id, requested); ok && commitOID == requested {
-		return requested, requested, nil
+	commitOID, err := m.peelToCommit(ctx, id, requested)
+	if err != nil {
+		return "", "", err
 	}
-	return "", "", errors.New("commit not found")
+	if commitOID != requested {
+		return "", "", errCommitNotFound
+	}
+	return requested, requested, nil
 }
 
 func snapshotRef(summary Summary, full string) (Ref, bool) {
@@ -103,28 +122,58 @@ func snapshotRef(summary Summary, full string) (Ref, bool) {
 	return Ref{}, false
 }
 
-// peelToCommit returns the commit an object, such as an annotated tag,
-// finally points to. ok is false when it points to no commit or Git could not
-// tell; only a found commit is cached.
-func (m *Manager) peelToCommit(ctx context.Context, id, oid string) (string, bool) {
+// peelToCommit is peelCommit for repository id, answered from the object
+// cache when it can be. Only a found commit is cached; an absent object can
+// still arrive with a push.
+func (m *Manager) peelToCommit(ctx context.Context, id, oid string) (string, error) {
 	if !isOID(oid) {
-		return "", false
+		return "", nil
 	}
 	result, err := m.cachedRead(ctx, id, "peel", oid, func(repositoryPath string) (cachedResult, bool, error) {
-		output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "--quiet", oid+"^{commit}")
-		if err != nil {
-			return cachedResult{}, false, err
-		}
-		commitOID := strings.TrimSpace(string(output.Stdout))
-		if !isOID(commitOID) {
-			return cachedResult{}, false, errors.New("Git returned an invalid commit ID")
-		}
-		return cachedResult{data: []byte(commitOID)}, true, nil
+		commitOID, err := m.peelCommit(ctx, repositoryPath, oid)
+		return cachedResult{data: []byte(commitOID)}, commitOID != "", err
 	})
 	if err != nil {
-		return "", false
+		return "", err
 	}
-	return string(result.data), true
+	return string(result.data), nil
+}
+
+// peelCommit returns the commit that oid names once any tags, also tags of
+// tags, are peeled. It returns "" when oid names no commit: Git reports the
+// object missing, or it ends in a tree or a blob. One cat-file process
+// answers, and its "missing" line is an answer, not a failure. The caller
+// holds the repository's lock.
+func (m *Manager) peelCommit(ctx context.Context, repositoryPath, oid string) (string, error) {
+	output, err := m.Git.Run(ctx, repositoryPath, strings.NewReader(oid+"^{}\n"), "--git-dir", ".", "cat-file", "--batch-check=%(objectname) %(objecttype)")
+	if err != nil {
+		return "", err
+	}
+	line := strings.TrimSuffix(string(output.Stdout), "\n")
+	if line == oid+"^{} missing" {
+		return "", nil
+	}
+	if peeled, objectType, _ := strings.Cut(line, " "); isOID(peeled) {
+		switch objectType {
+		case "commit":
+			return peeled, nil
+		case "tree", "blob":
+			return "", nil
+		}
+	}
+	return "", errors.New("Git returned malformed object type data")
+}
+
+// commitReadFailed explains a failed read of the commit oid, which the
+// caller did not check. It reports errCommitNotFound only when a lookup
+// establishes that oid names no commit of the repository, and failure
+// otherwise, also when that lookup fails too. It runs only after a failed
+// read, so a commit that reads normally costs no extra Git process.
+func (m *Manager) commitReadFailed(ctx context.Context, id, oid string, failure error) error {
+	if commitOID, err := m.peelToCommit(ctx, id, oid); err == nil && commitOID != oid {
+		return errCommitNotFound
+	}
+	return failure
 }
 
 // cachedRead answers a read of repository id from the object cache, or runs
@@ -133,11 +182,11 @@ func (m *Manager) peelToCommit(ctx context.Context, id, oid string) (string, boo
 // everything the result depends on.
 func (m *Manager) cachedRead(ctx context.Context, id, kind, key string, read func(repositoryPath string) (cachedResult, bool, error)) (cachedResult, error) {
 	repositoryPath, stored, exists, err := m.ExistingPath(ctx, id)
-	if err != nil || !exists {
-		if err == nil {
-			err = errors.New("repository not found")
-		}
+	if err != nil {
 		return cachedResult{}, err
+	}
+	if !exists {
+		return cachedResult{}, ErrRepositoryNotFound
 	}
 	return m.objects.load(ctx, namespaceFor(id, repositoryPath, stored.CreatedAt), kind, key, func() (cachedResult, bool, error) {
 		lock := m.Locks.For(id)
@@ -153,7 +202,7 @@ func (m *Manager) cachedRead(ctx context.Context, id, kind, key string, read fun
 // resolved to.
 func (m *Manager) Tree(ctx context.Context, id, requestedRef, directory string) (string, []TreeEntry, error) {
 	if err := validateTreePath(directory); err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("%w: %w", errDirectoryNotFound, err)
 	}
 	_, commitOID, err := m.ResolveRef(ctx, id, requestedRef)
 	if err != nil {
@@ -171,10 +220,10 @@ func (m *Manager) Tree(ctx context.Context, id, requestedRef, directory string) 
 // directory without entries all report "directory not found".
 func (m *Manager) TreeAt(ctx context.Context, id, commitOID, directory string) ([]TreeEntry, error) {
 	if !isOID(commitOID) {
-		return nil, errors.New("invalid commit ID")
+		return nil, errInvalidCommitID
 	}
 	if err := validateTreePath(directory); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errDirectoryNotFound, err)
 	}
 	result, err := m.cachedRead(ctx, id, "tree", commitOID+"\x00"+directory, func(repositoryPath string) (cachedResult, bool, error) {
 		args := []string{"--git-dir", ".", "ls-tree", "-z", "-l", commitOID}
@@ -238,7 +287,7 @@ func (m *Manager) ReadBlob(ctx context.Context, id, requestedRef, filePath strin
 		if err == nil {
 			err = errors.New("file path is required")
 		}
-		return "", Blob{}, err
+		return "", Blob{}, fmt.Errorf("%w: %w", errFileNotFound, err)
 	}
 	_, commitOID, err := m.ResolveRef(ctx, id, requestedRef)
 	if err != nil {
@@ -273,10 +322,10 @@ func (m *Manager) PathAt(ctx context.Context, id, commitOID, filePath string) (P
 		return PathView{Folder: true, Entries: entries}, err
 	}
 	if !isOID(commitOID) {
-		return PathView{}, errors.New("invalid commit ID")
+		return PathView{}, errInvalidCommitID
 	}
 	if err := validateTreePath(filePath); err != nil {
-		return PathView{}, err
+		return PathView{}, fmt.Errorf("%w: %w", errFileNotFound, err)
 	}
 	parent, parentSpec := "", ":(top)"
 	if separator := strings.LastIndexByte(filePath, '/'); separator >= 0 {
@@ -338,7 +387,7 @@ func (m *Manager) PathAt(ctx context.Context, id, commitOID, filePath string) (P
 // longer file.
 func (m *Manager) FileAt(ctx context.Context, id, commitOID, filePath string, limit int64) (Blob, []TreeEntry, error) {
 	if filePath == "" {
-		return Blob{}, nil, errors.New("file path is required")
+		return Blob{}, nil, fmt.Errorf("%w: file path is required", errFileNotFound)
 	}
 	view, err := m.PathAt(ctx, id, commitOID, filePath)
 	if err != nil {
@@ -356,7 +405,7 @@ func (m *Manager) FileAt(ctx context.Context, id, commitOID, filePath string, li
 // most limit bytes of it.
 func (m *Manager) BlobAt(ctx context.Context, id string, entry TreeEntry, limit int64) (Blob, error) {
 	if !isOID(entry.OID) || entry.Type != "blob" {
-		return Blob{}, errors.New("file not found")
+		return Blob{}, errFileNotFound
 	}
 	if limit <= 0 {
 		limit = 2 << 20
@@ -412,7 +461,7 @@ func commitListKey(commitOID string, limit int) string {
 // first, with one Git process.
 func (m *Manager) CommitsAt(ctx context.Context, id, commitOID string, limit int) ([]Commit, error) {
 	if !isOID(commitOID) {
-		return nil, errors.New("invalid commit ID")
+		return nil, errInvalidCommitID
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
@@ -431,10 +480,11 @@ func (m *Manager) CommitsAt(ctx context.Context, id, commitOID string, limit int
 }
 
 // CommitReachableFrom reports whether commitOID is rootOID or one of its
-// ancestors. The answer never changes for the two IDs, so it is cached.
+// ancestors. The answer never changes for the two IDs, so it is cached. A
+// commitOID that names no commit wraps ErrNotFound.
 func (m *Manager) CommitReachableFrom(ctx context.Context, id, rootOID, commitOID string) (bool, error) {
 	if !isOID(rootOID) || !isOID(commitOID) {
-		return false, errors.New("invalid commit ID")
+		return false, errInvalidCommitID
 	}
 	if rootOID == commitOID {
 		return true, nil
@@ -463,7 +513,7 @@ func (m *Manager) CommitReachableFrom(ctx context.Context, id, rootOID, commitOI
 		return cachedResult{}, false, err
 	})
 	if err != nil {
-		return false, err
+		return false, m.commitReadFailed(ctx, id, commitOID, err)
 	}
 	return len(result.data) == 1 && result.data[0] == 1, nil
 }
@@ -471,35 +521,41 @@ func (m *Manager) CommitReachableFrom(ctx context.Context, id, rootOID, commitOI
 // CommitFiles reads a commit's metadata and the files it changes, with their
 // line counts, in one Git process. Renames are not detected, so each changed
 // path is listed once with its own status. A merge commit lists no files.
+// An oid that names no commit, such as a tag's ID, wraps ErrNotFound.
 func (m *Manager) CommitFiles(ctx context.Context, id, oid string) (Commit, []ChangedFile, error) {
 	if !isOID(oid) {
-		return Commit{}, nil, errors.New("invalid commit ID")
+		return Commit{}, nil, errInvalidCommitID
 	}
 	result, err := m.cachedRead(ctx, id, "commit-files", oid, func(repositoryPath string) (cachedResult, bool, error) {
 		output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "log", "--no-walk", "--max-count=1", "-z", "--no-decorate",
 			"--format="+commitLogFormat, "--raw", "--numstat", "--no-renames", "--root", "--no-ext-diff", "--no-textconv", oid)
 		if err != nil {
-			return cachedResult{}, false, errors.New("commit not found")
+			return cachedResult{}, false, err
 		}
 		return cachedResult{data: output.Stdout}, true, nil
 	})
 	if err != nil {
-		return Commit{}, nil, err
+		return Commit{}, nil, m.commitReadFailed(ctx, id, oid, err)
 	}
 	// The ten metadata fields each end with NUL. When the commit changes
-	// files, a newline and the file records follow.
+	// files, a newline and the file records follow. Git answers the ID of a
+	// tree or a blob with no metadata, and a tag's ID with the commit it
+	// points to, so metadata that does not describe oid is checked.
+	notDescribed := func() error {
+		return m.commitReadFailed(ctx, id, oid, errors.New("Git returned malformed commit metadata"))
+	}
 	data := result.data
 	end := 0
 	for field := 0; field < 10; field++ {
 		next := bytes.IndexByte(data[end:], 0)
 		if next < 0 {
-			return Commit{}, nil, errors.New("Git returned malformed commit metadata")
+			return Commit{}, nil, notDescribed()
 		}
 		end += next + 1
 	}
 	commits, err := parseCommits(data[:end])
 	if err != nil || len(commits) != 1 || commits[0].OID != oid {
-		return Commit{}, nil, errors.New("Git returned malformed commit metadata")
+		return Commit{}, nil, notDescribed()
 	}
 	files, _, complete, _ := parseChanges(bytes.TrimPrefix(data[end:], []byte{'\n'}))
 	if !complete {
@@ -516,11 +572,11 @@ func (m *Manager) CommitFiles(ctx context.Context, id, oid string) (Commit, []Ch
 // for the same arguments.
 func (m *Manager) CommitPatch(ctx context.Context, id, oid, filePath string, excluded []string, limit int64) (string, bool, error) {
 	if !isOID(oid) {
-		return "", false, errors.New("invalid commit ID")
+		return "", false, errInvalidCommitID
 	}
 	if filePath != "" {
 		if err := validateTreePath(filePath); err != nil {
-			return "", false, err
+			return "", false, fmt.Errorf("%w: %w", errFileNotFound, err)
 		}
 	}
 	args := []string{"--git-dir", ".", "diff-tree", "-p", "--root", "--no-commit-id", "-r", "--no-renames",

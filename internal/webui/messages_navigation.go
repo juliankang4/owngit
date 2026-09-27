@@ -27,6 +27,7 @@ const (
 	MsgReadmeBusy        MessageCode = "code.readme_busy"
 	MsgCodeUnavailable   MessageCode = "code.render_unavailable"
 	MsgReadmeUnavailable MessageCode = "code.readme_unavailable"
+	MsgReadmeUnreadable  MessageCode = "code.readme_unreadable"
 	MsgCodeRawTooLarge   MessageCode = "code.raw_too_large"
 	MsgCommitsToList     MessageCode = "commits.back_to_list"
 
@@ -83,6 +84,10 @@ var navigationCatalog = map[MessageCode]message{
 	MsgReadmeUnavailable: {
 		en: "Formatted view is unavailable on this server. Open the README to read its source.",
 		ko: "이 서버에서는 서식 보기를 쓸 수 없습니다. README를 열어 원문을 읽으세요.",
+	},
+	MsgReadmeUnreadable: {
+		en: "This README could not be read. Open it to try again.",
+		ko: "이 README를 읽을 수 없습니다. 열어서 다시 시도하세요.",
 	},
 	MsgCodeRawTooLarge: {
 		en: "Files over 10 MB cannot be downloaded from the browser. Clone the repository to get this file.",
