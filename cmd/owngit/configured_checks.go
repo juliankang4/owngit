@@ -358,6 +358,9 @@ func unsafeRunnerWorkspaceMessage(unsafe *checksource.UnsafeWorkspaceRootError) 
 	if unsafe.Directory == "" {
 		return fmt.Sprintf("The runner workspace %s belongs to another account. Remove that folder, or pass --workspace-root with a folder this account owns.", unsafe.Root)
 	}
+	if unsafe.Directory == unsafe.Root {
+		return fmt.Sprintf("Another account can change the runner workspace %s through its access list. Run %s, or pass --workspace-root with a folder only this account can change.", unsafe.Root, unsafe.Fix)
+	}
 	if unsafe.Fix != "" {
 		return fmt.Sprintf("Another account can replace %s, which holds the runner workspace %s. Run %s, or pass --workspace-root with a folder whose parent folders only this account or root can change.", unsafe.Directory, unsafe.Root, unsafe.Fix)
 	}

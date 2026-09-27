@@ -46,8 +46,9 @@ type WorkspaceRoot struct {
 // owns or could replace. The root is left unchanged.
 type UnsafeWorkspaceRootError struct {
 	Root string
-	// Directory is the directory above Root that another account can change.
-	// It is empty when Root itself belongs to another account.
+	// Directory is the directory above Root that another account can change,
+	// or Root itself when its access list lets another account change it. It
+	// is empty when Root itself belongs to another account.
 	Directory string
 	// Fix is a shell command that removes the extra write access from
 	// Directory, or empty when changing the mode does not help.
@@ -57,6 +58,9 @@ type UnsafeWorkspaceRootError struct {
 func (e *UnsafeWorkspaceRootError) Error() string {
 	if e.Directory == "" {
 		return fmt.Sprintf("check workspace root %s belongs to another account", e.Root)
+	}
+	if e.Directory == e.Root {
+		return fmt.Sprintf("another account can change check workspace root %s", e.Root)
 	}
 	return fmt.Sprintf("another account can replace %s, which holds check workspace root %s", e.Directory, e.Root)
 }
@@ -100,15 +104,11 @@ func AcquireWorkspaceRoot(path string) (*WorkspaceRoot, error) {
 	if path == "" || !filepath.IsAbs(path) || path != filepath.Clean(path) {
 		return nil, errors.New("check workspace root must be an absolute cleaned path")
 	}
-	if err := requireProtectedAncestors(path); err != nil {
+	if err := prepareWorkspaceRoot(path); err != nil {
 		return nil, err
 	}
 	info, err := os.Lstat(path)
 	switch {
-	case errors.Is(err, os.ErrNotExist):
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			return nil, fmt.Errorf("create check workspace root: %w", err)
-		}
 	case err != nil:
 		return nil, fmt.Errorf("inspect check workspace root: %w", err)
 	case !info.IsDir() || info.Mode()&os.ModeSymlink != 0:
@@ -120,6 +120,13 @@ func AcquireWorkspaceRoot(path string) (*WorkspaceRoot, error) {
 	}
 	defer directory.Close()
 	if err := requireOwnedWorkspaceDirectory(directory, path); err != nil {
+		return nil, err
+	}
+	if err := requirePrivateWorkspaceACL(path); err != nil {
+		return nil, err
+	}
+	// Check every directory above the root again now that all of them exist.
+	if err := requireProtectedAncestors(path); err != nil {
 		return nil, err
 	}
 	markerPath := filepath.Join(path, workspaceRootMarker)

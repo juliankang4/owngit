@@ -91,9 +91,6 @@ func sharedGroup(t *testing.T) int {
 			return gid
 		}
 	}
-	if os.Geteuid() == 0 {
-		return 65534
-	}
 	t.Skip("this account belongs to no shared group")
 	return -1
 }
@@ -189,4 +186,90 @@ func TestAcquireWorkspaceRootAsRootRefusesAnotherAccountsRoot(t *testing.T) {
 	workspace, err := AcquireWorkspaceRoot(own)
 	noErr(t, err)
 	workspace.Close()
+}
+
+// createWhileAcquiring makes the first check see a missing directory, then
+// lets change create it the way another account would, before the runner does.
+func createWhileAcquiring(t *testing.T, target string, change func(path string)) {
+	t.Helper()
+	original := beforeCreatingWorkspaceParent
+	beforeCreatingWorkspaceParent = func(path string) {
+		if path == target {
+			change(path)
+		}
+	}
+	t.Cleanup(func() { beforeCreatingWorkspaceParent = original })
+}
+
+func requireNoWorkspaceBelow(t *testing.T, directory string) {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("%s has %d entries err=%v, want nothing made below a refused directory", directory, len(entries), err)
+	}
+}
+
+func TestAcquireWorkspaceRootRefusesMissingParentCreatedAfterCheck(t *testing.T) {
+	shared := directoryWithMode(t, filepath.Join(resolvedTempDir(t), "shared"), os.ModeSticky|0o777)
+	intermediate := filepath.Join(shared, "intermediate")
+	root := filepath.Join(intermediate, "child", "workspace")
+	createWhileAcquiring(t, intermediate, func(path string) {
+		directoryWithMode(t, path, 0o777)
+	})
+
+	_, err := AcquireWorkspaceRoot(root)
+	requireUnsafeParent(t, err, root, intermediate)
+	requireNoWorkspaceBelow(t, intermediate)
+}
+
+func TestAcquireWorkspaceRootAsRootRefusesMissingParentMadeByAnotherAccount(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to give the directory another owner")
+	}
+	shared := directoryWithMode(t, filepath.Join(resolvedTempDir(t), "shared"), os.ModeSticky|0o777)
+	intermediate := filepath.Join(shared, "intermediate")
+	root := filepath.Join(intermediate, "child", "workspace")
+	createWhileAcquiring(t, intermediate, func(path string) {
+		directoryWithMode(t, path, 0o700)
+		noErr(t, os.Chown(path, 65534, 65534))
+	})
+
+	_, err := AcquireWorkspaceRoot(root)
+	var unsafe *UnsafeWorkspaceRootError
+	if !errors.As(err, &unsafe) || unsafe.Directory != intermediate || unsafe.Fix != "" {
+		t.Fatalf("acquire err=%v, want a refusal of the directory another account made", err)
+	}
+	requireNoWorkspaceBelow(t, intermediate)
+}
+
+func TestAcquireWorkspaceRootCreatesMissingParentsWhenProtected(t *testing.T) {
+	shared := directoryWithMode(t, filepath.Join(resolvedTempDir(t), "shared"), os.ModeSticky|0o777)
+	root := filepath.Join(shared, "a", "b", "workspace")
+	workspace, err := AcquireWorkspaceRoot(root)
+	noErr(t, err)
+	workspace.Close()
+	for _, directory := range []string{filepath.Join(shared, "a"), filepath.Join(shared, "a", "b")} {
+		info, err := os.Stat(directory)
+		noErr(t, err)
+		if info.Mode().Perm()&0o022 != 0 {
+			t.Fatalf("created parent %s has mode %v", directory, info.Mode().Perm())
+		}
+	}
+}
+
+func TestAcquireWorkspaceRootAsRootRefusesLinkOfAnotherAccountInStickyFolder(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to give the link another owner")
+	}
+	scratch := resolvedTempDir(t)
+	shared := directoryWithMode(t, filepath.Join(scratch, "shared"), os.ModeSticky|0o777)
+	target := directoryWithMode(t, filepath.Join(scratch, "target"), 0o700)
+	link := filepath.Join(shared, "link")
+	noErr(t, os.Symlink(target, link))
+	noErr(t, os.Lchown(link, 65534, 65534))
+
+	root := filepath.Join(link, "workspace")
+	_, err := AcquireWorkspaceRoot(root)
+	requireUnsafeParent(t, err, root, link)
+	requireNoWorkspaceBelow(t, target)
 }

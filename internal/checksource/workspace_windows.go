@@ -3,6 +3,8 @@
 package checksource
 
 import (
+	"errors"
+	"fmt"
 	"os"
 
 	"owngit/internal/state"
@@ -18,6 +20,24 @@ func openWorkspaceDirectory(path string) (*os.File, error) {
 // uses the path; the root was already checked to be a real directory.
 func protectWorkspaceDirectory(_ *os.File, path string) error {
 	return state.ProtectPrivatePath(path, true)
+}
+
+// prepareWorkspaceRoot creates a missing root. The directories above it are
+// not checked on Windows; see requireProtectedAncestors.
+func prepareWorkspaceRoot(path string) error {
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return fmt.Errorf("create check workspace root: %w", err)
+	}
+	return nil
+}
+
+// requirePrivateWorkspaceACL has nothing to check before protection:
+// protectWorkspaceDirectory replaces the root's whole access list.
+func requirePrivateWorkspaceACL(string) error {
+	return nil
 }
 
 // requireProtectedAncestors has no Windows counterpart. Access to rename or
