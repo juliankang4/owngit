@@ -76,7 +76,7 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 			if tc.preStartStatus != "" {
 				_, err = store.FailCheckJobBeforeStart(ctx, authority, tc.preStartStatus, "Synthetic preflight did not start execution.", now.Add(3*time.Second))
 				noErr(t, err)
-				if _, err = store.StartCheckJob(ctx, start, now.Add(4*time.Second)); !errors.Is(err, state.ErrCheckJobState) {
+				if _, _, err = store.StartCheckJob(ctx, start, now.Add(4*time.Second)); !errors.Is(err, state.ErrCheckJobState) {
 					t.Fatalf("start after terminal preflight: %v", err)
 				}
 				if _, _, err = store.RegisterCheckAttempt(ctx, attempt); !errors.Is(err, state.ErrCheckJobState) {
@@ -85,7 +85,7 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 				_, err = store.CancelCheckJob(ctx, "project", claimed.ID, now.Add(4*time.Second))
 				noErr(t, err)
 			} else {
-				_, err = store.StartCheckJob(ctx, start, now.Add(2*time.Second))
+				_, _, err = store.StartCheckJob(ctx, start, now.Add(2*time.Second))
 				noErr(t, err)
 				if !tc.noAttempt {
 					_, _, err = store.RegisterCheckAttempt(ctx, attempt)
@@ -183,7 +183,7 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 			if len(credentials) != 0 {
 				t.Fatal("restore retained runner credentials")
 			}
-			if _, err = restored.StartCheckJob(ctx, start, now.Add(100*time.Second)); err == nil {
+			if _, _, err = restored.StartCheckJob(ctx, start, now.Add(100*time.Second)); err == nil {
 				t.Fatal("restore granted execution for terminal history")
 			}
 			if tc.preStartStatus == "" && !tc.noAttempt && !tc.complete {

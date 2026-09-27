@@ -827,7 +827,7 @@ func runJobToAttempt(t *testing.T, fixture apiFixture, job state.CheckJob, attem
 	if err != nil || !found || claimed.ID != job.ID {
 		t.Fatalf("claim job: err=%v found=%v claimed=%q want=%q", err, found, claimed.ID, job.ID)
 	}
-	started, err := fixture.store.StartCheckJob(ctx, state.CheckJobStart{
+	started, _, err := fixture.store.StartCheckJob(ctx, state.CheckJobStart{
 		RepositoryID: claimed.RepositoryID, JobID: claimed.ID, LeaseID: claimed.LeaseID,
 		CredentialID: claimed.CredentialID, CredentialGeneration: claimed.CredentialGeneration,
 		Protection: protection,

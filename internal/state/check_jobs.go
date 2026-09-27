@@ -104,6 +104,16 @@ var (
 	ErrCheckRunnerCreationConflict = errors.New("runner credential creation identity was reused with different content")
 	// ErrInvalidCheckObservation reports malformed observation input.
 	ErrInvalidCheckObservation = errors.New("invalid check observation")
+	// ErrCheckJobCommandsUnavailable reports a claimed job that was not
+	// started because its captured commands could not be read. The job stays
+	// claimed under its lease. The wrapped cause is ErrCheckConfigurationMissing
+	// when the record does not exist, and the read error otherwise.
+	ErrCheckJobCommandsUnavailable = errors.New("the job's captured commands could not be read")
+	// ErrCheckConfigurationMissing reports a captured check configuration that
+	// a job or an attempt names but that does not exist. Only repository
+	// deletion removes one, together with the jobs and attempts that name it,
+	// so this is a damaged record rather than a job without commands.
+	ErrCheckConfigurationMissing = errors.New("the captured check configuration is missing")
 )
 
 // CheckPolicy is the durable operator policy. It is portable except for the
@@ -1112,7 +1122,7 @@ func (s *Store) RerunCheckJob(ctx context.Context, repositoryID, jobID string, n
 		return CheckJob{}, false, err
 	}
 	if !exists {
-		return CheckJob{}, false, errors.New("the job configuration is missing")
+		return CheckJob{}, false, ErrCheckConfigurationMissing
 	}
 	root := original.RerunRoot
 	if root == "" {
@@ -1479,39 +1489,45 @@ func (s *Store) claimCheckJob(ctx context.Context, repositoryID, credentialID, r
 }
 
 // StartCheckJob records a one-shot execution grant and its first reported
-// facts. A repeated call returns ErrCheckJobStartReplay; callers can read the
-// immutable historical facts through CheckJob without receiving a new grant.
-func (s *Store) StartCheckJob(ctx context.Context, request CheckJobStart, now time.Time) (CheckJob, error) {
+// facts, and returns the commands the job captured at admission. A repeated
+// call returns ErrCheckJobStartReplay; callers can read the immutable
+// historical facts through CheckJob without receiving a new grant.
+//
+// A job is started only with its commands in hand: they are read in the same
+// transaction, after the authority checks, and a failed read returns
+// ErrCheckJobCommandsUnavailable with the job still claimed, so the caller can
+// record it as not run.
+func (s *Store) StartCheckJob(ctx context.Context, request CheckJobStart, now time.Time) (CheckJob, []CheckDefinition, error) {
 	if request.RepositoryID == "" || !validAttemptID(request.JobID) || !validAttemptID(request.LeaseID) || !validAttemptID(request.CredentialID) || request.CredentialGeneration <= 0 || now.IsZero() {
-		return CheckJob{}, fmt.Errorf("%w: invalid start", ErrInvalidCheckJob)
+		return CheckJob{}, nil, fmt.Errorf("%w: invalid start", ErrInvalidCheckJob)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return CheckJob{}, err
+		return CheckJob{}, nil, err
 	}
 	defer tx.Rollback()
 	job, exists, err := readCheckJobTx(ctx, tx, request.RepositoryID, request.JobID)
 	if err != nil {
-		return CheckJob{}, err
+		return CheckJob{}, nil, err
 	}
 	if !exists {
-		return CheckJob{}, ErrCheckJobNotFound
+		return CheckJob{}, nil, ErrCheckJobNotFound
 	}
 	if job.LeaseID != request.LeaseID || job.CredentialID != request.CredentialID || job.CredentialGeneration != request.CredentialGeneration {
-		return CheckJob{}, ErrCheckJobLease
+		return CheckJob{}, nil, ErrCheckJobLease
 	}
 	protection := request.Protection
 	if protection == "" {
 		protection = ProtectionUnknown
 	}
 	if !validProtection(protection) || !validProtectionForExecutor(job.Executor, protection) {
-		return CheckJob{}, fmt.Errorf("%w: protection %q does not match executor %q", ErrInvalidCheckJob, protection, job.Executor)
+		return CheckJob{}, nil, fmt.Errorf("%w: protection %q does not match executor %q", ErrInvalidCheckJob, protection, job.Executor)
 	}
 	if job.Status == CheckJobStarted || (job.Status == CheckJobAmbiguous && job.StartedAt != nil) {
-		return CheckJob{}, ErrCheckJobStartReplay
+		return CheckJob{}, nil, ErrCheckJobStartReplay
 	}
 	if job.Status != CheckJobClaimed {
-		return CheckJob{}, ErrCheckJobState
+		return CheckJob{}, nil, ErrCheckJobState
 	}
 	startedAt := now.UTC()
 	if job.LeaseExpiresAt == nil || !startedAt.Before(*job.LeaseExpiresAt) {
@@ -1520,49 +1536,56 @@ func (s *Store) StartCheckJob(ctx context.Context, request CheckJobStart, now ti
 			leaseLostAt = *job.LeaseExpiresAt
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='ambiguous',lease_lost_at=? WHERE id=? AND status='claimed'`, leaseLostAt.UnixNano(), job.ID); err != nil {
-			return CheckJob{}, err
+			return CheckJob{}, nil, err
 		}
 		if err := tx.Commit(); err != nil {
-			return CheckJob{}, err
+			return CheckJob{}, nil, err
 		}
-		return CheckJob{}, ErrCheckJobLease
+		return CheckJob{}, nil, ErrCheckJobLease
 	}
 	policy, policyExists, err := readCheckPolicyTx(ctx, tx, request.RepositoryID)
 	if err != nil {
-		return CheckJob{}, err
+		return CheckJob{}, nil, err
 	}
 	credentialCurrent, err := checkJobCredentialCurrentTx(ctx, tx, job)
 	if err != nil {
-		return CheckJob{}, err
+		return CheckJob{}, nil, err
 	}
 	if !policyExists || !checkJobAuthorityCurrent(job, policy) || !credentialCurrent {
 		if err := interruptCheckJobTx(ctx, tx, job, startedAt, "Execution authority changed before start."); err != nil {
-			return CheckJob{}, err
+			return CheckJob{}, nil, err
 		}
 		if err := tx.Commit(); err != nil {
-			return CheckJob{}, err
+			return CheckJob{}, nil, err
 		}
 		if !credentialCurrent {
-			return CheckJob{}, ErrCheckRunnerCredential
+			return CheckJob{}, nil, ErrCheckRunnerCredential
 		}
-		return CheckJob{}, ErrCheckConsentRequired
+		return CheckJob{}, nil, ErrCheckConsentRequired
+	}
+	configuration, exists, err := readCheckConfigurationTx(ctx, tx, job.RepositoryID, job.ConfigurationVersion)
+	if err == nil && !exists {
+		err = ErrCheckConfigurationMissing
+	}
+	if err != nil {
+		return CheckJob{}, nil, fmt.Errorf("%w: %w", ErrCheckJobCommandsUnavailable, err)
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='started',started_at=?,protection=? WHERE id=? AND status='claimed'`,
 		startedAt.UnixNano(), protection, job.ID)
 	if err != nil {
-		return CheckJob{}, err
+		return CheckJob{}, nil, err
 	}
 	affected, err := result.RowsAffected()
 	if err != nil || affected != 1 {
-		return CheckJob{}, ErrCheckJobState
+		return CheckJob{}, nil, ErrCheckJobState
 	}
 	if err := tx.Commit(); err != nil {
-		return CheckJob{}, err
+		return CheckJob{}, nil, err
 	}
 	job.Status = CheckJobStarted
 	job.StartedAt = &startedAt
 	job.Protection = protection
-	return job, nil
+	return job, configuration.Checks, nil
 }
 
 func checkJobCredentialCurrentTx(ctx context.Context, queryer querier, job CheckJob) (bool, error) {

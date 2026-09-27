@@ -49,7 +49,7 @@ func TestBackupRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 	}
 	claimed, _, err := store.ClaimCheckJob(ctx, "project", runner.ID, now)
 	noErr(t, err)
-	if _, err := store.StartCheckJob(ctx, state.CheckJobStart{
+	if _, _, err := store.StartCheckJob(ctx, state.CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
 	}, now); err != nil {

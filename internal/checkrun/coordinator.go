@@ -467,17 +467,8 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 
 	workspace, materialization, err := coordinator.materialize(jobContext, job)
 	if err != nil {
-		_ = coordinator.workspace.RemoveJob(job.ID)
-		status := state.CheckJobUnavailable
-		if parent.Err() != nil {
-			status = state.CheckJobInterrupted
-		}
 		_ = stopWatcher()
-		_, recordErr := coordinator.Store.FailCheckJobBeforeStart(context.WithoutCancel(parent), authority, status, boundedSummary("Exact configured-check source is unavailable or workspace ownership is uncertain: "+err.Error()), time.Now().UTC())
-		if recordErr == nil {
-			coordinator.log("reported configured-check job %s unavailable: %v", job.ID, err)
-		}
-		return recordErr
+		return coordinator.recordNotRun(parent, job, authority, "Exact configured-check source is unavailable or workspace ownership is uncertain: ", err)
 	}
 
 	cleanupWorkspace := func(results []checkexec.Result) []checkexec.Result {
@@ -494,13 +485,8 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 		protection = state.ProtectionHost
 	case state.CheckExecutorContainer:
 		if err := coordinator.containerPreflight(jobContext, job, workspace); err != nil {
-			_ = coordinator.workspace.RemoveJob(job.ID)
 			_ = stopWatcher()
-			_, recordErr := coordinator.Store.FailCheckJobBeforeStart(context.WithoutCancel(parent), authority, state.CheckJobUnavailable, boundedSummary("Configured container runtime is unavailable: "+err.Error()), time.Now().UTC())
-			if recordErr == nil {
-				coordinator.log("reported configured-check job %s runtime unavailable: %v", job.ID, err)
-			}
-			return recordErr
+			return coordinator.recordNotRun(parent, job, authority, "Configured container runtime is unavailable: ", err)
 		}
 		protection = state.ProtectionContainer
 	default:
@@ -508,18 +494,18 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 		return errors.New("local worker claimed a nonlocal configured check")
 	}
 
-	started, err := coordinator.Store.StartCheckJob(jobContext, state.CheckJobStart{
+	started, checks, err := coordinator.Store.StartCheckJob(jobContext, state.CheckJobStart{
 		RepositoryID: job.RepositoryID, JobID: job.ID, LeaseID: job.LeaseID,
 		CredentialID: job.CredentialID, CredentialGeneration: job.CredentialGeneration, Protection: protection,
 	}, time.Now().UTC())
+	if errors.Is(err, state.ErrCheckJobCommandsUnavailable) {
+		// The job was not started and is still claimed.
+		_ = stopWatcher()
+		return coordinator.recordNotRun(parent, job, authority, "The job was not started: ", err)
+	}
 	if err != nil {
 		_ = coordinator.workspace.RemoveJob(job.ID)
 		return err
-	}
-	configuration, exists, err := coordinator.Store.CheckConfiguration(jobContext, job.RepositoryID, job.ConfigurationVersion)
-	if err != nil || !exists {
-		_ = coordinator.workspace.RemoveJob(job.ID)
-		return errors.Join(err, errors.New("configured check job configuration is unavailable"))
 	}
 	attemptID, err := state.RandomID()
 	if err != nil {
@@ -528,7 +514,7 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 	}
 	attempt := state.CheckAttempt{
 		ID: attemptID, TaskID: job.TaskID, RepositoryID: job.RepositoryID, RevisionOID: job.SourceOID,
-		WorktreeState: state.WorktreeClean, JobID: job.ID, Checks: configuration.Checks,
+		WorktreeState: state.WorktreeClean, JobID: job.ID, Checks: checks,
 		StartedAt: *started.StartedAt, CreatedAt: time.Now().UTC(), CredentialID: job.CredentialID,
 	}
 	if _, _, err := coordinator.Store.RegisterCheckAttempt(jobContext, attempt); err != nil {
@@ -536,8 +522,8 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 		return err
 	}
 
-	definitions := make([]checkexec.Definition, 0, len(configuration.Checks))
-	for _, check := range configuration.Checks {
+	definitions := make([]checkexec.Definition, 0, len(checks))
+	for _, check := range checks {
 		definitions = append(definitions, checkexec.Definition{Name: check.Name, Command: check.Command})
 	}
 	var results []checkexec.Result
@@ -580,6 +566,23 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 	completion.Log, completion.LogTruncated = buildLog(results)
 	_, _, completeErr := coordinator.Store.CompleteCheckJobAttempt(context.WithoutCancel(parent), completion, authority, time.Now().UTC())
 	return completeErr
+}
+
+// recordNotRun ends a claimed job that ran nothing, with the reason. The job
+// is interrupted when the coordinator is stopping, since the stop may be the
+// cause, and unavailable otherwise. The record is written even while the
+// coordinator stops.
+func (coordinator *Coordinator) recordNotRun(parent context.Context, job state.CheckJob, authority state.CheckJobCompletionAuthority, reason string, cause error) error {
+	_ = coordinator.workspace.RemoveJob(job.ID)
+	status := state.CheckJobUnavailable
+	if parent.Err() != nil {
+		status = state.CheckJobInterrupted
+	}
+	_, err := coordinator.Store.FailCheckJobBeforeStart(context.WithoutCancel(parent), authority, status, boundedSummary(reason+cause.Error()), time.Now().UTC())
+	if err == nil {
+		coordinator.log("reported configured-check job %s %s: %v", job.ID, status, cause)
+	}
+	return err
 }
 
 // materialize copies the job's exact source into a new private workspace. A

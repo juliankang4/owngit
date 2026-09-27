@@ -358,7 +358,7 @@ func TestRevokedConsentCannotStartClaimedJob(t *testing.T) {
 	if _, err := fixture.store.RevokeCheckConsent(context.Background(), "project", fixture.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.store.StartCheckJob(context.Background(), CheckJobStart{
+	if _, _, err := fixture.store.StartCheckJob(context.Background(), CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
 	}, fixture.now.Add(2*time.Second)); err == nil {
@@ -472,19 +472,19 @@ func TestJobClaimStartCompleteLifecycle(t *testing.T) {
 	if claimed.CredentialID != runner.ID || claimed.CredentialGeneration != runner.Generation || claimed.CredentialRole != RunnerRoleExternal {
 		t.Fatalf("claim credential=%s generation=%d role=%s", claimed.CredentialID, claimed.CredentialGeneration, claimed.CredentialRole)
 	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+	if _, _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: strings.Repeat("0", 32),
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
 	}, fixture.now); !errors.Is(err, ErrCheckJobLease) {
 		t.Fatalf("wrong lease error=%v", err)
 	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+	if _, _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
 	}, fixture.now); err != nil {
 		t.Fatalf("start job: %v", err)
 	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+	if _, _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
 	}, fixture.now.Add(time.Second)); !errors.Is(err, ErrCheckJobStartReplay) {
@@ -508,11 +508,97 @@ func TestJobClaimStartCompleteLifecycle(t *testing.T) {
 	if err != nil || replayed.Status != CheckJobPassed {
 		t.Fatalf("replay job=%+v err=%v", replayed, err)
 	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+	if _, _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
 	}, fixture.now); !errors.Is(err, ErrCheckJobState) {
 		t.Fatalf("start terminal job error=%v", err)
+	}
+}
+
+// A job starts only with its captured commands in hand. When they cannot be
+// read, the start is not committed: the job stays claimed under its lease, and
+// the error tells a missing record from a failed read.
+func TestJobStartsOnlyWithItsCommands(t *testing.T) {
+	for _, test := range []struct {
+		name, statement string
+		missing         bool
+	}{
+		{"unreadable", `UPDATE check_configurations SET checks_json='{' WHERE repository_id='project'`, false},
+		{"missing", `DELETE FROM check_configurations WHERE repository_id='project'`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCheckJobFixture(t)
+			fixture.setPolicy(t, nil)
+			fixture.grantConsent(t)
+			job := fixture.admit(t, pushJobRequest())
+			runner, _ := fixture.issueRunner(t)
+			ctx := context.Background()
+			claimed, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
+			noErr(t, err)
+			start := CheckJobStart{
+				RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
+				CredentialID: runner.ID, CredentialGeneration: runner.Generation,
+			}
+			noErr(t, fixture.store.Exec(ctx, test.statement))
+			_, checks, err := fixture.store.StartCheckJob(ctx, start, fixture.now)
+			if !errors.Is(err, ErrCheckJobCommandsUnavailable) || errors.Is(err, ErrCheckConfigurationMissing) != test.missing || checks != nil {
+				t.Fatalf("start without commands: checks=%v err=%v", checks, err)
+			}
+			stored, _, err := fixture.store.CheckJob(ctx, "project", job.ID)
+			if err != nil || stored.Status != CheckJobClaimed || stored.StartedAt != nil || stored.LeaseID != claimed.LeaseID {
+				t.Fatalf("job after a refused start: %+v err=%v", stored, err)
+			}
+			if _, err := fixture.store.FailCheckJobBeforeStart(ctx, CheckJobCompletionAuthority{
+				JobID: job.ID, LeaseID: claimed.LeaseID, CredentialID: runner.ID, CredentialGeneration: runner.Generation,
+			}, CheckJobUnavailable, "The job was not started.", fixture.now); err != nil {
+				t.Fatalf("not-run report after a refused start: %v", err)
+			}
+		})
+	}
+
+	// A readable job hands its commands to the caller that starts it.
+	fixture := newCheckJobFixture(t)
+	fixture.setPolicy(t, nil)
+	fixture.grantConsent(t)
+	job := fixture.admit(t, pushJobRequest())
+	runner, _ := fixture.issueRunner(t)
+	claimed, _, err := fixture.store.ClaimCheckJob(context.Background(), "project", runner.ID, fixture.now)
+	noErr(t, err)
+	_, checks, err := fixture.store.StartCheckJob(context.Background(), CheckJobStart{
+		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
+		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
+	}, fixture.now)
+	if err != nil || len(checks) != 1 || checks[0] != pushJobRequest().Checks[0] {
+		t.Fatalf("started with checks=%v err=%v", checks, err)
+	}
+}
+
+// Every step that needs a captured configuration reports a missing one under
+// the same name: rerunning a job and completing an attempt, as starting does.
+func TestMissingConfigurationHasOneName(t *testing.T) {
+	fixture := newCheckJobFixture(t)
+	fixture.setPolicy(t, nil)
+	fixture.grantConsent(t)
+	job := fixture.admit(t, pushJobRequest())
+	ctx := context.Background()
+	_, err := fixture.store.CancelCheckJob(ctx, "project", job.ID, fixture.now)
+	noErr(t, err)
+	task, err := fixture.store.CreateTask(ctx, "project", "Missing configuration", fixture.now)
+	noErr(t, err)
+	attempt := attemptFor(task, strings.Repeat("a", 40), fixture.now, AttemptPassed)
+	_, _, err = fixture.store.RegisterCheckAttempt(ctx, attempt)
+	noErr(t, err)
+	noErr(t, fixture.store.Exec(ctx, `DELETE FROM check_configurations WHERE repository_id='project'`))
+
+	if _, _, err := fixture.store.RerunCheckJob(ctx, "project", job.ID, fixture.now); !errors.Is(err, ErrCheckConfigurationMissing) {
+		t.Fatalf("rerun without its configuration: %v", err)
+	}
+	if _, _, err := fixture.store.CompleteCheckAttempt(ctx, CheckCompletion{
+		AttemptID: attempt.ID, RepositoryID: "project", TaskID: task.ID, Results: attempt.Results,
+		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState,
+	}, fixture.now); !errors.Is(err, ErrCheckConfigurationMissing) {
+		t.Fatalf("completion without its configuration: %v", err)
 	}
 }
 
@@ -691,10 +777,10 @@ func TestStartReplayNeverGrantsExecution(t *testing.T) {
 				RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 				CredentialID: runner.ID, CredentialGeneration: runner.Generation, Protection: ProtectionRunnerReported,
 			}
-			first, err := fixture.store.StartCheckJob(ctx, request, fixture.now)
+			first, _, err := fixture.store.StartCheckJob(ctx, request, fixture.now)
 			noErr(t, err)
 			replayAt := test.invalidate(t, fixture, runner)
-			if _, err := fixture.store.StartCheckJob(ctx, request, replayAt); !errors.Is(err, ErrCheckJobStartReplay) {
+			if _, _, err := fixture.store.StartCheckJob(ctx, request, replayAt); !errors.Is(err, ErrCheckJobStartReplay) {
 				t.Fatalf("start replay error=%v", err)
 			}
 			stored, found, err := fixture.store.CheckJob(ctx, "project", job.ID)
@@ -809,7 +895,7 @@ func TestClaimedJobCancellationPreventsStart(t *testing.T) {
 		cancelled.CredentialID != runner.ID || cancelled.AttemptID != "" {
 		t.Fatalf("cancelled claimed job=%+v err=%v", cancelled, err)
 	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+	if _, _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
 	}, fixture.now.Add(2*time.Second)); !errors.Is(err, ErrCheckJobState) {
@@ -847,7 +933,7 @@ func TestClaimCancellationRaceDoesNotMisreportStoppedExecution(t *testing.T) {
 	go func() {
 		defer wait.Done()
 		<-begin
-		started, startErr = fixture.store.StartCheckJob(ctx, request, fixture.now.Add(time.Second))
+		started, _, startErr = fixture.store.StartCheckJob(ctx, request, fixture.now.Add(time.Second))
 	}()
 	go func() {
 		defer wait.Done()
@@ -993,7 +1079,7 @@ func TestRunnerCredentialRevocationAndScope(t *testing.T) {
 	if _, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now); !errors.Is(err, ErrCheckRunnerCredential) {
 		t.Fatalf("revoked claim error=%v", err)
 	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+	if _, _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
 	}, fixture.now); err == nil {
@@ -1172,7 +1258,7 @@ func (fixture *checkJobFixture) claimAndStart(t *testing.T, job CheckJob, runner
 	if err != nil || !found || claimed.ID != job.ID {
 		t.Fatalf("claim job=%+v found=%v err=%v", claimed, found, err)
 	}
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+	if _, _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation, Protection: protection,
 	}, fixture.now); err != nil {

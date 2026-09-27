@@ -360,18 +360,20 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_runner_start", "The runner start identity is invalid.", nil)
 			return
 		}
-		started, err := app.Store.StartCheckJob(request.Context(), state.CheckJobStart{
+		started, checks, err := app.Store.StartCheckJob(request.Context(), state.CheckJobStart{
 			RepositoryID: repositoryID, JobID: jobID, LeaseID: leaseID,
 			CredentialID: credential.ID, CredentialGeneration: credential.Generation,
 			Protection: state.ProtectionRunnerReported,
 		}, app.now())
-		if err != nil {
-			writeRunnerError(writer, request, err)
+		if errors.Is(err, state.ErrCheckJobCommandsUnavailable) {
+			// The job was not started and is still this runner's claim, so
+			// the answer names it, as a claim that could not be handed over
+			// does, and the runner reports it as not run.
+			writeJobRecordError(writer, request, err, jobChecksUnreadable, checkapi.ClaimedJob{JobID: jobID, LeaseID: leaseID})
 			return
 		}
-		checks, err := app.jobChecks(request.Context(), started)
 		if err != nil {
-			writeJobRecordError(writer, request, err, jobChecksUnreadable, nil)
+			writeRunnerError(writer, request, err)
 			return
 		}
 		attempt := state.CheckAttempt{
@@ -556,23 +558,16 @@ func jobJSON(job state.CheckJob, checks []state.CheckDefinition) *checkapi.Job {
 	return result
 }
 
-// jobRecordMissing is a record a job names that does not exist. Its text is
-// the message the client receives.
-//
 // A job's captured configuration is stored in the transaction that admits the
 // job, and the attempt it names in the transaction that binds it. Only
 // repository deletion removes either, and it removes the job with them. So a
-// job whose configuration or named attempt is missing is a damaged record. It
-// is answered as unavailable, like a failed read, and never as a job without
+// job whose configuration (state.ErrCheckConfigurationMissing) or named
+// attempt (errJobAttemptMissing) is missing is a damaged record. It is
+// answered as unavailable, like a failed read, and never as a job without
 // commands or a job that did not run.
-type jobRecordMissing string
-
-func (missing jobRecordMissing) Error() string { return string(missing) }
+var errJobAttemptMissing = errors.New("the attempt the job names is missing")
 
 const (
-	errJobChecksMissing  jobRecordMissing = "The job's captured commands are missing."
-	errJobAttemptMissing jobRecordMissing = "The attempt this job names is missing."
-
 	jobChecksUnreadable  = "The job's captured commands could not be read."
 	jobAttemptUnreadable = "The configured-check attempt could not be read."
 )
@@ -585,7 +580,7 @@ func (app *App) jobChecks(ctx context.Context, job state.CheckJob) ([]state.Chec
 		return nil, err
 	}
 	if !exists {
-		return nil, errJobChecksMissing
+		return nil, state.ErrCheckConfigurationMissing
 	}
 	return configuration.Checks, nil
 }
@@ -608,9 +603,11 @@ func (app *App) jobAttempt(ctx context.Context, job state.CheckJob) (state.Check
 // receives unreadable or the missing record's fixed message.
 func writeJobRecordError(writer http.ResponseWriter, request *http.Request, err error, unreadable string, details any) {
 	message := unreadable
-	var missing jobRecordMissing
-	if errors.As(err, &missing) {
-		message = string(missing)
+	switch {
+	case errors.Is(err, state.ErrCheckConfigurationMissing):
+		message = "The job's captured commands are missing."
+	case errors.Is(err, errJobAttemptMissing):
+		message = "The attempt this job names is missing."
 	}
 	writeAPIError(writer, unavailable(request, "job record read", err), "state_unavailable", message, details)
 }

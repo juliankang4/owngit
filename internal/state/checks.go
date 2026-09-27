@@ -488,7 +488,7 @@ func (s *Store) RegisterCheckAttempt(ctx context.Context, attempt CheckAttempt) 
 			return Task{}, CheckAttempt{}, err
 		}
 		if !configurationExists {
-			return Task{}, CheckAttempt{}, errors.New("the job configuration is missing")
+			return Task{}, CheckAttempt{}, ErrCheckConfigurationMissing
 		}
 		if err := applyJobOrigin(&attempt, job, configuration, exists); err != nil {
 			return Task{}, CheckAttempt{}, err
@@ -700,7 +700,7 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 		return Task{}, CheckAttempt{}, err
 	}
 	if !hasConfiguration {
-		return Task{}, CheckAttempt{}, errors.New("the registered configuration is missing")
+		return Task{}, CheckAttempt{}, ErrCheckConfigurationMissing
 	}
 	registered.Checks = configuration.Checks
 	if err := matchResults(registered.Checks, completion.Results); err != nil {

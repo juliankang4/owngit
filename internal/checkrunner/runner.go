@@ -215,20 +215,7 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 	base := "/api/v1/repositories/" + url.PathEscape(runner.RepositoryID) + "/runner"
 	content, err := runner.Client.Do(ctx, http.MethodPost, base+"/claim", nil)
 	if err != nil {
-		claimed, committed := claimedJob(err)
-		if !committed {
-			return "", err
-		}
-		// The claim committed, but the server could not hand the job over,
-		// so it ran nothing.
-		if reportErr := runner.reportNotRun(ctx, base, claimed.JobID, claimed.LeaseID, state.CheckJobUnavailable,
-			"The claimed job could not be handed to the runner: "+err.Error()); reportErr != nil {
-			return claimed.JobID, errors.Join(err, reportErr)
-		}
-		// The job is settled, but the server's answer was still that it is
-		// unavailable, so the loop waits as it does for any such answer.
-		runner.log("reported configured-check job %s unavailable: %v", claimed.JobID, err)
-		return "", err
+		return runner.notHandedOver(ctx, base, checkapi.ClaimedJob{}, err)
 	}
 	var claimed checkapi.JobResponse
 	if err := json.Unmarshal(content, &claimed); err != nil {
@@ -294,7 +281,7 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 		_ = workspaceRoot.RemoveJob(job.ID)
 		cancelLease()
 		<-leaseErrors
-		return job.ID, err
+		return runner.notHandedOver(ctx, base, checkapi.ClaimedJob{JobID: job.ID, LeaseID: job.LeaseID}, err)
 	}
 
 	definitions := make([]checkexec.Definition, 0, len(job.Checks))
@@ -344,9 +331,29 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 	return job.ID, err
 }
 
-// claimedJob returns the job and lease that a failed claim still committed.
-// The server names them in the error details; any other claim error claimed
-// nothing.
+// notHandedOver settles a job that the server holds as claimed but could not
+// hand over, on a claim or on a start. The server names such a job in the
+// error details; the runner reports it as not run and returns the server's
+// error without a job ID, so the loop waits as it does for any unavailable
+// answer. held is the job the runner already holds (zero on a claim): details
+// that name another job settle nothing. Without such details the held job's
+// outcome stays open, and its ID is returned.
+func (runner *Runner) notHandedOver(ctx context.Context, base string, held checkapi.ClaimedJob, err error) (string, error) {
+	claimed, committed := claimedJob(err)
+	if !committed || (held.JobID != "" && claimed != held) {
+		return held.JobID, err
+	}
+	if reportErr := runner.reportNotRun(ctx, base, claimed.JobID, claimed.LeaseID, state.CheckJobUnavailable,
+		"The claimed job could not be handed to the runner: "+err.Error()); reportErr != nil {
+		return claimed.JobID, errors.Join(err, reportErr)
+	}
+	runner.log("reported configured-check job %s unavailable: %v", claimed.JobID, err)
+	return "", err
+}
+
+// claimedJob returns the job and lease that the server still holds as claimed
+// after a failed claim or start. The server names them in the error details;
+// an error without them names no such job.
 func claimedJob(err error) (checkapi.ClaimedJob, bool) {
 	var problem *apiclient.Error
 	var claimed checkapi.ClaimedJob

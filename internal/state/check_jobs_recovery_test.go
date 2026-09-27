@@ -36,7 +36,7 @@ func newJobRecoveryFixture(t *testing.T) jobRecoveryFixture {
 	terminal := fixture.admit(t, pushJobRequest())
 	claimed, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
 	noErr(t, err)
-	if _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+	if _, _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: terminal.ID, LeaseID: claimed.LeaseID,
 		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
 	}, fixture.now); err != nil {
