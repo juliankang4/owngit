@@ -84,6 +84,8 @@ var (
 	applyServiceEnvironment    = platformApplyServiceEnvironment
 	runWithEnvironment         = platformRunWithEnvironment
 	runAttachedWithEnvironment = platformRunAttachedWithEnvironment
+	// gitOnServicePath reports whether the task will find Git on its PATH.
+	gitOnServicePath = platformGitOnServicePath
 	// readExecutableVersion reads the version reported by a protected copy.
 	readExecutableVersion = executableVersion
 	// taskPollInterval is how often waiting for the server also checks
@@ -101,6 +103,14 @@ const restartedVariable = "OWNGIT_SERVICE_RESTARTED"
 // queuedTaskMessage explains a task that Windows keeps queued. It was
 // observed on newly installed Windows 11; see docs/OPERATIONS.md.
 const queuedTaskMessage = "OwnGit has not started: Windows keeps the task queued. That happens until someone has signed in on this computer at the screen for the first time since Windows was installed (a sign-in over SSH does not count). Sign in once with any account, and OwnGit starts then and at every boot from then on.\n"
+
+// wingetNoApplicableUpgrade is winget's exit code when the package is
+// already installed and has no upgrade.
+const wingetNoApplicableUpgrade = 0x8A15002B
+
+// gitNotOnPathExit is the exit code of an elevated step that found Git
+// installed but not on PATH, and said so in one line.
+const gitNotOnPathExit = 3
 
 // taskStopTimeout bounds the wait for a server to stop after it was asked
 // to; its own shutdown steps add up to about two minutes.
@@ -391,8 +401,7 @@ func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
 	if _, err := service.RenderTask(plan); err != nil {
 		return err
 	}
-	_, gitErr := lookPath("git")
-	installGit := gitErr != nil
+	installGit := !gitOnServicePath()
 	if installGit && mode == service.ModeLogonTask {
 		host.printf("OwnGit needs Git for Windows. Install it from https://git-scm.com/download/win, then run \"owngit service install\" again.\n")
 		return errors.New("git is not installed")
@@ -459,6 +468,8 @@ func (host *taskHost) asAdministrator(arguments []string, steps string) error {
 		return &checkExit{code: 1, err: err}
 	case err != nil:
 		return err
+	case code == gitNotOnPathExit:
+		return &checkExit{code: code, err: errors.New("git is not on PATH")}
 	case code != 0:
 		// The elevated copy printed why on this console when it could.
 		host.printf("The administrator steps did not finish (exit status %d). If no reason is shown above, run the same command in a terminal opened with \"Run as administrator\".\n", code)
@@ -497,8 +508,16 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 		if err != nil {
 			return err
 		}
-		if err := runAttachedWithEnvironment(environment, winget, "install", "--id", "Git.Git", "-e", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"); err != nil {
+		code, err := runAttachedWithEnvironment(environment, winget, "install", "--id", "Git.Git", "-e", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")
+		if err == nil && code != 0 && uint32(code) != wingetNoApplicableUpgrade {
+			err = fmt.Errorf("exit status 0x%X", uint32(code))
+		}
+		if err != nil {
 			return fmt.Errorf("install Git with winget: %w", err)
+		}
+		if !gitOnServicePath() {
+			host.printf("Git for Windows is installed but not on PATH. Open a new terminal and run \"owngit service install\" again.\n")
+			return &checkExit{code: gitNotOnPathExit, err: errors.New("git is not on PATH")}
 		}
 	}
 	if existing, found, err := host.installed(); err == nil && found {

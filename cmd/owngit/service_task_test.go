@@ -37,8 +37,9 @@ type fakeWindows struct {
 	elevate      func([]string) (int, error)
 	stopAsked    []string
 	listening    bool // whether a server listens for the stop event
-	git          bool
+	git          bool // whether Git is on the PATH the task gets
 	winget       bool
+	wingetExit   uint32 // the exit code of winget install
 	environments [][]string
 	commandEnv   map[string]string
 	// owners maps folders to owner SIDs (default: the test account);
@@ -158,8 +159,9 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 	previousOwner, previousGive, previousRoot, previousPoll := ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval
 	previousPrepare, previousReplace, previousWinget := prepareServiceStorage, replaceServiceCopy, trustedWinget
 	previousEnvironment, previousApply := serviceEnvironment, applyServiceEnvironment
-	previousEnvironmentRunner, previousAttached := runWithEnvironment, runAttachedWithEnvironment
+	previousEnvironmentRunner, previousAttached, previousGit := runWithEnvironment, runAttachedWithEnvironment, gitOnServicePath
 	t.Cleanup(func() {
+		gitOnServicePath = previousGit
 		serviceRunner, runElevated, lookPath, signalServiceStop = previousRunner, previousElevated, previousLook, previousStop
 		ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval = previousOwner, previousGive, previousRoot, previousPoll
 		prepareServiceStorage, replaceServiceCopy, trustedWinget = previousPrepare, previousReplace, previousWinget
@@ -215,11 +217,12 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		defer func() { fake.commandEnv = nil }()
 		return fake.run(ctx, name, args...)
 	}
-	runAttachedWithEnvironment = func(environment []string, name string, args ...string) error {
+	runAttachedWithEnvironment = func(environment []string, name string, args ...string) (int, error) {
 		fake.environments = append(fake.environments, append([]string(nil), environment...))
 		fake.calls = append(fake.calls, "attached "+name+" "+strings.Join(args, " "))
-		return nil
+		return int(fake.wingetExit), nil
 	}
+	gitOnServicePath = func() bool { return fake.git }
 	serviceRunner = fake.run
 	runElevated = func(arguments []string) (int, error) {
 		fake.elevated = append(fake.elevated, arguments)
@@ -345,6 +348,41 @@ func TestTaskInstallGit(t *testing.T) {
 	err := elevated.elevatedInstall(testStateDir, false, true)
 	if err == nil || slicesContainPrefix(fake.calls, "schtasks") || !strings.Contains(err.Error(), "https://git-scm.com/download/win") {
 		t.Errorf("without trusted winget: %v, calls %q", err, fake.calls)
+	}
+}
+
+// Git counts as installed when the task will find it on the PATH saved in
+// Windows, although this terminal's PATH may be older. winget saying that
+// Git is already installed is no failure; when the task still would not
+// find Git, one line says what to do and nothing changes.
+func TestTaskInstallLooksForGitAsTheTaskDoes(t *testing.T) {
+	fake := newFakeWindows(t)
+	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
+	lookPath = func(string) (string, error) { return "", errors.New("not found") }
+	host, out := testTaskHost(service.Environment{Administrator: true})
+	_ = host.install("", nil)
+	if len(fake.elevated) != 1 || strings.Contains(strings.Join(fake.elevated[0], " "), "--install-git") || strings.Contains(out.String(), "winget") {
+		t.Errorf("elevated %q, output:\n%s", fake.elevated, out.String())
+	}
+
+	fake.wingetExit = wingetNoApplicableUpgrade
+	elevated, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	if err := elevated.elevatedInstall(testStateDir, false, true); err != nil || !slicesContainPrefix(fake.calls, "schtasks /Create") {
+		t.Errorf("Git already installed: %v, calls %q", err, fake.calls)
+	}
+	fake.git, fake.calls = false, nil
+	out.Reset()
+	err := elevated.elevatedInstall(testStateDir, false, true)
+	const line = "Git for Windows is installed but not on PATH. Open a new terminal and run \"owngit service install\" again.\n"
+	var exit *checkExit
+	if !errors.As(err, &exit) || exit.code != gitNotOnPathExit || !strings.HasSuffix(out.String(), "winget.\n"+line) || slicesContainPrefix(fake.calls, "schtasks") {
+		t.Errorf("Git not on PATH: %v, calls %q, output:\n%s", err, fake.calls, out.String())
+	}
+	// The command that asked for approval adds nothing to that line.
+	fake.elevate = func([]string) (int, error) { return gitNotOnPathExit, nil }
+	host, out = testTaskHost(service.Environment{Administrator: true})
+	if err := host.install("", nil); !errors.As(err, &exit) || strings.Contains(out.String(), "did not finish") {
+		t.Errorf("%v, output:\n%s", err, out.String())
 	}
 }
 

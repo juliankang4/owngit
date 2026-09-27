@@ -39,7 +39,10 @@ func platformApplyServiceEnvironment([]string) error { return errNotWindows }
 func platformRunWithEnvironment(context.Context, []string, string, ...string) ([]byte, error) {
 	return nil, errNotWindows
 }
-func platformRunAttachedWithEnvironment([]string, string, ...string) error { return errNotWindows }
+func platformRunAttachedWithEnvironment([]string, string, ...string) (int, error) {
+	return 0, errNotWindows
+}
+func platformGitOnServicePath() bool { return false }
 
 func platformGiveOwnership(string, string, func(string, string) error) (int, int, error) {
 	return 0, 0, errNotWindows

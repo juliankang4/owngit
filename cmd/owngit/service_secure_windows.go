@@ -391,9 +391,37 @@ func platformRunWithEnvironment(ctx context.Context, environment []string, name 
 	return command.CombinedOutput()
 }
 
-func platformRunAttachedWithEnvironment(environment []string, name string, args ...string) error {
+// platformRunAttachedWithEnvironment runs a program on this console and
+// returns its exit code.
+func platformRunAttachedWithEnvironment(environment []string, name string, args ...string) (int, error) {
 	command := exec.Command(name, args...)
 	command.Env = append([]string(nil), environment...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return command.Run()
+	err := command.Run()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode(), nil
+	}
+	return 0, err
+}
+
+// platformGitOnServicePath reports whether git.exe is in a folder of the
+// machine or user PATH saved in the registry. A task gets that PATH, while
+// a terminal keeps the one from when it was opened.
+func platformGitOnServicePath() bool {
+	paths := ""
+	for root, path := range map[registry.Key]string{registry.LOCAL_MACHINE: `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`, registry.CURRENT_USER: "Environment"} {
+		if key, err := registry.OpenKey(root, path, registry.QUERY_VALUE); err == nil {
+			value, _, _ := key.GetStringValue("Path")
+			key.Close()
+			paths += ";" + value
+		}
+	}
+	paths, _ = registry.ExpandString(paths)
+	for _, folder := range filepath.SplitList(paths) {
+		if info, err := os.Stat(filepath.Join(folder, "git.exe")); filepath.IsAbs(folder) && err == nil && info.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
 }
