@@ -89,9 +89,9 @@ func DefaultLimits() Limits {
 	}
 }
 
-// effective fills unset limits with defaults and refuses values this parser
+// Effective fills unset limits with defaults and refuses values this parser
 // will not run with.
-func (l Limits) effective() (Limits, error) {
+func (l Limits) Effective() (Limits, error) {
 	defaults := DefaultLimits()
 	limits := l
 	for name, value := range map[string]int{
@@ -242,7 +242,7 @@ func Parse(source io.Reader, options Options) (*Advertisement, error) {
 	if source == nil {
 		return nil, fmt.Errorf("%w: no response body was supplied", ErrInvalidOptions)
 	}
-	limits, err := options.Limits.effective()
+	limits, err := options.Limits.Effective()
 	if err != nil {
 		return nil, err
 	}

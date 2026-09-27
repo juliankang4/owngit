@@ -457,7 +457,6 @@ set -f
 ref=$1
 old=$2
 new=$3
-zero=0000000000000000000000000000000000000000
 case "$ref" in
   refs/heads/*) kind=heads; short=${ref#refs/heads/} ;;
   refs/tags/*) kind=tags; short=${ref#refs/tags/} ;;
@@ -466,7 +465,17 @@ case "$ref" in
 esac
 case "$old" in ''|*[!0-9a-f]*) echo "invalid old object ID" >&2; exit 1 ;; esac
 case "$new" in ''|*[!0-9a-f]*) echo "invalid new object ID" >&2; exit 1 ;; esac
-test "$old" = "$zero" && exit 0
+case "${#old}:${#new}" in
+  40:40|64:64) ;;
+  *) echo "invalid object ID width" >&2; exit 1 ;;
+esac
+is_null_oid() {
+  case "$1" in
+    *[!0]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+is_null_oid "$old" && exit 0
 run_git() {
   /usr/bin/env -i PATH=%s HOME=%s XDG_CONFIG_HOME=%s GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=%s GIT_CONFIG_GLOBAL=%s GIT_TERMINAL_PROMPT=0 LC_ALL=C LANG=C TZ=UTC TMPDIR=%s GIT_DIR="$GIT_DIR" %s "$@"
 }
@@ -477,7 +486,7 @@ run_git_objects() {
 actual=$(run_git show-ref --verify --hash "$ref" 2>/dev/null) || { echo "current ref is missing" >&2; exit 1; }
 test "$actual" = "$old" || { echo "current ref changed concurrently" >&2; exit 1; }
 run_git_objects cat-file -e "$old^{object}" || { echo "old object is unavailable" >&2; exit 1; }
-if test "$kind" = heads && test "$new" != "$zero"; then
+if test "$kind" = heads && ! is_null_oid "$new"; then
   if run_git_objects merge-base --is-ancestor "$old" "$new"; then
     exit 0
   else

@@ -13,7 +13,6 @@ import (
 	"owngit/internal/checksource"
 	"owngit/internal/gitexec"
 	"owngit/internal/importgit"
-	"owngit/internal/repository"
 )
 
 // lfsInspection records what one bounded Git LFS pointer scan actually
@@ -179,22 +178,15 @@ func (s *Service) verifyStagingRefs(ctx context.Context, run *runState) error {
 	if len(records) != len(refs) {
 		return newProblem(CodeVerifyFailed, fmt.Sprintf("staged ref count is %d, advertised named ref count is %d", len(records), len(refs)), nil)
 	}
-	for _, ref := range refs {
-		actual, exists := refMapValue(records, ref.Name)
-		if !exists || actual != ref.OID {
+	for i, ref := range refs {
+		if records[i].Name != ref.Name {
+			return newProblem(CodeVerifyFailed, fmt.Sprintf("staged ref inventory has %q where advertised inventory has %q", records[i].Name, ref.Name), nil)
+		}
+		if records[i].OID != ref.OID {
 			return newProblem(CodeVerifyFailed, fmt.Sprintf("staged ref %q does not match its advertised value", ref.Name), nil)
 		}
 	}
 	return nil
-}
-
-func refMapValue(records []repository.RefRecord, name string) (string, bool) {
-	for _, record := range records {
-		if record.Name == name {
-			return record.OID, true
-		}
-	}
-	return "", false
 }
 
 // verifyObjects requires every advertised object to exist with a valid type.

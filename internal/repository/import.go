@@ -90,28 +90,20 @@ func (m *Manager) ReadRefs(ctx context.Context, repositoryPath string, limit int
 // or detached-but-missing HEAD). A detached HEAD reports its object ID.
 func (m *Manager) ReadHead(ctx context.Context, repositoryPath string) (string, string, error) {
 	symbolic, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--quiet", "--no-recurse", "HEAD")
+	target := ""
 	if err == nil {
-		target := strings.TrimSpace(string(symbolic.Stdout))
-		resolved, resolveErr := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "--quiet", "HEAD")
-		if resolveErr != nil {
-			if code, ok := gitexec.ExitCode(resolveErr); ok && code == 1 {
-				return target, "", nil
-			}
-			return "", "", fmt.Errorf("resolve HEAD: %w", resolveErr)
-		}
-		return target, strings.TrimSpace(string(resolved.Stdout)), nil
-	}
-	if code, ok := gitexec.ExitCode(err); !ok || code != 1 {
+		target = strings.TrimSpace(string(symbolic.Stdout))
+	} else if code, ok := gitexec.ExitCode(err); !ok || code != 1 {
 		return "", "", fmt.Errorf("read HEAD: %w", err)
 	}
 	resolved, resolveErr := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "--quiet", "HEAD")
 	if resolveErr != nil {
 		if code, ok := gitexec.ExitCode(resolveErr); ok && code == 1 {
-			return "", "", nil
+			return target, "", nil
 		}
 		return "", "", fmt.Errorf("resolve HEAD: %w", resolveErr)
 	}
-	return "", strings.TrimSpace(string(resolved.Stdout)), nil
+	return target, strings.TrimSpace(string(resolved.Stdout)), nil
 }
 
 // ReadSymbolicRefTarget resolves a symbolic ref chain to its final ref target.

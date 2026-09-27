@@ -250,9 +250,11 @@ func validBearerToken(token string) bool {
 func effectiveLimits(input Limits) (Limits, error) {
 	defaults := DefaultLimits()
 	limits := input
-	if err := fillAdvertisementLimits(&limits.Advertisement, defaults.Advertisement); err != nil {
-		return Limits{}, err
+	advertisement, err := limits.Advertisement.Effective()
+	if err != nil {
+		return Limits{}, fetchError("validate advertisement limits", ErrInvalidRequest, nil)
 	}
+	limits.Advertisement = advertisement
 	integerLimits := []struct {
 		value        *int64
 		defaultValue int64
@@ -307,32 +309,4 @@ func effectiveLimits(input Limits) (Limits, error) {
 		return Limits{}, fetchError("validate limits", ErrInvalidRequest, nil)
 	}
 	return limits, nil
-}
-
-func fillAdvertisementLimits(limits *importgit.Limits, defaults importgit.Limits) error {
-	values := []struct {
-		value        *int
-		defaultValue int
-	}{
-		{&limits.MaxPacketBytes, defaults.MaxPacketBytes},
-		{&limits.MaxRefRecords, defaults.MaxRefRecords},
-		{&limits.MaxNameBytes, defaults.MaxNameBytes},
-		{&limits.MaxCapabilities, defaults.MaxCapabilities},
-		{&limits.MaxCapabilityBytes, defaults.MaxCapabilityBytes},
-	}
-	for _, item := range values {
-		if *item.value < 0 {
-			return fetchError("validate advertisement limits", ErrInvalidRequest, nil)
-		}
-		if *item.value == 0 {
-			*item.value = item.defaultValue
-		}
-	}
-	if limits.MaxPacketBytes > 65520 || limits.MaxTotalBytes < 0 {
-		return fetchError("validate advertisement limits", ErrInvalidRequest, nil)
-	}
-	if limits.MaxTotalBytes == 0 {
-		limits.MaxTotalBytes = defaults.MaxTotalBytes
-	}
-	return nil
 }

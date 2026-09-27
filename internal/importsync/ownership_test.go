@@ -626,6 +626,57 @@ func TestMalformedRootMarkerIsRefusedAndPreserved(t *testing.T) {
 	}
 }
 
+func TestRuntimeDirectoryPreparation(t *testing.T) {
+	for _, label := range []string{"import runtime directory", "import staging root"} {
+		for _, kind := range []string{"missing", "empty", "nonempty", "file", "link", "unreadable"} {
+			t.Run(label+"/"+kind, func(t *testing.T) {
+				if kind == "unreadable" && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+					t.Skip("read permissions require non-root Unix")
+				}
+				f := newFixture(t)
+				path := f.service.runtimeRootPath()
+				if label == "import staging root" {
+					path = f.service.stagingRootPath()
+				}
+				noErr(t, os.MkdirAll(filepath.Dir(path), 0o700))
+				want, mode := "", os.FileMode(0o700)
+				switch kind {
+				case "empty", "nonempty", "unreadable":
+					noErr(t, os.Mkdir(path, 0o755))
+					noErr(t, os.Chmod(path, 0o755))
+					if kind == "nonempty" {
+						f.writeSentinel(path, "unknown")
+						mode = 0o755
+					} else if kind == "unreadable" {
+						noErr(t, os.Chmod(path, 0))
+						t.Cleanup(func() { noErr(t, os.Chmod(path, 0o700)) })
+						want = CodeRuntimeUnavailable
+					}
+				case "file":
+					noErr(t, os.WriteFile(path, []byte("unknown"), 0o600))
+					want = CodeRuntimeUnsafe
+				case "link":
+					noErr(t, os.Symlink(t.TempDir(), path))
+					want = CodeRuntimeUnsafe
+				}
+				_, err := f.service.Prepare(context.Background())
+				if want != "" {
+					if problemCode(err) != want || !strings.Contains(err.Error(), label) {
+						t.Fatalf("prepare error = %v, want %s with %s", err, want, label)
+					}
+					return
+				}
+				noErr(t, err)
+				info, err := os.Stat(path)
+				noErr(t, err)
+				if runtime.GOOS != "windows" && info.Mode().Perm() != mode {
+					t.Fatalf("directory mode = %v, want %v", info.Mode().Perm(), mode)
+				}
+			})
+		}
+	}
+}
+
 func mustReadDir(t *testing.T, directory string) []os.DirEntry {
 	t.Helper()
 	entries, err := os.ReadDir(directory)

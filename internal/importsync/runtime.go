@@ -339,10 +339,10 @@ func (s *Service) prepareRuntime(ctx context.Context) error {
 	}
 	directory := s.runtimeRootPath()
 	stagingRoot := s.stagingRootPath()
-	if err := ensureRuntimeDirectory(directory); err != nil {
+	if err := ensureRuntimeDirectory(directory, "import runtime directory"); err != nil {
 		return err
 	}
-	if err := ensureStagingDirectory(stagingRoot); err != nil {
+	if err := ensureRuntimeDirectory(stagingRoot, "import staging root"); err != nil {
 		return err
 	}
 	lockPath := filepath.Join(stagingRoot, runtimeRootLockName)
@@ -448,65 +448,32 @@ func (s *Service) prepareRuntime(ctx context.Context) error {
 	return nil
 }
 
-// ensureRuntimeDirectory validates <state>/runtime. A directory this call
-// creates, or an empty one, is made private; an unknown nonempty one keeps its
-// existing mode.
-func ensureRuntimeDirectory(directory string) error {
+// ensureRuntimeDirectory makes missing or empty directories private and
+// preserves the mode of unknown nonempty directories.
+func ensureRuntimeDirectory(directory, label string) error {
 	info, err := os.Lstat(directory)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := os.MkdirAll(directory, 0o700); err != nil {
-			return newProblem(CodeRuntimeUnavailable, "import runtime directory could not be created", err)
+			return newProblem(CodeRuntimeUnavailable, label+" could not be created", err)
 		}
 		if err := state.ProtectPrivatePath(directory, true); err != nil {
-			return newProblem(CodeRuntimeUnavailable, "import runtime directory could not be protected", err)
+			return newProblem(CodeRuntimeUnavailable, label+" could not be protected", err)
 		}
 		return nil
 	case err != nil:
-		return newProblem(CodeRuntimeUnavailable, "import runtime directory could not be inspected", err)
+		return newProblem(CodeRuntimeUnavailable, label+" could not be inspected", err)
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return newProblem(CodeRuntimeUnsafe, "import runtime directory is not a real directory", ErrRuntimeUnsafe)
+		return newProblem(CodeRuntimeUnsafe, label+" is not a real directory", ErrRuntimeUnsafe)
 	}
 	empty, err := directoryIsEmpty(directory)
 	if err != nil {
-		return newProblem(CodeRuntimeUnavailable, "import runtime directory could not be read", err)
+		return newProblem(CodeRuntimeUnavailable, label+" could not be read", err)
 	}
 	if empty {
 		if err := state.ProtectPrivatePath(directory, true); err != nil {
-			return newProblem(CodeRuntimeUnavailable, "import runtime directory could not be protected", err)
-		}
-	}
-	return nil
-}
-
-// ensureStagingDirectory validates <state>/runtime/import-staging. An existing
-// nonempty root without a marker is adopted without chmod once the lease is
-// held, because the root identity is recorded by the marker that follows.
-func ensureStagingDirectory(stagingRoot string) error {
-	info, err := os.Lstat(stagingRoot)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		if err := os.MkdirAll(stagingRoot, 0o700); err != nil {
-			return newProblem(CodeRuntimeUnavailable, "import staging root could not be created", err)
-		}
-		if err := state.ProtectPrivatePath(stagingRoot, true); err != nil {
-			return newProblem(CodeRuntimeUnavailable, "import staging root could not be protected", err)
-		}
-		return nil
-	case err != nil:
-		return newProblem(CodeRuntimeUnavailable, "import staging root could not be inspected", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return newProblem(CodeRuntimeUnsafe, "import staging root is not a real directory", ErrRuntimeUnsafe)
-	}
-	empty, err := directoryIsEmpty(stagingRoot)
-	if err != nil {
-		return newProblem(CodeRuntimeUnavailable, "import staging root could not be read", err)
-	}
-	if empty {
-		if err := state.ProtectPrivatePath(stagingRoot, true); err != nil {
-			return newProblem(CodeRuntimeUnavailable, "import staging root could not be protected", err)
+			return newProblem(CodeRuntimeUnavailable, label+" could not be protected", err)
 		}
 	}
 	return nil
