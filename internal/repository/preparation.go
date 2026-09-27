@@ -193,9 +193,6 @@ func (m *Manager) CancelPreparation(id string) {
 
 // Preparing reports whether id is still being prepared.
 func (m *Manager) Preparing(id string) bool {
-	if m == nil {
-		return false
-	}
 	p := &m.preparation
 	p.mu.Lock()
 	defer p.mu.Unlock()

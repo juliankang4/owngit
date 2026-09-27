@@ -22,6 +22,8 @@ import (
 // Batch bounds the runs one pass starts and the rows one query returns. A
 // pass pages past the rows it passed over, so a page of preparing
 // repositories does not hide the due ones behind it.
+//
+// Service is required; the serving process always sets it.
 type Scheduler struct {
 	Service     *Service
 	Interval    time.Duration
@@ -45,9 +47,6 @@ func (s *Scheduler) Start(parent context.Context) error {
 	defer s.mu.Unlock()
 	if s.running {
 		return errors.New("import scheduler is already running")
-	}
-	if s.Service == nil || s.Service.Store == nil {
-		return errors.New("import scheduler has no service")
 	}
 	// Starting the scheduler is an explicit mutation: prepare the runtime root
 	// and its lifetime lease now, so the first tick cannot race preparation.

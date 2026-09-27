@@ -20,6 +20,9 @@ type CurrentRevision struct {
 	NewlyObserved bool
 }
 
+// Service owns pull request records and their Git effects. Store and
+// Repositories are required: every production constructor sets them, so no
+// method treats one as absent.
 type Service struct {
 	Store         *state.Store
 	Repositories  *repository.Manager
@@ -568,9 +571,6 @@ func (service *Service) ObserveCurrentRevisions(ctx context.Context, repositoryI
 // Advancing after to the last returned request prevents a busy request or the
 // newest fixed page from permanently starving older open requests.
 func (service *Service) ObserveCurrentRevisionsAfter(ctx context.Context, repositoryID string, after int64, limit int) ([]CurrentRevision, bool, error) {
-	if service == nil || service.Store == nil || service.Repositories == nil {
-		return nil, false, errors.New("pull request service is unavailable")
-	}
 	repositoryPath, err := service.repositoryPath(ctx, repositoryID)
 	if err != nil {
 		return nil, false, err

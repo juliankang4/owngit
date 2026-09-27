@@ -60,6 +60,11 @@ func (err *RuntimeUnavailableError) Is(target error) bool { return target == Err
 // Coordinator owns bounded reconciliation and the in-process host/container
 // worker. External-runner jobs are admitted here but claimed only over the
 // separate runner protocol.
+//
+// Start requires Store, Repositories and PullRequests, which the serving
+// process always sets. The command that forgets a foreign container builds a
+// Coordinator with only Store, because ForgetForeignContainer reads nothing
+// else.
 type Coordinator struct {
 	Store         *state.Store
 	Repositories  *repository.Manager
@@ -79,16 +84,10 @@ type Coordinator struct {
 }
 
 func (coordinator *Coordinator) Start(parent context.Context) error {
-	if coordinator == nil || coordinator.Store == nil || coordinator.Repositories == nil {
-		return errors.New("configured check coordinator is unavailable")
-	}
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
 	if coordinator.cancel != nil {
 		return errors.New("configured check coordinator is already running")
-	}
-	if coordinator.PullRequests == nil {
-		coordinator.PullRequests = &pullrequest.Service{Store: coordinator.Store, Repositories: coordinator.Repositories}
 	}
 	if coordinator.WorkspaceRoot == "" {
 		coordinator.WorkspaceRoot = filepath.Join(coordinator.Store.Dir(), "runtime", "check-jobs")

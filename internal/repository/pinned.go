@@ -74,9 +74,6 @@ type PinnedBlobChunk struct {
 // PinRepository verifies exact commit objects without resolving a branch, tag,
 // HEAD, or arbitrary revision expression.
 func (m *Manager) PinRepository(ctx context.Context, id, baseOID, headOID string) (*PinnedRepository, error) {
-	if m == nil || m.Git == nil || m.Locks == nil {
-		return nil, errors.New("repository manager is unavailable")
-	}
 	if !isOID(baseOID) || !isOID(headOID) {
 		return nil, errors.New("invalid pinned commit ID")
 	}
@@ -384,9 +381,6 @@ func (p *PinnedRepository) oid(side PinnedSide) (string, error) {
 }
 
 func (p *PinnedRepository) withReadLock(ctx context.Context, operation func(string) error) error {
-	if p == nil || p.manager == nil || p.manager.Git == nil || p.manager.Locks == nil {
-		return errors.New("pinned repository is unavailable")
-	}
 	lock := p.manager.Locks.For(p.id)
 	if err := ctx.Err(); err != nil {
 		return err

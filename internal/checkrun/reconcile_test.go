@@ -12,6 +12,7 @@ import (
 
 	"owngit/internal/checkworkflow"
 	"owngit/internal/gitexec"
+	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/testfixture"
@@ -72,9 +73,10 @@ func newPushFixture(t *testing.T, queueLimit int) *pushFixture {
 	if _, err := store.GrantCheckConsent(ctx, stored.ID, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	fixture.coordinator = &Coordinator{Store: store, Repositories: manager, Logf: func(format string, arguments ...any) {
-		fixture.logs = append(fixture.logs, format)
-	}}
+	fixture.coordinator = &Coordinator{
+		Store: store, Repositories: manager, PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
+		Logf: func(format string, arguments ...any) { fixture.logs = append(fixture.logs, format) },
+	}
 	return fixture
 }
 

@@ -8,14 +8,23 @@ import (
 	"slices"
 	"testing"
 
-	"owngit/internal/repository"
 	"owngit/internal/requestctx"
 )
+
+// newCGITestHandler is the Git handler the serving process builds, over a
+// synthetic repository folder.
+func newCGITestHandler(t *testing.T) *Handler {
+	t.Helper()
+	manager, runner := newHTTPTestRepository(t)
+	handler, err := New(runner, manager, "", 1)
+	noErr(t, err)
+	return handler
+}
 
 // The Git backend learns the scheme, server name and client address from the
 // request's own connection. Forwarded headers from any peer change nothing.
 func TestCGIEnvironmentUsesTheConnectionOnly(t *testing.T) {
-	handler := &Handler{Repositories: &repository.Manager{Root: t.TempDir()}}
+	handler := newCGITestHandler(t)
 	route := route{repositoryID: "demo", pathInfo: "/demo.git/info/refs", service: "git-upload-pack", query: "service=git-upload-pack"}
 	cases := []struct {
 		name, host, remote string
@@ -65,7 +74,7 @@ func TestCGIEnvironmentUsesTheConnectionOnly(t *testing.T) {
 // Behind a trusted proxy the Git backend sees the forwarded scheme and
 // client address, while the raw peer decides whether the proxy is trusted.
 func TestCGIEnvironmentFollowsATrustedProxy(t *testing.T) {
-	handler := &Handler{Repositories: &repository.Manager{Root: t.TempDir()}}
+	handler := newCGITestHandler(t)
 	route := route{repositoryID: "demo", pathInfo: "/demo.git/info/refs", service: "git-upload-pack", query: "service=git-upload-pack"}
 	resolver := requestctx.Resolver{TrustedProxies: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32")}}
 	for _, test := range []struct {

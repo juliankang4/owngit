@@ -34,6 +34,7 @@ func TestConfiguredCheckPolicyReportsUnavailableRuntimeAndRunnerIsClosed(t *test
 	}
 	app := &App{
 		Store:                         store,
+		Repositories:                  newRepositoryManager(t, store, filepath.Join(t.TempDir(), "runtime")),
 		CheckRuntimeUnavailableCode:   "workspace_unavailable",
 		CheckRuntimeUnavailableReason: "Configured checks are unavailable. Repair the workspace and restart OwnGit.",
 	}

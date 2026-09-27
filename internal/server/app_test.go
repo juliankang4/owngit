@@ -252,17 +252,24 @@ func TestSetupGETAndHEADDoNotConsumeCapabilityAndFormNeedsOrigin(t *testing.T) {
 	}
 }
 
+// newRepositoryManager builds the repository manager the serving process
+// builds for store, before setup chooses a repository folder.
+func newRepositoryManager(t *testing.T, store *state.Store, runtimeDirectory string) *repository.Manager {
+	t.Helper()
+	runner, err := gitexec.New("", runtimeDirectory)
+	noErr(t, err)
+	return &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks()}
+}
+
 func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	t.Helper()
 	root := t.TempDir()
 	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
 	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
-	noErr(t, err)
 	repositoryRoot := filepath.Join(root, "repositories")
-	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks()}
-	gitHandler, err := githttp.New(runner, manager, "", 2)
+	manager := newRepositoryManager(t, store, filepath.Join(root, "runtime"))
+	gitHandler, err := githttp.New(manager.Git, manager, "", 2)
 	noErr(t, err)
 	authentication := &auth.Manager{Store: store, SessionLife: time.Hour, AdminSessionLife: 5 * time.Minute}
 	renderer, err := webui.New()

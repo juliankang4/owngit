@@ -43,7 +43,6 @@ func (fixture *pushFixture) settle() int {
 // the queue ahead of new pushes. A head or revision is now queued once.
 func TestPolicyChangeDoesNotRequeueHeadsThatAlreadyHadAJob(t *testing.T) {
 	fixture := newPushFixture(t, 1000)
-	fixture.coordinator.PullRequests = &pullrequest.Service{Store: fixture.store, Repositories: fixture.coordinator.Repositories}
 	fixture.setPolicyVersion(60_000)
 	fixture.pushWorkflow("main", `{"version":1,"events":{"push":{},"pull_request":{}},"checks":[{"name":"n","command":"true"}]}`)
 	branches := maximumObservedRefs + 6

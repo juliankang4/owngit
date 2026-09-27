@@ -31,9 +31,6 @@ type ResolveResult struct {
 // last confirmed source observations, so refs that differ from both stay
 // divergent instead of being overwritten.
 func (s *Service) ResolveUnresolved(ctx context.Context, repositoryID string) (ResolveResult, error) {
-	if s.Store == nil || s.Repositories == nil {
-		return ResolveResult{}, newProblem(CodeRuntimeUnavailable, "import service is unavailable", nil)
-	}
 	s.lifecycle.RLock()
 	closing := s.closing
 	s.lifecycle.RUnlock()

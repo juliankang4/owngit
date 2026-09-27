@@ -331,9 +331,6 @@ func (s *Service) prepareRuntime(ctx context.Context) error {
 			return runtimeLostError(err)
 		}
 	}
-	if s.Store == nil {
-		return newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

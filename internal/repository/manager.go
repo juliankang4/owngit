@@ -32,6 +32,9 @@ var (
 	ErrImportInProgress = fmt.Errorf("%w: an import for this name is still running or needs recovery; try again after it finishes, or restart OwnGit if no import is running", ErrNameTaken)
 )
 
+// Manager owns the repository folder and its Git work. Store, Git and Locks
+// are required: every production constructor sets them, so no method treats
+// one as absent. Root is empty until setup chooses the repository folder.
 type Manager struct {
 	Store            *state.Store
 	Git              *gitexec.Runner
@@ -129,9 +132,6 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	id := strings.ToLower(name)
 	if err := ValidateID(id); err != nil {
 		return state.Repository{}, fmt.Errorf("%w: %v", ErrInvalidName, err)
-	}
-	if m.Locks == nil {
-		return state.Repository{}, errors.New("repository locks are unavailable")
 	}
 	// Hold the repository lock from the existence check through the row write so
 	// an initial import cannot configure this id between those steps.

@@ -202,9 +202,6 @@ func (m *Manager) NoteRepositoryWrite(id string) {
 // before its next step. Only repositories the scheduler already knows are recorded,
 // so requests for arbitrary names cannot grow its state.
 func (m *Manager) NoteRepositoryUse(id string) {
-	if m == nil {
-		return
-	}
 	s := &m.maintenance
 	s.mu.Lock()
 	defer s.mu.Unlock()

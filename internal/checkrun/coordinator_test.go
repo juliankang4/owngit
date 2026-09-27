@@ -3,10 +3,13 @@ package checkrun
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"owngit/internal/gitexec"
+	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
@@ -38,8 +41,13 @@ func TestCoordinatorStartStopAndRestartReturn(t *testing.T) {
 	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
 	noErr(t, err)
 	defer store.Close()
+	git, err := gitexec.New("", filepath.Join(root, "runtime"))
+	noErr(t, err)
+	repositoryRoot := filepath.Join(root, "repositories")
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
+	manager := &repository.Manager{Store: store, Git: git, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	coordinator := &Coordinator{
-		Store: store, Repositories: &repository.Manager{Store: store},
+		Store: store, Repositories: manager, PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
 		WorkspaceRoot: filepath.Join(root, "workspaces"), Interval: time.Hour,
 	}
 	// Start and Stop must return instead of running for the scheduler's

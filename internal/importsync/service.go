@@ -27,6 +27,9 @@ import (
 
 // Service is the small typed contract a later HTTP, CLI, or app binding uses.
 // Explicit mutations and passive reads are separate methods.
+//
+// Store and Repositories, with the Git runner and locks it carries, are
+// required. Every constructor sets them, so no method treats one as absent.
 type Service struct {
 	Store        *state.Store
 	Repositories *repository.Manager
@@ -259,9 +262,6 @@ type ConfigureInput struct {
 // repository write lock serializes the mutation with final publication checks;
 // network work never holds this lock.
 func (s *Service) ConfigureSource(ctx context.Context, input ConfigureInput) (state.ImportSource, error) {
-	if s.Store == nil || s.Repositories == nil || s.Repositories.Locks == nil {
-		return state.ImportSource{}, newProblem(CodeRuntimeUnavailable, "import configuration runtime is unavailable", nil)
-	}
 	if input.RepositoryID == "" {
 		return state.ImportSource{}, newProblem(CodeInvalidSource, "repository identifier is required", nil)
 	}
@@ -305,9 +305,6 @@ func (s *Service) ConfigureSource(ctx context.Context, input ConfigureInput) (st
 // SetCredentials stores machine-local credentials bound to the current source
 // configuration. nil clears them.
 func (s *Service) SetCredentials(ctx context.Context, repositoryID string, credential *Credentials) error {
-	if s.Store == nil || s.Repositories == nil || s.Repositories.Locks == nil {
-		return newProblem(CodeRuntimeUnavailable, "import configuration runtime is unavailable", nil)
-	}
 	now := s.clock()
 	lock := s.Repositories.Locks.For(repositoryID)
 	lock.Lock()
@@ -493,9 +490,6 @@ func (s *Service) ForgetOrphanImport(ctx context.Context, repositoryID string) (
 }
 
 func (s *Service) forgetOrphanImport(ctx context.Context, repositoryID string, stillApplies func() bool) (bool, error) {
-	if s.Store == nil || s.Repositories == nil || s.Repositories.Locks == nil {
-		return false, newProblem(CodeRuntimeUnavailable, "import configuration runtime is unavailable", nil)
-	}
 	now := s.clock()
 	mutex := s.repositoryLock(repositoryID)
 	if !mutex.TryLock() {
@@ -556,9 +550,6 @@ func (s *Service) forgetOrphanImports(ctx context.Context) error {
 // repository lock, refuses a destination that appeared after the unlocked
 // pre-check, and only then writes this import's source and credentials.
 func (s *Service) bindNewImport(ctx context.Context, input ConfigureInput, credentials *Credentials) (*state.ImportBindingSnapshot, state.ImportSource, error) {
-	if s.Repositories == nil || s.Repositories.Locks == nil || s.Store == nil {
-		return nil, state.ImportSource{}, newProblem(CodeRuntimeUnavailable, "import configuration runtime is unavailable", nil)
-	}
 	now := s.clock()
 	lock := s.Repositories.Locks.For(input.RepositoryID)
 	lock.Lock()
@@ -663,9 +654,6 @@ func (s *Service) kindFor(ctx context.Context, repositoryID string) (string, err
 // Cancel marks the active run for cancellation and cancels its context when it
 // runs in this process. A run already past publication records complete.
 func (s *Service) Cancel(ctx context.Context, repositoryID string) (bool, error) {
-	if s.Store == nil {
-		return false, newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
 	// The external clock callback stays outside the barrier. The barrier makes
 	// the row lookup and the cancel one admission-atomic step, so a cancel cannot
 	// miss a run that is being admitted right now.
@@ -783,9 +771,6 @@ var reconcilePageLimit = reconcilePageSize
 // the repository exists; a missing or unavailable repository is reported, never
 // guessed.
 func (s *Service) Status(ctx context.Context, repositoryID string) (Status, error) {
-	if s.Store == nil {
-		return Status{}, newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
 	status := Status{RepositoryID: repositoryID, Runtime: s.runtimeStatus()}
 	source, exists, err := s.Store.ImportSource(ctx, repositoryID)
 	if err != nil {
@@ -1004,9 +989,6 @@ func (s *Service) History(ctx context.Context, repositoryID string, limit int) (
 // HistoryBefore returns the next older page after afterRowID. A zero cursor
 // starts at the newest run. History is not pruned.
 func (s *Service) HistoryBefore(ctx context.Context, repositoryID string, limit int, afterRowID int64) ([]RunView, bool, error) {
-	if s.Store == nil {
-		return nil, false, newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
 	if limit <= 0 {
 		limit = 20
 	}
@@ -1046,12 +1028,7 @@ func (s *Service) Availability(ctx context.Context) Availability {
 	report := func(code, reason string) Availability {
 		return Availability{Code: code, Reason: reason, Limits: view}
 	}
-	switch {
-	case s.Store == nil:
-		return report(CodeRuntimeUnavailable, "state store is unavailable")
-	case s.Repositories == nil || s.Repositories.Git == nil:
-		return report(CodeRuntimeUnavailable, "Git runner is unavailable")
-	case s.Repositories.RepositoryRoot() == "":
+	if s.Repositories.RepositoryRoot() == "" {
 		return report(CodeRuntimeUnavailable, "repository storage root is not configured")
 	}
 	if err := ctx.Err(); err != nil {
@@ -1101,9 +1078,6 @@ func RunRecordView(run state.ImportRun) RunView {
 // holds no barrier, but the whole operation keeps the lease from being released
 // while a scan or intent reconciliation is still running.
 func (s *Service) Reconcile(ctx context.Context) error {
-	if s.Store == nil {
-		return newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
 	s.beginRuntimeOperation()
 	defer s.endRuntimeOperation()
 	if err := s.prepareRuntime(ctx); err != nil {
@@ -1246,9 +1220,6 @@ func (s *Service) reconcilePendingIntentPages(ctx context.Context, generation st
 
 // SetSchedule stores the machine-local opt-in schedule for one repository.
 func (s *Service) SetSchedule(ctx context.Context, repositoryID string, enabled bool, interval time.Duration) (state.ImportSchedule, error) {
-	if s.Store == nil || s.Repositories == nil {
-		return state.ImportSchedule{}, newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
 	_, exists, err := s.Store.ImportSource(ctx, repositoryID)
 	if err != nil {
 		return state.ImportSchedule{}, newProblem(CodeStateUnavailable, "import source could not be read", err)
@@ -1272,9 +1243,6 @@ func (s *Service) SetSchedule(ctx context.Context, repositoryID string, enabled 
 
 // Schedule reads the stored schedule.
 func (s *Service) Schedule(ctx context.Context, repositoryID string) (state.ImportSchedule, bool, error) {
-	if s.Store == nil {
-		return state.ImportSchedule{}, false, newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
 	schedule, exists, err := s.Store.ImportSchedule(ctx, repositoryID)
 	if err != nil {
 		return state.ImportSchedule{}, false, newProblem(CodeStateUnavailable, "import schedule could not be read", err)
@@ -1307,9 +1275,6 @@ func (s *Service) recordScheduledClaimFailure(ctx context.Context, repositoryID,
 
 // Schedules returns one bounded page of machine-local schedules.
 func (s *Service) Schedules(ctx context.Context, limit int, afterID string) ([]state.ImportSchedule, bool, error) {
-	if s.Store == nil {
-		return nil, false, newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
 	limit = clampListPage(limit)
 	records, err := s.Store.ImportSchedulesPage(ctx, afterID, limit+1)
 	if err != nil {
@@ -1323,9 +1288,6 @@ func (s *Service) Schedules(ctx context.Context, limit int, afterID string) ([]s
 
 // StagingIssues returns one bounded page of preserved staging records.
 func (s *Service) StagingIssues(ctx context.Context, limit int, afterName string) ([]state.ImportStaging, bool, error) {
-	if s.Store == nil {
-		return nil, false, newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
 	limit = clampListPage(limit)
 	records, err := s.Store.ImportStagingsPage(ctx, afterName, limit+1)
 	if err != nil {

@@ -87,9 +87,6 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 	if ValidateID(id) != nil {
 		return DeleteResult{}, ErrRepositoryNotFound
 	}
-	if m.Locks == nil {
-		return DeleteResult{}, errors.New("repository locks are unavailable")
-	}
 	if err := deletionBusyError(m.Store.RepositoryDeletionBusy(ctx, id)); err != nil {
 		return DeleteResult{}, err
 	}

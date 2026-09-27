@@ -17,6 +17,7 @@ import (
 	"owngit/internal/checkrun"
 	"owngit/internal/checkworkflow"
 	"owngit/internal/gitexec"
+	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
@@ -283,7 +284,7 @@ func newRealDockerFixture(t *testing.T, config realDockerConfig, network, comman
 		t.Fatal(err)
 	}
 	fixture.coordinator = &checkrun.Coordinator{
-		Store: store, Repositories: fixture.manager,
+		Store: store, Repositories: fixture.manager, PullRequests: &pullrequest.Service{Store: store, Repositories: fixture.manager},
 		WorkspaceRoot: filepath.Join(fixture.root, "check-workspaces"), DockerPath: config.docker,
 		Interval: 20 * time.Millisecond,
 	}

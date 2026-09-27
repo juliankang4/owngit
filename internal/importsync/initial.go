@@ -117,9 +117,6 @@ func ownerRecoveryProblem(finalPath string, cause error) *Problem {
 // of the same name, or a final directory already exists. It does not create,
 // rename, or remove anything.
 func (s *Service) destinationTaken(ctx context.Context, repositoryID string) (bool, error) {
-	if s.Store == nil || s.Repositories == nil {
-		return false, newProblem(CodeRuntimeUnavailable, "import configuration runtime is unavailable", nil)
-	}
 	if _, exists, err := s.Store.Repository(ctx, repositoryID); err != nil {
 		return false, runStateReadProblem("repository could not be read", err)
 	} else if exists {
@@ -513,9 +510,6 @@ func initialRenameLanded(dest *initialDestination, finalPath string) (bool, erro
 }
 
 func (s *Service) reconcileInitialDestinations(ctx context.Context, generation string) (int, error) {
-	if s.Repositories == nil || s.Repositories.Locks == nil {
-		return 0, errors.New("repository storage is unavailable")
-	}
 	root, err := s.currentRuntime(generation)
 	if err != nil {
 		return 0, err
@@ -1000,9 +994,6 @@ func (s *Service) preserveUnknownInitial(ctx context.Context, name, issue string
 func (s *Service) refuseTakenNewDestination(ctx context.Context, run *runState) error {
 	if run == nil || run.bindingSnapshot == nil {
 		return newProblem(CodeRepositoryTaken, "repository destination already exists", nil)
-	}
-	if s.Repositories == nil || s.Repositories.Locks == nil {
-		return newProblem(CodeRuntimeUnavailable, "repository locks are unavailable", nil)
 	}
 	lock := s.Repositories.Locks.For(run.run.RepositoryID)
 	if !run.credentialAuthorityLocked {

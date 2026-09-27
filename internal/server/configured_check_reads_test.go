@@ -56,7 +56,7 @@ func newRunnerReadFixture(t *testing.T) *runnerReadFixture {
 	if err != nil || deduped {
 		t.Fatalf("admit job deduped=%v err=%v", deduped, err)
 	}
-	app := &App{Store: store, Now: func() time.Time { return now.Add(time.Second) }}
+	app := &App{Store: store, Repositories: newRepositoryManager(t, store, filepath.Join(t.TempDir(), "runtime")), Now: func() time.Time { return now.Add(time.Second) }}
 	const prefix = "/api/v1/repositories/project/runner/"
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		app.handleRunnerAPI(writer, request, "project", strings.TrimPrefix(request.URL.Path, prefix))

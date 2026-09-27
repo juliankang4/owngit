@@ -63,9 +63,6 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 	if err != nil {
 		return state.ImportRun{}, newProblem(CodeRuntimeUnavailable, err.Error(), err)
 	}
-	if s.Store == nil || s.Repositories == nil || s.Repositories.Git == nil {
-		return state.ImportRun{}, newProblem(CodeRuntimeUnavailable, "import runtime is not configured", nil)
-	}
 	mutex := s.repositoryLock(repositoryID)
 	if !mutex.TryLock() {
 		return state.ImportRun{}, newProblem(CodeBusy, "an import is already running for this repository", ErrBusy)

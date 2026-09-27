@@ -3,11 +3,14 @@ package pullrequest
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"owngit/internal/gitexec"
+	"owngit/internal/repository"
 	"owngit/internal/state"
 )
 
@@ -76,6 +79,22 @@ func newEvidenceReadFixture(t *testing.T) (*serviceFixture, *View, string) {
 	return fixture, created, sourceOID
 }
 
+// newMappingService is the pull request service the serving process builds,
+// over its own state, with a fixed clock for the mapping under test.
+func newMappingService(t *testing.T, now time.Time) *Service {
+	t.Helper()
+	root := t.TempDir()
+	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
+	noErr(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
+	noErr(t, err)
+	repositoryRoot := filepath.Join(root, "repositories")
+	noErr(t, os.Mkdir(repositoryRoot, 0o700))
+	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
+	return &Service{Store: store, Repositories: manager, Now: func() time.Time { return now }}
+}
+
 func assertAdvisoryEvidenceDidNotBlockMerge(t *testing.T, view *View) {
 	t.Helper()
 	if !view.Checks.Advisory || !view.MergeEligibility.Eligible || len(view.MergeEligibility.Blockers) != 0 {
@@ -84,11 +103,8 @@ func assertAdvisoryEvidenceDidNotBlockMerge(t *testing.T, view *View) {
 }
 
 func TestChecksFromAttemptPreservesCleanupAndPendingEvidence(t *testing.T) {
-	store, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
-	noErr(t, err)
-	defer store.Close()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
-	service := Service{Store: store, Now: func() time.Time { return now }}
+	service := newMappingService(t, now)
 	exitCode := 0
 	attempt := state.CheckAttempt{
 		ID: "11111111111111111111111111111111", TaskID: "task-one", RepositoryID: "project",
@@ -132,11 +148,8 @@ func TestChecksFromAttemptPreservesCleanupAndPendingEvidence(t *testing.T) {
 // for the browser only: this release does not extend the pull request API
 // response, so it must not appear in the JSON.
 func TestChecksCarryTheRecordedJobLinkWithoutWideningTheAPI(t *testing.T) {
-	store, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
-	noErr(t, err)
-	defer store.Close()
 	now := time.Date(2026, 9, 21, 9, 0, 0, 0, time.UTC)
-	service := Service{Store: store, Now: func() time.Time { return now }}
+	service := newMappingService(t, now)
 
 	// One attempt, projected twice, differing only in the job link. Every
 	// other recorded fact is identical, so a mapping that ignores the link

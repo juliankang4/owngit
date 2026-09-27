@@ -36,7 +36,7 @@ func TestRunnerTokenForAnotherRepositoryIsRefusedDistinctly(t *testing.T) {
 	if err != nil || !created {
 		t.Fatalf("issue runner created=%v err=%v", created, err)
 	}
-	app := &App{Store: store, Now: func() time.Time { return now.Add(time.Minute) }}
+	app := &App{Store: store, Repositories: newRepositoryManager(t, store, filepath.Join(t.TempDir(), "runtime")), Now: func() time.Time { return now.Add(time.Minute) }}
 	claim := func(repositoryID, token string) (int, string, string) {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/repositories/"+repositoryID+"/runner/claim", nil)
