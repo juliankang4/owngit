@@ -805,7 +805,7 @@ func (host *taskHost) waitForServer(stateDir string) (string, error) {
 		}
 		if state, _, stateErr := host.taskState(); stateErr == nil && state == service.TaskQueued {
 			host.printf(queuedTaskMessage)
-			return "", errors.New("Windows keeps the task queued")
+			return "", &checkExit{code: 1, err: errors.New("Windows keeps the task queued")}
 		}
 		if time.Now().After(deadline) {
 			host.printf("OwnGit did not answer within %s: %v\n", serviceStartTimeout, err)
@@ -834,7 +834,7 @@ func (host *taskHost) printTaskFacts(stateDir, address, executable string) {
 	case found && rule.Allows(executable):
 		host.printf("  Firewall: devices on private networks may connect (rule %q)\n", service.FirewallRuleName)
 	case listensBeyondThisComputer(stateDir):
-		host.printf("  Firewall: no rule for this owngit.exe, so other devices may be blocked\n")
+		host.printf("  Firewall: no rule for this owngit.exe, so other devices may be blocked; run \"owngit service install\" to add it\n")
 	}
 }
 
@@ -938,11 +938,16 @@ func (host *taskHost) status() error {
 			address = ownerAddresses(installed.StateDir, target)
 		}
 	}
+	// A server that starts listening removes the error of the last start.
+	lastError, failed := serveErrorSince(installed.StateDir, time.Time{})
+	failed = failed && !answered
 	switch {
 	case answered:
 		host.printf("OwnGit is running and answers its health check.\n")
 	case state == service.TaskQueued:
 		host.printf(queuedTaskMessage)
+	case state == service.TaskRunning && failed:
+		host.printf("OwnGit keeps failing to start (task: Running).\n")
 	case state == service.TaskRunning:
 		host.printf("OwnGit is starting or not answering yet (task: Running).\n")
 	case stateErr != nil:
@@ -950,9 +955,8 @@ func (host *taskHost) status() error {
 	default:
 		host.printf("OwnGit is not running (task: %s, last result %s).\n", taskStateName(state), taskResult(result))
 	}
-	// A server that starts listening removes the error of the last start.
-	if message, failed := serveErrorSince(installed.StateDir, time.Time{}); !answered && failed {
-		host.printf("  Last error: %s\n", message)
+	if failed {
+		host.printf("  Last error: %s\n", lastError)
 	}
 	host.printf("  Mode:     %s\n", installed.Mode.Describe())
 	host.printTaskFacts(installed.StateDir, address, installed.Executable)

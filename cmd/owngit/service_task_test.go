@@ -559,7 +559,7 @@ func TestTaskStatusExplainsAQueuedTask(t *testing.T) {
 	noErr(t, err)
 	out.Reset()
 	noErr(t, host.status())
-	if !strings.Contains(out.String(), "  Firewall: no rule for this owngit.exe, so other devices may be blocked") {
+	if !strings.Contains(out.String(), "  Firewall: no rule for this owngit.exe, so other devices may be blocked; run \"owngit service install\" to add it\n") {
 		t.Errorf("no firewall warning for a server on every address:\n%s", out.String())
 	}
 }
@@ -769,7 +769,9 @@ func TestTaskInstallStopsWaitingForAQueuedTask(t *testing.T) {
 	host, out := testTaskHost(service.Environment{})
 	started := time.Now()
 	err := host.install("", nil)
-	if err == nil || !strings.Contains(out.String(), queuedTaskMessage) || strings.Contains(out.String(), "did not answer") {
+	// The exit status is 1, with no second line that repeats the reason.
+	var exit *checkExit
+	if !errors.As(err, &exit) || exit.code != 1 || !strings.Contains(out.String(), queuedTaskMessage) || strings.Contains(out.String(), "did not answer") {
 		t.Errorf("%v\n%s", err, out.String())
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
@@ -804,10 +806,10 @@ func TestTaskReportsWhyTheServerDidNotStart(t *testing.T) {
 		t.Errorf("output:\n%s", out.String())
 	}
 	recordServeError(stateDir, errors.New("protect state directory: Access is denied."))
-	fake.state = "3\n1"
+	fake.state = "4\n267009"
 	out.Reset()
 	noErr(t, host.status())
-	if !strings.Contains(out.String(), "  Last error: protect state directory: Access is denied.\n") {
+	if !strings.HasPrefix(out.String(), "OwnGit keeps failing to start (task: Running).\n  Last error: protect state directory: Access is denied.\n") {
 		t.Errorf("status:\n%s", out.String())
 	}
 }
