@@ -714,6 +714,24 @@ func TestOpenPinsResolvedStateLink(t *testing.T) {
 	}
 }
 
+func TestStateDirectoryOwnerIsRequired(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix state owner rule")
+	}
+	directory := filepath.Join(t.TempDir(), "state")
+	createMarkedState(t, directory, "checked")
+	original := stateDirectoryOwner
+	t.Cleanup(func() { stateDirectoryOwner = original })
+	stateDirectoryOwner = func(*os.File) (bool, error) { return false, nil }
+	store, err := Open(context.Background(), directory)
+	if store != nil {
+		_ = store.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "run the command as its owner") {
+		t.Fatalf("foreign state owner: %v", err)
+	}
+}
+
 func TestBaselineReplacedBeforeAcceptanceIsNotMigrated(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

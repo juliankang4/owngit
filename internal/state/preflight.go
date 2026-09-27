@@ -61,6 +61,8 @@ const (
 // preflightHooks are test seams at the inspection responsibility boundaries:
 // where the private directory is created, where private bytes are written and
 // at the named points passed to at. Production leaves every field zero.
+var stateDirectoryOwner = OwnedByCurrentUser
+
 var preflightHooks struct {
 	temporaryRoot string
 	privateWriter func(file *os.File) io.Writer
@@ -496,7 +498,7 @@ func bindDirectory(dir string) (*sourceObject, error) {
 		return nil, closeAfter(handle, errors.New("state path is not a directory"))
 	}
 	if runtime.GOOS != "windows" {
-		owned, err := OwnedByCurrentUser(handle)
+		owned, err := stateDirectoryOwner(handle)
 		if err != nil {
 			return nil, closeAfter(handle, err)
 		}
