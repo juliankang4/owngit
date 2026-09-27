@@ -26,6 +26,12 @@ func TestProtectedServiceCopyAndFolders(t *testing.T) {
 	noErr(t, platformPrepareServiceStorage(paths))
 	source, err := os.Executable()
 	noErr(t, err)
+	// A copy the owner placed there is protected where it is.
+	content, err := os.ReadFile(source)
+	noErr(t, err)
+	noErr(t, os.WriteFile(paths.Executable, content, 0o755))
+	noErr(t, platformReplaceServiceCopy(paths.Executable, paths))
+	noErr(t, verifyProtectedServiceACL(paths.Executable, false, true))
 	noErr(t, platformReplaceServiceCopy(source, paths))
 	noErr(t, verifyProtectedServiceACL(paths.Directory, true, true))
 	noErr(t, verifyProtectedServiceACL(paths.Temp, true, false))

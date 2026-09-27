@@ -63,7 +63,8 @@ func platformPrepareServiceStorage(paths serviceInstallPaths) error {
 // complete and protected.
 func platformReplaceServiceCopy(source string, paths serviceInstallPaths) error {
 	if strings.EqualFold(filepath.Clean(source), filepath.Clean(paths.Executable)) {
-		return verifyProtectedServiceACL(paths.Executable, false, true)
+		// A copy the owner placed there becomes the protected copy.
+		return setProtectedServiceACL(paths.Executable, false, true)
 	}
 	input, err := openServiceSource(source)
 	if err != nil {
