@@ -92,9 +92,6 @@ type Service struct {
 	// afterImportBinding runs after bindNewImport returns and before execute
 	// reads the source row. It is outside the repository lock.
 	afterImportBinding func() error
-	// beforeScheduledPreparation runs after a due schedule is claimed and before
-	// RefreshScheduled. It is outside repository locks.
-	beforeScheduledPreparation func(repositoryID string) error
 	// afterReconcileIntentPage records each pending-intent page. Tests use it to
 	// prove the cursor advances.
 	afterReconcileIntentPage func(ids []string)
@@ -1293,56 +1290,6 @@ func (s *Service) Schedule(ctx context.Context, repositoryID string) (state.Impo
 		return state.ImportSchedule{}, false, newProblem(CodeStateUnavailable, "import schedule could not be read", err)
 	}
 	return schedule, exists, nil
-}
-
-// StartDue starts one due scheduled refresh per repository, oldest first, up to
-// limit. It returns how many runs were started, not how many succeeded.
-func (s *Service) StartDue(ctx context.Context, limit int) (int, error) {
-	if s.Store == nil {
-		return 0, newProblem(CodeRuntimeUnavailable, "state store is unavailable", nil)
-	}
-	now := s.clock()
-	schedules, err := s.Store.DueImportSchedules(ctx, now, limit)
-	if err != nil {
-		return 0, newProblem(CodeStateUnavailable, "due import schedules could not be read", err)
-	}
-	started := 0
-	for _, schedule := range schedules {
-		if err := ctx.Err(); err != nil {
-			return started, err
-		}
-		// A repository still being prepared after startup is skipped before
-		// the claim, so no run, failure, or schedule change is recorded; the
-		// schedule stays due and runs once the repository is ready.
-		if s.Repositories != nil && s.Repositories.Preparing(schedule.RepositoryID) {
-			continue
-		}
-		claimed, err := s.Store.ClaimDueImportSchedule(ctx, schedule.RepositoryID, now)
-		if err != nil {
-			return started, newProblem(CodeStateUnavailable, "due import schedule could not be claimed", err)
-		}
-		if !claimed {
-			continue
-		}
-		if s.beforeScheduledPreparation != nil {
-			if prepErr := s.beforeScheduledPreparation(schedule.RepositoryID); prepErr != nil {
-				_ = s.recordScheduledClaimFailure(ctx, schedule.RepositoryID, prepErr.Error(), now)
-				continue
-			}
-		}
-		run, runErr := s.RefreshScheduled(ctx, schedule.RepositoryID, Limits{})
-		if runErr != nil {
-			if problemCode(runErr) == CodeBusy {
-				continue
-			}
-			s.logf("scheduled import for %s failed: %v", schedule.RepositoryID, runErr)
-			if run.ID == "" {
-				_ = s.recordScheduledClaimFailure(ctx, schedule.RepositoryID, runErr.Error(), now)
-			}
-		}
-		started++
-	}
-	return started, nil
 }
 
 func (s *Service) recordScheduledClaimFailure(ctx context.Context, repositoryID, message string, now time.Time) error {

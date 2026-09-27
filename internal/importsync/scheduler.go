@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"owngit/internal/state"
 )
 
 // Scheduler runs opt-in scheduled refreshes only while the serving process
@@ -14,7 +16,12 @@ import (
 //
 // Fairness comes from the store: starting a run stamps its schedule's
 // last_started_at, and due selection orders by that stamp, so a slow repository
-// cannot starve the others.
+// cannot starve the others. A repository still being prepared is passed over
+// unclaimed, so its schedule stays due and keeps its place.
+//
+// Batch bounds the runs one pass starts and the rows one query returns. A
+// pass pages past the rows it passed over, so a page of preparing
+// repositories does not hide the due ones behind it.
 type Scheduler struct {
 	Service     *Service
 	Interval    time.Duration
@@ -135,44 +142,66 @@ func (s *Scheduler) pump(ctx context.Context, slots chan struct{}) {
 	if limit <= 0 {
 		limit = 4
 	}
+	// The pass keeps one time, so its pages read one due set, and each page
+	// continues after the last row examined, whether claimed or passed over.
 	now := s.Service.clock()
-	schedules, err := s.Service.Store.DueImportSchedules(ctx, now, limit)
-	if err != nil {
-		s.logf("due import schedules could not be read: %v", err)
-		return
-	}
-	for _, schedule := range schedules {
-		if err := ctx.Err(); err != nil {
-			return
-		}
-		claimed, err := s.Service.Store.ClaimDueImportSchedule(ctx, schedule.RepositoryID, now)
+	started := 0
+	var last *state.ImportSchedule
+	for {
+		schedules, err := s.Service.Store.DueImportSchedulesAfter(ctx, now, last, limit)
 		if err != nil {
-			s.logf("due import schedule for %s could not be claimed: %v", schedule.RepositoryID, err)
+			s.logf("due import schedules could not be read: %v", err)
 			return
 		}
-		if !claimed {
-			continue
-		}
-		select {
-		case slots <- struct{}{}:
-		default:
-			_ = s.Service.recordScheduledClaimFailure(ctx, schedule.RepositoryID, "scheduled import concurrency is saturated", now)
-			return
-		}
-		repositoryID := schedule.RepositoryID
-		s.wait.Add(1)
-		go func() {
-			defer s.wait.Done()
-			defer func() { <-slots }()
-			run, err := s.Service.RefreshScheduled(ctx, repositoryID, Limits{})
-			if err != nil && problemCode(err) != CodeBusy {
-				s.logf("scheduled import for %s failed: %v", repositoryID, err)
-				if run.ID == "" {
-					_ = s.Service.recordScheduledClaimFailure(context.WithoutCancel(ctx), repositoryID, err.Error(), now)
-				}
+		for _, schedule := range schedules {
+			last = &schedule
+			if err := ctx.Err(); err != nil {
+				return
 			}
-		}()
+			if s.Service.Repositories.Preparing(schedule.RepositoryID) {
+				continue
+			}
+			claimed, err := s.Service.Store.ClaimDueImportSchedule(ctx, schedule.RepositoryID, now)
+			if err != nil {
+				s.logf("due import schedule for %s could not be claimed: %v", schedule.RepositoryID, err)
+				return
+			}
+			if !claimed {
+				continue
+			}
+			select {
+			case slots <- struct{}{}:
+			default:
+				_ = s.Service.recordScheduledClaimFailure(ctx, schedule.RepositoryID, "scheduled import concurrency is saturated", now)
+				return
+			}
+			s.start(ctx, schedule.RepositoryID, now, slots)
+			started++
+			if started == limit {
+				return
+			}
+		}
+		if len(schedules) < limit {
+			return
+		}
 	}
+}
+
+// start runs one claimed scheduled refresh in the slot it holds. A refresh
+// refused before it recorded a run is recorded as a failed run instead.
+func (s *Scheduler) start(ctx context.Context, repositoryID string, now time.Time, slots chan struct{}) {
+	s.wait.Add(1)
+	go func() {
+		defer s.wait.Done()
+		defer func() { <-slots }()
+		run, err := s.Service.RefreshScheduled(ctx, repositoryID, Limits{})
+		if err != nil && problemCode(err) != CodeBusy {
+			s.logf("scheduled import for %s failed: %v", repositoryID, err)
+			if run.ID == "" {
+				_ = s.Service.recordScheduledClaimFailure(context.WithoutCancel(ctx), repositoryID, err.Error(), now)
+			}
+		}
+	}()
 }
 
 func (s *Scheduler) logf(format string, arguments ...any) {

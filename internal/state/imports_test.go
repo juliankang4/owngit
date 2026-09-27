@@ -363,7 +363,7 @@ func TestImportScheduleFairnessAndDueOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	due, err := store.DueImportSchedules(ctx, now, 8)
+	due, err := store.DueImportSchedulesAfter(ctx, now, nil, 8)
 	if err != nil || len(due) != 3 || due[0].RepositoryID != "alpha" {
 		t.Fatalf("due=%+v err=%v", due, err)
 	}
@@ -375,12 +375,12 @@ func TestImportScheduleFairnessAndDueOrder(t *testing.T) {
 	}
 	run := testImportRun(t, strings.Repeat("e", 32), "alpha", 1, ImportKindScheduled, ImportRunPreparing)
 	noErr(t, store.BeginImportRun(ctx, run))
-	due, err = store.DueImportSchedules(ctx, now, 8)
+	due, err = store.DueImportSchedulesAfter(ctx, now, nil, 8)
 	if err != nil || len(due) != 2 || due[0].RepositoryID != "beta" {
 		t.Fatalf("fair due=%+v err=%v", due, err)
 	}
 	// The stamped start makes alpha due again only after its interval.
-	due, err = store.DueImportSchedules(ctx, now.Add(time.Minute), 8)
+	due, err = store.DueImportSchedulesAfter(ctx, now.Add(time.Minute), nil, 8)
 	if err != nil || len(due) != 3 || due[2].RepositoryID != "alpha" {
 		t.Fatalf("interval due=%+v err=%v", due, err)
 	}

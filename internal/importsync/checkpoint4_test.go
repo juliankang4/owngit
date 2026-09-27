@@ -2,6 +2,7 @@ package importsync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,51 +84,104 @@ func TestSetScheduleRefusesRepositoryWithoutSource(t *testing.T) {
 	}
 }
 
-func TestScheduledClaimAdvancesBeforePreparation(t *testing.T) {
-	f := newFixture(t)
+// scheduleOtherAndProject imports project and schedules it and an unimported
+// other. Both are due, and other comes first.
+func (f *fixture) scheduleOtherAndProject() {
+	f.t.Helper()
 	ctx := context.Background()
 	f.mustImport(ImportInput{})
 	if _, err := f.manager.Create(ctx, "other", "Other"); err != nil {
-		t.Fatal(err)
+		f.t.Fatal(err)
 	}
 	if _, err := f.service.ConfigureSource(ctx, ConfigureInput{
 		RepositoryID: "other", URL: "https://example.invalid/team/other.git",
 		Mode: ModeStandalone, GitOnlyConsent: true, AllowPrivateNetwork: true,
 	}); err != nil {
-		t.Fatal(err)
+		f.t.Fatal(err)
 	}
 	for _, id := range []string{"other", "project"} {
 		if _, err := f.service.SetSchedule(ctx, id, true, time.Minute); err != nil {
-			t.Fatal(err)
+			f.t.Fatal(err)
 		}
-	}
-	f.service.beforeScheduledPreparation = func(repositoryID string) error {
-		if repositoryID == "other" {
-			schedule, exists, err := f.store.ImportSchedule(ctx, repositoryID)
-			if err != nil || !exists || schedule.LastStartedAt == nil {
-				t.Errorf("preparation ran before the schedule was claimed: exists=%v schedule=%+v err=%v", exists, schedule, err)
-			}
-			return errScheduledPreparation
-		}
-		return nil
-	}
-	if _, err := f.service.StartDue(ctx, 1); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.service.StartDue(ctx, 1); err != nil {
-		t.Fatal(err)
-	}
-	runs, _, err := f.store.ImportRuns(ctx, "project", 5)
-	if err != nil || len(runs) == 0 || runs[0].Kind != state.ImportKindScheduled {
-		t.Fatalf("later repository was not claimed after the earlier failure: runs=%+v err=%v", runs, err)
-	}
-	other, _, err := f.store.ImportRuns(ctx, "other", 5)
-	if err != nil || len(other) != 1 || other[0].Status != state.ImportRunFailed {
-		t.Fatalf("failed claim was not recorded: runs=%+v err=%v", other, err)
 	}
 }
 
-var errScheduledPreparation = context.DeadlineExceeded
+// pump runs one scheduler pass with the given concurrency and waits for the
+// runs it started.
+func (f *fixture) pump(scheduler *Scheduler, concurrency int) {
+	scheduler.pump(context.Background(), make(chan struct{}, concurrency))
+	scheduler.wait.Wait()
+}
+
+// scheduledRuns returns the scheduled runs of repositoryID, newest first.
+func (f *fixture) scheduledRuns(repositoryID string) []state.ImportRun {
+	f.t.Helper()
+	runs, _, err := f.store.ImportRuns(context.Background(), repositoryID, 10)
+	noErr(f.t, err)
+	return slices.DeleteFunc(runs, func(run state.ImportRun) bool { return run.Kind != state.ImportKindScheduled })
+}
+
+// A scheduled run that fails has still claimed its schedule, so the next pass
+// reaches the repository behind it.
+func TestFailedScheduledRunLetsTheNextRepositoryRun(t *testing.T) {
+	f := newFixture(t)
+	f.scheduleOtherAndProject()
+	scheduler := &Scheduler{Service: f.service, Batch: 1}
+	f.transport.fail = errors.New("synthetic transfer failure")
+	f.pump(scheduler, 1)
+	f.transport.fail = nil
+	f.pump(scheduler, 1)
+	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].Status != state.ImportRunFailed {
+		t.Fatalf("the failed run was not recorded: runs=%+v", other)
+	}
+	if project := f.scheduledRuns("project"); len(project) != 1 || project[0].Status != state.ImportRunComplete {
+		t.Fatalf("the later repository did not run after the earlier failure: runs=%+v", project)
+	}
+}
+
+// A claimed schedule whose refresh is refused before it records a run, here
+// because the service is shutting down, is recorded as a failed run, so the
+// claimed interval does not pass without a record.
+func TestRefusedScheduledRefreshIsRecordedAsFailed(t *testing.T) {
+	f := newFixture(t)
+	f.scheduleOtherAndProject()
+	noErr(t, f.service.Shutdown(context.Background()))
+	f.pump(&Scheduler{Service: f.service, Batch: 1}, 1)
+	schedule, exists, err := f.store.ImportSchedule(context.Background(), "other")
+	if err != nil || !exists || schedule.LastStartedAt == nil {
+		t.Fatalf("the schedule was not claimed: exists=%v schedule=%+v err=%v", exists, schedule, err)
+	}
+	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].Status != state.ImportRunFailed || !strings.Contains(other[0].Message, "shutting down") {
+		t.Fatalf("the refused refresh was not recorded as failed: runs=%+v", other)
+	}
+}
+
+// A claimed schedule that finds every run slot taken is recorded as a failed
+// run, and Stop returns only after the run in flight finished.
+func TestSchedulerRecordsSaturationAndStopJoinsItsRun(t *testing.T) {
+	f := newFixture(t)
+	f.scheduleOtherAndProject()
+	f.transport.gate = make(chan struct{})
+	fetching := make(chan struct{})
+	f.transport.before = func() { close(fetching) }
+	scheduler := &Scheduler{Service: f.service, Interval: time.Hour, Batch: 2, Concurrency: 1}
+	noErr(t, scheduler.Start(context.Background()))
+	select {
+	case <-fetching:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first scheduled run never fetched")
+	}
+	waitUntil(t, "the saturated claim is recorded", func() bool { return len(f.scheduledRuns("project")) == 1 })
+	if project := f.scheduledRuns("project"); project[0].Status != state.ImportRunFailed || !strings.Contains(project[0].Message, "saturated") {
+		t.Fatalf("saturated claim: runs=%+v", project)
+	}
+	stop, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	noErr(t, scheduler.Stop(stop))
+	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].FinishedAt.IsZero() {
+		t.Fatalf("Stop returned before the run in flight finished: runs=%+v", other)
+	}
+}
 
 func TestUnclaimedDueQueryStaysOnTheSameRepository(t *testing.T) {
 	f := newFixture(t)
@@ -148,8 +202,8 @@ func TestUnclaimedDueQueryStaysOnTheSameRepository(t *testing.T) {
 		}
 	}
 	now := f.service.clock()
-	first, err := f.store.DueImportSchedules(ctx, now, 1)
-	second, secondErr := f.store.DueImportSchedules(ctx, now, 1)
+	first, err := f.store.DueImportSchedulesAfter(ctx, now, nil, 1)
+	second, secondErr := f.store.DueImportSchedulesAfter(ctx, now, nil, 1)
 	if err != nil || secondErr != nil || len(first) != 1 || len(second) != 1 || first[0].RepositoryID != "other" || second[0].RepositoryID != "other" {
 		t.Fatalf("unclaimed due query did not stay on the same repository: first=%+v second=%+v err=%v/%v", first, second, err, secondErr)
 	}

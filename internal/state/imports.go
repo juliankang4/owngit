@@ -1578,15 +1578,29 @@ func (s *Store) ClaimDueImportSchedule(ctx context.Context, repositoryID string,
 	return changed == 1, nil
 }
 
-// DueImportSchedules returns enabled schedules whose interval elapsed, oldest
-// start first so every repository is served in turn.
-func (s *Store) DueImportSchedules(ctx context.Context, now time.Time, limit int) ([]ImportSchedule, error) {
+// DueImportSchedulesAfter returns at most limit enabled schedules whose
+// interval elapsed (8 when nonpositive), oldest start first so every
+// repository is served in turn: ordered by COALESCE(last_started_at,0),
+// repository_id at stored second precision.
+// Use nil for the first page, then the last examined row as originally returned,
+// even if it was skipped or claimed. Keep now fixed throughout the paging pass.
+func (s *Store) DueImportSchedulesAfter(ctx context.Context, now time.Time, after *ImportSchedule, limit int) ([]ImportSchedule, error) {
 	if limit <= 0 {
 		limit = 8
 	}
-	rows, err := s.db.QueryContext(ctx, importScheduleSelect+`
-		WHERE enabled=1 AND (last_started_at IS NULL OR last_started_at + interval_seconds <= ?)
-		ORDER BY COALESCE(last_started_at,0),repository_id LIMIT ?`, now.Unix(), limit)
+	query := importScheduleSelect + `
+		WHERE enabled=1 AND (last_started_at IS NULL OR last_started_at + interval_seconds <= ?)`
+	arguments := []any{now.Unix()}
+	if after != nil {
+		var started int64
+		if after.LastStartedAt != nil {
+			started = after.LastStartedAt.Unix()
+		}
+		query += ` AND (COALESCE(last_started_at,0),repository_id) > (?,?)`
+		arguments = append(arguments, started, after.RepositoryID)
+	}
+	query += ` ORDER BY COALESCE(last_started_at,0),repository_id LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, query, append(arguments, limit)...)
 	if err != nil {
 		return nil, err
 	}

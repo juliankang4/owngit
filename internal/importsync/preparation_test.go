@@ -11,42 +11,29 @@ import (
 	"owngit/internal/state"
 )
 
-// A scheduled refresh of a repository that is still being prepared after
-// startup is skipped before the claim: no run or failure is recorded and the
-// schedule stays due.
-func TestScheduledImportSkipsAPreparingRepository(t *testing.T) {
+// The scheduler passes over a repository that is still being prepared after
+// startup: nothing is claimed, fetched or recorded for it and its schedule
+// stays due. A healthy schedule behind a full page of preparing ones still
+// runs, and the passed-over schedule runs once its repository is ready.
+func TestSchedulerPassesOverAPreparingRepository(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.manager.Create(ctx, "other", "Other"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.service.ConfigureSource(ctx, ConfigureInput{
-		RepositoryID: "other", URL: "https://example.invalid/team/other.git",
-		Mode: ModeStandalone, GitOnlyConsent: true, AllowPrivateNetwork: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.service.SetSchedule(ctx, "other", true, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	f.manager.PreparationRetry = time.Hour
-	preparation, cancel := context.WithCancel(ctx)
-	defer func() {
-		cancel()
-		if err := f.manager.StopPreparation(ctx); err != nil {
-			t.Error(err)
+	f.scheduleOtherAndProject()
+	var preparing atomic.Bool
+	preparing.Store(true)
+	startFixturePreparation(t, f, func(_ context.Context, id, _ string) error {
+		if id == "other" && preparing.Load() {
+			return errors.New("synthetic preparation failure")
 		}
-	}()
-	failing := func(context.Context, string, string) error { return errors.New("synthetic preparation failure") }
-	if err := f.manager.StartPreparation(preparation, failing, 10*time.Second, nil); err != nil {
-		t.Fatal(err)
+		return nil
+	}, 10*time.Second)
+	if !f.manager.Preparing("other") || f.manager.Preparing("project") {
+		t.Fatal("fixture preparation did not hold only the first repository")
 	}
-	if !f.manager.Preparing("other") {
-		t.Fatal("fixture repository is not preparing")
-	}
-	if _, err := f.service.StartDue(ctx, 10); err != nil {
-		t.Fatal(err)
-	}
+	// One schedule per page: the preparing repository fills the first page.
+	scheduler := &Scheduler{Service: f.service, Batch: 1}
+	fetches := f.transport.calls
+	f.pump(scheduler, 1)
 	runs, _, err := f.store.ImportRuns(ctx, "other", 5)
 	if err != nil || len(runs) != 0 {
 		t.Fatalf("a preparing repository recorded runs: %+v err=%v", runs, err)
@@ -54,6 +41,16 @@ func TestScheduledImportSkipsAPreparingRepository(t *testing.T) {
 	schedule, exists, err := f.store.ImportSchedule(ctx, "other")
 	if err != nil || !exists || schedule.LastStartedAt != nil {
 		t.Fatalf("the schedule of a preparing repository was claimed: exists=%v schedule=%+v err=%v", exists, schedule, err)
+	}
+	if runs := f.scheduledRuns("project"); len(runs) != 1 || runs[0].Status != state.ImportRunComplete || f.transport.calls != fetches+1 {
+		t.Fatalf("the healthy repository behind it did not run alone: runs=%+v fetches=%d", runs, f.transport.calls-fetches)
+	}
+
+	preparing.Store(false)
+	waitUntil(t, "the repository is ready", func() bool { return !f.manager.Preparing("other") })
+	f.pump(scheduler, 1)
+	if runs := f.scheduledRuns("other"); len(runs) != 1 || runs[0].FinishedAt.IsZero() {
+		t.Fatalf("the ready repository did not run: runs=%+v", runs)
 	}
 }
 
