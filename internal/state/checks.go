@@ -1025,14 +1025,18 @@ func (s *Store) LatestCheckAttemptForTask(ctx context.Context, repositoryID, tas
 }
 
 func (s *Store) latestCheckAttempt(ctx context.Context, query string, arguments ...any) (CheckAttempt, bool, error) {
-	attempt, err := scanCheckAttempt(s.db.QueryRowContext(ctx, query, arguments...))
+	return readCheckAttempt(ctx, s.db, query, arguments...)
+}
+
+func readCheckAttempt(ctx context.Context, queryer querier, query string, arguments ...any) (CheckAttempt, bool, error) {
+	attempt, err := scanCheckAttempt(queryer.QueryRowContext(ctx, query, arguments...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return CheckAttempt{}, false, nil
 	}
 	if err != nil {
 		return CheckAttempt{}, false, err
 	}
-	if err := loadCheckResults(ctx, s.db, &attempt); err != nil {
+	if err := loadCheckResults(ctx, queryer, &attempt); err != nil {
 		return CheckAttempt{}, false, err
 	}
 	return attempt, true, nil
@@ -1050,17 +1054,7 @@ func (s *Store) CheckAttemptByID(ctx context.Context, repositoryID, id string) (
 }
 
 func (s *Store) checkAttemptByID(ctx context.Context, id string) (CheckAttempt, bool, error) {
-	attempt, err := scanCheckAttempt(s.db.QueryRowContext(ctx, attemptSelect+` WHERE id=?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return CheckAttempt{}, false, nil
-	}
-	if err != nil {
-		return CheckAttempt{}, false, err
-	}
-	if err := loadCheckResults(ctx, s.db, &attempt); err != nil {
-		return CheckAttempt{}, false, err
-	}
-	return attempt, true, nil
+	return readCheckAttempt(ctx, s.db, attemptSelect+` WHERE id=?`, id)
 }
 
 func (s *Store) CheckAttempts(ctx context.Context, repositoryID string) ([]CheckAttempt, error) {
@@ -1149,17 +1143,7 @@ func loadCheckResults(ctx context.Context, queryer querier, attempt *CheckAttemp
 }
 
 func readAttemptTx(ctx context.Context, tx *sql.Tx, id string) (CheckAttempt, bool, error) {
-	attempt, err := scanCheckAttempt(tx.QueryRowContext(ctx, attemptSelect+` WHERE id=?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return CheckAttempt{}, false, nil
-	}
-	if err != nil {
-		return CheckAttempt{}, false, err
-	}
-	if err := loadCheckResults(ctx, tx, &attempt); err != nil {
-		return CheckAttempt{}, false, err
-	}
-	return attempt, true, nil
+	return readCheckAttempt(ctx, tx, attemptSelect+` WHERE id=?`, id)
 }
 
 func validateRegistration(attempt CheckAttempt) error {

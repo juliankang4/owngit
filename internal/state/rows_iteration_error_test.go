@@ -181,6 +181,75 @@ func TestRecoverySnapshotFailsOnIterationError(t *testing.T) {
 }
 
 // The stale-job sweep must not treat a failed read as "no stale jobs".
+func TestAttemptReadersUseTheirOwnQuerySurface(t *testing.T) {
+	for _, transactional := range []bool{false, true} {
+		t.Run(map[bool]string{false: "pool", true: "transaction"}[transactional], func(t *testing.T) {
+			store, fault := openFaultStore(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			now := time.Unix(1_800_000_000, 0)
+			noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "project", CreatedAt: now}))
+			task, err := store.CreateTask(ctx, "project", "Attempt reader", now)
+			noErr(t, err)
+			_, attempt := recordAttempt(t, store, attemptFor(task, strings.Repeat("a", 40), now, AttemptPassed))
+			var queryer querier = store.db
+			read := func(id string) (CheckAttempt, bool, error) { return store.CheckAttemptByID(ctx, "project", id) }
+			if transactional {
+				tx, err := store.db.BeginTx(ctx, nil)
+				noErr(t, err)
+				defer tx.Rollback()
+				queryer = tx
+				read = func(id string) (CheckAttempt, bool, error) { return readAttemptTx(ctx, tx, id) }
+			}
+			_, err = queryer.ExecContext(ctx, `UPDATE check_attempts SET summary='private' WHERE id=?`, attempt.ID)
+			noErr(t, err)
+			_, err = queryer.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,duration_ms,output_excerpt) VALUES(?,1,'second','true','passed',0,'private')`, attempt.ID)
+			noErr(t, err)
+			got, found, err := read(attempt.ID)
+			if err != nil || !found || got.Summary != "private" || len(got.Results) != 2 || got.Results[0].Position != 0 || got.Results[1].OutputExcerpt != "private" {
+				t.Fatalf("row/result visibility or order: found=%v err=%v", found, err)
+			}
+			if _, found, err := read("missing"); err != nil || found {
+				t.Fatalf("missing found=%v err=%v", found, err)
+			}
+			for _, table := range []string{"check_attempts", "check_results"} {
+				fault.set(func(query string) bool { return strings.Contains(query, "FROM "+table) })
+				id := attempt.ID
+				if table == "check_attempts" {
+					id = "missing"
+				}
+				if _, found, err := read(id); found || !errors.Is(err, errInjectedStep) {
+					t.Fatalf("%s failure became success/missing: found=%v err=%v", table, found, err)
+				}
+			}
+			for _, query := range []string{"SELECT 1", "SELECT * FROM absent_attempt_table"} {
+				if _, found, err := readCheckAttempt(ctx, queryer, query); found || err == nil {
+					t.Fatalf("scan/query failure became missing: found=%v err=%v", found, err)
+				}
+			}
+			if !transactional {
+				if _, found, err := store.CheckAttemptByID(ctx, "other", attempt.ID); found || err != nil {
+					t.Fatalf("repository scope: found=%v err=%v", found, err)
+				}
+				fault.set(func(query string) bool { return strings.Contains(query, "FROM check_results") })
+				if _, found, err := store.CheckAttemptByID(ctx, "other", attempt.ID); found || !errors.Is(err, errInjectedStep) {
+					t.Fatalf("repository scope hid result failure: found=%v err=%v", found, err)
+				}
+			}
+			_, err = queryer.ExecContext(ctx, `UPDATE check_results SET duration_ms='invalid' WHERE attempt_id=?`, attempt.ID)
+			noErr(t, err)
+			if _, found, err := read(attempt.ID); found || err == nil {
+				t.Fatalf("result scan failure became missing: found=%v err=%v", found, err)
+			}
+			cancelled, stop := context.WithCancel(ctx)
+			stop()
+			if _, found, err := readCheckAttempt(cancelled, queryer, attemptSelect); found || !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation became missing: found=%v err=%v", found, err)
+			}
+		})
+	}
+}
+
 func TestInterruptStalePendingCheckJobsFailsOnIterationError(t *testing.T) {
 	store, fault := openFaultStore(t)
 	ctx := context.Background()
