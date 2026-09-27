@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -109,7 +110,14 @@ func TestGiveOwnershipFollowsNoLink(t *testing.T) {
 		t.Helper()
 		noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, owner, nil, nil, nil))
 	}
-	base := t.TempDir()
+	// The check gets the final path, which Windows gives in its long form,
+	// while TEMP may use 8.3 short names such as RUNNER~1.
+	temporary, err := windows.UTF16PtrFromString(t.TempDir())
+	noErr(t, err)
+	long := make([]uint16, windows.MAX_LONG_PATH)
+	n, err := windows.GetLongPathName(temporary, &long[0], uint32(len(long)))
+	noErr(t, err)
+	base := windows.UTF16ToString(long[:n])
 	root, outside := filepath.Join(base, "state"), filepath.Join(base, "outside")
 	for _, dir := range []string{filepath.Join(root, "repositories", "a.git"), outside} {
 		noErr(t, os.MkdirAll(dir, 0o700))
@@ -138,7 +146,7 @@ func TestGiveOwnershipFollowsNoLink(t *testing.T) {
 		return nil
 	})
 	noErr(t, err)
-	if want := root + " " + administratorsSID; checked != want {
+	if want := root + " " + administratorsSID; !strings.EqualFold(checked, want) {
 		t.Errorf("checked %q, want %q", checked, want)
 	}
 	if changed != 4 || failed != 0 {
