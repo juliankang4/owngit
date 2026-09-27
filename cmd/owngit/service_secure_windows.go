@@ -36,11 +36,16 @@ func platformServiceInstallPaths() (serviceInstallPaths, error) {
 	}, nil
 }
 
-// platformPrepareServiceStorage creates administrator-controlled locations for
-// the task executable, task XML and elevated temporary files. The service
-// directory lets Users read and execute the installed binary. The temporary
-// directory is available only to Administrators and SYSTEM.
+// platformPrepareServiceStorage creates the protected service folders.
 func platformPrepareServiceStorage(paths serviceInstallPaths) error {
+	for _, path := range []struct {
+		name      string
+		directory bool
+	}{{paths.Directory, true}, {paths.Temp, true}, {paths.Executable, false}} {
+		if _, err := administratorControlledDescriptor(path.name, path.directory); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("refuse an unsafe OwnGit service path: %w", err)
+		}
+	}
 	if err := os.MkdirAll(paths.Directory, 0o755); err != nil {
 		return fmt.Errorf("create the OwnGit service folder: %w", err)
 	}
@@ -56,15 +61,14 @@ func platformPrepareServiceStorage(paths serviceInstallPaths) error {
 	return nil
 }
 
-// platformReplaceServiceCopy replaces the task executable with the running
-// executable. The UAC caller and this copy both hold source without write or
-// delete sharing, so its path stays stable. The temporary file is created in
-// the administrator-only directory and moved into place only after it is
-// complete and protected.
+// platformReplaceServiceCopy atomically replaces the task executable from a
+// locked source through the administrator-only temporary directory.
 func platformReplaceServiceCopy(source string, paths serviceInstallPaths) error {
 	if strings.EqualFold(filepath.Clean(source), filepath.Clean(paths.Executable)) {
-		// A copy the owner placed there becomes the protected copy.
-		return setProtectedServiceACL(paths.Executable, false, true)
+		if err := verifyProtectedServiceACL(paths.Directory, true, true); err != nil {
+			return err
+		}
+		return verifyProtectedServiceACL(paths.Executable, false, true)
 	}
 	input, err := openServiceSource(source)
 	if err != nil {
@@ -160,22 +164,19 @@ func setProtectedServiceACL(path string, directory, usersRead bool) error {
 }
 
 func verifyProtectedServiceACL(path string, directory, usersRead bool) error {
+	actual, err := administratorControlledDescriptor(path, directory)
+	if err != nil {
+		return err
+	}
 	expected, err := protectedServiceDescriptor(directory, usersRead)
 	if err != nil {
 		return err
 	}
-	actual, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		return err
-	}
 	actualText := "<none>"
-	normalized := actualText
 	if actual != nil {
 		actualText = actual.String()
-		normalized = strings.Replace(actualText, "D:PAI", "D:P", 1)
 	}
-	if normalized != expected.String() {
+	if strings.Replace(actualText, "D:PAI", "D:P", 1) != expected.String() {
 		return fmt.Errorf("owner or access list is %s, want %s", actualText, expected.String())
 	}
 	return nil
@@ -213,17 +214,17 @@ $package[0].InstallLocation`
 		name      string
 		directory bool
 	}{{windowsApps, true}, {packageDir, true}, {winget, false}} {
-		if err := verifyTrustedInstallerPath(path.name, path.directory); err != nil {
+		if _, err := administratorControlledDescriptor(path.name, path.directory); err != nil {
 			return "", err
 		}
 	}
 	return winget, nil
 }
 
-func verifyTrustedInstallerPath(path string, directory bool) error {
+func administratorControlledDescriptor(path string, directory bool) (*windows.SECURITY_DESCRIPTOR, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	flags := uint32(windows.FILE_FLAG_OPEN_REPARSE_POINT)
 	if directory {
@@ -233,28 +234,28 @@ func verifyTrustedInstallerPath(path string, directory bool) error {
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
 		windows.OPEN_EXISTING, flags, 0)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer windows.CloseHandle(handle)
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
-		return err
+		return nil, err
 	}
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || (info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0) != directory {
-		return errors.New("unexpected App Installer file type")
+		return nil, errors.New("unexpected file type")
 	}
 	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	owner, _, err := descriptor.Owner()
 	if err != nil || owner == nil || owner.String() != trustedInstallerSID && owner.String() != administratorsSID {
-		return errors.New("App Installer has an unexpected owner")
+		return nil, errors.New("path has an unexpected owner")
 	}
 	dacl, _, err := descriptor.DACL()
 	if err != nil || dacl == nil {
-		return errors.New("App Installer has no inspectable access list")
+		return nil, errors.New("path has no inspectable access list")
 	}
 	trustedWriters := map[string]bool{trustedInstallerSID: true, administratorsSID: true, systemSID: true}
 	const writeAccess = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA |
@@ -263,21 +264,21 @@ func verifyTrustedInstallerPath(path string, directory bool) error {
 	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, index, &ace); err != nil || ace == nil {
-			return errors.New("App Installer access list cannot be inspected")
+			return nil, errors.New("path access list cannot be inspected")
 		}
 		if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE {
 			continue
 		}
 		const accessAllowedCallbackACEType = 0x09
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE && ace.Header.AceType != accessAllowedCallbackACEType {
-			return errors.New("App Installer has an unsupported access entry")
+			return nil, errors.New("path has an unsupported access entry")
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String()
 		if ace.Mask&writeAccess != 0 && !trustedWriters[sid] {
-			return fmt.Errorf("App Installer grants write access to %s", sid)
+			return nil, fmt.Errorf("path grants write access to %s", sid)
 		}
 	}
-	return nil
+	return descriptor, nil
 }
 
 // platformServiceEnvironment returns the complete environment of a process

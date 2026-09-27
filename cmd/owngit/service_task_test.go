@@ -40,6 +40,7 @@ type fakeWindows struct {
 	git          bool // whether Git is on the PATH the task gets
 	winget       bool
 	wingetExit   uint32 // the exit code of winget install
+	copyErr      error
 	environments [][]string
 	commandEnv   map[string]string
 	// owners maps folders to owner SIDs (default: the test account);
@@ -194,7 +195,7 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 	}
 	replaceServiceCopy = func(source string, paths serviceInstallPaths) error {
 		fake.calls = append(fake.calls, "copy "+source+" to "+paths.Executable)
-		return nil
+		return fake.copyErr
 	}
 	trustedWinget = func() (string, error) {
 		if !fake.winget {
@@ -319,6 +320,34 @@ func TestTaskInstallAsksOnceForAdministratorApproval(t *testing.T) {
 	if len(fake.stopAsked) != 0 || slicesContainPrefix(fake.calls, "schtasks") || fake.state != "4\n267009" {
 		t.Errorf("the server was touched before approval: stop asked %q, calls %q, state %q", fake.stopAsked, fake.calls, fake.state)
 	}
+}
+
+func TestTaskInstallFromServicePathNeedsProtectedCopy(t *testing.T) {
+	const line = "Run \"owngit service install\" from a copy outside C:\\Program Files\\OwnGit.\n"
+	t.Run("unprotected copy", func(t *testing.T) {
+		fake := newFakeWindows(t)
+		fake.copyErr = errors.New("the service copy is not protected")
+		host, out := testTaskHost(service.Environment{Administrator: true})
+		host.executable, host.serviceInstall.Directory = testServiceExecutable, `C:\Program Files\OwnGit`
+		err := host.install("", nil)
+		var exit *checkExit
+		if !errors.As(err, &exit) || exit.code != 1 || out.String() != line {
+			t.Fatalf("refusal error=%v, output=%q", err, out.String())
+		}
+		if fake.definition != "" || len(fake.elevated) != 0 || slicesContainPrefix(fake.calls, "schtasks") {
+			t.Fatalf("the refusal changed the task: definition=%q elevated=%q calls=%q", fake.definition, fake.elevated, fake.calls)
+		}
+	})
+	t.Run("protected reinstall", func(t *testing.T) {
+		fake := newFakeWindows(t)
+		fake.existing(t, service.ModeBootTask, testSID, testStateDir)
+		host, out := testTaskHost(service.Environment{Administrator: true})
+		host.executable, host.serviceInstall.Directory = testServiceExecutable, `C:\Program Files\OwnGit`
+		_ = host.install("", nil)
+		if len(fake.elevated) != 1 || !strings.Contains(out.String(), "Windows asks once for administrator approval") {
+			t.Fatalf("elevated=%q, output=%q", fake.elevated, out.String())
+		}
+	})
 }
 
 func slicesContainPrefix(values []string, prefix string) bool {

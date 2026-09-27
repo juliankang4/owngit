@@ -21,23 +21,8 @@ import (
 	"owngit/internal/version"
 )
 
-// The Windows backend of "owngit service": a Task Scheduler task that runs
-// "owngit serve" and, for an administrator account, a Windows Firewall rule
-// for owngit.exe on private networks.
-//
-// An administrator account gets a task that starts at boot without a
-// sign-in (S4U, no stored password). Registering it, the firewall rule and
-// installing a missing Git need administrator rights, so this command asks
-// Windows once (UAC) to run "owngit service elevated-install", which does
-// exactly those steps for its own executable and touches no state. A
-// standard account may neither use S4U nor a boot trigger, so it gets a
-// task that starts when it signs in, registered without any prompt.
-//
-// The server never runs with administrator rights: an S4U task of an
-// administrator gets the full token, so "serve --service" starts the real
-// server with a restricted copy of it (see serveWithoutAdminRights).
-// Likewise, an elevated "owngit service" leaves everything that reads or
-// writes the state directory to a copy of itself without those rights.
+// Administrators get a boot S4U task with a restricted server; standard accounts
+// get a sign-in task, and elevated state commands rerun without administrator rights.
 
 type serviceInstallPaths struct {
 	Directory  string
@@ -132,7 +117,11 @@ func newTaskHost() (*taskHost, error) {
 	if err != nil {
 		return nil, err
 	}
-	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+	install, err := servicePaths()
+	if err != nil {
+		return nil, err
+	}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil && !strings.EqualFold(filepath.Clean(executable), filepath.Clean(install.Executable)) {
 		executable = resolved
 	}
 	sid, err := currentAccountSID()
@@ -140,10 +129,6 @@ func newTaskHost() (*taskHost, error) {
 		return nil, fmt.Errorf("find the current account: %w", err)
 	}
 	system, err := windowsSystemDirectory()
-	if err != nil {
-		return nil, err
-	}
-	install, err := servicePaths()
 	if err != nil {
 		return nil, err
 	}
@@ -369,6 +354,10 @@ func (host *taskHost) plan(mode service.Mode, stateDir string, headless bool) se
 // install installs or updates the service. headlessFlag is the --headless
 // option, or nil without it.
 func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
+	if host.env.Administrator && strings.EqualFold(filepath.Clean(host.executable), filepath.Clean(host.serviceInstall.Executable)) && replaceServiceCopy(host.executable, host.serviceInstall) != nil {
+		host.printf("Run \"owngit service install\" from a copy outside %s.\n", host.serviceInstall.Directory)
+		return &checkExit{code: 1, err: errors.New("the service copy is not protected")}
+	}
 	existing, found, err := host.installed()
 	if err != nil {
 		return err

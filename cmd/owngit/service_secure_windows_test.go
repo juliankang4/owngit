@@ -26,17 +26,48 @@ func TestProtectedServiceCopyAndFolders(t *testing.T) {
 	noErr(t, platformPrepareServiceStorage(paths))
 	source, err := os.Executable()
 	noErr(t, err)
-	// A copy the owner placed there is protected where it is.
 	content, err := os.ReadFile(source)
 	noErr(t, err)
 	noErr(t, os.WriteFile(paths.Executable, content, 0o755))
-	noErr(t, platformReplaceServiceCopy(paths.Executable, paths))
-	noErr(t, verifyProtectedServiceACL(paths.Executable, false, true))
+	if err := platformReplaceServiceCopy(paths.Executable, paths); err == nil {
+		t.Fatal("an unprotected service copy was protected in place")
+	}
 	noErr(t, platformReplaceServiceCopy(source, paths))
+	// Reinstalling from the protected copy verifies it without replacing the
+	// running executable.
+	noErr(t, platformReplaceServiceCopy(paths.Executable, paths))
 	noErr(t, verifyProtectedServiceACL(paths.Directory, true, true))
 	noErr(t, verifyProtectedServiceACL(paths.Temp, true, false))
 	noErr(t, verifyProtectedServiceACL(paths.Executable, false, true))
 	assertMediumCannotReplace(t, paths.Executable)
+}
+
+func TestServiceStorageRefusesUnsafeExistingPaths(t *testing.T) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("checking the elevated preparation needs administrator rights")
+	}
+	check := func(t *testing.T, directory string) {
+		t.Helper()
+		paths := serviceInstallPaths{Directory: directory, Executable: filepath.Join(directory, "owngit.exe"), Temp: filepath.Join(directory, "temp")}
+		if err := platformPrepareServiceStorage(paths); err == nil {
+			t.Fatal("an unsafe existing service path was protected in place")
+		}
+	}
+	t.Run("user-writable folder", func(t *testing.T) {
+		directory := filepath.Join(t.TempDir(), "OwnGit")
+		noErr(t, os.Mkdir(directory, 0o700))
+		check(t, directory)
+	})
+	t.Run("folder junction", func(t *testing.T) {
+		root := t.TempDir()
+		target := filepath.Join(root, "target")
+		junction := filepath.Join(root, "OwnGit")
+		noErr(t, os.Mkdir(target, 0o700))
+		if output, err := exec.Command("cmd.exe", "/d", "/c", "mklink", "/J", junction, target).CombinedOutput(); err != nil {
+			t.Fatalf("create test junction: %v: %s", err, output)
+		}
+		check(t, junction)
+	})
 }
 
 func TestInstalledServiceCopyRejectsMediumWrite(t *testing.T) {
@@ -96,9 +127,9 @@ func TestServiceSourceLockPreventsReplacement(t *testing.T) {
 	noErr(t, os.WriteFile(path, []byte("replacement"), 0o600))
 }
 
-func TestTrustedWingetRejectsAnOrdinaryFolder(t *testing.T) {
-	if err := verifyTrustedInstallerPath(t.TempDir(), true); err == nil {
-		t.Error("an ordinary user-owned folder passed the App Installer trust check")
+func TestAdministratorControlledPathRejectsAnOrdinaryFolder(t *testing.T) {
+	if _, err := administratorControlledDescriptor(t.TempDir(), true); err == nil {
+		t.Error("an ordinary user-owned folder passed the administrator-controlled path check")
 	}
 }
 
