@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
@@ -384,5 +385,42 @@ func TestTailscaleSharingShowsAnEarlierNameOnANamedPort(t *testing.T) {
 	noErr(t, err)
 	if report.On || !slices.ContainsFunc(report.Stale, func(use tailscale.Use) bool { return use.Address == "https://"+name+":4443/" }) {
 		t.Fatalf("report after off=%+v", report)
+	}
+}
+
+// When another program changes the chosen HTTPS port after turning on or
+// off checked it, and before OwnGit changes it, OwnGit changes nothing and
+// keeps what the other program put there.
+func TestTailscaleChangesStopWhenTheirPortChangesMeanwhile(t *testing.T) {
+	ctx := context.Background()
+	other := otherService(tailscale.ServeConfig{AllowFunnel: map[string]bool{tailscaletest.Name + ":443": true}}, tailscaletest.Name, 443)
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	app.Tailscale.BeforeServe = func(string) { fake.Update(func(s *tailscaletest.State) { s.Serve = other }) }
+	_, err := app.Tailscale.On(ctx, nil, 0)
+	var refusal *TailscaleError
+	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemServeChanged || len(fake.Writes()) != 0 || !reflect.DeepEqual(fake.State().Serve, other) {
+		t.Fatalf("on: err=%v writes=%q serve=%+v", err, fake.Writes(), fake.State().Serve)
+	}
+	if _, _, _, record := savedSharing(t, app.Store); record != nil {
+		t.Fatalf("a stopped turning on kept its record: %+v", record)
+	}
+
+	app, fake = tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	_, err = app.Tailscale.On(ctx, nil, 0)
+	noErr(t, err)
+	// Each read waits, so the change lands while turning off reads again.
+	fake.Update(func(s *tailscaletest.State) { s.ReadDelay = 500 })
+	checked := len(fake.Calls()) + 2
+	finished := make(chan error, 1)
+	go func() { _, err := app.Tailscale.Off(ctx); finished <- err }()
+	for deadline := time.Now().Add(time.Minute); len(fake.Calls()) < checked && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	fake.Update(func(s *tailscaletest.State) { s.Serve, s.ReadDelay = other, 0 })
+	if err := <-finished; !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemServeChanged || len(fake.Writes()) != 1 || !reflect.DeepEqual(fake.State().Serve, other) {
+		t.Fatalf("off: err=%v writes=%q serve=%+v", err, fake.Writes(), fake.State().Serve)
+	}
+	if _, on, _ := app.Store.TailscaleServe(ctx); !on {
+		t.Fatal("a stopped turning off took back the settings")
 	}
 }

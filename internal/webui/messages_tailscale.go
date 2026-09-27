@@ -195,6 +195,10 @@ var tailscaleCatalog = map[MessageCode]message{
 		en: "OwnGit already has an address on another HTTPS port of this computer, so OwnGit changed nothing. To move it, run \"owngit tailscale off\", then \"owngit tailscale on --https-port PORT\". The address now:",
 		ko: "이 컴퓨터의 다른 HTTPS 포트에 OwnGit의 주소가 이미 있어 OwnGit은 아무것도 바꾸지 않았습니다. 포트를 옮기려면 \"owngit tailscale off\"를 실행한 뒤 \"owngit tailscale on --https-port 포트\"를 실행하세요. 지금 주소:",
 	},
+	"tailscale.problem.serve_changed": {
+		en: "Something else changed what Tailscale serves on this HTTPS port while OwnGit was about to change it, so OwnGit changed nothing. Try again.",
+		ko: "OwnGit이 바꾸려던 HTTPS 포트의 Tailscale 설정을 그사이 다른 것이 바꿔 OwnGit은 아무것도 바꾸지 않았습니다. 다시 시도하세요.",
+	},
 	"tailscale.problem.read_back": {
 		en: "Tailscale accepted the change but did not keep it, so OwnGit does not use it.",
 		ko: "Tailscale이 변경을 받아들였지만 유지하지 않아 OwnGit은 이 주소를 쓰지 않습니다.",
