@@ -1,3 +1,5 @@
+//go:build !windows
+
 package main
 
 import (
@@ -352,7 +354,7 @@ func TestLaunchAgentInstallWritesTheAgent(t *testing.T) {
 // installed again from the desktop, and a desktop agent says so explicitly.
 func TestLaunchAgentReinstallKeepsHeadless(t *testing.T) {
 	fake := recordLaunchctl(t)
-	host, _ := testLaunchAgentHost(t, macDesktop(), "")
+	host, out := testLaunchAgentHost(t, macDesktop(), "")
 	stateDir := filepath.Join(t.TempDir(), "state")
 	earlier := host.agentPlan(stateDir, nil, service.Installed{}, false)
 	if earlier.Headless {
@@ -397,6 +399,12 @@ func TestLaunchAgentReinstallKeepsHeadless(t *testing.T) {
 		// The failed load put the earlier agent back; keep the new one as
 		// the installed agent for the next step.
 		noErr(t, os.WriteFile(desktop.agentPath, []byte(fake.bootstrapped), 0o644))
+	}
+	fake.loaded = []string{"gui/501/" + service.LaunchAgentLabel}
+	out.Reset()
+	noErr(t, host.status())
+	if strings.Contains(out.String(), "Setup is not complete") {
+		t.Fatalf("unreadable state was called incomplete: %q", out.String())
 	}
 }
 

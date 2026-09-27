@@ -371,11 +371,11 @@ func (host *launchAgentHost) status() error {
 	}
 	host.printf("  Mode:    %s, started when %s logs in on this Mac\n", installed.Mode.Describe(), host.account.Username)
 	host.printServiceFacts(installed.Mode, installed.UnitPath, installed.StateDir, address)
-	_, complete := setupStatus(installed.StateDir)
+	read, complete := setupStatus(installed.StateDir)
 	switch {
 	case state.Domain == "":
 		host.printf("Run \"owngit service start\" to start it.\n")
-	case !complete:
+	case read && !complete:
 		host.printf("Setup is not complete. Run \"owngit setup-link\" in a terminal for the one-time setup link.\n")
 	}
 	return nil

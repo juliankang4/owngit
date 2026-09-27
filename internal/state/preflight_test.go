@@ -74,6 +74,7 @@ func useHooks(t *testing.T) {
 		preflightHooks.temporaryRoot = ""
 		preflightHooks.privateWriter = nil
 		preflightHooks.at = nil
+		preflightHooks.afterRelease = nil
 	})
 }
 
@@ -634,6 +635,46 @@ func TestAcceptanceProtectsInspectedHandles(t *testing.T) {
 	assertProtectionFingerprints(t, map[string]string{
 		moved: "mode=0700", filepath.Join(moved, databaseName): "mode=0600",
 	})
+}
+
+func TestOpenRefusesStateInExchangeableParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix parent permissions")
+	}
+	ctx := context.Background()
+	parent := filepath.Join(t.TempDir(), "shared")
+	checked := filepath.Join(parent, "state")
+	replacement := filepath.Join(parent, "replacement")
+	noErr(t, os.Mkdir(parent, 0o755))
+	for directory, marker := range map[string]string{checked: "checked", replacement: "replacement"} {
+		createNumberedSchemaDatabase(t, directory, currentSchemaVersion())
+		db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
+		_, err := db.Exec(`INSERT INTO metadata(key,value) VALUES('exchange_marker',?)`, marker)
+		noErr(t, err)
+		noErr(t, db.Close())
+	}
+	store, err := Open(ctx, checked)
+	noErr(t, err)
+	values, err := store.metadataValues(ctx, "exchange_marker")
+	noErr(t, err)
+	noErr(t, store.Close())
+	if values["exchange_marker"] != "checked" {
+		t.Fatalf("no-exchange control opened marker %q", values["exchange_marker"])
+	}
+	noErr(t, os.Chmod(parent, 0o777))
+	useHooks(t)
+	preflightHooks.afterRelease = func(string) {
+		noErr(t, os.Rename(checked, checked+".inspected"))
+		noErr(t, os.Rename(replacement, checked))
+	}
+	store, err = Open(ctx, checked)
+	if store != nil {
+		_ = store.Close()
+		t.Fatal("opened the replacement state after exchange")
+	}
+	if err == nil || !strings.Contains(err.Error(), "another account can change "+parent) {
+		t.Fatalf("exchangeable state parent: %v", err)
+	}
 }
 
 func TestBaselineReplacedBeforeAcceptanceIsNotMigrated(t *testing.T) {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -25,11 +24,8 @@ func CreatePrivateFile(path string) (*os.File, error) {
 	return file, nil
 }
 
-// ProtectPrivatePath opens a non-link entry in a protected parent, then protects that handle.
+// ProtectPrivatePath opens a final non-link entry, then protects that handle.
 func ProtectPrivatePath(path string, directory bool) error {
-	if err := requireProtectedPath(filepath.Dir(path), false); err != nil {
-		return fmt.Errorf("protect parent of %s: %w", path, err)
-	}
 	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return &os.PathError{Op: "open private path without following a link", Path: path, Err: err}

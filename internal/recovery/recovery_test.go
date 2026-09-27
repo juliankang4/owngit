@@ -152,6 +152,33 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	assertRef(t, restoredRemote, "refs/owngit/provenance/heads/main/"+oid, oid)
 }
 
+func TestRecoveryTargetParentRules(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix parent permissions")
+	}
+	ctx := context.Background()
+	root := t.TempDir()
+	store, manager := newBackupStore(t, root)
+	sharedParent := filepath.Join(root, "shared")
+	noErr(t, os.Mkdir(sharedParent, 0o755))
+	noErr(t, os.Chmod(sharedParent, 0o777))
+	backup := filepath.Join(sharedParent, "backup")
+	noErr(t, Create(ctx, store, manager, backup))
+	noErr(t, Restore(ctx, backup, filepath.Join(root, "restored-state"), filepath.Join(sharedParent, "repositories"), ""))
+
+	stateParent := filepath.Join(root, "shared-state")
+	noErr(t, os.Mkdir(stateParent, 0o755))
+	noErr(t, os.Chmod(stateParent, 0o777))
+	stateTarget := filepath.Join(stateParent, "state")
+	repositoryTarget := filepath.Join(root, "unused-repositories")
+	err := Restore(ctx, backup, stateTarget, repositoryTarget, "")
+	if err == nil || !strings.Contains(err.Error(), "state destination parent is not protected: another account can change "+stateParent) {
+		t.Fatalf("exchangeable state destination: %v", err)
+	}
+	assertNoRecoveryOutputOrStages(t, stateTarget, ".owngit-restore-")
+	assertNoRecoveryOutputOrStages(t, repositoryTarget, ".owngit-restore-")
+}
+
 func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

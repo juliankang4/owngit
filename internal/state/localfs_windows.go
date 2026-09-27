@@ -14,9 +14,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+var reOpenFile = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReOpenFile")
+
 func RequireProtectedPath(string) error {
 	return errors.New("protected paths are unavailable on Windows")
 }
+
+func RequireProtectedParent(string) error { return nil }
 
 func ensureLocalStateFilesystem(path string) error {
 	absolute, err := filepath.Abs(path)
@@ -207,8 +211,27 @@ func ProtectPrivatePath(path string, directory bool) error {
 }
 
 // ProtectPrivateHandle applies and verifies the owner-only ACL through the held
-// handle, so a pathname replacement cannot change what was protected.
+// identity after reopening it with the Windows security rights that os.File omits.
 func ProtectPrivateHandle(file *os.File, directory bool) error {
+	owned, err := OwnedByCurrentUser(file)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return errors.New("private file must be owned by the current Windows user or its token owner")
+	}
+	result, _, callErr := reOpenFile.Call(file.Fd(),
+		uintptr(windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER),
+		uintptr(windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE),
+		uintptr(windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS))
+	handle := windows.Handle(result)
+	if handle == windows.InvalidHandle {
+		if errors.Is(callErr, windows.ERROR_SUCCESS) {
+			callErr = errors.New("ReOpenFile returned an invalid handle")
+		}
+		return fmt.Errorf("reopen private handle with security rights: %w", callErr)
+	}
+	defer windows.CloseHandle(handle)
 	user, _, err := processIdentity()
 	if err != nil {
 		return err
@@ -217,7 +240,6 @@ func ProtectPrivateHandle(file *os.File, directory bool) error {
 	if err != nil {
 		return err
 	}
-	handle := windows.Handle(file.Fd())
 	if err := windows.SetSecurityInfo(handle, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		user, nil, acl, nil); err != nil {

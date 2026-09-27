@@ -130,6 +130,11 @@ func othersCanChange(path string, info os.FileInfo, rootGroups, allowSticky bool
 // writable sticky directory is accepted only as an ancestor, not as path.
 func RequireProtectedPath(path string) error { return requireProtectedPath(path, true) }
 
+// RequireProtectedParent applies the ancestor rule to the parent of path.
+func RequireProtectedParent(path string) error {
+	return requireProtectedPath(filepath.Dir(path), false)
+}
+
 func requireProtectedPath(path string, strictFinal bool) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

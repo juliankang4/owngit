@@ -64,6 +64,7 @@ var preflightHooks struct {
 	temporaryRoot string
 	privateWriter func(file *os.File) io.Writer
 	at            func(point string, in *inspection, privateDir string) error
+	afterRelease  func(directory string)
 }
 
 // Named inspection points passed to preflightHooks.at.
