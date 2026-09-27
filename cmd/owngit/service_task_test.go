@@ -255,8 +255,9 @@ func testTaskHost(environment service.Environment) (*taskHost, *bytes.Buffer) {
 	var out bytes.Buffer
 	return &taskHost{
 		env: environment, executable: testUserExecutable,
+		// A folder that the tests may create and an uninstall removes.
 		serviceInstall: serviceInstallPaths{
-			Directory: `C:\Program Files\OwnGit`, Executable: testServiceExecutable,
+			Directory: filepath.Join(os.TempDir(), "owngit-test-service"), Executable: testServiceExecutable,
 			Temp: os.TempDir(),
 		},
 		sid: testSID, system: fakeSystem, out: &out,
@@ -518,9 +519,11 @@ func TestTaskElevatedUninstallKeepsTheData(t *testing.T) {
 	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
 	fake.firewall = testServiceExecutable + "\n2\nTrue\n1\n1\n"
 	host, _ := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	host.serviceInstall.Directory = filepath.Join(t.TempDir(), "OwnGit")
+	noErr(t, os.MkdirAll(filepath.Join(host.serviceInstall.Directory, "temp"), 0o700))
 	noErr(t, host.elevatedUninstall())
-	if fake.definition != "" || fake.firewall != "" {
-		t.Errorf("task %q or rule %q stayed", fake.definition, fake.firewall)
+	if _, err := os.Stat(host.serviceInstall.Directory); fake.definition != "" || fake.firewall != "" || !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("task %q, rule %q or service copy (%v) stayed", fake.definition, fake.firewall, err)
 	}
 	for _, call := range fake.calls {
 		if strings.Contains(call, testStateDir) {
@@ -751,11 +754,21 @@ func TestTaskElevatedUninstallNamesTheRepositories(t *testing.T) {
 	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
 	fake.repositories = `D:\Repositories`
 	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	host.serviceInstall.Directory = t.TempDir()
 	noErr(t, host.uninstall())
 	if fake.definition != "" {
 		t.Error("the task stayed")
 	}
-	if !strings.Contains(out.String(), `The state stays in `+testStateDir+` and the repositories in D:\Repositories.`) {
+	if !strings.Contains(out.String(), `The state stays in `+testStateDir+` and the repositories in D:\Repositories.`) || strings.Contains(out.String(), "service copy") {
+		t.Errorf("output:\n%s", out.String())
+	}
+	// Without the step with administrator rights, the copy stays, and the
+	// command says where.
+	fake.existing(t, service.ModeLogonTask, testSID, testStateDir)
+	host, out = testTaskHost(service.Environment{})
+	host.serviceInstall.Directory = t.TempDir()
+	noErr(t, host.uninstall())
+	if !strings.Contains(out.String(), "The service copy in "+host.serviceInstall.Directory+" stays; an administrator can delete that folder.\n") {
 		t.Errorf("output:\n%s", out.String())
 	}
 }

@@ -875,7 +875,7 @@ func (host *taskHost) uninstall() error {
 	case installed.Mode == service.ModeBootTask || ruleFound && host.env.Administrator:
 		// The server stops in the step with administrator rights, so
 		// declining the prompt changes nothing.
-		if err := host.asAdministrator([]string{"service", "elevated-uninstall"}, "remove the OwnGit task and its Windows Firewall rule"); err != nil {
+		if err := host.asAdministrator([]string{"service", "elevated-uninstall"}, "remove the OwnGit task, its Windows Firewall rule and "+host.serviceInstall.Directory); err != nil {
 			return err
 		}
 		removed += ", with its Windows Firewall rule"
@@ -898,12 +898,17 @@ func (host *taskHost) uninstall() error {
 	if repositories != "" {
 		host.printf(" and the repositories in %s", repositories)
 	}
-	host.printf(".\nRun \"owngit service install\" to use it again.\n")
+	host.printf(".\n")
+	if _, err := os.Stat(host.serviceInstall.Directory); err == nil {
+		host.printf("The service copy in %s stays; an administrator can delete that folder.\n", host.serviceInstall.Directory)
+	}
+	host.printf("Run \"owngit service install\" to use it again.\n")
 	return nil
 }
 
-// elevatedUninstall removes the task and OwnGit's firewall rule. It keeps
-// the state directory and the repositories.
+// elevatedUninstall removes the task, OwnGit's firewall rule and the
+// protected service copy. It keeps the state directory and the
+// repositories.
 func (host *taskHost) elevatedUninstall() error {
 	if err := host.prepareAdministrator(); err != nil {
 		return err
@@ -918,7 +923,18 @@ func (host *taskHost) elevatedUninstall() error {
 			return err
 		}
 	}
-	return host.removeFirewallRule()
+	if err := host.removeFirewallRule(); err != nil {
+		return err
+	}
+	// A server that was just ended may hold the copy for a moment.
+	for attempt := 0; attempt < 10; attempt++ {
+		if err = os.RemoveAll(host.serviceInstall.Directory); err == nil {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	host.printf("The service copy could not be removed: %v\n", err)
+	return nil
 }
 
 func (host *taskHost) status() error {
