@@ -4,8 +4,6 @@ package checkrunner
 
 import (
 	"context"
-	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -412,6 +410,9 @@ func (source *remoteSource) ListTree(ctx context.Context, metadataLimit int64) (
 	return entries, nil
 }
 
+// ReadBlob checks that the server sent the requested manifest blob at its
+// listed size. checksource.Materialize hashes the bytes against oid before it
+// writes them, so the content itself is verified there.
 func (source *remoteSource) ReadBlob(ctx context.Context, oid string, expectedSize int64) ([]byte, error) {
 	if source.manifest == nil || expectedSize < 0 || expectedSize > source.manifest.Limits.MaxFileBytes {
 		return nil, errors.New("source blob was requested without a valid manifest bound")
@@ -427,25 +428,6 @@ func (source *remoteSource) ReadBlob(ctx context.Context, oid string, expectedSi
 	}
 	if headers.Get("X-OwnGit-Blob-OID") != oid || int64(len(content)) != expectedSize {
 		return nil, errors.New("source blob identity or size does not match the manifest")
-	}
-	header := []byte(fmt.Sprintf("blob %d%c", len(content), 0))
-	var actual string
-	switch source.manifest.ObjectFormat {
-	case "sha1":
-		hash := sha1.New()
-		_, _ = hash.Write(header)
-		_, _ = hash.Write(content)
-		actual = fmt.Sprintf("%x", hash.Sum(nil))
-	case "sha256":
-		hash := sha256.New()
-		_, _ = hash.Write(header)
-		_, _ = hash.Write(content)
-		actual = fmt.Sprintf("%x", hash.Sum(nil))
-	default:
-		return nil, errors.New("source manifest has an unsupported object format")
-	}
-	if actual != oid {
-		return nil, errors.New("source blob hash does not match its Git object ID")
 	}
 	return content, nil
 }

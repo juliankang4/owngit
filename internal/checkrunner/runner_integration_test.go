@@ -104,6 +104,11 @@ func TestExternalRunnerCompletesNonASCIIOutputAcrossExcerptBound(t *testing.T) {
 
 func newRunnerIntegrationFixture(t *testing.T, command string) *runnerIntegrationFixture {
 	t.Helper()
+	return newRunnerIntegrationFixtureWithFormat(t, command, repository.ObjectFormatSHA1)
+}
+
+func newRunnerIntegrationFixtureWithFormat(t *testing.T, command, objectFormat string) *runnerIntegrationFixture {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("Git is unavailable")
 	}
@@ -122,12 +127,12 @@ func newRunnerIntegrationFixture(t *testing.T, command string) *runnerIntegratio
 	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", "test-admin-hash", true))
 	manager := &repository.Manager{Store: store, Git: git, Locks: gitexec.NewLocks(), Root: repositoryRoot}
-	stored, err := manager.Create(ctx, "runner-test", "")
+	stored, err := manager.CreateWithOptions(ctx, "runner-test", "", repository.CreateOptions{ObjectFormat: objectFormat})
 	noErr(t, err)
 	repositoryPath, err := manager.Path(stored.ID)
 	noErr(t, err)
 	work := filepath.Join(root, "source")
-	runGit(t, "init", "--initial-branch=main", work)
+	runGit(t, "init", "--initial-branch=main", "--object-format="+objectFormat, work)
 	runGit(t, "-C", work, "config", "user.name", "OwnGit Test")
 	runGit(t, "-C", work, "config", "user.email", "test@example.invalid")
 	noErr(t, os.WriteFile(filepath.Join(work, "source.txt"), []byte("exact source\n"), 0o600))
