@@ -126,17 +126,18 @@ func TestWithheldBodyIsAnsweredAtThePageDeadline(t *testing.T) {
 }
 
 // An authorized caller gets the operation deadline only for the work: its
-// import body is still read under the page deadline, which also ends the
-// time to answer, and an archive request whose body is left unread closes
-// the connection instead of reading it.
+// import body is still read under the page deadline, and an archive request
+// whose body is left unread closes the connection instead of reading it.
 func TestAuthorizedOperationReadsItsBodyUnderThePageDeadline(t *testing.T) {
 	// The page deadline leaves room for password verification.
 	_, address := longOperationServer(t, 3*time.Second)
 	t.Run("import API", func(t *testing.T) {
 		t.Parallel()
 		response, closed := withheldBody(t, address, http.MethodPost, "/api/v1/repositories/fresh/import/run", basicCredential("admin", "admin-password"))
-		if response != nil || !closed {
-			t.Fatalf("response=%v closed=%v, want the connection closed without a response", responseStatus(response), closed)
+		// The time to answer ends with the page deadline too, so the refusal
+		// is sent only when it is written before the runtime notices that.
+		if (response != nil && response.StatusCode != http.StatusBadRequest) || !closed {
+			t.Fatalf("response=%v closed=%v, want the connection closed, after 400 or without a response", responseStatus(response), closed)
 		}
 	})
 	t.Run("archive API", func(t *testing.T) {
