@@ -33,9 +33,6 @@ func TestProtectedServiceCopyAndFolders(t *testing.T) {
 		t.Fatal("an unprotected service copy was protected in place")
 	}
 	noErr(t, platformReplaceServiceCopy(source, paths))
-	// Reinstalling from the protected copy verifies it without replacing the
-	// running executable.
-	noErr(t, platformReplaceServiceCopy(paths.Executable, paths))
 	noErr(t, verifyProtectedServiceACL(paths.Directory, true, true))
 	noErr(t, verifyProtectedServiceACL(paths.Temp, true, false))
 	noErr(t, verifyProtectedServiceACL(paths.Executable, false, true))
@@ -68,6 +65,21 @@ func TestServiceStorageRefusesUnsafeExistingPaths(t *testing.T) {
 		}
 		check(t, junction)
 	})
+}
+
+func TestFirstInstallMovesExistingServiceFolder(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "OwnGit")
+	noErr(t, os.Mkdir(directory, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(directory, "owner.txt"), []byte("keep"), 0o600))
+	moved, err := platformPrepareServiceInstall(serviceInstallPaths{Directory: directory}, false)
+	noErr(t, err)
+	if _, err := os.Stat(directory); moved == "" || !os.IsNotExist(err) {
+		t.Fatalf("folder moved to %q but old path remains: %v", moved, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(moved, "owner.txt")); err != nil || string(data) != "keep" {
+		t.Fatalf("moved content=%q, error=%v", data, err)
+	}
 }
 
 func TestInstalledServiceCopyRejectsMediumWrite(t *testing.T) {

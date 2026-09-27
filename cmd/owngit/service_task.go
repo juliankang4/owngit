@@ -57,9 +57,10 @@ var (
 	// in a state directory, read without administrator rights.
 	repositoryRootWithoutAdminRights = platformRepositoryRootWithoutAdminRights
 	// servicePaths locates the administrator-protected service copy.
-	servicePaths = platformServiceInstallPaths
-	// prepareServiceStorage creates and verifies its protected folders.
+	servicePaths          = platformServiceInstallPaths
+	prepareServiceInstall = platformPrepareServiceInstall
 	prepareServiceStorage = platformPrepareServiceStorage
+	readTaskDefinition    = os.ReadFile
 	// replaceServiceCopy refreshes the protected executable from this one.
 	replaceServiceCopy = platformReplaceServiceCopy
 	// trustedWinget finds winget only in a verified App Installer package.
@@ -93,9 +94,8 @@ const queuedTaskMessage = "OwnGit has not started: Windows keeps the task queued
 // already installed and has no upgrade.
 const wingetNoApplicableUpgrade = 0x8A15002B
 
-// gitNotOnPathExit is the exit code of an elevated step that found Git
-// installed but not on PATH, and said so in one line.
-const gitNotOnPathExit = 3
+// elevatedMessageExit means the elevated step already printed its one-line failure.
+const elevatedMessageExit = 3
 
 // taskStopTimeout bounds the wait for a server to stop after it was asked
 // to; its own shutdown steps add up to about two minutes.
@@ -278,12 +278,13 @@ func (host *taskHost) administratorStep(action string, arguments []string) error
 	if !host.env.Elevated {
 		return errors.New("this step runs only with administrator rights, started by \"owngit service install\"")
 	}
+	if action == "elevated-install" {
+		return host.elevatedInstall(*stateDir, *headless, *installGit)
+	}
 	if err := host.prepareAdministrator(); err != nil {
 		return err
 	}
 	switch {
-	case action == "elevated-install":
-		return host.elevatedInstall(*stateDir, *headless, *installGit)
 	case action == "elevated-uninstall":
 		return host.elevatedUninstall()
 	case action != "elevated-firewall":
@@ -354,7 +355,7 @@ func (host *taskHost) plan(mode service.Mode, stateDir string, headless bool) se
 // install installs or updates the service. headlessFlag is the --headless
 // option, or nil without it.
 func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
-	if host.env.Administrator && strings.EqualFold(filepath.Clean(host.executable), filepath.Clean(host.serviceInstall.Executable)) && replaceServiceCopy(host.executable, host.serviceInstall) != nil {
+	if host.env.Administrator && strings.EqualFold(filepath.Clean(host.executable), filepath.Clean(host.serviceInstall.Executable)) {
 		host.printf("Run \"owngit service install\" from a copy outside %s.\n", host.serviceInstall.Directory)
 		return &checkExit{code: 1, err: errors.New("the service copy is not protected")}
 	}
@@ -457,8 +458,8 @@ func (host *taskHost) asAdministrator(arguments []string, steps string) error {
 		return &checkExit{code: 1, err: err}
 	case err != nil:
 		return err
-	case code == gitNotOnPathExit:
-		return &checkExit{code: code, err: errors.New("git is not on PATH")}
+	case code == elevatedMessageExit:
+		return &checkExit{code: code, err: errors.New("the elevated step explained its failure")}
 	case code != 0:
 		// The elevated copy printed why on this console when it could.
 		host.printf("The administrator steps did not finish (exit status %d). If no reason is shown above, run the same command in a terminal opened with \"Run as administrator\".\n", code)
@@ -484,6 +485,26 @@ var errElevationCancelled = errors.New("administrator approval was declined")
 // the firewall rule, and the start. It creates nothing in the state directory,
 // which the server creates itself without administrator rights.
 func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool) error {
+	definition, err := readTaskDefinition(filepath.Join(host.system, "Tasks", service.TaskName))
+	found := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read the protected task definition: %w", err)
+	}
+	var existing service.Installed
+	if found {
+		if existing, err = service.ParseTask(definition); err != nil {
+			return err
+		}
+	}
+	keepExisting := found && existing.Mode == service.ModeBootTask && existing.User == host.sid && strings.EqualFold(filepath.Clean(existing.Executable), filepath.Clean(host.serviceInstall.Executable))
+	moved, err := prepareServiceInstall(host.serviceInstall, keepExisting)
+	if err != nil {
+		host.printf("The existing OwnGit service folder could not be moved aside. Move or rename %s, then run \"owngit service install\" again.\n", host.serviceInstall.Directory)
+		return &checkExit{code: elevatedMessageExit, err: fmt.Errorf("move the existing service folder: %w", err)}
+	}
+	if moved != "" {
+		host.printf("The existing OwnGit service folder was moved to %s.\n", moved)
+	}
 	if err := host.prepareAdministrator(); err != nil {
 		return err
 	}
@@ -506,10 +527,10 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 		}
 		if !gitOnServicePath() {
 			host.printf("Git for Windows is installed but not on PATH. Add its cmd folder (for example C:\\Program Files\\Git\\cmd) to PATH, then run \"owngit service install\" again.\n")
-			return &checkExit{code: gitNotOnPathExit, err: errors.New("git is not on PATH")}
+			return &checkExit{code: elevatedMessageExit, err: errors.New("git is not on PATH")}
 		}
 	}
-	if existing, found, err := host.installed(); err == nil && found {
+	if found {
 		host.stopTask(existing.StateDir)
 	}
 	if err := replaceServiceCopy(host.executable, host.serviceInstall); err != nil {

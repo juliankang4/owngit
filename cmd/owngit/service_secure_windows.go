@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -36,7 +37,18 @@ func platformServiceInstallPaths() (serviceInstallPaths, error) {
 	}, nil
 }
 
-// platformPrepareServiceStorage creates the protected service folders.
+func platformPrepareServiceInstall(paths serviceInstallPaths, keepExisting bool) (string, error) {
+	_, err := os.Lstat(paths.Directory)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if keepExisting || err != nil {
+		return "", nil
+	}
+	moved := paths.Directory + ".old-" + time.Now().UTC().Format("20060102T150405.000000000")
+	return moved, os.Rename(paths.Directory, moved)
+}
+
 func platformPrepareServiceStorage(paths serviceInstallPaths) error {
 	for _, path := range []struct {
 		name      string
@@ -64,12 +76,6 @@ func platformPrepareServiceStorage(paths serviceInstallPaths) error {
 // platformReplaceServiceCopy atomically replaces the task executable from a
 // locked source through the administrator-only temporary directory.
 func platformReplaceServiceCopy(source string, paths serviceInstallPaths) error {
-	if strings.EqualFold(filepath.Clean(source), filepath.Clean(paths.Executable)) {
-		if err := verifyProtectedServiceACL(paths.Directory, true, true); err != nil {
-			return err
-		}
-		return verifyProtectedServiceACL(paths.Executable, false, true)
-	}
 	input, err := openServiceSource(source)
 	if err != nil {
 		return fmt.Errorf("open this owngit.exe: %w", err)
