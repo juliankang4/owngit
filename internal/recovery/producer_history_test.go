@@ -3,6 +3,7 @@ package recovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -135,14 +136,17 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 			}
 			snapshot, err := store.RecoverySnapshot(ctx)
 			noErr(t, err)
-			if len(snapshot.CheckJobs) != 1 || !reflect.DeepEqual(snapshot.CheckJobs[0], job) {
-				t.Fatal("snapshot dropped or changed producer history")
+			if len(snapshot.CheckJobs) != 1 {
+				t.Fatalf("snapshot holds %d check jobs, want 1", len(snapshot.CheckJobs))
+			}
+			if difference := checkJobDifference(job, snapshot.CheckJobs[0]); difference != "" {
+				t.Fatalf("snapshot changed producer history: %s", difference)
 			}
 			backup := filepath.Join(root, "backup")
 			noErr(t, Create(ctx, store, manager, backup))
 			unchanged, found, err := store.CheckJob(ctx, "project", job.ID)
-			if err != nil || !found || !reflect.DeepEqual(unchanged, job) {
-				t.Fatalf("recovery calls changed stored job: found=%v err=%v", found, err)
+			if difference := checkJobDifference(job, unchanged); err != nil || !found || difference != "" {
+				t.Fatalf("recovery calls changed stored job: found=%v err=%v difference=%s", found, err, difference)
 			}
 			content, err := os.ReadFile(filepath.Join(backup, manifestName))
 			noErr(t, err)
@@ -153,8 +157,12 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 			}
 			manifest, err := readManifest(filepath.Join(backup, manifestName))
 			noErr(t, err)
-			if portable := recoveryState(manifest); len(portable.CheckJobs) != 1 || !reflect.DeepEqual(portable.CheckJobs[0], job) {
-				t.Fatal("published backup dropped or changed producer history")
+			portable := recoveryState(manifest)
+			if len(portable.CheckJobs) != 1 {
+				t.Fatalf("published backup holds %d check jobs, want 1", len(portable.CheckJobs))
+			}
+			if difference := checkJobDifference(job, portable.CheckJobs[0]); difference != "" {
+				t.Fatalf("published backup changed producer history: %s", difference)
 			}
 			restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 			restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
@@ -163,8 +171,8 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 			noErr(t, err)
 			defer restored.Close()
 			restoredJob, found, err := restored.CheckJob(ctx, "project", job.ID)
-			if err != nil || !found || !reflect.DeepEqual(restoredJob, job) {
-				t.Fatalf("restore changed terminal history: found=%v err=%v", found, err)
+			if difference := checkJobDifference(job, restoredJob); err != nil || !found || difference != "" {
+				t.Fatalf("restore changed terminal history: found=%v err=%v difference=%s", found, err, difference)
 			}
 			restoredPolicy, found, err := restored.CheckPolicy(ctx, "project")
 			if err != nil || !found || restoredPolicy.ConsentActive || restoredPolicy.AuthorityEpoch == policy.AuthorityEpoch {
@@ -195,4 +203,30 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+// checkJobDifference names the first field whose recorded fact differs, or
+// returns "". A backup may write an instant with another zone offset, so every
+// time is compared as an instant and an absent optional time must stay absent.
+// Every other field, including one added later, must be exactly equal.
+func checkJobDifference(want, got state.CheckJob) string {
+	wantFields, gotFields := reflect.ValueOf(want), reflect.ValueOf(got)
+	for i := range wantFields.NumField() {
+		wantField, gotField := wantFields.Field(i).Interface(), gotFields.Field(i).Interface()
+		if !sameFact(wantField, gotField) {
+			return fmt.Sprintf("%s: want %v, got %v", wantFields.Type().Field(i).Name, wantField, gotField)
+		}
+	}
+	return ""
+}
+
+func sameFact(want, got any) bool {
+	switch want := want.(type) {
+	case time.Time:
+		return want.Equal(got.(time.Time))
+	case *time.Time:
+		got := got.(*time.Time)
+		return want == got || want != nil && got != nil && want.Equal(*got)
+	}
+	return reflect.DeepEqual(want, got)
 }
