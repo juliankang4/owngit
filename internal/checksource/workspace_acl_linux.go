@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"os"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -39,7 +40,11 @@ func ancestorACLFix(path string, info os.FileInfo) (string, error) {
 			mask = binary.LittleEndian.Uint16(entries[offset+2:])
 		}
 	}
-	gid := info.Sys().(*unix.Stat_t).Gid
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", errors.New("owning group is unavailable")
+	}
+	gid := stat.Gid
 	for offset := 4; offset < len(entries); offset += 8 {
 		tag := binary.LittleEndian.Uint16(entries[offset:])
 		permissions := binary.LittleEndian.Uint16(entries[offset+2:])
