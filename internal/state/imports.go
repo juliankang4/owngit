@@ -927,9 +927,6 @@ func (s *Store) FinalizeImportPublication(ctx context.Context, intentID, receipt
 	if err := validateImportIntentRecord(intent); err != nil {
 		return err
 	}
-	if err := validateCompleteImportIntentReceipt(intent); err != nil {
-		return err
-	}
 	if len(observations) != len(intent.Observed) {
 		return errors.New("import publication observations are incomplete")
 	}
@@ -1110,9 +1107,6 @@ func (s *Store) CompletedImportIntentForRun(ctx context.Context, runID string) (
 		return ImportIntent{}, false, err
 	}
 	if err := validateImportIntentRecord(record); err != nil {
-		return ImportIntent{}, false, err
-	}
-	if err := validateCompleteImportIntentReceipt(record); err != nil {
 		return ImportIntent{}, false, err
 	}
 	if rows.Next() {

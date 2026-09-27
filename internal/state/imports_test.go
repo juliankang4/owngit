@@ -302,6 +302,58 @@ func TestImportObservationUpsertAndIntentReceipt(t *testing.T) {
 	}
 }
 
+func TestCompleteImportReceiptValidationAtBothBoundaries(t *testing.T) {
+	oid := strings.Repeat("c", 40)
+	for name, receipt := range map[string]string{
+		"valid":     `{"refs/heads/main":"` + oid + `"}`,
+		"empty":     `{}`,
+		"missing":   `{}`,
+		"extra":     `{"refs/heads/main":"` + oid + `","refs/heads/other":"` + oid + `"}`,
+		"malformed": `{`,
+		"digest":    `{"refs/heads/main":"` + oid + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, ctx, now := openTestStore(t), context.Background(), testImportNow()
+			_, err := store.ConfigureImportSource(ctx, ImportSourceInput{RepositoryID: "project", URL: "https://example.invalid/project.git", Mode: ImportModeStandalone, Now: now})
+			noErr(t, err)
+			run := testImportRun(t, strings.Repeat("a", 32), "project", 1, ImportKindRefresh, ImportRunPreparing)
+			noErr(t, store.BeginImportRun(ctx, run))
+			intent := ImportIntent{ID: strings.Repeat("b", 32), RepositoryID: "project", RunID: run.ID,
+				SourceGeneration: 1, AuthorityRevision: 1, Status: ImportIntentPlanning, CreatedAt: now,
+				Expected: map[string]string{"refs/heads/main": ""}, Desired: map[string]string{"refs/heads/main": oid},
+				Observed: map[string]string{"refs/heads/main": oid}}
+			if name == "empty" {
+				intent.Expected, intent.Desired = nil, nil
+			}
+			noErr(t, store.CreateImportIntent(ctx, intent))
+			digest := ImportReceiptDigest(receipt)
+			if name == "digest" {
+				digest = strings.Repeat("0", 64)
+			}
+			run.Status, run.FinishedAt = ImportRunComplete, now
+			valid := name == "valid" || name == "empty"
+			observations := []ImportObservation{{RepositoryID: "project", SourceGeneration: 1, RefName: "refs/heads/main", OID: oid, RunID: run.ID, ObservedAt: now}}
+			err = store.FinalizeImportPublication(ctx, intent.ID, receipt, digest, "", observations, run)
+			if (err == nil) != valid {
+				t.Fatalf("finalize error=%v", err)
+			}
+			storedRun, _, readErr := store.ImportRun(ctx, run.ID)
+			noErr(t, readErr)
+			storedIntent, _, readErr := store.ImportIntent(ctx, intent.ID)
+			noErr(t, readErr)
+			storedObservations, readErr := store.ImportObservations(ctx, "project", 1)
+			noErr(t, readErr)
+			if (storedRun.Status == ImportRunComplete) != valid || (storedIntent.Status == ImportIntentComplete) != valid || (len(storedObservations) == 1) != valid {
+				t.Fatal("receipt refusal changed durable publication state")
+			}
+			noErr(t, store.Exec(ctx, `UPDATE import_publication_intents SET status=?,receipt_json=?,receipt_digest=? WHERE id=?`, ImportIntentComplete, receipt, digest, intent.ID))
+			if _, found, err := store.CompletedImportIntentForRun(ctx, run.ID); found != valid || (err == nil) != valid {
+				t.Fatalf("complete receipt found=%v error=%v", found, err)
+			}
+		})
+	}
+}
+
 func TestImportScheduleFairnessAndDueOrder(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
