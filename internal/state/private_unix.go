@@ -25,6 +25,8 @@ func CreatePrivateFile(path string) (*os.File, error) {
 }
 
 // ProtectPrivatePath opens a final non-link entry, then protects that handle.
+func protectSQLiteFilesAfterOpen(string) error { return nil }
+
 func ProtectPrivatePath(path string, directory bool) error {
 	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {

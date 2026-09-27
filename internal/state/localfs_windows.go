@@ -179,6 +179,15 @@ func ownerOnlyACL(user *windows.SID, directory bool) (*windows.ACL, error) {
 	return acl, nil
 }
 
+func protectSQLiteFilesAfterOpen(path string) error {
+	for _, candidate := range []string{path, path + walSuffix, path + shmSuffix} {
+		if err := ProtectPrivatePath(candidate, false); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 func ProtectPrivatePath(path string, directory bool) error {
 	user, defaultOwner, err := processIdentity()
 	if err != nil {

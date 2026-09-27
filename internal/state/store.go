@@ -169,6 +169,10 @@ func Open(ctx context.Context, dir string) (result *Store, err error) {
 		db.Close()
 		return nil, err
 	}
+	if err := protectSQLiteFilesAfterOpen(path); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("protect state database file: %w", err)
+	}
 	return store, nil
 }
 
