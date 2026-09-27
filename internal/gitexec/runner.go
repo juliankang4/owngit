@@ -20,6 +20,15 @@ import (
 
 const defaultOutputLimit = 8 << 20
 
+// stderrLimit bounds what a command's stderr keeps. stderr is not the
+// command's output: it is Git's explanation of a failure, which error text
+// carries to logs and users, so its bound does not follow the output limit
+// of a read, which can be a few bytes. Git reports a failure in a few short
+// lines, and 64 KiB keeps hundreds of them while bounding the memory of every
+// running command. A failure whose stderr passed the bound says it was cut;
+// a command that succeeded is not failed for what it wrote there.
+const stderrLimit = 64 << 10
+
 // Runner executes Git with an app-owned configuration and environment.
 type Runner struct {
 	GitPath          string
@@ -48,13 +57,15 @@ type Result struct {
 	Stderr []byte
 }
 
+// LimitError reports that a stream of the named command passed its limit.
 type LimitError struct {
-	Stream string
-	Limit  int64
+	Command string
+	Stream  string
+	Limit   int64
 }
 
 func (e *LimitError) Error() string {
-	return fmt.Sprintf("git %s exceeded the %d-byte limit", e.Stream, e.Limit)
+	return fmt.Sprintf("%s: %s exceeded the %d-byte limit", e.Command, e.Stream, e.Limit)
 }
 
 // New returns a runner for gitPath, or for the Git found on PATH when gitPath
@@ -235,9 +246,10 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	if limit <= 0 {
 		limit = defaultOutputLimit
 	}
+	name := commandName(args)
 	var stdout, stderr limitedBuffer
 	stdout.limit = limit
-	stderr.limit = limit
+	stderr.limit = stderrLimit
 	cmd := exec.Command(r.GitPath, args...)
 	cmd.Dir = dir
 	cmd.Env = r.Environment(extraEnv...)
@@ -251,7 +263,7 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 		var pipeErr error
 		stdinPipe, pipeErr = cmd.StdinPipe()
 		if pipeErr != nil {
-			return Result{}, fmt.Errorf("git %s: %w", commandName(args), pipeErr)
+			return Result{}, fmt.Errorf("%s: %w", name, pipeErr)
 		}
 	}
 
@@ -272,7 +284,7 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 		// Attachment cleanup returned while the delayed Wait still owns the
 		// output buffers, so copied output is not stable. Caller stdin is not
 		// read on this path.
-		return Result{}, fmt.Errorf("git %s: %w", commandName(args), err)
+		return Result{}, fmt.Errorf("%s: %w", name, err)
 	}
 	result := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
 	// A command stopped at its output limit ends with the cancellation that
@@ -281,41 +293,105 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	// limit is only named in the message, not wrapped, so no caller takes the
 	// partial output for a usable prefix.
 	if err != nil && stopAtLimit && stdout.hasExceeded() && ctx.Err() == nil && errors.Is(runCtx.Err(), context.Canceled) {
-		limitErr := &LimitError{Stream: "stdout", Limit: limit}
+		limitErr := &LimitError{Command: name, Stream: "stdout", Limit: limit}
 		if !errors.Is(err, ErrProcessCleanup) {
 			return result, limitErr
 		}
-		return result, fmt.Errorf("git %s: %s: %w", commandName(args), limitErr.Error(), err)
+		return result, fmt.Errorf("%s: %w", limitErr.Error(), err)
 	}
 	// A limit describes only a command that completed successfully and was
 	// cleaned up. Process failure, timeout and cleanup failure remain
 	// authoritative even when captured output also reached its bound.
 	if err != nil {
-		message := strings.TrimSpace(string(result.Stderr))
-		if message != "" {
-			return result, fmt.Errorf("git %s: %w: %s", commandName(args), err, message)
-		}
-		return result, fmt.Errorf("git %s: %w", commandName(args), err)
+		return result, commandFailure(name, err, &stderr)
 	}
 	if stdout.exceeded {
-		return result, &LimitError{Stream: "stdout", Limit: limit}
-	}
-	if stderr.exceeded {
-		return result, &LimitError{Stream: "stderr", Limit: limit}
+		return result, &LimitError{Command: name, Stream: "stdout", Limit: limit}
 	}
 	return result, nil
 }
 
-func commandName(args []string) string {
-	if len(args) == 0 {
-		return "command"
+// Output runs cmd, a Git command whose environment the caller chose, such as
+// the CLI's Git in a user's clone, and returns its stdout. It reports a
+// failure as Runner does: the Git command's name and the reason Git wrote to
+// stderr, bounded by stderrLimit. Its stdout has no limit, as with
+// exec.Cmd.Output.
+func Output(cmd *exec.Cmd) ([]byte, error) {
+	var stderr limitedBuffer
+	stderr.limit = stderrLimit
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		return output, commandFailure(commandName(cmd.Args[1:]), err, &stderr)
 	}
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			return arg
+	return output, nil
+}
+
+// commandFailure is the error for a command that failed: its name, the
+// failure, and the reason the command wrote to stderr, marked when it was cut.
+func commandFailure(name string, err error, stderr *limitedBuffer) error {
+	message := strings.TrimSpace(string(stderr.Bytes()))
+	if message == "" {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if stderr.hasExceeded() {
+		message += fmt.Sprintf(" [stderr cut at %d bytes]", stderr.limit)
+	}
+	return fmt.Errorf("%s: %w: %s", name, err, message)
+}
+
+// gitOptionsWithValue are Git's global options that take the next argument
+// as their value (handle_options in Git's git.c).
+var gitOptionsWithValue = map[string]bool{
+	"-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--namespace": true,
+	"--config-env": true, "--shallow-file": true, "--attr-source": true,
+}
+
+// gitQueryOptions are the options Git runs in place of a command: --version
+// and --help are the version and help commands spelled as options, and the
+// others print a path and exit.
+var gitQueryOptions = map[string]bool{
+	"--version": true, "-v": true, "--help": true, "-h": true,
+	"--exec-path": true, "--html-path": true, "--man-path": true, "--info-path": true,
+}
+
+// commandName names the Git command that args run, such as "git cat-file",
+// for error text. It never includes an argument, because arguments can be
+// paths, URLs or configuration that carries a credential. Git reads global
+// options before the command, and some take the next argument as their
+// value, so the command is the first argument that is neither such an option
+// nor its value. An option this list does not know would leave its value in
+// that place, so the candidate is the name only when it has the form of a
+// Git command. Otherwise, or when args name no command, the name is "git".
+func commandName(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case gitOptionsWithValue[arg]:
+			i++
+		case gitQueryOptions[arg]:
+			return "git " + arg
+		case !strings.HasPrefix(arg, "-"):
+			if !isGitCommandToken(arg) {
+				return "git"
+			}
+			return "git " + arg
 		}
 	}
-	return "command"
+	return "git"
+}
+
+// isGitCommandToken reports whether s has the form of a Git command, such as
+// cat-file or for-each-ref: a lowercase letter, then lowercase letters,
+// digits and hyphens.
+func isGitCommandToken(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !('a' <= c && c <= 'z' || i > 0 && ('0' <= c && c <= '9' || c == '-')) {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // Stream starts an owned Git process, passes stdout to consume, and does not
@@ -330,7 +406,7 @@ func commandName(args []string) string {
 // process never sees a clean end of its input. A stdin reader that must not
 // end the input cleanly can cancel ctx and block in Read until Close.
 func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
-	return r.stream(ctx, exec.Command(executable), dir, stdin, extraEnv, consume)
+	return r.stream(ctx, "Git backend", exec.Command(executable), dir, stdin, extraEnv, consume)
 }
 
 // StreamGit runs Git with args as Stream runs a backend, with no input: its
@@ -338,10 +414,14 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 // and the output in consume; returning an error from consume, or cancelling
 // ctx, stops Git and its owned descendants before StreamGit returns.
 func (r *Runner) StreamGit(ctx context.Context, dir string, consume func(io.Reader) error, args ...string) ([]byte, error) {
-	return r.stream(ctx, exec.Command(r.GitPath, args...), dir, nil, nil, consume)
+	return r.stream(ctx, commandName(args), exec.Command(r.GitPath, args...), dir, nil, nil, consume)
 }
 
-func (r *Runner) stream(ctx context.Context, cmd *exec.Cmd, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
+// stream runs cmd for Stream and StreamGit; name names it in error text. Its
+// stderr keeps the runner's output limit, not stderrLimit, because a Smart
+// HTTP caller reads receive-pack's messages there, and passing that limit is
+// an error, so the caller knows it did not read all of them.
+func (r *Runner) stream(ctx context.Context, name string, cmd *exec.Cmd, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
 	var stderr limitedBuffer
 	stderr.limit = r.OutputLimit
 	if stderr.limit <= 0 {
@@ -472,16 +552,11 @@ func (r *Runner) stream(ctx context.Context, cmd *exec.Cmd, dir string, stdin io
 	var primary error
 	switch {
 	case stderr.exceeded:
-		primary = &LimitError{Stream: "stderr", Limit: stderr.limit}
+		primary = &LimitError{Command: name, Stream: "stderr", Limit: stderr.limit}
 	case consumeErr != nil:
 		primary = consumeErr
 	case waitErr != nil:
-		message := strings.TrimSpace(string(stderr.Bytes()))
-		if message != "" {
-			primary = fmt.Errorf("Git backend: %w: %s", waitErr, message)
-		} else {
-			primary = fmt.Errorf("Git backend: %w", waitErr)
-		}
+		primary = commandFailure(name, waitErr, &stderr)
 	case inputErr != nil && !errors.Is(inputErr, os.ErrClosed) && !errors.Is(inputErr, io.ErrClosedPipe):
 		primary = fmt.Errorf("stream Git backend input: %w", inputErr)
 	}

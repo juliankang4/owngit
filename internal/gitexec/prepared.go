@@ -124,10 +124,12 @@ func (r *Runner) runPreparedUpdateContext(ctx context.Context, dir string, comma
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	args := []string{"--git-dir", ".", "update-ref", "--no-deref", "--stdin"}
+	name := commandName(args)
 	var stdout, stderr limitedBuffer
 	stdout.limit = outputLimit
-	stderr.limit = outputLimit
-	cmd := exec.Command(r.GitPath, "--git-dir", ".", "update-ref", "--no-deref", "--stdin")
+	stderr.limit = stderrLimit
+	cmd := exec.Command(r.GitPath, args...)
 	cmd.Dir = dir
 	cmd.Env = r.Environment(limits.Environment...)
 	cmd.Stderr = &stderr
@@ -168,13 +170,13 @@ func (r *Runner) runPreparedUpdateContext(ctx context.Context, dir string, comma
 		expect := func(action string) error {
 			line, readErr := reader.ReadSlice('\n')
 			if errors.Is(readErr, bufio.ErrBufferFull) {
-				return &LimitError{Stream: "stdout acknowledgement", Limit: 4096}
+				return &LimitError{Command: name, Stream: "stdout acknowledgement", Limit: 4096}
 			}
 			if _, writeErr := stdout.Write(line); writeErr != nil && readErr == nil {
 				readErr = writeErr
 			}
 			if stdout.exceeded {
-				return &LimitError{Stream: "stdout", Limit: outputLimit}
+				return &LimitError{Command: name, Stream: "stdout", Limit: outputLimit}
 			}
 			if readErr != nil {
 				return fmt.Errorf("read %s acknowledgement: %w", action, readErr)
@@ -246,7 +248,7 @@ func (r *Runner) runPreparedUpdateContext(ctx context.Context, dir string, comma
 			return
 		}
 		if stdout.exceeded {
-			interactionCh <- interactionResult{callbackErr: callbackErr, err: &LimitError{Stream: "stdout", Limit: outputLimit}}
+			interactionCh <- interactionResult{callbackErr: callbackErr, err: &LimitError{Command: name, Stream: "stdout", Limit: outputLimit}}
 			return
 		}
 		if trailing := stdout.Bytes()[acknowledgementBytes:]; len(trailing) != 0 {
@@ -390,19 +392,10 @@ func (r *Runner) runPreparedUpdateContext(ctx context.Context, dir string, comma
 		interaction.err = errors.Join(interaction.err, err)
 	}
 	if stdout.exceeded {
-		interaction.err = errors.Join(interaction.err, &LimitError{Stream: "stdout", Limit: outputLimit})
-	}
-	if stderr.exceeded {
-		interaction.err = errors.Join(interaction.err, &LimitError{Stream: "stderr", Limit: outputLimit})
+		interaction.err = errors.Join(interaction.err, &LimitError{Command: name, Stream: "stdout", Limit: outputLimit})
 	}
 	if waitErr != nil {
-		message := strings.TrimSpace(string(result.Stderr))
-		if message != "" {
-			waitErr = fmt.Errorf("git update-ref: %w: %s", waitErr, message)
-		} else {
-			waitErr = fmt.Errorf("git update-ref: %w", waitErr)
-		}
-		interaction.err = errors.Join(interaction.err, waitErr)
+		interaction.err = errors.Join(interaction.err, commandFailure(name, waitErr, &stderr))
 	}
 	if combinedErr := errors.Join(interaction.callbackErr, interaction.err); combinedErr != nil {
 		return result, combinedErr

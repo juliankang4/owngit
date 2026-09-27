@@ -111,7 +111,7 @@ func runPreparedHelper(mode string) int {
 				}
 			}
 			if mode == "stderr-overflow" {
-				_, _ = os.Stderr.WriteString(strings.Repeat("e", 4096))
+				_, _ = os.Stderr.WriteString(strings.Repeat("e", stderrLimit+4096))
 			}
 			if !acknowledge(line) {
 				return 2
@@ -164,21 +164,19 @@ func TestPreparedUpdateRejectsBadAndLostAcknowledgements(t *testing.T) {
 }
 
 func TestPreparedUpdateBoundsProtocolAndStderr(t *testing.T) {
-	for _, test := range []struct {
-		mode   string
-		stream string
-		limit  int64
-	}{
-		{mode: "oversized-ack", stream: "stdout acknowledgement", limit: 8192},
-		{mode: "stderr-overflow", stream: "stderr", limit: 128},
-	} {
-		t.Run(test.mode, func(t *testing.T) {
-			err := runPreparedHelperMode(t, test.mode, test.limit, func(context.Context) error { return nil })
-			var limitErr *LimitError
-			if !errors.As(err, &limitErr) || limitErr.Stream != test.stream {
-				t.Fatalf("mode=%s limit=%+v err=%v", test.mode, limitErr, err)
-			}
-		})
+	err := runPreparedHelperMode(t, "oversized-ack", 8192, func(context.Context) error { return nil })
+	var limitErr *LimitError
+	if !errors.As(err, &limitErr) || limitErr.Stream != "stdout acknowledgement" {
+		t.Fatalf("oversized acknowledgement limit=%+v err=%v", limitErr, err)
+	}
+	// stderr only explains a failure: it is bounded by stderrLimit, not by
+	// the output limit, and does not turn a committed transaction into one.
+	runner := newPreparedHelperRunner(t)
+	result, err := runner.RunPreparedUpdateContext(context.Background(), t.TempDir(), []string{"verify refs/heads/main 0000000000000000000000000000000000000000"}, CommandLimits{
+		Timeout: 5 * time.Second, OutputLimit: 128, Environment: []string{preparedHelperModeEnvironment + "=stderr-overflow"},
+	}, func(context.Context) error { return nil })
+	if err != nil || len(result.Stderr) != stderrLimit {
+		t.Fatalf("committed update with long stderr: stderr=%d bytes err=%v, want %d bytes and no error", len(result.Stderr), err, stderrLimit)
 	}
 }
 

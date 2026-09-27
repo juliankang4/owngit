@@ -17,6 +17,7 @@ import (
 
 	"owngit/internal/apiclient"
 	"owngit/internal/auth"
+	"owngit/internal/gitexec"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
@@ -110,18 +111,15 @@ func readOriginRemote(ctx context.Context, dir string) (originRemote, error) {
 	command := exec.CommandContext(ctx, "git", "config", "--local", "--no-includes", "--get-all", "remote.origin.url")
 	command.Dir = dir
 	command.Env = originGitEnvironment()
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	output, err := command.Output()
+	output, err := gitexec.Output(command)
 	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
 			return originRemote{}, cliProblem("origin_unavailable",
 				"This clone has no origin remote to supply the missing --server or --repository. Pass them explicitly.")
 		}
 		return originRemote{}, &apiclient.Error{Code: "origin_unavailable",
 			Message: "No origin remote could be read here to supply the missing --server or --repository. Pass them explicitly, or run the command inside a clone of an OwnGit repository.",
-			Cause:   fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))}
+			Cause:   err}
 	}
 	values := strings.Split(strings.TrimRight(string(output), "\r\n"), "\n")
 	if len(values) != 1 {

@@ -20,6 +20,7 @@ import (
 	"owngit/internal/checkapi"
 	"owngit/internal/checkexec"
 	"owngit/internal/checkworkflow"
+	"owngit/internal/gitexec"
 	"owngit/internal/state"
 )
 
@@ -541,7 +542,7 @@ func committedCheckDefinitions(ctx context.Context, directory, revision string) 
 	command := exec.CommandContext(ctx, "git", "cat-file", "blob", fields[2])
 	command.Dir = directory
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	content, err := command.Output()
+	content, err := gitexec.Output(command)
 	if err != nil {
 		return nil, cliProblem("revision_unavailable", "The committed check configuration could not be read: "+err.Error())
 	}
@@ -597,7 +598,7 @@ func runGit(ctx context.Context, directory string, arguments ...string) (string,
 	command := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, arguments...)...)
 	command.Dir = directory
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
-	output, err := command.Output()
+	output, err := gitexec.Output(command)
 	if err != nil {
 		return "", err
 	}

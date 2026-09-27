@@ -5,30 +5,61 @@ package gitexec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestRunnerReportsOutputLimitOnlyAfterSuccessfulExit(t *testing.T) {
 	runner := outputFixtureRunner(t)
+	result, err := runner.RunWithOutputLimit(context.Background(), "", nil, 8, "success-stdout")
+	var limitErr *LimitError
+	if !errors.As(err, &limitErr) || limitErr.Stream != "stdout" || limitErr.Limit != 8 {
+		t.Fatalf("result=%+v err=%v, want stdout LimitError", result, err)
+	}
+	if string(result.Stdout) != "01234567" {
+		t.Fatalf("captured stdout=%q, want the first 8 bytes", result.Stdout)
+	}
+	if !strings.HasPrefix(err.Error(), "git success-stdout: ") {
+		t.Fatalf("limit error %q does not name the command", err)
+	}
+}
+
+// stderr is Git's explanation of a failure, not the command's output, so its
+// bound is stderrLimit whatever the output limit of the read. What passes that
+// bound is dropped, and the failure says so; on success stderr is not used.
+func TestRunnerBoundsStderrIndependentlyOfOutputLimit(t *testing.T) {
+	runner := outputFixtureRunner(t)
 	for _, test := range []struct {
-		name   string
-		mode   string
-		stream string
+		mode     string
+		exit     int
+		stderr   int
+		contains string
 	}{
-		{name: "stdout", mode: "success-stdout", stream: "stdout"},
-		{name: "stderr", mode: "success-stderr", stream: "stderr"},
+		{mode: "success-stderr", stderr: 16},
+		{mode: "failure-stderr", exit: 2, stderr: 16, contains: ": 0123456789abcdef"},
+		{mode: "success-long-stderr", stderr: stderrLimit},
+		{mode: "failure-long-stderr", exit: 2, stderr: stderrLimit, contains: fmt.Sprintf("[stderr cut at %d bytes]", stderrLimit)},
 	} {
-		t.Run(test.name, func(t *testing.T) {
+		t.Run(test.mode, func(t *testing.T) {
 			result, err := runner.RunWithOutputLimit(context.Background(), "", nil, 8, test.mode)
-			var limitErr *LimitError
-			if !errors.As(err, &limitErr) || limitErr.Stream != test.stream || limitErr.Limit != 8 {
-				t.Fatalf("result=%+v err=%v, want %s LimitError", result, err, test.stream)
+			if len(result.Stderr) != test.stderr {
+				t.Fatalf("captured stderr=%d bytes, want %d", len(result.Stderr), test.stderr)
 			}
-			if len(result.Stdout) > 8 || len(result.Stderr) > 8 {
-				t.Fatalf("captured output exceeded limit: stdout=%d stderr=%d", len(result.Stdout), len(result.Stderr))
+			if test.exit == 0 {
+				if err != nil {
+					t.Fatalf("successful command err=%v", err)
+				}
+				return
+			}
+			if code, ok := ExitCode(err); !ok || code != test.exit {
+				t.Fatalf("exit code=(%d,%v) err=%v, want %d", code, ok, err, test.exit)
+			}
+			if !strings.HasPrefix(err.Error(), "git "+test.mode+": exit status 2: ") || !strings.Contains(err.Error(), test.contains) {
+				t.Fatalf("error %.200q, want the command, its exit and %q", err, test.contains)
 			}
 		})
 	}
@@ -112,6 +143,14 @@ failure-stdout)
   ;;
 failure-stderr)
   printf '0123456789abcdef' >&2
+  exit 2
+  ;;
+success-long-stderr)
+  head -c 70000 /dev/zero | tr '\0' e >&2
+  exit 0
+  ;;
+failure-long-stderr)
+  head -c 70000 /dev/zero | tr '\0' e >&2
   exit 2
   ;;
 timeout-stdout)
