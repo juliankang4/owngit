@@ -488,12 +488,14 @@ type RepositoryHeader struct {
 	// push instructions instead of pretending a history exists.
 	Empty bool
 	// Unreadable is true when the repository exists but its Git data could not
-	// be read. The renderer shows the reason instead of an empty history.
+	// be read. The renderer says so instead of showing an empty history.
 	Unreadable bool
-	// UnreadableReason explains why. Used only when Unreadable is true.
+	// UnreadableReason is the more specific reason, when one is known. The
+	// page then adds it after saying that the data could not be read.
 	UnreadableReason MessageCode
 	// Preparing is true while OwnGit prepares the repository after startup.
-	// Unreadable is then true as well, and the page explains the wait.
+	// Unreadable is then true as well, and the page explains the wait in
+	// place of the unreadable notice.
 	Preparing bool
 }
 

@@ -218,7 +218,6 @@ func pullRequestRepository(t *testing.T, app *App, id string, sourceFiles map[st
 // processes, none when cached, however many files changed.
 func TestPullRequestComparisonUsesTheMergeBase(t *testing.T) {
 	app := newConfiguredApp(t)
-	app.PullRequests = &pullrequest.Service{Store: app.Store, Repositories: app.Repositories}
 	_, base, source, target := pullRequestRepository(t, app, "compare", map[string]string{"feature.txt": "feature line\n"})
 	started := countGit(t, app)
 
@@ -315,7 +314,6 @@ func TestPullRequestComparisonKeepsUnusualPathsApart(t *testing.T) {
 // comparison instead of comparing tips or picking a base.
 func TestPullRequestComparisonWithoutOneMergeBase(t *testing.T) {
 	app := newConfiguredApp(t)
-	app.PullRequests = &pullrequest.Service{Store: app.Store, Repositories: app.Repositories}
 	when := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	work, base := seedRepository(t, app, "bases", map[string]string{"shared.txt": "shared\n"}, when)
 
@@ -356,7 +354,6 @@ func TestPullRequestComparisonWithoutOneMergeBase(t *testing.T) {
 // Every pull request in the list reads its branch heads from one listing.
 func TestPullRequestListRefReadsDoNotGrowWithPullRequests(t *testing.T) {
 	app := newConfiguredApp(t)
-	app.PullRequests = &pullrequest.Service{Store: app.Store, Repositories: app.Repositories}
 	when := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	work, _ := seedRepository(t, app, "listed", map[string]string{"base.txt": "base\n"}, when)
 	create := func(number int) {

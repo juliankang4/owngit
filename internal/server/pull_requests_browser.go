@@ -18,20 +18,14 @@ import (
 func (app *App) handlePullRequestsGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	page := app.pullRequestsPage(request, stored, summary, chrome)
 	status := http.StatusOK
-	if app.PullRequests == nil {
+	views, err := app.PullRequests.List(request.Context(), stored.ID)
+	if err != nil {
 		page.Unavailable = true
 		page.UnavailableReason = webui.MsgErrUnavailable
-		status = http.StatusServiceUnavailable
+		status = browserProblemStatus(err)
 	} else {
-		views, err := app.PullRequests.List(request.Context(), stored.ID)
-		if err != nil {
-			page.Unavailable = true
-			page.UnavailableReason = webui.MsgErrUnavailable
-			status = browserProblemStatus(err)
-		} else {
-			for _, view := range views {
-				page.Items = append(page.Items, app.pullRequestRow(stored.ID, view))
-			}
+		for _, view := range views {
+			page.Items = append(page.Items, app.pullRequestRow(stored.ID, view))
 		}
 	}
 	app.render(writer, status, page)
@@ -45,7 +39,7 @@ func (app *App) pullRequestsPage(request *http.Request, stored state.Repository,
 		Repo:   basePage.Repo,
 		Tabs:   repositoryTabs(basePage, webui.RepoTabPullRequests),
 	}
-	if len(summary.Branches) >= 2 && app.PullRequests != nil {
+	if len(summary.Branches) >= 2 {
 		page.NewURL = base + "/new"
 	}
 	return page
@@ -161,11 +155,6 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 			[]webui.Notice{webui.Error("", webui.MsgPRStale)}, http.StatusUnprocessableEntity)
 		return
 	}
-	if app.PullRequests == nil {
-		app.renderNewPullRequest(writer, request, stored, summary, chrome, input.SourceBranch, input.TargetBranch, input.Title, input.ReviewChoice,
-			[]webui.Notice{webui.Error("", webui.MsgPRFailed)}, http.StatusServiceUnavailable)
-		return
-	}
 	created, err := app.PullRequests.Create(request.Context(), input)
 	if err != nil {
 		notice, status := browserPullRequestProblem(err, "")
@@ -190,10 +179,6 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 	}
 	if !app.validCSRF(request, postValue(request, "csrf")) {
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
-		return
-	}
-	if app.PullRequests == nil {
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
 		return
 	}
 	input := pullrequest.RevisionInput{SourceOID: postValue(request, "source_oid"), TargetOID: postValue(request, "target_oid")}
@@ -242,10 +227,6 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 }
 
 func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, view *pullrequest.View, notices []webui.Notice, extraBlockers []webui.MergeBlocker, status int) {
-	if app.PullRequests == nil {
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
-		return
-	}
 	if view == nil {
 		var err error
 		view, err = app.PullRequests.Show(request.Context(), stored.ID, number)

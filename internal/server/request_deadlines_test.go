@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"owngit/internal/importfetch"
-	"owngit/internal/importgit"
-	"owngit/internal/importsync"
 	"owngit/internal/webui"
 )
 
@@ -30,11 +28,6 @@ const hangBound = 15 * time.Second
 // authorized request only runs out of it when a test holds it past it.
 const verifiedPage = 3 * time.Second
 
-// emptySourceFetch answers every import fetch with an empty source.
-func emptySourceFetch(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
-	return &importfetch.Result{Advertisement: &importgit.Advertisement{Service: "git-upload-pack", ObjectFormat: importgit.FormatSHA1, Empty: true}}, nil
-}
-
 // longOperationServer serves a password-protected fixture whose import runs
 // and archives may take an hour, under a page deadline of page.
 func longOperationServer(t *testing.T, page time.Duration) (apiFixture, string) {
@@ -43,9 +36,6 @@ func longOperationServer(t *testing.T, page time.Duration) (apiFixture, string) 
 	fixture.app.HTTPTimeout = page
 	fixture.app.ImportRunTimeout = time.Hour
 	fixture.app.GitHTTP.OperationTimeout = time.Hour
-	fixture.app.Imports = &importsync.Service{Store: fixture.store, Repositories: fixture.app.Repositories, Fetch: emptySourceFetch}
-	service := fixture.app.Imports
-	t.Cleanup(func() { _ = service.Close() })
 	server := httptest.NewUnstartedServer(fixture.app.Handler())
 	// The production server settings, with this test's page deadline as the
 	// server read limit.
@@ -198,7 +188,7 @@ func slowSourceFetch(wait time.Duration) func(context.Context, importfetch.Reque
 // then serves the next request under its own page deadline.
 func TestAuthorizedImportOutlivesThePageDeadline(t *testing.T) {
 	const page = verifiedPage
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	fixture.app.HTTPTimeout = page
 	fixture.app.Imports.Fetch = slowSourceFetch(page)
 	server := serve(t, fixture.app.Handler())

@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/webui"
 )
@@ -29,7 +28,6 @@ import (
 // again once a later attempt succeeds.
 func TestPreparingRepositoryIsRefusedWhileOthersServe(t *testing.T) {
 	app := newConfiguredApp(t)
-	app.PullRequests = &pullrequest.Service{Store: app.Store, Repositories: app.Repositories}
 	for _, name := range []string{"ready-one", "stuck"} {
 		_, err := app.Repositories.Create(context.Background(), name, "")
 		noErr(t, err)

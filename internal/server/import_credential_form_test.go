@@ -22,7 +22,7 @@ import (
 // (a browser without scripting still submits it), so it is ignored: only the
 // CA changes, and the password is neither stored nor shown.
 func TestImportPageStoresACAOnlyCredential(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "ca-form-admin")
@@ -85,7 +85,7 @@ func TestImportPageStoresACAOnlyCredential(t *testing.T) {
 // the chosen form's fields, so the save succeeds with Basic alone, and the
 // token is neither stored nor shown, on the Import tab and on a new import.
 func TestBrowserCredentialFormsIgnoreHiddenFields(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	var sent importfetch.Request
 	fixture.app.Imports.Fetch = func(_ context.Context, request importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 		sent = request
@@ -150,7 +150,7 @@ func credentialFormOptions(t *testing.T, body string) map[string]string {
 // CA; the API refuses an empty store the same way. Only the explicit clear
 // actions remove the credential.
 func TestImportCredentialSaveNeverClears(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "save-admin")
@@ -223,7 +223,7 @@ func TestImportCredentialSaveNeverClears(t *testing.T) {
 // The new-import form keeps treating empty credential fields as "no
 // credential": the import starts without one.
 func TestNewImportWithEmptyNoneHasNoCredential(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	var request importfetch.Request
 	fixture.app.Imports.Fetch = func(_ context.Context, got importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 		request = got
@@ -246,7 +246,7 @@ func TestNewImportWithEmptyNoneHasNoCredential(t *testing.T) {
 // still sends) keeps the stored sign-in, replaces only the CA, and neither
 // stores nor shows the stray password.
 func TestImportTabCAOnlySaveKeepsStoredBasic(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "keep-basic-admin")
@@ -282,7 +282,7 @@ func TestImportTabCAOnlySaveKeepsStoredBasic(t *testing.T) {
 // Both browser forms answer it as a bad request with the note on the
 // credential form field, and nothing is stored or started.
 func TestBrowserCredentialFormsRefuseAnUnknownForm(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	fetched := false
 	fixture.app.Imports.Fetch = func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
 		fetched = true

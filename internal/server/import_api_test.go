@@ -19,7 +19,7 @@ import (
 )
 
 func TestImportAPIRequiresOwnerAndRejectsCSRF(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	endpoint := server.URL + "/api/v1/repositories/project/import"
 	unauthenticated := importAPIRequest(t, http.MethodPut, endpoint, map[string]any{"url": "https://example.invalid/team/project.git"}, "", "", "")
@@ -42,7 +42,7 @@ func TestImportAPIRequiresOwnerAndRejectsCSRF(t *testing.T) {
 }
 
 func TestImportAPICredentialResponseHasNoSecret(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/project/import"
 	configured := importAPIRequest(t, http.MethodPut, base, map[string]any{
@@ -71,7 +71,7 @@ func TestImportAPICredentialResponseHasNoSecret(t *testing.T) {
 }
 
 func TestImportAPIMapsNotConfiguredAndImportsNewRepository(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/project/import"
 	refresh := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{}, "admin-password", "", "")
@@ -99,7 +99,7 @@ func TestImportAPIMapsNotConfiguredAndImportsNewRepository(t *testing.T) {
 // instead of turning the finished run into an error, and the run is not
 // repeated.
 func TestImportRunResultKeepsTheFinishedRunWhenStatusIsUnavailable(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	failImportStatusAfter(t, fixture.store, `UPDATE OF status ON import_runs WHEN NEW.status='`+state.ImportRunComplete+`'`, "fresh")
 	server := serve(t, fixture.app.Handler())
 	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/fresh/import/run", map[string]any{
@@ -129,7 +129,7 @@ func TestImportRunResultKeepsTheFinishedRunWhenStatusIsUnavailable(t *testing.T)
 // after it fails. The credential state the response would show is then null,
 // with the reason, instead of an error that says the change failed.
 func TestImportCredentialChangeStaysSavedWhenStatusIsUnavailable(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/project/import"
 	configured := importAPIRequest(t, http.MethodPut, base, map[string]any{"url": "https://example.invalid/team/project.git", "mode": "standalone"}, "admin-password", "", "")
@@ -161,7 +161,7 @@ func TestImportCredentialChangeStaysSavedWhenStatusIsUnavailable(t *testing.T) {
 // An add request for a repository that already exists is refused. It must not
 // silently refresh the stored source instead of importing the given one.
 func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/fresh/import"
 	created := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{
@@ -197,7 +197,7 @@ func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
 // A refresh names no source. For a name without a repository it used to start
 // a new import with an empty URL and fail as invalid_source.
 func TestImportRefreshWithoutARepositoryIsNotFound(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/missing/import/run", map[string]any{}, "admin-password", "", "")
 	if response.StatusCode != http.StatusNotFound || importAPICode(t, response) != "repository_not_found" {
@@ -218,7 +218,7 @@ func TestImportRefreshWithoutARepositoryIsNotFound(t *testing.T) {
 // problem. It used to be reported as invalid_source although the source was
 // fine.
 func TestImportScheduleIntervalErrorsNameTheSchedule(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/fresh/import"
 	created := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{
@@ -243,7 +243,7 @@ func TestImportScheduleIntervalErrorsNameTheSchedule(t *testing.T) {
 // repository_not_found and leave it running; it now stops the run, and the
 // source and token it stored are removed like after any failed first import.
 func TestImportCancelStopsARunningFirstImport(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	fetching, stopped := make(chan struct{}), make(chan struct{})
 	fixture.app.Imports.Fetch = func(ctx context.Context, _ importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 		close(fetching)
@@ -316,7 +316,7 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 }
 
 func TestImportRunRouteOutlivesOrdinaryDeadline(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	fixture.app.HTTPTimeout = 500 * time.Millisecond
 	fixture.app.Imports.Fetch = func(ctx context.Context, _ importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 		select {
@@ -382,7 +382,7 @@ func TestImportRunRouteOutlivesOrdinaryDeadline(t *testing.T) {
 }
 
 func TestInitialImportSendsCredentialsWithoutEchoingThem(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	const token = "initial-secret-token"
 	const caPEM = "initial-secret-ca"
 	var gotToken string
@@ -413,7 +413,7 @@ func TestInitialImportSendsCredentialsWithoutEchoingThem(t *testing.T) {
 }
 
 func TestReservedRepositoryNamesStayOnForms(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	ctx := context.Background()
 	for _, name := range []string{"new", "new-import", "New-Import"} {
 		_, err := fixture.app.Repositories.Create(ctx, name, "")
@@ -452,7 +452,7 @@ func TestReservedRepositoryNamesStayOnForms(t *testing.T) {
 // Creating a repository while a first import of that name runs is refused. The
 // form used to say that the repository already exists, although none did.
 func TestRepositoryCreationBesideARunningImportSaysSo(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	source, err := fixture.store.ConfigureImportSource(ctx, state.ImportSourceInput{
@@ -475,22 +475,6 @@ func TestRepositoryCreationBesideARunningImportSaysSo(t *testing.T) {
 	if _, exists, err := fixture.store.ImportSource(ctx, "arriving"); err != nil || !exists {
 		t.Fatalf("the running import lost its source exists=%v err=%v", exists, err)
 	}
-}
-
-func newImportAPIFixture(t *testing.T) apiFixture {
-	t.Helper()
-	fixture := newAPIFixture(t, false)
-	fixture.app.Imports = &importsync.Service{
-		Store: fixture.store, Repositories: fixture.app.Repositories,
-		Fetch: func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
-			return &importfetch.Result{Advertisement: &importgit.Advertisement{Service: "git-upload-pack", ObjectFormat: importgit.FormatSHA1, Empty: true}}, nil
-		},
-	}
-	// The runtime lease keeps its root marker open. Windows cannot remove
-	// the temporary directory until the service releases it.
-	service := fixture.app.Imports
-	t.Cleanup(func() { _ = service.Close() })
-	return fixture
 }
 
 func importAPIRequest(t *testing.T, method, target string, value any, password, csrf, adminHeader string) *http.Response {
@@ -526,7 +510,7 @@ func importAPIBody(t *testing.T, response *http.Response) string {
 // Clearing credentials works for a name whose first import never created the
 // repository, and a name with nothing stored is still not found.
 func TestImportCredentialsClearWorksWithoutARepository(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	ctx := context.Background()
 	source, err := fixture.store.ConfigureImportSource(ctx, state.ImportSourceInput{

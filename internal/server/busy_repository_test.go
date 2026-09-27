@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/pullrequest"
 	"owngit/internal/state"
 )
 
@@ -22,7 +21,6 @@ import (
 // instead of a dropped connection.
 func TestBusyRepositoryDoesNotStallPagesPastTheirDeadline(t *testing.T) {
 	app := newConfiguredApp(t)
-	app.PullRequests = &pullrequest.Service{Store: app.Store, Repositories: app.Repositories}
 	app.HTTPTimeout = 3 * time.Second
 	addActivityRepository(t, app, "busy", 2)
 	addActivityRepository(t, app, "free", 2)

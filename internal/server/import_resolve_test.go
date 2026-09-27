@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -93,7 +94,7 @@ func statusUnavailable(t *testing.T, fields map[string]json.RawMessage, observed
 }
 
 func TestImportResolveAPIRequiresOwnerAndRecordsTheDecision(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	intentID := recordUnresolvedPublication(t, fixture)
 	server := serve(t, fixture.app.Handler())
 	target := server.URL + "/api/v1/repositories/project/import/resolve"
@@ -137,7 +138,7 @@ func TestImportResolveAPIRequiresOwnerAndRecordsTheDecision(t *testing.T) {
 // unavailable instead of describing an unconfigured import, and nothing in
 // Git changes.
 func TestImportResolveAPIKeepsTheResolutionWhenStatusIsUnavailable(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	intentID := recordUnresolvedPublication(t, fixture)
 	refs := func() string {
 		return apiGitOutput(t, fixture.remote, "for-each-ref", "--format=%(refname) %(objectname)") + "\n" + apiGitOutput(t, fixture.remote, "symbolic-ref", "HEAD")
@@ -171,7 +172,7 @@ func TestImportResolveAPIKeepsTheResolutionWhenStatusIsUnavailable(t *testing.T)
 // status read fails afterwards. The page then says that the status could not
 // be read, in either language, and offers no second resolution.
 func TestImportPageConfirmsResolutionWhenStatusIsUnavailable(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	intentID := recordUnresolvedPublication(t, fixture)
 	failImportStatusAfter(t, fixture.store, ownerResolution, "project")
 	server := serve(t, fixture.app.Handler())
@@ -195,23 +196,8 @@ func TestImportPageConfirmsResolutionWhenStatusIsUnavailable(t *testing.T) {
 		if lang == webui.LangKO {
 			page = browserGET(t, client, server.URL+"/repositories/project/import?lang=ko")
 		}
-		if page.status != http.StatusServiceUnavailable || !strings.Contains(page.body, shownText(lang, webui.MsgImportStatusUnreadable)) ||
-			strings.Contains(page.body, shownText(lang, webui.MsgImportUnavailable)) {
+		if page.status != http.StatusServiceUnavailable || !strings.Contains(page.body, shownText(lang, webui.MsgImportStatusUnreadable)) {
 			t.Fatalf("%s page with an unreadable status status=%d body=%s", lang, page.status, page.body)
-		}
-	}
-}
-
-// A process without the import service says so, and only then.
-func TestImportPageWithoutTheImportServiceSaysSo(t *testing.T) {
-	fixture := newAPIFixture(t, false)
-	server := serve(t, fixture.app.Handler())
-	client, _ := newBrowserClient(t)
-	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
-		page := browserGET(t, client, server.URL+"/repositories/project/import?lang="+string(lang))
-		if page.status != http.StatusOK || !strings.Contains(page.body, shownText(lang, webui.MsgImportUnavailable)) ||
-			strings.Contains(page.body, shownText(lang, webui.MsgImportStatusUnreadable)) {
-			t.Fatalf("%s page without the import service status=%d body=%s", lang, page.status, page.body)
 		}
 	}
 }
@@ -219,11 +205,11 @@ func TestImportPageWithoutTheImportServiceSaysSo(t *testing.T) {
 // shownText is a message as a page shows it in lang, not as the other
 // language's switch attribute.
 func shownText(lang webui.Lang, code webui.MessageCode) string {
-	return ">" + webui.Text(lang, code) + "</span>"
+	return ">" + html.EscapeString(webui.Text(lang, code)) + "</span>"
 }
 
 func TestImportPageOffersOwnerResolutionInBothLanguages(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	intentID := recordUnresolvedPublication(t, fixture)
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)

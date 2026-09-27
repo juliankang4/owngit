@@ -221,7 +221,6 @@ func newAPIFixture(t *testing.T, protected bool) apiFixture {
 	apiRunGit(t, work, "commit", "-m", "feature")
 	apiRunGit(t, work, "push", "origin", "HEAD:refs/heads/feature")
 	sourceOID := apiGitOutput(t, work, "rev-parse", "HEAD")
-	app.PullRequests = &pullrequest.Service{Store: store, Repositories: app.Repositories}
 	return apiFixture{app: app, store: store, remote: remote, work: work, sourceOID: sourceOID, targetOID: targetOID}
 }
 

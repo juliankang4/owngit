@@ -129,10 +129,6 @@ func archiveRoute(request *http.Request) bool {
 // handleArchive answers the browser download of the Code tab and the commit
 // page, with the read access of those pages.
 func (app *App) handleArchive(writer http.ResponseWriter, request *http.Request, stored state.Repository) {
-	if app.GitHTTP == nil {
-		app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgErrUnavailable, "")
-		return
-	}
 	// The browser guard authorized the reader before this handler.
 	request = app.beginOperation(writer, request)
 	target, status := app.resolveArchive(request, stored.ID)
@@ -187,10 +183,6 @@ func (app *App) handleArchiveAPI(writer http.ResponseWriter, request *http.Reque
 		return
 	} else if !exists {
 		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
-		return
-	}
-	if app.GitHTTP == nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "service_unavailable", "The Git service is unavailable.", nil)
 		return
 	}
 	request = app.beginOperation(writer, request)

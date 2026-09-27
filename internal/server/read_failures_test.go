@@ -126,6 +126,26 @@ func TestRepositoryReadsTellMissingFromUnreadable(t *testing.T) {
 	}
 }
 
+// A page whose Git data could not be read says so once, in either language.
+// With no more specific reason known there is nothing else to add.
+func TestUnreadableRepositoryPageStatesItOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the failing Git wrapper is a Unix test fixture")
+	}
+	app := newConfiguredApp(t)
+	readFailureRepository(t, app, "once")
+	failPath := failGitWhile(t, app, "--max-count=8")
+	noErr(t, os.WriteFile(failPath, nil, 0o600))
+	server := serve(t, app.Handler())
+	client, _ := newBrowserClient(t)
+	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		body, status := dashboardGET(t, client, server.URL+"/repositories/once?lang="+string(lang))
+		if shown := strings.Count(body, shownText(lang, webui.MsgRepoUnreadable)); status != http.StatusServiceUnavailable || shown != 1 {
+			t.Errorf("%s unreadable page status=%d states it %d times, want 503 stating it once", lang, status, shown)
+		}
+	}
+}
+
 // The overview's body, the recent commits and the top folder, is required:
 // when it cannot be read, the page says the repository cannot be read. A side
 // panel that cannot be read says so and keeps the rest of the page; it is
@@ -199,7 +219,7 @@ func TestOverviewSidePanelsSayWhenTheyCouldNotBeRead(t *testing.T) {
 // Import history that could not be read is reported as such, beside the
 // import status that could be read, never as no runs.
 func TestImportTabSaysWhenHistoryCouldNotBeRead(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	fixture.app.Imports.Fetch = func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
 		return nil, &importfetch.Error{Op: "connect", Kind: importfetch.ErrConnection}
 	}

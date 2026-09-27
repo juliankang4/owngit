@@ -49,12 +49,6 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		app.render(writer, status, page)
 		return
 	}
-	if app.Imports == nil {
-		chrome.Notices = []webui.Notice{webui.Error("", webui.MsgImportUnavailable)}
-		page.Chrome = chrome
-		app.render(writer, http.StatusServiceUnavailable, page)
-		return
-	}
 	// A mistake the form can name is reported on its field, before anything
 	// is sent to the import service, which stays the authority on every rule.
 	if problems := importNameProblems(page.Name, page.Description); len(problems) > 0 {
@@ -160,11 +154,6 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 	}
 	if ok, status := app.importAdminPassword(writer, request, &chrome); !ok {
 		app.renderImportPage(writer, request, stored, summary, chrome, status)
-		return
-	}
-	if app.Imports == nil {
-		chrome.Notices = append(chrome.Notices, webui.Error("", webui.MsgImportUnavailable))
-		app.renderImportPage(writer, request, stored, summary, chrome, http.StatusServiceUnavailable)
 		return
 	}
 	notice := "import_saved"
@@ -274,11 +263,6 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 			page.CredentialChoice = postValue(request, "credential_form")
 		}
 	}
-	if app.Imports == nil {
-		app.render(writer, status, page)
-		return
-	}
-	page.Available = true
 	importStatus, err := app.Imports.Status(request.Context(), stored.ID)
 	if err != nil {
 		page.StatusUnreadable = true

@@ -16,6 +16,10 @@ import (
 	"owngit/internal/auth"
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
+	"owngit/internal/importfetch"
+	"owngit/internal/importgit"
+	"owngit/internal/importsync"
+	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -262,15 +266,28 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	authentication := &auth.Manager{Store: store, SessionLife: time.Hour, AdminSessionLife: 5 * time.Minute}
 	renderer, err := webui.New()
 	noErr(t, err)
+	// The pull request and import services are part of every app, as they
+	// are of the serving process. The import fetch answers locally, so no
+	// test reaches a network.
+	imports := &importsync.Service{Store: store, Repositories: manager, Fetch: emptySourceFetch}
 	app := &App{
 		Store: store, Auth: authentication, Repositories: manager, GitHTTP: gitHandler,
+		PullRequests: &pullrequest.Service{Store: store, Repositories: manager}, Imports: imports,
 		Renderer: renderer, Hosts: NewHostPolicy(), SuggestedRepositoryRoot: repositoryRoot,
 		GitVersion: "git version test", HTTPBackendFound: true,
 	}
 	gitHandler.Authorize = app.AuthorizeGit
 	// Background activity counting ends before the store and directories go.
 	t.Cleanup(app.StopBackground)
+	// The runtime lease keeps its root marker open. Windows cannot remove
+	// the temporary directory until the service releases it.
+	t.Cleanup(func() { _ = imports.Close() })
 	return app, store, repositoryRoot
+}
+
+// emptySourceFetch answers every import fetch with an empty source.
+func emptySourceFetch(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
+	return &importfetch.Result{Advertisement: &importgit.Advertisement{Service: "git-upload-pack", ObjectFormat: importgit.FormatSHA1, Empty: true}}, nil
 }
 
 // newConfiguredApp returns an app whose setup is complete in open mode with

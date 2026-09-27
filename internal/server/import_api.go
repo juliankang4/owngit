@@ -25,10 +25,6 @@ func importHistoryQueryAllowed(request *http.Request, repositoryRoute bool, reso
 }
 
 func (app *App) handleImportAPI(writer http.ResponseWriter, request *http.Request, repositoryID, remainder string) {
-	if app.Imports == nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, importsync.CodeRuntimeUnavailable, "The import service is unavailable.", nil)
-		return
-	}
 	if !app.authorizeAdminAPI(writer, request, request.Method != http.MethodGet) {
 		return
 	}

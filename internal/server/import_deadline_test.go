@@ -18,7 +18,7 @@ import (
 // so it leaves admission a margin that only a hang uses up; a deadline during
 // admission is TestImportDeadlineDuringAdmissionReachesTheClientAsTheLimit.
 func TestImportRunDeadlineResultReachesTheClient(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	fixture.app.ImportRunTimeout = 5 * time.Second
 	fixture.app.Imports.Fetch = func(ctx context.Context, _ importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 		<-ctx.Done()
@@ -60,7 +60,7 @@ func TestImportRunDeadlineResultReachesTheClient(t *testing.T) {
 // reaches the client as the time limit, never as 500 or 503. Deadlines from
 // 1 ms to 30 ms end the run at different admission steps.
 func TestImportDeadlineDuringAdmissionReachesTheClientAsTheLimit(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	fixture.app.Imports.Fetch = func(ctx context.Context, _ importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()

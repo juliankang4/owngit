@@ -220,19 +220,19 @@ func allPages(lang Lang) map[string]Page {
 		"runner-credentials-new": runnerPage(c, true),
 		"import": ImportPage{
 			Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabImport), SubmitURL: "/repositories/r1/import",
-			SelfURL: "/repositories/r1/import", Available: true, Configured: true, URL: "https://example.invalid/team/project.git",
+			SelfURL: "/repositories/r1/import", Configured: true, URL: "https://example.invalid/team/project.git",
 			Mode: "standalone", CredentialForm: "none", History: []ImportRunRow{{ID: "abc", Kind: "refresh", Status: "complete"}}, HistoryAvailable: true,
 		},
 		"import-admin": ImportPage{
 			Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabImport), SubmitURL: "/repositories/r1/import",
-			SelfURL: "/repositories/r1/import", SetupURL: "/repositories/r1/import?setup=1", Admin: true, Available: true, Configured: true,
+			SelfURL: "/repositories/r1/import", SetupURL: "/repositories/r1/import?setup=1", Admin: true, Configured: true,
 			URL: "https://example.invalid/team/project.git", Mode: "coexistence", CredentialForm: "bearer", CredentialBound: true,
 			ScheduleEnabled: true, ScheduleInterval: "6h", HistoryAvailable: true,
 			Last: &ImportRunRow{ID: "run1", Kind: "refresh", Status: "failed", ErrorClass: "network", Message: "connect failed"},
 		},
 		"import-setup": ImportPage{
 			Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabImport), SubmitURL: "/repositories/r1/import",
-			SelfURL: "/repositories/r1/import", SetupURL: "/repositories/r1/import?setup=1", Admin: true, Available: true, Setup: true, HistoryAvailable: true,
+			SelfURL: "/repositories/r1/import", SetupURL: "/repositories/r1/import?setup=1", Admin: true, Setup: true, HistoryAvailable: true,
 		},
 		"new-import": NewImportPage{Chrome: c, SubmitURL: "/repositories/new-import", Name: "project"},
 		"auth-admin-repo": AuthPage{Chrome: c, Scope: AuthAdmin, SubmitURL: "/admin/login", Next: "/repositories/r1/import",

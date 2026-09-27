@@ -484,12 +484,10 @@ func (app *App) renderRepositoryReadFailure(writer http.ResponseWriter, request 
 	}
 	page := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
 	page.Repo.Unreadable = true
-	page.Repo.UnreadableReason = webui.MsgRepoUnreadable
 	switch {
 	case errors.Is(cause, repository.ErrRepositoryPreparing):
 		// The notice is fixed; the cause is only in the server log.
 		page.Repo.Preparing = true
-		page.Repo.UnreadableReason = webui.MsgRepoPreparing
 		writer.Header().Set("Retry-After", "30")
 	case errors.Is(cause, repository.ErrRepositoryInUse):
 		page.Repo.UnreadableReason = webui.MsgRepoBusyInUse

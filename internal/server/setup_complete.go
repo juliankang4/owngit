@@ -159,7 +159,7 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 	app.setupHosts.clear()
 	// A kept Host is accepted from now on, also by this process; for a Host
 	// the policy already accepts this changes nothing.
-	if answers.KeepHost != "" && app.Hosts != nil {
+	if answers.KeepHost != "" {
 		if err := app.Hosts.Add(answers.KeepHost); err == nil && app.OnHostAccepted != nil {
 			app.OnHostAccepted()
 		}

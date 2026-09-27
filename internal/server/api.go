@@ -65,10 +65,6 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 			return
 		}
 	}
-	if app.PullRequests == nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "service_unavailable", "The pull request service is unavailable.", nil)
-		return
-	}
 	if !app.authorizeAPI(writer, request, settings) {
 		return
 	}
@@ -334,7 +330,7 @@ func decodeAPIJSONLimit(writer http.ResponseWriter, request *http.Request, desti
 // after authorization, so the answer does not reveal the repository to an
 // unauthenticated caller.
 func (app *App) refusePreparingAPI(writer http.ResponseWriter, repositoryID string) bool {
-	if app.Repositories == nil || !app.Repositories.Preparing(repositoryID) {
+	if !app.Repositories.Preparing(repositoryID) {
 		return false
 	}
 	writer.Header().Set("Retry-After", "30")

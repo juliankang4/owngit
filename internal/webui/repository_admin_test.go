@@ -226,7 +226,7 @@ func TestOverviewSidePanelsSayWhatCouldNotBeRead(t *testing.T) {
 func TestImportHistorySaysWhenItCouldNotBeRead(t *testing.T) {
 	r := newRenderer(t)
 	for _, lang := range []Lang{LangEN, LangKO} {
-		page := ImportPage{Chrome: fullChrome(lang), Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabImport), Available: true, Configured: true,
+		page := ImportPage{Chrome: fullChrome(lang), Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabImport), Configured: true,
 			Last: &ImportRunRow{ID: "run1", Kind: "refresh", Status: "failed", ErrorClass: "network"}}
 		out := render(t, r, page)
 		if !strings.Contains(out, Text(lang, MsgImportHistoryUnavailable)) || strings.Contains(out, Text(lang, MsgImportNoRun)) {

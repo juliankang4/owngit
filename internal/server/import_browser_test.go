@@ -14,7 +14,7 @@ import (
 )
 
 func TestImportBrowserFormsWorkInBothLanguages(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "import-browser")
@@ -58,7 +58,7 @@ func TestImportBrowserFormsWorkInBothLanguages(t *testing.T) {
 }
 
 func TestNewImportKeepsCAWhenCredentialFormIsNone(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	const caPEM = "browser-secret-ca"
 	var gotCA string
 	fixture.app.Imports.Fetch = func(_ context.Context, request importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
@@ -78,7 +78,7 @@ func TestNewImportKeepsCAWhenCredentialFormIsNone(t *testing.T) {
 }
 
 func TestImportPageShowsPasswordAndFailureCauses(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	fixture.app.Imports.Fetch = func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
 		return nil, &importfetch.Error{Op: "connect", Kind: importfetch.ErrConnection}
 	}
@@ -122,7 +122,7 @@ func TestImportPageShowsPasswordAndFailureCauses(t *testing.T) {
 // a cancelled initial import never redirects to a repository that was not
 // created.
 func TestCancelledImportsDoNotReportSuccess(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	cancelDuringFetch := func(repositoryID string) func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
 		return func(ctx context.Context, _ importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 			if _, err := fixture.app.Imports.Cancel(context.Background(), repositoryID); err != nil {
@@ -173,7 +173,7 @@ func TestCancelledImportsDoNotReportSuccess(t *testing.T) {
 // the password prompt, and a change posted without an administrator session
 // goes to that prompt too.
 func TestImportTabShowsStatusWithoutTheAdministratorPassword(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	const source = "https://git.example.invalid/private-team/project.git"
 	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{
 		RepositoryID: "project", URL: source, Mode: importsync.ModeCoexistence,
@@ -214,7 +214,7 @@ func TestImportTabShowsStatusWithoutTheAdministratorPassword(t *testing.T) {
 // An unconfigured repository offers Set up import instead of an open source
 // form. The form opens on that action, for an administrator only.
 func TestImportFormIsBehindSetUpImport(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	viewer, _ := newBrowserClient(t)
 	page := browserGET(t, viewer, server.URL+"/repositories/project/import")
@@ -237,7 +237,7 @@ func TestImportFormIsBehindSetUpImport(t *testing.T) {
 // A refused import names the rule on the field it is about, in both
 // languages, and marks that field invalid.
 func TestImportFormsReportTheRuleOnTheField(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "field-admin")
@@ -287,7 +287,7 @@ func TestImportFormsReportTheRuleOnTheField(t *testing.T) {
 // an administrator session never receives it, while the explained failure
 // class stays visible to everyone.
 func TestImportTabKeepsRunMessagesFromViewers(t *testing.T) {
-	fixture := newImportAPIFixture(t)
+	fixture := newAPIFixture(t, false)
 	fixture.app.Imports.Fetch = func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
 		return nil, &importfetch.Error{Op: "connect", Kind: importfetch.ErrConnection}
 	}

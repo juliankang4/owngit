@@ -59,9 +59,7 @@ type ImportPage struct {
 	// change, so the same fields are shown again. Empty otherwise.
 	CredentialChoice string
 
-	// Available is true when this process runs the import service.
-	Available bool
-	// StatusUnreadable is true when that service could not read this
+	// StatusUnreadable is true when the import service could not read this
 	// repository's import status, so the fields below describe nothing.
 	StatusUnreadable  bool
 	Configured        bool

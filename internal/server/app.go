@@ -43,6 +43,8 @@ const (
 )
 
 type App struct {
+	// Store through Hosts are required. The serving process always sets
+	// them, so no handler treats one as absent.
 	Store                   *state.Store
 	Auth                    *auth.Manager
 	Repositories            *repository.Manager
@@ -213,7 +215,7 @@ func (app *App) requestTimeout(request *http.Request) (time.Duration, time.Durat
 	// An archive download is a Git transfer. Its own operation deadline ends
 	// it first; the request keeps the reply reserve beyond that, so the limit
 	// that fires is the one the log names.
-	if archiveRoute(request) && app.GitHTTP != nil && app.GitHTTP.OperationTimeout > 0 {
+	if archiveRoute(request) && app.GitHTTP.OperationTimeout > 0 {
 		return app.GitHTTP.OperationTimeout + 2*replyReserve, replyReserve
 	}
 	return app.pageTimeout()

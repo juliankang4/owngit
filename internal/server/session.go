@@ -258,9 +258,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			item := webui.NavRepository{
 				ID: repository.ID, Name: repository.Name, URL: "/repositories/" + url.PathEscape(repository.ID), CountKnown: false,
 			}
-			if app.Repositories != nil {
-				item.LastActivity, _ = app.Repositories.CachedHeadDate(repository.ID)
-			}
+			item.LastActivity, _ = app.Repositories.CachedHeadDate(repository.ID)
 			nav.Repositories = append(nav.Repositories, item)
 		}
 		// Most recently active first. The dates come from snapshots already
