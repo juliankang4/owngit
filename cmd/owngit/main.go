@@ -111,7 +111,7 @@ func accountPathHint(err error) error {
 	case errors.Is(err, errUsageShown):
 		return nil
 	case errors.Is(err, fs.ErrPermission):
-		return fmt.Errorf("%w; this command runs as the %s account, which cannot open that path: give an absolute path in a folder it can use, such as %s", err, service.AccountName, filepath.Join(service.AccountHome, "backup"))
+		return fmt.Errorf("%w; this command runs as the %s account, which cannot open that path: give an absolute path in a folder it can use, such as %s", err, service.AccountName, service.AccountHome+"/backup")
 	}
 	return err
 }

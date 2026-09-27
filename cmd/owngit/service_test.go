@@ -560,6 +560,11 @@ type installFixture struct {
 
 func newInstallFixture(t *testing.T, env service.Environment, existing *service.Installed, managerDown bool) *installFixture {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		// "owngit service" runs on Linux only (requireServicePlatform); its
+		// units hold Unix paths, which are not absolute on Windows.
+		t.Skip("systemd service installs are Linux-only")
+	}
 	fixture := &installFixture{}
 	home := t.TempDir()
 	fixture.host = &serviceHost{

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -65,6 +66,7 @@ func TestChooseMode(t *testing.T) {
 }
 
 func TestHomebrewPrefix(t *testing.T) {
+	unixPathsOnly(t)
 	for path, want := range map[string]string{
 		"/home/linuxbrew/.linuxbrew/Cellar/owngit/1.1.1/bin/owngit": "/home/linuxbrew/.linuxbrew",
 		"/opt/homebrew/Cellar/owngit/1.1.1/bin/owngit":              "/opt/homebrew",
@@ -88,6 +90,7 @@ func unitLines(unit string) map[string][]string {
 }
 
 func TestRenderUnitForEachMode(t *testing.T) {
+	unixPathsOnly(t)
 	user, err := RenderUnit(Plan{Mode: ModeUser, Executable: "/usr/bin/owngit", StateDir: "/home/you/.config/owngit", Path: "/usr/bin:/bin"})
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +162,7 @@ func TestRenderUnitForEachMode(t *testing.T) {
 }
 
 func TestRenderUnitQuotesAndRefuses(t *testing.T) {
+	unixPathsOnly(t)
 	unit, err := RenderUnit(Plan{Mode: ModeUser, Executable: `/opt/own git/100%/$HOME/"q"\b/owngit`, StateDir: "/home/you/state"})
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +194,7 @@ func TestRenderUnitQuotesAndRefuses(t *testing.T) {
 }
 
 func TestReadUnitRecognizesModesAndForeignUnits(t *testing.T) {
+	unixPathsOnly(t)
 	dir := t.TempDir()
 	unit, err := RenderUnit(Plan{Mode: ModeUser, Executable: "/usr/bin/owngit", StateDir: "/home/you/.config/owngit"})
 	if err != nil {
@@ -232,6 +237,7 @@ func TestReadUnitRecognizesModesAndForeignUnits(t *testing.T) {
 }
 
 func TestRootScripts(t *testing.T) {
+	unixPathsOnly(t)
 	plan := Plan{
 		Mode: ModeAccount, Executable: "/usr/local/bin/owngit", StateDir: AccountStateDir,
 		User: AccountName, Group: AccountName, Home: AccountHome,
@@ -310,6 +316,7 @@ func (runner *recordedRunner) run(_ context.Context, name string, args ...string
 // Installing again replaces the unit and restarts the service, with the
 // same steps every time; uninstalling removes only the unit.
 func TestUserUnitInstallIsIdempotentAndUninstallKeepsData(t *testing.T) {
+	unixPathsOnly(t)
 	root := t.TempDir()
 	systemUnitPath = filepath.Join(root, "system", UnitName)
 	t.Cleanup(func() { systemUnitPath = SystemUnitPath })
@@ -376,6 +383,7 @@ func TestUserUnitInstallIsIdempotentAndUninstallKeepsData(t *testing.T) {
 }
 
 func TestReadPointer(t *testing.T) {
+	unixPathsOnly(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state-dir")
 	if got, err := ReadPointer(path); got != "" || err != nil {
@@ -399,5 +407,15 @@ func noErr(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// unixPathsOnly skips a test of units, pointers and Homebrew prefixes, which
+// hold Unix paths: "owngit service" runs on Linux, and those paths are not
+// absolute on Windows.
+func unixPathsOnly(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("systemd units and Homebrew prefixes use Unix paths; owngit service runs on Linux only")
 	}
 }
