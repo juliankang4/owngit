@@ -516,7 +516,7 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 			return fmt.Errorf("install Git with winget: %w", err)
 		}
 		if !gitOnServicePath() {
-			host.printf("Git for Windows is installed but not on PATH. Open a new terminal and run \"owngit service install\" again.\n")
+			host.printf("Git for Windows is installed but not on PATH. Add its cmd folder (for example C:\\Program Files\\Git\\cmd) to PATH, then run \"owngit service install\" again.\n")
 			return &checkExit{code: gitNotOnPathExit, err: errors.New("git is not on PATH")}
 		}
 	}

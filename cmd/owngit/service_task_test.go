@@ -374,7 +374,7 @@ func TestTaskInstallLooksForGitAsTheTaskDoes(t *testing.T) {
 	fake.git, fake.calls = false, nil
 	out.Reset()
 	err := elevated.elevatedInstall(testStateDir, false, true)
-	const line = "Git for Windows is installed but not on PATH. Open a new terminal and run \"owngit service install\" again.\n"
+	const line = "Git for Windows is installed but not on PATH. Add its cmd folder (for example C:\\Program Files\\Git\\cmd) to PATH, then run \"owngit service install\" again.\n"
 	var exit *checkExit
 	if !errors.As(err, &exit) || exit.code != gitNotOnPathExit || !strings.HasSuffix(out.String(), "winget.\n"+line) || slicesContainPrefix(fake.calls, "schtasks") {
 		t.Errorf("Git not on PATH: %v, calls %q, output:\n%s", err, fake.calls, out.String())
