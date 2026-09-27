@@ -41,34 +41,48 @@ func arriving(t *testing.T, app *App, handler http.Handler, local, peer string) 
 // labeled as encrypted by Tailscale and needs no acknowledgement of plain
 // HTTP. The same request on the LAN, from this computer, to an address in
 // the range that Tailscale does not list (another private network), or
-// from a tailnet device through a trusted proxy is not.
+// from a tailnet device that is a trusted proxy is not, whatever
+// forwarding headers the proxy sent, valid or not.
 func TestTheConnectionLabelNamesTheTailnet(t *testing.T) {
+	proxy := func(header ...string) http.Header {
+		values := http.Header{}
+		for i := 0; i < len(header); i += 2 {
+			values.Add(header[i], header[i+1])
+		}
+		return values
+	}
 	cases := []struct {
 		name, local, peer string
-		proxied, tailnet  bool
+		// proxy, when set, makes the peer a trusted proxy that sends it.
+		proxy   http.Header
+		tailnet bool
 	}{
-		{"tailnet IPv4", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", false, true},
-		{"tailnet IPv6", "[" + tailscaletest.IPv6 + "]:7654", "[fd7a:115c:a1e0::9]:50123", false, true},
-		{"home network", "192.168.1.5:7654", "192.168.1.9:50123", false, false},
-		{"loopback", "127.0.0.1:7654", "127.0.0.1:50123", false, false},
-		{"an address Tailscale does not list", "100.64.0.8:7654", "100.64.0.9:50123", false, false},
-		{"this computer at its own Tailscale address", tailscaletest.IPv4 + ":7654", tailscaletest.IPv4 + ":50123", false, false},
-		{"a device outside the tailnet ranges", tailscaletest.IPv4 + ":7654", "192.168.1.9:50123", false, false},
-		{"a tailnet proxy that forwarded plain HTTP", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", true, false},
+		{"tailnet IPv4", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", nil, true},
+		{"tailnet IPv6", "[" + tailscaletest.IPv6 + "]:7654", "[fd7a:115c:a1e0::9]:50123", nil, true},
+		{"home network", "192.168.1.5:7654", "192.168.1.9:50123", nil, false},
+		{"loopback", "127.0.0.1:7654", "127.0.0.1:50123", nil, false},
+		{"an address Tailscale does not list", "100.64.0.8:7654", "100.64.0.9:50123", nil, false},
+		{"this computer at its own Tailscale address", tailscaletest.IPv4 + ":7654", tailscaletest.IPv4 + ":50123", nil, false},
+		{"a device outside the tailnet ranges", tailscaletest.IPv4 + ":7654", "192.168.1.9:50123", nil, false},
+		{"a tailnet proxy that forwarded plain HTTP", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", proxy("X-Forwarded-Proto", "http"), false},
+		{"a tailnet proxy without forwarding headers", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", proxy(), false},
+		{"a tailnet proxy with an invalid scheme", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", proxy("X-Forwarded-Proto", "gopher"), false},
+		{"a tailnet proxy with a repeated scheme", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", proxy("X-Forwarded-Proto", "http", "X-Forwarded-Proto", "http"), false},
+		{"a tailnet proxy with only a client address", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", proxy("X-Forwarded-For", "100.100.1.2"), false},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			app, _ := withTailscale(t, newUnacknowledgedApp(t), tailscaletest.State{Status: tailscaletest.Running()})
 			readAddresses(t, app)
-			if test.proxied {
+			if test.proxy != nil {
 				app.Network = NewLiveNetwork(LiveNetworkConfig{Proxies: []netip.Prefix{netip.MustParsePrefix("100.64.0.9/32")}, Hosts: app.Hosts})
 			}
 			server := serve(t, arriving(t, app, app.Handler(), test.local, test.peer))
 			client, _ := newBrowserClient(t)
 			request, err := http.NewRequest(http.MethodGet, server.URL+"/settings", nil)
 			noErr(t, err)
-			if test.proxied {
-				request.Header.Set("X-Forwarded-Proto", "http")
+			for name, values := range test.proxy {
+				request.Header[name] = values
 			}
 			response, err := client.Do(request)
 			noErr(t, err)

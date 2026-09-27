@@ -37,6 +37,9 @@ type Info struct {
 	// Proxied is true when Scheme came from a trusted proxy's
 	// X-Forwarded-Proto rather than from the connection.
 	Proxied bool
+	// FromProxy is true when Peer is a trusted proxy, whatever headers it
+	// sent: the request then came from a client the server cannot see.
+	FromProxy bool
 }
 
 // Secure reports whether the client reached the server over HTTPS.
@@ -81,6 +84,7 @@ func (resolver Resolver) Resolve(request *http.Request) Info {
 	if !resolver.trusts(info.Peer) {
 		return info
 	}
+	info.FromProxy = true
 	if proto, ok := singleValue(request.Header, "X-Forwarded-Proto"); ok && (proto == "http" || proto == "https") {
 		info.Scheme, info.Proxied = proto, true
 	}

@@ -874,12 +874,12 @@ func (app *App) throughTailscale(request *http.Request) bool {
 // then encrypted it between the tailnet device that sent it and this
 // computer. The address ranges alone do not show that, since other private
 // networks and some carriers use 100.64.0.0/10 too. A request from this
-// computer itself, or forwarded by a trusted proxy, is not counted, and
-// neither is Tailscale in userspace networking mode, which connects from
-// 127.0.0.1.
+// computer itself, or from a trusted proxy with or without forwarding
+// headers, is not counted, and neither is Tailscale in userspace networking
+// mode, which connects from 127.0.0.1.
 func (app *App) throughTailnet(request *http.Request) bool {
 	info := requestctx.Of(request)
-	if app.Tailscale == nil || info.Secure() || info.Proxied {
+	if app.Tailscale == nil || info.Secure() || info.FromProxy {
 		return false
 	}
 	// The address the connection reached, as the listener reports it; a
