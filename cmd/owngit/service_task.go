@@ -899,16 +899,18 @@ func (host *taskHost) uninstall() error {
 		host.printf(" and the repositories in %s", repositories)
 	}
 	host.printf(".\n")
-	if _, err := os.Stat(host.serviceInstall.Directory); err == nil {
-		host.printf("The service copy in %s stays; an administrator can delete that folder.\n", host.serviceInstall.Directory)
+	if _, err := os.Stat(host.serviceInstall.Executable); err == nil {
+		host.printf("The service copy %s stays; an administrator can delete it.\n", host.serviceInstall.Executable)
+	} else if _, err := os.Stat(host.serviceInstall.Directory); err == nil {
+		host.printf("%s stays, because it holds files OwnGit did not create.\n", host.serviceInstall.Directory)
 	}
 	host.printf("Run \"owngit service install\" to use it again.\n")
 	return nil
 }
 
 // elevatedUninstall removes the task, OwnGit's firewall rule and the
-// protected service copy. It keeps the state directory and the
-// repositories.
+// protected service copy. It keeps the state directory, the repositories
+// and other files in the service folder.
 func (host *taskHost) elevatedUninstall() error {
 	if err := host.prepareAdministrator(); err != nil {
 		return err
@@ -926,14 +928,23 @@ func (host *taskHost) elevatedUninstall() error {
 	if err := host.removeFirewallRule(); err != nil {
 		return err
 	}
-	// A server that was just ended may hold the copy for a moment.
+	// Only the copy and temp go, and the folder when nothing else is in it.
+	// A server that was just ended may hold the copy for a moment; a copy
+	// that runs this command stays.
+	executable := host.serviceInstall.Executable
+	if strings.EqualFold(executable, host.executable) {
+		executable = ""
+	}
 	for attempt := 0; attempt < 10; attempt++ {
-		if err = os.RemoveAll(host.serviceInstall.Directory); err == nil {
-			return nil
+		if err = errors.Join(os.RemoveAll(host.serviceInstall.Temp), os.RemoveAll(executable)); err == nil {
+			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	host.printf("The service copy could not be removed: %v\n", err)
+	if err != nil {
+		host.printf("The service copy could not be removed: %v\n", err)
+	}
+	_ = os.Remove(host.serviceInstall.Directory)
 	return nil
 }
 

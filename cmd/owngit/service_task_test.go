@@ -255,7 +255,8 @@ func testTaskHost(environment service.Environment) (*taskHost, *bytes.Buffer) {
 	var out bytes.Buffer
 	return &taskHost{
 		env: environment, executable: testUserExecutable,
-		// A folder that the tests may create and an uninstall removes.
+		// Tests that uninstall use serviceFolder, since an uninstall
+		// removes the copy and temp.
 		serviceInstall: serviceInstallPaths{
 			Directory: filepath.Join(os.TempDir(), "owngit-test-service"), Executable: testServiceExecutable,
 			Temp: os.TempDir(),
@@ -514,16 +515,34 @@ func TestElevatedCommandsIgnoreTheUserEnvironment(t *testing.T) {
 	}
 }
 
+// serviceFolder gives host a service folder of its own, with the copy and
+// temp in it.
+func serviceFolder(t *testing.T, host *taskHost) {
+	directory := filepath.Join(t.TempDir(), "OwnGit")
+	host.serviceInstall = serviceInstallPaths{Directory: directory, Executable: filepath.Join(directory, "owngit.exe"), Temp: filepath.Join(directory, "temp")}
+	noErr(t, os.MkdirAll(filepath.Join(host.serviceInstall.Temp, "WinGet"), 0o700))
+	noErr(t, os.WriteFile(host.serviceInstall.Executable, []byte("service copy"), 0o700))
+}
+
+// An uninstall with administrator rights removes the task, the rule, the
+// service copy and its temp folder. It keeps the state and the files that
+// OwnGit did not create in the service folder, and says so.
 func TestTaskElevatedUninstallKeepsTheData(t *testing.T) {
 	fake := newFakeWindows(t)
 	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
 	fake.firewall = testServiceExecutable + "\n2\nTrue\n1\n1\n"
-	host, _ := testTaskHost(service.Environment{Administrator: true, Elevated: true})
-	host.serviceInstall.Directory = filepath.Join(t.TempDir(), "OwnGit")
-	noErr(t, os.MkdirAll(filepath.Join(host.serviceInstall.Directory, "temp"), 0o700))
-	noErr(t, host.elevatedUninstall())
-	if _, err := os.Stat(host.serviceInstall.Directory); fake.definition != "" || fake.firewall != "" || !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("task %q, rule %q or service copy (%v) stayed", fake.definition, fake.firewall, err)
+	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	serviceFolder(t, host)
+	readme := filepath.Join(host.serviceInstall.Directory, "README.txt")
+	noErr(t, os.WriteFile(readme, []byte("the owner's file"), 0o600))
+	noErr(t, host.uninstall())
+	_, copyErr := os.Stat(host.serviceInstall.Executable)
+	_, tempErr := os.Stat(host.serviceInstall.Temp)
+	if _, err := os.Stat(readme); fake.definition != "" || fake.firewall != "" || !errors.Is(copyErr, os.ErrNotExist) || !errors.Is(tempErr, os.ErrNotExist) || err != nil {
+		t.Errorf("task %q, rule %q, copy (%v) or temp (%v) stayed, or the owner's file is gone (%v)", fake.definition, fake.firewall, copyErr, tempErr, err)
+	}
+	if !strings.Contains(out.String(), host.serviceInstall.Directory+" stays, because it holds files OwnGit did not create.\n") {
+		t.Errorf("output:\n%s", out.String())
 	}
 	for _, call := range fake.calls {
 		if strings.Contains(call, testStateDir) {
@@ -754,21 +773,21 @@ func TestTaskElevatedUninstallNamesTheRepositories(t *testing.T) {
 	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
 	fake.repositories = `D:\Repositories`
 	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
-	host.serviceInstall.Directory = t.TempDir()
+	serviceFolder(t, host)
 	noErr(t, host.uninstall())
-	if fake.definition != "" {
-		t.Error("the task stayed")
+	if _, err := os.Stat(host.serviceInstall.Directory); fake.definition != "" || !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the task or the service folder (%v) stayed", err)
 	}
-	if !strings.Contains(out.String(), `The state stays in `+testStateDir+` and the repositories in D:\Repositories.`) || strings.Contains(out.String(), "service copy") {
+	if !strings.Contains(out.String(), `The state stays in `+testStateDir+` and the repositories in D:\Repositories.`) || strings.Contains(out.String(), " stays,") || strings.Contains(out.String(), "service copy") {
 		t.Errorf("output:\n%s", out.String())
 	}
 	// Without the step with administrator rights, the copy stays, and the
 	// command says where.
 	fake.existing(t, service.ModeLogonTask, testSID, testStateDir)
 	host, out = testTaskHost(service.Environment{})
-	host.serviceInstall.Directory = t.TempDir()
+	serviceFolder(t, host)
 	noErr(t, host.uninstall())
-	if !strings.Contains(out.String(), "The service copy in "+host.serviceInstall.Directory+" stays; an administrator can delete that folder.\n") {
+	if !strings.Contains(out.String(), "The service copy "+host.serviceInstall.Executable+" stays; an administrator can delete it.\n") {
 		t.Errorf("output:\n%s", out.String())
 	}
 }
