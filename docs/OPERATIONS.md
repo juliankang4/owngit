@@ -63,7 +63,7 @@ Every unit starts `owngit serve --state-dir DIR --no-open --headless=true` or `-
 
 `owngit service install` waits until the service answers. If the service stops with an error while it waits, for example because another program uses the port, the command prints that error at once with the next step.
 
-Run `owngit service install` again at any time, for example after you replace the `owngit` binary with a new release. It rewrites the unit and restarts the service in the same mode, with the same state directory. A service installed on the desktop stays a user service when you run the command again over SSH, and every service keeps the headless choice of its first install; `owngit service install --headless=true` or `--headless=false` changes it.
+Run `owngit service install` again at any time, for example after you replace the `owngit` binary with a new release. It rewrites the unit and restarts the service in the same mode, with the same state directory. A service installed on the desktop stays a user service when you run the command again over SSH, and every service keeps the headless choice of its first install; `owngit service install --headless=true` or `--headless=false` changes it. `--headless=false` does not change a listen address that an earlier headless start already saved; to go back to this computer only, also run `owngit network set --listen 127.0.0.1:7654`.
 
 | Command | What it does |
 | --- | --- |

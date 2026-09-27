@@ -63,7 +63,7 @@ Linux에서 `owngit service install`은 systemd로 OwnGit을 백그라운드에�
 
 `owngit service install`은 서비스가 응답할 때까지 기다립니다. 기다리는 동안 다른 프로그램이 포트를 쓰는 등의 이유로 서비스가 오류로 멈추면, 그 오류와 다음에 할 일을 바로 출력합니다.
 
-`owngit service install`은 언제든 다시 실행할 수 있습니다. 예를 들어 `owngit` 실행 파일을 새 릴리스로 바꾼 뒤 실행하면, 같은 방식과 같은 상태 디렉터리로 유닛을 다시 쓰고 서비스를 다시 시작합니다. 데스크톱에서 설치한 서비스는 나중에 SSH로 명령을 다시 실행해도 사용자 서비스로 남고, 모든 서비스는 처음 설치할 때 정한 화면 없음(headless) 여부를 유지합니다. 바꾸려면 `owngit service install --headless=true` 또는 `--headless=false`를 실행하세요.
+`owngit service install`은 언제든 다시 실행할 수 있습니다. 예를 들어 `owngit` 실행 파일을 새 릴리스로 바꾼 뒤 실행하면, 같은 방식과 같은 상태 디렉터리로 유닛을 다시 쓰고 서비스를 다시 시작합니다. 데스크톱에서 설치한 서비스는 나중에 SSH로 명령을 다시 실행해도 사용자 서비스로 남고, 모든 서비스는 처음 설치할 때 정한 화면 없음(headless) 여부를 유지합니다. 바꾸려면 `owngit service install --headless=true` 또는 `--headless=false`를 실행하세요. `--headless=false`는 앞서 화면 없는 컴퓨터로 시작하며 이미 저장한 연결 주소를 바꾸지 않으므로, 이 컴퓨터에서만 쓰도록 되돌리려면 `owngit network set --listen 127.0.0.1:7654`도 실행하세요.
 
 | 명령 | 하는 일 |
 | --- | --- |

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"owngit/internal/auth"
 	"owngit/internal/state"
@@ -123,30 +124,45 @@ func TestServeRetriesAnUnstableStateOpen(t *testing.T) {
 }
 
 // The real race: "owngit service install" polls the state of a server that
-// is starting. Every start succeeds.
+// is starting. Every start succeeds. The pollers open the state far more
+// often than the real waiter (every 500 ms) and still pause between opens,
+// so they cannot use up serve's retries on their own; with serve's retry
+// turned off this test fails within a few starts.
 func TestServeStartsWhileACommandPollsItsState(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	store, err := state.Open(context.Background(), stateDir)
 	noErr(t, err)
 	noErr(t, store.Close())
 	for round := 0; round < 10; round++ {
-		stop := make(chan struct{})
-		var pollers sync.WaitGroup
-		for range 4 {
-			pollers.Go(func() {
-				for {
-					select {
-					case <-stop:
-						return
-					default:
-					}
-					_, _, _ = healthAddress(stateDir)
-				}
-			})
-		}
+		stopPolling := pollState(t, stateDir, 4, 10*time.Millisecond)
 		instance := startServedWith(t, []string{"--state-dir", stateDir, "--no-open", "--listen", "127.0.0.1:0"})
-		close(stop)
-		pollers.Wait()
+		stopPolling()
 		instance.stop()
 	}
+}
+
+// pollState opens the state of stateDir as the service install waiter does,
+// from count goroutines that pause between opens, until the returned stop
+// runs. stop also runs when the test ends, so a failed test never leaves
+// the goroutines running into later tests.
+func pollState(t *testing.T, stateDir string, count int, pause time.Duration) (stop func()) {
+	t.Helper()
+	done := make(chan struct{})
+	var pollers sync.WaitGroup
+	for range count {
+		pollers.Go(func() {
+			for {
+				_, _, _ = healthAddress(stateDir)
+				select {
+				case <-done:
+					return
+				case <-time.After(pause):
+				}
+			}
+		})
+	}
+	var once sync.Once
+	stop = func() { once.Do(func() { close(done); pollers.Wait() }) }
+	t.Cleanup(stop)
+	return stop
 }
