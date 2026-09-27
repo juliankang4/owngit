@@ -762,3 +762,29 @@ func TestInstallKeepsTheHeadlessChoiceUnlessTheFlagChangesIt(t *testing.T) {
 }
 
 func ptr[T any](value T) *T { return &value }
+
+// Root's own earlier installation is named only when its setup is complete,
+// and only while the service's state is readable and not set up; the notice
+// holds the whole command line that serves it.
+func TestEarlierRootStateNotice(t *testing.T) {
+	root := t.TempDir()
+	fresh, done := filepath.Join(root, "fresh"), filepath.Join(root, "done")
+	for _, dir := range []string{fresh, done} {
+		store, err := state.Open(context.Background(), dir)
+		noErr(t, err)
+		if dir == done {
+			noErr(t, store.CompleteSetup(context.Background(), filepath.Join(root, "repositories"), "open", "", "admin-hash", true))
+		}
+		noErr(t, store.Close())
+	}
+	for dir, want := range map[string][2]bool{filepath.Join(root, "missing"): {false, false}, fresh: {true, false}, done: {true, true}} {
+		if read, complete := setupStatus(dir); read != want[0] || complete != want[1] {
+			t.Errorf("setupStatus(%s) = %t, %t, want %v", dir, read, complete, want)
+		}
+	}
+	notice := earlierStateNotice("/usr/local/bin/owngit", "/root/.config/owngit", true)
+	want := "  sudo '/usr/local/bin/owngit' backup --state-dir '/root/.config/owngit' --output /var/lib/owngit/root-backup && sudo chown -R owngit: /var/lib/owngit/root-backup && sudo runuser -u owngit -- '/usr/local/bin/owngit' restore --input /var/lib/owngit/root-backup --state-dir /var/lib/owngit/state-from-root --repository-root /var/lib/owngit/repositories && sudo '/usr/local/bin/owngit' service install --state-dir /var/lib/owngit/state-from-root\n"
+	if !strings.HasSuffix(notice, want) || strings.Contains(earlierStateNotice("/usr/local/bin/owngit", "/root/.config/owngit", false), "sudo") {
+		t.Errorf("notice = %q", notice)
+	}
+}

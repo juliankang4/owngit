@@ -250,6 +250,7 @@ func (host *serviceHost) install(stateDirFlag string, headlessFlag *bool) error 
 	}
 	unitPath := plan.UnitPath(host.userConfigDir)
 	ctx := context.Background()
+	earlier := ""
 	switch mode {
 	case service.ModeUser:
 		host.printf("Installing OwnGit as a %s.\n", mode.Describe())
@@ -269,6 +270,12 @@ func (host *serviceHost) install(stateDirFlag string, headlessFlag *bool) error 
 		if !root {
 			explanation = "Installing OwnGit as a " + mode.Describe() + " needs root once to " + steps + "."
 		}
+		if mode == service.ModeAccount {
+			// Root's own state from before the service stays where it is.
+			if read, complete := setupStatus(ownStateDir()); read && complete {
+				earlier = ownStateDir()
+			}
+		}
 		if err := host.runAsRoot(script, explanation); err != nil {
 			return err
 		}
@@ -280,7 +287,13 @@ func (host *serviceHost) install(stateDirFlag string, headlessFlag *bool) error 
 			}
 		}
 	}
-	return host.reportStarted(mode, unitPath, stateDir)
+	if err := host.reportStarted(mode, unitPath, stateDir); err != nil || earlier == "" {
+		return err
+	}
+	if read, complete := setupStatus(stateDir); read && !complete {
+		fmt.Fprint(host.out, earlierStateNotice(host.executable, earlier, os.Getenv("SUDO_USER") != ""))
+	}
+	return nil
 }
 
 // installStateDir is the state directory of a new or updated unit.
@@ -492,26 +505,39 @@ func (host *serviceHost) status() error {
 	} else if !readable {
 		host.printf("  Address: run \"sudo owngit service status\" to read it from the state directory of %s\n", installed.User)
 	}
-	if readable && !setupComplete(installed.StateDir) {
+	if read, complete := setupStatus(installed.StateDir); readable && read && !complete {
 		host.printf("Setup is not complete. Run \"owngit setup-link\" in a terminal for the one-time setup link.\n")
 	}
 	return nil
 }
 
-// setupComplete reports whether setup of the state directory is complete.
-// A state directory that cannot be read counts as complete, so nothing
-// suggests setting up an installation that may already be in use.
-func setupComplete(stateDir string) bool {
+// setupStatus reports whether the state directory could be read and whether
+// its setup is complete. Only a readable state is said to need setup, so
+// nothing suggests setting up an installation that may already be in use.
+func setupStatus(stateDir string) (readable, complete bool) {
 	if err := state.RequireExisting(stateDir); err != nil {
-		return true
+		return false, false
 	}
 	store, err := openLiveState(context.Background(), stateDir)
 	if err != nil {
-		return true
+		return false, false
 	}
 	defer store.Close()
 	settings, err := store.Settings(context.Background())
-	return err != nil || settings.Initialized
+	return err == nil, err == nil && settings.Initialized
+}
+
+// earlierStateNotice tells root how to serve its own earlier installation in
+// earlier through the account service, whose state starts empty: back it up,
+// restore it as the account and point the service at the restored state.
+func earlierStateNotice(executable, earlier string, sudo bool) string {
+	run, owngit, backup, restored := "", service.ShellQuote(executable), service.AccountHome+"/root-backup", service.AccountHome+"/state-from-root"
+	if sudo {
+		run = "sudo "
+	}
+	return fmt.Sprintf("Root's earlier OwnGit in %s was not moved, so this service starts empty. To serve it instead, run:\n"+
+		"  %[2]s%[3]s backup --state-dir %[4]s --output %[5]s && %[2]schown -R %[6]s: %[5]s && %[2]srunuser -u %[6]s -- %[3]s restore --input %[5]s --state-dir %[7]s --repository-root %[8]s/repositories && %[2]s%[3]s service install --state-dir %[7]s\n",
+		earlier, run, owngit, service.ShellQuote(earlier), backup, service.AccountName, restored, service.AccountHome)
 }
 
 func (host *serviceHost) control(action string) error {

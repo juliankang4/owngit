@@ -1021,6 +1021,12 @@ func defaultStateDir() string {
 	if pointed := pointerStateDir(); pointed != "" {
 		return pointed
 	}
+	return ownStateDir()
+}
+
+// ownStateDir is the default state directory of this account, without the
+// account service's pointer.
+func ownStateDir() string {
 	if configured, err := os.UserConfigDir(); err == nil {
 		return defaultStatePath(configured, "")
 	}

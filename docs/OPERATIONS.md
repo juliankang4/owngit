@@ -65,6 +65,17 @@ Every unit starts `owngit serve --state-dir DIR --no-open --headless=true` or `-
 
 Run `owngit service install` again at any time, for example after you replace the `owngit` binary with a new release. It rewrites the unit and restarts the service in the same mode, with the same state directory. A service installed on the desktop stays a user service when you run the command again over SSH, and every service keeps the headless choice of its first install; `owngit service install --headless=true` or `--headless=false` changes it. `--headless=false` does not change a listen address that an earlier headless start already saved; to go back to this computer only, also run `owngit network set --listen 127.0.0.1:7654`.
 
+If root already used OwnGit with its own state in `/root/.config/owngit`, for example with 1.1.0, root's `owngit service install` leaves that state where it is. While the service's new state is not set up, the command prints the commands that serve root's installation instead. They back it up (stop that OwnGit first), restore it as the `owngit` account and point the service at the restored copy:
+
+```sh
+sudo owngit backup --state-dir /root/.config/owngit --output /var/lib/owngit/root-backup
+sudo chown -R owngit: /var/lib/owngit/root-backup
+sudo runuser -u owngit -- owngit restore --input /var/lib/owngit/root-backup --state-dir /var/lib/owngit/state-from-root --repository-root /var/lib/owngit/repositories
+sudo owngit service install --state-dir /var/lib/owngit/state-from-root
+```
+
+As with every restore, sessions, trusted hosts and network settings are not carried over. Sign in again. The service listens on this computer only until you run `sudo owngit network set --listen 0.0.0.0:7654` and `sudo owngit service restart`. Root's old state, the backup and the unused `/var/lib/owngit/state` stay; remove them when you no longer need them.
+
 | Command | What it does |
 | --- | --- |
 | `owngit service status` | Whether OwnGit runs and answers, who runs it, the unit file, the log command, the state directory and the addresses. |
