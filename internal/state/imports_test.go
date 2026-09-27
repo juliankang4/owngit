@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -417,6 +418,57 @@ func TestImportCredentialFileIsBoundAndPrivate(t *testing.T) {
 	}
 	if _, exists, err := store.LoadImportCredentials(ctx, "project"); err != nil || exists {
 		t.Fatalf("deleted credential exists=%v err=%v", exists, err)
+	}
+}
+
+func TestImportCredentialReadersPreserveRawBinding(t *testing.T) {
+	for _, name := range []string{"missing", "empty", "invalid JSON", "invalid fields", "oversized", "read failure", "cancelled"} {
+		t.Run(name, func(t *testing.T) {
+			store := openTestStore(t)
+			ctx := context.Background()
+			content := []byte("not JSON\n")
+			switch name {
+			case "empty":
+				content = []byte{}
+			case "invalid fields":
+				content = []byte(" {\"extra\":true} \n")
+			case "oversized":
+				content = bytes.Repeat([]byte("x"), maxImportCredentialFileBytes+1)
+			case "cancelled":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			path, err := store.importCredentialPath("project")
+			noErr(t, err)
+			noErr(t, os.MkdirAll(filepath.Dir(path), 0o700))
+			if name == "read failure" {
+				noErr(t, os.Mkdir(path, 0o700))
+			} else if name != "missing" {
+				noErr(t, os.WriteFile(path, content, 0o600))
+			}
+			raw, found, rawErr := store.readImportCredentialFile(ctx, "project")
+			_, usable, err := store.LoadImportCredentials(ctx, "project")
+			readFailure := name == "oversized" || name == "read failure" || name == "cancelled"
+			if (rawErr != nil) != readFailure || found != (!readFailure && name != "missing") || usable || (err == nil) != (name == "missing") {
+				t.Fatalf("reader classifications: raw found=%v error=%v usable=%v error=%v", found, rawErr, usable, err)
+			}
+			if name == "cancelled" && (!errors.Is(rawErr, context.Canceled) || !errors.Is(err, context.Canceled)) {
+				t.Fatal("readers lost cancellation")
+			}
+			if !found {
+				return
+			}
+			snapshot, err := store.ReadImportBinding(ctx, "project")
+			noErr(t, err)
+			if !snapshot.CredentialExists || !bytes.Equal(raw, content) || !bytes.Equal(snapshot.CredentialJSON, content) {
+				t.Fatal("raw binding changed invalid bytes")
+			}
+			err = store.RestoreImportBinding(ctx, "project", snapshot)
+			if (err != nil) != (name == "empty") {
+				t.Fatalf("raw restore error=%v", err)
+			}
+		})
 	}
 }
 

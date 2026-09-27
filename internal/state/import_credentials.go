@@ -298,27 +298,9 @@ func (s *Store) writeImportCredentials(ctx context.Context, credential ImportCre
 // LoadImportCredentials reads one stored credential. A bounded read refuses a
 // file that grew beyond its expected size.
 func (s *Store) LoadImportCredentials(ctx context.Context, repositoryID string) (ImportCredentials, bool, error) {
-	if err := ctx.Err(); err != nil {
+	content, exists, err := s.readImportCredentialFile(ctx, repositoryID)
+	if err != nil || !exists {
 		return ImportCredentials{}, false, err
-	}
-	path, err := s.importCredentialPath(repositoryID)
-	if err != nil {
-		return ImportCredentials{}, false, err
-	}
-	file, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return ImportCredentials{}, false, nil
-	}
-	if err != nil {
-		return ImportCredentials{}, false, err
-	}
-	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, maxImportCredentialFileBytes+1))
-	if err != nil {
-		return ImportCredentials{}, false, err
-	}
-	if len(content) > maxImportCredentialFileBytes {
-		return ImportCredentials{}, false, errors.New("import credential file exceeds its bound")
 	}
 	var credential ImportCredentials
 	if err := json.Unmarshal(content, &credential); err != nil {
