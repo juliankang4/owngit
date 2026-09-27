@@ -36,6 +36,10 @@ func TestHeadlessDetection(t *testing.T) {
 		{"user in a container with a desktop", Environment{Getenv: environ(desktop), EUID: 1000, Linux: true, InContainer: true, GraphicalSession: true}, false},
 		{"root at a desktop", Environment{Getenv: environ(desktop), EUID: 0, Linux: true, GraphicalSession: true}, false},
 		{"not Linux", Environment{Getenv: environ(ssh), EUID: 501}, false},
+		{"Mac desktop", Environment{Getenv: environ(nil), EUID: 501, Darwin: true, GraphicalSession: true}, false},
+		{"SSH into a Mac with a desktop login", Environment{Getenv: environ(ssh), EUID: 501, Darwin: true, GraphicalSession: true}, false},
+		{"SSH into a Mac without a desktop login", Environment{Getenv: environ(ssh), EUID: 501, Darwin: true}, true},
+		{"Mac without a desktop login, display set", Environment{Getenv: environ(desktop), EUID: 501, Darwin: true}, true},
 	} {
 		if got := test.env.Headless(); got != test.want {
 			t.Errorf("%s: Headless() = %v, want %v", test.name, got, test.want)
@@ -58,6 +62,9 @@ func TestChooseMode(t *testing.T) {
 		{"root", root, false, ModeAccount},
 		{"Homebrew binary", ssh, true, ModeHomebrew},
 		{"root with a Homebrew binary", root, true, ModeAccount},
+		{"Mac", Environment{Getenv: environ(nil), EUID: 501, Darwin: true, GraphicalSession: true}, false, ModeLaunchAgent},
+		{"Mac over SSH", Environment{Getenv: environ(nil), EUID: 501, Darwin: true}, false, ModeLaunchAgent},
+		{"Mac with a Homebrew binary", Environment{Getenv: environ(nil), EUID: 501, Darwin: true}, true, ModeHomebrew},
 	} {
 		if got := test.env.ChooseMode(test.homebrew); got != test.want {
 			t.Errorf("%s: ChooseMode = %s, want %s", test.name, got, test.want)

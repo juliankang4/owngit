@@ -1,8 +1,9 @@
 // Package service installs OwnGit as a background service that starts at
 // boot. It chooses who runs the service from the environment, without
 // asking: a desktop user, the user who installs it over SSH, or a dedicated
-// account when root installs it. Linux uses systemd and Windows the Task
-// Scheduler. Other platforms plug in through the same modes and commands.
+// account when root installs it. Linux uses systemd, macOS a launchd
+// LaunchAgent and Windows the Task Scheduler. Other platforms plug in
+// through the same modes and commands.
 package service
 
 import (
@@ -28,6 +29,9 @@ const (
 	// ModeHomebrew leaves the service to "brew services", because Homebrew
 	// installed the binary and upgrades it.
 	ModeHomebrew Mode = "homebrew"
+	// ModeLaunchAgent is a macOS LaunchAgent of the installing user. launchd
+	// starts it when that user logs in.
+	ModeLaunchAgent Mode = "launchagent"
 	// ModeBootTask is a Windows scheduled task that starts at boot as the
 	// installing administrator account, without a stored password (S4U).
 	ModeBootTask Mode = "boot-task"
@@ -49,6 +53,8 @@ func (mode Mode) Describe() string {
 		return "systemd system service that runs as the " + AccountName + " account"
 	case ModeHomebrew:
 		return "Homebrew service (brew services)"
+	case ModeLaunchAgent:
+		return "LaunchAgent of this user"
 	case ModeBootTask:
 		return "scheduled task that starts at boot as this account"
 	case ModeLogonTask:
@@ -80,13 +86,17 @@ type Environment struct {
 	EUID int
 	// Linux is true on Linux, where the systemd modes apply.
 	Linux bool
+	// Darwin is true on macOS, where ModeLaunchAgent applies.
+	Darwin bool
 	// InContainer is true inside a container or LXC.
 	InContainer bool
-	// GraphicalSession is true when systemd-logind lists a graphical
-	// session (X11 or Wayland, including a login screen), as a desktop or
-	// laptop in use has. Servers and containers have none. A seat that
-	// could show graphics is not enough: every virtual machine with a
-	// virtual display adapter has one.
+	// GraphicalSession is true on Linux when systemd-logind lists a
+	// graphical session (X11 or Wayland, including a login screen), as a
+	// desktop or laptop in use has. Servers and containers have none. A
+	// seat that could show graphics is not enough: every virtual machine
+	// with a virtual display adapter has one. On macOS it is true when this
+	// user is logged in at the desktop (launchd has the user's GUI domain),
+	// in front or in the background of fast user switching.
 	GraphicalSession bool
 
 	// Windows is true on Windows, where the scheduled task modes apply.
@@ -112,12 +122,19 @@ type Environment struct {
 //   - no graphical session exists on this computer, and no display is set
 //     outside SSH (WSLg and desktops without logind set only a display).
 //
-// On Windows it is true in an SSH session, which has no desktop of its
-// own. Other platforms are never headless here yet.
+// On macOS it is true when this user is not logged in at the desktop, as
+// on a Mac reached over SSH while nobody or someone else is logged in
+// there. SSH into a Mac where the user is logged in at the desktop counts
+// as a desktop, like a terminal there. On Windows it is true in an SSH
+// session, which has no desktop of its own. Other platforms are never
+// headless here yet.
 func (env Environment) Headless() bool {
 	ssh := env.Getenv("SSH_CONNECTION") != "" || env.Getenv("SSH_CLIENT") != "" || env.Getenv("SSH_TTY") != ""
 	if env.Windows {
 		return ssh
+	}
+	if env.Darwin {
+		return !env.GraphicalSession
 	}
 	if !env.Linux {
 		return false
@@ -133,11 +150,13 @@ func (env Environment) Headless() bool {
 }
 
 // ChooseMode picks the mode for a new installation: Homebrew when it
-// installed the binary, the dedicated account for root, a user service on
-// a desktop, and a system service running as the installing user
-// otherwise. A user service that cannot start at boot falls back to
-// ModeSystem when it is installed. On Windows an administrator account
-// gets ModeBootTask and a standard account ModeLogonTask.
+// installed the binary, a LaunchAgent on macOS, the dedicated account for
+// root, a user service on a desktop, and a system service running as the
+// installing user otherwise. A user service that cannot start at boot
+// falls back to ModeSystem when it is installed. On macOS root gets
+// ModeLaunchAgent too, which the command refuses. On Windows an
+// administrator account gets ModeBootTask and a standard account
+// ModeLogonTask.
 func (env Environment) ChooseMode(homebrew bool) Mode {
 	switch {
 	case env.Windows && env.Administrator:
@@ -146,6 +165,8 @@ func (env Environment) ChooseMode(homebrew bool) Mode {
 		return ModeLogonTask
 	case homebrew && env.EUID != 0:
 		return ModeHomebrew
+	case env.Darwin:
+		return ModeLaunchAgent
 	case env.EUID == 0:
 		return ModeAccount
 	case env.Headless():
