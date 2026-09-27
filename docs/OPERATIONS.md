@@ -74,7 +74,7 @@ sudo runuser -u owngit -- owngit restore --input /var/lib/owngit-root-backup --s
 sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 ```
 
-As with every restore, sessions, trusted hosts and network settings are not carried over. Sign in again. The service listens on this computer only until you run `sudo owngit network set --listen 0.0.0.0:7654` and `sudo owngit service restart`. Root's old state, the backup and the unused `/var/lib/owngit/state` stay; remove them when you no longer need them. A later `owngit service install`, also after `owngit service uninstall`, keeps using the restored state.
+As with every restore, sessions, trusted hosts and network settings are not carried over. Sign in again. The service listens on this computer only until you run `sudo owngit network set --listen 0.0.0.0:7654 --allowed-host ADDRESS` (the name or address other devices use) and `sudo owngit service restart`. Root's old state, the backup and the unused `/var/lib/owngit/state` stay; remove them when you no longer need them. A later `owngit service install`, also after `owngit service uninstall`, keeps using the restored state.
 
 | Command | What it does |
 | --- | --- |

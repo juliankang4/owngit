@@ -74,7 +74,7 @@ sudo runuser -u owngit -- owngit restore --input /var/lib/owngit-root-backup --s
 sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 ```
 
-다른 복원과 마찬가지로 로그인 세션, 신뢰한 호스트, 네트워크 설정은 옮겨지지 않으므로 다시 로그인하세요. 서비스는 `sudo owngit network set --listen 0.0.0.0:7654`와 `sudo owngit service restart`를 실행하기 전까지 이 컴퓨터에서만 연결을 받습니다. root의 옛 상태, 백업, 쓰지 않는 `/var/lib/owngit/state`는 남아 있으니 필요 없어지면 지우세요. 나중에 서비스를 제거했다가 다시 설치해도 복원한 상태를 계속 씁니다.
+다른 복원과 마찬가지로 로그인 세션, 신뢰한 호스트, 네트워크 설정은 옮겨지지 않으므로 다시 로그인하세요. 서비스는 `sudo owngit network set --listen 0.0.0.0:7654 --allowed-host 주소`(다른 기기가 쓰는 이름이나 주소)와 `sudo owngit service restart`를 실행하기 전까지 이 컴퓨터에서만 연결을 받습니다. root의 옛 상태, 백업, 쓰지 않는 `/var/lib/owngit/state`는 남아 있으니 필요 없어지면 지우세요. 나중에 서비스를 제거했다가 다시 설치해도 복원한 상태를 계속 씁니다.
 
 | 명령 | 하는 일 |
 | --- | --- |
