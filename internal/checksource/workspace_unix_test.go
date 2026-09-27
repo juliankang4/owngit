@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"owngit/internal/state"
 )
 
 // directoryWithMode makes a directory and sets its exact mode, which umask
@@ -87,7 +89,7 @@ func sharedGroup(t *testing.T) int {
 	groups, err := os.Getgroups()
 	noErr(t, err)
 	for _, gid := range append([]int{os.Getegid()}, groups...) {
-		if !ownPrivateGroup(uint32(gid)) {
+		if !state.OwnPrivateGroup(uint32(gid)) {
 			return gid
 		}
 	}
@@ -104,7 +106,7 @@ func TestAcquireWorkspaceRootRefusesParentWritableBySharedGroup(t *testing.T) {
 }
 
 func TestAcquireWorkspaceRootAcceptsParentWritableByOwnPrivateGroup(t *testing.T) {
-	if !ownPrivateGroup(uint32(os.Getegid())) {
+	if !state.OwnPrivateGroup(uint32(os.Getegid())) {
 		t.Skip("this account has no private group of its own")
 	}
 	private := directoryWithMode(t, filepath.Join(resolvedTempDir(t), "private-group"), 0o775)

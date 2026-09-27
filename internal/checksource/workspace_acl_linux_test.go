@@ -10,11 +10,13 @@ import (
 	"testing"
 
 	"golang.org/x/sys/unix"
+
+	"owngit/internal/state"
 )
 
 // setPOSIXAccessACL writes an access list as setfacl would: owner, owning
 // group and mask with read, write and search, the named account, and nothing
-// for others.
+// for others. The tags are those of acl_ea.h.
 func setPOSIXAccessACL(t *testing.T, path string, named uint32, namedPermissions uint16) {
 	t.Helper()
 	entries := []struct {
@@ -22,12 +24,12 @@ func setPOSIXAccessACL(t *testing.T, path string, named uint32, namedPermissions
 		id               uint32
 	}{
 		{0x01, 7, 0xffffffff},
-		{posixACLUser, namedPermissions, named},
-		{posixACLGroupObj, 7, 0xffffffff},
-		{posixACLMask, 7, 0xffffffff},
+		{0x02, namedPermissions, named},
+		{0x04, 7, 0xffffffff},
+		{0x10, 7, 0xffffffff},
 		{0x20, 0, 0xffffffff},
 	}
-	value := binary.LittleEndian.AppendUint32(nil, posixACLVersion)
+	value := binary.LittleEndian.AppendUint32(nil, 2)
 	for _, entry := range entries {
 		value = binary.LittleEndian.AppendUint16(value, entry.tag)
 		value = binary.LittleEndian.AppendUint16(value, entry.permissions)
@@ -56,7 +58,7 @@ func TestAcquireWorkspaceRootRefusesParentACLThatLetsAnotherAccountWrite(t *test
 	}
 	requireNoWorkspaceBelow(t, parent)
 
-	if !ownPrivateGroup(uint32(os.Getegid())) {
+	if !state.OwnPrivateGroup(uint32(os.Getegid())) {
 		return
 	}
 	// Control: the same list with read access alone is accepted for an

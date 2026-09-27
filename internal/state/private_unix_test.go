@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,4 +55,23 @@ func TestUnixNotPrivateFixKeepsADashPathAnOperand(t *testing.T) {
 		t.Fatalf("the fix failed: %v\n%s", err, output)
 	}
 	noErr(t, ValidatePrivateFile(name))
+}
+
+// A path is refused when another account could change it, a folder above it
+// or the target of a link on the way.
+func TestRequireProtectedPath(t *testing.T) {
+	folder := filepath.Join(t.TempDir(), "bin")
+	binary := filepath.Join(folder, "owngit")
+	link := filepath.Join(t.TempDir(), "owngit")
+	noErr(t, os.Mkdir(folder, 0o755))
+	noErr(t, os.WriteFile(binary, nil, 0o755))
+	noErr(t, os.Symlink(binary, link))
+	noErr(t, RequireProtectedPath(link))
+	for _, changeable := range []string{binary, folder} {
+		noErr(t, os.Chmod(changeable, 0o757))
+		if err := RequireProtectedPath(link); err == nil || !strings.Contains(err.Error(), "another account can change "+changeable) {
+			t.Errorf("%s writable by others: %v", changeable, err)
+		}
+		noErr(t, os.Chmod(changeable, 0o755))
+	}
 }

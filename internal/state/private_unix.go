@@ -15,22 +15,31 @@ func CreatePrivateFile(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 }
 
+// ProtectPrivatePath applies the private mode to path. On macOS it also
+// removes an access list that allows anything; see clearAccessList.
 func ProtectPrivatePath(path string, directory bool) error {
 	mode := os.FileMode(0o600)
 	if directory {
 		mode = 0o700
 	}
-	return os.Chmod(path, mode)
+	if err := os.Chmod(path, mode); err != nil {
+		return err
+	}
+	return clearPathAccessList(path)
 }
 
 // ProtectPrivateHandle applies the private mode to the open file, so a
-// pathname replacement cannot change what was protected.
+// pathname replacement cannot change what was protected, and on macOS
+// removes its access list like ProtectPrivatePath.
 func ProtectPrivateHandle(file *os.File, directory bool) error {
 	mode := os.FileMode(0o600)
 	if directory {
 		mode = 0o700
 	}
-	return file.Chmod(mode)
+	if err := file.Chmod(mode); err != nil {
+		return err
+	}
+	return clearAccessList(file)
 }
 
 // OwnedByCurrentUser reports whether the open file or directory belongs to the

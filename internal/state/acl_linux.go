@@ -1,6 +1,6 @@
 //go:build linux
 
-package checksource
+package state
 
 import (
 	"encoding/binary"
@@ -21,12 +21,12 @@ const (
 	posixACLWrite    = 0x02
 )
 
-// ancestorACLFix refuses a POSIX access list that lets an account other than
+// accessListFix refuses a POSIX access list that lets an account other than
 // this one or root, or a group other than this account's private group,
 // write. Entries for named accounts and groups only take effect through the
 // mask, which the mode shows as group permissions, so a directory without
 // group write needs no further check. Removing group write clears the mask.
-func ancestorACLFix(path string, info os.FileInfo) (string, error) {
+func accessListFix(path string, info os.FileInfo) (string, error) {
 	if info.Mode().Perm()&0o020 == 0 {
 		return "", nil
 	}
@@ -54,19 +54,24 @@ func ancestorACLFix(path string, info os.FileInfo) (string, error) {
 		}
 		switch {
 		case tag == posixACLUser && id != 0 && int(id) != os.Geteuid(),
-			tag == posixACLGroup && !ownPrivateGroup(id),
-			tag == posixACLGroupObj && !ownPrivateGroup(gid):
-			return "chmod g-w,o-w " + quoteWorkspacePath(path), nil
+			tag == posixACLGroup && !OwnPrivateGroup(id),
+			tag == posixACLGroupObj && !OwnPrivateGroup(gid):
+			return "chmod g-w,o-w " + shellQuote(path), nil
 		}
 	}
 	return "", nil
 }
 
-// rootACLFix accepts the workspace root: its owner-only mode sets the mask to
-// no access, so named entries in its access list no longer apply.
-func rootACLFix(string) (string, error) {
-	return "", nil
-}
+// ChangeAccessListFix accepts a folder or file of this account: its
+// owner-only mode sets the mask to no access, so named entries in its access
+// list no longer apply.
+func ChangeAccessListFix(string) (string, error) { return "", nil }
+
+func adminGroup(uint32) bool { return false }
+
+func clearPathAccessList(string) error { return nil }
+
+func clearAccessList(*os.File) error { return nil }
 
 // posixAccessACL reads the access list of path, without following a final
 // link. It returns nothing when there is none.
