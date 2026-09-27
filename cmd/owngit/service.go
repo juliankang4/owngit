@@ -304,6 +304,11 @@ func (host *serviceHost) installStateDir(mode service.Mode, flagValue string, ex
 	case found && existing.StateDir != "":
 		return existing.StateDir, nil
 	case mode == service.ModeAccount:
+		// The pointer outlives an uninstall and names the state to use
+		// again, such as one restored from root's earlier installation.
+		if pointed := pointerStateDir(); strings.HasPrefix(pointed, service.AccountHome+"/") {
+			return pointed, nil
+		}
 		return service.AccountStateDir, nil
 	default:
 		return filepath.Abs(defaultStateDir())
@@ -528,15 +533,19 @@ func setupStatus(stateDir string) (readable, complete bool) {
 }
 
 // earlierStateNotice tells root how to serve its own earlier installation in
-// earlier through the account service, whose state starts empty: back it up,
-// restore it as the account and point the service at the restored state.
+// earlier through the account service, whose state starts empty: back it up
+// into a folder only root controls, outside the account's home, give that
+// backup to the account, restore it as the account and point the service at
+// the restored state. The steps are joined with && so that a failed step
+// stops the rest.
 func earlierStateNotice(executable, earlier string, sudo bool) string {
-	run, owngit, backup, restored := "", service.ShellQuote(executable), service.AccountHome+"/root-backup", service.AccountHome+"/state-from-root"
+	run, owngit, backup, restored := "", service.ShellQuote(executable), service.AccountHome+"-root-backup", service.AccountHome+"/state-from-root"
 	if sudo {
 		run = "sudo "
 	}
-	return fmt.Sprintf("Root's earlier OwnGit in %s was not moved, so this service starts empty. To serve it instead, run:\n"+
-		"  %[2]s%[3]s backup --state-dir %[4]s --output %[5]s && %[2]schown -R %[6]s: %[5]s && %[2]srunuser -u %[6]s -- %[3]s restore --input %[5]s --state-dir %[7]s --repository-root %[8]s/repositories && %[2]s%[3]s service install --state-dir %[7]s\n",
+	return fmt.Sprintf("Root's earlier OwnGit in %s was not moved, so this service starts empty. To serve it instead, stop that OwnGit first and run:\n"+
+		"  %[2]s%[3]s backup --state-dir %[4]s --output %[5]s && \\\n  %[2]schown -R %[6]s: %[5]s && \\\n"+
+		"  %[2]srunuser -u %[6]s -- %[3]s restore --input %[5]s --state-dir %[7]s --repository-root %[8]s/repositories && \\\n  %[2]s%[3]s service install --state-dir %[7]s\n",
 		earlier, run, owngit, service.ShellQuote(earlier), backup, service.AccountName, restored, service.AccountHome)
 }
 

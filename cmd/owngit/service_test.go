@@ -783,8 +783,34 @@ func TestEarlierRootStateNotice(t *testing.T) {
 		}
 	}
 	notice := earlierStateNotice("/usr/local/bin/owngit", "/root/.config/owngit", true)
-	want := "  sudo '/usr/local/bin/owngit' backup --state-dir '/root/.config/owngit' --output /var/lib/owngit/root-backup && sudo chown -R owngit: /var/lib/owngit/root-backup && sudo runuser -u owngit -- '/usr/local/bin/owngit' restore --input /var/lib/owngit/root-backup --state-dir /var/lib/owngit/state-from-root --repository-root /var/lib/owngit/repositories && sudo '/usr/local/bin/owngit' service install --state-dir /var/lib/owngit/state-from-root\n"
+	want := "stop that OwnGit first and run:\n" +
+		"  sudo '/usr/local/bin/owngit' backup --state-dir '/root/.config/owngit' --output /var/lib/owngit-root-backup && \\\n" +
+		"  sudo chown -R owngit: /var/lib/owngit-root-backup && \\\n" +
+		"  sudo runuser -u owngit -- '/usr/local/bin/owngit' restore --input /var/lib/owngit-root-backup --state-dir /var/lib/owngit/state-from-root --repository-root /var/lib/owngit/repositories && \\\n" +
+		"  sudo '/usr/local/bin/owngit' service install --state-dir /var/lib/owngit/state-from-root\n"
 	if !strings.HasSuffix(notice, want) || strings.Contains(earlierStateNotice("/usr/local/bin/owngit", "/root/.config/owngit", false), "sudo") {
 		t.Errorf("notice = %q", notice)
+	}
+}
+
+// After an uninstall, root's next install of the account service keeps using
+// the state the pointer names inside the account's home, such as one restored
+// from root's earlier installation; a pointer elsewhere is not followed.
+func TestAccountInstallReusesThePointedState(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the pointer file exists on Linux only")
+	}
+	previousFile, previousApplies := pointerFile, pointerApplies
+	t.Cleanup(func() { pointerFile, pointerApplies = previousFile, previousApplies })
+	pointerFile, pointerApplies = filepath.Join(t.TempDir(), "state-dir"), func() bool { return true }
+	host := &serviceHost{}
+	for pointed, want := range map[string]string{"": service.AccountStateDir, "/var/lib/owngit/state-from-root": "/var/lib/owngit/state-from-root", "/home/example/state": service.AccountStateDir} {
+		noErr(t, os.WriteFile(pointerFile, []byte(pointed+"\n"), 0o644))
+		if got, err := host.installStateDir(service.ModeAccount, "", service.Installed{}, false); err != nil || got != want {
+			t.Errorf("pointer %q: state directory %q, %v, want %q", pointed, got, err, want)
+		}
+	}
+	if got, _ := host.installStateDir(service.ModeAccount, "/var/lib/owngit/other", service.Installed{}, false); got != "/var/lib/owngit/other" {
+		t.Errorf("--state-dir gave %q", got)
 	}
 }

@@ -65,16 +65,16 @@ Linux에서 `owngit service install`은 systemd로 OwnGit을 백그라운드에�
 
 `owngit service install`은 언제든 다시 실행할 수 있습니다. 예를 들어 `owngit` 실행 파일을 새 릴리스로 바꾼 뒤 실행하면, 같은 방식과 같은 상태 디렉터리로 유닛을 다시 쓰고 서비스를 다시 시작합니다. 데스크톱에서 설치한 서비스는 나중에 SSH로 명령을 다시 실행해도 사용자 서비스로 남고, 모든 서비스는 처음 설치할 때 정한 화면 없음(headless) 여부를 유지합니다. 바꾸려면 `owngit service install --headless=true` 또는 `--headless=false`를 실행하세요. `--headless=false`는 앞서 화면 없는 컴퓨터로 시작하며 이미 저장한 연결 주소를 바꾸지 않으므로, 이 컴퓨터에서만 쓰도록 되돌리려면 `owngit network set --listen 127.0.0.1:7654`도 실행하세요.
 
-root가 이미 `/root/.config/owngit`의 자기 상태로 OwnGit을 쓰고 있었다면(예: 1.1.0), root의 `owngit service install`은 그 상태를 옮기지 않습니다. 서비스의 새 상태가 아직 설정되지 않은 동안에는 root의 설치를 대신 서비스하는 명령을 알려 줍니다. 이 명령은 그 설치를 백업하고(그 OwnGit을 먼저 멈추세요), `owngit` 계정으로 복원한 뒤, 서비스가 복원한 상태를 쓰게 합니다.
+root가 이미 `/root/.config/owngit`의 자기 상태로 OwnGit을 쓰고 있었다면(예: 1.1.0), root의 `owngit service install`은 그 상태를 옮기지 않습니다. 서비스의 새 상태가 아직 설정되지 않은 동안에는 root의 설치를 대신 서비스하는 명령을 알려 줍니다. 이 명령은 그 설치를 백업하고(그 OwnGit을 먼저 멈추세요), `owngit` 계정으로 복원한 뒤, 서비스가 복원한 상태를 쓰게 합니다. 백업은 `owngit` 계정이 root의 쓰기를 다른 곳으로 돌리지 못하도록 계정 홈 밖의 폴더에 만들고, `&&`는 실패한 단계에서 나머지를 멈춥니다.
 
 ```sh
-sudo owngit backup --state-dir /root/.config/owngit --output /var/lib/owngit/root-backup
-sudo chown -R owngit: /var/lib/owngit/root-backup
-sudo runuser -u owngit -- owngit restore --input /var/lib/owngit/root-backup --state-dir /var/lib/owngit/state-from-root --repository-root /var/lib/owngit/repositories
+sudo owngit backup --state-dir /root/.config/owngit --output /var/lib/owngit-root-backup && \
+sudo chown -R owngit: /var/lib/owngit-root-backup && \
+sudo runuser -u owngit -- owngit restore --input /var/lib/owngit-root-backup --state-dir /var/lib/owngit/state-from-root --repository-root /var/lib/owngit/repositories && \
 sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 ```
 
-다른 복원과 마찬가지로 로그인 세션, 신뢰한 호스트, 네트워크 설정은 옮겨지지 않으므로 다시 로그인하세요. 서비스는 `sudo owngit network set --listen 0.0.0.0:7654`와 `sudo owngit service restart`를 실행하기 전까지 이 컴퓨터에서만 연결을 받습니다. root의 옛 상태, 백업, 쓰지 않는 `/var/lib/owngit/state`는 남아 있으니 필요 없어지면 지우세요.
+다른 복원과 마찬가지로 로그인 세션, 신뢰한 호스트, 네트워크 설정은 옮겨지지 않으므로 다시 로그인하세요. 서비스는 `sudo owngit network set --listen 0.0.0.0:7654`와 `sudo owngit service restart`를 실행하기 전까지 이 컴퓨터에서만 연결을 받습니다. root의 옛 상태, 백업, 쓰지 않는 `/var/lib/owngit/state`는 남아 있으니 필요 없어지면 지우세요. 나중에 서비스를 제거했다가 다시 설치해도 복원한 상태를 계속 씁니다.
 
 | 명령 | 하는 일 |
 | --- | --- |
