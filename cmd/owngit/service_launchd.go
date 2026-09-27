@@ -158,6 +158,9 @@ func (host *launchAgentHost) install(stateDirFlag string, headlessFlag *bool) er
 		}
 		return host.installWithBrew(stateDir, found)
 	}
+	if err := requireProtectedPath(host.agentExecutable); err != nil {
+		return fmt.Errorf("the service would run %s, but %w; install OwnGit where only you or root can change it, such as with Homebrew or npm", host.agentExecutable, err)
+	}
 	switch {
 	case host.homebrew != "":
 		host.printf("OwnGit was installed with Homebrew. Homebrew's service starts only in a desktop login, so the OwnGit LaunchAgent runs %s instead.\n", host.agentExecutable)
@@ -196,7 +199,8 @@ func (host *launchAgentHost) agentStateDir(flagValue string, existing service.In
 
 // agentPlan is the agent of a new or updated install. --headless decides
 // whether it is headless, then the installed agent, then this session: a
-// desktop install stays one when it is installed again over SSH.
+// desktop install stays one when it is installed again over SSH. Its PATH
+// leaves out folders that another account could change.
 func (host *launchAgentHost) agentPlan(stateDir string, headlessFlag *bool, existing service.Installed, found bool) service.Plan {
 	headless := host.env.Headless()
 	switch {
@@ -207,8 +211,14 @@ func (host *launchAgentHost) agentPlan(stateDir string, headlessFlag *bool, exis
 	}
 	return service.Plan{
 		Mode: service.ModeLaunchAgent, Executable: host.agentExecutable, StateDir: stateDir,
-		Headless: headless, Home: host.account.HomeDir, Path: servicePath(),
+		Headless: headless, Home: host.account.HomeDir, Path: protectedServicePath(),
 	}
+}
+
+func protectedServicePath() string {
+	entries := filepath.SplitList(servicePath())
+	entries = slices.DeleteFunc(entries, func(entry string) bool { return requireProtectedPath(entry) != nil })
+	return strings.Join(entries, string(os.PathListSeparator))
 }
 
 // installWithBrew hands the service to "brew services". An OwnGit agent

@@ -51,12 +51,13 @@ func LaunchAgentLogPath(home string) string {
 // ModeLaunchAgent. plan.Home is the user's home folder.
 //
 // The agent runs "owngit serve" with an absolute --state-dir, --no-open
-// and --headless=true or --headless=false at login (RunAtLoad) and again whenever it ends (KeepAlive). It loads in
-// the desktop session and, for an install over SSH while the user is not
-// logged in at the desktop, in the user's background session; launchd never
-// runs both at once. Like the systemd units it passes the installing
-// shell's PATH, a private umask and a stop timeout long enough for an
-// orderly shutdown, and never --listen or --base-url.
+// and --headless=true or --headless=false at login (RunAtLoad) and again
+// whenever it ends (KeepAlive). It loads in the desktop session and, for an
+// install over SSH while the user is not logged in at the desktop, in the
+// user's background session; launchd never runs both at once. Like the
+// systemd units it passes the installing shell's PATH, a private umask and a
+// stop timeout long enough for an orderly shutdown, and never --listen or
+// --base-url.
 func RenderLaunchAgent(plan Plan) (string, error) {
 	if plan.Mode != ModeLaunchAgent {
 		return "", fmt.Errorf("no LaunchAgent for mode %q", plan.Mode)

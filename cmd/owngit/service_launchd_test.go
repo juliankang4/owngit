@@ -73,12 +73,13 @@ func recordLaunchctl(t *testing.T, loaded ...string) *fakeLaunchctl {
 }
 
 // fakeBrewPrefix is a Homebrew prefix whose brew records its arguments in
-// bin/brew.calls and fails, so that no test can run the real brew.
+// bin/brew.calls and fails except for "services info", so that no test can
+// run the real brew.
 func fakeBrewPrefix(t *testing.T) string {
 	t.Helper()
 	prefix := t.TempDir()
 	noErr(t, os.MkdirAll(filepath.Join(prefix, "bin"), 0o755))
-	noErr(t, os.WriteFile(filepath.Join(prefix, "bin", "brew"), []byte("#!/bin/sh\necho \"brew $*\" >>\"$0.calls\"\nexit 1\n"), 0o755))
+	noErr(t, os.WriteFile(filepath.Join(prefix, "bin", "brew"), []byte("#!/bin/sh\necho \"brew $*\" >>\"$0.calls\"\n[ \"$2\" = info ]\n"), 0o755))
 	return prefix
 }
 
@@ -229,7 +230,14 @@ func TestLaunchAgentInstallOfAHomebrewBinaryWithoutADesktop(t *testing.T) {
 func TestLaunchAgentHandsAHomebrewInstallToBrewServices(t *testing.T) {
 	fake := recordLaunchctl(t, "gui/501/"+service.LaunchAgentLabel)
 	prefix := fakeBrewPrefix(t)
-	host, _ := testLaunchAgentHost(t, macDesktop(), prefix)
+	host, out := testLaunchAgentHost(t, macDesktop(), prefix)
+	noErr(t, host.status())
+	if !strings.Contains(out.String(), "State:   "+mustAbs(defaultStateDir())) {
+		t.Fatalf("Homebrew status printed %q", out.String())
+	}
+	if err := host.install("", new(true)); err == nil || !strings.Contains(err.Error(), "network set --listen") {
+		t.Fatalf("install --headless for brew services: %v", err)
+	}
 	headless := host.agentPlan(mustAbs(defaultStateDir()), nil, service.Installed{}, false)
 	headless.Headless = true
 	agent, err := service.RenderLaunchAgent(headless)
@@ -242,7 +250,7 @@ func TestLaunchAgentHandsAHomebrewInstallToBrewServices(t *testing.T) {
 		t.Fatalf("install with a failing brew: %v", err)
 	}
 	calls, _ := os.ReadFile(filepath.Join(prefix, "bin", "brew.calls"))
-	if !strings.Contains(string(calls), "brew services restart owngit") {
+	if string(calls) != "brew services info owngit\nbrew services restart owngit\n" {
 		t.Fatalf("brew calls: %q", calls)
 	}
 	if !slices.Contains(fake.calls, "/bin/launchctl bootout gui/501/"+service.LaunchAgentLabel) || !strings.Contains(strings.Join(fake.calls, "\n"), "bootstrap gui/501 "+host.agentPath) {
@@ -271,6 +279,23 @@ func TestLaunchAgentInstallRefusals(t *testing.T) {
 		if err := action(); err == nil || !strings.Contains(err.Error(), "leaves it alone") {
 			t.Errorf("%s with a foreign file at the agent path: %v", name, err)
 		}
+	}
+
+	// A binary or a PATH folder that another account could change.
+	t.Cleanup(func() { requireProtectedPath = func(string) error { return nil } })
+	requireProtectedPath = func(path string) error {
+		if path == host.agentExecutable || path == "/shared" {
+			return errors.New("another account can change it")
+		}
+		return nil
+	}
+	t.Setenv("PATH", "/usr/bin:/shared")
+	if plan := host.agentPlan("", nil, service.Installed{}, false); plan.Path != "/usr/bin" {
+		t.Errorf("the agent PATH is %q", plan.Path)
+	}
+	noErr(t, os.Remove(host.agentPath))
+	if err := host.install("", nil); err == nil || !strings.Contains(err.Error(), "only you or root can change") {
+		t.Fatalf("install of a binary that others can change: %v", err)
 	}
 }
 
@@ -348,6 +373,7 @@ func TestLaunchAgentReinstallKeepsHeadless(t *testing.T) {
 		{macDesktop(), nil, "--headless=false"},
 		{macWithoutDesktop(), nil, "--headless=false"},
 		{macWithoutDesktop(), new(true), "--headless=true"},
+		{macWithoutDesktop(), new(false), "--headless=false"},
 	} {
 		desktop.env = step.env
 		if err := desktop.install(stateDir, step.flag); !errors.Is(err, service.ErrNotLoaded) {
@@ -370,7 +396,11 @@ func TestServeUnderHomebrewTakesOverFromTheAgent(t *testing.T) {
 	previousHome := launchAgentHome
 	t.Cleanup(func() { launchAgentHome = previousHome })
 	launchAgentHome = host.account.HomeDir
-	stateDir := filepath.Join(t.TempDir(), "state")
+	// A state directory that serve cannot create ends it right after the
+	// handover.
+	blocker := filepath.Join(t.TempDir(), "file")
+	noErr(t, os.WriteFile(blocker, nil, 0o600))
+	stateDir := filepath.Join(blocker, "state")
 	agent, err := service.RenderLaunchAgent(host.agentPlan(stateDir, nil, service.Installed{}, false))
 	noErr(t, err)
 	noErr(t, os.MkdirAll(filepath.Dir(host.agentPath), 0o755))
@@ -384,7 +414,9 @@ func TestServeUnderHomebrewTakesOverFromTheAgent(t *testing.T) {
 		t.Fatalf("another job removed the agent: %v", err)
 	}
 	t.Setenv("XPC_SERVICE_NAME", service.HomebrewLabels[0])
-	yieldToHomebrew(stateDir, logf)
+	if err := serveWithContext(context.Background(), []string{"--state-dir", stateDir}, nil, logf); err == nil {
+		t.Fatal("serve created a state directory inside a file")
+	}
 	_, err = os.Stat(host.agentPath)
 	if runtime.GOOS == "darwin" {
 		if !errors.Is(err, os.ErrNotExist) || len(logged) != 1 {
