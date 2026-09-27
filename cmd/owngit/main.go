@@ -291,6 +291,9 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if *asService {
 		defer watchServiceStop(*stateDir, cancelServe, logf)()
 	}
+	// Under Homebrew's service on macOS, an OwnGit LaunchAgent of the same
+	// state directory stops for good before this server takes the lock.
+	yieldToHomebrew(*stateDir, logf)
 
 	// The offline lock is taken before the state is opened, so a migration
 	// cannot race another owner that is already serving the same directory.

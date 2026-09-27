@@ -20,10 +20,11 @@ import (
 	"owngit/internal/state"
 )
 
-// "owngit service" runs OwnGit in the background and starts it at boot.
-// It chooses who runs the service from the environment and asks nothing;
-// see the service package. Only the root steps of a system service leave
-// this process, through one sudo that the owner answers.
+// "owngit service" runs OwnGit in the background and starts it at boot, or
+// at login on macOS. It chooses who runs the service from the environment
+// and asks nothing; see the service package. Only the root steps of a
+// system service leave this process, through one sudo that the owner
+// answers.
 
 // probeEnvironment reads what mode selection and headless detection use.
 // Tests replace it so that the machine running them never matters.
@@ -73,7 +74,7 @@ func serviceCommand(arguments []string) error {
 		if err := requireServicePlatform(); err != nil {
 			return err
 		}
-		host, err := newServiceHost()
+		host, err := newServiceBackend()
 		if err != nil {
 			return err
 		}
@@ -93,7 +94,7 @@ func serviceCommand(arguments []string) error {
 
 func printServiceUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit service <install|uninstall|status|start|stop|restart> [options]")
-	fmt.Fprintln(writer, "  service install     run OwnGit in the background from now on and at every boot; run again to update")
+	fmt.Fprintln(writer, "  service install     run OwnGit in the background from now on and at every boot (every login on macOS); run again to update")
 	fmt.Fprintln(writer, "  service uninstall   stop the service and remove it; the data stays")
 	fmt.Fprintln(writer, "  service status      whether it runs, who runs it, its unit or task, log, state directory and address")
 	fmt.Fprintln(writer, "  service start | stop | restart")
@@ -101,13 +102,28 @@ func printServiceUsage(writer io.Writer) {
 
 func requireServicePlatform() error {
 	switch runtime.GOOS {
-	case "linux":
+	case "linux", "darwin":
 		return nil
-	case "darwin":
-		return fmt.Errorf("owngit service is %w (macOS); with Homebrew, run \"brew services start owngit\"", service.ErrUnsupported)
 	default:
 		return fmt.Errorf("owngit service is %w (%s)", service.ErrUnsupported, runtime.GOOS)
 	}
+}
+
+// serviceBackend is the service manager of this platform: systemd on
+// Linux (serviceHost) and launchd on macOS (launchAgentHost).
+type serviceBackend interface {
+	install(stateDirFlag string, headlessFlag *bool) error
+	uninstall() error
+	status() error
+	control(action string) error
+}
+
+func newServiceBackend() (serviceBackend, error) {
+	host, err := newServiceHost()
+	if err != nil || runtime.GOOS != "darwin" {
+		return host, err
+	}
+	return newLaunchAgentHost(host)
 }
 
 // serviceHost is this computer and the account running the command.
@@ -189,7 +205,7 @@ func serviceInstall(arguments []string) error {
 	if err := requireServicePlatform(); err != nil {
 		return err
 	}
-	host, err := newServiceHost()
+	host, err := newServiceBackend()
 	if err != nil {
 		return err
 	}
@@ -354,15 +370,22 @@ func (host *serviceHost) installHomebrew(stateDir string, headless bool) error {
 			return err
 		}
 	}
-	if reason := host.userServiceProblem(); reason != "" {
-		host.printf("Note: the Homebrew service starts when you log in, not at boot (%s).\n", reason)
+	if runtime.GOOS == "linux" {
+		if reason := host.userServiceProblem(); reason != "" {
+			host.printf("Note: the Homebrew service starts when you log in, not at boot (%s).\n", reason)
+		}
 	}
-	brew := filepath.Join(host.homebrew, "bin", "brew")
-	host.printf("OwnGit was installed with Homebrew, so Homebrew runs the service: %s services restart owngit\n", brew)
-	if err := runAttached(brew, "services", "restart", "owngit"); err != nil {
+	host.printf("OwnGit was installed with Homebrew, so Homebrew runs the service: %s services restart owngit\n", filepath.Join(host.homebrew, "bin", "brew"))
+	if err := host.brewServices("restart"); err != nil {
 		return err
 	}
 	return host.reportStarted(service.ModeHomebrew, "", stateDir)
+}
+
+// brewServices runs "brew services ACTION owngit" of the Homebrew that
+// installed this binary.
+func (host *serviceHost) brewServices(action string) error {
+	return runAttached(filepath.Join(host.homebrew, "bin", "brew"), "services", action, "owngit")
 }
 
 // reportStarted waits for the service to answer, then prints where it
@@ -375,10 +398,13 @@ func (host *serviceHost) reportStarted(mode service.Mode, unitPath, stateDir str
 		host.printf("OwnGit could not start: %s\nIt tries again every few seconds; after fixing this, \"owngit service status\" shows whether it runs.\n", failed.message)
 		return errors.New("the service did not start")
 	case err != nil:
-		host.printf("OwnGit did not answer within %s: %v\nSee the log: %s\n", serviceStartTimeout, err, mode.JournalCommand())
+		host.printf("OwnGit did not answer within %s: %v\nSee the log: %s\n", serviceStartTimeout, err, host.logHint(mode))
 		return errors.New("the service did not start")
 	}
 	host.printf("OwnGit is running as a %s.\n", mode.Describe())
+	if runtime.GOOS == "darwin" {
+		host.printf("It starts again whenever %s logs in on this Mac.\n", host.account.Username)
+	}
 	host.printServiceFacts(mode, unitPath, stateDir, ownerAddresses(stateDir, address))
 	return printSetupLinkIfNeeded(stateDir, host.out)
 }
@@ -396,15 +422,26 @@ func ownerAddresses(stateDir, checked string) string {
 	return "http://" + checked
 }
 
+// logHint is where the log of the service is: a file, or the command that
+// shows it.
+func (host *serviceHost) logHint(mode service.Mode) string {
+	switch mode {
+	case service.ModeHomebrew:
+		return filepath.Join(host.homebrew, "var", "log", "owngit.log")
+	case service.ModeLaunchAgent:
+		return service.LaunchAgentLogPath(host.account.HomeDir)
+	}
+	return mode.JournalCommand()
+}
+
 func (host *serviceHost) printServiceFacts(mode service.Mode, unitPath, stateDir, address string) {
-	if unitPath != "" {
+	switch {
+	case mode == service.ModeLaunchAgent:
+		host.printf("  Agent:   %s\n", unitPath)
+	case unitPath != "":
 		host.printf("  Unit:    %s\n", unitPath)
 	}
-	if mode == service.ModeHomebrew {
-		host.printf("  Log:     %s\n", filepath.Join(host.homebrew, "var", "log", "owngit.log"))
-	} else {
-		host.printf("  Log:     %s\n", mode.JournalCommand())
-	}
+	host.printf("  Log:     %s\n", host.logHint(mode))
 	host.printf("  State:   %s\n", stateDir)
 	if address != "" {
 		host.printf("  Address: %s\n", address)
@@ -436,7 +473,7 @@ func (host *serviceHost) uninstall() error {
 	}
 	switch {
 	case !found && host.homebrew != "":
-		if err := runAttached(filepath.Join(host.homebrew, "bin", "brew"), "services", "stop", "owngit"); err != nil {
+		if err := host.brewServices("stop"); err != nil {
 			return err
 		}
 		host.printf("The Homebrew service is stopped and no longer starts. The data stays in %s.\n", mustAbs(defaultStateDir()))
@@ -479,7 +516,7 @@ func (host *serviceHost) status() error {
 	if !found {
 		if host.homebrew != "" {
 			host.printf("OwnGit was installed with Homebrew; its service is managed with brew services:\n")
-			return runAttached(filepath.Join(host.homebrew, "bin", "brew"), "services", "info", "owngit")
+			return host.brewServices("info")
 		}
 		host.printf("OwnGit is not installed as a service. Run \"owngit service install\".\n")
 		return nil
@@ -565,7 +602,7 @@ func (host *serviceHost) control(action string) error {
 	}
 	if !found {
 		if host.homebrew != "" {
-			return runAttached(filepath.Join(host.homebrew, "bin", "brew"), "services", action, "owngit")
+			return host.brewServices(action)
 		}
 		return errors.New("OwnGit is not installed as a service; run \"owngit service install\"")
 	}

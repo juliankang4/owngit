@@ -40,6 +40,8 @@ func TestMain(m *testing.M) {
 		return service.Environment{Getenv: func(string) string { return "" }, EUID: os.Geteuid()}
 	}
 	pointerFile = filepath.Join(os.TempDir(), "owngit-tests-have-no-service-pointer", "state-dir")
+	launchAgentHome = filepath.Join(os.TempDir(), "owngit-tests-have-no-home")
+	launchdFolders = nil
 	serviceRunner = func(context.Context, string, ...string) ([]byte, error) {
 		return nil, errors.New("tests never run a service manager")
 	}

@@ -311,14 +311,14 @@ func TestHealthCommand(t *testing.T) {
 	}
 }
 
-func TestServiceCommandsAreRefusedOffLinux(t *testing.T) {
-	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
-		t.Skip("Linux and Windows have a backend")
+func TestServiceCommandsAreRefusedWithoutABackend(t *testing.T) {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		t.Skip("Linux, macOS and Windows have service backends")
 	}
 	for _, action := range []string{"install", "uninstall", "status", "start", "stop", "restart"} {
 		_, err := captureStdout(func() error { return run([]string{"service", action}) })
 		if !errors.Is(err, service.ErrUnsupported) {
-			t.Errorf("service %s off Linux: %v, want ErrUnsupported", action, err)
+			t.Errorf("service %s without a backend: %v, want ErrUnsupported", action, err)
 		}
 	}
 }
