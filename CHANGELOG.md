@@ -6,50 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-27
+
+This release fixes security problems. Everyone should upgrade.
+
 ### Added
 
-- `owngit service install` runs OwnGit in the background on Linux and starts it at every boot, without questions. On a desktop it installs a systemd user service and turns on lingering; over SSH or on a computer without a graphical session it installs a system service that runs as your account, with one `sudo`; as root, for example in an LXC container, it creates an `owngit` account with its state in `/var/lib/owngit/state`, which the command line then finds on its own. A Homebrew install is handed to `brew services`. Running the command again updates the unit and restarts the service. `owngit service status`, `start`, `stop`, `restart` and `uninstall` manage it; `uninstall` keeps the data and says where it is. The system units run with systemd's file system and kernel protections, and a repository folder such as `/srv/git` works when the service account may write it; setup says in one line why it cannot use a folder. When the service cannot start, `service install` says why at once.
-- On macOS, `owngit service install` writes a LaunchAgent for your account (`~/Library/LaunchAgents/app.owngit.server.plist`) that starts OwnGit at every login and keeps it running, without an administrator password. The log goes to `~/Library/Logs/owngit/owngit.log`. Over SSH while you are not logged in on the Mac's screen, OwnGit starts right away and runs until the Mac restarts. A Homebrew install is handed to `brew services`, which uses the default state directory; over SSH without a desktop login, where Homebrew's service cannot start, the LaunchAgent runs Homebrew's binary until brew services takes over. An npm install runs the platform package's executable directly instead of the Node.js launcher. If a launchd job that `owngit service` did not create already runs `owngit serve`, the command names it and leaves it alone instead of starting a second server; a job that is only an unloaded file is named as such. When launchd does not load the agent, nothing is left behind.
-- `owngit service install` and `owngit setup-link` print the one-time setup link when their output is a terminal. Anywhere else, such as a pipe, the journal or `docker logs`, they print only the path of the setup file, as before.
-- On a computer without a screen, such as a server reached over SSH, root in a container, a machine without a graphical session, or a Mac reached over SSH while you are not logged in on its screen, the first start before setup listens on every address and saves `0.0.0.0:7654`, and the setup link names this computer's private and tailnet addresses, or an SSH tunnel when it has only public ones. Until setup is finished, those addresses answer only the setup page. Setup keeps accepting the address it was opened by unless you untick it; then OwnGit listens only on `127.0.0.1:7654` from its next start. Setup opened from a public address selects the shared password and leaves that box unticked. A computer with a screen still listens on `127.0.0.1:7654`, also when its service starts before the desktop session.
-- When root already used OwnGit with its own state, root's `owngit service install` leaves that state in place and, while the service is not set up, prints the backup and restore commands that serve root's installation through the service instead.
-- `GET /healthz` answers 200 with an empty body before and after setup, and `owngit health` exits 0 when the local server answers.
-- `owngit service install` on Windows registers a Task Scheduler task that runs OwnGit as your account. From an administrator account the task starts at boot, before anyone signs in and without a stored password. One User Account Control approval copies the program to a protected `%ProgramFiles%\OwnGit\owngit.exe`, registers the task and private-network firewall rule for that copy, installs Git with a verified App Installer `winget` when Git is missing, and makes your account the owner of what an earlier OwnGit with administrator rights left to the Administrators group in the state directory and repository folder. Declining the approval changes nothing. The protected supervisor has administrator rights, but the server, Git, hooks and checks run without them. From a standard account the task starts the user's current program when the account signs in, and nothing is asked. The server writes its log to `logs\service.log` in the state directory and starts again after a failure; `install`, `start` and `status` say why it could not start, and when Windows keeps the task queued until the first sign-in. `owngit service status`, `start`, `stop`, `restart` and `uninstall` work as on Linux; `stop` lets the server finish first, and `uninstall` also removes the firewall rule and the protected copy and keeps the data.
-- `owngit serve --log-file FILE` also writes the server log to a file, kept below 10 MB with one older file beside it.
+- `owngit service install` runs OwnGit in the background and starts it on its own: at boot on Linux, at sign-in on macOS, and on Windows at boot from an administrator account (one approval) or at sign-in from a standard account. `owngit service status`, `start`, `stop`, `restart` and `uninstall` manage it; `uninstall` keeps your data.
+- On a computer without a screen, the first start listens on every address until setup is finished, and the setup link is printed in the terminal.
+- When root already used OwnGit with its own state, `owngit service install` prints the commands that move that state into the service.
+- `GET /healthz` and `owngit health` report whether the server answers.
+- `owngit serve --log-file FILE` also writes the server log to a file.
 
 ### Changed
 
-- `owngit setup-link` without `--base-url` makes the link for the address the running server listens on, or the saved listen address, instead of always `http://127.0.0.1:7654`.
-- On Windows, an SSH session counts as a computer without a screen, as on Linux.
-- On Windows, commands that use the state directory, such as `owngit setup-link` and `owngit network`, give up administrator rights when you start them from an elevated terminal, so the files they create belong to your account.
+- Sharing on your tailnet uses port 8443 or 10000 when port 443 is already in use. `owngit tailscale on --https-port PORT` chooses the port.
+- A page opened over the tailnet at this computer's Tailscale address says "Encrypted by Tailscale".
+- `owngit setup-link` makes the link for the address the server listens on.
+- `owngit network show` and `owngit tailscale status` work before the first start, and every failure under `--json` is a JSON error.
+- On Windows, an SSH session counts as a computer without a screen, and commands that use the state directory drop administrator rights when started from an elevated terminal.
 
 ### Fixed
 
-- On Windows, OwnGit started without a desktop that a person sees, as a service, a scheduled task or over SSH, no longer opens a browser that nobody could see and that kept running after OwnGit stopped. The log shows the setup file's path.
+- On Windows, OwnGit started without a visible desktop no longer opens a browser.
 
 ### Security
 
-- OwnGit now refuses a Unix state directory that another local account could replace. OwnGit 1.1.0 and earlier are affected when a custom state path uses a shared writable parent or a link controlled by another account; upgrade and use the printed `chmod` command or move the state directory if it is refused.
-- `localhost`, `127.0.0.1` and `::1` are accepted as the Host only on connections from the computer running OwnGit. When OwnGit listened on a network address, another device could use one of these names to get past the Host check, and with open access it could read and push every repository. Such a request now gets "unrecognized host", and the page says how to allow an address. Tailscale Serve, a reverse proxy on the same computer, and the command line, MCP server and runner on that computer keep working. OwnGit 1.1.0 and earlier are affected when OwnGit listens on a network address.
-- `owngit runner` refuses a workspace folder that belongs to another account, or one inside a folder that another account can change, and leaves it untouched. Before, a runner started as root took over an empty folder that another local account had made, including the default one in the shared temporary folder, and that account could swap the source files a check ran. The refusal names the folder and says how to fix it. Without `--workspace-root` the runner now uses a folder in its account's cache folder; a workspace that an earlier release made in the temporary folder and that the account owns stays in use. The runner also warns when it runs as root. OwnGit 1.1.0 and earlier are affected on Linux and macOS when the runner runs as root.
-- A client that sent the headers of a request but held back its body could keep a connection to OwnGit open without any password: for up to an hour on the import and archive download addresses, and without a limit on addresses that refuse a request before reading its body. Many such connections could make OwnGit unreachable. OwnGit now waits at most 30 seconds for a request body on every address and then answers or closes the connection. An import or archive download gets its longer time limit only after the password check and after its request body has arrived. OwnGit 1.1.0 and earlier are affected.
-
-### Changed
-
-- Sharing on your tailnet no longer stops when Tailscale already serves something else on HTTPS port 443 of this computer. OwnGit uses port 8443, or 10000 if 8443 is taken too, and leaves what is on the other ports as it is; the address then carries the port, such as `https://NAME.TAILNET.ts.net:8443/`. `owngit tailscale on --https-port PORT` chooses the port yourself. Sharing turned on by 1.1.0 keeps port 443.
-- A page opened over the tailnet at one of this computer's Tailscale addresses, such as `http://100.64.0.7:7654/`, says "Encrypted by Tailscale" instead of "Not encrypted by OwnGit", and plain HTTP needs no acknowledgement for that connection. OwnGit checks the address against the ones Tailscale on this computer reports, so other networks in the same address range do not get the label.
-- `owngit tailscale on` and the notice after turning sharing on in Settings say that the first visit to the HTTPS address can take up to about a minute while Tailscale gets the certificate.
-- Before OwnGit's first start, `owngit network show` and `owngit tailscale status` report the defaults instead of failing, and with `--json` every failure of these commands and of `owngit tailscale on|off` is a JSON error object.
-- The plain HTTP notice names private networks such as Tailscale, NetBird or WireGuard, and a reverse proxy with HTTPS, instead of Tailscale only.
-
-### Fixed
-
-- The `owngit` commands, the MCP server and the runner gave up after 10 seconds while Tailscale got the certificate for a newly shared address, which can take longer. They now wait up to 75 seconds for the TLS handshake, and the time limit of each request starts once the connection is ready.
-- While the running OwnGit was started with `--base-url`, `owngit tailscale status`, `owngit tailscale on` and the Settings card showed the HTTPS clone address although OwnGit gave out the option's address. They now name the option and say to remove it.
-- Settings showed "Tailscale is stopped" twice after a refused change, and offered turning sharing off while Tailscale was stopped, which is refused. It now says it once and offers turning off again when Tailscale runs.
-- On a computer signed in to Headscale or another control server, the refusal pointed to a Tailscale admin console page that does not exist there. It now says that the control server offers no HTTPS certificates.
-- After a rename, Settings offered turning sharing on again while the new name's ports were taken. It now lists what is on them, as for a taken port.
-- The note about an address under an earlier name says the computer can be renamed back with `tailscale set --hostname` as well as in the admin console.
+- High: when OwnGit listened on a network address, another device could get past the allowed Host check. Affects 1.1.0 and earlier.
+- Medium: `owngit runner` started as root could use a workspace folder that another local account controls. Affects 1.1.0 and earlier on Linux and macOS.
+- Medium: a client without a password could hold connections open and make OwnGit unreachable. Affects 1.1.0 and earlier.
+- Low: on macOS, private state files could stay readable by other local accounts through inherited access lists. Affects 1.1.0 and earlier.
+- Low: a state directory whose parent folders another local account can change is now refused. If yours is refused after upgrading, run the command it prints or move the state directory.
 
 ## [1.1.0] - 2026-09-27
 
