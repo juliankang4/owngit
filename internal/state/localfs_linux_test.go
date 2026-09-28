@@ -40,9 +40,33 @@ func TestOwnershipIsEnforcedOnlyOnLocalFilesystems(t *testing.T) {
 // container, shows owners that a program reports: the create-folder command
 // is not offered there, and setup points to the mount's own settings.
 func TestFolderOnAFUSEMountIsNotRootOnly(t *testing.T) {
+	missing := filepath.Join(fuseFolder(t), "owngit-test-missing")
+	way := InspectFolderWay(missing)
+	if way.OnlyRoot {
+		t.Errorf("%s on a FUSE mount counts as root's", missing)
+	}
+	if !way.Shared {
+		t.Errorf("%s on a FUSE mount is not reported as shared", missing)
+	}
+}
+
+// Nor is state, a log or a serve error kept in a folder on a FUSE mount.
+func TestNoStateOnAFUSEMount(t *testing.T) {
+	path := filepath.Join(fuseFolder(t), "owngit-test-state")
+	held, err := CreateDirectory(path)
+	if held != nil {
+		held.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "does not enforce") {
+		t.Fatalf("CreateDirectory(%s) error=%v, want the FUSE mount refused", path, err)
+	}
+}
+
+// fuseFolder is a folder on a FUSE mount, or skips the test.
+func fuseFolder(t *testing.T) string {
+	t.Helper()
 	mountinfo, err := os.ReadFile("/proc/self/mountinfo")
 	noErr(t, err)
-	folder := ""
 	for _, line := range strings.Split(string(mountinfo), "\n") {
 		fields := strings.Fields(line)
 		_, after, _ := strings.Cut(line, " - ")
@@ -51,19 +75,9 @@ func TestFolderOnAFUSEMountIsNotRootOnly(t *testing.T) {
 			continue
 		}
 		if info, err := os.Stat(fields[4]); err == nil && info.IsDir() {
-			folder = fields[4]
-			break
+			return fields[4]
 		}
 	}
-	if folder == "" {
-		t.Skip("no FUSE folder is mounted here")
-	}
-	missing := filepath.Join(folder, "owngit-test-missing")
-	way := InspectFolderWay(missing)
-	if way.OnlyRoot {
-		t.Errorf("%s on a FUSE mount counts as root's", missing)
-	}
-	if !way.Shared {
-		t.Errorf("%s on a FUSE mount is not reported as shared", missing)
-	}
+	t.Skip("no FUSE folder is mounted here")
+	return ""
 }

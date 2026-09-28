@@ -108,7 +108,7 @@ func TestServeRetriesAnUnstableStateOpen(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	attempts := 0
 	original := openServeStateAttempt
-	openServeStateAttempt = func(ctx context.Context, dir string, report func(string, ...any)) (*state.Store, error) {
+	openServeStateAttempt = func(ctx context.Context, dir *os.File, report func(string, ...any)) (*state.Store, error) {
 		attempts++
 		if attempts <= 3 {
 			return nil, fmt.Errorf("%w: owngit.sqlite-wal appeared during inspection", state.ErrInspectionUnstable)

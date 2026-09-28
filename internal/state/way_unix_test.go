@@ -3,8 +3,11 @@
 package state
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -86,6 +89,46 @@ func TestFolderWayThroughALinkOnAShareIsShared(t *testing.T) {
 	noErr(t, os.Mkdir(share, 0o700))
 	noErr(t, os.Mkdir(local, 0o700))
 	noErr(t, os.Symlink(local, filepath.Join(share, "repos")))
+	markShare(t, share)
+	for _, path := range []string{filepath.Join(share, "repos", "new"), filepath.Join(share, "repos")} {
+		if way := InspectFolderWay(path); !way.Shared || way.OnlyRoot {
+			t.Errorf("%s: %+v, want the way through the share", path, way)
+		}
+	}
+	if way := InspectFolderWay(filepath.Join(local, "new")); way.Shared {
+		t.Errorf("the local folder counts as shared: %+v", way)
+	}
+}
+
+// OpenDirectory, which opens the folders for OwnGit's state, log and serve
+// error, does not trust owners and modes that a share shows: a link that a
+// share holds is refused even when it leads to a local folder of this
+// account. The share is marked by replacing the filesystem check.
+func TestOpenDirectoryRefusesAWayThroughAShare(t *testing.T) {
+	root := resolveTestPath(t, t.TempDir())
+	share, local := filepath.Join(root, "share"), filepath.Join(root, "local")
+	noErr(t, os.Mkdir(share, 0o700))
+	noErr(t, os.Mkdir(local, 0o700))
+	noErr(t, os.Symlink(local, filepath.Join(share, "state")))
+	markShare(t, share)
+	for _, create := range []bool{false, true} {
+		for _, path := range []string{filepath.Join(share, "state"), filepath.Join(share, "state", "new")} {
+			if dir, err := OpenDirectory(path, create); err == nil || !strings.Contains(err.Error(), "does not enforce") {
+				if dir != nil {
+					dir.Close()
+				}
+				t.Errorf("OpenDirectory(%s, %t) error=%v, want the share refused", path, create, err)
+			}
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(local, "new")); !os.IsNotExist(err) {
+		t.Fatalf("a folder was created through the share: %v", err)
+	}
+}
+
+// markShare makes the filesystem check report the folder share as a share.
+func markShare(t *testing.T, share string) {
+	t.Helper()
 	shareInfo, err := os.Stat(share)
 	noErr(t, err)
 	previous := filesystemEnforced
@@ -97,12 +140,27 @@ func TestFolderWayThroughALinkOnAShareIsShared(t *testing.T) {
 		}
 		return !os.SameFile(info, shareInfo), nil
 	}
-	for _, path := range []string{filepath.Join(share, "repos", "new"), filepath.Join(share, "repos")} {
-		if way := InspectFolderWay(path); !way.Shared || way.OnlyRoot {
-			t.Errorf("%s: %+v, want the way through the share", path, way)
-		}
+}
+
+// State is opened in the directory that was checked and is held: when its
+// path names another directory by the time the state is inspected, the
+// open reports a change instead of using that directory.
+func TestStateIsOpenedOnlyInTheHeldDirectory(t *testing.T) {
+	root := resolveTestPath(t, t.TempDir())
+	path := filepath.Join(root, "state")
+	held, err := CreateDirectory(path)
+	noErr(t, err)
+	defer held.Close()
+	noErr(t, os.Rename(path, filepath.Join(root, "checked")))
+	noErr(t, os.Mkdir(path, 0o700))
+	store, err := OpenIn(context.Background(), held)
+	if store != nil {
+		store.Close()
 	}
-	if way := InspectFolderWay(filepath.Join(local, "new")); way.Shared {
-		t.Errorf("the local folder counts as shared: %+v", way)
+	if !errors.Is(err, ErrInspectionUnstable) {
+		t.Fatalf("OpenIn error=%v, want the replaced directory reported as a change", err)
+	}
+	if entries, err := os.ReadDir(path); err != nil || len(entries) != 0 {
+		t.Fatalf("the directory now at the path was used: %v %v", entries, err)
 	}
 }

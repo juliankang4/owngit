@@ -34,11 +34,13 @@ const MaximumLinks = 40
 // only this account may use. Only the path itself may lead to a missing
 // name; a link that does is refused.
 //
+// Every directory it holds is classified once, through the held handle
+// (filesystemEnforced), and check gets the result with each entry.
+//
 // It returns the last directory it reached, open, and the resolved path of
 // what path leads to, which is that directory unless path leads to another
-// kind of file. check gets the held directory for "/" and each directory,
-// and nil for a link or another kind of file.
-func walkWay(path string, check func(name string, info os.FileInfo, dir *os.File, last bool) error, mayCreate func(string, os.FileInfo) error) (dir *os.File, resolved, missing string, err error) {
+// kind of file.
+func walkWay(path string, check func(wayEntry) error, mayCreate func(string, os.FileInfo) error) (dir *os.File, resolved, missing string, err error) {
 	root, err := openDirectoryAt(unix.AT_FDCWD, "/", "/")
 	if err != nil {
 		return nil, "", "", err
@@ -54,11 +56,12 @@ func walkWay(path string, check func(name string, info os.FileInfo, dir *os.File
 	top := walk.way[len(walk.way)-1]
 	resolved = top.file.Name()
 	if missing == "" {
-		info, final := top.info, top.file
+		entry := wayEntry{path: resolved, info: top.info, dir: top.file, last: true, enforced: top.enforced}
 		if walk.file != "" {
-			resolved, info, final = walk.file, walk.fileInfo, nil
+			entry.path, entry.info, entry.dir = walk.file, walk.fileInfo, nil
+			resolved = walk.file
 		}
-		if err := check(resolved, info, final, true); err != nil {
+		if err := check(entry); err != nil {
 			return nil, "", "", err
 		}
 	}
@@ -66,10 +69,25 @@ func walkWay(path string, check func(name string, info os.FileInfo, dir *os.File
 	return top.file, resolved, missing, nil
 }
 
+// wayEntry is an entry that walkWay passes to its check.
+type wayEntry struct {
+	path string
+	info os.FileInfo
+	// dir is the held directory, or nil for a link or another kind of file.
+	dir *os.File
+	// last is set for what the path leads to.
+	last bool
+	// enforced says whether this computer enforces the owners and modes of
+	// the filesystem that holds the entry (ownershipEnforced): a directory's
+	// own, or for a link or another kind of file, that of the folder that
+	// holds it, whose server or program also decides what the link says.
+	enforced bool
+}
+
 // wayWalk is the state of walkWay: the directories from "/" to the current
 // one, all open.
 type wayWalk struct {
-	check     func(string, os.FileInfo, *os.File, bool) error
+	check     func(wayEntry) error
 	mayCreate func(string, os.FileInfo) error
 	way       []wayDirectory
 	links     int
@@ -79,18 +97,23 @@ type wayWalk struct {
 }
 
 type wayDirectory struct {
-	file    *os.File
-	info    os.FileInfo
-	checked bool
+	file     *os.File
+	info     os.FileInfo
+	enforced bool
+	checked  bool
 }
 
 func (walk *wayWalk) push(dir *os.File) error {
 	info, err := dir.Stat()
+	var enforced bool
+	if err == nil {
+		enforced, err = filesystemEnforced(dir)
+	}
 	if err != nil {
 		dir.Close()
 		return err
 	}
-	walk.way = append(walk.way, wayDirectory{file: dir, info: info})
+	walk.way = append(walk.way, wayDirectory{file: dir, info: info, enforced: enforced})
 	return nil
 }
 
@@ -121,7 +144,7 @@ func (walk *wayWalk) walk(relative string, outermost bool) (missing string, err 
 		}
 		current := &walk.way[len(walk.way)-1]
 		if !current.checked {
-			if err := walk.check(current.file.Name(), current.info, current.file, false); err != nil {
+			if err := walk.check(wayEntry{path: current.file.Name(), info: current.info, dir: current.file, enforced: current.enforced}); err != nil {
 				return "", err
 			}
 			current.checked = true
@@ -160,7 +183,7 @@ func (walk *wayWalk) walk(relative string, outermost bool) (missing string, err 
 			walk.file, walk.fileInfo = next, info
 			continue
 		}
-		if err := walk.check(next, info, nil, false); err != nil {
+		if err := walk.check(wayEntry{path: next, info: info, enforced: current.enforced}); err != nil {
 			return "", err
 		}
 		if walk.links++; walk.links > MaximumLinks {
@@ -232,8 +255,8 @@ func readlinkAt(dir *os.File, name, path string) (string, error) {
 // it returns the resolved directory that should hold it and the missing
 // name; otherwise it returns the resolved path.
 func WalkProtected(path string, check func(string, os.FileInfo) error) (resolved, missing string, err error) {
-	dir, resolved, missing, err := walkWay(path, func(name string, info os.FileInfo, _ *os.File, _ bool) error {
-		return check(name, info)
+	dir, resolved, missing, err := walkWay(path, func(entry wayEntry) error {
+		return check(entry.path, entry.info)
 	}, nil)
 	if err != nil {
 		return "", "", err
@@ -342,22 +365,22 @@ func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
 // folder that another account owns belongs to that account, and so would
 // OwnGit's files inside it; files that root created there would lock that
 // account out, so the refusal is an *OtherAccountError that says to run the
-// command as that account.
+// command as that account. Owners and modes mean this only where this
+// computer enforces them, so every folder on the way must be on such a
+// filesystem, not on a network share or a FUSE filesystem, whose server or
+// program could show a link or folder as root's.
 func OpenDirectory(path string, create bool) (*os.File, error) {
-	return openDirectory(path, create, nil)
-}
-
-// openDirectory is OpenDirectory. When it creates a name, it first calls
-// beforeCreate, if set, with the resolved folder that receives it.
-func openDirectory(path string, create bool, beforeCreate func(string) error) (*os.File, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
 	protected := protectedCheck(true)
-	check := func(name string, info os.FileInfo, _ *os.File, last bool) error {
+	check := func(entry wayEntry) error {
+		name, info, last := entry.path, entry.info, entry.last
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		switch {
+		case !entry.enforced:
+			return fmt.Errorf("%s is on a filesystem whose owners and modes this computer does not enforce, such as a network share; choose a folder on a local disk", name)
 		case !ok:
 			return fmt.Errorf("the owner of %s is unavailable", name)
 		case last && !info.IsDir():
@@ -374,13 +397,7 @@ func openDirectory(path string, create bool, beforeCreate func(string) error) (*
 	var mayCreate func(string, os.FileInfo) error
 	if create {
 		mayCreate = func(name string, info os.FileInfo) error {
-			if err := requireNoOtherWriter(name, info); err != nil {
-				return notProtected(absolute, err)
-			}
-			if beforeCreate != nil {
-				return beforeCreate(name)
-			}
-			return nil
+			return notProtected(absolute, requireNoOtherWriter(name, info))
 		}
 	}
 	dir, _, missing, err := walkWay(absolute, check, mayCreate)
@@ -392,6 +409,13 @@ func openDirectory(path string, create bool, beforeCreate func(string) error) (*
 		return nil, &os.PathError{Op: "open", Path: absolute, Err: fs.ErrNotExist}
 	}
 	return dir, nil
+}
+
+// createStateDirectory is CreateDirectory: OpenDirectory already requires
+// every folder on the way to be on a filesystem that this computer
+// enforces, which a network share is not.
+func createStateDirectory(dir string) (*os.File, error) {
+	return OpenDirectory(dir, true)
 }
 
 // requireNoOtherWriter refuses a folder that another account could create
@@ -449,17 +473,12 @@ var filesystemEnforced = ownershipEnforced
 // its way. A way that cannot be walked does not count as OnlyRoot.
 func InspectFolderWay(path string) FolderWay {
 	way := FolderWay{OnlyRoot: true}
-	dir, _, _, err := walkWay(filepath.Clean(path), func(name string, info os.FileInfo, dir *os.File, _ bool) error {
-		if !onlyRootCanChangeEntry(name, info) {
+	dir, _, _, err := walkWay(filepath.Clean(path), func(entry wayEntry) error {
+		if !onlyRootCanChangeEntry(entry.path, entry.info) {
 			way.OnlyRoot = false
 		}
-		if dir != nil {
-			enforced, err := filesystemEnforced(dir)
-			if err != nil {
-				way.OnlyRoot = false
-			} else if !enforced {
-				way.Shared = true
-			}
+		if !entry.enforced {
+			way.Shared = true
 		}
 		return nil
 	}, nil)

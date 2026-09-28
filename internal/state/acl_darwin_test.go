@@ -89,7 +89,10 @@ func TestProtectPrivateRemovesMacOSAccessLists(t *testing.T) {
 	if !allows(wal) || !allows(shm) {
 		t.Fatal("WAL or SHM inherited no access entry")
 	}
-	inspection, err := inspectState(context.Background(), walState)
+	held, err := OpenDirectory(walState, false)
+	noErr(t, err)
+	defer held.Close()
+	inspection, err := inspectState(context.Background(), held)
 	noErr(t, err)
 	noErr(t, inspection.accept(context.Background(), walState))
 	noErr(t, inspection.release())

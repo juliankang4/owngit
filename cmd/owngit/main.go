@@ -340,13 +340,14 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// The offline lock is taken before the state is opened, so a migration
 	// cannot race another owner that is already serving the same directory.
 	// The directory is created first because the lock file lives inside it.
-	// No other account can change the way to the directory that it
-	// resolves to, so that path keeps naming the directory that was checked.
-	resolvedStateDir, err := state.CreateDirectory(*stateDir)
+	// The lock and the state are taken in the directory that was checked,
+	// held open, whatever its path names later.
+	stateDirectory, err := state.CreateDirectory(*stateDir)
 	if err != nil {
 		return err
 	}
-	unlock, err := state.AcquireLockBriefly(func() (func(), error) { return state.AcquireOfflineLock(resolvedStateDir) })
+	defer stateDirectory.Close()
+	unlock, err := state.AcquireLockBriefly(func() (func(), error) { return state.AcquireOfflineLockIn(stateDirectory) })
 	if err != nil {
 		return err
 	}
@@ -355,7 +356,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// for this start, may open the state while it is inspected, so serve
 	// retries as they do.
 	store, err := retryUnstableOpen(serveStateAttempts, func() (*state.Store, error) {
-		return openServeStateAttempt(ctx, resolvedStateDir, logf)
+		return openServeStateAttempt(ctx, stateDirectory, logf)
 	})
 	if err != nil {
 		return err
@@ -490,7 +491,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return network.listenError(err)
 	}
 	defer listener.Close()
-	clearServeError(resolvedStateDir)
+	clearServeError(stateDirectory.Name())
 
 	policy := server.NewHostPolicy(allowedHosts...)
 	trusted, err := store.TrustedHosts(ctx)
@@ -962,18 +963,17 @@ func backupState(arguments []string) error {
 	}
 	// The lock file is created only in a state directory that OwnGit may
 	// use, as serve's is; see state.OpenDirectory.
-	directory, err := state.OpenDirectory(*stateDir, false)
+	stateDirectory, err := state.OpenDirectory(*stateDir, false)
 	if err != nil {
 		return err
 	}
-	resolvedStateDir := directory.Name()
-	directory.Close()
-	unlock, err := state.AcquireOfflineLock(resolvedStateDir)
+	defer stateDirectory.Close()
+	unlock, err := state.AcquireOfflineLockIn(stateDirectory)
 	if err != nil {
 		return fmt.Errorf("backup requires OwnGit to be offline: %w", err)
 	}
 	defer unlock()
-	store, err := openState(context.Background(), resolvedStateDir, stderrf)
+	store, err := openStateIn(context.Background(), stateDirectory, stderrf)
 	if err != nil {
 		return err
 	}
@@ -1043,7 +1043,18 @@ func checkRuntimeUnavailableReason(code string) string {
 // open applied, so the operator can tell when older builds stopped accepting
 // the database. serve passes its log; offline commands pass stderrf.
 func openState(ctx context.Context, dir string, report func(string, ...any)) (*state.Store, error) {
-	store, err := state.Open(ctx, dir)
+	held, err := state.CreateDirectory(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer held.Close()
+	return openStateIn(ctx, held, report)
+}
+
+// openStateIn is openState for the state directory held, which
+// state.CreateDirectory or state.OpenDirectory returned.
+func openStateIn(ctx context.Context, held *os.File, report func(string, ...any)) (*state.Store, error) {
+	store, err := state.OpenIn(ctx, held)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,7 +1102,7 @@ var (
 	openLiveStateAttempt = func(ctx context.Context, stateDir string) (*state.Store, error) {
 		return openState(ctx, stateDir, stderrf)
 	}
-	openServeStateAttempt = openState
+	openServeStateAttempt = openStateIn
 )
 
 // stderrf writes one line to standard error.

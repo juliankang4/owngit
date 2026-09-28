@@ -110,33 +110,32 @@ func (e *OtherAccountError) Error() string {
 }
 
 // CreateDirectory creates the state directory dir and its missing parents
-// through OpenDirectory and returns its resolved path. The state directory
-// must be on a local filesystem, and so must the folder that receives the
-// missing ones, which is checked before anything is created, so a refused
-// directory leaves nothing behind. No other account can change the way to
-// the returned path, so it keeps naming the directory that was checked.
-func CreateDirectory(dir string) (string, error) {
-	handle, err := openDirectory(dir, true, func(folder string) error {
-		if err := ensureLocalStateFilesystem(folder); err != nil {
-			return fmt.Errorf("validate state directory parent: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	defer handle.Close()
-	if err := ensureLocalStateFilesystem(handle.Name()); err != nil {
-		return "", fmt.Errorf("validate state directory: %w", err)
-	}
-	return handle.Name(), nil
+// through OpenDirectory and returns it held open, named by its resolved
+// path. The state directory and the folders that receive the missing ones
+// must be on a local filesystem, which is checked before anything is
+// created, so a refused directory leaves nothing behind. Open and the locks
+// in it use the held directory, not whatever its path names later.
+func CreateDirectory(dir string) (*os.File, error) {
+	return createStateDirectory(dir)
 }
 
-func Open(ctx context.Context, dir string) (result *Store, err error) {
-	absolute, err := CreateDirectory(dir)
+// Open opens the state in the directory dir, creating it with
+// CreateDirectory.
+func Open(ctx context.Context, dir string) (*Store, error) {
+	held, err := CreateDirectory(dir)
 	if err != nil {
 		return nil, err
 	}
+	defer held.Close()
+	return OpenIn(ctx, held)
+}
+
+// OpenIn opens the state in the directory held, which CreateDirectory or
+// OpenDirectory returned. The inspection binds the directory by its path
+// and refuses one that is not the held directory any more, as a change
+// during inspection (ErrInspectionUnstable).
+func OpenIn(ctx context.Context, held *os.File) (result *Store, err error) {
+	absolute := held.Name()
 	if _, err := os.Lstat(filepath.Join(absolute, IncompleteRestoreMarkerName)); err == nil {
 		return nil, errors.New("state directory belongs to an incomplete offline restore; follow the interrupted-restore procedure before use")
 	} else if !os.IsNotExist(err) {
@@ -148,7 +147,7 @@ func Open(ctx context.Context, dir string) (result *Store, err error) {
 	// releases them before SQLite opens the same files. A release failure
 	// blocks the writable open because the bound objects are no longer
 	// reliably known.
-	inspected, err := inspectState(ctx, absolute)
+	inspected, err := inspectState(ctx, held)
 	if err != nil {
 		return nil, err
 	}

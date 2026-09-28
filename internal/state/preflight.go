@@ -144,7 +144,8 @@ func (in *inspection) validateHeldObjects() error {
 
 // inspectState classifies the database under dir without protecting the
 // directory or opening the original files through SQLite read-write.
-func inspectState(ctx context.Context, dir string) (result *inspection, err error) {
+func inspectState(ctx context.Context, held *os.File) (result *inspection, err error) {
+	dir := held.Name()
 	in := &inspection{}
 	succeeded := false
 	defer func() {
@@ -157,6 +158,9 @@ func inspectState(ctx context.Context, dir string) (result *inspection, err erro
 		return nil, err
 	}
 	in.dir = directory
+	if err := requireSameDirectory(held, directory); err != nil {
+		return nil, err
+	}
 	mainPath := filepath.Join(dir, databaseName)
 	mainInfo, err := lstatSourceEntry(in.dir.handle, mainPath)
 	if err != nil {
@@ -537,6 +541,20 @@ func bindDirectory(dir string) (*sourceObject, error) {
 		return nil, closeAfter(handle, fmt.Errorf("inspect state directory: %w", err))
 	}
 	return &sourceObject{path: dir, info: info, fingerprint: fingerprint, handle: handle}, nil
+}
+
+// requireSameDirectory refuses a bound state directory that is not the
+// held one: the path names another directory now, perhaps on another
+// filesystem mounted there, so the inspection starts again.
+func requireSameDirectory(held *os.File, bound *sourceObject) error {
+	info, err := held.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect state directory: %w", err)
+	}
+	if !os.SameFile(info, bound.info) {
+		return unstable("%s is not the state directory that was checked", bound.path)
+	}
+	return nil
 }
 
 var errNotStateOwner = errors.New("state directory must be owned by this account; run the command as its owner")

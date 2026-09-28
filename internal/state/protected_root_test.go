@@ -64,7 +64,10 @@ func TestRootIsToldToRunAsTheStateDirectoryOwner(t *testing.T) {
 	directory := filepath.Join(resolveTestPath(t, t.TempDir()), "state")
 	noErr(t, os.Mkdir(directory, 0o700))
 	noErr(t, os.Chown(directory, nobody, nobody))
-	_, err := CreateDirectory(directory)
+	held, err := CreateDirectory(directory)
+	if held != nil {
+		held.Close()
+	}
 	var other *OtherAccountError
 	if !errors.As(err, &other) || other.Path != directory || other.Account != accountName(nobody) {
 		t.Fatalf("CreateDirectory error=%v, want %s named as the account %s's", err, directory, accountName(nobody))
@@ -89,10 +92,15 @@ func TestRootRefusesALinkTakenInAStickyFolder(t *testing.T) {
 	link := filepath.Join(sticky, "state")
 	noErr(t, os.Symlink(target, link))
 	noErr(t, os.Lchown(link, nobody, nobody))
-	resolved, err := CreateDirectory(link)
+	held, err := CreateDirectory(link)
 	var other *OtherAccountError
 	if !errors.As(err, &other) || other.Path != link {
-		t.Fatalf("CreateDirectory returned %q, error=%v, want the link refused as another account's", resolved, err)
+		name := ""
+		if held != nil {
+			name = held.Name()
+			held.Close()
+		}
+		t.Fatalf("CreateDirectory returned %q, error=%v, want the link refused as another account's", name, err)
 	}
 	store, err := Open(context.Background(), link)
 	if store != nil {

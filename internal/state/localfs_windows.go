@@ -69,6 +69,26 @@ func openDirectory(path string, create bool, beforeCreate func(string) error) (*
 	return dir, nil
 }
 
+// createStateDirectory is CreateDirectory. The state directory must be on
+// a local volume, and so must the nearest existing folder, which is checked
+// before the missing ones are created.
+func createStateDirectory(dir string) (*os.File, error) {
+	held, err := openDirectory(dir, true, func(folder string) error {
+		if err := ensureLocalStateFilesystem(folder); err != nil {
+			return fmt.Errorf("validate state directory parent: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureLocalStateFilesystem(held.Name()); err != nil {
+		held.Close()
+		return nil, fmt.Errorf("validate state directory: %w", err)
+	}
+	return held, nil
+}
+
 // createMissing creates the folders of path that are missing, after
 // beforeCreate accepted the nearest existing one.
 func createMissing(path string, beforeCreate func(string) error) error {

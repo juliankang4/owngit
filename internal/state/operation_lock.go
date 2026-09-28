@@ -28,7 +28,18 @@ func AcquireExclusiveFileLock(lockPath string) (func(), error) {
 // repository folder may be on a share, or be shared with a group, whose
 // other writers are trusted with the repositories in it anyway.
 func AcquireExclusiveFileLockHandle(lockPath string) (*os.File, func(), error) {
-	file, err := openLockFile(lockPath, os.O_RDWR|os.O_CREATE)
+	dir, err := openFolder(filepath.Dir(lockPath))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open exclusive operation lock: %w", err)
+	}
+	defer dir.Close()
+	return acquireExclusiveFileLockIn(dir, filepath.Base(lockPath))
+}
+
+// acquireExclusiveFileLockIn is AcquireExclusiveFileLockHandle for the
+// lock file name in the held directory dir.
+func acquireExclusiveFileLockIn(dir *os.File, name string) (*os.File, func(), error) {
+	file, err := OpenOwnFile(dir, name, os.O_RDWR|os.O_CREATE)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open exclusive operation lock: %w", err)
 	}
@@ -76,11 +87,24 @@ func acquireExclusiveFileLock(file *os.File) (*os.File, func(), error) {
 	}, nil
 }
 
+// offlineLockFile is the lock file of AcquireOfflineLock.
+const offlineLockFile = ".offline-operation.lock"
+
 // AcquireOfflineLock excludes the HTTP server and offline backup or restore
 // commands from one another. Commands that intentionally update live owner
 // state, such as reset-admin and approve-host, do not take this lock.
 func AcquireOfflineLock(directory string) (func(), error) {
-	release, err := AcquireExclusiveFileLock(filepath.Join(directory, ".offline-operation.lock"))
+	release, err := AcquireExclusiveFileLock(filepath.Join(directory, offlineLockFile))
+	if err != nil {
+		return nil, fmt.Errorf("acquire offline operation lock: %w", err)
+	}
+	return release, nil
+}
+
+// AcquireOfflineLockIn is AcquireOfflineLock in the held state directory
+// that CreateDirectory or OpenDirectory returned.
+func AcquireOfflineLockIn(held *os.File) (func(), error) {
+	_, release, err := acquireExclusiveFileLockIn(held, offlineLockFile)
 	if err != nil {
 		return nil, fmt.Errorf("acquire offline operation lock: %w", err)
 	}
