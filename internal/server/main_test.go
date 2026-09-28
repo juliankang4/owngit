@@ -7,6 +7,7 @@ import (
 
 	"owngit/internal/markdown"
 	"owngit/internal/tailscale/tailscaletest"
+	"owngit/internal/testfixture"
 )
 
 // TestMain lets the test binary render Markdown in a child process, as the
@@ -17,6 +18,9 @@ func TestMain(m *testing.M) {
 		os.Exit(markdown.RunChild(os.Stdin, os.Stdout))
 	}
 	executable, err := os.Executable()
+	if err == nil {
+		err = testfixture.SkipRaceExitWaitInChildren()
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
