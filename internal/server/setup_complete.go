@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -225,10 +224,13 @@ func storageProblem(err error) webui.MessageCode {
 
 // storageNotice is the setup form's notice for a repository folder
 // problem. A service runs as an account the owner may not know, so a folder
-// that account cannot write comes with the next step: for a missing folder,
-// the command that creates it for that account; for an existing folder,
-// which may be a system folder that other software needs, a new folder
-// inside it, never a command that changes the existing one. Other problems
+// that account cannot write comes with the next step where one is safe: for
+// a missing folder, the command that creates it for that account; for an
+// existing folder, which may be a system folder that other software needs, a
+// new folder inside it, never a command that changes the existing one. Root
+// runs that command, so it is offered only when no other account can put a
+// link where root creates the folder (state.OnlyRootCanChange), and a new
+// folder is suggested only when it would get the command. Other problems
 // the owner cannot read from the page come with the system's message.
 func storageNotice(folder string, err error) webui.Notice {
 	code := storageProblem(err)
@@ -238,14 +240,16 @@ func storageNotice(folder string, err error) webui.Notice {
 	notice := webui.Error("storage_path", code)
 	switch code {
 	case webui.MsgSetupStorageDenied:
-		if runtime.GOOS == "windows" {
-			break
-		}
 		clean := filepath.Clean(folder)
 		if _, statErr := os.Lstat(clean); !errors.Is(statErr, fs.ErrNotExist) {
 			// It exists, or this account cannot even tell.
-			notice.Code = webui.MsgSetupStorageDeniedExisting
-			notice.Detail = freeSubfolder(clean)
+			if inside := freeSubfolder(clean); state.OnlyRootCanChange(inside) {
+				notice.Code = webui.MsgSetupStorageDeniedExisting
+				notice.Detail = inside
+			}
+			break
+		}
+		if !state.OnlyRootCanChange(clean) {
 			break
 		}
 		if account, err := user.Current(); err == nil {
@@ -262,7 +266,8 @@ func storageNotice(folder string, err error) webui.Notice {
 
 // freeSubfolder suggests a new folder inside parent: owngit-repos, or with
 // a number when that name is taken. A name this account cannot check counts
-// as free; entering it again gets the same kind of advice, never a command.
+// as free; state.OnlyRootCanChange cannot check it either, so it is not
+// suggested.
 func freeSubfolder(parent string) string {
 	for number := 1; ; number++ {
 		name := "owngit-repos"

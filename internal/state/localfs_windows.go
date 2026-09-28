@@ -24,6 +24,9 @@ func RequireProtectedParent(string) error { return nil }
 // protect the state directory, as for RequireProtectedParent.
 func requireStateParent(string) error { return nil }
 
+// OnlyRootCanChange is false on Windows, which has no root account.
+func OnlyRootCanChange(string) bool { return false }
+
 func ensureLocalStateFilesystem(path string) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

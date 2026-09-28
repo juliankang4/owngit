@@ -115,9 +115,8 @@ func othersCanChange(path string, info os.FileInfo, rootGroups, allowSticky bool
 		return false, "", nil
 	}
 	permissions := info.Mode().Perm()
-	adminGroup := runtime.GOOS == "darwin" && (stat.Gid == 0 || stat.Gid == 80)
 	if (!allowSticky || info.Mode()&os.ModeSticky == 0) && (permissions&0o002 != 0 ||
-		permissions&0o020 != 0 && !OwnPrivateGroup(stat.Gid) && !(rootGroups && adminGroup)) {
+		permissions&0o020 != 0 && !OwnPrivateGroup(stat.Gid) && !(rootGroups && rootEquivalentGroup(stat.Gid))) {
 		return true, "chmod g-w,o-w " + shellQuote(path), nil
 	}
 	fix, err := accessListFix(path, info)
@@ -133,6 +132,12 @@ func RequireProtectedPath(path string) error { return requireProtectedPath(path,
 // RequireProtectedParent applies the ancestor rule to the parent of path.
 func RequireProtectedParent(path string) error {
 	return requireProtectedPath(filepath.Dir(path), false)
+}
+
+// rootEquivalentGroup reports whether gid is a macOS group whose members may
+// act as root: wheel and admin, which own Homebrew's and the system's folders.
+func rootEquivalentGroup(gid uint32) bool {
+	return runtime.GOOS == "darwin" && (gid == 0 || gid == 80)
 }
 
 // protectedCheck is the WalkProtected check of RequireProtectedPath: it
@@ -199,6 +204,37 @@ func accountName(uid uint32) string {
 		return account.Username
 	}
 	return strconv.FormatUint(uint64(uid), 10)
+}
+
+var errNotRootOnly = errors.New("an account other than root can change it")
+
+// OnlyRootCanChange reports whether root is the only account that can create,
+// rename or replace anything on the way to the absolute path: "/" and every
+// existing folder and link on the way belong to root, and no other account
+// can write to one of them, not even to a sticky folder. Only then can a
+// folder that root creates at path for another account, with a command
+// OwnGit suggests, not be redirected by a link that another account put
+// there first. Names that do not exist yet are fine, because root creates
+// them. A path that cannot be checked counts as changeable.
+func OnlyRootCanChange(path string) bool {
+	_, _, err := WalkProtected(path, func(name string, info os.FileInfo) error {
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != 0 {
+			return errNotRootOnly
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		permissions := info.Mode().Perm()
+		if permissions&0o002 != 0 || permissions&0o020 != 0 && !rootEquivalentGroup(stat.Gid) {
+			return errNotRootOnly
+		}
+		if fix, err := accessListFix(name, info); err != nil || fix != "" {
+			return errNotRootOnly
+		}
+		return nil
+	})
+	return err == nil
 }
 
 // OwnPrivateGroup reports whether gid is the private group of a runner that

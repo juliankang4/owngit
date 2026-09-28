@@ -10,6 +10,25 @@ import (
 	"testing"
 )
 
+// A folder that root creates for another account is safe only where no
+// other account can put a link first: every existing folder on the way
+// belongs to root and nobody else may write to it.
+func TestOnlyRootCanChange(t *testing.T) {
+	missing := filepath.Join(string(filepath.Separator), "owngit-test-missing-folder", "git")
+	if !OnlyRootCanChange(missing) {
+		t.Fatalf("%s is under folders only root can change", missing)
+	}
+	if own := filepath.Join(t.TempDir(), "git"); os.Geteuid() != 0 && OnlyRootCanChange(own) {
+		t.Fatalf("%s is inside a folder of this account", own)
+	}
+	shared := filepath.Join(t.TempDir(), "shared")
+	noErr(t, os.Mkdir(shared, 0o755))
+	noErr(t, os.Chmod(shared, 0o777|os.ModeSticky))
+	if OnlyRootCanChange(filepath.Join(shared, "git")) {
+		t.Fatal("a folder every account can create entries in counts as root's")
+	}
+}
+
 // When root opens state in a folder that another account owns, the state
 // would be that account's, so the refusal names the account, and nothing is
 // created in its folder.
