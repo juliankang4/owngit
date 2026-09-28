@@ -673,7 +673,7 @@ var catalog = map[MessageCode]message{
 	// wholly exposed.
 	MsgSetupInsecureHelp: {
 		en: "OwnGit serves this page over plain HTTP and adds no encryption of its own. On an ordinary LAN with nothing else protecting the connection, passwords, sessions, and repository contents can be read by others on the network. A VPN or similar protection may already cover this path, but OwnGit cannot check that.",
-		ko: "OwnGit은 이 페이지를 일반 HTTP로 제공하며 자체 암호화를 더하지 않습니다. 다른 보호 장치가 없는 일반 LAN에서는 비밀번호와 세션, 저장소 내용을 같은 네트워크의 다른 사람이 읽을 수 있습니다. VPN 같은 보호가 이미 적용되어 있을 수도 있지만 OwnGit은 그 여부를 확인할 수 없습니다.",
+		ko: "OwnGit은 이 페이지를 일반 HTTP로 제공하며 따로 암호화하지 않습니다. 다른 보호 장치가 없는 일반 LAN에서는 비밀번호와 세션, 저장소 내용을 같은 네트워크의 다른 사람이 읽을 수 있습니다. VPN 같은 보호가 이미 적용되어 있을 수도 있지만 OwnGit은 그 여부를 확인할 수 없습니다.",
 	},
 	MsgSetupInsecureNeed: {
 		en: "Confirm that you understand OwnGit is not encrypting this connection.",
@@ -709,7 +709,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupKeepHostHelp: {
 		en: "OwnGit accepts this address now only because of how this run was started. Ticking the box saves it as an allowed Host. To remove it later, use owngit network on this computer.",
-		ko: "이번에 OwnGit을 시작한 방식 때문에 지금만 이 주소를 받아들입니다. 선택하면 허용한 Host로 저장합니다. 나중에 지우려면 이 컴퓨터에서 owngit network 명령을 쓰세요.",
+		ko: "지금 이 주소를 받아들이는 것은 이번에 OwnGit을 시작한 방식 때문입니다. 선택하면 허용한 Host로 저장합니다. 나중에 지우려면 이 컴퓨터에서 owngit network 명령을 쓰세요.",
 	},
 	MsgSetupSubmit: {
 		en: "Finish setup",
@@ -882,7 +882,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgAdminBody: {
 		en: "Security settings need the administrator password. Confirmation lasts for this short session only.",
-		ko: "보안 설정을 바꾸려면 관리자 비밀번호가 필요합니다. 확인은 이번 짧은 세션 동안만 유지됩니다.",
+		ko: "보안 설정에는 관리자 비밀번호가 필요합니다. 확인은 이번 짧은 세션 동안만 유지됩니다.",
 	},
 	MsgAdminField: {
 		en: "Administrator password",
@@ -1460,7 +1460,7 @@ var catalog = map[MessageCode]message{
 	// says only what is true either way.
 	MsgRestoreTargetHelp: {
 		en: "Only this repository changes. Working copies on other computers are not touched; pull to receive the change there.",
-		ko: "이 저장소만 바뀝니다. 다른 컴퓨터의 작업 폴더는 건드리지 않으니, 그 컴퓨터에서 받으려면 풀하세요.",
+		ko: "이 저장소만 바뀝니다. 다른 컴퓨터의 작업 폴더는 건드리지 않으니, 그 컴퓨터에서는 git pull로 받으세요.",
 	},
 	// "Recreates" was wrong for the general case. This notice appears for any
 	// name that is not currently a branch, including a suggested one that

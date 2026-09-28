@@ -121,7 +121,7 @@ func TestInsecureHelpStatesScopeAndRealRisk(t *testing.T) {
 		{LangEN, []string{"VPN"}, "acknowledges protection may already exist"},
 		{LangKO, []string{"OwnGit"}, "names what is and is not doing the encrypting"},
 		{LangKO, []string{"\uc77c\ubc18 HTTP"}, "says what OwnGit actually serves"},
-		{LangKO, []string{"\uc790\uccb4 \uc554\ud638\ud654\ub97c \ub354\ud558\uc9c0 \uc54a"}, "scopes the claim to OwnGit"},
+		{LangKO, []string{"\ub530\ub85c \uc554\ud638\ud654\ud558\uc9c0 \uc54a"}, "scopes the claim to OwnGit"},
 		{LangKO, []string{"LAN"}, "describes the situation where the risk is real"},
 		{LangKO, []string{"\ube44\ubc00\ubc88\ud638", "\uc800\uc7a5\uc18c"}, "names what could be exposed"},
 		{LangKO, []string{"\ud655\uc778\ud560 \uc218 \uc5c6"}, "admits the limit of its knowledge"},
