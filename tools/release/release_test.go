@@ -920,7 +920,7 @@ func TestPackagingRendering(t *testing.T) {
 		`run [opt_bin/"owngit", "serve", "-no-open", "--log-file", var/"log/owngit.log", "--service"]`,
 		`log_path var/"log/owngit.stderr.log"`,
 		`error_log_path var/"log/owngit.stderr.log"`,
-		`chmod 0600, var/"log/owngit.stderr.log"`,
+		`set_permissions "log/owngit.stderr.log", "0600", base: :var`,
 	} {
 		if !strings.Contains(formula, "\n    "+line+"\n") {
 			t.Fatalf("the formula service lacks %s", line)

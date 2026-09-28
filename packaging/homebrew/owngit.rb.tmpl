@@ -38,10 +38,10 @@ class Owngit < Formula
 
   # launchd would create the service's output file readable by everyone, so
   # it is created first, for the owner only, as owngit creates its log.
-  def post_install
-    (var/"log").mkpath
-    touch var/"log/owngit.stderr.log"
-    chmod 0600, var/"log/owngit.stderr.log"
+  post_install_steps do
+    mkdir_p "log", base: :var
+    touch "log/owngit.stderr.log", base: :var
+    set_permissions "log/owngit.stderr.log", "0600", base: :var
   end
 
   # The server log, where the first start writes the setup file path, is
