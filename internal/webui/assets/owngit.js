@@ -799,13 +799,13 @@
     var orderStatus = orderForm.querySelector('[data-order-status]');
     if (orderApply) { orderApply.hidden = true; }
 
-    // Drop a sort parameter the server has already saved, so reloading the
+    // Drop an order parameter the server has already saved, so reloading the
     // address does not undo a later in-place choice.
     if (window.history && window.history.replaceState) {
       try {
         var orderURL = new URL(window.location.href);
-        if (orderURL.searchParams.has('sort')) {
-          orderURL.searchParams.delete('sort');
+        if (orderURL.searchParams.has('order')) {
+          orderURL.searchParams.delete('order');
           window.history.replaceState(window.history.state, '', orderURL.pathname + orderURL.search + orderURL.hash);
         }
       } catch (e) { /* older browser: the cookie still carries the choice */ }

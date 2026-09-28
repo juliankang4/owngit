@@ -186,12 +186,12 @@ func newViewData(page Page, prints fingerprints) *viewData {
 	if !ok {
 		appearance = AppearanceSystem
 	}
-	// The appearance and sort parameters have done their work once the
+	// The appearance and order parameters have done their work once the
 	// backend saved the choice, so links built from this screen do not carry
 	// them on.
 	current := canonicalURL(page, chrome)
 	if current != "" {
-		current = withQuery(withQuery(current, "appearance", ""), "sort", "")
+		current = withQuery(withQuery(current, "appearance", ""), "order", "")
 	}
 	var pageNotices []Notice
 	for _, n := range chrome.Notices {

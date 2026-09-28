@@ -21,7 +21,7 @@ owngit serve
 
 The default address is `http://127.0.0.1:7654`. Setup asks for the repository folder, whether general access is open or protected by one shared password, and a separate administrator password, which every later security change asks for again. It ends at an empty dashboard, where New repository creates a repository with a clone address of the form `http://HOST:7654/git/PROJECT.git`.
 
-The dashboard lists repositories most recently updated first, by the date of each one's latest commit, and a repository without commits comes last. Sort beside the list switches to oldest first or to name order (A to Z or Z to A). Name order follows the interface language and compares numbers by value, so `project-2` comes before `project-10`. The sidebar uses the same order, and this browser remembers the choice.
+The dashboard lists repositories most recently updated first, by the author date of the latest commit on each one's default branch (the time its row shows). A repository that shows no time, because it has no commits yet or cannot be read right now, comes last. Sort beside the list switches to oldest first or to name order (A to Z or Z to A). Name order follows the interface language and compares numbers by value, so `project-2` comes before `project-10`. The sidebar uses the same order, and this browser remembers the choice.
 
 ### Setup in the terminal
 

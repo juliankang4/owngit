@@ -132,8 +132,10 @@ func TestDashboardRendersTheOrderControlAndRowKeys(t *testing.T) {
 		}})
 		for _, want := range []string{
 			`<form class="sortctl" method="get" action="/" data-order-form>`,
-			`<select id="list-order" name="sort" class="sortctl__sel" data-order-select>`,
+			`<select id="list-order" name="order" class="sortctl__sel" data-order-select>`,
 			`<option value="name-asc" data-en="Name, A to Z" data-ko="이름순 (가나다, ABC)" selected>` + Text(lang, MsgOrderNameAsc) + `</option>`,
+			// Choosing an order keeps the graph year on view.
+			`<input type="hidden" name="year" value="` + strconv.Itoa(sampleGraph().Year) + `">`,
 			`<button type="submit" class="btn btn--sm" data-order-apply>`,
 			`<div class="rows" data-order-list data-order="name-asc">`,
 			`data-order-item data-updated="` + strconv.FormatInt(testNow.Unix(), 10) + `" data-rank-en="1" data-rank-ko="1"`,

@@ -37,12 +37,13 @@
     {{if $p.Repositories}}
     <form class="sortctl" method="get" action="{{.Chrome.Nav.OverviewURL}}" data-order-form>
       <label class="sortctl__l" for="list-order">{{icon "sort"}}{{bi $lang "app.order.label"}}</label>
-      <select id="list-order" name="sort" class="sortctl__sel" data-order-select>
+      <select id="list-order" name="order" class="sortctl__sel" data-order-select>
         {{range listOrders}}
           <option value="{{.}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq . $.Chrome.Nav.Order}} selected{{end}}>{{t $lang .Label}}</option>
         {{end}}
       </select>
       {{with .Chrome.Nav.Query}}<input type="hidden" name="q" value="{{.}}">{{end}}
+      {{with $p.Activity.Year}}<input type="hidden" name="year" value="{{.}}">{{end}}
       <input type="hidden" name="lang" value="{{$lang}}">
       <button type="submit" class="btn btn--sm" data-order-apply>{{bi $lang "app.order.apply"}}</button>
       <span class="visually-hidden" role="status" data-order-status

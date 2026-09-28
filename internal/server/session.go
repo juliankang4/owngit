@@ -388,10 +388,10 @@ func (app *App) appearance(writer http.ResponseWriter, request *http.Request) we
 	return webui.AppearanceSystem
 }
 
-// listOrder reads the repository list order. A valid sort parameter, sent
-// by the order form, is saved for later requests, like the appearance.
+// listOrder reads the repository list order. A valid order parameter, sent
+// by the Sort form, is saved for later requests, like the appearance.
 func (app *App) listOrder(writer http.ResponseWriter, request *http.Request) webui.ListOrder {
-	if value, present := request.URL.Query()["sort"]; present && len(value) == 1 {
+	if value, present := request.URL.Query()["order"]; present && len(value) == 1 {
 		if order, valid := webui.ParseListOrder(value[0]); valid {
 			app.setCookie(writer, request, orderCookie, string(order), app.now().Add(365*24*time.Hour), false)
 			return order

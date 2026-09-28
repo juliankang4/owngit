@@ -56,7 +56,7 @@ func TestDashboardAndSidebarShareTheChosenOrder(t *testing.T) {
 		{"name-asc", []string{"alpha", "empty", "project-2", "project-10"}},
 		{"name-desc", []string{"project-10", "project-2", "empty", "alpha"}},
 	} {
-		body, status := dashboardGET(t, &http.Client{}, server.URL+"/?sort="+test.sort)
+		body, status := dashboardGET(t, &http.Client{}, server.URL+"/?order="+test.sort)
 		dashboard, sidebar := listedOrder(t, body)
 		if status != http.StatusOK || !slices.Equal(dashboard, test.want) || !slices.Equal(sidebar, test.want) {
 			t.Errorf("%s: status %d, dashboard %v, sidebar %v, want %v", test.sort, status, dashboard, sidebar, test.want)
@@ -84,7 +84,7 @@ func TestListOrderIsRememberedPerBrowserWithoutScript(t *testing.T) {
 		t.Fatalf("the default order is not recently updated first: %v", dashboard)
 	}
 
-	chosen := browserGET(t, client, server.URL+"/?sort=name-asc&lang=en")
+	chosen := browserGET(t, client, server.URL+"/?order=name-asc&lang=en")
 	var saved *http.Cookie
 	for _, cookie := range chosen.header.Values("Set-Cookie") {
 		if parsed, err := http.ParseSetCookie(cookie); err == nil && parsed.Name == orderCookie {
@@ -95,11 +95,11 @@ func TestListOrderIsRememberedPerBrowserWithoutScript(t *testing.T) {
 		t.Fatalf("the order was not saved as a script-readable preference: %+v", saved)
 	}
 	// Links built from this screen do not carry the parameter on.
-	if strings.Contains(chosen.body, "sort=name-asc") {
+	if strings.Contains(chosen.body, "order=name-asc") {
 		t.Error("a link on the page repeats the sort parameter")
 	}
 
-	for _, target := range []string{"/", "/?sort=bogus", "/activity"} {
+	for _, target := range []string{"/", "/?order=bogus", "/activity"} {
 		body, _ := dashboardGET(t, client, server.URL+target)
 		dashboard, sidebar := listedOrder(t, body)
 		if !slices.Equal(sidebar, []string{"alpha", "zulu"}) || (target != "/activity" && !slices.Equal(dashboard, []string{"alpha", "zulu"})) {

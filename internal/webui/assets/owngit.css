@@ -915,9 +915,12 @@ span.hm__cell { cursor: default; }
 
 /* Every list of rows has one shape: name (repository or commit) | branch |
    message | time at the right. The column headings above a list use the
-   same grid, so they line up with its rows. */
+   same grid, and every track except the message has a size that does not
+   depend on content or font size, so headings and rows line up. The name
+   and branch take a share of the width up to a cap, so in a narrower window
+   they give way and the message keeps room. */
 .row--repo, .row--act, .row--commit, .rowhead {
-  grid-template-columns: minmax(130px, 220px) minmax(90px, 170px) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(110px, min(22%, 220px)) minmax(80px, min(17%, 170px)) minmax(128px, 1fr) 104px;
 }
 .row__time { white-space: nowrap; text-align: right; }
 .rowhead {
@@ -2444,8 +2447,21 @@ span.hm__cell { cursor: default; }
 .ov-main, .ov-commits { min-width: 0; }
 .ov-commits .refbar { margin: 8px 0 2px; }
 .ov-rows { display: grid; }
-.ov-commits .rowhead, .ov-commits .row--commit { grid-template-columns: 11ch minmax(70px, 150px) minmax(0, 1fr) auto; }
+/* The overview's commit list sits in a column whose width depends on the
+   side panel as well as the window, so it follows its own width: the
+   branch gives way before the message, and below 540 px the rows stack
+   like every list does in a narrow window. */
+.ov-commits { container-type: inline-size; }
+.ov-commits .rowhead, .ov-commits .row--commit { grid-template-columns: 96px minmax(0, 150px) minmax(128px, 1fr) 104px; }
 .row--commit .row__name { font-weight: 600; font-size: 12.5px; }
+@container (max-width: 540px) {
+  .ov-commits .rowhead { display: none; }
+  .ov-commits .row--commit { grid-template-columns: minmax(0, 1fr) auto; }
+  .ov-commits .row--commit > .row__name { grid-row: 1; grid-column: 1; }
+  .ov-commits .row--commit > .row__when { grid-row: 1; grid-column: 2; }
+  .ov-commits .row--commit > .row__ref { grid-row: 2; grid-column: 1 / -1; }
+  .ov-commits .row--commit > .row__msg { grid-row: 3; grid-column: 1 / -1; }
+}
 .ov-more { margin-top: 8px; font-size: 12px; }
 
 .ov-side { display: grid; gap: 22px; min-width: 0; }

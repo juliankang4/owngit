@@ -1255,6 +1255,11 @@ func runLanguageClick(t *testing.T, out, currentURL string, tags []string, lists
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
+		// CI images include Node.js, so a missing one there is a broken
+		// runner rather than a reason to stop checking the shipped script.
+		if os.Getenv("CI") != "" {
+			t.Fatal("node is not available to run the shipped script")
+		}
 		t.Skip("node is not available to run the shipped script")
 	}
 

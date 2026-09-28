@@ -1,7 +1,6 @@
 package webui
 
 import (
-	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -519,10 +518,7 @@ func TestConfiguredCheckScreensClaimNoSandbox(t *testing.T) {
 func TestTheLanguageClickKeepsTheOpenedJobInTheAddressBar(t *testing.T) {
 	// The anchor is only half of it. The shipped script intercepts the click
 	// and rewrites the address itself, and that address is what a reload or a
-	// shared link uses. This drives the real script.
-	if _, err := exec.LookPath("node"); err != nil {
-		t.Skip("node is not available to run the shipped language-click script")
-	}
+	// shared link uses. This drives the real script (see clickLanguage).
 	r := newRenderer(t)
 	const jobURL = "/repositories/r1/configured-checks?job=job0"
 	c := fullChrome(LangEN)
