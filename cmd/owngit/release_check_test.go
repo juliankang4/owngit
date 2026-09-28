@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
+	"owngit/internal/testfixture"
 )
 
 func TestMain(m *testing.M) {
@@ -45,6 +47,11 @@ func TestMain(m *testing.M) {
 	requireProtectedPath = func(string) error { return nil }
 	serviceRunner = func(context.Context, string, ...string) ([]byte, error) {
 		return nil, errors.New("tests never run a service manager")
+	}
+	// The fake tailscale and the helper processes are this test binary.
+	if err := testfixture.SkipRaceExitWaitInChildren(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 	os.Exit(m.Run())
 }

@@ -3,6 +3,7 @@ package tailscale_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -16,10 +17,16 @@ import (
 
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
+	"owngit/internal/testfixture"
 )
 
 func TestMain(m *testing.M) {
 	tailscaletest.RunIfFake()
+	// The fake tailscale is this test binary.
+	if err := testfixture.SkipRaceExitWaitInChildren(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	os.Exit(m.Run())
 }
 

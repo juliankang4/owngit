@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"owngit/internal/testfixture"
 )
 
 var spinSink int
@@ -29,6 +31,11 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	SetHelper(executable)
+	// The render children are this test binary.
+	if err := testfixture.SkipRaceExitWaitInChildren(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	os.Exit(m.Run())
 }
 
