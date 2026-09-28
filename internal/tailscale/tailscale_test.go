@@ -77,6 +77,11 @@ func TestFakeStateSurvivesOverlappingCommandsAndReads(t *testing.T) {
 			errs <- err
 		}()
 	}
+	// The test changes and reads the state while the commands run, and
+	// leaves the lock free for a moment after each change, as any test does
+	// between its steps. A command retries a busy lock every 25 ms, so a
+	// loop that took the lock again at once could hold it at each of those
+	// tries, most easily under the race detector, until the command gave up.
 	changes := 0
 	for done := 0; done < commands; {
 		select {
@@ -85,7 +90,7 @@ func TestFakeStateSurvivesOverlappingCommandsAndReads(t *testing.T) {
 				t.Fatal(err)
 			}
 			done++
-		default:
+		case <-time.After(5 * time.Millisecond):
 			fake.Update(func(s *tailscaletest.State) { s.Calls = append(s.Calls, []string{"test", strconv.Itoa(changes)}) })
 			changes++
 			_ = fake.State()
