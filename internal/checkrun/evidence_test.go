@@ -1,6 +1,7 @@
 package checkrun
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -55,5 +56,18 @@ func TestAutomaticLogReportsTruncationAtEveryCharacterAlignment(t *testing.T) {
 		if !truncated || len(log) > maximumAutomaticLogSize || !utf8.ValidString(log) {
 			t.Errorf("shift=%d stored=%d truncated=%v valid=%v", shift, len(log), truncated, utf8.ValidString(log))
 		}
+	}
+}
+
+// A check may print far more than the stored log keeps. Building the log must
+// not copy that output whole before the cut.
+func TestAutomaticLogDoesNotCopyWholeOutput(t *testing.T) {
+	results := []checkexec.Result{{Status: checkexec.StatusPassed, Command: "c", Output: strings.Repeat("x", 8<<20)}}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	log, truncated := buildLog(results)
+	runtime.ReadMemStats(&after)
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 2*maximumAutomaticLogSize || len(log) != maximumAutomaticLogSize || !truncated {
+		t.Fatalf("allocated %d bytes for a %d-byte log, truncated=%v", allocated, len(log), truncated)
 	}
 }

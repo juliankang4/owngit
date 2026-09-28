@@ -47,22 +47,13 @@ type LogBuffer struct {
 	truncated bool
 }
 
-// Add appends part within the remaining space. It returns false once the
-// buffer is full and a later part would be dropped, so callers can stop
-// building parts early.
+// Add appends as much of part as fits and reports whether all of it was kept.
+// Callers stop at the first false, so the log ends where text was first dropped.
 func (buffer *LogBuffer) Add(part string) bool {
-	remaining := buffer.Limit - buffer.text.Len()
-	if remaining <= 0 {
-		buffer.truncated = buffer.truncated || part != ""
-		return false
-	}
-	clipped, cut := ClipText(part, remaining)
+	clipped, cut := ClipText(part, buffer.Limit-buffer.text.Len())
 	buffer.text.WriteString(clipped)
-	if cut {
-		buffer.truncated = true
-		return false
-	}
-	return true
+	buffer.truncated = buffer.truncated || cut
+	return !cut
 }
 
 // Result returns the joined text and whether anything was dropped.

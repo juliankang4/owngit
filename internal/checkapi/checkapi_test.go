@@ -71,6 +71,7 @@ func TestLogBufferReportsEveryDroppedByte(t *testing.T) {
 		{name: "fits", parts: []string{"ab", "cd"}, want: "abcd"},
 		{name: "exact fill", parts: []string{"abcdef"}, want: "abcdef"},
 		{name: "full then more", parts: []string{"abcdef", "g"}, want: "abcdef", truncated: true},
+		{name: "full, empty, then more", parts: []string{"abcdef", "", "g"}, want: "abcdef", truncated: true},
 		{name: "cut inside character, first byte", parts: []string{"abcde가"}, want: "abcde", truncated: true},
 		{name: "cut inside character, second byte", parts: []string{"abcd가"}, want: "abcd", truncated: true},
 		{name: "cut inside character, later part", parts: []string{"abc", "가나"}, want: "abc가", truncated: true},

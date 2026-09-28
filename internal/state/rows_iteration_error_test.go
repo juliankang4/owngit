@@ -180,7 +180,6 @@ func TestRecoverySnapshotFailsOnIterationError(t *testing.T) {
 	}
 }
 
-// The stale-job sweep must not treat a failed read as "no stale jobs".
 func TestAttemptReadersUseTheirOwnQuerySurface(t *testing.T) {
 	for _, transactional := range []bool{false, true} {
 		t.Run(map[bool]string{false: "pool", true: "transaction"}[transactional], func(t *testing.T) {
@@ -250,6 +249,7 @@ func TestAttemptReadersUseTheirOwnQuerySurface(t *testing.T) {
 	}
 }
 
+// The stale-job sweep must not treat a failed read as "no stale jobs".
 func TestInterruptStalePendingCheckJobsFailsOnIterationError(t *testing.T) {
 	store, fault := openFaultStore(t)
 	ctx := context.Background()

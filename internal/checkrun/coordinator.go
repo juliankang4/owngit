@@ -672,7 +672,9 @@ func stateResults(results []checkexec.Result) []state.CheckResult {
 func buildLog(results []checkexec.Result) (string, bool) {
 	log := checkapi.LogBuffer{Limit: maximumAutomaticLogSize}
 	for _, result := range results {
-		if !log.Add(fmt.Sprintf("[%s] %s\n%s\n", result.Status, result.Command, result.Output)) {
+		// Output may be far larger than the log, so it is added as its own part
+		// rather than copied whole into one string before the cut.
+		if !log.Add("["+result.Status+"] "+result.Command+"\n") || !log.Add(result.Output) || !log.Add("\n") {
 			break
 		}
 	}
