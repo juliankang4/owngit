@@ -5,7 +5,7 @@
 <h1 align="center">OwnGit</h1>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.1-0A62C9?style=flat&colorA=222222" alt="버전 1.1.1"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.2-0A62C9?style=flat&colorA=222222" alt="버전 1.1.2"></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-keep-E05735?style=flat&colorA=222222" alt="변경 기록"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-58A6FF?style=flat&colorA=222222" alt="MIT 라이선스"></a>
   <a href="https://github.com/juliankang4/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-juliankang4%2Ftap-FBB040?style=flat&colorA=222222&logo=homebrew&logoColor=white" alt="Homebrew tap juliankang4/tap"></a>
@@ -58,7 +58,7 @@ curl -fLO https://github.com/juliankang4/owngit/releases/latest/download/PKGBUIL
 makepkg -si
 ```
 
-[GitHub Releases](https://github.com/juliankang4/owngit/releases)에서 플랫폼에 맞는 압축 파일을 내려받아 `SHA256SUMS`로 확인해도 됩니다. 실행 파일에는 서명이 없습니다. macOS에서 브라우저로 내려받은 실행 파일이 실행되지 않으면 `xattr -d com.apple.quarantine owngit`을 한 번 실행하세요.
+[GitHub Releases](https://github.com/juliankang4/owngit/releases)에서 플랫폼에 맞는 압축 파일을 내려받아 `SHA256SUMS`로 확인해도 됩니다. macOS 실행 파일은 서명되어 있고 Apple의 공증을 받았습니다. Linux와 Windows 실행 파일에는 서명이 없습니다.
 
 소스에서 빌드하려면 Go 1.27 이상이 필요합니다.
 

@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-09-28
+
+This release fixes two low-severity security problems. Upgrading is recommended.
+
+### Added
+
+- The macOS binary in the release archive is signed with a Developer ID and notarized by Apple, so macOS runs it without the quarantine workaround.
+
+### Changed
+
+- The macOS and Homebrew services write their log to the rotating log file, and the same failure repeated within a minute is logged once with a count. Run `owngit service install` again, or restart the Homebrew service, to use the new log settings.
+- An import failure that OwnGit cannot classify is reported with the code `unclassified` instead of `unsupported`.
+
+### Fixed
+
+- A password or settings change that fails to save no longer signs the browser out, and the page says what was and was not changed.
+- A request that could not read OwnGit's own state answers that OwnGit is unavailable and logs the cause, instead of "not signed in", "not found", "invalid input" or an empty result.
+- Tailscale sharing: a turn-on whose settings could not be saved is finished by the next turn-on or turn-off; a port change no longer rewrites or later removes an HTTPS address you made in Tailscale; when Tailscale hangs, the page answers in time and says so.
+- A configured check that could not start is recorded as not run with the reason, instead of ending as ambiguous.
+- The restore page keeps the file list and the selection when a preview fails, and says why.
+- Scheduled imports keep running when other repositories are still being prepared.
+- Offline backups keep configured-check histories that the backup check used to refuse.
+- Very large check output no longer takes hundreds of megabytes of memory when it is cut for the log.
+
+### Security
+
+- Low: server log files could be read by other local accounts. They are now readable by their owner only. Affects 1.1.1 and earlier on Linux and macOS.
+- Low: signing out could report success while the session stayed valid on the server. It now says that you are still signed in. Affects 1.1.1 and earlier.
+
 ## [1.1.1] - 2026-09-27
 
 This release fixes security problems. Everyone should upgrade.

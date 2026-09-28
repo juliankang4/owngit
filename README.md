@@ -5,7 +5,7 @@
 <h1 align="center">OwnGit</h1>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.1-0A62C9?style=flat&colorA=222222" alt="Version 1.1.1"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.2-0A62C9?style=flat&colorA=222222" alt="Version 1.1.2"></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-keep-E05735?style=flat&colorA=222222" alt="Changelog"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-58A6FF?style=flat&colorA=222222" alt="MIT License"></a>
   <a href="https://github.com/juliankang4/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-juliankang4%2Ftap-FBB040?style=flat&colorA=222222&logo=homebrew&logoColor=white" alt="Homebrew tap juliankang4/tap"></a>
@@ -58,7 +58,7 @@ curl -fLO https://github.com/juliankang4/owngit/releases/latest/download/PKGBUIL
 makepkg -si
 ```
 
-Or download the archive for your platform from [GitHub Releases](https://github.com/juliankang4/owngit/releases) and check it against `SHA256SUMS`. The binaries are not signed. If macOS refuses to run a binary you downloaded with a browser, run `xattr -d com.apple.quarantine owngit` once.
+Or download the archive for your platform from [GitHub Releases](https://github.com/juliankang4/owngit/releases) and check it against `SHA256SUMS`. The macOS binary is signed and notarized by Apple; the Linux and Windows binaries are not signed.
 
 To build from source with Go 1.27 or newer:
 
