@@ -178,6 +178,8 @@ func runCommand(command string, arguments []string) error {
 		return backupState(arguments)
 	case "restore":
 		return restoreState(arguments)
+	case "upgrade-backup":
+		return upgradeBackupCommand(arguments)
 	case "pr":
 		return prCommand(arguments)
 	case "repo":
@@ -356,7 +358,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// for this start, may open the state while it is inspected, so serve
 	// retries as they do.
 	store, err := retryUnstableOpen(serveStateAttempts, func() (*state.Store, error) {
-		return openServeStateAttempt(ctx, stateDirectory, logf)
+		return openServeStateAttempt(ctx, stateDirectory, *gitPath, logf)
 	})
 	if err != nil {
 		return err
@@ -973,7 +975,7 @@ func backupState(arguments []string) error {
 		return fmt.Errorf("backup requires OwnGit to be offline: %w", err)
 	}
 	defer unlock()
-	store, err := openStateIn(context.Background(), stateDirectory, stderrf)
+	store, err := openStateIn(context.Background(), stateDirectory, *gitPath, stderrf)
 	if err != nil {
 		return err
 	}
@@ -1041,20 +1043,31 @@ func checkRuntimeUnavailableReason(code string) string {
 
 // openState opens the state directory and reports a schema upgrade that the
 // open applied, so the operator can tell when older builds stopped accepting
-// the database. serve passes its log; offline commands pass stderrf.
+// the database. An older schema is backed up first; see backupBeforeUpgrade.
+// openState is for the commands that do not hold the offline lock, so the
+// lock is taken for an upgrade.
 func openState(ctx context.Context, dir string, report func(string, ...any)) (*state.Store, error) {
 	held, err := state.CreateDirectory(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer held.Close()
-	return openStateIn(ctx, held, report)
+	beforeUpgrade, unlock := backupBeforeUpgradeLocking(held, report)
+	defer unlock()
+	return openHeldState(ctx, held, beforeUpgrade, report)
 }
 
 // openStateIn is openState for the state directory held, which
-// state.CreateDirectory or state.OpenStateDirectory returned.
-func openStateIn(ctx context.Context, held *os.File, report func(string, ...any)) (*state.Store, error) {
-	store, err := state.OpenIn(ctx, held, nil)
+// state.CreateDirectory or state.OpenStateDirectory returned, and whose
+// offline lock the caller holds. gitPath is the Git for the backup before
+// an upgrade, or "" to find it as usual. serve passes its log; offline
+// commands pass stderrf.
+func openStateIn(ctx context.Context, held *os.File, gitPath string, report func(string, ...any)) (*state.Store, error) {
+	return openHeldState(ctx, held, backupBeforeUpgrade(held, gitPath, report), report)
+}
+
+func openHeldState(ctx context.Context, held *os.File, beforeUpgrade state.BeforeUpgrade, report func(string, ...any)) (*state.Store, error) {
+	store, err := state.OpenIn(ctx, held, beforeUpgrade)
 	if err != nil {
 		return nil, err
 	}
@@ -1172,7 +1185,7 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|service|health|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|skill|mcp|version] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|service|health|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|upgrade-backup|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|skill|mcp|version] [options]")
 	fmt.Fprintln(writer, "Run owngit <command> --help for the options of a command.")
 }
 
@@ -1212,6 +1225,7 @@ var commandOperands = map[string]string{
 	"import schedule":    "<name>",
 	"import credentials": "<name>",
 	"import resolve":     "<name>",
+	"upgrade-backup":     "[on|off]",
 }
 
 // parseFlags parses a command's flags. On -h or --help it prints the
