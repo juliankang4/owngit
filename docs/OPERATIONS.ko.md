@@ -134,6 +134,18 @@ Linux의 시스템 서비스에는 systemd 강화 설정이 걸리지만, 이 �
 
 `GET /healthz`는 OwnGit이 HTTP를 제공하는 동안 설치 전후와 관계없이 빈 본문의 `200 OK`로 응답하며 상태를 읽지 않습니다. 다른 경로와 마찬가지로 OwnGit이 받아들이는 Host 이름에만 응답하므로, 다른 기기의 모니터는 승인된 이름이나 주소를 써야 합니다. `owngit health`는 이 컴퓨터의 상태 디렉터리를 쓰는 서버를 확인하고 응답하면 종료 코드 0으로 끝납니다. `owngit service status`와 `install`도 같은 확인을 씁니다.
 
+## 설정 화면
+
+설정 화면은 탭 다섯 개로 나뉩니다. 탭마다 주소가 따로 있어 JavaScript 없이도 일반 링크처럼 열립니다.
+
+- **일반** (`/settings`): 이 브라우저의 화면 설정(언어, 화면 모드, 저장소 목록 정렬)은 고르는 즉시 적용되며 비밀번호를 묻지 않습니다. 서버 전체에 적용되는 새 릴리스 [업데이트 확인](#새-릴리스-알림)도 여기 있습니다.
+- **접근 권한** (`/settings/access`): OwnGit에 접속할 수 있는 누구나 읽고 푸시할지, 공용 비밀번호를 아는 사람만 그렇게 할지 정하고, 관리자 비밀번호를 바꿉니다.
+- **네트워크** (`/settings/network`): 이 브라우저의 연결, [네트워크 설정](#네트워크-설정), [tailnet 공유](#tailnet에서-https로-공유하기)가 있습니다.
+- **저장소** (`/settings/repositories`): 저장소마다 그 저장소의 설정으로 가는 링크가 있습니다.
+- **보관과 복구** (`/settings/storage`): 저장소 폴더를 보여 주며 관리자에게만 보입니다.
+
+탭 안의 항목마다 저장과 취소가 따로 있고, 저장할 때 관리자 비밀번호를 묻습니다. 저장하면 그 항목만 보내므로 다른 항목의 값을 저장하거나 되돌리지 않지만, 저장한 뒤 페이지를 다시 불러오므로 다른 항목에 입력하고 저장하지 않은 내용은 남지 않습니다. OwnGit이 저장을 거부하면 그 항목에 이유가 나오고, 비밀번호를 뺀 입력 내용은 그대로 남습니다. 네트워크 설정은 다음에 시작할 때 적용되고, 나머지는 저장하는 즉시 적용됩니다. 공용 비밀번호가 이미 켜져 있을 때 새 공용 비밀번호를 비워 두면 지금 비밀번호가 유지됩니다. 공용 비밀번호를 켜거나 바꾸면 열려 있던 세션이 모두 로그아웃되므로 새 비밀번호로 다시 로그인합니다. 관리자 비밀번호 변경은 현재 비밀번호를 묻는 별도 양식입니다.
+
 ## 다른 기기에서 서버에 접속하기
 
 OwnGit은 일반 HTTP로 동작하며 TLS를 내장하지 않습니다. 암호화된 주소를 쓰려면 Tailscale이 tailnet에 공유하게 하거나([tailnet에서 HTTPS로 공유하기](#tailnet에서-https로-공유하기)) OwnGit 앞에 리버스 프록시를 두세요([리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기)). Tailscale, 직접 운영하는 VPN([다른 비공개 네트워크](#다른-비공개-네트워크)), LAN에서는 일반 HTTP로 접속해도 됩니다. 이때 OwnGit은 비밀번호를 받기 전에 한 번 경고를 보여 주고, 페이지 위쪽에 연결 상태를 계속 표시합니다. OwnGit을 공개 인터넷에 노출하지 마세요.
@@ -172,7 +184,7 @@ owngit network show
 - `--allowed-host`와 `--remove-allowed-host`는 `owngit approve-host`도 추가하는 목록을 바꾸고, `--trusted-proxy`와 `--remove-trusted-proxy`는 OwnGit이 전달 헤더를 믿는 리버스 프록시 목록을 바꿉니다(각각 IP 주소나 CIDR 범위, [리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기) 참고). 모두 여러 번 지정할 수 있습니다.
 - `--base-url ""`처럼 빈 값을 주면 저장된 그 값을 지웁니다.
 
-`owngit serve`는 옵션이 있으면 옵션을, 없으면 저장된 값을, 둘 다 없으면 기본값(`127.0.0.1:7654`)을 씁니다. 옵션은 그 실행에만 적용됩니다. `set`은 연결 주소가 이 컴퓨터 밖에서 접속을 받게 되거나(다른 기기가 일반 HTTP로 접속합니다) `https` 기본 URL에 신뢰하는 프록시가 없으면 안내 한 줄을 출력합니다. `network show`는 저장된 값, 실행 중인 서버가 실제로 쓰는 값, 다시 시작해야 하는지를 보여 주고, `--json`을 붙이면 같은 내용을 JSON으로 출력합니다. 설정 화면의 네트워크에도 같은 내용이 있으며 관리자 비밀번호로 바꿀 수 있습니다. 화면을 연 뒤에 설정이 바뀌었다면 저장을 거부합니다.
+`owngit serve`는 옵션이 있으면 옵션을, 없으면 저장된 값을, 둘 다 없으면 기본값(`127.0.0.1:7654`)을 씁니다. 옵션은 그 실행에만 적용됩니다. `set`은 연결 주소가 이 컴퓨터 밖에서 접속을 받게 되거나(다른 기기가 일반 HTTP로 접속합니다) `https` 기본 URL에 신뢰하는 프록시가 없으면 안내 한 줄을 출력합니다. `network show`는 저장된 값, 실행 중인 서버가 실제로 쓰는 값, 다시 시작해야 하는지를 보여 주고, `--json`을 붙이면 같은 내용을 JSON으로 출력합니다. 설정 화면의 네트워크 탭에도 같은 내용이 있어 다음 시작 때 쓸 저장된 값과 실행 중인 서버가 쓰는 값을 나란히 보여 주며, 관리자 비밀번호로 바꿀 수 있습니다. 화면을 연 뒤에 설정이 바뀌었다면 저장을 거부합니다.
 
 서비스 정의(LaunchAgent의 `ProgramArguments`, 유닛의 `ExecStart`)에서 `--listen`, `--base-url`, `--allowed-host`, `--trusted-proxy`를 넘기면 시작할 때마다 저장된 값보다 옵션이 우선하므로 빼 두세요. `owngit service install`이 쓰는 유닛은 이 옵션을 넘기지 않습니다. Homebrew 서비스는 `owngit serve --no-open`을 실행하므로 다른 기기에서 접속하려면 다음과 같이 합니다.
 
@@ -193,7 +205,7 @@ owngit network reset
 
 OwnGit을 실행하는 컴퓨터에서 Tailscale이 실행 중이면, OwnGit은 이 컴퓨터의 Tailscale 이름으로 들어오는 HTTPS 요청을 Tailscale이 받아 OwnGit에 넘기도록 설정할 수 있습니다. 그러면 tailnet의 기기에서 `https://NAME.TAILNET.ts.net/`을 열고 `https://NAME.TAILNET.ts.net/git/project.git`에서 clone할 수 있으며, 페이지 위쪽에 "이 컴퓨터의 Tailscale이 암호화함"이라고 표시됩니다. tailnet 밖의 기기는 이 주소에 접속할 수 없습니다.
 
-이 컴퓨터에 Tailscale이 설치되어 로그인되어 있어야 하고, Tailscale 관리 콘솔의 DNS 페이지에서 MagicDNS와 HTTPS Certificates가 켜져 있어야 합니다. Linux에서는 `sudo tailscale set --operator=$USER`로 사용자가 Tailscale 설정을 바꿀 수 있게 한 번 허용해 두세요. OwnGit이 `sudo`를 직접 실행하지는 않습니다. 그다음 설정 화면의 "tailnet에서 HTTPS로 공유"에서 관리자 비밀번호로 켜거나, 설치 호스트에서 다음 명령을 씁니다.
+이 컴퓨터에 Tailscale이 설치되어 로그인되어 있어야 하고, Tailscale 관리 콘솔의 DNS 페이지에서 MagicDNS와 HTTPS Certificates가 켜져 있어야 합니다. Linux에서는 `sudo tailscale set --operator=$USER`로 사용자가 Tailscale 설정을 바꿀 수 있게 한 번 허용해 두세요. OwnGit이 `sudo`를 직접 실행하지는 않습니다. 그다음 설정 화면의 네트워크 탭에 있는 "tailnet에서 HTTPS로 공유"에서 "내 tailnet에 OwnGit 공유"를 켜고 관리자 비밀번호로 저장하거나, 설치 호스트에서 다음 명령을 씁니다.
 
 ```sh
 owngit tailscale on
@@ -208,7 +220,7 @@ owngit tailscale off
 3. HTTPS 주소를 기본 URL로, Tailscale 이름을 허용한 Host로, `127.0.0.1`을 신뢰하는 프록시로, 각각 아직 저장되지 않은 경우에만 저장합니다. `127.0.0.1`을 믿으면 이 컴퓨터에서 요청을 넘겨주는 다른 프로그램도 믿게 됩니다. [리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기)를 참고하세요.
 4. 연결 주소를 정합니다. Tailscale은 `127.0.0.1`로 접속하므로 기본값 `127.0.0.1:7654`나 `0.0.0.0:7654`처럼 이를 받는 연결 주소는 그대로 두고, OwnGit이 Tailscale 주소에서만 연결을 받고 있었다면 `127.0.0.1:PORT`를 대신 저장하므로 다음 시작부터 다른 기기는 HTTPS 주소로만 접속합니다. 홈 네트워크 접속은 OwnGit이 스스로 열지 않습니다. "홈 네트워크에서도 허용 (암호화되지 않음)" 체크박스나 `owngit tailscale on --home-network`만 `0.0.0.0:PORT`를 저장하며, 이는 일반 HTTP를 받아들인다는 확인으로도 기록됩니다. 실행 중인 OwnGit이 `--listen` 옵션으로 시작되었다면 그 옵션이 연결 주소를 정하며 화면도 그렇게 알려 줍니다. 새 연결 주소는 다음 시작부터 적용됩니다.
 
-설정 화면에서 바꾸면 다시 시작하지 않아도 바로 적용됩니다. `owngit tailscale on`과 `off`는 같은 내용을 저장하지만 실행 중인 서버에는 전달할 수 없으므로 다시 시작하라고 안내합니다. `owngit tailscale status`는 실행 중인 서버가 이름을 받아들이고 `127.0.0.1`을 신뢰하며 Tailscale에 주소가 남아 있을 때만 "on and ready"를, 설정 화면은 "켜져 있습니다. 이 컴퓨터의 Tailscale이 암호화합니다."를 표시하고, 그렇지 않으면 무엇이 빠졌는지 알려 줍니다. OwnGit이 `--base-url` 옵션으로 시작되었다면 clone 주소는 여전히 그 옵션이 정하므로 옵션을 빼고 다시 시작하세요. 켜기가 중간에 끊겼다면 설정 화면이 다시 켤 수 있게 합니다. OwnGit이 `tailscale` 명령을 스스로 찾지 못하면 `owngit serve --tailscale PATH`와 `owngit tailscale --tailscale PATH`로 지정하고, `--json`을 주면 결과와 코드가 붙은 실패를 JSON으로 출력합니다.
+설정 화면에서 바꾸면 다시 시작하지 않아도 바로 적용됩니다. `owngit tailscale on`과 `off`는 같은 내용을 저장하지만 실행 중인 서버에는 전달할 수 없으므로 다시 시작하라고 안내합니다. `owngit tailscale status`는 실행 중인 서버가 이름을 받아들이고 `127.0.0.1`을 신뢰하며 Tailscale에 주소가 남아 있을 때만 "on and ready"를, 설정 화면은 "켜져 있습니다. 이 컴퓨터의 Tailscale이 암호화합니다."를 표시하고, 그렇지 않으면 무엇이 빠졌는지 알려 줍니다. OwnGit이 `--base-url` 옵션으로 시작되었다면 clone 주소는 여전히 그 옵션이 정하므로 옵션을 빼고 다시 시작하세요. 켜기가 중간에 끊겼다면 스위치가 켜진 채로 남으며, 저장하면 공유를 다시 켭니다. OwnGit이 `tailscale` 명령을 스스로 찾지 못하면 `owngit serve --tailscale PATH`와 `owngit tailscale --tailscale PATH`로 지정하고, `--json`을 주면 결과와 코드가 붙은 실패를 JSON으로 출력합니다.
 
 Tailscale이 인증서를 발급할 때 `gitbox.tail0000.ts.net`처럼 이 컴퓨터와 tailnet의 이름이 공개 인증서 투명성(Certificate Transparency) 로그에 기록됩니다. 주소만 기록될 뿐 내용은 기록되지 않습니다. 설정 화면은 이 안내를 스위치 옆에 보여 주고, `owngit tailscale on`은 출력합니다(`--json`에서는 `certificate_log`). Tailscale은 주소를 처음 열 때 인증서를 받으므로 공유를 켠 뒤나 컴퓨터 이름을 바꾼 뒤 첫 HTTPS 연결은 1분 가까이 걸릴 수 있으며, `owngit` 명령, MCP 서버, 러너는 이 연결을 75초까지 기다립니다. 이름을 바꾼 뒤에는(관리 콘솔이나 `tailscale set --hostname NAME`) 새 이름으로 공유를 다시 켜세요. 예전 이름은 로그에 남고, Tailscale에는 아무 데도 연결되지 않는 예전 이름의 주소가 남는데, 설정 화면과 `owngit tailscale status`가 그 주소와 지우는 `tailscale serve` 절차를 보여 줍니다.
 
@@ -356,7 +368,7 @@ set_real_ip_from 127.0.0.1;
 
 설정을 마친 뒤 OwnGit은 하루에 한 번 GitHub에 새 릴리스가 있는지 묻습니다. OwnGit과 그 버전을 밝힌 User-Agent를 담아 `https://api.github.com/repos/juliankang4/owngit/releases/latest`에 HTTPS 요청을 한 번 보내며, 서버가 시작되고 약 30초 뒤나 설정을 마친 직후에 합니다. 저장소 데이터는 보내지 않으며, GitHub는 서버의 주소를 볼 수 있습니다. 초안과 사전 릴리스는 무시합니다. [가져오기](#다른-git-호스트에서-가져오기)를 빼면 OwnGit이 다른 호스트에 여는 연결은 이것뿐입니다. 새 버전이 있으면 대시보드에 릴리스 노트와 [설치](../README.ko.md#설치)로 가는 링크가 있는 알림이 나타납니다. OwnGit은 아무것도 직접 내려받거나 설치하지 않으며, 알림 닫기는 지금 쓰는 브라우저에서 그 버전의 알림을 숨깁니다. 확인에 실패하면 아무것도 표시하지 않고 로그를 최대 한 줄만 남깁니다.
 
-확인을 끄려면 설정의 업데이트 확인에서 관리자 비밀번호로 끄세요. 이 설정은 이 설치 호스트에 속하며 백업에 들어가지 않습니다. 절대 확인하면 안 되는 환경이라면 서버를 `--no-update-check`로 시작하세요. 이 옵션이 저장된 설정보다 우선합니다.
+확인을 끄려면 설정 화면 일반 탭의 업데이트 확인에서 끄고 관리자 비밀번호로 저장하세요. 이 설정은 이 설치 호스트에 속하며 백업에 들어가지 않습니다. 절대 확인하면 안 되는 환경이라면 서버를 `--no-update-check`로 시작하세요. 이 옵션이 저장된 설정보다 우선합니다.
 
 ```sh
 owngit serve --no-update-check
