@@ -5,6 +5,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,39 +29,64 @@ func RequireStateParent(string) error { return nil }
 func InspectFolderWay(string) FolderWay { return FolderWay{} }
 
 // OpenDirectory opens the directory at path for files that OwnGit keeps
-// there, and creates it and its missing parents when create is set. The
-// directory must belong to this account (or its token owner). On Windows,
-// access lists protect the state directory, so the folders on the way are
-// not checked, as for RequireStateParent.
+// there, and creates it and its missing parents when create is set. It
+// walks from the volume's root one folder at a time, each opened relative
+// to the one before it without following a reparse point, and refuses a
+// folder that is a link or junction, so the directory it returns is the one
+// the path names, whatever the path names later. The directory must belong
+// to this account (or its token owner). Access lists protect OwnGit's
+// folders on Windows, so the owners of the folders on the way are not
+// checked.
 func OpenDirectory(path string, create bool) (*os.File, error) {
 	return openDirectory(path, create, nil)
 }
 
-// openDirectory is OpenDirectory. When it creates missing folders, it first
-// calls beforeCreate, if set, with the nearest existing folder.
-func openDirectory(path string, create bool, beforeCreate func(string) error) (*os.File, error) {
+// openDirectory is OpenDirectory. Before it creates the first missing
+// folder, it calls beforeCreate, if set, with the held folder that
+// receives it.
+func openDirectory(path string, create bool, beforeCreate func(*os.File) error) (*os.File, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	if create {
-		if err := createMissing(absolute, beforeCreate); err != nil {
-			return nil, err
-		}
+	volume := filepath.VolumeName(absolute)
+	if volume == "" {
+		return nil, fmt.Errorf("%s names no volume", absolute)
 	}
-	dir, err := openFolder(absolute)
+	dir, err := openFolder(volume + `\`)
 	if err != nil {
 		return nil, err
 	}
-	info, err := dir.Stat()
-	if err == nil && !info.IsDir() {
-		err = fmt.Errorf("%s is not a directory", absolute)
-	}
-	if err == nil {
-		var owned bool
-		if owned, err = OwnedByCurrentUser(dir); err == nil && !owned {
-			err = fmt.Errorf("%s belongs to another account; run the command as its owner", absolute)
+	created := false
+	for _, name := range strings.Split(absolute[len(volume):], `\`) {
+		if name == "" {
+			continue
 		}
+		next := filepath.Join(dir.Name(), name)
+		child, err := openAt(dir, next, folderAccess, folderShare, windows.FILE_OPEN, folderOptions, "open")
+		if errors.Is(err, fs.ErrNotExist) && create {
+			if !created && beforeCreate != nil {
+				if err := beforeCreate(dir); err != nil {
+					dir.Close()
+					return nil, err
+				}
+			}
+			created = true
+			child, err = openAt(dir, next, folderAccess, folderShare, windows.FILE_OPEN_IF, folderOptions, "create")
+		}
+		dir.Close()
+		if err != nil {
+			return nil, err
+		}
+		dir = child
+		if err := refuseLinkedFolder(dir); err != nil {
+			dir.Close()
+			return nil, err
+		}
+	}
+	owned, err := OwnedByCurrentUser(dir)
+	if err == nil && !owned {
+		err = fmt.Errorf("%s belongs to another account; run the command as its owner", absolute)
 	}
 	if err != nil {
 		dir.Close()
@@ -69,12 +95,41 @@ func openDirectory(path string, create bool, beforeCreate func(string) error) (*
 	return dir, nil
 }
 
+// The access, sharing and options of each folder that openDirectory holds.
+const (
+	folderAccess  = windows.FILE_LIST_DIRECTORY | windows.FILE_TRAVERSE | windows.FILE_READ_ATTRIBUTES | windows.READ_CONTROL
+	folderShare   = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
+	folderOptions = windows.FILE_DIRECTORY_FILE | windows.FILE_OPEN_FOR_BACKUP_INTENT
+)
+
+// fileAttributeTagInfo is FILE_ATTRIBUTE_TAG_INFO.
+type fileAttributeTagInfo struct {
+	FileAttributes uint32
+	ReparseTag     uint32
+}
+
+// refuseLinkedFolder refuses a held folder that is a symbolic link or a
+// junction, whose reparse tag says it stands for another name. Other
+// reparse points, such as a cloud file placeholder, are the folder itself.
+func refuseLinkedFolder(dir *os.File) error {
+	var info fileAttributeTagInfo
+	err := windows.GetFileInformationByHandleEx(windows.Handle(dir.Fd()), windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
+	if err != nil {
+		return &os.PathError{Op: "inspect", Path: dir.Name(), Err: err}
+	}
+	const nameSurrogate = 0x20000000
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 && info.ReparseTag&nameSurrogate != 0 {
+		return fmt.Errorf("%s is a link or junction; choose a folder that the path reaches without one", dir.Name())
+	}
+	return nil
+}
+
 // createStateDirectory is CreateDirectory. The state directory must be on
 // a local volume, and so must the nearest existing folder, which is checked
 // before the missing ones are created.
 func createStateDirectory(dir string) (*os.File, error) {
-	held, err := openDirectory(dir, true, func(folder string) error {
-		if err := ensureLocalStateFilesystem(folder); err != nil {
+	held, err := openDirectory(dir, true, func(folder *os.File) error {
+		if err := ensureLocalFolder(folder); err != nil {
 			return fmt.Errorf("validate state directory parent: %w", err)
 		}
 		return nil
@@ -82,38 +137,11 @@ func createStateDirectory(dir string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureLocalStateFilesystem(held.Name()); err != nil {
+	if err := ensureLocalFolder(held); err != nil {
 		held.Close()
 		return nil, fmt.Errorf("validate state directory: %w", err)
 	}
 	return held, nil
-}
-
-// createMissing creates the folders of path that are missing, after
-// beforeCreate accepted the nearest existing one.
-func createMissing(path string, beforeCreate func(string) error) error {
-	existing := path
-	for {
-		if _, err := os.Stat(existing); err == nil {
-			break
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		parent := filepath.Dir(existing)
-		if parent == existing {
-			return fmt.Errorf("%s has no existing folder on its way", path)
-		}
-		existing = parent
-	}
-	if existing == path {
-		return nil
-	}
-	if beforeCreate != nil {
-		if err := beforeCreate(existing); err != nil {
-			return err
-		}
-	}
-	return os.MkdirAll(path, 0o700)
 }
 
 // openFolder opens the directory at path, following reparse points on the
@@ -138,18 +166,19 @@ func openFolder(path string) (*os.File, error) {
 	return file, nil
 }
 
-func ensureLocalStateFilesystem(path string) error {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	if windowsNetworkPath(absolute) {
-		return errors.New("state directory must not use a network share")
-	}
-	resolved, err := finalWindowsPath(absolute)
+// ensureLocalFolder refuses a held folder on a network share or a mapped
+// network drive, or on a drive that is not safely local. It checks the
+// volume that the handle is on, not what the path names now.
+func ensureLocalFolder(dir *os.File) error {
+	resolved, err := handleFinalPath(windows.Handle(dir.Fd()))
 	if err != nil {
 		return fmt.Errorf("resolve state directory target: %w", err)
 	}
+	return ensureLocalResolved(resolved)
+}
+
+// ensureLocalResolved checks the resolved path of a state directory.
+func ensureLocalResolved(resolved string) error {
 	if windowsNetworkPath(resolved) {
 		return errors.New("state directory reparse target must not use a network share")
 	}
@@ -179,18 +208,8 @@ func ensureLocalStateFilesystem(path string) error {
 	}
 }
 
-func finalWindowsPath(path string) (string, error) {
-	name, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return "", err
-	}
-	handle, err := windows.CreateFile(name, windows.FILE_READ_ATTRIBUTES,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-	if err != nil {
-		return "", err
-	}
-	defer windows.CloseHandle(handle)
+// handleFinalPath is the path of what handle holds, with links resolved.
+func handleFinalPath(handle windows.Handle) (string, error) {
 	buffer := make([]uint16, 32768)
 	length, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0)
 	if err != nil {

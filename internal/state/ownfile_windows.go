@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -76,4 +78,44 @@ func requireOwnFile(file *os.File) error {
 		return fmt.Errorf("%s has another name as well, so it may be another file", file.Name())
 	}
 	return nil
+}
+
+// RenameOwnFile renames the file from in the held directory dir to the
+// name to there, replacing a file that is there, without following a
+// reparse point at either name.
+func RenameOwnFile(dir *os.File, from, to string) error {
+	oldPath, newPath := filepath.Join(dir.Name(), from), filepath.Join(dir.Name(), to)
+	fail := func(err error) error { return &os.LinkError{Op: "rename", Old: oldPath, New: newPath, Err: err} }
+	file, err := openAt(dir, oldPath, windows.DELETE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_OPEN, windows.FILE_NON_DIRECTORY_FILE, "rename")
+	if err != nil {
+		return fail(errors.Unwrap(err))
+	}
+	defer file.Close()
+	name, err := windows.UTF16FromString(to)
+	if err != nil {
+		return fail(err)
+	}
+	nameBytes := (len(name) - 1) * 2
+	var header fileRenameInformation
+	buffer := make([]byte, int(unsafe.Offsetof(header.FileName))+nameBytes+2)
+	information := (*fileRenameInformation)(unsafe.Pointer(&buffer[0]))
+	information.ReplaceIfExists = 1
+	information.RootDirectory = windows.Handle(dir.Fd())
+	information.FileNameLength = uint32(nameBytes)
+	copy(unsafe.Slice(&information.FileName[0], len(name)), name)
+	status := windows.NtSetInformationFile(windows.Handle(file.Fd()), &windows.IO_STATUS_BLOCK{}, &buffer[0], uint32(len(buffer)), windows.FileRenameInformation)
+	runtime.KeepAlive(dir)
+	if status != nil {
+		return fail(entryOpenError(status))
+	}
+	return nil
+}
+
+// fileRenameInformation is FILE_RENAME_INFORMATION.
+type fileRenameInformation struct {
+	ReplaceIfExists uint32
+	RootDirectory   windows.Handle
+	FileNameLength  uint32
+	FileName        [1]uint16
 }

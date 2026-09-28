@@ -83,3 +83,15 @@ func requireOwnFile(descriptor int, path string) error {
 	}
 	return nil
 }
+
+// RenameOwnFile renames the entry from in the held directory dir to the
+// name to there, replacing what is there, without following a link at
+// either name.
+func RenameOwnFile(dir *os.File, from, to string) error {
+	err := unix.Renameat(int(dir.Fd()), from, int(dir.Fd()), to)
+	runtime.KeepAlive(dir)
+	if err != nil {
+		return &os.LinkError{Op: "rename", Old: filepath.Join(dir.Name(), from), New: filepath.Join(dir.Name(), to), Err: err}
+	}
+	return nil
+}

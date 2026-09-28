@@ -112,12 +112,15 @@ func TestWindowsCreatePrivateFileProtectsTheHeldObject(t *testing.T) {
 
 func TestWindowsStateTargetResolutionAndOwnerOnlyACL(t *testing.T) {
 	directory := t.TempDir()
-	resolved, err := finalWindowsPath(directory)
+	held, err := openFolder(directory)
+	noErr(t, err)
+	defer held.Close()
+	resolved, err := handleFinalPath(windows.Handle(held.Fd()))
 	noErr(t, err)
 	if windowsNetworkPath(resolved) {
 		t.Fatalf("local temporary directory resolved to network path %q", resolved)
 	}
-	noErr(t, ensureLocalStateFilesystem(directory))
+	noErr(t, ensureLocalFolder(held))
 	noErr(t, ProtectPrivatePath(directory, true))
 	user, defaultOwner, err := processIdentity()
 	noErr(t, err)

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,5 +37,38 @@ func TestLogIsNotOpenedThroughASecondName(t *testing.T) {
 	}
 	if content, err := os.ReadFile(target); err != nil || string(content) != "kept\n" {
 		t.Fatalf("the file with the second name now holds %q (%v)", content, err)
+	}
+}
+
+// The log stays in the folder it opened, held: after its folder's name is
+// given to a link to another folder, its lines and its rotation still go
+// to the folder it opened, and a log file in the other folder is left
+// alone.
+func TestLogStaysInTheFolderItOpened(t *testing.T) {
+	root := t.TempDir()
+	folder, other := filepath.Join(root, "logs"), filepath.Join(root, "other")
+	noErr(t, os.Mkdir(folder, 0o700))
+	noErr(t, os.Mkdir(other, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(other, "owngit.log"), []byte("kept\n"), 0o600))
+	file, err := openRotatingFile(filepath.Join(folder, "owngit.log"), 40)
+	noErr(t, err)
+	moved := filepath.Join(root, "moved")
+	noErr(t, os.Rename(folder, moved))
+	linkFolder(t, other, folder)
+	for range 3 {
+		_, err = file.Write([]byte(strings.Repeat("x", 39) + "\n"))
+		noErr(t, err)
+	}
+	noErr(t, file.Close())
+	if content, err := os.ReadFile(filepath.Join(other, "owngit.log")); err != nil || string(content) != "kept\n" {
+		t.Fatalf("the other folder's log now holds %q (%v)", content, err)
+	}
+	if _, err := os.Lstat(filepath.Join(other, "owngit.log.1")); !os.IsNotExist(err) {
+		t.Fatalf("the rotation renamed in the other folder: %v", err)
+	}
+	for _, name := range []string{"owngit.log", "owngit.log.1"} {
+		if _, err := os.Stat(filepath.Join(moved, name)); err != nil {
+			t.Fatalf("the log's own folder lacks %s: %v", name, err)
+		}
 	}
 }

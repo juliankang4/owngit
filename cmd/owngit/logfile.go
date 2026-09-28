@@ -66,7 +66,6 @@ type rotatingFile struct {
 	mu     sync.Mutex
 	dir    *os.File // the folder, opened with state.OpenDirectory
 	name   string
-	path   string // name in the resolved folder
 	limit  int64
 	file   *os.File
 	size   int64
@@ -74,18 +73,17 @@ type rotatingFile struct {
 }
 
 // openRotatingFile opens the log at path. Its folder, created when missing,
-// is opened with state.OpenDirectory, and the log file in it with
+// is opened with state.OpenDirectory and held, and the log file in it with
 // state.OpenOwnFile, so a log path in a folder of another account, or a
-// link at the log's name, is refused before anything is written. No other
-// account can change the way to the resolved folder, so the rotation
-// renames by path there.
+// link at the log's name, is refused before anything is written. Every
+// later open and the rotation work in the held folder, whatever the path
+// names by then.
 func openRotatingFile(path string, limit int64) (*rotatingFile, error) {
 	dir, err := state.OpenDirectory(filepath.Dir(path), true)
 	if err != nil {
 		return nil, err
 	}
-	name := filepath.Base(path)
-	rotating := &rotatingFile{dir: dir, name: name, path: filepath.Join(dir.Name(), name), limit: limit}
+	rotating := &rotatingFile{dir: dir, name: filepath.Base(path), limit: limit}
 	if err := rotating.open(); err != nil {
 		dir.Close()
 		return nil, err
@@ -156,7 +154,7 @@ func (rotating *rotatingFile) Write(data []byte) (int, error) {
 		rotating.file = nil
 		// A rotation that failed leaves no file to write to; every later
 		// write reports why.
-		if err := os.Rename(rotating.path, rotating.path+".1"); err != nil {
+		if err := state.RenameOwnFile(rotating.dir, rotating.name, rotating.name+".1"); err != nil {
 			rotating.broken = fmt.Errorf("rotate the log file: %w", err)
 			return 0, rotating.broken
 		}
