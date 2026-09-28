@@ -44,7 +44,9 @@ func (fake *fakeApple) run(name string, arguments []string, _ []string) (string,
 	case name == "xcrun" && arguments[0] == "notarytool":
 		switch arguments[1] {
 		case "submit":
-			return `{"id":"` + testSubmit + `","message":"Successfully uploaded file","path":"` + arguments[2] + `"}`, nil
+			// Marshalled, so a Windows path is escaped as notarytool escapes it.
+			submitted, err := json.Marshal(map[string]string{"id": testSubmit, "message": "Successfully uploaded file", "path": arguments[2]})
+			return string(submitted), err
 		case "wait":
 			if fake.waitOutput == "" && fake.waitError == nil {
 				return `{"id":"` + testSubmit + `","message":"Processing complete","status":"Accepted"}`, nil
@@ -483,7 +485,10 @@ func TestAdHocSigningWithRealCodesign(t *testing.T) {
 			}
 			output, err := exec.Command("codesign", "--verify", "--deep", "--strict", "--verbose=2", path).CombinedOutput()
 			noErrf(t, err, "codesign --verify --deep %s: %s", path, output)
-			if !strings.Contains(string(output), "--validated:"+filepath.Join(path, appHelperPath)) {
+			// codesign names the helper by its resolved path (/var is /private/var on macOS).
+			resolved, err := filepath.EvalSymlinks(path)
+			noErrf(t, err, "resolve %s", path)
+			if !strings.Contains(string(output), "--validated:"+filepath.Join(resolved, appHelperPath)) {
 				t.Errorf("the helper was not validated as nested code:\n%s", output)
 			}
 		case "open":
