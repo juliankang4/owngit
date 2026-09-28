@@ -114,9 +114,12 @@ type fileAttributeTagInfo struct {
 	ReparseTag     uint32
 }
 
-// refuseLinkedFolder refuses a held folder that is a symbolic link or a
-// junction, whose reparse tag says it stands for another name. Other
-// reparse points, such as a cloud file placeholder, are the folder itself.
+// refuseLinkedFolder refuses a held folder that is a symbolic link, a
+// junction or a folder where a volume is mounted, whose reparse tag says it
+// stands for another name. Junctions and mounted volumes share their tag;
+// only administrators can mount a volume in a folder, but its own drive
+// letter reaches the same folders without one. Other reparse points, such
+// as a cloud file placeholder, are the folder itself.
 func refuseLinkedFolder(dir *os.File) error {
 	var info fileAttributeTagInfo
 	err := windows.GetFileInformationByHandleEx(windows.Handle(dir.Fd()), windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
@@ -125,7 +128,7 @@ func refuseLinkedFolder(dir *os.File) error {
 	}
 	const nameSurrogate = 0x20000000
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 && info.ReparseTag&nameSurrogate != 0 {
-		return fmt.Errorf("%s is a link or junction; choose a folder that the path reaches without one", dir.Name())
+		return fmt.Errorf("%s is a link, a junction or a mounted volume; choose a folder that the path reaches without one, for a mounted disk through its drive letter", dir.Name())
 	}
 	return nil
 }

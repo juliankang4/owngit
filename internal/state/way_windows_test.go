@@ -28,7 +28,7 @@ func TestWindowsOpenDirectoryRefusesAJunctionOnTheWay(t *testing.T) {
 			if dir != nil {
 				dir.Close()
 			}
-			if err == nil || !strings.Contains(err.Error(), "is a link or junction") {
+			if err == nil || !strings.Contains(err.Error(), "is a link, a junction") {
 				t.Errorf("OpenDirectory(%s, %t) error=%v, want the junction refused", path, create, err)
 			}
 		}
