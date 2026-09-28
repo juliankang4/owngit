@@ -308,40 +308,6 @@ func TestRestorePreviewNamesDeletedFilesSeparately(t *testing.T) {
 // outcomes the backend reports
 // ---------------------------------------------------------------------------
 
-func TestEveryRestoreOutcomeReachesTheScreenInBothLanguages(t *testing.T) {
-	r := newRenderer(t)
-	outcomes := []struct {
-		code MessageCode
-		kind NoticeKind
-	}{
-		{MsgRestoreInvalid, NoticeError},
-		{MsgRestoreConflict, NoticeError},
-		{MsgRestoreNoChanges, NoticeInfo},
-		{MsgRestoreUnsupported, NoticeError},
-		{MsgRestoreFailed, NoticeError},
-		{MsgRestorePreviewFailed, NoticeError},
-		{MsgRestoreReady, NoticeInfo},
-		{MsgRestoreSuccess, NoticeSuccess},
-	}
-	for _, outcome := range outcomes {
-		if !Has(outcome.code) {
-			t.Errorf("the shared outcome %q is not in the catalog", outcome.code)
-			continue
-		}
-		for _, lang := range Langs() {
-			c := fullChrome(lang)
-			c.Notices = []Notice{{Kind: outcome.kind, Code: outcome.code}}
-			out := render(t, r, restorePage(c, true))
-			if !strings.Contains(out, wantText(lang, outcome.code)) {
-				t.Errorf("%s (%s): the outcome text is not rendered", outcome.code, lang)
-			}
-			if outcome.kind == NoticeError && !strings.Contains(out, `role="alert"`) {
-				t.Errorf("%s: a failure is not announced", outcome.code)
-			}
-		}
-	}
-}
-
 func TestRestoreUncertainOutcomesDoNotAssertAState(t *testing.T) {
 	// A failure is reported when publishing the change failed and reading the
 	// branch back failed too. In that case the backend does not know whether
@@ -628,33 +594,6 @@ func focusedMessage(t *testing.T, out string, lang Lang) MessageCode {
 	return found
 }
 
-func TestRestoreFieldErrorsAreAttachedToTheirControls(t *testing.T) {
-	r := newRenderer(t)
-	cases := []struct {
-		field string
-		code  MessageCode
-	}{
-		{"target", MsgRestoreTargetEmpty},
-		{"path", MsgRestoreFilesNone},
-		{"mode", MsgRestoreInvalid},
-		{"confirm", MsgRestoreConflict},
-	}
-	for _, tc := range cases {
-		for _, lang := range Langs() {
-			c := fullChrome(lang)
-			c.Notices = []Notice{Error(tc.field, tc.code)}
-			out := render(t, r, restorePage(c, true))
-			if !strings.Contains(out, wantText(lang, tc.code)) {
-				t.Errorf("%s (%s): the error text is not rendered", tc.field, lang)
-			}
-			wantID := noteID(nil, tc.field)
-			if !strings.Contains(out, `id="`+wantID+`"`) {
-				t.Errorf("%s (%s): the error has no note element", tc.field, lang)
-			}
-		}
-	}
-}
-
 func TestRestoreNoChangeResultDoesNotLookLikeWork(t *testing.T) {
 	// A preview with nothing to do must say so where the changes would be,
 	// rather than showing an empty area next to an enabled restore button.
@@ -731,13 +670,9 @@ func TestRestoreTargetCanBeATypedName(t *testing.T) {
 		t.Error("the target is still a fixed list of existing names")
 	}
 
-	// Both outcomes are explained before the reader commits to either.
-	for _, lang := range Langs() {
-		out := render(t, r, restorePage(fullChrome(lang), false))
-		if !strings.Contains(out, wantText(lang, MsgRestoreTargetChoose)) {
-			t.Errorf("%s: the page does not explain existing versus new branches", lang)
-		}
-	}
+	// Both outcomes are explained before the reader commits to either
+	// ("the branch choice is explained" in TestRestoreScreenStates).
+	//
 	// The two targets do different things, and the help has to distinguish
 	// them. An existing branch keeps its own history and the restore commit
 	// sits on top of it; a new branch starts from the selected commit.
@@ -768,28 +703,21 @@ func TestRestoreTargetCanBeATypedName(t *testing.T) {
 func TestRestoreTargetIsPrefilledWithTheCurrentChoice(t *testing.T) {
 	r := newRenderer(t)
 
-	// An existing branch is filled in and not described as a new one.
+	// An existing branch is filled in.
 	out := render(t, r, restorePage(fullChrome(LangEN), false))
 	if tag := targetInput(t, out); !strings.Contains(tag, `value="main"`) {
 		t.Errorf("the current target is not prefilled: %s", tag)
 	}
-	if strings.Contains(out, wantText(LangEN, MsgRestoreTargetNew)) {
-		t.Error("an existing branch is described as one that would be created")
-	}
 
-	// A name that does not exist is kept exactly as typed, and the preview it
-	// leads to says what will happen to it. The claim is made there rather
-	// than beside the field, because the field can still be changed.
+	// A name that does not exist is kept exactly as typed. Whether it would
+	// be created is said on the preview, not beside the field, because the
+	// field can still be changed (TestRestoreScreenStates).
 	page := restorePage(fullChrome(LangEN), false)
 	page.TargetBranch = "recovered/9a8b154"
 	page.CreatesBranch = true
 	typed := render(t, r, page)
 	if tag := targetInput(t, typed); !strings.Contains(tag, `value="recovered/9a8b154"`) {
 		t.Errorf("a typed branch name was not preserved: %s", tag)
-	}
-	page.Previewed = true
-	if !strings.Contains(render(t, r, page), wantText(LangEN, MsgRestoreTargetNew)) {
-		t.Error("the preview does not say the branch would be created")
 	}
 	// This notice covers any name that is not currently a branch, including a
 	// suggested one that never existed. It says the branch is created; saying
@@ -855,22 +783,8 @@ func TestRestoreSelectionStageMakesNoClaimTheReaderCanInvalidate(t *testing.T) {
 	}
 
 	// The reader still learns what will happen, on the summary that was
-	// actually computed and can no longer be edited.
-	for _, lang := range Langs() {
-		creates := restorePage(fullChrome(lang), true)
-		creates.TargetBranch = "recovered-9a8b154"
-		creates.CreatesBranch = true
-		if !strings.Contains(render(t, r, creates), wantText(lang, MsgRestoreTargetNew)) {
-			t.Errorf("%s: the previewed summary no longer says the branch would be created", lang)
-		}
-
-		adds := restorePage(fullChrome(lang), true)
-		adds.TargetBranch = "release"
-		adds.CreatesBranch = false
-		if strings.Contains(render(t, r, adds), wantText(lang, MsgRestoreTargetNew)) {
-			t.Errorf("%s: the previewed summary invents a branch creation", lang)
-		}
-	}
+	// actually computed and can no longer be edited: TestRestoreScreenStates
+	// checks that it says so exactly when the backend reports a creation.
 
 	// A refused apply still reports the stale branch on that same summary, and
 	// still announces it. Dropping the step-one notice must not touch this.
@@ -1009,38 +923,6 @@ func TestRestoreGenericCopyDoesNotPromiseACommitThatMayNotExist(t *testing.T) {
 // ---------------------------------------------------------------------------
 // entry points
 // ---------------------------------------------------------------------------
-
-func TestRestoreLinksAreOptionalForExistingCallers(t *testing.T) {
-	// The fields were added to existing page types. A caller that never sets
-	// them must still render, with no control and no empty link.
-	r := newRenderer(t)
-	page := RepositoryPage{
-		Chrome: fullChrome(LangEN),
-		Tab:    RepoTabOverview,
-		Repo:   RepositoryHeader{ID: "r1", Name: "forge-cli", URL: "/repositories/r1"},
-		Overview: RepositoryOverview{
-			Head:         CommitSummary{ShortOID: "a41c9e2", Subject: "Add JSON output", AuthorDate: testNow, URL: "/c"},
-			Branches:     []RefLine{{Name: "main", URL: "/x", Kind: "branch", IsDefault: true}},
-			RetainedRefs: []RefLine{{Name: "old/main", URL: "/y", Kind: "branch", Retained: true}},
-		},
-		OverviewURL: "/repositories/r1",
-		CodeURL:     "/repositories/r1/code",
-		CommitsURL:  "/repositories/r1/commits",
-	}
-	out := render(t, r, page)
-	if strings.Contains(out, "/restore") {
-		t.Error("a restore link appeared for a caller that supplied none")
-	}
-	if strings.Contains(out, `href=""`) {
-		t.Error("an unset restore URL rendered as an empty link")
-	}
-
-	file := repoPage(fullChrome(LangEN), RepoTabCode)
-	file.Code.File.RestoreURL = ""
-	if out := render(t, r, file); strings.Contains(out, `href=""`) {
-		t.Error("an unset file restore URL rendered as an empty link")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // repository content is data
@@ -1522,8 +1404,6 @@ func TestRestoreScreenStates(t *testing.T) {
 			absent: []MessageCode{MsgRestoreTargetNew}, markup: []string{`name="expected_head" value="` + zero + `"`}},
 		// Whether restoring creates the branch is the backend's observation;
 		// the separately read suggestion list can be out of date either way.
-		screen{name: "a branch the backend found is not described as created",
-			page: restore(LangEN, true, branch("added/after-the-list", false)), absent: []MessageCode{MsgRestoreTargetNew}},
 		screen{name: "a suggested branch the backend did not find is created",
 			page: restore(LangEN, true, branch("main", true)), want: []MessageCode{MsgRestoreTargetNew}},
 		screen{name: "the suggestion list does not follow branch state",
@@ -1538,6 +1418,24 @@ func TestRestoreScreenStates(t *testing.T) {
 			markup: []string{`<label for="restore-target"`, "<legend>"}},
 		screen{name: "the Korean restore page uses standard Git terms", lang: LangKO, page: restore(LangKO, true, unchanged),
 			markup: []string{"브랜치", "커밋", "저장소"}, noMarkup: []string{"·", "—", "–", "오운깃"}},
+		// The link fields were added to existing page types. A caller that
+		// never sets them gets no control and no empty link.
+		screen{name: "a caller that supplies no restore links gets none", page: RepositoryPage{
+			Chrome: fullChrome(LangEN),
+			Tab:    RepoTabOverview,
+			Repo:   RepositoryHeader{ID: "r1", Name: "forge-cli", URL: "/repositories/r1"},
+			Overview: RepositoryOverview{
+				Head:         CommitSummary{ShortOID: "a41c9e2", Subject: "Add JSON output", AuthorDate: testNow, URL: "/c"},
+				Branches:     []RefLine{{Name: "main", URL: "/x", Kind: "branch", IsDefault: true}},
+				RetainedRefs: []RefLine{{Name: "old/main", URL: "/y", Kind: "branch", Retained: true}},
+			},
+			OverviewURL: "/repositories/r1",
+			CodeURL:     "/repositories/r1/code",
+			CommitsURL:  "/repositories/r1/commits",
+		}, noMarkup: []string{"/restore", `href=""`}},
+		screen{name: "an unset file restore link is not an empty link",
+			page:     with(repoPage(fullChrome(LangEN), RepoTabCode), func(p *RepositoryPage) { p.Code.File.RestoreURL = "" }),
+			noMarkup: []string{`href=""`}},
 	}
 	for _, previewed := range []bool{false, true} {
 		screens = append(screens, screen{name: "the restore page switches language in place",
@@ -1550,7 +1448,41 @@ func TestRestoreScreenStates(t *testing.T) {
 			screen{name: string(lang) + " the branch choice is explained", lang: lang, page: restore(lang, false, unchanged),
 				want: []MessageCode{MsgRestoreTargetChoose, MsgRestoreTargetHelp}, absent: []MessageCode{MsgRestoreTargetNew}},
 			screen{name: string(lang) + " a missing branch is flagged before the write", lang: lang,
-				page: restore(lang, true, branch("recovered-9a8b154", true)), want: []MessageCode{MsgRestoreTargetNew}})
+				page: restore(lang, true, branch("recovered-9a8b154", true)), want: []MessageCode{MsgRestoreTargetNew}},
+			screen{name: string(lang) + " a branch the backend found is not described as created", lang: lang,
+				page: restore(lang, true, branch("added/after-the-list", false)), absent: []MessageCode{MsgRestoreTargetNew}})
+		// A field error is rendered with the note its control points at.
+		for _, fieldError := range []Notice{
+			Error("target", MsgRestoreTargetEmpty), Error("path", MsgRestoreFilesNone),
+			Error("mode", MsgRestoreInvalid), Error("confirm", MsgRestoreConflict),
+		} {
+			screens = append(screens, screen{name: string(lang) + " the " + fieldError.Field + " error has its note", lang: lang,
+				page: restore(lang, true, func(p *RestorePage) { p.Chrome.Notices = []Notice{fieldError} }),
+				want: []MessageCode{fieldError.Code}, markup: []string{`id="` + noteID(nil, fieldError.Field) + `"`}})
+		}
+	}
+	// Every outcome the backend reports reaches the screen in both languages,
+	// and a failure is announced. An outcome missing from the catalog would
+	// render the generic fallback on both sides of the comparison, so it is
+	// checked separately.
+	for _, outcome := range []Notice{
+		{Kind: NoticeError, Code: MsgRestoreInvalid}, {Kind: NoticeError, Code: MsgRestoreConflict},
+		{Kind: NoticeInfo, Code: MsgRestoreNoChanges}, {Kind: NoticeError, Code: MsgRestoreUnsupported},
+		{Kind: NoticeError, Code: MsgRestoreFailed}, {Kind: NoticeError, Code: MsgRestorePreviewFailed},
+		{Kind: NoticeInfo, Code: MsgRestoreReady}, {Kind: NoticeSuccess, Code: MsgRestoreSuccess},
+	} {
+		if !Has(outcome.Code) {
+			t.Errorf("the shared outcome %q is not in the catalog", outcome.Code)
+		}
+		var announced []string
+		if outcome.Kind == NoticeError {
+			announced = []string{`role="alert"`}
+		}
+		for _, lang := range Langs() {
+			screens = append(screens, screen{name: string(lang) + " the outcome " + string(outcome.Code) + " is shown", lang: lang,
+				page: restore(lang, true, func(p *RestorePage) { p.Chrome.Notices = []Notice{outcome} }),
+				want: []MessageCode{outcome.Code}, markup: announced})
+		}
 	}
 	checkScreens(t, screens...)
 }

@@ -29,140 +29,71 @@ var (
 	serverNow17 = time.Date(2026, 9, 17, 12, 0, 0, 0, seoulZone)
 )
 
-func TestCommitAuthoredJustAfterMidnightAheadOfTheServer(t *testing.T) {
-	// The reported case. In the server's zone this instant is 16 September
-	// 19:30, a different day from the one the author recorded.
-	authored := time.Date(2026, 9, 17, 0, 30, 0, 0, plus14)
+// dateTexts is how one commit's date reads in one language: the activity
+// group heading, the list row, and the commit detail.
+type dateTexts struct{ heading, row, detail string }
 
-	if got := authored.In(serverNow17.Location()).Day(); got != 16 {
-		t.Fatalf("the fixture no longer crosses the server's day boundary (server day %d)", got)
-	}
-
-	for _, tc := range []struct {
-		lang        Lang
-		wantHeading string
-		wantRow     string
-		wantDetail  string
-	}{
-		{LangEN, "Today", "Today 00:30", "Sep 17, 2026 00:30"},
-		{LangKO, "오늘", "오늘 00:30", "2026년 9월 17일 00:30"},
-	} {
-		if got := formatDayHeading(tc.lang, serverNow17, authored); got != tc.wantHeading {
-			t.Errorf("%s: group heading = %q, want %q", tc.lang, got, tc.wantHeading)
-		}
-		if got := formatRelative(tc.lang, serverNow17, authored); got != tc.wantRow {
-			t.Errorf("%s: list row = %q, want %q", tc.lang, got, tc.wantRow)
-		}
-		if got := formatDateTime(tc.lang, authored); got != tc.wantDetail {
-			t.Errorf("%s: commit detail = %q, want %q", tc.lang, got, tc.wantDetail)
-		}
-	}
-
-	// The clock must be the author's, not a converted one.
-	if got := formatClock(authored); got != "00:30" {
-		t.Errorf("clock = %q, want the author's recorded 00:30", got)
-	}
-}
-
-func TestCommitAuthoredBehindTheServerCrossesTheOtherWay(t *testing.T) {
-	// The opposite direction: a negative offset. 17 September 23:30 at -11:00
-	// is 18 September 09:30 in Seoul, so converting would push the commit
-	// forward a day instead of back.
-	authored := time.Date(2026, 9, 17, 23, 30, 0, 0, minus11)
-
-	if got := authored.In(serverNow17.Location()).Day(); got != 18 {
-		t.Fatalf("the fixture no longer crosses the boundary forward (server day %d)", got)
-	}
-
-	for _, tc := range []struct {
-		lang         Lang
-		heading, row string
-	}{
-		{LangEN, "Today", "Today 23:30"},
-		{LangKO, "오늘", "오늘 23:30"},
-	} {
-		if got := formatDayHeading(tc.lang, serverNow17, authored); got != tc.heading {
-			t.Errorf("%s: group heading = %q, want %q", tc.lang, got, tc.heading)
-		}
-		if got := formatRelative(tc.lang, serverNow17, authored); got != tc.row {
-			t.Errorf("%s: list row = %q, want %q", tc.lang, got, tc.row)
-		}
-	}
-}
-
-func TestYesterdayIsTheAuthorsPreviousCalendarDay(t *testing.T) {
-	// 16 September recorded at +14:00 is 15 September in Seoul. It must still
-	// read as yesterday, the day the author wrote.
-	authored := time.Date(2026, 9, 16, 2, 0, 0, 0, plus14)
-
-	for _, tc := range []struct {
-		lang         Lang
-		heading, row string
-	}{
-		{LangEN, "Yesterday", "Yesterday 02:00"},
-		{LangKO, "어제", "어제 02:00"},
-	} {
-		if got := formatDayHeading(tc.lang, serverNow17, authored); got != tc.heading {
-			t.Errorf("%s: group heading = %q, want %q", tc.lang, got, tc.heading)
-		}
-		if got := formatRelative(tc.lang, serverNow17, authored); got != tc.row {
-			t.Errorf("%s: list row = %q, want %q", tc.lang, got, tc.row)
-		}
-	}
-}
-
-func TestYearBoundaryUsesTheAuthorsYear(t *testing.T) {
-	// 1 January 00:30 at +14:00 is still 31 December in Seoul. The commit
-	// belongs to the author's new year, and the current-year wording follows
-	// the reference calendar.
-	newYear := time.Date(2026, 1, 1, 0, 30, 0, 0, plus14)
+func TestCommitDatesUseTheAuthorsCalendar(t *testing.T) {
 	nowJan := time.Date(2026, 1, 5, 9, 0, 0, 0, seoulZone)
-
-	if got := newYear.In(seoulZone).Year(); got != 2025 {
-		t.Fatalf("the fixture no longer crosses the year boundary (server year %d)", got)
-	}
-
-	// Within the reference year: no year is repeated in the row.
-	if got := formatRelative(LangEN, nowJan, newYear); strings.Contains(got, "2026") || strings.Contains(got, "2025") {
-		t.Errorf("a commit in the current year names a year: %q", got)
-	}
-	// The detail always states the author's year.
-	if got := formatDateTime(LangEN, newYear); !strings.Contains(got, "2026") {
-		t.Errorf("the detail does not use the author's year: %q", got)
-	}
-	if got := formatDateTime(LangKO, newYear); !strings.Contains(got, "2026년") {
-		t.Errorf("the Korean detail does not use the author's year: %q", got)
-	}
-
-	// The last day of the old year keeps its own year once the reference
-	// calendar has moved on.
-	oldYear := time.Date(2025, 12, 31, 23, 30, 0, 0, minus11)
-	if got := formatRelative(LangEN, nowJan, oldYear); !strings.Contains(got, "2025") {
-		t.Errorf("a commit from last year does not name its year: %q", got)
-	}
-}
-
-func TestMidnightInAnotherZoneIsNotTheSameDay(t *testing.T) {
-	// Comparing midnight instants would make these equal even though they are
-	// different calendar dates, and would separate dates that are the same.
-	a := time.Date(2026, 9, 17, 0, 0, 0, 0, plus14)    // 17 Sep, +14
-	b := time.Date(2026, 9, 17, 0, 0, 0, 0, seoulZone) // 17 Sep, +09
-
-	if a.Equal(b) {
-		t.Fatal("the fixtures are the same instant; the test proves nothing")
-	}
-	if !sameDay(civilOf(a), civilOf(b)) {
-		t.Error("two records of the same calendar date are treated as different days")
-	}
-
-	// And the same instant written with two offsets is two different dates.
-	instant := time.Date(2026, 9, 17, 0, 30, 0, 0, plus14)
-	shifted := instant.In(seoulZone)
-	if !instant.Equal(shifted) {
-		t.Fatal("the fixtures are not the same instant")
-	}
-	if sameDay(civilOf(instant), civilOf(shifted)) {
-		t.Error("one instant written in two zones is treated as one calendar date")
+	for _, tc := range []struct {
+		name     string
+		authored time.Time
+		now      time.Time
+		// serverDate is the date the server's zone gives the same instant.
+		// Where it differs from the authored date, converting would move the
+		// commit to another day.
+		serverDate string
+		clock      string
+		en, ko     dateTexts
+	}{
+		{"the reported case: just after midnight ahead of the server",
+			time.Date(2026, 9, 17, 0, 30, 0, 0, plus14), serverNow17, "2026-09-16", "00:30",
+			dateTexts{"Today", "Today 00:30", "Sep 17, 2026 00:30"},
+			dateTexts{"오늘", "오늘 00:30", "2026년 9월 17일 00:30"}},
+		// The same instant as the reported case, recorded at +09:00, is a
+		// different calendar date. Comparing instants would merge the two.
+		{"the same instant recorded in the server's zone",
+			time.Date(2026, 9, 16, 19, 30, 0, 0, seoulZone), serverNow17, "2026-09-16", "19:30",
+			dateTexts{"Yesterday", "Yesterday 19:30", "Sep 16, 2026 19:30"},
+			dateTexts{"어제", "어제 19:30", "2026년 9월 16일 19:30"}},
+		{"behind the server, converting would move it forward",
+			time.Date(2026, 9, 17, 23, 30, 0, 0, minus11), serverNow17, "2026-09-18", "23:30",
+			dateTexts{"Today", "Today 23:30", "Sep 17, 2026 23:30"},
+			dateTexts{"오늘", "오늘 23:30", "2026년 9월 17일 23:30"}},
+		{"yesterday is the author's previous calendar day",
+			time.Date(2026, 9, 16, 2, 0, 0, 0, plus14), serverNow17, "2026-09-15", "02:00",
+			dateTexts{"Yesterday", "Yesterday 02:00", "Sep 16, 2026 02:00"},
+			dateTexts{"어제", "어제 02:00", "2026년 9월 16일 02:00"}},
+		// The row omits the year inside the reference year; the detail always
+		// states the author's year.
+		{"new year's day ahead of the server belongs to the author's year",
+			time.Date(2026, 1, 1, 0, 30, 0, 0, plus14), nowJan, "2025-12-31", "00:30",
+			dateTexts{"Thursday, Jan 1", "Jan 1 at 00:30", "Jan 1, 2026 00:30"},
+			dateTexts{"1월 1일 목요일", "1월 1일 00:30", "2026년 1월 1일 00:30"}},
+		{"the old year's last day behind the server keeps its year",
+			time.Date(2025, 12, 31, 23, 30, 0, 0, minus11), nowJan, "2026-01-01", "23:30",
+			dateTexts{"Wednesday, Dec 31, 2025", "Dec 31, 2025", "Dec 31, 2025 23:30"},
+			dateTexts{"2025년 12월 31일", "2025년 12월 31일", "2025년 12월 31일 23:30"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.authored.In(tc.now.Location()).Format("2006-01-02"); got != tc.serverDate {
+				t.Fatalf("the fixture's server date is %s, want %s", got, tc.serverDate)
+			}
+			// The clock is the author's, not a converted one.
+			if got := formatClock(tc.authored); got != tc.clock {
+				t.Errorf("clock = %q, want %q", got, tc.clock)
+			}
+			for lang, want := range map[Lang]dateTexts{LangEN: tc.en, LangKO: tc.ko} {
+				got := dateTexts{
+					formatDayHeading(lang, tc.now, tc.authored),
+					formatRelative(lang, tc.now, tc.authored),
+					formatDateTime(lang, tc.authored),
+				}
+				if got != want {
+					t.Errorf("%s: heading, row, detail = %q, want %q", lang, got, want)
+				}
+			}
+		})
 	}
 }
 
