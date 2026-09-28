@@ -158,18 +158,18 @@ func inspectState(ctx context.Context, dir string) (result *inspection, err erro
 	}
 	in.dir = directory
 	mainPath := filepath.Join(dir, databaseName)
-	mainInfo, err := lstatSourceEntry(mainPath)
+	mainInfo, err := lstatSourceEntry(in.dir.handle, mainPath)
 	if err != nil {
 		return nil, err
 	}
 	if err := in.at(pointMainListed, ""); err != nil {
 		return nil, err
 	}
-	walInfo, err := lstatSourceEntry(mainPath + walSuffix)
+	walInfo, err := lstatSourceEntry(in.dir.handle, mainPath+walSuffix)
 	if err != nil {
 		return nil, err
 	}
-	shmInfo, err := lstatSourceEntry(mainPath + shmSuffix)
+	shmInfo, err := lstatSourceEntry(in.dir.handle, mainPath+shmSuffix)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func inspectState(ctx context.Context, dir string) (result *inspection, err erro
 			// The entries are listed one at a time, so a database that
 			// another opener created after its listing, and then opened,
 			// can show only its recovery files here.
-			if info, err := lstatSourceEntry(mainPath); err != nil {
+			if info, err := lstatSourceEntry(in.dir.handle, mainPath); err != nil {
 				return nil, err
 			} else if info != nil {
 				return nil, unstable("%s appeared during inspection", databaseName)
@@ -199,7 +199,7 @@ func inspectState(ctx context.Context, dir string) (result *inspection, err erro
 		succeeded = true
 		return in, nil
 	}
-	in.main, err = bindFile(mainPath, mainInfo, false)
+	in.main, err = bindFile(in.dir.handle, mainPath, mainInfo, false)
 	if err != nil {
 		return nil, err
 	}
@@ -249,12 +249,12 @@ func (in *inspection) inspectImmutable(ctx context.Context) error {
 // tracked by identity and never read, copied or mapped.
 func (in *inspection) inspectPrivateCopy(ctx context.Context, walInfo, shmInfo os.FileInfo) (err error) {
 	if walInfo != nil {
-		if in.wal, err = bindFile(in.main.path+walSuffix, walInfo, false); err != nil {
+		if in.wal, err = bindFile(in.dir.handle, in.main.path+walSuffix, walInfo, false); err != nil {
 			return err
 		}
 	}
 	if shmInfo != nil {
-		if in.shm, err = bindFile(in.main.path+shmSuffix, shmInfo, true); err != nil {
+		if in.shm, err = bindFile(in.dir.handle, in.main.path+shmSuffix, shmInfo, true); err != nil {
 			return err
 		}
 	}
@@ -350,7 +350,7 @@ func (in *inspection) accept(ctx context.Context, dir string) error {
 	for _, object := range []*sourceObject{in.main, in.wal, in.shm} {
 		if object != nil {
 			if err := ProtectPrivateHandle(object.handle, false); err != nil {
-				return fmt.Errorf("protect state database file: %w", err)
+				return changedDuring(in.dir.handle, object, fmt.Errorf("protect state database file: %w", err))
 			}
 		}
 	}
@@ -385,14 +385,14 @@ func (in *inspection) validateSource(exact, fingerprints bool) error {
 	}
 	mainPath := filepath.Join(in.dir.path, databaseName)
 	if in.main == nil {
-		info, err := lstatSourceEntry(mainPath)
+		info, err := lstatSourceEntry(in.dir.handle, mainPath)
 		if err != nil {
 			return err
 		}
 		if info != nil {
 			return unstable("%s appeared during inspection", databaseName)
 		}
-	} else if err := in.main.validate(exact, fingerprints, true); err != nil {
+	} else if err := in.main.validate(in.dir.handle, exact, fingerprints, true); err != nil {
 		return err
 	}
 	// The SHM index is never read, so only its identity and presence matter.
@@ -402,12 +402,12 @@ func (in *inspection) validateSource(exact, fingerprints bool) error {
 		exact  bool
 	}{{in.wal, mainPath + walSuffix, exact}, {in.shm, mainPath + shmSuffix, false}} {
 		if sidecar.object != nil {
-			if err := sidecar.object.validate(sidecar.exact, fingerprints, exact); err != nil {
+			if err := sidecar.object.validate(in.dir.handle, sidecar.exact, fingerprints, exact); err != nil {
 				return err
 			}
 			continue
 		}
-		info, err := lstatSourceEntry(sidecar.path)
+		info, err := lstatSourceEntry(in.dir.handle, sidecar.path)
 		if err != nil {
 			return err
 		}
@@ -427,8 +427,8 @@ func (in *inspection) validateSource(exact, fingerprints bool) error {
 	return nil
 }
 
-func (object *sourceObject) validate(exact, fingerprints, required bool) error {
-	info, err := lstatSourceEntry(object.path)
+func (object *sourceObject) validate(dir *os.File, exact, fingerprints, required bool) error {
+	info, err := lstatSourceEntry(dir, object.path)
 	if err != nil {
 		return err
 	}
@@ -445,7 +445,31 @@ func (object *sourceObject) validate(exact, fingerprints, required bool) error {
 	if exact && (info.Size() != object.info.Size() || !info.ModTime().Equal(object.info.ModTime())) {
 		return unstable("%s changed", name)
 	}
-	return object.compareFingerprint(fingerprints)
+	return changedDuring(dir, object, object.compareFingerprint(fingerprints))
+}
+
+// changedDuring decides what err, a failed operation on the bound entry
+// object, means. When the entry's name no longer leads to the bound object
+// (it was removed, its deletion is pending, or it was replaced), the failure
+// came from a change during inspection, which the caller can retry. Windows
+// reports operations by name on a file whose deletion is pending as access
+// denied, so this is how a concurrent opener's removal of its sidecars is
+// told apart from a real failure. When the name still leads to the object,
+// or cannot be looked up, err keeps its cause.
+func changedDuring(dir *os.File, object *sourceObject, err error) error {
+	if err == nil || errors.Is(err, ErrInspectionUnstable) {
+		return err
+	}
+	info, lookupErr := lstatSourceEntry(dir, object.path)
+	switch {
+	case lookupErr != nil:
+		return err
+	case info == nil:
+		return unstable("%s was removed", filepath.Base(object.path))
+	case !os.SameFile(info, object.info):
+		return unstable("%s was replaced", filepath.Base(object.path))
+	}
+	return err
 }
 
 func (object *sourceObject) compareFingerprint(enabled bool) error {
@@ -522,12 +546,13 @@ func closeAfter(handle *os.File, err error) error {
 	return err
 }
 
-// bindFile opens a regular source file and requires the handle to name the
-// same object as the path entry, which rejects a symbolic link or reparse point
-// substituted between the two calls. A metadata-only handle carries identity
-// without data access, which is all the SHM index may provide.
-func bindFile(path string, entry os.FileInfo, metadataOnly bool) (*sourceObject, error) {
-	handle, err := openSourceHandle(path, metadataOnly)
+// bindFile opens a regular source file inside the held directory dir and
+// requires the handle to name the same object as the path entry, which
+// rejects a symbolic link or reparse point substituted between the two calls.
+// A metadata-only handle carries identity without data access, which is all
+// the SHM index may provide.
+func bindFile(dir *os.File, path string, entry os.FileInfo, metadataOnly bool) (*sourceObject, error) {
+	handle, err := openSourceEntry(dir, path, metadataOnly)
 	if errors.Is(err, os.ErrNotExist) {
 		// Listed a moment ago, so it was removed during inspection, for
 		// example a WAL that another opener checkpointed and deleted.
@@ -543,23 +568,23 @@ func bindFile(path string, entry os.FileInfo, metadataOnly bool) (*sourceObject,
 	if !info.Mode().IsRegular() || !os.SameFile(info, entry) {
 		return nil, closeAfter(handle, unstable("%s was replaced", filepath.Base(path)))
 	}
-	fingerprint, err := protectionFingerprint(path)
-	if errors.Is(err, os.ErrNotExist) {
-		// Removed after it was opened, as above.
-		return nil, closeAfter(handle, unstable("%s was removed", filepath.Base(path)))
-	}
+	object := &sourceObject{path: path, info: info, handle: handle}
+	object.fingerprint, err = protectionFingerprint(path)
 	if err != nil {
-		return nil, closeAfter(handle, fmt.Errorf("inspect %s: %w", filepath.Base(path), err))
+		// Removed after it was opened, as above, or a real failure.
+		return nil, closeAfter(handle, changedDuring(dir, object, fmt.Errorf("inspect %s: %w", filepath.Base(path), err)))
 	}
-	return &sourceObject{path: path, info: info, fingerprint: fingerprint, handle: handle}, nil
+	return object, nil
 }
 
-// lstatSourceEntry returns nil for an absent entry and refuses any entry that
-// is not a regular file, including symbolic links and reparse points. The
+// lstatSourceEntry looks up the entry path inside the held state directory
+// dir. It returns nil for an absent entry, which includes an entry whose
+// deletion is pending (see lookupSourceEntry), and refuses any entry that is
+// not a regular file, including symbolic links and reparse points. The
 // identity is fixed at this call, because bindFile compares it after opening.
-func lstatSourceEntry(path string) (os.FileInfo, error) {
-	info, err := LstatIdentity(path)
-	if os.IsNotExist(err) {
+func lstatSourceEntry(dir *os.File, path string) (os.FileInfo, error) {
+	info, err := lookupSourceEntry(dir, path)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {

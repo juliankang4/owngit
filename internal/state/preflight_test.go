@@ -1033,3 +1033,35 @@ func TestEntriesThatChangeWhileListedAreUnstable(t *testing.T) {
 		noErr(t, store.Close())
 	})
 }
+
+// A failed operation on a bound entry is a change during inspection only when
+// the entry's name no longer leads to it. Otherwise the failure keeps its
+// cause, so a lasting problem is not retried as if it were a change.
+func TestFailureOnABoundEntryIsAChangeOnlyWhenTheEntryIsGone(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "state")
+	noErr(t, os.MkdirAll(directory, 0o700))
+	path := filepath.Join(directory, databaseName+walSuffix)
+	noErr(t, os.WriteFile(path, []byte("wal"), 0o600))
+	dir, err := bindDirectory(directory)
+	noErr(t, err)
+	defer dir.handle.Close()
+	entry, err := lstatSourceEntry(dir.handle, path)
+	noErr(t, err)
+	object, err := bindFile(dir.handle, path, entry, false)
+	noErr(t, err)
+	defer object.handle.Close()
+
+	failure := errors.New("synthetic protection failure")
+	if err := changedDuring(dir.handle, object, failure); err != failure {
+		t.Fatalf("entry in place: %v, want the failure itself", err)
+	}
+	noErr(t, os.Rename(path, path+".moved"))
+	noErr(t, os.WriteFile(path, []byte("new"), 0o600))
+	if err := changedDuring(dir.handle, object, failure); !errors.Is(err, ErrInspectionUnstable) || !strings.Contains(err.Error(), "was replaced") {
+		t.Fatalf("entry replaced: %v", err)
+	}
+	noErr(t, os.Remove(path))
+	if err := changedDuring(dir.handle, object, failure); !errors.Is(err, ErrInspectionUnstable) || !strings.Contains(err.Error(), "was removed") {
+		t.Fatalf("entry removed: %v", err)
+	}
+}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -130,9 +129,6 @@ func TestServeRetriesAnUnstableStateOpen(t *testing.T) {
 // so they cannot use up serve's retries on their own; with serve's retry
 // turned off this test fails within a few starts.
 func TestServeStartsWhileACommandPollsItsState(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("known Windows issue: a state sidecar file that another opener is deleting fails the inspection through several APIs, not as a retryable change")
-	}
 	stateDir := filepath.Join(t.TempDir(), "state")
 	store, err := state.Open(context.Background(), stateDir)
 	noErr(t, err)

@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -260,5 +262,112 @@ func TestWindowsReparseStateEntriesAreRefused(t *testing.T) {
 				t.Fatalf("junction disappeared or changed: attributes=%#x err=%v", attributes, err)
 			}
 		})
+	}
+}
+
+// markDeletePending deletes path the way Windows deletes a file that another
+// process still holds open, as when SQLite removes its sidecars on close
+// while another opener inspects them: the name stays, and opening it by name
+// fails, until release closes the last handle.
+func markDeletePending(t *testing.T, path string) (release func()) {
+	t.Helper()
+	name, err := windows.UTF16PtrFromString(path)
+	noErr(t, err)
+	handle, err := windows.CreateFile(name, windows.DELETE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	noErr(t, err)
+	release = sync.OnceFunc(func() { _ = windows.CloseHandle(handle) })
+	t.Cleanup(release)
+	disposition := struct{ DeleteFile bool }{DeleteFile: true} // FILE_DISPOSITION_INFO
+	noErr(t, windows.SetFileInformationByHandle(handle, windows.FileDispositionInfo,
+		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition))))
+	if _, err := LstatIdentity(path); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("%s is not waiting for deletion: lookup error %v, want access denied", filepath.Base(path), err)
+	}
+	return release
+}
+
+// A sidecar that a closing opener deleted while another process holds it
+// open cannot be opened by name until that process lets go. It is already
+// deleted, so the inspection treats it as removed: absent when it is listed,
+// and a retryable change when it disappears during inspection. Open never
+// fails with another error because of it.
+func TestWindowsSidecarsWhoseDeletionIsPendingCountAsRemoved(t *testing.T) {
+	ctx := context.Background()
+	sidecars := []string{databaseName + walSuffix, databaseName + shmSuffix}
+	prepare := func(t *testing.T) string {
+		directory := filepath.Join(t.TempDir(), "state")
+		store, err := Open(ctx, directory)
+		noErr(t, err)
+		noErr(t, store.Close())
+		for _, name := range sidecars {
+			noErr(t, os.WriteFile(filepath.Join(directory, name), nil, 0o600))
+		}
+		return directory
+	}
+	markSidecars := func(t *testing.T, directory string) func() {
+		var releases []func()
+		for _, name := range sidecars {
+			releases = append(releases, markDeletePending(t, filepath.Join(directory, name)))
+		}
+		return func() {
+			for _, release := range releases {
+				release()
+			}
+		}
+	}
+
+	t.Run("before the inspection", func(t *testing.T) {
+		directory := prepare(t)
+		release := markSidecars(t, directory)
+		useHooks(t)
+		// The other process lets go once this inspection has released its
+		// handles, before SQLite opens the database.
+		preflightHooks.afterRelease = func(string) { release() }
+		store, err := Open(ctx, directory)
+		noErr(t, err)
+		noErr(t, store.Close())
+	})
+	for _, point := range []string{pointListed, pointAccept, pointProtect} {
+		t.Run("at "+point, func(t *testing.T) {
+			directory := prepare(t)
+			release := func() {}
+			hookAt(t, point, func(string) { release = markSidecars(t, directory) })
+			preflightHooks.afterRelease = func(string) { release() }
+			store, err := Open(ctx, directory)
+			release()
+			if store != nil {
+				noErr(t, store.Close())
+			}
+			if err != nil && !errors.Is(err, ErrInspectionUnstable) {
+				t.Fatalf("a sidecar deleted during inspection failed the open: %v", err)
+			}
+			preflightHooks.at = nil
+			store, err = Open(ctx, directory)
+			noErr(t, err)
+			noErr(t, store.Close())
+		})
+	}
+}
+
+// Only a pending deletion counts as absence. Every other failure to open a
+// state entry keeps the error that CreateFile would report, so an entry this
+// account may not open is still refused with its cause.
+func TestWindowsEntryOpenStatusKeepsItsMeaning(t *testing.T) {
+	for _, test := range []struct {
+		status             windows.NTStatus
+		absent, permission bool
+	}{
+		{windows.STATUS_DELETE_PENDING, true, false},
+		{windows.STATUS_OBJECT_NAME_NOT_FOUND, true, false},
+		{windows.STATUS_ACCESS_DENIED, false, true},
+		{windows.STATUS_SHARING_VIOLATION, false, false},
+	} {
+		err := entryOpenError(test.status)
+		if errors.Is(err, os.ErrNotExist) != test.absent || errors.Is(err, os.ErrPermission) != test.permission {
+			t.Errorf("status %#x gave %v: absent=%t permission=%t, want %t and %t", uint32(test.status), err,
+				errors.Is(err, os.ErrNotExist), errors.Is(err, os.ErrPermission), test.absent, test.permission)
+		}
 	}
 }
