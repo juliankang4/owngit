@@ -25,7 +25,9 @@ type servedInstance struct {
 	t      *testing.T
 	url    string
 	cancel context.CancelFunc
-	result chan error
+	done   chan struct{} // closed when serve has returned err
+	err    error
+	stops  sync.Once
 	mu     sync.Mutex
 	logs   []string
 }
@@ -37,39 +39,43 @@ func startServed(t *testing.T, stateDir string, extra ...string) *servedInstance
 	return startServedWith(t, append([]string{"--state-dir", stateDir, "--listen", "127.0.0.1:0", "--no-open"}, extra...))
 }
 
-// startServedWith starts serve with exactly these arguments.
+// startServedWith starts serve with exactly these arguments. The test
+// stops it at the latest when it ends, also when the start fails, so serve
+// never outlives the test and its folders.
 func startServedWith(t *testing.T, arguments []string) *servedInstance {
 	t.Helper()
-	instance := &servedInstance{t: t, result: make(chan error, 1)}
+	instance := &servedInstance{t: t, done: make(chan struct{})}
+	listening := make(chan string, 1)
 	logf := func(format string, arguments ...any) {
+		line := fmt.Sprintf(format, arguments...)
 		instance.mu.Lock()
-		instance.logs = append(instance.logs, fmt.Sprintf(format, arguments...))
+		instance.logs = append(instance.logs, line)
 		instance.mu.Unlock()
+		if match := listeningLine.FindStringSubmatch(line); match != nil {
+			select {
+			case listening <- "http://" + match[1]:
+			default:
+			}
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	instance.cancel = cancel
+	t.Cleanup(instance.stop)
 	go func() {
-		instance.result <- serveWithContext(ctx, arguments, func(string) error { return nil }, logf)
+		defer close(instance.done)
+		instance.err = serveWithContext(ctx, arguments, func(string) error { return nil }, logf)
 	}()
 	// Wait for the listening line, however slow a busy machine makes the
 	// start. A serve that returns instead failed to start, and says why; the
 	// bound only keeps a hung start from reaching the test binary's timeout.
-	bound := time.After(2 * time.Minute)
-	for {
-		if match := listeningLine.FindStringSubmatch(instance.log()); match != nil {
-			instance.url = "http://" + match[1]
-			return instance
-		}
-		select {
-		case err := <-instance.result:
-			cancel()
-			t.Fatalf("serve returned before it listened: %v\n%s", err, instance.log())
-		case <-bound:
-			cancel()
-			t.Fatalf("serve did not listen within 2 minutes: %s", instance.log())
-		case <-time.After(20 * time.Millisecond):
-		}
+	select {
+	case instance.url = <-listening:
+	case <-instance.done:
+		t.Fatalf("serve returned before it listened: %v\n%s", instance.err, instance.log())
+	case <-time.After(2 * time.Minute):
+		t.Fatalf("serve did not listen within 2 minutes: %s", instance.log())
 	}
+	return instance
 }
 
 func (instance *servedInstance) log() string {
@@ -78,17 +84,21 @@ func (instance *servedInstance) log() string {
 	return strings.Join(instance.logs, "\n")
 }
 
+// stop ends serve and waits for it. Only the first call does so. The
+// error of a serve that never listened was reported by its start.
 func (instance *servedInstance) stop() {
 	instance.t.Helper()
-	instance.cancel()
-	select {
-	case err := <-instance.result:
-		if err != nil {
-			instance.t.Fatalf("serve returned %v\n%s", err, instance.log())
+	instance.stops.Do(func() {
+		instance.cancel()
+		select {
+		case <-instance.done:
+		case <-time.After(90 * time.Second):
+			instance.t.Fatal("serve did not stop")
 		}
-	case <-time.After(90 * time.Second):
-		instance.t.Fatal("serve did not stop")
-	}
+		if instance.err != nil && instance.url != "" {
+			instance.t.Fatalf("serve returned %v\n%s", instance.err, instance.log())
+		}
+	})
 }
 
 // completeSetupOverHTTP drives the owner setup forms of a running serve.
@@ -160,30 +170,22 @@ func importRuntimeStatus(t *testing.T, base, repositoryID, adminPassword string)
 }
 
 // First-run setup completed inside a running serve starts the import runtime
-// then: the status surface reports a running scheduler, and a schedule
-// enabled afterwards is claimed without a restart.
+// then: the status surface reports a running scheduler, and a schedule that
+// became due while setup was pending is claimed without a restart.
 func TestSchedulerStartsWhenSetupCompletesWhileServing(t *testing.T) {
-	if testing.Short() {
-		t.Skip("waits for one 30 second scheduler tick")
-	}
 	base := t.TempDir()
 	stateDir := filepath.Join(base, "state")
 	root := filepath.Join(base, "repositories")
 	noErr(t, os.MkdirAll(root, 0o700))
 	served := startServed(t, stateDir)
-	defer served.stop()
 	ctx := context.Background()
 	store, err := state.Open(ctx, stateDir)
 	noErr(t, err)
 	defer store.Close()
-	const adminPassword = "lifetime-admin-password"
-	completeSetupOverHTTP(t, store, served.url, root, adminPassword)
-
-	settings, err := store.Settings(ctx)
-	if err != nil || !settings.Initialized {
-		t.Fatalf("setup did not complete settings=%+v err=%v", settings, err)
-	}
-	if output, err := exec.Command("git", "init", "--bare", "-q", filepath.Join(settings.RepositoryRoot, "demo.git")).CombinedOutput(); err != nil {
+	// A started scheduler looks for due schedules at once, so a schedule
+	// that is due before setup shows that setup started it, without waiting
+	// for a later tick.
+	if output, err := exec.Command("git", "init", "--bare", "-q", filepath.Join(root, "demo.git")).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, output)
 	}
 	now := time.Now().UTC()
@@ -192,11 +194,18 @@ func TestSchedulerStartsWhenSetupCompletesWhileServing(t *testing.T) {
 	if _, err := store.ConfigureImportSource(ctx, state.ImportSourceInput{RepositoryID: "demo", URL: "https://127.0.0.1:9/demo.git", Mode: "standalone", Now: now}); err != nil {
 		t.Fatal(err)
 	}
-	if running, code := importRuntimeStatus(t, served.url, "demo", adminPassword); !running || code != "" {
-		t.Fatalf("scheduler after first-run setup running=%v code=%q\n%s", running, code, served.log())
-	}
 	if _, err := store.SetImportSchedule(ctx, "demo", true, 60*time.Second, now); err != nil {
 		t.Fatal(err)
+	}
+	const adminPassword = "lifetime-admin-password"
+	completeSetupOverHTTP(t, store, served.url, root, adminPassword)
+
+	settings, err := store.Settings(ctx)
+	if err != nil || !settings.Initialized {
+		t.Fatalf("setup did not complete settings=%+v err=%v", settings, err)
+	}
+	if running, code := importRuntimeStatus(t, served.url, "demo", adminPassword); !running || code != "" {
+		t.Fatalf("scheduler after first-run setup running=%v code=%q\n%s", running, code, served.log())
 	}
 	deadline := time.Now().Add(45 * time.Second)
 	for {

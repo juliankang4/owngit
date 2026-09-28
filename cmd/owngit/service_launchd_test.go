@@ -354,6 +354,8 @@ func TestLaunchAgentInstallWritesTheAgent(t *testing.T) {
 // installed again from the desktop, and a desktop agent says so explicitly.
 func TestLaunchAgentReinstallKeepsHeadless(t *testing.T) {
 	fake := recordLaunchctl(t)
+	// status checks the default address, since the state cannot be read.
+	useFakeHealth(t)
 	host, out := testLaunchAgentHost(t, macDesktop(), "")
 	stateParent := filepath.Join(t.TempDir(), "not-a-directory")
 	noErr(t, os.WriteFile(stateParent, nil, 0o600))

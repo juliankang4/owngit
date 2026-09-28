@@ -50,6 +50,7 @@ type fakeWindows struct {
 	owners       map[string]string
 	adminOwned   map[string]int
 	repositories string // the repository folder saved in the state
+	health       *fakeHealth
 }
 
 const fakeSystem = `C:\Windows\System32`
@@ -165,6 +166,11 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 	previousEnvironment, previousApply := serviceEnvironment, applyServiceEnvironment
 	previousEnvironmentRunner, previousAttached, previousGit := runWithEnvironment, runAttachedWithEnvironment, gitOnServicePath
 	t.Cleanup(func() {
+		// The Windows paths of these tests are only text. Elsewhere they are
+		// relative, so a test that used one as a folder left it here.
+		if _, err := os.Lstat(testStateDir); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("a test used %s as a folder: %v", testStateDir, err)
+		}
 		gitOnServicePath = previousGit
 		serviceRunner, runElevated, lookPath, signalServiceStop = previousRunner, previousElevated, previousLook, previousStop
 		ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval = previousOwner, previousGive, previousRoot, previousPoll
@@ -174,6 +180,7 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		runWithEnvironment, runAttachedWithEnvironment = previousEnvironmentRunner, previousAttached
 	})
 	taskPollInterval = 10 * time.Millisecond
+	fake.health = useFakeHealth(t)
 	ownerOf = func(path string) (string, error) {
 		if owner, found := fake.owners[path]; found {
 			return owner, nil
@@ -288,7 +295,9 @@ const (
 )
 
 // An existing task keeps its state directory, so these tests need no
-// Windows path from filepath.Abs.
+// Windows path from filepath.Abs. A test that reads the state gives a
+// temporary folder, which replaces testStateDir in the rendered task,
+// since only a Windows path can be rendered.
 func (fake *fakeWindows) existing(t *testing.T, mode service.Mode, sid, stateDir string) {
 	t.Helper()
 	executable := testServiceExecutable
@@ -296,13 +305,14 @@ func (fake *fakeWindows) existing(t *testing.T, mode service.Mode, sid, stateDir
 		executable = testUserExecutable
 	}
 	definition, err := service.RenderTask(service.TaskPlan{
-		Mode: mode, Executable: executable, StateDir: stateDir,
+		Mode: mode, Executable: executable, StateDir: testStateDir,
 		UserSID: sid, Conhost: fakeSystem + `\conhost.exe`,
 	})
 	noErr(t, err)
-	fake.definition, fake.state = definition, "3\n0"
+	fake.definition, fake.state = strings.ReplaceAll(definition, testStateDir, stateDir), "3\n0"
 }
 
+// testStateDir is the state directory of tests that only show or pass it on.
 const testStateDir = `C:\Users\you\My Files\AppData\Roaming\owngit`
 
 // An administrator gets one UAC prompt, announced in one line, for a copy
@@ -670,8 +680,7 @@ func TestTaskStatusExplainsAQueuedTask(t *testing.T) {
 	address := freeLoopbackAddress(t)
 	_, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", address)
 	noErr(t, err)
-	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
-	fake.definition = strings.Replace(fake.definition, testStateDir, stateDir, -1)
+	fake.existing(t, service.ModeBootTask, testSID, stateDir)
 	fake.state = "2\n0"
 	host, out := testTaskHost(service.Environment{Administrator: true})
 	noErr(t, host.status())
@@ -696,11 +705,22 @@ func TestTaskStatusExplainsAQueuedTask(t *testing.T) {
 	if !strings.Contains(out.String(), "  Firewall: no rule for this owngit.exe, so other devices may be blocked; run \"owngit service install\" to add it\n") {
 		t.Errorf("no firewall warning for a server on every address:\n%s", out.String())
 	}
+	// A server that answers is running, whatever state the task is in.
+	fake.health.answering = true
+	out.Reset()
+	noErr(t, host.status())
+	if !strings.HasPrefix(out.String(), "OwnGit is running and answers its health check.\n") || !strings.Contains(out.String(), "  Address:  http://127.0.0.1:"+port) || strings.Contains(out.String(), "queued") {
+		t.Errorf("status of an answering server:\n%s", out.String())
+	}
+	// Every check went to the address the state names.
+	if len(fake.health.checked) == 0 || slices.ContainsFunc(fake.health.checked, func(checked string) bool { return checked != address }) {
+		t.Errorf("health checks %q, want only %s", fake.health.checked, address)
+	}
 }
 
 func TestTaskStatusExplainsHowToRefreshTheServiceCopy(t *testing.T) {
 	fake := newFakeWindows(t)
-	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
+	fake.existing(t, service.ModeBootTask, testSID, filepath.Join(t.TempDir(), "state"))
 	fake.state = "3\n0"
 	host, out := testTaskHost(service.Environment{Administrator: true})
 	previousVersion := readExecutableVersion
@@ -932,8 +952,7 @@ func TestTaskReportsWhyTheServerDidNotStart(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	_, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", freeLoopbackAddress(t))
 	noErr(t, err)
-	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
-	fake.definition = strings.Replace(fake.definition, testStateDir, stateDir, -1)
+	fake.existing(t, service.ModeBootTask, testSID, stateDir)
 	previous := waitForService
 	t.Cleanup(func() { waitForService = previous })
 	waitForService = func(string, time.Duration) (string, error) {
