@@ -454,6 +454,12 @@ func notLocalState(name string) error {
 	return fmt.Errorf("%s is %s; %s", name, notKnownLocal, stateOnLocalDisk)
 }
 
+// holdWay has nothing to hold on Unix: OpenDirectory already requires that
+// no other account can change a folder on the way to the state, so the
+// path that SQLite opens names the held directory while this account does
+// not change it.
+func holdWay(*os.File) (func(), error) { return func() {}, nil }
+
 // requireNoOtherWriter refuses a folder that another account could create
 // names in, sticky or not.
 func requireNoOtherWriter(name string, info os.FileInfo) error {

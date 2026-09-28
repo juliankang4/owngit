@@ -138,11 +138,17 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 }
 
 // OpenIn opens the state in the directory held, which CreateDirectory or
-// OpenDirectory returned. The inspection binds the directory by its path
-// and refuses one that is not the held directory any more, as a change
-// during inspection (ErrInspectionUnstable).
+// OpenStateDirectory returned. The inspection binds the directory by its
+// path and refuses one that is not the held directory any more, as a change
+// during inspection (ErrInspectionUnstable). SQLite opens the state by that
+// path, so the way to it is held (holdWay) until it has.
 func OpenIn(ctx context.Context, held *os.File) (result *Store, err error) {
 	absolute := held.Name()
+	release, err := holdWay(held)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if _, err := os.Lstat(filepath.Join(absolute, IncompleteRestoreMarkerName)); err == nil {
 		return nil, errors.New("state directory belongs to an incomplete offline restore; follow the interrupted-restore procedure before use")
 	} else if !os.IsNotExist(err) {

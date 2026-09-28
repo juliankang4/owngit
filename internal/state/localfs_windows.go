@@ -130,6 +130,62 @@ func refuseLinkedFolder(dir *os.File) error {
 	return nil
 }
 
+// holdWay keeps the way to the held directory, which openDirectory
+// returned, from changing until release is called: it opens every folder
+// from the volume's root to the held one again, each relative to the one
+// before it, without following a reparse point and without delete sharing,
+// so no account can rename or remove one of them while they are open, and
+// requires that the last is the held directory. Access lists do not protect
+// the folders on the way to the state on Windows, so without this, an
+// account allowed to rename one of them could put another state at the path
+// between the inspection and SQLite's open by path. OwnGit's own opens of
+// these folders ask for no delete access, so they are not refused.
+func holdWay(held *os.File) (release func(), err error) {
+	absolute := held.Name()
+	volume := filepath.VolumeName(absolute)
+	root, err := openFolder(volume + `\`)
+	if err != nil {
+		return nil, err
+	}
+	way := []*os.File{root}
+	release = func() {
+		for _, folder := range way {
+			folder.Close()
+		}
+	}
+	defer func() {
+		if err != nil {
+			release()
+		}
+	}()
+	for _, name := range strings.Split(absolute[len(volume):], `\`) {
+		if name == "" {
+			continue
+		}
+		dir := way[len(way)-1]
+		next, err := openAt(dir, filepath.Join(dir.Name(), name), folderAccess, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, windows.FILE_OPEN, folderOptions, "hold")
+		if err != nil {
+			return nil, err
+		}
+		way = append(way, next)
+		if err := refuseLinkedFolder(next); err != nil {
+			return nil, err
+		}
+	}
+	heldInfo, err := held.Stat()
+	if err != nil {
+		return nil, err
+	}
+	lastInfo, err := way[len(way)-1].Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(heldInfo, lastInfo) {
+		return nil, fmt.Errorf("%w: %s is not the directory that was checked", ErrInspectionUnstable, absolute)
+	}
+	return release, nil
+}
+
 // requireLocalWay refuses the volume of the held folder where a way starts
 // when it is not local and local is set or OwnGit runs as administrator.
 func requireLocalWay(dir *os.File, local bool) error {
