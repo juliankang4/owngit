@@ -2,9 +2,10 @@ name: CI
 
 # Runs the checks from CONTRIBUTING.md on every pull request. Pull requests
 # merge by fast-forward, so main receives the commits that already passed here
-# and pushes to main do not run the checks again; run them by hand from the
-# Actions tab when needed. Tests run on Linux (with the race detector),
-# Windows, and macOS.
+# and pushes to main do not run the checks again. Instead, main runs the full
+# checks once a day at an off-peak hour, which catches tests that fail only
+# now and then; run them by hand from the Actions tab when needed. Tests run on
+# Linux (with the race detector), Windows, and macOS.
 #
 # The tests of every package are split over four shards per system by
 # .github/scripts/test-shard.sh. Each job runs about a quarter of every
@@ -26,14 +27,19 @@ on:
       - "docs/OPERATIONS.ko.md"
       - "integrations/**"
       - "THIRD_PARTY_NOTICES/**"
+  # GitHub runs scheduled workflows on the default branch only.
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Cancel superseded pull request runs; a manual run keeps going.
+  # Scheduled, manual and pull request runs each have their own group, so no
+  # kind of run cancels or holds back another.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  # Cancel superseded pull request runs; scheduled and manual runs keep going.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
