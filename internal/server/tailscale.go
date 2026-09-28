@@ -28,12 +28,12 @@ import (
 // OwnGit reads Tailscale's Serve configuration before it writes, refuses
 // when something else uses the HTTPS port, and makes its change from what
 // it read: Tailscale applies the change only while its configuration is
-// still the one read, so a change made meanwhile by anything else is never
-// overwritten but reported (TailscaleProblemServeChanged). OwnGit reads the
-// configuration back after writing, and records what it wrote
-// (state.TailscaleServe). Turning
-// sharing off removes the endpoint only while Tailscale still has exactly
-// that record's endpoint, and takes back only the settings OwnGit changed.
+// still the one read, so a change made meanwhile by anything else is
+// reported (TailscaleProblemServeChanged), never overwritten. OwnGit reads
+// the configuration back after writing, and records what it wrote
+// (state.TailscaleServe). Turning sharing off removes the endpoint only
+// while Tailscale still has exactly that record's endpoint, and takes back
+// only the settings OwnGit changed.
 // It never enables Funnel, and Tailscale's identity headers grant nothing.
 
 // tailscaleHTTPSPorts are the HTTPS ports that turning sharing on tries, in

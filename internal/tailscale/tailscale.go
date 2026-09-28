@@ -333,9 +333,8 @@ func (command Command) ServeHTTPS(ctx context.Context, read ServeConfig, name st
 	return command.change(ctx, read, name, port, target)
 }
 
-// RemoveHTTPS removes the endpoint for name on port from read, which holds
-// exactly one handler, OwnGit's, and nothing else. It applies as ServeHTTPS
-// does.
+// RemoveHTTPS removes from read the endpoint for name on port, which the
+// caller found to be exactly OwnGit's. It applies as ServeHTTPS does.
 func (command Command) RemoveHTTPS(ctx context.Context, read ServeConfig, name string, port int) error {
 	return command.change(ctx, read, name, port, "")
 }
