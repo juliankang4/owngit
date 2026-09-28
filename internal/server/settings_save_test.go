@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
 	"owngit/internal/webui"
@@ -73,7 +72,7 @@ func TestNetworkChangeThatWasNotSavedRecordsNoAcknowledgement(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
-	adminHash, _ := auth.HashPassword("admin-password")
+	adminHash := fixturePasswordHash(t, "admin-password")
 	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, false))
 	app.Repositories.SetRoot(canonical)
 	client, base, csrf, body := networkSettingsClient(t, app)

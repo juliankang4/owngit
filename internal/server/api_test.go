@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/pullrequest"
 	"owngit/internal/state"
 	"owngit/internal/testfixture"
@@ -193,13 +192,9 @@ func newAPIFixture(t *testing.T, protected bool) apiFixture {
 	accessHash := ""
 	if protected {
 		mode = "password"
-		var err error
-		accessHash, err = auth.HashPassword("shared-password")
-		noErr(t, err)
+		accessHash = fixturePasswordHash(t, "shared-password")
 	}
-	adminHash, err := auth.HashPassword("admin-password")
-	noErr(t, err)
-	noErr(t, store.CompleteSetup(context.Background(), repositoryRoot, mode, accessHash, adminHash, true))
+	noErr(t, store.CompleteSetup(context.Background(), repositoryRoot, mode, accessHash, fixturePasswordHash(t, "admin-password"), true))
 	app.Repositories.SetRoot(repositoryRoot)
 	stored, err := app.Repositories.Create(context.Background(), "project", "API fixture")
 	noErr(t, err)

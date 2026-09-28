@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"owngit/internal/auth"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -296,7 +295,7 @@ func TestListeningBeyondThisComputerNeedsThePlainHTTPAcknowledgement(t *testing.
 	app, store, repositoryRoot := newTestApp(t)
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
-	adminHash, _ := auth.HashPassword("admin-password")
+	adminHash := fixturePasswordHash(t, "admin-password")
 	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, false))
 	app.Repositories.SetRoot(canonical)
 	client, base, csrf, body := networkSettingsClient(t, app)

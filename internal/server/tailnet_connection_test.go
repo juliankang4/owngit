@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/tailscale/tailscaletest"
 	"owngit/internal/webui"
 )
@@ -121,8 +120,7 @@ func newUnacknowledgedApp(t *testing.T) *App {
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, err := filepath.EvalSymlinks(repositoryRoot)
 	noErr(t, err)
-	adminHash, err := auth.HashPassword("admin-password")
-	noErr(t, err)
+	adminHash := fixturePasswordHash(t, "admin-password")
 	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, false))
 	app.Repositories.SetRoot(canonical)
 	return app

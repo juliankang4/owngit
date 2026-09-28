@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/webui"
 )
 
@@ -120,8 +119,8 @@ func TestResultNoticesNeedTheirAction(t *testing.T) {
 func TestLeavingSharedAccessIsConfirmedOnTheSignInPage(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
-	accessHash, _ := auth.HashPassword("shared-password")
-	adminHash, _ := auth.HashPassword("admin-password")
+	accessHash := fixturePasswordHash(t, "shared-password")
+	adminHash := fixturePasswordHash(t, "admin-password")
 	noErr(t, store.CompleteSetup(context.Background(), repositoryRoot, "password", accessHash, adminHash, true))
 	app.Repositories.SetRoot(repositoryRoot)
 	server := serve(t, app.Handler())

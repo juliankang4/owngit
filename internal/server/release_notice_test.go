@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"owngit/internal/auth"
 	"owngit/internal/releasecheck"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -43,7 +42,7 @@ func releaseApp(t *testing.T, tag string) (*App, *state.Store, *releaseEndpoint,
 	app, store, repositoryRoot := newTestApp(t)
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
-	adminHash, _ := auth.HashPassword("admin-password")
+	adminHash := fixturePasswordHash(t, "admin-password")
 	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true))
 	app.Repositories.SetRoot(canonical)
 	app.Version = "1.0.2"

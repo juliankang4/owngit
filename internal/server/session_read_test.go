@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -197,8 +196,7 @@ func TestCompletedSetupRefusesAnUnknownHostWithoutReadingItsSession(t *testing.T
 	browser := newHostBrowser(t, app, "192.168.1.20:7720")
 	browser.redeem("synthetic-owner-token")
 	token := cookieValue(t, browser.jar, browser.server, setupCookie)
-	adminHash, err := auth.HashPassword("admin-password")
-	noErr(t, err)
+	adminHash := fixturePasswordHash(t, "admin-password")
 	noErr(t, store.CompleteSetup(context.Background(), repositoryRoot, "open", "", adminHash, true))
 	// Completing setup ended the setup session; a damaged copy stays.
 	hash := sha256.Sum256([]byte(token))

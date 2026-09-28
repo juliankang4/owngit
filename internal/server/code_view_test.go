@@ -15,10 +15,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/testfixture"
 )
 
@@ -177,9 +177,7 @@ func TestRawFilesNeedTheSameAccessAsTheCodeView(t *testing.T) {
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, err := filepath.EvalSymlinks(repositoryRoot)
 	noErr(t, err)
-	accessHash, _ := auth.HashPassword("shared-password")
-	adminHash, _ := auth.HashPassword("admin-password")
-	noErr(t, store.CompleteSetup(context.Background(), canonical, "password", accessHash, adminHash, true))
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "password", fixturePasswordHash(t, "shared-password"), fixturePasswordHash(t, "admin-password"), true))
 	app.Repositories.SetRoot(canonical)
 	seedRepository(t, app, "private-raw", map[string]string{"secret.txt": "private\n"}, time.Now())
 	server := serve(t, app.Handler())
@@ -408,12 +406,18 @@ func TestAmplifyingReadmesDoNotGrowTheServer(t *testing.T) {
 	}
 }
 
+// unavailableHelperRuns numbers the runs of TestUnavailableHelperIsNamedOnThePage.
+var unavailableHelperRuns atomic.Int64
+
 // When the server cannot run its render helper, pages say so rather than
 // blaming the document, and the document renders once the helper is back.
 func TestUnavailableHelperIsNamedOnThePage(t *testing.T) {
 	app := newConfiguredApp(t)
+	// Rendered documents are remembered for the whole test process, so each
+	// run needs a README no earlier run rendered (go test -count=2).
+	readme := fmt.Sprintf("# Plain readme\n\nRun %d.\n", unavailableHelperRuns.Add(1))
 	seedRepository(t, app, "no-helper", map[string]string{
-		"README.md": "# Plain readme\n\nNothing unusual.\n",
+		"README.md": readme,
 	}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
 	server := serve(t, app.Handler())
 	client := &http.Client{}

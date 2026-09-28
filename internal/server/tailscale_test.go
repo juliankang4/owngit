@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
@@ -487,8 +486,7 @@ func TestTailscaleHeadersGrantNothing(t *testing.T) {
 	ctx := context.Background()
 	_, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
-	hash, err := auth.HashPassword("shared-password-for-tests")
-	noErr(t, err)
+	hash := fixturePasswordHash(t, "shared-password-for-tests")
 	noErr(t, app.Store.SetAccessPassword(ctx, hash))
 
 	send := func(path string, header map[string]string) *httptest.ResponseRecorder {

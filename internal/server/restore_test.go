@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/auth"
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
 	"owngit/internal/webui"
@@ -371,8 +370,8 @@ func TestRestoreRequiresGeneralAccessButNotAdministratorSession(t *testing.T) {
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, err := filepath.EvalSymlinks(repositoryRoot)
 	noErr(t, err)
-	accessHash, _ := auth.HashPassword("shared-password")
-	adminHash, _ := auth.HashPassword("admin-password")
+	accessHash := fixturePasswordHash(t, "shared-password")
+	adminHash := fixturePasswordHash(t, "admin-password")
 	noErr(t, store.CompleteSetup(context.Background(), canonical, "password", accessHash, adminHash, true))
 	app.Repositories.SetRoot(canonical)
 	if _, err := app.Repositories.Create(context.Background(), "protected-restore", ""); err != nil {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -320,11 +321,32 @@ func newConfiguredApp(t *testing.T) *App {
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, err := filepath.EvalSymlinks(repositoryRoot)
 	noErr(t, err)
-	adminHash, err := auth.HashPassword("admin-password")
-	noErr(t, err)
-	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", adminHash, true))
+	noErr(t, store.CompleteSetup(context.Background(), canonical, "open", "", fixturePasswordHash(t, "admin-password"), true))
 	app.Repositories.SetRoot(canonical)
 	return app
+}
+
+// fixtureHashes holds the encoded form of each synthetic fixture password.
+// Hashing costs as much as a login, and an encoded password never changes,
+// so tests share it. Each test still has its own store, credential records,
+// sessions and password checks.
+var fixtureHashes = struct {
+	sync.Mutex
+	encoded map[string]string
+}{encoded: map[string]string{}}
+
+// fixturePasswordHash returns the shared encoded form of password.
+func fixturePasswordHash(t *testing.T, password string) string {
+	t.Helper()
+	fixtureHashes.Lock()
+	defer fixtureHashes.Unlock()
+	if encoded, ok := fixtureHashes.encoded[password]; ok {
+		return encoded
+	}
+	encoded, err := auth.HashPassword(password)
+	noErr(t, err)
+	fixtureHashes.encoded[password] = encoded
+	return encoded
 }
 
 // serve starts a test server for handler and closes it when the test ends.

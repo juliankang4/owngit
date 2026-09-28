@@ -168,8 +168,7 @@ func TestApprovedBrowserAfterSetupFinishedElsewhereIsToldSo(t *testing.T) {
 	browser.ask()
 	request, _ := app.Approvals.Pending()
 	noErr(t, app.Approvals.Decide(request.ID, true))
-	adminHash, err := auth.HashPassword("admin-password")
-	noErr(t, err)
+	adminHash := fixturePasswordHash(t, "admin-password")
 	noErr(t, app.Store.CompleteSetup(context.Background(), t.TempDir(), "open", "", adminHash, true))
 	// The page is served directly: through the router, a finished setup is
 	// answered before approvals are looked at. This is the moment between
