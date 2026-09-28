@@ -563,8 +563,10 @@ func TestDeletionRecordTheStorageContradictsIsInternal(t *testing.T) {
 		record  func(root string) string
 		prepare func(t *testing.T, root string)
 	}{
-		{"begun under another repository folder", "the repository folder changed", func(string) string {
-			return `{"mode":"keep_files","phase":"pending","root":"/synthetic/other-folder","moved":".owngit-removed/project-20260101T000000Z.git","marker":"` + marker + `","created_at":1}`
+		// The other folder is absolute on every platform, so the record is
+		// valid and only its folder differs.
+		{"begun under another repository folder", "the repository folder changed", func(root string) string {
+			return fmt.Sprintf(`{"mode":"keep_files","phase":"pending","root":%q,"moved":".owngit-removed/project-20260101T000000Z.git","marker":%q,"created_at":1}`, filepath.Join(filepath.Dir(root), "other-folder"), marker)
 		}, func(*testing.T, string) {}},
 		// An older build recorded "project" again, so its directory is the new
 		// repository's.

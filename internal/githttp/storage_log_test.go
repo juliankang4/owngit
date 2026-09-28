@@ -42,7 +42,8 @@ func TestStorageFailureIsLoggedWithItsCause(t *testing.T) {
 		`Git fetch ref advertisement request for repository "sample" failed: repository storage is unavailable: "`,
 		`Git archive request for repository "sample" failed: repository storage is unavailable: "`,
 	} {
-		if len(lines) != 2 || !strings.HasPrefix(lines[index], prefix) || !strings.HasSuffix(lines[index], `no such file or directory"`) {
+		// The cause names the missing directory; its wording is the platform's.
+		if len(lines) != 2 || !strings.HasPrefix(lines[index], prefix) || !strings.Contains(lines[index], "sample.git") || !strings.HasSuffix(lines[index], `"`) {
 			t.Fatalf("log=%q, want two lines, each with the quoted cause", logs.String())
 		}
 	}
