@@ -45,7 +45,7 @@ func TestWindowsExistingBackupFolderMustBePrivate(t *testing.T) {
 	before, err := pathDescriptor(folder)
 	noErr(t, err)
 	_, _, err = OpenUpgradeBackupFolder(stateDir)
-	if err == nil || !strings.Contains(err.Error(), "only this account can change") || !strings.Contains(err.Error(), "the folder must belong to this account") || strings.Contains(err.Error(), "private file") {
+	if err == nil || !strings.Contains(err.Error(), "only this account can change") || !strings.Contains(err.Error(), "is not private to this account: the folder must belong to this account") {
 		t.Fatalf("err=%v", err)
 	}
 	after, err := pathDescriptor(folder)
