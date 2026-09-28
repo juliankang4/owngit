@@ -713,7 +713,7 @@ Then start the earlier version. The restored repositories are in the new reposit
 
 When the backup cannot be made, for example because the disk is full, the folder cannot be created or the repository folder is not available, OwnGit does not upgrade the state and stops with the reason, and the earlier version can still use the state. Fix the cause and start OwnGit again. To keep these backups on another local disk, make the `-backups` folder a link to a folder there. Only one OwnGit upgrades a state at a time, so a command run while an earlier OwnGit still serves the state says to stop it first.
 
-Once a new backup is complete, OwnGit removes the older backups it made there before an upgrade, which it recognizes by `owngit-upgrade-backup.txt`, and leaves everything else in the folder alone.
+Once a new backup is complete, OwnGit removes the older backups it made there before an upgrade, which it recognizes by `owngit-upgrade-backup.txt`, and leaves everything else in the folder alone. If OwnGit stops while it makes the backup, the state is not upgraded; once no OwnGit runs, delete the hidden `.owngit-upgrade-copy-...` and `.pre-...owngit-backup-...` folders it left there.
 
 To upgrade without a backup, for example when you back up another way, turn it off:
 
