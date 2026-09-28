@@ -31,9 +31,8 @@ const MaximumLinks = 40
 // When a name on the way does not exist, walkWay returns the directory that
 // should hold it and the name, unless mayCreate is set: it then asks
 // mayCreate about the holding directory's entry and creates the name as a
-// directory
-// only this account may use. Only the path itself may lead to a missing
-// name; a link that does is refused.
+// directory only this account may use. Only the path itself may lead to a
+// missing name; a link that does is refused.
 //
 // Every directory it holds is classified once, through the held handle
 // (filesystemEnforced), and check gets the result with each entry.

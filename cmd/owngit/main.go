@@ -1052,7 +1052,7 @@ func openState(ctx context.Context, dir string, report func(string, ...any)) (*s
 }
 
 // openStateIn is openState for the state directory held, which
-// state.CreateDirectory or state.OpenDirectory returned.
+// state.CreateDirectory or state.OpenStateDirectory returned.
 func openStateIn(ctx context.Context, held *os.File, report func(string, ...any)) (*state.Store, error) {
 	store, err := state.OpenIn(ctx, held)
 	if err != nil {
