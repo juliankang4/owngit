@@ -20,9 +20,5 @@ type FolderWay struct {
 	Shared bool
 }
 
-// createAttempts bounds how often OpenOwnFile tries to create a name that
-// others keep creating and removing.
-const createAttempts = 5
-
 // stateOnLocalDisk says why a folder for the state must be on a local disk.
 const stateOnLocalDisk = "OwnGit keeps its state, with its accounts and credentials, only on a local disk, because whoever serves such a filesystem could read and change it; choose a folder on a local disk"
