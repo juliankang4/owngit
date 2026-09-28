@@ -5,35 +5,31 @@ import (
 	"testing"
 )
 
-// The sidebar's New repository and Import entries fit on one line: English
-// shows "New" and "Import", while assistive technology and hovering get the
-// full names. Korean already fits and keeps its words. The dashboard's own
-// section links keep their full names.
-func TestSidebarEntriesUseShortVisibleLabels(t *testing.T) {
+// New repository and Import are icon buttons beside both Repositories
+// headings, the sidebar's and the dashboard list's. The icon is the visible
+// label; the full name is the accessible name and the hover title, and
+// Import carries the lock mark while the administrator password would be
+// asked.
+func TestRepositoryActionsAreNamedIconButtons(t *testing.T) {
 	r := newRenderer(t)
-	for _, test := range []struct {
-		lang Lang
-		want []string
-	}{
-		{LangEN, []string{
-			`title="New repository"`, `<span aria-hidden="true"><span data-en="New" data-ko="새 저장소">New</span></span>`,
-			`<span class="visually-hidden"><span data-en="New repository" data-ko="새 저장소">New repository</span></span>`,
-			`title="Import a repository"`, `<span aria-hidden="true"><span data-en="Import" data-ko="가져오기">Import</span></span>`,
-			`<span class="visually-hidden"><span data-en="Import a repository" data-ko="저장소 가져오기">Import a repository</span></span><span class="adminlock"`,
-			`<span class="sec__hint"><a href="/repositories/new"><span data-en="New repository" data-ko="새 저장소">New repository</span></a></span>`,
-		}},
-		{LangKO, []string{
-			`title="새 저장소"`, `<span aria-hidden="true"><span data-en="New" data-ko="새 저장소">새 저장소</span></span>`,
-			`<span aria-hidden="true"><span data-en="Import" data-ko="가져오기">가져오기</span></span>`,
-			`<span class="visually-hidden"><span data-en="Import a repository" data-ko="저장소 가져오기">저장소 가져오기</span></span>`,
-		}},
-	} {
-		chrome := fullChrome(test.lang)
+	for _, lang := range Langs() {
+		chrome := fullChrome(lang)
 		chrome.Nav.NewImportURL = "/repositories/new-import"
-		out := render(t, r, OverviewPage{Chrome: chrome, Activity: sampleGraph()})
-		for _, want := range test.want {
-			if !strings.Contains(out, want) {
-				t.Errorf("%s sidebar lacks %s", test.lang, want)
+		out := render(t, r, OverviewPage{Chrome: chrome, Activity: sampleGraph(), TotalCount: 1,
+			Repositories: []RepositorySummary{{ID: "r1", Name: "forge-cli", URL: "/repositories/r1"}}})
+		newButton := `<a class="iconbtn" href="/repositories/new" ` + string(biAttr(lang, "title", MsgRepoNewTitle)) + `>` + string(icon("plus")) +
+			`<span class="visually-hidden">` + string(bi(lang, MsgRepoNewTitle)) + `</span></a>`
+		importButton := `<a class="iconbtn" href="/repositories/new-import" ` + string(biAttr(lang, "title", MsgImportListLink)) + `>` + string(icon("import")) +
+			`<span class="visually-hidden">` + string(bi(lang, MsgImportListLink)) + `</span><span class="adminlock"`
+		menu := sidebarOfOutput(t, out)
+		main := out[strings.Index(out, `<main`):]
+		for where, part := range map[string]string{"sidebar": menu, "dashboard": main} {
+			if strings.Count(part, newButton) != 1 || strings.Count(part, importButton) != 1 {
+				t.Errorf("%s %s: the actions are not one named icon button each:\n%s", lang, where, part)
+			}
+			heading := strings.Index(part, wantText(lang, MsgNavRepos))
+			if heading < 0 || strings.Index(part, newButton) < heading {
+				t.Errorf("%s %s: the actions are not beside the Repositories heading", lang, where)
 			}
 		}
 	}

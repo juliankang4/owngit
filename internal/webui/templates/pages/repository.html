@@ -61,12 +61,15 @@
       {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.OverviewURL}}
       {{if $p.NotFound}}{{template "backToRepo" dict "Lang" $lang "P" $p}}{{end}}
       {{if $o.Recent}}
+      {{/* The same columns as the dashboard lists: the commit, the selected
+           branch or tag it was listed from, the message, and the time. */}}
+      {{template "listHead" dict "Lang" $lang "Kind" "commits" "RefKind" $p.Ref.Kind}}
       <div class="ov-rows">
         {{range $o.Recent}}
           <a class="row row--commit" href="{{.URL}}">
-            <span class="row__sha mono">{{.ShortOID}}</span>
-            <span class="row__subj">{{.Subject}}</span>
-            <span class="row__who">{{.AuthorName}}</span>
+            <span class="row__name mono">{{.ShortOID}}</span>
+            <span class="row__ref">{{if eq $p.Ref.Kind "tag"}}{{icon "tag"}}{{else if eq $p.Ref.Kind "branch"}}{{icon "branch"}}{{else}}{{icon "commit"}}{{end}}<span class="row__refname" title="{{$p.Ref.Name}}">{{$p.Ref.Name}}</span></span>
+            <span class="row__msg">{{.Subject}}</span>
             <span class="row__when">{{biRelative $lang $now .AuthorDate}}</span>
           </a>
         {{end}}

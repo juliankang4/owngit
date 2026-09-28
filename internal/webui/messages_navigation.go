@@ -8,12 +8,28 @@ const (
 	MsgNavFilter       MessageCode = "app.nav.filter"
 	MsgNavNoMatch      MessageCode = "app.nav.no_match"
 	MsgNavMenu         MessageCode = "app.nav.menu"
-	MsgNavImport       MessageCode = "app.nav.import"
-	// MsgNavNewShort is the visible sidebar label of New repository. Korean
-	// keeps the full name, which already fits.
-	MsgNavNewShort MessageCode = "app.nav.new_short"
-	MsgNavAdminOn  MessageCode = "app.nav.admin_on"
-	MsgNavAdminEnd MessageCode = "app.nav.admin_end"
+	MsgNavAdminOn      MessageCode = "app.nav.admin_on"
+	MsgNavAdminEnd     MessageCode = "app.nav.admin_end"
+
+	// Repository list order. MsgOrderSorted introduces the current order in
+	// the sidebar and in the announcement after a change.
+	MsgOrderLabel         MessageCode = "app.order.label"
+	MsgOrderSorted        MessageCode = "app.order.sorted"
+	MsgOrderApply         MessageCode = "app.order.apply"
+	MsgOrderUpdatedNewest MessageCode = "app.order.updated_desc"
+	MsgOrderUpdatedOldest MessageCode = "app.order.updated_asc"
+	MsgOrderNameAsc       MessageCode = "app.order.name_asc"
+	MsgOrderNameDesc      MessageCode = "app.order.name_desc"
+
+	// Column headings of the repository, activity and commit lists.
+	MsgColRepository   MessageCode = "list.col.repository"
+	MsgColCommit       MessageCode = "list.col.commit"
+	MsgColBranch       MessageCode = "list.col.branch"
+	MsgColTag          MessageCode = "list.col.tag"
+	MsgColLatestCommit MessageCode = "list.col.latest_commit"
+	MsgColMessage      MessageCode = "list.col.message"
+	MsgColUpdated      MessageCode = "list.col.updated"
+	MsgColAuthored     MessageCode = "list.col.authored"
 
 	MsgCodeFiles         MessageCode = "code.files"
 	MsgCodePreview       MessageCode = "code.preview"
@@ -50,10 +66,25 @@ var navigationCatalog = map[MessageCode]message{
 	MsgNavFilter:       {en: "Find a repository", ko: "저장소 찾기"},
 	MsgNavNoMatch:      {en: "No repository matches.", ko: "일치하는 저장소가 없습니다."},
 	MsgNavMenu:         {en: "Menu", ko: "메뉴"},
-	MsgNavImport:       {en: "Import", ko: "가져오기"},
-	MsgNavNewShort:     {en: "New", ko: "새 저장소"},
 	MsgNavAdminOn:      {en: "Confirmed as administrator", ko: "관리자로 확인됨"},
 	MsgNavAdminEnd:     {en: "End", ko: "종료"},
+
+	MsgOrderLabel:         {en: "Sort", ko: "정렬"},
+	MsgOrderSorted:        {en: "Sorted:", ko: "정렬:"},
+	MsgOrderApply:         {en: "Apply", ko: "적용"},
+	MsgOrderUpdatedNewest: {en: "Recently updated first", ko: "최근 수정한 순"},
+	MsgOrderUpdatedOldest: {en: "Least recently updated first", ko: "오래전에 수정한 순"},
+	MsgOrderNameAsc:       {en: "Name, A to Z", ko: "이름순 (가나다, ABC)"},
+	MsgOrderNameDesc:      {en: "Name, Z to A", ko: "이름 역순"},
+
+	MsgColRepository:   {en: "Repository", ko: "저장소"},
+	MsgColCommit:       {en: "Commit", ko: "커밋"},
+	MsgColBranch:       {en: "Branch", ko: "브랜치"},
+	MsgColTag:          {en: "Tag", ko: "태그"},
+	MsgColLatestCommit: {en: "Latest commit", ko: "최근 커밋"},
+	MsgColMessage:      {en: "Message", ko: "메시지"},
+	MsgColUpdated:      {en: "Updated", ko: "마지막 수정"},
+	MsgColAuthored:     {en: "Authored", ko: "작성 시간"},
 
 	MsgCodeFiles:    {en: "Files", ko: "파일 목록"},
 	MsgCodePreview:  {en: "Preview", ko: "미리보기"},

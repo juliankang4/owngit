@@ -4,7 +4,7 @@
  * server renders the chosen language. The script only improves what a reload
  * would otherwise cost, and never invents text of its own.
  *
- * It does five things:
+ * It does six things:
  *   1. Appearance: Light, Dark, or System, remembered per browser.
  *   2. Language: switch in place so typing in a form is not lost.
  *   3. Activity graph: arrow-key movement and a spoken day readout.
@@ -14,6 +14,9 @@
  *      repository list, close the file drawer, wrap long lines, fold every
  *      file of a diff at once, and follow a heading address written for
  *      GitHub to the matching heading of a rendered document.
+ *   6. Repository list order: reorder the dashboard list and the sidebar in
+ *      place, remember the choice per browser, and keep the order right when
+ *      the language changes.
  *
  * It never stores a password, a setup code, or any other secret.
  */
@@ -215,6 +218,8 @@
     }
 
     writeCookie(root.getAttribute('data-lang-cookie') || 'owngit_lang', lang);
+    // Name order depends on the language, so the lists follow it.
+    all('[data-order-list]').forEach(orderRows);
     void other;
   }
 
@@ -734,6 +739,107 @@
       sync();
     });
   });
+
+  /* ------------------------------------------------------------------ */
+  /* 6. repository list order                                            */
+  /* ------------------------------------------------------------------ */
+
+  /* The server sorts both lists, so the order is right without this file,
+   * and remembers the choice in a preference cookie. Here a change reorders
+   * the rows in place, so focus stays on the control.
+   *
+   * Each row carries what ordering needs: data-updated (seconds, empty when
+   * the row shows no time) and data-rank-en / data-rank-ko, its position in
+   * name order in each language. The server computed those positions with
+   * its one collation, so the script only compares numbers and cannot
+   * disagree with a reload. */
+
+  var ORDER_KEY = 'owngit_order';
+
+  function validOrder(value) {
+    return value === 'updated-desc' || value === 'updated-asc' || value === 'name-asc' || value === 'name-desc';
+  }
+
+  function orderRows(list) {
+    var order = list.getAttribute('data-order');
+    if (!validOrder(order)) { return; }
+    var lang = root.getAttribute('data-lang') === 'ko' ? 'ko' : 'en';
+    var rank = function (row) { return parseInt(row.getAttribute('data-rank-' + lang), 10) || 0; };
+    var time = function (row) {
+      var value = row.getAttribute('data-updated');
+      return value ? parseInt(value, 10) : null;
+    };
+    var rows = Array.prototype.filter.call(list.children, function (child) {
+      return child.hasAttribute('data-order-item');
+    });
+    rows.sort(function (a, b) {
+      if (order === 'name-asc') { return rank(a) - rank(b); }
+      if (order === 'name-desc') { return rank(b) - rank(a); }
+      var ta = time(a), tb = time(b);
+      // A row without a time comes last in both directions.
+      if ((ta === null) !== (tb === null)) { return ta === null ? 1 : -1; }
+      if (ta !== null && ta !== tb) { return order === 'updated-asc' ? ta - tb : tb - ta; }
+      return rank(a) - rank(b);
+    });
+    // Anything after the rows, such as the "no match" line, stays after them.
+    var rest = Array.prototype.filter.call(list.children, function (child) {
+      return !child.hasAttribute('data-order-item');
+    })[0] || null;
+    var focused = document.activeElement;
+    rows.forEach(function (row) { list.insertBefore(row, rest); });
+    if (focused && focused !== document.activeElement && list.contains(focused)) {
+      focused.focus({ preventScroll: true });
+    }
+  }
+
+  var orderForm = document.querySelector('[data-order-form]');
+  var orderSelect = orderForm && orderForm.querySelector('[data-order-select]');
+  if (orderSelect) {
+    var orderApply = orderForm.querySelector('[data-order-apply]');
+    var orderStatus = orderForm.querySelector('[data-order-status]');
+    if (orderApply) { orderApply.hidden = true; }
+
+    // Drop a sort parameter the server has already saved, so reloading the
+    // address does not undo a later in-place choice.
+    if (window.history && window.history.replaceState) {
+      try {
+        var orderURL = new URL(window.location.href);
+        if (orderURL.searchParams.has('sort')) {
+          orderURL.searchParams.delete('sort');
+          window.history.replaceState(window.history.state, '', orderURL.pathname + orderURL.search + orderURL.hash);
+        }
+      } catch (e) { /* older browser: the cookie still carries the choice */ }
+    }
+
+    orderSelect.addEventListener('change', function () {
+      var order = orderSelect.value;
+      if (!validOrder(order)) { return; }
+      writeCookie(ORDER_KEY, order);
+      all('[data-order-list]').forEach(function (list) {
+        list.setAttribute('data-order', order);
+        orderRows(list);
+      });
+
+      // Say the new order in words, in the sidebar and to assistive
+      // technology, from the option's own server-rendered text.
+      var option = orderSelect.options[orderSelect.selectedIndex];
+      var en = option.getAttribute('data-en') || option.textContent;
+      var ko = option.getAttribute('data-ko') || option.textContent;
+      var lang = root.getAttribute('data-lang') === 'ko' ? 'ko' : 'en';
+      all('[data-order-name]').forEach(function (node) {
+        node.setAttribute('data-en', en);
+        node.setAttribute('data-ko', ko);
+        node.textContent = lang === 'ko' ? ko : en;
+      });
+      if (orderStatus) {
+        var sayEN = (orderStatus.getAttribute('data-prefix-en') || '') + ' ' + en;
+        var sayKO = (orderStatus.getAttribute('data-prefix-ko') || '') + ' ' + ko;
+        orderStatus.setAttribute('data-en', sayEN);
+        orderStatus.setAttribute('data-ko', sayKO);
+        orderStatus.textContent = lang === 'ko' ? sayKO : sayEN;
+      }
+    });
+  }
 
   // A rendered document's heading anchors carry an "md-" prefix, so they
   // never take an id of the page itself. An address copied from GitHub names

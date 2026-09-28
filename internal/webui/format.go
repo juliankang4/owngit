@@ -42,6 +42,7 @@ func templateFuncs() template.FuncMap {
 		"count":        formatCount,
 		"withLang":     withLang,
 		"withQuery":    withQuery,
+		"listOrders":   ListOrders,
 		"level":        activityLevel,
 		// Known import words switch in place like any other catalog text; an
 		// unknown token is the same escaped data in both languages.

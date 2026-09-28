@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -285,7 +284,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		}
 		query := strings.TrimSpace(request.URL.Query().Get("q"))
 		nav := webui.Nav{
-			Section: section, ActiveRepoID: activeRepository, Total: len(repositories), Query: query,
+			Section: section, ActiveRepoID: activeRepository, Total: len(repositories), Query: query, Order: app.listOrder(writer, request),
 			OverviewURL: "/", ActivityURL: "/activity", SettingsURL: "/settings", NewRepoURL: "/repositories/new", NewImportURL: "/repositories/new-import",
 			AdminLoginURL: "/admin/login?next=" + url.QueryEscape(loginNext(request)),
 		}
@@ -305,16 +304,10 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			item.LastActivity, _ = app.Repositories.CachedHeadDate(repository.ID)
 			nav.Repositories = append(nav.Repositories, item)
 		}
-		// Most recently active first. The dates come from snapshots already
-		// read, so building the sidebar starts no Git process; a repository
-		// without a known date keeps the store's order after the dated ones.
-		sort.SliceStable(nav.Repositories, func(left, right int) bool {
-			a, b := nav.Repositories[left].LastActivity, nav.Repositories[right].LastActivity
-			if a.IsZero() != b.IsZero() {
-				return !a.IsZero()
-			}
-			return a.After(b)
-		})
+		// The dates come from snapshots already read, so building the sidebar
+		// starts no Git process. The dashboard puts its own list in the same
+		// order (see handleOverview).
+		webui.OrderNav(nav.Repositories, nav.Order, lang)
 		chrome.Nav = nav
 	}
 	chrome.Notices = noticeFor(app.resultNotice(writer, request))
@@ -393,6 +386,23 @@ func (app *App) appearance(writer http.ResponseWriter, request *http.Request) we
 		}
 	}
 	return webui.AppearanceSystem
+}
+
+// listOrder reads the repository list order. A valid sort parameter, sent
+// by the order form, is saved for later requests, like the appearance.
+func (app *App) listOrder(writer http.ResponseWriter, request *http.Request) webui.ListOrder {
+	if value, present := request.URL.Query()["sort"]; present && len(value) == 1 {
+		if order, valid := webui.ParseListOrder(value[0]); valid {
+			app.setCookie(writer, request, orderCookie, string(order), app.now().Add(365*24*time.Hour), false)
+			return order
+		}
+	}
+	if cookie, err := request.Cookie(orderCookie); err == nil {
+		if order, valid := webui.ParseListOrder(cookie.Value); valid {
+			return order
+		}
+	}
+	return webui.DefaultListOrder
 }
 
 // noticeFor turns a verified result notice into its message.

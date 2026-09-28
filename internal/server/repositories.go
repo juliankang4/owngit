@@ -54,6 +54,8 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	snapshots, snapshotErrs := app.refSnapshots(ctx, repositories)
 	query := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("q")))
 	var summaries []webui.RepositorySummary
+	// updated holds the time each listed row shows, for the sidebar below.
+	updated := make(map[string]time.Time, len(repositories))
 	listed := 0
 	for index, stored := range repositories {
 		// One repository that cannot be read never takes the page down. A
@@ -99,19 +101,29 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 		}
 		repositories[listed], snapshots[listed], snapshotErrs[listed] = stored, snapshot, err
 		listed++
-		if query == "" || strings.Contains(strings.ToLower(stored.Name), query) || strings.Contains(strings.ToLower(stored.Description), query) {
-			summary := app.repositorySummary(request, stored, snapshot)
-			if err != nil {
-				preparing := errors.Is(err, repository.ErrRepositoryPreparing)
-				summary = webui.RepositorySummary{
-					ID: stored.ID, Name: stored.Name, Description: stored.Description,
-					URL: summary.URL, CloneURL: summary.CloneURL, CreatedAt: stored.CreatedAt,
-					Preparing: preparing, Unreadable: unreadable, Busy: busy && !unreadable,
-				}
+		summary := app.repositorySummary(request, stored, snapshot)
+		if err != nil {
+			preparing := errors.Is(err, repository.ErrRepositoryPreparing)
+			summary = webui.RepositorySummary{
+				ID: stored.ID, Name: stored.Name, Description: stored.Description,
+				URL: summary.URL, CloneURL: summary.CloneURL, CreatedAt: stored.CreatedAt,
+				Preparing: preparing, Unreadable: unreadable, Busy: busy && !unreadable,
 			}
+		}
+		updated[stored.ID] = summary.Updated()
+		if query == "" || strings.Contains(strings.ToLower(stored.Name), query) || strings.Contains(strings.ToLower(stored.Description), query) {
 			summaries = append(summaries, summary)
 		}
 	}
+	// The sidebar was built before this page read the repositories, from
+	// the snapshots it found then. It takes the times this page shows, so
+	// the two lists are in the same order.
+	for index := range chrome.Nav.Repositories {
+		item := &chrome.Nav.Repositories[index]
+		item.LastActivity = updated[item.ID]
+	}
+	webui.OrderNav(chrome.Nav.Repositories, chrome.Nav.Order, chrome.Lang)
+	webui.OrderRepositories(summaries, chrome.Nav.Order, chrome.Lang)
 	repositories, snapshots, snapshotErrs = repositories[:listed], snapshots[:listed], snapshotErrs[:listed]
 	app.activity.forget(repositories)
 	present := make([]string, len(repositories))

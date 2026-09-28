@@ -152,18 +152,12 @@
       <div class="sb__head">
         <h2 class="sb__title" id="sb-repos-h">{{bi $lang "app.nav.repositories"}}</h2>
         <span class="sb__total">{{number $nav.Total}}</span>
+        {{template "repoActions" dict "Lang" $lang "Nav" $nav "Viewer" $.Chrome.Viewer "Place" $sb.Place}}
       </div>
-      {{if or $nav.NewRepoURL $nav.NewImportURL}}
-      <div class="sb__acts">
-        {{/* Both entries fit on one line under the heading, so the visible
-             English labels are short ("New", "Import"). Assistive technology
-             reads the full names from the hidden text instead, and hovering
-             shows them; the lock's hidden words are kept. */}}
-        {{with $nav.NewRepoURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "new"}} aria-current="page"{{end}} {{biAttr $lang "title" "repo.new.title"}}>{{icon "plus"}}<span aria-hidden="true">{{bi $lang "app.nav.new_short"}}</span><span class="visually-hidden">{{bi $lang "repo.new.title"}}</span></a>{{end}}
-        {{/* Importing asks for the administrator password, so the entry
-             carries the lock mark until an administrator session exists. */}}
-        {{with $nav.NewImportURL}}<a class="sb__act" href="{{.}}"{{if eq $sb.Place "import"}} aria-current="page"{{end}} {{biAttr $lang "title" "import.list_link"}}>{{icon "import"}}<span aria-hidden="true">{{bi $lang "app.nav.import"}}</span><span class="visually-hidden">{{bi $lang "import.list_link"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $.Chrome.Viewer.AdminConfirmed)}}</a>{{end}}
-      </div>
+      {{/* The order in words, so it is never shown by an arrow alone. The
+           dashboard's Sort control changes it. */}}
+      {{if $nav.Repositories}}
+      <p class="sb__order">{{icon "sort"}}<span class="visually-hidden">{{bi $lang "app.order.sorted"}} </span><span data-order-name data-en="{{t "en" $nav.Order.Label}}" data-ko="{{t "ko" $nav.Order.Label}}">{{t $lang $nav.Order.Label}}</span></p>
       {{end}}
       {{/* The filter only hides rows already on the page; it starts hidden
            and the script shows it, so it never appears without working. */}}
@@ -171,9 +165,10 @@
       <input class="sb__filter" type="search" autocomplete="off" spellcheck="false" data-sb-filter hidden
              {{biAttr $lang "placeholder" "app.nav.filter"}} {{biAttr $lang "aria-label" "app.nav.filter"}}>
       {{end}}
-      <div class="sb__list" aria-labelledby="sb-repos-h" role="group">
+      <div class="sb__list" aria-labelledby="sb-repos-h" role="group" data-order-list data-order="{{$nav.Order}}">
         {{range $nav.Repositories}}
-          <a class="sb__item" href="{{.URL}}" data-sb-name="{{.Name}}"{{if eq .ID $nav.ActiveRepoID}} aria-current="page"{{end}}>
+          <a class="sb__item" href="{{.URL}}" data-sb-name="{{.Name}}"{{if eq .ID $nav.ActiveRepoID}} aria-current="page"{{end}}
+             data-order-item data-updated="{{if not .LastActivity.IsZero}}{{.LastActivity.Unix}}{{end}}" data-rank-en="{{.Rank.EN}}" data-rank-ko="{{.Rank.KO}}">
             {{icon "repo"}}<span class="sb__name">{{.Name}}</span>
             {{if not .LastActivity.IsZero}}<span class="sb__when">{{biRelative $lang $.Chrome.Now .LastActivity}}</span>{{end}}
           </a>
@@ -204,6 +199,48 @@
     {{end}}
   </div>
 </nav>
+{{end}}
+
+{{/* New repository and Import, as icon buttons beside a Repositories
+     heading. The hidden words are the accessible names and hovering shows
+     them; Import carries the lock mark until an administrator session
+     exists, because it asks for the administrator password. Call as:
+     {{template "repoActions" dict "Lang" .Lang "Nav" .Chrome.Nav "Viewer" .Chrome.Viewer "Place" ""}}
+     Place names the current screen ("new" or "import"), if either. */}}
+{{define "repoActions"}}
+{{$lang := .Lang}}{{$nav := .Nav}}
+{{if or $nav.NewRepoURL $nav.NewImportURL}}
+<span class="headacts">
+  {{with $nav.NewRepoURL}}<a class="iconbtn" href="{{.}}"{{if eq $.Place "new"}} aria-current="page"{{end}} {{biAttr $lang "title" "repo.new.title"}}>{{icon "plus"}}<span class="visually-hidden">{{bi $lang "repo.new.title"}}</span></a>{{end}}
+  {{with $nav.NewImportURL}}<a class="iconbtn" href="{{.}}"{{if eq $.Place "import"}} aria-current="page"{{end}} {{biAttr $lang "title" "import.list_link"}}>{{icon "import"}}<span class="visually-hidden">{{bi $lang "import.list_link"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $.Viewer.AdminConfirmed)}}</a>{{end}}
+</span>
+{{end}}
+{{end}}
+
+{{/* Column headings over a list of rows. Every such list has the same
+     columns: name, branch, message, and the time at the right. The rows
+     themselves read in that order, so the headings are only visual. Kind is
+     "repositories", "activity" or "commits"; a commit list also passes
+     RefKind, the kind of the selected ref. Call as:
+     {{template "listHead" dict "Lang" .Lang "Kind" "activity"}} */}}
+{{define "listHead"}}
+{{$lang := .Lang}}
+<div class="rowhead" aria-hidden="true">
+  {{if eq .Kind "commits"}}
+    <span>{{bi $lang "list.col.commit"}}</span>
+    <span>{{if eq .RefKind "branch"}}{{bi $lang "list.col.branch"}}{{else if eq .RefKind "tag"}}{{bi $lang "list.col.tag"}}{{else}}{{bi $lang "app.ref_label"}}{{end}}</span>
+  {{else}}
+    <span>{{bi $lang "list.col.repository"}}</span>
+    <span>{{bi $lang "list.col.branch"}}</span>
+  {{end}}
+  {{if eq .Kind "repositories"}}
+    <span>{{bi $lang "list.col.latest_commit"}}</span>
+    <span>{{bi $lang "list.col.updated"}}</span>
+  {{else}}
+    <span>{{bi $lang "list.col.message"}}</span>
+    <span>{{bi $lang "list.col.authored"}}</span>
+  {{end}}
+</div>
 {{end}}
 
 {{define "notices"}}

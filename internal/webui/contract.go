@@ -189,6 +189,9 @@ type Nav struct {
 	Total int
 	// Query is the current repository search text, echoed into the field.
 	Query string
+	// Order is this browser's repository list order. Repositories is already
+	// in it, and so is the dashboard list, so the two always agree.
+	Order ListOrder
 
 	OverviewURL  string
 	ActivityURL  string
@@ -213,9 +216,11 @@ type NavRepository struct {
 	CommitCount int
 	CountKnown  bool
 	// LastActivity is the author date of the default branch tip, when the
-	// backend already knows it. Zero shows no time. The backend orders
-	// Repositories by it, newest first.
+	// backend already knows it. Zero shows no time and sorts last in both
+	// time orders.
 	LastActivity time.Time
+	// Rank lets the script keep the order when the language changes.
+	Rank NameRank
 }
 
 // NoticeKind selects the visual treatment and the accessible role of a notice.

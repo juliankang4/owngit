@@ -25,22 +25,38 @@
 
 {{template "graph" dict "Lang" $lang "G" $p.Activity}}
 
-<section class="sec">
-  <div class="sec__bar">
-    <h2>{{bi $lang "app.nav.repositories"}}</h2>
+<section class="sec" aria-labelledby="repos-h">
+  <div class="sec__bar sec__bar--tools">
+    <h2 id="repos-h">{{bi $lang "app.nav.repositories"}}</h2>
     <span class="sec__n">{{biCount $lang "repository" $p.TotalCount}}</span>
-    {{with .Chrome.Nav.NewRepoURL}}
-      <span class="sec__hint"><a href="{{.}}">{{bi $lang "repo.new.title"}}</a></span>
-    {{end}}
-    {{with .Chrome.Nav.NewImportURL}}
-      <span class="sec__hint"><a href="{{.}}">{{bi $lang "import.list_link"}}{{template "adminLock" dict "Lang" $lang "Locked" (not $.Chrome.Viewer.AdminConfirmed)}}</a></span>
+    {{template "repoActions" dict "Lang" $lang "Nav" .Chrome.Nav "Viewer" .Chrome.Viewer "Place" ""}}
+    {{/* The order is an ordinary form, so it works without scripting: the
+         server sorts the list and remembers the choice in this browser. With
+         the script loaded, a change reorders both lists in place and the
+         Apply button is hidden. */}}
+    {{if $p.Repositories}}
+    <form class="sortctl" method="get" action="{{.Chrome.Nav.OverviewURL}}" data-order-form>
+      <label class="sortctl__l" for="list-order">{{icon "sort"}}{{bi $lang "app.order.label"}}</label>
+      <select id="list-order" name="sort" class="sortctl__sel" data-order-select>
+        {{range listOrders}}
+          <option value="{{.}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq . $.Chrome.Nav.Order}} selected{{end}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+      {{with .Chrome.Nav.Query}}<input type="hidden" name="q" value="{{.}}">{{end}}
+      <input type="hidden" name="lang" value="{{$lang}}">
+      <button type="submit" class="btn btn--sm" data-order-apply>{{bi $lang "app.order.apply"}}</button>
+      <span class="visually-hidden" role="status" data-order-status
+            data-prefix-en="{{t "en" "app.order.sorted"}}" data-prefix-ko="{{t "ko" "app.order.sorted"}}"></span>
+    </form>
     {{end}}
   </div>
 
   {{if $p.Repositories}}
-    <div class="rows">
+    {{template "listHead" dict "Lang" $lang "Kind" "repositories"}}
+    <div class="rows" data-order-list data-order="{{.Chrome.Nav.Order}}">
       {{range $p.Repositories}}
-        <a class="row row--repo" href="{{.URL}}">
+        {{$updated := .Updated}}
+        <a class="row row--repo" href="{{.URL}}" data-order-item data-updated="{{if not $updated.IsZero}}{{$updated.Unix}}{{end}}" data-rank-en="{{.Rank.EN}}" data-rank-ko="{{.Rank.KO}}">
           <span class="row__name">{{.Name}}</span>
           <span class="row__ref">
             {{/* A badge is one short line, so the row names the status only.
@@ -70,9 +86,7 @@
             {{else if .Head.Subject}}{{.Head.Subject}}
             {{else if .Description}}{{.Description}}{{end}}
           </span>
-          <span class="row__when">
-            {{if not (or .Empty .Preparing .Unreadable .Busy)}}{{biRelative $lang $now .Head.AuthorDate}}{{end}}
-          </span>
+          <span class="row__when">{{biRelative $lang $now $updated}}</span>
         </a>
       {{end}}
     </div>
@@ -100,6 +114,7 @@
     <h2>{{bi $lang "app.latest_activity"}}</h2>
     {{with $p.RecentMoreURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "app.see_all"}}</a></span>{{end}}
   </div>
+  {{template "listHead" dict "Lang" $lang "Kind" "activity"}}
   <div class="rows">
     {{range $p.Recent}}
       {{template "activityRow" dict "Lang" $lang "Now" $now "E" . "ShowRepo" true "Dated" true}}

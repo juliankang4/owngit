@@ -12,9 +12,15 @@
  * links here are the ones the server emits.
  *
  * Input  (argv[2]): {"script": path, "currentURL": str, "links": [{lang, href}],
- *                    "nodes": [rendered opening tag plus text, optional]}
+ *                    "nodes": [rendered opening tag plus text, optional],
+ *                    "lists": [{tag: container opening tag,
+ *                               rows: [row opening tags]}], optional}
  * Output (stdout) : {"address": str, "lang": str, "cookie": str,
- *                    "nodes": [{text, attrs}] after the click, in input order}
+ *                    "nodes": [{text, attrs}] after the click, in input order,
+ *                    "lists": [[href of each row] after the click]}
+ *
+ * A list is an ordered repository list: the rows the renderer produced, in a
+ * container marked as the page marks it. The language switch reorders them.
  */
 
 import { readFileSync } from 'node:fs';
@@ -44,6 +50,13 @@ class Node {
   removeAttribute(name) { delete this.attrs[name]; }
   hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name); }
   append(child) { child.parent = this; this.children.push(child); return child; }
+  insertBefore(child, ref) {
+    if (child.parent) { child.parent.children.splice(child.parent.children.indexOf(child), 1); }
+    const at = ref ? this.children.indexOf(ref) : -1;
+    if (at < 0) { this.children.push(child); } else { this.children.splice(at, 0, child); }
+    child.parent = this;
+    return child;
+  }
 
   get descendants() {
     const out = [];
@@ -90,13 +103,19 @@ body.append(new Node('input', { name: 'lang', value: 'en' }));
 // Elements copied from the renderer's real output, to observe what the switch
 // does to their text and attributes. Each is an opening tag and its text.
 const unescape = (s) => s.replace(/&(amp|lt|gt|#34|#39);/g, (_, e) => ({ amp: '&', lt: '<', gt: '>', '#34': '"', '#39': "'" })[e]);
-const nodes = (input.nodes || []).map((tag) => {
-  const m = /^<(\w+)((?:\s+[\w-]+="[^"]*")*)\s*>([^<]*)/.exec(tag);
+const parse = (tag) => {
+  const m = /^<(\w+)((?:\s+[\w-]+(?:="[^"]*")?)*)\s*>([^<]*)/.exec(tag);
   const attrs = {};
-  for (const a of m[2].matchAll(/([\w-]+)="([^"]*)"/g)) { attrs[a[1]] = unescape(a[2]); }
-  const node = body.append(new Node(m[1], attrs));
+  for (const a of m[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) { attrs[a[1]] = unescape(a[2] || ''); }
+  const node = new Node(m[1], attrs);
   node.textContent = unescape(m[3]);
   return node;
+};
+const nodes = (input.nodes || []).map((tag) => body.append(parse(tag)));
+const lists = (input.lists || []).map((list) => {
+  const container = body.append(parse(list.tag));
+  for (const row of list.rows) { container.append(parse(row)); }
+  return container;
 });
 
 let cookie = '';
@@ -153,4 +172,5 @@ process.stdout.write(JSON.stringify({
   lang: root.getAttribute('data-lang'),
   cookie,
   nodes: nodes.map((n) => ({ text: n.textContent, attrs: n.attrs })),
+  lists: lists.map((list) => list.children.map((row) => row.getAttribute('href'))),
 }));

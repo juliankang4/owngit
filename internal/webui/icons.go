@@ -35,6 +35,7 @@ var iconPaths = map[string]string{
 	"wrap":     `<path d="M2.4 4h11.2M2.4 8h9a2 2 0 010 4H8.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 10.6L8.6 12l1.4 1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.4 12h3.4" stroke-linecap="round"/>`,
 	"copy":     `<rect x="5.4" y="5.4" width="8" height="8" rx="1.4"/><path d="M10.6 5.2V3.8a1.2 1.2 0 00-1.2-1.2H3.8a1.2 1.2 0 00-1.2 1.2v5.6a1.2 1.2 0 001.2 1.2h1.4" stroke-linecap="round"/>`,
 	"trash":    `<path d="M2.8 4.4h10.4M6.4 4.2V2.8h3.2v1.4M4.2 4.4l.7 9h6.2l.7-9" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.8 7v4M9.2 7v4" stroke-linecap="round"/>`,
+	"sort":     `<path d="M5 3.5v9M2.8 10.3L5 12.5l2.2-2.2M11 12.5v-9M8.8 5.7L11 3.5l2.2 2.2" stroke-linecap="round" stroke-linejoin="round"/>`,
 	// Evidence states. Each shape differs from the others, so a state is never
 	// carried by colour alone: a stopped run, an unavailable one, a stale one
 	// and an absent one are four distinct outlines.

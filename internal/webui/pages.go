@@ -238,7 +238,7 @@ type OverviewPage struct {
 	Chrome Chrome
 	// Activity is the annual graph across all repositories.
 	Activity ActivityGraph
-	// Repositories is the full list, already ordered and search-filtered.
+	// Repositories is the full list, search-filtered and in Chrome.Nav.Order.
 	Repositories []RepositorySummary
 	// Recent is the short "Latest activity" list under the repositories.
 	Recent []ActivityEntry
@@ -385,6 +385,18 @@ type RepositorySummary struct {
 	// earlier listing was available. Like Preparing, only the name and
 	// description are known.
 	Busy bool
+	// Rank lets the script keep the order when the language changes.
+	Rank NameRank
+}
+
+// Updated is the time the row shows as the repository's last update: the
+// author date of its latest commit. It is zero when the row shows none,
+// because the repository has no commits or was not read for this page.
+func (s RepositorySummary) Updated() time.Time {
+	if s.Empty || s.Preparing || s.Unreadable || s.Busy {
+		return time.Time{}
+	}
+	return s.Head.AuthorDate
 }
 
 // ---------------------------------------------------------------------------

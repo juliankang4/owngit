@@ -31,8 +31,8 @@ func TestSidebarOutsideARepositoryListsPlacesThenRepositories(t *testing.T) {
 		}{
 			"home":     {OverviewPage{Chrome: chrome, Activity: sampleGraph()}, `href="/" aria-current="page"`},
 			"activity": {ActivityPage{Chrome: chrome}, `href="/activity" aria-current="page"`},
-			"new":      {NewRepositoryPage{Chrome: chrome, SubmitURL: "/repositories"}, `class="sb__act" href="/repositories/new" aria-current="page"`},
-			"import":   {NewImportPage{Chrome: chrome, SubmitURL: "/repositories/new-import"}, `class="sb__act" href="/repositories/new-import" aria-current="page"`},
+			"new":      {NewRepositoryPage{Chrome: chrome, SubmitURL: "/repositories"}, `class="iconbtn" href="/repositories/new" aria-current="page"`},
+			"import":   {NewImportPage{Chrome: chrome, SubmitURL: "/repositories/new-import"}, `class="iconbtn" href="/repositories/new-import" aria-current="page"`},
 		} {
 			menu := sidebarOfOutput(t, render(t, r, tc.page))
 			if !strings.Contains(menu, tc.current) || strings.Count(menu, `aria-current="page"`) != 1 {

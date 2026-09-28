@@ -33,6 +33,9 @@ const (
 	languageCookie = "owngit_lang"
 	// appearanceCookie is a preference the page script also reads and writes.
 	appearanceCookie = "owngit_appearance"
+	// orderCookie holds the repository list order, a preference the page
+	// script also reads and writes.
+	orderCookie = "owngit_order"
 	// releaseDismissCookie holds the release version whose dashboard notice
 	// this browser dismissed. It is a preference, not a credential.
 	releaseDismissCookie = "owngit_release_dismissed"

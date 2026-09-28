@@ -181,15 +181,17 @@ func newViewData(page Page, prints fingerprints) *viewData {
 	if chrome.Lang == LangKO {
 		title = titleKO
 	}
+	chrome.Nav.Order, _ = ParseListOrder(string(chrome.Nav.Order))
 	appearance, ok := ParseAppearance(string(chrome.Appearance))
 	if !ok {
 		appearance = AppearanceSystem
 	}
-	// The appearance parameter has done its work once the backend saved the
-	// choice, so links built from this screen do not carry it on.
+	// The appearance and sort parameters have done their work once the
+	// backend saved the choice, so links built from this screen do not carry
+	// them on.
 	current := canonicalURL(page, chrome)
 	if current != "" {
-		current = withQuery(current, "appearance", "")
+		current = withQuery(withQuery(current, "appearance", ""), "sort", "")
 	}
 	var pageNotices []Notice
 	for _, n := range chrome.Notices {

@@ -123,13 +123,6 @@
 {{define "activityRow"}}
 {{$lang := .Lang}}{{$e := .E}}{{$when := $e.Commit.AuthorDate}}
 <a class="row row--act{{if .Dated}} row--dated{{end}}" href="{{$e.Commit.URL}}">
-  {{if .Dated}}
-  <time class="row__time" datetime="{{$when.Format "2006-01-02T15:04:05Z07:00"}}" {{biAttrText $lang "title" (dateTime "en" $when) (dateTime "ko" $when)}}>
-    <span aria-hidden="true">{{biRelative $lang .Now $when}}</span><span class="visually-hidden">{{biDateTime $lang $when}}</span>
-  </time>
-  {{else}}
-  <span class="row__time">{{clock $when}}</span>
-  {{end}}
   {{if .ShowRepo}}<span class="row__name">{{$e.RepositoryName}}</span>{{end}}
   {{/* The ref name carries its own element so a long name can be shortened
        without clipping the status badge beside it. The title attribute keeps
@@ -139,5 +132,12 @@
     {{if $e.RefRetained}}<span class="pill pill--kept">{{bi $lang "repo.retained.title"}}</span>{{end}}
   </span>
   <span class="row__msg">{{$e.Commit.Subject}}</span>
+  {{if .Dated}}
+  <time class="row__time" datetime="{{$when.Format "2006-01-02T15:04:05Z07:00"}}" {{biAttrText $lang "title" (dateTime "en" $when) (dateTime "ko" $when)}}>
+    <span aria-hidden="true">{{biRelative $lang .Now $when}}</span><span class="visually-hidden">{{biDateTime $lang $when}}</span>
+  </time>
+  {{else}}
+  <span class="row__time">{{clock $when}}</span>
+  {{end}}
 </a>
 {{end}}

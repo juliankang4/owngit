@@ -1231,6 +1231,28 @@ type switchedNode struct {
 // is decided by the handler, not by the href. That is what this drives.
 func clickLanguage(t *testing.T, out, currentURL string, tags ...string) (address string, lang string, nodes []switchedNode) {
 	t.Helper()
+	result := runLanguageClick(t, out, currentURL, tags, nil)
+	return result.Address, result.Lang, result.Nodes
+}
+
+// renderedList is an ordered list handed to the language click: the
+// container's opening tag and each row's.
+type renderedList struct {
+	Tag  string   `json:"tag"`
+	Rows []string `json:"rows"`
+}
+
+type languageClickResult struct {
+	Address   string         `json:"address"`
+	Prevented bool           `json:"prevented"`
+	Lang      string         `json:"lang"`
+	Nodes     []switchedNode `json:"nodes"`
+	// Lists holds each list's row addresses after the click.
+	Lists [][]string `json:"lists"`
+}
+
+func runLanguageClick(t *testing.T, out, currentURL string, tags []string, lists []renderedList) languageClickResult {
+	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not available to run the shipped script")
@@ -1259,7 +1281,7 @@ func clickLanguage(t *testing.T, out, currentURL string, tags ...string) (addres
 	script, err := filepath.Abs("assets/owngit.js")
 	noErr(t, err)
 	input, err := json.Marshal(map[string]any{
-		"script": script, "currentURL": currentURL, "links": links, "nodes": tags,
+		"script": script, "currentURL": currentURL, "links": links, "nodes": tags, "lists": lists,
 	})
 	noErr(t, err)
 
@@ -1267,17 +1289,12 @@ func clickLanguage(t *testing.T, out, currentURL string, tags ...string) (addres
 	cmd.Stderr = os.Stderr
 	stdout, err := cmd.Output()
 	noErrf(t, err, "running the shipped script")
-	var result struct {
-		Address   string         `json:"address"`
-		Prevented bool           `json:"prevented"`
-		Lang      string         `json:"lang"`
-		Nodes     []switchedNode `json:"nodes"`
-	}
+	var result languageClickResult
 	noErrf(t, json.Unmarshal(stdout, &result), "reading the script's result")
 	if !result.Prevented {
 		t.Fatal("the language click was not intercepted")
 	}
-	return result.Address, result.Lang, result.Nodes
+	return result
 }
 
 func TestRestoreLanguageClickLandsOnAFollowableAddress(t *testing.T) {
