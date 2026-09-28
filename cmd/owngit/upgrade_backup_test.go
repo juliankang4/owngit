@@ -246,12 +246,21 @@ func TestUpgradeWithTheBackupOff(t *testing.T) {
 func TestUpgradeBackupRemovesOnlyItsOwnOlderBackups(t *testing.T) {
 	stateDir := createBaselineStateForTest(t)
 	folder := state.UpgradeBackupFolder(stateDir)
+	_, release, err := state.OpenUpgradeBackupFolder(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
 	older := filepath.Join(folder, "pre-1.1.3-20260101T000000Z")
 	manual := filepath.Join(folder, "pre-1.1.0-20260926T232321")
 	for _, path := range []string{older, manual} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Backups are private, as recovery.Create makes them.
+	if err := state.ProtectPrivatePath(older, true); err != nil {
+		t.Fatal(err)
 	}
 	resolved, err := filepath.EvalSymlinks(stateDir)
 	if err != nil {
@@ -272,7 +281,19 @@ func TestUpgradeBackupRemovesOnlyItsOwnOlderBackups(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(manual, "owngit.sqlite"), []byte("kept"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	kept := []string{filepath.Base(manual), filepath.Base(other)}
+	// A backup whose note has a second name is not one this account's
+	// upgrade wrote, whatever the note says.
+	linked := filepath.Join(folder, "pre-1.1.3-20260103T000000Z")
+	if err := os.Mkdir(linked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linked, upgradeNoteName), []byte(upgradeNoteStatePrefix+resolved+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(linked, upgradeNoteName), filepath.Join(folder, "second-name")); err != nil {
+		t.Fatal(err)
+	}
+	kept := []string{filepath.Base(manual), filepath.Base(other), filepath.Base(linked), "second-name"}
 	if runtime.GOOS != "windows" {
 		// A link to a backup is not a backup in this folder.
 		elsewhere := filepath.Join(t.TempDir(), "elsewhere")
@@ -322,7 +343,7 @@ func TestCommandBesideAServerNeverUpgrades(t *testing.T) {
 	before := stateFiles(t, stateDir)
 	var lines []string
 	_, err = openState(context.Background(), stateDir, func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) })
-	if !errors.Is(err, errOlderSchema) || !strings.Contains(err.Error(), "start OwnGit once") || len(lines) != 0 {
+	if !errors.Is(err, errOlderSchema) || !strings.Contains(err.Error(), "start or restart this OwnGit once") || len(lines) != 0 {
 		t.Fatalf("err=%v lines=%q", err, lines)
 	}
 	unlock()

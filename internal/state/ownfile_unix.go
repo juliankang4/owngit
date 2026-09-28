@@ -95,3 +95,19 @@ func RenameOwnFile(dir *os.File, from, to string) error {
 	}
 	return nil
 }
+
+// removeOwnFile removes the file name in the held directory dir once
+// OpenOwnFile accepted it as this account's own regular file.
+func removeOwnFile(dir *os.File, name string) error {
+	file, err := OpenOwnFile(dir, name, os.O_RDONLY)
+	if err != nil {
+		return err
+	}
+	file.Close()
+	err = unix.Unlinkat(int(dir.Fd()), name, 0)
+	runtime.KeepAlive(dir)
+	if err != nil {
+		return &os.PathError{Op: "remove", Path: filepath.Join(dir.Name(), name), Err: err}
+	}
+	return nil
+}

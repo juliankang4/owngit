@@ -77,7 +77,7 @@ var errOlderSchema = errors.New("this state has an older schema")
 // refuseUpgrade is the state.BeforeUpgrade of the commands that work beside
 // a running server.
 func refuseUpgrade(_ context.Context, upgrade *state.Upgrade) error {
-	return fmt.Errorf("%w, which a starting OwnGit backs up and upgrades %s: start OwnGit once (owngit serve, or owngit service start) or run owngit backup, then run this command again", errOlderSchema, upgrade.Describe())
+	return fmt.Errorf("%w, which a starting OwnGit of this version backs up and upgrades %s: start or restart this OwnGit once (owngit serve, or owngit service start or restart) or run owngit backup, then run this command again", errOlderSchema, upgrade.Describe())
 }
 
 type upgradeBackup struct {
@@ -90,13 +90,14 @@ type upgradeBackup struct {
 // returns no path when setup is not complete. Once the backup is complete,
 // the older backups that upgrades made there are removed.
 func createUpgradeBackup(ctx context.Context, stateDir string, upgrade *state.Upgrade, gitPath string, report func(string, ...any)) (result upgradeBackup, err error) {
-	// The folder follows the rules of a state directory: on a local disk,
-	// this account's, reached through no link that it did not check.
-	folder, err := state.CreateDirectory(state.UpgradeBackupFolder(stateDir))
+	// The folder is private and held (see state.OpenUpgradeBackupFolder),
+	// so every path below, all inside it, leads to what this process put
+	// there until release.
+	folder, release, err := state.OpenUpgradeBackupFolder(stateDir)
 	if err != nil {
 		return upgradeBackup{}, err
 	}
-	defer folder.Close()
+	defer release()
 	copyDir, err := os.MkdirTemp(folder.Name(), ".owngit-upgrade-copy-")
 	if err != nil {
 		return upgradeBackup{}, err
@@ -142,7 +143,7 @@ func createUpgradeBackup(ctx context.Context, stateDir string, upgrade *state.Up
 	if err := writeUpgradeNote(output, stateDir, upgrade, restoreCommand); err != nil {
 		return upgradeBackup{}, fmt.Errorf("the backup %s is complete, but its note could not be written: %w", output, err)
 	}
-	removeOlderUpgradeBackups(folder.Name(), name, stateDir, report)
+	removeOlderUpgradeBackups(folder, name, stateDir, report)
 	return upgradeBackup{path: output, restoreCommand: restoreCommand}, nil
 }
 
@@ -187,40 +188,45 @@ func writeUpgradeNote(backup, stateDir string, upgrade *state.Upgrade, restoreCo
 // state directory whose backup it is.
 const upgradeNoteStatePrefix = "State directory: "
 
-// removeOlderUpgradeBackups removes the backups in folder that an upgrade of
-// the state in stateDir made, other than keep: real folders whose note names
-// stateDir. Any other entry stays, including the backups of another state
-// directory whose backup folder is a link to the same place. A removal
-// failure is reported and does not stop the upgrade, because the new backup
-// is complete.
-func removeOlderUpgradeBackups(folder, keep, stateDir string, report func(string, ...any)) {
-	entries, err := os.ReadDir(folder)
+// removeOlderUpgradeBackups removes the backups in the held private folder
+// that an upgrade of the state in stateDir made, other than keep: private
+// folders of this account, not links, whose note is this account's own file
+// and names stateDir. Any other entry stays, including the backups of
+// another state directory of this account whose backup folder is a link to
+// the same place. A removal failure is reported and does not stop the
+// upgrade, because the new backup is complete.
+func removeOlderUpgradeBackups(folder *os.File, keep, stateDir string, report func(string, ...any)) {
+	entries, err := os.ReadDir(folder.Name())
 	if err != nil {
-		report("could not list %s to remove older upgrade backups: %v", folder, err)
+		report("could not list %s to remove older upgrade backups: %v", folder.Name(), err)
 		return
 	}
 	for _, entry := range entries {
-		if entry.Name() == keep || !entry.IsDir() {
+		if entry.Name() == keep || !entry.IsDir() || !upgradeBackupOf(folder, entry.Name(), stateDir) {
 			continue
 		}
-		path := filepath.Join(folder, entry.Name())
-		if !upgradeBackupOf(path, stateDir) {
-			continue
-		}
+		path := filepath.Join(folder.Name(), entry.Name())
 		if err := os.RemoveAll(path); err != nil {
 			report("could not remove the older upgrade backup %s: %v", path, err)
 		}
 	}
 }
 
-// upgradeBackupOf reports whether the folder backup holds a regular note
-// whose last line names stateDir.
-func upgradeBackupOf(backup, stateDir string) bool {
-	path := filepath.Join(backup, upgradeNoteName)
-	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() || info.Size() > 64<<10 {
+// upgradeBackupOf reports whether name in the held folder is a private
+// folder of this account whose note, this account's own regular file,
+// ends with the line that names stateDir.
+func upgradeBackupOf(folder *os.File, name, stateDir string) bool {
+	backup, err := state.OpenPrivateFolderIn(folder, name)
+	if err != nil {
 		return false
 	}
-	content, err := os.ReadFile(path)
+	defer backup.Close()
+	note, err := state.OpenOwnFile(backup, upgradeNoteName, os.O_RDONLY)
+	if err != nil {
+		return false
+	}
+	defer note.Close()
+	content, err := io.ReadAll(io.LimitReader(note, 64<<10))
 	if err != nil {
 		return false
 	}

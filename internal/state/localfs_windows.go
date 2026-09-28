@@ -136,6 +136,45 @@ func refuseLinkedFolder(dir *os.File) error {
 	return nil
 }
 
+// requirePrivateFolder refuses the held folder dir unless its owner is this
+// account and its access list grants access to this account only, as for
+// the folders OwnGit protects itself (validateOwnerOnlyDescriptor).
+func requirePrivateFolder(dir *os.File) error {
+	user, _, err := processIdentity()
+	if err != nil {
+		return err
+	}
+	if err := validateOwnerOnlyHandle(windows.Handle(dir.Fd()), user, true); err != nil {
+		return fmt.Errorf("%s is not private to this account: %w", dir.Name(), err)
+	}
+	return nil
+}
+
+// OpenPrivateFolderIn opens the folder name in the held folder parent
+// without following a reparse point at that name, refuses any reparse
+// point, and requires the folder to be private like requirePrivateFolder.
+func OpenPrivateFolderIn(parent *os.File, name string) (*os.File, error) {
+	dir, err := openAt(parent, filepath.Join(parent.Name(), name), folderAccess, folderShare, windows.FILE_OPEN, folderOptions, "open")
+	if err != nil {
+		return nil, err
+	}
+	var info fileAttributeTagInfo
+	err = windows.GetFileInformationByHandleEx(windows.Handle(dir.Fd()), windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
+	switch {
+	case err != nil:
+		err = &os.PathError{Op: "inspect", Path: dir.Name(), Err: err}
+	case info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0:
+		err = fmt.Errorf("%s is a reparse point, not a plain folder", dir.Name())
+	default:
+		err = requirePrivateFolder(dir)
+	}
+	if err != nil {
+		dir.Close()
+		return nil, err
+	}
+	return dir, nil
+}
+
 // holdWay keeps the way to the held directory, which openDirectory
 // returned, from changing until release is called: it opens every folder
 // from the volume's root to the held one again, each relative to the one

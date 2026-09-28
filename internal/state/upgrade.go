@@ -94,7 +94,7 @@ func UpgradeBackupEnabled(held *os.File) (bool, error) {
 // the state in the held state directory.
 func SetUpgradeBackup(held *os.File, enabled bool) error {
 	if enabled {
-		err := os.Remove(filepath.Join(held.Name(), upgradeBackupOffName))
+		err := removeOwnFile(held, upgradeBackupOffName)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("turn on the upgrade backup: %w", err)
 		}
@@ -117,4 +117,48 @@ func SetUpgradeBackup(held *os.File, enabled bool) error {
 // after it, for example owngit-backups beside owngit.
 func UpgradeBackupFolder(stateDir string) string {
 	return filepath.Join(filepath.Dir(stateDir), filepath.Base(stateDir)+"-backups")
+}
+
+// OpenUpgradeBackupFolder opens the UpgradeBackupFolder of stateDir,
+// creating it when it is missing, and holds it until release is called.
+//
+// The folder follows the rules of a state directory (CreateDirectory: on a
+// local disk, this account's, reached through no link that was not
+// checked), and it must be private as well: one in which no other account
+// can create, rename or remove names. A folder that this call creates is
+// made private. An existing folder that is not private is refused, not
+// repaired, because another account may already have put something in it.
+// On Windows the way to the folder and the folder itself are held without
+// delete sharing until release (holdWay), as OpenIn holds the way to the
+// state; on Unix no other account can change that way (CreateDirectory).
+// So until release, a path name inside the folder leads to what this
+// account put there, and the callers work inside it by path.
+func OpenUpgradeBackupFolder(stateDir string) (folder *os.File, release func(), err error) {
+	path := UpgradeBackupFolder(stateDir)
+	_, statErr := os.Lstat(path)
+	created := errors.Is(statErr, os.ErrNotExist)
+	held, err := CreateDirectory(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	unhold, err := holdWay(held)
+	if err != nil {
+		held.Close()
+		return nil, nil, err
+	}
+	release = func() {
+		unhold()
+		held.Close()
+	}
+	if created {
+		err = ProtectPrivateHandle(held, true)
+	}
+	if err == nil {
+		err = requirePrivateFolder(held)
+	}
+	if err != nil {
+		release()
+		return nil, nil, fmt.Errorf("%w; the backups before upgrades need a folder that only this account can change: make it so, or move it away so that OwnGit creates one", err)
+	}
+	return held, release, nil
 }

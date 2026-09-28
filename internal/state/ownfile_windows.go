@@ -119,3 +119,29 @@ type fileRenameInformation struct {
 	FileNameLength  uint32
 	FileName        [1]uint16
 }
+
+// removeOwnFile removes the file name in the held directory dir: it opens
+// the file relative to dir without following a reparse point, accepts it
+// only as this account's own regular file (requireOwnFile), and marks that
+// same open file for deletion.
+func removeOwnFile(dir *os.File, name string) error {
+	path := filepath.Join(dir.Name(), name)
+	file, err := openAt(dir, path, windows.DELETE|windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_OPEN, windows.FILE_NON_DIRECTORY_FILE, "remove")
+	if errors.Is(err, errFolder) {
+		return fmt.Errorf("%s is not a regular file", path)
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := requireOwnFile(file); err != nil {
+		return err
+	}
+	disposition := struct{ DeleteFile bool }{DeleteFile: true} // FILE_DISPOSITION_INFO
+	if err := windows.SetFileInformationByHandle(windows.Handle(file.Fd()), windows.FileDispositionInfo,
+		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition))); err != nil {
+		return &os.PathError{Op: "remove", Path: path, Err: err}
+	}
+	return nil
+}

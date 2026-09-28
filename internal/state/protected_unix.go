@@ -565,3 +565,48 @@ func OwnPrivateGroup(gid uint32) bool {
 	group, err := user.LookupGroupId(account.Gid)
 	return err == nil && group.Name == account.Username
 }
+
+// requirePrivateFolder refuses the held folder dir unless it belongs to
+// this account and no other account can create, rename or remove names in
+// it (group write only for this account's own group or, on macOS, the
+// groups that can become root anyway; no world write, sticky or not; no
+// access-list entry that allows changes).
+func requirePrivateFolder(dir *os.File) error {
+	info, err := dir.Stat()
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("the owner of %s is unavailable", dir.Name())
+	}
+	if int(stat.Uid) != os.Geteuid() {
+		return fmt.Errorf("%s belongs to another account", dir.Name())
+	}
+	changeable, fix, err := othersCanChange(dir.Name(), info, true, false)
+	if err != nil {
+		return err
+	}
+	if changeable {
+		return fmt.Errorf("other accounts can change what is in %s (%s stops that)", dir.Name(), fix)
+	}
+	return nil
+}
+
+// OpenPrivateFolderIn opens the folder name in the held folder parent
+// without following a link at that name, and requires it to be private
+// like requirePrivateFolder.
+func OpenPrivateFolderIn(parent *os.File, name string) (*os.File, error) {
+	path := filepath.Join(parent.Name(), name)
+	descriptor, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	runtime.KeepAlive(parent)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	dir := os.NewFile(uintptr(descriptor), path)
+	if err := requirePrivateFolder(dir); err != nil {
+		dir.Close()
+		return nil, err
+	}
+	return dir, nil
+}
