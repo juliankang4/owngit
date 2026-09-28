@@ -62,6 +62,9 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	if !app.requireCSRF(writer, request) {
 		return
 	}
+	// The group actions map to the actions of the 1.1.2 forms, which are
+	// still accepted, behind the same checks, so a page opened before an
+	// upgrade still saves.
 	action := postValue(request, "action")
 	adminPassword := postValue(request, "admin_password")
 	if err := app.Auth.VerifyCredential(request.Context(), "admin", adminPassword, requestctx.Of(request).ClientAddress); err != nil {
