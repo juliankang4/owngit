@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -558,13 +559,20 @@ func TestABaseURLOptionIsNamedInsteadOfTheHTTPSCloneAddress(t *testing.T) {
 // answer in time instead of waiting for the reading.
 func TestSharingPageDoesNotWaitForTailscaleBeyondItsDeadline(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
-	app.HTTPTimeout = 8 * time.Second
+	app.HTTPTimeout = verifiedPage
 	client, base, csrf, _ := networkSettingsClient(t, app)
 	// Turning on reads the status once and fails; the page's reading then
-	// needs the status and the Serve configuration, beyond the deadline.
-	fake.Update(func(s *tailscaletest.State) { s.StatusError, s.ReadDelay = "synthetic unexplained failure", 3000 })
+	// waits for Tailscale until the test lets it answer, beyond the deadline.
+	fake.Update(func(s *tailscaletest.State) {
+		s.StatusError, s.HoldReads, s.PassReads, s.Calls = "synthetic unexplained failure", true, 1, nil
+	})
+	release := func() { fake.Update(func(s *tailscaletest.State) { s.HoldReads = false }) }
+	t.Cleanup(release)
 	values := tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false)
-	request, err := http.NewRequest(http.MethodPost, base+"/settings", strings.NewReader(values.Encode()))
+	// A page that waited for the held reading would never answer.
+	ctx, cancel := context.WithTimeout(context.Background(), hangBound)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/settings", strings.NewReader(values.Encode()))
 	noErr(t, err)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", base)
@@ -583,8 +591,13 @@ func TestSharingPageDoesNotWaitForTailscaleBeyondItsDeadline(t *testing.T) {
 		!strings.Contains(string(body), enText(webui.TailscaleProblemCode(string(tailscale.KindTimeout)))) {
 		t.Fatalf("status=%d after %v, body=%s", response.StatusCode, elapsed, body)
 	}
+	// Only turning on was answered; the page's reading is still waiting.
+	if calls, held := fake.Calls(), fake.State().HeldReads; !slices.Equal(calls, []string{"status --json"}) || held == 0 {
+		t.Fatalf("answered %q with %d reads waiting, want only the status read of turning on answered", calls, held)
+	}
 	// The reading goes on in the background; wait for it before the fake
 	// is removed.
+	release()
 	_, err = app.Tailscale.Report(context.Background())
 	noErr(t, err)
 }
