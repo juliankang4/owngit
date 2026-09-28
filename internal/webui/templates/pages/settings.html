@@ -407,7 +407,7 @@
   <div class="setblock">
     <h2 class="setblock__h">{{bi $lang "settings.storage.title"}}</h2>
     <dl class="kv">
-      {{with $p.Storage.Label}}<div><dt>{{biText $lang "Installation" "설치"}}</dt><dd>{{.}}</dd></div>{{end}}
+      {{with $p.Storage.Label}}<div><dt>{{biText $lang "Installation" "서버 이름"}}</dt><dd>{{.}}</dd></div>{{end}}
       <div><dt>{{bi $lang "settings.storage.title"}}</dt><dd class="mono">{{$p.Storage.Path}}</dd></div>
       {{with $p.CloneHint}}<div><dt>{{bi $lang "settings.clone.title"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
     </dl>

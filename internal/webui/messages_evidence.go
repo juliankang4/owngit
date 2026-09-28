@@ -331,7 +331,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgCheckStateCancelled:   {en: "The run was cancelled", ko: "실행이 취소되었습니다"},
 	MsgCheckStateIncomplete:  {en: "The run is incomplete", ko: "실행이 완료되지 않았습니다"},
 	MsgCheckStateUnavailable: {en: "The check environment was unavailable", ko: "체크 실행 환경을 사용할 수 없었습니다"},
-	MsgCheckStateStale:       {en: "The newest result is for an earlier revision", ko: "가장 최근 결과는 이전 커밋의 것입니다"},
+	MsgCheckStateStale:       {en: "The newest result is for an earlier revision", ko: "가장 최근 결과는 이전 커밋에서 나왔습니다"},
 	MsgCheckStatePending:     {en: "Registered, no result yet", ko: "등록됨, 아직 결과 없음"},
 
 	// A non-success label. It states the one thing the record establishes, a
@@ -381,7 +381,7 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgCheckTestedCommit: {
 		en: "The working copy matched this commit, so the result describes this code.",
-		ko: "워킹 트리가 이 커밋과 같았으므로 이 코드에 대한 체크 결과입니다.",
+		ko: "워킹 트리가 이 커밋과 같았으므로 이 결과는 이 코드를 체크한 것입니다.",
 	},
 	MsgCheckNotTested: {
 		en: "The result does not prove this commit was the code that ran.",
@@ -431,7 +431,7 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgCheckProtectionUnknown: {
 		en: "The protection around this run was not recorded, so nothing about it is claimed.",
-		ko: "이 실행의 보호 수준은 기록되지 않았습니다. 따라서 아무것도 주장하지 않습니다.",
+		ko: "이 실행의 보호 수준은 기록되지 않았으므로 보호에 관해서는 아무것도 주장하지 않습니다.",
 	},
 	// An automatic job runs on the server, not on the operator's machine. It
 	// is still not a sandbox, and saying so stays as plain here as it is for a
@@ -463,7 +463,7 @@ var evidenceCatalog = map[MessageCode]message{
 
 	// -- review --------------------------------------------------------
 	MsgReviewTitle:            {en: "Review", ko: "리뷰"},
-	MsgReviewStateNone:        {en: "No review for this revision", ko: "이 커밋에 대한 리뷰가 없습니다"},
+	MsgReviewStateNone:        {en: "No review for this revision", ko: "이 커밋의 리뷰가 없습니다"},
 	MsgReviewStatePending:     {en: "Review requested", ko: "리뷰 요청됨"},
 	MsgReviewStateApproved:    {en: "Approved", ko: "승인됨"},
 	MsgReviewStateChanges:     {en: "Changes requested", ko: "변경 요청됨"},
@@ -473,7 +473,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgReviewRecordUnreadable: {en: "The review record could not be read", ko: "리뷰 기록을 읽지 못했습니다"},
 
 	MsgReviewFromRequest: {en: "Recorded when a review was requested", ko: "리뷰를 요청할 때 기록되었습니다"},
-	MsgReviewFromSkip:    {en: "Recorded as an explicit skip", ko: "건너뛰기를 명시해 기록되었습니다"},
+	MsgReviewFromSkip:    {en: "Recorded as an explicit skip", ko: "명시적으로 건너뛴다고 기록되었습니다"},
 	MsgReviewFromTool:    {en: "Supplied by an external coding tool", ko: "외부 코딩 도구가 제출했습니다"},
 	MsgReviewFromDefault: {en: "Recorded without a stated source", ko: "출처 없이 기록되었습니다"},
 
@@ -488,7 +488,7 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgReviewOtherRevision: {
 		en: "This review belongs to an earlier revision, not to the code shown here.",
-		ko: "이 리뷰는 이전 커밋의 것이며, 여기 표시된 코드에 대한 것이 아닙니다.",
+		ko: "이 리뷰는 이전 커밋을 리뷰한 것이며 여기 표시된 코드를 리뷰한 것이 아닙니다.",
 	},
 	MsgReviewSubmittedAt:       {en: "Recorded", ko: "기록 시각"},
 	MsgReviewRevisionRequested: {en: "Requested for revision", ko: "요청한 커밋"},
@@ -510,7 +510,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRListEmpty: {en: "No pull requests yet.", ko: "아직 풀 리퀘스트가 없습니다."},
 	MsgPRListStart: {
 		en: "Open one to compare two branches and merge when you are ready.",
-		ko: "두 브랜치를 비교하고 원할 때 병합하려면 하나를 여세요.",
+		ko: "두 브랜치를 비교하고 원할 때 병합하려면 풀 리퀘스트를 여세요.",
 	},
 	MsgPRListUnavailable: {
 		en: "Pull request records could not be read, so this list is not complete.",
@@ -548,7 +548,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRNewReviewNone: {en: "Decide later", ko: "나중에 결정"},
 	MsgPRNewReviewNoneHelp: {
 		en: "Leaves review unrequested. Nothing waits on it.",
-		ko: "리뷰를 요청하지 않은 상태로 둡니다. 이 때문에 기다릴 일은 없습니다.",
+		ko: "리뷰를 요청하지 않은 채로 둡니다. 리뷰를 기다리는 일은 없습니다.",
 	},
 	MsgPRNewSubmit:         {en: "Create pull request", ko: "풀 리퀘스트 만들기"},
 	MsgPRNewChangeBranches: {en: "Choose different branches", ko: "다른 브랜치 고르기"},
@@ -576,7 +576,7 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgPRChangesUnavail: {
 		en: "The comparison could not be produced, so the change list is missing rather than empty.",
-		ko: "비교를 만들지 못했습니다. 변경 목록이 비어 있는 것이 아니라 없는 상태입니다.",
+		ko: "비교를 만들지 못했습니다. 바뀐 내용이 없는 것이 아니라 변경 목록을 만들지 못한 것입니다.",
 	},
 	MsgPRChangesCut: {
 		en: "This comparison is incomplete: some files' changes were too large to show. Every changed file is still listed.",
@@ -645,12 +645,12 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRClose:         {en: "Close pull request", ko: "풀 리퀘스트 닫기"},
 	MsgPRCloseHelp: {
 		en: "Closes it without merging. Nothing changes in either branch, the history stays, and you can reopen it later.",
-		ko: "병합하지 않고 닫습니다. 두 브랜치는 그대로이고 기록도 남으며, 나중에 다시 열 수 있습니다.",
+		ko: "병합하지 않고 닫습니다. 두 브랜치는 그대로이고 기록도 남으며 나중에 다시 열 수 있습니다.",
 	},
 	MsgPRReopen: {en: "Reopen pull request", ko: "풀 리퀘스트 다시 열기"},
 	MsgPRReopenHelp: {
 		en: "Opens it again for review and merging. This is refused while another pull request is open for the same two branches.",
-		ko: "리뷰와 병합을 위해 다시 엽니다. 같은 두 브랜치로 열려 있는 다른 풀 리퀘스트가 있으면 거부됩니다.",
+		ko: "다시 열어 리뷰하고 병합할 수 있게 합니다. 같은 두 브랜치로 열린 다른 풀 리퀘스트가 있으면 다시 열 수 없습니다.",
 	},
 	MsgPRClosedNote: {
 		en: "This pull request was closed without merging.",
@@ -688,7 +688,7 @@ var evidenceCatalog = map[MessageCode]message{
 		// No reason was recorded, so none is invented. Reloading is the one
 		// thing that can produce a current answer.
 		en: "No reason was recorded with this refusal. Reload to check the current state of both branches.",
-		ko: "이 거부에는 이유가 기록되지 않았습니다. 새로 고쳐 두 브랜치의 현재 상태를 확인하세요.",
+		ko: "이 거부에는 이유가 기록되지 않았습니다. 페이지를 새로 고쳐 두 브랜치의 현재 상태를 확인하세요.",
 	},
 
 	MsgPRCreated:       {en: "Pull request created.", ko: "풀 리퀘스트를 만들었습니다."},
@@ -697,7 +697,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRMerged:        {en: "Merged.", ko: "병합했습니다."},
 	MsgPRStale: {
 		en: "A branch moved since this page was loaded, so nothing was changed. Reload and check the new commits first.",
-		ko: "페이지를 연 뒤 브랜치가 움직여 아무것도 바뀌지 않았습니다. 새로 고쳐 새 커밋부터 확인하세요.",
+		ko: "페이지를 연 뒤 브랜치가 움직여 아무것도 바뀌지 않았습니다. 페이지를 새로 고쳐 새 커밋부터 확인하세요.",
 	},
 	MsgPRMergeBlocked:  {en: "The merge was refused.", ko: "병합이 거부되었습니다."},
 	MsgPRNotFound:      {en: "That pull request does not exist.", ko: "해당 풀 리퀘스트가 없습니다."},
@@ -726,7 +726,7 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgPRReconciling: {
 		en: "Your work was kept, but OwnGit still has to finish recording it. Reload shortly.",
-		ko: "작업은 보존되었지만 기록을 마무리해야 합니다. 잠시 후 새로 고쳐 주세요.",
+		ko: "작업은 그대로 남아 있지만 OwnGit이 아직 기록을 마무리해야 합니다. 잠시 뒤 페이지를 새로 고치세요.",
 	},
 
 	// -- tasks ---------------------------------------------------------
@@ -758,7 +758,7 @@ var evidenceCatalog = map[MessageCode]message{
 		// counts. Saying so stops the reader expecting the number to move only
 		// on failure.
 		en: "A round is counted when it is reserved, including a round that fixes the problem.",
-		ko: "라운드는 예약될 때 집계되며, 문제를 해결한 라운드도 포함됩니다.",
+		ko: "라운드는 예약될 때 집계되며 문제를 해결한 라운드도 포함됩니다.",
 	},
 	MsgTaskManualRerun: {
 		en: "Running the checks yourself does not use a round.",
@@ -771,14 +771,14 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgTaskBudgetHelp: {
 		en: "The budget belongs to the task. Moving to a new commit does not give it more rounds.",
-		ko: "이 라운드는 작업에 속합니다. 새 커밋으로 옮겨도 라운드가 늘어나지 않습니다.",
+		ko: "라운드 한도는 작업마다 정해집니다. 새 커밋으로 옮겨도 라운드가 늘어나지 않습니다.",
 	},
 	MsgTaskExhausted: {
 		en: "Automatic correction has stopped for this task. Your work and its history are untouched, and Git operations are not restricted.",
 		ko: "이 작업의 자동 수정은 멈췄습니다. 작업물과 기록은 그대로이며 Git 작업도 제한되지 않습니다.",
 	},
 	MsgTaskCreatedAt:  {en: "Started", ko: "시작"},
-	MsgTaskUpdatedAt:  {en: "Last change", ko: "마지막 변화"},
+	MsgTaskUpdatedAt:  {en: "Last change", ko: "마지막 변경"},
 	MsgTaskIdentifier: {en: "Task", ko: "작업"},
 
 	MsgAttemptsTitle: {en: "Runs", ko: "실행 기록"},
@@ -808,7 +808,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgConfigNone:    {en: "No check configuration has been recorded yet.", ko: "아직 기록된 체크 구성이 없습니다."},
 	MsgConfigNoneHelp: {
 		en: "Until then, nothing here reports on this repository's code.",
-		ko: "그때까지는 이 저장소 코드에 대해 보고할 내용이 없습니다.",
+		ko: "그때까지 여기에는 이 저장소 코드에 관한 보고가 없습니다.",
 	},
 	MsgConfigRecordedAt: {en: "Recorded", ko: "기록 시각"},
 
@@ -872,7 +872,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgHelperFailed: {en: "The credential operation did not complete.", ko: "토큰 작업을 끝내지 못했습니다."},
 	MsgHelperUnreadable: {
 		en: "The helper credential records could not be read, so this screen could not be shown. Reload the page to try again.",
-		ko: "헬퍼 토큰 기록을 읽지 못해 이 화면을 열 수 없습니다. 페이지를 다시 불러오세요.",
+		ko: "체크 에이전트 토큰 기록을 읽지 못해 이 화면을 열 수 없습니다. 페이지를 다시 불러오세요.",
 	},
 
 	// -- summary relevance ---------------------------------------------
@@ -884,7 +884,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgRelevanceNone:    {en: "Nothing recorded", ko: "기록 없음"},
 	MsgRelevanceUnknown: {en: "Could not be determined", ko: "확인 못함"},
 
-	MsgPRSummaryTitle:   {en: "What is known about this change", ko: "이 변경에 대해 확인된 내용"},
+	MsgPRSummaryTitle:   {en: "What is known about this change", ko: "이 변경에서 확인된 내용"},
 	MsgPRSummaryDetails: {en: "Details and findings", ko: "자세한 내용과 지적 보기"},
 }
 

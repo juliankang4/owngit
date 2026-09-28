@@ -168,13 +168,13 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoDefaultBranchTitle: {en: "Default branch", ko: "기본 브랜치"},
 	MsgRepoDefaultBranchHelp: {
 		en: "OwnGit shows this branch first, and a new clone checks it out. Only existing branches can be chosen.",
-		ko: "OwnGit이 먼저 보여 주고, 새로 클론하면 받게 되는 브랜치입니다. 이미 있는 브랜치만 고를 수 있습니다.",
+		ko: "OwnGit이 먼저 보여 주고 새로 클론하면 받게 되는 브랜치입니다. 이미 있는 브랜치만 고를 수 있습니다.",
 	},
 	MsgRepoDefaultBranchLabel:   {en: "Branch", ko: "브랜치"},
 	MsgRepoDefaultBranchCurrent: {en: "Now:", ko: "지금:"},
 	MsgRepoDefaultBranchMissing: {
 		en: "The default branch is set to a branch that does not exist. Choose an existing branch below. Currently set to:",
-		ko: "기본 브랜치로 정해진 브랜치가 없습니다. 아래에서 있는 브랜치를 고르세요. 지금 정해진 이름:",
+		ko: "기본 브랜치로 정한 브랜치가 저장소에 없습니다. 아래에서 기존 브랜치를 고르세요. 지금 정해진 이름:",
 	},
 	MsgRepoDefaultBranchChoose: {en: "Choose a branch", ko: "브랜치를 고르세요"},
 	MsgRepoDefaultBranchNone: {
@@ -246,11 +246,11 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoDeleteKeepTitle: {en: "Remove from OwnGit and keep the files", ko: "OwnGit에서만 제거하고 파일은 남기기"},
 	MsgRepoDeleteKeepDesc: {
 		en: "The Git folder moves into a hidden .owngit-removed folder in the repository storage.",
-		ko: "Git 폴더를 저장소 보관 위치 안의 숨은 폴더 .owngit-removed로 옮깁니다.",
+		ko: "Git 폴더를 저장소 폴더 안의 숨은 폴더 .owngit-removed로 옮깁니다.",
 	},
 	MsgRepoDeleteKeepBack: {
 		en: "To bring it back, create a new repository and push from that folder. After the removal, OwnGit shows the command to run.",
-		ko: "되살리려면 새 저장소를 만들고 그 폴더에서 푸시하면 됩니다. 제거한 뒤 실행할 명령을 보여 드립니다.",
+		ko: "되살리려면 새 저장소를 만들고 그 폴더에서 푸시하면 됩니다. 제거한 뒤 OwnGit이 실행할 명령을 보여 줍니다.",
 	},
 	MsgRepoDeleteFilesTitle: {en: "Delete the files too", ko: "파일까지 영구 삭제"},
 	MsgRepoDeleteFilesDesc: {
@@ -262,10 +262,10 @@ var repositoryAdminCatalog = map[MessageCode]message{
 		ko: "되돌릴 수 없습니다. 다른 곳에 복사본이 없으면 이 기록은 영영 사라집니다.",
 	},
 	MsgRepoDeleteGitPath:     {en: "Git folder now", ko: "지금 Git 폴더"},
-	MsgRepoDeleteRemovedPath: {en: "A kept folder moves into", ko: "남긴 폴더가 옮겨질 곳"},
+	MsgRepoDeleteRemovedPath: {en: "A kept folder moves into", ko: "남긴 폴더를 옮길 곳"},
 	MsgRepoDeleteNameHelp: {
 		en: "To confirm, type the name exactly as shown:",
-		ko: "확인을 위해 표시된 이름을 그대로 입력하세요:",
+		ko: "확인하려면 표시된 이름을 그대로 입력하세요:",
 	},
 	MsgRepoDeletePasswordHelp: {
 		en: "Deleting asks for the administrator password again, even in an administrator session.",

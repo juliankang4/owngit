@@ -91,7 +91,7 @@ var navigationCatalog = map[MessageCode]message{
 	},
 	MsgCodeRawTooLarge: {
 		en: "Files over 10 MB cannot be downloaded from the browser. Clone the repository to get this file.",
-		ko: "10MB가 넘는 파일은 브라우저에서 내려받을 수 없습니다. 저장소를 복제해서 받으세요.",
+		ko: "10MB가 넘는 파일은 브라우저에서 내려받을 수 없습니다. 저장소를 클론해서 받으세요.",
 	},
 	MsgCommitsToList: {en: "Commits", ko: "커밋 목록"},
 
@@ -99,7 +99,7 @@ var navigationCatalog = map[MessageCode]message{
 	MsgDiffCollapseAll: {en: "Collapse all", ko: "모두 접기"},
 	MsgDiffExpandAll:   {en: "Expand all", ko: "모두 펼치기"},
 	MsgDiffRenamedFrom: {en: "Previously", ko: "이전 이름"},
-	MsgDiffNoLines:     {en: "No line changes to show.", ko: "보여 줄 줄 변경이 없습니다."},
+	MsgDiffNoLines:     {en: "No line changes to show.", ko: "표시할 줄 단위 변경이 없습니다."},
 	MsgDiffNotLoaded: {
 		en: "This file's changes were not loaded, because the change is too large to show on one page.",
 		ko: "변경이 너무 커서 이 파일의 변경 내용은 한 페이지에 불러오지 않았습니다.",

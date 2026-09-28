@@ -348,11 +348,11 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCOpen:  {en: "Automatic checks", ko: "자동 체크"},
 	MsgCCIntro: {
 		en: "When you push or open a pull request, OwnGit runs the commands in your repository's check file and shows whether each one passed or failed.",
-		ko: "푸시하거나 PR을 열면 OwnGit이 저장소의 체크 파일에 적힌 명령을 실행하고, 각 명령이 통과했는지 실패했는지 보여 줍니다.",
+		ko: "푸시하거나 풀 리퀘스트를 열면 OwnGit이 저장소의 체크 파일에 적힌 명령을 실행하고, 각 명령이 통과했는지 실패했는지 보여 줍니다.",
 	},
 	MsgCCAdvisory: {
 		en: "Results are advice only. They never block a push, a pull request, or a merge.",
-		ko: "결과는 참고용입니다. 푸시, PR, 병합을 막지 않습니다.",
+		ko: "결과는 참고용입니다. 푸시, 풀 리퀘스트, 병합을 막지 않습니다.",
 	},
 	MsgCCManual: {
 		en: "This is separate from the check helper you run yourself. Helper tokens and the results a helper reports are not affected.",
@@ -360,7 +360,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgCCWorkflow: {
 		en: "Checks run only for commits that contain the file .owngit/checks.json. Commit a file like this one, then replace the command with the one you use to test your project.",
-		ko: "체크는 .owngit/checks.json 파일이 들어 있는 커밋에서만 실행됩니다. 아래와 같은 파일을 커밋하고, 명령을 프로젝트를 테스트할 때 쓰는 명령으로 바꾸세요.",
+		ko: "체크는 .owngit/checks.json 파일이 들어 있는 커밋에서만 실행됩니다. 아래와 같은 파일을 커밋하고, 그 안의 명령은 프로젝트를 테스트할 때 쓰는 명령으로 바꾸세요.",
 	},
 
 	// -- status ----------------------------------------------------------
@@ -379,7 +379,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 		ko: "이 설정은 이전 버전에서 복원되어 일부가 빠져 있습니다. 체크를 켜기 전에 다시 저장하세요.",
 	},
 	MsgCCStateEventPush: {en: "Push", ko: "푸시"},
-	MsgCCStateEventPR:   {en: "Pull request", ko: "PR"},
+	MsgCCStateEventPR:   {en: "Pull request", ko: "풀 리퀘스트"},
 	MsgCCConsentOn:      {en: "On: new commits are checked", ko: "켜짐: 새 커밋을 체크합니다"},
 	MsgCCConsentOff:     {en: "Off: nothing runs", ko: "꺼짐: 아무것도 실행하지 않습니다"},
 	MsgCCConsentPaused:  {en: "On, but paused until the check environment works", ko: "켜져 있지만 체크 환경이 준비될 때까지 멈춤"},
@@ -387,11 +387,11 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCRuntimeDown:    {en: "Unavailable", ko: "사용 불가"},
 	MsgCCRuntimeSep: {
 		en: "This is not a check result. Git, pull requests, and merging keep working.",
-		ko: "체크 결과가 아닙니다. Git 사용, PR, 병합은 그대로 동작합니다.",
+		ko: "체크 결과가 아닙니다. Git 사용, 풀 리퀘스트, 병합은 그대로 동작합니다.",
 	},
 	MsgCCRuntimeWork: {
 		en: "OwnGit could not take ownership of its private check workspace.",
-		ko: "OwnGit이 체크 전용 작업 폴더의 소유권을 확보하지 못했습니다.",
+		ko: "OwnGit이 체크 전용 작업 폴더의 소유권을 가져오지 못했습니다.",
 	},
 	MsgCCRuntimeRestart: {
 		en: "OwnGit could not clean up work left by an earlier run.",
@@ -399,7 +399,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgCCRuntimeOther: {
 		en: "OwnGit reported a condition this screen has no words for. The recorded code is shown beside it.",
-		ko: "이 화면이 설명할 수 없는 상태를 보고했습니다. 기록된 코드를 옆에 표시합니다.",
+		ko: "OwnGit이 이 화면에서 설명할 수 없는 상태를 보고했습니다. 기록된 코드를 옆에 표시합니다.",
 	},
 	MsgCCRuntimeRepair: {
 		en: "Fix the cause and restart OwnGit. OwnGit does not retry on its own or run the checks somewhere else.",
@@ -446,15 +446,15 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgCCNextRunner: {
 		en: "Create a runner token and start a runner on the computer that should run the checks.",
-		ko: "러너 토큰을 만들고, 체크를 실행할 컴퓨터에서 러너를 시작하세요.",
+		ko: "러너 토큰을 만들고 체크를 실행할 컴퓨터에서 러너를 시작하세요.",
 	},
 	MsgCCNextNone: {
 		en: "Nothing. Checks run on the next matching push or pull request.",
-		ko: "없습니다. 조건에 맞는 다음 푸시나 PR에서 체크가 실행됩니다.",
+		ko: "없습니다. 조건에 맞는 다음 푸시나 풀 리퀘스트에서 체크가 실행됩니다.",
 	},
 	MsgCCNextContainerStart: {
 		en: "If Docker is running on this computer and the image is already pulled, checks run on the next matching push or pull request. OwnGit can only tell when a job starts, and a job that cannot use Docker is recorded as unavailable.",
-		ko: "이 컴퓨터에서 Docker가 실행 중이고 이미지를 미리 받아 두었다면, 조건에 맞는 다음 푸시나 PR에서 체크가 실행됩니다. OwnGit은 작업을 시작할 때에만 이를 알 수 있으며, Docker를 쓸 수 없는 작업은 사용 불가로 기록됩니다.",
+		ko: "이 컴퓨터에서 Docker가 실행 중이고 이미지를 미리 받아 두었다면 조건에 맞는 다음 푸시나 풀 리퀘스트에서 체크가 실행됩니다. OwnGit은 작업을 시작할 때에만 이를 알 수 있으며, Docker를 쓸 수 없는 작업은 사용 불가로 기록됩니다.",
 	},
 	MsgCCNextContainerFailed: {
 		en: "The last container check could not run. Open that job in the list below to see why. If the cause was Docker or the image, fix it, then run the job again from its page.",
@@ -462,7 +462,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgCCNextUnknown: {
 		en: "Could not determine the next step for the selected place.",
-		ko: "선택한 실행 위치에 대한 다음 할 일을 확인할 수 없습니다.",
+		ko: "선택한 실행 위치에서 다음에 할 일을 알 수 없습니다.",
 	},
 	MsgCCNextFileUnknown: {
 		en: "Could not determine. OwnGit could not read the check file on the default branch, so it cannot tell whether checks will run. Reload this page to try again.",
@@ -474,7 +474,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgCCNextRunnerStart: {
 		en: "If no runner is running yet, start one on the other computer with a runner token from this repository. OwnGit cannot see whether a runner is running, and checks run only while one is connected.",
-		ko: "아직 러너를 시작하지 않았다면, 이 저장소의 러너 토큰으로 다른 컴퓨터에서 러너를 시작하세요. OwnGit은 러너가 실행 중인지 알 수 없으며, 체크는 러너가 연결되어 있을 때만 실행됩니다.",
+		ko: "아직 러너를 시작하지 않았다면 이 저장소의 러너 토큰으로 다른 컴퓨터에서 러너를 시작하세요. OwnGit은 러너가 실행 중인지 알 수 없으며, 체크는 러너가 연결되어 있을 때만 실행됩니다.",
 	},
 
 	// -- steps -----------------------------------------------------------
@@ -497,7 +497,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCExecCont: {en: "A Docker container on this computer", ko: "이 컴퓨터의 Docker 컨테이너"},
 	MsgCCExecContHelp: {
 		en: "Commands run inside a Docker image you choose, as a non-administrator user, with limits on CPU, memory, and processes. Only the commit's files are shared with the container. How much this restricts a command depends on your Docker setup and the image.",
-		ko: "직접 고른 Docker 이미지 안에서 관리자가 아닌 사용자로 실행하며, CPU, 메모리, 프로세스 수를 제한합니다. 컨테이너에는 해당 커밋의 파일만 공유됩니다. 실제로 얼마나 제한되는지는 Docker 설정과 이미지에 달려 있습니다.",
+		ko: "직접 고른 Docker 이미지 안에서 관리자가 아닌 사용자로 실행하며, CPU, 메모리, 프로세스 수를 제한합니다. 컨테이너와는 해당 커밋의 파일만 공유합니다. 실제로 얼마나 제한되는지는 Docker 설정과 이미지에 달려 있습니다.",
 	},
 	MsgCCExecRunner: {en: "Another computer (runner)", ko: "다른 컴퓨터 (러너)"},
 	MsgCCExecRunnerHelp: {
@@ -524,10 +524,10 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 
 	MsgCCEventPush: {en: "After a push", ko: "푸시한 뒤"},
-	MsgCCEventPR:   {en: "When a pull request is opened or updated", ko: "PR을 열거나 업데이트할 때"},
+	MsgCCEventPR:   {en: "When a pull request is opened or updated", ko: "풀 리퀘스트를 열거나 업데이트할 때"},
 	MsgCCEventsHelp: {
 		en: "Choose at least one. The check file has to turn on the same event, and it can narrow it to certain branches.",
-		ko: "하나 이상 고르세요. 체크 파일에도 같은 이벤트가 켜져 있어야 하며, 체크 파일에서 특정 브랜치로 좁힐 수 있습니다.",
+		ko: "하나 이상 고르세요. 체크 파일에도 같은 이벤트가 켜져 있어야 하며 체크 파일에서 특정 브랜치로 좁힐 수 있습니다.",
 	},
 
 	// -- the check file ------------------------------------------------
@@ -539,7 +539,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCFileKeyVersion: {en: "Always 1.", ko: "항상 1입니다."},
 	MsgCCFileKeyEvents: {
 		en: "When to run. push runs after a push, and pull_request runs when a pull request is opened or updated. Leave one out to skip it.",
-		ko: "언제 실행할지 정합니다. push는 푸시한 뒤, pull_request는 PR을 열거나 업데이트할 때 실행합니다. 필요 없는 항목은 빼세요.",
+		ko: "언제 실행할지 정합니다. push는 푸시한 뒤, pull_request는 풀 리퀘스트를 열거나 업데이트할 때 실행합니다. 필요 없는 항목은 빼세요.",
 	},
 	MsgCCFileKeyBranches: {
 		en: "Optional, inside an event. For example {\"branches\": [\"main\"]} runs only for main. A name ending in * matches every branch that starts with it.",
@@ -551,7 +551,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgCCFileKeyChecks: {
 		en: "The commands to run, each with a short name. Each command runs in a copy of the commit's files, and it passes when it exits with code 0.",
-		ko: "실행할 명령 목록이며 각각 짧은 이름을 붙입니다. 명령은 커밋 파일의 복사본에서 실행되며, 종료 코드 0으로 끝나면 통과입니다.",
+		ko: "실행할 명령 목록이며 각각 짧은 이름을 붙입니다. 명령은 커밋 파일의 복사본에서 실행되며 종료 코드 0으로 끝나면 통과입니다.",
 	},
 
 	// -- limits ----------------------------------------------------------
@@ -569,12 +569,12 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCTimeout: {en: "Longest time a check may run", ko: "체크당 최대 실행 시간"},
 	MsgCCTimeoutHelp: {
 		en: "A check gets 10 minutes unless its check file asks for a different time under limits, and never more than this.",
-		ko: "체크 파일의 limits에서 다른 시간을 요청하지 않으면 체크마다 10분이 주어지며, 이 값을 넘지 않습니다.",
+		ko: "체크 파일의 limits에서 다른 시간을 요청하지 않으면 체크마다 10분이 주어지며 이 값을 넘지 않습니다.",
 	},
 	MsgCCOutput: {en: "Most output a check may keep", ko: "체크당 최대 보관 출력"},
 	MsgCCOutputHelp: {
 		en: "A check keeps 64 KB of output unless its check file asks for more under limits, and never more than this. Output past the limit is cut off, and the result says so.",
-		ko: "체크 파일의 limits에서 더 요청하지 않으면 체크마다 출력을 64 KB까지 보관하며, 이 값을 넘지 않습니다. 한도를 넘는 출력은 잘리며, 결과에 그 사실을 표시합니다.",
+		ko: "체크 파일의 limits에서 더 요청하지 않으면 체크마다 출력을 64 KB까지 보관하며 이 값을 넘지 않습니다. 한도를 넘는 출력은 잘리며 결과에 그 사실을 표시합니다.",
 	},
 	MsgCCQueue: {en: "Unfinished jobs allowed", ko: "쌓아 둘 수 있는 미완료 작업"},
 	MsgCCQueueHelp: {
@@ -679,11 +679,11 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCDisable: {en: "Turn checks off", ko: "체크 끄기"},
 	MsgCCDisableHelp: {
 		en: "No new jobs start. Jobs already running are asked to stop, and OwnGit reports only what it can confirm.",
-		ko: "새 작업을 시작하지 않습니다. 실행 중인 작업에는 중지를 요청하며, OwnGit은 확인된 사실만 보고합니다.",
+		ko: "새 작업을 시작하지 않습니다. 실행 중인 작업에는 중지를 요청하며 OwnGit은 확인된 사실만 보고합니다.",
 	},
 	MsgCCPasswordEach: {
 		en: "Changing check settings is a security change, so OwnGit asks for the administrator password every time, even when you are signed in.",
-		ko: "체크 설정 변경은 보안 설정이라 로그인한 상태여도 매번 관리자 비밀번호를 확인합니다.",
+		ko: "체크 설정은 보안 설정이라 로그인한 상태에서도 바꿀 때마다 관리자 비밀번호를 묻습니다.",
 	},
 	MsgCCEnableBlocked: {
 		en: "Save the settings in step 4 first.",
@@ -698,12 +698,12 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCJobsTitle: {en: "Recent jobs", ko: "최근 작업"},
 	MsgCCJobsHelp: {
 		en: "Each job names the exact commit it was pinned to and the mode that actually applied to it.",
-		ko: "각 작업은 어떤 커밋에 고정되었는지와 실제로 적용된 실행 모드를 함께 기록합니다.",
+		ko: "각 작업에는 고정된 커밋과 실제로 적용된 실행 모드가 함께 기록됩니다.",
 	},
 	MsgCCJobsNone: {en: "No job has been recorded for this repository.", ko: "이 저장소에 기록된 작업이 없습니다."},
 	MsgCCJobsNoneHelp: {
 		en: "A job appears after a matching push or pull request, once the check file is committed and checks are on.",
-		ko: "체크 파일이 커밋되고 체크가 켜진 뒤, 조건에 맞는 푸시나 PR이 있으면 작업이 나타납니다.",
+		ko: "체크 파일을 커밋하고 체크를 켠 뒤 조건에 맞는 푸시나 풀 리퀘스트가 생기면 작업이 나타납니다.",
 	},
 	MsgCCJobsUnavailable: {
 		en: "The job records could not be read, so this list is not a statement that no job exists.",
@@ -751,7 +751,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCJobStarted:    {en: "Started", ko: "시작"},
 	MsgCCJobFinished:   {en: "Finished", ko: "종료"},
 	MsgCCJobIdentifier: {en: "Job", ko: "작업"},
-	MsgCCJobPR:         {en: "Pull request", ko: "PR"},
+	MsgCCJobPR:         {en: "Pull request", ko: "풀 리퀘스트"},
 	MsgCCJobCommands:   {en: "Commands", ko: "명령"},
 	MsgCCJobNoAttempt: {
 		en: "No run was registered for this job.",
@@ -783,12 +783,12 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCJobStateInterrupted: {en: "Interrupted before start", ko: "시작 전에 중단됨"},
 
 	MsgCCTriggerPush: {en: "Push", ko: "푸시"},
-	MsgCCTriggerPR:   {en: "Pull request", ko: "PR"},
+	MsgCCTriggerPR:   {en: "Pull request", ko: "풀 리퀘스트"},
 
 	MsgCCCancel: {en: "Cancel", ko: "취소"},
 	MsgCCCancelHelp: {
 		en: "Records a cancellation. OwnGit reports what it can actually confirm about stopping the work.",
-		ko: "취소를 기록합니다. 작업 중지에 대해서는 실제로 확인된 사실만 보고합니다.",
+		ko: "취소를 기록합니다. 작업이 멈췄는지는 실제로 확인한 사실만 보고합니다.",
 	},
 	MsgCCRerun: {en: "Run again", ko: "다시 실행"},
 	MsgCCRerunHelp: {
@@ -804,7 +804,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgRTScope: {
 		en: "A token works only for this repository and only for claiming and reporting configured-check work. You can revoke it at any time.",
-		ko: "이 토큰은 이 저장소의 설정된 체크 작업을 가져가고 결과를 보고할 때만 쓸 수 있습니다. 언제든 취소할 수 있습니다.",
+		ko: "이 토큰은 이 저장소에 설정한 체크 작업을 가져가고 결과를 보고할 때만 쓸 수 있습니다. 언제든 취소할 수 있습니다.",
 	},
 	MsgRTNotPassword: {
 		en: "A token is not a password and not a repository sign-in. It cannot change settings, read other repositories, or act as an administrator.",
@@ -830,7 +830,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgRTRevoke: {en: "Revoke", ko: "취소"},
 	MsgRTRevHelp: {
 		en: "The runner stops being able to claim or report with it. An unstarted claim is interrupted; results already recorded stay.",
-		ko: "러너는 이 토큰으로 작업을 가져가거나 보고할 수 없게 됩니다. 아직 시작하지 않은 점유는 중단되고, 이미 기록된 결과는 남습니다.",
+		ko: "러너는 이 토큰으로 작업을 가져가거나 결과를 보고할 수 없게 됩니다. 가져갔지만 아직 시작하지 않은 작업은 중단되고 이미 기록된 결과는 남습니다.",
 	},
 	MsgRTActive:    {en: "Active", ko: "사용 중"},
 	MsgRTRevoked:   {en: "Revoked", ko: "취소됨"},
@@ -844,7 +844,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgRTTokenTitle: {en: "Copy this now", ko: "지금 토큰을 복사하세요"},
 	MsgRTTokenOnce: {
 		en: "This is the only time OwnGit shows this token. It keeps only a verifier, so leaving this page loses the value for good.",
-		ko: "OwnGit이 이 토큰을 보여주는 것은 이번 한 번뿐입니다. 검증용 값만 저장하므로 이 화면을 떠나면 값은 복구할 수 없습니다.",
+		ko: "OwnGit은 이 토큰을 지금 한 번만 보여 줍니다. 검증용 값만 저장하므로 이 화면을 떠나면 토큰 값을 되찾을 수 없습니다.",
 	},
 	MsgRTTokenLabel: {en: "Runner token", ko: "러너 토큰"},
 	MsgRTTokenStore: {
@@ -867,7 +867,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgRTConnectNoSvc: {
 		en: "OwnGit does not install a service or start a runner for you.",
-		ko: "OwnGit이 서비스를 설치하거나 러너를 대신 실행하지 않습니다.",
+		ko: "OwnGit은 서비스를 설치하거나 러너를 대신 실행하지 않습니다.",
 	},
 
 	// -- results ---------------------------------------------------------
@@ -898,7 +898,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	// leave the reader expecting the outcome to change.
 	MsgCCJobAlreadyFinished: {
 		en: "This job had already finished, so the request was recorded but no result changed.",
-		ko: "이 작업은 이미 끝난 상태여서 요청만 기록되고 결과는 바뀌지 않았습니다.",
+		ko: "이 작업은 이미 끝나서 요청만 기록했고 결과는 바뀌지 않았습니다.",
 	},
 	MsgCCJobRerunQueued: {
 		en: "A new job was queued for the same commit.",
@@ -951,7 +951,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	// other numeric limit.
 	MsgCCTotalBytesRange: {
 		en: "The total must be at least the largest file size above it, and within the range shown with this field.",
-		ko: "전체 파일 크기는 위의 가장 큰 파일 크기 이상이며, 이 항목에 안내된 범위 안이어야 합니다.",
+		ko: "전체 파일 크기는 위의 가장 큰 파일 크기 이상이며 이 항목에 안내된 범위 안이어야 합니다.",
 	},
 	MsgCCFieldRequired: {en: "This field is required.", ko: "이 항목은 필수입니다."},
 	MsgCCFieldUnknown: {
@@ -960,7 +960,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgCCFieldFormat: {
 		en: "This value is not written in an accepted form.",
-		ko: "허용되는 형식으로 작성된 값이 아닙니다.",
+		ko: "허용하는 형식의 값이 아닙니다.",
 	},
 	MsgCCFieldNotApplicable: {
 		en: "This setting applies only to a Docker container. Clear it or choose the container under \"Where checks run\".",

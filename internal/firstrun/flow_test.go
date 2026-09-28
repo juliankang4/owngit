@@ -257,7 +257,7 @@ func TestLanguageCanBeSwitchedWithL(t *testing.T) {
 	h := newHarness(t, "127.0.0.1:7654", Tailscale{})
 	h.run("1\r", "l\r", "ㅣ\r")
 	out := h.out.String()
-	if !strings.Contains(out, "[L] English") || strings.Count(out, "+- Set up OwnGit ") != 2 || !strings.Contains(out, "+- OwnGit 설치 ") {
+	if !strings.Contains(out, "[L] English") || strings.Count(out, "+- Set up OwnGit ") != 2 || !strings.Contains(out, "+- OwnGit 설정 ") {
 		t.Fatalf("language switch output:\n%s", out)
 	}
 }

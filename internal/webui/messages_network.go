@@ -57,7 +57,7 @@ var networkCatalog = map[MessageCode]message{
 	},
 	MsgNetCurrentOpt: {
 		en: "Apart from the values given as start options, the running server uses the saved settings.",
-		ko: "시작 옵션으로 준 값을 빼면 실행 중인 서버가 저장된 설정을 쓰고 있습니다.",
+		ko: "시작 옵션으로 준 값 말고는 실행 중인 서버가 저장된 설정을 쓰고 있습니다.",
 	},
 	MsgNetRestart: {
 		en: "Saved changes are waiting. Restart OwnGit to apply them.",
@@ -105,7 +105,7 @@ var networkCatalog = map[MessageCode]message{
 
 	MsgNetProxiesHelp: {
 		en: "Reverse proxies whose forwarded headers OwnGit believes, one IP address or range per line, such as %s. Leave it empty when no proxy sits in front of OwnGit.",
-		ko: "OwnGit이 전달 헤더를 믿을 리버스 프록시를 한 줄에 하나씩 적습니다. IP 주소나 범위를 씁니다. 예: %s. OwnGit 앞에 프록시가 없으면 비워 두세요.",
+		ko: "OwnGit이 전달 헤더를 믿을 리버스 프록시의 IP 주소나 범위를 한 줄에 하나씩 적습니다. 예: %s. OwnGit 앞에 프록시가 없으면 비워 두세요.",
 	},
 
 	MsgNetPlainHTTP: {
@@ -114,7 +114,7 @@ var networkCatalog = map[MessageCode]message{
 	},
 	MsgNetNeedsName: {
 		en: "OwnGit will listen on every network, but no name for other devices is saved. Add the address other devices use or an allowed name, or they will be refused.",
-		ko: "OwnGit이 모든 네트워크에서 연결을 받지만 다른 기기가 쓸 이름이 저장되어 있지 않습니다. 다른 기기가 쓰는 주소나 허용할 이름을 추가하지 않으면 다른 기기의 접속은 거부됩니다.",
+		ko: "OwnGit이 모든 네트워크에서 연결을 받게 되지만 다른 기기가 쓸 이름이 저장되어 있지 않습니다. 다른 기기가 쓰는 주소나 허용할 이름을 추가하지 않으면 다른 기기의 접속은 거부됩니다.",
 	},
 	MsgNetHTTPSProxy: {
 		en: "The address other devices use starts with https, but no reverse proxy is trusted. Add the proxy's address under Trusted proxies so that OwnGit treats requests through it as HTTPS.",
@@ -122,7 +122,7 @@ var networkCatalog = map[MessageCode]message{
 	},
 	MsgNetAckHelp: {
 		en: "Needed only when this computer's address reaches other devices, because they would connect over plain HTTP.",
-		ko: "이 컴퓨터의 주소가 다른 기기에서 접속할 수 있는 주소일 때만 필요합니다. 그 기기들은 일반 HTTP로 접속하기 때문입니다.",
+		ko: "이 컴퓨터의 주소로 다른 기기가 접속할 수 있을 때만 필요합니다. 그 기기들은 일반 HTTP로 접속하기 때문입니다.",
 	},
 	MsgNetChange: {en: "Change network settings", ko: "네트워크 설정 바꾸기"},
 	MsgNetSave:   {en: "Save network settings", ko: "네트워크 설정 저장"},
@@ -137,7 +137,7 @@ var networkCatalog = map[MessageCode]message{
 
 	MsgNetSaved: {
 		en: "Network settings saved. They apply the next time OwnGit starts; the running server is unchanged.",
-		ko: "네트워크 설정을 저장했습니다. OwnGit을 다음에 시작할 때 적용되며, 실행 중인 서버는 바뀌지 않았습니다.",
+		ko: "네트워크 설정을 저장했습니다. OwnGit을 다음에 시작할 때 적용되며 실행 중인 서버는 바뀌지 않았습니다.",
 	},
 	MsgNetStale: {
 		en: "The network settings changed after this page was opened. Check the current values below and save again.",

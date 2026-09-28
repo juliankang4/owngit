@@ -8,25 +8,25 @@ import (
 
 // Terminal wording. Sentences that the web setup page also shows come from
 // the web catalog (webui.Text) so the two stay the same; these are the
-// sentences only the terminal needs. Korean uses 설치 for the process and 설정
-// for the state (아직 설정되지 않았습니다).
+// sentences only the terminal needs. Korean calls first-run setup 설정, as the
+// web setup page and the Korean docs do; 설치 means installing software.
 type phrase struct{ en, ko string }
 
 var phrases = map[string]phrase{
 	"subtitle":      {"First-run setup", "처음 설정"},
-	"start_title":   {"Set up OwnGit", "OwnGit 설치"},
-	"start_help":    {"OwnGit is running but has not been set up yet. Choose where to answer the setup questions.", "OwnGit은 실행 중이지만 아직 설정되지 않았습니다. 설치 질문에 어디서 답할지 고르세요."},
+	"start_title":   {"Set up OwnGit", "OwnGit 설정"},
+	"start_help":    {"OwnGit is running but has not been set up yet. Choose where to answer the setup questions.", "OwnGit은 실행 중이지만 아직 설정을 마치지 않았습니다. 설정 질문에 어디서 답할지 고르세요."},
 	"opt_term":      {"Continue in this terminal", "이 터미널에서 계속"},
 	"opt_term_help": {"Answer a few questions here. Passwords stay hidden as you type.", "여기서 몇 가지 질문에 답합니다. 비밀번호는 입력해도 화면에 나타나지 않습니다."},
 	"opt_web":       {"Open the web dashboard", "웹 대시보드 열기"},
-	"opt_web_help":  {"Approve your browser here, then continue setup in the browser.", "이 터미널에서 브라우저를 승인한 뒤 브라우저에서 설치를 이어 갑니다."},
+	"opt_web_help":  {"Approve your browser here, then continue setup in the browser.", "이 터미널에서 브라우저를 승인한 뒤 브라우저에서 설정을 이어 갑니다."},
 	"lang_other":    {"한국어", "English"},
 	"choice":        {"Choice", "선택"},
 	"choice_bad":    {"Enter a number from 1 to {n}.", "1부터 {n}까지의 번호를 입력하세요."},
 	"yn_bad":        {"Enter y or n.", "y 또는 n을 입력하세요."},
 	"suggested":     {"Suggested", "제안"},
 
-	"storage_help":    {"OwnGit creates repositories inside this folder and leaves existing files alone.", "OwnGit은 이 폴더 안에 저장소를 만들고, 폴더에 있던 파일은 그대로 둡니다."},
+	"storage_help":    {"OwnGit creates repositories inside this folder and leaves existing files alone.", "OwnGit은 이 폴더 안에 저장소를 만들고 폴더에 있던 파일은 그대로 둡니다."},
 	"storage_default": {"Type a full path, or press Enter to use the suggested folder.", "전체 경로를 입력하세요. Enter만 누르면 제안한 폴더를 씁니다."},
 	"storage_field":   {"Folder", "폴더"},
 	"storage_ok":      {"OwnGit can use this folder.", "이 폴더를 쓸 수 있습니다."},
@@ -44,7 +44,7 @@ var phrases = map[string]phrase{
 	"conn_need_saved": {"Confirm that you understand OwnGit is not encrypting this connection. This address comes from the saved network settings. To keep OwnGit on this computer only, press Ctrl-C, run the command below, and start OwnGit again.", "OwnGit이 이 연결을 암호화하지 않는다는 점을 확인해 주세요. 이 주소는 저장된 네트워크 설정에서 왔습니다. 이 컴퓨터에서만 쓰려면 Ctrl-C로 멈춘 뒤 아래 명령을 실행하고 OwnGit을 다시 시작하세요."},
 
 	"review_title": {"Review", "설정 확인"},
-	"review_help":  {"Nothing is saved until you choose Finish setup.", "설치 완료를 고르기 전에는 아무것도 저장하지 않습니다."},
+	"review_help":  {"Nothing is saved until you choose Finish setup.", "설정 완료를 고르기 전에는 아무것도 저장하지 않습니다."},
 	"row_access":   {"Access", "접근"},
 	"row_conn":     {"Connection", "연결"},
 	"val_entered":  {"entered", "입력함"},
@@ -52,31 +52,31 @@ var phrases = map[string]phrase{
 	"val_local":    {"this computer only", "이 컴퓨터에서만"},
 	"start_over":   {"Start over", "처음부터 다시"},
 
-	"done_title": {"Setup complete", "설치를 마쳤습니다"},
+	"done_title": {"Setup complete", "설정을 마쳤습니다"},
 	"done_dash":  {"Dashboard", "대시보드"},
 	"done_other": {"Other devices", "다른 기기에서"},
 	"done_next":  {"Create your first repository when you are ready.", "준비되면 첫 저장소를 만드세요."},
 	"done_log":   {"OwnGit keeps running. The server log continues below.", "OwnGit은 계속 실행됩니다. 아래로 서버 로그가 이어집니다."},
 
-	"web_title":      {"Browser setup", "브라우저에서 설치"},
+	"web_title":      {"Browser setup", "브라우저에서 설정"},
 	"web_open":       {"Opening {url} in your browser. If nothing opens, visit that address on this computer.", "브라우저에서 {url} 주소를 엽니다. 열리지 않으면 이 컴퓨터에서 그 주소로 접속하세요."},
 	"web_visit":      {"Visit {url} in a browser on this computer.", "이 컴퓨터의 브라우저에서 {url} 주소로 접속하세요."},
 	"web_wait":       {"Waiting for the browser.", "브라우저를 기다리는 중입니다."},
-	"web_switch":     {"Press T to set up here instead.", "여기서 설치하려면 T를 누르세요."},
-	"web_req":        {"A browser wants to set up OwnGit", "브라우저가 OwnGit 설치를 요청했습니다"},
+	"web_switch":     {"Press T to set up here instead.", "여기서 설정하려면 T를 누르세요."},
+	"web_req":        {"A browser wants to set up OwnGit", "브라우저가 OwnGit 설정을 요청했습니다"},
 	"web_from":       {"From", "보낸 곳"},
 	"web_this":       {"this computer", "이 컴퓨터"},
 	"web_other_dev":  {"another device", "다른 기기"},
 	"web_remote":     {"This request comes from another device. Approve it only if you are using that device yourself.", "다른 기기에서 온 요청입니다. 그 기기를 직접 쓰고 있을 때만 승인하세요."},
 	"web_compare":    {"Approve only if your browser shows this same code.", "브라우저에 이 코드와 같은 코드가 보일 때만 승인하세요."},
-	"web_replaces":   {"Approving ends the setup already open in the browser you approved before.", "승인하면 앞서 승인한 브라우저에서 진행 중인 설치가 끝납니다."},
+	"web_replaces":   {"Approving ends the setup already open in the browser you approved before.", "승인하면 앞서 승인한 브라우저에서 진행 중인 설정이 끝납니다."},
 	"web_q":          {"Approve this browser?", "이 브라우저를 승인할까요?"},
-	"web_rejected":   {"Rejected. That browser cannot continue setup. Waiting for another request.", "거절했습니다. 그 브라우저로는 설치를 이어 갈 수 없습니다. 다른 요청을 기다립니다."},
+	"web_rejected":   {"Rejected. That browser cannot continue setup. Waiting for another request.", "거절했습니다. 그 브라우저로는 설정을 이어 갈 수 없습니다. 다른 요청을 기다립니다."},
 	"web_gone":       {"That request is no longer waiting. Waiting for another request.", "그 요청은 이제 기다리고 있지 않습니다. 다른 요청을 기다립니다."},
 	"web_approved":   {"Approved. Continue in the browser.", "승인했습니다. 브라우저에서 계속하세요."},
-	"web_finishing":  {"Waiting for the browser to finish setup.", "브라우저에서 설치를 마치기를 기다리는 중입니다."},
+	"web_finishing":  {"Waiting for the browser to finish setup.", "브라우저에서 설정을 마칠 때까지 기다리는 중입니다."},
 	"web_progress":   {"Answers received from the browser:", "브라우저에서 받은 답:"},
-	"done_elsewhere": {"Setup was finished in a browser.", "브라우저에서 설치를 마쳤습니다."},
+	"done_elsewhere": {"Setup was finished in a browser.", "브라우저에서 설정을 마쳤습니다."},
 
 	"dev_title":    {"Other devices", "다른 기기에서 접속"},
 	"dev_found":    {"Tailscale is running on this computer.", "이 컴퓨터에서 Tailscale이 실행 중입니다."},
@@ -84,14 +84,14 @@ var phrases = map[string]phrase{
 	"dev_stopped":  {"Tailscale is installed but not running.", "Tailscale이 설치되어 있지만 실행 중이 아닙니다."},
 	"dev_addr":     {"Tailscale address", "Tailscale 주소"},
 	"dev_name":     {"MagicDNS name", "MagicDNS 이름"},
-	"dev_how":      {"To use OwnGit from your other Tailscale devices, save these network settings with the command below, then restart OwnGit after setup. You can change them later in Settings, under Network.", "다른 Tailscale 기기에서 OwnGit을 쓰려면 아래 명령으로 네트워크 설정을 저장하고, 설치를 마친 뒤 OwnGit을 다시 시작하세요. 나중에 설정 화면의 \"네트워크\"에서 바꿀 수도 있습니다."},
+	"dev_how":      {"To use OwnGit from your other Tailscale devices, save these network settings with the command below, then restart OwnGit after setup. You can change them later in Settings, under Network.", "다른 Tailscale 기기에서 OwnGit을 쓰려면 아래 명령으로 네트워크 설정을 저장하고, 설정을 마친 뒤 OwnGit을 다시 시작하세요. 나중에 설정 화면의 \"네트워크\"에서 바꿀 수도 있습니다."},
 	"dev_enc":      {"Tailscale encrypts the connection between devices, but OwnGit still reports plain HTTP because it cannot see that protection.", "Tailscale이 기기 사이의 연결을 암호화하지만, OwnGit은 그 보호를 확인할 수 없어 계속 일반 HTTP로 표시합니다."},
 	"dev_docs":     {`See "Reaching the server from another device" in the OwnGit docs.`, `OwnGit 문서의 "다른 기기에서 서버에 접속하기"를 보세요.`},
 	"dev_cmd":      {"Command that saves the settings (one line, copy all of it):", "설정을 저장하는 명령 (한 줄 전체를 복사하세요):"},
 	"dev_service":  {`Saved settings also apply when OwnGit runs as a background service. Leave --listen and --base-url out of the service definition, because an option there replaces the saved value. See "Options for a background service" in the OwnGit docs.`, `OwnGit을 백그라운드 서비스로 실행해도 저장된 설정이 적용됩니다. 서비스 정의에 --listen이나 --base-url 옵션이 있으면 저장된 값 대신 옵션 값을 쓰므로 빼 두세요. OwnGit 문서의 "백그라운드 서비스의 옵션"을 보세요.`},
 	"dev_continue": {"Press Enter to continue", "계속하려면 Enter를 누르세요"},
 
-	"stop_title":  {"Setup stopped", "설치를 멈췄습니다"},
+	"stop_title":  {"Setup stopped", "설정을 멈췄습니다"},
 	"stop_body":   {"Nothing was saved. OwnGit is still not set up.", "저장한 내용은 없습니다. OwnGit은 아직 설정되지 않은 상태입니다."},
 	"stop_resume": {"To continue, run owngit serve again.", "이어서 하려면 owngit serve를 다시 실행하세요."},
 }

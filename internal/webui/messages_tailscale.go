@@ -389,7 +389,7 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 	MsgTSTitle: {en: "Share on your tailnet over HTTPS", ko: "tailnet에서 HTTPS로 공유"},
 	MsgTSIntro: {
 		en: "Other devices signed in to your tailnet can open OwnGit and clone over HTTPS at this computer's Tailscale name. Tailscale on this computer holds the certificate and encrypts the connection.",
-		ko: "tailnet에 로그인한 다른 기기에서 이 컴퓨터의 Tailscale 이름으로 OwnGit을 열고 HTTPS로 클론할 수 있습니다. 인증서는 이 컴퓨터의 Tailscale이 관리하고, 연결도 Tailscale이 암호화합니다.",
+		ko: "tailnet에 로그인한 다른 기기에서 이 컴퓨터의 Tailscale 이름으로 OwnGit을 열고 HTTPS로 클론할 수 있습니다. 인증서는 이 컴퓨터의 Tailscale이 관리하고 연결도 Tailscale이 암호화합니다.",
 	},
 	MsgTSOff:     {en: "Off.", ko: "꺼져 있습니다."},
 	MsgTSReady:   {en: "On. Encrypted by Tailscale on this computer.", ko: "켜져 있습니다. 이 컴퓨터의 Tailscale이 암호화합니다."},
@@ -469,7 +469,7 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 	MsgTSTurnedOff: {en: "Sharing on the tailnet is off.", ko: "tailnet 공유를 껐습니다."},
 	"settings.tailscale.off_away": {
 		en: "This page was opened through the tailnet address, which no longer reaches OwnGit, so other pages will not load from here.",
-		ko: "이 페이지는 tailnet 주소로 열렸고, 이 주소로는 더 이상 OwnGit에 접속할 수 없습니다. 그래서 여기서 다른 페이지를 열 수 없습니다.",
+		ko: "이 페이지는 tailnet 주소로 열렸고 이 주소로는 더 이상 OwnGit에 접속할 수 없습니다. 그래서 여기서 다른 페이지를 열 수 없습니다.",
 	},
 	"settings.tailscale.off_local": {
 		en: "On the computer where OwnGit runs, open it at",

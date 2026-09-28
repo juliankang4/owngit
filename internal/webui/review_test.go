@@ -425,7 +425,7 @@ func TestWelcomeIntroDoesNotClaimTheReaderUsedTheLink(t *testing.T) {
 		// which is the reason the owner must not share it.
 		for _, part := range map[Lang][]string{
 			LangEN: {"one-time setup link", "cannot be reused"},
-			LangKO: {"1회용 설치 링크", "다시 쓸 수 없습니다"},
+			LangKO: {"1회용 설정 링크", "다시 쓸 수 없습니다"},
 		}[lang] {
 			if !strings.Contains(intro, part) {
 				t.Errorf("%s: the introduction no longer explains %q: %q", lang, part, intro)

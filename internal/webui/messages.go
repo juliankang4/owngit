@@ -498,7 +498,7 @@ var catalog = map[MessageCode]message{
 	// -- setup ---------------------------------------------------------
 	MsgSetupWelcomeTitle: {
 		en: "Set up OwnGit",
-		ko: "OwnGit 설치 시작",
+		ko: "OwnGit 처음 설정",
 	},
 	// This is the page's static introduction, rendered before anything has
 	// been checked. The code lives in the URL fragment, which the browser
@@ -508,19 +508,19 @@ var catalog = map[MessageCode]message{
 	// held-code and missing-code notices below say which case applies.
 	MsgSetupWelcomeBody: {
 		en: "Use the one-time setup link to configure this installation. Starting setup uses the link so it cannot be reused.",
-		ko: "이 설치를 구성하려면 1회용 설치 링크를 사용하세요. 설치를 시작하면 링크가 사용 처리되어 다시 쓸 수 없습니다.",
+		ko: "1회용 설정 링크로 이 서버를 설정하세요. 설정을 시작하면 링크를 쓴 것으로 처리하므로 다시 쓸 수 없습니다.",
 	},
 	MsgSetupWelcomeSecretHeld: {
 		en: "The link code was removed from the address bar and is kept only in this page until you start.",
-		ko: "링크의 코드는 주소창에서 지웠고, 설치를 시작할 때까지 이 페이지 안에만 보관합니다.",
+		ko: "링크의 코드는 주소창에서 지웠고 설정을 시작할 때까지 이 페이지에만 보관합니다.",
 	},
 	MsgSetupStart: {
 		en: "Start setup",
-		ko: "설치 시작",
+		ko: "설정 시작",
 	},
 	MsgSetupMissingToken: {
 		en: "This page has no setup code. Open the one-time link the installer gave you.",
-		ko: "이 페이지에 설치 코드가 없습니다. 설치할 때 받은 1회용 링크로 다시 열어 주세요.",
+		ko: "이 페이지에 설정 코드가 없습니다. 설치 프로그램이 알려 준 1회용 링크로 다시 여세요.",
 	},
 	// The code lives in the URL fragment, which a browser never sends to the
 	// server. Only a script in the page can read it, so the server cannot know
@@ -532,7 +532,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupWizardTitle: {
 		en: "Configure this installation",
-		ko: "설치 설정",
+		ko: "OwnGit 설정하기",
 	},
 	MsgSetupWizardBody: {
 		en: "Choose where repositories are stored and how people reach them. You can change access settings later.",
@@ -544,11 +544,11 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupStorageHelp: {
 		en: "Repositories are created inside this folder. Existing files in it are left alone.",
-		ko: "저장소는 이 폴더 안에 만들어집니다. 폴더에 이미 있던 파일은 건드리지 않습니다.",
+		ko: "OwnGit은 이 폴더 안에 저장소를 만들고 폴더에 있던 파일은 그대로 둡니다.",
 	},
 	MsgSetupStorageLocal: {
 		en: "The folder can be on this computer's disk or on a mounted SMB or NFS share, as long as only one OwnGit uses it at a time. Settings and the database always stay on this computer.",
-		ko: "이 컴퓨터의 디스크나 마운트한 SMB 또는 NFS 공유 폴더를 쓸 수 있습니다. 단, 한 번에 하나의 OwnGit만 그 폴더를 써야 합니다. 설정과 데이터베이스는 항상 이 컴퓨터에 보관합니다.",
+		ko: "이 컴퓨터의 디스크나 마운트한 SMB 또는 NFS 공유 폴더를 쓸 수 있습니다. 단, 한 번에 OwnGit 하나만 그 폴더를 써야 합니다. 설정과 데이터베이스는 항상 이 컴퓨터에 보관합니다.",
 	},
 	MsgSetupStorageMissing: {
 		en: "Enter the folder where repositories should be stored.",
@@ -564,15 +564,15 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupStorageDeniedGive: {
 		en: "The account OwnGit runs as cannot write to that folder. Choose another folder, or give it this one by running this command on the OwnGit computer:",
-		ko: "OwnGit이 실행되는 계정은 그 폴더에 쓸 수 없습니다. 다른 폴더를 고르거나, OwnGit 컴퓨터에서 이 명령을 실행해 이 폴더를 맡기세요:",
+		ko: "OwnGit을 실행하는 계정은 그 폴더에 쓸 수 없습니다. 다른 폴더를 고르거나, OwnGit 컴퓨터에서 이 명령을 실행해 그 계정에 이 폴더를 넘기세요:",
 	},
 	MsgSetupStorageDeniedExisting: {
 		en: "The account OwnGit runs as cannot write to that existing folder. Leave the folder as it is and enter a new folder inside it instead; OwnGit then shows how to create it. For example:",
-		ko: "OwnGit이 실행되는 계정은 이미 있는 그 폴더에 쓸 수 없습니다. 그 폴더는 그대로 두고 그 안의 새 폴더를 입력하세요. 그러면 새 폴더를 만드는 방법을 알려 줍니다. 예:",
+		ko: "OwnGit을 실행하는 계정은 이미 있는 그 폴더에 쓸 수 없습니다. 그 폴더는 그대로 두고 그 안에 만들 새 폴더를 입력하세요. 그러면 OwnGit이 새 폴더를 만드는 방법을 알려 줍니다. 예:",
 	},
 	MsgSetupStorageReadOnly: {
 		en: "That folder is read-only for OwnGit. A service may not write in system folders, and the owngit account may not write in home folders either. Choose the suggested folder or one such as /srv/git.",
-		ko: "그 폴더는 OwnGit에게 읽기 전용입니다. 서비스는 시스템 폴더에 쓸 수 없고, owngit 계정은 홈 폴더에도 쓸 수 없습니다. 제안된 폴더나 /srv/git 같은 폴더를 고르세요.",
+		ko: "OwnGit은 그 폴더를 읽기만 할 수 있습니다. 서비스는 시스템 폴더에 쓸 수 없고 owngit 계정은 홈 폴더에도 쓸 수 없습니다. 제안한 폴더나 /srv/git 같은 폴더를 고르세요.",
 	},
 	MsgSetupStorageUnusable: {
 		en: "OwnGit cannot use that folder. The system reported:",
@@ -584,15 +584,15 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupStorageInUse: {
 		en: "That folder already holds another installation's data.",
-		ko: "그 폴더에는 이미 다른 설치의 데이터가 있습니다.",
+		ko: "그 폴더에는 이미 다른 OwnGit 서버의 데이터가 있습니다.",
 	},
 	MsgSetupStorageOverlap: {
 		en: "That folder is inside OwnGit's own data folder, or holds it. Enter a separate folder.",
-		ko: "그 폴더는 OwnGit 자체 데이터 폴더 안에 있거나 그 폴더를 담고 있습니다. 별도의 폴더를 입력하세요.",
+		ko: "그 폴더는 OwnGit의 데이터 폴더 안에 있거나, 그 안에 데이터 폴더가 있습니다. 다른 폴더를 입력하세요.",
 	},
 	MsgSetupStorageRemote: {
 		en: "That folder looks like a network share. Repositories can be kept there while only one OwnGit uses it at a time. The database always stays on this computer.",
-		ko: "그 폴더는 네트워크 공유로 보입니다. 한 번에 하나의 OwnGit만 쓴다면 저장소를 그곳에 둘 수 있습니다. 데이터베이스는 항상 이 컴퓨터에 남습니다.",
+		ko: "네트워크 공유 폴더로 보입니다. 한 번에 OwnGit 하나만 쓴다면 저장소를 그곳에 둘 수 있습니다. 데이터베이스는 항상 이 컴퓨터에 둡니다.",
 	},
 	MsgSetupAccessLabel: {
 		en: "Who can read and write repositories",
@@ -600,7 +600,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupAccessHelp: {
 		en: "This covers everyday repository use on your network. Security settings always need the administrator password.",
-		ko: "네트워크 안에서의 평소 저장소 사용에 적용됩니다. 보안 설정은 언제나 관리자 비밀번호가 필요합니다.",
+		ko: "네트워크에서 평소에 저장소를 쓸 때 적용됩니다. 보안 설정을 바꿀 때는 언제나 관리자 비밀번호가 필요합니다.",
 	},
 	MsgSetupAccessOpen: {
 		en: "Anyone on this network",
@@ -608,7 +608,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupAccessOpenHelp: {
 		en: "No password for reading or pushing. Suitable for a private LAN or a Tailscale network you control.",
-		ko: "읽기와 푸시에 비밀번호가 없습니다. 직접 관리하는 사설 LAN이나 Tailscale 네트워크에 적합합니다.",
+		ko: "비밀번호 없이 읽고 푸시합니다. 직접 관리하는 사설 LAN이나 Tailscale 네트워크에 알맞습니다.",
 	},
 	MsgSetupAccessPassword: {
 		en: "People with the shared password",
@@ -616,11 +616,11 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupAccessPassHelp: {
 		en: "One shared password for everyone. There are no individual accounts.",
-		ko: "모두가 같은 비밀번호 하나를 사용합니다. 개인 계정은 없습니다.",
+		ko: "모두 같은 비밀번호 하나를 씁니다. 개인 계정은 없습니다.",
 	},
 	MsgSetupAccessPassEmpty: {
 		en: "Enter the shared access password.",
-		ko: "공용 접근 비밀번호를 입력하세요.",
+		ko: "공용 비밀번호를 입력하세요.",
 	},
 	MsgSetupAccessPassShort: {
 		en: "Use at least 8 characters.",
@@ -652,7 +652,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupAdminSameAsGen: {
 		en: "Use a different password from the shared access password.",
-		ko: "공용 접근 비밀번호와 다른 비밀번호를 사용하세요.",
+		ko: "공용 비밀번호와 다른 비밀번호를 사용하세요.",
 	},
 	MsgSetupGenSameAsAdmin: {
 		en: "Use a different password from the administrator password.",
@@ -681,15 +681,15 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupKeepHostHelpSetupOnly: {
 		en: "OwnGit accepts this address only to finish setup. Unless you tick the box, it refuses this address once setup is finished. Ticking the box saves it as an allowed Host. To remove it later, use owngit network on this computer.",
-		ko: "OwnGit은 설치를 마칠 때까지만 이 주소를 받아들입니다. 선택하지 않으면 설치를 마친 뒤 이 주소를 거부합니다. 선택하면 허용한 Host로 저장합니다. 나중에 지우려면 이 컴퓨터에서 owngit network 명령을 쓰세요.",
+		ko: "OwnGit은 설정을 마칠 때까지만 이 주소를 받아들입니다. 선택하지 않으면 설정을 마친 뒤 이 주소를 거부합니다. 선택하면 허용한 Host로 저장합니다. 나중에 지우려면 이 컴퓨터에서 owngit network 명령을 쓰세요.",
 	},
 	MsgSetupDoneHostNotKept: {
 		en: "Setup is finished. OwnGit no longer accepts this address.",
-		ko: "설치를 마쳤습니다. 이제 OwnGit은 이 주소를 받아들이지 않습니다.",
+		ko: "설정을 마쳤습니다. 이제 OwnGit은 이 주소를 받아들이지 않습니다.",
 	},
 	MsgSetupDoneHostNotKeptHint: {
 		en: "Open OwnGit on the installation host. To use this address, allow it there with owngit network and restart OwnGit.",
-		ko: "설치 호스트에서 OwnGit을 여세요. 이 주소를 쓰려면 그곳에서 owngit network 명령으로 허용하고 OwnGit을 다시 시작하세요.",
+		ko: "OwnGit이 설치된 컴퓨터에서 OwnGit을 여세요. 이 주소를 쓰려면 그 컴퓨터에서 owngit network 명령으로 이 주소를 허용하고 OwnGit을 다시 시작하세요.",
 	},
 	MsgHostRefusedHint: {
 		en: "To use this address, add it to Allowed names in OwnGit's network settings, or run owngit network set --allowed-host on the computer running OwnGit, then restart OwnGit. Names for that computer itself, such as localhost, work only on that computer.",
@@ -697,11 +697,11 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupDoneLocalOnlyHint: {
 		en: "From its next start OwnGit listens only on the installation host, so open it there. To use this address, set the listen address and allow the address there with owngit network, and restart OwnGit.",
-		ko: "OwnGit은 다음 시작부터 설치 호스트에서만 연결을 받으므로 그곳에서 여세요. 이 주소를 쓰려면 그곳에서 owngit network 명령으로 받을 주소를 정하고 이 주소를 허용한 뒤 OwnGit을 다시 시작하세요.",
+		ko: "다음에 시작할 때부터 OwnGit은 설치된 컴퓨터에서 오는 연결만 받으므로 그 컴퓨터에서 여세요. 이 주소를 쓰려면 그 컴퓨터에서 owngit network 명령으로 연결을 받을 주소를 정하고 이 주소를 허용한 뒤 OwnGit을 다시 시작하세요.",
 	},
 	MsgSetupPublicNetwork: {
 		en: "You opened setup from a public Internet address, so \"Anyone on this network\" would mean anyone on the Internet. OwnGit selected the shared password instead.",
-		ko: "공인 인터넷 주소에서 설치 화면을 열었으므로 \"이 네트워크의 모든 사람\"은 인터넷의 모든 사람을 뜻합니다. 그래서 공용 비밀번호를 선택해 두었습니다.",
+		ko: "공인 인터넷 주소에서 설정 화면을 열었으므로 \"이 네트워크의 모든 사람\"은 인터넷의 모든 사람이 됩니다. 그래서 OwnGit이 공용 비밀번호를 대신 선택해 두었습니다.",
 	},
 	MsgSetupKeepHostLabel: {
 		en: "Keep accepting this address after a restart:",
@@ -709,47 +709,47 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSetupKeepHostHelp: {
 		en: "OwnGit accepts this address now only because of how this run was started. Ticking the box saves it as an allowed Host. To remove it later, use owngit network on this computer.",
-		ko: "지금은 이번 실행을 시작한 방식 때문에 이 주소를 받아들입니다. 선택하면 허용한 Host로 저장합니다. 나중에 지우려면 이 컴퓨터에서 owngit network 명령을 쓰세요.",
+		ko: "이번에 OwnGit을 시작한 방식 때문에 지금만 이 주소를 받아들입니다. 선택하면 허용한 Host로 저장합니다. 나중에 지우려면 이 컴퓨터에서 owngit network 명령을 쓰세요.",
 	},
 	MsgSetupSubmit: {
 		en: "Finish setup",
-		ko: "설치 완료",
+		ko: "설정 완료",
 	},
 	MsgSetupFailed: {
 		en: "Setup could not be saved. Nothing was changed. The server log names the cause.",
-		ko: "설치 내용을 저장하지 못했습니다. 변경된 내용은 없습니다. 원인은 서버 로그에 있습니다.",
+		ko: "설정을 저장하지 못했습니다. 바뀐 것은 없습니다. 원인은 서버 로그에 있습니다.",
 	},
 	MsgSetupCompleted: {
 		en: "Setup finished. Create your first repository when you are ready.",
-		ko: "설치를 마쳤습니다. 준비되면 첫 저장소를 만드세요.",
+		ko: "설정을 마쳤습니다. 준비되면 첫 저장소를 만드세요.",
 	},
 	MsgSetupFileRemains: {
 		en: "OwnGit could not remove the used setup file from its state folder. The file no longer opens setup; remove it when convenient. The server log names it and why.",
-		ko: "사용한 설치 파일을 OwnGit 상태 폴더에서 지우지 못했습니다. 이 파일로는 더 이상 설치를 열 수 없으니 편할 때 지우세요. 파일 위치와 이유는 서버 로그에 있습니다.",
+		ko: "이미 쓴 설정 파일을 OwnGit 상태 폴더에서 지우지 못했습니다. 이 파일로는 이제 설정 화면을 열 수 없으니 편할 때 지우세요. 파일 위치와 이유는 서버 로그에 있습니다.",
 	},
 	MsgSetupLinkExpired: {
 		en: "This setup link expired.",
-		ko: "이 설치 링크는 기한이 지났습니다.",
+		ko: "이 설정 링크는 기한이 지났습니다.",
 	},
 	MsgSetupLinkUsed: {
 		en: "This setup link was already used.",
-		ko: "이 설치 링크는 이미 사용되었습니다.",
+		ko: "이미 사용한 설정 링크입니다.",
 	},
 	MsgSetupLinkInvalid: {
 		en: "This setup link is not valid for this installation.",
-		ko: "이 설치 링크는 이 설치에서 사용할 수 없습니다.",
+		ko: "이 서버에서는 쓸 수 없는 설정 링크입니다.",
 	},
 	MsgSetupAlreadyDone: {
 		en: "This installation is already set up.",
-		ko: "이 설치는 이미 설정을 마쳤습니다.",
+		ko: "이 서버는 이미 설정을 마쳤습니다.",
 	},
 	MsgSetupRaceLost: {
 		en: "Another browser finished setup first.",
-		ko: "다른 브라우저에서 먼저 설치를 마쳤습니다.",
+		ko: "다른 브라우저에서 먼저 설정을 마쳤습니다.",
 	},
 	MsgSetupSessionEnded: {
 		en: "The setup session ended. Open the setup link again to continue.",
-		ko: "설치 세션이 끝났습니다. 설치 링크를 다시 열어 계속하세요.",
+		ko: "설정 세션이 끝났습니다. 설정 링크를 다시 열어 계속하세요.",
 	},
 	MsgSetupReissueHint: {
 		en: "Issue a new link from the computer running OwnGit. There is no email or account recovery.",
@@ -760,7 +760,7 @@ var catalog = map[MessageCode]message{
 	// or a secret.
 	MsgSetupApprovalBody: {
 		en: "OwnGit is waiting in the terminal where it was started. Ask that terminal for approval, then approve this browser there.",
-		ko: "OwnGit은 실행한 터미널에서 기다리고 있습니다. 그 터미널에 승인을 요청한 뒤 거기서 이 브라우저를 승인하세요.",
+		ko: "OwnGit은 자신을 시작한 터미널에서 기다리고 있습니다. 그 터미널에 승인을 요청한 뒤 터미널에서 이 브라우저를 승인하세요.",
 	},
 	MsgSetupApprovalRequest: {
 		en: "Ask the terminal for approval",
@@ -824,7 +824,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgPrereqGitOld: {
 		en: "The installed Git is older than OwnGit needs.",
-		ko: "설치된 Git이 OwnGit에서 필요한 버전보다 오래되었습니다.",
+		ko: "설치된 Git이 OwnGit에 필요한 버전보다 낮습니다.",
 	},
 	MsgPrereqHTTPFound: {
 		en: "Git's HTTP service was found.",
@@ -842,7 +842,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgLoginBody: {
 		en: "This installation asks for one shared password before showing repositories.",
-		ko: "이 설치는 저장소를 보기 전에 공용 비밀번호 하나를 요구합니다.",
+		ko: "이 서버는 저장소를 보여 주기 전에 공용 비밀번호를 확인합니다.",
 	},
 	MsgLoginField: {
 		en: "Shared password",
@@ -866,11 +866,11 @@ var catalog = map[MessageCode]message{
 	},
 	MsgLoginNotRequired: {
 		en: "This installation does not use a shared password.",
-		ko: "이 설치는 공용 비밀번호를 사용하지 않습니다.",
+		ko: "이 서버는 공용 비밀번호를 쓰지 않습니다.",
 	},
 	MsgLogoutDone: {
 		en: "Signed out of shared access.",
-		ko: "공용 접근에서 나왔습니다.",
+		ko: "공용 접근에서 로그아웃했습니다.",
 	},
 	MsgLogoutFailed: {
 		en: "Sign-out could not be completed. You are still signed in. Try signing out again.",
@@ -882,7 +882,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgAdminBody: {
 		en: "Security settings need the administrator password. Confirmation lasts for this short session only.",
-		ko: "보안 설정에는 관리자 비밀번호가 필요합니다. 확인 상태는 이번 짧은 세션 동안만 유지됩니다.",
+		ko: "보안 설정을 바꾸려면 관리자 비밀번호가 필요합니다. 확인은 이번 짧은 세션 동안만 유지됩니다.",
 	},
 	MsgAdminField: {
 		en: "Administrator password",
@@ -914,7 +914,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgAdminTemporary: {
 		en: "This browser is not remembered as an administrator. Confirmation is asked again when it lapses.",
-		ko: "이 브라우저를 관리자로 기억하지 않습니다. 확인 상태가 끝나면 다시 물어봅니다.",
+		ko: "이 브라우저를 관리자로 기억하지 않습니다. 확인 시간이 지나면 다시 묻습니다.",
 	},
 	MsgAdminForgot: {
 		en: "Forgot it? Reset the administrator password from the computer running OwnGit. Repositories are not touched.",
@@ -960,7 +960,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSettingsEnablePass: {
 		en: "Require a shared password",
-		ko: "공용 비밀번호 사용",
+		ko: "공용 비밀번호 켜기",
 	},
 	MsgSettingsChangePass: {
 		en: "Change the shared password",
@@ -968,7 +968,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSettingsDisablePass: {
 		en: "Stop requiring a shared password",
-		ko: "공용 비밀번호 해제",
+		ko: "공용 비밀번호 끄기",
 	},
 	MsgSettingsDisableWarning: {
 		en: "Everyone who can reach this address will be able to read and push.",
@@ -1038,7 +1038,7 @@ var catalog = map[MessageCode]message{
 	// the indicator stays visible.
 	MsgSettingsAckDone: {
 		en: "Noted. Nothing about the connection changed; the header keeps showing its status instead of asking again.",
-		ko: "확인했습니다. 연결 자체가 바뀌지는 않으며, 다시 묻지 않고 상단에 상태만 계속 표시합니다.",
+		ko: "확인했습니다. 연결은 그대로이며 앞으로는 다시 묻지 않고 상단에 상태만 표시합니다.",
 	},
 	MsgSettingsUnknownAct: {
 		en: "That action is not available.",
@@ -1067,7 +1067,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgSettingsUpdateHelp: {
 		en: "The request carries only the OwnGit version, and GitHub sees this server's network address. No repository data is sent. A newer release is announced on the dashboard. OwnGit never updates itself.",
-		ko: "요청에는 OwnGit 버전만 담기고, GitHub는 이 서버의 네트워크 주소를 볼 수 있습니다. 저장소 데이터는 보내지 않습니다. 새 릴리스가 나오면 대시보드에 알려 주며, OwnGit이 스스로 업데이트하지는 않습니다.",
+		ko: "요청에는 OwnGit 버전만 담기고 GitHub는 이 서버의 네트워크 주소를 볼 수 있습니다. 저장소 데이터는 보내지 않습니다. 새 릴리스가 나오면 대시보드에 알려 주며 OwnGit이 스스로 업데이트하지는 않습니다.",
 	},
 	MsgSettingsUpdateTurnOff: {en: "Turn off update check", ko: "업데이트 확인 끄기"},
 	MsgSettingsUpdateTurnOn:  {en: "Turn on update check", ko: "업데이트 확인 켜기"},
@@ -1103,13 +1103,13 @@ var catalog = map[MessageCode]message{
 	},
 	MsgConnTailscale: {
 		en: "A private network such as Tailscale, NetBird or WireGuard protects access from other devices, and so does a reverse proxy with HTTPS. The operations guide explains each. When Tailscale runs on this computer, the administrator can share OwnGit on the tailnet over HTTPS in Settings.",
-		ko: "Tailscale, NetBird, WireGuard 같은 비공개 네트워크나 HTTPS를 쓰는 리버스 프록시를 쓰면 다른 기기에서의 접속을 보호할 수 있습니다. 방법은 운영 안내서에 있습니다. 이 컴퓨터에서 Tailscale이 실행되고 있다면 관리자가 설정에서 OwnGit을 tailnet에 HTTPS로 공유할 수 있습니다.",
+		ko: "Tailscale, NetBird, WireGuard 같은 비공개 네트워크나 HTTPS 리버스 프록시를 쓰면 다른 기기에서 접속할 때 연결을 보호할 수 있습니다. 방법은 운영 안내서에 있습니다. 이 컴퓨터에서 Tailscale이 실행되고 있다면 관리자가 설정에서 OwnGit을 tailnet에 HTTPS로 공유할 수 있습니다.",
 	},
 	// A host name is not evidence. A Tailscale-style name can be served over
 	// plain HTTP, and a plain name can sit inside a protected network.
 	MsgConnProxyNote: {
 		en: "OwnGit receives this request over plain HTTP from the proxy in front of it. The encrypted part is between your device and that proxy; the proxy's own connection to OwnGit is plain HTTP.",
-		ko: "OwnGit은 앞에 있는 프록시에서 이 요청을 일반 HTTP로 받습니다. 암호화되는 구간은 사용 중인 기기와 그 프록시 사이이며, 프록시가 OwnGit에 연결하는 구간은 일반 HTTP입니다.",
+		ko: "OwnGit은 앞에 있는 프록시에서 이 요청을 일반 HTTP로 받습니다. 암호화되는 구간은 사용 중인 기기와 그 프록시 사이이며 프록시가 OwnGit에 연결하는 구간은 일반 HTTP입니다.",
 	},
 	MsgConnTailscaleNote: {
 		en: "OwnGit receives this request over plain HTTP from Tailscale on this computer. The encrypted part is between your device and Tailscale on this computer.",
@@ -1127,7 +1127,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgConnNoProof: {
 		en: "OwnGit reports only its own connection. It cannot tell whether a VPN or other protection covers the rest of the path, and a host name alone does not prove one.",
-		ko: "OwnGit은 자신이 맺은 연결만 알려줍니다. VPN 같은 다른 보호가 나머지 구간을 감싸는지는 알 수 없으며, 호스트 이름만으로는 증명되지 않습니다.",
+		ko: "OwnGit은 자신이 맺은 연결만 알려 줍니다. VPN 같은 다른 보호 수단이 나머지 구간을 감싸는지는 알 수 없고 호스트 이름만으로는 그런 보호를 증명할 수 없습니다.",
 	},
 
 	// -- repositories --------------------------------------------------
@@ -1215,7 +1215,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgRepoPreparingDetail: {
 		en: "OwnGit checks each repository's safety settings before serving it, after starting and whenever its folder could not be read. This one is not ready yet, so pushes, clones, and changes are refused for now. OwnGit keeps retrying on its own. The server log explains what went wrong.",
-		ko: "OwnGit은 시작할 때와 저장소 폴더를 읽지 못했을 때 저장소마다 안전 설정을 확인한 뒤에 제공합니다. 이 저장소는 아직 준비되지 않아 지금은 푸시, 클론, 변경을 받지 않습니다. OwnGit이 알아서 계속 다시 시도합니다. 원인은 서버 로그에 있습니다.",
+		ko: "OwnGit은 시작한 뒤, 그리고 저장소 폴더를 읽지 못했을 때마다 각 저장소의 안전 설정을 확인한 다음 저장소를 제공합니다. 이 저장소는 아직 준비되지 않아 지금은 푸시, 클론, 변경을 받지 않습니다. OwnGit이 알아서 계속 다시 시도합니다. 원인은 서버 로그에 있습니다.",
 	},
 	MsgRepoPreparingShort: {
 		en: "Preparing",
@@ -1453,14 +1453,14 @@ var catalog = map[MessageCode]message{
 	// history, and that promise is made where the reader confirms the write.
 	MsgRestoreTargetChoose: {
 		en: "Choose an existing branch or enter a new name. The restore adds to an existing branch's history; a new branch continues from the selected commit.",
-		ko: "기존 브랜치를 고르거나 새 이름을 입력하세요. 기존 브랜치는 현재 기록 뒤에 새 커밋을 추가하고, 새 브랜치는 선택한 커밋의 기록을 이어갑니다.",
+		ko: "기존 브랜치를 고르거나 새 이름을 입력하세요. 기존 브랜치에는 현재 기록 뒤에 새 커밋을 추가하고, 새 브랜치는 선택한 커밋의 기록을 이어 갑니다.",
 	},
 	// What this branch choice does is stated by the two messages above it.
 	// This one covers the boundary a reader is most likely to get wrong, so it
 	// says only what is true either way.
 	MsgRestoreTargetHelp: {
 		en: "Only this repository changes. Working copies on other computers are not touched; pull to receive the change there.",
-		ko: "이 저장소만 바뀝니다. 다른 컴퓨터의 작업 폴더는 건드리지 않으며, 그쪽에서 받으려면 pull 하세요.",
+		ko: "이 저장소만 바뀝니다. 다른 컴퓨터의 작업 폴더는 건드리지 않으니, 그 컴퓨터에서 받으려면 풀하세요.",
 	},
 	// "Recreates" was wrong for the general case. This notice appears for any
 	// name that is not currently a branch, including a suggested one that
@@ -1550,11 +1550,11 @@ var catalog = map[MessageCode]message{
 	// cut, and the sentence says which is which.
 	MsgRestoreDiffTruncated: {
 		en: "Some file contents were too large to show line by line. The list of changed files is complete.",
-		ko: "일부 파일 내용은 너무 커서 줄 단위로는 다 보여주지 못했습니다. 변경되는 파일 목록은 전체입니다.",
+		ko: "일부 파일은 내용이 너무 커서 줄 단위로 다 보여 주지 못했습니다. 바뀌는 파일 목록은 빠짐없이 보여 줍니다.",
 	},
 	MsgRestoreBinaryFile: {
 		en: "Not text, so there is no line by line view",
-		ko: "텍스트가 아니어서 줄 단위로 보여주지 않습니다",
+		ko: "텍스트가 아니어서 줄 단위로 보여 주지 않습니다",
 	},
 
 	MsgRestoreConfirmLabel: {
@@ -1575,7 +1575,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgRestoreChangeHelp: {
 		en: "Your choices are kept, and OwnGit shows the changes again before anything is restored.",
-		ko: "선택한 내용은 그대로 두고, 되돌리기 전에 바뀔 내용을 다시 보여 줍니다.",
+		ko: "선택한 내용은 그대로 두고 되돌리기 전에 바뀔 내용을 다시 보여 줍니다.",
 	},
 
 	// -- activity ------------------------------------------------------
@@ -1593,7 +1593,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgActivityLimit: {
 		en: "Counting stopped at this installation's limit, so the real total is higher.",
-		ko: "이 설치의 한도에서 집계를 멈췄습니다. 실제 합계는 이보다 많습니다.",
+		ko: "이 서버의 집계 한도에 닿아 집계를 멈췄습니다. 실제 합계는 이보다 많습니다.",
 	},
 	MsgActivityCounting: {
 		en: "Some repositories are still being counted. Reload the page to see the full count.",
@@ -1625,7 +1625,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgActivityNotBuilt: {
 		en: "The activity index has not been built yet.",
-		ko: "활동 색인이 아직 만들어지지 않았습니다.",
+		ko: "활동 색인을 아직 만들지 않았습니다.",
 	},
 	// Two separate statements a reader needs: which day a commit is counted
 	// on, and that activity is not a check result. The date is the author's
@@ -1651,11 +1651,11 @@ var catalog = map[MessageCode]message{
 	},
 	MsgErrCSRF: {
 		en: "This form expired. Open the page again and resubmit.",
-		ko: "이 양식이 만료되었습니다. 페이지를 다시 열고 제출하세요.",
+		ko: "이 양식은 기한이 지났습니다. 페이지를 다시 열고 제출하세요.",
 	},
 	MsgErrHostRejected: {
 		en: "This address is not approved for this installation. Open it from an already approved address.",
-		ko: "이 주소는 이 설치에서 승인되지 않았습니다. 이미 승인된 주소로 열어 주세요.",
+		ko: "이 서버에서 승인하지 않은 주소입니다. 이미 승인한 주소로 여세요.",
 	},
 	MsgErrMethod: {
 		en: "That action is not allowed here.",
@@ -1663,7 +1663,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgErrTooLarge: {
 		en: "That upload is larger than this installation accepts.",
-		ko: "이 설치에서 받을 수 있는 크기를 넘었습니다.",
+		ko: "이 서버가 받을 수 있는 크기를 넘었습니다.",
 	},
 	MsgErrRateLimited: {
 		en: "Too many requests. Try again shortly.",
