@@ -130,9 +130,16 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 		// Asking for what sharing already is changes nothing. Sharing that
 		// is on but unfinished is turned on again. A reading that failed
 		// leaves the decision to turning on or off, which reports why.
+		// The group then shows what is saved, not what was sent. A home
+		// network choice sent while sharing stays off is used only when
+		// sharing is turned on, which the answer says.
 		if report, err := app.Tailscale.Report(request.Context()); err == nil {
 			if on && report.On && !report.CanTurnOn || !on && !report.On {
-				app.renderSettings(writer, request, settings, csrf, webui.ActionSaveTailscale, []webui.Notice{webui.Info(webui.MsgSettingsNothing)}, http.StatusOK)
+				notice := webui.MsgSettingsNothing
+				if !on && report.ListenOption == "" && *homeNetwork != report.HomeNetwork {
+					notice = webui.MsgSettingsTSHomeOff
+				}
+				app.renderSettingsPage(writer, request, settings, csrf, webui.ActionSaveTailscale, []webui.Notice{webui.Info(notice)}, http.StatusOK, settingsView{Unchanged: true})
 				return
 			}
 		}

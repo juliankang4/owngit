@@ -279,10 +279,59 @@ func TestSavingTheUnchangedTailscaleGroupChangesNothing(t *testing.T) {
 	if result = saveTailscaleGroup(t, client, base, csrf, "", false); result.status != http.StatusSeeOther {
 		t.Fatalf("turning off: status=%d", result.status)
 	}
+	// Turning off keeps the listen address, so the form shows the home
+	// network choice ticked, and sends it so.
 	writes = len(fake.Writes())
-	result = saveTailscaleGroup(t, client, base, csrf, "", false)
+	result = saveTailscaleGroup(t, client, base, csrf, "", true)
 	if result.status != http.StatusOK || !strings.Contains(settingsGroup(t, result.body, "tailscale"), nothing) || len(fake.Writes()) != writes {
 		t.Errorf("unchanged save while off: status=%d writes=%q", result.status, fake.Writes()[writes:])
+	}
+}
+
+// homeNetworkTicked reports whether the home network choice of a Settings
+// page is ticked.
+func homeNetworkTicked(t *testing.T, page string) bool {
+	t.Helper()
+	at := strings.Index(page, `name="home_network"`)
+	if at < 0 {
+		t.Fatal("the page has no home network choice")
+	}
+	start := strings.LastIndex(page[:at], "<")
+	return strings.Contains(page[start:start+strings.Index(page[start:], ">")], " checked")
+}
+
+// While sharing is off, the home network choice is used only when sharing
+// is turned on. Changing it alone saves nothing, and the answer says so and
+// shows the choice as saved, not as sent, so the page never claims a
+// listen address that is not the one saved.
+func TestAHomeNetworkChoiceWithoutSharingIsNotShownAsSaved(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	noErr(t, app.Store.UpdateNetwork(context.Background(), state.NetworkUpdate{Settings: state.NetworkSettings{Listen: "0.0.0.0:7654"}}))
+	client, base, csrf, body := networkSettingsClient(t, app)
+	if !homeNetworkTicked(t, body) {
+		t.Fatal("a saved listen address on every network does not tick the home network choice")
+	}
+	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		dashboardGET(t, client, base+"/settings/network?lang="+string(lang))
+		text := func(code webui.MessageCode) string { return html.EscapeString(webui.Text(lang, code)) }
+		// Unticked, with the switch still off.
+		result := saveTailscaleGroup(t, client, base, csrf, "", false)
+		group := settingsGroup(t, result.body, "tailscale")
+		if result.status != http.StatusOK || !strings.Contains(group, text(webui.MsgSettingsTSHomeOff)) || strings.Contains(group, text(webui.MsgSettingsNothing)) {
+			t.Errorf("%s: unticking the home network while sharing is off: status=%d, the answer does not say why nothing was saved", lang, result.status)
+		}
+		if !homeNetworkTicked(t, result.body) {
+			t.Errorf("%s: the answer shows the home network choice that was not saved", lang)
+		}
+		// Ticked, as saved: nothing to say but that nothing changed.
+		result = saveTailscaleGroup(t, client, base, csrf, "", true)
+		group = settingsGroup(t, result.body, "tailscale")
+		if result.status != http.StatusOK || !strings.Contains(group, text(webui.MsgSettingsNothing)) || !homeNetworkTicked(t, result.body) {
+			t.Errorf("%s: the unchanged choice: status=%d", lang, result.status)
+		}
+	}
+	if settings, _, _ := savedNetwork(t, app.Store); settings.Listen != "0.0.0.0:7654" || len(fake.Writes()) != 0 {
+		t.Fatalf("the saves changed listen to %q or wrote %q", settings.Listen, fake.Writes())
 	}
 }
 

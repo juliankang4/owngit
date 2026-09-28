@@ -80,7 +80,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			return
 		}
 		if !changes {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Info(webui.MsgSettingsNothing)}, http.StatusOK)
+			app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Info(webui.MsgSettingsNothing)}, http.StatusOK, settingsView{Unchanged: true})
 			return
 		}
 	}
@@ -317,6 +317,9 @@ type settingsView struct {
 	// TailscaleRefused is the problem of a refused Tailscale change shown
 	// on the page, which the Tailscale block then does not repeat.
 	TailscaleRefused string
+	// Unchanged is true when the form asked for nothing that could be
+	// saved: the group then shows the saved values, not what was sent.
+	Unchanged bool
 }
 
 // settingsDraftFields are the non-secret fields a refused form shows again.
@@ -362,7 +365,7 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 	switch group := webui.SettingsActionGroup(action); {
 	case group != "":
 		tab, page.Group, page.Notices, page.Chrome.Notices = webui.SettingsGroupTab(group), group, notices, nil
-		if request.Method == http.MethodPost {
+		if request.Method == http.MethodPost && !view.Unchanged {
 			page.Draft = settingsDraft(request)
 		}
 	case notices != nil:

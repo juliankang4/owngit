@@ -46,6 +46,7 @@ const (
 	MsgSettingsTSSwitch       MessageCode = "settings.tailscale.switch"
 	MsgSettingsTSScope        MessageCode = "settings.tailscale.scope"
 	MsgSettingsTSAgain        MessageCode = "settings.tailscale.again"
+	MsgSettingsTSHomeOff      MessageCode = "settings.tailscale.home_needs_sharing"
 	MsgSettingsNetMore        MessageCode = "settings.network.more"
 	MsgSettingsStorageHidden  MessageCode = "settings.storage.admin_only"
 	MsgSettingsReposTitle     MessageCode = "settings.repositories.title"
@@ -118,8 +119,8 @@ var settingsCatalog = map[MessageCode]message{
 	},
 
 	MsgSettingsAccessScope: {
-		en: "Git and the dashboard, for everyone; there are no individual accounts. Applies as soon as you save, and a new shared password signs out everyone signed in with the shared password.",
-		ko: "Git과 대시보드에 함께 적용되며 사람마다 계정을 따로 두지는 않습니다. 저장하면 바로 바뀌고, 공용 비밀번호를 새로 정하면 공용 비밀번호로 로그인한 사람은 모두 로그아웃됩니다.",
+		en: "Git and the dashboard, for everyone; there are no individual accounts. Applies as soon as you save. Turning the shared password on or changing it signs out everyone who does not hold an administrator session; they sign in again with the new password.",
+		ko: "Git과 대시보드에 함께 적용되며 사람마다 계정을 따로 두지는 않습니다. 저장하면 바로 바뀝니다. 공용 비밀번호를 켜거나 바꾸면 관리자 세션이 없는 사람은 모두 로그아웃되고, 새 비밀번호로 다시 로그인합니다.",
 	},
 	MsgSettingsAccessMode:     {en: "Who can read and push", ko: "읽기와 푸시 권한"},
 	MsgSettingsAccessModePass: {en: "Only people with the shared password", ko: "공용 비밀번호를 아는 사람만"},
@@ -141,6 +142,10 @@ var settingsCatalog = map[MessageCode]message{
 	MsgSettingsTSAgain: {
 		en: "Sharing is on, but turning it on did not finish. Save to turn it on again.",
 		ko: "공유가 켜져 있지만 켜는 작업이 끝나지 않았습니다. 저장하면 다시 켭니다.",
+	},
+	MsgSettingsTSHomeOff: {
+		en: "Sharing is off, so nothing was saved. The home network choice is used only when you turn sharing on. To change where OwnGit listens, use This computer's address in Network above.",
+		ko: "공유가 꺼져 있어 아무것도 저장하지 않았습니다. 홈 네트워크 선택은 공유를 켤 때만 쓰입니다. OwnGit이 연결을 받는 곳을 바꾸려면 위쪽 네트워크의 이 컴퓨터의 주소를 쓰세요.",
 	},
 	MsgSettingsNetMore: {en: "Proxy and host details", ko: "프록시와 호스트 세부 설정"},
 	MsgSettingsStorageHidden: {
