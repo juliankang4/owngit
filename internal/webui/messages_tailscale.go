@@ -196,6 +196,11 @@ var tailscaleCatalog = map[MessageCode]message{
 		en: "Tailscale already serves something else on each HTTPS port that OwnGit tried on this computer, so OwnGit changed nothing. What is on those ports, and what to do, is below.",
 		ko: "이 컴퓨터에서 OwnGit이 시도한 HTTPS 포트마다 Tailscale이 이미 다른 것을 제공하고 있어 OwnGit은 아무것도 바꾸지 않았습니다. 그 포트들의 설정과 해결 방법은 아래에 있습니다.",
 	},
+	// Detail: OwnGit's local address now.
+	"tailscale.problem.owners_endpoint": {
+		en: "Sharing uses an HTTPS address that you made in Tailscale, and it still passes requests to OwnGit's earlier local address. OwnGit does not rewrite what you made, so it changed nothing. Point that address at OwnGit's local address now with \"tailscale serve\", or turn sharing off, remove the address and turn sharing on again. OwnGit's local address now:",
+		ko: "공유는 Tailscale에서 직접 만든 HTTPS 주소를 쓰고 있고, 이 주소는 아직 OwnGit의 예전 로컬 주소로 요청을 넘깁니다. OwnGit은 직접 만든 설정을 고쳐 쓰지 않으므로 아무것도 바꾸지 않았습니다. \"tailscale serve\"로 이 주소가 지금의 OwnGit 로컬 주소를 가리키게 하거나, 공유를 끄고 이 주소를 지운 뒤 공유를 다시 켜세요. 지금의 OwnGit 로컬 주소:",
+	},
 	// Detail: the address of sharing now.
 	"tailscale.problem.other_port": {
 		en: "OwnGit already has an address on another HTTPS port of this computer, so OwnGit changed nothing. To move it, run \"owngit tailscale off\", then \"owngit tailscale on --https-port PORT\". The address now:",

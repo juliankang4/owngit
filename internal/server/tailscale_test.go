@@ -1074,3 +1074,45 @@ func TestReplacingOwnGitsEndpointWithAnUnknownOutcomeIsFinishedNextTime(t *testi
 		})
 	}
 }
+
+// After the server's port changes, turning on again does not rewrite an
+// endpoint the owner made, which OwnGit used without taking it over: it
+// refuses and says so, naming OwnGit's local address now, and turning off
+// leaves the endpoint.
+func TestPortChangeDoesNotTakeOverTheOwnersEndpoint(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	first, err := app.Tailscale.On(ctx, nil, 0)
+	noErr(t, err)
+	rename(fake)
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve.Web[renamed+":443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: first.Record.Target}}}
+	})
+	change, err := app.Tailscale.On(ctx, nil, 0)
+	noErr(t, err)
+	if change.Endpoint != endpointKept || change.Record.Created {
+		t.Fatalf("turning on over the owner's endpoint: %+v", change)
+	}
+	_, _, _, before := savedSharing(t, app.Store)
+	saved, err := app.Store.NetworkSettings(ctx)
+	noErr(t, err)
+	saved.Listen = "127.0.0.1:18080"
+	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: saved}))
+	writes := len(fake.Writes())
+	_, err = app.Tailscale.On(ctx, nil, 0)
+	var refusal *TailscaleError
+	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemOwnersEndpoint || refusal.Detail != tailscale.Target(18080) || len(fake.Writes()) != writes {
+		t.Fatalf("turning on after the port change: err=%v, writes %q", err, fake.Writes()[writes:])
+	}
+	if webui.TailscaleProblemCode(refusal.Problem) == webui.MsgTSProblemFailed {
+		t.Fatalf("the refusal %q has no explanation of its own", refusal.Problem)
+	}
+	if _, _, _, after := savedSharing(t, app.Store); !reflect.DeepEqual(after, before) {
+		t.Fatalf("record after the refused turning on %+v, want %+v", after, before)
+	}
+	off, err := app.Tailscale.Off(ctx)
+	noErr(t, err)
+	if off.Endpoint != "left" || !fake.State().Serve.Endpoint(renamed, 443, first.Record.Target).Exact {
+		t.Fatalf("turning off: %+v; the owner's endpoint is %+v", off, fake.State().Serve.Endpoint(renamed, 443, first.Record.Target))
+	}
+}

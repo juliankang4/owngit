@@ -380,8 +380,8 @@ func readEndpoint(reading tailscaleReading, report *TailscaleReport, record stat
 	}
 }
 
-// Outcomes of an endpointPlan besides the refusals TailscaleProblemTaken
-// and TailscaleProblemUnrecorded.
+// Outcomes of an endpointPlan besides the refusals TailscaleProblemTaken,
+// TailscaleProblemUnrecorded and TailscaleProblemOwnersEndpoint.
 const (
 	endpointCreated = "created" // OwnGit writes its endpoint on the port
 	endpointKept    = "kept"    // the recorded port already has it
@@ -396,6 +396,9 @@ type endpointPlan struct {
 	// what is on them, or on the port of an unrecorded endpoint.
 	passed []int
 	found  []tailscale.Use
+	// replaces is set when the endpoint created replaces the one OwnGit
+	// created there to an earlier target.
+	replaces bool
 }
 
 // planEndpoint chooses the first of ports that turning on can use for name
@@ -412,9 +415,12 @@ func planEndpoint(config tailscale.ServeConfig, name, target string, ports []int
 		recorded := wasOn && port == previous.HTTPSPort
 		// After a rename OwnGit's earlier endpoint is under the old name,
 		// which answers for nothing and does not take the port for the new
-		// one (tailscale.Endpoint.Stale). Under the same name, OwnGit's own
-		// endpoint to an earlier target is replaced.
-		ours := recorded && previous.Name == name && config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact
+		// one (tailscale.Endpoint.Stale). Under the same name, the recorded
+		// endpoint to an earlier target is replaced only when OwnGit created
+		// it. One the owner made (Created false) is the owner's Serve
+		// setting: OwnGit uses it while it points at OwnGit exactly, and
+		// never rewrites it.
+		earlier := recorded && previous.Name == name && config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact
 		plan.port = port
 		switch {
 		case endpoint.Exact && recorded:
@@ -423,7 +429,13 @@ func planEndpoint(config tailscale.ServeConfig, name, target string, ports []int
 		case endpoint.Exact:
 			plan.outcome, plan.found = TailscaleProblemUnrecorded, endpoint.Found
 			return plan
-		case endpoint.Free || ours:
+		case earlier && previous.Created:
+			plan.outcome, plan.found, plan.replaces = endpointCreated, nil, true
+			return plan
+		case earlier:
+			plan.outcome, plan.found = TailscaleProblemOwnersEndpoint, nil
+			return plan
+		case endpoint.Free:
 			plan.outcome, plan.found = endpointCreated, nil
 			return plan
 		}
@@ -537,6 +549,10 @@ const (
 	// TailscaleProblemServeChanged: something else changed the HTTPS port
 	// between OwnGit's check and its change (unchangedPort).
 	TailscaleProblemServeChanged = "serve_changed"
+	// TailscaleProblemOwnersEndpoint: sharing uses an endpoint the owner
+	// made, which passes requests to OwnGit's earlier local address; OwnGit
+	// does not rewrite it. Detail is OwnGit's local address now.
+	TailscaleProblemOwnersEndpoint = "owners_endpoint"
 )
 
 // Refused reports whether the problem is a state the owner can fix, such as
@@ -702,6 +718,8 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 		record.Created = previous.Created && previous.Name == status.Name
 	case endpointCreated:
 		record.Created = true
+	case TailscaleProblemOwnersEndpoint:
+		return TailscaleChange{}, &TailscaleError{Problem: plan.outcome, Detail: target, Port: plan.port}
 	default:
 		return TailscaleChange{}, &TailscaleError{Problem: plan.outcome, Found: plan.found, Port: plan.port}
 	}
@@ -715,13 +733,12 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 		pending := record
 		pending.Confirmed = false
 		// An endpoint OwnGit created on this name and port is already
-		// recorded as its own. Replacing it with a new target, the pending
-		// record keeps the target it has now: whether or not the write took
-		// effect, the next turning on then recognises the port as OwnGit's
-		// (planEndpoint), and turning off removes the endpoint that is still
-		// there when it did not.
-		if wasOn && previous.Created && previous.Name == record.Name && previous.HTTPSPort == record.HTTPSPort &&
-			config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact {
+		// recorded as its own. Replacing it with a new target
+		// (plan.replaces), the pending record keeps the target it has now:
+		// whether or not the write took effect, the next turning on then
+		// recognises the port as OwnGit's (planEndpoint), and turning off
+		// removes the endpoint that is still there when it did not.
+		if plan.replaces {
 			pending.Target = previous.Target
 		}
 		if err := sharing.Store.SaveTailscaleServe(ctx, pending); err != nil {

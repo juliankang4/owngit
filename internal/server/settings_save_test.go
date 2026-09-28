@@ -209,6 +209,7 @@ func TestTailscaleRefusedOnlyWhenTheOwnerCanFixIt(t *testing.T) {
 		string(tailscale.KindHTTPSOff), string(tailscale.KindHTTPSUnavailable), string(tailscale.KindPermission),
 		TailscaleProblemTaken, TailscaleProblemOtherPort, TailscaleProblemUnrecorded,
 		TailscaleProblemChanged, TailscaleProblemListenOption, TailscaleProblemNotOn, TailscaleProblemServeChanged,
+		TailscaleProblemOwnersEndpoint,
 	} {
 		if !(&TailscaleError{Problem: problem}).Refused() {
 			t.Errorf("%s is not answered as refused", problem)
