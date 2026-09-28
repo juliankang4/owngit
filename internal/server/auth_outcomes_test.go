@@ -224,6 +224,7 @@ func TestRateLimitedBrowserPasswordIsTooManyRequests(t *testing.T) {
 // again, and changes nothing.
 func TestAdminFormsReportAPasswordCheckThatCouldNotFinish(t *testing.T) {
 	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
 	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "unavailable-admin")
 	ctx := context.Background()

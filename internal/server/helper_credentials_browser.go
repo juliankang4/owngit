@@ -11,14 +11,13 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/repository"
-	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
 func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	writer.Header().Set("Cache-Control", "no-store")
-	adminSession, ok := app.requireBrowserAdmin(writer, request)
+	adminSession, ok := app.requireAdminPage(writer, request)
 	if !ok {
 		return
 	}
@@ -48,7 +47,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
 		return
 	}
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
+	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		app.renderHelperCredentials(writer, request, stored, summary, chrome, action, credentialID, label,
 			[]webui.Notice{notice}, status)
@@ -134,20 +133,6 @@ func (app *App) helperCredentialsPage(request *http.Request, stored state.Reposi
 		page.Credentials = append(page.Credentials, browserHelperCredential(credential))
 	}
 	return page
-}
-
-func (app *App) requireBrowserAdmin(writer http.ResponseWriter, request *http.Request) (state.Session, bool) {
-	writer.Header().Set("Cache-Control", "no-store")
-	session, ok, err := app.cookieSession(request, "admin", adminCookie)
-	switch {
-	case err != nil:
-		app.answerUnavailable(writer, request, "session read", err)
-	case ok:
-		return session, true
-	default:
-		http.Redirect(writer, request, "/admin/login?next="+url.QueryEscape(loginNext(request)), http.StatusSeeOther)
-	}
-	return state.Session{}, false
 }
 
 func (app *App) issueHelperCredential(ctx context.Context, repositoryID, label, creationID string) (state.HelperCredential, string, bool, error) {

@@ -7,7 +7,6 @@ import (
 	"net/url"
 
 	"owngit/internal/auth"
-	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -18,9 +17,11 @@ import (
 // or changes another group's settings.
 //
 // The page's script can save a group without leaving the page, for a form
-// without a password field (groupSave in owngit.js); a form that asks for
-// the administrator password, as every group does today, is always posted
-// by the browser. The script sends the same form with the
+// without a password field (groupSave in owngit.js): every group while this
+// browser's administrator confirmation is remembered or the check is off
+// (see confirmAdmin), except those that always ask for it. A form that
+// asks for the administrator password is always posted by the browser.
+// The script sends the same form with the
 // settingsGroupHeader header, which selects only the form of the answer;
 // the change and its checks are the same:
 //
@@ -66,8 +67,38 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	// still accepted, behind the same checks, so a page opened before an
 	// upgrade still saves.
 	action := postValue(request, "action")
-	adminPassword := postValue(request, "admin_password")
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", adminPassword, requestctx.Of(request).ClientAddress); err != nil {
+	// Changing the administrator password asks for the current one, and
+	// turning Do not ask on asks one last time, even when this browser is
+	// remembered or the check is off.
+	always := action == webui.ActionChangeAdminPassword
+	var choice, savedChoice state.AdminConfirmation
+	if action == webui.ActionSaveConfirmation {
+		var valid bool
+		if choice, valid = state.ParseAdminConfirmation(postValue(request, "admin_confirmation")); !valid {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("admin_confirmation", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+			return
+		}
+		var err error
+		if savedChoice, err = app.Store.AdminConfirmation(request.Context()); err != nil {
+			app.renderNotSaved(writer, request, settings, csrf, action, "administrator confirmation read", err)
+			return
+		}
+		if choice == savedChoice {
+			app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Info(webui.MsgSettingsNothing)}, http.StatusOK, settingsView{Unchanged: true})
+			return
+		}
+		if choice == state.ConfirmNever {
+			if !formChecked(postValue(request, "no_ask_ack")) {
+				app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("no_ask_ack", webui.MsgConfirmAckNeeded)}, http.StatusUnprocessableEntity)
+				return
+			}
+			always = true
+		}
+	}
+	// verified is the administrator password when this request typed it,
+	// and "" when the change needed none.
+	verified, err := app.confirmAdmin(writer, request, nil, always)
+	if err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{notice}, status)
 		return
@@ -85,7 +116,6 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		}
 	}
 
-	var err error
 	// ends is the session cookie a saved change ends in this browser. It is
 	// cleared only once the change is saved; a change that was not saved
 	// changes nothing, this browser's session included.
@@ -99,7 +129,12 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", passwordRuleMessage(validateErr, webui.MsgSetupAccessPassShort))}, http.StatusUnprocessableEntity)
 			return
 		}
-		if adminPassword == password {
+		same, sameErr := app.sameAsAdminPassword(request, verified, password)
+		if sameErr != nil {
+			app.renderNotSaved(writer, request, settings, csrf, action, "administrator password read", sameErr)
+			return
+		}
+		if same {
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", webui.MsgSetupGenSameAsAdmin)}, http.StatusUnprocessableEntity)
 			return
 		}
@@ -121,7 +156,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", passwordRuleMessage(validateErr, webui.MsgSetupAdminShort))}, http.StatusUnprocessableEntity)
 			return
 		}
-		if adminPassword == newPassword {
+		if verified == newPassword {
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", webui.MsgSettingsAdminSame)}, http.StatusUnprocessableEntity)
 			return
 		}
@@ -161,6 +196,12 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		if err == nil && value == "on" && app.Releases != nil {
 			app.Releases.Wake()
 		}
+	case webui.ActionSaveConfirmation:
+		err = app.Auth.SetAdminConfirmation(request.Context(), choice)
+		notice = "confirmation_saved"
+		if choice == state.ConfirmNever {
+			notice = "confirmation_off"
+		}
 	case webui.ActionSaveNetwork:
 		app.saveNetwork(writer, request, settings, csrf)
 		return
@@ -184,16 +225,30 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	if action == webui.ActionEnableAccessPassword || action == webui.ActionChangeAccessPassword {
 		// A session that could not be read may have ended, so the
 		// confirmation goes where it is shown either way.
-		_, admin, err := app.cookieSession(request, "admin", adminCookie)
+		authority, err := app.adminAuthority(writer, request)
 		if err != nil {
-			logFailure(request, "session read", err)
+			logFailure(request, "administrator confirmation read", err)
 		}
-		if !admin {
+		if !authority.confirmed {
 			app.settingsSaved(writer, request, "/login?notice=access_password_saved&next="+url.QueryEscape(webui.SettingsTabURL(webui.SettingsAccess)))
 			return
 		}
 	}
 	app.settingsSaved(writer, request, settingsResultURL(action, notice))
+}
+
+// sameAsAdminPassword reports whether password is the administrator
+// password: the one this request typed, when it typed one, or else the
+// saved one.
+func (app *App) sameAsAdminPassword(request *http.Request, verified, password string) (bool, error) {
+	if verified != "" {
+		return verified == password, nil
+	}
+	encoded, err := app.Store.PasswordHash(request.Context(), "admin")
+	if err != nil {
+		return false, err
+	}
+	return auth.CheckPassword(encoded, password), nil
 }
 
 // accessAction turns a save of the Access group into the change it asks
@@ -229,6 +284,8 @@ var settingsNoticeGroups = map[string]string{
 	"access_changed":         webui.GroupAccess,
 	"access_disabled":        webui.GroupAccess,
 	"admin_password_changed": webui.GroupAdmin,
+	"confirmation_saved":     webui.GroupConfirm,
+	"confirmation_off":       webui.GroupConfirm,
 	"insecure_acknowledged":  webui.GroupConnection,
 	"network_saved":          webui.GroupNetwork,
 	"tailscale_on":           webui.GroupTailscale,
@@ -311,8 +368,8 @@ type settingsView struct {
 	// opened before another change, so it shows the values saved now.
 	Network      *webui.NetworkForm
 	NetworkStale bool
-	// AdminVerified is true when this request verified the administrator
-	// password, so the page may show what only an administrator sees.
+	// AdminVerified is true when this request passed confirmAdmin, so the
+	// page may show what only an administrator sees.
 	AdminVerified bool
 	// TailscaleRefused is the problem of a refused Tailscale change shown
 	// on the page, which the Tailscale block then does not repeat.
@@ -326,7 +383,7 @@ type settingsView struct {
 // A switch or checkbox is written "on" or "off", since an unticked one
 // sends nothing.
 var settingsDraftFields = map[string]bool{
-	"access_mode": false, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
+	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.
@@ -358,7 +415,7 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	tab, _ := webui.SettingsTabOfPath(request.URL.Path)
-	page := webui.SettingsPage{Chrome: chrome, AccessMode: webui.AccessOpen, AdminRequired: true}
+	page := webui.SettingsPage{Chrome: chrome, AccessMode: webui.AccessOpen}
 	if settings.AccessMode == "password" {
 		page.AccessMode = webui.AccessPassword
 	}

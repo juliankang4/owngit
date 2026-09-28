@@ -10,13 +10,12 @@ import (
 
 	"owngit/internal/importsync"
 	"owngit/internal/repository"
-	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
 func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
-	session, ok := app.requireBrowserAdmin(writer, request)
+	session, ok := app.requireAdminPage(writer, request)
 	if !ok {
 		return
 	}
@@ -43,7 +42,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	page.CredentialForm = postValue(request, "credential_form")
-	if ok, status := app.importAdminPassword(writer, request, &chrome); !ok {
+	if ok, status := app.confirmImportAdmin(writer, request, &chrome); !ok {
 		page.Chrome = chrome
 		app.render(writer, request, status, page)
 		return
@@ -124,34 +123,22 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 // handleImportPage serves the repository's Import tab. Anyone who may read
 // the repository sees its import status; the source address, credential
 // state and technical messages are administrator data and are filled in
-// only for an administrator session. Every change is a POST that needs that
-// session and the administrator password again.
+// only for a viewer who may open the administrator pages. Every change is a
+// POST that passes requireAdminPage and confirmAdmin.
 func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	writer.Header().Set("Cache-Control", "no-store")
 	if request.Method == http.MethodGet {
 		// Opening the source form is a change, so it asks for the
 		// administrator password first and returns here afterwards.
 		if request.URL.Query().Get("setup") == "1" {
-			if _, ok := app.requireBrowserAdmin(writer, request); !ok {
-				return
-			}
-		}
-		session, admin, err := app.cookieSession(request, "admin", adminCookie)
-		if err != nil {
-			app.answerUnavailable(writer, request, "session read", err)
-			return
-		}
-		if admin {
-			chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, session.CSRF)
-			if err != nil {
-				app.answerUnavailable(writer, request, "page frame read", err)
+			if _, ok := app.requireAdminPage(writer, request); !ok {
 				return
 			}
 		}
 		app.renderImportPage(writer, request, stored, summary, chrome, http.StatusOK)
 		return
 	}
-	session, ok := app.requireBrowserAdmin(writer, request)
+	session, ok := app.requireAdminPage(writer, request)
 	if !ok {
 		return
 	}
@@ -167,7 +154,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 	if !app.requireCSRF(writer, request) {
 		return
 	}
-	if ok, status := app.importAdminPassword(writer, request, &chrome); !ok {
+	if ok, status := app.confirmImportAdmin(writer, request, &chrome); !ok {
 		app.renderImportPage(writer, request, stored, summary, chrome, status)
 		return
 	}
@@ -353,8 +340,8 @@ func importRunRow(run *importsync.RunView, admin bool) *webui.ImportRunRow {
 	return row
 }
 
-func (app *App) importAdminPassword(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome) (bool, int) {
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
+func (app *App) confirmImportAdmin(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome) (bool, int) {
+	if _, err := app.confirmAdmin(writer, request, chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "")
 		chrome.Notices = append(chrome.Notices, notice)
 		return false, status

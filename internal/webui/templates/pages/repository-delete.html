@@ -53,13 +53,7 @@
     {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "confirm_name"}}
   </div>
 
-  <div class="f">
-    <label for="rdel-password">{{bi $lang "admin.field"}}</label>
-    <input id="rdel-password" name="admin_password" type="password" required autocomplete="current-password"
-           {{template "fieldInvalid" dict "Notices" $n "Field" "admin_password"}}>
-    {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "admin_password"}}
-    <p class="f__help">{{bi $lang "repoadmin.delete.password.help"}}</p>
-  </div>
+  {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $n "ID" "rdel-password"}}
 
   <div class="actions">
     <button type="submit" class="btn btn--danger-solid">{{icon "trash"}}<span>{{bi $lang "repoadmin.delete.submit"}}</span></button>

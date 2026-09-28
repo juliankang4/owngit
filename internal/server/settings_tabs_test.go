@@ -68,6 +68,7 @@ func TestSettingsTabsAreAddresses(t *testing.T) {
 // off, and a save that asks for what is saved changes nothing.
 func TestSavingTheAccessGroupAsksForOneChange(t *testing.T) {
 	app := newConfiguredApp(t)
+	askEveryTime(t, app)
 	client, base, csrf, _ := networkSettingsClient(t, app)
 	save := func(fields url.Values) browserHTTPResult {
 		fields.Set("csrf", csrf)

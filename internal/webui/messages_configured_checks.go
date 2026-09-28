@@ -189,7 +189,6 @@ const (
 	MsgCCEnableHelp    MessageCode = "cc.consent.enable_help"
 	MsgCCDisable       MessageCode = "cc.consent.disable"
 	MsgCCDisableHelp   MessageCode = "cc.consent.disable_help"
-	MsgCCPasswordEach  MessageCode = "cc.password_each_time"
 	MsgCCEnableBlocked MessageCode = "cc.consent.blocked"
 	MsgCCEnableLegacy  MessageCode = "cc.consent.blocked_legacy"
 )
@@ -680,10 +679,6 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCDisableHelp: {
 		en: "No new jobs start. Jobs already running are asked to stop, and OwnGit reports only what it can confirm.",
 		ko: "새 작업을 시작하지 않습니다. 실행 중인 작업에는 중지를 요청하며 OwnGit은 확인된 사실만 보고합니다.",
-	},
-	MsgCCPasswordEach: {
-		en: "Changing check settings is a security change, so OwnGit asks for the administrator password every time, even when you are signed in.",
-		ko: "체크 설정은 보안 설정이라 로그인한 상태에서도 바꿀 때마다 관리자 비밀번호를 묻습니다.",
 	},
 	MsgCCEnableBlocked: {
 		en: "Save the settings in step 4 first.",

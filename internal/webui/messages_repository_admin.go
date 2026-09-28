@@ -87,7 +87,6 @@ const (
 	MsgRepoDeleteGitPath       MessageCode = "repoadmin.delete.git_path"
 	MsgRepoDeleteRemovedPath   MessageCode = "repoadmin.delete.removed_path"
 	MsgRepoDeleteNameHelp      MessageCode = "repoadmin.delete.name.help"
-	MsgRepoDeletePasswordHelp  MessageCode = "repoadmin.delete.password.help"
 	MsgRepoDeleteSubmit        MessageCode = "repoadmin.delete.submit"
 	MsgRepoDeleteModeRequired  MessageCode = "repoadmin.delete.mode_required"
 	MsgRepoDeleteNameMismatch  MessageCode = "repoadmin.delete.name_mismatch"
@@ -266,10 +265,6 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoDeleteNameHelp: {
 		en: "To confirm, type the name exactly as shown:",
 		ko: "확인하려면 표시된 이름을 그대로 입력하세요:",
-	},
-	MsgRepoDeletePasswordHelp: {
-		en: "Deleting asks for the administrator password again, even in an administrator session.",
-		ko: "관리자로 로그인해 있어도 삭제할 때는 관리자 비밀번호를 다시 묻습니다.",
 	},
 	MsgRepoDeleteSubmit:       {en: "Delete repository", ko: "저장소 삭제"},
 	MsgRepoDeleteModeRequired: {en: "Choose what happens to the Git files.", ko: "Git 파일을 어떻게 할지 고르세요."},

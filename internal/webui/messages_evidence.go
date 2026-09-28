@@ -276,25 +276,24 @@ const (
 
 // Helper credential screen.
 const (
-	MsgHelperTitle            MessageCode = "helper.title"
-	MsgHelperIntro            MessageCode = "helper.intro"
-	MsgHelperScope            MessageCode = "helper.scope"
-	MsgHelperOpen             MessageCode = "helper.open"
-	MsgHelperNone             MessageCode = "helper.none"
-	MsgHelperListTitle        MessageCode = "helper.list.title"
-	MsgHelperLabel            MessageCode = "helper.label"
-	MsgHelperLabelHelp        MessageCode = "helper.label_help"
-	MsgHelperCreatedAt        MessageCode = "helper.created_at"
-	MsgHelperLastUsed         MessageCode = "helper.last_used"
-	MsgHelperNeverUsed        MessageCode = "helper.never_used"
-	MsgHelperRevokedAt        MessageCode = "helper.revoked_at"
-	MsgHelperActive           MessageCode = "helper.active"
-	MsgHelperRevoked          MessageCode = "helper.revoked"
-	MsgHelperIssue            MessageCode = "helper.issue"
-	MsgHelperIssueHelp        MessageCode = "helper.issue_help"
-	MsgHelperRevoke           MessageCode = "helper.revoke"
-	MsgHelperRevokeHelp       MessageCode = "helper.revoke_help"
-	MsgHelperPasswordEachTime MessageCode = "helper.password_each_time"
+	MsgHelperTitle      MessageCode = "helper.title"
+	MsgHelperIntro      MessageCode = "helper.intro"
+	MsgHelperScope      MessageCode = "helper.scope"
+	MsgHelperOpen       MessageCode = "helper.open"
+	MsgHelperNone       MessageCode = "helper.none"
+	MsgHelperListTitle  MessageCode = "helper.list.title"
+	MsgHelperLabel      MessageCode = "helper.label"
+	MsgHelperLabelHelp  MessageCode = "helper.label_help"
+	MsgHelperCreatedAt  MessageCode = "helper.created_at"
+	MsgHelperLastUsed   MessageCode = "helper.last_used"
+	MsgHelperNeverUsed  MessageCode = "helper.never_used"
+	MsgHelperRevokedAt  MessageCode = "helper.revoked_at"
+	MsgHelperActive     MessageCode = "helper.active"
+	MsgHelperRevoked    MessageCode = "helper.revoked"
+	MsgHelperIssue      MessageCode = "helper.issue"
+	MsgHelperIssueHelp  MessageCode = "helper.issue_help"
+	MsgHelperRevoke     MessageCode = "helper.revoke"
+	MsgHelperRevokeHelp MessageCode = "helper.revoke_help"
 
 	MsgHelperTokenTitle MessageCode = "helper.token.title"
 	MsgHelperTokenOnce  MessageCode = "helper.token.once"
@@ -845,10 +844,6 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgHelperRevokeHelp: {
 		en: "The helper stops being able to report with it immediately. Results it already reported stay.",
 		ko: "체크 에이전트는 이 토큰으로 즉시 보고할 수 없게 됩니다. 이미 보고된 결과는 남습니다.",
-	},
-	MsgHelperPasswordEachTime: {
-		en: "Issuing and revoking each ask for your current administrator password. Being signed in is not enough.",
-		ko: "토큰을 발급하거나 취소할 때마다 현재 관리자 비밀번호를 다시 확인합니다. 로그인만으로는 부족합니다.",
 	},
 
 	MsgHelperTokenTitle: {en: "Copy this now", ko: "지금 토큰을 복사하세요"},

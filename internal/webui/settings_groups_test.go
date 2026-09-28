@@ -15,6 +15,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 		GroupUpdate:     {"update_check"},
 		GroupAccess:     {"access_mode", "access_password"},
 		GroupAdmin:      {"new_admin_password"},
+		GroupConfirm:    {"admin_confirmation", "no_ask_ack"},
 		GroupConnection: {"insecure_ack"},
 		GroupNetwork:    {"network_revision", "listen", "base_url", "allowed_hosts", "trusted_proxies", "insecure_ack"},
 		GroupTailscale:  {"tailscale", "home_network"},
@@ -48,8 +49,9 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 					t.Errorf("%s: the form sends %q, which is not its own", group, name)
 				}
 			}
-			// Today every group asks for the administrator password, so the
-			// browser, not the script, sends each of them.
+			// This browser has not typed the administrator password, so
+			// every group asks for it and the browser, not the script,
+			// sends each of them.
 			if !strings.Contains(form, `type="password"`) {
 				t.Errorf("%s: the form has no password field", group)
 			}
@@ -58,6 +60,74 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 	for group := range own {
 		if !seen[group] {
 			t.Errorf("no page showed the %s group", group)
+		}
+	}
+}
+
+// groupForms returns the form of each Settings group on a rendered tab.
+func groupForms(out string) map[string]string {
+	forms := map[string]string{}
+	for _, m := range regexp.MustCompile(`<section class="grp" id="grp-([a-z]+)"`).FindAllStringSubmatchIndex(out, -1) {
+		section := out[m[0]:]
+		section = section[:strings.Index(section, "</section>")]
+		start := strings.Index(section, "<form")
+		if start < 0 || !strings.Contains(section, "data-group-form") {
+			continue
+		}
+		forms[out[m[2]:m[3]]] = section[start : start+strings.Index(section[start:], "</form>")]
+	}
+	return forms
+}
+
+// While a change needs no password, in a remembered browser or with the
+// check off, a group has no password field, so the script saves it and the
+// other groups keep what was typed in them. Changing the administrator
+// password still asks for the current one, and turning the check off asks
+// one last time, only while that choice is picked.
+func TestSettingsGroupsAskForThePasswordOnlyWhenAChangeNeedsIt(t *testing.T) {
+	r := newRenderer(t)
+	for _, check := range []struct {
+		name   string
+		viewer func(*Viewer)
+		note   MessageCode
+	}{
+		{"remembered", func(v *Viewer) { v.AdminConfirmed, v.AdminRemembered, v.AdminAsks = true, true, false }, MsgConfirmRemembered},
+		{"check off", func(v *Viewer) {
+			v.AdminConfirmed, v.AdminCheckOff, v.AdminChoice, v.AdminAsks = true, true, "never", false
+		}, MsgConfirmCheckOff},
+	} {
+		for _, name := range []string{"settings", "settings-access", "settings-network"} {
+			c := fullChrome(LangEN)
+			check.viewer(&c.Viewer)
+			page := allPages(LangEN)[name].(SettingsPage)
+			page.Chrome = c
+			out := render(t, r, page)
+			for group, form := range groupForms(out) {
+				switch group {
+				case GroupAdmin:
+					if !strings.Contains(form, `name="admin_password"`) {
+						t.Errorf("%s: changing the administrator password does not ask for the current one", check.name)
+					}
+				case GroupConfirm:
+					asks := strings.Contains(form, `data-show-if="admin_confirmation=never"`) && strings.Contains(form, `name="admin_password"`)
+					if asks != (check.name == "remembered") {
+						t.Errorf("%s: the confirmation group asks for the password one last time: %v", check.name, asks)
+					}
+				default:
+					if strings.Contains(form, `type="password"`) && group != GroupAccess {
+						t.Errorf("%s: the %s group asks for a password its change does not need", check.name, group)
+					}
+					if strings.Contains(form, `name="admin_password"`) {
+						t.Errorf("%s: the %s group asks for the administrator password", check.name, group)
+					}
+					if !strings.Contains(form, wantText(LangEN, check.note)) {
+						t.Errorf("%s: the %s group does not say why it saves without the password", check.name, group)
+					}
+				}
+			}
+			if hasPill := strings.Contains(out, "data-admin-check-off"); hasPill != (check.name == "check off") {
+				t.Errorf("%s: the page shows the check-off indication: %v", check.name, hasPill)
+			}
 		}
 	}
 }

@@ -179,7 +179,7 @@ func TestSavingNetworkSettingsNeedsTheAdministratorPassword(t *testing.T) {
 	if result.status != http.StatusUnauthorized {
 		t.Fatalf("save with a wrong administrator password status=%d", result.status)
 	}
-	if !strings.Contains(result.body, enText(webui.MsgAdminFailed)) || !strings.Contains(result.body, `aria-invalid="true" aria-describedby="network-admin_password-note"`) {
+	if !strings.Contains(result.body, enText(webui.MsgAdminFailed)) || !strings.Contains(result.body, `aria-invalid="true" aria-describedby="network-admin_password-note`) {
 		t.Fatal("the refused save did not mark the administrator password")
 	}
 	// A failed confirmation keeps what was typed, so it can be saved with

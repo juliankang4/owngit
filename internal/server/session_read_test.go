@@ -184,7 +184,7 @@ func TestSavedPasswordConfirmationSurvivesAnUnreadableAdminSession(t *testing.T)
 	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/login?notice=access_password_saved&next=%2Fsettings%2Faccess" {
 		t.Fatalf("save status=%d location=%q", result.status, result.header.Get("Location"))
 	}
-	checkLoggedSteps(t, "save", loggedFailures(serverLog, 0), "session read")
+	checkLoggedSteps(t, "save", loggedFailures(serverLog, 0), "administrator confirmation read")
 }
 
 // Once setup is complete, the setup form refuses an unknown Host whatever its

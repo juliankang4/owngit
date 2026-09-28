@@ -55,6 +55,12 @@
   {{end}}
 
   {{/* Keep related controls together without changing their focus order. */}}
+  {{/* While the administrator password check is off, every page says so
+       and leads to where it is turned back on. */}}
+  {{if .Chrome.Viewer.AdminCheckOff}}
+  <a class="conn conn--danger toolbar__alert" href="{{tabURL "access"}}#grp-confirm" data-admin-check-off>{{icon "warning"}}<span class="conn__t">{{bi .Lang "confirm.off_badge"}}</span></a>
+  {{end}}
+
   <div class="toolbar__controls">
     {{template "connection" .}}
 
@@ -185,7 +191,8 @@
         {{with $nav.AdminLogoutURL}}
         <form class="sb__admin" method="post" action="{{.}}">
           <input type="hidden" name="csrf" value="{{$.Chrome.CSRF}}">
-          <span class="sb__admin-t">{{icon "unlocked"}}<span>{{bi $lang "app.nav.admin_on"}}</span></span>
+          {{$v := $.Chrome.Viewer}}
+          <span class="sb__admin-t">{{icon "unlocked"}}<span>{{if $v.AdminRemembered}}{{biUntil $lang "confirm.until" $.Chrome.Now $v.AdminExpiresAt}}{{else}}{{biUntil $lang "confirm.pages_until" $.Chrome.Now $v.AdminExpiresAt}}{{end}}</span></span>
           <button type="submit" class="linkbtn" {{biAttr $lang "aria-label" "app.end_admin"}}>{{bi $lang "app.nav.admin_end"}}</button>
         </form>
         {{end}}
@@ -203,8 +210,8 @@
 
 {{/* New repository and Import, as icon buttons beside a Repositories
      heading. The hidden words are the accessible names and hovering shows
-     them; Import carries the lock mark until an administrator session
-     exists, because it asks for the administrator password. Call as:
+     them; Import carries the lock mark while an administrator change asks
+     for the administrator password. Call as:
      {{template "repoActions" dict "Lang" .Lang "Nav" .Chrome.Nav "Viewer" .Chrome.Viewer "Place" ""}}
      Place names the current screen ("new" or "import"), if either. */}}
 {{define "repoActions"}}
@@ -212,7 +219,7 @@
 {{if or $nav.NewRepoURL $nav.NewImportURL}}
 <span class="headacts">
   {{with $nav.NewRepoURL}}<a class="iconbtn" href="{{.}}"{{if eq $.Place "new"}} aria-current="page"{{end}} {{biAttr $lang "title" "repo.new.title"}}>{{icon "plus"}}<span class="visually-hidden">{{bi $lang "repo.new.title"}}</span></a>{{end}}
-  {{with $nav.NewImportURL}}<a class="iconbtn" href="{{.}}"{{if eq $.Place "import"}} aria-current="page"{{end}} {{biAttr $lang "title" "import.list_link"}}>{{icon "import"}}<span class="visually-hidden">{{bi $lang "import.list_link"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $.Viewer.AdminConfirmed)}}</a>{{end}}
+  {{with $nav.NewImportURL}}<a class="iconbtn" href="{{.}}"{{if eq $.Place "import"}} aria-current="page"{{end}} {{biAttr $lang "title" "import.list_link"}}>{{icon "import"}}<span class="visually-hidden">{{bi $lang "import.list_link"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" $.Viewer.AdminAsks}}</a>{{end}}
 </span>
 {{end}}
 {{end}}
@@ -304,6 +311,28 @@
   {{end}}
 {{end}}
 {{end}}
+
+{{/* The administrator password a change asks for. It is shown only while a
+     change asks for it (Viewer.AdminAsks, which follows the choice in
+     Access and this browser's confirmation); otherwise the server needs
+     none and the form sends none. Each form scopes its own notice. The help
+     line says what typing the password does, and the field points at it
+     together with any refusal.
+
+     Call as: {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer
+                 "Notices" $fn "Scope" $act "ID" "cc-save-password"}}
+     "Label" replaces the field's label with another message. */}}
+{{define "adminField"}}{{if .Viewer.AdminAsks}}
+{{$lang := .Lang}}{{$id := .ID}}{{$help := confirmAfter .Viewer.AdminChoice}}
+{{$refused := false}}{{range .Notices}}{{if and (eq .Field "admin_password") (eq .Kind "error")}}{{$refused = true}}{{end}}{{end}}
+<div class="f">
+  <label for="{{$id}}">{{with .Label}}{{bi $lang (code .)}}{{else}}{{bi $lang "admin.field"}}{{end}}</label>
+  <input id="{{$id}}" name="admin_password" type="password" required autocomplete="current-password"
+         {{if $refused}}aria-invalid="true" aria-describedby="{{noteID .Scope "admin_password"}}{{if $help}} {{$id}}-help{{end}}"{{else if $help}}aria-describedby="{{$id}}-help"{{end}}>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Scope "Field" "admin_password"}}
+  {{with $help}}<p class="f__help" id="{{$id}}-help">{{bi $lang .}}</p>{{end}}
+</div>
+{{end}}{{end}}
 
 {{/* aria-invalid and aria-describedby for a field that carries an error. */}}
 {{define "fieldInvalid"}}{{$field := .Field}}{{$id := noteID .Scope .Field}}{{range .Notices}}{{if and (eq .Field $field) (eq .Kind "error")}} aria-invalid="true" aria-describedby="{{$id}}"{{end}}{{end}}{{end}}

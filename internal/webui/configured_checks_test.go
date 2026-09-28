@@ -619,8 +619,8 @@ func TestConfiguredCheckScreenStates(t *testing.T) {
 				p.PendingAction, p.PendingCredentialID = ActionRevokeRunnerToken, "rc1"
 				p.Chrome.Notices = []Notice{Error("admin_password", MsgAdminFailed)}
 			}),
-			markup:   []string{`aria-describedby="` + noteID("rc1", "admin_password") + `"`},
-			noMarkup: []string{`aria-describedby="` + noteID("rc2", "admin_password") + `"`}},
+			markup:   []string{`aria-describedby="` + noteID("rc1", "admin_password")},
+			noMarkup: []string{`aria-describedby="` + noteID("rc2", "admin_password")}},
 		screen{name: "returning to runner tokens shows no token", page: runnerPage(fullChrome(LangEN), false),
 			absent: []MessageCode{MsgRTTokenOnce}, noMarkup: []string{runnerTestToken}},
 	}

@@ -205,6 +205,7 @@ func TestSettingsChangesConfirmTheSave(t *testing.T) {
 // save (QA-014).
 func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
+	askEveryTime(t, app)
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
 	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
 	accessHash := fixturePasswordHash(t, "shared-password")

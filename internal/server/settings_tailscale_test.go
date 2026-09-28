@@ -78,7 +78,7 @@ func TestTurningTailscaleSharingOnAndOffInSettings(t *testing.T) {
 	client, base, csrf, _ := networkSettingsClient(t, app)
 
 	result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "wrong-password", false), base)
-	if result.status != http.StatusUnauthorized || !strings.Contains(result.body, `aria-describedby="tailscale-admin_password-note"`) {
+	if result.status != http.StatusUnauthorized || !strings.Contains(result.body, `aria-describedby="tailscale-admin_password-note`) {
 		t.Fatalf("wrong administrator password: status=%d", result.status)
 	}
 	if len(fake.Writes()) != 0 {

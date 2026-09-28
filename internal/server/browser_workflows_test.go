@@ -239,6 +239,7 @@ func TestBrowserEvidenceReadFailuresStayLocalizedAndAdvisory(t *testing.T) {
 
 func TestBrowserHelperCredentialsRequireSessionPasswordAndDeliverTokenOnce(t *testing.T) {
 	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
 	server, client, jar := openBrowser(t, fixture)
 
 	helperURL := server.URL + baseHelperCredentialsURL("project")

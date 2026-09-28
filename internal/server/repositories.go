@@ -302,7 +302,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	// which controls a page would draw. Hiding a button is presentation; this
 	// is the authorization.
 	if len(parts) >= 2 && administratorRepositoryScreen(parts[1]) {
-		session, ok = app.requireBrowserAdmin(writer, request)
+		session, ok = app.requireAdminPage(writer, request)
 	} else {
 		session, ok = app.requireGeneral(writer, request, settings)
 	}

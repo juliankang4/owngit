@@ -130,11 +130,26 @@ type Viewer struct {
 	// GeneralUnlocked is true when general access is currently satisfied,
 	// either because AccessMode is AccessOpen or a valid session exists.
 	GeneralUnlocked bool
-	// AdminConfirmed is true during a short administrator confirmation state.
-	// It is never permanent browser trust.
+	// AdminConfirmed is true when the viewer may open the administrator
+	// pages and see administrator data: this browser holds an administrator
+	// confirmation, or the administrator password check is off.
 	AdminConfirmed bool
-	// AdminExpiresAt is when the confirmation lapses. Zero when not confirmed.
+	// AdminExpiresAt is when this browser's administrator confirmation
+	// ends. Zero when it holds none.
 	AdminExpiresAt time.Time
+	// AdminRemembered is true while this browser's confirmation stands for
+	// changes, so they ask for no password until AdminExpiresAt.
+	AdminRemembered bool
+	// AdminAsks is true when an administrator change asks for the
+	// administrator password now. The forms then show the field.
+	AdminAsks bool
+	// AdminCheckOff is true while the administrator password check is off
+	// (Do not ask) for a viewer who may use the dashboard. Every page says
+	// so.
+	AdminCheckOff bool
+	// AdminChoice is the saved "Ask for the administrator password" choice,
+	// one of AdminConfirmChoices.
+	AdminChoice string
 	// SetupComplete is false only before the installation is configured.
 	SetupComplete bool
 }

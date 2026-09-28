@@ -15,14 +15,16 @@ import (
 
 func TestImportBrowserFormsWorkInBothLanguages(t *testing.T) {
 	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)
-	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "import-browser")
+	browserAdminSessionFor(t, fixture, server.URL, jar, "import-browser")
 	// The source form is behind the explicit Set up import action.
 	english := browserGET(t, client, server.URL+"/repositories/project/import?setup=1")
-	if english.status != http.StatusOK || !strings.Contains(english.body, webui.Text(webui.LangEN, webui.MsgImportTitle)) || !strings.Contains(english.body, `name="csrf" value="`+csrf+`"`) {
+	if english.status != http.StatusOK || !strings.Contains(english.body, webui.Text(webui.LangEN, webui.MsgImportTitle)) {
 		t.Fatalf("english import page status=%d body=%s", english.status, english.body)
 	}
+	csrf := formValue(t, english.body, "csrf")
 	if !strings.Contains(english.body, `name="url"`) || !strings.Contains(english.body, `name="admin_password"`) || !strings.Contains(english.body, `method="post"`) {
 		t.Fatal("import form is missing a no-script field")
 	}
@@ -79,6 +81,7 @@ func TestNewImportKeepsCAWhenCredentialFormIsNone(t *testing.T) {
 
 func TestImportPageShowsPasswordAndFailureCauses(t *testing.T) {
 	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
 	fixture.app.Imports.Fetch = func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
 		return nil, &importfetch.Error{Op: "connect", Kind: importfetch.ErrConnection}
 	}

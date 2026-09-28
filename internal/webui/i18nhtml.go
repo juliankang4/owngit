@@ -126,6 +126,19 @@ func biF(lang Lang, code MessageCode, values ...string) template.HTML {
 	return biText(lang, fmt.Sprintf(Text(LangEN, code), args...), fmt.Sprintf(Text(LangKO, code), args...))
 }
 
+// biUntil renders a sentence whose single %s is the time t, such as the
+// end of a confirmation: the clock alone when t is on the same day as now,
+// otherwise the date as well.
+func biUntil(lang Lang, code MessageCode, now, t time.Time) template.HTML {
+	when := func(lang Lang) string {
+		if now.In(t.Location()).Format("2006-01-02") == t.Format("2006-01-02") {
+			return formatClock(t)
+		}
+		return formatDateTime(lang, t)
+	}
+	return biText(lang, fmt.Sprintf(Text(LangEN, code), when(LangEN)), fmt.Sprintf(Text(LangKO, code), when(LangKO)))
+}
+
 // biRelease renders the new-release sentence in both languages. The versions
 // are strict X.Y.Z strings chosen by the backend and are escaped like any
 // other text.

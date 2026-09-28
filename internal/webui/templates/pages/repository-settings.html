@@ -40,6 +40,7 @@
       </select>
       {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "branch"}}
     </div>
+    {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $n "ID" "rset-password"}}
     <div class="actions">
       <button type="submit" class="btn btn--primary">{{bi $lang "repoadmin.default_branch.save"}}</button>
     </div>

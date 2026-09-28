@@ -234,13 +234,13 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 	if err != nil {
 		return webui.Chrome{}, fmt.Errorf("session read: %w", err)
 	}
-	admin, adminOK, err := app.cookieSession(request, "admin", adminCookie)
+	authority, err := app.adminAuthority(writer, request)
 	if err != nil {
-		return webui.Chrome{}, fmt.Errorf("session read: %w", err)
+		return webui.Chrome{}, fmt.Errorf("administrator confirmation read: %w", err)
 	}
 	if csrf == "" {
-		if adminOK {
-			csrf = admin.CSRF
+		if authority.confirmed {
+			csrf = authority.session.CSRF
 		} else if generalOK {
 			csrf = general.CSRF
 		} else {
@@ -262,22 +262,19 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		Lang: lang, Appearance: appearance, Now: app.now(), CurrentURL: request.URL.RequestURI(), CSRF: csrf, Version: app.Version,
 		Viewer: webui.Viewer{
 			AccessMode: accessMode, GeneralUnlocked: settings.AccessMode == "open" || generalOK,
-			AdminConfirmed: adminOK, SetupComplete: settings.Initialized,
+			SetupComplete: settings.Initialized,
 		},
 		Connection: webui.Connection{
 			Encrypted: info.Secure(), Proxy: info.Secure() && info.Proxied, Tailscale: app.throughTailscale(request), Tailnet: app.throughTailnet(request),
 			Host: info.Host, InsecureAcknowledged: settings.InsecureHTTPAccepted,
 		},
 	}
-	if adminOK {
-		chrome.Viewer.AdminExpiresAt = admin.Expires
-	}
 	// A Host admitted only to redeem the setup link learns nothing about
 	// this server, not even its version. See setup_host.go.
 	if _, unknown := app.unknownHost(request); unknown {
 		chrome.Version = ""
 	}
-	if settings.Initialized && (chrome.Viewer.GeneralUnlocked || adminOK) {
+	if settings.Initialized && (chrome.Viewer.GeneralUnlocked || authority.confirmed) {
 		repositories, err := app.visibleRepositories(request)
 		if err != nil {
 			return webui.Chrome{}, fmt.Errorf("repository list read: %w", err)
@@ -290,9 +287,6 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		}
 		if generalOK && settings.AccessMode == "password" {
 			nav.LogoutURL = "/logout"
-		}
-		if adminOK {
-			nav.AdminLogoutURL = "/admin/logout"
 		}
 		for _, repository := range repositories {
 			if query != "" && !strings.Contains(strings.ToLower(repository.Name), strings.ToLower(query)) {
@@ -310,6 +304,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		webui.OrderNav(nav.Repositories, nav.Order, lang)
 		chrome.Nav = nav
 	}
+	fillAdminViewer(&chrome, authority)
 	chrome.Notices = noticeFor(app.resultNotice(writer, request))
 	return chrome, nil
 }
@@ -434,6 +429,10 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgSettingsAccessDisabled)}
 	case "admin_password_changed":
 		return []webui.Notice{webui.Success(webui.MsgSettingsAdminChanged)}
+	case "confirmation_saved":
+		return []webui.Notice{webui.Success(webui.MsgConfirmSaved)}
+	case "confirmation_off":
+		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgConfirmTurnedOff}}
 	case "insecure_acknowledged":
 		return []webui.Notice{webui.Success(webui.MsgSettingsAckDone)}
 	case "logout":

@@ -3,10 +3,10 @@
 
 <div class="phead">
   <h1>{{bi $lang "settings.title"}}</h1>
-  {{/* Every security change verifies the administrator password in the form
-       itself. A short confirmation state does not replace that check, and no
-       browser is remembered as an administrator. */}}
-  <p>{{bi $lang "settings.admin_required"}}</p>
+  {{/* Whether a save asks for the administrator password follows the
+       choice in Access and this browser's confirmation. */}}
+  {{$v := .Chrome.Viewer}}
+  <p>{{if $v.AdminCheckOff}}{{bi $lang "confirm.intro_off"}}{{else if $v.AdminRemembered}}{{bi $lang "confirm.intro_remembered"}}{{else}}{{bi $lang "settings.admin_required"}}{{end}}</p>
 </div>
 
 {{/* Each tab is its own address, so the strip is a list of ordinary links:
@@ -41,9 +41,10 @@
      - [data-group-native] asks the script to leave the form to the browser.
 
      The script sends a group's form itself, and keeps the page, only when
-     the form has no password field (groupSave in owngit.js). A group that
-     asks for the administrator password, as every group does today, is an
-     ordinary POST. Without the script every form is an ordinary POST, its
+     the form has no password field (groupSave in owngit.js): while this
+     browser's administrator confirmation is remembered or the check is off,
+     a group shows no password field unless it always asks for one. A group
+     that asks for the administrator password is an ordinary POST. Without the script every form is an ordinary POST, its
      save bar is always shown, and Cancel reloads the tab. */}}
 <div class="setpanel" data-settings>
   {{if eq $tab "general"}}<p class="setpanel__lead">{{bi $lang "settings.lead.general"}}</p>{{template "setGeneral" .}}
@@ -118,7 +119,7 @@
     <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
     <input type="hidden" name="action" value="set_update_check">
     {{template "switch" dict "Lang" $lang "ID" "upd-check" "Name" "update_check" "On" (eq $on "on") "Saved" (onOff $u.Enabled) "Label" (bi $lang "settings.update.switch") "Help" (bi $lang "settings.update.help") }}
-    {{template "grpBar" dict "Lang" $lang "Group" "update" "Notices" $gn "Focus" $focus "Cancel" (tabURL "general")}}
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "update" "Notices" $gn "Focus" $focus "Cancel" (tabURL "general")}}
   </form>
 </section>
 {{end}}
@@ -173,7 +174,7 @@
         <p class="f__help">{{bi $lang "setup.access.password_help"}}</p>
       </div>
     {{end}}
-    {{template "grpBar" dict "Lang" $lang "Group" "access" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access")}}
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "access" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access")}}
   </form>
 </section>
 
@@ -201,8 +202,51 @@
                {{template "fieldInvalid" dict "Notices" $gn "Scope" "admin" "Field" "new_admin_password"}}{{if eq $focus "new_admin_password"}} autofocus{{end}}>
         {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "admin" "Field" "new_admin_password"}}
       </div>
-      {{template "grpBar" dict "Lang" $lang "Group" "admin" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access") "NoAdmin" true "Save" (bi $lang "settings.admin.change")}}
+      {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "admin" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access") "NoAdmin" true "Save" (bi $lang "settings.admin.change")}}
     </details>
+  </form>
+</section>
+
+{{/* When the administrator password is asked. Turning Do not ask on asks
+     for the password one last time and for an explicit acknowledgement of
+     the full warning; the server enforces both. */}}
+{{$v := .Chrome.Viewer}}
+{{$gn := forAction $p.Group "confirm" $p.Notices}}{{$focus := firstError $gn "admin_confirmation" "no_ask_ack" "admin_password"}}
+{{$choice := draft $p.Group $p.Draft "confirm" "admin_confirmation" $v.AdminChoice}}
+<section class="grp" id="grp-confirm" aria-labelledby="grp-confirm-h" data-group="confirm"{{if hasError $gn}} data-group-refused{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "confirm" "Title" (bi $lang "confirm.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "confirm.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  <form class="gform" method="post" action="{{tabURL "access"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_confirmation">
+    <div class="f f--row">
+      <label for="confirm-choice">{{bi $lang "confirm.label"}}</label>
+      <select id="confirm-choice" name="admin_confirmation" data-saved="{{$v.AdminChoice}}"
+              {{template "netDescribed" dict "Notices" $gn "Scope" "confirm" "Field" "admin_confirmation" "Help" "confirm-choice-help"}}{{if eq $focus "admin_confirmation"}} autofocus{{end}}>
+        {{range adminChoices}}
+          <option value="{{.Value}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq .Value $choice}} selected{{end}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "confirm" "Field" "admin_confirmation"}}
+      <p class="f__help" id="confirm-choice-help">{{bi $lang "confirm.help"}}</p>
+    </div>
+    {{if eq $v.AdminChoice "never"}}
+      <p class="wn wn--danger">{{icon "error"}}<span><b>{{bi $lang "settings.risk"}}</b> {{bi $lang "confirm.never_risk"}}</span></p>
+    {{else}}
+      <div data-show-if="admin_confirmation=never">
+        <p class="wn wn--danger">{{icon "error"}}<span><b>{{bi $lang "settings.risk"}}</b> {{bi $lang "confirm.never_risk"}}</span></p>
+        {{if ne (print $p.AccessMode) "password"}}<p class="wn wn--danger">{{icon "error"}}<span><b>{{bi $lang "settings.risk"}}</b> {{bi $lang "confirm.never_open_risk"}}</span></p>{{end}}
+        {{$ack := draft $p.Group $p.Draft "confirm" "no_ask_ack" "off"}}
+        <label class="check">
+          <input type="checkbox" name="no_ask_ack" value="1" data-group-gate{{if eq $ack "on"}} checked{{end}}
+                 {{template "fieldInvalid" dict "Notices" $gn "Scope" "confirm" "Field" "no_ask_ack"}}{{if eq $focus "no_ask_ack"}} autofocus{{end}}>
+          <span class="check__t">{{bi $lang "confirm.ack"}}</span>
+        </label>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "confirm" "Field" "no_ask_ack"}}
+      </div>
+    {{end}}
+    {{template "grpBar" dict "Lang" $lang "Viewer" $v "Group" "confirm" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access") "AskIf" (and (ne $v.AdminChoice "never") "admin_confirmation=never")}}
   </form>
 </section>
 {{end}}
@@ -250,7 +294,7 @@
         </label>
         {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "connection" "Field" "insecure_ack"}}
       </div>
-      {{template "grpBar" dict "Lang" $lang "Group" "connection" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network") "Save" (bi $lang "settings.connection.acknowledge")}}
+      {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "connection" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network") "Save" (bi $lang "settings.connection.acknowledge")}}
     </form>
   {{else if not $protected}}
     <p class="f__help">{{bi $lang "connection.tailscale_hint"}}</p>
@@ -347,7 +391,7 @@
       </div>
     {{end}}
     <p class="f__help">{{bi $lang "settings.network.save_note"}}</p>
-    {{template "grpBar" dict "Lang" $lang "Group" "network" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network")}}
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "network" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network")}}
   </form>
   <p class="f__help">{{biF $lang "settings.network.reset" $net.DefaultListen}}</p>
   <pre class="clone__cmds netreset">owngit network reset</pre>
@@ -450,7 +494,7 @@
       {{if $again}}<p class="netnote" data-show-if="tailscale=on">{{icon "clock"}}<span>{{bi $lang "settings.tailscale.again"}}</span></p>{{end}}
     {{end}}
     {{if or $canSwitch $again}}
-      {{template "grpBar" dict "Lang" $lang "Group" "tailscale" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network")}}
+      {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "tailscale" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network")}}
     {{end}}
   </form>
 </section>
@@ -468,7 +512,7 @@
   {{if $nav.Repositories}}
     <ul class="setlinks">
       {{range $nav.Repositories}}
-        <li><a href="{{.URL}}/settings">{{icon "settings"}}<span>{{biF $lang "settings.repositories.link" .Name}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $.Chrome.Viewer.AdminConfirmed)}}</a></li>
+        <li><a href="{{.URL}}/settings">{{icon "settings"}}<span>{{biF $lang "settings.repositories.link" .Name}}</span>{{template "adminLock" dict "Lang" $lang "Locked" $.Chrome.Viewer.AdminAsks}}</a></li>
       {{end}}
     </ul>
   {{else}}
@@ -533,18 +577,27 @@
 </div>
 {{end}}
 
-{{/* The save bar. The administrator password confirms the save, and Cancel
-     puts the saved values back; without the script it reloads the tab. */}}
-{{define "grpBar"}}{{$lang := .Lang}}{{$g := .Group}}
+{{/* The save bar, and Cancel, which puts the saved values back; without
+     the script it reloads the tab. When a change asks for the
+     administrator password (Viewer.AdminAsks), the bar asks for it and says
+     what typing it does; otherwise it says why the save needs none. NoAdmin
+     leaves the password to the form itself. AskIf "name=value" asks for the
+     password only while that field has that value, for a change that
+     always asks. */}}
+{{define "grpBar"}}{{$lang := .Lang}}{{$g := .Group}}{{$v := .Viewer}}
 <div class="sbar" data-group-bar>
   <p class="sbar__t" data-group-bar-title hidden>{{bi $lang "settings.unsaved_changes"}}</p>
-  {{if not .NoAdmin}}
-  <div class="f sbar__pw">
+  {{if .NoAdmin}}
+  {{else if or $v.AdminAsks .AskIf}}
+  <div class="f sbar__pw"{{if not $v.AdminAsks}} data-show-if="{{.AskIf}}"{{end}}>
     <label for="{{$g}}-admin">{{icon "lock"}}{{bi $lang "admin.field"}}</label>
-    <input id="{{$g}}-admin" name="admin_password" type="password" autocomplete="current-password" required data-group-gate
-           {{template "fieldInvalid" dict "Notices" .Notices "Scope" $g "Field" "admin_password"}}{{if eq .Focus "admin_password"}} autofocus{{end}}>
+    <input id="{{$g}}-admin" name="admin_password" type="password" autocomplete="current-password"{{if $v.AdminAsks}} required{{end}} data-group-gate
+           {{template "netDescribed" dict "Notices" .Notices "Scope" $g "Field" "admin_password" "Help" (print $g "-admin-help")}}{{if eq .Focus "admin_password"}} autofocus{{end}}>
     {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" $g "Field" "admin_password"}}
+    <p class="f__help" id="{{$g}}-admin-help">{{if not $v.AdminAsks}}{{bi $lang "confirm.last_time"}}{{else}}{{with confirmAfter $v.AdminChoice}}{{bi $lang .}}{{end}}{{if .AskIf}} <span data-show-if="{{.AskIf}}">{{bi $lang "confirm.last_time"}}</span>{{end}}{{end}}</p>
   </div>
+  {{else}}
+  <p class="sbar__ok">{{icon "unlocked"}}<span>{{if $v.AdminCheckOff}}{{bi $lang "confirm.check_off"}}{{else}}{{bi $lang "confirm.remembered"}}{{end}}</span></p>
   {{end}}
   <div class="sbar__acts">
     <button type="submit" class="btn btn--primary" data-group-save>{{with .Save}}{{.}}{{else}}{{bi $lang "settings.save"}}{{end}}</button>

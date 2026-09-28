@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"owngit/internal/repository"
-	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -92,6 +91,12 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 		return
 	}
 	branch := postValue(request, "branch")
+	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
+		notice, status := adminPasswordNotice(request, err, "admin_password")
+		chrome.Notices = append(chrome.Notices, notice)
+		app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, status)
+		return
+	}
 	// Only an existing branch is offered, and only an existing branch is
 	// accepted. The backend checks again under its own lock.
 	if !hasBranch(summary, branch) {
@@ -204,9 +209,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		app.renderRepositoryDelete(writer, request, stored, chrome, mode, http.StatusUnprocessableEntity)
 		return
 	}
-	// The password is asked again even inside an administrator session, as
-	// every other destructive administrator action does.
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
+	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		chrome.Notices = append(chrome.Notices, notice)
 		app.renderRepositoryDelete(writer, request, stored, chrome, mode, status)

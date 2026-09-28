@@ -43,6 +43,10 @@ func fullChrome(lang Lang) Chrome {
 			AccessMode:      AccessOpen,
 			GeneralUnlocked: true,
 			SetupComplete:   true,
+			// The default choice, in a browser that has not typed the
+			// administrator password: a change asks for it.
+			AdminChoice: "30m",
+			AdminAsks:   true,
 		},
 		// A running version the backend supplied. The renderer has no version
 		// of its own, so this is the only place one can come from.
@@ -1043,7 +1047,7 @@ func TestEveryFieldErrorReachesItsScreen(t *testing.T) {
 			if !strings.Contains(out, `id="`+wantID+`"`) {
 				t.Errorf("%s (%s): the error is not attached to the %q field (no %s)", tc.name, lang, tc.field, wantID)
 			}
-			if !strings.Contains(out, `aria-describedby="`+wantID+`"`) {
+			if !describedBy(out, wantID) {
 				t.Errorf("%s (%s): the %q input does not point at its message", tc.name, lang, tc.field)
 			}
 		}

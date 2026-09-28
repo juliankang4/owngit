@@ -308,6 +308,11 @@ a:hover { text-decoration: underline; }
 }
 .conn--secure { color: var(--ok); background: var(--ok-soft); }
 .conn--plain { color: var(--warn); background: var(--warn-soft); }
+/* The administrator password check is off. It stays named at every width,
+   and leads to where it is turned back on. */
+.conn--danger { color: var(--bad); background: var(--bad-soft); font-weight: 590; text-decoration: none; }
+.toolbar__alert { flex: none; }
+.conn--danger:hover { text-decoration: underline; }
 
 /* Keep connection, appearance and language on the same row. */
 .toolbar__controls {
@@ -1698,6 +1703,7 @@ span.hm__cell { cursor: default; }
 .sbar__pw > label { display: inline-flex; align-items: center; gap: 5px; }
 .sbar__pw input[type="password"] { max-width: 300px; }
 .sbar__acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.sbar__ok { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; color: var(--text-2); }
 /* A save on its way keeps every label readable; the script ignores a
    second Save until the answer arrives. */
 .grp[aria-busy="true"] { cursor: progress; }
@@ -1877,6 +1883,7 @@ span.hm__cell { cursor: default; }
     white-space: nowrap; border: 0;
   }
   .conn { padding: 4px 8px; }
+  .conn--danger .conn__t { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; white-space: normal; }
 }
 
 @media (max-width: 760px) {
@@ -1892,6 +1899,8 @@ span.hm__cell { cursor: default; }
   .toolbar__id { order: 1; flex: 1 1 auto; min-width: 0; }
   .toolbar__controls { order: 3; margin-left: auto; flex: none; }
   .toolbar .field ~ .toolbar__controls { margin-left: auto; }
+  /* After the controls, on its own row when they leave no room. */
+  .toolbar__alert { order: 4; }
   .field { order: 2; margin-left: 0; flex: 1 0 100%; }
   .field input { width: 100%; max-width: none; }
   .hm__bar { flex-wrap: wrap; }

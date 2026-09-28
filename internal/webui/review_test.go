@@ -131,7 +131,7 @@ func TestWrongAdminPasswordIsShownInTheFormThatWasSubmitted(t *testing.T) {
 			if !strings.Contains(form, `id="`+wantID+`"`) {
 				t.Errorf("%s/%s: the message has no id unique to this form", tc.action, lang)
 			}
-			if !strings.Contains(form, `aria-describedby="`+wantID+`"`) {
+			if !describedBy(form, wantID) {
 				t.Errorf("%s/%s: the input does not point at its own message", tc.action, lang)
 			}
 
@@ -955,4 +955,10 @@ func TestRepositoryReviewScreenStates(t *testing.T) {
 				want: []MessageCode{MsgRepoDefaultGone}})
 	}
 	checkScreens(t, screens...)
+}
+
+// describedBy reports whether an input in out points first at the message
+// with id, before any help line it also names.
+func describedBy(out, id string) bool {
+	return strings.Contains(out, `aria-describedby="`+id+`"`) || strings.Contains(out, `aria-describedby="`+id+` `)
 }

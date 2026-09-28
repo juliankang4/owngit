@@ -48,7 +48,7 @@
       <p class="ev__more"><a href="{{.}}">{{bi $lang "evidence.checks.open_task"}}</a></p>
     {{end}}
 
-    {{template "jobActions" dict "Lang" $lang "J" .Job "URL" .SubmitURL "CSRF" $csrf "Pending" $pending "Notices" $n}}
+    {{template "jobActions" dict "Lang" $lang "J" .Job "URL" .SubmitURL "CSRF" $csrf "Pending" $pending "Notices" $n "Viewer" $.Chrome.Viewer}}
   </div>
 
   {{if or .Checks .ChecksMissing .ChecksUnreadable}}
@@ -368,7 +368,7 @@
           </div>
         </details>
 
-        {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" "cc-save-password" "Help" "cc.password_each_time"}}
+        {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $fn "Scope" $act "ID" "cc-save-password"}}
         <div class="actions">
           <button type="submit" class="btn btn--primary">{{bi $lang "cc.policy.save"}}</button>
         </div>
@@ -395,7 +395,7 @@
           <input type="hidden" name="csrf" value="{{$csrf}}">
           <input type="hidden" name="action" value="{{$act}}">
           <p class="f__help">{{bi $lang "cc.consent.disable_help"}}</p>
-          {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" "cc-disable-password" "Help" "cc.password_each_time"}}
+          {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $fn "Scope" $act "ID" "cc-disable-password"}}
           <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "cc.consent.disable"}}</button></div>
         </form>
       {{else}}
@@ -410,7 +410,7 @@
           <input type="hidden" name="policy_version" value="{{$policy.Version}}">
           <input type="hidden" name="policy_digest" value="{{$policy.Digest}}">
           <p class="f__help">{{bi $lang "cc.consent.enable_help"}}</p>
-          {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" "cc-enable-password" "Help" "cc.password_each_time"}}
+          {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $fn "Scope" $act "ID" "cc-enable-password"}}
           <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "cc.consent.enable"}}</button></div>
         </form>
       {{end}}

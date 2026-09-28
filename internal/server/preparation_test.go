@@ -168,6 +168,7 @@ func TestPreparingRepositoryCredentialScreensRevokeWithoutGit(t *testing.T) {
 	}
 	fixture := newAPIFixture(t, false)
 	app := fixture.app
+	askEveryTime(t, app)
 	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "prep-admin")
 	if result := browserForm(t, client, server.URL+configuredChecksURL("project"), validPolicyValues(csrf), server.URL); result.status != http.StatusSeeOther {

@@ -8,7 +8,6 @@ const (
 	MsgNavFilter       MessageCode = "app.nav.filter"
 	MsgNavNoMatch      MessageCode = "app.nav.no_match"
 	MsgNavMenu         MessageCode = "app.nav.menu"
-	MsgNavAdminOn      MessageCode = "app.nav.admin_on"
 	MsgNavAdminEnd     MessageCode = "app.nav.admin_end"
 
 	// Repository list order. MsgOrderSorted introduces the current order in
@@ -66,7 +65,6 @@ var navigationCatalog = map[MessageCode]message{
 	MsgNavFilter:       {en: "Find a repository", ko: "저장소 찾기"},
 	MsgNavNoMatch:      {en: "No repository matches.", ko: "일치하는 저장소가 없습니다."},
 	MsgNavMenu:         {en: "Menu", ko: "메뉴"},
-	MsgNavAdminOn:      {en: "Confirmed as administrator", ko: "관리자로 확인됨"},
 	MsgNavAdminEnd:     {en: "End", ko: "종료"},
 
 	MsgOrderLabel:         {en: "Sort", ko: "정렬"},

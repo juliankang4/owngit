@@ -35,10 +35,7 @@
   <form class="form form--inline imp__act" method="post" action="{{$p.SubmitURL}}">
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <input type="hidden" name="action" value="import_resolve">
-    <div class="f">
-      <label for="import-resolve-password">{{bi $lang "import.password_each_time"}}</label>
-      <input id="import-resolve-password" name="admin_password" type="password" required autocomplete="current-password">
-    </div>
+    {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "ID" "import-resolve-password" "Label" "import.password_each_time"}}
     <button type="submit" class="btn">{{bi $lang "import.resolve"}}</button>
   </form>
   {{else}}
@@ -85,19 +82,13 @@
     <form class="form form--inline imp__act" method="post" action="{{$p.SubmitURL}}">
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <input type="hidden" name="action" value="import_refresh">
-      <div class="f">
-        <label for="import-refresh-password">{{bi $lang "import.password_each_time"}}</label>
-        <input id="import-refresh-password" name="admin_password" type="password" required autocomplete="current-password">
-      </div>
+      {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "ID" "import-refresh-password" "Label" "import.password_each_time"}}
       <button type="submit" class="btn btn--primary">{{bi $lang "import.refresh"}}</button>
     </form>
     <form class="form form--inline imp__act" method="post" action="{{$p.SubmitURL}}">
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <input type="hidden" name="action" value="import_cancel">
-      <div class="f">
-        <label for="import-cancel-password">{{bi $lang "import.password_each_time"}}</label>
-        <input id="import-cancel-password" name="admin_password" type="password" required autocomplete="current-password">
-      </div>
+      {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "ID" "import-cancel-password" "Label" "import.password_each_time"}}
       <button type="submit" class="btn">{{bi $lang "import.cancel"}}</button>
     </form>
   </div>
@@ -116,7 +107,7 @@
       <a class="btn btn--primary" href="{{$p.SetupURL}}">{{icon "import"}}<span>{{bi $lang "import.set_up"}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $p.Admin)}}</a>
     {{end}}
   </div>
-  {{if $p.Setup}}{{template "importSetup" dict "Lang" $lang "P" $p "Notices" $n "CSRF" $csrf}}{{end}}
+  {{if $p.Setup}}{{template "importSetup" dict "Lang" $lang "P" $p "Notices" $n "CSRF" $csrf "Viewer" .Chrome.Viewer}}{{end}}
 {{end}}
 
 {{if or $p.Configured $p.Last $p.Active}}
@@ -170,7 +161,7 @@
 
 {{if $p.Admin}}
 {{if $p.Setup}}
-  {{template "importSetup" dict "Lang" $lang "P" $p "Notices" $n "CSRF" $csrf}}
+  {{template "importSetup" dict "Lang" $lang "P" $p "Notices" $n "CSRF" $csrf "Viewer" .Chrome.Viewer}}
 {{else}}
 <div class="card">
   <h2 class="setblock__h">{{bi $lang "import.source"}}</h2>
@@ -189,19 +180,13 @@
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <input type="hidden" name="action" value="import_credentials">
     {{template "importCredentialFields" dict "Lang" $lang "Notices" $n "ID" "import" "Choice" $choice "Stored" true}}
-    <div class="f">
-      <label for="import-credential-admin">{{bi $lang "admin.field"}}</label>
-      <input id="import-credential-admin" name="admin_password" type="password" required autocomplete="current-password">
-    </div>
+    {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "ID" "import-credential-admin"}}
     <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "import.save_credentials"}}</button></div>
   </form>
   <form class="form form--inline imp__act imp__clear" method="post" action="{{$p.SubmitURL}}">
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <input type="hidden" name="action" value="import_clear_credentials">
-    <div class="f">
-      <label for="import-clear-password">{{bi $lang "admin.field"}}</label>
-      <input id="import-clear-password" name="admin_password" type="password" required autocomplete="current-password">
-    </div>
+    {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "ID" "import-clear-password"}}
     <button type="submit" class="btn">{{bi $lang "import.clear_credentials"}}</button>
   </form>
 </div>
@@ -223,10 +208,7 @@
       <input id="import-interval" name="interval" type="text" required value="{{if $p.ScheduleInterval}}{{$p.ScheduleInterval}}{{else}}1h{{end}}">
       <p class="f__help">{{bi $lang "import.interval_help"}}</p>
     </div>
-    <div class="f">
-      <label for="import-schedule-password">{{bi $lang "admin.field"}}</label>
-      <input id="import-schedule-password" name="admin_password" type="password" required autocomplete="current-password">
-    </div>
+    {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "ID" "import-schedule-password"}}
     <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "import.save_schedule"}}</button></div>
   </form>
 </div>
@@ -247,11 +229,7 @@
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <input type="hidden" name="action" value="import_configure">
     {{template "importSourceFields" dict "Lang" $lang "Notices" $n "ID" "import" "URL" $p.URL "Mode" $p.Mode "GitOnly" $p.GitOnlyConsent "Private" $p.PrivateNetwork "Focus" (not $n)}}
-    <div class="f">
-      <label for="import-configure-password">{{bi $lang "admin.field"}}</label>
-      <input id="import-configure-password" name="admin_password" type="password" required autocomplete="current-password">
-      <p class="f__help">{{bi $lang "import.password_each_time"}}</p>
-    </div>
+    {{template "adminField" dict "Lang" $lang "Viewer" .Viewer "ID" "import-configure-password"}}
     <div class="actions">
       <button type="submit" class="btn btn--primary">{{bi $lang "import.save_source"}}</button>
       <a class="btn" href="{{$p.SubmitURL}}">{{bi $lang "app.cancel"}}</a>

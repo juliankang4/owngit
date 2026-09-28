@@ -201,6 +201,7 @@ func TestRepositoryAdminRoutesRequireAdministratorSession(t *testing.T) {
 
 func TestRepositoryDeleteRefusalsNeverReachTheBackend(t *testing.T) {
 	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
 	server, client, jar := openBrowser(t, fixture)
 	signInAdmin(t, fixture, server.URL, jar)
 	target := server.URL + "/repositories/project/delete"
@@ -235,7 +236,7 @@ func TestRepositoryDeleteRefusalsNeverReachTheBackend(t *testing.T) {
 		{name: "unknown mode", edit: func(v url.Values) { v.Set("mode", "purge") }, status: http.StatusUnprocessableEntity, message: "Choose what happens to the Git files."},
 		{name: "wrong name", edit: func(v url.Values) { v.Set("confirm_name", "Project") }, status: http.StatusUnprocessableEntity, message: "The name does not match."},
 		{name: "empty name", edit: func(v url.Values) { v.Set("confirm_name", "") }, status: http.StatusUnprocessableEntity, message: "The name does not match."},
-		{name: "missing password", edit: func(v url.Values) { v.Del("admin_password") }, status: http.StatusUnauthorized, message: "That administrator password did not match."},
+		{name: "missing password", edit: func(v url.Values) { v.Del("admin_password") }, status: http.StatusUnauthorized, message: "Enter the administrator password."},
 		{name: "wrong password", edit: func(v url.Values) { v.Set("admin_password", "not-it") }, status: http.StatusUnauthorized, message: "That administrator password did not match."},
 	}
 	for _, test := range cases {

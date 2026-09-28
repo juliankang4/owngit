@@ -221,32 +221,56 @@ func TestPullRequestActionsResubmitTheRevisionOnScreen(t *testing.T) {
 
 // helper credentials
 
-func TestIssuingAndRevokingEachCollectTheAdminPassword(t *testing.T) {
-	// A remembered administrator session reads the list. Minting or destroying
-	// a credential is a security change and re-verifies the password each
-	// time, the same rule the settings screen follows.
+func TestCredentialFormsAskForTheAdminPasswordOnlyWhenAChangeNeedsIt(t *testing.T) {
+	// Minting or destroying a credential follows the one administrator
+	// confirmation rule: each form asks for the password while a change
+	// needs it, and says what typing it does. A browser whose typed password
+	// is remembered, or an installation with the check off, sends none.
 	r := newRenderer(t)
-	out := render(t, r, helperPage(fullChrome(LangEN), false))
-
-	forms := 0
-	for _, form := range strings.Split(out, `method="post"`)[1:] {
-		if end := strings.Index(form, "</form>"); end >= 0 {
-			form = form[:end]
+	forms := func(out string) []string {
+		var found []string
+		for _, form := range strings.Split(out, `method="post"`)[1:] {
+			if end := strings.Index(form, "</form>"); end >= 0 {
+				form = form[:end]
+			}
+			found = append(found, form)
 		}
-		forms++
+		return found
+	}
+	asking := render(t, r, helperPage(fullChrome(LangEN), false))
+	// One issue form plus one revoke form per active credential.
+	if got := forms(asking); len(got) < 3 {
+		t.Fatalf("rendered %d credential forms, want an issue form and one per active credential", len(got))
+	}
+	for _, form := range forms(asking) {
 		if !strings.Contains(form, `name="admin_password"`) {
-			t.Errorf("a credential form does not re-verify the administrator password: %.160s", form)
+			t.Errorf("a credential form does not ask for the administrator password: %.160s", form)
 		}
 		if !strings.Contains(form, `name="csrf"`) {
 			t.Errorf("a credential form has no CSRF token: %.160s", form)
 		}
 	}
-	// One issue form plus one revoke form per active credential.
-	if forms < 3 {
-		t.Errorf("rendered %d credential forms, want an issue form and one per active credential", forms)
+	if !strings.Contains(asking, wantText(LangEN, MsgConfirmAfter30m)) {
+		t.Error("the password field does not say what typing it does")
 	}
-	if !strings.Contains(out, wantText(LangEN, MsgHelperPasswordEachTime)) {
-		t.Error("the screen does not say the password is required for each operation")
+
+	for name, viewer := range map[string]func(*Viewer){
+		"remembered": func(v *Viewer) { v.AdminConfirmed, v.AdminRemembered, v.AdminAsks = true, true, false },
+		"check off": func(v *Viewer) {
+			v.AdminConfirmed, v.AdminCheckOff, v.AdminChoice, v.AdminAsks = true, true, "never", false
+		},
+	} {
+		chrome := fullChrome(LangEN)
+		viewer(&chrome.Viewer)
+		out := render(t, r, helperPage(chrome, false))
+		for _, form := range forms(out) {
+			if strings.Contains(form, `name="admin_password"`) {
+				t.Errorf("%s: a credential form asks for a password the change does not need: %.160s", name, form)
+			}
+			if !strings.Contains(form, `name="csrf"`) {
+				t.Errorf("%s: a credential form has no CSRF token: %.160s", name, form)
+			}
+		}
 	}
 }
 

@@ -67,8 +67,8 @@ var settingsCatalog = map[MessageCode]message{
 		ko: "이 브라우저에서 보이는 화면과 새 릴리스 알림을 정합니다.",
 	},
 	MsgSettingsLeadAccess: {
-		en: "Who can use OwnGit, and the administrator password.",
-		ko: "누가 OwnGit을 쓸 수 있는지 정하고 관리자 비밀번호를 바꿉니다.",
+		en: "Who can use OwnGit, the administrator password, and when it is asked.",
+		ko: "누가 OwnGit을 쓸 수 있는지, 관리자 비밀번호를 언제 물을지 정하고 관리자 비밀번호를 바꿉니다.",
 	},
 	MsgSettingsLeadNetwork: {
 		en: "How this computer and other devices reach OwnGit.",
@@ -119,8 +119,8 @@ var settingsCatalog = map[MessageCode]message{
 	},
 
 	MsgSettingsAccessScope: {
-		en: "Git and the dashboard, for everyone; there are no individual accounts. Applies as soon as you save. Turning the shared password on or changing it signs out everyone who does not hold an administrator session; they sign in again with the new password.",
-		ko: "Git과 대시보드에 함께 적용되며 사람마다 계정을 따로 두지는 않습니다. 저장하면 바로 바뀝니다. 공용 비밀번호를 켜거나 바꾸면 관리자 세션이 없는 사람은 모두 로그아웃되고, 새 비밀번호로 다시 로그인합니다.",
+		en: "Git and the dashboard, for everyone; there are no individual accounts. Applies as soon as you save. Turning the shared password on or changing it signs out everyone who is not confirmed as administrator; they sign in again with the new password.",
+		ko: "Git과 대시보드에 함께 적용되며 사람마다 계정을 따로 두지는 않습니다. 저장하면 바로 바뀝니다. 공용 비밀번호를 켜거나 바꾸면 관리자로 확인되지 않은 사람은 모두 로그아웃되고, 새 비밀번호로 다시 로그인합니다.",
 	},
 	MsgSettingsAccessMode:     {en: "Who can read and push", ko: "읽기와 푸시 권한"},
 	MsgSettingsAccessModePass: {en: "Only people with the shared password", ko: "공용 비밀번호를 아는 사람만"},

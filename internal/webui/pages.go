@@ -192,6 +192,10 @@ const (
 	// turns it off, as the fields ask. Fields: admin_password, access_mode
 	// ("password" or "open"), access_password.
 	ActionSaveAccess = "save_access"
+	// ActionSaveConfirmation saves when the administrator password is
+	// asked. Fields: admin_password, admin_confirmation (one of
+	// AdminConfirmChoices), no_ask_ack (required to turn Do not ask on).
+	ActionSaveConfirmation = "save_confirmation"
 )
 
 // The Settings tabs. Each is its own address, so a tab works as an ordinary
@@ -250,6 +254,7 @@ const (
 	GroupUpdate     = "update"
 	GroupAccess     = "access"
 	GroupAdmin      = "admin"
+	GroupConfirm    = "confirm"
 	GroupConnection = "connection"
 	GroupNetwork    = "network"
 	GroupTailscale  = "tailscale"
@@ -258,7 +263,7 @@ const (
 // settingsGroupTabs names the tab of each group.
 var settingsGroupTabs = map[string]string{
 	GroupUpdate: SettingsGeneral,
-	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess,
+	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess, GroupConfirm: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
 }
 
@@ -276,6 +281,8 @@ func SettingsActionGroup(action string) string {
 		return GroupAccess
 	case ActionChangeAdminPassword:
 		return GroupAdmin
+	case ActionSaveConfirmation:
+		return GroupConfirm
 	case ActionAcknowledgeInsecure:
 		return GroupConnection
 	case ActionSaveNetwork:
@@ -295,10 +302,6 @@ type SettingsPage struct {
 	SubmitURL string
 	// AccessMode is the currently stored mode.
 	AccessMode AccessMode
-	// AdminRequired is true when the viewer must confirm the administrator
-	// password before the controls become usable. The forms stay visible and
-	// each one collects "admin_password" inline.
-	AdminRequired bool
 	// Group is the group that Notices describe: the group whose form was
 	// refused, or whose change was just saved. Every other group shows no
 	// notice.

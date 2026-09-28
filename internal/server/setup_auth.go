@@ -373,12 +373,14 @@ func (app *App) renderLoginFailure(writer http.ResponseWriter, request *http.Req
 	app.render(writer, request, status, page)
 }
 
-// adminPasswordNotice is the notice and status of a browser form whose
-// administrator password was not accepted. A wrong or rate-limited password
-// belongs to field. A check that could not be completed is a page-level
-// unavailable notice, because the password may well be right.
+// adminPasswordNotice is the notice and status of a browser form refused by
+// confirmAdmin. A missing, wrong or rate-limited password belongs to field.
+// A check that could not be completed is a page-level unavailable notice,
+// because the password may well be right.
 func adminPasswordNotice(request *http.Request, err error, field string) (webui.Notice, int) {
 	switch {
+	case errors.Is(err, errAdminPasswordMissing):
+		return webui.Error(field, webui.MsgAdminEmpty), http.StatusUnauthorized
 	case errors.Is(err, auth.ErrRateLimited):
 		return webui.Error(field, webui.MsgAdminLocked), http.StatusTooManyRequests
 	case errors.Is(err, auth.ErrInvalidCredentials):
@@ -395,23 +397,30 @@ func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, 
 		return
 	}
 	// Leaving shared access is confirmed on the sign-in page it leads to,
-	// not after the next sign-in. Ending the administrator session keeps the
-	// shared session, so its confirmation stays on the dashboard.
-	kind, cookieName, target := "general", generalCookie, "/login?notice=logout"
+	// not after the next sign-in. Signing out also ends this browser's
+	// administrator confirmation. End ends only the administrator
+	// confirmation and keeps the shared session, so its confirmation stays
+	// on the dashboard.
+	type ending struct{ kind, cookie string }
+	endings, target := []ending{{"general", generalCookie}, {"admin", adminCookie}}, "/login?notice=logout"
 	if scope == webui.AuthAdmin {
-		kind, cookieName, target = "admin", adminCookie, "/?notice=admin_logout"
+		endings, target = []ending{{"admin", adminCookie}}, "/?notice=admin_logout"
 	}
-	// The browser forgets the session only after the server ended it. A
+	// The browser forgets a session only after the server ended it. A
 	// failed sign-out says the reader is still signed in, and the kept
-	// cookie lets them try again; a cleared one would leave a live session
+	// cookies let them try again; a cleared one would leave a live session
 	// this browser can no longer end.
-	if cookie, err := request.Cookie(cookieName); err == nil {
-		if err := app.Store.DeleteSession(request.Context(), cookie.Value, kind); err != nil {
-			app.renderError(writer, request, unavailable(request, "sign-out", err), webui.MsgLogoutFailed, "")
-			return
+	for _, end := range endings {
+		if cookie, err := request.Cookie(end.cookie); err == nil {
+			if err := app.Store.DeleteSession(request.Context(), cookie.Value, end.kind); err != nil {
+				app.renderError(writer, request, unavailable(request, "sign-out", err), webui.MsgLogoutFailed, "")
+				return
+			}
 		}
 	}
-	app.clearCookie(writer, request, cookieName, true)
+	for _, end := range endings {
+		app.clearCookie(writer, request, end.cookie, true)
+	}
 	app.noticeRedirect(writer, request, target, http.StatusSeeOther)
 }
 

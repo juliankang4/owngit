@@ -45,26 +45,6 @@
 </div>
 {{end}}
 
-{{/* The administrator password field one form collects.
-
-     Holding a signed-in session is not consent to change execution authority,
-     so every form here asks again and scopes its own notice. An optional Help
-     line says why, and the field points at it together with any refusal.
-
-     Call as: {{template "adminField" dict "Lang" $lang "Notices" $fn
-                 "Scope" $act "ID" "cc-save-password" "Help" "cc.password_each_time"}} */}}
-{{define "adminField"}}
-{{$lang := .Lang}}{{$id := .ID}}{{$help := .Help}}
-{{$refused := false}}{{range .Notices}}{{if and (eq .Field "admin_password") (eq .Kind "error")}}{{$refused = true}}{{end}}{{end}}
-<div class="f">
-  <label for="{{$id}}">{{bi $lang "admin.field"}}</label>
-  <input id="{{$id}}" name="admin_password" type="password" required autocomplete="current-password"
-         {{if $refused}}aria-invalid="true" aria-describedby="{{noteID .Scope "admin_password"}}{{if $help}} {{$id}}-help{{end}}"{{else if $help}}aria-describedby="{{$id}}-help"{{end}}>
-  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Scope "Field" "admin_password"}}
-  {{with $help}}<p class="f__help" id="{{$id}}-help">{{bi $lang (code .)}}</p>{{end}}
-</div>
-{{end}}
-
 {{/* One job's identity and outcome as recorded.
 
      The commit and the mode are the job's own captured facts, not the
@@ -139,7 +119,7 @@
 
      Call as: {{template "jobActions" dict "Lang" $lang "J" $job
                  "URL" $p.SubmitURL "CSRF" $csrf "Pending" $pending
-                 "Notices" $n}} */}}
+                 "Notices" $n "Viewer" .Chrome.Viewer}} */}}
 {{define "jobActions"}}
 {{$lang := .Lang}}{{$j := .J}}{{$csrf := .CSRF}}{{$url := .URL}}{{$pending := .Pending}}{{$n := .Notices}}
 {{if or $j.Cancellable $j.Rerunnable}}
@@ -150,7 +130,7 @@
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <input type="hidden" name="action" value="{{$act}}">
       <input type="hidden" name="job_id" value="{{$j.ID}}">
-      {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" (printf "cancel-pw-%s" $j.ID)}}
+      {{template "adminField" dict "Lang" $lang "Viewer" $.Viewer "Notices" $fn "Scope" $act "ID" (printf "cancel-pw-%s" $j.ID)}}
       <button type="submit" class="btn btn--danger">{{bi $lang "cc.job.cancel"}}</button>
       <span class="f__help">{{bi $lang "cc.job.cancel_help"}}</span>
     </form>
@@ -161,7 +141,7 @@
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <input type="hidden" name="action" value="{{$act}}">
       <input type="hidden" name="job_id" value="{{$j.ID}}">
-      {{template "adminField" dict "Lang" $lang "Notices" $fn "Scope" $act "ID" (printf "rerun-pw-%s" $j.ID)}}
+      {{template "adminField" dict "Lang" $lang "Viewer" $.Viewer "Notices" $fn "Scope" $act "ID" (printf "rerun-pw-%s" $j.ID)}}
       <button type="submit" class="btn">{{bi $lang "cc.job.rerun"}}</button>
       <span class="f__help">{{bi $lang "cc.job.rerun_help"}}</span>
     </form>

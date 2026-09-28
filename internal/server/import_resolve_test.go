@@ -210,6 +210,7 @@ func shownText(lang webui.Lang, code webui.MessageCode) string {
 
 func TestImportPageOffersOwnerResolutionInBothLanguages(t *testing.T) {
 	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
 	intentID := recordUnresolvedPublication(t, fixture)
 	server := serve(t, fixture.app.Handler())
 	client, jar := newBrowserClient(t)

@@ -92,6 +92,7 @@ func validPolicyValues(csrf string) url.Values {
 
 func TestBrowserConfiguredChecksRequireAdminSessionAndPasswordPerChange(t *testing.T) {
 	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
 	server, client, jar := openBrowser(t, fixture)
 
 	policyURL := server.URL + configuredChecksURL("project")
@@ -291,6 +292,7 @@ func TestBrowserFailedConsentChangeKeepsTheSavedPolicyOnScreen(t *testing.T) {
 	// them must not repaint the editor from that empty submission and blank
 	// every saved setting the owner is looking at.
 	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
 	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "cc-keep")
 	policyURL := server.URL + configuredChecksURL("project")
@@ -509,6 +511,7 @@ func TestBrowserRefusedPolicyIsNotStoredAndKeepsTheSubmittedValues(t *testing.T)
 
 func TestBrowserRunnerTokensDeliverTheValueOnceAndRevokeIt(t *testing.T) {
 	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
 	server, client, jar := openBrowser(t, fixture)
 	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "rt-admin")
 	tokenURL := server.URL + runnerTokensURL("project")

@@ -12,7 +12,6 @@ import (
 	"owngit/internal/checkapi"
 	"owngit/internal/checkworkflow"
 	"owngit/internal/repository"
-	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -62,7 +61,7 @@ func runnerTokensURL(repositoryID string) string {
 // handleConfiguredChecks serves the execution policy screen and its forms.
 func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	writer.Header().Set("Cache-Control", "no-store")
-	adminSession, ok := app.requireBrowserAdmin(writer, request)
+	adminSession, ok := app.requireAdminPage(writer, request)
 	if !ok {
 		return
 	}
@@ -94,7 +93,7 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 		submitted := submittedPolicyForm(request)
 		form = &submitted
 	}
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
+	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: action, form: form, notices: []webui.Notice{notice},
@@ -906,7 +905,7 @@ func policySaveStatus(request *http.Request, err error) int {
 // handleRunnerTokens serves the runner token screen and its forms.
 func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	writer.Header().Set("Cache-Control", "no-store")
-	adminSession, ok := app.requireBrowserAdmin(writer, request)
+	adminSession, ok := app.requireAdminPage(writer, request)
 	if !ok {
 		return
 	}
@@ -935,7 +934,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
 		return
 	}
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", postValue(request, "admin_password"), requestctx.Of(request).ClientAddress); err != nil {
+	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, label,
 			[]webui.Notice{notice}, status)

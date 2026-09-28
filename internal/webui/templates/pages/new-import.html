@@ -27,12 +27,7 @@
       <p class="f__help">{{bi $lang "import.credentials_help"}}</p>
       {{template "importCredentialFields" dict "Lang" $lang "Notices" $n "ID" "import-new" "Choice" $p.CredentialForm}}
     </fieldset>
-    <div class="f">
-      <label for="import-new-admin">{{bi $lang "admin.field"}}</label>
-      <input id="import-new-admin" name="admin_password" type="password" required autocomplete="current-password"
-             {{template "fieldInvalid" dict "Notices" $n "Field" "admin_password"}}>
-      <p class="f__help">{{bi $lang "import.password_each_time"}}</p>
-    </div>
+    {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $n "ID" "import-new-admin"}}
     <div class="actions">
       <button type="submit" class="btn btn--primary">{{bi $lang "import.new.submit"}}</button>
       <a class="btn" href="{{.Chrome.Nav.OverviewURL}}">{{bi $lang "app.cancel"}}</a>
