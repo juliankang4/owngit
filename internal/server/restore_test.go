@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -239,23 +240,129 @@ func TestRestorePageUsesPreviewBranchObservationInsteadOfStaleSummary(t *testing
 	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
 
 	request := httptest.NewRequest(http.MethodGet, "http://localhost/repositories/branch-observation/restore", nil)
+	page := func(summary repository.Summary, selection repository.RestoreRequest) webui.RestorePage {
+		t.Helper()
+		preview, previewErr := app.Repositories.PreviewRestore(context.Background(), stored.ID, selection)
+		built, err := app.restorePage(request, stored, summary, webui.Chrome{}, selection, preview, previewErr, false)
+		noErr(t, err)
+		return built
+	}
 	staleMissing := repository.Summary{DefaultBranch: "main"}
-	existingPage, err := app.restorePage(request, stored, staleMissing, webui.Chrome{}, repository.RestoreRequest{
-		Source: sourceOID, Target: "main", Mode: repository.RestoreAll,
-	}, nil, false)
-	noErr(t, err)
+	existingPage := page(staleMissing, repository.RestoreRequest{Source: sourceOID, Target: "main", Mode: repository.RestoreAll})
 	if existingPage.CreatesBranch || existingPage.ExpectedHead != targetOID {
 		t.Fatalf("existing target used stale missing summary: creates=%v expected=%s", existingPage.CreatesBranch, existingPage.ExpectedHead)
 	}
 
 	zero := strings.Repeat("0", len(sourceOID))
 	staleExisting := repository.Summary{DefaultBranch: "main", Branches: []repository.Ref{{Name: "release", OID: targetOID, Type: "commit"}}}
-	missingPage, err := app.restorePage(request, stored, staleExisting, webui.Chrome{}, repository.RestoreRequest{
-		Source: sourceOID, Target: "release", Mode: repository.RestoreAll,
-	}, nil, false)
-	noErr(t, err)
+	missingPage := page(staleExisting, repository.RestoreRequest{Source: sourceOID, Target: "release", Mode: repository.RestoreAll})
 	if !missingPage.CreatesBranch || missingPage.ExpectedHead != zero {
 		t.Fatalf("missing target used stale existing summary: creates=%v expected=%s", missingPage.CreatesBranch, missingPage.ExpectedHead)
+	}
+}
+
+// A whole-tree page is built from the one preview it shows: its paths and
+// expected head describe the same branch tip even when the branch moves
+// before the page is built, and applying against that tip is refused.
+func TestRestorePageShowsOneWholeTreeObservation(t *testing.T) {
+	app := newConfiguredApp(t)
+	stored, err := app.Repositories.Create(context.Background(), "one-observation", "")
+	noErr(t, err)
+	remote, _ := app.Repositories.Path(stored.ID)
+	work := filepath.Join(t.TempDir(), "work")
+	apiRunGit(t, "", "init", "--initial-branch=main", work)
+	apiRunGit(t, work, "config", "user.name", "Restore Author")
+	apiRunGit(t, work, "config", "user.email", "restore@example.invalid")
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("source\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "source")
+	sourceOID := apiGitOutput(t, work, "rev-parse", "HEAD")
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("target\n"), 0o600))
+	apiRunGit(t, work, "commit", "-am", "target")
+	targetOID := apiGitOutput(t, work, "rev-parse", "HEAD")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
+
+	selection := repository.RestoreRequest{Source: sourceOID, Target: "main", Mode: repository.RestoreAll}
+	preview, err := app.Repositories.PreviewRestore(context.Background(), stored.ID, selection)
+	noErr(t, err)
+	noErr(t, os.WriteFile(filepath.Join(work, "moved.txt"), []byte("moved\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "moved")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
+
+	request := httptest.NewRequest(http.MethodPost, "http://localhost/repositories/one-observation/restore/preview", nil)
+	page, err := app.restorePage(request, stored, repository.Summary{DefaultBranch: "main"}, webui.Chrome{}, selection, preview, nil, true)
+	noErr(t, err)
+	var paths []string
+	for _, path := range page.Paths {
+		paths = append(paths, path.Path)
+	}
+	if page.ExpectedHead != targetOID || strings.Join(paths, ",") != "file.txt" {
+		t.Fatalf("page expected=%s paths=%v, want the previewed tip %s and its one change", page.ExpectedHead, paths, targetOID)
+	}
+	selection.ExpectedHead = page.ExpectedHead
+	if _, err := app.Repositories.ApplyRestore(context.Background(), stored.ID, selection); !errors.Is(err, repository.ErrRestoreConflict) {
+		t.Fatalf("apply against the moved branch err=%v, want a conflict", err)
+	}
+}
+
+// A selected-file preview that fails is reported on the page, which keeps
+// the file list and the selection: a refusal with its own status and
+// message, any other failure as unavailable. After a failed apply, the
+// failure of the preview that refreshes the page is shown beside the
+// apply's, and a reason already shown is not repeated.
+func TestRestorePageReportsAFailedFilePreview(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the failing Git wrapper is a Unix test fixture")
+	}
+	app := newConfiguredApp(t)
+	_, _, commit, parent, _ := readFailureRepository(t, app, "file-preview")
+	server := httptest.NewServer(app.Handler())
+	defer server.Close()
+	client, jar := newBrowserClient(t)
+	if _, status := dashboardGET(t, client, server.URL+"/"); status != http.StatusOK {
+		t.Fatalf("overview status=%d", status)
+	}
+	csrf := cookieValue(t, jar, server.URL, generalCookie)
+	base := server.URL + "/repositories/file-preview/restore"
+	listed := "docs/a.txt"
+	invalid := webui.Text(webui.LangEN, webui.MsgRestoreInvalid)
+	previewFailed := webui.Text(webui.LangEN, webui.MsgRestorePreviewFailed)
+	conflict := webui.Text(webui.LangEN, webui.MsgRestoreConflict)
+	selection := func(path string, extra ...string) url.Values {
+		values := url.Values{"source": {parent}, "target": {"main"}, "mode": {"files"}, "path": {path}}
+		for index := 0; index+1 < len(extra); index += 2 {
+			values.Set(extra[index], extra[index+1])
+		}
+		return values
+	}
+
+	body, status := dashboardGET(t, client, base+"?"+selection("absent.txt").Encode())
+	if status != http.StatusUnprocessableEntity || !strings.Contains(body, invalid) || !strings.Contains(body, listed) {
+		t.Errorf("refused file selection status=%d reason=%v list=%v, want 422 with the reason and the list", status, strings.Contains(body, invalid), strings.Contains(body, listed))
+	}
+
+	failPath := failGitWhile(t, app, "read-tree")
+	noErr(t, os.WriteFile(failPath, nil, 0o600))
+	body, status = dashboardGET(t, client, base+"?"+selection("docs/a.txt").Encode())
+	if status != http.StatusServiceUnavailable || !strings.Contains(body, previewFailed) || !strings.Contains(body, listed) {
+		t.Errorf("failed file preview status=%d reason=%v list=%v, want 503 with the reason and the list", status, strings.Contains(body, previewFailed), strings.Contains(body, listed))
+	}
+	body, status = restorePOST(t, client, base+"/preview", selection("docs/a.txt", "csrf", csrf), server.URL)
+	if status != http.StatusServiceUnavailable || !strings.Contains(body, previewFailed) || strings.Contains(body, webui.Text(webui.LangEN, webui.MsgRestoreFailed)) {
+		t.Errorf("failed file preview POST status=%d preview_reason=%v, want 503 saying the preview could not be made", status, strings.Contains(body, previewFailed))
+	}
+	// The apply is refused before the private index is read; the preview that
+	// refreshes the page then fails, and both reasons are shown.
+	body, status = restorePOST(t, client, base, selection("docs/a.txt", "csrf", csrf, "expected_head", strings.Repeat("0", len(parent)), "confirm", "restore"), server.URL)
+	if status != http.StatusConflict || !strings.Contains(body, conflict) || !strings.Contains(body, previewFailed) {
+		t.Errorf("stale apply with a failed preview status=%d conflict=%v preview_reason=%v", status, strings.Contains(body, conflict), strings.Contains(body, previewFailed))
+	}
+
+	noErr(t, os.Remove(failPath))
+	body, status = restorePOST(t, client, base, selection("absent.txt", "csrf", csrf, "expected_head", commit, "confirm", "restore"), server.URL)
+	if status != http.StatusUnprocessableEntity || !strings.Contains(body, invalid) || strings.Count(body, `role="alert"`) != 1 {
+		t.Errorf("refused apply status=%d alerts=%d, want 422 with one reason", status, strings.Count(body, `role="alert"`))
 	}
 }
 

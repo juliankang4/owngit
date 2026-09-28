@@ -319,6 +319,7 @@ func TestEveryRestoreOutcomeReachesTheScreenInBothLanguages(t *testing.T) {
 		{MsgRestoreNoChanges, NoticeInfo},
 		{MsgRestoreUnsupported, NoticeError},
 		{MsgRestoreFailed, NoticeError},
+		{MsgRestorePreviewFailed, NoticeError},
 		{MsgRestoreReady, NoticeInfo},
 		{MsgRestoreSuccess, NoticeSuccess},
 	}

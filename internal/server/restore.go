@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"owngit/internal/repository"
@@ -28,12 +29,7 @@ func (app *App) handleRestoreGet(writer http.ResponseWriter, request *http.Reque
 	}
 	paths := restorePaths(requestedMode, request.URL.Query()["path"])
 	selection := repository.RestoreRequest{Source: source, Target: target, Mode: mode, Paths: paths}
-	page, err := app.restorePage(request, stored, summary, chrome, selection, nil, false)
-	if err != nil {
-		app.renderRestorePageError(writer, request, chrome, stored, err)
-		return
-	}
-	app.render(writer, request, http.StatusOK, page)
+	app.renderRestorePreview(writer, request, stored, summary, chrome, selection, false)
 }
 
 func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
@@ -43,26 +39,31 @@ func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.R
 	if !app.requireCSRF(writer, request) {
 		return
 	}
-	selection := restoreFormRequest(request)
+	app.renderRestorePreview(writer, request, stored, summary, chrome, restoreFormRequest(request), true)
+}
+
+// renderRestorePreview answers with the restore page for selection and its
+// preview, or with the reason the preview failed. previewed shows the
+// changes and whether they can be applied, as the answer to a preview
+// request.
+func (app *App) renderRestorePreview(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selection repository.RestoreRequest, previewed bool) {
 	preview, err := app.Repositories.PreviewRestore(request.Context(), stored.ID, selection)
-	page, pageErr := app.restorePage(request, stored, summary, chrome, selection, previewOrNil(preview, err), true)
+	page, pageErr := app.restorePage(request, stored, summary, chrome, selection, preview, err, previewed)
 	if pageErr != nil {
 		app.renderRestorePageError(writer, request, chrome, stored, pageErr)
 		return
 	}
-	if err != nil {
-		page.Chrome.Notices = append(page.Chrome.Notices, webui.Error(restoreField(err), restoreMessage(err)))
-		page.Previewed = false
-		page.CanApply = false
-		app.render(writer, request, restoreStatus(request, "restore preview", err), page)
-		return
-	}
-	if !preview.CanApply {
+	status := http.StatusOK
+	switch {
+	case err != nil:
+		status = addRestoreFailure(&page, request, restorePreviewStep, err)
+	case !previewed:
+	case !preview.CanApply:
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Info(webui.MsgRestoreNoChanges))
-	} else {
+	default:
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Info(webui.MsgRestoreReady))
 	}
-	app.render(writer, request, http.StatusOK, page)
+	app.render(writer, request, status, page)
 }
 
 func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
@@ -75,12 +76,18 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 	selection := restoreFormRequest(request)
 	selection.ExpectedHead = postValue(request, "expected_head")
 	if postValue(request, "confirm") != "restore" {
-		page, err := app.restorePage(request, stored, summary, chrome, selection, nil, true)
+		preview, previewErr := app.Repositories.PreviewRestore(request.Context(), stored.ID, selection)
+		page, err := app.restorePage(request, stored, summary, chrome, selection, preview, previewErr, true)
 		if err != nil {
 			app.renderRestorePageError(writer, request, chrome, stored, err)
 			return
 		}
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Error("confirm", webui.MsgRestoreInvalid))
+		if previewErr != nil {
+			// The missing confirmation answers the request; the failed preview
+			// is shown, and logged, beside it.
+			addRestoreFailure(&page, request, restorePreviewStep, previewErr)
+		}
 		app.render(writer, request, http.StatusUnprocessableEntity, page)
 		return
 	}
@@ -94,33 +101,40 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 		app.noticeRedirect(writer, request, location+separator+"notice=restore_success", http.StatusSeeOther)
 		return
 	}
-	status := restoreStatus(request, "restore apply", err)
 
+	// The page shows the branch as it is now, so it is previewed again rather
+	// than from the observation the failed apply was checked against.
 	current, previewErr := app.Repositories.PreviewRestore(request.Context(), stored.ID, repository.RestoreRequest{
 		Source: selection.Source, Target: selection.Target, Mode: selection.Mode, Paths: selection.Paths,
 	})
-	page, pageErr := app.restorePage(request, stored, summary, chrome, selection, previewOrNil(current, previewErr), previewErr == nil)
+	page, pageErr := app.restorePage(request, stored, summary, chrome, selection, current, previewErr, true)
 	if pageErr != nil {
 		// A restore that failed for a reason other than a refusal cannot
 		// promise that the branch stayed as it was, and the reader must hear
 		// that first. A refused restore changed nothing, so the page failure
 		// is then the news.
 		if restoreRefusal(err) == 0 {
-			app.renderError(writer, request, status, restoreMessage(err), "")
+			app.renderError(writer, request, restoreStatus(request, restoreApplyStep, err), restoreMessage(restoreApplyStep, err), "")
 			return
 		}
 		app.renderRestorePageError(writer, request, chrome, stored, pageErr)
 		return
 	}
-	page.Chrome.Notices = append(page.Chrome.Notices, webui.Error(restoreField(err), restoreMessage(err)))
-	page.CanApply = false
+	status := addRestoreFailure(&page, request, restoreApplyStep, err)
+	if previewErr != nil {
+		// The failed apply answers the request; the failed preview is shown,
+		// and logged, beside it.
+		addRestoreFailure(&page, request, restorePreviewStep, previewErr)
+	}
 	app.render(writer, request, status, page)
 }
 
-// restorePage builds the restore page for selection. A source that names no
-// commit of the repository is an invalid selection; a read that failed is
-// returned as it is.
-func (app *App) restorePage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selection repository.RestoreRequest, selectedPreview *repository.RestorePreview, previewed bool) (webui.RestorePage, error) {
+// restorePage builds the restore page for selection from preview, its
+// preview, which failed with previewErr unless that is nil. A source that
+// names no commit of the repository is an invalid selection; a read that
+// failed is returned as it is. A failed preview of selected files leaves the
+// page without a preview, and the caller says why.
+func (app *App) restorePage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selection repository.RestoreRequest, preview repository.RestorePreview, previewErr error, previewed bool) (webui.RestorePage, error) {
 	sourceCommit, _, err := app.Repositories.CommitFiles(request.Context(), stored.ID, selection.Source)
 	if errors.Is(err, repository.ErrNotFound) {
 		return webui.RestorePage{}, fmt.Errorf("%w: %w", repository.ErrRestoreInvalid, err)
@@ -128,22 +142,26 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 	if err != nil {
 		return webui.RestorePage{}, err
 	}
-	available, err := app.Repositories.PreviewRestore(request.Context(), stored.ID, repository.RestoreRequest{
-		Source: selection.Source, Target: selection.Target, Mode: repository.RestoreAll,
-	})
-	if err != nil {
-		return webui.RestorePage{}, err
-	}
-	if selectedPreview == nil {
-		if selection.Mode == repository.RestoreAll {
-			selectedPreview = &available
-		} else if candidate, previewErr := app.Repositories.PreviewRestore(request.Context(), stored.ID, selection); previewErr == nil {
-			selectedPreview = &candidate
+	// The paths offered are the whole-tree preview's changes. A whole-tree
+	// selection is that preview, so its list, expected head and changes come
+	// from one observation of the branch, and the page cannot be built
+	// without it.
+	available := preview
+	if selection.Mode == repository.RestoreAll {
+		if previewErr != nil {
+			return webui.RestorePage{}, previewErr
+		}
+	} else {
+		available, err = app.Repositories.PreviewRestore(request.Context(), stored.ID, repository.RestoreRequest{
+			Source: selection.Source, Target: selection.Target, Mode: repository.RestoreAll,
+		})
+		if err != nil {
+			return webui.RestorePage{}, err
 		}
 	}
-	branchPreview := selectedPreview
-	if branchPreview == nil {
-		branchPreview = &available
+	branch := available
+	if previewErr == nil {
+		branch = preview
 	}
 	base := "/repositories/" + url.PathEscape(stored.ID)
 	page := webui.RestorePage{
@@ -153,7 +171,7 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 			CloneURL: app.cloneURL(request, stored.ID), Empty: summary.Empty,
 		},
 		Source: app.commitSummary(stored.ID, "", sourceCommit), TargetBranch: selection.Target,
-		CreatesBranch: branchPreview.CreatesBranch, Mode: selection.Mode, Previewed: previewed,
+		CreatesBranch: branch.CreatesBranch, Mode: selection.Mode, Previewed: previewed && previewErr == nil,
 		PreviewURL: base + "/restore/preview", ApplyURL: base + "/restore", CancelURL: base,
 		// No section is current: restoring is reached from several of them.
 		Tabs: repositoryTabs(app.baseRepositoryPage(request, chrome, stored, summary), ""),
@@ -168,17 +186,17 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 	for _, change := range available.Changes {
 		page.Paths = append(page.Paths, webui.RestorePath{Path: change.Path, Status: change.Status, Selected: selectedPaths[change.Path]})
 	}
-	if selectedPreview != nil {
-		page.ExpectedHead = selectedPreview.ExpectedHead
-		page.CanApply = selectedPreview.CanApply
-		page.DiffTruncated = selectedPreview.DiffTruncated
+	if previewErr == nil {
+		page.ExpectedHead = preview.ExpectedHead
+		page.CanApply = preview.CanApply
+		page.DiffTruncated = preview.DiffTruncated
 		if previewed {
-			for _, change := range selectedPreview.Changes {
+			for _, change := range preview.Changes {
 				item := webui.DiffFile{
 					Path: change.Path, Status: change.Status, Additions: change.Additions,
 					Deletions: change.Deletions, Binary: change.Binary, Selected: true,
 				}
-				if patch := selectedPreview.Patches[change.Path]; patch != "" {
+				if patch := preview.Patches[change.Path]; patch != "" {
 					item.Hunks = parsePatch(patch)
 				}
 				page.Changes = append(page.Changes, item)
@@ -194,10 +212,35 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 // repository cannot be read now, as the other repository pages do.
 func (app *App) renderRestorePageError(writer http.ResponseWriter, request *http.Request, chrome webui.Chrome, stored state.Repository, err error) {
 	if status := restoreRefusal(err); status != 0 {
-		app.renderError(writer, request, status, restoreMessage(err), "")
+		app.renderError(writer, request, status, restoreMessage(restorePreviewStep, err), "")
 		return
 	}
 	app.renderRepositoryReadFailure(writer, request, chrome, stored, err)
+}
+
+// restoreStep is a step of restoring: its name in the server log, and the
+// message for a failure of it that is not a refusal.
+type restoreStep struct {
+	name   string
+	failed webui.MessageCode
+}
+
+var (
+	restorePreviewStep = restoreStep{"restore preview", webui.MsgRestorePreviewFailed}
+	restoreApplyStep   = restoreStep{"restore apply", webui.MsgRestoreFailed}
+)
+
+// addRestoreFailure shows err, a failed step of request, on page and returns
+// the status that answers it. A notice the page already shows is not
+// repeated: the preview after a refused apply usually refuses for the same
+// reason.
+func addRestoreFailure(page *webui.RestorePage, request *http.Request, step restoreStep, err error) int {
+	notice := webui.Error(restoreField(err), restoreMessage(step, err))
+	if !slices.Contains(page.Chrome.Notices, notice) {
+		page.Chrome.Notices = append(page.Chrome.Notices, notice)
+	}
+	page.CanApply = false
+	return restoreStatus(request, step, err)
 }
 
 func restoreFormRequest(request *http.Request) repository.RestoreRequest {
@@ -241,14 +284,9 @@ func restoreURL(repositoryID, sourceOID, target, filePath string) string {
 	return "/repositories/" + url.PathEscape(repositoryID) + "/restore?" + values.Encode()
 }
 
-func previewOrNil(preview repository.RestorePreview, err error) *repository.RestorePreview {
-	if err != nil {
-		return nil
-	}
-	return &preview
-}
-
-func restoreMessage(err error) webui.MessageCode {
+// restoreMessage is the message for err, a failed step: a refusal's own
+// message, and otherwise the step's failure message.
+func restoreMessage(step restoreStep, err error) webui.MessageCode {
 	switch {
 	case errors.Is(err, repository.ErrRestoreConflict):
 		return webui.MsgRestoreConflict
@@ -259,17 +297,17 @@ func restoreMessage(err error) webui.MessageCode {
 	case errors.Is(err, repository.ErrRestoreInvalid):
 		return webui.MsgRestoreInvalid
 	default:
-		return webui.MsgRestoreFailed
+		return step.failed
 	}
 }
 
 // restoreStatus is the status that answers err, a failed restore step of
 // request: a refusal's own status, and otherwise unavailable.
-func restoreStatus(request *http.Request, step string, err error) int {
+func restoreStatus(request *http.Request, step restoreStep, err error) int {
 	if status := restoreRefusal(err); status != 0 {
 		return status
 	}
-	return unavailable(request, step, err)
+	return unavailable(request, step.name, err)
 }
 
 // restoreRefusal is the status of a selection the repository refused, and 0

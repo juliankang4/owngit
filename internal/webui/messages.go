@@ -348,16 +348,17 @@ const (
 
 // Restoring files from an earlier commit.
 //
-// The first seven codes are the shared outcomes the backend reports. The rest
+// The first eight codes are the shared outcomes the backend reports. The rest
 // are the screen's own labels and help text, which the renderer owns.
 const (
-	MsgRestoreInvalid     MessageCode = "restore.invalid"
-	MsgRestoreConflict    MessageCode = "restore.conflict"
-	MsgRestoreNoChanges   MessageCode = "restore.no_changes"
-	MsgRestoreUnsupported MessageCode = "restore.unsupported"
-	MsgRestoreFailed      MessageCode = "restore.failed"
-	MsgRestoreReady       MessageCode = "restore.ready"
-	MsgRestoreSuccess     MessageCode = "restore.success"
+	MsgRestoreInvalid       MessageCode = "restore.invalid"
+	MsgRestoreConflict      MessageCode = "restore.conflict"
+	MsgRestoreNoChanges     MessageCode = "restore.no_changes"
+	MsgRestoreUnsupported   MessageCode = "restore.unsupported"
+	MsgRestoreFailed        MessageCode = "restore.failed"
+	MsgRestorePreviewFailed MessageCode = "restore.preview_failed"
+	MsgRestoreReady         MessageCode = "restore.ready"
+	MsgRestoreSuccess       MessageCode = "restore.success"
 
 	MsgRestoreTitle    MessageCode = "restore.title"
 	MsgRestoreIntro    MessageCode = "restore.intro"
@@ -1390,6 +1391,12 @@ var catalog = map[MessageCode]message{
 		// would be a promise nothing verified; the reader is told to look.
 		en: "Could not confirm the restore. Check the branch before trying again.",
 		ko: "되돌리기 결과를 확인하지 못했습니다. 다시 시도하기 전에 브랜치를 확인하세요.",
+	},
+	MsgRestorePreviewFailed: {
+		// A preview only reads. It can also be shown after a failed apply,
+		// beside that failure, so it says nothing about the branch.
+		en: "The preview could not be made. The server log names the cause.",
+		ko: "미리 보기를 만들지 못했습니다. 원인은 서버 로그에 있습니다.",
 	},
 	MsgRestoreReady: {
 		en: "Nothing has changed yet. Read the list below, then restore.",
