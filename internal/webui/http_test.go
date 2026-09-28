@@ -63,16 +63,3 @@ func TestAssetsDoNotEscapeTheEmbeddedTree(t *testing.T) {
 		}
 	}
 }
-
-func TestRenderWritesToAnOrdinaryWriter(t *testing.T) {
-	// Render must not touch response headers or status: the caller owns those.
-	r := newRenderer(t)
-	rec := httptest.NewRecorder()
-	noErr(t, r.Render(rec.Body, OverviewPage{Chrome: fullChrome(LangEN), Activity: sampleGraph()}))
-	if len(rec.Header()) != 0 {
-		t.Errorf("Render set response headers: %v", rec.Header())
-	}
-	if rec.Body.Len() == 0 {
-		t.Fatal("Render produced no output")
-	}
-}

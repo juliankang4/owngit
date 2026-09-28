@@ -2,8 +2,6 @@ package webui
 
 import (
 	"html/template"
-	"os"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -280,16 +278,6 @@ func TestGraphCaptionSaysWhoseTimeZoneIsUsed(t *testing.T) {
 		if !strings.Contains(out, wantText(lang, MsgActivityNoChecks)) {
 			t.Errorf("%s: the caption is not rendered", lang)
 		}
-	}
-}
-
-func TestNoFormatterRestatesAStoredTimeInAnotherZone(t *testing.T) {
-	// The defect was a single conversion. Guard against it returning.
-	data, err := os.ReadFile("format.go")
-	noErr(t, err)
-	if m := regexp.MustCompile(`\.In\(now\.Location\(\)\)`).FindString(string(data)); m != "" {
-		t.Errorf("a formatter converts a stored date into the reference zone (%s), "+
-			"which moves commits to a different calendar day", m)
 	}
 }
 

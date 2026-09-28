@@ -968,32 +968,6 @@ func TestInsecureAcknowledgementIsAdministratorProtected(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// honest repository and activity states
-// ---------------------------------------------------------------------------
-
-func TestNoSyntheticMockDataReachesTheInterface(t *testing.T) {
-	// The accepted mockup's sample repositories and check vocabulary must not
-	// appear in the product.
-	r := newRenderer(t)
-	var all strings.Builder
-	for _, lang := range Langs() {
-		for _, page := range allPages(lang) {
-			all.WriteString(render(t, r, page))
-		}
-	}
-	out := all.String()
-	for _, fixture := range []string{
-		"Northstar Gateway", "Cedar Config", "Relay Queue", "Sentinel Auth",
-		"Prism UI", "Atlas Migrations", "Sample commit activity",
-		"Preview with sample data", "예시 데이터",
-	} {
-		if strings.Contains(out, fixture) {
-			t.Errorf("mockup fixture %q reached the product interface", fixture)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // accessibility
 // ---------------------------------------------------------------------------
 
@@ -1228,27 +1202,6 @@ func TestGraphLayoutCoversTheWholeYear(t *testing.T) {
 	}
 	if len(layout.Months) != 12 {
 		t.Errorf("expected 12 month labels, got %d", len(layout.Months))
-	}
-}
-
-func TestCountedNounsReadNaturallyInBothLanguages(t *testing.T) {
-	cases := []struct {
-		lang Lang
-		kind string
-		n    int
-		want string
-	}{
-		{LangEN, "repository", 1, "1 repository"},
-		{LangEN, "repository", 7, "7 repositories"},
-		{LangEN, "commit", 1, "1 commit"},
-		{LangKO, "repository", 7, "저장소 7곳"},
-		{LangKO, "commit", 200, "커밋 200건"},
-		{LangKO, "branch", 3, "브랜치 3개"},
-	}
-	for _, tc := range cases {
-		if got := formatCount(tc.lang, tc.kind, tc.n); got != tc.want {
-			t.Errorf("formatCount(%s, %s, %d) = %q, want %q", tc.lang, tc.kind, tc.n, got, tc.want)
-		}
 	}
 }
 

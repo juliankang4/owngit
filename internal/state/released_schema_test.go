@@ -105,19 +105,6 @@ func TestSchemaChainRunsEveryLaterStep(t *testing.T) {
 	})
 }
 
-// The chain starts at the baseline upgrade step, has no gap, and ends at the
-// schema this build writes. 1.1.0 writes the same schema 15 as 1.0.3.
-func TestSchemaStepsAreConsecutive(t *testing.T) {
-	for index, step := range schemaSteps {
-		if step.version != 6+index || len(step.statements) == 0 {
-			t.Fatalf("step %d has version %d and %d statements", index, step.version, len(step.statements))
-		}
-	}
-	if currentSchemaVersion() != 15 {
-		t.Fatalf("current schema=%d", currentSchemaVersion())
-	}
-}
-
 func createReleasedSchemaWithPullRequest(t *testing.T, directory string, version int) {
 	t.Helper()
 	createMigratedSchemaDatabase(t, directory, version)

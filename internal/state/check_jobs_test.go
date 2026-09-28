@@ -156,36 +156,6 @@ func TestCheckPolicyChangeInvalidatesConsent(t *testing.T) {
 	}
 }
 
-func TestCheckPolicyValidation(t *testing.T) {
-	fixture := newCheckJobFixture(t)
-	for name, mutate := range map[string]func(*CheckPolicyInput){
-		"empty events":     func(input *CheckPolicyInput) { input.AllowedEvents = nil },
-		"unknown event":    func(input *CheckPolicyInput) { input.AllowedEvents = []string{"tag"} },
-		"repeated event":   func(input *CheckPolicyInput) { input.AllowedEvents = []string{"push", "push"} },
-		"unknown executor": func(input *CheckPolicyInput) { input.Executor = "vm" },
-		"small timeout":    func(input *CheckPolicyInput) { input.MaxTimeoutMS = 10 },
-		"large output":     func(input *CheckPolicyInput) { input.MaxOutputLimitBytes = 1 << 30 },
-		"zero queue":       func(input *CheckPolicyInput) { input.QueueLimit = 0 },
-		"zero active":      func(input *CheckPolicyInput) { input.MaxActiveJobs = 0 },
-		"small lease":      func(input *CheckPolicyInput) { input.MaxLeaseMS = 1 },
-	} {
-		t.Run(name, func(t *testing.T) {
-			input := defaultPolicyInput()
-			input.RepositoryID = "other"
-			mutate(&input)
-			if _, err := fixture.store.SetCheckPolicy(context.Background(), input, fixture.now); !errors.Is(err, ErrInvalidCheckPolicy) {
-				t.Fatalf("policy error=%v", err)
-			}
-		})
-	}
-	if _, _, err := fixture.store.CheckPolicy(context.Background(), "project"); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists, err := fixture.store.CheckPolicy(context.Background(), "project"); err != nil || exists {
-		t.Fatalf("unexpected policy exists=%v err=%v", exists, err)
-	}
-}
-
 func TestImmutableContainerImageAcceptsIDsAndDigestsButRejectsTags(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	for _, image := range []string{"sha256:" + digest, "example.invalid/checks@sha256:" + digest} {

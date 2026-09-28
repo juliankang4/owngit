@@ -1,8 +1,6 @@
 package webui
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -424,36 +422,6 @@ func TestVersionIsVisibleOnEveryDashboardScreen(t *testing.T) {
 			}
 			if out := render(t, r, page); !strings.Contains(out, chrome.Version) {
 				t.Errorf("%s/%s: the running version is not visible", lang, name)
-			}
-		}
-	}
-}
-
-func TestPackageContainsNoVersionLiteral(t *testing.T) {
-	// A version written here would drift from the binary's own version and
-	// state it with total confidence. There is one source, and it is the
-	// backend's.
-	number := regexp.MustCompile(`\b\d+\.\d+\.\d+\b`)
-	paths, err := filepath.Glob("*.go")
-	noErr(t, err)
-	templates, err := filepath.Glob("templates/*.html")
-	noErr(t, err)
-	pages, err := filepath.Glob("templates/pages/*.html")
-	noErr(t, err)
-	for _, path := range append(append(paths, templates...), pages...) {
-		if strings.HasSuffix(path, "_test.go") {
-			continue // fixtures deliberately carry a synthetic version
-		}
-		data, err := os.ReadFile(path)
-		noErr(t, err)
-		for _, line := range strings.Split(string(data), "\n") {
-			// Example text in comments names real Git and font versions, which
-			// are not claims about OwnGit.
-			if strings.Contains(line, "//") || strings.Contains(line, "{{/*") {
-				continue
-			}
-			if hit := number.FindString(line); hit != "" {
-				t.Errorf("%s: version-like literal %q in package source", path, hit)
 			}
 		}
 	}

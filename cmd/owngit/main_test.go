@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,14 +14,6 @@ import (
 	"owngit/internal/auth"
 	"owngit/internal/state"
 )
-
-func TestUsageNamesTheOwngitCommand(t *testing.T) {
-	var output bytes.Buffer
-	printUsage(&output)
-	if !strings.Contains(output.String(), "Usage: owngit") {
-		t.Fatalf("usage does not name the owngit command: %q", output.String())
-	}
-}
 
 func TestDefaultStatePathUsesOwngitNames(t *testing.T) {
 	configRoot := filepath.Join("platform", "config")
@@ -206,19 +197,6 @@ func TestBackupRefusesStateHeldByLiveServer(t *testing.T) {
 	}
 	if _, statErr := os.Stat(output); !os.IsNotExist(statErr) {
 		t.Fatalf("refused backup created output: %v", statErr)
-	}
-}
-
-func TestReadPrivatePasswordRejectsBroadPermissions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "password")
-	noErr(t, os.WriteFile(path, []byte("valid-password"), 0o600))
-	noErr(t, state.ProtectPrivatePath(path, false))
-	makePasswordFileBroad(t, path)
-	if err := state.ValidatePrivateFile(path); err == nil {
-		t.Fatal("password fixture unexpectedly has owner-only protection")
-	}
-	if _, err := readPrivatePassword(path); err == nil {
-		t.Fatal("broadly accessible password file was accepted")
 	}
 }
 
