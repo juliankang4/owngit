@@ -3,6 +3,7 @@
 package state
 
 import (
+	"os"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -17,7 +18,10 @@ func TestOwnershipIsEnforcedOnlyOnLocalFilesystems(t *testing.T) {
 	if ownershipEnforcedWith(unix.MNT_NOSUID | unix.MNT_NODEV) {
 		t.Error("a filesystem that is not marked local counts as enforced")
 	}
-	if enforced, err := ownershipEnforcedHere("/"); err != nil || !enforced {
+	root, err := os.Open("/")
+	noErr(t, err)
+	defer root.Close()
+	if enforced, err := ownershipEnforced(root); err != nil || !enforced {
 		t.Errorf("the system volume: enforced=%t err=%v", enforced, err)
 	}
 }

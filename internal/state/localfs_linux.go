@@ -4,6 +4,8 @@ package state
 
 import (
 	"errors"
+	"os"
+	"runtime"
 
 	"golang.org/x/sys/unix"
 )
@@ -21,14 +23,16 @@ func ensureLocalStateFilesystem(path string) error {
 	}
 }
 
-// ownershipEnforcedHere reports whether this computer's kernel keeps the
-// owners and modes of the filesystem that holds path. On a network
+// ownershipEnforced reports whether this computer's kernel keeps the owners
+// and modes of the filesystem that holds the open directory. On a network
 // filesystem the server decides them, and on a FUSE filesystem the program
 // behind it does; either can let another account change what they show as
 // root's folder.
-func ownershipEnforcedHere(path string) (bool, error) {
+func ownershipEnforced(dir *os.File) (bool, error) {
 	var stat unix.Statfs_t
-	if err := unix.Statfs(path, &stat); err != nil {
+	err := unix.Fstatfs(int(dir.Fd()), &stat)
+	runtime.KeepAlive(dir)
+	if err != nil {
 		return false, err
 	}
 	return ownershipEnforcedOn(uint64(stat.Type)), nil

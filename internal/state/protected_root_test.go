@@ -13,18 +13,18 @@ import (
 // A folder that root creates for another account is safe only where no
 // other account can put a link first: every existing folder on the way
 // belongs to root and nobody else may write to it.
-func TestOnlyRootCanChange(t *testing.T) {
+func TestOnlyRootCanChangeTheWay(t *testing.T) {
 	missing := filepath.Join(string(filepath.Separator), "owngit-test-missing-folder", "git")
-	if !OnlyRootCanChange(missing) {
+	if !InspectFolderWay(missing).OnlyRoot {
 		t.Fatalf("%s is under folders only root can change", missing)
 	}
-	if own := filepath.Join(t.TempDir(), "git"); os.Geteuid() != 0 && OnlyRootCanChange(own) {
+	if own := filepath.Join(t.TempDir(), "git"); os.Geteuid() != 0 && InspectFolderWay(own).OnlyRoot {
 		t.Fatalf("%s is inside a folder of this account", own)
 	}
 	shared := filepath.Join(t.TempDir(), "shared")
 	noErr(t, os.Mkdir(shared, 0o755))
 	noErr(t, os.Chmod(shared, 0o777|os.ModeSticky))
-	if OnlyRootCanChange(filepath.Join(shared, "git")) {
+	if InspectFolderWay(filepath.Join(shared, "git")).OnlyRoot {
 		t.Fatal("a folder every account can create entries in counts as root's")
 	}
 }
@@ -68,5 +68,43 @@ func TestRootIsToldToRunAsTheStateDirectoryOwner(t *testing.T) {
 	var other *OtherAccountError
 	if !errors.As(err, &other) || other.Path != directory || other.Account != accountName(nobody) {
 		t.Fatalf("CreateDirectory error=%v, want %s named as the account %s's", err, directory, accountName(nobody))
+	}
+}
+
+// Another account can take a missing name in a sticky folder that every
+// account may write with a link before root looks at it, for example to a
+// folder of root's. Root must refuse the link, not create or use state
+// where it leads. macOS follows such a link for root; Linux may not.
+func TestRootRefusesALinkTakenInAStickyFolder(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+	const nobody = 65534
+	root := resolveTestPath(t, t.TempDir())
+	noErr(t, os.Chmod(root, 0o755))
+	sticky, target := filepath.Join(root, "shared"), filepath.Join(root, "roots")
+	noErr(t, os.Mkdir(sticky, 0o755))
+	noErr(t, os.Chmod(sticky, 0o777|os.ModeSticky))
+	noErr(t, os.Mkdir(target, 0o755))
+	link := filepath.Join(sticky, "state")
+	noErr(t, os.Symlink(target, link))
+	noErr(t, os.Lchown(link, nobody, nobody))
+	resolved, err := CreateDirectory(link)
+	var other *OtherAccountError
+	if !errors.As(err, &other) || other.Path != link {
+		t.Fatalf("CreateDirectory returned %q, error=%v, want the link refused as another account's", resolved, err)
+	}
+	store, err := Open(context.Background(), link)
+	if store != nil {
+		_ = store.Close()
+	}
+	if !errors.As(err, &other) {
+		t.Fatalf("Open error=%v, want the link refused as another account's", err)
+	}
+	if entries, err := os.ReadDir(target); err != nil || len(entries) != 0 {
+		t.Fatalf("root's folder behind the link changed: %v %v", entries, err)
+	}
+	if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("root's folder behind the link changed: %v %v", info.Mode(), err)
 	}
 }

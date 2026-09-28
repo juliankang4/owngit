@@ -90,9 +90,10 @@ type BootstrapSnapshot struct {
 	ExpiresAt int64  `json:"expires_at,omitempty"`
 }
 
-// OtherAccountError refuses a state directory that root would open or create
-// in a folder that another account owns. The folder, and state in it, belong
-// to that account, so the command must run as that account.
+// OtherAccountError refuses a folder for OwnGit's files, such as its state or
+// log, that root would open or create in a folder that another account owns.
+// The folder, and OwnGit's files in it, belong to that account, so the
+// command must run as that account.
 type OtherAccountError struct {
 	// Path is the folder that belongs to the account.
 	Path string
@@ -103,19 +104,16 @@ type OtherAccountError struct {
 
 func (e *OtherAccountError) Error() string {
 	if e.Account == "" {
-		return fmt.Sprintf("%s belongs to the account with ID %d, so OwnGit state there is that account's; run the command as that account", e.Path, e.UID)
+		return fmt.Sprintf("%s belongs to the account with ID %d, so OwnGit's files there are that account's; run the command as that account", e.Path, e.UID)
 	}
-	return fmt.Sprintf("%s belongs to the account %s, so OwnGit state there is that account's; run the command as %s", e.Path, e.Account, e.Account)
+	return fmt.Sprintf("%s belongs to the account %s, so OwnGit's files there are that account's; run the command as %s", e.Path, e.Account, e.Account)
 }
 
 // CreateDirectory creates the state directory dir and its missing parents
-// and returns its resolved path. It first checks what exists, so a refused
-// directory leaves nothing behind: the nearest existing folder must be on a
-// local filesystem, and on Unix no other account may be able to change a
-// folder on the way to dir or take one of the missing names first (see
-// RequireStateParent). Afterwards it checks the created directory again (see
-// checkStateDirectory), so a caller such as serve's lock only uses a
-// directory of this account.
+// through OpenDirectory and returns its resolved path. It first requires
+// the nearest existing folder to be on a local filesystem, so a refused
+// directory leaves nothing behind. No other account can change the way to
+// the returned path, so it keeps naming the directory that was checked.
 func CreateDirectory(dir string) (string, error) {
 	absolute, err := filepath.Abs(dir)
 	if err != nil {
@@ -137,13 +135,12 @@ func CreateDirectory(dir string) (string, error) {
 		}
 		ancestor = parent
 	}
-	if err := RequireStateParent(absolute); err != nil {
+	handle, err := OpenDirectory(absolute, true)
+	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(absolute, 0o700); err != nil {
-		return "", fmt.Errorf("create state directory: %w", err)
-	}
-	return checkStateDirectory(absolute)
+	defer handle.Close()
+	return handle.Name(), nil
 }
 
 func Open(ctx context.Context, dir string) (result *Store, err error) {

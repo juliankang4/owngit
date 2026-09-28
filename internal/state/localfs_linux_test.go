@@ -59,10 +59,11 @@ func TestFolderOnAFUSEMountIsNotRootOnly(t *testing.T) {
 		t.Skip("no FUSE folder is mounted here")
 	}
 	missing := filepath.Join(folder, "owngit-test-missing")
-	if OnlyRootCanChange(missing) {
+	way := InspectFolderWay(missing)
+	if way.OnlyRoot {
 		t.Errorf("%s on a FUSE mount counts as root's", missing)
 	}
-	if !OnSharedFilesystem(missing) {
+	if !way.Shared {
 		t.Errorf("%s on a FUSE mount is not reported as shared", missing)
 	}
 }

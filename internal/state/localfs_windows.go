@@ -22,16 +22,68 @@ func RequireProtectedPath(string) error {
 // protect the state directory.
 func RequireStateParent(string) error { return nil }
 
-// checkStateDirectory has nothing to check on Windows either; the state
-// directory's owner is checked when Open inspects it.
-func checkStateDirectory(path string) (string, error) { return path, nil }
+// InspectFolderWay finds no way that only root can change on Windows, which
+// has no root account, and no shared one, since setup offers no command
+// there that a share could redirect.
+func InspectFolderWay(string) FolderWay { return FolderWay{} }
 
-// OnlyRootCanChange is false on Windows, which has no root account.
-func OnlyRootCanChange(string) bool { return false }
+// OpenDirectory opens the directory at path for files that OwnGit keeps
+// there, and creates it and its missing parents when create is set. The
+// directory must belong to this account (or its token owner). On Windows,
+// access lists protect the state directory, so the folders on the way are
+// not checked, as for RequireStateParent.
+func OpenDirectory(path string, create bool) (*os.File, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if create {
+		if err := os.MkdirAll(absolute, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	dir, err := openFolder(absolute)
+	if err != nil {
+		return nil, err
+	}
+	info, err := dir.Stat()
+	if err == nil && !info.IsDir() {
+		err = fmt.Errorf("%s is not a directory", absolute)
+	}
+	if err == nil {
+		var owned bool
+		if owned, err = OwnedByCurrentUser(dir); err == nil && !owned {
+			err = fmt.Errorf("%s belongs to another account; run the command as its owner", absolute)
+		}
+	}
+	if err != nil {
+		dir.Close()
+		return nil, err
+	}
+	return dir, nil
+}
 
-// OnSharedFilesystem is not needed on Windows, where setup offers no command
-// that a share could redirect.
-func OnSharedFilesystem(string) bool { return false }
+// openFolder opens the directory at path, following reparse points on the
+// way.
+func openFolder(path string) (*os.File, error) {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	handle, err := windows.CreateFile(name,
+		windows.FILE_LIST_DIRECTORY|windows.FILE_TRAVERSE|windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	file := os.NewFile(uintptr(handle), path)
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, &os.PathError{Op: "open", Path: path, Err: errors.New("create directory handle")}
+	}
+	return file, nil
+}
 
 func ensureLocalStateFilesystem(path string) error {
 	absolute, err := filepath.Abs(path)

@@ -229,11 +229,11 @@ func storageProblem(err error) webui.MessageCode {
 // existing folder, which may be a system folder that other software needs, a
 // new folder inside it, never a command that changes the existing one. Root
 // runs that command, so it is offered only when no other account can put a
-// link where root creates the folder (state.OnlyRootCanChange), and a new
-// folder is suggested only when it would get the command. A folder on a
-// network share gets no command: the owner creates it through the share's
-// own settings. Other problems
-// the owner cannot read from the page come with the system's message.
+// link where root creates the folder (state.FolderWay.OnlyRoot), and a new
+// folder is suggested only when it would get the command. A folder reached
+// through a network share gets no command: the owner creates it through the
+// share's own settings. Other problems the owner cannot read from the page
+// come with the system's message.
 func storageNotice(folder string, err error) webui.Notice {
 	code := storageProblem(err)
 	if code == webui.MsgSetupStorageDenied && hiddenFolder(folder) {
@@ -243,7 +243,8 @@ func storageNotice(folder string, err error) webui.Notice {
 	switch code {
 	case webui.MsgSetupStorageDenied:
 		clean := filepath.Clean(folder)
-		if state.OnSharedFilesystem(clean) {
+		way := state.InspectFolderWay(clean)
+		if way.Shared {
 			// The share's server decides who may create folders there,
 			// and a command run on this computer cannot know what it
 			// would change.
@@ -252,13 +253,13 @@ func storageNotice(folder string, err error) webui.Notice {
 		}
 		if _, statErr := os.Lstat(clean); !errors.Is(statErr, fs.ErrNotExist) {
 			// It exists, or this account cannot even tell.
-			if inside := freeSubfolder(clean); state.OnlyRootCanChange(inside) {
+			if inside := freeSubfolder(clean); state.InspectFolderWay(inside).OnlyRoot {
 				notice.Code = webui.MsgSetupStorageDeniedExisting
 				notice.Detail = inside
 			}
 			break
 		}
-		if !state.OnlyRootCanChange(clean) {
+		if !way.OnlyRoot {
 			break
 		}
 		if account, err := user.Current(); err == nil {
@@ -275,7 +276,7 @@ func storageNotice(folder string, err error) webui.Notice {
 
 // freeSubfolder suggests a new folder inside parent: owngit-repos, or with
 // a number when that name is taken. A name this account cannot check counts
-// as free; state.OnlyRootCanChange cannot check it either, so it is not
+// as free; state.InspectFolderWay cannot check it either, so it is not
 // suggested.
 func freeSubfolder(parent string) string {
 	for number := 1; ; number++ {

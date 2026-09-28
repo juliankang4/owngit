@@ -50,7 +50,7 @@ func rootOnlyFolder(t *testing.T) string {
 		t.Skip("needs a folder that only root can change and this account cannot write")
 	}
 	for _, candidate := range []string{"/Library", "/usr", "/"} {
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() && state.OnlyRootCanChange(candidate) {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() && state.InspectFolderWay(candidate).OnlyRoot {
 			return candidate
 		}
 	}

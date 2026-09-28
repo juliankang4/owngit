@@ -340,10 +340,13 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// The offline lock is taken before the state is opened, so a migration
 	// cannot race another owner that is already serving the same directory.
 	// The directory is created first because the lock file lives inside it.
-	if _, err := state.CreateDirectory(*stateDir); err != nil {
+	// No other account can change the way to the directory that it
+	// resolves to, so that path keeps naming the directory that was checked.
+	resolvedStateDir, err := state.CreateDirectory(*stateDir)
+	if err != nil {
 		return err
 	}
-	unlock, err := state.AcquireLockBriefly(func() (func(), error) { return state.AcquireOfflineLock(*stateDir) })
+	unlock, err := state.AcquireLockBriefly(func() (func(), error) { return state.AcquireOfflineLock(resolvedStateDir) })
 	if err != nil {
 		return err
 	}
@@ -352,7 +355,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// for this start, may open the state while it is inspected, so serve
 	// retries as they do.
 	store, err := retryUnstableOpen(serveStateAttempts, func() (*state.Store, error) {
-		return openServeStateAttempt(ctx, *stateDir, logf)
+		return openServeStateAttempt(ctx, resolvedStateDir, logf)
 	})
 	if err != nil {
 		return err
@@ -487,7 +490,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return network.listenError(err)
 	}
 	defer listener.Close()
-	clearServeError(*stateDir)
+	clearServeError(resolvedStateDir)
 
 	policy := server.NewHostPolicy(allowedHosts...)
 	trusted, err := store.TrustedHosts(ctx)

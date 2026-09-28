@@ -173,7 +173,7 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 	stateParent = filepath.Dir(stateTarget)
 	repositoryTarget := filepath.Join(root, "unused-repositories")
 	err := Restore(ctx, backup, stateTarget, repositoryTarget, "")
-	if err == nil || !strings.Contains(err.Error(), "state directory parent is not protected: another account can change "+stateParent) {
+	if err == nil || !strings.Contains(err.Error(), "is not protected: other accounts can create names in "+stateParent) {
 		t.Fatalf("exchangeable state destination: %v", err)
 	}
 	assertNoRecoveryOutputOrStages(t, stateTarget, ".owngit-restore-")
