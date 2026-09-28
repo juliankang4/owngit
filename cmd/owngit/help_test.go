@@ -17,7 +17,7 @@ var helpCommands = []struct {
 	{"serve", true}, {"service", false}, {"service install", true}, {"health", true}, {"setup-link", true}, {"reset-admin", true}, {"approve-host", true},
 	{"network", false}, {"network show", true}, {"network set", true}, {"network reset", true},
 	{"tailscale", false}, {"tailscale status", true}, {"tailscale on", true}, {"tailscale off", true},
-	{"forget-check-container", true}, {"backup", true}, {"restore", true},
+	{"forget-check-container", true}, {"backup", true}, {"restore", true}, {"upgrade-backup", true},
 	{"repo", false}, {"repo list", true}, {"repo show", true}, {"repo create", true},
 	{"pr", false}, {"pr create", true}, {"pr list", true}, {"pr show", true}, {"pr diff", true},
 	{"pr review", false}, {"pr review request", true}, {"pr review submit", true}, {"pr review skip", true},

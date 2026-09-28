@@ -30,6 +30,8 @@ func createBaselineStateForTest(t *testing.T) string {
 	runPRGit(t, root, "init", "--bare", "--initial-branch=main", remote)
 	work := filepath.Join(root, "work")
 	runPRGit(t, root, "init", "--initial-branch=main", work)
+	runPRGit(t, work, "config", "user.name", "Baseline Test")
+	runPRGit(t, work, "config", "user.email", "baseline@example.invalid")
 	runPRGit(t, work, "commit", "--allow-empty", "-m", "target")
 	target := prGitOutput(t, work, "rev-parse", "HEAD")
 	runPRGit(t, work, "commit", "--allow-empty", "-m", "source")
