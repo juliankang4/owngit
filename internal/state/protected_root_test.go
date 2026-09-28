@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -114,5 +115,31 @@ func TestRootRefusesALinkTakenInAStickyFolder(t *testing.T) {
 	}
 	if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0o755 {
 		t.Fatalf("root's folder behind the link changed: %v %v", info.Mode(), err)
+	}
+}
+
+// Root uses nothing on a share, not even a folder on the way to a local
+// one or a log folder: the share's server could show another account's
+// folder as root's.
+func TestRootUsesNothingOnAShare(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+	root := resolveTestPath(t, t.TempDir())
+	share := filepath.Join(root, "share")
+	local := filepath.Join(share, "local")
+	noErr(t, os.MkdirAll(local, 0o700))
+	markShare(t, share)
+	for _, path := range []string{filepath.Join(share, "logs"), filepath.Join(local, "logs")} {
+		dir, err := OpenDirectory(path, true)
+		if dir != nil {
+			dir.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "run as root uses nothing there") {
+			t.Errorf("OpenDirectory(%s) as root: error=%v, want the share refused", path, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(local, "logs")); !os.IsNotExist(err) {
+		t.Fatalf("root created a folder behind the share: %v", err)
 	}
 }

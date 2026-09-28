@@ -30,7 +30,8 @@ const MaximumLinks = 40
 //
 // When a name on the way does not exist, walkWay returns the directory that
 // should hold it and the name, unless mayCreate is set: it then asks
-// mayCreate about the holding directory and creates the name as a directory
+// mayCreate about the holding directory's entry and creates the name as a
+// directory
 // only this account may use. Only the path itself may lead to a missing
 // name; a link that does is refused.
 //
@@ -40,7 +41,7 @@ const MaximumLinks = 40
 // It returns the last directory it reached, open, and the resolved path of
 // what path leads to, which is that directory unless path leads to another
 // kind of file.
-func walkWay(path string, check func(wayEntry) error, mayCreate func(string, os.FileInfo) error) (dir *os.File, resolved, missing string, err error) {
+func walkWay(path string, check func(wayEntry) error, mayCreate func(wayEntry) error) (dir *os.File, resolved, missing string, err error) {
 	root, err := openDirectoryAt(unix.AT_FDCWD, "/", "/")
 	if err != nil {
 		return nil, "", "", err
@@ -56,7 +57,8 @@ func walkWay(path string, check func(wayEntry) error, mayCreate func(string, os.
 	top := walk.way[len(walk.way)-1]
 	resolved = top.file.Name()
 	if missing == "" {
-		entry := wayEntry{path: resolved, info: top.info, dir: top.file, last: true, enforced: top.enforced}
+		entry := top.entry()
+		entry.last = true
 		if walk.file != "" {
 			entry.path, entry.info, entry.dir = walk.file, walk.fileInfo, nil
 			resolved = walk.file
@@ -88,7 +90,7 @@ type wayEntry struct {
 // one, all open.
 type wayWalk struct {
 	check     func(wayEntry) error
-	mayCreate func(string, os.FileInfo) error
+	mayCreate func(wayEntry) error
 	way       []wayDirectory
 	links     int
 	// file and fileInfo name a final entry that is not a directory.
@@ -101,6 +103,11 @@ type wayDirectory struct {
 	info     os.FileInfo
 	enforced bool
 	checked  bool
+}
+
+// entry is the held directory as an entry on the way.
+func (dir *wayDirectory) entry() wayEntry {
+	return wayEntry{path: dir.file.Name(), info: dir.info, dir: dir.file, enforced: dir.enforced}
 }
 
 func (walk *wayWalk) push(dir *os.File) error {
@@ -144,7 +151,7 @@ func (walk *wayWalk) walk(relative string, outermost bool) (missing string, err 
 		}
 		current := &walk.way[len(walk.way)-1]
 		if !current.checked {
-			if err := walk.check(wayEntry{path: current.file.Name(), info: current.info, dir: current.file, enforced: current.enforced}); err != nil {
+			if err := walk.check(current.entry()); err != nil {
 				return "", err
 			}
 			current.checked = true
@@ -158,7 +165,7 @@ func (walk *wayWalk) walk(relative string, outermost bool) (missing string, err 
 			if walk.mayCreate == nil {
 				return name, nil
 			}
-			if err := walk.mayCreate(current.file.Name(), current.info); err != nil {
+			if err := walk.mayCreate(current.entry()); err != nil {
 				return "", err
 			}
 			if err := unix.Mkdirat(parent, name, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
@@ -349,11 +356,10 @@ func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
 }
 
 // OpenDirectory opens the directory at path for files that OwnGit keeps
-// there, such as its state, its log or the error of a serve that could not
-// start, and creates it and its missing parents when create is set. It
-// walks the way with walkWay, so it follows no link that it did not check,
-// and the check holds for the directory it returns, not for whatever path
-// names later.
+// there, such as its log, and creates it and its missing parents when
+// create is set. It walks the way with walkWay, so it follows no link that
+// it did not check, and the check holds for the directory it returns, not
+// for whatever path names later.
 //
 // Every folder and link on the way must be one that no other account can
 // change (see RequireProtectedPath): a sticky folder that every account may
@@ -365,11 +371,30 @@ func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
 // folder that another account owns belongs to that account, and so would
 // OwnGit's files inside it; files that root created there would lock that
 // account out, so the refusal is an *OtherAccountError that says to run the
-// command as that account. Owners and modes mean this only where this
-// computer enforces them, so every folder on the way must be on such a
-// filesystem, not on a network share or a FUSE filesystem, whose server or
-// program could show a link or folder as root's.
+// command as that account.
+//
+// Owners and modes mean this only where this computer enforces them, not on
+// a filesystem whose server or program decides them (ownershipEnforced),
+// such as a network share. There, OpenDirectory follows no link, since the
+// server decides where it leads, and could lead into this account's own
+// files; and when root runs the command it uses no folder there at all,
+// since the server could show another account's folder as root's. An
+// account other than root may keep its log on a share: whoever serves it
+// could change it, but reaches nothing else through it.
 func OpenDirectory(path string, create bool) (*os.File, error) {
+	return openDirectory(path, create, false)
+}
+
+// openStateDirectory is CreateDirectory, or OpenStateDirectory when create
+// is not set.
+func openStateDirectory(dir string, create bool) (*os.File, error) {
+	return openDirectory(dir, create, true)
+}
+
+// openDirectory is OpenDirectory; with local set, the directory, and the
+// folder that receives the missing ones, must be on a filesystem that this
+// computer enforces as well.
+func openDirectory(path string, create, local bool) (*os.File, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -379,8 +404,12 @@ func OpenDirectory(path string, create bool) (*os.File, error) {
 		name, info, last := entry.path, entry.info, entry.last
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		switch {
-		case !entry.enforced:
-			return fmt.Errorf("%s is on a filesystem whose owners and modes this computer does not enforce, such as a network share; choose a folder on a local disk", name)
+		case !entry.enforced && os.Geteuid() == 0:
+			return fmt.Errorf("%s is %s; OwnGit run as root uses nothing there, choose a folder on a local disk", name, notKnownLocal)
+		case !entry.enforced && info.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("%s is a link %s, whose server decides where it leads, so OwnGit does not follow it; use the real path that the link leads to", name, notKnownLocal)
+		case !entry.enforced && last && local:
+			return notLocalState(name)
 		case !ok:
 			return fmt.Errorf("the owner of %s is unavailable", name)
 		case last && !info.IsDir():
@@ -396,10 +425,13 @@ func OpenDirectory(path string, create bool) (*os.File, error) {
 		}
 		return notProtected(absolute, protected(name, info))
 	}
-	var mayCreate func(string, os.FileInfo) error
+	var mayCreate func(wayEntry) error
 	if create {
-		mayCreate = func(name string, info os.FileInfo) error {
-			return notProtected(absolute, requireNoOtherWriter(name, info))
+		mayCreate = func(entry wayEntry) error {
+			if local && !entry.enforced {
+				return notLocalState(entry.path)
+			}
+			return notProtected(absolute, requireNoOtherWriter(entry.path, entry.info))
 		}
 	}
 	dir, _, missing, err := walkWay(absolute, check, mayCreate)
@@ -413,11 +445,13 @@ func OpenDirectory(path string, create bool) (*os.File, error) {
 	return dir, nil
 }
 
-// createStateDirectory is CreateDirectory: OpenDirectory already requires
-// every folder on the way to be on a filesystem that this computer
-// enforces, which a network share is not.
-func createStateDirectory(dir string) (*os.File, error) {
-	return OpenDirectory(dir, true)
+// notKnownLocal describes a filesystem that ownershipEnforced does not
+// know to be local.
+const notKnownLocal = "on a filesystem that OwnGit does not know to be local, such as a network share, a FUSE filesystem or a virtual machine's shared folder"
+
+// notLocalState refuses the folder name for the state.
+func notLocalState(name string) error {
+	return fmt.Errorf("%s is %s; %s", name, notKnownLocal, stateOnLocalDisk)
 }
 
 // requireNoOtherWriter refuses a folder that another account could create
@@ -440,7 +474,7 @@ func notProtected(path string, err error) error {
 
 // RequireStateParent refuses a state destination that does not exist yet,
 // such as a restore target, unless OwnGit could create it: its parent must
-// pass OpenDirectory, and no other account may be able to create names in
+// pass OpenStateDirectory, and no other account may be able to create names in
 // the parent. The parent stays as the check found it, since no other account
 // can change the way to it.
 func RequireStateParent(path string) error {
@@ -448,7 +482,7 @@ func RequireStateParent(path string) error {
 	if err != nil {
 		return err
 	}
-	dir, err := OpenDirectory(filepath.Dir(absolute), false)
+	dir, err := openStateDirectory(filepath.Dir(absolute), false)
 	if err != nil {
 		return err
 	}

@@ -29,22 +29,32 @@ func RequireStateParent(string) error { return nil }
 func InspectFolderWay(string) FolderWay { return FolderWay{} }
 
 // OpenDirectory opens the directory at path for files that OwnGit keeps
-// there, and creates it and its missing parents when create is set. It
-// walks from the volume's root one folder at a time, each opened relative
-// to the one before it without following a reparse point, and refuses a
-// folder that is a link or junction, so the directory it returns is the one
-// the path names, whatever the path names later. The directory must belong
-// to this account (or its token owner). Access lists protect OwnGit's
-// folders on Windows, so the owners of the folders on the way are not
-// checked.
+// there, such as its log, and creates it and its missing parents when
+// create is set. It walks from the volume's root one folder at a time, each
+// opened relative to the one before it without following a reparse point,
+// and refuses a folder that is a link, a junction or a mounted volume, so
+// the directory it returns is the one the path names, whatever the path
+// names later, and it is on the volume where the way starts. The directory
+// must belong to this account (or its token owner). Access lists protect
+// OwnGit's folders on Windows, so the owners of the folders on the way are
+// not checked.
+//
+// When OwnGit runs as administrator (elevated), that volume must be local:
+// a share's server could otherwise decide what administrator writes. An
+// account that is not elevated may keep its log on a share.
 func OpenDirectory(path string, create bool) (*os.File, error) {
-	return openDirectory(path, create, nil)
+	return openDirectory(path, create, false)
 }
 
-// openDirectory is OpenDirectory. Before it creates the first missing
-// folder, it calls beforeCreate, if set, with the held folder that
-// receives it.
-func openDirectory(path string, create bool, beforeCreate func(*os.File) error) (*os.File, error) {
+// openStateDirectory is CreateDirectory, or OpenStateDirectory when create
+// is not set: the state must be on a local volume for every account.
+func openStateDirectory(dir string, create bool) (*os.File, error) {
+	return openDirectory(dir, create, true)
+}
+
+// openDirectory is OpenDirectory; with local set, the volume must be local
+// for every account. It is checked before anything is created.
+func openDirectory(path string, create, local bool) (*os.File, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -57,7 +67,10 @@ func openDirectory(path string, create bool, beforeCreate func(*os.File) error) 
 	if err != nil {
 		return nil, err
 	}
-	created := false
+	if err := requireLocalWay(dir, local); err != nil {
+		dir.Close()
+		return nil, err
+	}
 	for _, name := range strings.Split(absolute[len(volume):], `\`) {
 		if name == "" {
 			continue
@@ -65,13 +78,6 @@ func openDirectory(path string, create bool, beforeCreate func(*os.File) error) 
 		next := filepath.Join(dir.Name(), name)
 		child, err := openAt(dir, next, folderAccess, folderShare, windows.FILE_OPEN, folderOptions, "open")
 		if errors.Is(err, fs.ErrNotExist) && create {
-			if !created && beforeCreate != nil {
-				if err := beforeCreate(dir); err != nil {
-					dir.Close()
-					return nil, err
-				}
-			}
-			created = true
 			child, err = openAt(dir, next, folderAccess, folderShare, windows.FILE_OPEN_IF, folderOptions, "create")
 		}
 		dir.Close()
@@ -124,24 +130,22 @@ func refuseLinkedFolder(dir *os.File) error {
 	return nil
 }
 
-// createStateDirectory is CreateDirectory. The state directory must be on
-// a local volume, and so must the nearest existing folder, which is checked
-// before the missing ones are created.
-func createStateDirectory(dir string) (*os.File, error) {
-	held, err := openDirectory(dir, true, func(folder *os.File) error {
-		if err := ensureLocalFolder(folder); err != nil {
-			return fmt.Errorf("validate state directory parent: %w", err)
-		}
+// requireLocalWay refuses the volume of the held folder where a way starts
+// when it is not local and local is set or OwnGit runs as administrator.
+func requireLocalWay(dir *os.File, local bool) error {
+	elevated := windows.GetCurrentProcessToken().IsElevated()
+	if !local && !elevated {
 		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
-	if err := ensureLocalFolder(held); err != nil {
-		held.Close()
-		return nil, fmt.Errorf("validate state directory: %w", err)
+	err := ensureLocalFolder(dir)
+	switch {
+	case err == nil:
+		return nil
+	case local:
+		return fmt.Errorf("%w; %s", err, stateOnLocalDisk)
+	default:
+		return fmt.Errorf("%w; OwnGit run as administrator uses nothing there, choose a folder on a local disk", err)
 	}
-	return held, nil
 }
 
 // openFolder opens the directory at path, following reparse points on the
@@ -172,15 +176,19 @@ func openFolder(path string) (*os.File, error) {
 func ensureLocalFolder(dir *os.File) error {
 	resolved, err := handleFinalPath(windows.Handle(dir.Fd()))
 	if err != nil {
-		return fmt.Errorf("resolve state directory target: %w", err)
+		return fmt.Errorf("resolve the volume of %s: %w", dir.Name(), err)
 	}
-	return ensureLocalResolved(resolved)
+	if err := ensureLocalResolved(resolved); err != nil {
+		return fmt.Errorf("%s %w", dir.Name(), err)
+	}
+	return nil
 }
 
-// ensureLocalResolved checks the resolved path of a state directory.
+// ensureLocalResolved checks the resolved path of a folder. It says where
+// the folder is when that is not local.
 func ensureLocalResolved(resolved string) error {
 	if windowsNetworkPath(resolved) {
-		return errors.New("state directory reparse target must not use a network share")
+		return errors.New("is on a network share")
 	}
 	resolvedPath, err := windows.UTF16PtrFromString(resolved)
 	if err != nil {
@@ -188,11 +196,11 @@ func ensureLocalResolved(resolved string) error {
 	}
 	volume := make([]uint16, windows.MAX_PATH+1)
 	if err := windows.GetVolumePathName(resolvedPath, &volume[0], uint32(len(volume))); err != nil {
-		return fmt.Errorf("resolve state directory volume: %w", err)
+		return fmt.Errorf("has no volume that can be checked: %w", err)
 	}
 	volumePath := windows.UTF16ToString(volume)
 	if windowsNetworkPath(volumePath) {
-		return errors.New("state directory resolved volume must not be remote")
+		return errors.New("is on a network share")
 	}
 	root, err := windows.UTF16PtrFromString(volumePath)
 	if err != nil {
@@ -202,9 +210,9 @@ func ensureLocalResolved(resolved string) error {
 	case windows.DRIVE_FIXED, windows.DRIVE_REMOVABLE, windows.DRIVE_RAMDISK:
 		return nil
 	case windows.DRIVE_REMOTE:
-		return errors.New("state directory must not use a mapped network drive")
+		return errors.New("is on a mapped network drive")
 	default:
-		return fmt.Errorf("state directory drive type is not safely local (%d)", driveType)
+		return fmt.Errorf("is on a drive that is not known to be local (drive type %d)", driveType)
 	}
 }
 

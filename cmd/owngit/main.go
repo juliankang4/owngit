@@ -962,8 +962,8 @@ func backupState(arguments []string) error {
 		return err
 	}
 	// The lock file is created only in a state directory that OwnGit may
-	// use, as serve's is; see state.OpenDirectory.
-	stateDirectory, err := state.OpenDirectory(*stateDir, false)
+	// use, as serve's is; see state.CreateDirectory.
+	stateDirectory, err := state.OpenStateDirectory(*stateDir)
 	if err != nil {
 		return err
 	}

@@ -118,11 +118,12 @@ const serveErrorFile = "serve-error.txt"
 
 // recordServeError writes the serve error into the state directory, if
 // there is one that OwnGit may use: it opens the directory with
-// state.OpenDirectory and writes through that handle with state.OpenOwnFile.
-// A serve that was refused another account's folder, for example root's,
-// writes nothing there, and no link leads the error elsewhere.
+// state.OpenStateDirectory and writes through that handle with
+// state.OpenOwnFile. A serve that was refused another account's folder, for
+// example root's, or a folder on a share, writes nothing there, and no link
+// leads the error elsewhere.
 func recordServeError(stateDir string, err error) {
-	directory, openErr := state.OpenDirectory(stateDir, false)
+	directory, openErr := state.OpenStateDirectory(stateDir)
 	if openErr != nil {
 		return
 	}

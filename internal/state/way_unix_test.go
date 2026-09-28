@@ -101,9 +101,10 @@ func TestFolderWayThroughALinkOnAShareIsShared(t *testing.T) {
 }
 
 // OpenDirectory, which opens the folders for OwnGit's state, log and serve
-// error, does not trust owners and modes that a share shows: a link that a
-// share holds is refused even when it leads to a local folder of this
-// account. The share is marked by replacing the filesystem check.
+// error, does not follow a link that a share holds, for any account, even
+// when it leads to a local folder of this account: the share's server
+// decides where it leads. The share is marked by replacing the filesystem
+// check.
 func TestOpenDirectoryRefusesAWayThroughAShare(t *testing.T) {
 	root := resolveTestPath(t, t.TempDir())
 	share, local := filepath.Join(root, "share"), filepath.Join(root, "local")
@@ -113,7 +114,7 @@ func TestOpenDirectoryRefusesAWayThroughAShare(t *testing.T) {
 	markShare(t, share)
 	for _, create := range []bool{false, true} {
 		for _, path := range []string{filepath.Join(share, "state"), filepath.Join(share, "state", "new")} {
-			if dir, err := OpenDirectory(path, create); err == nil || !strings.Contains(err.Error(), "does not enforce") {
+			if dir, err := OpenDirectory(path, create); err == nil || !strings.Contains(err.Error(), "does not follow it") {
 				if dir != nil {
 					dir.Close()
 				}
@@ -123,6 +124,54 @@ func TestOpenDirectoryRefusesAWayThroughAShare(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(local, "new")); !os.IsNotExist(err) {
 		t.Fatalf("a folder was created through the share: %v", err)
+	}
+}
+
+// An account other than root may keep its log in a folder on a share, and
+// pass through one on the way, but the state must be on a local disk: the
+// share's server could read and change it. The share is marked by replacing
+// the filesystem check; the local folder inside it stands for a local disk
+// mounted there.
+func TestLogMayBeOnAShareButNotTheState(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root uses nothing on a share")
+	}
+	root := resolveTestPath(t, t.TempDir())
+	share := filepath.Join(root, "share")
+	local := filepath.Join(share, "local")
+	noErr(t, os.MkdirAll(local, 0o700))
+	markShare(t, share)
+	for _, path := range []string{filepath.Join(share, "logs"), filepath.Join(local, "logs"), filepath.Join(local, "state")} {
+		dir, err := OpenDirectory(path, true)
+		if err != nil {
+			t.Fatalf("OpenDirectory(%s): %v", path, err)
+		}
+		dir.Close()
+	}
+	held, err := CreateDirectory(filepath.Join(local, "state"))
+	if err != nil {
+		t.Fatalf("the state behind a folder on a share: %v", err)
+	}
+	held.Close()
+	refused := []error{RequireStateParent(filepath.Join(share, "restored"))}
+	for _, open := range []func() (*os.File, error){
+		func() (*os.File, error) { return CreateDirectory(filepath.Join(share, "state")) },
+		func() (*os.File, error) { return CreateDirectory(filepath.Join(share, "state", "nested")) },
+		func() (*os.File, error) { return OpenStateDirectory(share) },
+	} {
+		dir, err := open()
+		if dir != nil {
+			dir.Close()
+		}
+		refused = append(refused, err)
+	}
+	for i, err := range refused {
+		if err == nil || !strings.Contains(err.Error(), "only on a local disk") {
+			t.Errorf("state on a share, case %d: error=%v, want it refused", i, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(share, "state")); !os.IsNotExist(err) {
+		t.Fatalf("a state folder was created on the share: %v", err)
 	}
 }
 

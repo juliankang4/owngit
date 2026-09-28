@@ -111,12 +111,19 @@ func (e *OtherAccountError) Error() string {
 
 // CreateDirectory creates the state directory dir and its missing parents
 // through OpenDirectory and returns it held open, named by its resolved
-// path. The state directory and the folders that receive the missing ones
-// must be on a local filesystem, which is checked before anything is
-// created, so a refused directory leaves nothing behind. Open and the locks
-// in it use the held directory, not whatever its path names later.
+// path. The state directory and the folder that receives the missing ones
+// must be on a local filesystem, for every account, which is checked before
+// anything is created, so a refused directory leaves nothing behind. Open
+// and the locks in it use the held directory, not whatever its path names
+// later.
 func CreateDirectory(dir string) (*os.File, error) {
-	return createStateDirectory(dir)
+	return openStateDirectory(dir, true)
+}
+
+// OpenStateDirectory opens the existing state directory dir like
+// CreateDirectory, creating nothing.
+func OpenStateDirectory(dir string) (*os.File, error) {
+	return openStateDirectory(dir, false)
 }
 
 // Open opens the state in the directory dir, creating it with
