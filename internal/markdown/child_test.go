@@ -126,7 +126,8 @@ const stopWithin = 20 * time.Second
 // Each limit stops the child, the page gets ErrTooComplex, and the source
 // is not tried again. What is checked does not depend on the share of the
 // processor the child gets: the reason it stopped, that it was reaped within
-// a generous bound, its peak memory, and how many children later views start.
+// a generous bound, the heap behind a memory stop, and how many children
+// later views start.
 func TestChildLimits(t *testing.T) {
 	cases := []struct {
 		mode, reason string
@@ -158,8 +159,8 @@ func TestChildLimits(t *testing.T) {
 			if result.state == nil || !result.state.Exited() && c.reason != "time" && c.reason != "output" {
 				t.Fatalf("the child was not reaped: %v", result.state)
 			}
-			checkChildMemory(t, c.mode, result)
-			t.Logf("%s stopped by %s after %v, cpu %v, peak %d MiB", c.mode, result.reason, elapsed.Round(time.Millisecond), result.cpu().Round(time.Millisecond), peakMemory(result.state)>>20)
+			checkMemoryStop(t, c.mode, result)
+			t.Logf("%s stopped by %s after %v, cpu %v", c.mode, result.reason, elapsed.Round(time.Millisecond), result.cpu().Round(time.Millisecond))
 
 			// Render has not seen this source yet. Memory, output and a
 			// failure are remembered at the first view. A timeout is too when
@@ -216,34 +217,45 @@ func forgetSlow(source []byte) {
 	delete(slow.seen, sha256.Sum256(source))
 }
 
-// runtimeAllowance is how much memory a child may hold beside its heap
-// objects: the runtime's span and collector metadata, stacks, and freed pages
-// not yet returned. Measured at 20 to 30 MiB on macOS.
-const runtimeAllowance = 64 << 20
-
-// checkChildMemory checks what the memory limit guarantees. A child stopped
-// by it saw a heap past childMemoryLimit, and its peak resident memory is that
-// heap plus the runtime's own memory, so the peak measures the heap and not
-// memory the process had given back. How far the heap got past the limit
-// depends on when the watcher could run (see the comment on the containment in
-// child.go), so it is logged, not bounded. A child stopped otherwise never
-// had its heap pass the limit at a sample.
-func checkChildMemory(t *testing.T, name string, result childResult) {
+// checkMemoryStop checks what the memory limit decides: a child stops itself
+// for memory only when a sample of its heap is past childMemoryLimit, and it
+// reports that heap. How far past depends on the renderer. One that allocates
+// faster than the sampler can run, such as hog or the amplifying tables on a
+// busy machine, has no fixed bound on the overshoot; one that yields is
+// bounded by what it allocates between samples (TestMemoryStopComesNearTheLimit).
+// The child's resident memory has no fixed bound either: the renderer keeps
+// allocating after the decision until the process has exited (see the comment
+// on the containment in child.go), and the runtime holds memory beside the
+// heap.
+func checkMemoryStop(t *testing.T, name string, result childResult) {
 	t.Helper()
-	peak := uint64(peakMemory(result.state))
 	if result.reason != "memory" {
-		if peak > (childMemoryLimit+runtimeAllowance)*memoryScale {
-			t.Errorf("%s: stopped by %s, the child reached %d MiB", name, result.reason, peak>>20)
-		}
 		return
 	}
 	if result.heapAtStop <= childMemoryLimit {
 		t.Errorf("%s: stopped for memory with a reported heap of %d MiB, not past the %d MiB limit", name, result.heapAtStop>>20, childMemoryLimit>>20)
 		return
 	}
-	t.Logf("%s: heap %d MiB at the stop (%d MiB past the limit), peak %d MiB", name, result.heapAtStop>>20, (result.heapAtStop-childMemoryLimit)>>20, peak>>20)
-	if peak > (result.heapAtStop+runtimeAllowance)*memoryScale {
-		t.Errorf("%s: peak %d MiB, more than the %d MiB heap at the stop and the runtime's own memory", name, peak>>20, result.heapAtStop>>20)
+	t.Logf("%s: heap %d MiB at the stop (%d MiB past the limit)", name, result.heapAtStop>>20, (result.heapAtStop-childMemoryLimit)>>20)
+}
+
+// pacedStep is what the paced child keeps before each pause.
+const pacedStep = 1 << 20
+
+// A renderer that pauses between allocations lets the watcher sample the heap
+// between them however busy the machine is, so the memory limit stops it
+// within a few steps of the limit. A sampler that runs late or stops past the
+// limit fails here.
+func TestMemoryStopComesNearTheLimit(t *testing.T) {
+	withChild(t, "paced")
+	result := renderInChild([]byte("# paced\n"), testLinks)
+	if !errors.Is(result.err, ErrTooComplex) || result.reason != "memory" {
+		t.Fatalf("got %v, reason %q, want the memory limit", result.err, result.reason)
+	}
+	over := int64(result.heapAtStop) - childMemoryLimit
+	t.Logf("paced: heap %d MiB at the stop (%d KiB past the limit)", result.heapAtStop>>20, over>>10)
+	if over <= 0 || over > 8*pacedStep {
+		t.Errorf("paced: reported heap %d MiB, want past the %d MiB limit by at most 8 steps of %d MiB", result.heapAtStop>>20, childMemoryLimit>>20, pacedStep>>20)
 	}
 }
 
@@ -251,8 +263,8 @@ func checkChildMemory(t *testing.T, name string, result childResult) {
 // of cells, and reference links that multiply the output. Rendered in a
 // child without the estimate, each is stopped by one of the child's limits.
 // Which limit comes first depends on the machine: a slow one reaches the time
-// limit before the heap passes the memory limit. Either stop is correct, and
-// checkChildMemory bounds the memory in both cases.
+// limit before the heap passes the memory limit. Either stop is correct, and a
+// memory stop must come from a heap past the limit.
 // The tables never reach a child in the product, because the estimate
 // refuses them first.
 func TestAmplifyingDocumentsStayWithinTheChildLimits(t *testing.T) {
@@ -283,7 +295,7 @@ func TestAmplifyingDocumentsStayWithinTheChildLimits(t *testing.T) {
 		if result.reason != "memory" && result.reason != "time" && result.reason != "output" {
 			t.Errorf("%s: stopped by %s, want one of the child's limits", name, result.reason)
 		}
-		checkChildMemory(t, name, result)
+		checkMemoryStop(t, name, result)
 	}
 }
 

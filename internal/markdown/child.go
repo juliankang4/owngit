@@ -35,9 +35,11 @@ import (
 // costly shapes before any child starts. The memory limit is sampled: the
 // child runs Go on one processor, so its watcher runs only when the renderer
 // is preempted, and the heap can grow past the limit by what the renderer
-// allocates in between. For the padded tables in the tests, the heap at the
-// stop was measured at 256 to 303 MiB on an idle Mac and up to 320 MiB with
-// every core busy, with the peak resident memory 10 to 44 MiB above it. A
+// allocates in between. The renderer also keeps allocating after the watcher
+// decides to stop, until the process has exited. For the padded tables in the
+// tests on a Mac, the heap at the stop was measured at 256 to 357 MiB, and
+// with every core heavily loaded the peak resident memory was up to 191 MiB
+// above it, of which the runtime's own memory was at most about 33 MiB. A
 // second processor for the watcher would shorten the gaps but let garbage
 // collection use two cores. The stop is certain; how far past the limit it
 // comes depends on scheduling.

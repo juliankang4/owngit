@@ -61,6 +61,15 @@ var testChildren = map[string]func([]byte, Resolver) (string, error){
 			}
 		}
 	},
+	// paced keeps pacedStep at a time and pauses between steps, so its heap
+	// grows slower than the child samples it.
+	"paced": func([]byte, Resolver) (string, error) {
+		var kept [][]byte
+		for {
+			kept = append(kept, make([]byte, pacedStep))
+			time.Sleep(time.Millisecond)
+		}
+	},
 	// hog keeps what it allocates, as a parse tree does.
 	"hog": func([]byte, Resolver) (string, error) {
 		var kept [][]byte

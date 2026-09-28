@@ -1,15 +1,10 @@
 package markdown
 
 import (
-	"os"
 	"time"
 
 	"golang.org/x/sys/windows"
 )
-
-// peakMemory is not measured on Windows; the child's own heap limit still
-// applies there.
-func peakMemory(*os.ProcessState) int64 { return 0 }
 
 // processCPU is the processor time this process has used. Timing checks use
 // it rather than the wall clock, which a busy machine stretches.
