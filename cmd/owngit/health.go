@@ -116,11 +116,27 @@ func checkHealth(target string) error {
 // allowed to read. A serve that starts listening removes it.
 const serveErrorFile = "serve-error.txt"
 
-// recordServeError writes the serve error, when the state directory exists.
+// recordServeError writes the serve error when the state directory exists
+// and belongs to this account, and never through a link at the file's name.
+// A serve that was refused another account's folder, for example root's,
+// writes nothing there.
 func recordServeError(stateDir string, err error) {
-	if info, statErr := os.Stat(stateDir); statErr == nil && info.IsDir() {
-		_ = os.WriteFile(filepath.Join(stateDir, serveErrorFile), []byte(err.Error()+"\n"), 0o600)
+	directory, openErr := os.Open(stateDir)
+	if openErr != nil {
+		return
 	}
+	info, statErr := directory.Stat()
+	owned, ownerErr := state.OwnedByCurrentUser(directory)
+	directory.Close()
+	if statErr != nil || !info.IsDir() || ownerErr != nil || !owned {
+		return
+	}
+	file, openErr := os.OpenFile(filepath.Join(stateDir, serveErrorFile), os.O_WRONLY|os.O_CREATE|os.O_TRUNC|serveErrorOpenFlags, 0o600)
+	if openErr != nil {
+		return
+	}
+	_, _ = file.WriteString(err.Error() + "\n")
+	_ = file.Close()
 }
 
 func clearServeError(stateDir string) {
