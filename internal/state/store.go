@@ -94,12 +94,17 @@ type BootstrapSnapshot struct {
 // in a folder that another account owns. The folder, and state in it, belong
 // to that account, so the command must run as that account.
 type OtherAccountError struct {
-	// Path is the folder that belongs to Account.
-	Path    string
+	// Path is the folder that belongs to the account.
+	Path string
+	// Account is the account's name, or "" when its ID has no name here.
 	Account string
+	UID     uint32
 }
 
 func (e *OtherAccountError) Error() string {
+	if e.Account == "" {
+		return fmt.Sprintf("%s belongs to the account with ID %d, so OwnGit state there is that account's; run the command as that account", e.Path, e.UID)
+	}
 	return fmt.Sprintf("%s belongs to the account %s, so OwnGit state there is that account's; run the command as %s", e.Path, e.Account, e.Account)
 }
 

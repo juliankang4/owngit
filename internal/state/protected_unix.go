@@ -187,7 +187,7 @@ func RequireStateParent(path string) error {
 	protected := protectedCheck(true)
 	resolved, missing, err := WalkProtected(filepath.Dir(path), func(name string, info os.FileInfo) error {
 		if stat, ok := info.Sys().(*syscall.Stat_t); ok && os.Geteuid() == 0 && stat.Uid != 0 {
-			return &OtherAccountError{Path: name, Account: accountName(stat.Uid)}
+			return &OtherAccountError{Path: name, Account: accountName(stat.Uid), UID: stat.Uid}
 		}
 		return protected(name, info)
 	})
@@ -228,18 +228,17 @@ func checkStateDirectory(path string) (string, error) {
 	case int(stat.Uid) == os.Geteuid():
 		return resolved, nil
 	case os.Geteuid() == 0:
-		return "", &OtherAccountError{Path: resolved, Account: accountName(stat.Uid)}
+		return "", &OtherAccountError{Path: resolved, Account: accountName(stat.Uid), UID: stat.Uid}
 	}
 	return "", errNotStateOwner
 }
 
-// accountName is the name of the account uid, or its number when it has no
-// name.
+// accountName is the name of the account uid, or "" when it has no name.
 func accountName(uid uint32) string {
 	if account, err := user.LookupId(strconv.FormatUint(uint64(uid), 10)); err == nil {
 		return account.Username
 	}
-	return strconv.FormatUint(uint64(uid), 10)
+	return ""
 }
 
 // OnSharedFilesystem reports whether the nearest existing folder of the

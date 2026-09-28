@@ -598,6 +598,12 @@ func TestRunAsOwnerHint(t *testing.T) {
 	if err := runAsOwnerHint(other, "health", nil); err != other {
 		t.Fatalf("runAsOwnerHint changed %v", err)
 	}
+	// runuser and sudo take a name, so an account without one gets the
+	// refusal alone.
+	unnamed := &state.OtherAccountError{Path: "/home/example", UID: 1234}
+	if err := runAsOwnerHint(unnamed, "setup-link", nil); err != unnamed || !strings.Contains(err.Error(), "account with ID 1234") {
+		t.Fatalf("runAsOwnerHint for an account without a name = %v", err)
+	}
 }
 
 // installFixture runs serviceHost.install with every system effect

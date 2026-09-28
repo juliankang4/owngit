@@ -124,10 +124,11 @@ func run(arguments []string) error {
 }
 
 // runAsOwnerHint completes a refusal of another account's state directory
-// with the command that runs this one as that account.
+// with the command that runs this one as that account. An account without a
+// name gets no command: runuser and sudo take the name.
 func runAsOwnerHint(err error, command string, arguments []string) error {
 	var other *state.OtherAccountError
-	if !errors.As(err, &other) {
+	if !errors.As(err, &other) || other.Account == "" {
 		return err
 	}
 	line := "sudo -u " + service.ShellQuote(other.Account) + " owngit " + command
