@@ -99,6 +99,13 @@ var errDeletePending = fmt.Errorf("%w: its deletion is pending", ErrInspectionUn
 // a change in progress (errDeletePending), not a failure. A name relative to
 // the held directory needs no conversion to an NT path.
 func openEntry(dir *os.File, path string, access uint32, op string) (*os.File, error) {
+	return openAt(dir, path, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_OPEN, windows.FILE_OPEN_FOR_BACKUP_INTENT, op)
+}
+
+// openAt opens path, a direct child of the held directory dir, through
+// NtCreateFile without following a reparse point, for synchronous use.
+func openAt(dir *os.File, path string, access, share, disposition, options uint32, op string) (*os.File, error) {
 	objectName, err := windows.NewNTUnicodeString(filepath.Base(path))
 	if err != nil {
 		return nil, &os.PathError{Op: op, Path: path, Err: err}
@@ -110,9 +117,9 @@ func openEntry(dir *os.File, path string, access uint32, op string) (*os.File, e
 	}
 	attributes.Length = uint32(unsafe.Sizeof(attributes))
 	var handle windows.Handle
-	status := windows.NtCreateFile(&handle, access|windows.SYNCHRONIZE, &attributes, &windows.IO_STATUS_BLOCK{}, nil, 0,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_OPEN,
-		windows.FILE_OPEN_REPARSE_POINT|windows.FILE_OPEN_FOR_BACKUP_INTENT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
+	status := windows.NtCreateFile(&handle, access|windows.SYNCHRONIZE, &attributes, &windows.IO_STATUS_BLOCK{}, nil,
+		windows.FILE_ATTRIBUTE_NORMAL, share, disposition,
+		options|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
 	runtime.KeepAlive(dir)
 	if status != nil {
 		return nil, &os.PathError{Op: op, Path: path, Err: entryOpenError(status)}

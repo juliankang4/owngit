@@ -86,6 +86,12 @@ func (m *Manager) claimStorageLocked(writing bool) error {
 			return err
 		}
 	}
+	// The lock refuses a link or another account's file at its name (see
+	// state.AcquireExclusiveFileLockHandle), but the folders on the way are
+	// not held to the state directory's rule: a repository folder may be on
+	// a network share or shared with a group, and whoever else can write
+	// there is already trusted with the repositories in it, so refusing
+	// such a folder would break a supported setup and protect nothing.
 	release, err := state.AcquireExclusiveFileLock(filepath.Join(root, storageLockName))
 	if errors.Is(err, state.ErrInstanceRunning) {
 		return fmt.Errorf("%w: %s", ErrStorageInUse, root)

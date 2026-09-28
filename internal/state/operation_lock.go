@@ -20,8 +20,15 @@ func AcquireExclusiveFileLock(lockPath string) (func(), error) {
 // open file returned. A caller that must revalidate the lock path later
 // compares the path against this handle instead of trusting a fresh lookup,
 // which can silently point at a replaced file.
+//
+// The lock file is opened through its folder's handle with OpenOwnFile, so a
+// link or another account's file at its name is refused before the lock
+// makes it private. The folder is not checked further: a lock in the state
+// directory is taken once OpenDirectory accepted the way to it, and a
+// repository folder may be on a share, or be shared with a group, whose
+// other writers are trusted with the repositories in it anyway.
 func AcquireExclusiveFileLockHandle(lockPath string) (*os.File, func(), error) {
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := openLockFile(lockPath, os.O_RDWR|os.O_CREATE)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open exclusive operation lock: %w", err)
 	}
@@ -36,7 +43,7 @@ func AcquireExclusiveFileLockHandle(lockPath string) (*os.File, func(), error) {
 // rewriting its permissions. Validation and later reads use the returned handle,
 // so a pathname replacement cannot change which file was accepted.
 func AcquireExclusivePrivateFileLockHandle(path string) (*os.File, func(), error) {
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	file, err := openLockFile(path, os.O_RDWR)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open exclusive private-file lock: %w", err)
 	}
@@ -45,6 +52,16 @@ func AcquireExclusivePrivateFileLockHandle(path string) (*os.File, func(), error
 		return nil, nil, fmt.Errorf("validate exclusive private-file lock: %w", err)
 	}
 	return acquireExclusiveFileLock(file)
+}
+
+// openLockFile opens path with OpenOwnFile in its folder.
+func openLockFile(path string, flag int) (*os.File, error) {
+	dir, err := openFolder(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	return OpenOwnFile(dir, filepath.Base(path), flag)
 }
 
 func acquireExclusiveFileLock(file *os.File) (*os.File, func(), error) {

@@ -5,6 +5,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -38,6 +39,41 @@ func TestWalkResolvesLinksLikeTheSystem(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(root, "missing")); !os.IsNotExist(err) {
 		t.Fatalf("the missing folder behind a link was created: %v", err)
+	}
+}
+
+// A lock file is made private only once it is known to be a file of this
+// account with no other name: a link or a second name put where the lock
+// goes leaves the file it leads to as it was.
+func TestLockChangesNoFileAtItsName(t *testing.T) {
+	for _, plant := range []struct {
+		name  string
+		place func(target, lock string) error
+	}{
+		{"link", os.Symlink},
+		{"second name", os.Link},
+	} {
+		t.Run(plant.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(t.TempDir(), "program")
+			noErr(t, os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755))
+			noErr(t, os.Chmod(target, 0o755))
+			lock := filepath.Join(dir, "operation.lock")
+			noErr(t, plant.place(target, lock))
+			if release, err := AcquireExclusiveFileLock(lock); err == nil {
+				release()
+				t.Fatal("the planted lock name was locked")
+			}
+			if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0o755 {
+				t.Fatalf("the planted file changed: %v %v", info.Mode(), err)
+			}
+		})
+	}
+	dir := t.TempDir()
+	noErr(t, syscall.Mkfifo(filepath.Join(dir, "operation.lock"), 0o600))
+	if release, err := AcquireExclusiveFileLock(filepath.Join(dir, "operation.lock")); err == nil {
+		release()
+		t.Fatal("a named pipe was locked")
 	}
 }
 

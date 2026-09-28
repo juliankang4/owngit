@@ -960,12 +960,20 @@ func backupState(arguments []string) error {
 	if err := state.RequireExisting(*stateDir); err != nil {
 		return err
 	}
-	unlock, err := state.AcquireOfflineLock(*stateDir)
+	// The lock file is created only in a state directory that OwnGit may
+	// use, as serve's is; see state.OpenDirectory.
+	directory, err := state.OpenDirectory(*stateDir, false)
+	if err != nil {
+		return err
+	}
+	resolvedStateDir := directory.Name()
+	directory.Close()
+	unlock, err := state.AcquireOfflineLock(resolvedStateDir)
 	if err != nil {
 		return fmt.Errorf("backup requires OwnGit to be offline: %w", err)
 	}
 	defer unlock()
-	store, err := openState(context.Background(), *stateDir, stderrf)
+	store, err := openState(context.Background(), resolvedStateDir, stderrf)
 	if err != nil {
 		return err
 	}
