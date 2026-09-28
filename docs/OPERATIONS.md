@@ -19,7 +19,7 @@ Install a release first. Every route needs Git with an executable `git-http-back
 owngit serve
 ```
 
-The default address is `http://127.0.0.1:7654`. Setup asks for the repository folder, whether general access is open or protected by one shared password, and a separate administrator password, which every later security change asks for again. It ends at an empty dashboard, where New repository creates a repository with a clone address of the form `http://HOST:7654/git/PROJECT.git`.
+The default address is `http://127.0.0.1:7654`. Setup asks for the repository folder, whether general access is open or protected by one shared password, and a separate administrator password, which the dashboard asks for before administrator changes ([how often](#administrator-password-check)). It ends at an empty dashboard, where New repository creates a repository with a clone address of the form `http://HOST:7654/git/PROJECT.git`.
 
 The dashboard lists repositories most recently updated first, by the author date of the latest commit on each one's default branch (the time its row shows). A repository that shows no time, because it has no commits yet or cannot be read right now, comes last. Sort beside the list switches to oldest first or to name order (A to Z or Z to A). Name order follows the interface language and compares numbers by value, so `project-2` comes before `project-10`. The sidebar uses the same order, and this browser remembers the choice.
 
@@ -139,12 +139,22 @@ The unit also sets `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKern
 Settings has five tabs. Each is its own address, so it works as an ordinary link, also without JavaScript:
 
 - **General** (`/settings`): the display choices of this browser (language, appearance and repository list order), which apply at once and never ask for a password, and the new-release [update check](#new-release-notice) for the whole server.
-- **Access** (`/settings/access`): who can read and push, anyone who reaches OwnGit or only people with the shared password, and the administrator password.
+- **Access** (`/settings/access`): who can read and push, anyone who reaches OwnGit or only people with the shared password, the administrator password, and [how often it is asked](#administrator-password-check).
 - **Network** (`/settings/network`): the connection of this browser, the [network settings](#network-settings) and [sharing on your tailnet](#share-on-your-tailnet-over-https).
 - **Repositories** (`/settings/repositories`): a link to the settings of each repository.
 - **Storage & recovery** (`/settings/storage`): the repository folder, shown only to an administrator.
 
-Each part of a tab has its own Save and Cancel, and Save asks for the administrator password. Saving sends only that part, so it never saves another part's values. The page then reloads, so a change typed in another part and not saved is lost; save each part before you change the next. When OwnGit refuses a save, the part says why and keeps what you entered, except passwords. One exception: when the network settings changed after you opened the page, the Network part shows the values saved now, so you can check them before you enter your change again. Network settings apply at the next start; everything else applies as soon as you save. With the shared password already on, leave New shared password empty to keep it. Turning the shared password on or changing it signs out everyone signed in with the shared password; a browser without an administrator session then signs in with the new password. Changing the administrator password is a separate form that asks for the current one.
+Each part of a tab has its own Save and Cancel. Save asks for the administrator password unless this browser is confirmed as administrator or the check is off. Saving sends only that part, so it never saves another part's values. When Save needs no password, the page stays and a change typed in another part and not saved stays too; when it asks for the password, the page reloads and such a change is lost, so save each part before you change the next. When OwnGit refuses a save, the part says why and keeps what you entered, except passwords. One exception: when the network settings changed after you opened the page, the Network part shows the values saved now, so you can check them before you enter your change again. Network settings apply at the next start; everything else applies as soon as you save. With the shared password already on, leave New shared password empty to keep it. Turning the shared password on or changing it signs out everyone signed in with the shared password; a browser that is not confirmed as administrator then signs in with the new password. Changing the administrator password is a separate form that always asks for the current one.
+
+### Administrator password check
+
+"Ask for the administrator password" on the Access tab decides when the dashboard asks for it. It applies to Settings, repository settings, deletion, imports, checks, and helper and runner credentials:
+
+- **Every time**: each change asks. Signing in as administrator opens the administrator pages for a short time only.
+- **Again after 30 minutes** (the default), **1 hour**, **8 hours**, **1 day**, **7 days** or **30 days**: after you type the password, on the administrator sign-in or in a form, this browser does not ask again for that long. The time counts from when you typed it; moving between pages does not extend it. Another browser is asked for its own. The sidebar shows until when this browser is confirmed, with End to stop now. Signing out, End, changing or resetting the administrator password, or choosing a shorter time ends it.
+- **Do not ask**: anyone who can open the dashboard can change settings, delete repositories and issue credentials without the administrator password, and with Open access nobody has to sign in. Turning it on asks for the password one last time and for a tick confirming the warning. While it is on, every page shows "Administrator password check off", which leads back here.
+
+The choice belongs to this installation host and is not in backups; a restored installation asks after 30 minutes again. The command line and the API always ask for the administrator password, whatever the choice.
 
 ## Reaching the server from another device
 
@@ -384,7 +394,7 @@ Before setup is complete, a terminal on the installation host issues a replaceme
 owngit setup-link --no-open
 ```
 
-To reset a forgotten administrator password, put the new password in an owner-only file. Resetting signs out administrator sessions and leaves repositories unchanged:
+To reset a forgotten administrator password, put the new password in an owner-only file. Resetting ends every browser's administrator confirmation and leaves repositories unchanged:
 
 ```sh
 owngit reset-admin --password-file /path/to/owner-only-password-file
@@ -420,7 +430,7 @@ The default branch is the one OwnGit and `git clone` open first (the repository'
 
 ### Deleting a repository
 
-An administrator deletes a repository with Delete repository, at the end of the repository's tabs, by typing its name and the administrator password. Deleting removes its pull requests, reviews, tasks, check settings, jobs and results, helper and runner credentials, and import settings and credentials; queued check jobs are dropped, and the name is free again. You choose what happens to the files:
+An administrator deletes a repository with Delete repository, at the end of the repository's tabs, by typing its name and, when asked, the administrator password. Deleting removes its pull requests, reviews, tasks, check settings, jobs and results, helper and runner credentials, and import settings and credentials; queued check jobs are dropped, and the name is free again. You choose what happens to the files:
 
 - Remove from OwnGit and keep the files moves the bare repository, unchanged, to `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git` inside the repository folder (`ID` is the lowercase name, the time is UTC). Its branches, tags and kept history stay there until you remove the folder yourself. Folders under `.owngit-removed` are never listed as repositories and are not in backups.
 - Delete the files too deletes the bare repository, including its kept history. Earlier backups still contain it, and the database space its records used is freed but not securely erased.
@@ -513,7 +523,7 @@ When `owngit serve` starts, it prepares each repository (safety settings, retent
 
 An import copies a repository from another Git host over HTTPS into a new OwnGit repository and can refresh it later, on demand or on a schedule. Imports are inbound only: OwnGit never writes to the source, and Git LFS objects are not fetched or hosted.
 
-In the browser, an administrator uses Import a repository on the dashboard to start one, and the repository's Import tab to change its source and credentials, refresh, cancel, and set a schedule. Anyone who can read the repository sees the tab's status, run history and ref states; the source address, credential state and run messages are for administrators only. Every change asks for the administrator password. The credential form changes only what you enter (a new token or Basic credential keeps a stored CA, and **No new sign-in (CA only)** keeps the credential); only Clear credentials removes them. The form is limited to 1 MiB, so store a CA bundle near that size with the command line.
+In the browser, an administrator uses Import a repository on the dashboard to start one, and the repository's Import tab to change its source and credentials, refresh, cancel, and set a schedule. Anyone who can read the repository sees the tab's status, run history and ref states; the source address, credential state and run messages are for administrators only. Changes ask for the administrator password as set under [Administrator password check](#administrator-password-check). The credential form changes only what you enter (a new token or Basic credential keeps a stored CA, and **No new sign-in (CA only)** keeps the credential); only Clear credentials removes them. The form is limited to 1 MiB, so store a CA bundle near that size with the command line.
 
 Each import records a mode, **Standalone** (the copy is the primary one) or **Coexistence** (the other host stays authoritative). The mode is only a label; both follow the same [refresh rules](#what-an-import-publishes).
 
@@ -624,7 +634,7 @@ owngit helper-credential create \
   --output ~/.owngit-helper-token
 ```
 
-An existing file or link at `--output` is reported, not replaced, and a file left by a failed creation stays for you to inspect. If the response is lost, the command revokes the new credential, or prints its creation identity (never the token) so you can. `helper-credential list` and `helper-credential revoke --id ID` manage credentials, and the Helper credentials link on the repository's Checks tab does the same in the browser; a revoked token stops working at once. Issuing and revoking always ask for the administrator password, even in a signed-in browser. Then create a stable task and run checks:
+An existing file or link at `--output` is reported, not replaced, and a file left by a failed creation stays for you to inspect. If the response is lost, the command revokes the new credential, or prints its creation identity (never the token) so you can. `helper-credential list` and `helper-credential revoke --id ID` manage credentials, and the Helper credentials link on the repository's Checks tab does the same in the browser; a revoked token stops working at once. The commands always ask for the administrator password; in the browser, issuing and revoking follow the [administrator password check](#administrator-password-check). Then create a stable task and run checks:
 
 ```sh
 owngit check task new \

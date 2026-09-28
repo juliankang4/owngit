@@ -91,8 +91,9 @@ runner execution, and reports `workspace_unavailable` or
 
 ## Browser screens
 
-The same operations are on two administrator screens, and every change asks
-for the administrator password.
+The same operations are on two administrator screens. Changes ask for the
+administrator password as set under
+[Administrator password check](OPERATIONS.md#administrator-password-check).
 
 The **Automatic checks** screen, `/repositories/{id}/configured-checks`,
 linked from the repository's Checks and Settings tabs, edits the policy, turns

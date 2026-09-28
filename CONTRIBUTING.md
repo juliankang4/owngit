@@ -93,7 +93,7 @@ A change must keep the following behavior.
 
 - Support local and private networks, and recommend Tailscale for other devices. Public Internet hosting is out of scope. OwnGit serves plain HTTP; any TLS is provided by the operator.
 - General access is password-free or protected by one shared password. There are no individual accounts.
-- A separate administrator password protects security settings, and every change asks for it again. Host owners can reset it without deleting repository data.
+- A separate administrator password protects security settings. The dashboard asks for it as the owner chooses under Settings, Access: for every change, or again after 30 minutes (the default) up to 30 days, counted from when it was last typed in that browser. A remembered confirmation belongs to one browser; browsing never extends it, and it ends with End, sign-out, a shorter choice, or a change or reset of the administrator password. "Do not ask" turns the check off for everyone who can open the dashboard; turning it on asks for the password and an acknowledgement of the warning, and every page says it is off. The API and the command line always ask for the password. Host owners can reset it without deleting repository data.
 - Setup starts from an owner-only, one-time link and does not require creating a repository.
 - Plain LAN HTTP needs an informed choice, and the connection status stays visible.
 
@@ -119,17 +119,17 @@ A change must keep the following behavior.
 ### Security and records
 
 - Treat hosted code and check commands as untrusted, and record only the protection actually established.
-- Password-free access does not remove administrator confirmation, Host and Origin checks, CSRF protection, or input limits. Private-network membership alone does not prove installation ownership.
+- Password-free access does not remove administrator confirmation, Host and Origin checks, CSRF protection, or input limits. Only the owner's "Do not ask" choice turns administrator confirmation off, and only in the dashboard. Private-network membership alone does not prove installation ownership.
 - Helper credentials are separate, revocable, and repository-scoped. They cannot change access or security settings or manage other credentials.
 - Keep durable records (history, tasks, check outcomes) separate from disposable raw logs. Log cleanup never removes durable records.
 
 ## Security rules for code
 
 - Never put setup tokens, passwords, or credentials in command-line values, environment variables, URLs, fixtures, or logs. Secrets come from owner-only files or interactive prompts. The one exception is the one-time setup link, which OwnGit may print when standard output is a terminal and nowhere else: never to a pipe, a file, the system journal, or a container log. Tests use synthetic credentials and disposable repositories.
-- Do not weaken Host, exact-Origin, CSRF, access-mode, or administrator-confirmation checks. Mutating JSON endpoints accept JSON only, and the CLI client never follows redirects or retries authentication.
+- Do not weaken Host, exact-Origin, CSRF, access-mode, or administrator-confirmation checks. Every administrator page and change in the browser goes through the one shared confirmation gate; do not add a separate password check or exception to one handler. A remembered browser confirmation never authorizes an API request. Mutating JSON endpoints accept JSON only, and the CLI client never follows redirects or retries authentication.
 - Git subprocesses use an app-owned HOME and empty global and system config. Do not reintroduce inherited hooks, credential helpers, filters, or client environment variables.
 - Treat repository paths, symbolic-link blobs, binary blobs, and modes as data. Pass paths to Git as literal pathspecs and never resolve them on the host filesystem.
-- Store only hashes of helper and runner tokens. Issuing or revoking a credential always verifies the current administrator password.
+- Store only hashes of helper and runner tokens. Issuing or revoking a credential through the API or the command line always verifies the current administrator password; in the dashboard it follows administrator confirmation like every other administrator change.
 - Deliver a new helper token only through an exclusively created, owner-only file that is never reopened by path. Generate the creation identity before the request, so a lost response can be revoked.
 - API responses and CLI output never contain tokens, passwords, CA PEM, or credential file paths. The pull request API never authenticates with browser cookies or the administrator password.
 - Once a raw check log is accepted, a later submission never replaces its bytes. Backup files stay owner-readable.
