@@ -54,7 +54,8 @@ type confirmationBrowser struct {
 func newConfirmationFixture(t *testing.T, protected bool, choice state.AdminConfirmation) (apiFixture, *httptest.Server, *confirmationClock) {
 	t.Helper()
 	fixture := newAPIFixture(t, protected)
-	clock := &confirmationClock{now: time.Now()}
+	// Sessions end on a whole second, so the clock starts on one.
+	clock := &confirmationClock{now: time.Now().Truncate(time.Second)}
 	fixture.app.Now, fixture.app.Auth.Now = clock.Now, clock.Now
 	noErr(t, fixture.app.Auth.SetAdminConfirmation(context.Background(), choice))
 	return fixture, serve(t, fixture.app.Handler()), clock
@@ -264,14 +265,16 @@ func TestEveryTimeAsksForEachChange(t *testing.T) {
 	requirePasswordAsked(t, "the next change", browser.saveUpdateCheck(""))
 }
 
-// A shorter choice shortens the confirmations browsers hold already, this
-// one's included; a longer one extends none.
+// A shorter choice shortens the confirmations browsers hold already to the
+// new time counted from when their password was typed, this one's
+// included; a longer one extends none.
 func TestAShorterChoiceShortensHeldConfirmations(t *testing.T) {
-	fixture, server, clock := newConfirmationFixture(t, false, state.Confirm30Days)
+	fixture, server, clock := newConfirmationFixture(t, false, state.Confirm8Hours)
 	ctx := context.Background()
-	saver, other := openConfirmationBrowser(t, server, false), openConfirmationBrowser(t, server, false)
+	saver, early := openConfirmationBrowser(t, server, false), openConfirmationBrowser(t, server, false)
+	early.adminSignIn()
+	clock.Add(7*time.Hour + 30*time.Minute)
 	saver.adminSignIn()
-	other.adminSignIn()
 	expires := func(browser *confirmationBrowser) time.Duration {
 		session, ok, err := fixture.store.Session(ctx, browser.cookie(adminCookie), "admin", clock.Now())
 		if err != nil || !ok {
@@ -279,20 +282,28 @@ func TestAShorterChoiceShortensHeldConfirmations(t *testing.T) {
 		}
 		return session.Expires.Sub(clock.Now())
 	}
-	if expires(other) < 29*24*time.Hour {
-		t.Fatalf("a 30 day confirmation ends in %s", expires(other))
+	if expires(early) != 30*time.Minute {
+		t.Fatalf("an 8 hour confirmation typed 7h30m ago ends in %s", expires(early))
 	}
 	requireSaved(t, "a shorter choice", saver.post("/settings/access", url.Values{"action": {webui.ActionSaveConfirmation}, "admin_confirmation": {"1h"}}))
-	for name, browser := range map[string]*confirmationBrowser{"saver": saver, "other": other} {
-		if left := expires(browser); left <= 0 || left > time.Hour {
-			t.Fatalf("%s's confirmation ends in %s after choosing 1 hour", name, left)
-		}
+	if left := expires(early); left != 0 {
+		t.Fatalf("a confirmation typed 7h30m ago still has %s after choosing 1 hour", left)
 	}
+	if left := expires(saver); left != time.Hour {
+		t.Fatalf("the saver's confirmation, typed just now, ends in %s after choosing 1 hour", left)
+	}
+	clock.Add(10 * time.Minute)
 	requireSaved(t, "a longer choice", saver.post("/settings/access", url.Values{"action": {webui.ActionSaveConfirmation}, "admin_confirmation": {"7d"}}))
-	if left := expires(other); left > time.Hour {
-		t.Fatalf("a longer choice extended a held confirmation to %s", left)
+	if left := expires(saver); left != 50*time.Minute {
+		t.Fatalf("a longer choice changed a held confirmation to %s", left)
 	}
-	requireSaved(t, "Every time", saver.post("/settings/access", url.Values{"action": {webui.ActionSaveConfirmation}, "admin_confirmation": {"every"}}))
+	requireSaved(t, "30 minutes", saver.post("/settings/access", url.Values{"action": {webui.ActionSaveConfirmation}, "admin_confirmation": {"30m"}}))
+	if left := expires(saver); left > 20*time.Minute {
+		t.Fatalf("after 7 days then 30 minutes, a confirmation typed 10 minutes ago ends in %s", left)
+	}
+	other := openConfirmationBrowser(t, server, false)
+	other.adminSignIn()
+	requireSaved(t, "Every time", other.post("/settings/access", url.Values{"action": {webui.ActionSaveConfirmation}, "admin_confirmation": {"every"}}))
 	requirePasswordAsked(t, "a held confirmation under Every time", other.saveUpdateCheck(""))
 }
 

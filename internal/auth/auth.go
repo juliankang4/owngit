@@ -164,10 +164,11 @@ func (m *Manager) StartAdminSession(ctx context.Context) (NewSession, error) {
 	return m.startSession(ctx, "admin", m.adminLife(choice))
 }
 
-// SetAdminConfirmation saves choice. Administrator sessions that would last
-// longer than a session started now under choice end that much sooner.
+// SetAdminConfirmation saves choice. A stricter choice shortens the
+// administrator sessions browsers hold to the new time counted from when
+// their password was typed; a looser one extends none.
 func (m *Manager) SetAdminConfirmation(ctx context.Context, choice state.AdminConfirmation) error {
-	return m.Store.SetAdminConfirmation(ctx, choice, m.now().Add(m.adminLife(choice)))
+	return m.Store.SetAdminConfirmation(ctx, choice, m.adminLife)
 }
 
 // adminLife is how long an administrator session started under choice
