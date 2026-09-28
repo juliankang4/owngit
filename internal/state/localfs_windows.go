@@ -144,8 +144,9 @@ func requirePrivateFolder(dir *os.File) error {
 	if err != nil {
 		return err
 	}
-	if err := validateOwnerOnlyHandle(windows.Handle(dir.Fd()), user, true); err != nil {
-		return fmt.Errorf("%s is not private to this account: %w", dir.Name(), err)
+	// The shared check describes a file; say what a folder needs instead.
+	if validateOwnerOnlyHandle(windows.Handle(dir.Fd()), user, true) != nil {
+		return fmt.Errorf("%s is not private to this account: the folder must belong to this account, with its own access list, not an inherited one, letting only this account in", dir.Name())
 	}
 	return nil
 }

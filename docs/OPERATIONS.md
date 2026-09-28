@@ -711,7 +711,7 @@ owngit restore \
 
 Then start the earlier version. The restored repositories, as they were at the upgrade, are in the new folder beside the backup; another new folder in a place this account can create works as well. While the earlier version uses the restored repositories there, keep the `-backups` folder.
 
-When the backup cannot be made, for example because the disk is full, the folder cannot be created or the repository folder is not available, OwnGit does not upgrade the state and stops with the reason, and the earlier version can still use the state. Fix the cause and start OwnGit again. To keep these backups on another local disk, make the `-backups` folder a link to a folder there that only this account can change.
+When the backup cannot be made, for example because the disk is full, the folder cannot be created or the repository folder is not available, OwnGit does not upgrade the state and stops with the reason, and the earlier version can still use the state. Fix the cause and start OwnGit again. To keep these backups on another local disk, on macOS and Linux make the `-backups` folder a link to a folder there that only this account can change; on Windows, which follows no link on the way, choose a state directory on that disk instead.
 
 Once a new backup is complete, OwnGit removes the older backups it made there before an upgrade of the same state directory, which `owngit-upgrade-backup.txt` names, and leaves everything else in the folder alone. If OwnGit stops while it makes the backup, the state is not upgraded; once no OwnGit runs, delete the hidden `.owngit-upgrade-copy-...` and `.pre-...owngit-backup-...` folders it left there.
 
