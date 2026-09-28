@@ -5,13 +5,14 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -101,14 +102,18 @@ type fileEntry struct {
 }
 
 type artifact struct {
-	Target         string      `json:"target"`
-	Name           string      `json:"name"`
-	SHA256         string      `json:"sha256"`
-	Size           int64       `json:"size"`
-	Executed       bool        `json:"executed"`
-	ExecutedOutput string      `json:"executed_output,omitempty"`
-	BuildInfo      string      `json:"build_info"`
-	Files          []fileEntry `json:"files"`
+	Target         string `json:"target"`
+	Name           string `json:"name"`
+	SHA256         string `json:"sha256"`
+	Size           int64  `json:"size"`
+	Executed       bool   `json:"executed"`
+	ExecutedOutput string `json:"executed_output,omitempty"`
+	BuildInfo      string `json:"build_info"`
+	// AppleSignature is set when the binary was signed with a Developer ID
+	// and notarized. SHA256 and Files then describe the signed bytes that
+	// ship.
+	AppleSignature *appleSignature `json:"apple_signature,omitempty"`
+	Files          []fileEntry     `json:"files"`
 }
 
 type vcsInfo struct {
@@ -139,7 +144,13 @@ func buildCommand(arguments []string) error {
 	targetList := set.String("targets", "", "comma-separated GOOS/GOARCH list (default: every release target)")
 	goTool := set.String("go", "go", "Go toolchain command")
 	skipVerify := set.Bool("skip-verify", false, "skip the verification pass after building")
+	identity := set.String("sign-identity", "", "Developer ID Application certificate name that signs the macOS binary (with -notary-profile)")
+	profile := set.String("notary-profile", "", "notarytool keychain profile that notarizes the macOS binary (with -sign-identity)")
 	if err := parseFlags(set, arguments); err != nil {
+		return err
+	}
+	signer, err := newAppleSigner(*identity, *profile, "xcrun", runNativeCommand)
+	if err != nil {
 		return err
 	}
 
@@ -154,6 +165,9 @@ func buildCommand(arguments []string) error {
 	targets, err := selectTargets(*targetList)
 	if err != nil {
 		return err
+	}
+	if signer != nil && !slices.ContainsFunc(targets, func(current target) bool { return current.goos == "darwin" }) {
+		return errors.New("-sign-identity signs the darwin binary, but no darwin target is selected")
 	}
 	outDir, err := filepath.Abs(*out)
 	if err != nil {
@@ -204,7 +218,7 @@ func buildCommand(arguments []string) error {
 	}
 
 	for _, current := range targets {
-		built, err := buildTarget(*goTool, root, outDir, archiveReadmeTemplate, current, appVersion)
+		built, err := buildTarget(*goTool, root, outDir, archiveReadmeTemplate, current, appVersion, signer)
 		if err != nil {
 			return fmt.Errorf("%s: %w", current, err)
 		}
@@ -227,23 +241,45 @@ func buildCommand(arguments []string) error {
 	if *skipVerify {
 		return nil
 	}
-	return verifyDir(outDir, *goTool)
+	return verifyBuilt(outDir, *goTool)
+}
+
+// verifyBuilt runs the final verification of a finished build. The
+// checksums and manifest are already written by then and describe the
+// archives truthfully, so a failure or interruption here says so and how to
+// repeat the check.
+func verifyBuilt(outDir, goTool string) error {
+	if err := verifyDir(outDir, goTool); err != nil {
+		return fmt.Errorf("the checksums and manifest in %s are written, but their final verification did not pass: %w; check them again with: release verify -dir %s", outDir, err, outDir)
+	}
+	return nil
 }
 
 // buildTarget compiles one target, stages its files, and writes its archive.
-func buildTarget(goTool, root, outDir, readmeTemplate string, current target, appVersion string) (artifact, error) {
-	stage := filepath.Join(outDir, "stage", current.key())
-	if err := os.RemoveAll(stage); err != nil {
+// With a signer, a darwin binary is signed and notarized before anything
+// runs, stages or records it.
+//
+// The files are staged in a private folder outside outDir and removed on
+// every path, so the output folder only receives the finished archive, and
+// a binary that failed signing or notarization never lands there.
+func buildTarget(goTool, root, outDir, readmeTemplate string, current target, appVersion string, signer *appleSigner) (artifact, error) {
+	stage, err := os.MkdirTemp("", "owngit-release-stage-"+current.key()+"-")
+	if err != nil {
 		return artifact{}, err
 	}
-	if err := os.MkdirAll(stage, 0o755); err != nil {
-		return artifact{}, err
-	}
+	defer os.RemoveAll(stage)
 
 	binaryPath := filepath.Join(stage, current.binary)
 	environment := []string{"GOOS=" + current.goos, "GOARCH=" + current.goarch, "CGO_ENABLED=0"}
 	if _, err := runGo(goTool, root, environment, "build", "-trimpath", "-buildvcs=false", "-o", binaryPath, "./cmd/owngit"); err != nil {
 		return artifact{}, err
+	}
+	var signature *appleSignature
+	if signer != nil && current.goos == "darwin" {
+		var err error
+		if signature, err = signer.signTool(binaryPath); err != nil {
+			return artifact{}, err
+		}
 	}
 
 	files := []stagedFile{}
@@ -324,16 +360,17 @@ func buildTarget(goTool, root, outDir, readmeTemplate string, current target, ap
 	}
 
 	built := artifact{
-		Target:    current.String(),
-		Name:      filepath.Base(archivePath),
-		SHA256:    digest,
-		Size:      info.Size(),
-		BuildInfo: metadata,
+		Target:         current.String(),
+		Name:           filepath.Base(archivePath),
+		SHA256:         digest,
+		Size:           info.Size(),
+		BuildInfo:      metadata,
+		AppleSignature: signature,
 	}
 	// Execution is recorded only after the binary actually ran on this host.
 	// A cross-compiled binary is never reported as natively executed.
 	if current.goos == runtime.GOOS && current.goarch == runtime.GOARCH {
-		output, err := exec.Command(binaryPath, "version").Output()
+		output, err := externalCommand(binaryPath, "version").Output()
 		if err != nil {
 			return artifact{}, fmt.Errorf("run %s version: %w", current.binary, err)
 		}

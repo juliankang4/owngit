@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -494,6 +493,9 @@ func verifyBinary(goTool string, expected target, entries []archiveEntry, built 
 	if facts.metadata != built.BuildInfo {
 		return nil, fmt.Errorf("embedded build metadata does not match the manifest")
 	}
+	if err := verifyToolSignature(runNativeCommand, runtime.GOOS, expected, built.AppleSignature, path); err != nil {
+		return nil, err
+	}
 	if noticeDocument.Go != facts.goVersion {
 		return nil, fmt.Errorf("the notice manifest records Go %s but the binary embeds %s", noticeDocument.Go, facts.goVersion)
 	}
@@ -521,7 +523,7 @@ func verifyBinary(goTool string, expected target, entries []archiveEntry, built 
 	if !built.Executed {
 		return nil, fmt.Errorf("the manifest does not record the execution this host can perform")
 	}
-	output, err := exec.Command(path, "version").Output()
+	output, err := externalCommand(path, "version").Output()
 	if err != nil {
 		return nil, fmt.Errorf("running %s version: %w", expected.binary, err)
 	}
@@ -529,6 +531,28 @@ func verifyBinary(goTool string, expected target, entries []archiveEntry, built 
 		return nil, fmt.Errorf("binary reported %q, want %q", string(output), want)
 	}
 	return linked, nil
+}
+
+// verifyToolSignature checks a recorded Developer ID signature against the
+// archived binary. codesign exists only on macOS, so another host reports
+// that it could not check the signature instead of passing over it silently.
+// Notarization is not rechecked here: it was accepted when the release was
+// made, and Gatekeeper checks the ticket online on users' Macs.
+func verifyToolSignature(run commandRunner, host string, expected target, signature *appleSignature, binaryPath string) error {
+	if signature == nil {
+		return nil
+	}
+	if expected.goos != "darwin" {
+		return fmt.Errorf("the manifest records an Apple signature for a %s binary", expected.goos)
+	}
+	if err := validateToolSignature(signature); err != nil {
+		return err
+	}
+	if host != "darwin" {
+		fmt.Printf("%s: the Developer ID signature of team %s is recorded but can be checked only on macOS\n", expected, signature.TeamID)
+		return nil
+	}
+	return checkDeveloperIDSignature(run, binaryPath, signature.TeamID, signature.Identifier, false)
 }
 
 // inspectBinary reads the embedded build metadata and checks the target, the

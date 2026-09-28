@@ -462,6 +462,11 @@ func TestNativeLauncherCommandsOpenOwnerDashboard(t *testing.T) {
 	if strings.Contains(launcher, `process.arguments = ["serve"]`) {
 		t.Fatal("macOS launcher still starts serve without --open")
 	}
+	// The launcher and the release tool must agree on where the app holds
+	// the owngit binary.
+	if !strings.Contains(launcher, `private let helperPath = "`+appHelperPath+`"`) {
+		t.Fatalf("macOS launcher does not start the binary at %s", appHelperPath)
+	}
 	assertDesktopLaunchCommand(t, readText(t, filepath.Join(root, "packaging", "linux", "owngit.desktop")))
 }
 
@@ -615,8 +620,11 @@ func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 		t.Fatalf("native manifest has %d artifacts", len(document.Artifacts))
 	}
 	built := document.Artifacts[0]
-	if built.Format != "macos-dmg" || built.Target != "darwin/arm64" || !built.Prototype || built.PublisherSigned || built.Notarized || built.NativeInstallVerified || built.PublicReady {
+	if built.Format != "macos-dmg" || built.Target != "darwin/arm64" || !built.Prototype || built.PublisherSigned || built.Notarized || built.NativeInstallVerified || built.PublicReady || built.AppleSignature != nil {
 		t.Fatalf("macOS prototype overclaims readiness: %#v", built)
+	}
+	if document.Status != nativePrototypeStatus {
+		t.Fatalf("unsigned native manifest status = %q", document.Status)
 	}
 	path := filepath.Join(out, built.Name)
 	command := exec.Command("hdiutil", "verify", path)
@@ -633,7 +641,7 @@ func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 	for _, required := range []string{
 		"OwnGit.app/Contents/Info.plist",
 		"OwnGit.app/Contents/MacOS/OwnGitLauncher",
-		"OwnGit.app/Contents/Resources/bin/owngit",
+		"OwnGit.app/" + appHelperPath,
 		"OwnGit.app/Contents/Resources/LICENSE",
 		"OwnGit.app/Contents/Resources/THIRD_PARTY_NOTICES/manifest.json",
 		"OwnGit.app/Contents/Resources/package-provenance.json",
@@ -641,6 +649,11 @@ func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 	} {
 		if !paths[required] {
 			t.Errorf("DMG manifest is missing %s", required)
+		}
+	}
+	for path := range paths {
+		if strings.Contains(path, "_CodeSignature") || strings.HasPrefix(path, "OwnGit.app/Contents/Resources/bin/") {
+			t.Errorf("unsigned DMG manifest lists %s", path)
 		}
 	}
 }

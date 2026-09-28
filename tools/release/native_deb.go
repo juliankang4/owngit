@@ -42,7 +42,7 @@ func buildDebPrototype(inputs nativeInputs, outDir, targetName string) (nativeAr
 	if err != nil {
 		return nativeArtifact{}, err
 	}
-	provenance, err := provenanceBytes(inputs, payload, "deb")
+	provenance, err := provenanceBytes(inputs, payload, "deb", false)
 	if err != nil {
 		return nativeArtifact{}, err
 	}

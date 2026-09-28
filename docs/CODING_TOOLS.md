@@ -90,7 +90,7 @@ guide directly.
 
 A source build, a portable archive, and the macOS app do not add `owngit` to
 `PATH`: use `bin/owngit` in a source checkout, `./owngit` in an unpacked
-archive, or `OwnGit.app/Contents/Resources/bin/owngit` inside the app. The
+archive, or `OwnGit.app/Contents/Helpers/owngit` inside the app. The
 Debian prototype package installs `/usr/bin/owngit`. When the binary is not on
 `PATH`, give the coding tool the full path instead of editing shell startup
 files on its behalf.

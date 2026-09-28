@@ -47,7 +47,7 @@ cp -R integrations/skills/owngit-checks ~/.agents/skills/
 
 ### 체크 에이전트 실행 파일 찾기
 
-소스 빌드, 포터블 압축 파일, macOS 앱은 `owngit`을 `PATH`에 넣지 않습니다. 소스 체크아웃에서는 `bin/owngit`, 압축을 푼 디렉터리에서는 `./owngit`, 앱 안에서는 `OwnGit.app/Contents/Resources/bin/owngit`을 쓰세요. Debian 프로토타입 패키지는 `/usr/bin/owngit`을 설치합니다. 실행 파일이 `PATH`에 없으면 코딩 도구를 대신해 셸 시작 파일을 고치지 말고, 코딩 도구에 전체 경로를 알려 주세요.
+소스 빌드, 포터블 압축 파일, macOS 앱은 `owngit`을 `PATH`에 넣지 않습니다. 소스 체크아웃에서는 `bin/owngit`, 압축을 푼 디렉터리에서는 `./owngit`, 앱 안에서는 `OwnGit.app/Contents/Helpers/owngit`을 쓰세요. Debian 프로토타입 패키지는 `/usr/bin/owngit`을 설치합니다. 실행 파일이 `PATH`에 없으면 코딩 도구를 대신해 셸 시작 파일을 고치지 말고, 코딩 도구에 전체 경로를 알려 주세요.
 
 ## 클론 안에서 실행하기
 

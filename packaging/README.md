@@ -1,6 +1,6 @@
 # Packaging templates
 
-The files here are inputs for `tools/release`. They produce portable archives, unsigned native prototypes, and package-manager files. `packaging` output is what gets published to the Homebrew tap and npm and attached to GitHub Releases as the Arch Linux `PKGBUILD`; the native prototypes are not published. [CONTRIBUTING.md](../CONTRIBUTING.md#releases) shows how to run the release tool.
+The files here are inputs for `tools/release`. They produce portable archives, native prototypes, and package-manager files. Every output is unsigned unless a [signed macOS release](#signed-macos-release) is requested. `packaging` output is what gets published to the Homebrew tap and npm and attached to GitHub Releases as the Arch Linux `PKGBUILD`; the native prototypes are not published. [CONTRIBUTING.md](../CONTRIBUTING.md#releases) shows how to run the release tool.
 
 ## Layout
 
@@ -19,13 +19,80 @@ Every artifact takes its version from `internal/version.Version`. Native prototy
 
 ## Native prototypes
 
-`native` writes `native-manifest.json` and `SHA256SUMS`. Every artifact and its packaged provenance record state that it is an unsigned prototype.
+`native` writes `native-manifest.json` and `SHA256SUMS`. Every artifact and its packaged provenance record state that it is a prototype, and whether it is signed and notarized.
 
-The macOS app holds the `darwin/arm64` binary and a small AppKit launcher. The launcher starts `owngit serve --open`, which opens the private setup file before setup and the dashboard afterwards. It shows early process errors, sends `SIGTERM` when you quit, and does not run as a service or update itself. The release tool checks the plist, rejects a launcher that embeds a local source or home path, and verifies the disk image with `hdiutil`. It does not sign the app or DMG with a publisher identity. The ad hoc signature that Apple's linker may add to a Mach-O file is not a publisher signature. Building it requires an Apple silicon Mac with Xcode command-line tools.
+The macOS app holds the `darwin/arm64` binary at `OwnGit.app/Contents/Helpers/owngit`, where Apple places helper tools, and a small AppKit launcher. Its bundle identifier is `app.owngit.OwnGit`. The launcher starts `owngit serve --open`, which opens the private setup file before setup and the dashboard afterwards. It shows early process errors, sends `SIGTERM` when you quit, and does not run as a service or update itself. The release tool checks the plist, rejects a launcher that embeds a local source or home path, and verifies the disk image with `hdiutil`. Unless signing is requested, it does not sign the app or DMG with a publisher identity. The ad hoc signature that Apple's linker may add to a Mach-O file is not a publisher signature. Building it requires an Apple silicon Mac with Xcode command-line tools.
+
+Earlier prototypes kept the binary at `OwnGit.app/Contents/Resources/bin/owngit`. A service installed with `owngit service install` from that path records it in `~/Library/LaunchAgents/app.owngit.server.plist`, so the service no longer starts once the app is replaced. Run `OwnGit.app/Contents/Helpers/owngit service install` again from the new app to point the service at the new path.
 
 Each DEB holds the `linux/amd64` or `linux/arm64` binary, a terminal-backed desktop entry that runs `owngit serve --open`, the license, the notices, the instructions, and provenance. It depends on `git` and has no maintainer scripts, systemd units, or login-start entries.
 
-The bundle identifier and the Debian maintainer address are placeholders, not publisher identities.
+The Debian maintainer address is a placeholder, not a publisher identity.
+
+## Signed macOS release
+
+A release built on the maintainer's Mac can sign every macOS artifact with a Developer ID, notarize it with Apple, and staple the ticket where Apple allows it. A downloaded OwnGit then opens without Gatekeeper's warning. Without the two signing options below, nothing is signed, and CI and development builds need no Apple account.
+
+### One-time setup
+
+These steps run in the maintainer's own terminal and Apple account. No password, key, or app-specific password is given to the release tool, written to a file in the repository, or passed as an argument to it.
+
+1. Create a **Developer ID Application** certificate. The Apple Developer Program Account Holder can do it in Xcode (Settings, Accounts, select the team, Manage Certificates, add "Developer ID Application") or on the developer website (Certificates, Identifiers & Profiles, Certificates, add "Developer ID Application", upload a certificate signing request made with Keychain Access, then open the downloaded certificate). The private key stays in the login keychain.
+2. Check that the identity is usable and copy its exact name:
+
+   ```sh
+   security find-identity -v -p codesigning
+   ```
+
+   The name looks like `Developer ID Application: Your Name (TEAMID1234)`. The ten characters in parentheses are the Team ID, also shown under Membership details on the developer website. `-sign-identity` takes this name and nothing else, so it must match exactly one identity. A renewed certificate has the same name as the old one, and `codesign` then stops because the name is ambiguous. After renewing, delete the certificate you no longer use (with its private key) from the login keychain in Keychain Access. Code signed earlier stays valid, because its signature carries a secure timestamp. If Keychain Access shows the certificate but this list does not, install the "Developer ID - G2" intermediate certificate from [Apple PKI](https://www.apple.com/certificateauthority/).
+3. Store notarization credentials in the keychain as the profile `owngit-notary`. With an app-specific password made at [account.apple.com](https://account.apple.com) (Sign-In and Security, App-Specific Passwords):
+
+   ```sh
+   xcrun notarytool store-credentials owngit-notary --apple-id YOUR_APPLE_ID --team-id TEAMID1234
+   ```
+
+   `notarytool` asks for the password at a prompt and checks it with Apple before saving. An App Store Connect API key works too: `--key AuthKey_XXXX.p8 --key-id XXXX --issuer ISSUER_ID` instead of the Apple ID options; the key file can be deleted afterwards because the profile holds it.
+
+### Release commands
+
+```sh
+IDENTITY="Developer ID Application: Your Name (TEAMID1234)"
+
+go run ./tools/release build -out dist/portable \
+  -sign-identity "$IDENTITY" -notary-profile owngit-notary
+
+go run ./tools/release native -formats macos \
+  -manifest dist/portable/manifest.json -out dist/native-macos \
+  -baseline "$REVIEWED_BASELINE" \
+  -sign-identity "$IDENTITY" -notary-profile owngit-notary
+
+go run ./tools/release native -formats deb \
+  -manifest dist/portable/manifest.json -out dist/native-deb \
+  -baseline "$REVIEWED_BASELINE"
+```
+
+The two options go together, need a Mac, and take only names. `-sign-identity` must be the full certificate name, from which the tool takes the Team ID. A signed `native` run builds only the `macos` format, so the Debian packages are built in their own unsigned run. `packaging` needs no options: the Homebrew formula and the npm `owngit-darwin-arm64` package take the signed binary from the portable archive.
+
+### What the tool does
+
+- `build` signs the `darwin/arm64` `owngit` binary right after compiling it, with the hardened runtime, a secure timestamp, and the identifier `app.owngit.cli`, and checks the signature with `codesign --verify --strict` against the Developer ID requirement of the team. It submits the binary to Apple in a zip made with `ditto`, prints the submission id, and waits for the result. Only then does it run the binary, archive it, and write `SHA256SUMS` and `manifest.json`. A bare binary cannot hold a stapled ticket, so Gatekeeper looks the ticket up online.
+- `native` puts that binary into `OwnGit.app` unchanged and requires it to be signed by the same team. It signs the app (bundle identifier `app.owngit.OwnGit`, hardened runtime, timestamp), checks it with `codesign --verify --deep --strict`, creates the DMG, signs it as `app.owngit.dmg`, checks it and runs `hdiutil verify`, notarizes the DMG, staples the ticket to it with `stapler`, and asks Gatekeeper (`spctl --assess`) to accept both the DMG and the app. Apple notarizes the app and both executables as part of the DMG.
+- Neither executable needs entitlements.
+
+### Records
+
+The manifests describe the signed bytes that ship: archive and DMG digests, `SHA256SUMS`, and per-file digests. The signed `darwin/arm64` artifact in `manifest.json` also carries `apple_signature` with `team_id`, `identifier`, `notary_submission`, and `unsigned_sha256`, the digest of the Go linker output before signing. The Go build is reproducible and the signature is not, so `unsigned_sha256` is the value to compare when rebuilding the tagged source with the same Go toolchain. The DMG in `native-manifest.json` carries `apple_signature` without `unsigned_sha256`, `publisher_signed` and `notarized` are true, and its status says it is a signed and notarized prototype. An unsigned build has no `apple_signature`.
+
+`verify` checks a recorded signature on macOS with `codesign` against the recorded team and identifier, and on another host says that it could not check it. It does not contact Apple.
+
+### Failures
+
+Every failure stops the command before `SHA256SUMS` and the manifest are written, with one exception: `build` verifies its output after writing them, so when that final verification fails or is interrupted, they remain and the error says to check them again with `release verify -dir <out>`. The binary and the DMG are made in private folders outside the output folder (the DMG's folder is a hidden folder beside it) and removed afterwards, so a binary or DMG that failed signing, notarization, stapling, or Gatekeeper's check is never left in it. Archives of other targets written earlier in the same `build` run can remain; they carry no signature claim. An interruption (Ctrl-C or `SIGTERM`) takes the same path: the running tool is stopped, the temporary folders are removed, and a submission already made is named. Only a forced kill (`SIGKILL`) or a second interrupt, which ends the command at once, can leave a temporary folder behind (a hidden `.<out>-stage-*` folder beside the output folder, or `owngit-*` folders in the temporary directory), which can be deleted.
+
+- A missing or unusable identity stops at `codesign` with its message; check `security find-identity -v -p codesigning`.
+- When Apple does not accept a submission, the error names the submission id, Apple's status and message, and the issues from `notarytool log`. `xcrun notarytool log <id> --keychain-profile owngit-notary` prints the full log.
+- When waiting ends without a result (interrupted, timed out, or offline), the error names the submission id; Apple keeps processing it. `xcrun notarytool info <id> --keychain-profile owngit-notary` shows the result. Run the command again for a release; each run makes a new submission. Apple asks for no more than 75 submissions a day.
+- An error after Apple accepted a submission, from stapling or from Gatekeeper's check, names the submission id as well.
 
 ## Homebrew, WinGet, npm, and Arch Linux
 

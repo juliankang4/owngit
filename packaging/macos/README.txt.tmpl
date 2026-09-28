@@ -1,9 +1,16 @@
 OwnGit {{.Version}} macOS prototype
 
+{{if .Signed -}}
+This prototype is signed with the publisher's Developer ID, uses the hardened
+runtime, and was notarized by Apple; the notarization ticket is stapled to the
+disk image. It is not a public release yet: it has not been installed through
+a completed native acceptance run.
+{{- else -}}
 This unsigned local prototype is not a public release. It has no
 publisher-signed app or DMG and has not been notarized or installed through a
 completed native acceptance run. An ad hoc signature added to a Mach-O file by
 Apple's linker is not a publisher signature.
+{{- end}}
 
 Install
   Copy OwnGit.app to your own ~/Applications folder with Finder. Installation
@@ -20,6 +27,10 @@ Upgrade
   and replace OwnGit.app. Replacing the app does not remove state or
   repositories. An older app is not promised to read state after a completed
   schema migration.
+  Earlier prototypes kept the helper binary at
+  OwnGit.app/Contents/Resources/bin/owngit. A service installed with that
+  binary no longer starts after the app is replaced; run
+  {{.Helper}} service install again.
 
 Remove
   Quit OwnGit and move OwnGit.app to Trash. Remove a Login Item separately if
@@ -34,9 +45,14 @@ Coding tool integration
   OwnGit.app/Contents/Resources/integrations/skills/owngit-checks/SKILL.md
   Copy the skill yourself, or run owngit skill --install DIR, if you want a
   coding tool to load it. The helper binary is at
-  OwnGit.app/Contents/Resources/bin/owngit and is not on PATH.
+  {{.Helper}} and is not on PATH.
 
 Public readiness
+{{- if .Signed}}
+  Public distribution additionally requires observed Gatekeeper behavior on a
+  Mac that did not build it and a completed native acceptance run.
+{{- else}}
   Public distribution additionally requires an authorized Developer ID
   signature, hardened runtime, notarization, stapling, and observed Gatekeeper
   behavior. No protection should be bypassed to run this prototype.
+{{- end}}

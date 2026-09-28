@@ -1,5 +1,7 @@
 // Command release builds and verifies OwnGit's portable distribution archives,
-// builds unsigned native prototypes, and renders package-manager preparation.
+// builds native prototypes, and renders package-manager preparation. Given a
+// Developer ID identity and a notarytool profile, it signs and notarizes the
+// macOS artifacts; otherwise nothing is signed.
 //
 // Portable archives and Debian prototypes use the Go toolchain and standard
 // library only. The macOS prototype also invokes the installed Apple Swift and
@@ -12,11 +14,12 @@
 //	release verify    re-check an existing output directory against its manifest
 //	release notices   collect or verify third-party notices from the build inputs
 //	release packaging render the Homebrew, WinGet, and npm preparation files
-//	release native    build unsigned local macOS and Debian prototypes
+//	release native    build local macOS and Debian prototypes
 package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -25,8 +28,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"owngit/internal/version"
@@ -37,8 +42,29 @@ import (
 // MS-DOS timestamp epoch, which is the earliest time a zip entry can carry.
 var fixedModTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 
+// interrupt ends when the process receives an interrupt (Ctrl-C) or SIGTERM.
+// Every external command runs under it, so an interruption stops the running
+// command and the command's error takes the normal error path: temporary
+// folders are removed, the output folder keeps only artifacts that passed
+// their checks, and a notarization submission already made is named. Only
+// main replaces the background context. After the first signal the default
+// handling returns, so a second interrupt, like a forced kill (SIGKILL),
+// ends the process at once.
+var interrupt = context.Background()
+
+// commandWaitDelay bounds how long an interrupted command may keep its output
+// pipes open, for example through a child process it started itself.
+const commandWaitDelay = 5 * time.Second
+
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	interrupt = ctx
 	err := run(os.Args[1:])
+	stop()
 	if err == nil || errors.Is(err, flag.ErrHelp) {
 		return
 	}
@@ -79,7 +105,7 @@ Commands:
   verify     re-check an output directory against its manifest
   notices    collect or verify third-party notices from the build inputs
   packaging  render the Homebrew, WinGet, and npm preparation files
-  native     build unsigned local macOS and Debian prototypes
+  native     build local macOS and Debian prototypes
 
 Run "release <command> -h" for the options of one command.
 `)
@@ -97,21 +123,37 @@ func moduleRoot(dir string) (string, error) {
 	return absolute, nil
 }
 
+// externalCommand prepares a command that is stopped when the process is
+// interrupted.
+func externalCommand(name string, arguments ...string) *exec.Cmd {
+	command := exec.CommandContext(interrupt, name, arguments...)
+	command.WaitDelay = commandWaitDelay
+	return command
+}
+
+// failureMessage explains why a command failed: an interruption, else the
+// command's error output, else its exit status.
+func failureMessage(err error, stderr string) string {
+	if interrupt.Err() != nil {
+		return "interrupted"
+	}
+	if message := strings.TrimSpace(stderr); message != "" {
+		return message
+	}
+	return err.Error()
+}
+
 // runGo runs the Go toolchain in dir with extra environment entries and
 // returns its standard output.
 func runGo(goTool, dir string, extraEnv []string, arguments ...string) (string, error) {
-	command := exec.Command(goTool, arguments...)
+	command := externalCommand(goTool, arguments...)
 	command.Dir = dir
 	command.Env = append(os.Environ(), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = err.Error()
-		}
-		return stdout.String(), fmt.Errorf("%s %s: %s", goTool, strings.Join(arguments, " "), message)
+		return stdout.String(), fmt.Errorf("%s %s: %s", goTool, strings.Join(arguments, " "), failureMessage(err, stderr.String()))
 	}
 	return stdout.String(), nil
 }
@@ -210,12 +252,12 @@ func vcsState(root string) (revision string, modified bool, ok bool) {
 	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
 		return "", false, false
 	}
-	output, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
+	output, err := externalCommand("git", "-C", root, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return "", false, false
 	}
 	revision = strings.TrimSpace(string(output))
-	status, err := exec.Command("git", "-C", root, "status", "--porcelain").Output()
+	status, err := externalCommand("git", "-C", root, "status", "--porcelain").Output()
 	if err != nil {
 		return revision, false, true
 	}

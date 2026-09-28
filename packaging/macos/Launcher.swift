@@ -3,6 +3,9 @@ import Foundation
 
 private let capturedOutputLimit = 4 * 1024
 private let gracefulShutdownLimit: TimeInterval = 15
+// The owngit binary inside the app. Apple reserves Contents/Helpers for helper
+// tools; tools/release (appHelperPath) places the binary at the same path.
+private let helperPath = "Contents/Helpers/owngit"
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let outputLock = NSLock()
@@ -50,11 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startServer() {
-        guard let resources = Bundle.main.resourceURL else {
-            showFatalError("OwnGit resources are unavailable.")
-            return
-        }
-        let executable = resources.appendingPathComponent("bin/owngit")
+        let executable = Bundle.main.bundleURL.appendingPathComponent(helperPath)
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             showFatalError("The bundled OwnGit executable is unavailable.")
             return

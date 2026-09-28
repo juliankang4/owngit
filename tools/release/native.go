@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -16,7 +15,17 @@ import (
 	"text/template"
 )
 
-const nativePrototypeStatus = "unsigned local prototype; native installation and public readiness are unverified"
+const (
+	nativePrototypeStatus = "unsigned local prototype; native installation and public readiness are unverified"
+	nativeSignedStatus    = "Developer ID signed and notarized local prototype; native installation and public readiness are unverified"
+)
+
+func nativeStatus(signed bool) string {
+	if signed {
+		return nativeSignedStatus
+	}
+	return nativePrototypeStatus
+}
 
 var baselinePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:=;,+-]{0,511}$`)
 
@@ -31,23 +40,26 @@ type nativeManifest struct {
 }
 
 type nativeArtifact struct {
-	Format                   string      `json:"format"`
-	Target                   string      `json:"target"`
-	Name                     string      `json:"name"`
-	SHA256                   string      `json:"sha256"`
-	Size                     int64       `json:"size"`
-	Prototype                bool        `json:"prototype"`
-	PublisherSigned          bool        `json:"publisher_signed"`
-	Notarized                bool        `json:"notarized"`
-	StructureVerified        bool        `json:"structure_verified"`
-	NativeInstallVerified    bool        `json:"native_install_verified"`
-	PublicReady              bool        `json:"public_ready"`
-	Toolchain                string      `json:"toolchain"`
-	PortableArtifact         string      `json:"portable_artifact"`
-	PortableArtifactSHA256   string      `json:"portable_artifact_sha256"`
-	ApplicationBinarySHA256  string      `json:"application_binary_sha256"`
-	PackagedProvenanceSHA256 string      `json:"packaged_provenance_sha256"`
-	Files                    []fileEntry `json:"files"`
+	Format                   string `json:"format"`
+	Target                   string `json:"target"`
+	Name                     string `json:"name"`
+	SHA256                   string `json:"sha256"`
+	Size                     int64  `json:"size"`
+	Prototype                bool   `json:"prototype"`
+	PublisherSigned          bool   `json:"publisher_signed"`
+	Notarized                bool   `json:"notarized"`
+	StructureVerified        bool   `json:"structure_verified"`
+	NativeInstallVerified    bool   `json:"native_install_verified"`
+	PublicReady              bool   `json:"public_ready"`
+	Toolchain                string `json:"toolchain"`
+	PortableArtifact         string `json:"portable_artifact"`
+	PortableArtifactSHA256   string `json:"portable_artifact_sha256"`
+	ApplicationBinarySHA256  string `json:"application_binary_sha256"`
+	PackagedProvenanceSHA256 string `json:"packaged_provenance_sha256"`
+	// AppleSignature is set when the artifact itself is Developer ID signed
+	// and notarized.
+	AppleSignature *appleSignature `json:"apple_signature,omitempty"`
+	Files          []fileEntry     `json:"files"`
 }
 
 type packageProvenance struct {
@@ -85,6 +97,10 @@ type nativeInputs struct {
 	hdiutil        string
 	macToolchain   string
 	selected       map[string]bool
+	// run runs the macOS packaging tools; signer is nil for an unsigned
+	// build.
+	run    commandRunner
+	signer *appleSigner
 }
 
 type nativePackageFile struct {
@@ -103,7 +119,13 @@ func nativeCommand(arguments []string) error {
 	goTool := set.String("go", "go", "Go toolchain command")
 	xcrun := set.String("xcrun", "xcrun", "Apple toolchain launcher for the macOS format")
 	hdiutil := set.String("hdiutil", "hdiutil", "disk image tool for the macOS format")
+	identity := set.String("sign-identity", "", "Developer ID Application certificate name that signs the app and DMG (with -notary-profile; macos format only)")
+	profile := set.String("notary-profile", "", "notarytool keychain profile that notarizes the DMG (with -sign-identity)")
 	if err := parseFlags(set, arguments); err != nil {
+		return err
+	}
+	signer, err := newAppleSigner(*identity, *profile, *xcrun, runNativeCommand)
+	if err != nil {
 		return err
 	}
 	if !baselinePattern.MatchString(*baseline) {
@@ -113,6 +135,11 @@ func nativeCommand(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	// One native manifest has one status, and the Debian packages are not
+	// Apple-signed, so a signed run builds the macOS format alone.
+	if signer != nil && (!selected["macos"] || len(selected) != 1) {
+		return errors.New("-sign-identity applies only to -formats macos; build the Debian packages in a separate unsigned run")
+	}
 	root, err := moduleRoot(*source)
 	if err != nil {
 		return err
@@ -121,6 +148,8 @@ func nativeCommand(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	inputs.run = runNativeCommand
+	inputs.signer = signer
 	outDir, err := createFreshOutput("native", *out)
 	if err != nil {
 		return err
@@ -128,7 +157,7 @@ func nativeCommand(arguments []string) error {
 
 	document := nativeManifest{
 		Schema:                 1,
-		Status:                 nativePrototypeStatus,
+		Status:                 nativeStatus(signer != nil),
 		Version:                inputs.manifest.Version,
 		Baseline:               inputs.baseline,
 		PortableManifestSHA256: inputs.manifestSHA256,
@@ -137,7 +166,7 @@ func nativeCommand(arguments []string) error {
 	if selected["macos"] {
 		built, err := buildMacPrototype(inputs, outDir)
 		if err != nil {
-			return fmt.Errorf("macos prototype: %w; partial output remains at %s", err, outDir)
+			return fmt.Errorf("macos prototype: %w; %s holds no macOS output", err, outDir)
 		}
 		document.Artifacts = append(document.Artifacts, built)
 		fmt.Printf("built prototype %s %s\n", built.Target, built.Name)
@@ -503,14 +532,18 @@ func readPinnedRegularFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-func provenanceBytes(inputs nativeInputs, payload portablePayload, format string) ([]byte, error) {
+// provenanceBytes renders the provenance record placed inside a package.
+// signed states that the package is Developer ID signed and notarized; the
+// record is sealed inside the package, so it is written before signing, and
+// the build fails without a manifest if notarization is not accepted.
+func provenanceBytes(inputs nativeInputs, payload portablePayload, format string, signed bool) ([]byte, error) {
 	document := packageProvenance{
-		Schema: 1, Status: nativePrototypeStatus, Version: inputs.manifest.Version,
+		Schema: 1, Status: nativeStatus(signed), Version: inputs.manifest.Version,
 		Target: payload.target.String(), Format: format, Baseline: inputs.baseline,
 		PortableManifestSHA256: inputs.manifestSHA256,
 		PortableArtifact:       payload.built.Name, PortableArtifactSHA256: payload.built.SHA256,
 		ApplicationBinarySHA256: payload.binary.sha,
-		PublisherSigned:         false, Notarized: false, NativeInstallationVerified: false, PublicDistributionReady: false,
+		PublisherSigned:         signed, Notarized: signed, NativeInstallationVerified: false, PublicDistributionReady: false,
 	}
 	encoded, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
@@ -592,16 +625,12 @@ func firstNonemptyLine(value string) string {
 }
 
 func commandOutput(name string, arguments ...string) (string, error) {
-	command := exec.Command(name, arguments...)
+	command := externalCommand(name, arguments...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = err.Error()
-		}
-		return stdout.String(), fmt.Errorf("%s %s: %s", name, strings.Join(arguments, " "), message)
+		return stdout.String(), fmt.Errorf("%s %s: %s", name, strings.Join(arguments, " "), failureMessage(err, stderr.String()))
 	}
 	return stdout.String(), nil
 }

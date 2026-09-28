@@ -146,7 +146,7 @@ Git refs and objects are the authoritative repository data. SQLite (`owngit.sqli
 
 ## Releases
 
-Releases are published on [GitHub Releases](https://github.com/juliankang4/owngit/releases), with a Homebrew tap and npm packages built from the same archives. `tools/release` builds and checks release artifacts using the Go toolchain and the standard library. It does not sign or publish anything.
+Releases are published on [GitHub Releases](https://github.com/juliankang4/owngit/releases), with a Homebrew tap and npm packages built from the same archives. `tools/release` builds and checks release artifacts using the Go toolchain and the standard library. It never publishes anything, and it signs the macOS artifacts only when given a Developer ID identity and a notarization profile; see [Signed macOS release](packaging/README.md#signed-macos-release).
 
 ```sh
 go run ./tools/release notices -check
@@ -162,7 +162,7 @@ Build targets are `darwin/arm64` (macOS on Apple silicon), `linux/amd64`, `linux
 
 The application version is `internal/version.Version`. Every artifact name, manifest, and package file takes its version from that one value. 1.0.0 is the first version and has no changelog entry. Each later release adds a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` that matches `internal/version.Version`, with notable changes grouped under `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, and `Security`, and breaking changes and removals stated explicitly.
 
-Unsigned native prototypes and package-manager files are built from a verified portable output:
+Native prototypes and package-manager files are built from a verified portable output:
 
 ```sh
 go run ./tools/release native \

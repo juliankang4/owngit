@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -27,37 +27,57 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 	if !ok {
 		return nativeArtifact{}, errors.New("no darwin/arm64 portable payload")
 	}
+	signer := inputs.signer
+	signed := signer != nil
+	// The helper is signed and notarized once, by release build, and ships
+	// in the app unchanged, so a signed app needs a portable binary signed by
+	// the same team. Verifying the portable snapshot has already checked
+	// that signature against the binary on this Mac.
+	if signed {
+		if recorded := payload.built.AppleSignature; recorded == nil || recorded.TeamID != signer.team {
+			return nativeArtifact{}, fmt.Errorf("the portable darwin/arm64 binary is not signed by team %s; build the portable output with the same -sign-identity and -notary-profile", signer.team)
+		}
+	}
 	shared, err := explicitSharedFiles(payload)
 	if err != nil {
 		return nativeArtifact{}, err
 	}
-	provenance, err := provenanceBytes(inputs, payload, "macos-dmg")
+	provenance, err := provenanceBytes(inputs, payload, "macos-dmg", signed)
 	if err != nil {
 		return nativeArtifact{}, err
 	}
-	infoPlist, err := renderNativeTemplate(filepath.Join(inputs.root, "packaging", "macos", "Info.plist.tmpl"), struct{ Version string }{inputs.manifest.Version})
+	infoPlist, err := renderNativeTemplate(filepath.Join(inputs.root, "packaging", "macos", "Info.plist.tmpl"), struct{ Version, BundleID string }{inputs.manifest.Version, appleBundleID})
 	if err != nil {
 		return nativeArtifact{}, err
 	}
-	readme, err := renderNativeTemplate(filepath.Join(inputs.root, "packaging", "macos", "README.txt.tmpl"), struct{ Version string }{inputs.manifest.Version})
+	readme, err := renderNativeTemplate(filepath.Join(inputs.root, "packaging", "macos", "README.txt.tmpl"), struct {
+		Version, Helper string
+		Signed          bool
+	}{inputs.manifest.Version, "OwnGit.app/" + appHelperPath, signed})
 	if err != nil {
 		return nativeArtifact{}, err
 	}
 
-	stage, err := os.MkdirTemp("", "owngit-macos-prototype-")
+	// The app and the DMG are made in a private folder and removed on every
+	// path. The DMG moves into outDir only after every check passed, because
+	// a signed DMG seals the claim that it is notarized, and the output
+	// folder must only receive artifacts whose claims hold. The folder sits
+	// beside outDir so that the final move is a rename on the same volume.
+	stage, err := os.MkdirTemp(filepath.Dir(outDir), "."+filepath.Base(outDir)+"-stage-")
 	if err != nil {
 		return nativeArtifact{}, err
 	}
 	defer os.RemoveAll(stage)
 	volume := filepath.Join(stage, "volume")
-	contents := filepath.Join(volume, "OwnGit.app", "Contents")
+	app := filepath.Join(volume, "OwnGit.app")
+	contents := filepath.Join(app, "Contents")
 	launcherPath := filepath.Join(contents, "MacOS", "OwnGitLauncher")
 	if err := os.MkdirAll(filepath.Dir(launcherPath), 0o755); err != nil {
 		return nativeArtifact{}, err
 	}
 	launcherSource := filepath.Join(inputs.root, "packaging", "macos", "Launcher.swift")
 	lifecycleSource := filepath.Join(inputs.root, "packaging", "macos", "Lifecycle.swift")
-	if _, err := runNativeCommand(inputs.xcrun, []string{
+	if _, err := inputs.run(inputs.xcrun, []string{
 		"swiftc", "-O", "-gnone", "-framework", "AppKit", "-o", launcherPath,
 		launcherSource, lifecycleSource,
 	}, nil); err != nil {
@@ -70,10 +90,11 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 		return nativeArtifact{}, err
 	}
 
+	helper := "OwnGit.app/" + appHelperPath
 	files := []nativePackageFile{
 		{path: "OwnGit.app/Contents/Info.plist", mode: 0o644, data: infoPlist},
 		{path: "OwnGit.app/Contents/PkgInfo", mode: 0o644, data: []byte("APPL????")},
-		{path: "OwnGit.app/Contents/Resources/bin/owngit", mode: 0o755, data: payload.binary.data},
+		{path: helper, mode: 0o755, data: payload.binary.data},
 		{path: "OwnGit.app/Contents/Resources/package-provenance.json", mode: 0o644, data: provenance},
 		{path: "README.txt", mode: 0o644, data: readme},
 	}
@@ -106,43 +127,134 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 			return nativeArtifact{}, err
 		}
 	}
-	if _, err := runNativeCommand("plutil", []string{"-lint", filepath.Join(contents, "Info.plist")}, nil); err != nil {
+	if _, err := inputs.run("plutil", []string{"-lint", filepath.Join(contents, "Info.plist")}, nil); err != nil {
 		return nativeArtifact{}, err
 	}
-	packagedBinaryDigest, err := sha256File(filepath.Join(contents, "Resources", "bin", "owngit"))
+	packagedBinaryDigest, err := sha256File(filepath.Join(volume, filepath.FromSlash(helper)))
 	if err != nil {
 		return nativeArtifact{}, err
 	}
 	if packagedBinaryDigest != payload.binary.sha {
 		return nativeArtifact{}, errors.New("the app binary does not match the verified portable binary")
 	}
-
-	name := fmt.Sprintf("owngit_%s_darwin_arm64_prototype.dmg", inputs.manifest.Version)
-	dmgPath := filepath.Join(outDir, name)
-	volumeName := "OwnGit Prototype " + inputs.manifest.Version
-	if err := createDiskImage(runNativeCommand, time.Sleep, inputs.hdiutil, diskImageCreateArguments(volumeName, volume, dmgPath)); err != nil {
-		return nativeArtifact{}, err
+	// Signing the app signs its launcher as the main executable and seals
+	// the helper, which is already signed, together with the resources.
+	if signed {
+		if err := signer.sign(app, "", true); err != nil {
+			return nativeArtifact{}, err
+		}
+		if err := checkDeveloperIDSignature(inputs.run, app, signer.team, appleBundleID, true); err != nil {
+			return nativeArtifact{}, err
+		}
 	}
-	if _, err := runNativeCommand(inputs.hdiutil, []string{"verify", dmgPath}, nil); err != nil {
-		return nativeArtifact{}, err
-	}
-	digest, err := sha256File(dmgPath)
+	// The manifest lists what the volume holds after signing, which
+	// includes the signed launcher and the app's signature files.
+	shipped, err := volumeFiles(volume)
 	if err != nil {
 		return nativeArtifact{}, err
 	}
-	info, err := os.Stat(dmgPath)
+
+	name := fmt.Sprintf("owngit_%s_darwin_arm64_prototype.dmg", inputs.manifest.Version)
+	dmgPath := filepath.Join(stage, name)
+	volumeName := "OwnGit Prototype " + inputs.manifest.Version
+	if err := createDiskImage(inputs.run, time.Sleep, inputs.hdiutil, diskImageCreateArguments(volumeName, volume, dmgPath)); err != nil {
+		return nativeArtifact{}, err
+	}
+	if signed {
+		if err := signer.sign(dmgPath, appleDiskImageIdentifier, false); err != nil {
+			return nativeArtifact{}, err
+		}
+		if err := checkDeveloperIDSignature(inputs.run, dmgPath, signer.team, appleDiskImageIdentifier, false); err != nil {
+			return nativeArtifact{}, err
+		}
+	}
+	if _, err := inputs.run(inputs.hdiutil, []string{"verify", dmgPath}, nil); err != nil {
+		return nativeArtifact{}, err
+	}
+	// The DMG is the outermost container, so it alone is notarized; Apple
+	// issues tickets for the app and the executables inside it as well. The
+	// ticket is stapled to the DMG for offline checks, and Gatekeeper then
+	// has to accept both the DMG and the app.
+	var signature *appleSignature
+	if signed {
+		submission, err := signer.notarize(dmgPath)
+		if err != nil {
+			return nativeArtifact{}, err
+		}
+		if err := stapleAndAssess(signer, dmgPath, app); err != nil {
+			return nativeArtifact{}, fmt.Errorf("Apple accepted %s (submission %s), but %w", name, submission, err)
+		}
+		signature = &appleSignature{TeamID: signer.team, Identifier: appleDiskImageIdentifier, NotarySubmission: submission}
+	}
+	shippedPath := filepath.Join(outDir, name)
+	if err := os.Rename(dmgPath, shippedPath); err != nil {
+		return nativeArtifact{}, err
+	}
+	digest, err := sha256File(shippedPath)
+	if err != nil {
+		return nativeArtifact{}, err
+	}
+	info, err := os.Stat(shippedPath)
 	if err != nil {
 		return nativeArtifact{}, err
 	}
 	return nativeArtifact{
 		Format: "macos-dmg", Target: "darwin/arm64", Name: name,
-		SHA256: digest, Size: info.Size(), Prototype: true, PublisherSigned: false, Notarized: false,
+		SHA256: digest, Size: info.Size(), Prototype: true, PublisherSigned: signed, Notarized: signed,
 		StructureVerified: true, NativeInstallVerified: false, PublicReady: false,
 		Toolchain:        inputs.macToolchain,
 		PortableArtifact: payload.built.Name, PortableArtifactSHA256: payload.built.SHA256,
 		ApplicationBinarySHA256:  payload.binary.sha,
-		PackagedProvenanceSHA256: sha256Bytes(provenance), Files: fileEntries(files),
+		PackagedProvenanceSHA256: sha256Bytes(provenance), AppleSignature: signature, Files: shipped,
 	}, nil
+}
+
+// stapleAndAssess finishes an accepted DMG: it staples the ticket for
+// offline checks, then Gatekeeper has to accept the DMG and the app in it.
+func stapleAndAssess(signer *appleSigner, diskImage, app string) error {
+	if err := signer.staple(diskImage); err != nil {
+		return err
+	}
+	if err := signer.assess(diskImage, "open"); err != nil {
+		return err
+	}
+	return signer.assess(app, "execute")
+}
+
+// volumeFiles lists every file under the disk image folder, with the path
+// relative to it. Only regular files and directories may appear there.
+func volumeFiles(volume string) ([]fileEntry, error) {
+	var entries []fileEntry
+	err := filepath.WalkDir(volume, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(volume, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("the disk image folder holds %s, which is not a regular file", relative)
+		}
+		if err := validateNativePath(relative); err != nil {
+			return err
+		}
+		digest, err := sha256File(path)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, fileEntry{
+			Path: relative, Mode: fmt.Sprintf("%04o", info.Mode().Perm()), Size: info.Size(), SHA256: digest,
+		})
+		return nil
+	})
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	return entries, err
 }
 
 // hdiutil create sometimes fails with "Resource busy" on hosted CI runners,
@@ -162,7 +274,7 @@ func diskImageCreateArguments(volumeName, source, image string) []string {
 
 // createDiskImage runs hdiutil create and retries it only when hdiutil
 // reports that a resource is busy.
-func createDiskImage(run func(string, []string, []string) (string, error), pause func(time.Duration), hdiutil string, arguments []string) error {
+func createDiskImage(run commandRunner, pause func(time.Duration), hdiutil string, arguments []string) error {
 	for attempt := 1; ; attempt++ {
 		_, err := run(hdiutil, arguments, nil)
 		var failure *nativeCommandError
@@ -189,7 +301,7 @@ type nativeCommandError struct {
 func (e *nativeCommandError) Error() string { return e.command + ": " + e.message }
 
 func runNativeCommand(name string, arguments []string, extraEnvironment []string) (string, error) {
-	command := exec.Command(name, arguments...)
+	command := externalCommand(name, arguments...)
 	if len(extraEnvironment) > 0 {
 		command.Env = append(os.Environ(), extraEnvironment...)
 	}
@@ -197,11 +309,7 @@ func runNativeCommand(name string, arguments []string, extraEnvironment []string
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = err.Error()
-		}
-		return stdout.String(), &nativeCommandError{command: name + " " + strings.Join(arguments, " "), message: message}
+		return stdout.String(), &nativeCommandError{command: name + " " + strings.Join(arguments, " "), message: failureMessage(err, stderr.String())}
 	}
 	return stdout.String(), nil
 }
