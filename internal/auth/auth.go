@@ -56,8 +56,11 @@ var (
 )
 
 type Manager struct {
-	Store                   *state.Store
-	SessionLife             time.Duration
+	Store       *state.Store
+	SessionLife time.Duration
+	// AdminSessionLife is how long an administrator sign-in keeps the
+	// administrator pages open when the confirmation choice remembers no
+	// password (Every time, Do not ask). A remembering choice sets its own.
 	AdminSessionLife        time.Duration
 	MaximumConcurrentChecks int
 	Now                     func() time.Time
@@ -138,7 +141,48 @@ func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddres
 	if err := m.VerifyCredential(ctx, kind, password, remoteAddress); err != nil {
 		return NewSession{}, err
 	}
-	now := m.now()
+	if kind == "admin" {
+		return m.StartAdminSession(ctx)
+	}
+	life := m.SessionLife
+	if life <= 0 {
+		life = 12 * time.Hour
+	}
+	return m.startSession(ctx, kind, life)
+}
+
+// StartAdminSession starts an administrator session for this browser after
+// the caller verified the administrator password. Under a confirmation
+// choice that remembers the password it lasts that window; otherwise it
+// lasts AdminSessionLife and only opens the administrator pages, while
+// every change still asks for the password.
+func (m *Manager) StartAdminSession(ctx context.Context) (NewSession, error) {
+	choice, err := m.Store.AdminConfirmation(ctx)
+	if err != nil {
+		return NewSession{}, err
+	}
+	return m.startSession(ctx, "admin", m.adminLife(choice))
+}
+
+// SetAdminConfirmation saves choice. Administrator sessions that would last
+// longer than a session started now under choice end that much sooner.
+func (m *Manager) SetAdminConfirmation(ctx context.Context, choice state.AdminConfirmation) error {
+	return m.Store.SetAdminConfirmation(ctx, choice, m.now().Add(m.adminLife(choice)))
+}
+
+// adminLife is how long an administrator session started under choice
+// lasts.
+func (m *Manager) adminLife(choice state.AdminConfirmation) time.Duration {
+	if window := choice.Window(); window > 0 {
+		return window
+	}
+	if m.AdminSessionLife > 0 {
+		return m.AdminSessionLife
+	}
+	return 15 * time.Minute
+}
+
+func (m *Manager) startSession(ctx context.Context, kind string, life time.Duration) (NewSession, error) {
 	settings, err := m.Store.Settings(ctx)
 	if err != nil {
 		return NewSession{}, err
@@ -148,14 +192,7 @@ func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddres
 		version = settings.AdminSessionVersion
 	}
 	token, csrf := RandomToken(32), RandomToken(32)
-	life := m.SessionLife
-	if kind == "admin" && m.AdminSessionLife > 0 {
-		life = m.AdminSessionLife
-	}
-	if life <= 0 {
-		life = 12 * time.Hour
-	}
-	expires := now.Add(life)
+	expires := m.now().Add(life)
 	if err := m.Store.CreateSession(ctx, token, kind, csrf, version, expires); err != nil {
 		return NewSession{}, err
 	}
