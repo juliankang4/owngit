@@ -20,11 +20,13 @@ import (
 // at path. Switching a database to WAL rewrites its header through a rollback
 // journal, and the preflight refuses a journal beside the state database, so
 // the switch runs on a temporary file in the same directory. The finished file
-// then takes the final name without replacing an existing entry. When a
-// concurrent first start publishes first, this one discards its file and uses
-// that database. A crash before publication leaves only temporary entries,
-// which Open ignores, so the final name is either absent or a complete WAL
-// database.
+// then takes the final name without replacing an existing entry. When an
+// entry appeared there after the inspection found none, for example a
+// concurrent first start's database, this one discards its file and reports
+// ErrInspectionUnstable: what appeared was not inspected, so it is not used
+// until a new Open inspects it. A crash before publication leaves only
+// temporary entries, which Open ignores, so the final name is either absent
+// or a complete WAL database.
 func createDatabase(ctx context.Context, path string) (err error) {
 	suffix := make([]byte, 8)
 	if _, err := rand.Read(suffix); err != nil {
@@ -63,10 +65,10 @@ func createDatabase(ctx context.Context, path string) (err error) {
 	}
 	err = publishNoReplace(ctx, temporary, path)
 	if errors.Is(err, fs.ErrExist) {
-		// Another first start published first and its database is used. A
-		// temporary file that cannot be removed is left behind and ignored.
+		// A temporary file that cannot be removed is left behind and
+		// ignored.
 		_ = removeTemporaryDatabase(temporary)
-		return nil
+		return unstable("%s appeared during inspection", databaseName)
 	}
 	if err != nil {
 		return fmt.Errorf("publish state database: %w", err)

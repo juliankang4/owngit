@@ -462,6 +462,8 @@ func changedDuring(dir *os.File, object *sourceObject, err error) error {
 	}
 	info, lookupErr := lstatSourceEntry(dir, object.path)
 	switch {
+	case errors.Is(lookupErr, ErrInspectionUnstable):
+		return lookupErr
 	case lookupErr != nil:
 		return err
 	case info == nil:
@@ -578,10 +580,11 @@ func bindFile(dir *os.File, path string, entry os.FileInfo, metadataOnly bool) (
 }
 
 // lstatSourceEntry looks up the entry path inside the held state directory
-// dir. It returns nil for an absent entry, which includes an entry whose
-// deletion is pending (see lookupSourceEntry), and refuses any entry that is
-// not a regular file, including symbolic links and reparse points. The
-// identity is fixed at this call, because bindFile compares it after opening.
+// dir. It returns nil for an absent entry and ErrInspectionUnstable for an
+// entry whose deletion is pending on Windows (see openEntry). It refuses any
+// entry that is not a regular file, including symbolic links and reparse
+// points. The identity is fixed at this call, because bindFile compares it
+// after opening.
 func lstatSourceEntry(dir *os.File, path string) (os.FileInfo, error) {
 	info, err := lookupSourceEntry(dir, path)
 	if errors.Is(err, os.ErrNotExist) {

@@ -5,9 +5,9 @@ package state
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -84,17 +84,20 @@ func openSourceEntry(dir *os.File, path string, metadataOnly bool) (*os.File, er
 	return openEntry(dir, path, sourceAccess(metadataOnly), "open")
 }
 
-// errDeletePending is the cause of an entry whose deletion is pending.
-var errDeletePending = fmt.Errorf("its deletion is pending: %w", fs.ErrNotExist)
+// errDeletePending is the cause of an entry whose deletion is pending. The
+// deletion can still be cancelled by whoever holds the entry open, so the
+// entry is neither present nor absent yet: the directory is changing, and the
+// caller retries once the deletion has finished or been cancelled.
+var errDeletePending = fmt.Errorf("%w: its deletion is pending", ErrInspectionUnstable)
 
 // openEntry opens a direct child of dir by name, without following a reparse
 // point, through NtCreateFile. When SQLite deletes a sidecar that another
 // process still holds open, for example another opener's inspection, the
 // name stays until the last handle closes, and every open by name fails.
 // CreateFile reports that as access denied, the same as a file this account
-// may not open. NtCreateFile reports STATUS_DELETE_PENDING instead, and such
-// an entry is already deleted: it counts as absent, as it would on Unix.
-// A name relative to the held directory needs no conversion to an NT path.
+// may not open. NtCreateFile reports STATUS_DELETE_PENDING instead, which is
+// a change in progress (errDeletePending), not a failure. A name relative to
+// the held directory needs no conversion to an NT path.
 func openEntry(dir *os.File, path string, access uint32, op string) (*os.File, error) {
 	objectName, err := windows.NewNTUnicodeString(filepath.Base(path))
 	if err != nil {
@@ -110,6 +113,7 @@ func openEntry(dir *os.File, path string, access uint32, op string) (*os.File, e
 	status := windows.NtCreateFile(&handle, access|windows.SYNCHRONIZE, &attributes, &windows.IO_STATUS_BLOCK{}, nil, 0,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_OPEN,
 		windows.FILE_OPEN_REPARSE_POINT|windows.FILE_OPEN_FOR_BACKUP_INTENT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
+	runtime.KeepAlive(dir)
 	if status != nil {
 		return nil, &os.PathError{Op: op, Path: path, Err: entryOpenError(status)}
 	}
@@ -122,7 +126,7 @@ func openEntry(dir *os.File, path string, access uint32, op string) (*os.File, e
 }
 
 // entryOpenError turns the status of a failed NtCreateFile into the error
-// that CreateFile would return, except that a pending deletion is absence.
+// that CreateFile would return, except for a pending deletion.
 func entryOpenError(status error) error {
 	if status == windows.STATUS_DELETE_PENDING {
 		return errDeletePending

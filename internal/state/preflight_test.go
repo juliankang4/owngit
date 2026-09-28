@@ -1080,3 +1080,30 @@ func TestRefusedStateDirectoryIsNotCreated(t *testing.T) {
 		t.Fatalf("the refused Open created a folder: %v", err)
 	}
 }
+
+// A database that appears after the inspection found none, for example one
+// that another opener published or a deleted one that was restored, was not
+// inspected. Open reports the change instead of using it, and the next Open
+// inspects it.
+func TestDatabaseThatAppearsAfterAnEmptyInspectionIsInspectedFirst(t *testing.T) {
+	ctx := context.Background()
+	source := filepath.Join(t.TempDir(), "source")
+	createMarkedState(t, source, "appeared")
+	directory := filepath.Join(t.TempDir(), "state")
+	noErr(t, os.Mkdir(directory, 0o700))
+	useHooks(t)
+	preflightHooks.afterRelease = func(string) {
+		noErr(t, os.Rename(filepath.Join(source, databaseName), filepath.Join(directory, databaseName)))
+	}
+	store, err := Open(ctx, directory)
+	if store != nil {
+		_ = store.Close()
+	}
+	if !errors.Is(err, ErrInspectionUnstable) {
+		t.Fatalf("Open used a database it did not inspect: %v", err)
+	}
+	preflightHooks.afterRelease = nil
+	if marker, _ := openStateMarker(t, directory); marker != "appeared" {
+		t.Fatalf("the next Open found marker %q", marker)
+	}
+}

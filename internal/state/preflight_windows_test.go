@@ -265,11 +265,20 @@ func TestWindowsReparseStateEntriesAreRefused(t *testing.T) {
 	}
 }
 
-// markDeletePending deletes path the way Windows deletes a file that another
-// process still holds open, as when SQLite removes its sidecars on close
-// while another opener inspects them: the name stays, and opening it by name
-// fails, until release closes the last handle.
-func markDeletePending(t *testing.T, path string) (release func()) {
+// pendingDeletion is a deletion that a process holding the entry open has
+// requested, as SQLite does to its sidecars on close while another opener
+// inspects them: the name stays, and opening it by name fails, until the
+// last handle closes. Until then the holder can cancel it.
+type pendingDeletion struct {
+	handle windows.Handle
+	// release lets go, so the deletion finishes; cancelAndRelease cancels
+	// it first, so the entry stays. Only the first of them acts.
+	release, cancelAndRelease func()
+}
+
+// markDeletePending requests the deletion of path through a handle that the
+// returned pendingDeletion holds.
+func markDeletePending(t *testing.T, path string) *pendingDeletion {
 	t.Helper()
 	name, err := windows.UTF16PtrFromString(path)
 	noErr(t, err)
@@ -277,23 +286,38 @@ func markDeletePending(t *testing.T, path string) (release func()) {
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	noErr(t, err)
-	release = sync.OnceFunc(func() { _ = windows.CloseHandle(handle) })
-	t.Cleanup(release)
-	disposition := struct{ DeleteFile bool }{DeleteFile: true} // FILE_DISPOSITION_INFO
-	noErr(t, windows.SetFileInformationByHandle(handle, windows.FileDispositionInfo,
-		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition))))
+	pending := &pendingDeletion{handle: handle}
+	var once sync.Once
+	pending.release = func() { once.Do(func() { _ = windows.CloseHandle(handle) }) }
+	pending.cancelAndRelease = func() {
+		once.Do(func() {
+			pending.set(t, false)
+			_ = windows.CloseHandle(handle)
+		})
+	}
+	t.Cleanup(pending.release)
+	pending.set(t, true)
 	if _, err := LstatIdentity(path); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("%s is not waiting for deletion: lookup error %v, want access denied", filepath.Base(path), err)
 	}
-	return release
+	return pending
+}
+
+// set requests (true) or cancels (false) the deletion with the legacy
+// FileDispositionInfo class, which allows both.
+func (pending *pendingDeletion) set(t *testing.T, deleteFile bool) {
+	t.Helper()
+	disposition := struct{ DeleteFile bool }{DeleteFile: deleteFile} // FILE_DISPOSITION_INFO
+	noErr(t, windows.SetFileInformationByHandle(pending.handle, windows.FileDispositionInfo,
+		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition))))
 }
 
 // A sidecar that a closing opener deleted while another process holds it
-// open cannot be opened by name until that process lets go. It is already
-// deleted, so the inspection treats it as removed: absent when it is listed,
-// and a retryable change when it disappears during inspection. Open never
-// fails with another error because of it.
-func TestWindowsSidecarsWhoseDeletionIsPendingCountAsRemoved(t *testing.T) {
+// open cannot be opened by name until that process lets go, and the deletion
+// could still be cancelled. The inspection reports it as a change in
+// progress, whenever it meets it, and never fails with another error because
+// of it. Once the deletion has finished, the next Open succeeds.
+func TestWindowsSidecarsWhoseDeletionIsPendingAreAChangeInProgress(t *testing.T) {
 	ctx := context.Background()
 	sidecars := []string{databaseName + walSuffix, databaseName + shmSuffix}
 	prepare := func(t *testing.T) string {
@@ -307,42 +331,38 @@ func TestWindowsSidecarsWhoseDeletionIsPendingCountAsRemoved(t *testing.T) {
 		return directory
 	}
 	markSidecars := func(t *testing.T, directory string) func() {
-		var releases []func()
+		var pending []*pendingDeletion
 		for _, name := range sidecars {
-			releases = append(releases, markDeletePending(t, filepath.Join(directory, name)))
+			pending = append(pending, markDeletePending(t, filepath.Join(directory, name)))
 		}
 		return func() {
-			for _, release := range releases {
-				release()
+			for _, deletion := range pending {
+				deletion.release()
 			}
 		}
 	}
-
-	t.Run("before the inspection", func(t *testing.T) {
-		directory := prepare(t)
-		release := markSidecars(t, directory)
-		useHooks(t)
-		// The other process lets go once this inspection has released its
-		// handles, before SQLite opens the database.
-		preflightHooks.afterRelease = func(string) { release() }
-		store, err := Open(ctx, directory)
-		noErr(t, err)
-		noErr(t, store.Close())
-	})
-	for _, point := range []string{pointListed, pointAccept, pointProtect} {
-		t.Run("at "+point, func(t *testing.T) {
+	for _, point := range []string{"", pointListed, pointAccept, pointProtect} {
+		name := "before the inspection"
+		if point != "" {
+			name = "at " + point
+		}
+		t.Run(name, func(t *testing.T) {
 			directory := prepare(t)
 			release := func() {}
-			hookAt(t, point, func(string) { release = markSidecars(t, directory) })
-			preflightHooks.afterRelease = func(string) { release() }
+			if point == "" {
+				release = markSidecars(t, directory)
+			} else {
+				hookAt(t, point, func(string) { release = markSidecars(t, directory) })
+			}
 			store, err := Open(ctx, directory)
-			release()
 			if store != nil {
 				noErr(t, store.Close())
 			}
-			if err != nil && !errors.Is(err, ErrInspectionUnstable) {
-				t.Fatalf("a sidecar deleted during inspection failed the open: %v", err)
+			if !errors.Is(err, ErrInspectionUnstable) {
+				t.Fatalf("Open with sidecars waiting for deletion: %v, want a retryable change", err)
 			}
+			// The other process lets go, so the deletion finishes.
+			release()
 			preflightHooks.at = nil
 			store, err = Open(ctx, directory)
 			noErr(t, err)
@@ -351,23 +371,84 @@ func TestWindowsSidecarsWhoseDeletionIsPendingCountAsRemoved(t *testing.T) {
 	}
 }
 
-// Only a pending deletion counts as absence. Every other failure to open a
-// state entry keeps the error that CreateFile would report, so an entry this
-// account may not open is still refused with its cause.
+// A state database whose deletion is pending is not an empty state
+// directory: the holder may cancel the deletion after the inspection, and the
+// restored entry, possibly a link, would then be used without having been
+// inspected. Open reports the change, and the next Open inspects whatever is
+// there.
+func TestWindowsCancelledDeletionIsInspectedBeforeUse(t *testing.T) {
+	ctx := context.Background()
+	openCancelledLater := func(t *testing.T, directory string) {
+		t.Helper()
+		pending := markDeletePending(t, filepath.Join(directory, databaseName))
+		useHooks(t)
+		// If the inspection took the database as absent, the holder
+		// cancels the deletion before SQLite opens the name.
+		preflightHooks.afterRelease = func(string) { pending.cancelAndRelease() }
+		store, err := Open(ctx, directory)
+		if store != nil {
+			noErr(t, store.Close())
+		}
+		if !errors.Is(err, ErrInspectionUnstable) {
+			t.Fatalf("Open with the database waiting for deletion: %v, want a retryable change", err)
+		}
+		pending.cancelAndRelease()
+		preflightHooks.afterRelease = nil
+	}
+	t.Run("regular database", func(t *testing.T) {
+		directory := filepath.Join(t.TempDir(), "state")
+		createMarkedState(t, directory, "kept")
+		openCancelledLater(t, directory)
+		if marker, _ := openStateMarker(t, directory); marker != "kept" {
+			t.Fatalf("the next Open found marker %q", marker)
+		}
+	})
+	reparse := func(t *testing.T, link func(t *testing.T, root, name string)) {
+		root := t.TempDir()
+		target := filepath.Join(root, "target")
+		createMarkedState(t, target, "elsewhere")
+		before := captureSchemaDirectory(t, target)
+		directory := filepath.Join(root, "state")
+		noErr(t, os.Mkdir(directory, 0o700))
+		link(t, root, filepath.Join(directory, databaseName))
+		openCancelledLater(t, directory)
+		openRefused(t, directory, "must be a regular file")
+		assertSchemaDirectoryUnchanged(t, target, before)
+	}
+	t.Run("junction", func(t *testing.T) {
+		reparse(t, func(t *testing.T, root, name string) {
+			if output, err := exec.Command("cmd.exe", "/d", "/c", "mklink", "/J", name, filepath.Join(root, "target")).CombinedOutput(); err != nil {
+				t.Fatalf("create junction: %v: %s", err, output)
+			}
+		})
+	})
+	t.Run("file symbolic link", func(t *testing.T) {
+		reparse(t, func(t *testing.T, root, name string) {
+			if err := os.Symlink(filepath.Join(root, "target", databaseName), name); err != nil {
+				t.Skipf("this account may not create symbolic links: %v", err)
+			}
+		})
+	})
+}
+
+// A pending deletion is a change in progress, and every other failure to
+// open a state entry keeps the error that CreateFile would report, so an
+// entry this account may not open is still refused with its cause.
 func TestWindowsEntryOpenStatusKeepsItsMeaning(t *testing.T) {
 	for _, test := range []struct {
-		status             windows.NTStatus
-		absent, permission bool
+		status                       windows.NTStatus
+		changing, absent, permission bool
 	}{
-		{windows.STATUS_DELETE_PENDING, true, false},
-		{windows.STATUS_OBJECT_NAME_NOT_FOUND, true, false},
-		{windows.STATUS_ACCESS_DENIED, false, true},
-		{windows.STATUS_SHARING_VIOLATION, false, false},
+		{windows.STATUS_DELETE_PENDING, true, false, false},
+		{windows.STATUS_OBJECT_NAME_NOT_FOUND, false, true, false},
+		{windows.STATUS_ACCESS_DENIED, false, false, true},
+		{windows.STATUS_SHARING_VIOLATION, false, false, false},
 	} {
 		err := entryOpenError(test.status)
-		if errors.Is(err, os.ErrNotExist) != test.absent || errors.Is(err, os.ErrPermission) != test.permission {
-			t.Errorf("status %#x gave %v: absent=%t permission=%t, want %t and %t", uint32(test.status), err,
-				errors.Is(err, os.ErrNotExist), errors.Is(err, os.ErrPermission), test.absent, test.permission)
+		changing, absent, permission := errors.Is(err, ErrInspectionUnstable), errors.Is(err, os.ErrNotExist), errors.Is(err, os.ErrPermission)
+		if changing != test.changing || absent != test.absent || permission != test.permission {
+			t.Errorf("status %#x gave %v: changing=%t absent=%t permission=%t, want %t, %t and %t", uint32(test.status), err,
+				changing, absent, permission, test.changing, test.absent, test.permission)
 		}
 	}
 }

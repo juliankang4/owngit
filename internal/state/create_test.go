@@ -63,8 +63,9 @@ func TestCreatedDatabaseIsPublishedInWALModeWithoutReplacing(t *testing.T) {
 }
 
 // assertPublishesOnceInWALMode creates a database twice in a new directory.
-// The first creation must publish a WAL database, the second must keep it and
-// leave no temporary entry. extra names the other entries the directory must
+// The first creation must publish a WAL database. The second must keep it,
+// report it as a database that appeared during inspection and leave no
+// temporary entry. extra names the other entries the directory must
 // hold afterwards. AppleDouble entries ("._*") that macOS adds on exFAT and
 // FAT volumes are ignored, and so is a creation lock that extra does not
 // require, so the check also runs on such volumes.
@@ -84,7 +85,9 @@ func assertPublishesOnceInWALMode(t *testing.T, extra ...string) {
 	}
 	first, err := os.Stat(path)
 	noErr(t, err)
-	noErr(t, createDatabase(ctx, path))
+	if err := createDatabase(ctx, path); !errors.Is(err, ErrInspectionUnstable) {
+		t.Fatalf("second creation: %v, want the database reported as appeared", err)
+	}
 	second, err := os.Stat(path)
 	noErr(t, err)
 	if !os.SameFile(first, second) || !second.ModTime().Equal(first.ModTime()) {
@@ -203,7 +206,9 @@ func TestUnremovableTemporaryNameDoesNotFailTheOpen(t *testing.T) {
 	t.Run("after another opener published", func(t *testing.T) {
 		usePublishers(t, failWith(syscall.EEXIST), nil)
 		publishers.remove = refuseTemporaryRemoval
-		noErr(t, createDatabase(context.Background(), filepath.Join(t.TempDir(), databaseName)))
+		if err := createDatabase(context.Background(), filepath.Join(t.TempDir(), databaseName)); !errors.Is(err, ErrInspectionUnstable) {
+			t.Fatalf("createDatabase: %v, want only the appeared database reported", err)
+		}
 	})
 }
 
