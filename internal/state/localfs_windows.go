@@ -102,8 +102,11 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 }
 
 // The access, sharing and options of each folder that openDirectory holds.
+// A name is opened relative to a folder without access to list it, so a
+// folder on the way that this account may pass through but not list is
+// accepted; READ_CONTROL reads the owner of the last.
 const (
-	folderAccess  = windows.FILE_LIST_DIRECTORY | windows.FILE_TRAVERSE | windows.FILE_READ_ATTRIBUTES | windows.READ_CONTROL
+	folderAccess  = windows.FILE_TRAVERSE | windows.FILE_READ_ATTRIBUTES | windows.READ_CONTROL
 	folderShare   = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
 	folderOptions = windows.FILE_DIRECTORY_FILE | windows.FILE_OPEN_FOR_BACKUP_INTENT
 )

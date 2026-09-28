@@ -82,3 +82,30 @@ func TestWindowsAdministratorUsesNoFolderOnAShare(t *testing.T) {
 		}
 	}
 }
+
+// A folder on the way that this account may pass through but not list, as
+// Windows lets every account do by default, does not stop OwnGit.
+func TestWindowsFolderThatCannotBeListedIsOnTheWay(t *testing.T) {
+	root := t.TempDir()
+	unlisted := filepath.Join(root, "unlisted")
+	noErr(t, os.MkdirAll(filepath.Join(unlisted, "logs"), 0o700))
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	noErr(t, err)
+	account := "*" + user.User.Sid.String()
+	if output, err := exec.Command("icacls", unlisted, "/deny", account+":(RD)").CombinedOutput(); err != nil {
+		t.Fatalf("deny listing: %v: %s", err, output)
+	}
+	t.Cleanup(func() {
+		if output, err := exec.Command("icacls", unlisted, "/remove:d", account).CombinedOutput(); err != nil {
+			t.Errorf("allow listing again: %v: %s", err, output)
+		}
+	})
+	if _, err := os.ReadDir(unlisted); err == nil {
+		t.Skip("this account can still list the folder")
+	}
+	dir, err := OpenDirectory(filepath.Join(unlisted, "logs"), false)
+	if err != nil {
+		t.Fatalf("a folder that cannot be listed on the way: %v", err)
+	}
+	noErr(t, dir.Close())
+}
