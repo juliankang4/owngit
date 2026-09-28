@@ -2,6 +2,7 @@ package state
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -34,6 +35,26 @@ func TestOwnFileCreatedByOpenersAtOnce(t *testing.T) {
 			if err != nil {
 				t.Fatalf("round %d: %v", round, err)
 			}
+		}
+	}
+}
+
+// A folder where a file is expected is named as such on every platform,
+// not reported as denied access, so a log's first lines say the same
+// everywhere.
+func TestOwnFileRefusesAFolderAsNotAFile(t *testing.T) {
+	root := t.TempDir()
+	noErr(t, os.Mkdir(filepath.Join(root, "folder"), 0o700))
+	dir, err := openFolder(root)
+	noErr(t, err)
+	defer dir.Close()
+	for _, flag := range []int{os.O_RDONLY, os.O_WRONLY | os.O_APPEND | os.O_CREATE, os.O_RDWR | os.O_CREATE} {
+		file, err := OpenOwnFile(dir, "folder", flag)
+		if err == nil {
+			file.Close()
+		}
+		if want := filepath.Join(dir.Name(), "folder") + " is not a regular file"; err == nil || err.Error() != want {
+			t.Errorf("flag %#x: error=%v, want %q", flag, err, want)
 		}
 	}
 }

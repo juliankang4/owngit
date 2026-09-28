@@ -132,11 +132,18 @@ func openAt(dir *os.File, path string, access, share, disposition, options uint3
 	return file, nil
 }
 
+// errFolder is the cause of opening a folder where only a file may be.
+// CreateFile reports it as access denied, which hides what is wrong.
+var errFolder = errors.New("it is a folder")
+
 // entryOpenError turns the status of a failed NtCreateFile into the error
 // that CreateFile would return, except for a pending deletion.
 func entryOpenError(status error) error {
 	if status == windows.STATUS_DELETE_PENDING {
 		return errDeletePending
+	}
+	if status == windows.STATUS_FILE_IS_A_DIRECTORY {
+		return errFolder
 	}
 	if ntStatus, ok := status.(windows.NTStatus); ok {
 		return ntStatus.Errno()

@@ -50,6 +50,9 @@ func OpenOwnFile(dir *os.File, name string, flag int) (*os.File, error) {
 			descriptor, err = open(0)
 		}
 	}
+	if errors.Is(err, unix.EISDIR) {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}

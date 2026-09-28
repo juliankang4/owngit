@@ -45,6 +45,9 @@ func OpenOwnFile(dir *os.File, name string, flag int) (*os.File, error) {
 			file, err = open(windows.FILE_OPEN)
 		}
 	}
+	if errors.Is(err, errFolder) {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
 	if err != nil {
 		return nil, err
 	}
