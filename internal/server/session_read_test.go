@@ -33,12 +33,10 @@ func TestSessionThatCannotBeReadIsUnavailable(t *testing.T) {
 	settings, err := fixture.store.Settings(ctx)
 	noErr(t, err)
 	noErr(t, fixture.store.CreateSession(ctx, "general-session", "general", "general-csrf", settings.AccessSessionVersion, time.Now().Add(time.Hour)))
-	noErr(t, fixture.store.CreateSession(ctx, "admin-session", "admin", "admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	client, jar := newBrowserClient(t)
 	parsed, _ := url.Parse(server.URL)
 	jar.SetCookies(parsed, []*http.Cookie{{Name: generalCookie, Value: "general-session", Path: "/"}})
 	damageSession(t, fixture.store, "general-session", "general")
-	damageSession(t, fixture.store, "admin-session", "admin")
 	serverLog := captureServerLog(t)
 
 	for _, check := range []struct {
@@ -59,14 +57,6 @@ func TestSessionThatCannotBeReadIsUnavailable(t *testing.T) {
 			result := browserForm(t, client, server.URL+"/logout", url.Values{"csrf": {"general-csrf"}}, server.URL)
 			return result.status, result.header
 		}, "CSRF check", "POST /logout"},
-		{"admin API", func() (int, http.Header) {
-			response := adminSessionRequest(t, http.MethodGet, server.URL+"/api/v1/repositories/project/helper-credentials", nil, "admin-csrf", "")
-			status, code := checkStatus(t, response)
-			if code != "state_unavailable" {
-				t.Errorf("admin API code=%q", code)
-			}
-			return status, response.Header
-		}, "session read", "GET /api/v1/repositories/project/helper-credentials"},
 	} {
 		endFailureWindows()
 		since := len(serverLog.String())
@@ -93,7 +83,7 @@ func TestSessionThatCannotBeReadIsUnavailable(t *testing.T) {
 	if result := browserForm(t, stranger, server.URL+"/logout", url.Values{"csrf": {"general-csrf"}}, server.URL); result.status != http.StatusForbidden {
 		t.Fatalf("sign-out without a session status=%d", result.status)
 	}
-	response := sendJSON(t, http.MethodGet, server.URL+"/api/v1/repositories/project/helper-credentials", nil, adminCookieValue("unknown-session"), header(csrfHeader, "admin-csrf"))
+	response := sendJSON(t, http.MethodGet, server.URL+"/api/v1/repositories/project/helper-credentials", nil, adminCookieValue("unknown-session"), header("X-Owngit-CSRF", "admin-csrf"))
 	if status, code := checkStatus(t, response); status != http.StatusUnauthorized || code != "admin_authentication_required" || response.Header.Get("WWW-Authenticate") == "" {
 		t.Fatalf("unknown admin session status=%d code=%q", status, code)
 	}

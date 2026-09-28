@@ -320,9 +320,7 @@ func (app *App) writeCheckAttemptLog(writer http.ResponseWriter, request *http.R
 // credential can never widen its own authority or change access and security
 // settings.
 func (app *App) handleHelperCredentialAPI(writer http.ResponseWriter, request *http.Request, repositoryID, remainder string) {
-	// Listing may use a browser admin session. A change must verify the
-	// current administrator password.
-	if !app.authorizeAdminAPI(writer, request, request.Method != http.MethodGet) {
+	if !app.authorizeAdminAPI(writer, request) {
 		return
 	}
 	if _, exists, err := app.Store.Repository(request.Context(), repositoryID); err != nil {
@@ -440,60 +438,19 @@ func (app *App) authorizeHelper(writer http.ResponseWriter, request *http.Reques
 	return credential, true
 }
 
-// csrfHeader carries the admin session CSRF token for browser API calls.
-const csrfHeader = "X-Owngit-CSRF"
-
-// adminPasswordHeader carries the current administrator password for a browser
-// security change, so the dashboard does not have to build a Basic header.
-const adminPasswordHeader = "X-Owngit-Admin-Password"
-
-// authorizeAdminAPI authenticates an administrator API request.
-//
-// A security change must verify the current administrator password, because a
-// remembered browser session must not silently issue or revoke authority. The
-// password travels in the Basic header (CLI) or in the admin password header
-// (browser). A read may instead use a browser admin session with its CSRF
-// token, which follows the existing browser rules.
-func (app *App) authorizeAdminAPI(writer http.ResponseWriter, request *http.Request, requirePassword bool) bool {
+// authorizeAdminAPI authenticates an administrator API request, a read or a
+// change, by the administrator password in its Basic header, as the
+// command line sends it. A browser's administrator session is not an API
+// credential, however long the dashboard remembers it, and neither is Do
+// not ask.
+func (app *App) authorizeAdminAPI(writer http.ResponseWriter, request *http.Request) bool {
 	username, password, hasBasic := request.BasicAuth()
-	if hasBasic {
-		if username != "admin" {
-			writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit admin"`)
-			writeAPIError(writer, http.StatusUnauthorized, "admin_authentication_required", "The administrator password is required.", nil)
-			return false
-		}
-		return app.checkAPIPassword(writer, request, "admin", password)
-	}
-
-	_, ok, err := app.cookieSession(request, "admin", adminCookie)
-	if err != nil {
-		app.answerUnavailable(writer, request, "session read", err)
-		return false
-	}
-	if !ok {
+	if !hasBasic || username != "admin" {
 		writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit admin"`)
 		writeAPIError(writer, http.StatusUnauthorized, "admin_authentication_required", "The administrator password is required.", nil)
 		return false
 	}
-	valid, err := app.validCSRF(request, request.Header.Get(csrfHeader))
-	if err != nil {
-		app.answerUnavailable(writer, request, "CSRF check", err)
-		return false
-	}
-	if !valid {
-		writeAPIError(writer, http.StatusForbidden, "csrf_required", "The "+csrfHeader+" header does not match the admin session.", nil)
-		return false
-	}
-	password = request.Header.Get(adminPasswordHeader)
-	if requirePassword && password == "" {
-		writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit admin"`)
-		writeAPIError(writer, http.StatusUnauthorized, "admin_password_required", "The current administrator password is required to change protected settings.", nil)
-		return false
-	}
-	if password != "" {
-		return app.checkAPIPassword(writer, request, "admin", password)
-	}
-	return true
+	return app.checkAPIPassword(writer, request, "admin", password)
 }
 
 func attemptFromRegistration(registration checkapi.AttemptRegistration, repositoryID, taskID, credentialID string, now time.Time) (state.CheckAttempt, *pullrequest.Problem) {

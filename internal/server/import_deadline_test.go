@@ -34,7 +34,7 @@ func TestImportRunDeadlineResultReachesTheClient(t *testing.T) {
 	started := time.Now()
 	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/slow/import/run", map[string]any{
 		"name": "slow", "url": "https://example.invalid/team/slow.git", "mode": "standalone",
-	}, "admin-password", "", "")
+	}, "admin-password")
 	content, err := io.ReadAll(response.Body)
 	response.Body.Close()
 	noErrf(t, err, "run response could not be read after %s", time.Since(started))
@@ -73,7 +73,7 @@ func TestImportDeadlineDuringAdmissionReachesTheClientAsTheLimit(t *testing.T) {
 			noErr(t, err)
 			response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/slow/import/run", map[string]any{
 				"name": "slow", "url": "https://example.invalid/team/slow.git", "mode": "standalone",
-			}, "admin-password", "", "")
+			}, "admin-password")
 			content, err := io.ReadAll(response.Body)
 			response.Body.Close()
 			noErr(t, err)

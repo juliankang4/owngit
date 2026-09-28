@@ -965,7 +965,7 @@ func TestBrowserCancelThatLosesToACompletionSaysNothingChanged(t *testing.T) {
 		t.Error("a cancel intent was recorded on a finished job")
 	}
 	// The API and CLI refuse it with a clear code instead of reporting success.
-	apiCancel := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/project/check-jobs/"+job.ID+"/cancel", map[string]any{}, "admin-password", "", "")
+	apiCancel := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/project/check-jobs/"+job.ID+"/cancel", map[string]any{}, "admin-password")
 	if apiCancel.StatusCode != http.StatusConflict || importAPICode(t, apiCancel) != "check_job_finished" {
 		t.Errorf("API cancel of a finished job status=%d", apiCancel.StatusCode)
 	}

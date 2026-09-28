@@ -99,18 +99,15 @@ func TestImportResolveAPIRequiresOwnerAndRecordsTheDecision(t *testing.T) {
 	server := serve(t, fixture.app.Handler())
 	target := server.URL + "/api/v1/repositories/project/import/resolve"
 
-	if response := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "", "", ""); response.StatusCode != http.StatusUnauthorized {
+	if response := importAPIRequest(t, http.MethodPost, target, map[string]any{}, ""); response.StatusCode != http.StatusUnauthorized {
 		response.Body.Close()
 		t.Fatalf("anonymous resolve status=%d", response.StatusCode)
 	} else {
 		response.Body.Close()
 	}
-	settings, err := fixture.store.Settings(context.Background())
-	noErr(t, err)
-	noErr(t, fixture.store.CreateSession(context.Background(), "import-admin", "admin", "import-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
-	if response := importSessionRequest(t, http.MethodPost, target, map[string]any{}, "wrong-csrf", "admin-password"); response.StatusCode != http.StatusForbidden {
+	if response := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "wrong-password"); response.StatusCode != http.StatusUnauthorized {
 		response.Body.Close()
-		t.Fatalf("wrong CSRF resolve status=%d", response.StatusCode)
+		t.Fatalf("wrong password resolve status=%d", response.StatusCode)
 	} else {
 		response.Body.Close()
 	}
@@ -118,7 +115,7 @@ func TestImportResolveAPIRequiresOwnerAndRecordsTheDecision(t *testing.T) {
 		t.Fatalf("refused request changed the intent: %s", intent.Status)
 	}
 
-	response := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "admin-password", "", "")
+	response := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "admin-password")
 	body := importAPIBody(t, response)
 	if response.StatusCode != http.StatusOK || !strings.Contains(body, intentID) || !strings.Contains(body, `"unresolved_intents":0`) {
 		t.Fatalf("resolve status=%d body=%s", response.StatusCode, body)
@@ -127,7 +124,7 @@ func TestImportResolveAPIRequiresOwnerAndRecordsTheDecision(t *testing.T) {
 	if err != nil || intent.Status != state.ImportIntentOwnerResolved || !strings.Contains(intent.ReceiptJSON, fixture.targetOID) {
 		t.Fatalf("resolved intent=%+v err=%v", intent, err)
 	}
-	again := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "admin-password", "", "")
+	again := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "admin-password")
 	if code := importAPICode(t, again); again.StatusCode != http.StatusConflict || code != importsync.CodeNothingToResolve {
 		t.Fatalf("second resolve status=%d code=%s", again.StatusCode, code)
 	}
@@ -148,7 +145,7 @@ func TestImportResolveAPIKeepsTheResolutionWhenStatusIsUnavailable(t *testing.T)
 	server := serve(t, fixture.app.Handler())
 	target := server.URL + "/api/v1/repositories/project/import/resolve"
 
-	response := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "admin-password", "", "")
+	response := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "admin-password")
 	fields := decodeImportFields(t, response)
 	var resolved []string
 	noErr(t, json.Unmarshal(fields["resolved"], &resolved))
@@ -162,7 +159,7 @@ func TestImportResolveAPIKeepsTheResolutionWhenStatusIsUnavailable(t *testing.T)
 	if after := refs(); after != before {
 		t.Fatalf("resolution changed Git refs\nbefore:\n%s\nafter:\n%s", before, after)
 	}
-	again := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "admin-password", "", "")
+	again := importAPIRequest(t, http.MethodPost, target, map[string]any{}, "admin-password")
 	if code := importAPICode(t, again); again.StatusCode != http.StatusConflict || code != importsync.CodeNothingToResolve {
 		t.Fatalf("second resolve status=%d code=%s", again.StatusCode, code)
 	}

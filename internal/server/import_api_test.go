@@ -18,24 +18,15 @@ import (
 	"owngit/internal/state"
 )
 
-func TestImportAPIRequiresOwnerAndRejectsCSRF(t *testing.T) {
+func TestImportAPIRequiresTheAdministratorPassword(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	endpoint := server.URL + "/api/v1/repositories/project/import"
-	unauthenticated := importAPIRequest(t, http.MethodPut, endpoint, map[string]any{"url": "https://example.invalid/team/project.git"}, "", "", "")
-	if unauthenticated.StatusCode != http.StatusUnauthorized {
+	source := map[string]any{"url": "https://example.invalid/team/project.git", "mode": "standalone"}
+	if unauthenticated := importAPIRequest(t, http.MethodPut, endpoint, source, ""); unauthenticated.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status=%d", unauthenticated.StatusCode)
 	}
-	settings, err := fixture.store.Settings(context.Background())
-	noErr(t, err)
-	noErr(t, fixture.store.CreateSession(context.Background(), "import-admin", "admin", "import-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
-	wrong := importSessionRequest(t, http.MethodPut, endpoint, map[string]any{"url": "https://example.invalid/team/project.git"}, "wrong-csrf", "admin-password")
-	if wrong.StatusCode != http.StatusForbidden || importAPICode(t, wrong) != "csrf_required" {
-		t.Fatalf("csrf status=%d code=%s", wrong.StatusCode, importAPICode(t, wrong))
-	}
-	saved := importSessionRequest(t, http.MethodPut, endpoint, map[string]any{
-		"url": "https://example.invalid/team/project.git", "mode": "standalone",
-	}, "import-csrf", "admin-password")
+	saved := importAPIRequest(t, http.MethodPut, endpoint, source, "admin-password")
 	if saved.StatusCode != http.StatusOK || strings.Contains(importAPIBody(t, saved), "admin-password") {
 		t.Fatalf("owner configure status=%d", saved.StatusCode)
 	}
@@ -47,7 +38,7 @@ func TestImportAPICredentialResponseHasNoSecret(t *testing.T) {
 	base := server.URL + "/api/v1/repositories/project/import"
 	configured := importAPIRequest(t, http.MethodPut, base, map[string]any{
 		"url": "https://example.invalid/team/project.git", "mode": "coexistence", "git_only_consent": true,
-	}, "admin-password", "", "")
+	}, "admin-password")
 	if configured.StatusCode != http.StatusOK {
 		t.Fatalf("configure status=%d body=%s", configured.StatusCode, importAPIBody(t, configured))
 	}
@@ -55,7 +46,7 @@ func TestImportAPICredentialResponseHasNoSecret(t *testing.T) {
 	const password = "import-secret-password"
 	saved := importAPIRequest(t, http.MethodPut, base+"/credentials", map[string]any{
 		"form": "bearer", "token": token, "ca_pem": "not-a-secret-ca",
-	}, "admin-password", "", "")
+	}, "admin-password")
 	body := importAPIBody(t, saved)
 	if saved.StatusCode != http.StatusOK || !strings.Contains(body, `"credential_form":"bearer"`) || !strings.Contains(body, `"credential_bound":true`) {
 		t.Fatalf("credential response status=%d body=%s", saved.StatusCode, body)
@@ -63,7 +54,7 @@ func TestImportAPICredentialResponseHasNoSecret(t *testing.T) {
 	if strings.Contains(body, token) || strings.Contains(body, password) || strings.Contains(body, "not-a-secret-ca") {
 		t.Fatalf("credential response echoed a secret: %s", body)
 	}
-	status := importAPIRequest(t, http.MethodGet, base, nil, "admin-password", "", "")
+	status := importAPIRequest(t, http.MethodGet, base, nil, "admin-password")
 	statusBody := importAPIBody(t, status)
 	if strings.Contains(statusBody, token) || strings.Contains(statusBody, "not-a-secret-ca") {
 		t.Fatalf("status echoed a secret: %s", statusBody)
@@ -74,21 +65,21 @@ func TestImportAPIMapsNotConfiguredAndImportsNewRepository(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/project/import"
-	refresh := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{}, "admin-password", "", "")
+	refresh := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{}, "admin-password")
 	if refresh.StatusCode != http.StatusNotFound || importAPICode(t, refresh) != importsync.CodeNotConfigured {
 		t.Fatalf("refresh without source status=%d code=%s", refresh.StatusCode, importAPICode(t, refresh))
 	}
 	created := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/fresh/import/run", map[string]any{
 		"name": "fresh", "url": "https://example.invalid/team/fresh.git", "mode": "standalone",
-	}, "admin-password", "", "")
+	}, "admin-password")
 	if created.StatusCode != http.StatusOK || !strings.Contains(importAPIBody(t, created), `"status":"complete"`) {
 		t.Fatalf("initial import status=%d body=%s", created.StatusCode, importAPIBody(t, created))
 	}
-	history := importAPIRequest(t, http.MethodGet, server.URL+"/api/v1/repositories/fresh/import/history?limit=1", nil, "admin-password", "", "")
+	history := importAPIRequest(t, http.MethodGet, server.URL+"/api/v1/repositories/fresh/import/history?limit=1", nil, "admin-password")
 	if history.StatusCode != http.StatusOK || !strings.Contains(importAPIBody(t, history), `"more"`) {
 		t.Fatalf("history status=%d body=%s", history.StatusCode, importAPIBody(t, history))
 	}
-	rejected := importAPIRequest(t, http.MethodGet, server.URL+"/api/v1/repositories/fresh/import?cursor=1", nil, "admin-password", "", "")
+	rejected := importAPIRequest(t, http.MethodGet, server.URL+"/api/v1/repositories/fresh/import?cursor=1", nil, "admin-password")
 	if rejected.StatusCode != http.StatusBadRequest {
 		t.Fatalf("query on status status=%d", rejected.StatusCode)
 	}
@@ -104,7 +95,7 @@ func TestImportRunResultKeepsTheFinishedRunWhenStatusIsUnavailable(t *testing.T)
 	server := serve(t, fixture.app.Handler())
 	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/fresh/import/run", map[string]any{
 		"name": "fresh", "url": "https://example.invalid/team/fresh.git", "mode": "standalone",
-	}, "admin-password", "", "")
+	}, "admin-password")
 	fields := decodeImportFields(t, response)
 	var run struct {
 		ID     string `json:"id"`
@@ -132,7 +123,7 @@ func TestImportCredentialChangeStaysSavedWhenStatusIsUnavailable(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/api/v1/repositories/project/import"
-	configured := importAPIRequest(t, http.MethodPut, base, map[string]any{"url": "https://example.invalid/team/project.git", "mode": "standalone"}, "admin-password", "", "")
+	configured := importAPIRequest(t, http.MethodPut, base, map[string]any{"url": "https://example.invalid/team/project.git", "mode": "standalone"}, "admin-password")
 	if configured.StatusCode != http.StatusOK {
 		t.Fatalf("configure status=%d body=%s", configured.StatusCode, importAPIBody(t, configured))
 	}
@@ -146,7 +137,7 @@ func TestImportCredentialChangeStaysSavedWhenStatusIsUnavailable(t *testing.T) {
 		{http.MethodPut, map[string]any{"form": "bearer", "token": "import-secret-token"}, true},
 		{http.MethodDelete, nil, false},
 	} {
-		response := importAPIRequest(t, change.method, base+"/credentials", change.body, "admin-password", "", "")
+		response := importAPIRequest(t, change.method, base+"/credentials", change.body, "admin-password")
 		fields := decodeImportFields(t, response)
 		if response.StatusCode != http.StatusOK || string(fields["ok"]) != "true" || !statusUnavailable(t, fields, "credential_form", "credential_bound") {
 			t.Fatalf("%s credentials status=%d fields=%s", change.method, response.StatusCode, fields)
@@ -166,7 +157,7 @@ func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
 	base := server.URL + "/api/v1/repositories/fresh/import"
 	created := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{
 		"name": "fresh", "url": "https://example.invalid/team/fresh.git", "mode": "coexistence",
-	}, "admin-password", "", "")
+	}, "admin-password")
 	if created.StatusCode != http.StatusOK {
 		t.Fatalf("initial import status=%d body=%s", created.StatusCode, importAPIBody(t, created))
 	}
@@ -174,7 +165,7 @@ func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
 		{"name": "fresh", "url": "https://example.invalid/team/other.git", "mode": "standalone"},
 		{"url": "https://example.invalid/team/fresh.git"},
 	} {
-		again := importAPIRequest(t, http.MethodPost, base+"/run", body, "admin-password", "", "")
+		again := importAPIRequest(t, http.MethodPost, base+"/run", body, "admin-password")
 		if again.StatusCode != http.StatusConflict || importAPICode(t, again) != importsync.CodeRepositoryTaken {
 			t.Fatalf("add on an existing repository status=%d", again.StatusCode)
 		}
@@ -188,7 +179,7 @@ func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
 		t.Fatalf("a refused add changed the source: %+v err=%v", status, err)
 	}
 	// A plain refresh still runs.
-	refreshed := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{}, "admin-password", "", "")
+	refreshed := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{}, "admin-password")
 	if refreshed.StatusCode != http.StatusOK {
 		t.Fatalf("refresh status=%d body=%s", refreshed.StatusCode, importAPIBody(t, refreshed))
 	}
@@ -199,7 +190,7 @@ func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
 func TestImportRefreshWithoutARepositoryIsNotFound(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
-	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/missing/import/run", map[string]any{}, "admin-password", "", "")
+	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/missing/import/run", map[string]any{}, "admin-password")
 	if response.StatusCode != http.StatusNotFound || importAPICode(t, response) != "repository_not_found" {
 		t.Fatalf("refresh without a repository status=%d", response.StatusCode)
 	}
@@ -208,7 +199,7 @@ func TestImportRefreshWithoutARepositoryIsNotFound(t *testing.T) {
 		t.Fatalf("a refresh without a repository recorded runs=%d err=%v", len(runs), err)
 	}
 	// An add that names no source still reports the missing source.
-	added := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/missing/import/run", map[string]any{"name": "missing"}, "admin-password", "", "")
+	added := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/missing/import/run", map[string]any{"name": "missing"}, "admin-password")
 	if added.StatusCode != http.StatusUnprocessableEntity || importAPICode(t, added) != importsync.CodeInvalidSource {
 		t.Fatalf("add without a URL status=%d", added.StatusCode)
 	}
@@ -223,17 +214,17 @@ func TestImportScheduleIntervalErrorsNameTheSchedule(t *testing.T) {
 	base := server.URL + "/api/v1/repositories/fresh/import"
 	created := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{
 		"name": "fresh", "url": "https://example.invalid/team/fresh.git", "mode": "standalone",
-	}, "admin-password", "", "")
+	}, "admin-password")
 	if created.StatusCode != http.StatusOK {
 		t.Fatalf("initial import status=%d body=%s", created.StatusCode, importAPIBody(t, created))
 	}
 	for _, interval := range []string{"soon", "10s", "999h"} {
-		response := importAPIRequest(t, http.MethodPut, base+"/schedule", map[string]any{"enabled": true, "interval": interval}, "admin-password", "", "")
+		response := importAPIRequest(t, http.MethodPut, base+"/schedule", map[string]any{"enabled": true, "interval": interval}, "admin-password")
 		if response.StatusCode != http.StatusUnprocessableEntity || importAPICode(t, response) != importsync.CodeInvalidSchedule {
 			t.Fatalf("interval %s status=%d", interval, response.StatusCode)
 		}
 	}
-	saved := importAPIRequest(t, http.MethodPut, base+"/schedule", map[string]any{"enabled": true, "interval": "1h"}, "admin-password", "", "")
+	saved := importAPIRequest(t, http.MethodPut, base+"/schedule", map[string]any{"enabled": true, "interval": "1h"}, "admin-password")
 	if saved.StatusCode != http.StatusOK {
 		t.Fatalf("valid schedule status=%d body=%s", saved.StatusCode, importAPIBody(t, saved))
 	}
@@ -271,7 +262,7 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 		response := importAPIRequest(t, http.MethodPost, base+"/run", map[string]any{
 			"name": "arriving", "url": "https://example.invalid/team/arriving.git", "mode": "standalone",
 			"credential_form": "bearer", "token": "first-import-token",
-		}, "admin-password", "", "")
+		}, "admin-password")
 		defer response.Body.Close()
 		var body struct {
 			Code   string `json:"code"`
@@ -289,7 +280,7 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the first import did not start fetching")
 	}
-	cancelled := importAPIRequest(t, http.MethodPost, base+"/cancel", map[string]any{}, "admin-password", "", "")
+	cancelled := importAPIRequest(t, http.MethodPost, base+"/cancel", map[string]any{}, "admin-password")
 	if body := importAPIBody(t, cancelled); cancelled.StatusCode != http.StatusOK || !strings.Contains(body, `"cancelled":true`) {
 		t.Fatalf("cancel of a first import status=%d body=%s", cancelled.StatusCode, body)
 	}
@@ -309,7 +300,7 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 		t.Fatalf("the cancelled first import kept its token exists=%v err=%v", exists, err)
 	}
 	// With nothing running, a name without a repository is still not found.
-	again := importAPIRequest(t, http.MethodPost, base+"/cancel", map[string]any{}, "admin-password", "", "")
+	again := importAPIRequest(t, http.MethodPost, base+"/cancel", map[string]any{}, "admin-password")
 	if again.StatusCode != http.StatusNotFound || importAPICode(t, again) != "repository_not_found" {
 		t.Fatalf("cancel with nothing running status=%d", again.StatusCode)
 	}
@@ -329,7 +320,7 @@ func TestImportRunRouteOutlivesOrdinaryDeadline(t *testing.T) {
 	server := serve(t, fixture.app.Handler())
 	created := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/slow/import/run", map[string]any{
 		"name": "slow", "url": "https://example.invalid/team/slow.git", "mode": "standalone",
-	}, "admin-password", "", "")
+	}, "admin-password")
 	body := importAPIBody(t, created)
 	if created.StatusCode != http.StatusOK || !strings.Contains(body, `"status":"complete"`) || strings.Contains(body, `"code":"cancelled"`) {
 		t.Fatalf("slow import did not outlive the ordinary deadline: status=%d body=%s", created.StatusCode, body)
@@ -396,7 +387,7 @@ func TestInitialImportSendsCredentialsWithoutEchoingThem(t *testing.T) {
 	created := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/private/import/run", map[string]any{
 		"name": "private", "url": "https://example.invalid/team/private.git", "mode": "standalone",
 		"credential_form": "bearer", "token": token, "ca_pem": caPEM,
-	}, "admin-password", "", "")
+	}, "admin-password")
 	body := importAPIBody(t, created)
 	if created.StatusCode != http.StatusOK || gotToken != token || gotCA != caPEM {
 		t.Fatalf("initial credential was not sent: status=%d token=%q ca=%q body=%s", created.StatusCode, gotToken, gotCA, body)
@@ -406,7 +397,7 @@ func TestInitialImportSendsCredentialsWithoutEchoingThem(t *testing.T) {
 	}
 	refused := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/project/import/run", map[string]any{
 		"credential_form": "bearer", "token": token,
-	}, "admin-password", "", "")
+	}, "admin-password")
 	if refused.StatusCode != http.StatusUnprocessableEntity || importAPICode(t, refused) != importsync.CodeInvalidSource {
 		t.Fatalf("refresh accepted credentials: status=%d code=%s", refused.StatusCode, importAPICode(t, refused))
 	}
@@ -477,16 +468,11 @@ func TestRepositoryCreationBesideARunningImportSaysSo(t *testing.T) {
 	}
 }
 
-func importAPIRequest(t *testing.T, method, target string, value any, password, csrf, adminHeader string) *http.Response {
+func importAPIRequest(t *testing.T, method, target string, value any, password string) *http.Response {
 	t.Helper()
-	return sendJSON(t, method, target, value, basicAuth("admin", password), header(csrfHeader, csrf), header(adminPasswordHeader, adminHeader))
+	return sendJSON(t, method, target, value, basicAuth("admin", password))
 }
 
-// importSessionRequest always has a body, CSRF token and password.
-func importSessionRequest(t *testing.T, method, target string, value any, csrf, password string) *http.Response {
-	t.Helper()
-	return sendJSON(t, method, target, value, adminCookieValue("import-admin"), header(csrfHeader, csrf), header(adminPasswordHeader, password))
-}
 func importAPICode(t *testing.T, response *http.Response) string {
 	t.Helper()
 	defer response.Body.Close()
@@ -523,7 +509,7 @@ func TestImportCredentialsClearWorksWithoutARepository(t *testing.T) {
 	}, time.Now())
 	noErr(t, err)
 
-	cleared := importAPIRequest(t, http.MethodDelete, server.URL+"/api/v1/repositories/orphan/import/credentials", nil, "admin-password", "", "")
+	cleared := importAPIRequest(t, http.MethodDelete, server.URL+"/api/v1/repositories/orphan/import/credentials", nil, "admin-password")
 	if body := importAPIBody(t, cleared); cleared.StatusCode != http.StatusOK || !strings.Contains(body, `"credential_form":"none"`) {
 		t.Fatalf("clear without a repository status=%d body=%s", cleared.StatusCode, body)
 	}
@@ -533,7 +519,7 @@ func TestImportCredentialsClearWorksWithoutARepository(t *testing.T) {
 	if _, exists, err := fixture.store.ImportSource(ctx, "orphan"); err != nil || exists {
 		t.Fatalf("the source stayed exists=%v err=%v", exists, err)
 	}
-	again := importAPIRequest(t, http.MethodDelete, server.URL+"/api/v1/repositories/orphan/import/credentials", nil, "admin-password", "", "")
+	again := importAPIRequest(t, http.MethodDelete, server.URL+"/api/v1/repositories/orphan/import/credentials", nil, "admin-password")
 	if again.StatusCode != http.StatusNotFound || importAPICode(t, again) != "repository_not_found" {
 		t.Fatalf("clear with nothing stored status=%d", again.StatusCode)
 	}

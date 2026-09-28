@@ -25,7 +25,7 @@ func importHistoryQueryAllowed(request *http.Request, repositoryRoute bool, reso
 }
 
 func (app *App) handleImportAPI(writer http.ResponseWriter, request *http.Request, repositoryID, remainder string) {
-	if !app.authorizeAdminAPI(writer, request, request.Method != http.MethodGet) {
+	if !app.authorizeAdminAPI(writer, request) {
 		return
 	}
 	// Cancelling needs no repository data and stays available.

@@ -31,8 +31,8 @@ import (
 //   - Do not ask: whoever may use the dashboard may open the administrator
 //     pages and make changes without the password.
 //
-// This is browser authority only. An API request never makes a change with
-// it (authorizeAdminAPI), and Do not ask does not apply to the API. CSRF,
+// This is browser authority only. The administrator API never reads it
+// (authorizeAdminAPI), and Do not ask does not apply to the API. CSRF,
 // Host and Origin checks apply as before.
 
 // adminAuthority is what this browser may do as administrator.

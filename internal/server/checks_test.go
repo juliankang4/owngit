@@ -139,21 +139,6 @@ func TestHelperCredentialAuthAndAttemptUpload(t *testing.T) {
 		t.Fatalf("admin create credential status=%d error=%q", adminCreated.StatusCode, apiErrorCode(t, adminCreated))
 	}
 
-	// A browser admin session can read with its CSRF header, but issuing
-	// authority still needs the current administrator password.
-	settings, err := fixture.store.Settings(ctx)
-	noErr(t, err)
-	noErr(t, fixture.store.CreateSession(ctx, "admin-session", "admin", "admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
-	sessionRead := adminSessionRequest(t, http.MethodGet, base+"/helper-credentials", nil, "admin-csrf", "")
-	if sessionRead.StatusCode != http.StatusOK {
-		t.Fatalf("admin session read status=%d error=%q", sessionRead.StatusCode, apiErrorCode(t, sessionRead))
-	}
-	sessionRead.Body.Close()
-	wrongCSRF := adminSessionRequest(t, http.MethodGet, base+"/helper-credentials", nil, "wrong", "")
-	if wrongCSRF.StatusCode != http.StatusForbidden || apiErrorCode(t, wrongCSRF) != "csrf_required" {
-		t.Fatalf("wrong csrf status=%d error=%q", wrongCSRF.StatusCode, apiErrorCode(t, wrongCSRF))
-	}
-	wrongCSRF.Body.Close()
 	var credentialResponse checkapi.CredentialResponse
 	decodeCheckJSON(t, adminCreated, &credentialResponse)
 	if credentialResponse.Credential == nil || credentialResponse.Token == "" {
@@ -220,70 +205,74 @@ func TestHelperCredentialCreationIdentityIsRecoverable(t *testing.T) {
 	}
 }
 
-func TestHelperCredentialChangesRequireTheCurrentAdminPassword(t *testing.T) {
-	fixture := newAPIFixture(t, false)
-	server := serve(t, fixture.app.Handler())
-	ctx := context.Background()
+// The administrator API takes the administrator password, in the Basic
+// header, for every read and change. A browser's administrator session is
+// not an API credential, with its CSRF token and the password header or
+// without, however long the dashboard remembers it.
+func TestAdministratorAPIAcceptsOnlyTheAdministratorPassword(t *testing.T) {
+	_, server, _ := newConfirmationFixture(t, false, state.Confirm30Days)
+	browser := openConfirmationBrowser(t, server, false)
+	browser.adminSignIn()
+	// The token of the administrator session, as its pages carry it.
+	session, csrf := browser.cookie(adminCookie), formValue(t, browser.get(baseHelperCredentialsURL("project")).body, "csrf")
 	base := server.URL + "/api/v1/repositories/project"
-
-	settings, err := fixture.store.Settings(ctx)
-	noErr(t, err)
-	noErr(t, fixture.store.CreateSession(ctx, "admin-session", "admin", "admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
-
-	// A remembered browser session can read.
-	if status, code := checkStatus(t, adminSessionRequest(t, http.MethodGet, base+"/helper-credentials", nil, "admin-csrf", "")); status != http.StatusOK {
-		t.Fatalf("session read status=%d error=%q", status, code)
+	routes := []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodGet, "/helper-credentials", nil},
+		{http.MethodPost, "/helper-credentials", map[string]any{"label": "api"}},
+		{http.MethodDelete, "/helper-credentials/missing", nil},
+		{http.MethodDelete, "/helper-credentials/by-creation/missing", nil},
+		{http.MethodGet, "/check-policy", nil},
+		{http.MethodPut, "/check-policy", map[string]any{}},
+		{http.MethodPost, "/check-policy/enable", map[string]any{}},
+		{http.MethodPost, "/check-policy/disable", map[string]any{}},
+		{http.MethodGet, "/check-jobs", nil},
+		{http.MethodGet, "/check-jobs/missing", nil},
+		{http.MethodGet, "/check-jobs/missing/log", nil},
+		{http.MethodPost, "/check-jobs/missing/cancel", map[string]any{}},
+		{http.MethodPost, "/check-jobs/missing/rerun", map[string]any{}},
+		{http.MethodGet, "/runner-credentials", nil},
+		{http.MethodPost, "/runner-credentials", map[string]any{"label": "api", "creation_id": strings.Repeat("b", 32)}},
+		{http.MethodDelete, "/runner-credentials/missing", nil},
+		{http.MethodDelete, "/runner-credentials/by-creation/missing", nil},
+		{http.MethodGet, "/import", nil},
+		{http.MethodPut, "/import", map[string]any{}},
+		{http.MethodPost, "/import/run", map[string]any{}},
+		{http.MethodPost, "/import/cancel", map[string]any{}},
+		{http.MethodPost, "/import/resolve", map[string]any{}},
+		{http.MethodGet, "/import/history", nil},
+		{http.MethodGet, "/import/schedule", nil},
+		{http.MethodPut, "/import/schedule", map[string]any{}},
+		{http.MethodPut, "/import/credentials", map[string]any{}},
+		{http.MethodDelete, "/import/credentials", nil},
+	}
+	for _, route := range routes {
+		name := route.method + " " + route.path
+		for _, password := range []string{"", "admin-password"} {
+			response := sendJSON(t, route.method, base+route.path, route.body, adminCookieValue(session),
+				header("X-Owngit-CSRF", csrf), header("X-Owngit-Admin-Password", password))
+			if status, code := checkStatus(t, response); status != http.StatusUnauthorized || code != "admin_authentication_required" {
+				t.Errorf("%s with the browser session (password header %v): status=%d code=%q", name, password != "", status, code)
+			}
+		}
+		response := sendJSON(t, route.method, base+route.path, route.body, basicAuth("admin", "admin-password"))
+		if status, code := checkStatus(t, response); status == http.StatusUnauthorized || status == http.StatusForbidden {
+			t.Errorf("%s with the administrator password: status=%d code=%q", name, status, code)
+		}
+		if status, code := checkStatus(t, sendJSON(t, route.method, base+route.path, route.body, basicAuth("admin", "wrong-password"))); status != http.StatusUnauthorized || code != "invalid_admin_credentials" {
+			t.Errorf("%s with a wrong password: status=%d code=%q", name, status, code)
+		}
 	}
 
-	// It cannot issue authority without the current password.
-	if status, code := checkStatus(t, adminSessionRequest(t, http.MethodPost, base+"/helper-credentials", map[string]any{"label": "browser"}, "admin-csrf", "")); status != http.StatusUnauthorized || code != "admin_password_required" {
-		t.Fatalf("session create status=%d error=%q", status, code)
-	}
-
-	// A wrong password is rejected even with a valid session and CSRF token.
-	if status, code := checkStatus(t, adminSessionRequest(t, http.MethodPost, base+"/helper-credentials", map[string]any{"label": "browser"}, "admin-csrf", "wrong-password")); status != http.StatusUnauthorized || code != "invalid_admin_credentials" {
-		t.Fatalf("wrong password status=%d error=%q", status, code)
-	}
-
-	// The current password with the session and CSRF token succeeds.
-	created := adminSessionRequest(t, http.MethodPost, base+"/helper-credentials", map[string]any{"label": "browser"}, "admin-csrf", "admin-password")
-	if created.StatusCode != http.StatusOK {
-		status, code := checkStatus(t, created)
-		t.Fatalf("session create with password status=%d error=%q", status, code)
-	}
-	var credentialResponse checkapi.CredentialResponse
-	decodeCheckJSON(t, created, &credentialResponse)
-	if credentialResponse.Credential == nil || credentialResponse.Token == "" {
-		t.Fatalf("created credential=%+v", credentialResponse)
-	}
-
-	// Revoking is a security change too.
-	if status, code := checkStatus(t, adminSessionRequest(t, http.MethodDelete, base+"/helper-credentials/"+credentialResponse.Credential.ID, nil, "admin-csrf", "")); status != http.StatusUnauthorized || code != "admin_password_required" {
-		t.Fatalf("session revoke status=%d error=%q", status, code)
-	}
-	if status, code := checkStatus(t, adminSessionRequest(t, http.MethodDelete, base+"/helper-credentials/"+credentialResponse.Credential.ID, nil, "admin-csrf", "admin-password")); status != http.StatusOK {
-		t.Fatalf("session revoke with password status=%d error=%q", status, code)
-	}
-
-	// The Basic CLI flow still works, and a wrong password fails.
-	if status, code := checkStatus(t, adminAPIRequest(t, http.MethodPost, base+"/helper-credentials", map[string]any{"label": "cli"}, "admin-password")); status != http.StatusOK {
-		t.Fatalf("basic create status=%d error=%q", status, code)
-	}
-	if status, code := checkStatus(t, adminAPIRequest(t, http.MethodPost, base+"/helper-credentials", map[string]any{"label": "cli"}, "wrong-password")); status != http.StatusUnauthorized || code != "invalid_admin_credentials" {
-		t.Fatalf("wrong basic status=%d error=%q", status, code)
-	}
-
-	// A helper token and the general password are not administrator authority.
+	// A helper token and the shared password are not administrator
+	// authority.
 	if status, code := checkStatus(t, checkRequest(t, http.MethodPost, base+"/helper-credentials", map[string]any{"label": "helper"}, "synthetic-helper-token")); status != http.StatusUnauthorized || code != "admin_authentication_required" {
 		t.Fatalf("helper token write status=%d error=%q", status, code)
 	}
-	if status, code := checkStatus(t, apiRequest(t, http.MethodPost, base+"/helper-credentials", map[string]any{"label": "general"}, "shared-password", "")); status != http.StatusUnauthorized || code != "admin_authentication_required" {
-		t.Fatalf("general password write status=%d error=%q", status, code)
-	}
-
-	// A session without its CSRF token is still rejected on a read.
-	if status, code := checkStatus(t, adminSessionRequest(t, http.MethodGet, base+"/helper-credentials", nil, "", "")); status != http.StatusForbidden || code != "csrf_required" {
-		t.Fatalf("session without csrf status=%d error=%q", status, code)
+	if status, code := checkStatus(t, apiRequest(t, http.MethodGet, base+"/helper-credentials", nil, "shared-password", "")); status != http.StatusUnauthorized || code != "admin_authentication_required" {
+		t.Fatalf("general password read status=%d error=%q", status, code)
 	}
 }
 
@@ -810,10 +799,6 @@ func checkRequest(t *testing.T, method, target string, value any, token string) 
 func adminAPIRequest(t *testing.T, method, target string, value any, password string) *http.Response {
 	t.Helper()
 	return sendJSON(t, method, target, value, func(request *http.Request) { request.SetBasicAuth("admin", password) })
-}
-func adminSessionRequest(t *testing.T, method, target string, value any, csrf, password string) *http.Response {
-	t.Helper()
-	return sendJSON(t, method, target, value, adminCookieValue("admin-session"), header(csrfHeader, csrf), header(adminPasswordHeader, password))
 }
 
 // checkStatus reads and closes a response, returning its status and error

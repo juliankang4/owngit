@@ -21,7 +21,7 @@ const runnerLeaseHeader = "X-OwnGit-Runner-Lease"
 // handleConfiguredCheckOwnerAPI serves owner-only policy, job and runner-token
 // operations. Every mutation requires the current administrator password.
 func (app *App) handleConfiguredCheckOwnerAPI(writer http.ResponseWriter, request *http.Request, repositoryID, resource, remainder string) {
-	if !app.authorizeAdminAPI(writer, request, request.Method != http.MethodGet) {
+	if !app.authorizeAdminAPI(writer, request) {
 		return
 	}
 	if _, exists, err := app.Store.Repository(request.Context(), repositoryID); err != nil {

@@ -196,7 +196,7 @@ func TestImportCredentialSaveNeverClears(t *testing.T) {
 	}
 	api := server.URL + "/api/v1/repositories/project/import/credentials"
 	for _, body := range []map[string]any{{}, {"form": "none"}, {"form": "none", "ca_pem": ""}} {
-		response := importAPIRequest(t, http.MethodPut, api, body, "admin-password", "", "")
+		response := importAPIRequest(t, http.MethodPut, api, body, "admin-password")
 		if response.StatusCode != http.StatusUnprocessableEntity {
 			t.Fatalf("API empty store %v status=%d", body, response.StatusCode)
 		}
@@ -212,7 +212,7 @@ func TestImportCredentialSaveNeverClears(t *testing.T) {
 		t.Fatalf("Clear credentials kept the credential: exists=%v err=%v", exists, err)
 	}
 	store()
-	if response := importAPIRequest(t, http.MethodDelete, api, nil, "admin-password", "", ""); response.StatusCode != http.StatusOK {
+	if response := importAPIRequest(t, http.MethodDelete, api, nil, "admin-password"); response.StatusCode != http.StatusOK {
 		t.Fatalf("API clear status=%d", response.StatusCode)
 	}
 	if _, exists, err := fixture.store.LoadImportCredentials(context.Background(), "project"); err != nil || exists {
