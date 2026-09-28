@@ -177,24 +177,64 @@ func requireProtectedPath(path string, strictFinal bool) error {
 
 // requireStateParent refuses the absolute state directory path when another
 // account could change a folder on the way to it, the rule of
-// RequireProtectedParent. It runs before anything is created, so names that
-// do not exist yet are accepted: they are created inside the last existing
-// folder, which only this account or root can change. When root runs the
+// RequireProtectedParent. Before anything is created, names that do not
+// exist yet are accepted when the folder that receives them, the last
+// existing one, is one that no other account can write: a sticky folder that
+// every account may write, such as /tmp, keeps others from renaming what is
+// in it, but not from taking a name that does not exist yet. The existing
+// folders above cannot be renamed by others either, so nobody else can put
+// anything where the missing folders are created. When root runs the
 // command, a folder that another account owns belongs to that account, and
 // so would state inside it; state that root created there would lock that
 // account out. The refusal then says to run the command as that account.
 func requireStateParent(path string) error {
 	protected := protectedCheck(true)
-	_, _, err := WalkProtected(filepath.Dir(path), func(name string, info os.FileInfo) error {
+	resolved, missing, err := WalkProtected(filepath.Dir(path), func(name string, info os.FileInfo) error {
 		if stat, ok := info.Sys().(*syscall.Stat_t); ok && os.Geteuid() == 0 && stat.Uid != 0 {
 			return &OtherAccountError{Path: name, Account: accountName(stat.Uid)}
 		}
 		return protected(name, info)
 	})
+	if _, statErr := os.Lstat(path); err == nil && (missing != "" || statErr != nil) {
+		var info os.FileInfo
+		if info, err = os.Lstat(resolved); err == nil {
+			var changeable bool
+			if changeable, _, err = othersCanChange(resolved, info, true, false); err == nil && changeable {
+				err = fmt.Errorf("other accounts can create names in %s, where the missing folders would be created", resolved)
+			}
+		}
+	}
 	if other := new(OtherAccountError); err != nil && !errors.As(err, &other) {
 		return fmt.Errorf("state directory parent is not protected: %w; choose a parent that other accounts cannot change", err)
 	}
 	return err
+}
+
+// checkStateDirectory checks the state directory path after it was created:
+// the way to where it leads, once more, now that every folder exists, and
+// that the directory belongs to this account. It returns the resolved path.
+func checkStateDirectory(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve state directory identity: %w", err)
+	}
+	if err := requireStateParent(resolved); err != nil {
+		return "", err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("inspect state directory: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	switch {
+	case !ok:
+		return "", errors.New("state directory owner is unavailable")
+	case int(stat.Uid) == os.Geteuid():
+		return resolved, nil
+	case os.Geteuid() == 0:
+		return "", &OtherAccountError{Path: resolved, Account: accountName(stat.Uid)}
+	}
+	return "", errNotStateOwner
 }
 
 // accountName is the name of the account uid, or its number when it has no

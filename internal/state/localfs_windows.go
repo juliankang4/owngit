@@ -24,6 +24,10 @@ func RequireProtectedParent(string) error { return nil }
 // protect the state directory, as for RequireProtectedParent.
 func requireStateParent(string) error { return nil }
 
+// checkStateDirectory has nothing to check on Windows either; the state
+// directory's owner is checked when Open inspects it.
+func checkStateDirectory(path string) (string, error) { return path, nil }
+
 // OnlyRootCanChange is false on Windows, which has no root account.
 func OnlyRootCanChange(string) bool { return false }
 

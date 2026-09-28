@@ -339,7 +339,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// The offline lock is taken before the state is opened, so a migration
 	// cannot race another owner that is already serving the same directory.
 	// The directory is created first because the lock file lives inside it.
-	if err := state.CreateDirectory(*stateDir); err != nil {
+	if _, err := state.CreateDirectory(*stateDir); err != nil {
 		return err
 	}
 	unlock, err := state.AcquireLockBriefly(func() (func(), error) { return state.AcquireOfflineLock(*stateDir) })

@@ -529,7 +529,7 @@ func bindDirectory(dir string) (*sourceObject, error) {
 			return nil, closeAfter(handle, err)
 		}
 		if !owned {
-			return nil, closeAfter(handle, errors.New("state directory must be owned by this account; run the command as its owner"))
+			return nil, closeAfter(handle, errNotStateOwner)
 		}
 	}
 	fingerprint, err := protectionFingerprint(dir)
@@ -538,6 +538,8 @@ func bindDirectory(dir string) (*sourceObject, error) {
 	}
 	return &sourceObject{path: dir, info: info, fingerprint: fingerprint, handle: handle}, nil
 }
+
+var errNotStateOwner = errors.New("state directory must be owned by this account; run the command as its owner")
 
 // closeAfter closes a handle that will not be kept and joins its close error
 // with the failure that made it unnecessary.

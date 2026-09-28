@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -104,58 +103,47 @@ func (e *OtherAccountError) Error() string {
 	return fmt.Sprintf("%s belongs to the account %s, so OwnGit state there is that account's; run the command as %s", e.Path, e.Account, e.Account)
 }
 
-// CreateDirectory creates the state directory dir and its missing parents.
-// It first checks what exists, so a refused directory leaves nothing behind:
-// the nearest existing folder must be on a local filesystem, and on Unix no
-// other account may be able to change a folder on the way to dir (see
-// requireStateParent).
-func CreateDirectory(dir string) error {
+// CreateDirectory creates the state directory dir and its missing parents
+// and returns its resolved path. It first checks what exists, so a refused
+// directory leaves nothing behind: the nearest existing folder must be on a
+// local filesystem, and on Unix no other account may be able to change a
+// folder on the way to dir or take one of the missing names first (see
+// requireStateParent). Afterwards it checks the created directory again (see
+// checkStateDirectory), so a caller such as serve's lock only uses a
+// directory of this account.
+func CreateDirectory(dir string) (string, error) {
 	absolute, err := filepath.Abs(dir)
 	if err != nil {
-		return fmt.Errorf("resolve state directory: %w", err)
+		return "", fmt.Errorf("resolve state directory: %w", err)
 	}
 	ancestor := absolute
 	for {
 		if _, err := os.Stat(ancestor); err == nil {
 			if err := ensureLocalStateFilesystem(ancestor); err != nil {
-				return fmt.Errorf("validate state directory parent: %w", err)
+				return "", fmt.Errorf("validate state directory parent: %w", err)
 			}
 			break
 		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("inspect state directory parent: %w", err)
+			return "", fmt.Errorf("inspect state directory parent: %w", err)
 		}
 		parent := filepath.Dir(ancestor)
 		if parent == ancestor {
-			return errors.New("state directory has no accessible parent")
+			return "", errors.New("state directory has no accessible parent")
 		}
 		ancestor = parent
 	}
 	if err := requireStateParent(absolute); err != nil {
-		return err
+		return "", err
 	}
 	if err := os.MkdirAll(absolute, 0o700); err != nil {
-		return fmt.Errorf("create state directory: %w", err)
+		return "", fmt.Errorf("create state directory: %w", err)
 	}
-	return nil
+	return checkStateDirectory(absolute)
 }
 
 func Open(ctx context.Context, dir string) (result *Store, err error) {
-	absolute, err := filepath.Abs(dir)
+	absolute, err := CreateDirectory(dir)
 	if err != nil {
-		return nil, fmt.Errorf("resolve state directory: %w", err)
-	}
-	if err := CreateDirectory(absolute); err != nil {
-		return nil, err
-	}
-	if runtime.GOOS != "windows" {
-		absolute, err = filepath.EvalSymlinks(absolute)
-		if err != nil {
-			return nil, fmt.Errorf("resolve state directory identity: %w", err)
-		}
-	}
-	// A link to the state directory leads elsewhere, so the way to where it
-	// leads is checked the same way.
-	if err := requireStateParent(absolute); err != nil {
 		return nil, err
 	}
 	if _, err := os.Lstat(filepath.Join(absolute, IncompleteRestoreMarkerName)); err == nil {

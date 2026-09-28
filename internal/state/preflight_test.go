@@ -1107,3 +1107,27 @@ func TestDatabaseThatAppearsAfterAnEmptyInspectionIsInspectedFirst(t *testing.T)
 		t.Fatalf("the next Open found marker %q", marker)
 	}
 }
+
+// A sticky folder that every account may write, such as /tmp, keeps others
+// from renaming what is in it, but not from taking a name that does not exist
+// yet. The state directory is created there only below an existing folder
+// that no other account can write.
+func TestStateDirectoryIsNotCreatedWhereOthersCanTakeTheName(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sticky folders")
+	}
+	shared := filepath.Join(resolveTestPath(t, t.TempDir()), "shared")
+	noErr(t, os.Mkdir(shared, 0o755))
+	noErr(t, os.Chmod(shared, 0o777|os.ModeSticky))
+	for _, directory := range []string{filepath.Join(shared, "missing", "state"), filepath.Join(shared, "state")} {
+		openRefused(t, directory, "other accounts can create names in "+shared)
+		if entries, err := os.ReadDir(shared); err != nil || len(entries) != 0 {
+			t.Fatalf("the refused Open of %s created %v (%v)", directory, entries, err)
+		}
+	}
+	existing := filepath.Join(shared, "existing")
+	noErr(t, os.Mkdir(existing, 0o700))
+	store, err := Open(context.Background(), filepath.Join(existing, "state"))
+	noErr(t, err)
+	noErr(t, store.Close())
+}

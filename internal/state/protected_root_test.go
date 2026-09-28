@@ -52,3 +52,21 @@ func TestRootIsToldToRunAsTheFolderOwner(t *testing.T) {
 		t.Fatalf("the refused Open created a folder in the account's home: %v", err)
 	}
 }
+
+// When the state directory itself belongs to another account, root is told
+// to run the command as that account before anything uses the directory,
+// such as serve's lock file.
+func TestRootIsToldToRunAsTheStateDirectoryOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+	const nobody = 65534
+	directory := filepath.Join(resolveTestPath(t, t.TempDir()), "state")
+	noErr(t, os.Mkdir(directory, 0o700))
+	noErr(t, os.Chown(directory, nobody, nobody))
+	_, err := CreateDirectory(directory)
+	var other *OtherAccountError
+	if !errors.As(err, &other) || other.Path != directory || other.Account != accountName(nobody) {
+		t.Fatalf("CreateDirectory error=%v, want %s named as the account %s's", err, directory, accountName(nobody))
+	}
+}
