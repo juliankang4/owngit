@@ -52,6 +52,20 @@ const (
 	MsgSettingsReposTitle     MessageCode = "settings.repositories.title"
 	MsgSettingsRepoLink       MessageCode = "settings.repositories.link"
 	MsgSettingsReposNoneHelp  MessageCode = "settings.repositories.none"
+
+	// The dialog shown when leaving Settings with unsaved changes.
+	MsgLeaveTitle        MessageCode = "leave.title"
+	MsgLeaveLead         MessageCode = "leave.lead"
+	MsgLeaveSave         MessageCode = "leave.save"
+	MsgLeaveDiscard      MessageCode = "leave.discard"
+	MsgLeaveStay         MessageCode = "leave.stay"
+	MsgLeaveEntered      MessageCode = "leave.entered"
+	MsgLeaveEmpty        MessageCode = "leave.empty"
+	MsgLeavePasswordHelp MessageCode = "leave.password_help"
+	MsgLeaveApartTag     MessageCode = "leave.apart_tag"
+	MsgLeaveApart        MessageCode = "leave.apart"
+	MsgLeaveSaving       MessageCode = "leave.saving"
+	MsgLeavePartial      MessageCode = "leave.partial"
 )
 
 var settingsCatalog = map[MessageCode]message{
@@ -158,6 +172,31 @@ var settingsCatalog = map[MessageCode]message{
 	MsgSettingsReposNoneHelp: {
 		en: "No repositories yet. Each new repository gets its own settings page.",
 		ko: "아직 저장소가 없습니다. 저장소를 만들면 저장소마다 설정 페이지가 생깁니다.",
+	},
+
+	MsgLeaveTitle:   {en: "You have unsaved changes", ko: "저장하지 않은 변경 사항이 있습니다"},
+	MsgLeaveLead:    {en: "If you leave now, these changes are lost:", ko: "이대로 나가면 아래 변경 사항이 사라집니다."},
+	MsgLeaveSave:    {en: "Save and leave", ko: "저장하고 나가기"},
+	MsgLeaveDiscard: {en: "Discard and leave", ko: "저장하지 않고 나가기"},
+	MsgLeaveStay:    {en: "Stay", ko: "계속 편집"},
+	// A password is never shown, only that one was typed.
+	MsgLeaveEntered: {en: "entered", ko: "입력됨"},
+	MsgLeaveEmpty:   {en: "(empty)", ko: "(비어 있음)"},
+	MsgLeavePasswordHelp: {
+		en: "Needed only to save. Leaving without saving does not ask for it.",
+		ko: "저장할 때만 필요합니다. 저장하지 않고 나가면 묻지 않습니다.",
+	},
+	// Marks a group whose save sends a page, such as one that asks for a
+	// password, when more than one such group holds a change.
+	MsgLeaveApartTag: {en: "Save separately", ko: "따로 저장"},
+	MsgLeaveApart: {
+		en: "Groups marked Save separately reload the page when saved, so they cannot be saved on the way out. Choose Stay and save each one with its own Save button, or leave without saving.",
+		ko: "‘따로 저장’ 표시가 있는 항목은 저장할 때 페이지를 새로 불러오므로 나가면서 함께 저장할 수 없습니다. 계속 편집을 누르고 항목마다 저장 버튼으로 저장하거나 저장하지 않고 나가세요.",
+	},
+	MsgLeaveSaving: {en: "Saving…", ko: "저장하는 중…"},
+	MsgLeavePartial: {
+		en: "Not everything could be saved, so you are still on this page. Saved groups say so; the others keep your changes.",
+		ko: "모두 저장하지 못해 이 페이지에 그대로 있습니다. 저장한 항목에는 저장했다는 안내가 보이고 나머지 항목에는 입력한 내용이 남아 있습니다.",
 	},
 }
 

@@ -45,7 +45,9 @@
      browser's administrator confirmation is remembered or the check is off,
      a group shows no password field unless it always asks for one. A group
      that asks for the administrator password is an ordinary POST. Without the script every form is an ordinary POST, its
-     save bar is always shown, and Cancel reloads the tab. */}}
+     save bar is always shown, and Cancel reloads the tab. With the script,
+     leaving the page while a group holds a change asks first (leaveDialog
+     below). */}}
 <div class="setpanel" data-settings>
   {{if eq $tab "general"}}<p class="setpanel__lead">{{bi $lang "settings.lead.general"}}</p>{{template "setGeneral" .}}
   {{else if eq $tab "access"}}<p class="setpanel__lead">{{bi $lang "settings.lead.access"}}</p>{{template "setAccess" .}}
@@ -56,7 +58,53 @@
   {{/* What the script says when a save gets no usable answer. */}}
   <p class="notice notice--error" role="alert" tabindex="-1" data-settings-failed hidden>{{statusIcon "error"}}<span>{{bi $lang "settings.send_failed"}}</span></p>
   <p class="notice notice--error" role="alert" tabindex="-1" data-settings-unexpected hidden>{{statusIcon "error"}}<span>{{bi $lang "settings.unexpected_answer"}}</span></p>
+  {{/* What the script says when Save and leave saved only some groups. */}}
+  <p class="notice notice--warning" role="status" tabindex="-1" data-leave-partial hidden>{{statusIcon "warning"}}<span>{{bi $lang "leave.partial"}}</span></p>
 </div>
+{{template "leaveDialog" .}}
+{{end}}
+
+{{/* Leaving Settings while a group holds a change. The script opens this
+     dialog for a link, a form sent from elsewhere on the page and the
+     browser's Back, and lists each change from the page itself: a label, the
+     saved value and the new one, and for a password only that one was
+     entered. Without the script it is never shown, and its fields belong to
+     no form, so they are never sent.
+
+     Save and leave saves the groups the script can send, one by one, and
+     stops at the first that is not saved. A group whose form holds a
+     password field is always sent by the browser as a page, so at most one
+     such group can be saved on the way out, as the last step: the script
+     then attaches [data-leave-password] (when that group asks for the
+     administrator password) and [data-leave-to] to that group's form, and
+     the server continues to the page being left for once the change is
+     saved. Otherwise such groups are marked to be saved separately. */}}
+{{define "leaveDialog"}}{{$lang := .Lang}}
+<dialog class="leave" aria-labelledby="leave-h" aria-describedby="leave-d" data-leave>
+  <h2 id="leave-h">{{bi $lang "leave.title"}}</h2>
+  <p id="leave-d">{{bi $lang "leave.lead"}}</p>
+  <ul class="leave__list" data-leave-list></ul>
+  <p class="wn" data-leave-apart hidden>{{icon "info"}}<span>{{bi $lang "leave.apart"}}</span></p>
+  <div class="f leave__pw" data-leave-password-field hidden>
+    <label for="leave-pw">{{icon "lock"}}{{bi $lang "admin.field"}}</label>
+    <input id="leave-pw" name="admin_password" type="password" autocomplete="current-password" required aria-describedby="leave-pw-help" data-leave-password>
+    <p class="f__help" id="leave-pw-help">{{bi $lang "leave.password_help"}}</p>
+  </div>
+  <input type="hidden" name="leave_to" data-leave-to>
+  <p class="leave__status" role="status" data-leave-status></p>
+  <div class="leave__acts">
+    <button type="button" class="btn btn--primary" data-leave-save>{{bi $lang "leave.save"}}</button>
+    <button type="button" class="btn" data-leave-discard>{{bi $lang "leave.discard"}}</button>
+    <button type="button" class="btn" data-leave-stay>{{bi $lang "leave.stay"}}</button>
+  </div>
+  {{/* Words the script places in the list and the status line. */}}
+  <span data-leave-word="entered" hidden>{{bi $lang "leave.entered"}}</span>
+  <span data-leave-word="empty" hidden>{{bi $lang "leave.empty"}}</span>
+  <span data-leave-word="on" hidden>{{bi $lang "settings.on"}}</span>
+  <span data-leave-word="off" hidden>{{bi $lang "settings.off"}}</span>
+  <span class="leave__tag" data-leave-word="apart" hidden>{{bi $lang "leave.apart_tag"}}</span>
+  <span data-leave-word="saving" hidden>{{bi $lang "leave.saving"}}</span>
+</dialog>
 {{end}}
 
 {{/* ------------------------------------------------------------------ */}}

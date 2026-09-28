@@ -163,6 +163,51 @@ func TestSettingsGroupSaveSendsOnlyWhatItMay(t *testing.T) {
 	}
 }
 
+// Leaving Settings with unsaved changes makes no request of its own: it
+// saves through saveGroup, asking it to stay on the page, and otherwise
+// lets the browser send a group's form as a page. It never reads a
+// password field's value, and asks the browser's own question on leaving
+// only while a group holds a change.
+func TestLeavingSettingsSendsNothingItself(t *testing.T) {
+	block := section(t, scriptSource(t), "var leaveDialog = settingsPanel", "  if (settingsPanel) {\n    var editGroup")
+	for _, banned := range []string{"fetch(", "FormData", "URLSearchParams", "groupSave.send", "groupSave.read", "innerHTML", "Storage", "document.cookie", "console."} {
+		if strings.Contains(block, banned) {
+			t.Errorf("the leave block uses %q", banned)
+		}
+	}
+	if found := forbiddenSinksIn(block); len(found) > 0 {
+		t.Errorf("the leave block uses %q", found)
+	}
+	// One caller of saveGroup, which never lets it send the page.
+	if strings.Count(block, "saveGroup(") != 1 || !strings.Contains(block, "saveGroup(groupNamed(name), true)") {
+		t.Error("the leave block calls saveGroup other than to stay on the page")
+	}
+	// The only values it touches: the address being left for, clearing
+	// the dialog's password field, and the value of a choice.
+	for part, want := range map[string]int{".value": 4, "to.value = leave.target": 1, "to.value = ''": 1,
+		"querySelector('[data-leave-password]').value = ''": 1, "item.value === value": 1} {
+		if got := strings.Count(block, part); got != want {
+			t.Errorf("the leave block has %q %d times, want %d", part, got, want)
+		}
+	}
+	// A page is sent only by the browser's own form submission.
+	if strings.Count(block, "HTMLFormElement.prototype.submit.call(") != 2 || strings.Contains(block, ".requestSubmit(") {
+		t.Error("the leave block sends a form some other way")
+	}
+	// The browser's question is registered only while a group holds a
+	// change.
+	sync := section(t, block, "function syncLeave(", "function isGuard(")
+	if strings.Count(block, "addEventListener('beforeunload'") != 1 || !strings.Contains(sync, "if (dirty) {\n        window.addEventListener('beforeunload', askBeforeUnload);") ||
+		!strings.Contains(sync, "window.removeEventListener('beforeunload', askBeforeUnload);") {
+		t.Error("the browser's question on leaving is not tied to an unsaved change")
+	}
+	// History gets one entry of its own, added only while something is
+	// unsaved, and taken back again.
+	if strings.Count(block, "pushState(") != 1 || !strings.Contains(block, "window.history.back();") {
+		t.Error("the leave block adds history entries other than its one guard")
+	}
+}
+
 // No part of the script, the two blocks that make requests included, keeps
 // data in the browser beyond the display preferences or sends it by any way
 // other than their fetch calls.

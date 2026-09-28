@@ -36,7 +36,23 @@ import (
 //
 // Anything else, such as a sign-in page after the session ended, is not a
 // saved change.
+//
+// A page submission may also carry settingsLeaveField, the page the owner
+// was leaving for when the script asked to save first. Once the change is
+// saved, the redirect goes there instead of back to the tab; a refused
+// change still shows the tab, so the owner stays with the error.
 const settingsGroupHeader = "X-OwnGit-Group"
+
+const settingsLeaveField = "leave_to"
+
+// settingsLeaveTarget is the address a page submission asked to continue to
+// once saved: a path on this site, or "".
+func settingsLeaveTarget(request *http.Request) string {
+	if request.Header.Get(settingsGroupHeader) != "" {
+		return ""
+	}
+	return localNext(postValue(request, settingsLeaveField), "")
+}
 
 // isSettingsPath reports whether path is the address of a Settings tab.
 func isSettingsPath(path string) bool {
@@ -237,7 +253,11 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			logFailure(request, "administrator confirmation read", err)
 		}
 		if !authority.confirmed {
-			app.settingsSaved(writer, request, "/login?notice=access_password_saved&next="+url.QueryEscape(webui.SettingsTabURL(webui.SettingsAccess)))
+			next := settingsLeaveTarget(request)
+			if next == "" {
+				next = webui.SettingsTabURL(webui.SettingsAccess)
+			}
+			app.settingsAnswer(writer, request, "/login?notice=access_password_saved&next="+url.QueryEscape(next))
 			return
 		}
 	}
@@ -300,9 +320,20 @@ var settingsNoticeGroups = map[string]string{
 	"tailscale_off":          webui.GroupTailscale,
 }
 
-// settingsSaved ends a saved Settings change: a redirect to target, or for
-// the page's script the same target as JSON (see settingsGroupHeader).
+// settingsSaved ends a saved Settings change: a redirect to target, or to
+// the page the owner was leaving for (settingsLeaveTarget), or for the
+// page's script the same target as JSON (see settingsGroupHeader).
 func (app *App) settingsSaved(writer http.ResponseWriter, request *http.Request, target string) {
+	if leave := settingsLeaveTarget(request); leave != "" {
+		http.Redirect(writer, request, leave, http.StatusSeeOther)
+		return
+	}
+	app.settingsAnswer(writer, request, target)
+}
+
+// settingsAnswer answers a saved change with target, as a redirect or,
+// for the page's script, as JSON.
+func (app *App) settingsAnswer(writer http.ResponseWriter, request *http.Request, target string) {
 	if request.Header.Get(settingsGroupHeader) == "" {
 		app.noticeRedirect(writer, request, target, http.StatusSeeOther)
 		return

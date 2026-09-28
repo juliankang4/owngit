@@ -203,3 +203,60 @@ func TestSavingOneSettingsGroupLeavesTheOthers(t *testing.T) {
 		t.Fatalf("an update check save: status=%d listen=%q", result.status, settings.Listen)
 	}
 }
+
+// Save and leave sends a group's page with the address being left for. A
+// saved change then continues there; a refused change stays on the tab
+// with the error. The script's answer and any address off this site keep
+// the tab.
+func TestASavedGroupContinuesToThePageBeingLeftFor(t *testing.T) {
+	app := newConfiguredApp(t)
+	askEveryTime(t, app)
+	client, base, csrf, _ := networkSettingsClient(t, app)
+	update := func(group, password, check, leave string) browserHTTPResult {
+		return settingsGroupForm(t, client, base, "/settings", group, url.Values{
+			"csrf": {csrf}, "action": {webui.ActionSetUpdateCheck}, "admin_password": {password}, "update_check": {check}, "leave_to": {leave},
+		})
+	}
+	saved := func() bool {
+		settings, err := app.Store.Settings(context.Background())
+		noErr(t, err)
+		return settings.UpdateCheck
+	}
+	const tab = "/settings?notice=settings_saved#grp-update"
+	onOff := map[bool]string{true: "on", false: "off"}
+	before := saved()
+
+	result := update("", "wrong-password", onOff[!before], "/activity")
+	if result.status != http.StatusUnauthorized || !strings.Contains(settingsGroup(t, result.body, "update"), "data-group-refused") || saved() != before {
+		t.Fatalf("a refused save: status=%d saved=%v", result.status, saved())
+	}
+	result = update("", "admin-password", onOff[!before], "/activity?lang=ko#top")
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/activity?lang=ko#top" || saved() == before {
+		t.Fatalf("a saved change: status=%d location=%q saved=%v", result.status, result.header.Get("Location"), saved())
+	}
+	for _, leave := range []string{"https://example.test/", "//example.test/", "/\t/example.test", `/\example.test`, "activity", ""} {
+		want := !saved()
+		result = update("", "admin-password", onOff[want], leave)
+		if result.status != http.StatusSeeOther || result.header.Get("Location") != tab || saved() != want {
+			t.Fatalf("leaving for %q: status=%d location=%q", leave, result.status, result.header.Get("Location"))
+		}
+	}
+	result = update("update", "admin-password", onOff[!saved()], "/activity")
+	var answer struct {
+		Location string `json:"location"`
+	}
+	noErr(t, json.Unmarshal([]byte(result.body), &answer))
+	if result.status != http.StatusOK || answer.Location != tab {
+		t.Fatalf("the script's answer: status=%d location=%q", result.status, answer.Location)
+	}
+
+	// A new shared password signs this browser out, so sign-in comes first
+	// and then continues to the page being left for.
+	result = browserForm(t, client, base+"/settings/access", url.Values{
+		"csrf": {csrf}, "action": {webui.ActionSaveAccess}, "admin_password": {"admin-password"},
+		"access_mode": {"password"}, "access_password": {"first-shared-password"}, "leave_to": {"/activity"},
+	}, base)
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/login?notice=access_password_saved&next=%2Factivity" {
+		t.Fatalf("a new shared password: status=%d location=%q", result.status, result.header.Get("Location"))
+	}
+}

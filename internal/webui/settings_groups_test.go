@@ -131,3 +131,35 @@ func TestSettingsGroupsAskForThePasswordOnlyWhenAChangeNeedsIt(t *testing.T) {
 		}
 	}
 }
+
+// Every Settings tab carries the leave dialog, closed. Its fields belong to
+// no form, so without the script they are never sent; the script attaches
+// them to one group's form only for Save and leave.
+func TestTheLeaveDialogBelongsToNoForm(t *testing.T) {
+	r := newRenderer(t)
+	for _, name := range []string{"settings", "settings-access", "settings-network"} {
+		page := allPages(LangKO)[name].(SettingsPage)
+		out := render(t, r, page)
+		start := strings.Index(out, `<dialog class="leave"`)
+		if start < 0 {
+			t.Fatalf("%s: no leave dialog", name)
+		}
+		dialog := out[start : start+strings.Index(out[start:], "</dialog>")]
+		opening := dialog[:strings.Index(dialog, ">")]
+		if strings.Contains(opening, " open") {
+			t.Errorf("%s: the dialog starts open", name)
+		}
+		if strings.Contains(dialog, "<form") || strings.Contains(dialog, " form=") {
+			t.Errorf("%s: a field of the dialog belongs to a form", name)
+		}
+		if forms := strings.Count(out[:start], "<form") - strings.Count(out[:start], "</form>"); forms != 0 {
+			t.Errorf("%s: the dialog sits inside a form", name)
+		}
+		for _, want := range []string{`name="admin_password" type="password"`, `name="leave_to"`, "data-leave-save", "data-leave-discard", "data-leave-stay",
+			Text(LangKO, MsgLeaveSave), Text(LangKO, MsgLeaveDiscard), Text(LangKO, MsgLeaveStay), Text(LangEN, MsgLeaveStay)} {
+			if !strings.Contains(dialog, want) {
+				t.Errorf("%s: the dialog lacks %q", name, want)
+			}
+		}
+	}
+}
