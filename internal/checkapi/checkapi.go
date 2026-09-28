@@ -17,24 +17,38 @@ import (
 const MaximumUploadBytes = 2 << 20
 
 // ClipText returns value as valid UTF-8 of at most limit bytes and reports
-// whether text was cut. Invalid byte sequences become U+FFFD before the cut,
-// and the cut never splits a character, so a JSON round trip returns exactly
-// the same bytes. A raw byte cut does not have that property: encoding/json
-// replaces each invalid byte with a three-byte U+FFFD, which can push a value
-// past the bound that the sender just enforced.
+// whether text was cut. Each run of invalid bytes becomes one U+FFFD, as with
+// strings.ToValidUTF8, and the cut never splits a character, so a JSON round
+// trip returns exactly the same bytes. A raw byte cut does not have that
+// property: encoding/json replaces each invalid byte with a three-byte U+FFFD,
+// which can push a value past the bound that the sender just enforced.
+//
+// It reads and converts value only up to the cut, so a long value costs what
+// is kept, not what is dropped. A run of invalid bytes is kept whole once its
+// one replacement fits, however long the run is.
 func ClipText(value string, limit int) (string, bool) {
-	value = strings.ToValidUTF8(value, "\uFFFD")
-	if limit < 0 {
-		limit = 0
+	const replacement = "\uFFFD"
+	size, end, invalid := 0, 0, false
+	for end < len(value) {
+		character, width := utf8.DecodeRuneInString(value[end:])
+		bytes := width
+		if character == utf8.RuneError && width == 1 {
+			// Only the first invalid byte of a run adds a replacement.
+			bytes = len(replacement)
+			if invalid {
+				bytes = 0
+			}
+			invalid = true
+		} else {
+			invalid = false
+		}
+		if size+bytes > limit {
+			break
+		}
+		size += bytes
+		end += width
 	}
-	if len(value) <= limit {
-		return value, false
-	}
-	cut := limit
-	for cut > 0 && !utf8.RuneStart(value[cut]) {
-		cut--
-	}
-	return value[:cut], true
+	return strings.ToValidUTF8(value[:end], replacement), end < len(value)
 }
 
 // LogBuffer joins log parts into valid UTF-8 of at most Limit bytes. Every
