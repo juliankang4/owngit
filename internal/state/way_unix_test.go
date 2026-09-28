@@ -132,10 +132,11 @@ func TestOpenDirectoryRefusesAWayThroughAShare(t *testing.T) {
 }
 
 // An account other than root may keep its log in a folder on a share, and
-// pass through one on the way, but the state must be on a local disk: the
-// share's server could read and change it. The share is marked by replacing
-// the filesystem check; the local folder inside it stands for a local disk
-// mounted there.
+// pass through one on the way, but the state and the way to it must be on
+// a local disk: the share's server could read and change the state, or
+// rename a folder on the way and put another state there. The share is
+// marked by replacing the filesystem check; the local folder inside it
+// stands for a local disk mounted there.
 func TestLogMayBeOnAShareButNotTheState(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root uses nothing on a share")
@@ -152,13 +153,10 @@ func TestLogMayBeOnAShareButNotTheState(t *testing.T) {
 		}
 		dir.Close()
 	}
-	held, err := CreateDirectory(filepath.Join(local, "state"))
-	if err != nil {
-		t.Fatalf("the state behind a folder on a share: %v", err)
-	}
-	held.Close()
-	refused := []error{RequireStateParent(filepath.Join(share, "restored"))}
+	refused := []error{RequireStateParent(filepath.Join(share, "restored")), RequireStateParent(filepath.Join(local, "restored"))}
 	for _, open := range []func() (*os.File, error){
+		func() (*os.File, error) { return CreateDirectory(filepath.Join(local, "state")) },
+		func() (*os.File, error) { return OpenStateDirectory(filepath.Join(local, "state")) },
 		func() (*os.File, error) { return CreateDirectory(filepath.Join(share, "state")) },
 		func() (*os.File, error) { return CreateDirectory(filepath.Join(share, "state", "nested")) },
 		func() (*os.File, error) { return OpenStateDirectory(share) },

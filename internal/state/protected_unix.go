@@ -391,9 +391,10 @@ func openStateDirectory(dir string, create bool) (*os.File, error) {
 	return openDirectory(dir, create, true)
 }
 
-// openDirectory is OpenDirectory; with local set, the directory, and the
-// folder that receives the missing ones, must be on a filesystem that this
-// computer enforces as well.
+// openDirectory is OpenDirectory; with local set, every folder on the way
+// must be on a filesystem that this computer enforces as well, for every
+// account: a share's server could otherwise rename a folder on the way
+// after the check and put another state at the path.
 func openDirectory(path string, create, local bool) (*os.File, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -406,10 +407,10 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 		switch {
 		case !entry.enforced && os.Geteuid() == 0:
 			return fmt.Errorf("%s is %s; OwnGit run as root uses nothing there, choose a folder on a local disk", name, notKnownLocal)
+		case !entry.enforced && local:
+			return notLocalState(name)
 		case !entry.enforced && info.Mode()&os.ModeSymlink != 0:
 			return fmt.Errorf("%s is a link %s, whose server decides where it leads, so OwnGit does not follow it; use the real path that the link leads to", name, notKnownLocal)
-		case !entry.enforced && last && local:
-			return notLocalState(name)
 		case !ok:
 			return fmt.Errorf("the owner of %s is unavailable", name)
 		case last && !info.IsDir():
@@ -428,9 +429,6 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 	var mayCreate func(wayEntry) error
 	if create {
 		mayCreate = func(entry wayEntry) error {
-			if local && !entry.enforced {
-				return notLocalState(entry.path)
-			}
 			return notProtected(absolute, requireNoOtherWriter(entry.path, entry.info))
 		}
 	}
@@ -454,10 +452,10 @@ func notLocalState(name string) error {
 	return fmt.Errorf("%s is %s; %s", name, notKnownLocal, stateOnLocalDisk)
 }
 
-// holdWay has nothing to hold on Unix: OpenDirectory already requires that
-// no other account can change a folder on the way to the state, so the
-// path that SQLite opens names the held directory while this account does
-// not change it.
+// holdWay has nothing to hold on Unix: every folder on the way to the state
+// is on a local filesystem (openStateDirectory) and one that no other
+// account can change (OpenDirectory), so the path that SQLite opens names
+// the held directory while this account does not change it.
 func holdWay(*os.File) (func(), error) { return func() {}, nil }
 
 // requireNoOtherWriter refuses a folder that another account could create
