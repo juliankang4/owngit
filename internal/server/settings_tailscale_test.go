@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -548,4 +549,41 @@ func TestABaseURLOptionIsNamedInsteadOfTheHTTPSCloneAddress(t *testing.T) {
 	if !strings.Contains(page, note) || strings.Contains(page, hint) {
 		t.Fatal("the page claims the HTTPS clone address, or does not name the option")
 	}
+}
+
+// A request never waits for Tailscale beyond its own deadline. When
+// Tailscale answers too slowly, a refused turning on is still answered
+// within the page limit, and the Tailscale block says that Tailscale did not
+// answer in time instead of waiting for the reading.
+func TestSharingPageDoesNotWaitForTailscaleBeyondItsDeadline(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	app.HTTPTimeout = 8 * time.Second
+	client, base, csrf, _ := networkSettingsClient(t, app)
+	// Turning on reads the status once and fails; the page's reading then
+	// needs the status and the Serve configuration, beyond the deadline.
+	fake.Update(func(s *tailscaletest.State) { s.StatusError, s.ReadDelay = "synthetic unexplained failure", 3000 })
+	values := tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false)
+	request, err := http.NewRequest(http.MethodPost, base+"/settings", strings.NewReader(values.Encode()))
+	noErr(t, err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", base)
+	started := time.Now()
+	response, err := client.Do(request)
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("no answer after %v: %v", elapsed, err)
+	}
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil {
+		t.Fatalf("the answer broke off after %v: %v", time.Since(started), err)
+	}
+	if response.StatusCode != http.StatusServiceUnavailable || elapsed >= app.HTTPTimeout ||
+		!strings.Contains(string(body), enText(webui.TailscaleProblemCode(string(tailscale.KindTimeout)))) {
+		t.Fatalf("status=%d after %v, body=%s", response.StatusCode, elapsed, body)
+	}
+	// The reading goes on in the background; wait for it before the fake
+	// is removed.
+	_, err = app.Tailscale.Report(context.Background())
+	noErr(t, err)
 }

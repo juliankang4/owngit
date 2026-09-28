@@ -19,7 +19,9 @@ import (
 // by it.
 
 // tailscaleBlock reads the state of sharing for the page. It never fails the
-// page: a state that cannot be read is shown as a Tailscale problem.
+// page: a state that cannot be read is shown as a Tailscale problem, and a
+// reading that did not finish before the page's deadline as Tailscale not
+// answering in time (Tailscale.read).
 //
 // Only an administrator sees what Tailscale reports beyond OwnGit's own
 // endpoint: what else is on the port, addresses under earlier names and what
@@ -30,10 +32,15 @@ import (
 // "": the block does not repeat the same message.
 func (app *App) tailscaleBlock(ctx context.Context, admin bool, refused string) webui.TailscaleInfo {
 	report, err := app.Tailscale.Report(ctx)
-	if err != nil {
-		return webui.TailscaleInfo{Problem: webui.MsgTSProblemFailed}
+	var info webui.TailscaleInfo
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		info.Problem = webui.TailscaleProblemCode(string(tailscale.KindTimeout))
+	case err != nil:
+		info.Problem = webui.MsgTSProblemFailed
+	default:
+		info = tailscaleInfo(report)
 	}
-	info := tailscaleInfo(report)
 	if refused != "" && info.Problem == webui.TailscaleProblemCode(refused) {
 		info.Problem, info.ProblemDetail = "", ""
 	}

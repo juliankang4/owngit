@@ -26,13 +26,21 @@ type tailscaleReading struct {
 	configErr  error
 }
 
+// readingInFlight is a reading that runs in the background. done is closed
+// when it finished, and reading is then what it read.
+type readingInFlight struct {
+	done       chan struct{}
+	generation uint64
+	reading    tailscaleReading
+}
+
 // readingCache holds the latest reading and the one in flight.
 type readingCache struct {
 	mu      sync.Mutex
 	reading tailscaleReading
 	at      time.Time
-	// pending is closed when the reading in flight finishes.
-	pending chan struct{}
+	// pending is the reading in flight, or nil.
+	pending *readingInFlight
 	// generation changes when forget drops the reading, so a reading that
 	// was in flight across a change is not kept.
 	generation uint64
@@ -50,48 +58,63 @@ type readingCache struct {
 // pages use the latest addresses and never wait (addresses).
 const tailnetLabelWait = time.Second
 
-// read returns a reading no older than tailscaleReadingTTL, sharing the one
-// in flight. The shared reading does not stop when ctx does, since other
-// reports wait for it; each command keeps its own time limit.
+// read returns a reading no older than tailscaleReadingTTL. A request never
+// waits for Tailscale longer than its own deadline: the reading runs in the
+// background, shared with every report that arrives meanwhile, and read
+// returns ctx's error when ctx ends first. The reading then still finishes
+// within each command's own time limit and serves the next report.
 func (sharing *Tailscale) read(ctx context.Context) (tailscaleReading, error) {
 	cache := &sharing.readings
 	cache.mu.Lock()
-	for {
-		if !cache.at.IsZero() && time.Since(cache.at) < tailscaleReadingTTL {
-			reading := cache.reading
-			cache.mu.Unlock()
-			return reading, nil
-		}
-		if cache.pending == nil {
-			break
-		}
-		wait := cache.pending
+	if !cache.at.IsZero() && time.Since(cache.at) < tailscaleReadingTTL {
+		reading := cache.reading
 		cache.mu.Unlock()
-		select {
-		case <-wait:
-		case <-ctx.Done():
-			return tailscaleReading{}, ctx.Err()
-		}
-		cache.mu.Lock()
+		return reading, nil
 	}
-	done, generation := make(chan struct{}), cache.generation
-	cache.pending = done
+	// A reading that started before a change (forget) may show Tailscale as
+	// it was, so it is not joined; the new one runs after it, so the
+	// commands of one reading still run one at a time.
+	flight := cache.pending
+	if flight == nil || flight.generation != cache.generation {
+		var earlier <-chan struct{}
+		if flight != nil {
+			earlier = flight.done
+		}
+		flight = &readingInFlight{done: make(chan struct{}), generation: cache.generation}
+		cache.pending = flight
+		go sharing.finish(flight, earlier)
+	}
 	cache.mu.Unlock()
+	select {
+	case <-flight.done:
+		return flight.reading, nil
+	case <-ctx.Done():
+		return tailscaleReading{}, ctx.Err()
+	}
+}
 
-	reading := sharing.readNow(context.WithoutCancel(ctx))
-
+// finish runs the reading in flight, after the earlier one when it is not
+// nil, and keeps it unless a change dropped the readings meanwhile.
+func (sharing *Tailscale) finish(flight *readingInFlight, earlier <-chan struct{}) {
+	if earlier != nil {
+		<-earlier
+	}
+	reading := sharing.readNow(context.Background())
+	cache := &sharing.readings
 	cache.mu.Lock()
-	if cache.generation == generation {
+	defer cache.mu.Unlock()
+	if cache.generation == flight.generation {
 		cache.reading, cache.at = reading, time.Now()
 	}
 	cache.addresses, cache.known = nil, true
 	if reading.commandErr == nil && reading.statusErr == nil {
 		cache.addresses = reading.status.Addresses
 	}
-	cache.pending = nil
-	close(done)
-	cache.mu.Unlock()
-	return reading, nil
+	if cache.pending == flight {
+		cache.pending = nil
+	}
+	flight.reading = reading
+	close(flight.done)
 }
 
 // addresses returns this computer's Tailscale addresses for the connection

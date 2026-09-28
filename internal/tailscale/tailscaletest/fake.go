@@ -62,6 +62,12 @@ type State struct {
 
 	// Calls are the argument lists the fake was run with, in order.
 	Calls [][]string `json:"calls,omitempty"`
+	// Running counts the commands in progress, delays included, and
+	// MaxRunning the most that were in progress at once, so a test can tell
+	// whether commands overlapped. A command killed during its delay stays
+	// counted.
+	Running    int `json:"running,omitempty"`
+	MaxRunning int `json:"max_running,omitempty"`
 }
 
 // Status is the subset of "tailscale status --json" the fake prints.
@@ -125,6 +131,12 @@ func New(t *testing.T, state State) *Fake {
 // Update changes the fake's state.
 func (fake *Fake) Update(change func(*State)) {
 	fake.t.Helper()
+	// The lock keeps a command that runs meanwhile from losing the change.
+	unlock, err := lockFile(fake.file + ".lock")
+	if err != nil {
+		fake.t.Fatal(err)
+	}
+	defer unlock()
 	state := fake.State()
 	change(&state)
 	fake.save(state)
@@ -204,16 +216,33 @@ func RunIfFake() {
 // run handles one fake command. Calls from concurrent processes are
 // serialized with a lock file next to the state.
 func run(file string, arguments []string) int {
-	if state, err := load(file); err == nil {
-		write := len(arguments) > 1 && arguments[0] == "serve" && arguments[1] != "status"
-		read := slices.Contains([]string{"status --json", "serve status --json"}, strings.Join(arguments, " "))
-		switch {
-		case write && state.WriteDelay > 0:
-			time.Sleep(time.Duration(state.WriteDelay) * time.Millisecond)
-		case read && state.ReadDelay > 0:
-			time.Sleep(time.Duration(state.ReadDelay) * time.Millisecond)
-		}
+	var started State
+	if code := locked(file, func(state *State) int {
+		state.Running++
+		state.MaxRunning = max(state.MaxRunning, state.Running)
+		started = *state
+		return 0
+	}); code != 0 {
+		return code
 	}
+	write := len(arguments) > 1 && arguments[0] == "serve" && arguments[1] != "status"
+	read := slices.Contains([]string{"status --json", "serve status --json"}, strings.Join(arguments, " "))
+	switch {
+	case write && started.WriteDelay > 0:
+		time.Sleep(time.Duration(started.WriteDelay) * time.Millisecond)
+	case read && started.ReadDelay > 0:
+		time.Sleep(time.Duration(started.ReadDelay) * time.Millisecond)
+	}
+	return locked(file, func(state *State) int {
+		state.Running--
+		state.Calls = append(state.Calls, arguments)
+		return handle(state, arguments)
+	})
+}
+
+// locked runs change on the state with the lock held and saves it. It
+// returns change's exit code, or 3 when the state cannot be read or saved.
+func locked(file string, change func(*State) int) int {
 	unlock, err := lockFile(file + ".lock")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -225,8 +254,7 @@ func run(file string, arguments []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 3
 	}
-	state.Calls = append(state.Calls, arguments)
-	code := handle(&state, arguments)
+	code := change(&state)
 	if err := store(file, state); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 3
