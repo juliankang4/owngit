@@ -93,8 +93,12 @@ func (app *App) createTask(writer http.ResponseWriter, request *http.Request, re
 		return
 	}
 	task, err := app.Store.CreateTask(request.Context(), repositoryID, input.Title, app.now())
-	if err != nil {
+	if errors.Is(err, state.ErrInvalidTask) {
 		writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_task", "The task could not be created.", nil)
+		return
+	}
+	if err != nil {
+		writeAPIError(writer, unavailable(request, "task creation", err), "state_unavailable", "The task could not be created.", nil)
 		return
 	}
 	writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task)})

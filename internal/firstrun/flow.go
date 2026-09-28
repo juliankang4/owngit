@@ -529,9 +529,12 @@ func (f *flow) save() (bool, error) {
 			f.screen.notice("err", f.text(notice.Code))
 		}
 		return true, nil
-	case errors.Is(err, server.ErrSetupNotSaved):
+	case errors.Is(err, server.ErrSetupCompletedElsewhere):
 		return false, f.finishedElsewhere()
 	case errors.Is(err, server.ErrSetupUnavailable):
+		// Nothing was saved, so the answers can be saved again. The log names
+		// the cause, as the browser path does.
+		log.Printf("terminal setup: setup completion could not be completed: %s", logtext.Cause(err))
 		f.screen.notice("err", f.text(webui.MsgSetupFailed))
 		return true, nil
 	case errors.Is(err, server.ErrSetupCleanup):

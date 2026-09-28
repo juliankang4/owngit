@@ -35,7 +35,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 	answerUnavailable := func(step string, err error) {
 		page.Unavailable = true
 		page.UnavailableReason = webui.MsgErrUnavailable
-		app.render(writer, unavailable(request, step, err), page)
+		app.render(writer, request, unavailable(request, step, err), page)
 	}
 	tasks, err := app.Store.Tasks(request.Context(), stored.ID)
 	if err != nil {
@@ -61,7 +61,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 				detail.Attempts = append(detail.Attempts, app.browserAttemptRecord(attempt))
 			}
 			page.Detail = detail
-			app.render(writer, http.StatusOK, page)
+			app.render(writer, request, http.StatusOK, page)
 			return
 		}
 		page.NotFound = true
@@ -95,10 +95,10 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 		page.Tasks = append(page.Tasks, summaryView)
 	}
 	if page.NotFound {
-		app.render(writer, http.StatusNotFound, page)
+		app.render(writer, request, http.StatusNotFound, page)
 		return
 	}
-	app.render(writer, http.StatusOK, page)
+	app.render(writer, request, http.StatusOK, page)
 }
 
 func browserCheckConfiguration(configuration state.CheckConfiguration, configured bool) webui.CheckConfigurationView {

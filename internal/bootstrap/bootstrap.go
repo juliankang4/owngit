@@ -127,10 +127,7 @@ func (issuer *Issuer) issue(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 
-	token, err := auth.RandomToken(32)
-	if err != nil {
-		return "", "", err
-	}
+	token := auth.RandomToken(32)
 	now := time.Now()
 	if issuer.Now != nil {
 		now = issuer.Now()

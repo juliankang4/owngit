@@ -286,6 +286,9 @@ type CheckCompletion struct {
 }
 
 var (
+	// ErrInvalidTask reports a task the store refuses, such as one with an
+	// overlong title.
+	ErrInvalidTask = errors.New("invalid task")
 	// ErrTaskNotFound reports an attempt for a task that does not exist.
 	ErrTaskNotFound = errors.New("task does not exist")
 	// ErrAttemptNotFound reports a completion for an unregistered attempt, or
@@ -317,14 +320,14 @@ type querier interface {
 
 func (s *Store) CreateTask(ctx context.Context, repositoryID, title string, now time.Time) (Task, error) {
 	if repositoryID == "" || now.IsZero() {
-		return Task{}, errors.New("invalid task")
+		return Task{}, ErrInvalidTask
 	}
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "Check task"
 	}
 	if len(title) > 200 || !validText(title, 200) {
-		return Task{}, errors.New("invalid task title")
+		return Task{}, fmt.Errorf("%w: invalid title", ErrInvalidTask)
 	}
 	id, err := RandomID()
 	if err != nil {

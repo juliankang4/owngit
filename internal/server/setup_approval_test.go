@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -572,9 +573,12 @@ func (b *setupBrowser) follow(status int, location, body string) (string, string
 // QA-053: after first setup, the "Setup finished" notice is shown once on
 // the dashboard, also when shared access first asks for the password, and
 // also after setup in the terminal. It comes from the setup itself through
-// the notice cookie, never from an address alone.
+// the notice cookie, never from an address alone. When the used setup file
+// could not be removed, the notice says so beside it, once, and web setup
+// logs why.
 func TestSetupFinishedNoticeIsShownOnceAfterSetup(t *testing.T) {
 	finished := webui.Text(webui.LangEN, webui.MsgSetupCompleted)
+	remains := webui.Text(webui.LangEN, webui.MsgSetupFileRemains)
 	for _, c := range []struct {
 		name     string
 		terminal bool
@@ -585,51 +589,74 @@ func TestSetupFinishedNoticeIsShownOnceAfterSetup(t *testing.T) {
 		{"terminal, shared password", true, "password"},
 		{"terminal, open", true, "open"},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			app, store, root := newTestApp(t)
-			server := serve(t, app.Handler())
-			browser := newSetupBrowser(t, server)
-			answers := url.Values{
-				"storage_path": {root}, "access_mode": {c.mode}, "access_password": {"shared-password-1"},
-				"admin_password": {"admin-password-1"}, "insecure_ack": {"1"},
+		for _, fileRemains := range []bool{false, true} {
+			name := c.name
+			if fileRemains {
+				name += ", setup file remains"
 			}
-			var path, page string
-			if c.terminal {
-				if notices, err := app.CompleteSetup(context.Background(), SetupAnswers{
-					StoragePath: root, AccessMode: c.mode, AccessPassword: "shared-password-1", AdminPassword: "admin-password-1",
-				}, false); len(notices) != 0 || err != nil {
-					t.Fatalf("notices=%v err=%v", notices, err)
+			t.Run(name, func(t *testing.T) {
+				app, store, root := newTestApp(t)
+				server := serve(t, app.Handler())
+				browser := newSetupBrowser(t, server)
+				wantErr := error(nil)
+				if fileRemains {
+					// A nonempty directory at the owner file path makes its
+					// removal fail.
+					noErr(t, os.MkdirAll(filepath.Join(store.Dir(), "owner-setup.html", "keep"), 0o700))
+					wantErr = ErrSetupCleanup
 				}
-				path, page = browser.follow(browser.get("/"))
-			} else {
-				noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
-				browser.get("/setup")
-				browser.post("/setup/redeem", url.Values{"csrf": {browser.cookie(preauthCookie)}, "token": {"synthetic-owner-token"}})
-				session, ok, err := store.Session(context.Background(), browser.cookie(setupCookie), "setup", time.Now())
-				if err != nil || !ok {
-					t.Fatalf("setup session ok=%v err=%v", ok, err)
+				serverLog := captureServerLog(t)
+				answers := url.Values{
+					"storage_path": {root}, "access_mode": {c.mode}, "access_password": {"shared-password-1"},
+					"admin_password": {"admin-password-1"}, "insecure_ack": {"1"},
 				}
-				answers.Set("csrf", session.CSRF)
-				path, page = browser.follow(browser.post("/setup", answers))
-			}
-			if c.mode == "password" {
-				if !strings.HasPrefix(path, "/login") || strings.Contains(page, finished) {
-					t.Fatalf("expected the sign-in page without the notice at %s", path)
+				var path, page string
+				if c.terminal {
+					if notices, err := app.CompleteSetup(context.Background(), SetupAnswers{
+						StoragePath: root, AccessMode: c.mode, AccessPassword: "shared-password-1", AdminPassword: "admin-password-1",
+					}, false); len(notices) != 0 || !errors.Is(err, wantErr) {
+						t.Fatalf("notices=%v err=%v", notices, err)
+					}
+					path, page = browser.follow(browser.get("/"))
+				} else {
+					noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
+					browser.get("/setup")
+					browser.post("/setup/redeem", url.Values{"csrf": {browser.cookie(preauthCookie)}, "token": {"synthetic-owner-token"}})
+					session, ok, err := store.Session(context.Background(), browser.cookie(setupCookie), "setup", time.Now())
+					if err != nil || !ok {
+						t.Fatalf("setup session ok=%v err=%v", ok, err)
+					}
+					answers.Set("csrf", session.CSRF)
+					path, page = browser.follow(browser.post("/setup", answers))
 				}
-				path, page = browser.follow(browser.post("/login", url.Values{
-					"csrf": {browser.cookie(preauthCookie)}, "password": {"shared-password-1"}, "next": {"/"},
-				}))
-			}
-			if shown := strings.Count(page, ">"+finished+"<"); shown != 1 {
-				t.Fatalf("the notice is shown %d times at %s", shown, path)
-			}
-			if _, page := browser.follow(browser.get(path)); strings.Contains(page, finished) {
-				t.Fatal("the notice is shown again on reload")
-			}
-			if _, page := browser.follow(browser.get("/")); strings.Contains(page, finished) {
-				t.Fatal("the notice is shown again on the dashboard")
-			}
-		})
+				if c.mode == "password" {
+					if !strings.HasPrefix(path, "/login") || strings.Contains(page, finished) || strings.Contains(page, remains) {
+						t.Fatalf("expected the sign-in page without the notice at %s", path)
+					}
+					path, page = browser.follow(browser.post("/login", url.Values{
+						"csrf": {browser.cookie(preauthCookie)}, "password": {"shared-password-1"}, "next": {"/"},
+					}))
+				}
+				want := 0
+				if fileRemains {
+					want = 1
+				}
+				if shown, warned := strings.Count(page, ">"+finished+"<"), strings.Count(page, ">"+remains+"<"); shown != 1 || warned != want {
+					t.Fatalf("at %s the notice is shown %d times and the warning %d times, want 1 and %d", path, shown, warned, want)
+				}
+				for _, again := range []string{path, "/"} {
+					if _, page := browser.follow(browser.get(again)); strings.Contains(page, finished) || strings.Contains(page, remains) {
+						t.Fatalf("the notice is shown again at %s", again)
+					}
+				}
+				// The terminal logs its own line (firstrun); web setup logs here.
+				var steps []string
+				if fileRemains && !c.terminal {
+					steps = []string{"setup file removal"}
+				}
+				checkLoggedSteps(t, name, loggedFailures(serverLog, 0), steps...)
+			})
+		}
 	}
 }
 

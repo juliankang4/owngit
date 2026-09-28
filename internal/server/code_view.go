@@ -87,7 +87,7 @@ func (app *App) folderReadme(request *http.Request, repositoryID, ref, dir strin
 	// The listing already names the README's object, so it is read directly.
 	blob, err := app.Repositories.BlobAt(request.Context(), repositoryID, *found, markdown.MaxSource)
 	if err != nil {
-		logUnavailable(request, "README read", err)
+		logFailure(request, "README read", err)
 		view.Note = webui.MsgReadmeUnreadable
 		return view
 	}

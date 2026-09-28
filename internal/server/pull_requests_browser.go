@@ -21,14 +21,18 @@ func (app *App) handlePullRequestsGet(writer http.ResponseWriter, request *http.
 	views, err := app.PullRequests.List(request.Context(), stored.ID)
 	if err != nil {
 		page.Unavailable = true
-		page.UnavailableReason = webui.MsgErrUnavailable
-		status = browserProblemStatus(request, "pull request list read", err)
+		switch status = apiStatus(request, "pull request list read", err); status {
+		case http.StatusRequestEntityTooLarge:
+			page.UnavailableReason = webui.MsgPRListTooLarge
+		default:
+			page.UnavailableReason = failureText(status)
+		}
 	} else {
 		for _, view := range views {
 			page.Items = append(page.Items, app.pullRequestRow(stored.ID, view))
 		}
 	}
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 func (app *App) pullRequestsPage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) webui.PullRequestsPage {
@@ -92,7 +96,7 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 	}
 	if sourceBranch == "" && targetBranch == "" {
 		page.Source.Branch, page.Target.Branch = defaultPullRequestBranches(summary)
-		app.render(writer, status, page)
+		app.render(writer, request, status, page)
 		return
 	}
 
@@ -132,7 +136,7 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 			page.FilesTruncated = changes.FilesIncomplete
 		}
 	}
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
@@ -239,7 +243,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 				app.renderError(writer, request, http.StatusNotFound, webui.MsgPRNotFound, "")
 				return
 			}
-			app.renderError(writer, request, browserProblemStatus(request, "pull request read", err), webui.MsgPRFailed, "")
+			app.renderError(writer, request, apiStatus(request, "pull request read", err), webui.MsgPRFailed, "")
 			return
 		}
 	}
@@ -323,7 +327,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 			page.FilesTruncated = changes.FilesIncomplete
 		}
 	}
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 // pullRequestNotices shows the result of an action this page redirected from,
@@ -523,16 +527,7 @@ func browserPullRequestProblem(request *http.Request, step string, err error, ac
 	if action == "merge" && field == "" && (problem.Code == "stale_revision" || problem.Code == "invalid_revision") {
 		field = "merge"
 	}
-	return webui.Error(field, code), browserProblemStatus(request, step, err)
-}
-
-// browserProblemStatus is apiStatus for a page, which also answers a
-// problem OwnGit did not classify as unavailable.
-func browserProblemStatus(request *http.Request, step string, err error) int {
-	if status := apiStatus(request, step, err); status != http.StatusInternalServerError {
-		return status
-	}
-	return unavailable(request, step, err)
+	return webui.Error(field, code), apiStatus(request, step, err)
 }
 
 func observedBranch(summary repository.Summary, name string) webui.RevisionState {

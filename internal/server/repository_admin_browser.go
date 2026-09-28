@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -13,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"owngit/internal/logtext"
 	"owngit/internal/repository"
 	"owngit/internal/requestctx"
 	"owngit/internal/state"
@@ -124,9 +122,8 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 			app.renderError(writer, request, http.StatusNotFound, webui.MsgRepoNotFound, stored.ID)
 		default:
 			// The cause can name host paths, so it goes to the server log.
-			log.Printf("default branch of repository %s was not changed: %s", stored.ID, logtext.Cause(err))
 			chrome.Notices = append(chrome.Notices, webui.Error("", webui.MsgRepoDefaultBranchFailed))
-			app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, http.StatusInternalServerError)
+			app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, unavailable(request, "default branch change", err))
 		}
 		return
 	}
@@ -170,7 +167,7 @@ func (app *App) renderRepositorySettings(writer http.ResponseWriter, request *ht
 			page.Selected = selected
 		}
 	}
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 // ---------------------------------------------------------------------------
@@ -227,12 +224,9 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		// cancelled context would leave the file step for the next start.
 		return app.Repositories.Delete(context.WithoutCancel(request.Context()), stored.ID, repository.DeleteMode(mode))
 	}()
-	if err != nil && !errors.Is(err, repository.ErrRepositoryBusy) {
-		// The cause can name storage paths and the deletion token, so it goes
-		// to the server log, which the pages point the administrator to, and
-		// never into a page.
-		log.Printf("deletion of repository %s: %s", stored.ID, logtext.Cause(err))
-	}
+	// The cause of a failed or incomplete deletion can name storage paths and
+	// the deletion token, so it goes to the server log, which the pages point
+	// the administrator to, and never into a page.
 	incomplete := errors.Is(err, repository.ErrDeleteIncomplete)
 	if incomplete {
 		// Delete also reports an older unfinished deletion of this name that
@@ -243,7 +237,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		}
 	}
 	if err != nil && !incomplete {
-		code, status := webui.MsgRepoDeleteFailed, http.StatusInternalServerError
+		code, status := webui.MsgRepoDeleteFailed, 0
 		if busy, ok := busyNotice(err); ok {
 			code, status = busy, http.StatusConflict
 			// While the repository is being prepared, no other Git operation
@@ -253,6 +247,10 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 			}
 		} else if errors.Is(err, repository.ErrRepositoryNotFound) {
 			code, status = webui.MsgRepoDeleteGone, http.StatusNotFound
+		} else if errors.Is(err, repository.ErrDeletionRecordMismatch) {
+			status = internalError(request, "repository deletion", err)
+		} else {
+			status = unavailable(request, "repository deletion", err)
 		}
 		chrome.Notices = append(chrome.Notices, webui.Error("", code))
 		app.renderRepositoryDelete(writer, request, stored, chrome, mode, status)
@@ -261,6 +259,9 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 	// An incomplete deletion has already removed the repository from OwnGit,
 	// so the dashboard reports it as removed, with the file cleanup still
 	// owed, rather than as a failure to retry on a page that no longer exists.
+	if incomplete {
+		logFailure(request, "repository file removal", err)
+	}
 	app.setRemovedCookie(writer, request, removedResult{Name: stored.Name, ID: stored.ID, Mode: mode, Kept: result.KeptPath, Incomplete: incomplete})
 	app.noticeRedirect(writer, request, "/?notice="+removedNotice, http.StatusSeeOther)
 }
@@ -278,7 +279,7 @@ func (app *App) renderRepositoryDelete(writer http.ResponseWriter, request *http
 		page.GitPath = gitPath
 		page.RemovedPath = filepath.Join(filepath.Dir(gitPath), removedFolderName)
 	}
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 func (app *App) setRemovedCookie(writer http.ResponseWriter, request *http.Request, result removedResult) {

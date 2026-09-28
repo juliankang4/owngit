@@ -147,14 +147,7 @@ func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddres
 	if kind == "admin" {
 		version = settings.AdminSessionVersion
 	}
-	token, err := RandomToken(32)
-	if err != nil {
-		return NewSession{}, err
-	}
-	csrf, err := RandomToken(32)
-	if err != nil {
-		return NewSession{}, err
-	}
+	token, csrf := RandomToken(32), RandomToken(32)
 	life := m.SessionLife
 	if kind == "admin" && m.AdminSessionLife > 0 {
 		life = m.AdminSessionLife
@@ -315,12 +308,13 @@ func (m *Manager) now() time.Time {
 	return time.Now()
 }
 
-func RandomToken(bytes int) (string, error) {
+// RandomToken returns bytes random bytes as unpadded URL-safe base64. It
+// cannot fail: crypto/rand.Read never returns an error and crashes the
+// program instead (Go 1.24).
+func RandomToken(bytes int) string {
 	value := make([]byte, bytes)
-	if _, err := rand.Read(value); err != nil {
-		return "", fmt.Errorf("generate secure token: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(value), nil
+	rand.Read(value)
+	return base64.RawURLEncoding.EncodeToString(value)
 }
 
 type hashParameters struct {

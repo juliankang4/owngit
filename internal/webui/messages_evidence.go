@@ -224,6 +224,10 @@ const (
 	MsgPRReopenedDone  MessageCode = "pr.result.reopened"
 	MsgPRMergedFixed   MessageCode = "pr.result.merged_fixed"
 	MsgPRUpToDate      MessageCode = "pr.result.up_to_date"
+
+	// MsgPRListTooLarge explains a pull request list longer than one answer
+	// holds.
+	MsgPRListTooLarge MessageCode = "pr.list.too_large"
 )
 
 // Task and check history screens.
@@ -704,6 +708,10 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRFailed:        {en: "The pull request operation did not complete.", ko: "풀 리퀘스트 작업을 끝내지 못했습니다."},
 	MsgPRClosedDone:    {en: "Pull request closed.", ko: "풀 리퀘스트를 닫았습니다."},
 	MsgPRReopenedDone:  {en: "Pull request reopened.", ko: "풀 리퀘스트를 다시 열었습니다."},
+	MsgPRListTooLarge: {
+		en: "This repository has more pull requests than the list can show. Open one at its address, which ends in /pull-requests/ and its number.",
+		ko: "이 저장소에는 목록에 모두 보여 줄 수 없을 만큼 풀 리퀘스트가 많습니다. 주소 끝에 /pull-requests/와 번호를 붙여 여세요.",
+	},
 	MsgPRMergedFixed: {
 		en: "A merged pull request cannot be closed or reopened.",
 		ko: "병합된 풀 리퀘스트는 닫거나 다시 열 수 없습니다.",

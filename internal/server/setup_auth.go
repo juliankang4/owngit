@@ -63,7 +63,7 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 		page.Reason = webui.MsgSetupAlreadyDone
 		page.RecoveryHint = webui.MsgSetupReissueHint
 	}
-	app.render(writer, http.StatusOK, page)
+	app.render(writer, request, http.StatusOK, page)
 }
 
 func (app *App) handleSetupRedeem(writer http.ResponseWriter, request *http.Request) {
@@ -79,16 +79,7 @@ func (app *App) handleSetupRedeem(writer http.ResponseWriter, request *http.Requ
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgSetupLinkInvalid, "")
 		return
 	}
-	sessionToken, err := auth.RandomToken(32)
-	if err != nil {
-		app.writePlainError(writer, http.StatusInternalServerError)
-		return
-	}
-	csrf, err := auth.RandomToken(32)
-	if err != nil {
-		app.writePlainError(writer, http.StatusInternalServerError)
-		return
-	}
+	sessionToken, csrf := auth.RandomToken(32), auth.RandomToken(32)
 	expires := app.now().Add(20 * time.Minute)
 	redeemed, err := app.Store.RedeemBootstrap(request.Context(), token, sessionToken, csrf, app.now(), expires)
 	if err != nil {
@@ -153,13 +144,14 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 	case errors.Is(err, ErrSetupUnavailable):
 		app.renderError(writer, request, unavailable(request, "setup completion", err), webui.MsgErrUnavailable, "")
 		return
-	case errors.Is(err, ErrSetupNotSaved):
+	case errors.Is(err, ErrSetupCompletedElsewhere):
 		app.renderError(writer, request, http.StatusConflict, webui.MsgSetupRaceLost, "")
 		return
 	case err != nil:
-		// Committed, but the obsolete owner setup files remain.
-		app.renderError(writer, request, unavailable(request, "setup file removal", err), webui.MsgErrUnavailable, "")
-		return
+		// Setup is saved and in effect; only the used owner setup files
+		// remain. The result says so, and the log names them and why, as the
+		// terminal does.
+		logFailure(request, "setup file removal", err)
 	}
 	app.clearCookie(writer, request, setupCookie, true)
 	app.returnToLocalListen(request.Context(), answers.KeepHost)
@@ -173,10 +165,11 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 	// shows the notice there. With it, the address loses its notice at the
 	// sign-in page, so the dashboard shows the notice after sign-in instead
 	// (see handleOverview).
+	notice := setupResultNotice(err)
 	if answers.AccessMode == "open" {
-		app.setupFinished.Store(false)
+		app.setupResult.Store(nil)
 	}
-	app.noticeRedirect(writer, request, "/?notice=setup_completed", http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/?notice="+notice, http.StatusSeeOther)
 }
 
 // renderSetupDoneElsewhere tells a browser on an unknown Host that setup is
@@ -193,7 +186,7 @@ func (app *App) renderSetupDoneElsewhere(writer http.ResponseWriter, request *ht
 	if app.listenReturned.Load() {
 		hint = webui.MsgSetupDoneLocalOnlyHint
 	}
-	app.render(writer, http.StatusOK, webui.SetupPage{Chrome: chrome, Stage: webui.SetupUnavailable, Reason: webui.MsgSetupDoneHostNotKept, RecoveryHint: hint})
+	app.render(writer, request, http.StatusOK, webui.SetupPage{Chrome: chrome, Stage: webui.SetupUnavailable, Reason: webui.MsgSetupDoneHostNotKept, RecoveryHint: hint})
 }
 
 // publicPeer reports whether the request comes from a public Internet
@@ -238,7 +231,7 @@ func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Requ
 	if publicPeer(request) {
 		chrome.Notices = append(chrome.Notices, publicNetworkNotice())
 	}
-	app.render(writer, status, webui.SetupPage{
+	app.render(writer, request, status, webui.SetupPage{
 		Chrome: chrome, Stage: webui.SetupWizard, SubmitURL: "/setup", RedeemURL: "/setup/redeem", Form: form,
 		Prerequisites: app.setupPrerequisites(), KeepHost: app.setupHostToKeep(request), KeepHostSetupOnly: unknownHost,
 	})
@@ -270,7 +263,7 @@ func (app *App) handleLoginGet(writer http.ResponseWriter, request *http.Request
 	}
 	page := webui.AuthPage{Chrome: chrome, Scope: scope, SubmitURL: submitURL, Next: localNext(request.URL.Query().Get("next"), "/")}
 	app.keepRepositoryContext(request, &page)
-	app.render(writer, http.StatusOK, page)
+	app.render(writer, request, http.StatusOK, page)
 }
 
 // keepRepositoryContext keeps the repository an administrator prompt was
@@ -370,7 +363,7 @@ func (app *App) renderLoginFailure(writer http.ResponseWriter, request *http.Req
 	chrome.Notices = []webui.Notice{webui.Error(field, code)}
 	page := webui.AuthPage{Chrome: chrome, Scope: scope, SubmitURL: request.URL.Path, Next: next, Locked: locked}
 	app.keepRepositoryContext(request, &page)
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 // adminPasswordNotice is the notice and status of a browser form whose

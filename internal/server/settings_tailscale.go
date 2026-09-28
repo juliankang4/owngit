@@ -136,7 +136,7 @@ func (app *App) renderTailscaleOff(writer http.ResponseWriter, request *http.Req
 	var body bytes.Buffer
 	page := webui.TailscaleOffPage{Lang: app.language(writer, request), Appearance: app.appearance(writer, request), Local: local}
 	if err := app.Renderer.RenderTailscaleOff(&body, page); err != nil {
-		app.writePlainError(writer, http.StatusInternalServerError)
+		app.writePlainError(writer, internalError(request, "page render", err))
 		return
 	}
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")

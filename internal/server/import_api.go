@@ -510,11 +510,16 @@ func writeImportProblem(writer http.ResponseWriter, request *http.Request, step 
 
 // importProblemHTTP is the status, code, message and details that answer
 // err by its import problem code. An unavailable one is logged as step of
-// request.
+// request. The import service does not classify every failure: its runtime
+// preparation, runtime files and state reads can return a plain error, such
+// as the context's. Such an error is work that could not be completed now,
+// so it is answered as unavailable and logged the same way. Its code is
+// "unsupported", the code importsync gives an unclassified failure
+// (problemCode), although nothing was found unsupported.
 func importProblemHTTP(request *http.Request, step string, err error) (int, string, string, any) {
 	var problem *importsync.Problem
 	if !errors.As(err, &problem) {
-		return http.StatusInternalServerError, importsync.CodeUnsupported, "import failed", nil
+		return unavailable(request, step, err), importsync.CodeUnsupported, "import failed", nil
 	}
 	status := http.StatusBadGateway
 	var details any
@@ -546,10 +551,13 @@ func importProblemHTTP(request *http.Request, step string, err error) (int, stri
 // request allowance for the other fields and JSON escaping of line breaks.
 const MaximumImportCredentialRequest = int64(state.MaxImportCABytes) + maximumAPIRequest
 
+// importsyncProblemCode is the code of the import problem in err, or "" for
+// an error the import service did not classify, which a page explains with
+// the neutral import failure text (webui.ImportErrorCode).
 func importsyncProblemCode(err error) string {
 	var problem *importsync.Problem
 	if errors.As(err, &problem) {
 		return problem.Code
 	}
-	return importsync.CodeUnsupported
+	return ""
 }

@@ -107,7 +107,7 @@ func ValidateName(name, description string) error {
 	case "new", "new-import":
 		return fmt.Errorf("%w: %q is used by a repository form", ErrReservedName, trimmed)
 	}
-	if len(description) > 500 {
+	if len(description) > state.MaximumRepositoryDescriptionBytes {
 		return ErrInvalidDescription
 	}
 	return nil

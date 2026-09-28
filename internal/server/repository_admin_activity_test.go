@@ -345,7 +345,8 @@ esac; done`)
 }
 
 // TestDefaultBranchGitFailureIsNotReportedAsAMissingBranch proves that a Git
-// failure gives the generic failure sentence, not "That branch does not exist".
+// failure gives the generic failure sentence, not "That branch does not
+// exist", is answered as unavailable, and has its cause logged.
 func TestDefaultBranchGitFailureIsNotReportedAsAMissingBranch(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the failing wrapper is a Unix test fixture")
@@ -354,11 +355,16 @@ func TestDefaultBranchGitFailureIsNotReportedAsAMissingBranch(t *testing.T) {
 	useGitWrapper(t, fixture.app, `for a in "$@"; do if test "$a" = show-ref; then echo 'fatal: simulated storage failure' >&2; exit 128; fi; done`)
 	server, client, jar := openBrowser(t, fixture)
 	signInAdmin(t, fixture, server.URL, jar)
+	serverLog := captureServerLog(t)
 	result := browserForm(t, client, server.URL+"/repositories/project/settings/default-branch", url.Values{
 		"csrf": {adminTestCSRF}, "branch": {"feature"},
 	}, server.URL)
-	if result.status != http.StatusInternalServerError || !strings.Contains(result.body, "The default branch could not be changed.") ||
+	if result.status != http.StatusServiceUnavailable || !strings.Contains(result.body, "The default branch could not be changed.") ||
 		strings.Contains(result.body, "That branch does not exist.") || strings.Contains(result.body, "simulated storage failure") {
 		t.Fatalf("Git failure status=%d body=%s", result.status, result.body)
+	}
+	checkLoggedSteps(t, "default branch change", loggedFailures(serverLog, 0), "default branch change")
+	if !strings.Contains(serverLog.String(), "simulated storage failure") {
+		t.Fatalf("log does not name the cause: %s", serverLog)
 	}
 }

@@ -60,7 +60,14 @@ var (
 	// OwnGit but its directory was not yet moved or fully deleted. Retrying
 	// Delete, or the next start, finishes the work.
 	ErrDeleteIncomplete = errors.New("the repository was removed from OwnGit, but its files were not fully moved or deleted yet")
-	ErrBranchNotFound   = errors.New("branch not found")
+	// ErrDeletionRecordMismatch reports a recorded deletion that the
+	// repository storage or another record contradicts: the repository
+	// folder changed since it began, its recorded target is not a name OwnGit
+	// gives, a new repository with the name owns the directory it was to
+	// move, or the directory it was to delete was replaced by another kind of
+	// file. Retrying does not change that; a person has to act.
+	ErrDeletionRecordMismatch = errors.New("the recorded deletion does not match the repository storage")
+	ErrBranchNotFound         = errors.New("branch not found")
 )
 
 // DeleteResult describes a completed deletion.
@@ -188,12 +195,12 @@ func (m *Manager) ReconcileDeletions(ctx context.Context) error {
 // first attempt and later resumption.
 func (m *Manager) finishDeletion(ctx context.Context, root string, deletion state.RepositoryDeletion) (DeleteResult, error) {
 	incomplete := func(err error) (DeleteResult, error) {
-		return DeleteResult{}, fmt.Errorf("%w: %v", ErrDeleteIncomplete, err)
+		return DeleteResult{}, fmt.Errorf("%w: %w", ErrDeleteIncomplete, err)
 	}
 	m.snapshots.drop(deletion.RepositoryID)
 	m.objects.drop(deletion.RepositoryID)
 	if deletion.Root != root {
-		return incomplete(fmt.Errorf("the repository folder changed from %s since the deletion began; its directory is left in place", deletion.Root))
+		return incomplete(fmt.Errorf("%w: the repository folder changed from %s since the deletion began; its directory is left in place", ErrDeletionRecordMismatch, deletion.Root))
 	}
 	movedPath, err := deletionMovedPath(root, deletion)
 	if err != nil {
@@ -230,7 +237,7 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 	// may already belong to a new repository with the same name.
 	if info, err := state.LstatIdentity(movedPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return incomplete(errors.New("the directory being deleted was replaced by another kind of file; it is left in place"))
+			return incomplete(fmt.Errorf("%w: the directory being deleted was replaced by another kind of file; it is left in place", ErrDeletionRecordMismatch))
 		}
 		if err := os.RemoveAll(movedPath); err != nil {
 			return incomplete(fmt.Errorf("delete repository files: %w", err))
@@ -362,7 +369,7 @@ func (m *Manager) moveDeletedRepository(ctx context.Context, root string, deleti
 	if _, exists, err := m.Store.Repository(ctx, deletion.RepositoryID); err != nil {
 		return err
 	} else if exists {
-		return errors.New("a new repository with this name exists and the earlier directory was not moved; move it manually")
+		return fmt.Errorf("%w: a new repository with this name exists and the earlier directory was not moved; move it manually", ErrDeletionRecordMismatch)
 	}
 	repositoryPath, err := m.Path(deletion.RepositoryID)
 	if err != nil {
@@ -440,7 +447,7 @@ func deletionMovedPath(root string, deletion state.RepositoryDeletion) (string, 
 		valid = strings.HasPrefix(moved, deletingDirectoryPrefix) && len(suffix) == 32 && strings.Trim(suffix, "0123456789abcdef") == ""
 	}
 	if !valid {
-		return "", fmt.Errorf("recorded deletion target %q is not an OwnGit deletion name", moved)
+		return "", fmt.Errorf("%w: recorded deletion target %q is not an OwnGit deletion name", ErrDeletionRecordMismatch, moved)
 	}
 	return filepath.Join(root, filepath.FromSlash(moved)), nil
 }

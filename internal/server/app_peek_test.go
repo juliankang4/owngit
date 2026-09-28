@@ -36,8 +36,7 @@ func refreshRequest(body io.ReadCloser, contentLength int64, contentType string)
 }
 
 func TestRefreshPeekReadsOnlyWhatTheFormNeeds(t *testing.T) {
-	csrf, err := auth.RandomToken(32)
-	noErr(t, err)
+	csrf := auth.RandomToken(32)
 	// The longest accepted password, made only of four-byte characters that
 	// URL-encode to twelve bytes each, is the largest valid refresh form.
 	longest := strings.Repeat("\U0001F512", auth.MaximumPasswordCharacters)

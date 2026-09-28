@@ -1240,7 +1240,7 @@ func validateManifest(manifest Manifest) error {
 	bundles := make(map[string]bool)
 	repositoryRefs := make(map[string]map[string]string)
 	for _, item := range manifest.Repositories {
-		if repository.ValidateID(item.ID) != nil || item.Name == "" || len(item.Name) > 100 || len(item.Description) > 500 || ids[item.ID] {
+		if repository.ValidateID(item.ID) != nil || item.Name == "" || len(item.Name) > 100 || len(item.Description) > state.MaximumRepositoryDescriptionBytes || ids[item.ID] {
 			return errors.New("backup repository metadata is invalid or not portable")
 		}
 		ids[item.ID] = true

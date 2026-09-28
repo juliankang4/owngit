@@ -33,8 +33,8 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	// The first dashboard view after setup in this process shows "Setup
 	// finished" once: after the terminal setup, or after the sign-in that
 	// shared access asked for. The notice travels in the notice cookie.
-	if app.setupFinished.CompareAndSwap(true, false) {
-		app.noticeRedirect(writer, request, "/?notice=setup_completed", http.StatusSeeOther)
+	if notice := app.setupResult.Swap(nil); notice != nil {
+		app.noticeRedirect(writer, request, "/?notice="+*notice, http.StatusSeeOther)
 		return
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
@@ -128,7 +128,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	}
 	graph := buildActivityGraph(observation.counts, selectedYear(request, app.now().Year()), app.now(), len(repositories))
 	observation.describe(&graph)
-	app.render(writer, http.StatusOK, webui.OverviewPage{
+	app.render(writer, request, http.StatusOK, webui.OverviewPage{
 		Chrome: chrome, Activity: graph, Repositories: summaries, Recent: recent,
 		RecentMoreURL: "/activity", TotalCount: len(repositories),
 		Release: app.releaseNotice(request, settings),
@@ -139,7 +139,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 // unreadable, and again only after it was read successfully in between. The
 // cause goes only to the server log; pages show a fixed notice.
 //
-// This differs on purpose from unavailable and logUnavailable, which log
+// This differs on purpose from unavailable and logFailure, which log
 // every failed read behind an unavailable answer or panel. The dashboard
 // lists every repository on each view, so one damaged repository would
 // otherwise repeat the same line on every visit to the dashboard, while its
@@ -201,7 +201,7 @@ func (app *App) handleNewRepositoryGet(writer http.ResponseWriter, request *http
 	if len(notices) != 0 {
 		status = http.StatusUnprocessableEntity
 	}
-	app.render(writer, status, webui.NewRepositoryPage{
+	app.render(writer, request, status, webui.NewRepositoryPage{
 		Chrome: chrome, SubmitURL: "/repositories", Name: name, Description: description, NameRules: webui.MsgRepoNameRules,
 	})
 }
@@ -274,7 +274,7 @@ func (app *App) handleActivity(writer http.ResponseWriter, request *http.Request
 	}
 	sortActivityEntries(entries)
 	groups := groupActivity(entries)
-	app.render(writer, http.StatusOK, webui.ActivityPage{Chrome: chrome, Activity: graph, Days: groups})
+	app.render(writer, request, http.StatusOK, webui.ActivityPage{Chrome: chrome, Activity: graph, Days: groups})
 }
 
 func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
@@ -484,7 +484,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		return
 	}
 	page.NotFound = status == http.StatusNotFound
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 // renderRepositoryReadFailure answers a repository page whose Git data could
@@ -506,7 +506,7 @@ func (app *App) renderRepositoryReadFailure(writer http.ResponseWriter, request 
 		page.Repo.UnreadableReason = webui.MsgRepoBusyInUse
 		writer.Header().Set("Retry-After", "10")
 	}
-	app.render(writer, unavailable(request, "repository read", cause), page)
+	app.render(writer, request, unavailable(request, "repository read", cause), page)
 }
 
 // administratorRepositoryScreen names the repository screens that require an
@@ -689,12 +689,12 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	branchTips, err := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Branches)
 	page.Overview.BranchTipsKnown = err == nil
 	if err != nil {
-		logUnavailable(request, "branch tip read", err)
+		logFailure(request, "branch tip read", err)
 	}
 	tagTips, err := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Tags)
 	page.Overview.TagTipsKnown = err == nil
 	if err != nil {
-		logUnavailable(request, "tag tip read", err)
+		logFailure(request, "tag tip read", err)
 	}
 	var branches, tags, retainedLines []webui.RefLine
 	for _, branch := range summary.Branches {
@@ -718,7 +718,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	retained, err := app.Repositories.RetainedRefs(request.Context(), page.Repo.ID)
 	page.Overview.RetainedKnown = err == nil
 	if err != nil {
-		logUnavailable(request, "kept history read", err)
+		logFailure(request, "kept history read", err)
 	}
 	for _, ref := range retained {
 		line := webui.RefLine{Name: shortOID(ref.OID), Kind: ref.Kind, Retained: true}
@@ -768,7 +768,7 @@ func (app *App) fillOverviewEvidence(request *http.Request, page *webui.Reposito
 		page.Overview.OpenPullRequestsMore = more
 		page.Overview.OpenPullRequestsKnown = true
 	} else {
-		logUnavailable(request, "open pull request count read", err)
+		logFailure(request, "open pull request count read", err)
 	}
 	if summary.DefaultOID == "" {
 		return
@@ -776,7 +776,7 @@ func (app *App) fillOverviewEvidence(request *http.Request, page *webui.Reposito
 	page.Overview.DefaultCheckRev = summary.DefaultOID
 	attempt, exists, err := app.Store.LatestCheckAttemptForRevision(request.Context(), page.Repo.ID, summary.DefaultOID)
 	if err != nil {
-		logUnavailable(request, "default branch check read", err)
+		logFailure(request, "default branch check read", err)
 		return
 	}
 	page.Overview.DefaultCheckKnown = true
@@ -1314,7 +1314,7 @@ func (app *App) overviewLanguages(request *http.Request, id, commitOID string) w
 		// answered from what could be read (QA-058).
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesBusy}
 	case err != nil:
-		logUnavailable(request, "language count", err)
+		logFailure(request, "language count", err)
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesUnavailable}
 	case stats.TooLarge:
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesTooLarge}

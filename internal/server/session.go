@@ -21,11 +21,7 @@ func (app *App) requireGeneral(writer http.ResponseWriter, request *http.Request
 		if cookie, err := request.Cookie(generalCookie); err == nil && validOpenToken(cookie.Value) {
 			return state.Session{Kind: "general", CSRF: cookie.Value, Version: settings.AccessSessionVersion, Expires: expires}, true
 		}
-		token, err := auth.RandomToken(32)
-		if err != nil {
-			app.writePlainError(writer, http.StatusInternalServerError)
-			return state.Session{}, false
-		}
+		token := auth.RandomToken(32)
 		app.setCookie(writer, request, generalCookie, token, expires, true)
 		return state.Session{Kind: "general", CSRF: token, Version: settings.AccessSessionVersion, Expires: expires}, true
 	}
@@ -165,10 +161,7 @@ func (app *App) preauthCSRF(writer http.ResponseWriter, request *http.Request) s
 	if cookie, err := request.Cookie(preauthCookie); err == nil && len(cookie.Value) >= 32 {
 		return cookie.Value
 	}
-	token, err := auth.RandomToken(32)
-	if err != nil {
-		return ""
-	}
+	token := auth.RandomToken(32)
 	app.setCookie(writer, request, preauthCookie, token, app.now().Add(20*time.Minute), true)
 	return token
 }
@@ -357,6 +350,8 @@ func noticeFor(notice string) []webui.Notice {
 	switch notice {
 	case "setup_completed":
 		return []webui.Notice{webui.Success(webui.MsgSetupCompleted)}
+	case "setup_file_remains":
+		return []webui.Notice{webui.Success(webui.MsgSetupCompleted), {Kind: webui.NoticeWarning, Code: webui.MsgSetupFileRemains}}
 	case "repository_created":
 		return []webui.Notice{webui.Success(webui.MsgRepoCreated)}
 	case "settings_saved":

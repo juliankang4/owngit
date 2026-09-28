@@ -180,7 +180,7 @@ func TestRepositoryReadFailuresLogTheirCauseOnce(t *testing.T) {
 		noErr(t, os.WriteFile(failPath, nil, 0o600))
 		_, status := dashboardGET(t, client, base+check.path)
 		noErr(t, os.Remove(failPath))
-		lines := loggedUnavailable(serverLog, since)
+		lines := loggedFailures(serverLog, since)
 		if status != check.status || len(lines) != len(check.steps) {
 			t.Errorf("GET %s with failing %s status=%d logged %d lines, want %d with %d:\n%s", check.path, check.pattern, status, len(lines), check.status, len(check.steps), strings.Join(lines, "\n"))
 			continue
@@ -199,7 +199,7 @@ func TestRepositoryReadFailuresLogTheirCauseOnce(t *testing.T) {
 			t.Errorf("GET %s after Git recovered status=%d, want 200", path, status)
 		}
 	}
-	checkLoggedSteps(t, "pages that could be read", loggedUnavailable(serverLog, since))
+	checkLoggedSteps(t, "pages that could be read", loggedFailures(serverLog, since))
 }
 
 // The overview's body, the recent commits and the top folder, is required:

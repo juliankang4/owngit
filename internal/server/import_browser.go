@@ -27,7 +27,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 	}
 	page := webui.NewImportPage{Chrome: chrome, SubmitURL: "/repositories/new-import"}
 	if request.Method == http.MethodGet {
-		app.render(writer, http.StatusOK, page)
+		app.render(writer, request, http.StatusOK, page)
 		return
 	}
 	if !parseForm(writer, request) {
@@ -46,7 +46,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 	page.CredentialForm = postValue(request, "credential_form")
 	if ok, status := app.importAdminPassword(writer, request, &chrome); !ok {
 		page.Chrome = chrome
-		app.render(writer, status, page)
+		app.render(writer, request, status, page)
 		return
 	}
 	// A mistake the form can name is reported on its field, before anything
@@ -54,26 +54,26 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 	if problems := importNameProblems(page.Name, page.Description); len(problems) > 0 {
 		chrome.Notices = problems
 		page.Chrome = chrome
-		app.render(writer, http.StatusUnprocessableEntity, page)
+		app.render(writer, request, http.StatusUnprocessableEntity, page)
 		return
 	}
 	if notice, ok := importURLProblem(page.URL); !ok {
 		chrome.Notices = []webui.Notice{notice}
 		page.Chrome = chrome
-		app.render(writer, http.StatusUnprocessableEntity, page)
+		app.render(writer, request, http.StatusUnprocessableEntity, page)
 		return
 	}
 	if problems, status := importCredentialProblems(request); len(problems) > 0 {
 		chrome.Notices = problems
 		page.Chrome = chrome
-		app.render(writer, status, page)
+		app.render(writer, request, status, page)
 		return
 	}
 	credential, credErr := postedImportCredential(request)
 	if credErr != nil {
 		chrome.Notices = []webui.Notice{importFailureNotice(credErr, "")}
 		page.Chrome = chrome
-		app.render(writer, http.StatusUnprocessableEntity, page)
+		app.render(writer, request, http.StatusUnprocessableEntity, page)
 		return
 	}
 	request = app.beginOperation(writer, request)
@@ -94,7 +94,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 				// stating either outcome.
 				chrome.Notices = []webui.Notice{webui.Error("", webui.MsgImportCancelledUnsure)}
 				page.Chrome = chrome
-				app.render(writer, unavailable(request, "repository record read", lookupErr), page)
+				app.render(writer, request, unavailable(request, "repository record read", lookupErr), page)
 				return
 			}
 		}
@@ -114,7 +114,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 				chrome.Notices = []webui.Notice{importFailureNotice(err, result.Run.ErrorClass)}
 			}
 			page.Chrome = chrome
-			app.render(writer, importProblemStatus(request, "import start", err), page)
+			app.render(writer, request, importProblemStatus(request, "import start", err), page)
 			return
 		}
 		notice = "import_run_cancelled"
@@ -279,7 +279,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	importStatus, err := app.Imports.Status(request.Context(), stored.ID)
 	if err != nil {
 		page.StatusUnreadable = true
-		app.render(writer, unavailable(request, "import status read", err), page)
+		app.render(writer, request, unavailable(request, "import status read", err), page)
 		return
 	}
 	page.Configured = importStatus.Configured
@@ -323,7 +323,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 	runs, more, err := app.Imports.HistoryBefore(request.Context(), stored.ID, 20, cursor)
 	page.HistoryAvailable = err == nil
 	if err != nil {
-		logUnavailable(request, "import history read", err)
+		logFailure(request, "import history read", err)
 	}
 	for _, run := range runs {
 		row := run
@@ -334,7 +334,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 		page.SelfURL = page.SelfURL + "?cursor=" + strconv.FormatInt(cursor, 10)
 	}
 	_ = summary
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 // importRunRow is one run for the page. Its technical message can name the
@@ -394,7 +394,7 @@ func postedImportCredential(request *http.Request) (*importsync.Credentials, err
 // import then derives one from the source address.
 func importNameProblems(name, description string) []webui.Notice {
 	if name == "" {
-		if len(description) > 500 {
+		if len(description) > state.MaximumRepositoryDescriptionBytes {
 			return []webui.Notice{webui.Error("description", webui.MsgRepoDescriptionTooLong)}
 		}
 		return nil

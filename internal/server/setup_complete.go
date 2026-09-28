@@ -35,12 +35,13 @@ type SetupAnswers struct {
 
 // CompleteSetup's errors wrap their cause, so the server log can name it.
 var (
-	// ErrSetupUnavailable means setup could not be attempted now, for
-	// example because the setup lock was unavailable. Nothing was saved.
+	// ErrSetupUnavailable means setup could not be completed now, because
+	// the setup lock could not be taken or the settings could not be saved.
+	// Nothing was saved.
 	ErrSetupUnavailable = errors.New("setup is temporarily unavailable")
-	// ErrSetupNotSaved means the settings were not saved, usually because
-	// setup was already completed by another browser or the terminal.
-	ErrSetupNotSaved = errors.New("setup was not saved")
+	// ErrSetupCompletedElsewhere means the settings were not saved because
+	// another browser or the terminal had already completed setup.
+	ErrSetupCompletedElsewhere = errors.New("setup was completed elsewhere")
 	// ErrSetupCleanup means setup was saved and is in effect, but the
 	// obsolete owner setup files could not be removed.
 	ErrSetupCleanup = errors.New("setup was saved but the owner setup files remain")
@@ -150,8 +151,11 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 		cleanupErr = bootstrap.RemoveOwnerSetupFiles(app.Store.Dir())
 	}
 	unlock()
+	if errors.Is(completeErr, state.ErrSetupComplete) {
+		return nil, fmt.Errorf("%w: %w", ErrSetupCompletedElsewhere, completeErr)
+	}
 	if completeErr != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSetupNotSaved, completeErr)
+		return nil, fmt.Errorf("%w: %w", ErrSetupUnavailable, completeErr)
 	}
 	// Setup is committed, so this process serves it even when removing the
 	// obsolete owner setup files failed. The failure is still reported, and
@@ -165,7 +169,8 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 			app.OnHostAccepted()
 		}
 	}
-	app.setupFinished.Store(true)
+	notice := setupResultNotice(cleanupErr)
+	app.setupResult.Store(&notice)
 	if app.Approvals != nil {
 		app.Approvals.Void()
 	}
@@ -176,6 +181,16 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 		return nil, fmt.Errorf("%w: %w", ErrSetupCleanup, cleanupErr)
 	}
 	return nil, nil
+}
+
+// setupResultNotice is the result notice of saved setup: "setup_completed",
+// or "setup_file_remains" when the used owner setup files could not be
+// removed. Setup is in effect either way.
+func setupResultNotice(cleanupErr error) string {
+	if cleanupErr != nil {
+		return "setup_file_remains"
+	}
+	return "setup_completed"
 }
 
 // CheckRepositoryFolder applies the repository folder rules without

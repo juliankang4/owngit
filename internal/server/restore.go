@@ -33,7 +33,7 @@ func (app *App) handleRestoreGet(writer http.ResponseWriter, request *http.Reque
 		app.renderRestorePageError(writer, request, chrome, stored, err)
 		return
 	}
-	app.render(writer, http.StatusOK, page)
+	app.render(writer, request, http.StatusOK, page)
 }
 
 func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
@@ -55,7 +55,7 @@ func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.R
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Error(restoreField(err), restoreMessage(err)))
 		page.Previewed = false
 		page.CanApply = false
-		app.render(writer, restoreStatus(request, "restore preview", err), page)
+		app.render(writer, request, restoreStatus(request, "restore preview", err), page)
 		return
 	}
 	if !preview.CanApply {
@@ -63,7 +63,7 @@ func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.R
 	} else {
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Info(webui.MsgRestoreReady))
 	}
-	app.render(writer, http.StatusOK, page)
+	app.render(writer, request, http.StatusOK, page)
 }
 
 func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
@@ -83,7 +83,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 			return
 		}
 		page.Chrome.Notices = append(page.Chrome.Notices, webui.Error("confirm", webui.MsgRestoreInvalid))
-		app.render(writer, http.StatusUnprocessableEntity, page)
+		app.render(writer, request, http.StatusUnprocessableEntity, page)
 		return
 	}
 	result, err := app.Repositories.ApplyRestore(request.Context(), stored.ID, selection)
@@ -116,7 +116,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 	}
 	page.Chrome.Notices = append(page.Chrome.Notices, webui.Error(restoreField(err), restoreMessage(err)))
 	page.CanApply = false
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 // restorePage builds the restore page for selection. A source that names no

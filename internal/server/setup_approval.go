@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
-	"math/big"
 	"net"
 	"net/http"
 	"sync"
@@ -239,14 +238,7 @@ func (approvals *SetupApprovals) request(address string, cookie [32]byte) (Appro
 	case len(approvals.recent[address]) >= approvalLimit:
 		return ApprovalRequest{}, &approvalRefusal{http.StatusTooManyRequests, webui.MsgSetupApprovalLimited}
 	}
-	id, err := auth.RandomToken(16)
-	if err != nil {
-		return ApprovalRequest{}, &approvalRefusal{http.StatusInternalServerError, webui.MsgErrInternal}
-	}
-	code, err := approvalCode()
-	if err != nil {
-		return ApprovalRequest{}, &approvalRefusal{http.StatusInternalServerError, webui.MsgErrInternal}
-	}
+	id, code := auth.RandomToken(16), approvalCode()
 	ip := net.ParseIP(address)
 	approvals.current = &approvalRequest{
 		ApprovalRequest: ApprovalRequest{ID: id, Code: code, Address: address, Loopback: ip != nil && ip.IsLoopback()},
@@ -311,21 +303,26 @@ func (approvals *SetupApprovals) redeem(cookie [32]byte) bool {
 	return true
 }
 
-// approvalCode returns a random code such as "K7Q-4MP".
-func approvalCode() (string, error) {
+// approvalCode returns a random code such as "K7Q-4MP", each character
+// drawn uniformly from approvalAlphabet. A random byte picks a character by
+// its remainder; a byte at or above the largest multiple of the alphabet's
+// length is drawn again, so every character has the same number of bytes.
+// crypto/rand.Read cannot fail: it crashes the program instead (Go 1.24).
+func approvalCode() string {
 	code := make([]byte, 0, 7)
-	limit := big.NewInt(int64(len(approvalAlphabet)))
-	for i := 0; i < 6; i++ {
-		if i == 3 {
+	accepted := 256 - 256%len(approvalAlphabet)
+	var random [1]byte
+	for len(code) < cap(code) {
+		if len(code) == 3 {
 			code = append(code, '-')
+			continue
 		}
-		n, err := rand.Int(rand.Reader, limit)
-		if err != nil {
-			return "", err
+		rand.Read(random[:])
+		if int(random[0]) < accepted {
+			code = append(code, approvalAlphabet[int(random[0])%len(approvalAlphabet)])
 		}
-		code = append(code, approvalAlphabet[n.Int64()])
 	}
-	return string(code), nil
+	return string(code)
 }
 
 func requestAddress(request *http.Request) string {
@@ -402,7 +399,7 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 	}
 	page.Chrome = chrome
 	writer.Header().Set("Cache-Control", "no-store")
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 // startApprovedSession redeems the approval for a setup session, like
@@ -410,14 +407,7 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 // longer be redeemed, and an error when the session could not be started.
 // The approval is used up once redeemed, even if saving the session fails.
 func (app *App) startApprovedSession(writer http.ResponseWriter, request *http.Request, hash [32]byte) (bool, error) {
-	sessionToken, err := auth.RandomToken(32)
-	if err != nil {
-		return false, err
-	}
-	csrf, err := auth.RandomToken(32)
-	if err != nil {
-		return false, err
-	}
+	sessionToken, csrf := auth.RandomToken(32), auth.RandomToken(32)
 	if !app.Approvals.redeem(hash) {
 		return false, nil
 	}
@@ -456,11 +446,7 @@ func (app *App) handleSetupApprovalRequest(writer http.ResponseWriter, request *
 			return
 		}
 	}
-	token, err := auth.RandomToken(32)
-	if err != nil {
-		app.writePlainError(writer, http.StatusInternalServerError)
-		return
-	}
+	token := auth.RandomToken(32)
 	_, refusal := app.Approvals.request(requestAddress(request), sha256.Sum256([]byte(token)))
 	if refusal != nil {
 		app.renderApprovalRefusal(writer, request, *refusal)
@@ -476,7 +462,7 @@ func (app *App) renderApprovalRefusal(writer http.ResponseWriter, request *http.
 		app.writePlainError(writer, unavailable(request, "page frame read", err))
 		return
 	}
-	app.render(writer, refusal.status, webui.SetupPage{
+	app.render(writer, request, refusal.status, webui.SetupPage{
 		Chrome: chrome, Stage: webui.SetupUnavailable, Reason: refusal.reason, RetryURL: "/setup",
 	})
 }

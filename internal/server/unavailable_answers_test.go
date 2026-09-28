@@ -9,6 +9,7 @@ import (
 	"go/parser"
 	"go/token"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -17,16 +18,19 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/checkapi"
 	"owngit/internal/checkrun"
 	"owngit/internal/importfetch"
 	"owngit/internal/importsync"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
-// Every answer with status 503 takes that status from unavailable, which
-// logs the answer's cause. The check reads this package's source: 503 may
+// Every answer with status 503 takes that status from unavailable, and
+// every answer with status 500 from internalError, which both log the
+// answer's cause. The check reads this package's source: these statuses may
 // appear nowhere else, except in a comparison, which reads a status and
 // writes none.
 //
@@ -35,7 +39,7 @@ import (
 // to githttp, and an archive githttp refused, which the archive handlers
 // write with githttp's status. Its access check is AuthorizeGit here, which
 // logs a check that could not be completed.
-func TestOnlyUnavailableAnswersUnavailable(t *testing.T) {
+func TestFailureStatusesLogTheirCause(t *testing.T) {
 	names, err := filepath.Glob("*.go")
 	noErr(t, err)
 	files := token.NewFileSet()
@@ -52,8 +56,8 @@ func TestOnlyUnavailableAnswersUnavailable(t *testing.T) {
 				ancestors = ancestors[:len(ancestors)-1]
 				return true
 			}
-			if isStatus503(node, httpName) && !readsOrDecides503(ancestors) {
-				t.Errorf("%s: status 503 does not come from unavailable", files.Position(node.Pos()))
+			if source, ok := failureSource(node, httpName); ok && !readsOrReturns(ancestors, source) {
+				t.Errorf("%s: this status does not come from %s", files.Position(node.Pos()), source)
 			}
 			ancestors = append(ancestors, node)
 			return true
@@ -76,27 +80,36 @@ func importName(file *ast.File, importPath string) string {
 	return ""
 }
 
-// isStatus503 reports whether node is net/http's StatusServiceUnavailable,
-// under the name httpName, or an integer literal of 503 in any base.
-func isStatus503(node ast.Node, httpName string) bool {
+// failureSource reports whether node is status 503 or 500, as net/http's
+// constant under the name httpName or as an integer literal in any base,
+// and names the function that alone may return it.
+func failureSource(node ast.Node, httpName string) (string, bool) {
+	sources := map[string]string{"StatusServiceUnavailable": "unavailable", "StatusInternalServerError": "internalError"}
+	var name string
 	switch node := node.(type) {
 	case *ast.SelectorExpr:
-		pkg, ok := node.X.(*ast.Ident)
-		return ok && pkg.Name == httpName && node.Sel.Name == "StatusServiceUnavailable"
+		if pkg, ok := node.X.(*ast.Ident); ok && pkg.Name == httpName {
+			name = node.Sel.Name
+		}
 	case *ast.Ident:
-		return httpName == "." && node.Name == "StatusServiceUnavailable"
+		if httpName == "." {
+			name = node.Name
+		}
 	case *ast.BasicLit:
 		value, err := strconv.ParseInt(node.Value, 0, 64)
-		return node.Kind == token.INT && err == nil && value == 503
+		if node.Kind == token.INT && err == nil {
+			name = map[int64]string{503: "StatusServiceUnavailable", 500: "StatusInternalServerError"}[value]
+		}
 	}
-	return false
+	source, ok := sources[name]
+	return source, ok
 }
 
-// readsOrDecides503 reports whether a 503 under ancestors is compared, or is the
-// status unavailable returns.
-func readsOrDecides503(ancestors []ast.Node) bool {
+// readsOrReturns reports whether a status under ancestors is compared, or
+// is the status that source returns.
+func readsOrReturns(ancestors []ast.Node, source string) bool {
 	for _, node := range ancestors {
-		if function, ok := node.(*ast.FuncDecl); ok && function.Recv == nil && function.Name.Name == "unavailable" {
+		if function, ok := node.(*ast.FuncDecl); ok && function.Recv == nil && function.Name.Name == source {
 			return true
 		}
 	}
@@ -114,7 +127,7 @@ func readsOrDecides503(ancestors []ast.Node) bool {
 func TestUnavailableCauseIsLoggedOnOneLine(t *testing.T) {
 	serverLog := captureServerLog(t)
 	request := httptestRequest(t, http.MethodGet, "/repositories/project")
-	logUnavailable(request, "file read", errors.New("fatal: bad object\n2026/09/28 12:00:00 GET /forged: \x1b[31mforged"))
+	logFailure(request, "file read", errors.New("fatal: bad object\n2026/09/28 12:00:00 GET /forged: \x1b[31mforged"))
 	logged := serverLog.String()
 	if strings.Count(logged, "\n") != 1 || strings.Contains(logged, "\x1b") || !strings.Contains(logged, `GET /repositories/project: file read could not be completed: "fatal: bad object\n2026/09/28`) {
 		t.Fatalf("logged %q, want one line with the cause escaped", logged)
@@ -171,7 +184,7 @@ func TestIntendedStatesAreNotLogged(t *testing.T) {
 	} {
 		since := len(serverLog.String())
 		unavailable(check.request, "state read", check.err)
-		checkLoggedSteps(t, check.what, loggedUnavailable(serverLog, since), "state read")
+		checkLoggedSteps(t, check.what, loggedFailures(serverLog, since), "state read")
 	}
 
 	// An import stopped by its owner whose bookkeeping then failed is still
@@ -181,7 +194,7 @@ func TestIntendedStatesAreNotLogged(t *testing.T) {
 	if status, _, _, _ := importProblemHTTP(left, "import run", stopped); status != http.StatusServiceUnavailable {
 		t.Errorf("stopped import with a failed bookkeeping write status=%d", status)
 	}
-	checkLoggedSteps(t, "stopped import with a failed bookkeeping write", loggedUnavailable(serverLog, since), "import run")
+	checkLoggedSteps(t, "stopped import with a failed bookkeeping write", loggedFailures(serverLog, since), "import run")
 }
 
 // A long request path is logged as a short prefix with its full length, so a
@@ -189,7 +202,7 @@ func TestIntendedStatesAreNotLogged(t *testing.T) {
 func TestLongPathIsCutInTheLog(t *testing.T) {
 	serverLog := captureServerLog(t)
 	long := "/repositories/" + strings.Repeat("a", 4000)
-	logUnavailable(httptestRequest(t, http.MethodGet, long), "settings read", errors.New("disk I/O error"))
+	logFailure(httptestRequest(t, http.MethodGet, long), "settings read", errors.New("disk I/O error"))
 	logged := serverLog.String()
 	if !strings.Contains(logged, " GET "+long[:256]+"...(cut, 4014 bytes): settings read could not be completed: ") || len(logged) > 400 {
 		t.Fatalf("logged %q, want the path cut to 256 bytes with its length", logged)
@@ -230,9 +243,18 @@ func TestStateFailuresBehindAPIsAndPagesAreLogged(t *testing.T) {
 		{"task API list", "tasks", func() int {
 			return responseStatusOf(t, checkRequest(t, http.MethodGet, api+"/project/tasks", nil, token))
 		}, "task list read"},
+		{"task API creation", "tasks", func() int {
+			return responseStatusOf(t, checkRequest(t, http.MethodPost, api+"/project/tasks", checkapi.CreateTaskInput{Title: "Logged"}, token))
+		}, "task creation"},
 		{"configured check policy API", "check_policies", func() int {
 			return responseStatusOf(t, adminAPIRequest(t, http.MethodGet, api+"/project/check-policy", nil, "admin-password"))
 		}, "configured check policy read"},
+		{"configured check policy API save", "check_policies", func() int {
+			return responseStatusOf(t, adminAPIRequest(t, http.MethodPut, api+"/project/check-policy", checkapi.PolicyInput{
+				Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"}, MaxTimeoutMS: 60_000,
+				MaxOutputLimitBytes: 64 << 10, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+			}, "admin-password"))
+		}, "configured check policy save"},
 		{"task page", "check_configurations", func() int {
 			_, status := dashboardGET(t, client, server.URL+"/repositories/project/tasks")
 			return status
@@ -249,7 +271,84 @@ func TestStateFailuresBehindAPIsAndPagesAreLogged(t *testing.T) {
 		if status != http.StatusServiceUnavailable {
 			t.Errorf("%s status=%d, want 503", check.what, status)
 		}
-		checkLoggedSteps(t, check.what, loggedUnavailable(serverLog, since), check.step)
+		checkLoggedSteps(t, check.what, loggedFailures(serverLog, since), check.step)
+	}
+}
+
+// A fault in OwnGit is answered as internal and a run that could not be
+// completed now, including an unclassified pull request or import error, as
+// unavailable; both log their cause once. An unclassified import error is
+// explained on a page with the neutral import failure text.
+func TestInternalFaultsAndUnclassifiedRunsAreLogged(t *testing.T) {
+	serverLog := captureServerLog(t)
+	request := httptestRequest(t, http.MethodPost, "/api/v1/repositories/project/pull-requests/1/merge")
+	integrity := pullrequest.NewProblem("repository_integrity_error", "The merge intent is in an unexpected state.")
+	gitRun := errors.New("fatal: unable to write new index file")
+	for _, check := range []struct {
+		what   string
+		status func() int
+		want   int
+		cause  string
+	}{
+		{"records that contradict each other", func() int { return apiStatus(request, "pull request merge", integrity) }, http.StatusInternalServerError, "unexpected state"},
+		{"an unclassified pull request run", func() int { return apiStatus(request, "pull request merge", gitRun) }, http.StatusServiceUnavailable, "new index file"},
+		{"an unclassified import error", func() int {
+			status, _, _, _ := importProblemHTTP(request, "import run", gitRun)
+			return status
+		}, http.StatusServiceUnavailable, "new index file"},
+		{"a page that cannot be rendered", func() int {
+			renderer, err := webui.New()
+			noErr(t, err)
+			recorder := httptest.NewRecorder()
+			(&App{Renderer: renderer}).render(recorder, request, http.StatusOK, nil)
+			return recorder.Code
+		}, http.StatusInternalServerError, "nil page"},
+	} {
+		since := len(serverLog.String())
+		if status := check.status(); status != check.want {
+			t.Errorf("%s status=%d, want %d", check.what, status, check.want)
+		}
+		lines := loggedFailures(serverLog, since)
+		if len(lines) != 1 || !strings.Contains(lines[0], check.cause) {
+			t.Errorf("%s logged %q, want one line naming %q", check.what, lines, check.cause)
+		}
+	}
+	if notice := importFailureNotice(gitRun, ""); notice.Code != webui.MsgImportFailed {
+		t.Errorf("an unclassified import error is explained as %q, want %q", notice.Code, webui.MsgImportFailed)
+	}
+}
+
+// Input the store refuses stays refused input, not a failure to log.
+func TestRefusedInputIsNotLoggedAsAFailure(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	token := "synthetic-helper-token"
+	hash := sha256.Sum256([]byte(token))
+	_, _, err := fixture.store.CreateHelperCredential(context.Background(), "project", "refused", "", hash[:], time.Now())
+	noErr(t, err)
+	server := serve(t, fixture.app.Handler())
+	api := server.URL + "/api/v1/repositories/project"
+	serverLog := captureServerLog(t)
+	for _, check := range []struct {
+		what, code string
+		send       func() *http.Response
+	}{
+		{"a policy without a queue", "invalid_check_policy", func() *http.Response {
+			return adminAPIRequest(t, http.MethodPut, api+"/check-policy", checkapi.PolicyInput{
+				Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"}, MaxTimeoutMS: 60_000,
+				MaxOutputLimitBytes: 64 << 10, QueueLimit: 0, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+			}, "admin-password")
+		}},
+		{"an overlong task title", "invalid_task", func() *http.Response {
+			return checkRequest(t, http.MethodPost, api+"/tasks", checkapi.CreateTaskInput{Title: strings.Repeat("t", 201)}, token)
+		}},
+	} {
+		response := check.send()
+		if code := apiErrorCode(t, response); response.StatusCode != http.StatusUnprocessableEntity || code != check.code {
+			t.Errorf("%s status=%d code=%q, want 422 %s", check.what, response.StatusCode, code, check.code)
+		}
+	}
+	if logged := serverLog.String(); logged != "" {
+		t.Fatalf("refused input logged %q", logged)
 	}
 }
 
@@ -288,5 +387,5 @@ func TestCancelledImportWithAnUnreadableRecordIsUnconfirmed(t *testing.T) {
 		strings.Contains(created.body, webui.Text(webui.LangEN, webui.MsgImportCancelledNoRepo)) {
 		t.Fatalf("cancelled import with an unreadable record status=%d body=%s", created.status, created.body)
 	}
-	checkLoggedSteps(t, "cancelled import", loggedUnavailable(serverLog, 0), "repository record read")
+	checkLoggedSteps(t, "cancelled import", loggedFailures(serverLog, 0), "repository record read")
 }

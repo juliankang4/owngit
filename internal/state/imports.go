@@ -2136,7 +2136,7 @@ func validateImportInitialDestination(item ImportInitialDestination, states ...s
 	if item.Name == "" || len(item.Name) > 80 || strings.ContainsAny(item.Name, `/\`) || !strings.HasPrefix(item.Name, ".owngit-create-") {
 		return errors.New("invalid initial destination name")
 	}
-	if len(item.RepositoryID) > 100 || len(item.RunID) > 64 || len(item.DisplayName) > 100 || len(item.Description) > 500 || len(item.Issue) > 500 {
+	if len(item.RepositoryID) > 100 || len(item.RunID) > 64 || len(item.DisplayName) > 100 || len(item.Description) > MaximumRepositoryDescriptionBytes || len(item.Issue) > 500 {
 		return errors.New("invalid initial destination record")
 	}
 	if !isLowerHex(item.RootID, 32) || len(item.Token) < 16 || len(item.Token) > 64 || item.CreatedAt.IsZero() {

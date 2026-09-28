@@ -203,7 +203,7 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 	if settings.AccessMode == "password" {
 		mode = webui.AccessPassword
 	}
-	app.render(writer, status, webui.SettingsPage{
+	app.render(writer, request, status, webui.SettingsPage{
 		Chrome: chrome, SubmitURL: "/settings", AccessMode: mode, AdminRequired: true,
 		PendingAction: pending, Storage: storage, CloneHint: app.serverOrigin(request) + "/git/",
 		UpdateCheck: webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil},

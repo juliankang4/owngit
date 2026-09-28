@@ -16,8 +16,9 @@ import (
 	"owngit/internal/webui"
 )
 
-// loggedUnavailable returns the unavailable answers logged after offset since.
-func loggedUnavailable(serverLog *lockedLog, since int) []string {
+// loggedFailures returns the failures, unavailable or internal, logged after
+// offset since.
+func loggedFailures(serverLog *lockedLog, since int) []string {
 	var lines []string
 	for _, line := range strings.Split(serverLog.String()[since:], "\n") {
 		if strings.Contains(line, "could not be completed") {
@@ -112,7 +113,7 @@ func TestPullRequestAndRestoreFailuresLogTheirCauseOnce(t *testing.T) {
 		if status != http.StatusServiceUnavailable {
 			t.Errorf("%s status=%d, want 503", what, status)
 		}
-		checkLoggedSteps(t, what, loggedUnavailable(serverLog, since), check.step)
+		checkLoggedSteps(t, what, loggedFailures(serverLog, since), check.step)
 	}
 }
 
@@ -190,7 +191,7 @@ func TestStateFailuresBehindRepositoryPagesAreLogged(t *testing.T) {
 		if status := check.send(); status != http.StatusServiceUnavailable {
 			t.Errorf("%s status=%d, want 503", check.what, status)
 		}
-		checkLoggedSteps(t, check.what, loggedUnavailable(serverLog, since), check.steps...)
+		checkLoggedSteps(t, check.what, loggedFailures(serverLog, since), check.steps...)
 	}
 
 	// With the state readable again the same pages log nothing.
@@ -200,7 +201,7 @@ func TestStateFailuresBehindRepositoryPagesAreLogged(t *testing.T) {
 			t.Errorf("GET %s after the state recovered status=%d, want 200", path, status)
 		}
 	}
-	checkLoggedSteps(t, "pages that could be read", loggedUnavailable(serverLog, since))
+	checkLoggedSteps(t, "pages that could be read", loggedFailures(serverLog, since))
 }
 
 // A language count that failed is logged with its cause. It has its own
@@ -221,5 +222,57 @@ func TestLanguageCountFailureIsLogged(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(body, webui.Text(webui.LangEN, webui.MsgRepoLanguagesUnavailable)) {
 		t.Errorf("overview with a failing language count status=%d, want 200 with the panel saying so", status)
 	}
-	checkLoggedSteps(t, "failing language count", loggedUnavailable(serverLog, 0), "language count")
+	checkLoggedSteps(t, "failing language count", loggedFailures(serverLog, 0), "language count")
+}
+
+// The pull request list says what its status says: a fault in OwnGit for
+// 500, which waiting does not fix, unavailable for 503, and for 413 that the
+// list is too long to show.
+func TestPullRequestListTextFollowsItsStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the failing wrapper is a Unix test fixture")
+	}
+	internal, unavailable := "Something went wrong on the server.", "This is temporarily unavailable."
+	tooLong := "more pull requests than the list can show"
+	for _, check := range []struct {
+		what, wrapper string
+		// rows are closed pull requests recorded beside the open one.
+		rows   int
+		status int
+		text   string
+		logged []string
+	}{
+		{"an invalid branch head", `for a in "$@"; do if test "$a" = for-each-ref; then printf 'refs/heads/main\000nothex\000commit\n'; exit 0; fi; done`, 0,
+			http.StatusInternalServerError, internal, []string{"pull request list read"}},
+		{"branch heads that could not be read", `for a in "$@"; do if test "$a" = for-each-ref; then echo 'fatal: simulated storage failure' >&2; exit 128; fi; done`, 0,
+			http.StatusServiceUnavailable, unavailable, []string{"pull request list read"}},
+		{"a list longer than one answer", "", pullrequest.MaximumListResults, http.StatusRequestEntityTooLarge, tooLong, nil},
+	} {
+		fixture := newAPIFixture(t, false)
+		_, err := fixture.app.PullRequests.Create(context.Background(), pullrequest.CreateInput{
+			Repository: "project", Title: "Listed", SourceBranch: "feature", TargetBranch: "main",
+			SourceOID: fixture.sourceOID, TargetOID: fixture.targetOID,
+		})
+		noErr(t, err)
+		if check.rows != 0 {
+			noErr(t, fixture.store.Exec(context.Background(), `INSERT INTO pull_requests(repository_id,number,title,source_branch,target_branch,status,created_at,updated_at)
+				WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<?)
+				SELECT 'project',i,'Closed','feature','main','closed',1,1 FROM n`, check.rows+1))
+		}
+		server, client, _ := openBrowser(t, fixture)
+		if check.wrapper != "" {
+			useGitWrapper(t, fixture.app, check.wrapper)
+		}
+		serverLog := captureServerLog(t)
+		result := browserGET(t, client, server.URL+"/repositories/project/pull-requests")
+		if result.status != check.status || !strings.Contains(result.body, check.text) {
+			t.Errorf("%s: status=%d, want %d with %q", check.what, result.status, check.status, check.text)
+		}
+		for _, other := range []string{internal, unavailable, tooLong} {
+			if other != check.text && strings.Contains(result.body, other) {
+				t.Errorf("%s: the page also says %q", check.what, other)
+			}
+		}
+		checkLoggedSteps(t, check.what, loggedFailures(serverLog, 0), check.logged...)
+	}
 }

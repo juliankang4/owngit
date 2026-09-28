@@ -73,8 +73,12 @@ func (app *App) handleCheckPolicy(writer http.ResponseWriter, request *http.Requ
 			QueueLimit: input.QueueLimit, MaxActiveJobs: input.MaxActiveJobs, MaxLeaseMS: input.MaxLeaseMS,
 			Execution: input.Execution,
 		}, app.now())
-		if err != nil {
+		if errors.Is(err, state.ErrInvalidCheckPolicy) {
 			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_check_policy", err.Error(), nil)
+			return
+		}
+		if err != nil {
+			writeAPIError(writer, unavailable(request, "configured check policy save", err), "state_unavailable", "The configured-check policy could not be saved.", nil)
 			return
 		}
 		app.wakeChecks(repositoryID)

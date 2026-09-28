@@ -69,6 +69,12 @@ type Session struct {
 	Expires time.Time
 }
 
+// MaximumRepositoryDescriptionBytes bounds a repository description wherever
+// one is held: the repository rules, a recorded import destination and a
+// backup manifest. The migration that created the import destination table
+// states the same bound in its SQL.
+const MaximumRepositoryDescriptionBytes = 500
+
 type Repository struct {
 	ID          string
 	Name        string

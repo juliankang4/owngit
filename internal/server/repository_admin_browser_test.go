@@ -528,6 +528,81 @@ func TestBusyReasonsGetTheirOwnSentence(t *testing.T) {
 	}
 }
 
+// A deletion that could not be completed is answered as unavailable, the
+// page says so, and its cause is logged once.
+func TestDeletionThatCouldNotBeCompletedIsLogged(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	signInAdmin(t, fixture, server.URL, jar)
+	noErr(t, fixture.store.Exec(context.Background(), `CREATE TRIGGER refuse_deletion_journal BEFORE INSERT ON metadata WHEN NEW.key LIKE 'repository_deletion/%' BEGIN SELECT RAISE(ABORT, 'injected failure'); END`))
+	serverLog := captureServerLog(t)
+	result := browserForm(t, client, server.URL+"/repositories/project/delete", url.Values{
+		"csrf": {adminTestCSRF}, "mode": {"delete_files"}, "confirm_name": {"project"}, "admin_password": {"admin-password"},
+	}, server.URL)
+	if result.status != http.StatusServiceUnavailable || !strings.Contains(result.body, "The repository could not be deleted.") {
+		t.Fatalf("failed deletion status=%d body=%s", result.status, result.body)
+	}
+	checkLoggedSteps(t, "failed deletion", loggedFailures(serverLog, 0), "repository deletion")
+	if !strings.Contains(serverLog.String(), "injected failure") {
+		t.Fatalf("log does not name the cause: %s", serverLog)
+	}
+	if _, exists, err := fixture.store.Repository(context.Background(), "project"); err != nil || !exists {
+		t.Fatalf("repository exists=%v err=%v, want it kept", exists, err)
+	}
+}
+
+// An earlier unfinished deletion that the repository storage or another
+// record contradicts is a fault retrying does not fix: it is answered as
+// internal and logged.
+func TestDeletionRecordTheStorageContradictsIsInternal(t *testing.T) {
+	const marker = "0123456789abcdef0123456789abcdef"
+	for _, check := range []struct {
+		what, cause string
+		// record is the recorded deletion of "project" under root, the
+		// canonical repository folder; prepare readies root for it.
+		record  func(root string) string
+		prepare func(t *testing.T, root string)
+	}{
+		{"begun under another repository folder", "the repository folder changed", func(string) string {
+			return `{"mode":"keep_files","phase":"pending","root":"/synthetic/other-folder","moved":".owngit-removed/project-20260101T000000Z.git","marker":"` + marker + `","created_at":1}`
+		}, func(*testing.T, string) {}},
+		// An older build recorded "project" again, so its directory is the new
+		// repository's.
+		{"whose directory a new repository owns", "move it manually", func(root string) string {
+			return fmt.Sprintf(`{"mode":"keep_files","phase":"pending","root":%q,"moved":".owngit-removed/project-20260101T000000Z.git","marker":%q,"created_at":1}`, root, marker)
+		}, func(*testing.T, string) {}},
+		{"whose directory was replaced by a file", "replaced by another kind of file", func(root string) string {
+			return fmt.Sprintf(`{"mode":"delete_files","phase":"moved","root":%q,"moved":".owngit-delete-%s","marker":%q,"created_at":1}`, root, marker, marker)
+		}, func(t *testing.T, root string) {
+			noErr(t, os.WriteFile(filepath.Join(root, ".owngit-delete-"+marker), []byte("synthetic"), 0o600))
+		}},
+	} {
+		t.Run(check.what, func(t *testing.T) {
+			fixture := newAPIFixture(t, false)
+			server, client, jar := openBrowser(t, fixture)
+			signInAdmin(t, fixture, server.URL, jar)
+			// The folder as the deletion records it: absolute and clean.
+			root, err := filepath.Abs(fixture.app.Repositories.RepositoryRoot())
+			noErr(t, err)
+			root = filepath.Clean(root)
+			noErr(t, os.WriteFile(filepath.Join(root, ".owngit-deletion-project"), []byte("token "+marker+"\n"), 0o600))
+			check.prepare(t, root)
+			noErr(t, fixture.store.Exec(context.Background(), `INSERT INTO metadata(key,value) VALUES('repository_deletion/project', ?)`, check.record(root)))
+			serverLog := captureServerLog(t)
+			result := browserForm(t, client, server.URL+"/repositories/project/delete", url.Values{
+				"csrf": {adminTestCSRF}, "mode": {"delete_files"}, "confirm_name": {"project"}, "admin_password": {"admin-password"},
+			}, server.URL)
+			if result.status != http.StatusInternalServerError || !strings.Contains(result.body, "The repository could not be deleted.") {
+				t.Fatalf("status=%d body=%s", result.status, result.body)
+			}
+			checkLoggedSteps(t, check.what, loggedFailures(serverLog, 0), "repository deletion")
+			if !strings.Contains(serverLog.String(), check.cause) {
+				t.Fatalf("log does not name %q: %s", check.cause, serverLog)
+			}
+		})
+	}
+}
+
 func TestIncompleteDeletionIsReportedAsRemovedWithCleanupOwed(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)

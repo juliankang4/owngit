@@ -80,7 +80,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 		page := app.helperCredentialsPage(request, stored, summary, chrome, append(credentials, credential))
 		page.Chrome.Notices = []webui.Notice{webui.Success(webui.MsgHelperIssued)}
 		page.Issued, page.IssuedToken = browserHelperCredential(credential), token
-		app.render(writer, http.StatusOK, page)
+		app.render(writer, request, http.StatusOK, page)
 	case webui.ActionRevokeHelperCredential:
 		if !validAttemptID(credentialID) {
 			app.renderHelperCredentials(writer, request, stored, summary, chrome, action, credentialID, "",
@@ -117,7 +117,7 @@ func (app *App) renderHelperCredentials(writer http.ResponseWriter, request *htt
 	if notices != nil {
 		page.Chrome.Notices = notices
 	}
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 func (app *App) helperCredentialsPage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, credentials []state.HelperCredential) webui.HelperCredentialsPage {
@@ -146,10 +146,7 @@ func (app *App) requireBrowserAdmin(writer http.ResponseWriter, request *http.Re
 }
 
 func (app *App) issueHelperCredential(ctx context.Context, repositoryID, label, creationID string) (state.HelperCredential, string, bool, error) {
-	token, err := auth.RandomToken(32)
-	if err != nil {
-		return state.HelperCredential{}, "", false, err
-	}
+	token := auth.RandomToken(32)
 	hash := sha256.Sum256([]byte(token))
 	credential, created, err := app.Store.CreateHelperCredential(ctx, repositoryID, label, creationID, hash[:], app.now())
 	if err != nil || !created {

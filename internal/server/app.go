@@ -100,11 +100,12 @@ type App struct {
 	HeadlessListen string
 	// listenReturned records that setup saved DefaultListenAddress.
 	listenReturned atomic.Bool
-	// setupFinished is set when first-run setup succeeds in this process, by
-	// the web page or the terminal. The next dashboard view, after sign-in
-	// when shared access needs one, takes it and shows the "Setup finished"
-	// notice once through the notice cookie.
-	setupFinished atomic.Bool
+	// setupResult is set when first-run setup is saved in this process, by
+	// the web page or the terminal, to its result notice (see
+	// setupResultNotice). The next dashboard view, after sign-in when shared
+	// access needs one, takes it and shows the notice once through the
+	// notice cookie.
+	setupResult atomic.Pointer[string]
 	// setupHosts binds a setup session redeemed from an unknown Host to that
 	// Host. See setup_host.go.
 	setupHosts setupHostBinding
@@ -140,7 +141,7 @@ func (app *App) Handler() http.Handler {
 func (app *App) AuthorizeGit(request *http.Request) (bool, error) {
 	settings, err := app.Store.Settings(request.Context())
 	if err != nil {
-		logUnavailable(request, "Git access check", err)
+		logFailure(request, "Git access check", err)
 		return false, err
 	}
 	if !settings.Initialized {
@@ -160,7 +161,7 @@ func (app *App) AuthorizeGit(request *http.Request) (bool, error) {
 	case errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, auth.ErrRateLimited):
 		return false, nil
 	}
-	logUnavailable(request, "Git password check", err)
+	logFailure(request, "Git password check", err)
 	return false, err
 }
 
@@ -405,10 +406,13 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
-func (app *App) render(writer http.ResponseWriter, status int, page webui.Page) {
+// render answers request with page. The page is rendered in full before
+// anything is written, so a page that cannot be rendered is answered as a
+// failure instead of a partial page.
+func (app *App) render(writer http.ResponseWriter, request *http.Request, status int, page webui.Page) {
 	var output bytes.Buffer
 	if err := app.Renderer.Render(&output, page); err != nil {
-		app.writePlainError(writer, http.StatusInternalServerError)
+		app.writePlainError(writer, internalError(request, "page render", err))
 		return
 	}
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -422,29 +426,51 @@ func (app *App) render(writer http.ResponseWriter, status int, page webui.Page) 
 func (app *App) renderError(writer http.ResponseWriter, request *http.Request, status int, code webui.MessageCode, detail string) {
 	chrome, err := app.chrome(writer, request, webui.SectionNone, "", "")
 	if err != nil {
-		logUnavailable(request, "page frame read", err)
+		logFailure(request, "page frame read", err)
 	}
-	app.render(writer, status, webui.ErrorPage{Chrome: chrome, Status: status, Code: code, Detail: detail, RetryURL: "/"})
+	app.render(writer, request, status, webui.ErrorPage{Chrome: chrome, Status: status, Code: code, Detail: detail, RetryURL: "/"})
 }
 
 // unavailable logs why step of request could not be completed and returns
-// 503 Service Unavailable, the status that answers it. It is the only source
-// of that status in this package (TestOnlyUnavailableAnswersUnavailable), so
-// the cause of every unavailable answer is in the server log, once. A state
-// that is working as intended, such as a repository being prepared, is
-// passed as its error and not logged (see intendedCause).
+// 503 Service Unavailable, the status that answers it: the work could not be
+// done now, and the same request can succeed later. It is the only source of
+// that status in this package (TestFailureStatusesLogTheirCause), so the
+// cause of every unavailable answer is in the server log, once. A state that
+// is working as intended, such as a repository being prepared, is passed as
+// its error and not logged (see intendedCause).
 func unavailable(request *http.Request, step string, err error) int {
-	logUnavailable(request, step, err)
+	logFailure(request, step, err)
 	return http.StatusServiceUnavailable
 }
 
-// logUnavailable logs why step of request could not be completed. An answer
-// logs through unavailable. What logs here is not answered in this package
-// as unavailable: a part of a page shown as unavailable, such as a side
-// panel, and a Git request, which githttp answers. The line holds only the
-// method and escaped path, cut when long, never the request's password,
+// internalError logs why step of request failed and returns 500 Internal
+// Server Error, the status that answers it: OwnGit found a fault in itself
+// or its data, such as a page it cannot render or a pull request whose
+// records disagree, which retrying does not fix. It is the only source of
+// that status in this package, as unavailable is of 503.
+func internalError(request *http.Request, step string, err error) int {
+	logFailure(request, step, err)
+	return http.StatusInternalServerError
+}
+
+// failureText is the page text for a failure answered with status 500 or
+// 503, the statuses internalError and unavailable return: a fault in OwnGit
+// for 500, which waiting does not fix, and work that could not be done now
+// for 503. A page answering another status says what that status means.
+func failureText(status int) webui.MessageCode {
+	if status == http.StatusInternalServerError {
+		return webui.MsgErrInternal
+	}
+	return webui.MsgErrUnavailable
+}
+
+// logFailure logs why step of request could not be completed. An answer
+// logs through unavailable or internalError. What logs here directly is not
+// answered in this package: a part of a page shown as unavailable, such as
+// a side panel, and a Git request, which githttp answers. The line holds only
+// the method and escaped path, cut when long, never the request's password,
 // cookie or token, and the cause is quoted onto it (see logtext).
-func logUnavailable(request *http.Request, step string, err error) {
+func logFailure(request *http.Request, step string, err error) {
 	if intendedCause(request.Context(), err) {
 		return
 	}

@@ -321,7 +321,7 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 		// policy screen on the next reload. SubmitURL stays the POST route,
 		// which the job forms already extend with the job they act on.
 		page.SelfURL = configuredCheckJobURL(self, opened)
-		app.render(writer, status, page)
+		app.render(writer, request, status, page)
 		return
 	}
 
@@ -338,7 +338,7 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 	jobs, err := app.Store.LatestCheckJobs(request.Context(), stored.ID, maximumBrowserJobs+1)
 	if err != nil {
 		page.JobsUnavailable = true
-		app.render(writer, status, page)
+		app.render(writer, request, status, page)
 		return
 	}
 	if len(jobs) > maximumBrowserJobs {
@@ -348,7 +348,7 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 	for _, job := range jobs {
 		page.Jobs = append(page.Jobs, browserCheckJobRow(job, self))
 	}
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 // browserCheckFile reports what the default branch holds at the check file
@@ -991,7 +991,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 		page := app.runnerTokensPage(request, stored, summary, chrome, listed)
 		page.Chrome.Notices = []webui.Notice{webui.Success(webui.MsgRTIssued)}
 		page.Issued, page.IssuedToken = browserRunnerCredential(credential), token
-		app.render(writer, http.StatusOK, page)
+		app.render(writer, request, http.StatusOK, page)
 	case webui.ActionRevokeRunnerToken:
 		if !validAttemptID(credentialID) {
 			app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, "",
@@ -1047,7 +1047,7 @@ func (app *App) renderRunnerTokens(writer http.ResponseWriter, request *http.Req
 	if notices != nil {
 		page.Chrome.Notices = notices
 	}
-	app.render(writer, status, page)
+	app.render(writer, request, status, page)
 }
 
 func (app *App) runnerTokensPage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, listed runnerTokenList) webui.RunnerCredentialsPage {

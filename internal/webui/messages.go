@@ -156,6 +156,9 @@ const (
 	MsgSetupSubmit    MessageCode = "setup.submit"
 	MsgSetupFailed    MessageCode = "setup.failed"
 	MsgSetupCompleted MessageCode = "setup.completed"
+	// MsgSetupFileRemains follows MsgSetupCompleted when the used setup file
+	// could not be removed.
+	MsgSetupFileRemains MessageCode = "setup.completed.file_remains"
 
 	MsgSetupLinkExpired  MessageCode = "setup.unavailable.expired"
 	MsgSetupLinkUsed     MessageCode = "setup.unavailable.used"
@@ -711,12 +714,16 @@ var catalog = map[MessageCode]message{
 		ko: "설치 완료",
 	},
 	MsgSetupFailed: {
-		en: "Setup could not be completed. Nothing was changed.",
-		ko: "설치를 완료하지 못했습니다. 변경된 내용은 없습니다.",
+		en: "Setup could not be saved. Nothing was changed. The server log names the cause.",
+		ko: "설치 내용을 저장하지 못했습니다. 변경된 내용은 없습니다. 원인은 서버 로그에 있습니다.",
 	},
 	MsgSetupCompleted: {
 		en: "Setup finished. Create your first repository when you are ready.",
 		ko: "설치를 마쳤습니다. 준비되면 첫 저장소를 만드세요.",
+	},
+	MsgSetupFileRemains: {
+		en: "OwnGit could not remove the used setup file from its state folder. The file no longer opens setup; remove it when convenient. The server log names it and why.",
+		ko: "사용한 설치 파일을 OwnGit 상태 폴더에서 지우지 못했습니다. 이 파일로는 더 이상 설치를 열 수 없으니 편할 때 지우세요. 파일 위치와 이유는 서버 로그에 있습니다.",
 	},
 	MsgSetupLinkExpired: {
 		en: "This setup link expired.",

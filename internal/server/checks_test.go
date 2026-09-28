@@ -499,6 +499,14 @@ func TestAttemptCompletionValidatesTheDeclaredChecks(t *testing.T) {
 		t.Fatalf("missing identity status=%d error=%q", response.StatusCode, apiErrorCode(t, response))
 	}
 
+	// A malformed identifier is refused input, like the attempt identifier.
+	badJob := registrationBody(attemptUploadBodyWithID(fixture.sourceOID, "clean", "passed", "dddddddddddddddddddddddddddddddd"))
+	badJob["job_id"] = "not-a-job"
+	response = checkRequest(t, http.MethodPost, base+"/tasks/"+taskID+"/attempts", badJob, token)
+	if response.StatusCode != http.StatusUnprocessableEntity || apiErrorCode(t, response) != "invalid_job_id" {
+		t.Fatalf("malformed job identity status=%d error=%q", response.StatusCode, apiErrorCode(t, response))
+	}
+
 	// A completion for an unregistered attempt is reported as such.
 	unregistered := attemptUploadBody(fixture.sourceOID, "clean", "passed")
 	response = completeAttempt(t, base, taskID, "cccccccccccccccccccccccccccccccc", token, unregistered)
