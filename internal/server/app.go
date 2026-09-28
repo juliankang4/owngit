@@ -129,7 +129,7 @@ type App struct {
 }
 
 func (app *App) Handler() http.Handler {
-	next := app.Hosts.MiddlewareAdmitting(app.admitUnknownHost, http.HandlerFunc(app.serveHTTP))
+	next := app.Hosts.MiddlewareAdmitting(app.admitUnknownHost, app.answerUnavailable, http.HandlerFunc(app.serveHTTP))
 	return refuseFunnel(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		// The proxies trusted now, which Tailscale sharing can change.
 		app.Network.Resolver().Middleware(next).ServeHTTP(writer, request)
@@ -335,12 +335,7 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	settings, err := app.Store.Settings(request.Context())
 	if err != nil {
-		status := unavailable(request, "settings read", err)
-		if strings.HasPrefix(request.URL.Path, "/api/") {
-			writeAPIError(writer, status, "state_unavailable", "OwnGit state is unavailable.", nil)
-		} else {
-			app.writePlainError(writer, status)
-		}
+		app.answerUnavailable(writer, request, "settings read", err)
 		return
 	}
 	if strings.HasPrefix(request.URL.Path, "/api/") {
@@ -443,6 +438,20 @@ func unavailable(request *http.Request, step string, err error) int {
 	return http.StatusServiceUnavailable
 }
 
+// answerUnavailable answers a request that step could not complete now,
+// through unavailable: an API request with its JSON error, any other with
+// plain text. A page answers this way when its frame, or a read that decides
+// the request, such as its session, fails; a failed read that may have
+// allowed the request is neither refused nor sent to sign in.
+func (app *App) answerUnavailable(writer http.ResponseWriter, request *http.Request, step string, err error) {
+	status := unavailable(request, step, err)
+	if strings.HasPrefix(request.URL.Path, "/api/") {
+		writeAPIError(writer, status, "state_unavailable", "OwnGit state is unavailable.", nil)
+		return
+	}
+	app.writePlainError(writer, status)
+}
+
 // internalError logs why step of request failed and returns 500 Internal
 // Server Error, the status that answers it: OwnGit found a fault in itself
 // or its data, such as a page it cannot render or a pull request whose
@@ -467,9 +476,10 @@ func failureText(status int) webui.MessageCode {
 // logFailure logs why step of request could not be completed. An answer
 // logs through unavailable or internalError. What logs here directly is not
 // answered in this package: a part of a page shown as unavailable, such as
-// a side panel, and a Git request, which githttp answers. The line holds only
-// the method and escaped path, cut when long, never the request's password,
-// cookie or token, and the cause is quoted onto it (see logtext).
+// a side panel, a choice that is right whatever the read would have given,
+// and a Git request, which githttp answers. The line holds only the method
+// and escaped path, cut when long, never the request's password, cookie or
+// token, and the cause is quoted onto it (see logtext).
 func logFailure(request *http.Request, step string, err error) {
 	if intendedCause(request.Context(), err) {
 		return

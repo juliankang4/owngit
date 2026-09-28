@@ -143,8 +143,7 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 	if !parseForm(writer, request) {
 		return
 	}
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 
@@ -184,8 +183,7 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 	if !parseForm(writer, request) {
 		return
 	}
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 	input := pullrequest.RevisionInput{SourceOID: postValue(request, "source_oid"), TargetOID: postValue(request, "target_oid")}

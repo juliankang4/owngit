@@ -22,7 +22,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	page := webui.NewImportPage{Chrome: chrome, SubmitURL: "/repositories/new-import"}
@@ -39,8 +39,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 	page.Mode = postValue(request, "mode")
 	page.GitOnlyConsent = postValue(request, "git_only_consent") == "1"
 	page.PrivateNetwork = postValue(request, "allow_private_network") == "1"
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 	page.CredentialForm = postValue(request, "credential_form")
@@ -137,11 +136,15 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 				return
 			}
 		}
-		if session, admin := app.cookieSession(request, "admin", adminCookie); admin {
-			var err error
+		session, admin, err := app.cookieSession(request, "admin", adminCookie)
+		if err != nil {
+			app.answerUnavailable(writer, request, "session read", err)
+			return
+		}
+		if admin {
 			chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, session.CSRF)
 			if err != nil {
-				app.writePlainError(writer, unavailable(request, "page frame read", err))
+				app.answerUnavailable(writer, request, "page frame read", err)
 				return
 			}
 		}
@@ -155,14 +158,13 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 	var err error
 	chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	if !parseForm(writer, request) {
 		return
 	}
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 	if ok, status := app.importAdminPassword(writer, request, &chrome); !ok {

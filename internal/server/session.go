@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -25,10 +26,15 @@ func (app *App) requireGeneral(writer http.ResponseWriter, request *http.Request
 		app.setCookie(writer, request, generalCookie, token, expires, true)
 		return state.Session{Kind: "general", CSRF: token, Version: settings.AccessSessionVersion, Expires: expires}, true
 	}
-	if session, ok := app.cookieSession(request, "general", generalCookie); ok {
+	session, ok, err := app.cookieSession(request, "general", generalCookie)
+	switch {
+	case err != nil:
+		app.answerUnavailable(writer, request, "session read", err)
+	case ok:
 		return session, true
+	default:
+		http.Redirect(writer, request, "/login?next="+url.QueryEscape(loginNext(request)), http.StatusSeeOther)
 	}
-	http.Redirect(writer, request, "/login?next="+url.QueryEscape(loginNext(request)), http.StatusSeeOther)
 	return state.Session{}, false
 }
 
@@ -107,46 +113,76 @@ func repositoryOfPath(path string) (string, bool) {
 	return id, found && id != ""
 }
 
-func (app *App) cookieSession(request *http.Request, kind, cookieName string) (state.Session, bool) {
+// cookieSession returns the session of kind named by the request's cookie.
+// ok is false for no cookie and for an unknown, expired or ended session. An
+// error means the session could not be read and may be valid, so it neither
+// grants nor refuses anything: the request is answered through
+// answerUnavailable instead of being sent to sign in or refused as a forgery.
+func (app *App) cookieSession(request *http.Request, kind, cookieName string) (state.Session, bool, error) {
 	cookie, err := request.Cookie(cookieName)
 	if err != nil || cookie.Value == "" {
-		return state.Session{}, false
+		return state.Session{}, false, nil
 	}
 	session, ok, err := app.Auth.ValidateSession(request.Context(), cookie.Value, kind)
-	if err != nil || !ok {
-		return state.Session{}, false
-	}
-	return session, true
+	return endedSessionKept(request, session, ok, err)
 }
 
-func (app *App) validCSRF(request *http.Request, submitted string) bool {
-	if submitted == "" {
-		return false
+// endedSessionKept completes a session read. A session found ended whose
+// removal failed is not valid: the failure is logged, and the session reads
+// as none.
+func endedSessionKept(request *http.Request, session state.Session, ok bool, err error) (state.Session, bool, error) {
+	if errors.Is(err, state.ErrEndedSessionKept) {
+		logFailure(request, "ended session removal", err)
+		return state.Session{}, false, nil
 	}
-	for _, candidate := range []struct{ kind, cookie string }{
-		{"setup", setupCookie}, {"admin", adminCookie}, {"general", generalCookie},
-	} {
-		if candidate.kind == "setup" {
-			cookie, err := request.Cookie(candidate.cookie)
-			if err != nil {
-				continue
-			}
-			session, ok, err := app.Store.Session(request.Context(), cookie.Value, "setup", app.now())
-			if err == nil && ok && constantEqual(session.CSRF, submitted) {
-				return true
-			}
-			continue
+	return session, ok, err
+}
+
+// validCSRF reports whether submitted is the CSRF token of a session the
+// request holds, or its open-access token. A token that matches a session
+// that was read is valid even when another could not be read. A token that
+// matches none is refused only when everything it could match was read;
+// otherwise the error is returned.
+func (app *App) validCSRF(request *http.Request, submitted string) (bool, error) {
+	if submitted == "" {
+		return false, nil
+	}
+	var readErr error
+	matches := func(session state.Session, ok bool, err error) bool {
+		if readErr == nil {
+			readErr = err
 		}
-		if session, ok := app.cookieSession(request, candidate.kind, candidate.cookie); ok && constantEqual(session.CSRF, submitted) {
-			return true
-		}
+		return ok && constantEqual(session.CSRF, submitted)
+	}
+	if matches(app.setupSession(request)) ||
+		matches(app.cookieSession(request, "admin", adminCookie)) ||
+		matches(app.cookieSession(request, "general", generalCookie)) {
+		return true, nil
 	}
 	settings, err := app.Store.Settings(request.Context())
-	if err != nil || settings.AccessMode != "open" {
-		return false
+	if err != nil {
+		return false, err
 	}
-	cookie, err := request.Cookie(generalCookie)
-	return err == nil && validOpenToken(cookie.Value) && constantEqual(cookie.Value, submitted)
+	if settings.AccessMode == "open" {
+		if cookie, err := request.Cookie(generalCookie); err == nil && validOpenToken(cookie.Value) && constantEqual(cookie.Value, submitted) {
+			return true, nil
+		}
+	}
+	return false, readErr
+}
+
+// requireCSRF reports whether a form submission carries a valid CSRF token,
+// and otherwise answers it: 403 for a token that matches nothing, and
+// unavailable when that could not be decided.
+func (app *App) requireCSRF(writer http.ResponseWriter, request *http.Request) bool {
+	valid, err := app.validCSRF(request, postValue(request, "csrf"))
+	switch {
+	case err != nil:
+		app.answerUnavailable(writer, request, "CSRF check", err)
+	case !valid:
+		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	}
+	return valid
 }
 
 func validOpenToken(value string) bool {
@@ -195,15 +231,27 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 	}
 	lang := app.language(writer, request)
 	appearance := app.appearance(writer, request)
-	general, generalOK := app.cookieSession(request, "general", generalCookie)
-	admin, adminOK := app.cookieSession(request, "admin", adminCookie)
+	general, generalOK, err := app.cookieSession(request, "general", generalCookie)
+	if err != nil {
+		return webui.Chrome{}, fmt.Errorf("session read: %w", err)
+	}
+	admin, adminOK, err := app.cookieSession(request, "admin", adminCookie)
+	if err != nil {
+		return webui.Chrome{}, fmt.Errorf("session read: %w", err)
+	}
 	if csrf == "" {
 		if adminOK {
 			csrf = admin.CSRF
 		} else if generalOK {
 			csrf = general.CSRF
-		} else if setup, ok := app.setupSession(request); ok {
-			csrf = setup.CSRF
+		} else {
+			setup, ok, err := app.setupSession(request)
+			if err != nil {
+				return webui.Chrome{}, fmt.Errorf("session read: %w", err)
+			}
+			if ok {
+				csrf = setup.CSRF
+			}
 		}
 	}
 	accessMode := webui.AccessOpen
@@ -301,13 +349,15 @@ func (app *App) resultNotice(writer http.ResponseWriter, request *http.Request) 
 	return notice
 }
 
-func (app *App) setupSession(request *http.Request) (state.Session, bool) {
+// setupSession returns the setup session named by the request's cookie, with
+// the outcomes of cookieSession.
+func (app *App) setupSession(request *http.Request) (state.Session, bool, error) {
 	cookie, err := request.Cookie(setupCookie)
 	if err != nil {
-		return state.Session{}, false
+		return state.Session{}, false, nil
 	}
 	session, ok, err := app.Store.Session(request.Context(), cookie.Value, "setup", app.now())
-	return session, err == nil && ok
+	return endedSessionKept(request, session, ok, err)
 }
 
 func (app *App) language(writer http.ResponseWriter, request *http.Request) webui.Lang {

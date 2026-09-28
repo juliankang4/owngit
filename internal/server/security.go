@@ -65,21 +65,33 @@ func (policy *HostPolicy) Allows(requestHost, peer string) bool {
 }
 
 func (policy *HostPolicy) Middleware(next http.Handler) http.Handler {
-	return policy.MiddlewareAdmitting(nil, next)
+	return policy.MiddlewareAdmitting(nil, nil, next)
 }
 
 // MiddlewareAdmitting is Middleware with one exception: a request whose Host
-// the policy refuses still passes when admit, if not nil, accepts it. The
-// Origin check and the security headers apply either way.
-func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) bool, next http.Handler) http.Handler {
+// the policy refuses still passes when admit, if not nil, accepts it. When
+// admit could not decide, unavailable answers the request with the cause:
+// the Host may be admitted, so it is not refused. The Origin check and the
+// security headers apply either way.
+func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) (bool, error), unavailable func(http.ResponseWriter, *http.Request, string, error), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if info := requestctx.Of(request); !policy.Allows(info.Host, info.Peer) && (admit == nil || !admit(request)) {
-			if strings.HasPrefix(request.URL.Path, "/api/") {
-				writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
-			} else {
-				http.Error(writer, "unrecognized host\n"+webui.Text(refusedHostLang(request), webui.MsgHostRefusedHint), http.StatusMisdirectedRequest)
+		if info := requestctx.Of(request); !policy.Allows(info.Host, info.Peer) {
+			admitted, err := false, error(nil)
+			if admit != nil {
+				admitted, err = admit(request)
 			}
-			return
+			if err != nil {
+				unavailable(writer, request, "setup Host admission", err)
+				return
+			}
+			if !admitted {
+				if strings.HasPrefix(request.URL.Path, "/api/") {
+					writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
+				} else {
+					http.Error(writer, "unrecognized host\n"+webui.Text(refusedHostLang(request), webui.MsgHostRefusedHint), http.StatusMisdirectedRequest)
+				}
+				return
+			}
 		}
 		if origin := request.Header.Get("Origin"); origin != "" && !sameOrigin(request, origin) {
 			if strings.HasPrefix(request.URL.Path, "/api/") {

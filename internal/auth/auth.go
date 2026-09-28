@@ -276,7 +276,9 @@ func (m *Manager) ValidateSession(ctx context.Context, token, kind string) (stat
 		expectedVersion = settings.AdminSessionVersion
 	}
 	if session.Version != expectedVersion {
-		_ = m.Store.DeleteSession(ctx, token, kind)
+		if err := m.Store.DeleteSession(ctx, token, kind); err != nil {
+			return state.Session{}, false, fmt.Errorf("%w: %w", state.ErrEndedSessionKept, err)
+		}
 		return state.Session{}, false, nil
 	}
 	return session, true, nil

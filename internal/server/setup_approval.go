@@ -394,7 +394,7 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 	csrf := app.preauthCSRF(writer, request)
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	page.Chrome = chrome
@@ -459,7 +459,7 @@ func (app *App) handleSetupApprovalRequest(writer http.ResponseWriter, request *
 func (app *App) renderApprovalRefusal(writer http.ResponseWriter, request *http.Request, refusal approvalRefusal) {
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", "")
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	app.render(writer, request, refusal.status, webui.SetupPage{

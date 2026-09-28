@@ -40,8 +40,7 @@ func (app *App) handleReleaseDismiss(writer http.ResponseWriter, request *http.R
 	if !parseForm(writer, request) {
 		return
 	}
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 	version := postValue(request, "version")

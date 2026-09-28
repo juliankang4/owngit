@@ -68,7 +68,7 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionRepository, stored.ID, adminSession.CSRF)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	// A GET is a plain read. It never admits a job, never reserves a
@@ -912,7 +912,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionRepository, stored.ID, adminSession.CSRF)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	if request.Method == http.MethodGet {

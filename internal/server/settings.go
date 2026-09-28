@@ -26,8 +26,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	if !parseForm(writer, request) {
 		return
 	}
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 	action := postValue(request, "action")
@@ -121,7 +120,13 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	// too. Without an administrator session Settings would send it to the
 	// sign-in page and drop the confirmation, so the confirmation goes there.
 	if action == webui.ActionEnableAccessPassword || action == webui.ActionChangeAccessPassword {
-		if _, ok := app.cookieSession(request, "admin", adminCookie); !ok {
+		// A session that could not be read may have ended, so the
+		// confirmation goes where it is shown either way.
+		_, admin, err := app.cookieSession(request, "admin", adminCookie)
+		if err != nil {
+			logFailure(request, "session read", err)
+		}
+		if !admin {
 			app.noticeRedirect(writer, request, "/login?notice=access_password_saved&next=%2Fsettings", http.StatusSeeOther)
 			return
 		}
@@ -142,13 +147,21 @@ func (app *App) allowSettingsViewer(writer http.ResponseWriter, request *http.Re
 		session, ok := app.requireGeneral(writer, request, settings)
 		return session.CSRF, ok
 	}
-	if session, ok := app.cookieSession(request, "general", generalCookie); ok {
-		return session.CSRF, true
+	// Either session shows Settings, so one that was read decides even when
+	// the other could not be read.
+	general, generalOK, generalErr := app.cookieSession(request, "general", generalCookie)
+	if generalOK {
+		return general.CSRF, true
 	}
-	if session, ok := app.cookieSession(request, "admin", adminCookie); ok {
-		return session.CSRF, true
+	admin, adminOK, adminErr := app.cookieSession(request, "admin", adminCookie)
+	switch {
+	case adminOK:
+		return admin.CSRF, true
+	case generalErr != nil || adminErr != nil:
+		app.answerUnavailable(writer, request, "session read", errors.Join(generalErr, adminErr))
+	default:
+		http.Redirect(writer, request, "/login?next=%2Fsettings", http.StatusSeeOther)
 	}
-	http.Redirect(writer, request, "/login?next=%2Fsettings", http.StatusSeeOther)
 	return "", false
 }
 
@@ -175,12 +188,12 @@ type settingsView struct {
 func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, pending string, notices []webui.Notice, status int, view settingsView) {
 	chrome, err := app.chrome(writer, request, webui.SectionSettings, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	report, err := app.networkReport(request.Context())
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "network settings read", err))
+		app.answerUnavailable(writer, request, "network settings read", err)
 		return
 	}
 	networkBlock := networkInfo(report)

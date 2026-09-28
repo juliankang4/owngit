@@ -465,12 +465,22 @@ func (app *App) authorizeAdminAPI(writer http.ResponseWriter, request *http.Requ
 		return app.checkAPIPassword(writer, request, "admin", password)
 	}
 
-	if _, ok := app.cookieSession(request, "admin", adminCookie); !ok {
+	_, ok, err := app.cookieSession(request, "admin", adminCookie)
+	if err != nil {
+		app.answerUnavailable(writer, request, "session read", err)
+		return false
+	}
+	if !ok {
 		writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit admin"`)
 		writeAPIError(writer, http.StatusUnauthorized, "admin_authentication_required", "The administrator password is required.", nil)
 		return false
 	}
-	if !app.validCSRF(request, request.Header.Get(csrfHeader)) {
+	valid, err := app.validCSRF(request, request.Header.Get(csrfHeader))
+	if err != nil {
+		app.answerUnavailable(writer, request, "CSRF check", err)
+		return false
+	}
+	if !valid {
 		writeAPIError(writer, http.StatusForbidden, "csrf_required", "The "+csrfHeader+" header does not match the admin session.", nil)
 		return false
 	}

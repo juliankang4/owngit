@@ -39,7 +39,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	if app.resultNotice(writer, request) == removedNotice {
@@ -193,7 +193,7 @@ func (app *App) handleNewRepositoryGet(writer http.ResponseWriter, request *http
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	chrome.Notices = notices
@@ -213,8 +213,7 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 	if !parseForm(writer, request) {
 		return
 	}
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 	name := strings.TrimSpace(postValue(request, "name"))
@@ -247,7 +246,7 @@ func (app *App) handleActivity(writer http.ResponseWriter, request *http.Request
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionActivity, "", session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	repositories, err := app.visibleRepositories(request)
@@ -312,7 +311,7 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionRepository, id, session.CSRF)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	// Deleting does not need the Git data, so it is routed before that read:

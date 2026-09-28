@@ -23,7 +23,10 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 	_, unknownHost := app.unknownHost(request)
 	if settings.Initialized {
 		stage = webui.SetupUnavailable
-	} else if session, ok := app.setupSessionForHost(request); ok {
+	} else if session, ok, err := app.setupSessionForHost(request); err != nil {
+		app.answerUnavailable(writer, request, "session read", err)
+		return
+	} else if ok {
 		stage = webui.SetupWizard
 		csrf = session.CSRF
 	} else if app.Approvals.Active() && !unknownHost {
@@ -34,7 +37,7 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	page := webui.SetupPage{
@@ -83,7 +86,7 @@ func (app *App) handleSetupRedeem(writer http.ResponseWriter, request *http.Requ
 	expires := app.now().Add(20 * time.Minute)
 	redeemed, err := app.Store.RedeemBootstrap(request.Context(), token, sessionToken, csrf, app.now(), expires)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "bootstrap redemption", err))
+		app.answerUnavailable(writer, request, "bootstrap redemption", err)
 		return
 	}
 	if !redeemed {
@@ -106,7 +109,11 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 	if !parseForm(writer, request) {
 		return
 	}
-	session, ok := app.setupSessionForHost(request)
+	session, ok, err := app.setupSessionForHost(request)
+	if err != nil {
+		app.answerUnavailable(writer, request, "session read", err)
+		return
+	}
 	if !ok {
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgSetupSessionEnded, "")
 		return
@@ -178,7 +185,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 func (app *App) renderSetupDoneElsewhere(writer http.ResponseWriter, request *http.Request) {
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", "")
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	chrome.Nav = webui.Nav{}
@@ -224,7 +231,7 @@ func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Requ
 	_, unknownHost := app.unknownHost(request)
 	chrome, err := app.chrome(writer, request, webui.SectionSetup, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	chrome.Notices = notices
@@ -254,7 +261,7 @@ func (app *App) handleLoginGet(writer http.ResponseWriter, request *http.Request
 	csrf := app.preauthCSRF(writer, request)
 	chrome, err := app.chrome(writer, request, webui.SectionAuth, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	submitURL := "/login"
@@ -357,7 +364,7 @@ func (app *App) renderLoginFailure(writer http.ResponseWriter, request *http.Req
 	csrf := app.preauthCSRF(writer, request)
 	chrome, err := app.chrome(writer, request, webui.SectionAuth, "", csrf)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	chrome.Notices = []webui.Notice{webui.Error(field, code)}
@@ -384,8 +391,7 @@ func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, 
 	if !parseForm(writer, request) {
 		return
 	}
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 	// Leaving shared access is confirmed on the sign-in page it leads to,

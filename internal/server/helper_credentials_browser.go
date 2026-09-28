@@ -25,7 +25,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 	var err error
 	chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, adminSession.CSRF)
 	if err != nil {
-		app.writePlainError(writer, unavailable(request, "page frame read", err))
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	if request.Method == http.MethodGet {
@@ -138,10 +138,15 @@ func (app *App) helperCredentialsPage(request *http.Request, stored state.Reposi
 
 func (app *App) requireBrowserAdmin(writer http.ResponseWriter, request *http.Request) (state.Session, bool) {
 	writer.Header().Set("Cache-Control", "no-store")
-	if session, ok := app.cookieSession(request, "admin", adminCookie); ok {
+	session, ok, err := app.cookieSession(request, "admin", adminCookie)
+	switch {
+	case err != nil:
+		app.answerUnavailable(writer, request, "session read", err)
+	case ok:
 		return session, true
+	default:
+		http.Redirect(writer, request, "/admin/login?next="+url.QueryEscape(loginNext(request)), http.StatusSeeOther)
 	}
-	http.Redirect(writer, request, "/admin/login?next="+url.QueryEscape(loginNext(request)), http.StatusSeeOther)
 	return state.Session{}, false
 }
 

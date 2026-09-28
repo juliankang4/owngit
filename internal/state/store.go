@@ -1961,6 +1961,13 @@ func (s *Store) CreateSession(ctx context.Context, token, kind, csrf string, ver
 	return err
 }
 
+// ErrEndedSessionKept reports that a session found no longer valid could not
+// be removed. The session is not valid either way; only its removal failed.
+var ErrEndedSessionKept = errors.New("the ended session could not be removed")
+
+// Session returns the session of kind with token. An expired session is not
+// valid and is removed; ErrEndedSessionKept, with ok false, reports that the
+// removal failed.
 func (s *Store) Session(ctx context.Context, token, kind string, now time.Time) (Session, bool, error) {
 	hash := sha256.Sum256([]byte(token))
 	var session Session
@@ -1974,7 +1981,9 @@ func (s *Store) Session(ctx context.Context, token, kind string, now time.Time) 
 	}
 	session.Expires = time.Unix(expiresAt, 0)
 	if !session.Expires.After(now) {
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash=?`, hash[:])
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash=?`, hash[:]); err != nil {
+			return Session{}, false, fmt.Errorf("%w: %w", ErrEndedSessionKept, err)
+		}
 		return Session{}, false, nil
 	}
 	return session, true, nil

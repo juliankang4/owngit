@@ -78,10 +78,11 @@ func (app *App) unknownHost(request *http.Request) (string, bool) {
 }
 
 // admitUnknownHost decides whether a request from a Host the policy refuses
-// may still reach setup. See the comment at the top of this file.
-func (app *App) admitUnknownHost(request *http.Request) bool {
+// may still reach setup. See the comment at the top of this file. An error
+// means the state that decides it could not be read.
+func (app *App) admitUnknownHost(request *http.Request) (bool, error) {
 	if host, unknown := app.unknownHost(request); !unknown || host == "" {
-		return false
+		return false, nil
 	}
 	path, method := request.URL.Path, request.Method
 	switch {
@@ -89,28 +90,34 @@ func (app *App) admitUnknownHost(request *http.Request) bool {
 	case path == "/setup" && method == http.MethodGet:
 	case path == "/setup/redeem" && method == http.MethodPost:
 	case path == "/setup" && method == http.MethodPost:
-		if _, ok := app.setupSessionForHost(request); !ok {
-			return false
-		}
 	default:
-		return false
+		return false, nil
 	}
+	// After setup every such request is refused, whatever its session.
 	settings, err := app.Store.Settings(request.Context())
-	return err == nil && !settings.Initialized
+	if err != nil || settings.Initialized {
+		return false, err
+	}
+	if path == "/setup" && method == http.MethodPost {
+		_, ok, err := app.setupSessionForHost(request)
+		return ok, err
+	}
+	return true, nil
 }
 
-// setupSessionForHost returns the setup session of this request. From an
-// unknown Host the session must be the one bound to that Host.
-func (app *App) setupSessionForHost(request *http.Request) (state.Session, bool) {
-	session, ok := app.setupSession(request)
-	if !ok {
-		return state.Session{}, false
+// setupSessionForHost returns the setup session of this request, with the
+// outcomes of cookieSession. From an unknown Host the session must be the one
+// bound to that Host.
+func (app *App) setupSessionForHost(request *http.Request) (state.Session, bool, error) {
+	session, ok, err := app.setupSession(request)
+	if err != nil || !ok {
+		return state.Session{}, false, err
 	}
 	if host, unknown := app.unknownHost(request); unknown {
 		cookie, err := request.Cookie(setupCookie)
 		if err != nil || !app.setupHosts.matches(cookie.Value, host) {
-			return state.Session{}, false
+			return state.Session{}, false, nil
 		}
 	}
-	return session, true
+	return session, true, nil
 }

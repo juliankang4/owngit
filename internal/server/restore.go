@@ -40,8 +40,7 @@ func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.R
 	if !parseForm(writer, request) {
 		return
 	}
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 	selection := restoreFormRequest(request)
@@ -70,8 +69,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 	if !parseForm(writer, request) {
 		return
 	}
-	if !app.validCSRF(request, postValue(request, "csrf")) {
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+	if !app.requireCSRF(writer, request) {
 		return
 	}
 	selection := restoreFormRequest(request)
