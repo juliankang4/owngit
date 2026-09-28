@@ -460,20 +460,37 @@ func worseWorktree(before, after string) string {
 // repository-wide sequence before execution. A retransmit with the same content
 // returns the same registration; different content is rejected.
 func (s *Store) RegisterCheckAttempt(ctx context.Context, attempt CheckAttempt) (Task, CheckAttempt, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Task{}, CheckAttempt{}, err
+	}
+	defer tx.Rollback()
+	stored, err := s.registerCheckAttemptTx(ctx, tx, attempt)
+	if err != nil {
+		return Task{}, CheckAttempt{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Task{}, CheckAttempt{}, err
+	}
+	task, err := s.task(ctx, s.db, stored.RepositoryID, stored.TaskID)
+	if err != nil {
+		return Task{}, CheckAttempt{}, err
+	}
+	return task, stored, nil
+}
+
+// registerCheckAttemptTx is RegisterCheckAttempt inside tx, so that a job's
+// start and its attempt are written in one transaction.
+func (s *Store) registerCheckAttemptTx(ctx context.Context, tx *sql.Tx, attempt CheckAttempt) (CheckAttempt, error) {
 	if attempt.Protection == "" {
 		attempt.Protection = ProtectionUnknown
 	}
 	if attempt.ExecutionScope == "" {
 		attempt.ExecutionScope = ExecutionScopeInherited
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Task{}, CheckAttempt{}, err
-	}
-	defer tx.Rollback()
 	existing, exists, err := readAttemptTx(ctx, tx, attempt.ID)
 	if err != nil {
-		return Task{}, CheckAttempt{}, err
+		return CheckAttempt{}, err
 	}
 	// A server-linked job owns the tested revision, task, configuration, limits,
 	// and execution origin. Terminal state permits only replay of the attempt
@@ -481,24 +498,24 @@ func (s *Store) RegisterCheckAttempt(ctx context.Context, attempt CheckAttempt) 
 	if attempt.JobID != "" {
 		job, jobExists, err := readCheckJobTx(ctx, tx, attempt.RepositoryID, attempt.JobID)
 		if err != nil {
-			return Task{}, CheckAttempt{}, err
+			return CheckAttempt{}, err
 		}
 		if !jobExists {
-			return Task{}, CheckAttempt{}, ErrCheckJobNotFound
+			return CheckAttempt{}, ErrCheckJobNotFound
 		}
 		configuration, configurationExists, err := readCheckConfigurationTx(ctx, tx, job.RepositoryID, job.ConfigurationVersion)
 		if err != nil {
-			return Task{}, CheckAttempt{}, err
+			return CheckAttempt{}, err
 		}
 		if !configurationExists {
-			return Task{}, CheckAttempt{}, ErrCheckConfigurationMissing
+			return CheckAttempt{}, ErrCheckConfigurationMissing
 		}
 		if err := applyJobOrigin(&attempt, job, configuration, exists); err != nil {
-			return Task{}, CheckAttempt{}, err
+			return CheckAttempt{}, err
 		}
 	}
 	if err := validateRegistration(attempt); err != nil {
-		return Task{}, CheckAttempt{}, err
+		return CheckAttempt{}, err
 	}
 	// CreatedAt is the server's observation, not helper payload. An exact
 	// retransmit can arrive under a later server clock, so compare it using the
@@ -508,36 +525,28 @@ func (s *Store) RegisterCheckAttempt(ctx context.Context, attempt CheckAttempt) 
 		candidate := attempt
 		candidate.CreatedAt = existing.CreatedAt
 		if existing.RegistrationDigest != registrationDigest(candidate) {
-			return Task{}, CheckAttempt{}, ErrAttemptConflict
+			return CheckAttempt{}, ErrAttemptConflict
 		}
-		task, err := s.task(ctx, tx, existing.RepositoryID, existing.TaskID)
-		if err != nil {
-			return Task{}, CheckAttempt{}, err
-		}
-		if err := tx.Commit(); err != nil {
-			return Task{}, CheckAttempt{}, err
-		}
-		return task, existing, nil
+		return existing, nil
 	}
-	task, err := s.task(ctx, tx, attempt.RepositoryID, attempt.TaskID)
-	if err != nil {
-		return Task{}, CheckAttempt{}, err
+	if _, err := s.task(ctx, tx, attempt.RepositoryID, attempt.TaskID); err != nil {
+		return CheckAttempt{}, err
 	}
 	configurationVersion, _, err := ensureCheckConfiguration(ctx, tx, attempt.RepositoryID, attempt.Checks, attempt.CreatedAt)
 	if err != nil {
-		return Task{}, CheckAttempt{}, err
+		return CheckAttempt{}, err
 	}
 	attempt.ConfigurationVersion = configurationVersion
 	if attempt.CycleID != "" {
 		cycle, exists, err := readCycleTx(ctx, tx, attempt.CycleID)
 		if err != nil {
-			return Task{}, CheckAttempt{}, err
+			return CheckAttempt{}, err
 		}
 		if !exists {
-			return Task{}, CheckAttempt{}, ErrCycleNotFound
+			return CheckAttempt{}, ErrCycleNotFound
 		}
 		if cycle.TaskID != attempt.TaskID || cycle.RepositoryID != attempt.RepositoryID {
-			return Task{}, CheckAttempt{}, ErrCycleConflict
+			return CheckAttempt{}, ErrCycleConflict
 		}
 	}
 	attempt.RegistrationDigest = registrationDigest(attempt)
@@ -545,7 +554,7 @@ func (s *Store) RegisterCheckAttempt(ctx context.Context, attempt CheckAttempt) 
 	if err := tx.QueryRowContext(ctx, `INSERT INTO repository_attempt_counters(repository_id,attempt_sequence) VALUES(?,1)
 		ON CONFLICT(repository_id) DO UPDATE SET attempt_sequence=attempt_sequence+1 RETURNING attempt_sequence`,
 		attempt.RepositoryID).Scan(&attempt.Sequence); err != nil {
-		return Task{}, CheckAttempt{}, err
+		return CheckAttempt{}, err
 	}
 	attempt.Status = AttemptPending
 	// The finish time is not known before execution, so a registration carries
@@ -559,7 +568,7 @@ func (s *Store) RegisterCheckAttempt(ctx context.Context, attempt CheckAttempt) 
 		attempt.ID, attempt.TaskID, attempt.RepositoryID, attempt.RevisionOID, attempt.WorktreeState, attempt.ConfigurationVersion,
 		attempt.Status, attempt.StartedAt.UnixNano(), attempt.Protection, attempt.ExecutionScope, attempt.CredentialID,
 		attempt.TimeoutMS, attempt.OutputLimitBytes, attempt.CreatedAt.Unix(), attempt.Sequence, attempt.CycleID, attempt.RegistrationDigest, attempt.JobID); err != nil {
-		return Task{}, CheckAttempt{}, err
+		return CheckAttempt{}, err
 	}
 	// One job binds one attempt. A concurrent different attempt is rejected
 	// instead of silently overwriting the linkage.
@@ -567,24 +576,17 @@ func (s *Store) RegisterCheckAttempt(ctx context.Context, attempt CheckAttempt) 
 		result, err := tx.ExecContext(ctx, `UPDATE check_jobs SET attempt_id=? WHERE id=? AND repository_id=? AND (attempt_id='' OR attempt_id=?)`,
 			attempt.ID, attempt.JobID, attempt.RepositoryID, attempt.ID)
 		if err != nil {
-			return Task{}, CheckAttempt{}, err
+			return CheckAttempt{}, err
 		}
 		affected, err := result.RowsAffected()
 		if err != nil {
-			return Task{}, CheckAttempt{}, err
+			return CheckAttempt{}, err
 		}
 		if affected != 1 {
-			return Task{}, CheckAttempt{}, ErrCheckJobAttemptBound
+			return CheckAttempt{}, ErrCheckJobAttemptBound
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return Task{}, CheckAttempt{}, err
-	}
-	task, err = s.task(ctx, s.db, attempt.RepositoryID, attempt.TaskID)
-	if err != nil {
-		return Task{}, CheckAttempt{}, err
-	}
-	return task, attempt, nil
+	return attempt, nil
 }
 
 // checkCompletionOps isolates the two SQLite boundaries whose failure handling

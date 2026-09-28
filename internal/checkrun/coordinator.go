@@ -494,11 +494,18 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 		return errors.New("local worker claimed a nonlocal configured check")
 	}
 
-	started, checks, err := coordinator.Store.StartCheckJob(jobContext, state.CheckJobStart{
+	attemptID, err := state.RandomID()
+	if err != nil {
+		_ = coordinator.workspace.RemoveJob(job.ID)
+		return err
+	}
+	_, attempt, err := coordinator.Store.StartCheckJob(jobContext, state.CheckJobStart{
 		RepositoryID: job.RepositoryID, JobID: job.ID, LeaseID: job.LeaseID,
 		CredentialID: job.CredentialID, CredentialGeneration: job.CredentialGeneration, Protection: protection,
+		AttemptID: attemptID,
 	}, time.Now().UTC())
-	if errors.Is(err, state.ErrCheckJobCommandsUnavailable) {
+	var notStarted *state.CheckJobNotStartedError
+	if errors.As(err, &notStarted) {
 		// The job was not started and is still claimed.
 		_ = stopWatcher()
 		return coordinator.recordNotRun(parent, job, authority, "The job was not started: ", err)
@@ -507,23 +514,9 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 		_ = coordinator.workspace.RemoveJob(job.ID)
 		return err
 	}
-	attemptID, err := state.RandomID()
-	if err != nil {
-		_ = coordinator.workspace.RemoveJob(job.ID)
-		return err
-	}
-	attempt := state.CheckAttempt{
-		ID: attemptID, TaskID: job.TaskID, RepositoryID: job.RepositoryID, RevisionOID: job.SourceOID,
-		WorktreeState: state.WorktreeClean, JobID: job.ID, Checks: checks,
-		StartedAt: *started.StartedAt, CreatedAt: time.Now().UTC(), CredentialID: job.CredentialID,
-	}
-	if _, _, err := coordinator.Store.RegisterCheckAttempt(jobContext, attempt); err != nil {
-		_ = coordinator.workspace.RemoveJob(job.ID)
-		return err
-	}
 
-	definitions := make([]checkexec.Definition, 0, len(checks))
-	for _, check := range checks {
+	definitions := make([]checkexec.Definition, 0, len(attempt.Checks))
+	for _, check := range attempt.Checks {
 		definitions = append(definitions, checkexec.Definition{Name: check.Name, Command: check.Command})
 	}
 	var results []checkexec.Result

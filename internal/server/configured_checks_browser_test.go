@@ -827,23 +827,12 @@ func runJobToAttempt(t *testing.T, fixture apiFixture, job state.CheckJob, attem
 	if err != nil || !found || claimed.ID != job.ID {
 		t.Fatalf("claim job: err=%v found=%v claimed=%q want=%q", err, found, claimed.ID, job.ID)
 	}
-	started, _, err := fixture.store.StartCheckJob(ctx, state.CheckJobStart{
+	started, registered, err := fixture.store.StartCheckJob(ctx, state.CheckJobStart{
 		RepositoryID: claimed.RepositoryID, JobID: claimed.ID, LeaseID: claimed.LeaseID,
 		CredentialID: claimed.CredentialID, CredentialGeneration: claimed.CredentialGeneration,
-		Protection: protection,
+		Protection: protection, AttemptID: attemptID,
 	}, fixture.app.now())
 	noErrf(t, err, "start job")
-	configuration, exists, err := fixture.store.CheckConfiguration(ctx, started.RepositoryID, started.ConfigurationVersion)
-	if err != nil || !exists {
-		t.Fatalf("read job configuration: err=%v exists=%v", err, exists)
-	}
-	_, registered, err := fixture.store.RegisterCheckAttempt(ctx, state.CheckAttempt{
-		ID: attemptID, TaskID: started.TaskID, RepositoryID: started.RepositoryID,
-		RevisionOID: started.SourceOID, WorktreeState: state.WorktreeClean,
-		JobID: started.ID, CredentialID: started.CredentialID, Checks: configuration.Checks,
-		StartedAt: *started.StartedAt, CreatedAt: fixture.app.now(),
-	})
-	noErrf(t, err, "register job attempt")
 	exit := 0
 	_, stored, err := fixture.store.CompleteCheckJobAttempt(ctx, state.CheckCompletion{
 		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,

@@ -364,33 +364,29 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_runner_start", "The runner start identity is invalid.", nil)
 			return
 		}
-		started, checks, err := app.Store.StartCheckJob(request.Context(), state.CheckJobStart{
+		started, attempt, err := app.Store.StartCheckJob(request.Context(), state.CheckJobStart{
 			RepositoryID: repositoryID, JobID: jobID, LeaseID: leaseID,
 			CredentialID: credential.ID, CredentialGeneration: credential.Generation,
-			Protection: state.ProtectionRunnerReported,
+			Protection: state.ProtectionRunnerReported, AttemptID: input.AttemptID,
 		}, app.now())
-		if errors.Is(err, state.ErrCheckJobCommandsUnavailable) {
+		var notStarted *state.CheckJobNotStartedError
+		if errors.As(err, &notStarted) {
 			// The job was not started and is still this runner's claim, so
 			// the answer names it, as a claim that could not be handed over
 			// does, and the runner reports it as not run.
-			writeJobRecordError(writer, request, err, jobChecksUnreadable, checkapi.ClaimedJob{JobID: jobID, LeaseID: leaseID})
+			claimed := checkapi.ClaimedJob{JobID: jobID, LeaseID: leaseID}
+			if errors.Is(err, state.ErrCheckJobCommandsUnavailable) {
+				writeJobRecordError(writer, request, err, jobChecksUnreadable, claimed)
+			} else {
+				writeAPIError(writer, unavailable(request, "runner start", err), "state_unavailable", "The configured-check job could not be started.", claimed)
+			}
 			return
 		}
 		if err != nil {
 			writeRunnerError(writer, request, err)
 			return
 		}
-		attempt := state.CheckAttempt{
-			ID: input.AttemptID, TaskID: started.TaskID, RepositoryID: repositoryID, RevisionOID: started.SourceOID,
-			WorktreeState: state.WorktreeClean, JobID: started.ID, Checks: checks,
-			StartedAt: *started.StartedAt, CreatedAt: app.now(), CredentialID: credential.ID,
-		}
-		_, stored, err := app.Store.RegisterCheckAttempt(request.Context(), attempt)
-		if err != nil {
-			writeRunnerError(writer, request, err)
-			return
-		}
-		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(started, checks), Attempt: attemptJSON(stored)})
+		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(started, attempt.Checks), Attempt: attemptJSON(attempt)})
 	case "complete":
 		var input checkapi.RunnerCompletionInput
 		if !decodeAPIJSONLimit(writer, request, &input, maximumCheckUpload) {

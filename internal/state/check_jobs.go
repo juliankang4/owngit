@@ -104,10 +104,9 @@ var (
 	ErrCheckRunnerCreationConflict = errors.New("runner credential creation identity was reused with different content")
 	// ErrInvalidCheckObservation reports malformed observation input.
 	ErrInvalidCheckObservation = errors.New("invalid check observation")
-	// ErrCheckJobCommandsUnavailable reports a claimed job that was not
-	// started because its captured commands could not be read. The job stays
-	// claimed under its lease. The wrapped cause is ErrCheckConfigurationMissing
-	// when the record does not exist, and the read error otherwise.
+	// ErrCheckJobCommandsUnavailable reports that a job's captured commands
+	// could not be read. The wrapped cause is ErrCheckConfigurationMissing when
+	// the record does not exist, and the read error otherwise.
 	ErrCheckJobCommandsUnavailable = errors.New("the job's captured commands could not be read")
 	// ErrCheckConfigurationMissing reports a captured check configuration that
 	// a job or an attempt names but that does not exist. Only repository
@@ -239,6 +238,8 @@ type CheckJobStart struct {
 	CredentialGeneration int64
 	// Protection is optional. Empty means unknown.
 	Protection string
+	// AttemptID names the attempt that the start registers for the job.
+	AttemptID string
 }
 
 // CheckJobCompletionAuthority binds a completion to the claim that started
@@ -1488,46 +1489,61 @@ func (s *Store) claimCheckJob(ctx context.Context, repositoryID, credentialID, r
 	return job, true, nil
 }
 
+// CheckJobNotStartedError reports a claimed job that passed the start's
+// authority checks but could not be started together with its commands and
+// its attempt. The start wrote nothing: the job stays claimed under its lease,
+// and the caller records it as not run. Cause is ErrCheckJobCommandsUnavailable
+// when the commands could not be read, and otherwise the failed write.
+type CheckJobNotStartedError struct {
+	Cause error
+}
+
+func (err *CheckJobNotStartedError) Error() string { return err.Cause.Error() }
+func (err *CheckJobNotStartedError) Unwrap() error { return err.Cause }
+
 // StartCheckJob records a one-shot execution grant and its first reported
-// facts, and returns the commands the job captured at admission. A repeated
-// call returns ErrCheckJobStartReplay; callers can read the immutable
-// historical facts through CheckJob without receiving a new grant.
+// facts, and registers the job's attempt under request.AttemptID. It returns
+// the started job and the attempt, which carries the commands the job
+// captured at admission. A repeated call returns ErrCheckJobStartReplay;
+// callers can read the immutable historical facts through CheckJob without
+// receiving a new grant.
 //
-// A job is started only with its commands in hand: they are read in the same
-// transaction, after the authority checks, and a failed read returns
-// ErrCheckJobCommandsUnavailable with the job still claimed, so the caller can
-// record it as not run.
-func (s *Store) StartCheckJob(ctx context.Context, request CheckJobStart, now time.Time) (CheckJob, []CheckDefinition, error) {
-	if request.RepositoryID == "" || !validAttemptID(request.JobID) || !validAttemptID(request.LeaseID) || !validAttemptID(request.CredentialID) || request.CredentialGeneration <= 0 || now.IsZero() {
-		return CheckJob{}, nil, fmt.Errorf("%w: invalid start", ErrInvalidCheckJob)
+// A job is started only together with its commands and its attempt, in one
+// transaction after the authority checks, so a started job always has an
+// attempt to complete. When a step after the authority checks fails, nothing
+// is written and the error is a CheckJobNotStartedError. A failed commit is
+// returned as it is, since the start may or may not have been written.
+func (s *Store) StartCheckJob(ctx context.Context, request CheckJobStart, now time.Time) (CheckJob, CheckAttempt, error) {
+	if request.RepositoryID == "" || !validAttemptID(request.JobID) || !validAttemptID(request.LeaseID) || !validAttemptID(request.CredentialID) || request.CredentialGeneration <= 0 || !validAttemptID(request.AttemptID) || now.IsZero() {
+		return CheckJob{}, CheckAttempt{}, fmt.Errorf("%w: invalid start", ErrInvalidCheckJob)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return CheckJob{}, nil, err
+		return CheckJob{}, CheckAttempt{}, err
 	}
 	defer tx.Rollback()
 	job, exists, err := readCheckJobTx(ctx, tx, request.RepositoryID, request.JobID)
 	if err != nil {
-		return CheckJob{}, nil, err
+		return CheckJob{}, CheckAttempt{}, err
 	}
 	if !exists {
-		return CheckJob{}, nil, ErrCheckJobNotFound
+		return CheckJob{}, CheckAttempt{}, ErrCheckJobNotFound
 	}
 	if job.LeaseID != request.LeaseID || job.CredentialID != request.CredentialID || job.CredentialGeneration != request.CredentialGeneration {
-		return CheckJob{}, nil, ErrCheckJobLease
+		return CheckJob{}, CheckAttempt{}, ErrCheckJobLease
 	}
 	protection := request.Protection
 	if protection == "" {
 		protection = ProtectionUnknown
 	}
 	if !validProtection(protection) || !validProtectionForExecutor(job.Executor, protection) {
-		return CheckJob{}, nil, fmt.Errorf("%w: protection %q does not match executor %q", ErrInvalidCheckJob, protection, job.Executor)
+		return CheckJob{}, CheckAttempt{}, fmt.Errorf("%w: protection %q does not match executor %q", ErrInvalidCheckJob, protection, job.Executor)
 	}
 	if job.Status == CheckJobStarted || (job.Status == CheckJobAmbiguous && job.StartedAt != nil) {
-		return CheckJob{}, nil, ErrCheckJobStartReplay
+		return CheckJob{}, CheckAttempt{}, ErrCheckJobStartReplay
 	}
 	if job.Status != CheckJobClaimed {
-		return CheckJob{}, nil, ErrCheckJobState
+		return CheckJob{}, CheckAttempt{}, ErrCheckJobState
 	}
 	startedAt := now.UTC()
 	if job.LeaseExpiresAt == nil || !startedAt.Before(*job.LeaseExpiresAt) {
@@ -1536,56 +1552,72 @@ func (s *Store) StartCheckJob(ctx context.Context, request CheckJobStart, now ti
 			leaseLostAt = *job.LeaseExpiresAt
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='ambiguous',lease_lost_at=? WHERE id=? AND status='claimed'`, leaseLostAt.UnixNano(), job.ID); err != nil {
-			return CheckJob{}, nil, err
+			return CheckJob{}, CheckAttempt{}, err
 		}
 		if err := tx.Commit(); err != nil {
-			return CheckJob{}, nil, err
+			return CheckJob{}, CheckAttempt{}, err
 		}
-		return CheckJob{}, nil, ErrCheckJobLease
+		return CheckJob{}, CheckAttempt{}, ErrCheckJobLease
 	}
 	policy, policyExists, err := readCheckPolicyTx(ctx, tx, request.RepositoryID)
 	if err != nil {
-		return CheckJob{}, nil, err
+		return CheckJob{}, CheckAttempt{}, err
 	}
 	credentialCurrent, err := checkJobCredentialCurrentTx(ctx, tx, job)
 	if err != nil {
-		return CheckJob{}, nil, err
+		return CheckJob{}, CheckAttempt{}, err
 	}
 	if !policyExists || !checkJobAuthorityCurrent(job, policy) || !credentialCurrent {
 		if err := interruptCheckJobTx(ctx, tx, job, startedAt, "Execution authority changed before start."); err != nil {
-			return CheckJob{}, nil, err
+			return CheckJob{}, CheckAttempt{}, err
 		}
 		if err := tx.Commit(); err != nil {
-			return CheckJob{}, nil, err
+			return CheckJob{}, CheckAttempt{}, err
 		}
 		if !credentialCurrent {
-			return CheckJob{}, nil, ErrCheckRunnerCredential
+			return CheckJob{}, CheckAttempt{}, ErrCheckRunnerCredential
 		}
-		return CheckJob{}, nil, ErrCheckConsentRequired
+		return CheckJob{}, CheckAttempt{}, ErrCheckConsentRequired
 	}
+	attempt, err := s.startCheckJobTx(ctx, tx, job, request.AttemptID, protection, startedAt)
+	if err != nil {
+		return CheckJob{}, CheckAttempt{}, &CheckJobNotStartedError{Cause: err}
+	}
+	if err := tx.Commit(); err != nil {
+		return CheckJob{}, CheckAttempt{}, err
+	}
+	job.Status = CheckJobStarted
+	job.StartedAt = &startedAt
+	job.Protection = protection
+	job.AttemptID = attempt.ID
+	return job, attempt, nil
+}
+
+// startCheckJobTx marks the claimed job started and registers its attempt
+// with the commands the job captured at admission.
+func (s *Store) startCheckJobTx(ctx context.Context, tx *sql.Tx, job CheckJob, attemptID, protection string, startedAt time.Time) (CheckAttempt, error) {
 	configuration, exists, err := readCheckConfigurationTx(ctx, tx, job.RepositoryID, job.ConfigurationVersion)
 	if err == nil && !exists {
 		err = ErrCheckConfigurationMissing
 	}
 	if err != nil {
-		return CheckJob{}, nil, fmt.Errorf("%w: %w", ErrCheckJobCommandsUnavailable, err)
+		return CheckAttempt{}, fmt.Errorf("%w: %w", ErrCheckJobCommandsUnavailable, err)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='started',started_at=?,protection=? WHERE id=? AND status='claimed'`,
-		startedAt.UnixNano(), protection, job.ID)
+	// The job was read as claimed in this transaction. The registration
+	// requires it to be started, so an update that changed nothing fails there.
+	if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='started',started_at=?,protection=? WHERE id=? AND status='claimed'`,
+		startedAt.UnixNano(), protection, job.ID); err != nil {
+		return CheckAttempt{}, fmt.Errorf("the job's start could not be recorded: %w", err)
+	}
+	attempt, err := s.registerCheckAttemptTx(ctx, tx, CheckAttempt{
+		ID: attemptID, TaskID: job.TaskID, RepositoryID: job.RepositoryID, RevisionOID: job.SourceOID,
+		WorktreeState: WorktreeClean, JobID: job.ID, Checks: configuration.Checks,
+		StartedAt: startedAt, CreatedAt: startedAt, CredentialID: job.CredentialID,
+	})
 	if err != nil {
-		return CheckJob{}, nil, err
+		return CheckAttempt{}, fmt.Errorf("the job's attempt could not be registered: %w", err)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil || affected != 1 {
-		return CheckJob{}, nil, ErrCheckJobState
-	}
-	if err := tx.Commit(); err != nil {
-		return CheckJob{}, nil, err
-	}
-	job.Status = CheckJobStarted
-	job.StartedAt = &startedAt
-	job.Protection = protection
-	return job, configuration.Checks, nil
+	return attempt, nil
 }
 
 func checkJobCredentialCurrentTx(ctx context.Context, queryer querier, job CheckJob) (bool, error) {

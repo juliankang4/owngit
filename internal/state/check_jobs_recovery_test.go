@@ -36,13 +36,11 @@ func newJobRecoveryFixture(t *testing.T) jobRecoveryFixture {
 	terminal := fixture.admit(t, pushJobRequest())
 	claimed, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
 	noErr(t, err)
-	if _, _, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
+	_, attempt, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
 		RepositoryID: "project", JobID: terminal.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
-	}, fixture.now); err != nil {
-		t.Fatal(err)
-	}
-	attempt := fixture.registerJobAttempt(t, claimed, runner)
+		CredentialID: runner.ID, CredentialGeneration: runner.Generation, AttemptID: attemptID(terminal.ID, fixture.now),
+	}, fixture.now)
+	noErr(t, err)
 	completeJobAttempt(t, fixture.store, attempt, AttemptPassed, fixture.now.Add(time.Minute))
 
 	request := pushJobRequest()
@@ -217,8 +215,7 @@ func TestRestoreInterruptedJobRejectsLateCompletion(t *testing.T) {
 	job := fixture.admit(t, pushJobRequest())
 	runner, _ := fixture.issueRunner(t)
 	ctx := context.Background()
-	claimed := fixture.claimAndStart(t, job, runner, "")
-	attempt := fixture.registerJobAttempt(t, claimed, runner)
+	claimed, attempt := fixture.claimAndStart(t, job, runner, "")
 	snapshot, err := fixture.store.RecoverySnapshot(ctx)
 	noErr(t, err)
 	restored := openTestStore(t)

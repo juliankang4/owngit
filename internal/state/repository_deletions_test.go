@@ -75,10 +75,8 @@ func seedRepositoryRecords(t *testing.T, fixture *checkJobFixture) {
 	fixture.grantConsent(t)
 	runner, _ := fixture.issueRunner(t)
 	finished := fixture.admit(t, pushJobRequest())
-	fixture.claimAndStart(t, finished, runner, "")
-	claimed, _, err := store.CheckJob(ctx, "project", finished.ID)
-	noErr(t, err)
-	completeJobAttempt(t, store, fixture.registerJobAttempt(t, claimed, runner), AttemptPassed, fixture.now.Add(time.Second))
+	_, attempt := fixture.claimAndStart(t, finished, runner, "")
+	completeJobAttempt(t, store, attempt, AttemptPassed, fixture.now.Add(time.Second))
 	queued := fixture.admit(t, pullRequestJobRequest())
 	if queued.Status != CheckJobPending {
 		t.Fatalf("second job is not queued: %+v", queued)

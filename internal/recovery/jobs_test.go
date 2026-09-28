@@ -49,22 +49,14 @@ func TestBackupRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 	}
 	claimed, _, err := store.ClaimCheckJob(ctx, "project", runner.ID, now)
 	noErr(t, err)
-	if _, _, err := store.StartCheckJob(ctx, state.CheckJobStart{
+	_, attempt, err := store.StartCheckJob(ctx, state.CheckJobStart{
 		RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation,
-	}, now); err != nil {
+		CredentialID: runner.ID, CredentialGeneration: runner.Generation, AttemptID: "0123456789abcdef0123456789abcdef",
+	}, now)
+	if err != nil {
 		t.Fatal(err)
-	}
-	attempt := state.CheckAttempt{
-		ID: "0123456789abcdef0123456789abcdef", TaskID: job.TaskID, RepositoryID: "project",
-		RevisionOID: sourceOID, WorktreeState: state.WorktreeClean, StartedAt: now, CreatedAt: now,
-		JobID: job.ID, CredentialID: runner.ID,
-		Checks: []state.CheckDefinition{{Name: "unit", Command: "go test ./..."}},
-	}
-	if _, stored, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
-		t.Fatal(err)
-	} else if stored.ExecutionScope != state.ExecutionScopeExternalRunner {
-		t.Fatalf("derived scope=%q", stored.ExecutionScope)
+	} else if attempt.ExecutionScope != state.ExecutionScopeExternalRunner {
+		t.Fatalf("derived scope=%q", attempt.ExecutionScope)
 	}
 	exit := 0
 	if _, _, err := store.CompleteCheckJobAttempt(ctx, state.CheckCompletion{

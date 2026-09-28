@@ -12,41 +12,55 @@ import (
 	"owngit/internal/state"
 )
 
-// The job's commands become unreadable after the claim handed them over and
-// before the runner starts the job. The server does not start a job whose
-// commands it cannot read, so the job stays claimed and the runner reports it
-// as not run. It used to be started without an attempt and to end ambiguous.
+// Between the claim and the start, the job's commands become unreadable or
+// its attempt cannot be written. The server starts a job only together with
+// its commands and its attempt, so the job stays claimed and the runner
+// reports it as not run. It used to be started without an attempt and to end
+// ambiguous.
 func TestRunnerReportsAJobItCouldNotStartAsUnavailable(t *testing.T) {
-	fixture := newRunnerIntegrationFixture(t, "echo never-run")
-	httpServer, origin := fixture.startHTTPServer(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			if strings.HasSuffix(request.URL.Path, "/start") {
-				breakJobCommands(t, fixture)
-			}
-			next.ServeHTTP(writer, request)
-		})
-	})
-	defer httpServer.Close()
+	for _, test := range []struct {
+		name, statement, summary string
+	}{
+		{"commands unreadable", `UPDATE check_configurations SET checks_json='{'`, "commands could not be read"},
+		{"attempt not written", refuseAttempts, "job could not be started"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newRunnerIntegrationFixture(t, "echo never-run")
+			httpServer, origin := fixture.startHTTPServer(func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					if strings.HasSuffix(request.URL.Path, "/start") {
+						noErr(t, fixture.store.Exec(fixture.ctx, test.statement))
+					}
+					next.ServeHTTP(writer, request)
+				})
+			})
+			defer httpServer.Close()
 
-	log := &runnerLog{}
-	runner := fixture.runner(fixture.client(origin))
-	runner.Logf = log.logf
-	err := runner.Run(fixture.ctx)
-	var problem *apiclient.Error
-	if !errors.As(err, &problem) || problem.ResponseStatus != http.StatusServiceUnavailable {
-		t.Fatalf("run err=%v", err)
-	}
-	if _, err := fixture.store.ExpireCheckJobLeases(fixture.ctx, time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	job := fixture.readJob()
-	if job.Status != state.CheckJobUnavailable || job.StartedAt != nil || job.AttemptID != "" || !strings.Contains(job.Summary, "commands could not be read") {
-		t.Fatalf("job after a start without commands: status=%s started=%v attempt=%q summary=%q", job.Status, job.StartedAt, job.AttemptID, job.Summary)
-	}
-	if log.count("reported configured-check job "+fixture.job.ID+" unavailable") != 1 || log.count(ambiguousWarning) != 0 {
-		t.Fatalf("runner log: %q", log.snapshot())
+			log := &runnerLog{}
+			runner := fixture.runner(fixture.client(origin))
+			runner.Logf = log.logf
+			err := runner.Run(fixture.ctx)
+			var problem *apiclient.Error
+			if !errors.As(err, &problem) || problem.ResponseStatus != http.StatusServiceUnavailable {
+				t.Fatalf("run err=%v", err)
+			}
+			if _, err := fixture.store.ExpireCheckJobLeases(fixture.ctx, time.Now().Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			job := fixture.readJob()
+			if job.Status != state.CheckJobUnavailable || job.StartedAt != nil || job.AttemptID != "" || !strings.Contains(job.Summary, test.summary) {
+				t.Fatalf("job after a refused start: status=%s started=%v attempt=%q summary=%q", job.Status, job.StartedAt, job.AttemptID, job.Summary)
+			}
+			if log.count("reported configured-check job "+fixture.job.ID+" unavailable") != 1 || log.count(ambiguousWarning) != 0 {
+				t.Fatalf("runner log: %q", log.snapshot())
+			}
+		})
 	}
 }
+
+// refuseAttempts makes every later attempt write fail, as a storage failure
+// would.
+const refuseAttempts = `CREATE TRIGGER refuse_attempts BEFORE INSERT ON check_attempts BEGIN SELECT RAISE(ABORT, 'synthetic attempt write failure'); END`
 
 // A start error whose details name a different job settles nothing: the
 // runner does not report that job, and the job it holds stays open under its

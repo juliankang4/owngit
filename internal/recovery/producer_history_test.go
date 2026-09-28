@@ -20,14 +20,18 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 	for _, tc := range []struct {
 		name, preStartStatus string
 		restartOffset        time.Duration
-		noAttempt, complete  bool
+		legacy, complete     bool
 	}{
 		{name: "prestart_unavailable", preStartStatus: state.CheckJobUnavailable},
 		{name: "prestart_error", preStartStatus: state.CheckJobError},
 		{name: "prestart_interrupted", preStartStatus: state.CheckJobInterrupted},
 		{name: "restart_before_expiry", restartOffset: 10 * time.Second},
 		{name: "restart_after_expiry", restartOffset: 90 * time.Second},
-		{name: "restart_before_registration", restartOffset: 10 * time.Second, noAttempt: true},
+		// Earlier versions committed the start and the attempt in two
+		// transactions, so a database or backup can hold a started job
+		// without an attempt. It must still recover and round trip.
+		{name: "legacy_started_without_attempt_restart", restartOffset: 10 * time.Second, legacy: true},
+		{name: "legacy_started_without_attempt_expiry", legacy: true},
 		{name: "late_completion_before_expiry", restartOffset: 10 * time.Second, complete: true},
 		{name: "late_completion_after_expiry", restartOffset: 90 * time.Second, complete: true},
 		{name: "ordinary_expiry"},
@@ -61,13 +65,14 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 			}
 			authority := state.CheckJobCompletionAuthority{JobID: claimed.ID, LeaseID: claimed.LeaseID,
 				CredentialID: claimed.CredentialID, CredentialGeneration: claimed.CredentialGeneration}
-			start := state.CheckJobStart{RepositoryID: "project", JobID: claimed.ID, LeaseID: claimed.LeaseID,
-				CredentialID: claimed.CredentialID, CredentialGeneration: claimed.CredentialGeneration, Protection: state.ProtectionHost}
 			attempt := state.CheckAttempt{
 				ID: "0123456789abcdef0123456789abcdef", RepositoryID: "project", TaskID: claimed.TaskID,
 				JobID: claimed.ID, CredentialID: claimed.CredentialID, RevisionOID: sourceOID,
 				WorktreeState: state.WorktreeClean, Checks: checks, StartedAt: now.Add(2 * time.Second), CreatedAt: now.Add(2 * time.Second),
 			}
+			start := state.CheckJobStart{RepositoryID: "project", JobID: claimed.ID, LeaseID: claimed.LeaseID,
+				CredentialID: claimed.CredentialID, CredentialGeneration: claimed.CredentialGeneration, Protection: state.ProtectionHost,
+				AttemptID: attempt.ID}
 			completion := state.CheckCompletion{AttemptID: attempt.ID, RepositoryID: "project", TaskID: claimed.TaskID,
 				Results:    []state.CheckResult{{Name: "unit", Command: "go test ./...", Status: state.AttemptFailed}},
 				FinishedAt: now.Add(tc.restartOffset + time.Second), WorktreeState: state.WorktreeClean}
@@ -85,10 +90,11 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 				_, err = store.CancelCheckJob(ctx, "project", claimed.ID, now.Add(4*time.Second))
 				noErr(t, err)
 			} else {
-				_, _, err = store.StartCheckJob(ctx, start, now.Add(2*time.Second))
-				noErr(t, err)
-				if !tc.noAttempt {
-					_, _, err = store.RegisterCheckAttempt(ctx, attempt)
+				if tc.legacy {
+					noErr(t, store.Exec(ctx, `UPDATE check_jobs SET status='started',started_at=?,protection=? WHERE id=?`,
+						attempt.StartedAt.UnixNano(), state.ProtectionHost, claimed.ID))
+				} else {
+					_, _, err = store.StartCheckJob(ctx, start, now.Add(2*time.Second))
 					noErr(t, err)
 				}
 				_, err = store.RecoverySnapshot(ctx)
@@ -129,7 +135,7 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 					wantStatus = state.CheckJobFailed
 				}
 				if job.Status != wantStatus || job.StartedAt == nil || !job.StartedAt.Equal(attempt.StartedAt) ||
-					(job.AttemptID == "") != tc.noAttempt || (job.FinishedAt != nil) != tc.complete ||
+					(job.AttemptID == "") != tc.legacy || (job.FinishedAt != nil) != tc.complete ||
 					(tc.complete && !job.FinishedAt.Equal(completion.FinishedAt)) || job.LeaseLostAt == nil || !job.LeaseLostAt.Equal(wantLoss) {
 					t.Fatal("lease-loss producer changed the original execution or observed loss time")
 				}
@@ -186,7 +192,7 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 			if _, _, err = restored.StartCheckJob(ctx, start, now.Add(100*time.Second)); err == nil {
 				t.Fatal("restore granted execution for terminal history")
 			}
-			if tc.preStartStatus == "" && !tc.noAttempt && !tc.complete {
+			if tc.preStartStatus == "" && !tc.legacy && !tc.complete {
 				completion.FinishedAt = now.Add(100 * time.Second)
 				if _, _, err = restored.CompleteCheckJobAttempt(ctx, completion, authority, completion.FinishedAt); !errors.Is(err, state.ErrCheckRunnerCredential) {
 					t.Fatalf("restored pending completion authority: %v", err)
