@@ -66,20 +66,35 @@ func TestWindowsStateIsNotSwappedAfterItsCheck(t *testing.T) {
 
 // A folder on the way that another program holds open to rename or remove
 // it is a change in progress, which OpenIn's callers try again, not a
-// failure.
+// failure or a crash, and OpenIn leaves no folder on the way held: every
+// folder can be opened to rename it again afterwards.
 func TestWindowsFolderHeldForRenamingIsAChangeInProgress(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "parent", "state")
 	held, err := CreateDirectory(path)
 	noErr(t, err)
 	defer held.Close()
-	name, err := windows.UTF16PtrFromString(filepath.Dir(path))
+	openIn := func() (store *Store, err error) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				t.Fatalf("OpenIn panicked: %v", recovered)
+			}
+		}()
+		return OpenIn(context.Background(), held)
+	}
+	requireRenameable := func(when string) {
+		t.Helper()
+		for _, folder := range []string{root, filepath.Dir(path), path} {
+			handle, err := openToRename(folder)
+			if err != nil {
+				t.Fatalf("%s, %s cannot be opened to rename it: %v", when, folder, err)
+			}
+			noErr(t, windows.CloseHandle(handle))
+		}
+	}
+	parent, err := openToRename(filepath.Dir(path))
 	noErr(t, err)
-	parent, err := windows.CreateFile(name, windows.DELETE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-	noErr(t, err)
-	store, err := OpenIn(context.Background(), held)
+	store, err := openIn()
 	noErr(t, windows.CloseHandle(parent))
 	if store != nil {
 		noErr(t, store.Close())
@@ -87,7 +102,22 @@ func TestWindowsFolderHeldForRenamingIsAChangeInProgress(t *testing.T) {
 	if !errors.Is(err, ErrInspectionUnstable) {
 		t.Fatalf("OpenIn with a folder on the way held for renaming: %v, want a change in progress", err)
 	}
-	store, err = OpenIn(context.Background(), held)
+	requireRenameable("after the refused OpenIn")
+	store, err = openIn()
 	noErr(t, err)
 	noErr(t, store.Close())
+	requireRenameable("after OpenIn")
+}
+
+// openToRename opens the folder at path with the access that renaming or
+// removing it needs, sharing everything, so it fails only while another
+// handle to the folder refuses to share delete.
+func openToRename(path string) (windows.Handle, error) {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	return windows.CreateFile(name, windows.DELETE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 }

@@ -146,7 +146,7 @@ func refuseLinkedFolder(dir *os.File) error {
 // account allowed to rename one of them could put another state at the path
 // between the inspection and SQLite's open by path. OwnGit's own opens of
 // these folders ask for no delete access, so they are not refused.
-func holdWay(held *os.File) (release func(), err error) {
+func holdWay(held *os.File) (func(), error) {
 	absolute := held.Name()
 	volume := filepath.VolumeName(absolute)
 	root, err := openFolder(volume + `\`)
@@ -154,47 +154,53 @@ func holdWay(held *os.File) (release func(), err error) {
 		return nil, err
 	}
 	way := []*os.File{root}
-	release = func() {
+	release := func() {
 		for _, folder := range way {
 			folder.Close()
 		}
 	}
-	defer func() {
-		if err != nil {
-			release()
-		}
-	}()
-	for _, name := range strings.Split(absolute[len(volume):], `\`) {
+	if err := holdFolders(&way, absolute[len(volume):], held); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+// holdFolders is holdWay's walk: it appends each folder named in relative
+// to way, which starts at the volume's root, as soon as it is open, so
+// holdWay closes every folder it opened when holdFolders fails.
+func holdFolders(way *[]*os.File, relative string, held *os.File) error {
+	for _, name := range strings.Split(relative, `\`) {
 		if name == "" {
 			continue
 		}
-		dir := way[len(way)-1]
+		dir := (*way)[len(*way)-1]
 		next, err := openAt(dir, filepath.Join(dir.Name(), name), folderAccess, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, windows.FILE_OPEN, folderOptions, "hold")
 		if errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
 			// Another program has the folder open to rename or remove
 			// it: the way may be changing, so the caller tries again.
-			return nil, fmt.Errorf("%w: %w", ErrInspectionUnstable, err)
+			return fmt.Errorf("%w: %w", ErrInspectionUnstable, err)
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
-		way = append(way, next)
+		*way = append(*way, next)
 		if err := refuseLinkedFolder(next); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	heldInfo, err := held.Stat()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	lastInfo, err := way[len(way)-1].Stat()
+	lastInfo, err := (*way)[len(*way)-1].Stat()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if !os.SameFile(heldInfo, lastInfo) {
-		return nil, fmt.Errorf("%w: %s is not the directory that was checked", ErrInspectionUnstable, absolute)
+		return fmt.Errorf("%w: %s is not the directory that was checked", ErrInspectionUnstable, held.Name())
 	}
-	return release, nil
+	return nil
 }
 
 // requireLocalWay refuses the volume of the held folder where a way starts
