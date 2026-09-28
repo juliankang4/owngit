@@ -50,15 +50,24 @@ func TestFolderOnAFUSEMountIsNotRootOnly(t *testing.T) {
 	}
 }
 
-// Nor is state, a log or a serve error kept in a folder on a FUSE mount.
+// A real FUSE mount counts as not enforced through the held folder, the
+// check that OpenDirectory applies to every folder on the way, and state
+// is not created there.
 func TestNoStateOnAFUSEMount(t *testing.T) {
-	path := filepath.Join(fuseFolder(t), "owngit-test-state")
+	folder := fuseFolder(t)
+	dir, err := openFolder(folder)
+	noErr(t, err)
+	defer dir.Close()
+	if enforced, err := filesystemEnforced(dir); err != nil || enforced {
+		t.Fatalf("%s on a FUSE mount: enforced=%t err=%v", folder, enforced, err)
+	}
+	path := filepath.Join(folder, "owngit-test-state")
 	held, err := CreateDirectory(path)
 	if held != nil {
 		held.Close()
 	}
-	if err == nil || !strings.Contains(err.Error(), "does not enforce") {
-		t.Fatalf("CreateDirectory(%s) error=%v, want the FUSE mount refused", path, err)
+	if err == nil {
+		t.Fatalf("CreateDirectory(%s) accepted a folder on a FUSE mount", path)
 	}
 }
 
