@@ -18,25 +18,23 @@ import (
 	"time"
 )
 
+// completionFor is the completion a helper submits after running attempt: the
+// attempt's own identity, results, cancellation, finish time and worktree
+// state, with log as the raw output. A test that submits something else
+// changes that field.
+func completionFor(attempt CheckAttempt, log string) CheckCompletion {
+	return CheckCompletion{
+		AttemptID: attempt.ID, RepositoryID: attempt.RepositoryID, TaskID: attempt.TaskID,
+		Results: attempt.Results, Cancelled: attempt.Status == AttemptCancelled,
+		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: log,
+	}
+}
+
 // recordAttempt registers and completes one attempt in one step, which is what
 // a helper does when it has already run the checks.
 func recordAttempt(t *testing.T, store *Store, attempt CheckAttempt) (Task, CheckAttempt) {
 	t.Helper()
-	ctx := context.Background()
-	task, registered, err := store.RegisterCheckAttempt(ctx, attempt)
-	if err != nil {
-		t.Fatalf("register attempt: %v", err)
-	}
-	completion := CheckCompletion{
-		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
-		Results: attempt.Results, Cancelled: attempt.Status == AttemptCancelled,
-		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState,
-	}
-	task, stored, err := store.CompleteCheckAttempt(ctx, completion, attempt.CreatedAt)
-	if err != nil {
-		t.Fatalf("complete attempt: %v", err)
-	}
-	return task, stored
+	return recordAttemptWithLog(t, store, attempt, "")
 }
 
 // completeTestSetup marks the store initialized so portable validation runs.
@@ -45,20 +43,14 @@ func completeTestSetup(t *testing.T, store *Store) {
 	noErr(t, store.CompleteSetup(context.Background(), t.TempDir(), "open", "", "admin-hash", true))
 }
 
-// recordAttemptWithLog registers and completes one attempt with a raw log.
+// recordAttemptWithLog is recordAttempt with a raw log.
 func recordAttemptWithLog(t *testing.T, store *Store, attempt CheckAttempt, log string) (Task, CheckAttempt) {
 	t.Helper()
 	ctx := context.Background()
-	task, registered, err := store.RegisterCheckAttempt(ctx, attempt)
-	if err != nil {
+	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
 		t.Fatalf("register attempt: %v", err)
 	}
-	completion := CheckCompletion{
-		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
-		Results: attempt.Results, Cancelled: attempt.Status == AttemptCancelled,
-		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: log,
-	}
-	task, stored, err := store.CompleteCheckAttempt(ctx, completion, attempt.CreatedAt)
+	task, stored, err := store.CompleteCheckAttempt(ctx, completionFor(attempt, log), attempt.CreatedAt)
 	if err != nil {
 		t.Fatalf("complete attempt: %v", err)
 	}
@@ -163,10 +155,7 @@ func TestCleanupFailureCannotResolveTaskOrLoseSubmittedFacts(t *testing.T) {
 				t.Fatalf("cleanup failure summary=%q", stored.Summary)
 			}
 
-			completion := CheckCompletion{
-				AttemptID: stored.ID, RepositoryID: stored.RepositoryID, TaskID: stored.TaskID,
-				Results: attempt.Results, Cancelled: true, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState,
-			}
+			completion := completionFor(attempt, "")
 			_, replayed, err := store.CompleteCheckAttempt(ctx, completion, now.Add(time.Minute))
 			if err != nil || replayed.ID != stored.ID || replayed.CompletionDigest != stored.CompletionDigest || replayed.Status != AttemptError {
 				t.Fatalf("exact cleanup replay=%+v err=%v", replayed, err)
@@ -375,10 +364,7 @@ func TestSimultaneousDuplicateUploadsStoreOneAttempt(t *testing.T) {
 	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
-	completion := CheckCompletion{
-		AttemptID: attempt.ID, RepositoryID: "project", TaskID: task.ID, Results: attempt.Results,
-		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "shared log",
-	}
+	completion := completionFor(attempt, "shared log")
 	var wait sync.WaitGroup
 	errs := make([]error, 4)
 	for index := range errs {
@@ -419,10 +405,7 @@ func TestAcceptedLogAndResultSurviveAConflictingRetransmit(t *testing.T) {
 	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
-	completion := CheckCompletion{
-		AttemptID: attempt.ID, RepositoryID: "project", TaskID: task.ID, Results: attempt.Results,
-		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "first log",
-	}
+	completion := completionFor(attempt, "first log")
 	_, stored, err := store.CompleteCheckAttempt(ctx, completion, now)
 	noErr(t, err)
 	originalExpiry := *stored.LogExpiresAt
@@ -452,6 +435,12 @@ func TestAcceptedLogAndResultSurviveAConflictingRetransmit(t *testing.T) {
 	conflicting.Results[0].Status = AttemptPassed
 	if _, _, err := store.CompleteCheckAttempt(ctx, conflicting, now.Add(4*time.Hour)); !errors.Is(err, ErrAttemptConflict) {
 		t.Fatalf("conflicting result error=%v", err)
+	}
+	// The same bytes claimed as truncated are a different submission.
+	truncated := completion
+	truncated.LogTruncated = true
+	if _, _, err := store.CompleteCheckAttempt(ctx, truncated, now.Add(4*time.Hour)); !errors.Is(err, ErrAttemptConflict) {
+		t.Fatalf("changed truncation flag error=%v", err)
 	}
 	assertAcceptedLog(t, store, stored, now.Add(5*time.Hour), "first log")
 	// Expiry changes only log readability. An exact replay returns the original
@@ -486,20 +475,16 @@ func TestLateOlderFailureDoesNotOverrideNewerSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The newer revision succeeds first.
-	task, _, err = store.CompleteCheckAttempt(ctx, CheckCompletion{
-		AttemptID: newer.ID, RepositoryID: "project", TaskID: newer.TaskID, Results: newer.Results,
-		FinishedAt: newer.FinishedAt, WorktreeState: newer.WorktreeState,
-	}, now.Add(2*time.Minute))
+	task, _, err = store.CompleteCheckAttempt(ctx, completionFor(newer, ""), now.Add(2*time.Minute))
 	noErr(t, err)
 	if task.Status != TaskResolved {
 		t.Fatalf("task after the newer pass = %+v", task)
 	}
 	// The older revision finishes much later, with a client clock far ahead.
 	// The server-issued sequence, not the finish time, decides the order.
-	task, _, err = store.CompleteCheckAttempt(ctx, CheckCompletion{
-		AttemptID: older.ID, RepositoryID: "project", TaskID: older.TaskID, Results: older.Results,
-		FinishedAt: now.Add(10 * time.Hour), WorktreeState: older.WorktreeState,
-	}, now.Add(10*time.Hour))
+	late := completionFor(older, "")
+	late.FinishedAt = now.Add(10 * time.Hour)
+	task, _, err = store.CompleteCheckAttempt(ctx, late, now.Add(10*time.Hour))
 	noErr(t, err)
 	if task.Status != TaskResolved || task.CorrectionCyclesUsed != 0 {
 		t.Fatalf("late older failure overrode newer state: %+v", task)
@@ -602,12 +587,10 @@ func TestCompletionRejectsResultsThatDoNotMatchTheDeclaredChecks(t *testing.T) {
 	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
-	results := append([]CheckResult(nil), attempt.Results...)
-	results[0].Name = "other"
-	if _, _, err := store.CompleteCheckAttempt(ctx, CheckCompletion{
-		AttemptID: attempt.ID, RepositoryID: "project", TaskID: task.ID, Results: results,
-		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState,
-	}, now); err == nil {
+	undeclared := completionFor(attempt, "")
+	undeclared.Results = append([]CheckResult(nil), attempt.Results...)
+	undeclared.Results[0].Name = "other"
+	if _, _, err := store.CompleteCheckAttempt(ctx, undeclared, now); err == nil {
 		t.Fatal("a result for an undeclared check was accepted")
 	}
 }
@@ -796,13 +779,10 @@ func TestCheckLogReportsSubmittedTruncation(t *testing.T) {
 	task, err := store.CreateTask(ctx, "project", "Truncated log", now)
 	noErr(t, err)
 	attempt := attemptFor(task, strings.Repeat("b", 40), now, AttemptFailed)
-	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
+	_, _, err = store.RegisterCheckAttempt(ctx, attempt)
 	noErr(t, err)
-	completion := CheckCompletion{
-		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
-		Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState,
-		Log: strings.Repeat("x", MaximumCheckLogBytes), LogTruncated: true,
-	}
+	completion := completionFor(attempt, strings.Repeat("x", MaximumCheckLogBytes))
+	completion.LogTruncated = true
 	_, stored, err := store.CompleteCheckAttempt(ctx, completion, now)
 	if err != nil || !stored.LogTruncated || !stored.SubmittedTruncated {
 		t.Fatalf("stored truncation=%+v err=%v", stored, err)
@@ -866,10 +846,7 @@ func TestChangedReplayAfterLogRemovalKeepsAcceptedBytes(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM check_raw_logs WHERE attempt_id=?`, stored.LogID); err != nil {
 		t.Fatal(err)
 	}
-	exact := CheckCompletion{
-		AttemptID: stored.ID, RepositoryID: stored.RepositoryID, TaskID: stored.TaskID, Results: attempt.Results,
-		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "accepted log\n",
-	}
+	exact := completionFor(attempt, "accepted log\n")
 	_, replayed, err := store.CompleteCheckAttempt(ctx, exact, now)
 	if err != nil {
 		t.Fatalf("exact replay error=%v", err)
@@ -902,11 +879,7 @@ func TestEmptyReplayAfterLogRemovalKeepsAcceptedBytes(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `DELETE FROM check_raw_logs WHERE attempt_id=?`, stored.LogID); err != nil {
 		t.Fatal(err)
 	}
-	completion := CheckCompletion{
-		AttemptID: stored.ID, RepositoryID: stored.RepositoryID, TaskID: stored.TaskID, Results: attempt.Results,
-		FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState,
-	}
-	if _, _, err := store.CompleteCheckAttempt(ctx, completion, now); !errors.Is(err, ErrAttemptConflict) {
+	if _, _, err := store.CompleteCheckAttempt(ctx, completionFor(attempt, ""), now); !errors.Is(err, ErrAttemptConflict) {
 		t.Fatalf("empty replay error=%v", err)
 	}
 	if count := checkRawLogCount(t, store, stored.LogID); count != 0 {
@@ -935,11 +908,7 @@ func TestCompletingAnOlderAttemptWhileANewerIsPendingKeepsRecoveryValid(t *testi
 	if _, _, err := store.RegisterCheckAttempt(ctx, newer); err != nil {
 		t.Fatal(err)
 	}
-	completion := CheckCompletion{
-		AttemptID: older.ID, RepositoryID: "project", TaskID: older.TaskID, Results: older.Results,
-		FinishedAt: older.FinishedAt, WorktreeState: older.WorktreeState,
-	}
-	task, _, err = store.CompleteCheckAttempt(ctx, completion, now)
+	task, _, err = store.CompleteCheckAttempt(ctx, completionFor(older, ""), now)
 	noErr(t, err)
 	// The newer registration is still in flight, so the task stays active even
 	// though the applied attempt exhausted the reserved budget.
@@ -967,11 +936,7 @@ func TestCompletingTheNewestPendingAttemptDoesNotPointAtAnOlderOne(t *testing.T)
 	if _, _, err := store.RegisterCheckAttempt(ctx, newer); err != nil {
 		t.Fatal(err)
 	}
-	completion := CheckCompletion{
-		AttemptID: newer.ID, RepositoryID: "project", TaskID: newer.TaskID, Results: newer.Results,
-		FinishedAt: newer.FinishedAt, WorktreeState: newer.WorktreeState,
-	}
-	task, _, err = store.CompleteCheckAttempt(ctx, completion, now)
+	task, _, err = store.CompleteCheckAttempt(ctx, completionFor(newer, ""), now)
 	noErr(t, err)
 	if task.PendingAttemptID != "" {
 		t.Fatalf("pending attempt=%q want none after the newest completion", task.PendingAttemptID)
@@ -1159,12 +1124,10 @@ func TestCleanRegistrationWithDirtyCompletionIsNotCertifiedClean(t *testing.T) {
 	task := newProjectTask(t, store, ctx, now)
 	attempt := attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptPassed)
 	attempt.WorktreeState = WorktreeClean
-	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
+	_, _, err := store.RegisterCheckAttempt(ctx, attempt)
 	noErr(t, err)
-	completion := CheckCompletion{
-		AttemptID: registered.ID, RepositoryID: "project", TaskID: task.ID, Results: attempt.Results,
-		FinishedAt: attempt.FinishedAt, WorktreeState: WorktreeDirty,
-	}
+	completion := completionFor(attempt, "")
+	completion.WorktreeState = WorktreeDirty
 	_, stored, err := store.CompleteCheckAttempt(ctx, completion, now)
 	noErr(t, err)
 	if stored.WorktreeState != WorktreeClean || stored.SubmittedWorktreeState != WorktreeDirty {
@@ -1204,10 +1167,7 @@ func TestRawLogStorageFailureUsesOneFreshMetadataTransaction(t *testing.T) {
 			attempt := attemptFor(task, strings.Repeat("1", 40), now, AttemptFailed)
 			_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
 			noErr(t, err)
-			completion := CheckCompletion{
-				AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
-				Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "raw log",
-			}
+			completion := completionFor(attempt, "raw log")
 			ops := defaultCheckCompletionOps()
 			insertions := 0
 			ops.insertRawLog = func(context.Context, *sql.Tx, string, []byte, int64) error {
@@ -1256,10 +1216,7 @@ func TestMetadataFallbackFailureIsBounded(t *testing.T) {
 	attempt := attemptFor(task, strings.Repeat("8", 40), now, AttemptFailed)
 	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
 	noErr(t, err)
-	completion := CheckCompletion{
-		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
-		Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "raw log",
-	}
+	completion := completionFor(attempt, "raw log")
 	fallbackErr := errors.New("injected metadata commit failure")
 	ops := defaultCheckCompletionOps()
 	insertions, commits := 0, 0
@@ -1336,10 +1293,8 @@ func TestPreReservationAttemptCannotCertifyTheReservedRound(t *testing.T) {
 		t.Fatalf("reservation boundary=%d want 2", cycle.ReservedAfterSequence)
 	}
 	// The pre-reservation attempt finishes later and fails.
-	completion := CheckCompletion{
-		AttemptID: pre.ID, RepositoryID: "project", TaskID: task.ID, Results: pre.Results,
-		FinishedAt: now.Add(3 * time.Minute), WorktreeState: pre.WorktreeState,
-	}
+	completion := completionFor(pre, "")
+	completion.FinishedAt = now.Add(3 * time.Minute)
 	task, _, err = store.CompleteCheckAttempt(ctx, completion, now.Add(3*time.Minute))
 	noErr(t, err)
 	// The round is still uncertified, so the task stays active.
@@ -1366,10 +1321,7 @@ func TestRawLogAndCompletionMetadataRollBackTogether(t *testing.T) {
 	attempt := attemptFor(task, strings.Repeat("1", 40), now, AttemptFailed)
 	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
 	noErr(t, err)
-	completion := CheckCompletion{
-		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
-		Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "submitted bytes",
-	}
+	completion := completionFor(attempt, "submitted bytes")
 	injected := errors.New("injected failure after raw insert")
 	ops := defaultCheckCompletionOps()
 	insertRawLog := ops.insertRawLog
@@ -1412,10 +1364,7 @@ func TestCompletionReconcilesCommitAmbiguity(t *testing.T) {
 			attempt := attemptFor(task, strings.Repeat("6", 40), now, AttemptFailed)
 			_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
 			noErr(t, err)
-			completion := CheckCompletion{
-				AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
-				Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "raw bytes",
-			}
+			completion := completionFor(attempt, "raw bytes")
 			commitErr := errors.New("injected ambiguous commit")
 			ops := defaultCheckCompletionOps()
 			commitCalls := 0
@@ -1486,11 +1435,7 @@ func TestRealSQLiteFullUsesMetadataOnlyFallback(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, fmt.Sprintf(`PRAGMA max_page_count=%d`, pageCount)).Scan(&acceptedLimit); err != nil || acceptedLimit != pageCount {
 		t.Fatalf("max page count=%d want %d err=%v", acceptedLimit, pageCount, err)
 	}
-	completion := CheckCompletion{
-		AttemptID: registered.ID, RepositoryID: registered.RepositoryID, TaskID: registered.TaskID,
-		Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState,
-		Log: strings.Repeat("x", MaximumCheckLogBytes),
-	}
+	completion := completionFor(attempt, strings.Repeat("x", MaximumCheckLogBytes))
 	ops := defaultCheckCompletionOps()
 	insertRawLog := ops.insertRawLog
 	insertions, commits := 0, 0
@@ -1596,11 +1541,7 @@ func TestRawLogDigestMismatchIsMissingAndReplayDoesNotRepairIt(t *testing.T) {
 	if content, state, err := store.ReadCheckLog(stored.LogID, stored.LogExpiresAt, now); err == nil || state != CheckLogMissing || content != nil {
 		t.Fatalf("damaged raw log content=%q state=%q err=%v", content, state, err)
 	}
-	completion := CheckCompletion{
-		AttemptID: stored.ID, RepositoryID: stored.RepositoryID, TaskID: stored.TaskID,
-		Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "accepted bytes",
-	}
-	if _, replayed, err := store.CompleteCheckAttempt(ctx, completion, now); err != nil || replayed.CompletionDigest != stored.CompletionDigest {
+	if _, replayed, err := store.CompleteCheckAttempt(ctx, completionFor(attempt, "accepted bytes"), now); err != nil || replayed.CompletionDigest != stored.CompletionDigest {
 		t.Fatalf("exact replay=%+v err=%v", replayed, err)
 	}
 	var damaged []byte
@@ -1619,10 +1560,7 @@ func TestConcurrentDifferentCompletionsKeepOneHonestOutcome(t *testing.T) {
 	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
-	completions := []CheckCompletion{
-		{AttemptID: attempt.ID, RepositoryID: "project", TaskID: task.ID, Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "first payload"},
-		{AttemptID: attempt.ID, RepositoryID: "project", TaskID: task.ID, Results: attempt.Results, FinishedAt: attempt.FinishedAt, WorktreeState: attempt.WorktreeState, Log: "second payload"},
-	}
+	completions := []CheckCompletion{completionFor(attempt, "first payload"), completionFor(attempt, "second payload")}
 	errs := make([]error, len(completions))
 	start := make(chan struct{})
 	var wait sync.WaitGroup

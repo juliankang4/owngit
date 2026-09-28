@@ -22,6 +22,27 @@ func testImportRun(t *testing.T, id, repositoryID string, generation int64, kind
 	}
 }
 
+// configureTestImportSource gives repositoryID a standalone import source, the
+// setup a run needs before it can be admitted.
+func configureTestImportSource(t *testing.T, store *Store, repositoryID string) ImportSource {
+	t.Helper()
+	source, err := store.ConfigureImportSource(context.Background(), ImportSourceInput{
+		RepositoryID: repositoryID, URL: "https://example.invalid/team/" + repositoryID + ".git",
+		Mode: ImportModeStandalone, Now: testImportNow(),
+	})
+	noErr(t, err)
+	return source
+}
+
+// beginTestImportRun admits a run for the first source generation of
+// repositoryID.
+func beginTestImportRun(t *testing.T, store *Store, id, repositoryID, kind, status string) ImportRun {
+	t.Helper()
+	run := testImportRun(t, id, repositoryID, 1, kind, status)
+	noErr(t, store.BeginImportRun(context.Background(), run))
+	return run
+}
+
 func TestImportSourceSeparatesIdentityAndExecutionAuthority(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -65,16 +86,11 @@ func TestImportSourceSeparatesIdentityAndExecutionAuthority(t *testing.T) {
 func TestDeletedSourceCannotReuseRetainedRunAuthority(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	if _, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ImportModeStandalone, Now: testImportNow(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	run := testImportRun(t, strings.Repeat("9", 32), "project", 1, ImportKindInitial, ImportRunPreparing)
-	noErr(t, store.BeginImportRun(ctx, run))
+	source := configureTestImportSource(t, store, "project")
+	beginTestImportRun(t, store, strings.Repeat("9", 32), "project", ImportKindInitial, ImportRunPreparing)
 	noErr(t, store.DeleteImportSource(ctx, "project"))
 	recreated, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ImportModeStandalone, Now: testImportNow().Add(time.Minute),
+		RepositoryID: "project", URL: source.URL, Mode: ImportModeStandalone, Now: testImportNow().Add(time.Minute),
 	})
 	noErr(t, err)
 	if recreated.SourceGeneration != 2 || recreated.AuthorityRevision != 2 {
@@ -85,13 +101,8 @@ func TestDeletedSourceCannotReuseRetainedRunAuthority(t *testing.T) {
 func TestImportRunActiveRefusalAndInterruption(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	if _, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ImportModeStandalone, Now: testImportNow(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	run := testImportRun(t, strings.Repeat("a", 32), "project", 1, ImportKindInitial, ImportRunPreparing)
-	noErr(t, store.BeginImportRun(ctx, run))
+	configureTestImportSource(t, store, "project")
+	run := beginTestImportRun(t, store, strings.Repeat("a", 32), "project", ImportKindInitial, ImportRunPreparing)
 	if err := store.BeginImportRun(ctx, testImportRun(t, strings.Repeat("b", 32), "project", 1, ImportKindRefresh, ImportRunFetching)); !errors.Is(err, ErrImportActive) {
 		t.Fatalf("second active run error=%v", err)
 	}
@@ -123,15 +134,9 @@ func TestImportRunActiveRefusalAndInterruption(t *testing.T) {
 func TestImportRunHistoryUsesAdmissionOrderWhenClocksTie(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	if _, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ImportModeStandalone,
-		GitOnlyConsent: true, Now: testImportNow(),
-	}); err != nil {
-		t.Fatal(err)
-	}
+	configureTestImportSource(t, store, "project")
 	finish := func(id string, inspectionComplete bool) ImportRun {
-		run := testImportRun(t, id, "project", 1, ImportKindRefresh, ImportRunPreparing)
-		noErr(t, store.BeginImportRun(ctx, run))
+		run := beginTestImportRun(t, store, id, "project", ImportKindRefresh, ImportRunPreparing)
 		run.Status = ImportRunComplete
 		run.FinishedAt = testImportNow()
 		run.LFSInspectionDone = inspectionComplete
@@ -150,8 +155,7 @@ func TestImportRunHistoryUsesAdmissionOrderWhenClocksTie(t *testing.T) {
 		t.Fatalf("accepted=%+v exists=%v err=%v", accepted, exists, err)
 	}
 
-	later := testImportRun(t, strings.Repeat("a", 32), "project", 1, ImportKindRefresh, ImportRunPreparing)
-	noErr(t, store.BeginImportRun(ctx, later))
+	later := beginTestImportRun(t, store, strings.Repeat("a", 32), "project", ImportKindRefresh, ImportRunPreparing)
 	active, activeExists, err := store.ActiveImportRun(ctx, "project")
 	if err != nil || !activeExists || active.ID != later.ID {
 		t.Fatalf("active=%+v exists=%v err=%v", active, activeExists, err)
@@ -180,16 +184,10 @@ func TestImportRunAdmissionOrderSurvivesCurrentRecoveryAcrossRepositories(t *tes
 	noErr(t, store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
 	for _, repositoryID := range []string{"alpha", "beta"} {
 		noErr(t, store.AddRepository(ctx, Repository{ID: repositoryID, Name: repositoryID, CreatedAt: testImportNow()}))
-		if _, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-			RepositoryID: repositoryID, URL: "https://example.invalid/" + repositoryID + ".git",
-			Mode: ImportModeStandalone, Now: testImportNow(),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		configureTestImportSource(t, store, repositoryID)
 	}
 	finish := func(repositoryID, id string) {
-		run := testImportRun(t, id, repositoryID, 1, ImportKindRefresh, ImportRunPreparing)
-		noErr(t, store.BeginImportRun(ctx, run))
+		run := beginTestImportRun(t, store, id, repositoryID, ImportKindRefresh, ImportRunPreparing)
 		run.Status = ImportRunComplete
 		run.FinishedAt = testImportNow()
 		run.LFSInspectionDone = true
@@ -232,11 +230,7 @@ func TestImportRunAdmissionOrderSurvivesCurrentRecoveryAcrossRepositories(t *tes
 func TestImportObservationUpsertAndIntentReceipt(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	if _, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ImportModeStandalone, Now: testImportNow(),
-	}); err != nil {
-		t.Fatal(err)
-	}
+	configureTestImportSource(t, store, "project")
 	observation := ImportObservation{
 		RepositoryID: "project", SourceGeneration: 1, RefName: "refs/heads/main",
 		OID: strings.Repeat("a", 40), ObservedAt: testImportNow(), RunID: strings.Repeat("c", 32),
@@ -314,10 +308,8 @@ func TestCompleteImportReceiptValidationAtBothBoundaries(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			store, ctx, now := openTestStore(t), context.Background(), testImportNow()
-			_, err := store.ConfigureImportSource(ctx, ImportSourceInput{RepositoryID: "project", URL: "https://example.invalid/project.git", Mode: ImportModeStandalone, Now: now})
-			noErr(t, err)
-			run := testImportRun(t, strings.Repeat("a", 32), "project", 1, ImportKindRefresh, ImportRunPreparing)
-			noErr(t, store.BeginImportRun(ctx, run))
+			configureTestImportSource(t, store, "project")
+			run := beginTestImportRun(t, store, strings.Repeat("a", 32), "project", ImportKindRefresh, ImportRunPreparing)
 			intent := ImportIntent{ID: strings.Repeat("b", 32), RepositoryID: "project", RunID: run.ID,
 				SourceGeneration: 1, AuthorityRevision: 1, Status: ImportIntentPlanning, CreatedAt: now,
 				Expected: map[string]string{"refs/heads/main": ""}, Desired: map[string]string{"refs/heads/main": oid},
@@ -333,7 +325,7 @@ func TestCompleteImportReceiptValidationAtBothBoundaries(t *testing.T) {
 			run.Status, run.FinishedAt = ImportRunComplete, now
 			valid := name == "valid" || name == "empty"
 			observations := []ImportObservation{{RepositoryID: "project", SourceGeneration: 1, RefName: "refs/heads/main", OID: oid, RunID: run.ID, ObservedAt: now}}
-			err = store.FinalizeImportPublication(ctx, intent.ID, receipt, digest, "", observations, run)
+			err := store.FinalizeImportPublication(ctx, intent.ID, receipt, digest, "", observations, run)
 			if (err == nil) != valid {
 				t.Fatalf("finalize error=%v", err)
 			}
@@ -368,13 +360,8 @@ func TestImportScheduleFairnessAndDueOrder(t *testing.T) {
 		t.Fatalf("due=%+v err=%v", due, err)
 	}
 	// A run is recorded only for a configured source generation.
-	if _, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-		RepositoryID: "alpha", URL: "https://example.invalid/team/alpha.git", Mode: ImportModeStandalone, Now: now,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	run := testImportRun(t, strings.Repeat("e", 32), "alpha", 1, ImportKindScheduled, ImportRunPreparing)
-	noErr(t, store.BeginImportRun(ctx, run))
+	configureTestImportSource(t, store, "alpha")
+	beginTestImportRun(t, store, strings.Repeat("e", 32), "alpha", ImportKindScheduled, ImportRunPreparing)
 	due, err = store.DueImportSchedulesAfter(ctx, now, nil, 8)
 	if err != nil || len(due) != 2 || due[0].RepositoryID != "beta" {
 		t.Fatalf("fair due=%+v err=%v", due, err)
@@ -419,15 +406,12 @@ func TestCredentialAuthorityLocksAreRepositoryScoped(t *testing.T) {
 func TestImportCredentialFileIsBoundAndPrivate(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	source, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ImportModeStandalone, Now: testImportNow(),
-	})
-	noErr(t, err)
+	source := configureTestImportSource(t, store, "project")
 	credential := ImportCredentials{
 		RepositoryID: "project", URL: source.URL, SourceGeneration: source.SourceGeneration, ExpectedAuthorityRevision: source.AuthorityRevision,
 		Basic: &ImportBasicAuth{Username: "user", Password: "secret"},
 	}
-	source, err = store.SaveImportCredentials(ctx, credential, testImportNow().Add(time.Second))
+	source, err := store.SaveImportCredentials(ctx, credential, testImportNow().Add(time.Second))
 	if err != nil || source.AuthorityRevision != 2 {
 		t.Fatalf("save credentials source=%+v err=%v", source, err)
 	}
@@ -528,15 +512,12 @@ func TestCredentialDatabaseFailureLeavesAuthorityFailClosed(t *testing.T) {
 	t.Run("replacement", func(t *testing.T) {
 		store := openTestStore(t)
 		ctx := context.Background()
-		source, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-			RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ImportModeStandalone, Now: testImportNow(),
-		})
-		noErr(t, err)
+		source := configureTestImportSource(t, store, "project")
 		credential := ImportCredentials{
 			RepositoryID: "project", URL: source.URL, SourceGeneration: source.SourceGeneration, ExpectedAuthorityRevision: source.AuthorityRevision,
 			Basic: &ImportBasicAuth{Username: "user", Password: "first-secret"},
 		}
-		source, err = store.SaveImportCredentials(ctx, credential, testImportNow().Add(time.Second))
+		source, err := store.SaveImportCredentials(ctx, credential, testImportNow().Add(time.Second))
 		noErr(t, err)
 		noErr(t, store.Exec(ctx, `CREATE TRIGGER fail_import_authority BEFORE UPDATE OF authority_revision ON import_sources BEGIN SELECT RAISE(FAIL,'synthetic authority failure'); END`))
 		replacement := credential
@@ -579,15 +560,12 @@ func TestCredentialDatabaseFailureLeavesAuthorityFailClosed(t *testing.T) {
 	t.Run("revocation", func(t *testing.T) {
 		store := openTestStore(t)
 		ctx := context.Background()
-		source, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-			RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ImportModeStandalone, Now: testImportNow(),
-		})
-		noErr(t, err)
+		source := configureTestImportSource(t, store, "project")
 		credential := ImportCredentials{
 			RepositoryID: "project", URL: source.URL, SourceGeneration: source.SourceGeneration, ExpectedAuthorityRevision: source.AuthorityRevision,
 			BearerToken: "first-secret",
 		}
-		source, err = store.SaveImportCredentials(ctx, credential, testImportNow().Add(time.Second))
+		source, err := store.SaveImportCredentials(ctx, credential, testImportNow().Add(time.Second))
 		noErr(t, err)
 		noErr(t, store.Exec(ctx, `CREATE TRIGGER fail_import_authority BEFORE UPDATE OF authority_revision ON import_sources BEGIN SELECT RAISE(FAIL,'synthetic authority failure'); END`))
 		if _, err := store.DeleteImportCredentials(ctx, "project", testImportNow().Add(2*time.Second)); err == nil {
@@ -626,14 +604,12 @@ func TestImportRecoveryPreservesHistoryAndInvalidatesMachineState(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	run := testImportRun(t, strings.Repeat("f", 32), "project", 1, ImportKindInitial, ImportRunPreparing)
-	noErr(t, store.BeginImportRun(ctx, run))
+	run := beginTestImportRun(t, store, strings.Repeat("f", 32), "project", ImportKindInitial, ImportRunPreparing)
 	run.Status = ImportRunComplete
 	run.FinishedAt = testImportNow().Add(time.Second)
 	run.LFSInspectionDone = false
 	noErr(t, store.FinishImportRun(ctx, run))
-	pending := testImportRun(t, strings.Repeat("1", 32), "project", 1, ImportKindRefresh, ImportRunPublishing)
-	noErr(t, store.BeginImportRun(ctx, pending))
+	pending := beginTestImportRun(t, store, strings.Repeat("1", 32), "project", ImportKindRefresh, ImportRunPublishing)
 	if err := store.RecordImportObservations(ctx, []ImportObservation{{
 		RepositoryID: "project", SourceGeneration: 1, RefName: "refs/heads/main",
 		OID: strings.Repeat("a", 40), ObservedAt: testImportNow(), RunID: run.ID,
@@ -840,8 +816,7 @@ func TestRecoveryCarriesInvalidatedIntentOfUnpublishedInitialImport(t *testing.T
 	defer store.Close()
 	noErr(t, store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
 	now := testImportNow()
-	source, err := store.ConfigureImportSource(ctx, ImportSourceInput{RepositoryID: "ghost", URL: "https://example.invalid/team/ghost.git", Mode: ImportModeStandalone, Now: now})
-	noErr(t, err)
+	source := configureTestImportSource(t, store, "ghost")
 	run := testImportRun(t, strings.Repeat("c", 32), "ghost", source.SourceGeneration, ImportKindInitial, ImportRunPublishing)
 	run.AuthorityRevision = source.AuthorityRevision
 	noErr(t, store.BeginImportRun(ctx, run))
@@ -939,22 +914,18 @@ func TestClaimImportStagingDoesNotAdoptAnotherRun(t *testing.T) {
 func TestForgetUnpublishedImportKeepsHistoryAndRespectsBlockers(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	configure := func(repositoryID string) ImportSource {
+	configure := func(repositoryID string) {
 		t.Helper()
-		source, err := store.ConfigureImportSource(ctx, ImportSourceInput{
-			RepositoryID: repositoryID, URL: "https://example.invalid/team/" + repositoryID + ".git", Mode: ImportModeStandalone, Now: testImportNow(),
-		})
-		noErr(t, err)
-		_, err = store.SaveImportCredentials(ctx, ImportCredentials{
+		source := configureTestImportSource(t, store, repositoryID)
+		_, err := store.SaveImportCredentials(ctx, ImportCredentials{
 			RepositoryID: repositoryID, URL: source.URL, SourceGeneration: source.SourceGeneration,
 			ExpectedAuthorityRevision: source.AuthorityRevision, BearerToken: "synthetic-token",
 		}, testImportNow())
 		noErr(t, err)
-		return source
 	}
 
 	configure("failed")
-	noErr(t, store.BeginImportRun(ctx, testImportRun(t, strings.Repeat("a", 32), "failed", 1, ImportKindInitial, ImportRunPreparing)))
+	beginTestImportRun(t, store, strings.Repeat("a", 32), "failed", ImportKindInitial, ImportRunPreparing)
 	if err := store.ForgetUnpublishedImport(ctx, "failed"); !errors.Is(err, ErrImportNotForgettable) {
 		t.Fatalf("forget during an active run err=%v", err)
 	}
