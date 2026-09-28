@@ -112,9 +112,13 @@ func TestOpenDirectoryRefusesAWayThroughAShare(t *testing.T) {
 	noErr(t, os.Mkdir(local, 0o700))
 	noErr(t, os.Symlink(local, filepath.Join(share, "state")))
 	markShare(t, share)
+	refusal := "does not follow it"
+	if os.Geteuid() == 0 {
+		refusal = "run as root uses nothing there"
+	}
 	for _, create := range []bool{false, true} {
 		for _, path := range []string{filepath.Join(share, "state"), filepath.Join(share, "state", "new")} {
-			if dir, err := OpenDirectory(path, create); err == nil || !strings.Contains(err.Error(), "does not follow it") {
+			if dir, err := OpenDirectory(path, create); err == nil || !strings.Contains(err.Error(), refusal) {
 				if dir != nil {
 					dir.Close()
 				}
