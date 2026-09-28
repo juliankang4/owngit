@@ -1038,7 +1038,7 @@ var catalog = map[MessageCode]message{
 	// the indicator stays visible.
 	MsgSettingsAckDone: {
 		en: "Noted. Nothing about the connection changed; the header keeps showing its status instead of asking again.",
-		ko: "확인했습니다. 연결은 그대로이며 앞으로는 다시 묻지 않고 상단에 상태만 표시합니다.",
+		ko: "확인했습니다. 연결 자체가 바뀌지는 않으며 앞으로는 다시 묻지 않고 상단에 상태만 계속 표시합니다.",
 	},
 	MsgSettingsUnknownAct: {
 		en: "That action is not available.",
