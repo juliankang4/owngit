@@ -874,3 +874,205 @@ func TestAListenOptionDecidesInsteadOfTheHomeNetworkChoice(t *testing.T) {
 		t.Fatalf("a choice that changed nothing saved listen %q or accepted plain HTTP (%v)", saved.Listen, settings.InsecureHTTPAccepted)
 	}
 }
+
+// refuseConfirmedSharing makes every save of a confirmed sharing record
+// fail, so turning on writes its endpoint and then cannot save its settings.
+// The returned function lets saves succeed again.
+func refuseConfirmedSharing(t *testing.T, store *state.Store) func() {
+	t.Helper()
+	noErr(t, store.Exec(context.Background(), `CREATE TRIGGER refuse_confirmed_insert BEFORE INSERT ON metadata WHEN NEW.key='tailscale_serve' AND json_extract(NEW.value,'$.confirmed') BEGIN SELECT RAISE(ABORT, 'injected failure'); END;
+CREATE TRIGGER refuse_confirmed_update BEFORE UPDATE ON metadata WHEN NEW.key='tailscale_serve' AND json_extract(NEW.value,'$.confirmed') BEGIN SELECT RAISE(ABORT, 'injected failure'); END`))
+	return func() {
+		noErr(t, store.Exec(context.Background(), `DROP TRIGGER refuse_confirmed_insert; DROP TRIGGER refuse_confirmed_update`))
+	}
+}
+
+// Turning sharing on again over a confirmed record, after a rename or after
+// the endpoint disappeared, writes a new endpoint. When its settings then
+// cannot be saved, that endpoint is still recorded as OwnGit's, so the next
+// turning on finishes the change and the next turning off removes it.
+func TestTurningOnAgainThatCouldNotBeSavedIsFinishedNextTime(t *testing.T) {
+	for _, situation := range []struct {
+		name string
+		// prepare turns sharing on and then changes Tailscale so that
+		// turning on again writes a new endpoint; it returns the name the
+		// endpoint is written for.
+		prepare func(t *testing.T, app *App, fake *tailscaletest.Fake) string
+	}{
+		{"after a rename", func(t *testing.T, app *App, fake *tailscaletest.Fake) string {
+			_, err := app.Tailscale.On(context.Background(), nil, 0)
+			noErr(t, err)
+			rename(fake)
+			return renamed
+		}},
+		{"after the owner's endpoint that OwnGit used disappeared", func(t *testing.T, app *App, fake *tailscaletest.Fake) string {
+			// After a rename OwnGit uses the owner's endpoint for the new
+			// name without taking it over (Created false), and then that
+			// endpoint disappears.
+			first, err := app.Tailscale.On(context.Background(), nil, 0)
+			noErr(t, err)
+			rename(fake)
+			fake.Update(func(s *tailscaletest.State) {
+				s.Serve.Web[renamed+":443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: first.Record.Target}}}
+			})
+			change, err := app.Tailscale.On(context.Background(), nil, 0)
+			noErr(t, err)
+			if change.Endpoint != endpointKept || change.Record.Created {
+				t.Fatalf("turning on over the owner's endpoint: %+v", change)
+			}
+			fake.Update(func(s *tailscaletest.State) { delete(s.Serve.Web, renamed+":443") })
+			return renamed
+		}},
+	} {
+		for _, next := range []string{"on", "off"} {
+			t.Run(situation.name+", then "+next, func(t *testing.T) {
+				app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+				ctx := context.Background()
+				name := situation.prepare(t, app, fake)
+				allow := refuseConfirmedSharing(t, app.Store)
+				if _, err := app.Tailscale.On(ctx, nil, 0); !errors.Is(err, ErrTailscaleAhead) {
+					t.Fatalf("turning on with a settings save that fails: %v", err)
+				}
+				allow()
+				_, _, _, record := savedSharing(t, app.Store)
+				if record == nil || record.Confirmed || !record.Created || record.Name != name {
+					t.Fatalf("the written endpoint is not recorded as OwnGit's: %+v", record)
+				}
+				target := record.Target
+				if next == "on" {
+					change, err := app.Tailscale.On(ctx, nil, 0)
+					noErr(t, err)
+					if change.Endpoint != endpointKept || !change.Record.Created || !change.Record.Confirmed || change.Record.Name != name {
+						t.Fatalf("turning on again: %+v", change)
+					}
+				}
+				change, err := app.Tailscale.Off(ctx)
+				noErr(t, err)
+				if change.Endpoint != "removed" {
+					t.Fatalf("turning off: %+v", change)
+				}
+				settings, hosts, proxies, record := savedSharing(t, app.Store)
+				if settings.BaseURL != "" || len(hosts) != 0 || len(proxies) != 0 || record != nil {
+					t.Fatalf("after off: base URL %q, hosts %v, proxies %v, record %+v", settings.BaseURL, hosts, proxies, record)
+				}
+				if !fake.State().Serve.Endpoint(name, 443, target).Free {
+					t.Fatal("turning off left the endpoint OwnGit wrote")
+				}
+				report, err := app.Tailscale.Report(ctx)
+				noErr(t, err)
+				if report.On || report.Endpoint != TailscaleEndpointFree || !report.CanTurnOn {
+					t.Fatalf("report after off: %+v", report)
+				}
+			})
+		}
+	}
+}
+
+// Turning on again that Tailscale refused wrote nothing, so the confirmed
+// record stays as it was.
+func TestTurningOnAgainThatTailscaleRefusedKeepsTheRecord(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	_, err := app.Tailscale.On(ctx, nil, 0)
+	noErr(t, err)
+	_, _, _, before := savedSharing(t, app.Store)
+	rename(fake)
+	fake.Update(func(s *tailscaletest.State) { s.WriteError = "Access denied: serve config denied" })
+	if _, err := app.Tailscale.On(ctx, nil, 0); err == nil || errors.Is(err, ErrTailscaleAhead) {
+		t.Fatalf("turning on that Tailscale refused: %v", err)
+	}
+	if _, _, _, after := savedSharing(t, app.Store); !reflect.DeepEqual(after, before) {
+		t.Fatalf("record after a refused turning on %+v, want %+v", after, before)
+	}
+}
+
+// When a refused turning on cannot put the record from before back, the
+// answer is that failure, not the refusal: the page says the change was not
+// saved and the cause is logged once, since the record left may name as
+// OwnGit's an endpoint that OwnGit did not write.
+func TestTurningOnWhoseRecordCannotBePutBackIsNotARefusal(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	// After a rename OwnGit uses the owner's endpoint for the new name
+	// (Created false); then that endpoint disappears and Tailscale refuses
+	// to write it again.
+	first, err := app.Tailscale.On(ctx, nil, 0)
+	noErr(t, err)
+	rename(fake)
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve.Web[renamed+":443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: first.Record.Target}}}
+	})
+	change, err := app.Tailscale.On(ctx, nil, 0)
+	noErr(t, err)
+	if change.Endpoint != endpointKept || change.Record.Created {
+		t.Fatalf("turning on over the owner's endpoint: %+v", change)
+	}
+	client, base, csrf, _ := networkSettingsClient(t, app)
+	fake.Update(func(s *tailscaletest.State) {
+		delete(s.Serve.Web, renamed+":443")
+		s.WriteError = "Access denied: serve config denied"
+	})
+	refuseConfirmedSharing(t, app.Store)
+	serverLog := captureServerLog(t)
+	result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false), base)
+	if result.status != http.StatusServiceUnavailable || !strings.Contains(result.body, enText(webui.MsgSettingsNotSaved)) {
+		t.Fatalf("status=%d body=%s", result.status, result.body)
+	}
+	lines := loggedFailures(serverLog, 0)
+	checkLoggedSteps(t, "a record that cannot be put back", lines, "Tailscale sharing change")
+	if logged := strings.Join(lines, "\n"); !strings.Contains(logged, "Access denied") || !strings.Contains(logged, "could not be put back") {
+		t.Errorf("the log does not name both causes: %s", logged)
+	}
+}
+
+// Replacing OwnGit's own endpoint with a new target, when the outcome is
+// unknown and Tailscale in fact kept the old endpoint, is finished by the
+// next turning on, which rewrites the port, and by the next turning off,
+// which removes the endpoint, as when the record was not touched.
+func TestReplacingOwnGitsEndpointWithAnUnknownOutcomeIsFinishedNextTime(t *testing.T) {
+	for _, next := range []string{"on", "off"} {
+		t.Run(next, func(t *testing.T) {
+			app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+			ctx := context.Background()
+			first, err := app.Tailscale.On(ctx, nil, 0)
+			noErr(t, err)
+			// The server moves to another port, so turning on again replaces
+			// the endpoint's target; Tailscale accepts the write without
+			// keeping it and then cannot be read.
+			saved, err := app.Store.NetworkSettings(ctx)
+			noErr(t, err)
+			saved.Listen = "127.0.0.1:18080"
+			noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: saved}))
+			fake.Update(func(s *tailscaletest.State) {
+				s.Wrote, s.IgnoreWrites, s.ServeReadErrorAfterWrite = false, true, "synthetic serve status failure"
+			})
+			if _, err := app.Tailscale.On(ctx, nil, 0); !errors.Is(err, ErrTailscaleAhead) {
+				t.Fatalf("turning on with an unknown outcome: %v", err)
+			}
+			fake.Update(func(s *tailscaletest.State) { s.Wrote, s.IgnoreWrites, s.ServeReadErrorAfterWrite = false, false, "" })
+			if _, _, _, record := savedSharing(t, app.Store); record == nil || record.Confirmed || !record.Created || record.HTTPSPort != 443 || record.Target != first.Record.Target {
+				t.Fatalf("pending record %+v, want OwnGit's endpoint on 443 to %s", record, first.Record.Target)
+			}
+			target := tailscale.Target(18080)
+			if next == "on" {
+				change, err := app.Tailscale.On(ctx, nil, 0)
+				noErr(t, err)
+				if change.Endpoint != endpointCreated || change.Record.HTTPSPort != 443 || change.Record.Target != target || !change.Record.Created || !change.Record.Confirmed {
+					t.Fatalf("turning on again: %+v", change)
+				}
+				if serve := fake.State().Serve; !serve.Endpoint(tailscaletest.Name, 443, target).Exact || len(serve.Web) != 1 {
+					t.Fatalf("after turning on again Tailscale serves %v", serve.Web)
+				}
+				return
+			}
+			change, err := app.Tailscale.Off(ctx)
+			noErr(t, err)
+			if change.Endpoint != "removed" {
+				t.Fatalf("turning off: %+v", change)
+			}
+			if _, _, _, record := savedSharing(t, app.Store); record != nil || len(fake.State().Serve.Web) != 0 {
+				t.Fatalf("after off: record %+v, Tailscale serves %v", record, fake.State().Serve.Web)
+			}
+		})
+	}
+}

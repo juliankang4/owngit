@@ -684,10 +684,10 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 		return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemOtherPort, Detail: TailscaleOrigin(previous.Name, previous.HTTPSPort) + "/"}
 	}
 	plan := planEndpoint(config, status.Name, target, httpsPorts(httpsPort, previous, wasOn, status.Name), previous, wasOn)
-	// A record that was never confirmed belongs to a turning on that was
-	// interrupted before it changed any setting, so this one starts anew:
-	// it records the base URL saved now and what it adds itself.
-	fresh := !wasOn || !previous.Confirmed
+	// A record whose settings were never saved belongs to a turning on that
+	// was interrupted before it changed any setting, so this one starts
+	// anew: it records the base URL saved now and what it adds itself.
+	fresh := !wasOn || !previous.SavedSettings()
 	record := previous
 	if fresh {
 		record = state.TailscaleServe{CreatedAt: time.Now().Unix()}
@@ -707,23 +707,48 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 	}
 
 	if change.Endpoint == endpointCreated {
-		// A new record is saved before writing, so an endpoint that is
-		// written and then interrupted can still be found and removed. An
-		// existing record keeps describing the endpoint it made until the
-		// new one is confirmed.
-		if fresh {
-			if err := sharing.Store.SaveTailscaleServe(ctx, record); err != nil {
-				return TailscaleChange{}, err
+		// Every endpoint OwnGit writes is recorded as its own, not yet
+		// confirmed, before it is written. An endpoint that is written and
+		// then interrupted, or whose settings are not saved, is then still
+		// OwnGit's for the next turning on or off, which finishes or undoes
+		// the change. A record whose settings were saved keeps naming them.
+		pending := record
+		pending.Confirmed = false
+		// An endpoint OwnGit created on this name and port is already
+		// recorded as its own. Replacing it with a new target, the pending
+		// record keeps the target it has now: whether or not the write took
+		// effect, the next turning on then recognises the port as OwnGit's
+		// (planEndpoint), and turning off removes the endpoint that is still
+		// there when it did not.
+		if wasOn && previous.Created && previous.Name == record.Name && previous.HTTPSPort == record.HTTPSPort &&
+			config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact {
+			pending.Target = previous.Target
+		}
+		if err := sharing.Store.SaveTailscaleServe(ctx, pending); err != nil {
+			return TailscaleChange{}, err
+		}
+		// restore puts back the record from before, once the endpoint is
+		// known not to be written, and returns cause. When the record
+		// cannot be put back, the pending one stays and may name an endpoint
+		// OwnGit did not write, so that failure is returned instead, with
+		// cause in its text: it is not the refusal cause may be.
+		restore := func(cause error) error {
+			var err error
+			if wasOn {
+				err = sharing.Store.SaveTailscaleServe(ctx, previous)
+			} else {
+				err = sharing.Store.ClearTailscaleServe(ctx)
 			}
+			if err != nil {
+				return fmt.Errorf("%v, and the sharing record from before could not be put back: %w", cause, err)
+			}
+			return cause
 		}
 		if sharing.BeforeServe != nil {
 			sharing.BeforeServe(record.Name)
 		}
 		if err := unchangedPort(ctx, command, config, record.Name, record.HTTPSPort, target); err != nil {
-			if fresh {
-				_ = sharing.Store.ClearTailscaleServe(ctx)
-			}
-			return TailscaleChange{}, err
+			return TailscaleChange{}, restore(err)
 		}
 		writeErr := whyWriteFailed(ctx, command, command.ServeHTTPS(ctx, record.HTTPSPort, target))
 		after, readErr := command.ServeConfig(ctx)
@@ -736,10 +761,11 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 			writeErr = readErr
 		}
 		if writeErr != nil {
-			if readErr == nil && fresh && after.Endpoint(record.Name, record.HTTPSPort, target).Free {
-				_ = sharing.Store.ClearTailscaleServe(ctx)
+			err := tailscaleAhead(tailscaleError(writeErr, command.MacApp), ahead)
+			if !ahead {
+				err = restore(err)
 			}
-			return TailscaleChange{}, tailscaleAhead(tailscaleError(writeErr, command.MacApp), ahead)
+			return TailscaleChange{}, err
 		}
 	}
 

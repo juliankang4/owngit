@@ -1474,11 +1474,13 @@ type TailscaleServe struct {
 	// turning sharing off leaves it in place.
 	Created bool `json:"created"`
 	// Confirmed is true once the endpoint was read back from Tailscale and
-	// the settings below were saved.
+	// the settings below were saved. An endpoint OwnGit is about to write is
+	// recorded first with Confirmed false.
 	Confirmed bool  `json:"confirmed"`
 	CreatedAt int64 `json:"created_at"`
 	// BaseURL is the base URL OwnGit saved and PreviousBaseURL the one saved
-	// before; turning off restores it while BaseURL is still saved.
+	// before; turning off restores it while BaseURL is still saved. BaseURL
+	// is empty until the settings are saved (SavedSettings).
 	BaseURL         string `json:"base_url"`
 	PreviousBaseURL string `json:"previous_base_url,omitempty"`
 	// AddedProxy and AddedHost are the trusted proxy and allowed Host name
@@ -1524,6 +1526,14 @@ func (s *Store) LockTailscaleChange(ctx context.Context) (func(), error) {
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// SavedSettings reports whether the settings the record names were saved. A
+// confirmed record's were. A record that is not confirmed either never saved
+// them, when a first turning on was interrupted, or keeps those of an
+// earlier confirmation while a new endpoint is not yet confirmed.
+func (record TailscaleServe) SavedSettings() bool {
+	return record.BaseURL != ""
 }
 
 // SaveTailscaleServe replaces the Tailscale sharing record.
