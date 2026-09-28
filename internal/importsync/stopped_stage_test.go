@@ -5,90 +5,122 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"owngit/internal/state"
 )
 
-// A run stopped while local Git verification runs is recorded as the stop
-// that happened, not as content that failed verification.
-func TestStopDuringVerificationIsNotAContentFailure(t *testing.T) {
-	t.Run("cancel", func(t *testing.T) {
-		f := newFixture(t)
-		f.commit("one", "one\n")
-		f.service.beforeStagingVerification = func(context.Context) {
-			if cancelled, err := f.service.Cancel(context.Background(), "project"); err != nil || !cancelled {
-				t.Errorf("cancel during verification cancelled=%v err=%v", cancelled, err)
-			}
-		}
-		_, err := f.importProject(ImportInput{})
-		run := f.lastRun()
-		if problemCode(err) != CodeCancelled || run.Status != state.ImportRunCancelled || run.ErrorClass != CodeCancelled {
-			t.Fatalf("cancel during verification err=%v status=%s class=%s message=%q", err, run.Status, run.ErrorClass, run.Message)
-		}
-		if strings.Count(run.Message, "import cancelled") > 2 {
-			t.Fatalf("stored message repeats its cause: %q", run.Message)
-		}
-	})
-	t.Run("deadline", func(t *testing.T) {
-		f := newFixture(t)
-		f.commit("one", "one\n")
-		f.service.beforeStagingVerification = func(ctx context.Context) {
-			select {
-			case <-ctx.Done():
-			case <-time.After(30 * time.Second):
-				t.Error("run deadline did not expire")
-			}
-		}
-		_, err := f.importProject(ImportInput{Limits: Limits{RunTimeout: 3 * time.Second}})
-		run := f.lastRun()
-		if problemCode(err) != CodeLimit || run.Status != state.ImportRunFailed || run.ErrorClass != CodeLimit || !strings.Contains(run.Message, "deadline") {
-			t.Fatalf("deadline during verification err=%v status=%s class=%s message=%q", err, run.Status, run.ErrorClass, run.Message)
-		}
-	})
+// hookDeadline is the parent context of a run whose deadline the test lets
+// pass at the seam under test. A run timeout starts at admission, and a slow
+// runner can spend it before the run reaches the seam. The
+// run context ends with context.DeadlineExceeded from this parent exactly as
+// from its own timeout; TestDeadlineDuringAdmissionIsTheTimeLimit covers the
+// timeout itself.
+type hookDeadline struct {
+	context.Context
+	done chan struct{}
+	once sync.Once
 }
 
-// A run whose deadline or cancellation comes while a stage is being recorded
-// reports that stop and records its outcome, not a state failure.
-func TestStopWhileRecordingAStageIsNotAStateFailure(t *testing.T) {
-	for _, stage := range []string{state.ImportRunFetching, state.ImportRunInspecting} {
-		t.Run("deadline at "+stage, func(t *testing.T) {
-			f := newFixture(t)
-			f.commit("one", "one\n")
-			f.service.beforeRecord = func(ctx context.Context, status string) {
-				if status != stage {
-					return
-				}
-				select {
-				case <-ctx.Done():
-				case <-time.After(30 * time.Second):
-					t.Error("run deadline did not expire")
+func newHookDeadline() *hookDeadline {
+	return &hookDeadline{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (d *hookDeadline) Done() <-chan struct{} { return d.done }
+
+func (d *hookDeadline) Err() error {
+	select {
+	case <-d.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+// stopRun stops the run at a seam, as stop names: "deadline" lets the run's
+// deadline pass, "cancel" cancels it. It returns once runCtx, the run's
+// context, has ended, so the run continues from the seam already stopped.
+func stopRun(t *testing.T, f *fixture, stop string, deadline *hookDeadline, runCtx context.Context) {
+	t.Helper()
+	if stop == "cancel" {
+		cancelAdmittedRun(t, f)
+	} else {
+		deadline.once.Do(func() { close(deadline.done) })
+	}
+	select {
+	case <-runCtx.Done():
+	case <-time.After(time.Minute):
+		t.Errorf("the run context did not end after the %s", stop)
+	}
+}
+
+// runUnder runs a first import, or a refresh when refresh is set, with parent
+// as the parent context of the run.
+func runUnder(f *fixture, parent context.Context, refresh bool) error {
+	if refresh {
+		_, err := f.service.Refresh(parent, "project", Limits{})
+		return err
+	}
+	_, err := f.importProjectUnder(parent, ImportInput{})
+	return err
+}
+
+// assertStoppedRun fails unless the last run reported and recorded stop: a
+// deadline as the time limit, a cancellation as cancelled. It returns the run.
+func assertStoppedRun(t *testing.T, f *fixture, name, stop string, err error) state.ImportRun {
+	t.Helper()
+	run := f.lastRun()
+	wantCode, wantStatus, wantMessage := CodeLimit, state.ImportRunFailed, "deadline"
+	if stop == "cancel" {
+		wantCode, wantStatus, wantMessage = CodeCancelled, state.ImportRunCancelled, "cancel"
+	}
+	if problemCode(err) != wantCode || run.Status != wantStatus || run.ErrorClass != wantCode || !strings.Contains(run.Message, wantMessage) {
+		t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
+	}
+	if strings.Count(run.Message, "import cancelled") > 2 {
+		t.Fatalf("%s: stored message repeats its cause: %q", name, run.Message)
+	}
+	return run
+}
+
+// A deadline or cancellation that comes while a run records its start or a
+// stage, or just before it verifies its staged refs, is reported and recorded
+// as that stop: never as a state failure, and never as content that failed
+// verification.
+func TestStopAtARunStepIsThatStop(t *testing.T) {
+	for _, step := range []struct {
+		name string
+		at   func(f *fixture, stop func(runCtx context.Context))
+	}{
+		{"the start record", func(f *fixture, stop func(context.Context)) { f.service.beforeRunRecord = stop }},
+		{"the fetching stage", func(f *fixture, stop func(context.Context)) {
+			f.service.beforeRecord = func(ctx context.Context, record string) {
+				if record == state.ImportRunFetching {
+					stop(ctx)
 				}
 			}
-			_, err := f.importProject(ImportInput{Limits: Limits{RunTimeout: 3 * time.Second}})
-			run := f.lastRun()
-			if problemCode(err) != CodeLimit || run.Status != state.ImportRunFailed || run.ErrorClass != CodeLimit || !strings.Contains(run.Message, "deadline") {
-				t.Fatalf("deadline while recording %s: err=%v status=%s class=%s message=%q", stage, err, run.Status, run.ErrorClass, run.Message)
-			}
-		})
-		t.Run("cancel at "+stage, func(t *testing.T) {
-			f := newFixture(t)
-			f.commit("one", "one\n")
-			f.service.beforeRecord = func(_ context.Context, status string) {
-				if status != stage {
-					return
-				}
-				if cancelled, err := f.service.Cancel(context.Background(), "project"); err != nil || !cancelled {
-					t.Errorf("cancel while recording %s cancelled=%v err=%v", stage, cancelled, err)
+		}},
+		{"the inspecting stage", func(f *fixture, stop func(context.Context)) {
+			f.service.beforeRecord = func(ctx context.Context, record string) {
+				if record == state.ImportRunInspecting {
+					stop(ctx)
 				}
 			}
-			_, err := f.importProject(ImportInput{})
-			run := f.lastRun()
-			if problemCode(err) != CodeCancelled || run.Status != state.ImportRunCancelled || run.ErrorClass != CodeCancelled {
-				t.Fatalf("cancel while recording %s: err=%v status=%s class=%s message=%q", stage, err, run.Status, run.ErrorClass, run.Message)
-			}
-		})
+		}},
+		{"verification", func(f *fixture, stop func(context.Context)) { f.service.beforeStagingVerification = stop }},
+	} {
+		for _, stop := range []string{"deadline", "cancel"} {
+			name := stop + " at " + step.name
+			t.Run(name, func(t *testing.T) {
+				f := newFixture(t)
+				f.commit("one", "one\n")
+				deadline := newHookDeadline()
+				step.at(f, func(runCtx context.Context) { stopRun(t, f, stop, deadline, runCtx) })
+				assertStoppedRun(t, f, name, stop, runUnder(f, deadline, false))
+			})
+		}
 	}
 }
 
@@ -119,43 +151,6 @@ func TestAFailedStageWriteIsAStateFailure(t *testing.T) {
 	}
 }
 
-// A run whose deadline or cancellation comes while its start is being
-// recorded reports that stop and records its outcome, not a state failure.
-func TestStopWhileRecordingTheStartIsNotAStateFailure(t *testing.T) {
-	t.Run("deadline", func(t *testing.T) {
-		f := newFixture(t)
-		f.commit("one", "one\n")
-		f.service.beforeRunRecord = func(ctx context.Context) {
-			select {
-			case <-ctx.Done():
-			case <-time.After(30 * time.Second):
-				t.Error("run deadline did not expire")
-			}
-		}
-		_, err := f.importProject(ImportInput{Limits: Limits{RunTimeout: 3 * time.Second}})
-		if problemCode(err) != CodeLimit {
-			t.Fatalf("deadline while recording the start: err=%v", err)
-		}
-		run := f.lastRun()
-		if run.Status != state.ImportRunFailed || run.ErrorClass != CodeLimit || !strings.Contains(run.Message, "deadline") {
-			t.Fatalf("deadline while recording the start: err=%v status=%s class=%s message=%q", err, run.Status, run.ErrorClass, run.Message)
-		}
-	})
-	t.Run("cancel", func(t *testing.T) {
-		f := newFixture(t)
-		f.commit("one", "one\n")
-		f.service.beforeRunRecord = func(context.Context) { cancelAdmittedRun(t, f) }
-		_, err := f.importProject(ImportInput{})
-		if problemCode(err) != CodeCancelled {
-			t.Fatalf("cancel while recording the start: err=%v", err)
-		}
-		run := f.lastRun()
-		if run.Status != state.ImportRunCancelled || run.ErrorClass != CodeCancelled {
-			t.Fatalf("cancel while recording the start: err=%v status=%s class=%s message=%q", err, run.Status, run.ErrorClass, run.Message)
-		}
-	})
-}
-
 // A start record that really fails stays a state failure, also when the run
 // was stopped while it was being recorded.
 func TestAFailedStartRecordIsAStateFailure(t *testing.T) {
@@ -180,7 +175,8 @@ func TestAFailedStartRecordIsAStateFailure(t *testing.T) {
 }
 
 // cancelAdmittedRun cancels the one admitted run the way Cancel does. Cancel
-// itself cannot run here: admission holds the lifecycle lock it takes.
+// itself cannot run while admission records the start: admission holds the
+// lifecycle lock that Cancel takes.
 func cancelAdmittedRun(t *testing.T, f *fixture) {
 	t.Helper()
 	cancelled := 0
@@ -271,43 +267,19 @@ func TestStopWhileRecordingPublicationIsNotAStateFailure(t *testing.T) {
 					f.mustImport(ImportInput{})
 					f.commit("two", "two\n")
 				}
+				deadline := newHookDeadline()
 				hit := false
 				f.service.beforeRecord = func(ctx context.Context, record string) {
-					if record != test.record || hit {
-						return
-					}
-					hit = true
-					if stop == "cancel" {
-						cancelAdmittedRun(t, f)
-						return
-					}
-					select {
-					case <-ctx.Done():
-					case <-time.After(30 * time.Second):
-						t.Error("run deadline did not expire")
+					if record == test.record && !hit {
+						hit = true
+						stopRun(t, f, stop, deadline, ctx)
 					}
 				}
-				limits := Limits{}
-				if stop == "deadline" {
-					limits.RunTimeout = 3 * time.Second
-				}
-				var err error
-				if test.refresh {
-					_, err = f.service.Refresh(context.Background(), "project", limits)
-				} else {
-					_, err = f.importProject(ImportInput{Limits: limits})
-				}
+				err := runUnder(f, deadline, test.refresh)
 				if !hit {
 					t.Fatalf("the run did not record the %s", test.record)
 				}
-				wantCode, wantStatus := CodeLimit, state.ImportRunFailed
-				if stop == "cancel" {
-					wantCode, wantStatus = CodeCancelled, state.ImportRunCancelled
-				}
-				run := f.lastRun()
-				if problemCode(err) != wantCode || run.Status != wantStatus || run.ErrorClass != wantCode {
-					t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
-				}
+				run := assertStoppedRun(t, f, name, stop, err)
 				assertIntentsSettled(t, f, name)
 				if !test.refresh {
 					assertNoLeftoverDirectories(t, f)
@@ -396,48 +368,24 @@ func TestStopWhileRecordingAnAppliedPublication(t *testing.T) {
 					f.git(f.source, "branch", "trunk")
 					f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/trunk")
 				}
+				deadline := newHookDeadline()
 				hit := false
 				f.service.beforeRecord = func(ctx context.Context, record string) {
-					if record != test.record || hit {
-						return
-					}
-					hit = true
-					if stop == "cancel" {
-						cancelAdmittedRun(t, f)
-						return
-					}
-					select {
-					case <-ctx.Done():
-					case <-time.After(30 * time.Second):
-						t.Error("run deadline did not expire")
+					if record == test.record && !hit {
+						hit = true
+						stopRun(t, f, stop, deadline, ctx)
 					}
 				}
-				limits := Limits{}
-				if stop == "deadline" {
-					limits.RunTimeout = 3 * time.Second
-				}
-				var err error
-				if test.refresh {
-					_, err = f.service.Refresh(context.Background(), "project", limits)
-				} else {
-					_, err = f.importProject(ImportInput{Limits: limits})
-				}
+				err := runUnder(f, deadline, test.refresh)
 				if !hit {
 					t.Fatalf("%s: the run did not record the %s", name, test.record)
 				}
-				run := f.lastRun()
 				if test.refresh {
-					if err != nil || run.Status != state.ImportRunComplete {
+					if run := f.lastRun(); err != nil || run.Status != state.ImportRunComplete {
 						t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
 					}
 				} else {
-					wantCode, wantStatus := CodeLimit, state.ImportRunFailed
-					if stop == "cancel" {
-						wantCode, wantStatus = CodeCancelled, state.ImportRunCancelled
-					}
-					if problemCode(err) != wantCode || run.Status != wantStatus || run.ErrorClass != wantCode {
-						t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
-					}
+					assertStoppedRun(t, f, name, stop, err)
 					assertNoLeftoverDirectories(t, f)
 				}
 				assertIntentsSettled(t, f, name)
@@ -478,17 +426,7 @@ func TestStopBetweenARefreshsRefsAndItsHEADCompletesIt(t *testing.T) {
 				f.commit("two", "two\n")
 				f.git(f.source, "branch", "trunk")
 				f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/trunk")
-				stopRun := func(ctx context.Context) {
-					if stop == "cancel" {
-						cancelAdmittedRun(t, f)
-						return
-					}
-					select {
-					case <-ctx.Done():
-					case <-time.After(30 * time.Second):
-						t.Error("run deadline did not expire")
-					}
-				}
+				deadline := newHookDeadline()
 				// The HEAD lock seam has no context; the run's context is
 				// taken from the record just before it.
 				var runCtx context.Context
@@ -500,20 +438,16 @@ func TestStopBetweenARefreshsRefsAndItsHEADCompletesIt(t *testing.T) {
 					runCtx = ctx
 					if at == record && !hit {
 						hit = true
-						stopRun(ctx)
+						stopRun(t, f, stop, deadline, ctx)
 					}
 				}
 				f.service.beforeFinalHEADLock = func() {
 					if at == "final HEAD lock" && !hit && runCtx != nil {
 						hit = true
-						stopRun(runCtx)
+						stopRun(t, f, stop, deadline, runCtx)
 					}
 				}
-				limits := Limits{}
-				if stop == "deadline" {
-					limits.RunTimeout = 3 * time.Second
-				}
-				_, err := f.service.Refresh(context.Background(), "project", limits)
+				err := runUnder(f, deadline, true)
 				if !hit {
 					t.Fatalf("%s: the run did not reach the stop point", name)
 				}

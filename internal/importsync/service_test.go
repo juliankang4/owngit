@@ -155,13 +155,20 @@ func (f *fixture) lastRun() state.ImportRun {
 
 func (f *fixture) importProject(input ImportInput) (ImportResult, error) {
 	f.t.Helper()
+	return f.importProjectUnder(context.Background(), input)
+}
+
+// importProjectUnder imports the project with parent as the parent context of
+// the run.
+func (f *fixture) importProjectUnder(parent context.Context, input ImportInput) (ImportResult, error) {
+	f.t.Helper()
 	if input.Name == "" {
 		input.Name = "project"
 	}
 	if input.URL == "" {
 		input.URL = "https://example.invalid/team/project.git"
 	}
-	return f.service.Import(context.Background(), input)
+	return f.service.Import(parent, input)
 }
 
 func (f *fixture) mustImport(input ImportInput) ImportResult {
