@@ -26,7 +26,11 @@ func AcquireExclusiveFileLock(lockPath string) (func(), error) {
 // makes it private. The folder is not checked further: a lock in the state
 // directory is taken once OpenDirectory accepted the way to it, and a
 // repository folder may be on a share, or be shared with a group, whose
-// other writers are trusted with the repositories in it anyway.
+// other writers are trusted with the repositories in it anyway. The folder
+// is found by following its path, because the owner may reach a repository
+// folder through a link of their own, such as ~/git to a folder on another
+// disk; the folder that path leads to is then held, and the lock file is
+// opened in it.
 func AcquireExclusiveFileLockHandle(lockPath string) (*os.File, func(), error) {
 	file, err := OpenLockFile(lockPath)
 	if err != nil {

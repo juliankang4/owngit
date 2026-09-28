@@ -91,7 +91,10 @@ func (m *Manager) claimStorageLocked(writing bool) error {
 	// not held to the state directory's rule: a repository folder may be on
 	// a network share or shared with a group, and whoever else can write
 	// there is already trusted with the repositories in it, so refusing
-	// such a folder would break a supported setup and protect nothing.
+	// such a folder would break a supported setup and protect nothing. A
+	// link at the folder's own name is followed too: the owner may reach
+	// the repository folder through a link they made, such as ~/git to a
+	// folder on another disk.
 	release, err := state.AcquireExclusiveFileLock(filepath.Join(root, storageLockName))
 	if errors.Is(err, state.ErrInstanceRunning) {
 		return fmt.Errorf("%w: %s", ErrStorageInUse, root)
