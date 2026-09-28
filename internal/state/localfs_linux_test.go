@@ -28,7 +28,19 @@ func TestOwnershipIsEnforcedOnlyOnLocalFilesystems(t *testing.T) {
 		{"CIFS", unix.CIFS_SUPER_MAGIC, false},
 		{"9P", unix.V9FS_MAGIC, false},
 		{"Ceph", unix.CEPH_SUPER_MAGIC, false},
-		{"FUSE", unix.FUSE_SUPER_MAGIC, false},
+		{"FUSE, virtiofs and GlusterFS", unix.FUSE_SUPER_MAGIC, false},
+		{"OCFS2", unix.OCFS2_SUPER_MAGIC, false},
+		{"VirtualBox shared folder", 0x786f4256, false},
+		{"Parallels shared folder", 0x7c7c6673, false},
+		{"VMware shared folder", 0xbacbacbc, false},
+		{"Lustre", 0x0bd00bd0, false},
+		{"GPFS", 0x47504653, false},
+		{"BeeGFS", 0x19830326, false},
+		{"OrangeFS", 0x20030528, false},
+		{"GFS2", 0x01161970, false},
+		{"kAFS", unix.AFS_FS_MAGIC, false},
+		{"Panasas", 0xaad7aaea, false},
+		{"overlay, the root of a container", unix.OVERLAYFS_SUPER_MAGIC, true},
 	} {
 		if got := ownershipEnforcedOn(test.magic); got != test.enforced {
 			t.Errorf("%s: enforced=%t, want %t", test.name, got, test.enforced)
