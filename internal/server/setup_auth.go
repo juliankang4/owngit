@@ -341,7 +341,13 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 		app.renderLoginFailure(writer, request, scope, field, next, code, false, http.StatusUnprocessableEntity)
 		return
 	}
-	session, err := app.Auth.Authenticate(request.Context(), kind, password, requestctx.Of(request).ClientAddress)
+	// The new session replaces the one of kind this browser holds, so no
+	// copy of the old token outlives it.
+	replaced := ""
+	if cookie, err := request.Cookie(cookieName); err == nil {
+		replaced = cookie.Value
+	}
+	session, err := app.Auth.Authenticate(request.Context(), kind, password, requestctx.Of(request).ClientAddress, replaced)
 	if err != nil {
 		admin := scope == webui.AuthAdmin
 		switch {

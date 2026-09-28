@@ -137,31 +137,45 @@ func withinMaximum(password string) bool {
 	return len(password) <= utf8.UTFMax*MaximumPasswordCharacters && utf8.RuneCountInString(password) <= MaximumPasswordCharacters
 }
 
-func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddress string) (NewSession, error) {
+// Authenticate verifies password for kind and starts a session in place of
+// replaced, the token of the session of kind this browser holds ("" for
+// none), which ends with it.
+func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddress, replaced string) (NewSession, error) {
 	if err := m.VerifyCredential(ctx, kind, password, remoteAddress); err != nil {
 		return NewSession{}, err
 	}
 	if kind == "admin" {
-		return m.StartAdminSession(ctx)
+		return m.StartAdminSession(ctx, replaced)
 	}
 	life := m.SessionLife
 	if life <= 0 {
 		life = 12 * time.Hour
 	}
-	return m.startSession(ctx, kind, life)
-}
-
-// StartAdminSession starts an administrator session for this browser after
-// the caller verified the administrator password. Under a confirmation
-// choice that remembers the password it lasts that window; otherwise it
-// lasts AdminSessionLife and only opens the administrator pages, while
-// every change still asks for the password.
-func (m *Manager) StartAdminSession(ctx context.Context) (NewSession, error) {
-	choice, _, err := m.Store.AdminConfirmation(ctx)
+	settings, err := m.Store.Settings(ctx)
 	if err != nil {
 		return NewSession{}, err
 	}
-	return m.startSession(ctx, "admin", m.adminLife(choice))
+	token, csrf := RandomToken(32), RandomToken(32)
+	expires := m.now().Add(life)
+	if err := m.Store.StartSession(ctx, replaced, token, kind, csrf, settings.AccessSessionVersion, expires); err != nil {
+		return NewSession{}, err
+	}
+	return NewSession{Token: token, CSRF: csrf, Expires: expires}, nil
+}
+
+// StartAdminSession starts an administrator session for this browser after
+// the caller verified the administrator password, in place of replaced, the
+// administrator session this browser holds ("" for none). Under a
+// confirmation choice that remembers the password it lasts that window;
+// otherwise it lasts AdminSessionLife and only opens the administrator
+// pages, while every change still asks for the password.
+func (m *Manager) StartAdminSession(ctx context.Context, replaced string) (NewSession, error) {
+	token, csrf := RandomToken(32), RandomToken(32)
+	expires, err := m.Store.StartAdminSession(ctx, replaced, token, csrf, m.now(), m.adminLife)
+	if err != nil {
+		return NewSession{}, err
+	}
+	return NewSession{Token: token, CSRF: csrf, Expires: expires}, nil
 }
 
 // SetAdminConfirmation saves choice. A stricter choice shortens the
@@ -181,23 +195,6 @@ func (m *Manager) adminLife(choice state.AdminConfirmation) time.Duration {
 		return m.AdminSessionLife
 	}
 	return 15 * time.Minute
-}
-
-func (m *Manager) startSession(ctx context.Context, kind string, life time.Duration) (NewSession, error) {
-	settings, err := m.Store.Settings(ctx)
-	if err != nil {
-		return NewSession{}, err
-	}
-	version := settings.AccessSessionVersion
-	if kind == "admin" {
-		version = settings.AdminSessionVersion
-	}
-	token, csrf := RandomToken(32), RandomToken(32)
-	expires := m.now().Add(life)
-	if err := m.Store.CreateSession(ctx, token, kind, csrf, version, expires); err != nil {
-		return NewSession{}, err
-	}
-	return NewSession{Token: token, CSRF: csrf, Expires: expires}, nil
 }
 
 func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAddress string) error {

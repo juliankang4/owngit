@@ -200,6 +200,11 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		}
 	case webui.ActionSaveConfirmation:
 		err = app.Auth.SetAdminConfirmation(request.Context(), choice)
+		// A password typed for the new choice starts its window now, in
+		// place of the session this browser held under the old one.
+		if err == nil && verified != "" && choice.Window() > 0 {
+			app.rememberAdmin(writer, request, nil)
+		}
 		notice = "confirmation_saved"
 		if choice == state.ConfirmNever {
 			notice = "confirmation_off"

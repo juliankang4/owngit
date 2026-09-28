@@ -25,15 +25,15 @@ func TestAuthenticationAttemptsAreBoundedAndSessionsAreVersioned(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	manager := &Manager{Store: store, Now: func() time.Time { return now }, SessionLife: time.Hour}
 	for attempt := 0; attempt < 4; attempt++ {
-		if _, err := manager.Authenticate(context.Background(), "general", "wrong-password", "192.0.2.4:1234"); !errors.Is(err, ErrInvalidCredentials) {
+		if _, err := manager.Authenticate(context.Background(), "general", "wrong-password", "192.0.2.4:1234", ""); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("attempt %d error=%v, want ordinary credential failure", attempt+1, err)
 		}
 	}
-	if _, err := manager.Authenticate(context.Background(), "general", "shared-password", "192.0.2.4:1234"); !errors.Is(err, ErrRateLimited) {
+	if _, err := manager.Authenticate(context.Background(), "general", "shared-password", "192.0.2.4:1234", ""); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("fifth attempt error=%v, want rate limit before password verification", err)
 	}
 	now = now.Add(16 * time.Minute)
-	session, err := manager.Authenticate(context.Background(), "general", "shared-password", "192.0.2.4:1234")
+	session, err := manager.Authenticate(context.Background(), "general", "shared-password", "192.0.2.4:1234", "")
 	if err != nil {
 		t.Fatalf("correct credential remained blocked after bounded interval: %v", err)
 	}

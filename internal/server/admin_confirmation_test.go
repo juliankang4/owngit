@@ -499,3 +499,91 @@ func TestAnUnknownSavedChoiceActsAsEveryTime(t *testing.T) {
 		t.Fatal("Access still says the saved choice was not recognized")
 	}
 }
+
+// A browser holds one session of each kind. Signing in again, or typing
+// the password in a form, replaces the session it held, so a copy of an
+// earlier token grants nothing, and End or signing out leaves no earlier
+// token valid. Other browsers keep theirs until the administrator password
+// changes.
+func TestSigningInAgainReplacesTheSessionThisBrowserHeld(t *testing.T) {
+	fixture, server, clock := newConfirmationFixture(t, true, state.Confirm8Hours)
+	ctx := context.Background()
+	valid := func(token, kind string) bool {
+		t.Helper()
+		_, ok, err := fixture.app.Auth.ValidateSession(ctx, token, kind)
+		noErr(t, err)
+		return ok
+	}
+	// copied opens an administrator page with only token as its
+	// administrator cookie, as a copy of it would.
+	copied := func(token string) int {
+		t.Helper()
+		thief := openConfirmationBrowser(t, server, true)
+		parsed, _ := url.Parse(server.URL)
+		thief.jar.SetCookies(parsed, []*http.Cookie{{Name: adminCookie, Value: token, Path: "/"}})
+		return thief.get(baseHelperCredentialsURL("project")).status
+	}
+
+	for _, end := range []string{"/admin/logout", "/logout"} {
+		browser := openConfirmationBrowser(t, server, true)
+		generalFirst := browser.cookie(generalCookie)
+		browser.adminSignIn()
+		first := browser.cookie(adminCookie)
+		browser.adminSignIn()
+		second := browser.cookie(adminCookie)
+		if first == second || valid(first, "admin") || !valid(second, "admin") {
+			t.Fatalf("%s: signing in again kept the first administrator session", end)
+		}
+		if status := copied(first); status != http.StatusSeeOther {
+			t.Fatalf("%s: a copy of the replaced token opened an administrator page: status=%d", end, status)
+		}
+		if result := browser.post(end, url.Values{}); result.status != http.StatusSeeOther {
+			t.Fatalf("%s status=%d", end, result.status)
+		}
+		if valid(first, "admin") || valid(second, "admin") {
+			t.Fatalf("%s left an administrator session of this browser valid", end)
+		}
+		if end == "/logout" && valid(generalFirst, "general") {
+			t.Fatal("signing out left the shared session valid")
+		}
+	}
+
+	// Signing in to shared access again replaces the shared session too.
+	shared := openConfirmationBrowser(t, server, true)
+	before := shared.cookie(generalCookie)
+	browserGET(t, shared.client, server.URL+"/login")
+	result := browserForm(t, shared.client, server.URL+"/login", url.Values{"csrf": {shared.cookie(preauthCookie)}, "password": {"shared-password"}, "next": {"/"}}, server.URL)
+	if result.status != http.StatusSeeOther || shared.cookie(generalCookie) == before || valid(before, "general") {
+		t.Fatalf("signing in to shared access again: status=%d, earlier session valid=%v", result.status, valid(before, "general"))
+	}
+
+	// Under Every time a sign-in gives only a page session. Choosing a time
+	// that remembers the password, with the password, replaces it with a
+	// confirmation of the new time.
+	noErr(t, fixture.app.Auth.SetAdminConfirmation(ctx, state.ConfirmEveryTime))
+	upgraded := openConfirmationBrowser(t, server, true)
+	upgraded.adminSignIn()
+	page := upgraded.cookie(adminCookie)
+	clock.Add(time.Minute)
+	requireSaved(t, "choosing 8 hours", upgraded.post("/settings/access", url.Values{"action": {webui.ActionSaveConfirmation}, "admin_confirmation": {"8h"}, "admin_password": {"admin-password"}}))
+	confirmation := upgraded.cookie(adminCookie)
+	if confirmation == page || valid(page, "admin") {
+		t.Fatal("choosing 8 hours with the password kept the page session")
+	}
+	if session, ok, err := fixture.store.Session(ctx, confirmation, "admin", clock.Now()); err != nil || !ok || session.Expires.Sub(clock.Now()) != 8*time.Hour {
+		t.Fatalf("the new confirmation ok=%v err=%v ends in %s, want 8 hours", ok, err, session.Expires.Sub(clock.Now()))
+	}
+
+	// Another browser's session is its own until the password changes.
+	other := openConfirmationBrowser(t, server, true)
+	other.adminSignIn()
+	upgraded.adminSignIn()
+	if !valid(other.cookie(adminCookie), "admin") {
+		t.Fatal("signing in in one browser ended another browser's session")
+	}
+	change := url.Values{"action": {webui.ActionChangeAdminPassword}, "new_admin_password": {"admin-password-new"}, "admin_password": {"admin-password"}}
+	requireSaved(t, "changing the administrator password", upgraded.post("/settings/access", change))
+	if valid(other.cookie(adminCookie), "admin") {
+		t.Fatal("changing the administrator password left another browser's session")
+	}
+}

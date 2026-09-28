@@ -57,21 +57,13 @@ func (a adminAuthority) checkOff() bool { return a.choice == state.ConfirmNever 
 func (a adminAuthority) changesFreely() bool { return a.remembers() || a.checkOff() }
 
 // adminAuthority reads the saved choice and this browser's administrator
-// session. The session is the one this response sets, when it sets one,
-// since that is the one the browser holds from now on; otherwise the one
-// the request sent.
+// session.
 func (app *App) adminAuthority(writer http.ResponseWriter, request *http.Request) (adminAuthority, error) {
 	choice, known, err := app.Store.AdminConfirmation(request.Context())
 	if err != nil {
 		return adminAuthority{}, err
 	}
-	token, set := pendingCookie(writer, adminCookie)
-	if !set {
-		if cookie, err := request.Cookie(adminCookie); err == nil {
-			token = cookie.Value
-		}
-	}
-	session, ok, err := app.Auth.ValidateSession(request.Context(), token, "admin")
+	session, ok, err := app.Auth.ValidateSession(request.Context(), heldCookie(writer, request, adminCookie), "admin")
 	session, ok, err = endedSessionKept(request, session, ok, err)
 	if err != nil {
 		return adminAuthority{}, err
@@ -79,16 +71,22 @@ func (app *App) adminAuthority(writer http.ResponseWriter, request *http.Request
 	return adminAuthority{choice: choice, known: known, session: session, confirmed: ok}, nil
 }
 
-// pendingCookie returns the value of the cookie named name that this
-// response sets, if it sets one. A cleared cookie has the value "".
-func pendingCookie(writer http.ResponseWriter, name string) (string, bool) {
+// heldCookie is the value of the cookie named name that the browser holds
+// once this response arrives: the one the response sets, when it sets one
+// ("" when it clears it), otherwise the one the request sent.
+func heldCookie(writer http.ResponseWriter, request *http.Request, name string) string {
 	value, set := "", false
 	for _, line := range writer.Header().Values("Set-Cookie") {
 		if cookie, err := http.ParseSetCookie(line); err == nil && cookie.Name == name {
 			value, set = cookie.Value, true
 		}
 	}
-	return value, set
+	if !set {
+		if cookie, err := request.Cookie(name); err == nil {
+			value = cookie.Value
+		}
+	}
+	return value
 }
 
 // requireAdminPage lets the request open an administrator page, or answers
@@ -152,16 +150,23 @@ func (app *App) confirmAdmin(writer http.ResponseWriter, request *http.Request, 
 	if err := app.Auth.VerifyCredential(request.Context(), "admin", password, requestctx.Of(request).ClientAddress); err != nil {
 		return "", err
 	}
-	if readErr != nil || always || authority.choice.Window() == 0 {
-		return password, nil
+	if readErr == nil && !always && authority.choice.Window() > 0 {
+		app.rememberAdmin(writer, request, chrome)
 	}
-	// The change is confirmed whether or not remembering it works; a
-	// session that could not be saved only means the next change asks
-	// again, which the page then shows.
-	session, err := app.Auth.StartAdminSession(request.Context())
+	return password, nil
+}
+
+// rememberAdmin starts this browser's remembered confirmation after this
+// request verified the administrator password, in place of the
+// administrator session the browser held, which may have been only a page
+// session. chrome, when given, then shows it. The change is confirmed
+// whether or not remembering it works; a session that could not be saved
+// only means the next change asks again, which the page then shows.
+func (app *App) rememberAdmin(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome) {
+	session, err := app.Auth.StartAdminSession(request.Context(), heldCookie(writer, request, adminCookie))
 	if err != nil {
 		logFailure(request, "administrator confirmation start", err)
-		return password, nil
+		return
 	}
 	app.setCookie(writer, request, adminCookie, session.Token, session.Expires, true)
 	if chrome != nil {
@@ -171,7 +176,6 @@ func (app *App) confirmAdmin(writer http.ResponseWriter, request *http.Request, 
 			fillAdminViewer(chrome, authority)
 		}
 	}
-	return password, nil
 }
 
 // fillAdminViewer puts this browser's administrator state into chrome:
