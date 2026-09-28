@@ -164,3 +164,18 @@ func TestStateIsOpenedOnlyInTheHeldDirectory(t *testing.T) {
 		t.Fatalf("the directory now at the path was used: %v %v", entries, err)
 	}
 }
+
+// A folder of root's is not this account's, but running the command as
+// root is not the answer: the refusal says to choose another folder.
+func TestFolderOfRootIsNotSentToRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root owns the folder")
+	}
+	dir, err := OpenDirectory("/", false)
+	if dir != nil {
+		dir.Close()
+	}
+	if err == nil || strings.Contains(err.Error(), "run the command as") || !strings.Contains(err.Error(), "choose a folder of this account") {
+		t.Fatalf("OpenDirectory(/) error=%v, want a folder of this account asked for", err)
+	}
+}

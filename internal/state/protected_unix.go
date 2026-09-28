@@ -389,6 +389,8 @@ func OpenDirectory(path string, create bool) (*os.File, error) {
 			return nil
 		case os.Geteuid() == 0 && stat.Uid != 0:
 			return &OtherAccountError{Path: name, Account: accountName(stat.Uid), UID: stat.Uid}
+		case last && stat.Uid == 0:
+			return fmt.Errorf("%s belongs to root, not to this account; choose a folder of this account", name)
 		case last:
 			return fmt.Errorf("%s belongs to another account; run the command as its owner", name)
 		}
