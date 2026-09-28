@@ -234,6 +234,6 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 		Chrome: chrome, SubmitURL: "/settings", AccessMode: mode, AdminRequired: true,
 		PendingAction: pending, Storage: storage, CloneHint: app.serverOrigin(request) + "/git/",
 		UpdateCheck: webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil},
-		Network:     networkBlock, Tailscale: app.tailscaleBlock(request.Context(), chrome.Viewer.AdminConfirmed || view.AdminVerified, view.TailscaleRefused),
+		Network:     networkBlock, Tailscale: app.tailscaleBlock(request, chrome.Viewer.AdminConfirmed || view.AdminVerified, view.TailscaleRefused),
 	})
 }

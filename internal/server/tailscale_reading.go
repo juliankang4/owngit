@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/netip"
 	"sync"
 	"time"
 
+	"owngit/internal/importsync"
 	"owngit/internal/tailscale"
 )
 
@@ -51,7 +54,23 @@ type readingCache struct {
 	addresses []netip.Addr
 	known     bool
 	refreshed chan struct{}
+	// life is the lifetime of the background readings, which Stop ends:
+	// their commands are stopped, running counts the readings until they
+	// return, and stopped keeps new ones from starting.
+	life    context.Context
+	end     context.CancelFunc
+	stopped bool
+	running sync.WaitGroup
 }
+
+// errReadingUnfinished marks a report whose Tailscale reading did not finish
+// before the request's deadline, which is Tailscale not answering in time,
+// not a failure of OwnGit's own reads.
+var errReadingUnfinished = errors.New("the Tailscale reading did not finish in time")
+
+// errReadingsStopped is the answer to a report once the server stopped its
+// readings, as it stops serving.
+var errReadingsStopped = fmt.Errorf("Tailscale readings: %w", importsync.ErrShuttingDown)
 
 // tailnetLabelWait bounds how long a page waits for this computer's
 // Tailscale addresses before the first reading has finished. Once one has,
@@ -66,6 +85,10 @@ const tailnetLabelWait = time.Second
 func (sharing *Tailscale) read(ctx context.Context) (tailscaleReading, error) {
 	cache := &sharing.readings
 	cache.mu.Lock()
+	if cache.stopped {
+		cache.mu.Unlock()
+		return tailscaleReading{}, errReadingsStopped
+	}
 	if !cache.at.IsZero() && time.Since(cache.at) < tailscaleReadingTTL {
 		reading := cache.reading
 		cache.mu.Unlock()
@@ -82,24 +105,29 @@ func (sharing *Tailscale) read(ctx context.Context) (tailscaleReading, error) {
 		}
 		flight = &readingInFlight{done: make(chan struct{}), generation: cache.generation}
 		cache.pending = flight
-		go sharing.finish(flight, earlier)
+		if cache.life == nil {
+			cache.life, cache.end = context.WithCancel(context.Background())
+		}
+		cache.running.Add(1)
+		go sharing.finish(cache.life, flight, earlier)
 	}
 	cache.mu.Unlock()
 	select {
 	case <-flight.done:
 		return flight.reading, nil
 	case <-ctx.Done():
-		return tailscaleReading{}, ctx.Err()
+		return tailscaleReading{}, fmt.Errorf("%w: %w", errReadingUnfinished, ctx.Err())
 	}
 }
 
-// finish runs the reading in flight, after the earlier one when it is not
-// nil, and keeps it unless a change dropped the readings meanwhile.
-func (sharing *Tailscale) finish(flight *readingInFlight, earlier <-chan struct{}) {
+// finish runs the reading in flight under life, after the earlier one when
+// it is not nil, and keeps it unless a change dropped the readings meanwhile.
+func (sharing *Tailscale) finish(life context.Context, flight *readingInFlight, earlier <-chan struct{}) {
+	defer sharing.readings.running.Done()
 	if earlier != nil {
 		<-earlier
 	}
-	reading := sharing.readNow(context.Background())
+	reading := sharing.readNow(life)
 	cache := &sharing.readings
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -165,6 +193,30 @@ func (sharing *Tailscale) readNow(ctx context.Context) tailscaleReading {
 	reading.status, reading.statusErr = reading.command.Status(ctx)
 	reading.config, reading.configErr = reading.command.ServeConfig(ctx)
 	return reading
+}
+
+// Stop ends the background readings when the server stops: their tailscale
+// commands are stopped, and Stop waits for the readings to return until ctx
+// ends. Reports after Stop get errReadingsStopped.
+func (sharing *Tailscale) Stop(ctx context.Context) error {
+	cache := &sharing.readings
+	cache.mu.Lock()
+	cache.stopped = true
+	if cache.end != nil {
+		cache.end()
+	}
+	cache.mu.Unlock()
+	returned := make(chan struct{})
+	go func() {
+		cache.running.Wait()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // forget drops the kept reading after a change, so the next report reads

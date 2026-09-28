@@ -552,6 +552,15 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			}
 		},
 	}
+	// Background readings of Tailscale end with the server, within the same
+	// grace as its requests, so no tailscale command outlives it.
+	defer func() {
+		stopContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := application.Tailscale.Stop(stopContext); err != nil {
+			logf("stopping: Tailscale readings still running after 10s: %v", err)
+		}
+	}()
 	// First-run setup asks its questions in the terminal when OwnGit was
 	// started from one. Otherwise, as under a service manager, it keeps the
 	// private setup file. The terminal flow issues no setup file at all.

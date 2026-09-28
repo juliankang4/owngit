@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -19,9 +18,11 @@ import (
 // by it.
 
 // tailscaleBlock reads the state of sharing for the page. It never fails the
-// page: a state that cannot be read is shown as a Tailscale problem, and a
-// reading that did not finish before the page's deadline as Tailscale not
-// answering in time (Tailscale.read).
+// page. What Tailscale reports, its failures included, is in the report; a
+// reading that did not finish before the page's deadline is Tailscale not
+// answering in time (Tailscale.read). Any other error is a failed read of
+// OwnGit's own state, which is logged and shown as such, not as a Tailscale
+// problem.
 //
 // Only an administrator sees what Tailscale reports beyond OwnGit's own
 // endpoint: what else is on the port, addresses under earlier names and what
@@ -30,14 +31,20 @@ import (
 //
 // refused is the problem of a refusal the page shows above the block, or
 // "": the block does not repeat the same message.
-func (app *App) tailscaleBlock(ctx context.Context, admin bool, refused string) webui.TailscaleInfo {
-	report, err := app.Tailscale.Report(ctx)
+func (app *App) tailscaleBlock(request *http.Request, admin bool, refused string) webui.TailscaleInfo {
+	report, err := app.Tailscale.Report(request.Context())
 	var info webui.TailscaleInfo
 	switch {
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, errReadingUnfinished):
 		info.Problem = webui.TailscaleProblemCode(string(tailscale.KindTimeout))
 	case err != nil:
-		info.Problem = webui.MsgTSProblemFailed
+		logFailure(request, "sharing state read", err)
+		info.Problem = webui.MsgTSStateUnreadable
+		if errors.Is(err, errReadingsStopped) {
+			// The server is stopping and reads Tailscale no more; nothing
+			// failed, which logFailure knows too.
+			info.Problem = webui.MsgErrUnavailable
+		}
 	default:
 		info = tailscaleInfo(report)
 	}

@@ -2,11 +2,15 @@ package server
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
+	"owngit/internal/webui"
 )
 
 // A reading after a change is a new one: a report does not join the reading
@@ -57,4 +61,46 @@ func TestReadingAfterAChangeIsNewAndRunsAfterTheEarlierOne(t *testing.T) {
 	if most := fake.State().MaxRunning; most != 1 {
 		t.Fatalf("%d Tailscale commands ran at once, want 1 (%q)", most, fake.Calls())
 	}
+}
+
+// Stopping the server ends a background reading that Tailscale does not
+// answer: its command is stopped, Stop waits until the reading returned, so
+// no tailscale process is left, and later reports start no command.
+func TestStoppingEndsTheBackgroundReading(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	sharing := app.Tailscale
+	fake.Update(func(s *tailscaletest.State) { s.ReadDelay, s.Calls, s.Running, s.MaxRunning = 60000, nil, 0, 0 })
+	reading := make(chan tailscaleReading, 1)
+	go func() {
+		result, _ := sharing.read(context.Background())
+		reading <- result
+	}()
+	for deadline := time.Now().Add(30 * time.Second); fake.State().Running == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the reading did not start its command")
+		}
+	}
+	stopContext, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := sharing.Stop(stopContext); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	// Stop returned, so the reading returned, and its command was waited
+	// for: it ended before answering.
+	if result := <-reading; tailscale.KindOf(result.statusErr) != tailscale.KindTimeout || len(fake.Calls()) != 0 {
+		t.Fatalf("the reading after stop: status error %v, calls %q", result.statusErr, fake.Calls())
+	}
+	if _, err := sharing.read(context.Background()); !errors.Is(err, errReadingsStopped) {
+		t.Fatalf("a report after stop: %v", err)
+	}
+	if running := fake.State().Running; running != 1 || len(fake.Calls()) != 0 {
+		t.Fatalf("a report after stop started a command: running %d, calls %q", running, fake.Calls())
+	}
+	// The Tailscale block then says only that this is unavailable, and
+	// nothing is logged, since nothing failed.
+	serverLog := captureServerLog(t)
+	if info := app.tailscaleBlock(httptest.NewRequest(http.MethodGet, "/settings", nil), true, ""); info.Problem != webui.MsgErrUnavailable {
+		t.Fatalf("the block after stop shows %q, want %q", info.Problem, webui.MsgErrUnavailable)
+	}
+	checkLoggedSteps(t, "the block after stop", loggedFailures(serverLog, 0))
 }

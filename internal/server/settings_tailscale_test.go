@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -586,4 +587,24 @@ func TestSharingPageDoesNotWaitForTailscaleBeyondItsDeadline(t *testing.T) {
 	// is removed.
 	_, err = app.Tailscale.Report(context.Background())
 	noErr(t, err)
+}
+
+// When OwnGit cannot read its own state for the Tailscale block, the block
+// says so and the cause is logged once; it is not shown as an error that
+// Tailscale reported.
+func TestSharingStateThatOwnGitCannotReadIsNotBlamedOnTailscale(t *testing.T) {
+	app, _ := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	app.Tailscale.Observe = func(context.Context) (state.RunningObservation, error) {
+		return state.RunningObservation{}, errors.New("synthetic running record read failure")
+	}
+	serverLog := captureServerLog(t)
+	_, _, _, body := networkSettingsClient(t, app)
+	if !strings.Contains(body, enText(webui.MsgTSStateUnreadable)) || strings.Contains(body, enText(webui.MsgTSProblemFailed)) {
+		t.Fatalf("the Tailscale block does not say that OwnGit could not read its state:\n%s", body)
+	}
+	lines := loggedFailures(serverLog, 0)
+	checkLoggedSteps(t, "the sharing state read", lines, "sharing state read")
+	if !strings.Contains(strings.Join(lines, "\n"), "synthetic running record read failure") {
+		t.Errorf("the log does not name the cause: %q", lines)
+	}
 }

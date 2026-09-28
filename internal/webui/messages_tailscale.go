@@ -102,6 +102,9 @@ const (
 	// MsgTSNotSavedAhead reports a sharing change whose settings were not
 	// saved while Tailscale may already have the change.
 	MsgTSNotSavedAhead = MessageCode("tailscale.not_saved_ahead")
+	// MsgTSStateUnreadable reports that OwnGit could not read its own record
+	// of sharing, so the block says nothing about Tailscale.
+	MsgTSStateUnreadable = MessageCode("tailscale.state_unreadable")
 	// MsgTSStale introduces what Tailscale keeps under an earlier name of
 	// this computer, and how to remove it.
 	MsgTSStale = MessageCode("tailscale.stale")
@@ -209,6 +212,10 @@ var tailscaleCatalog = map[MessageCode]message{
 	MsgTSReadBackMacApp: {
 		en: "The Tailscale app for macOS does this when it cannot save its settings. Quit and reopen the Tailscale app, then try again.",
 		ko: "macOS용 Tailscale 앱은 설정을 저장하지 못할 때 이렇게 됩니다. Tailscale 앱을 종료했다가 다시 연 뒤 다시 시도하세요.",
+	},
+	MsgTSStateUnreadable: {
+		en: "OwnGit could not read its own sharing settings, so the state of sharing is not shown. The server log names the cause. Reload the page to try again.",
+		ko: "OwnGit이 자신의 공유 설정을 읽지 못해 공유 상태를 보여 줄 수 없습니다. 원인은 서버 로그에 있습니다. 페이지를 다시 불러와 다시 시도하세요.",
 	},
 	MsgTSNotSavedAhead: {
 		en: "The settings could not be saved. Tailscale may already have the change. Check the Tailscale status on this page. The server log names the cause.",
