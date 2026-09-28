@@ -344,6 +344,12 @@ func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
 // account out, so the refusal is an *OtherAccountError that says to run the
 // command as that account.
 func OpenDirectory(path string, create bool) (*os.File, error) {
+	return openDirectory(path, create, nil)
+}
+
+// openDirectory is OpenDirectory. When it creates a name, it first calls
+// beforeCreate, if set, with the resolved folder that receives it.
+func openDirectory(path string, create bool, beforeCreate func(string) error) (*os.File, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -368,7 +374,13 @@ func OpenDirectory(path string, create bool) (*os.File, error) {
 	var mayCreate func(string, os.FileInfo) error
 	if create {
 		mayCreate = func(name string, info os.FileInfo) error {
-			return notProtected(absolute, requireNoOtherWriter(name, info))
+			if err := requireNoOtherWriter(name, info); err != nil {
+				return notProtected(absolute, err)
+			}
+			if beforeCreate != nil {
+				return beforeCreate(name)
+			}
+			return nil
 		}
 	}
 	dir, _, missing, err := walkWay(absolute, check, mayCreate)

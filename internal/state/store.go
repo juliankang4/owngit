@@ -110,36 +110,25 @@ func (e *OtherAccountError) Error() string {
 }
 
 // CreateDirectory creates the state directory dir and its missing parents
-// through OpenDirectory and returns its resolved path. It first requires
-// the nearest existing folder to be on a local filesystem, so a refused
+// through OpenDirectory and returns its resolved path. The state directory
+// must be on a local filesystem, and so must the folder that receives the
+// missing ones, which is checked before anything is created, so a refused
 // directory leaves nothing behind. No other account can change the way to
 // the returned path, so it keeps naming the directory that was checked.
 func CreateDirectory(dir string) (string, error) {
-	absolute, err := filepath.Abs(dir)
-	if err != nil {
-		return "", fmt.Errorf("resolve state directory: %w", err)
-	}
-	ancestor := absolute
-	for {
-		if _, err := os.Stat(ancestor); err == nil {
-			if err := ensureLocalStateFilesystem(ancestor); err != nil {
-				return "", fmt.Errorf("validate state directory parent: %w", err)
-			}
-			break
-		} else if !os.IsNotExist(err) {
-			return "", fmt.Errorf("inspect state directory parent: %w", err)
+	handle, err := openDirectory(dir, true, func(folder string) error {
+		if err := ensureLocalStateFilesystem(folder); err != nil {
+			return fmt.Errorf("validate state directory parent: %w", err)
 		}
-		parent := filepath.Dir(ancestor)
-		if parent == ancestor {
-			return "", errors.New("state directory has no accessible parent")
-		}
-		ancestor = parent
-	}
-	handle, err := OpenDirectory(absolute, true)
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
 	defer handle.Close()
+	if err := ensureLocalStateFilesystem(handle.Name()); err != nil {
+		return "", fmt.Errorf("validate state directory: %w", err)
+	}
 	return handle.Name(), nil
 }
 
@@ -152,9 +141,6 @@ func Open(ctx context.Context, dir string) (result *Store, err error) {
 		return nil, errors.New("state directory belongs to an incomplete offline restore; follow the interrupted-restore procedure before use")
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("inspect incomplete restore marker: %w", err)
-	}
-	if err := ensureLocalStateFilesystem(absolute); err != nil {
-		return nil, fmt.Errorf("validate state directory: %w", err)
 	}
 	// An existing database is classified before any permission change or
 	// read-write SQLite access, so a refused database keeps its bytes, entries

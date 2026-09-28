@@ -33,12 +33,18 @@ func InspectFolderWay(string) FolderWay { return FolderWay{} }
 // access lists protect the state directory, so the folders on the way are
 // not checked, as for RequireStateParent.
 func OpenDirectory(path string, create bool) (*os.File, error) {
+	return openDirectory(path, create, nil)
+}
+
+// openDirectory is OpenDirectory. When it creates missing folders, it first
+// calls beforeCreate, if set, with the nearest existing folder.
+func openDirectory(path string, create bool, beforeCreate func(string) error) (*os.File, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
 	if create {
-		if err := os.MkdirAll(absolute, 0o700); err != nil {
+		if err := createMissing(absolute, beforeCreate); err != nil {
 			return nil, err
 		}
 	}
@@ -61,6 +67,33 @@ func OpenDirectory(path string, create bool) (*os.File, error) {
 		return nil, err
 	}
 	return dir, nil
+}
+
+// createMissing creates the folders of path that are missing, after
+// beforeCreate accepted the nearest existing one.
+func createMissing(path string, beforeCreate func(string) error) error {
+	existing := path
+	for {
+		if _, err := os.Stat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return fmt.Errorf("%s has no existing folder on its way", path)
+		}
+		existing = parent
+	}
+	if existing == path {
+		return nil
+	}
+	if beforeCreate != nil {
+		if err := beforeCreate(existing); err != nil {
+			return err
+		}
+	}
+	return os.MkdirAll(path, 0o700)
 }
 
 // openFolder opens the directory at path, following reparse points on the
