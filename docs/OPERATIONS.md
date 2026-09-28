@@ -668,7 +668,7 @@ owngit check run \
 - Repository names cannot end in `.git` or use Windows device names such as `CON`, `AUX`, `NUL`, `COM1` or `LPT1`, with or without an extension, on any platform. `new` and `new-import` are reserved. New repositories are written under a temporary `.owngit-create-*` name and renamed into place; on Windows, antivirus or search indexing can briefly lock the new directory, and OwnGit retries for about 2 seconds. Deleted repositories use `.owngit-delete-*`, `.owngit-removed` and `.owngit-deletion-*` names ([Deleting a repository](#deleting-a-repository)).
 - When a Git operation holds a repository, the dashboard waits at most a second, then shows the branch list it read last or lists the repository as In use; the repository's own pages wait until shortly before the request deadline and then answer HTTP 503 with `Retry-After`. OwnGit remembers each repository's branches and tags between its own writes and keeps recently read listings, files up to 4 MiB, diffs and pull request comparisons in memory (up to 64 MiB), so a page opened again starts no Git process. Refs changed directly in the repository folder show after OwnGit next changes a ref in that repository or restarts. Activity counts are computed in the background at start and after a branch changes; on a slow share the dashboard says when some repositories are still being counted.
 - OwnGit maintains each repository while nobody uses it: after five minutes without a push or request following a change, it packs loose refs and objects and updates the commit-graph, and between 03:00 and 05:00 local time it also combines the packs of a repository that has more than 20. Maintenance never deletes objects or kept history, holds the repository only while a step runs (a push or page that arrives then waits for that step), and logs one line per run. At start, OwnGit removes temporary pack and lock files that an interrupted Git command left behind and names them in the log.
-- On start, OwnGit upgrades a database from any earlier release in place, in one transaction, and logs one line such as `state database upgraded from schema 14 to 15` (on standard error for offline commands such as `backup`). It refuses a database from a newer version and leaves its files unchanged, and an older build refuses a database that a newer build has upgraded, so back up with the current executable before you replace it; to go back to OwnGit 1.0, restore a backup that 1.0 made. Expired logs and deleted records free space inside the database for reuse, but the file does not shrink, the old bytes are not securely erased, there is no overall size limit, and OwnGit does not run `VACUUM`. When a `-wal` or `-shm` file is present at start, OwnGit copies the database to a private temporary directory to inspect it, so the temporary volume needs that much free space.
+- On start, OwnGit upgrades a database from any earlier release in place, in one transaction, after [backing it up](#backup-before-an-upgrade), and logs one line such as `state database upgraded from schema 14 to 15` (on standard error for offline commands such as `backup`). It refuses a database from a newer version and leaves its files unchanged, and an older build refuses a database that a newer build has upgraded; to go back, restore the backup made before the upgrade with the earlier version. Expired logs and deleted records free space inside the database for reuse, but the file does not shrink, the old bytes are not securely erased, there is no overall size limit, and OwnGit does not run `VACUUM`. When a `-wal` or `-shm` file is present at start, OwnGit copies the database to a private temporary directory to inspect it, so the temporary volume needs that much free space.
 - Removing the `owngit` executable leaves the state directory and repositories in place; a `logs/` directory left by older versions is not read or removed either. Delete them yourself when you no longer need them.
 
 ## Offline backups
@@ -695,3 +695,30 @@ owngit restore \
 Restore checks every bundle, ref, object and record before it publishes the new state; the SHA-256 hashes detect corruption, not a backup that someone replaced along with its manifest. After a restore, sessions, setup links, approved Hosts, network settings, credentials, schedules and every consent are gone: create new helper and runner credentials, store import credentials again, and enable automatic checks again (unfinished jobs are marked `interrupted`). Raw logs are absent, and unsettled import publications are closed without being applied. Start `owngit serve` with the restored state before you use it in other ways, so that startup can settle interrupted records. Git file names are kept exactly, so a name Git accepts but Windows does not, such as one with a backslash, may not check out there.
 
 If a restore is interrupted, do not start OwnGit from either target and do not remove a `.owngit-restore-pending` marker; move both targets and any `TARGET.owngit-restore-...` siblings to a quarantine location and restore again into new paths. If a backup stops before finishing, its output directory does not exist; keep or quarantine its hidden `.OUTPUT.owngit-backup-...` sibling once no backup process is running.
+
+### Backup before an upgrade
+
+When a newer OwnGit opens a state whose schema is older than the one it writes, it first makes an offline backup of the state as it is, and upgrades the state only when that backup is complete. The backup is a new folder, such as `pre-1.1.3-20260929T101500Z`, in a folder beside the state directory named after it with `-backups`, for example `~/.config/owngit-backups` beside `~/.config/owngit`. It holds every repository, so that disk needs room for them. The server log, or standard error for other commands, says where the backup is and gives the command that restores it, and `owngit-upgrade-backup.txt` in the backup says the same. A new state, and one whose setup is not complete, need no backup. OwnGit 1.0.3 and later restore it.
+
+To go back to the earlier version, stop OwnGit, move the state directory aside, and run the printed command with the earlier version, for example:
+
+```sh
+owngit restore \
+  --input ~/.config/owngit-backups/pre-1.1.3-20260929T101500Z \
+  --state-dir ~/.config/owngit \
+  --repository-root /srv/git-pre-1.1.3
+```
+
+Then start the earlier version. The restored repositories are in the new repository folder, as they were at the upgrade.
+
+When the backup cannot be made, for example because the disk is full, the folder cannot be created or the repository folder is not available, OwnGit does not upgrade the state and stops with the reason, and the earlier version can still use the state. Fix the cause and start OwnGit again. To keep these backups on another local disk, make the `-backups` folder a link to a folder there. Only one OwnGit upgrades a state at a time, so a command run while an earlier OwnGit still serves the state says to stop it first.
+
+Once a new backup is complete, OwnGit removes the older backups it made there before an upgrade, which it recognizes by `owngit-upgrade-backup.txt`, and leaves everything else in the folder alone.
+
+To upgrade without a backup, for example when you back up another way, turn it off:
+
+```sh
+owngit upgrade-backup off
+```
+
+OwnGit then upgrades without a backup and logs a warning when it does. `owngit upgrade-backup on` turns the backup on again, and `owngit upgrade-backup` shows the setting (`--json` for JSON). The command works before a newer version has upgraded the state, so after a failed backup you can turn it off and start again. The setting belongs to this computer's state directory, and backups do not carry it. With the backup off, stop OwnGit and make a backup with the current version's `owngit backup` before you install a newer version.
