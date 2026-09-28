@@ -38,8 +38,12 @@ func OpenOwnFile(dir *os.File, name string, flag int) (*os.File, error) {
 		return openAt(dir, path, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, disposition, windows.FILE_NON_DIRECTORY_FILE, "open")
 	}
 	file, err := open(windows.FILE_OPEN)
-	if errors.Is(err, fs.ErrNotExist) && flag&os.O_CREATE != 0 {
-		file, err = open(windows.FILE_CREATE)
+	// Another opener can create the name between the two opens; its file
+	// is then opened and checked like any existing one.
+	for attempt := 0; errors.Is(err, fs.ErrNotExist) && flag&os.O_CREATE != 0 && attempt < createAttempts; attempt++ {
+		if file, err = open(windows.FILE_CREATE); errors.Is(err, fs.ErrExist) {
+			file, err = open(windows.FILE_OPEN)
+		}
 	}
 	if err != nil {
 		return nil, err

@@ -43,8 +43,12 @@ func OpenOwnFile(dir *os.File, name string, flag int) (*os.File, error) {
 		return descriptor, err
 	}
 	descriptor, err := open(0)
-	if errors.Is(err, unix.ENOENT) && flag&os.O_CREATE != 0 {
-		descriptor, err = open(unix.O_CREAT | unix.O_EXCL)
+	// Another opener can create the name between the two opens; its file
+	// is then opened and checked like any existing one.
+	for attempt := 0; errors.Is(err, unix.ENOENT) && flag&os.O_CREATE != 0 && attempt < createAttempts; attempt++ {
+		if descriptor, err = open(unix.O_CREAT | unix.O_EXCL); errors.Is(err, unix.EEXIST) {
+			descriptor, err = open(0)
+		}
 	}
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}

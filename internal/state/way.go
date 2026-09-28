@@ -19,3 +19,7 @@ type FolderWay struct {
 	// share that leads to a local folder makes the way Shared too.
 	Shared bool
 }
+
+// createAttempts bounds how often OpenOwnFile tries to create a name that
+// others keep creating and removing.
+const createAttempts = 5
