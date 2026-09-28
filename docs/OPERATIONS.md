@@ -698,7 +698,7 @@ If a restore is interrupted, do not start OwnGit from either target and do not r
 
 ### Backup before an upgrade
 
-When a newer OwnGit opens a state whose schema is older than the one it writes, it first makes an offline backup of the state as it is, and upgrades the state only when that backup is complete. The backup is a new folder, such as `pre-1.1.3-20260929T101500Z`, in a folder beside the state directory named after it with `-backups`, for example `~/.config/owngit-backups` beside `~/.config/owngit`. It holds every repository, so that disk needs room for them. The server log, or standard error for other commands, says where the backup is and gives the command that restores it, and `owngit-upgrade-backup.txt` in the backup says the same. A new state, and one whose setup is not complete, need no backup. OwnGit 1.0.3 and later restore it.
+When a newer OwnGit starts on a state whose schema is older than the one it writes, it first makes an offline backup of the state as it is, and upgrades the state only when that backup is complete. `owngit backup` does the same before its own backup. Other commands, which also work beside a running server, leave an older state alone and say to start OwnGit once or to run `owngit backup` first. The backup is a new folder, such as `pre-1.1.3-20260929T101500Z`, in a folder beside the state directory named after it with `-backups`, for example `~/.config/owngit-backups` beside `~/.config/owngit`. It holds every repository, so that disk needs room for them. The server log, or standard error for `owngit backup`, says where the backup is and gives the command that restores it, and `owngit-upgrade-backup.txt` in the backup says the same. A new state, and one whose setup is not complete, need no backup. OwnGit 1.0.3 and later restore it.
 
 To go back to the earlier version, stop OwnGit, move the state directory aside, and run the printed command with the earlier version, for example:
 
@@ -706,14 +706,14 @@ To go back to the earlier version, stop OwnGit, move the state directory aside, 
 owngit restore \
   --input ~/.config/owngit-backups/pre-1.1.3-20260929T101500Z \
   --state-dir ~/.config/owngit \
-  --repository-root /srv/git-pre-1.1.3
+  --repository-root ~/.config/owngit-backups/pre-1.1.3-20260929T101500Z-repositories
 ```
 
-Then start the earlier version. The restored repositories are in the new repository folder, as they were at the upgrade.
+Then start the earlier version. The restored repositories, as they were at the upgrade, are in the new folder beside the backup; another new folder in a place this account can create works as well.
 
-When the backup cannot be made, for example because the disk is full, the folder cannot be created or the repository folder is not available, OwnGit does not upgrade the state and stops with the reason, and the earlier version can still use the state. Fix the cause and start OwnGit again. To keep these backups on another local disk, make the `-backups` folder a link to a folder there. Only one OwnGit upgrades a state at a time, so a command run while an earlier OwnGit still serves the state says to stop it first.
+When the backup cannot be made, for example because the disk is full, the folder cannot be created or the repository folder is not available, OwnGit does not upgrade the state and stops with the reason, and the earlier version can still use the state. Fix the cause and start OwnGit again. To keep these backups on another local disk, make the `-backups` folder a link to a folder there.
 
-Once a new backup is complete, OwnGit removes the older backups it made there before an upgrade, which it recognizes by `owngit-upgrade-backup.txt`, and leaves everything else in the folder alone. If OwnGit stops while it makes the backup, the state is not upgraded; once no OwnGit runs, delete the hidden `.owngit-upgrade-copy-...` and `.pre-...owngit-backup-...` folders it left there.
+Once a new backup is complete, OwnGit removes the older backups it made there before an upgrade of the same state directory, which `owngit-upgrade-backup.txt` names, and leaves everything else in the folder alone. If OwnGit stops while it makes the backup, the state is not upgraded; once no OwnGit runs, delete the hidden `.owngit-upgrade-copy-...` and `.pre-...owngit-backup-...` folders it left there.
 
 To upgrade without a backup, for example when you back up another way, turn it off:
 
