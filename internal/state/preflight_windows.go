@@ -106,14 +106,22 @@ func openEntry(dir *os.File, path string, access uint32, op string) (*os.File, e
 // openAt opens path, a direct child of the held directory dir, through
 // NtCreateFile without following a reparse point, for synchronous use.
 func openAt(dir *os.File, path string, access, share, disposition, options uint32, op string) (*os.File, error) {
+	return createAt(dir, path, access, share, disposition, options, nil, op)
+}
+
+// createAt is openAt that gives an entry it creates the security
+// descriptor, instead of the access entries it would inherit from dir when
+// descriptor is nil.
+func createAt(dir *os.File, path string, access, share, disposition, options uint32, descriptor *windows.SECURITY_DESCRIPTOR, op string) (*os.File, error) {
 	objectName, err := windows.NewNTUnicodeString(filepath.Base(path))
 	if err != nil {
 		return nil, &os.PathError{Op: op, Path: path, Err: err}
 	}
 	attributes := windows.OBJECT_ATTRIBUTES{
-		RootDirectory: windows.Handle(dir.Fd()),
-		ObjectName:    objectName,
-		Attributes:    windows.OBJ_CASE_INSENSITIVE,
+		RootDirectory:      windows.Handle(dir.Fd()),
+		ObjectName:         objectName,
+		Attributes:         windows.OBJ_CASE_INSENSITIVE,
+		SecurityDescriptor: descriptor,
 	}
 	attributes.Length = uint32(unsafe.Sizeof(attributes))
 	var handle windows.Handle

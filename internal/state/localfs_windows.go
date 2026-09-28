@@ -37,7 +37,10 @@ func InspectFolderWay(string) FolderWay { return FolderWay{} }
 // names later, and it is on the volume where the way starts. The directory
 // must belong to this account (or its token owner). Access lists protect
 // OwnGit's folders on Windows, so the owners of the folders on the way are
-// not checked.
+// not checked. A folder it creates gets an access list that lets only this
+// account in as it is created, like a folder made with mode 0700 on Unix:
+// one inherited from its parent could let another account open it, and an
+// open handle keeps its access when the access list changes later.
 //
 // When OwnGit runs as administrator (elevated), that volume must be local:
 // a share's server could otherwise decide what administrator writes. An
@@ -71,6 +74,7 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 		dir.Close()
 		return nil, err
 	}
+	var private *windows.SECURITY_DESCRIPTOR
 	for _, name := range strings.Split(absolute[len(volume):], `\`) {
 		if name == "" {
 			continue
@@ -78,7 +82,12 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 		next := filepath.Join(dir.Name(), name)
 		child, err := openAt(dir, next, folderAccess, folderShare, windows.FILE_OPEN, folderOptions, "open")
 		if errors.Is(err, fs.ErrNotExist) && create {
-			child, err = openAt(dir, next, folderAccess, folderShare, windows.FILE_OPEN_IF, folderOptions, "create")
+			if private == nil {
+				private, err = privateFolderDescriptor()
+			}
+			if private != nil {
+				child, err = createAt(dir, next, folderAccess, folderShare, windows.FILE_OPEN_IF, folderOptions, private, "create")
+			}
 		}
 		dir.Close()
 		if err != nil {
@@ -366,7 +375,7 @@ func CreatePrivateFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	descriptor, err := ownerOnlySecurityDescriptor(user)
+	descriptor, err := ownerOnlySecurityDescriptor(user, false)
 	if err != nil {
 		return nil, err
 	}
@@ -391,8 +400,17 @@ func CreatePrivateFile(path string) (*os.File, error) {
 	return file, nil
 }
 
-func ownerOnlySecurityDescriptor(user *windows.SID) (*windows.SECURITY_DESCRIPTOR, error) {
-	acl, err := ownerOnlyACL(user, false)
+// privateFolderDescriptor is the owner-only descriptor of a new folder.
+func privateFolderDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
+	user, _, err := processIdentity()
+	if err != nil {
+		return nil, err
+	}
+	return ownerOnlySecurityDescriptor(user, true)
+}
+
+func ownerOnlySecurityDescriptor(user *windows.SID, directory bool) (*windows.SECURITY_DESCRIPTOR, error) {
+	acl, err := ownerOnlyACL(user, directory)
 	if err != nil {
 		return nil, err
 	}

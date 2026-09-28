@@ -126,7 +126,9 @@ func UpgradeBackupFolder(stateDir string) string {
 // local disk, this account's, reached through no link that was not
 // checked), and it must be private as well: one in which no other account
 // can create, rename or remove names. A folder that this call creates is
-// made private. An existing folder that is not private is refused, not
+// private from the moment it exists (CreateDirectory), and is then made
+// private as well, which on macOS drops access list entries inherited from
+// its parent. An existing folder that is not private is refused, not
 // repaired, because another account may already have put something in it.
 // On Windows the way to the folder and the folder itself are held without
 // delete sharing until release (holdWay), as OpenIn holds the way to the

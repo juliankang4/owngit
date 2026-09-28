@@ -113,7 +113,8 @@ func (e *OtherAccountError) Error() string {
 // through OpenDirectory and returns it held open, named by its resolved
 // path. Every folder on the way, for every account, must be on a local
 // filesystem, which is checked before anything is created, so a refused
-// directory leaves nothing behind. Open
+// directory leaves nothing behind. The folders it creates are private to
+// this account from the moment they exist. Open
 // and the locks in it use the held directory, not whatever its path names
 // later.
 func CreateDirectory(dir string) (*os.File, error) {
