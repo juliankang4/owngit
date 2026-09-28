@@ -20,6 +20,10 @@ func RequireProtectedPath(string) error {
 
 func RequireProtectedParent(string) error { return nil }
 
+// requireStateParent has nothing to check on Windows, where access lists
+// protect the state directory, as for RequireProtectedParent.
+func requireStateParent(string) error { return nil }
+
 func ensureLocalStateFilesystem(path string) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

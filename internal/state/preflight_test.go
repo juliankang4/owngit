@@ -1065,3 +1065,18 @@ func TestFailureOnABoundEntryIsAChangeOnlyWhenTheEntryIsGone(t *testing.T) {
 		t.Fatalf("entry removed: %v", err)
 	}
 }
+
+// Open checks the way to the state directory before it creates anything, so
+// a refused state directory leaves no folder behind.
+func TestRefusedStateDirectoryIsNotCreated(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix parent permissions")
+	}
+	parent := filepath.Join(resolveTestPath(t, t.TempDir()), "shared")
+	noErr(t, os.Mkdir(parent, 0o755))
+	noErr(t, os.Chmod(parent, 0o777))
+	openRefused(t, filepath.Join(parent, "home", "state"), "another account can change "+parent)
+	if _, err := os.Lstat(filepath.Join(parent, "home")); !os.IsNotExist(err) {
+		t.Fatalf("the refused Open created a folder: %v", err)
+	}
+}

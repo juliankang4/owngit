@@ -120,7 +120,25 @@ func run(arguments []string) error {
 	if errors.Is(err, errUsageShown) {
 		return nil
 	}
-	return err
+	return runAsOwnerHint(err, command, arguments)
+}
+
+// runAsOwnerHint completes a refusal of another account's state directory
+// with the command that runs this one as that account.
+func runAsOwnerHint(err error, command string, arguments []string) error {
+	var other *state.OtherAccountError
+	if !errors.As(err, &other) {
+		return err
+	}
+	line := "sudo -u " + service.ShellQuote(other.Account) + " owngit " + command
+	if runtime.GOOS == "linux" {
+		// runuser comes with Linux itself; sudo may not be installed.
+		line = "runuser -u " + service.ShellQuote(other.Account) + " -- owngit " + command
+	}
+	for _, argument := range arguments {
+		line += " " + service.ShellQuote(argument)
+	}
+	return fmt.Errorf("%w: %s", err, line)
 }
 
 // accountPathHint explains a permission error of a command that root runs
@@ -321,8 +339,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// The offline lock is taken before the state is opened, so a migration
 	// cannot race another owner that is already serving the same directory.
 	// The directory is created first because the lock file lives inside it.
-	if err := os.MkdirAll(*stateDir, 0o700); err != nil {
-		return fmt.Errorf("create state directory: %w", err)
+	if err := state.CreateDirectory(*stateDir); err != nil {
+		return err
 	}
 	unlock, err := state.AcquireLockBriefly(func() (func(), error) { return state.AcquireOfflineLock(*stateDir) })
 	if err != nil {

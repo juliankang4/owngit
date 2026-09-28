@@ -135,24 +135,28 @@ func RequireProtectedParent(path string) error {
 	return requireProtectedPath(filepath.Dir(path), false)
 }
 
+// protectedCheck is the WalkProtected check of RequireProtectedPath: it
+// refuses a path that another account can change, with the command that
+// fixes it when there is one.
+func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
+	return func(name string, info os.FileInfo) error {
+		changeable, fix, err := othersCanChange(name, info, true, allowSticky)
+		if err == nil && changeable {
+			err = fmt.Errorf("another account can change %s", name)
+			if fix != "" {
+				err = fmt.Errorf("%w (%s fixes that)", err, fix)
+			}
+		}
+		return err
+	}
+}
+
 func requireProtectedPath(path string, strictFinal bool) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	check := func(allowSticky bool) func(string, os.FileInfo) error {
-		return func(name string, info os.FileInfo) error {
-			changeable, fix, err := othersCanChange(name, info, true, allowSticky)
-			if err == nil && changeable {
-				err = fmt.Errorf("another account can change %s", name)
-				if fix != "" {
-					err = fmt.Errorf("%w (%s fixes that)", err, fix)
-				}
-			}
-			return err
-		}
-	}
-	resolved, missing, err := WalkProtected(absolute, check(true))
+	resolved, missing, err := WalkProtected(absolute, protectedCheck(true))
 	if err == nil && missing != "" {
 		return fmt.Errorf("%s does not exist", path)
 	}
@@ -161,9 +165,40 @@ func requireProtectedPath(path string, strictFinal bool) error {
 		if statErr != nil {
 			return statErr
 		}
-		err = check(false)(resolved, info)
+		err = protectedCheck(false)(resolved, info)
 	}
 	return err
+}
+
+// requireStateParent refuses the absolute state directory path when another
+// account could change a folder on the way to it, the rule of
+// RequireProtectedParent. It runs before anything is created, so names that
+// do not exist yet are accepted: they are created inside the last existing
+// folder, which only this account or root can change. When root runs the
+// command, a folder that another account owns belongs to that account, and
+// so would state inside it; state that root created there would lock that
+// account out. The refusal then says to run the command as that account.
+func requireStateParent(path string) error {
+	protected := protectedCheck(true)
+	_, _, err := WalkProtected(filepath.Dir(path), func(name string, info os.FileInfo) error {
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && os.Geteuid() == 0 && stat.Uid != 0 {
+			return &OtherAccountError{Path: name, Account: accountName(stat.Uid)}
+		}
+		return protected(name, info)
+	})
+	if other := new(OtherAccountError); err != nil && !errors.As(err, &other) {
+		return fmt.Errorf("state directory parent is not protected: %w; choose a parent that other accounts cannot change", err)
+	}
+	return err
+}
+
+// accountName is the name of the account uid, or its number when it has no
+// name.
+func accountName(uid uint32) string {
+	if account, err := user.LookupId(strconv.FormatUint(uint64(uid), 10)); err == nil {
+		return account.Username
+	}
+	return strconv.FormatUint(uint64(uid), 10)
 }
 
 // OwnPrivateGroup reports whether gid is the private group of a runner that

@@ -91,29 +91,61 @@ type BootstrapSnapshot struct {
 	ExpiresAt int64  `json:"expires_at,omitempty"`
 }
 
-func Open(ctx context.Context, dir string) (result *Store, err error) {
+// OtherAccountError refuses a state directory that root would open or create
+// in a folder that another account owns. The folder, and state in it, belong
+// to that account, so the command must run as that account.
+type OtherAccountError struct {
+	// Path is the folder that belongs to Account.
+	Path    string
+	Account string
+}
+
+func (e *OtherAccountError) Error() string {
+	return fmt.Sprintf("%s belongs to the account %s, so OwnGit state there is that account's; run the command as %s", e.Path, e.Account, e.Account)
+}
+
+// CreateDirectory creates the state directory dir and its missing parents.
+// It first checks what exists, so a refused directory leaves nothing behind:
+// the nearest existing folder must be on a local filesystem, and on Unix no
+// other account may be able to change a folder on the way to dir (see
+// requireStateParent).
+func CreateDirectory(dir string) error {
 	absolute, err := filepath.Abs(dir)
 	if err != nil {
-		return nil, fmt.Errorf("resolve state directory: %w", err)
+		return fmt.Errorf("resolve state directory: %w", err)
 	}
 	ancestor := absolute
 	for {
 		if _, err := os.Stat(ancestor); err == nil {
 			if err := ensureLocalStateFilesystem(ancestor); err != nil {
-				return nil, fmt.Errorf("validate state directory parent: %w", err)
+				return fmt.Errorf("validate state directory parent: %w", err)
 			}
 			break
 		} else if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("inspect state directory parent: %w", err)
+			return fmt.Errorf("inspect state directory parent: %w", err)
 		}
 		parent := filepath.Dir(ancestor)
 		if parent == ancestor {
-			return nil, errors.New("state directory has no accessible parent")
+			return errors.New("state directory has no accessible parent")
 		}
 		ancestor = parent
 	}
+	if err := requireStateParent(absolute); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(absolute, 0o700); err != nil {
-		return nil, fmt.Errorf("create state directory: %w", err)
+		return fmt.Errorf("create state directory: %w", err)
+	}
+	return nil
+}
+
+func Open(ctx context.Context, dir string) (result *Store, err error) {
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve state directory: %w", err)
+	}
+	if err := CreateDirectory(absolute); err != nil {
+		return nil, err
 	}
 	if runtime.GOOS != "windows" {
 		absolute, err = filepath.EvalSymlinks(absolute)
@@ -121,8 +153,10 @@ func Open(ctx context.Context, dir string) (result *Store, err error) {
 			return nil, fmt.Errorf("resolve state directory identity: %w", err)
 		}
 	}
-	if err := RequireProtectedParent(absolute); err != nil {
-		return nil, fmt.Errorf("state directory parent is not protected: %w; choose a parent that other accounts cannot change", err)
+	// A link to the state directory leads elsewhere, so the way to where it
+	// leads is checked the same way.
+	if err := requireStateParent(absolute); err != nil {
+		return nil, err
 	}
 	if _, err := os.Lstat(filepath.Join(absolute, IncompleteRestoreMarkerName)); err == nil {
 		return nil, errors.New("state directory belongs to an incomplete offline restore; follow the interrupted-restore procedure before use")

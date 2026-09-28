@@ -582,6 +582,24 @@ func TestAccountPathHint(t *testing.T) {
 	}
 }
 
+// When root is refused another account's state directory, the error ends
+// with the same command run as that account.
+func TestRunAsOwnerHint(t *testing.T) {
+	refused := fmt.Errorf("open state: %w", &state.OtherAccountError{Path: "/home/example", Account: "example"})
+	err := runAsOwnerHint(refused, "setup-link", []string{"--state-dir", "/home/example/my state"})
+	want := "sudo -u 'example' owngit setup-link '--state-dir' '/home/example/my state'"
+	if runtime.GOOS == "linux" {
+		want = "runuser -u 'example' -- owngit setup-link '--state-dir' '/home/example/my state'"
+	}
+	if !errors.Is(err, refused) || !strings.HasSuffix(err.Error(), ": "+want) {
+		t.Fatalf("runAsOwnerHint = %v, want it to end with %s", err, want)
+	}
+	other := errors.New("state is locked")
+	if err := runAsOwnerHint(other, "health", nil); err != other {
+		t.Fatalf("runAsOwnerHint changed %v", err)
+	}
+}
+
 // installFixture runs serviceHost.install with every system effect
 // replaced: the unit found, the service manager, sudo and root's shell,
 // and the wait for the started service.
