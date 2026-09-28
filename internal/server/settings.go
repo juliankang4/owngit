@@ -14,8 +14,8 @@ import (
 
 // Settings is split into tabs, each its own address (webui.SettingsTabs),
 // and each tab into groups: one form per group, with its own Save. A group
-// posts only its own fields, to its tab's address, so saving it can neither
-// save nor reset what another group holds.
+// posts only its own fields, to its tab's address, so saving it never saves
+// or changes another group's settings.
 //
 // The page's script can save a group without leaving the page, for a form
 // without a password field (groupSave in owngit.js); a form that asks for

@@ -114,12 +114,12 @@ var settingsCatalog = map[MessageCode]message{
 	MsgSettingsUpdateSwitch: {en: "Check for new releases once a day", ko: "새 릴리스를 하루에 한 번 확인"},
 	MsgSettingsUpdateScope: {
 		en: "Whole server. Applies as soon as you save.",
-		ko: "서버 전체에 적용되며 저장하면 바로 적용됩니다.",
+		ko: "서버 전체 설정이며 저장하면 바로 적용됩니다.",
 	},
 
 	MsgSettingsAccessScope: {
-		en: "Git and the dashboard, for everyone; there are no individual accounts. Applies as soon as you save, and a new shared password signs out every open session.",
-		ko: "Git과 대시보드 모두에 적용되며 사람마다 따로 계정을 두지는 않습니다. 저장하면 바로 적용되고, 공용 비밀번호를 새로 정하면 열려 있던 세션은 모두 로그아웃됩니다.",
+		en: "Git and the dashboard, for everyone; there are no individual accounts. Applies as soon as you save, and a new shared password signs out everyone signed in with the shared password.",
+		ko: "Git과 대시보드에 함께 적용되며 사람마다 계정을 따로 두지는 않습니다. 저장하면 바로 바뀌고, 공용 비밀번호를 새로 정하면 공용 비밀번호로 로그인한 사람은 모두 로그아웃됩니다.",
 	},
 	MsgSettingsAccessMode:     {en: "Who can read and push", ko: "읽기와 푸시 권한"},
 	MsgSettingsAccessModePass: {en: "Only people with the shared password", ko: "공용 비밀번호를 아는 사람만"},

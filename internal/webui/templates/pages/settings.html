@@ -20,8 +20,10 @@
 {{/* The settings groups.
 
      A group is one form with its own Save and Cancel. Saving it sends only
-     its own fields, so another group's unsaved change is neither saved nor
-     reset. The contract the script relies on:
+     its own fields, so another group's change is never saved with it. An
+     unsaved change in another group survives only a save the script sends
+     (see below); a page submission reloads the tab. The contract the script
+     relies on:
 
      - [data-group] is the group, with its name as the value, and holds one
        [data-group-form]. The server answers a refused form with the whole
