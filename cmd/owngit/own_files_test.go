@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -53,7 +54,14 @@ func TestLogStaysInTheFolderItOpened(t *testing.T) {
 	file, err := openRotatingFile(filepath.Join(folder, "owngit.log"), 40)
 	noErr(t, err)
 	moved := filepath.Join(root, "moved")
-	noErr(t, os.Rename(folder, moved))
+	err = os.Rename(folder, moved)
+	if err != nil && runtime.GOOS == "windows" {
+		// Windows keeps the name of a folder that holds an open file, so
+		// the name cannot be given away while the log is open.
+		file.Close()
+		t.Skipf("the folder of the open log cannot be renamed: %v", err)
+	}
+	noErr(t, err)
 	linkFolder(t, other, folder)
 	for range 3 {
 		_, err = file.Write([]byte(strings.Repeat("x", 39) + "\n"))

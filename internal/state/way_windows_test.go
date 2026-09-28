@@ -35,3 +35,11 @@ func TestWindowsOpenDirectoryRefusesAJunctionOnTheWay(t *testing.T) {
 		t.Fatalf("a folder was created through the junction: %v", err)
 	}
 }
+
+// linkTestFolder makes link a junction to target.
+func linkTestFolder(t *testing.T, target, link string) {
+	t.Helper()
+	if output, err := exec.Command("cmd.exe", "/d", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+		t.Fatalf("create junction: %v: %s", err, output)
+	}
+}

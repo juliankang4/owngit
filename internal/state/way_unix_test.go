@@ -179,3 +179,9 @@ func TestFolderOfRootIsNotSentToRoot(t *testing.T) {
 		t.Fatalf("OpenDirectory(/) error=%v, want a folder of this account asked for", err)
 	}
 }
+
+// linkTestFolder makes link a symbolic link to target.
+func linkTestFolder(t *testing.T, target, link string) {
+	t.Helper()
+	noErr(t, os.Symlink(target, link))
+}
