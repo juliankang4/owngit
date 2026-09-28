@@ -142,9 +142,14 @@ func TestSettingsGroupSaveSendsOnlyWhatItMay(t *testing.T) {
 	if strings.Count(copyToken, ".value") != 2 || !strings.Contains(copyToken, "field.value = token.value") {
 		t.Error("the group save reads a value other than the fetched token")
 	}
+	// Beyond what no part of the script may use, the block uses no browser
+	// storage at all, no cookie, log, address fragment or other site.
+	if found := forbiddenSinksIn(block); len(found) > 0 {
+		t.Errorf("the group save touches %q", found)
+	}
 	for _, leak := range []string{
-		"Storage", "sendBeacon", "console.", "location.hash", "document.cookie", "http:", "https:", "://", "XMLHttpRequest",
-		"WebSocket", "EventSource", "postMessage", "Observer", "import", "require(", "<script", "innerHTML", "eval(",
+		"Storage", "console.", "location.hash", "document.cookie", "http:", "https:", "://",
+		"Observer", "import", "require(", "<script", "innerHTML", "eval(",
 	} {
 		if strings.Contains(strings.ReplaceAll(block, "'X-OwnGit-Group'", ""), leak) {
 			t.Errorf("the group save touches %q", leak)
@@ -155,6 +160,18 @@ func TestSettingsGroupSaveSendsOnlyWhatItMay(t *testing.T) {
 	rest := scriptOutsideRequests(t)
 	if !strings.Contains(rest, "!groupSave || !groupSave.eligible(form)) { return; }") {
 		t.Error("the submit handler takes over a form the group save does not send")
+	}
+}
+
+// No part of the script, the two blocks that make requests included, keeps
+// data in the browser beyond the display preferences or sends it by any way
+// other than their fetch calls.
+func TestScriptUsesNoOtherStorageOrTransport(t *testing.T) {
+	if found := forbiddenSinksIn(scriptSource(t)); len(found) > 0 {
+		t.Errorf("the script uses %q", found)
+	}
+	if found := forbiddenSinksIn(scriptOutsideRequests(t)); len(found) > 0 {
+		t.Errorf("the script outside the request blocks uses %q", found)
 	}
 }
 

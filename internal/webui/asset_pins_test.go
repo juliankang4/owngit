@@ -221,6 +221,34 @@ func scriptOutsideRequests(t *testing.T) string {
 	return strings.Replace(js, groupSaveSource(t), "", 1)
 }
 
+// scriptForbiddenSinks are the browser interfaces that keep data in the
+// browser or send it elsewhere, which no part of the script may use,
+// including the two blocks that make requests: IndexedDB, Cache Storage,
+// the cookie store, Web SQL, the origin-private file system and file system
+// entry points, session storage, beacons, service workers, workers,
+// cross-context messages, sockets and server-sent events. The two request
+// blocks use fetch only; local storage holds only the display preferences
+// (TestScriptStoresNoSecrets). The names are compared ignoring case.
+var scriptForbiddenSinks = []string{
+	"indexedDB", "IDBFactory", "caches", "CacheStorage", "cookieStore", "openDatabase",
+	"navigator.storage", "getDirectory", "requestFileSystem", "showSaveFilePicker",
+	"sessionStorage", "sendBeacon", "serviceWorker", "SharedWorker", "Worker(", "importScripts",
+	"BroadcastChannel", "postMessage", "MessageChannel", "WebSocket", "WebTransport", "EventSource",
+	"XMLHttpRequest", "RTCPeerConnection",
+}
+
+// forbiddenSinksIn returns the scriptForbiddenSinks that source names.
+func forbiddenSinksIn(source string) []string {
+	var found []string
+	lower := strings.ToLower(source)
+	for _, sink := range scriptForbiddenSinks {
+		if strings.Contains(lower, strings.ToLower(sink)) {
+			found = append(found, sink)
+		}
+	}
+	return found
+}
+
 // groupSaveSource is the Settings group save block of the script.
 func groupSaveSource(t *testing.T) string {
 	return section(t, scriptSource(t), "var groupSave = (function groupSave()", "})();")
