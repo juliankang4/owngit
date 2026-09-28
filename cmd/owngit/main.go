@@ -1043,25 +1043,24 @@ func checkRuntimeUnavailableReason(code string) string {
 
 // openState opens the state directory and reports a schema upgrade that the
 // open applied, so the operator can tell when older builds stopped accepting
-// the database. An older schema is backed up first; see backupBeforeUpgrade.
-// openState is for the commands that do not hold the offline lock, so the
-// lock is taken for an upgrade.
+// the database. openState is for the commands that work beside a running
+// server, without the offline lock, so it refuses an older schema; see
+// refuseUpgrade.
 func openState(ctx context.Context, dir string, report func(string, ...any)) (*state.Store, error) {
 	held, err := state.CreateDirectory(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer held.Close()
-	beforeUpgrade, unlock := backupBeforeUpgradeLocking(held, report)
-	defer unlock()
-	return openHeldState(ctx, held, beforeUpgrade, report)
+	return openHeldState(ctx, held, refuseUpgrade, report)
 }
 
 // openStateIn is openState for the state directory held, which
 // state.CreateDirectory or state.OpenStateDirectory returned, and whose
-// offline lock the caller holds. gitPath is the Git for the backup before
-// an upgrade, or "" to find it as usual. serve passes its log; offline
-// commands pass stderrf.
+// offline lock the caller has held since before the open. An older schema
+// is backed up first and then upgraded; see backupBeforeUpgrade. gitPath is
+// the Git for that backup, or "" to find it as usual. serve passes its log;
+// offline commands pass stderrf.
 func openStateIn(ctx context.Context, held *os.File, gitPath string, report func(string, ...any)) (*state.Store, error) {
 	return openHeldState(ctx, held, backupBeforeUpgrade(held, gitPath, report), report)
 }

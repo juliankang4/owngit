@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,12 +17,22 @@ import (
 	"owngit/internal/testfixture"
 )
 
-// openStateForTest opens the state like a command next to a server and
-// returns what it reported.
+// openStateForTest opens the state like serve and backup, which hold the
+// offline lock from their start, and returns what it reported.
 func openStateForTest(t *testing.T, stateDir string) ([]string, error) {
 	t.Helper()
+	held, err := state.CreateDirectory(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	unlock, err := state.AcquireOfflineLockIn(held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
 	var lines []string
-	store, err := openState(context.Background(), stateDir, func(format string, args ...any) {
+	store, err := openStateIn(context.Background(), held, "", func(format string, args ...any) {
 		lines = append(lines, fmt.Sprintf(format, args...))
 	})
 	if err == nil {
@@ -102,7 +113,7 @@ func TestUpgradeBackupRestoresTheStateBeforeTheUpgrade(t *testing.T) {
 	if want := "backed up the state to " + backup + " before upgrading it from the committed baseline"; !strings.HasPrefix(lines[0], want) {
 		t.Fatalf("reported %q, want %q", lines[0], want)
 	}
-	command := "owngit restore --input " + quoteForShell(backup) + " --state-dir " + quoteForShell(resolved)
+	command := "owngit restore --input " + quoteForShell(backup) + " --state-dir " + quoteForShell(resolved) + " --repository-root " + quoteForShell(backup+"-repositories")
 	if !strings.Contains(lines[1], command) {
 		t.Fatalf("reported %q, want the restore command %q", lines[1], command)
 	}
@@ -230,8 +241,8 @@ func TestUpgradeWithTheBackupOff(t *testing.T) {
 	}
 }
 
-// Only the backups that an upgrade made are removed, once a newer one is
-// complete; other folders beside them stay.
+// Only the backups that an upgrade of this state directory made are
+// removed, once a newer one is complete; other folders beside them stay.
 func TestUpgradeBackupRemovesOnlyItsOwnOlderBackups(t *testing.T) {
 	stateDir := createBaselineStateForTest(t)
 	folder := state.UpgradeBackupFolder(stateDir)
@@ -242,20 +253,33 @@ func TestUpgradeBackupRemovesOnlyItsOwnOlderBackups(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(older, upgradeNoteName), []byte("note"), 0o600); err != nil {
+	resolved, err := filepath.EvalSymlinks(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(older, upgradeNoteName), []byte("note\n\n"+upgradeNoteStatePrefix+resolved+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A backup of another state directory whose backup folder is a link to
+	// the same place.
+	other := filepath.Join(folder, "pre-1.1.3-20260102T000000Z")
+	if err := os.Mkdir(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, upgradeNoteName), []byte("note\n\n"+upgradeNoteStatePrefix+resolved+"-other\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(manual, "owngit.sqlite"), []byte("kept"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	kept := []string{filepath.Base(manual)}
+	kept := []string{filepath.Base(manual), filepath.Base(other)}
 	if runtime.GOOS != "windows" {
 		// A link to a backup is not a backup in this folder.
 		elsewhere := filepath.Join(t.TempDir(), "elsewhere")
 		if err := os.Mkdir(elsewhere, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(elsewhere, upgradeNoteName), []byte("note"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(elsewhere, upgradeNoteName), []byte(upgradeNoteStatePrefix+resolved+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Symlink(elsewhere, filepath.Join(folder, "link")); err != nil {
@@ -280,9 +304,11 @@ func TestUpgradeBackupRemovesOnlyItsOwnOlderBackups(t *testing.T) {
 	}
 }
 
-// A command next to a server upgrades only with the offline lock, so it
-// never upgrades a state that another OwnGit uses.
-func TestCommandUpgradesOnlyWithTheOfflineLock(t *testing.T) {
+// A command beside a server never upgrades and never takes the offline
+// lock for it: while another OwnGit holds the lock, as a starting server
+// does during its backup, the command still only says what to do, and a
+// server that starts next is not kept out.
+func TestCommandBesideAServerNeverUpgrades(t *testing.T) {
 	stateDir := createBaselineStateForTest(t)
 	held, err := state.OpenStateDirectory(stateDir)
 	if err != nil {
@@ -294,16 +320,36 @@ func TestCommandUpgradesOnlyWithTheOfflineLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := stateFiles(t, stateDir)
-	if _, err := openStateForTest(t, stateDir); err == nil || !strings.Contains(err.Error(), "only while no other OwnGit uses it") {
-		t.Fatalf("err=%v", err)
+	var lines []string
+	_, err = openState(context.Background(), stateDir, func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) })
+	if !errors.Is(err, errOlderSchema) || !strings.Contains(err.Error(), "start OwnGit once") || len(lines) != 0 {
+		t.Fatalf("err=%v lines=%q", err, lines)
+	}
+	unlock()
+	_, err = captureStderr(func() error {
+		return runCommand("approve-host", []string{"--state-dir", stateDir, "owngit.example.test"})
+	})
+	if !errors.Is(err, errOlderSchema) {
+		t.Fatalf("approve-host err=%v", err)
 	}
 	requireStateFiles(t, stateDir, before)
 	if backups := upgradeBackups(t, stateDir); len(backups) != 0 {
 		t.Fatalf("backups %q", backups)
 	}
-	unlock()
-	if _, err := openStateForTest(t, stateDir); err != nil {
-		t.Fatal(err)
+	instance := startServed(t, stateDir)
+	instance.stop()
+	if !strings.Contains(instance.log(), baselineUpgradeLine) {
+		t.Fatalf("serve log:\n%s", instance.log())
+	}
+}
+
+// A service that is still backing up when the wait for it ends is reported
+// as such, not as a state that needs an upgrade.
+func TestServiceWaitNamesAStartStillBackingUp(t *testing.T) {
+	stateDir := createBaselineStateForTest(t)
+	_, err := waitHealthy(stateDir, 0)
+	if err == nil || !strings.Contains(err.Error(), "still backing up the state") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

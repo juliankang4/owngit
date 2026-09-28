@@ -67,21 +67,17 @@ func notUpgraded(upgrade *state.Upgrade, cause error, stateDir string) error {
 		upgrade.Describe(), cause, state.UpgradeBackupFolder(stateDir), quoteForShell(stateDir))
 }
 
-// backupBeforeUpgradeLocking is backupBeforeUpgrade for a command that does
-// not hold the offline lock, such as the commands that work next to a
-// running server. The lock is taken only for an upgrade, so that one
-// OwnGit makes the backup and the upgrade while no other uses the state;
-// unlock releases it once the state is open.
-func backupBeforeUpgradeLocking(held *os.File, report func(string, ...any)) (state.BeforeUpgrade, func()) {
-	unlock := func() {}
-	return func(ctx context.Context, upgrade *state.Upgrade) error {
-		release, err := state.AcquireOfflineLockIn(held)
-		if err != nil {
-			return fmt.Errorf("the state is upgraded %s, after a backup, only while no other OwnGit uses it: %w; stop the earlier OwnGit, or wait until the one that is starting has upgraded it", upgrade.Describe(), err)
-		}
-		unlock = release
-		return backupBeforeUpgrade(held, "", report)(ctx, upgrade)
-	}, func() { unlock() }
+// errOlderSchema refuses to open an older state in a command that works
+// beside a running server. Only a process that holds the offline lock from
+// its start (serve and backup) backs a state up and upgrades it: a command
+// beside a server that took the lock for a backup would keep a starting
+// server out for as long as the backup takes.
+var errOlderSchema = errors.New("this state has an older schema")
+
+// refuseUpgrade is the state.BeforeUpgrade of the commands that work beside
+// a running server.
+func refuseUpgrade(_ context.Context, upgrade *state.Upgrade) error {
+	return fmt.Errorf("%w, which a starting OwnGit backs up and upgrades %s: start OwnGit once (owngit serve, or owngit service start) or run owngit backup, then run this command again", errOlderSchema, upgrade.Describe())
 }
 
 type upgradeBackup struct {
@@ -138,12 +134,15 @@ func createUpgradeBackup(ctx context.Context, stateDir string, upgrade *state.Up
 	if err := recovery.Create(ctx, store, manager, output); err != nil {
 		return upgradeBackup{}, err
 	}
+	// The restored repositories go into the backup folder, where this
+	// account has just created the backup, so the command works as printed
+	// even when it cannot create a folder beside the repository folder.
 	restoreCommand := "owngit restore --input " + quoteForShell(output) + " --state-dir " + quoteForShell(stateDir) +
-		" --repository-root " + quoteForShell(filepath.Clean(settings.RepositoryRoot)+"-pre-"+version.Version)
+		" --repository-root " + quoteForShell(output+"-repositories")
 	if err := writeUpgradeNote(output, stateDir, upgrade, restoreCommand); err != nil {
 		return upgradeBackup{}, fmt.Errorf("the backup %s is complete, but its note could not be written: %w", output, err)
 	}
-	removeOlderUpgradeBackups(folder.Name(), name, report)
+	removeOlderUpgradeBackups(folder.Name(), name, stateDir, report)
 	return upgradeBackup{path: output, restoreCommand: restoreCommand}, nil
 }
 
@@ -174,19 +173,27 @@ func writeUpgradeNote(backup, stateDir string, upgrade *state.Upgrade, restoreCo
 	}
 	_, err = fmt.Fprintf(file, "OwnGit %s made this backup before it upgraded the state in %s %s.\n\n"+
 		"To go back to the earlier OwnGit version, stop OwnGit, move %s aside, and run this with the earlier version:\n\n  %s\n\n"+
-		"Then start the earlier version. OwnGit removes this backup once it has made a newer one before a later upgrade.\n",
-		version.Version, stateDir, upgrade.Describe(), stateDir, restoreCommand)
+		"Then start the earlier version. The restored repositories are in the folder after --repository-root; another new folder in a place this account can create works as well.\n"+
+		"OwnGit removes this backup once it has made a newer one for this state directory before a later upgrade.\n\n"+
+		upgradeNoteStatePrefix+"%s\n",
+		version.Version, stateDir, upgrade.Describe(), stateDir, restoreCommand, stateDir)
 	if err == nil {
 		err = file.Sync()
 	}
 	return errors.Join(err, file.Close())
 }
 
-// removeOlderUpgradeBackups removes the backups in folder that an upgrade
-// made, other than keep. A folder without the note is not one of them and
-// stays. A removal failure is reported and does not stop the upgrade,
-// because the new backup is complete.
-func removeOlderUpgradeBackups(folder, keep string, report func(string, ...any)) {
+// upgradeNoteStatePrefix starts the last line of the note, which names the
+// state directory whose backup it is.
+const upgradeNoteStatePrefix = "State directory: "
+
+// removeOlderUpgradeBackups removes the backups in folder that an upgrade of
+// the state in stateDir made, other than keep: real folders whose note names
+// stateDir. Any other entry stays, including the backups of another state
+// directory whose backup folder is a link to the same place. A removal
+// failure is reported and does not stop the upgrade, because the new backup
+// is complete.
+func removeOlderUpgradeBackups(folder, keep, stateDir string, report func(string, ...any)) {
 	entries, err := os.ReadDir(folder)
 	if err != nil {
 		report("could not list %s to remove older upgrade backups: %v", folder, err)
@@ -197,13 +204,28 @@ func removeOlderUpgradeBackups(folder, keep string, report func(string, ...any))
 			continue
 		}
 		path := filepath.Join(folder, entry.Name())
-		if note, err := os.Lstat(filepath.Join(path, upgradeNoteName)); err != nil || !note.Mode().IsRegular() {
+		if !upgradeBackupOf(path, stateDir) {
 			continue
 		}
 		if err := os.RemoveAll(path); err != nil {
 			report("could not remove the older upgrade backup %s: %v", path, err)
 		}
 	}
+}
+
+// upgradeBackupOf reports whether the folder backup holds a regular note
+// whose last line names stateDir.
+func upgradeBackupOf(backup, stateDir string) bool {
+	path := filepath.Join(backup, upgradeNoteName)
+	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() || info.Size() > 64<<10 {
+		return false
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
+	return lines[len(lines)-1] == upgradeNoteStatePrefix+stateDir
 }
 
 // quoteForShell quotes a path for the shell that the owner is likely to

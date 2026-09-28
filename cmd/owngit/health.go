@@ -201,6 +201,10 @@ func waitHealthy(stateDir string, timeout time.Duration) (string, error) {
 			}
 		}
 		if time.Now().After(deadline) {
+			if errors.Is(err, errOlderSchema) {
+				// Only the starting server upgrades, after its backup.
+				err = errors.New("it is still backing up the state before it upgrades it, which takes a while with large repositories; the log says when it is done")
+			}
 			return "", err
 		}
 		time.Sleep(500 * time.Millisecond)

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,65 +51,43 @@ func createBaselineStateForTest(t *testing.T) string {
 	return stateDir
 }
 
-// serve passes its log to openState, so the upgrade appears there once.
+// The upgrade is reported once, after the backup; a new database reports
+// nothing.
 func TestOpenStateReportsTheSchemaUpgradeOnce(t *testing.T) {
 	stateDir := createBaselineStateForTest(t)
 	var lines []string
-	report := func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
 	for range 2 {
-		store, err := openState(context.Background(), stateDir, report)
+		reported, err := openStateForTest(t, stateDir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.Close(); err != nil {
-			t.Fatal(err)
-		}
+		lines = append(lines, reported...)
 	}
 	if len(lines) != 3 || !strings.HasPrefix(lines[0], "backed up the state to ") || !strings.HasPrefix(lines[1], "to go back to the earlier OwnGit") || lines[2] != baselineUpgradeLine {
 		t.Fatalf("reported lines %q, want the backup, how to go back and %q, once", lines, baselineUpgradeLine)
 	}
-
-	var fresh []string
-	store, err := openState(context.Background(), filepath.Join(t.TempDir(), "state"), func(format string, args ...any) {
-		fresh = append(fresh, fmt.Sprintf(format, args...))
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if len(fresh) != 0 {
-		t.Fatalf("a new database reported %q", fresh)
+	if fresh, err := openStateForTest(t, filepath.Join(t.TempDir(), "state")); err != nil || len(fresh) != 0 {
+		t.Fatalf("a new database reported %q err=%v", fresh, err)
 	}
 }
 
-// An offline command writes the upgrade to standard error.
+// An offline command writes the backup and the upgrade to standard error.
 func TestOfflineCommandWritesTheSchemaUpgradeToStderr(t *testing.T) {
 	stateDir := createBaselineStateForTest(t)
 	run := func() string {
 		t.Helper()
-		stderrPath := filepath.Join(t.TempDir(), "stderr")
-		stderrFile, err := os.Create(stderrPath)
+		var stderr string
+		_, err := captureStdout(func() error {
+			var runErr error
+			stderr, runErr = captureStderr(func() error {
+				return runCommand("backup", []string{"--state-dir", stateDir, "--output", filepath.Join(t.TempDir(), "backup")})
+			})
+			return runErr
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		stdoutFile, err := os.Create(filepath.Join(t.TempDir(), "stdout"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		stderr, stdout := os.Stderr, os.Stdout
-		os.Stderr, os.Stdout = stderrFile, stdoutFile
-		runErr := runCommand("approve-host", []string{"--state-dir", stateDir, "owngit.example.test"})
-		os.Stderr, os.Stdout = stderr, stdout
-		stderrFile.Close()
-		stdoutFile.Close()
-		if runErr != nil {
-			t.Fatal(runErr)
-		}
-		data, err := os.ReadFile(stderrPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
+		return stderr
 	}
 	if got := run(); !strings.HasPrefix(got, "backed up the state to ") || !strings.HasSuffix(got, "\n"+baselineUpgradeLine+"\n") {
 		t.Fatalf("first run wrote %q to stderr", got)
