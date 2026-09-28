@@ -238,6 +238,88 @@ func TestUnfinishedSharingOffersTurningOnAgain(t *testing.T) {
 	}
 }
 
+// saveTailscaleGroup posts the Tailscale group as its form sends it: the
+// switch and, while sharing is off, the home network choice.
+func saveTailscaleGroup(t *testing.T, client *http.Client, base, csrf, switchValue string, homeNetwork bool) browserHTTPResult {
+	t.Helper()
+	values := tailscaleForm(csrf, webui.ActionSaveTailscale, "admin-password", homeNetwork)
+	if switchValue != "" {
+		values.Set("tailscale", switchValue)
+	}
+	return browserForm(t, client, base+"/settings/network", values, base)
+}
+
+// Saving the Tailscale group with the switch as it is changes nothing and
+// says so. The form has no home network choice while sharing is on, so the
+// save must not read one from it: the listen address that the owner opened
+// to the home network stays.
+func TestSavingTheUnchangedTailscaleGroupChangesNothing(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	client, base, csrf, _ := networkSettingsClient(t, app)
+	nothing := enText(webui.MsgSettingsNothing)
+
+	result := saveTailscaleGroup(t, client, base, csrf, "on", true)
+	if result.status != http.StatusSeeOther {
+		t.Fatalf("turning on with the home network: status=%d", result.status)
+	}
+	before, _, _ := savedNetwork(t, app.Store)
+	if host, _, _ := strings.Cut(before.Listen, ":"); host != "0.0.0.0" {
+		t.Fatalf("turning on with the home network saved listen %q", before.Listen)
+	}
+	writes := len(fake.Writes())
+	result = saveTailscaleGroup(t, client, base, csrf, "on", false)
+	after, _, _ := savedNetwork(t, app.Store)
+	if result.status != http.StatusOK || !strings.Contains(settingsGroup(t, result.body, "tailscale"), nothing) {
+		t.Errorf("unchanged save while on: status=%d location=%q", result.status, result.header.Get("Location"))
+	}
+	if after.Listen != before.Listen || len(fake.Writes()) != writes {
+		t.Errorf("unchanged save while on changed listen %q to %q, or wrote %q", before.Listen, after.Listen, fake.Writes()[writes:])
+	}
+
+	if result = saveTailscaleGroup(t, client, base, csrf, "", false); result.status != http.StatusSeeOther {
+		t.Fatalf("turning off: status=%d", result.status)
+	}
+	writes = len(fake.Writes())
+	result = saveTailscaleGroup(t, client, base, csrf, "", false)
+	if result.status != http.StatusOK || !strings.Contains(settingsGroup(t, result.body, "tailscale"), nothing) || len(fake.Writes()) != writes {
+		t.Errorf("unchanged save while off: status=%d writes=%q", result.status, fake.Writes()[writes:])
+	}
+}
+
+// Saving the group of sharing that is on but unfinished turns it on again
+// and keeps the home network choice made when it was turned on, which that
+// form does not offer again.
+func TestTurningOnAgainKeepsTheHomeNetwork(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	target := tailscale.Target(7654)
+	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{Listen: "0.0.0.0:7654"}}))
+	noErr(t, app.Store.SaveTailscaleServe(ctx, state.TailscaleServe{Name: tailscaletest.Name, HTTPSPort: 443, Target: target, Created: true}))
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve = tailscale.ServeConfig{
+			TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+			Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: target}}}},
+		}
+	})
+	client, base, csrf, body := networkSettingsClient(t, app)
+	if _, _, again := tailscaleOffers(body); !again {
+		t.Fatal("the unfinished state does not offer turning on again")
+	}
+	if strings.Contains(settingsGroup(t, body, "tailscale"), `name="home_network"`) {
+		t.Fatal("the form of sharing that is on offers the home network choice")
+	}
+	result := saveTailscaleGroup(t, client, base, csrf, "on", false)
+	if result.status != http.StatusSeeOther {
+		t.Fatalf("turning on again: status=%d", result.status)
+	}
+	if settings, _, _ := savedNetwork(t, app.Store); settings.Listen != "0.0.0.0:7654" {
+		t.Errorf("turning on again changed the saved listen address to %q", settings.Listen)
+	}
+	if report, err := app.Tailscale.Report(ctx); err != nil || !report.Ready {
+		t.Fatalf("after turning on again: %+v %v", report, err)
+	}
+}
+
 // A viewer who is not the administrator sees that the port is taken, but not
 // the backend addresses of other services, addresses under earlier names or
 // what Tailscale printed. An administrator session sees them.

@@ -109,24 +109,46 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	return info
 }
 
-// changeTailscale handles ActionTailscaleOn and ActionTailscaleOff after the
-// administrator password was verified.
+// changeTailscale handles the Tailscale group, and the ActionTailscaleOn and
+// ActionTailscaleOff forms of 1.1.2, after the administrator password was
+// verified.
 func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, action string) {
+	homeNetwork := new(bool)
+	*homeNetwork = formChecked(postValue(request, "home_network"))
 	// The switch of the Tailscale group sends what sharing should be.
 	if action == webui.ActionSaveTailscale {
+		var on bool
 		switch postValue(request, "tailscale") {
 		case "on":
-			action = webui.ActionTailscaleOn
+			action, on = webui.ActionTailscaleOn, true
 		case "off", "":
 			action = webui.ActionTailscaleOff
 		default:
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+			app.renderSettings(writer, request, settings, csrf, webui.ActionSaveTailscale, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
 			return
+		}
+		// Asking for what sharing already is changes nothing. Sharing that
+		// is on but unfinished is turned on again. A reading that failed
+		// leaves the decision to turning on or off, which reports why.
+		if report, err := app.Tailscale.Report(request.Context()); err == nil {
+			if on && report.On && !report.CanTurnOn || !on && !report.On {
+				app.renderSettings(writer, request, settings, csrf, webui.ActionSaveTailscale, []webui.Notice{webui.Info(webui.MsgSettingsNothing)}, http.StatusOK)
+				return
+			}
+		}
+		// The group offers the home network choice only while sharing is
+		// off. Turning on again keeps what was chosen then (see planListen).
+		_, wasOn, err := app.Store.TailscaleServe(request.Context())
+		if err != nil {
+			app.renderNotSaved(writer, request, settings, csrf, webui.ActionSaveTailscale, "sharing state read", err)
+			return
+		}
+		if wasOn {
+			homeNetwork = nil
 		}
 	}
 	if action == webui.ActionTailscaleOn {
-		homeNetwork := formChecked(postValue(request, "home_network"))
-		change, err := app.Tailscale.On(request.Context(), &homeNetwork, 0)
+		change, err := app.Tailscale.On(request.Context(), homeNetwork, 0)
 		if err != nil {
 			app.renderTailscaleRefusal(writer, request, settings, csrf, action, err)
 			return
