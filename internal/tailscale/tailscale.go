@@ -319,8 +319,11 @@ func (command Command) ServeConfig(ctx context.Context) (ServeConfig, error) {
 		return ServeConfig{}, &Error{Kind: KindOutdated}
 	}
 	config, err := ParseServeConfig(content)
+	if err != nil {
+		return ServeConfig{}, err
+	}
 	config.version, config.content = version, content
-	return config, err
+	return config, nil
 }
 
 // ServeHTTPS adds a background Serve endpoint to read, a configuration
