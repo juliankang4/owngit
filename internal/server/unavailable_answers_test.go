@@ -182,6 +182,7 @@ func TestIntendedStatesAreNotLogged(t *testing.T) {
 		{"a lock wait that ran out of time", expired, fmt.Errorf("%w (%w)", repository.ErrRepositoryInUse, context.DeadlineExceeded)},
 		{"a busy repository joined with a failed read", left, errors.Join(repository.ErrRepositoryInUse, disk)},
 	} {
+		endFailureWindows()
 		since := len(serverLog.String())
 		unavailable(check.request, "state read", check.err)
 		checkLoggedSteps(t, check.what, loggedFailures(serverLog, since), "state read")
@@ -189,6 +190,7 @@ func TestIntendedStatesAreNotLogged(t *testing.T) {
 
 	// An import stopped by its owner whose bookkeeping then failed is still
 	// a state failure that someone must look at.
+	endFailureWindows()
 	since := len(serverLog.String())
 	stopped := &importsync.Problem{Code: importsync.CodeStateUnavailable, Message: "state store is unavailable", Cause: errors.Join(context.Canceled, disk)}
 	if status, _, _, _ := importProblemHTTP(left, "import run", stopped); status != http.StatusServiceUnavailable {
@@ -264,6 +266,7 @@ func TestStateFailuresBehindAPIsAndPagesAreLogged(t *testing.T) {
 			return status
 		}, "network settings read"},
 	} {
+		endFailureWindows()
 		since := len(serverLog.String())
 		restore := hideTable(t, fixture.store, check.table)
 		status := check.send()
@@ -304,6 +307,7 @@ func TestInternalFaultsAndUnclassifiedRunsAreLogged(t *testing.T) {
 			return recorder.Code
 		}, http.StatusInternalServerError, "nil page"},
 	} {
+		endFailureWindows()
 		since := len(serverLog.String())
 		if status := check.status(); status != check.want {
 			t.Errorf("%s status=%d, want %d", check.what, status, check.want)

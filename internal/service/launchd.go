@@ -42,16 +42,26 @@ func LaunchAgentPath(home string) string {
 	return filepath.Join(home, "Library", "LaunchAgents", LaunchAgentLabel+".plist")
 }
 
-// LaunchAgentLogPath is the file that receives the agent's output.
+// LaunchAgentLogPath is the agent's server log, which "owngit serve
+// --log-file" keeps below 10 MiB with one older file beside it.
 func LaunchAgentLogPath(home string) string {
 	return filepath.Join(home, "Library", "Logs", "owngit", "owngit.log")
+}
+
+// LaunchAgentOutputPath is the file that receives the agent's standard
+// output and error. The log does not go there (see --service), so it holds
+// only what the log cannot, such as a crash report, and stays small.
+// launchd does not bound it.
+func LaunchAgentOutputPath(home string) string {
+	return filepath.Join(home, "Library", "Logs", "owngit", "owngit.stderr.log")
 }
 
 // RenderLaunchAgent writes the LaunchAgent property list of a plan with
 // ModeLaunchAgent. plan.Home is the user's home folder.
 //
-// The agent runs "owngit serve" with an absolute --state-dir, --no-open
-// and --headless=true or --headless=false at login (RunAtLoad) and again
+// The agent runs "owngit serve" with an absolute --state-dir, --no-open,
+// --log-file LaunchAgentLogPath, --service and --headless=true or
+// --headless=false at login (RunAtLoad) and again
 // whenever it ends (KeepAlive). It loads in the desktop session and, for an
 // install over SSH while the user is not logged in at the desktop, in the
 // user's background session; launchd never runs both at once. Like the
@@ -70,7 +80,7 @@ func RenderLaunchAgent(plan Plan) (string, error) {
 	// --headless is always explicit: the agent can start in the background
 	// domain while nobody is logged in on the screen, where serve would
 	// otherwise decide again that the Mac has no screen.
-	arguments := []string{plan.Executable, "serve", "--state-dir", plan.StateDir, "--no-open", "--headless=" + strconv.FormatBool(plan.Headless)}
+	arguments := []string{plan.Executable, "serve", "--state-dir", plan.StateDir, "--no-open", "--log-file", LaunchAgentLogPath(plan.Home), "--service", "--headless=" + strconv.FormatBool(plan.Headless)}
 	var text strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&text, format+"\n", args...) }
 	var failed error
@@ -120,11 +130,11 @@ func RenderLaunchAgent(plan Plan) (string, error) {
 	// SIGTERM lets OwnGit end Git processes, imports and checks in order.
 	line("\t<key>ExitTimeOut</key>")
 	line("\t<integer>150</integer>")
-	log := LaunchAgentLogPath(plan.Home)
+	output := LaunchAgentOutputPath(plan.Home)
 	line("\t<key>StandardOutPath</key>")
-	line("\t%s", str(log))
+	line("\t%s", str(output))
 	line("\t<key>StandardErrorPath</key>")
-	line("\t%s", str(log))
+	line("\t%s", str(output))
 	line("</dict>")
 	line("</plist>")
 	if failed != nil {
@@ -463,12 +473,12 @@ var ErrNotLoaded = errors.New("launchd did not load the OwnGit service")
 // log folder it created are removed, so a failed install leaves nothing.
 func InstallLaunchAgent(ctx context.Context, run Runner, plan Plan, agent string, uid int, gui bool) (string, error) {
 	path := LaunchAgentPath(plan.Home)
-	log := LaunchAgentLogPath(plan.Home)
+	logs := []string{LaunchAgentLogPath(plan.Home), LaunchAgentOutputPath(plan.Home)}
 	previous, readErr := os.ReadFile(path)
 	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 		return "", readErr
 	}
-	_, logMissing := os.Stat(filepath.Dir(log))
+	_, logMissing := os.Stat(filepath.Dir(logs[0]))
 	loadedIn := LaunchAgentStatus(ctx, run, uid).Domain
 	undo := func() {
 		if readErr == nil {
@@ -480,22 +490,29 @@ func InstallLaunchAgent(ctx context.Context, run Runner, plan Plan, agent string
 		}
 		_ = os.Remove(path)
 		if errors.Is(logMissing, os.ErrNotExist) {
-			_ = os.Remove(log)
-			_ = os.Remove(filepath.Dir(log))
+			for _, log := range logs {
+				_ = os.Remove(log)
+			}
+			_ = os.Remove(filepath.Dir(logs[0]))
 		}
 	}
 	// launchd does not create the log folder, and the job does not start
-	// without it. It would create the log file readable by everyone, so the
-	// file is created first, for the owner only.
-	if err := os.MkdirAll(filepath.Dir(log), 0o700); err != nil {
+	// without it. It would create the output file readable by everyone, so
+	// both files are created first, or made, for the owner only.
+	if err := os.MkdirAll(filepath.Dir(logs[0]), 0o700); err != nil {
 		return "", err
 	}
-	logFile, err := os.OpenFile(log, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		undo()
-		return "", err
+	for _, log := range logs {
+		logFile, err := os.OpenFile(log, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+		if err == nil {
+			err = logFile.Chmod(0o600)
+			logFile.Close()
+		}
+		if err != nil {
+			undo()
+			return "", err
+		}
 	}
-	logFile.Close()
 	if err := writeAgentFile(path, agent); err != nil {
 		undo()
 		return "", err

@@ -4,18 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
-func TestPathIsCutWithItsLength(t *testing.T) {
+func TestRequestIsCutWithItsLength(t *testing.T) {
 	whole := "/" + strings.Repeat("a", maximumPath-1)
-	if got := Path(whole); got != whole {
-		t.Fatalf("a path of %d bytes was changed to %q", len(whole), got)
+	if got, want := Request(httptest.NewRequest("PROPFIND", whole, nil)), "PROPFIND "+whole; got != want {
+		t.Fatalf("Request=%q, want %q", got, want)
 	}
-	long := whole + "b%0A"
-	if got, want := Path(long), whole+"...(cut, 260 bytes)"; got != want {
-		t.Fatalf("Path=%q, want %q", got, want)
+	method := strings.Repeat("M", maximumMethod+1)
+	long := httptest.NewRequest(method, whole+"b%0A", nil)
+	if got, want := Request(long), method[:maximumMethod]+"...(cut, 33 bytes) "+whole+"...(cut, 260 bytes)"; got != want {
+		t.Fatalf("Request=%q, want %q", got, want)
 	}
 }
 
@@ -62,5 +66,32 @@ func TestIntendedOnlyWhenEveryBranchIs(t *testing.T) {
 		if got := Intended(check.err, errIntended, context.Canceled); got != check.want {
 			t.Errorf("Intended(%s)=%v, want %v", check.what, got, check.want)
 		}
+	}
+}
+
+// A long cause keeps its beginning, which names what failed, and its end,
+// which holds the deepest cause, and is marked with its full length.
+func TestLongCauseIsCutWithItsLength(t *testing.T) {
+	middle := strings.Repeat("progress line\n", 5000)
+	err := fmt.Errorf("git fetch: exit status 128: %s", middle+"fatal: 한글 end")
+	text := err.Error()
+	got := Cause(err)
+	if len(got) >= 4*maximumCause+64 {
+		t.Fatalf("Cause is %d bytes for a %d-byte cause", len(got), len(text))
+	}
+	if !strings.HasPrefix(got, `"git fetch: exit status 128: progress line\n`) || !strings.HasSuffix(got, `fatal: 한글 end"`) ||
+		!strings.Contains(got, fmt.Sprintf(`"...(cut, %d bytes)..."`, len(text))) {
+		t.Fatalf("Cause=%.120s...%s", got, got[len(got)-80:])
+	}
+	// A run of bytes that are not UTF-8 is cut at the same bound; each byte
+	// is quoted as \xHH, so this is the longest a cause can be on a line.
+	invalid := errors.New("git: " + strings.Repeat("\x80", 70000))
+	if got := Cause(invalid); len(got) > 4*(maximumCause+2*(utf8.UTFMax-1))+4+len("...(cut, 70005 bytes)...") ||
+		!strings.HasPrefix(got, `"git: \x80`) || !strings.Contains(got, "...(cut, 70005 bytes)...") {
+		t.Fatalf("Cause of invalid bytes is %d bytes: %.60s", len(got), got)
+	}
+	short := errors.New(strings.Repeat("x", maximumCause))
+	if got, want := Cause(short), strconv.Quote(short.Error()); got != want {
+		t.Fatal("a cause of the maximum length was cut")
 	}
 }

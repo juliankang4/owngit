@@ -1,42 +1,73 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+
+	"owngit/internal/version"
 )
 
 // logFileLimit is the size at which the server log moves to FILE.1,
 // replacing the older one, and a new file starts.
 const logFileLimit = 10 << 20
 
-// writeLogTo makes the standard logger write to path as well, for a
-// service whose output nobody keeps. It returns a function that restores
-// the logger and closes the file.
-func writeLogTo(path string) (func(), error) {
+// writeLogTo makes the standard logger write to path, kept below
+// logFileLimit. A service's log goes only there: a service's own output is
+// discarded (a Windows task) or kept in a file that nothing bounds (launchd,
+// Homebrew), so it keeps only what the log cannot hold, such as a crash
+// report. Otherwise the log goes to the earlier output as well. It returns a
+// function that restores the logger and closes the file.
+//
+// The log opens only when it takes its first lines: a line naming this run,
+// and a warning when the older file beside it stays readable by others. The
+// older file keeps what it holds either way, so that alone does not keep
+// OwnGit from starting. A log that cannot take them, for example because it
+// is full and cannot rotate, is not opened: the error says why and what the
+// lines said, and serve reports it, as for a log that cannot be opened.
+func writeLogTo(path string, service bool) (func(), error) {
 	file, err := openRotatingFile(path, logFileLimit)
 	if err != nil {
 		return nil, fmt.Errorf("open the log file: %w", err)
 	}
 	previous := log.Writer()
-	log.SetOutput(io.MultiWriter(previous, file))
-	return func() {
+	restore := func() {
 		log.SetOutput(previous)
 		file.Close()
-	}, nil
+	}
+	if service {
+		log.SetOutput(file)
+	} else {
+		log.SetOutput(logAndEarlier{file: file, earlier: previous})
+	}
+	lines := []string{fmt.Sprintf("OwnGit %s (process %d) starts, logging to this file", version.Version, os.Getpid())}
+	if err := os.Chmod(path+".1", 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		lines = append(lines, fmt.Sprintf("the older log file could not be made private: %v", err))
+	}
+	for _, line := range lines {
+		if err := log.Output(1, line); err != nil {
+			restore()
+			return nil, fmt.Errorf("write the log file: %w (it would have said: %s)", err, strings.Join(lines, "; "))
+		}
+	}
+	return restore, nil
 }
 
 // rotatingFile appends to a file and moves it aside at a size limit.
 type rotatingFile struct {
-	mu    sync.Mutex
-	path  string
-	limit int64
-	file  *os.File
-	size  int64
+	mu     sync.Mutex
+	path   string
+	limit  int64
+	file   *os.File
+	size   int64
+	broken error // why a failed rotation left no file
 }
 
 func openRotatingFile(path string, limit int64) (*rotatingFile, error) {
@@ -47,9 +78,33 @@ func openRotatingFile(path string, limit int64) (*rotatingFile, error) {
 	return rotating, rotating.open()
 }
 
+// logAndEarlier writes each log line to the log file and to the earlier
+// output, each whatever the other did. It reports the file's result: the
+// file is the log that confirms the error that ends serve (see loggedError),
+// and an earlier output that fails has nowhere else to say so.
+type logAndEarlier struct {
+	file    *rotatingFile
+	earlier io.Writer
+}
+
+func (outputs logAndEarlier) Write(line []byte) (int, error) {
+	_, _ = outputs.earlier.Write(line)
+	return outputs.file.Write(line)
+}
+
+// open opens the log file for appending and makes it private to the owner,
+// whether it is new, was left by an earlier run, or was just rotated: a
+// file created by a service manager, such as an earlier Homebrew service,
+// can be readable by every account. A log that cannot be made private is
+// not opened, since it would hold this run's causes where other accounts
+// may read them; the error keeps OwnGit from starting and says why.
 func (rotating *rotatingFile) open() error {
 	file, err := os.OpenFile(rotating.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
+		return err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
 		return err
 	}
 	info, err := file.Stat()
@@ -65,16 +120,20 @@ func (rotating *rotatingFile) Write(data []byte) (int, error) {
 	rotating.mu.Lock()
 	defer rotating.mu.Unlock()
 	if rotating.file == nil {
-		return 0, errors.New("log file is closed")
+		return 0, cmp.Or(rotating.broken, errors.New("log file is closed"))
 	}
 	if rotating.size > 0 && rotating.size+int64(len(data)) > rotating.limit {
 		rotating.file.Close()
 		rotating.file = nil
+		// A rotation that failed leaves no file to write to; every later
+		// write reports why.
 		if err := os.Rename(rotating.path, rotating.path+".1"); err != nil {
-			return 0, err
+			rotating.broken = fmt.Errorf("rotate the log file: %w", err)
+			return 0, rotating.broken
 		}
 		if err := rotating.open(); err != nil {
-			return 0, err
+			rotating.broken = fmt.Errorf("reopen the log file: %w", err)
+			return 0, rotating.broken
 		}
 	}
 	written, err := rotating.file.Write(data)

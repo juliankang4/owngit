@@ -51,18 +51,34 @@ func main() {
 		markdown.SetHelper(executable)
 	}
 	if err := run(os.Args[1:]); err != nil {
-		// A completed check run already wrote its JSON result and only needs
-		// its conventional exit code.
-		var exit *checkExit
-		if errors.As(err, &exit) {
-			os.Exit(exit.code)
-		}
-		if !writeStructuredCommandError(os.Stdout, err) {
-			log.Printf("error: %v", err)
-		}
-		os.Exit(1)
+		os.Exit(reportError(os.Stdout, err))
 	}
 }
+
+// reportError writes err where the command reports it and returns the exit
+// code. An error is written once, to the log of the run that met it: an
+// error that serve's log file confirmed is not written again, neither to
+// standard error, which a service keeps in a file nothing bounds, nor as
+// JSON to stdout. Any other error with a code is written as JSON to stdout,
+// and the rest to standard error.
+func reportError(stdout io.Writer, err error) int {
+	// A completed check run already wrote its JSON result and only needs
+	// its conventional exit code.
+	var exit *checkExit
+	if errors.As(err, &exit) {
+		return exit.code
+	}
+	var logged loggedError
+	if !errors.As(err, &logged) && !writeStructuredCommandError(stdout, err) {
+		log.Printf("error: %v", err)
+	}
+	return 1
+}
+
+// loggedError is an error that the run's log confirmed it wrote.
+type loggedError struct{ error }
+
+func (err loggedError) Unwrap() error { return err.error }
 
 func run(arguments []string) error {
 	// Global help must be handled before command dispatch: the flag package
@@ -249,8 +265,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
 	headless := flags.Bool("headless", false, "whether this computer has no screen for setup (default: detected); before setup, with no saved listen address, a computer without a screen listens on every address and saves that")
-	logFile := flags.String("log-file", "", "also write the server log to this `file` (kept below 10 MB, with one older file beside it)")
-	asService := flags.Bool("service", false, "run as the service that \"owngit service install\" set up (on Windows: without administrator rights, and \"owngit service stop\" stops it in order)")
+	logFile := flags.String("log-file", "", "also write the server log to this `file`, or only there with --service (kept below 10 MB, with one older file beside it)")
+	asService := flags.Bool("service", false, "run as the background service that \"owngit service install\" or Homebrew set up: with --log-file the log goes only to that file (on Windows also: without administrator rights, and \"owngit service stop\" stops it in order)")
 	noUpdateCheck := flags.Bool("no-update-check", false, "never contact GitHub to check for a newer OwnGit release, whatever the Settings page says")
 	var allowedHosts, trustedProxies stringList
 	flags.Var(&allowedHosts, "allowed-host", "additional accepted `host` name (repeatable)")
@@ -266,15 +282,22 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return errors.New("serve --open and --no-open cannot be used together")
 	}
 	if *logFile != "" {
-		closeLog, err := writeLogTo(*logFile)
+		closeLog, err := writeLogTo(*logFile, *asService)
 		if err != nil {
 			return err
 		}
-		// The error that ends serve reaches the log before it closes; a
-		// service keeps no other output.
+		// The error that ends serve reaches the log before it closes, and
+		// only there (see reportError), when the log confirms the write.
+		// Otherwise main writes it, with why the log could not. It goes
+		// through the standard logger, which reports the write, rather than
+		// logf, which does not.
 		defer func() {
 			if serveErr != nil {
-				logf("error: %v", serveErr)
+				if err := log.Output(1, "error: "+serveErr.Error()); err != nil {
+					serveErr = fmt.Errorf("%w (the log file did not record this: %v)", serveErr, err)
+				} else {
+					serveErr = loggedError{serveErr}
+				}
 			}
 			closeLog()
 		}()

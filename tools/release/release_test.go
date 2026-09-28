@@ -827,6 +827,18 @@ func TestPackagingRendering(t *testing.T) {
 	if !strings.Contains(formula, "on_macos do\n    on_arm do") {
 		t.Fatal("the macOS branch does not require arm64")
 	}
+	// The service writes its log to a file owngit bounds, and Homebrew's
+	// output file keeps only what the log cannot hold.
+	for _, line := range []string{
+		`run [opt_bin/"owngit", "serve", "-no-open", "--log-file", var/"log/owngit.log", "--service"]`,
+		`log_path var/"log/owngit.stderr.log"`,
+		`error_log_path var/"log/owngit.stderr.log"`,
+		`chmod 0600, var/"log/owngit.stderr.log"`,
+	} {
+		if !strings.Contains(formula, "\n    "+line+"\n") {
+			t.Fatalf("the formula service lacks %s", line)
+		}
+	}
 	installer := readText(t, filepath.Join(ready, "Example.Owngit.installer.yaml"))
 	document, err := readManifest(manifestPath)
 	noErr(t, err)

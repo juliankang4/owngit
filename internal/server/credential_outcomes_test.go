@@ -117,6 +117,7 @@ func TestCredentialRevokeFailureIsNotReportedAsAbsence(t *testing.T) {
 		if status != http.StatusServiceUnavailable || code != "state_unavailable" || message != test.apiMessage {
 			t.Fatalf("%s API revoke failure: %d %s %q", test.name, status, code, message)
 		}
+		endFailureWindows()
 		page := browserForm(t, client, server.URL+test.pageURL, url.Values{
 			"csrf": {csrf}, "action": {test.action}, "credential_id": {test.id}, "admin_password": {"admin-password"},
 		}, server.URL)
@@ -262,6 +263,7 @@ func TestCredentialScreenFailuresAreLogged(t *testing.T) {
 		if page := browserGET(t, client, server.URL+test.pageURL); page.status != http.StatusServiceUnavailable {
 			t.Fatalf("%s visit with unreadable records: status=%d", test.kind, page.status)
 		}
+		endFailureWindows()
 		if page := browserForm(t, client, server.URL+test.pageURL, test.values, server.URL); page.status != http.StatusServiceUnavailable {
 			t.Fatalf("%s issue with an unreadable list: status=%d", test.kind, page.status)
 		}

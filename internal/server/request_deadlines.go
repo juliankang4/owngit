@@ -86,7 +86,7 @@ func startDeadlines(writer http.ResponseWriter, request *http.Request, pageTimeo
 	deadlines := &requestDeadlines{
 		controller: http.NewResponseController(writer), body: body, parent: request.Context(),
 		page: page, operation: started.Add(operationTimeout), reserve: operationReserve, current: page,
-		name: request.Method + " " + logtext.Path(request.URL.EscapedPath()),
+		name: logtext.Request(request),
 	}
 	_ = deadlines.controller.SetReadDeadline(page)
 	_ = deadlines.controller.SetWriteDeadline(page)

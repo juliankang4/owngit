@@ -69,6 +69,7 @@ func TestSessionThatCannotBeReadIsUnavailable(t *testing.T) {
 			return status, response.Header
 		}, "session read", "GET /api/v1/repositories/project/helper-credentials"},
 	} {
+		endFailureWindows()
 		since := len(serverLog.String())
 		status, header := check.do()
 		if status != http.StatusServiceUnavailable || header.Get("Location") != "" || header.Get("WWW-Authenticate") != "" {
@@ -141,6 +142,7 @@ func TestSetupSessionThatCannotBeReadIsUnavailable(t *testing.T) {
 			if status, page := browser.do(http.MethodGet, "/setup", nil); status != http.StatusServiceUnavailable {
 				t.Errorf("setup page status=%d, redemption form shown=%v", status, strings.Contains(page, `action="/setup/redeem"`))
 			}
+			endFailureWindows()
 			if status := browser.status(http.MethodPost, "/setup", url.Values{
 				"csrf": {"any"}, "storage_path": {repositoryRoot}, "access_mode": {"open"}, "admin_password": {"admin-password-one"},
 			}); status != http.StatusServiceUnavailable {

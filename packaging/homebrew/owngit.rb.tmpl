@@ -36,12 +36,23 @@ class Owngit < Formula
     prefix.install "THIRD_PARTY_NOTICES"
   end
 
-  # The first start writes the setup file path to this log.
+  # launchd would create the service's output file readable by everyone, so
+  # it is created first, for the owner only, as owngit creates its log.
+  def post_install
+    (var/"log").mkpath
+    touch var/"log/owngit.stderr.log"
+    chmod 0600, var/"log/owngit.stderr.log"
+  end
+
+  # The server log, where the first start writes the setup file path, is
+  # var/log/owngit.log, which owngit keeps below 10 MiB with one older file
+  # beside it. The service's own output holds only what the log cannot,
+  # such as a crash report.
   service do
-    run [opt_bin/"owngit", "serve", "-no-open"]
+    run [opt_bin/"owngit", "serve", "-no-open", "--log-file", var/"log/owngit.log", "--service"]
     keep_alive true
-    log_path var/"log/owngit.log"
-    error_log_path var/"log/owngit.log"
+    log_path var/"log/owngit.stderr.log"
+    error_log_path var/"log/owngit.stderr.log"
   end
 
   test do

@@ -17,8 +17,10 @@ import (
 )
 
 // loggedFailures returns the failures, unavailable or internal, logged after
-// offset since.
+// offset since. The failures counted so far are reported first, so a failure
+// logged twice shows as its line and a count line, not as one line.
 func loggedFailures(serverLog *lockedLog, since int) []string {
+	failures.flush()
 	var lines []string
 	for _, line := range strings.Split(serverLog.String()[since:], "\n") {
 		if strings.Contains(line, "could not be completed") {
@@ -99,6 +101,7 @@ func TestPullRequestAndRestoreFailuresLogTheirCauseOnce(t *testing.T) {
 			"expected_head": {preview.ExpectedHead}, "confirm": {"restore"},
 		}, "restore apply"},
 	} {
+		endFailureWindows()
 		since := len(serverLog.String())
 		failPath := failGitWhile(t, fixture.app, check.pattern)
 		noErr(t, os.WriteFile(failPath, nil, 0o600))
@@ -187,6 +190,7 @@ func TestStateFailuresBehindRepositoryPagesAreLogged(t *testing.T) {
 			}))()
 		}, []string{"configured check consent change"}},
 	} {
+		endFailureWindows()
 		since := len(serverLog.String())
 		if status := check.send(); status != http.StatusServiceUnavailable {
 			t.Errorf("%s status=%d, want 503", check.what, status)
@@ -195,6 +199,7 @@ func TestStateFailuresBehindRepositoryPagesAreLogged(t *testing.T) {
 	}
 
 	// With the state readable again the same pages log nothing.
+	endFailureWindows()
 	since := len(serverLog.String())
 	for _, path := range []string{"/", "/repositories/project", "/repositories/project/pull-requests", "/repositories/project/pull-requests/1"} {
 		if status := get(path); status != http.StatusOK {

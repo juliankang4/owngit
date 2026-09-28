@@ -24,13 +24,26 @@ func refuseWrites(t *testing.T, store *state.Store, trigger, event string) {
 	noErr(t, store.Exec(context.Background(), `CREATE TRIGGER `+trigger+` BEFORE `+event+` BEGIN SELECT RAISE(ABORT, 'injected failure'); END`))
 }
 
+// endFailureWindows reports the failures counted so far and ends their
+// windows, so the next request logs its own line even when an earlier
+// request of the test failed the same way. A test that checks which request
+// logged a failure calls it between such requests.
+func endFailureWindows() { failures.flush() }
+
 // captureServerLog sends the standard logger to a buffer for this test.
+// Failures counted before are reported to the earlier output first, so this
+// test's first failure of each kind is logged, and the failures this test
+// counted are reported into its buffer when it ends.
 func captureServerLog(t *testing.T) *lockedLog {
 	t.Helper()
+	failures.flush()
 	serverLog := &lockedLog{}
 	previous := log.Writer()
 	log.SetOutput(serverLog)
-	t.Cleanup(func() { log.SetOutput(previous) })
+	t.Cleanup(func() {
+		failures.flush()
+		log.SetOutput(previous)
+	})
 	return serverLog
 }
 
@@ -141,6 +154,7 @@ func TestSignInThatCouldNotFinishIsUnavailable(t *testing.T) {
 	noErr(t, fixture.store.Exec(context.Background(), `DROP TRIGGER refuse_session`))
 
 	failAttemptClearing(t, fixture.store)
+	endFailureWindows()
 	result = browserForm(t, client, server.URL+"/login", url.Values{"csrf": {csrf}, "password": {"shared-password"}, "next": {"/"}}, server.URL)
 	requireUnavailableNotice(t, "shared sign-in", result, webui.MsgLoginFailed)
 	parsed, _ := url.Parse(server.URL)
@@ -239,6 +253,7 @@ func TestAdminFormsReportAPasswordCheckThatCouldNotFinish(t *testing.T) {
 	} {
 		form.values.Set("csrf", csrf)
 		form.values.Set("admin_password", "admin-password")
+		endFailureWindows()
 		result := browserForm(t, client, server.URL+form.path, form.values, server.URL)
 		requireUnavailableNotice(t, form.name, result, webui.MsgAdminFailed)
 		if (form.kept != "" && !strings.Contains(result.body, form.kept)) || !form.unchanged() {

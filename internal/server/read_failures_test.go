@@ -175,6 +175,7 @@ func TestRepositoryReadFailuresLogTheirCauseOnce(t *testing.T) {
 		{"ls-tree", "/raw?ref=refs/heads/main&path=docs/a.txt", http.StatusServiceUnavailable, []string{"GET /repositories/logged/raw: file read"}},
 		{"cat-file", "/archive?format=zip&ref=" + commit, http.StatusServiceUnavailable, []string{"GET /repositories/logged/archive: archive ref read"}},
 	} {
+		endFailureWindows()
 		since := len(serverLog.String())
 		failPath := failGitWhile(t, app, check.pattern)
 		noErr(t, os.WriteFile(failPath, nil, 0o600))
@@ -193,6 +194,7 @@ func TestRepositoryReadFailuresLogTheirCauseOnce(t *testing.T) {
 		}
 	}
 
+	endFailureWindows()
 	since := len(serverLog.String())
 	for _, path := range []string{"", "/raw?ref=refs/heads/main&path=docs/a.txt", "/archive?format=zip&ref=" + commit} {
 		if _, status := dashboardGET(t, client, base+path); status != http.StatusOK {

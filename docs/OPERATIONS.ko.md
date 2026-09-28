@@ -112,6 +112,8 @@ sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 
 에이전트는 명령을 실행한 경로(예: `/usr/local/bin/owngit`)로 OwnGit을 시작하며, 본인이나 root가 아닌 계정이 바꿀 수 있는 실행 파일은 거부합니다. macOS의 `wheel`과 `admin` 그룹에 쓰기 권한이 있는 것은 받아들입니다. `owngit service`가 만들지 않은 launchd 작업이 이미 `owngit serve`를 실행하고 있으면 명령은 그 작업을 알려 주고 아무것도 바꾸지 않습니다. 먼저 그 작업을 내리고 지우세요. 예를 들어 `launchctl bootout gui/$(id -u)/LABEL`로 내릴 수 있습니다.
 
+서비스는 로그 폴더(`~/Library/Logs/owngit`, Homebrew는 `$(brew --prefix)/var/log`)에 파일 두 개를 둡니다. `owngit.log`는 서버 로그입니다. OwnGit이 직접 쓰고(`--service`와 함께 준 `--log-file`) 내 계정만 읽을 수 있게 두며 10MB 아래로 유지하고, 그 크기에 이르면 `owngit.log.1`로 옮기고 이전 `.1` 파일을 대신합니다. `owngit.stderr.log`에는 launchd가 OwnGit의 출력에서 모은 내용이 들어가는데, 로그가 담지 못하는 것(예를 들어 비정상 종료 보고나 OwnGit이 로그를 열지 못한 오류)뿐이라 작게 유지됩니다. 이 파일의 크기는 launchd가 제한하지 않습니다. 이전 버전으로 설치한 서비스는 `owngit service install`을 다시 실행하기 전까지(Homebrew는 업그레이드한 뒤 `brew services restart owngit`을 실행하기 전까지) 모든 내용을 크기 제한 없는 `owngit.log` 하나에 계속 씁니다.
+
 ### 서비스가 할 수 있는 일
 
 내 계정으로 실행하는 서비스는 내 계정이 할 수 있는 일을 모두 할 수 있고, 푸시된 커밋에서 실행하는 체크도 마찬가지입니다. 다른 사람이 푸시할 수 있다면 Linux에서 OwnGit을 root로 설치해 별도의 `owngit` 계정으로 실행하세요.

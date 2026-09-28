@@ -404,9 +404,12 @@ func (app *App) StartBackground(ctx context.Context) {
 	}()
 }
 
-// StopBackground cancels background activity counting and waits for it.
+// StopBackground cancels background activity counting and waits for it,
+// and logs the failures counted since their last line, whose windows the
+// stop would otherwise end unreported.
 func (app *App) StopBackground() {
 	app.activity.stop()
+	failures.flush()
 }
 
 // refSnapshots reads every repository's ref snapshot with bounded

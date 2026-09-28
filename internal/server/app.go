@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -479,12 +478,14 @@ func failureText(status int) webui.MessageCode {
 // a side panel, a choice that is right whatever the read would have given,
 // and a Git request, which githttp answers. The line holds only the method
 // and escaped path, cut when long, never the request's password, cookie or
-// token, and the cause is quoted onto it (see logtext).
+// token, and the cause is quoted and bounded (see logtext). The same step
+// and cause met again soon after is counted rather than logged again (see
+// failureLog).
 func logFailure(request *http.Request, step string, err error) {
 	if intendedCause(request.Context(), err) {
 		return
 	}
-	log.Printf("%s %s: %s could not be completed: %s", request.Method, logtext.Path(request.URL.EscapedPath()), step, logtext.Cause(err))
+	failures.write(logtext.Request(request), step, logtext.Chain(err))
 }
 
 // intendedCause reports whether err, from work done under ctx, holds only

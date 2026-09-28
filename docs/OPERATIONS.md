@@ -112,6 +112,8 @@ To update, unpack or install the new release outside `%ProgramFiles%\OwnGit` and
 
 The agent starts OwnGit by the path you ran the command with, for example `/usr/local/bin/owngit`, and refuses a binary that an account other than yours or root could change; group write by macOS's `wheel` and `admin` groups is accepted. If a launchd job that `owngit service` did not create already runs `owngit serve`, the command names it and changes nothing; unload and remove that job first, for example with `launchctl bootout gui/$(id -u)/LABEL`.
 
+The service keeps two files in the log folder (`~/Library/Logs/owngit`, or `$(brew --prefix)/var/log` for Homebrew). `owngit.log` is the server log: OwnGit writes it itself (`--log-file` with `--service`), readable only by your account, and keeps it below 10 MB, moving it to `owngit.log.1` (which replaces the older one) when it reaches that size. `owngit.stderr.log` receives what launchd collects from OwnGit's output, which is only what the log cannot hold, such as a crash report or the error that kept OwnGit from opening its log, so it stays small; launchd does not limit its size. An installation from an earlier version keeps writing everything to one unlimited `owngit.log` until you run `owngit service install` again, or, for Homebrew, upgrade and run `brew services restart owngit`.
+
 ### What the service may do
 
 A service that runs as your account can do what your account can do, and so can the checks that run from pushed commits. If other people can push, install OwnGit as root on Linux so that it runs as the separate `owngit` account.

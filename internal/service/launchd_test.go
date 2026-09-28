@@ -39,18 +39,21 @@ func TestRenderLaunchAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v\n%s", err, agent)
 	}
+	// The server log is OwnGit's own file, which it bounds; launchd's output
+	// file keeps only what the log cannot hold, such as a crash report.
 	log := "/Users/example/Library/Logs/owngit/owngit.log"
+	output := "/Users/example/Library/Logs/owngit/owngit.stderr.log"
 	want := map[string]any{
 		"Label":                  LaunchAgentLabel,
-		"ProgramArguments":       []any{plan.Executable, "serve", "--state-dir", plan.StateDir, "--no-open", "--headless=false"},
+		"ProgramArguments":       []any{plan.Executable, "serve", "--state-dir", plan.StateDir, "--no-open", "--log-file", log, "--service", "--headless=false"},
 		"EnvironmentVariables":   map[string]any{"PATH": plan.Path},
 		"RunAtLoad":              true,
 		"KeepAlive":              true,
 		"LimitLoadToSessionType": []any{"Aqua", "Background"},
 		"Umask":                  "63",
 		"ExitTimeOut":            "150",
-		"StandardOutPath":        log,
-		"StandardErrorPath":      log,
+		"StandardOutPath":        output,
+		"StandardErrorPath":      output,
 	}
 	if !reflect.DeepEqual(plist, want) {
 		t.Fatalf("agent =\n%#v\nwant\n%#v", plist, want)
@@ -68,7 +71,7 @@ func TestRenderLaunchAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stringList(plist["ProgramArguments"]); !slices.Equal(got, []string{plan.Executable, "serve", "--state-dir", plan.StateDir, "--no-open", "--headless=true"}) {
+	if got := stringList(plist["ProgramArguments"]); !slices.Equal(got, []string{plan.Executable, "serve", "--state-dir", plan.StateDir, "--no-open", "--log-file", log, "--service", "--headless=true"}) {
 		t.Fatalf("headless arguments: %q", got)
 	}
 	if _, found := plist["EnvironmentVariables"]; found {
@@ -395,8 +398,10 @@ func TestLaunchAgentInstallIsIdempotentAndUninstallKeepsData(t *testing.T) {
 	if err != nil || logs.Mode().Perm() != 0o700 {
 		t.Fatalf("log folder: %v, %v", logs, err)
 	}
-	if log, err := os.Stat(LaunchAgentLogPath(home)); err != nil || log.Mode().Perm() != 0o600 {
-		t.Fatalf("log file: %v, %v", log, err)
+	for _, name := range []string{"owngit.log", "owngit.stderr.log"} {
+		if log, err := os.Stat(filepath.Join(filepath.Dir(LaunchAgentLogPath(home)), name)); err != nil || log.Mode().Perm() != 0o600 {
+			t.Fatalf("%s: %v, %v", name, log, err)
+		}
 	}
 
 	if err := UninstallLaunchAgent(ctx, fake.run, 501, path); err != nil || fake.loaded != "" {
@@ -575,6 +580,35 @@ func TestDesktopUID(t *testing.T) {
 	} {
 		if got := DesktopUID(test.uid, test.console); got != test.want {
 			t.Errorf("DesktopUID(%d, %d) = %d, want %d", test.uid, test.console, got, test.want)
+		}
+	}
+}
+
+// Log files left readable by everyone, as an earlier install or launchd
+// can leave them, are made private to the owner by the next install.
+func TestLaunchAgentInstallMakesExistingLogsPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are Unix permissions")
+	}
+	home := t.TempDir()
+	plan := launchAgentPlan(home)
+	logs := []string{LaunchAgentLogPath(home), LaunchAgentOutputPath(home)}
+	for _, log := range logs {
+		writeFile(t, log, "earlier output\n")
+		if err := os.Chmod(log, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agent, err := RenderLaunchAgent(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallLaunchAgent(context.Background(), (&fakeLaunchd{gui: true}).run, plan, agent, 501, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, log := range logs {
+		if info, err := os.Stat(log); err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s: %v, %v", log, info, err)
 		}
 	}
 }
