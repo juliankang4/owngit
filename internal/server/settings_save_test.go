@@ -180,15 +180,17 @@ func TestTailscaleChangeThatWasNotSavedSaysWhetherTailscaleChanged(t *testing.T)
 // pass on another try, so it is unavailable and its cause is logged.
 func TestTailscaleFailureThatMayPassOnAnotherTryIsUnavailable(t *testing.T) {
 	for _, check := range []struct {
-		name, writeError string
-		status           int
-		logged           []string
+		name   string
+		fake   tailscaletest.State
+		status int
+		logged []string
 	}{
-		{"a refused permission", "Access denied: serve config denied", http.StatusConflict, nil},
-		{"an unexplained failure", "synthetic unexplained failure", http.StatusServiceUnavailable, []string{"Tailscale sharing change"}},
+		{"a refused permission", tailscaletest.State{WriteDenied: true}, http.StatusConflict, nil},
+		{"an unexplained failure", tailscaletest.State{WriteError: "synthetic unexplained failure"}, http.StatusServiceUnavailable, []string{"Tailscale sharing change"}},
 	} {
 		t.Run(check.name, func(t *testing.T) {
-			app, _ := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), WriteError: check.writeError})
+			check.fake.Status = tailscaletest.Running()
+			app, _ := tailscaleApp(t, check.fake)
 			client, base, csrf, _ := networkSettingsClient(t, app)
 			serverLog := captureServerLog(t)
 			result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false), base)
@@ -274,7 +276,7 @@ func TestTailscaleChangeThatFailedIsMarkedByWhatTheReadBackShows(t *testing.T) {
 			// Wrote is still set by turning on; only the removal counts.
 			s.WriteErrorAfterChange, s.ServeReadErrorAfterWrite, s.Wrote = "synthetic interrupted removal", "synthetic serve status failure", false
 		}, string(tailscale.KindFailed), true},
-		{"off, the removal is refused", false, func(s *tailscaletest.State) { s.WriteError = "Access denied: serve config denied" }, string(tailscale.KindPermission), false},
+		{"off, the removal is refused", false, func(s *tailscaletest.State) { s.WriteDenied = true }, string(tailscale.KindPermission), false},
 	} {
 		t.Run(check.name, func(t *testing.T) {
 			app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
@@ -295,7 +297,7 @@ func TestTailscaleChangeThatFailedIsMarkedByWhatTheReadBackShows(t *testing.T) {
 			if !errors.As(err, &refusal) || refusal.Problem != check.problem || errors.Is(err, ErrTailscaleAhead) != check.marked {
 				t.Fatalf("err=%v, want problem %s marked=%v", err, check.problem, check.marked)
 			}
-			if calls := fake.Calls()[reads:]; calls[len(calls)-1] != "serve status --json" {
+			if calls := fake.Calls()[reads:]; calls[len(calls)-1] != tailscaletest.ServeRead {
 				t.Fatalf("the failed change was not read back: %q", calls)
 			}
 		})

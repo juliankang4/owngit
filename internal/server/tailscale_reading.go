@@ -16,10 +16,11 @@ import (
 // further reports. The Settings page reports on every view, for any viewer
 // with general access, so reports share one reading in flight and reuse it
 // for this long: however many requests arrive, at most one status and one
-// Serve configuration command run at a time, and none again within the TTL.
+// Serve configuration read run at a time, and none again within the TTL.
 const tailscaleReadingTTL = 3 * time.Second
 
-// tailscaleReading is what a report reads from the tailscale command.
+// tailscaleReading is what a report reads from Tailscale: the status with
+// the tailscale command and the Serve configuration through the LocalAPI.
 type tailscaleReading struct {
 	command    tailscale.Command
 	commandErr error
@@ -183,7 +184,7 @@ func (sharing *Tailscale) addresses() []netip.Addr {
 	return cache.addresses
 }
 
-// readNow runs the tailscale commands of one reading.
+// readNow runs the reads of one reading.
 func (sharing *Tailscale) readNow(ctx context.Context) tailscaleReading {
 	var reading tailscaleReading
 	reading.command, reading.commandErr = sharing.Find()

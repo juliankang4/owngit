@@ -45,7 +45,7 @@ func withTailscale(t *testing.T, app *App, fakeState tailscaletest.State) (*App,
 	app.Network.Publish()
 	app.Tailscale = &Tailscale{
 		Store: app.Store,
-		Find:  func() (tailscale.Command, error) { return tailscale.Find(fake.Path) },
+		Find:  func() (tailscale.Command, error) { return fake.Command(), nil },
 		Observe: func(ctx context.Context) (state.RunningObservation, error) {
 			return app.Store.OwnRunningNetwork(ctx, app.RunningRecordLive)
 		},
@@ -127,8 +127,8 @@ func TestTurningTailscaleSharingOnAndOff(t *testing.T) {
 	if change.Endpoint != "created" || change.ListenChanged {
 		t.Fatalf("change=%+v", change)
 	}
-	if want := []string{"serve --bg --https=443 http://127.0.0.1:7654"}; !reflect.DeepEqual(fake.Writes(), want) {
-		t.Fatalf("writes=%q, want %q", fake.Writes(), want)
+	if len(fake.Writes()) != 1 || !fake.Endpoint(443, "http://127.0.0.1:7654").Exact {
+		t.Fatalf("writes=%q, endpoint %+v", fake.Writes(), fake.Endpoint(443, "http://127.0.0.1:7654"))
 	}
 	settings, hosts, proxies, record := savedSharing(t, app.Store)
 	origin := "https://" + tailscaletest.Name
@@ -173,8 +173,8 @@ func TestTurningTailscaleSharingOnAndOff(t *testing.T) {
 	if change.Endpoint != "removed" {
 		t.Fatalf("off change=%+v", change)
 	}
-	if want := []string{"serve --bg --https=443 http://127.0.0.1:7654", "serve --https=443 --set-path=/ off"}; !reflect.DeepEqual(fake.Writes(), want) {
-		t.Fatalf("writes=%q, want %q", fake.Writes(), want)
+	if len(fake.Writes()) != 2 || len(fake.State().Serve.Web) != 0 {
+		t.Fatalf("writes=%q, serve %+v", fake.Writes(), fake.State().Serve)
 	}
 	settings, hosts, proxies, record = savedSharing(t, app.Store)
 	if settings != (state.NetworkSettings{}) || len(hosts) != 0 || len(proxies) != 0 || record != nil {
@@ -294,9 +294,8 @@ func TestTailscaleProblemsChangeNothing(t *testing.T) {
 		{"daemon down", func(fakeState *tailscaletest.State) {
 			fakeState.StatusError = "failed to connect to local Tailscale daemon; it doesn't appear to be running"
 		}, string(tailscale.KindNotRunning), 0},
-		{"not the operator", func(fakeState *tailscaletest.State) {
-			fakeState.WriteError = "Access denied: serve config denied"
-		}, string(tailscale.KindPermission), 1},
+		{"not the operator", func(fakeState *tailscaletest.State) { fakeState.WriteDenied = true }, string(tailscale.KindPermission), 1},
+		{"Tailscale older than 1.50", func(fakeState *tailscaletest.State) { fakeState.Unversioned = true }, string(tailscale.KindOutdated), 0},
 		{"change not kept", func(fakeState *tailscaletest.State) { fakeState.IgnoreWrites = true }, TailscaleProblemReadBack, 1},
 	}
 	for _, test := range cases {
@@ -404,7 +403,7 @@ func TestTailscaleListenChoice(t *testing.T) {
 	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{Listen: "100.64.0.7:7700"}}))
 	change, err := app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
-	if !change.ListenChanged || change.Listen != "127.0.0.1:7700" || !slices.Contains(fake.Writes(), "serve --bg --https=443 http://127.0.0.1:7700") {
+	if !change.ListenChanged || change.Listen != "127.0.0.1:7700" || !fake.Endpoint(443, "http://127.0.0.1:7700").Exact {
 		t.Fatalf("change=%+v writes=%q", change, fake.Writes())
 	}
 	if settings, _, _, _ := savedSharing(t, app.Store); settings.Listen != "127.0.0.1:7700" {
@@ -757,7 +756,7 @@ func TestTurningOnAfterARenameDoesNotTakeOverAnEndpointForTheNewName(t *testing.
 func reads(fake *tailscaletest.Fake) int {
 	count := 0
 	for _, call := range fake.Calls() {
-		if call == "status --json" || call == "serve status --json" {
+		if call == "status --json" || call == tailscaletest.ServeRead {
 			count++
 		}
 	}
@@ -863,7 +862,7 @@ func TestAListenOptionDecidesInsteadOfTheHomeNetworkChoice(t *testing.T) {
 	yes := true
 	change, err := app.Tailscale.On(ctx, &yes, 0)
 	noErr(t, err)
-	if change.ListenChanged || change.ListenOption != "127.0.0.1:7890" || !slices.Contains(fake.Writes(), "serve --bg --https=443 http://127.0.0.1:7890") {
+	if change.ListenChanged || change.ListenOption != "127.0.0.1:7890" || !fake.Endpoint(443, "http://127.0.0.1:7890").Exact {
 		t.Fatalf("change=%+v writes=%q", change, fake.Writes())
 	}
 	settings, err := app.Store.Settings(ctx)
@@ -975,7 +974,7 @@ func TestTurningOnAgainThatTailscaleRefusedKeepsTheRecord(t *testing.T) {
 	noErr(t, err)
 	_, _, _, before := savedSharing(t, app.Store)
 	rename(fake)
-	fake.Update(func(s *tailscaletest.State) { s.WriteError = "Access denied: serve config denied" })
+	fake.Update(func(s *tailscaletest.State) { s.WriteDenied = true })
 	if _, err := app.Tailscale.On(ctx, nil, 0); err == nil || errors.Is(err, ErrTailscaleAhead) {
 		t.Fatalf("turning on that Tailscale refused: %v", err)
 	}
@@ -1008,7 +1007,7 @@ func TestTurningOnWhoseRecordCannotBePutBackIsNotARefusal(t *testing.T) {
 	client, base, csrf, _ := networkSettingsClient(t, app)
 	fake.Update(func(s *tailscaletest.State) {
 		delete(s.Serve.Web, renamed+":443")
-		s.WriteError = "Access denied: serve config denied"
+		s.WriteDenied = true
 	})
 	refuseConfirmedSharing(t, app.Store)
 	serverLog := captureServerLog(t)
@@ -1018,7 +1017,7 @@ func TestTurningOnWhoseRecordCannotBePutBackIsNotARefusal(t *testing.T) {
 	}
 	lines := loggedFailures(serverLog, 0)
 	checkLoggedSteps(t, "a record that cannot be put back", lines, "Tailscale sharing change")
-	if logged := strings.Join(lines, "\n"); !strings.Contains(logged, "Access denied") || !strings.Contains(logged, "could not be put back") {
+	if logged := strings.Join(lines, "\n"); !strings.Contains(logged, "serve config denied") || !strings.Contains(logged, "could not be put back") {
 		t.Errorf("the log does not name both causes: %s", logged)
 	}
 }

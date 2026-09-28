@@ -14,21 +14,15 @@ import (
 
 	"owngit/internal/service"
 	"owngit/internal/state"
-	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
 	"owngit/internal/testfixture"
 )
 
 func TestMain(m *testing.M) {
 	tailscaletest.RunIfFake()
-	// No test may run the real tailscale: without a --tailscale path the
-	// command is not found.
-	findTailscale = func(path string) (tailscale.Command, error) {
-		if path == "" {
-			return tailscale.Command{}, tailscale.ErrNotInstalled
-		}
-		return tailscale.Find(path)
-	}
+	// No test may run or reach the real Tailscale: only a fake's path given
+	// with --tailscale finds a command, and its LocalAPI is the fake's.
+	findTailscale = tailscaletest.Find
 	// No test may contact GitHub. A server started by any test in this
 	// package points its release check at a closed local port unless the
 	// test sets its own endpoint.

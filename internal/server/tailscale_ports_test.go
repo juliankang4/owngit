@@ -89,8 +89,8 @@ func TestTailscaleSharingUsesAnotherPortWhen443IsTaken(t *testing.T) {
 			if change.Endpoint != "created" || change.Record.HTTPSPort != 8443 || !reflect.DeepEqual(change.PassedPorts, []int{443}) {
 				t.Fatalf("change=%+v", change)
 			}
-			if want := []string{"serve --bg --https=8443 http://127.0.0.1:7654"}; !reflect.DeepEqual(fake.Writes(), want) {
-				t.Fatalf("writes=%q, want %q", fake.Writes(), want)
+			if len(fake.Writes()) != 1 || !fake.Endpoint(8443, "http://127.0.0.1:7654").Exact {
+				t.Fatalf("writes=%q", fake.Writes())
 			}
 			origin := "https://" + name + ":8443"
 			settings, hosts, _, record := savedSharing(t, app.Store)
@@ -119,7 +119,7 @@ func TestTailscaleSharingUsesAnotherPortWhen443IsTaken(t *testing.T) {
 
 			change, err = app.Tailscale.Off(ctx)
 			noErr(t, err)
-			if change.Endpoint != "removed" || fake.Writes()[1] != "serve --https=8443 --set-path=/ off" {
+			if change.Endpoint != "removed" || len(fake.Writes()) != 2 || !fake.Endpoint(8443, "").Free {
 				t.Fatalf("off change=%+v writes=%q", change, fake.Writes())
 			}
 			if after := portEntries(fake.State().Serve, 443); !reflect.DeepEqual(after, before) {
@@ -207,7 +207,7 @@ func TestTailscaleSharingOnANamedPort(t *testing.T) {
 	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemOtherPort || refusal.Detail != "https://"+name+":4443/" {
 		t.Fatalf("moving while on: err=%v", err)
 	}
-	if want := []string{"serve --bg --https=4443 http://127.0.0.1:7654"}; !reflect.DeepEqual(fake.Writes(), want) {
+	if len(fake.Writes()) != 1 || !fake.Endpoint(4443, "http://127.0.0.1:7654").Exact {
 		t.Fatalf("writes=%q", fake.Writes())
 	}
 	// The same port again changes nothing.
@@ -249,7 +249,7 @@ func TestTailscaleSharingRecordOfAnEarlierVersion(t *testing.T) {
 	}
 	change, err = app.Tailscale.Off(ctx)
 	noErr(t, err)
-	if change.Endpoint != "removed" || !reflect.DeepEqual(fake.Writes(), []string{"serve --https=443 --set-path=/ off"}) {
+	if change.Endpoint != "removed" || len(fake.Writes()) != 1 || !fake.Endpoint(443, "").Free {
 		t.Fatalf("off: %+v %q", change, fake.Writes())
 	}
 }
@@ -305,7 +305,7 @@ func TestTailscaleSharingOnAnotherPortAfterARename(t *testing.T) {
 	}
 	change, err = app.Tailscale.Off(ctx)
 	noErr(t, err)
-	if change.Endpoint != "removed" || fake.Writes()[len(fake.Writes())-1] != "serve --https=8443 --set-path=/ off" {
+	if change.Endpoint != "removed" || !fake.Endpoint(8443, "").Free {
 		t.Fatalf("off: %+v %q", change, fake.Writes())
 	}
 	if len(fake.State().Serve.Web[name+":8443"].Handlers) != 1 {
@@ -346,7 +346,7 @@ func TestTailscaleSharingNamedPortAfterAnInterruptedTurningOn(t *testing.T) {
 	}
 	change, err := app.Tailscale.Off(ctx)
 	noErr(t, err)
-	if change.Endpoint != "removed" || !reflect.DeepEqual(fake.Writes(), []string{"serve --https=8443 --set-path=/ off"}) {
+	if change.Endpoint != "removed" || len(fake.Writes()) != 1 || !fake.Endpoint(8443, "").Free {
 		t.Fatalf("off: %+v %q", change, fake.Writes())
 	}
 	change, err = app.Tailscale.On(ctx, nil, 10000)
@@ -360,7 +360,7 @@ func TestTailscaleSharingNamedPortAfterAnInterruptedTurningOn(t *testing.T) {
 	noErr(t, app.Store.SaveTailscaleServe(ctx, interrupted))
 	change, err = app.Tailscale.On(ctx, nil, 10000)
 	noErr(t, err)
-	if change.Endpoint != "created" || change.Record.HTTPSPort != 10000 || !reflect.DeepEqual(fake.Writes(), []string{"serve --bg --https=10000 " + target}) {
+	if change.Endpoint != "created" || change.Record.HTTPSPort != 10000 || len(fake.Writes()) != 1 || !fake.Endpoint(10000, target).Exact {
 		t.Fatalf("with no address left: %+v %q", change, fake.Writes())
 	}
 }
@@ -387,42 +387,55 @@ func TestTailscaleSharingShowsAnEarlierNameOnANamedPort(t *testing.T) {
 	}
 }
 
-// When another program changes the chosen HTTPS port after turning on or
-// off checked it, and before OwnGit changes it, OwnGit changes nothing and
-// keeps what the other program put there.
-func TestTailscaleChangesStopWhenTheirPortChangesMeanwhile(t *testing.T) {
+// When anything else changes Tailscale's Serve configuration after turning
+// on or off read it, at any moment before Tailscale applies OwnGit's change,
+// Tailscale applies nothing: OwnGit reports the other change, keeps the
+// sharing record as it was, and leaves what the other program put there,
+// handlers and Funnel alike.
+func TestTailscaleChangesStopWhenServeChangesMeanwhile(t *testing.T) {
 	ctx := context.Background()
 	other := otherService(tailscale.ServeConfig{AllowFunnel: map[string]bool{tailscaletest.Name + ":443": true}}, tailscaletest.Name, 443)
-	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
-	app.Tailscale.BeforeServe = func(string) { fake.Update(func(s *tailscaletest.State) { s.Serve = other }) }
-	_, err := app.Tailscale.On(ctx, nil, 0)
-	var refusal *TailscaleError
-	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemServeChanged || len(fake.Writes()) != 0 || !reflect.DeepEqual(fake.State().Serve, other) {
-		t.Fatalf("on: err=%v writes=%q serve=%+v", err, fake.Writes(), fake.State().Serve)
-	}
-	if _, _, _, record := savedSharing(t, app.Store); record != nil {
-		t.Fatalf("a stopped turning on kept its record: %+v", record)
-	}
-
-	app, fake = tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
-	_, err = app.Tailscale.On(ctx, nil, 0)
-	noErr(t, err)
-	// Turning off reads the status and the Serve configuration it decides
-	// on, then reads the configuration again. That second read is held until
-	// the other program's change is in place.
-	before := len(fake.Calls())
-	fake.Update(func(s *tailscaletest.State) { s.HoldReads, s.PassReads = true, 2 })
-	finished := make(chan error, 1)
-	go func() { _, err := app.Tailscale.Off(ctx); finished <- err }()
-	fake.AwaitHeldReads(1)
-	if decided := fake.Calls()[before:]; !reflect.DeepEqual(decided, []string{"status --json", "serve status --json"}) {
-		t.Fatalf("turning off was held after %q, want after its first status and Serve reads", decided)
-	}
-	fake.Update(func(s *tailscaletest.State) { s.Serve, s.HoldReads = other, false })
-	if err := <-finished; !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemServeChanged || len(fake.Writes()) != 1 || !reflect.DeepEqual(fake.State().Serve, other) {
-		t.Fatalf("off: err=%v writes=%q serve=%+v", err, fake.Writes(), fake.State().Serve)
-	}
-	if _, on, _ := app.Store.TailscaleServe(ctx); !on {
-		t.Fatal("a stopped turning off took back the settings")
+	for _, test := range []struct {
+		name string
+		on   bool
+		// meanwhile changes Serve after OwnGit's read.
+		meanwhile func(*Tailscale, *tailscaletest.Fake)
+	}{
+		{"on, before OwnGit asks", true, func(sharing *Tailscale, fake *tailscaletest.Fake) {
+			sharing.BeforeServe = func(string) { fake.Update(func(s *tailscaletest.State) { s.Serve = other }) }
+		}},
+		{"on, as Tailscale gets the change", true, func(_ *Tailscale, fake *tailscaletest.Fake) {
+			fake.Update(func(s *tailscaletest.State) { s.ChangedBeforeWrite = &other })
+		}},
+		{"off, as Tailscale gets the change", false, func(_ *Tailscale, fake *tailscaletest.Fake) {
+			fake.Update(func(s *tailscaletest.State) { s.ChangedBeforeWrite = &other })
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+			if !test.on {
+				_, err := app.Tailscale.On(ctx, nil, 0)
+				noErr(t, err)
+			}
+			_, _, _, before := savedSharing(t, app.Store)
+			writes := len(fake.Writes())
+			test.meanwhile(app.Tailscale, fake)
+			var err error
+			if test.on {
+				_, err = app.Tailscale.On(ctx, nil, 0)
+			} else {
+				_, err = app.Tailscale.Off(ctx)
+			}
+			var refusal *TailscaleError
+			if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemServeChanged || errors.Is(err, ErrTailscaleAhead) {
+				t.Fatalf("err=%v, want the refusal %s", err, TailscaleProblemServeChanged)
+			}
+			if serve := fake.State().Serve; !reflect.DeepEqual(serve, other) || len(fake.Writes()) != writes+1 {
+				t.Fatalf("Tailscale has %+v after %q, want the other change %+v", serve, fake.Writes()[writes:], other)
+			}
+			if _, _, _, after := savedSharing(t, app.Store); !reflect.DeepEqual(after, before) {
+				t.Fatalf("the sharing record is %+v, want %+v", after, before)
+			}
+		})
 	}
 }

@@ -1,10 +1,13 @@
-// Package tailscale runs the host's tailscale command so OwnGit can be
-// shared on the owner's tailnet over HTTPS with Tailscale Serve.
+// Package tailscale lets OwnGit be shared on the owner's tailnet over HTTPS
+// with Tailscale Serve.
 //
-// It reads Tailscale's status and Serve configuration, and it writes or
-// removes exactly one HTTPS endpoint. It never runs funnel, "serve reset",
-// up, down, set, cert or sudo. Every call passes an argument array without a
-// shell and has a time limit.
+// It reads Tailscale's status with the host's tailscale command, and reads
+// and changes the Serve configuration through Tailscale's LocalAPI
+// (localapi.go), where a change applies only to the configuration it was
+// made from. It adds or removes exactly one HTTPS endpoint and keeps
+// everything else in the configuration as Tailscale gave it. It never turns
+// on Funnel and never runs up, down, set, cert or sudo. Every command passes
+// an argument array without a shell, and every call has a time limit.
 package tailscale
 
 import (
@@ -19,20 +22,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
 )
 
-// Time limits of one tailscale command. A write can wait for the daemon to
+// Time limits of one call to Tailscale. A write can wait for the daemon to
 // fetch a certificate, so it gets longer.
 const (
 	readTimeout  = 10 * time.Second
 	writeTimeout = 30 * time.Second
 )
 
-// maxOutput bounds what one command may print.
+// maxOutput bounds what one command may print or one LocalAPI answer hold.
 const maxOutput = 4 << 20
 
 // Command is a tailscale executable found on this computer.
@@ -44,6 +46,10 @@ type Command struct {
 	// That app does not run until someone logs in to the Mac, so the HTTPS
 	// address stops working after a restart until then.
 	MacApp bool
+	// LocalAPI connects to the LocalAPI of the Tailscale that Path talks
+	// to, which Serve is read and changed through. Find sets it for this
+	// computer; without it, Serve can be neither read nor changed.
+	LocalAPI Dialer
 }
 
 // Paths that Find and macApp inspect. Variables only so tests can point
@@ -87,7 +93,8 @@ func Find(override string) (Command, error) {
 	}
 	for _, path := range paths {
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return Command{Path: path, MacApp: macApp(path)}, nil
+			mac := macApp(path)
+			return Command{Path: path, MacApp: mac, LocalAPI: localAPIDialer(mac)}, nil
 		}
 	}
 	return Command{}, ErrNotInstalled
@@ -139,6 +146,12 @@ const (
 	// KindPermission: the daemon refused a change for this user, such as a
 	// user who is not the operator on Linux.
 	KindPermission Kind = "permission"
+	// KindOutdated: the daemon is older than Tailscale 1.50 and cannot
+	// apply a change only to the Serve configuration it was made from.
+	KindOutdated Kind = "outdated"
+	// KindServeChanged: the Serve configuration changed after it was read,
+	// so the change made from it was not applied.
+	KindServeChanged Kind = "serve_changed"
 	// KindTimeout: the command did not finish in time.
 	KindTimeout Kind = "timeout"
 	// KindUnreadable: the command printed something this code cannot read.
@@ -294,28 +307,51 @@ func (command Command) Status(ctx context.Context) (Status, error) {
 	return status, nil
 }
 
-// ServeConfig runs "tailscale serve status --json".
+// ServeConfig reads the Serve configuration and its version, which a change
+// made from it binds to. A daemon that gives no version cannot bind a
+// change, and the read fails with KindOutdated.
 func (command Command) ServeConfig(ctx context.Context) (ServeConfig, error) {
-	output, err := command.run(ctx, readTimeout, "serve", "status", "--json")
+	version, content, err := command.serveConfig(ctx, readTimeout, "", nil)
 	if err != nil {
 		return ServeConfig{}, err
 	}
-	return ParseServeConfig(output)
+	if version == "" {
+		return ServeConfig{}, &Error{Kind: KindOutdated}
+	}
+	config, err := ParseServeConfig(content)
+	config.version, config.content = version, content
+	return config, err
 }
 
-// ServeHTTPS adds a background Serve endpoint that answers HTTPS on port
-// and proxies to target, such as "http://127.0.0.1:7654", at path "/". It
-// never enables Funnel. Callers read the configuration back afterwards: the
-// command can succeed without the change being kept.
-func (command Command) ServeHTTPS(ctx context.Context, port int, target string) error {
-	_, err := command.run(ctx, writeTimeout, "serve", "--bg", "--https="+strconv.Itoa(port), target)
-	return err
+// ServeHTTPS adds a background Serve endpoint to read, a configuration
+// ServeConfig returned: for name on port, answering HTTPS at path "/" and
+// proxying to target, such as "http://127.0.0.1:7654". Tailscale applies it
+// only while its configuration is still read, and otherwise answers
+// KindServeChanged. It never enables Funnel. Callers read the configuration
+// back afterwards: Tailscale can accept a change without keeping it.
+func (command Command) ServeHTTPS(ctx context.Context, read ServeConfig, name string, port int, target string) error {
+	return command.change(ctx, read, name, port, target)
 }
 
-// RemoveHTTPS removes the handler at path "/" of the HTTPS endpoint on port,
-// and nothing else.
-func (command Command) RemoveHTTPS(ctx context.Context, port int) error {
-	_, err := command.run(ctx, writeTimeout, "serve", "--https="+strconv.Itoa(port), "--set-path=/", "off")
+// RemoveHTTPS removes the endpoint for name on port from read, which holds
+// exactly one handler, OwnGit's, and nothing else. It applies as ServeHTTPS
+// does.
+func (command Command) RemoveHTTPS(ctx context.Context, read ServeConfig, name string, port int) error {
+	return command.change(ctx, read, name, port, "")
+}
+
+// change writes read with the endpoint for name on port set to target, or
+// removed when target is empty, bound to the version of read.
+func (command Command) change(ctx context.Context, read ServeConfig, name string, port int, target string) error {
+	if read.version == "" {
+		// Not read from Tailscale: there is nothing to bind the change to.
+		return &Error{Kind: KindOutdated}
+	}
+	content, err := read.withEndpoint(name, port, target)
+	if err != nil {
+		return err
+	}
+	_, _, err = command.serveConfig(ctx, writeTimeout, read.version, content)
 	return err
 }
 

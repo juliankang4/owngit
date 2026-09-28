@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,8 +26,12 @@ import (
 // HTTPS, and saves the HTTPS address as its base URL and allowed name.
 //
 // OwnGit reads Tailscale's Serve configuration before it writes, refuses
-// when something else uses the HTTPS port, reads the configuration back
-// after writing, and records what it wrote (state.TailscaleServe). Turning
+// when something else uses the HTTPS port, and makes its change from what
+// it read: Tailscale applies the change only while its configuration is
+// still the one read, so a change made meanwhile by anything else is never
+// overwritten but reported (TailscaleProblemServeChanged). OwnGit reads the
+// configuration back after writing, and records what it wrote
+// (state.TailscaleServe). Turning
 // sharing off removes the endpoint only while Tailscale still has exactly
 // that record's endpoint, and takes back only the settings OwnGit changed.
 // It never enables Funnel, and Tailscale's identity headers grant nothing.
@@ -52,8 +55,14 @@ var ErrTailscaleAhead = errors.New("OwnGit's settings were not saved, and Tailsc
 // returned readErr: the read back shows the change, or it could not be read
 // while the command succeeded or failed without a refusal (Refused), such as
 // a timeout, so its outcome is unknown. A read back that shows no change, or
-// a command Tailscale refused, rules it out.
+// a command Tailscale refused, rules it out. A change Tailscale did not apply
+// because the configuration had changed since OwnGit read it
+// (TailscaleProblemServeChanged) is ruled out whatever the read back shows,
+// which is then the other change.
 func tailscaleMayHave(changeErr, readErr error, shown bool) bool {
+	if tailscale.KindOf(changeErr) == tailscale.KindServeChanged {
+		return false
+	}
 	return shown || readErr != nil && (changeErr == nil || !refused(changeErr))
 }
 
@@ -546,9 +555,10 @@ const (
 	TailscaleProblemListenOption = "listen_option"
 	// TailscaleProblemNotOn: sharing is not on.
 	TailscaleProblemNotOn = "not_on"
-	// TailscaleProblemServeChanged: something else changed the HTTPS port
-	// between OwnGit's check and its change (unchangedPort).
-	TailscaleProblemServeChanged = "serve_changed"
+	// TailscaleProblemServeChanged: something else changed Tailscale's
+	// Serve configuration between OwnGit's read and its change, so
+	// Tailscale did not apply the change.
+	TailscaleProblemServeChanged = string(tailscale.KindServeChanged)
 	// TailscaleProblemOwnersEndpoint: sharing uses an endpoint the owner
 	// made, which passes requests to OwnGit's earlier local address; OwnGit
 	// does not rewrite it. Detail is OwnGit's local address now.
@@ -764,10 +774,7 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 		if sharing.BeforeServe != nil {
 			sharing.BeforeServe(record.Name)
 		}
-		if err := unchangedPort(ctx, command, config, record.Name, record.HTTPSPort, target); err != nil {
-			return TailscaleChange{}, restore(err)
-		}
-		writeErr := whyWriteFailed(ctx, command, command.ServeHTTPS(ctx, record.HTTPSPort, target))
+		writeErr := whyWriteFailed(ctx, command, command.ServeHTTPS(ctx, config, record.Name, record.HTTPSPort, target))
 		after, readErr := command.ServeConfig(ctx)
 		shown := readErr == nil && after.Endpoint(record.Name, record.HTTPSPort, target).Exact
 		if writeErr == nil && readErr == nil && !shown {
@@ -861,23 +868,6 @@ func (sharing *Tailscale) Off(ctx context.Context) (TailscaleChange, error) {
 	return change, err
 }
 
-// unchangedPort reads Tailscale's Serve configuration again just before a
-// change and refuses it when what is on port for name differs from checked,
-// the configuration the change was decided on: another program changed it
-// meanwhile, and the change could replace or remove what it put there.
-// Tailscale's own command reads the configuration once more before it
-// writes, so a change in that last moment is not caught.
-func unchangedPort(ctx context.Context, command tailscale.Command, checked tailscale.ServeConfig, name string, port int, target string) error {
-	now, err := command.ServeConfig(ctx)
-	if err != nil {
-		return tailscaleError(err, command.MacApp)
-	}
-	if !reflect.DeepEqual(now.Endpoint(name, port, target), checked.Endpoint(name, port, target)) {
-		return &TailscaleError{Problem: TailscaleProblemServeChanged, Port: port}
-	}
-	return nil
-}
-
 // off turns sharing off and returns the base URL saved now.
 func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, error) {
 	record, on, err := sharing.Store.TailscaleServe(ctx)
@@ -913,10 +903,7 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 				change.Endpoint = "stale"
 			}
 		case endpoint.Exact:
-			if err := unchangedPort(ctx, command, config, record.Name, record.HTTPSPort, record.Target); err != nil {
-				return TailscaleChange{}, "", err
-			}
-			removeErr := whyWriteFailed(ctx, command, command.RemoveHTTPS(ctx, record.HTTPSPort))
+			removeErr := whyWriteFailed(ctx, command, command.RemoveHTTPS(ctx, config, record.Name, record.HTTPSPort))
 			after, readErr := command.ServeConfig(ctx)
 			shown := readErr == nil && !after.Endpoint(record.Name, record.HTTPSPort, record.Target).Exact
 			if removeErr == nil && readErr == nil && !shown {

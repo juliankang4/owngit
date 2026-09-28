@@ -9,8 +9,8 @@ import (
 	"strconv"
 )
 
-// ServeConfig is the part of Tailscale's Serve configuration ("tailscale
-// serve status --json") that tells what answers on a port.
+// ServeConfig is the part of Tailscale's Serve configuration that tells what
+// answers on a port.
 type ServeConfig struct {
 	// TCP maps a port to how Tailscale handles it.
 	TCP map[string]TCPHandler `json:"TCP,omitempty"`
@@ -21,6 +21,12 @@ type ServeConfig struct {
 	// Foreground holds the configuration of foreground "tailscale serve"
 	// sessions, by session.
 	Foreground map[string]ServeConfig `json:"Foreground,omitempty"`
+
+	// version and content are the version and the whole configuration as
+	// Command.ServeConfig read them, fields OwnGit does not know included.
+	// A change is made from content and binds to version.
+	version string
+	content []byte
 }
 
 // TCPHandler is how Tailscale handles connections to one port.
@@ -46,8 +52,8 @@ type Handler struct {
 	AcceptAppCaps []string `json:"AcceptAppCaps,omitempty"`
 }
 
-// ParseServeConfig reads "tailscale serve status --json"; "null" and an
-// empty answer mean nothing is configured.
+// ParseServeConfig reads a Serve configuration in Tailscale's JSON; "null"
+// and an empty answer mean nothing is configured.
 func ParseServeConfig(output []byte) (ServeConfig, error) {
 	var config ServeConfig
 	if trimmed := bytes.TrimSpace(output); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -57,6 +63,75 @@ func ParseServeConfig(output []byte) (ServeConfig, error) {
 		return ServeConfig{}, &Error{Kind: KindUnreadable}
 	}
 	return config, nil
+}
+
+// withEndpoint returns the configuration as read with the HTTPS endpoint for
+// name on port set to a single handler at "/" that proxies to target, or
+// removed when target is empty. Only the entries of that name and port
+// change: every other field, handler and Funnel setting stays exactly as
+// Tailscale gave it, also fields OwnGit does not know. The port's TCP entry
+// goes with its last web server, as "tailscale serve" does.
+func (config ServeConfig) withEndpoint(name string, port int, target string) ([]byte, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(config.content, &top); err != nil {
+		return nil, &Error{Kind: KindUnreadable}
+	}
+	if top == nil {
+		top = map[string]json.RawMessage{}
+	}
+	var tcp, web map[string]json.RawMessage
+	if err := decodeEntries(top, "TCP", &tcp); err != nil {
+		return nil, err
+	}
+	if err := decodeEntries(top, "Web", &web); err != nil {
+		return nil, err
+	}
+	portText := strconv.Itoa(port)
+	key := net.JoinHostPort(name, portText)
+	if target != "" {
+		server, err := json.Marshal(WebServer{Handlers: map[string]Handler{"/": {Proxy: target}}})
+		if err != nil {
+			return nil, err
+		}
+		tcp[portText], web[key] = json.RawMessage(`{"HTTPS":true}`), server
+	} else {
+		delete(web, key)
+		last := true
+		for other := range web {
+			if _, p, err := net.SplitHostPort(other); err == nil && p == portText {
+				last = false
+			}
+		}
+		if last {
+			delete(tcp, portText)
+		}
+	}
+	for field, entries := range map[string]map[string]json.RawMessage{"TCP": tcp, "Web": web} {
+		if len(entries) == 0 {
+			delete(top, field)
+			continue
+		}
+		encoded, err := json.Marshal(entries)
+		if err != nil {
+			return nil, err
+		}
+		top[field] = encoded
+	}
+	return json.Marshal(top)
+}
+
+// decodeEntries decodes the map in field of top into entries, leaving each
+// entry as Tailscale wrote it; a missing or null field is an empty map.
+func decodeEntries(top map[string]json.RawMessage, field string, entries *map[string]json.RawMessage) error {
+	if raw, ok := top[field]; ok {
+		if err := json.Unmarshal(raw, entries); err != nil {
+			return &Error{Kind: KindUnreadable}
+		}
+	}
+	if *entries == nil {
+		*entries = map[string]json.RawMessage{}
+	}
+	return nil
 }
 
 // Use is one thing the Serve configuration has on a port. The words that

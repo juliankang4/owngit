@@ -2,8 +2,10 @@ package tailscale_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -42,7 +44,7 @@ func TestFakeCommandsKeepTheirOwnState(t *testing.T) {
 		fake *tailscaletest.Fake
 		want string
 	}{{first, tailscaletest.Name}, {second, "other.tail0000.ts.net"}} {
-		status, err := tailscale.Command{Path: test.fake.Path}.Status(context.Background())
+		status, err := test.fake.Command().Status(context.Background())
 		if err != nil || status.Name != test.want || !reflect.DeepEqual(test.fake.Calls(), []string{"status --json"}) {
 			t.Fatalf("want %s: status=%+v err=%v calls=%q", test.want, status, err, test.fake.Calls())
 		}
@@ -68,7 +70,7 @@ func TestFakeCommandsRejectUnknownArguments(t *testing.T) {
 // sharing violation.
 func TestFakeStateSurvivesOverlappingCommandsAndReads(t *testing.T) {
 	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
-	command := tailscale.Command{Path: fake.Path}
+	command := fake.Command()
 	const commands = 8
 	errs := make(chan error, commands)
 	for range commands {
@@ -123,7 +125,7 @@ func TestFindUsesOnlyTheGivenPath(t *testing.T) {
 	}
 	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
 	command, err := tailscale.Find(fake.Path)
-	if err != nil || command.Path != fake.Path {
+	if err != nil || command.Path != fake.Path || command.LocalAPI == nil {
 		t.Fatalf("Find(%q) = %+v, %v", fake.Path, command, err)
 	}
 }
@@ -156,7 +158,7 @@ func TestStatusNamesWhatKeepsHTTPSFromWorking(t *testing.T) {
 			state := tailscaletest.State{Status: tailscaletest.Running()}
 			test.change(&state)
 			fake := tailscaletest.New(t, state)
-			status, err := tailscale.Command{Path: fake.Path}.Status(context.Background())
+			status, err := fake.Command().Status(context.Background())
 			if err == nil {
 				err = status.Usable()
 			}
@@ -175,24 +177,28 @@ func TestStatusNamesWhatKeepsHTTPSFromWorking(t *testing.T) {
 	}
 }
 
-// OwnGit adds and removes exactly one handler with argument arrays; it
-// never runs funnel or "serve reset".
+// OwnGit adds and removes exactly one handler, through the LocalAPI; it
+// never turns on Funnel or resets Serve.
 func TestServeWritesExactlyOneHTTPSHandler(t *testing.T) {
 	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
-	command := tailscale.Command{Path: fake.Path}
+	command := fake.Command()
 	ctx := context.Background()
 	target := tailscale.Target(7654)
-	if err := command.ServeHTTPS(ctx, 443, target); err != nil {
+	config, err := command.ServeConfig(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := command.ServeConfig(ctx)
+	if err := command.ServeHTTPS(ctx, config, tailscaletest.Name, 443, target); err != nil {
+		t.Fatal(err)
+	}
+	config, err = command.ServeConfig(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if endpoint := config.Endpoint(tailscaletest.Name, 443, target); !endpoint.Exact {
 		t.Fatalf("after writing: %+v", endpoint)
 	}
-	if err := command.RemoveHTTPS(ctx, 443); err != nil {
+	if err := command.RemoveHTTPS(ctx, config, tailscaletest.Name, 443); err != nil {
 		t.Fatal(err)
 	}
 	config, err = command.ServeConfig(ctx)
@@ -202,30 +208,164 @@ func TestServeWritesExactlyOneHTTPSHandler(t *testing.T) {
 	if endpoint := config.Endpoint(tailscaletest.Name, 443, target); !endpoint.Free {
 		t.Fatalf("after removing: %+v", endpoint)
 	}
-	want := []string{"serve --bg --https=443 http://127.0.0.1:7654", "serve --https=443 --set-path=/ off"}
-	if !reflect.DeepEqual(fake.Writes(), want) {
+	if serve := fake.State().Serve; len(serve.TCP)+len(serve.Web)+len(serve.AllowFunnel) != 0 {
+		t.Fatalf("after removing, Tailscale still has %+v", serve)
+	}
+	if want := []string{tailscaletest.ServeWrite, tailscaletest.ServeWrite}; !reflect.DeepEqual(fake.Writes(), want) {
 		t.Fatalf("writes=%q, want %q", fake.Writes(), want)
 	}
 }
 
-// A Linux user who is not Tailscale's operator gets a permission problem,
-// and a timeout is reported as such.
+// ownersServe is a Serve configuration with something of the owner's on
+// every place near OwnGit's endpoint on port 443: another handler and Funnel
+// on 8443, a handler under an earlier name on 443, a foreground session, and
+// a field OwnGit does not know.
+func ownersServe() (tailscale.ServeConfig, map[string]json.RawMessage) {
+	return tailscale.ServeConfig{
+		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}, "8443": {HTTPS: true}},
+		Web: map[string]tailscale.WebServer{
+			tailscaletest.Name + ":8443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3000"}}},
+			"oldbox.tail0000.ts.net:443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: "http://127.0.0.1:3001"}}},
+		},
+		AllowFunnel: map[string]bool{tailscaletest.Name + ":8443": true},
+		Foreground: map[string]tailscale.ServeConfig{"session": {
+			TCP: map[string]tailscale.TCPHandler{"9000": {TCPForward: "127.0.0.1:22"}},
+		}},
+	}, map[string]json.RawMessage{
+		"Services": json.RawMessage(`{"svc:web":{"TCP":{"443":{"HTTPS":true}}}}`),
+	}
+}
+
+// sameJSON reports whether a and b encode to the same JSON; the fake's
+// state file indents what it keeps.
+func sameJSON(a, b any) bool {
+	encodedA, errA := json.Marshal(a)
+	encodedB, errB := json.Marshal(b)
+	return errA == nil && errB == nil && string(encodedA) == string(encodedB)
+}
+
+// Adding and removing OwnGit's endpoint keeps every other handler, Funnel
+// setting and field as Tailscale had it, also fields OwnGit does not know.
+func TestServeChangesKeepEverythingElse(t *testing.T) {
+	serve, extra := ownersServe()
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: serve, ServeExtra: extra})
+	command := fake.Command()
+	ctx := context.Background()
+	target := tailscale.Target(7654)
+	config, err := command.ServeConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.ServeHTTPS(ctx, config, tailscaletest.Name, 443, target); err != nil {
+		t.Fatal(err)
+	}
+	after := fake.State()
+	want, _ := ownersServe()
+	want.Web[tailscaletest.Name+":443"] = tailscale.WebServer{Handlers: map[string]tailscale.Handler{"/": {Proxy: target}}}
+	if !reflect.DeepEqual(after.Serve, want) || !sameJSON(after.ServeExtra, extra) {
+		t.Fatalf("after adding: %+v %s", after.Serve, after.ServeExtra)
+	}
+	config, err = command.ServeConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.RemoveHTTPS(ctx, config, tailscaletest.Name, 443); err != nil {
+		t.Fatal(err)
+	}
+	// Port 443 keeps its TCP setting for the handler under the earlier name.
+	after = fake.State()
+	want, _ = ownersServe()
+	if !reflect.DeepEqual(after.Serve, want) || !sameJSON(after.ServeExtra, extra) {
+		t.Fatalf("after removing: %+v %s", after.Serve, after.ServeExtra)
+	}
+}
+
+// A change applies only to the configuration it was made from: when
+// anything changed Serve after OwnGit read it, Tailscale changes nothing,
+// and the answer says so.
+func TestServeChangesBindToTheConfigurationRead(t *testing.T) {
+	target := tailscale.Target(7654)
+	owners, _ := ownersServe()
+	exact := tailscale.ServeConfig{
+		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+		Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: target}}}},
+	}
+	for _, test := range []struct {
+		name   string
+		before tailscale.ServeConfig
+		change func(tailscale.Command, tailscale.ServeConfig) error
+	}{
+		{"adding", tailscale.ServeConfig{}, func(command tailscale.Command, read tailscale.ServeConfig) error {
+			return command.ServeHTTPS(context.Background(), read, tailscaletest.Name, 443, target)
+		}},
+		{"removing", exact, func(command tailscale.Command, read tailscale.ServeConfig) error {
+			return command.RemoveHTTPS(context.Background(), read, tailscaletest.Name, 443)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: test.before})
+			command := fake.Command()
+			read, err := command.ServeConfig(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			fake.Update(func(s *tailscaletest.State) { s.Serve = owners })
+			if err := test.change(command, read); tailscale.KindOf(err) != tailscale.KindServeChanged {
+				t.Fatalf("err=%v, want %s", err, tailscale.KindServeChanged)
+			}
+			if serve := fake.State().Serve; !reflect.DeepEqual(serve, owners) {
+				t.Fatalf("Tailscale has %+v, want the other change %+v", serve, owners)
+			}
+		})
+	}
+}
+
+// Tailscale before 1.50 gives no version and would apply a change whatever
+// happened meanwhile, so OwnGit reports it as outdated and never writes.
+func TestServeWithoutVersionIsOutdated(t *testing.T) {
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Unversioned: true})
+	command := fake.Command()
+	if _, err := command.ServeConfig(context.Background()); tailscale.KindOf(err) != tailscale.KindOutdated {
+		t.Fatalf("read: err=%v, want %s", err, tailscale.KindOutdated)
+	}
+	// A configuration not read from Tailscale has nothing to bind to.
+	if err := command.ServeHTTPS(context.Background(), tailscale.ServeConfig{}, tailscaletest.Name, 443, tailscale.Target(7654)); tailscale.KindOf(err) != tailscale.KindOutdated {
+		t.Fatalf("write: err=%v, want %s", err, tailscale.KindOutdated)
+	}
+	if len(fake.Writes()) != 0 {
+		t.Fatalf("writes=%q", fake.Writes())
+	}
+}
+
+// A user who is not Tailscale's operator gets a permission problem, an error
+// from Tailscale is kept as one short printable line, and a LocalAPI that
+// does not answer is reported as not running.
 func TestServeFailuresAreClassified(t *testing.T) {
-	fake := tailscaletest.New(t, tailscaletest.State{
-		Status:     tailscaletest.Running(),
-		WriteError: "Access denied: serve config denied\n\nUse 'sudo tailscale serve' or 'tailscale set --operator=$USER'",
-	})
-	err := tailscale.Command{Path: fake.Path}.ServeHTTPS(context.Background(), 443, tailscale.Target(7654))
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), WriteDenied: true})
+	command := fake.Command()
+	read, err := command.ServeConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = command.ServeHTTPS(context.Background(), read, tailscaletest.Name, 443, tailscale.Target(7654))
 	var failure *tailscale.Error
-	if !errors.As(err, &failure) || failure.Kind != tailscale.KindPermission || !strings.Contains(failure.Detail, "Access denied") {
+	if !errors.As(err, &failure) || failure.Kind != tailscale.KindPermission || !strings.Contains(failure.Detail, "serve config denied") {
 		t.Fatalf("err=%#v", err)
 	}
 	fake.Update(func(state *tailscaletest.State) {
-		state.WriteError = "unexpected\x1b[31m failure\n" + strings.Repeat("x", 500)
+		state.WriteDenied, state.WriteError = false, "unexpected\x1b[31m failure\n"+strings.Repeat("x", 500)
 	})
-	err = tailscale.Command{Path: fake.Path}.ServeHTTPS(context.Background(), 443, tailscale.Target(7654))
+	err = command.ServeHTTPS(context.Background(), read, tailscaletest.Name, 443, tailscale.Target(7654))
 	if !errors.As(err, &failure) || failure.Kind != tailscale.KindFailed || strings.ContainsAny(failure.Detail, "\x1b\n") || len(failure.Detail) > 310 {
 		t.Fatalf("detail is not one short printable line: %q", failure.Detail)
+	}
+	closed := tailscale.Command{Path: fake.Path, LocalAPI: func(ctx context.Context) (net.Conn, string, error) {
+		var dialer net.Dialer
+		conn, err := dialer.DialContext(ctx, "tcp", "127.0.0.1:1")
+		return conn, "", err
+	}}
+	if _, err := closed.ServeConfig(context.Background()); tailscale.KindOf(err) != tailscale.KindNotRunning {
+		t.Fatalf("closed LocalAPI: err=%v", err)
 	}
 }
 

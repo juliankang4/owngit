@@ -1,30 +1,40 @@
-// Package tailscaletest provides a fake tailscale command for tests. No test
-// runs the real tailscale or changes this computer's Tailscale settings.
+// Package tailscaletest provides a fake Tailscale for tests: a fake tailscale
+// command and a fake LocalAPI. No test runs the real tailscale, reaches the
+// real LocalAPI or changes this computer's Tailscale settings.
 //
-// The fake is the test binary itself, linked under a private path for each
-// fake: a package's TestMain calls RunIfFake, which acts as tailscale when
-// the process runs from such a path and the arguments are a tailscale
-// command. The state file beside that path says what the fake reports and
-// records every call, so a test can check exactly which commands OwnGit ran.
-// A command therefore reaches the state of the fake it was started from,
-// whatever another test set up meanwhile.
+// The fake command is the test binary itself, linked under a private path
+// for each fake: a package's TestMain calls RunIfFake, which acts as
+// tailscale when the process runs from such a path and the arguments are a
+// tailscale command. The fake LocalAPI is a loopback HTTP server in the test
+// process that answers the serve-config resource as Tailscale does, with a
+// version (ETag) and a change applied only to the version it was made from
+// (If-Match). Fake.Command returns a tailscale.Command that uses both.
 //
-// The test and every command it causes, each in its own process, read and
-// change the state file only while holding the lock file next to it. On
-// Windows a file that one process has open cannot be replaced by another,
-// so a read beside a command's save would fail with a sharing violation.
+// The state file beside the command's path says what the fake reports and
+// records every call, so a test can check exactly what OwnGit asked. A
+// command therefore reaches the state of the fake it was started from,
+// whatever another test set up meanwhile. The test, the LocalAPI and every
+// command, each in its own process, read and change the state file only
+// while holding the lock file next to it. On Windows a file that one process
+// has open cannot be replaced by another, so a read beside a command's save
+// would fail with a sharing violation.
 package tailscaletest
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,11 +49,26 @@ type State struct {
 	// StatusError is printed to standard error for "status --json", which
 	// then fails, like a client whose daemon does not run.
 	StatusError string `json:"status_error,omitempty"`
-	// Serve is the Serve configuration.
-	Serve tailscale.ServeConfig `json:"serve"`
-	// WriteError is printed to standard error for every Serve change, which
-	// then fails, like an operator permission error.
+	// Serve is the Serve configuration, and ServeExtra its fields that
+	// tailscale.ServeConfig does not name, such as Services, which the
+	// LocalAPI keeps and reports as Tailscale keeps fields OwnGit does not
+	// know.
+	Serve      tailscale.ServeConfig      `json:"serve"`
+	ServeExtra map[string]json.RawMessage `json:"serve_extra,omitempty"`
+	// WriteDenied makes the LocalAPI refuse every Serve change as Tailscale
+	// refuses a user who is not its operator.
+	WriteDenied bool `json:"write_denied,omitempty"`
+	// WriteError is the error the LocalAPI answers every Serve change with,
+	// which then fails, like Tailscale when it is stopped.
 	WriteError string `json:"write_error,omitempty"`
+	// Unversioned makes the LocalAPI answer as Tailscale before 1.50 does:
+	// a read of the Serve configuration has no version, and a change
+	// applies whatever its If-Match header says.
+	Unversioned bool `json:"unversioned,omitempty"`
+	// ChangedBeforeWrite, when set, replaces the Serve configuration as the
+	// next Serve change arrives, before Tailscale checks it, as another
+	// program changing Serve at that moment; it is then cleared.
+	ChangedBeforeWrite *tailscale.ServeConfig `json:"changed_before_write,omitempty"`
 	// IgnoreWrites makes Serve changes succeed without being kept, as
 	// Tailscale does when it cannot save its state.
 	IgnoreWrites bool `json:"ignore_writes,omitempty"`
@@ -51,34 +76,35 @@ type State struct {
 	// before it takes effect, as Tailscale does while it fetches a
 	// certificate. Other calls are answered meanwhile.
 	WriteDelay int `json:"write_delay,omitempty"`
-	// ReadDelay does the same for "status --json" and "serve status
-	// --json", as a slow tailscaled does.
+	// ReadDelay does the same for "status --json" and reads of the Serve
+	// configuration, as a slow tailscaled does.
 	ReadDelay int `json:"read_delay,omitempty"`
-	// ServeReadErrorAfterWrite is printed to standard error for "serve
-	// status --json" once a Serve change succeeded (Wrote), which then
-	// fails, like a tailscaled that stops answering after a change.
+	// ServeReadErrorAfterWrite is the error the LocalAPI answers reads of
+	// the Serve configuration with once a Serve change succeeded (Wrote),
+	// like a tailscaled that stops answering after a change.
 	ServeReadErrorAfterWrite string `json:"serve_read_error_after_write,omitempty"`
 	// Wrote is set when a Serve change succeeds.
 	Wrote bool `json:"wrote,omitempty"`
-	// WriteErrorAfterChange is printed to standard error after a Serve
-	// change took effect, which then fails, like a command interrupted
-	// after Tailscale kept the change.
+	// WriteErrorAfterChange is the error the LocalAPI answers a Serve change
+	// with after the change took effect, like a connection interrupted after
+	// Tailscale kept the change.
 	WriteErrorAfterChange string `json:"write_error_after_change,omitempty"`
 
-	// Calls are the argument lists the fake was run with, in order.
+	// Calls are the argument lists the fake command was run with and the
+	// LocalAPI requests (ServeRead, ServeWrite), in order.
 	Calls [][]string `json:"calls,omitempty"`
-	// Running counts the commands in progress, delays included, and
-	// MaxRunning the most that were in progress at once, so a test can tell
-	// whether commands overlapped. A command killed during its delay stays
-	// counted.
+	// Running counts the commands and LocalAPI requests in progress, delays
+	// included, and MaxRunning the most that were in progress at once, so a
+	// test can tell whether calls overlapped. A command killed during its
+	// delay stays counted.
 	Running    int `json:"running,omitempty"`
 	MaxRunning int `json:"max_running,omitempty"`
 
-	// HoldReads makes "status --json" and "serve status --json" wait,
-	// after any ReadDelay, until the test clears it, so a test can change
-	// the state at a known point: a waiting read answers from the state as
-	// it is when released. PassReads lets that many more reads answer
-	// meanwhile, and HeldReads counts the reads waiting now.
+	// HoldReads makes "status --json" and reads of the Serve configuration
+	// wait, after any ReadDelay, until the test clears it, so a test can
+	// change the state at a known point: a waiting read answers from the
+	// state as it is when released. PassReads lets that many more reads
+	// answer meanwhile, and HeldReads counts the reads waiting now.
 	HoldReads bool `json:"hold_reads,omitempty"`
 	PassReads int  `json:"pass_reads,omitempty"`
 	HeldReads int  `json:"held_reads,omitempty"`
@@ -120,16 +146,50 @@ func Running() Status {
 	}
 }
 
-// Fake is one fake tailscale command and its state file.
+// Calls recorded for LocalAPI requests.
+const (
+	ServeRead  = "serve-config GET"
+	ServeWrite = "serve-config POST"
+)
+
+// localAPIPassword is the password the fake LocalAPI asks for, as the
+// Tailscale app for macOS does.
+const localAPIPassword = "synthetic-localapi-password"
+
+// Fake is one fake tailscale command, its LocalAPI and its state file.
 type Fake struct {
 	t *testing.T
-	// Path runs the fake.
-	Path string
-	file string
+	// Path runs the fake command.
+	Path     string
+	file     string
+	localAPI *httptest.Server
 }
 
-// New creates a fake that reports state. Its executable and state file
-// belong to this test.
+// fakes are the fakes of this process by Path, for Find.
+var fakes sync.Map
+
+// Find returns the Command of the fake at path, as tailscale.Find returns
+// the real one, or tailscale.ErrNotInstalled when no fake of this process
+// has that path. It never returns a Command that reaches the real Tailscale.
+func Find(path string) (tailscale.Command, error) {
+	if fake, ok := fakes.Load(path); ok {
+		return fake.(*Fake).Command(), nil
+	}
+	return tailscale.Command{}, tailscale.ErrNotInstalled
+}
+
+// Command returns the command that runs the fake and reaches its LocalAPI.
+func (fake *Fake) Command() tailscale.Command {
+	address := fake.localAPI.Listener.Addr().String()
+	return tailscale.Command{Path: fake.Path, LocalAPI: func(ctx context.Context) (net.Conn, string, error) {
+		var dialer net.Dialer
+		conn, err := dialer.DialContext(ctx, "tcp", address)
+		return conn, localAPIPassword, err
+	}}
+}
+
+// New creates a fake that reports state. Its executable, LocalAPI and state
+// file belong to this test.
 func New(t *testing.T, state State) *Fake {
 	t.Helper()
 	executable, err := os.Executable()
@@ -149,6 +209,12 @@ func New(t *testing.T, state State) *Fake {
 	if err := store(fake.file, state); err != nil {
 		t.Fatal(err)
 	}
+	fake.localAPI = httptest.NewServer(http.HandlerFunc(fake.serveConfig))
+	fakes.Store(path, fake)
+	t.Cleanup(func() {
+		fakes.Delete(path)
+		fake.localAPI.Close()
+	})
 	return fake
 }
 
@@ -188,6 +254,18 @@ func (fake *Fake) State() State {
 	return current
 }
 
+// Endpoint describes what Tailscale has now on HTTPS port for the fake's
+// name, with target as OwnGit's expected proxy target.
+func (fake *Fake) Endpoint(port int, target string) tailscale.Endpoint {
+	fake.t.Helper()
+	current := fake.State()
+	name := ""
+	if current.Status.Self != nil {
+		name = strings.TrimSuffix(current.Status.Self.DNSName, ".")
+	}
+	return current.Serve.Endpoint(name, port, target)
+}
+
 // AwaitHeldReads waits until n reads are held (HoldReads).
 func (fake *Fake) AwaitHeldReads(n int) {
 	fake.t.Helper()
@@ -208,11 +286,12 @@ func (fake *Fake) Calls() []string {
 	return calls
 }
 
-// Writes returns the commands run so far that change Tailscale.
+// Writes returns the calls so far that change Tailscale, or would: Serve
+// changes and commands other than reads.
 func (fake *Fake) Writes() []string {
 	var writes []string
 	for _, call := range fake.Calls() {
-		if call != "version" && call != "status --json" && call != "serve status --json" {
+		if call != "version" && call != "status --json" && call != ServeRead {
 			writes = append(writes, call)
 		}
 	}
@@ -277,8 +356,22 @@ func RunIfFake() {
 // run handles one fake command. It returns the command's exit code, or 3
 // when the state cannot be read or saved.
 func run(file string, arguments []string) int {
-	write := len(arguments) > 1 && arguments[0] == "serve" && arguments[1] != "status"
-	read := slices.Contains([]string{"status --json", "serve status --json"}, strings.Join(arguments, " "))
+	code := 0
+	err := call(file, arguments, false, strings.Join(arguments, " ") == "status --json", func(state *State) {
+		code = handle(state, arguments)
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 3
+	}
+	return code
+}
+
+// call runs one call of the fake, a command or a LocalAPI request: it counts
+// the call as running, waits for the delay of a write or a read and for a
+// held read to be released, then records the call and answers it with the
+// state held.
+func call(file string, arguments []string, write, read bool, answer func(*State)) error {
 	var started State
 	err := update(file, func(state *State) bool {
 		state.Running++
@@ -288,28 +381,23 @@ func run(file string, arguments []string) int {
 	})
 	switch {
 	case err != nil:
+		return err
 	case write && started.WriteDelay > 0:
 		time.Sleep(time.Duration(started.WriteDelay) * time.Millisecond)
 	case read && started.ReadDelay > 0:
 		time.Sleep(time.Duration(started.ReadDelay) * time.Millisecond)
 	}
-	if err == nil && read {
-		err = awaitRelease(file)
+	if read {
+		if err := awaitRelease(file); err != nil {
+			return err
+		}
 	}
-	code := 0
-	if err == nil {
-		err = update(file, func(state *State) bool {
-			state.Running--
-			state.Calls = append(state.Calls, arguments)
-			code = handle(state, arguments)
-			return true
-		})
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 3
-	}
-	return code
+	return update(file, func(state *State) bool {
+		state.Running--
+		state.Calls = append(state.Calls, arguments)
+		answer(state)
+		return true
+	})
 }
 
 // awaitRelease returns once this read may answer: nothing holds reads, or a
@@ -357,107 +445,121 @@ func handle(state *State, arguments []string) int {
 		content, _ := json.MarshalIndent(state.Status, "", "  ")
 		fmt.Println(string(content))
 		return 0
-	case command == "serve status --json":
-		if state.Wrote && state.ServeReadErrorAfterWrite != "" {
-			fmt.Fprintln(os.Stderr, state.ServeReadErrorAfterWrite)
-			return 1
-		}
-		content, _ := json.MarshalIndent(state.Serve, "", "  ")
-		fmt.Println(string(content))
-		return 0
-	}
-	if len(arguments) == 4 && arguments[0] == "serve" && arguments[1] == "--bg" && strings.HasPrefix(arguments[2], "--https=") {
-		if failed := state.writeRefused(); failed {
-			return 1
-		}
-		state.addHandler(strings.TrimPrefix(arguments[2], "--https="), arguments[3])
-		return state.changed()
-	}
-	if len(arguments) == 4 && arguments[0] == "serve" && strings.HasPrefix(arguments[1], "--https=") && arguments[2] == "--set-path=/" && arguments[3] == "off" {
-		if failed := state.writeRefused(); failed {
-			return 1
-		}
-		if !state.removeHandler(strings.TrimPrefix(arguments[1], "--https=")) {
-			fmt.Fprintln(os.Stderr, "error: failed to remove web serve: handler does not exist")
-			return 1
-		}
-		return state.changed()
 	}
 	fmt.Fprintf(os.Stderr, "fake tailscale: unsupported command %q\n", command)
 	return 2
 }
 
-// changed finishes a Serve change that took effect.
-func (state *State) changed() int {
-	state.Wrote = true
-	if state.WriteErrorAfterChange != "" {
-		fmt.Fprintln(os.Stderr, state.WriteErrorAfterChange)
-		return 1
-	}
-	return 0
-}
-
-func (state *State) writeRefused() bool {
-	if state.WriteError != "" {
-		fmt.Fprintln(os.Stderr, state.WriteError)
-		return true
-	}
-	return false
-}
-
-func (state *State) name() string {
-	if state.Status.Self == nil {
-		return ""
-	}
-	return strings.TrimSuffix(state.Status.Self.DNSName, ".")
-}
-
-// addHandler does what "tailscale serve --bg --https=PORT TARGET" does.
-func (state *State) addHandler(port, target string) {
-	if state.IgnoreWrites {
+// serveConfig answers a LocalAPI request to the serve-config resource as
+// Tailscale does: a read gets the configuration and its version, the SHA-256
+// of the JSON, in the ETag header; a change replaces the configuration only
+// when its If-Match header has the current version, and is otherwise
+// answered 412 without a change.
+func (fake *Fake) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if _, password, _ := request.BasicAuth(); password != localAPIPassword {
+		http.Error(response, "bad password", http.StatusForbidden)
 		return
 	}
-	config := &state.Serve
-	if config.TCP == nil {
-		config.TCP = map[string]tailscale.TCPHandler{}
+	if request.URL.Path != "/localapi/v0/serve-config" || request.Host != "local-tailscaled.sock" {
+		http.NotFound(response, request)
+		return
 	}
-	if config.Web == nil {
-		config.Web = map[string]tailscale.WebServer{}
+	write := request.Method == http.MethodPost
+	name := ServeRead
+	if write {
+		name = ServeWrite
 	}
-	config.TCP[port] = tailscale.TCPHandler{HTTPS: true}
-	key := net.JoinHostPort(state.name(), port)
-	server := config.Web[key]
-	if server.Handlers == nil {
-		server.Handlers = map[string]tailscale.Handler{}
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
 	}
-	server.Handlers["/"] = tailscale.Handler{Proxy: target}
-	config.Web[key] = server
-	delete(config.AllowFunnel, key)
+	var status int
+	var answer []byte
+	var version string
+	err = call(fake.file, []string{name}, write, !write, func(state *State) {
+		if write {
+			status, answer = state.change(request.Header.Get("If-Match"), body)
+			return
+		}
+		if state.Wrote && state.ServeReadErrorAfterWrite != "" {
+			status, answer = http.StatusInternalServerError, errorJSON(state.ServeReadErrorAfterWrite)
+			return
+		}
+		status, answer = http.StatusOK, state.serveJSON()
+		if !state.Unversioned {
+			version = versionOf(answer)
+		}
+	})
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if version != "" {
+		response.Header().Set("Etag", version)
+	}
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(status)
+	response.Write(answer)
 }
 
-// removeHandler does what "tailscale serve --https=PORT --set-path=/ off"
-// does.
-func (state *State) removeHandler(port string) bool {
-	key := net.JoinHostPort(state.name(), port)
-	server, ok := state.Serve.Web[key]
-	if !ok {
-		return false
+// change answers a Serve change with body made from version ifMatch.
+func (state *State) change(ifMatch string, body []byte) (int, []byte) {
+	if state.ChangedBeforeWrite != nil {
+		state.Serve, state.ChangedBeforeWrite = *state.ChangedBeforeWrite, nil
 	}
-	if _, ok := server.Handlers["/"]; !ok {
-		return false
+	switch {
+	case state.WriteDenied:
+		return http.StatusForbidden, []byte("serve config denied\n")
+	case state.WriteError != "":
+		return http.StatusInternalServerError, errorJSON("updating config: " + state.WriteError)
+	case ifMatch != "" && ifMatch != versionOf(state.serveJSON()) && !state.Unversioned:
+		return http.StatusPreconditionFailed, []byte("etag mismatch\n")
 	}
-	if state.IgnoreWrites {
-		return true
+	var fields map[string]json.RawMessage
+	var config tailscale.ServeConfig
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return http.StatusInternalServerError, errorJSON("decoding config: " + err.Error())
 	}
-	delete(server.Handlers, "/")
-	if len(server.Handlers) == 0 {
-		delete(state.Serve.Web, key)
-		delete(state.Serve.TCP, port)
-		delete(state.Serve.AllowFunnel, key)
-	} else {
-		state.Serve.Web[key] = server
+	if err := json.Unmarshal(body, &config); err != nil {
+		return http.StatusInternalServerError, errorJSON("decoding config: " + err.Error())
 	}
-	return true
+	if !state.IgnoreWrites {
+		for _, known := range []string{"TCP", "Web", "AllowFunnel", "Foreground"} {
+			delete(fields, known)
+		}
+		state.Serve, state.ServeExtra = config, fields
+	}
+	state.Wrote = true
+	if state.WriteErrorAfterChange != "" {
+		return http.StatusInternalServerError, errorJSON(state.WriteErrorAfterChange)
+	}
+	return http.StatusOK, nil
+}
+
+// serveJSON is the Serve configuration as Tailscale writes it.
+func (state *State) serveJSON() []byte {
+	var fields map[string]json.RawMessage
+	content, _ := json.Marshal(state.Serve)
+	_ = json.Unmarshal(content, &fields)
+	for field, value := range state.ServeExtra {
+		fields[field] = value
+	}
+	if len(fields) == 0 {
+		return []byte("null")
+	}
+	content, _ = json.Marshal(fields)
+	return content
+}
+
+func versionOf(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
+func errorJSON(text string) []byte {
+	content, _ := json.Marshal(struct{ Error string }{text})
+	return content
 }
 
 // lockFile holds the operating system's lock on the file at path, waiting

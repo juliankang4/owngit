@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -121,9 +120,8 @@ func TestTailscaleCommandBesideARunningServer(t *testing.T) {
 		strings.Count(strings.ToLower(output), "restart") != 1 || !strings.Contains(output, "Settings applies at once") {
 		t.Fatalf("off printed %q", output)
 	}
-	want := []string{"serve --bg --https=443 http://127.0.0.1:7821", "serve --https=443 --set-path=/ off"}
-	if !reflect.DeepEqual(fake.Writes(), want) {
-		t.Fatalf("writes=%q, want %q", fake.Writes(), want)
+	if len(fake.Writes()) != 2 || len(fake.State().Serve.Web) != 0 {
+		t.Fatalf("writes=%q, serve %+v", fake.Writes(), fake.State().Serve)
 	}
 	report = tailscaleJSON(t, stateDir, fake.Path)
 	if report.On || report.Endpoint != server.TailscaleEndpointFree {
@@ -227,7 +225,7 @@ func TestTailscaleCommandAfterARename(t *testing.T) {
 func TestTailscaleOnShowsTheCertificateLogNotice(t *testing.T) {
 	notice := fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgTSCertLog), tailscaletest.Name)
 	stateDir := initializedState(t, false)
-	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), WriteError: "Access denied: serve config denied"})
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), WriteDenied: true})
 	output, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path)
 	if err == nil || !strings.Contains(output, notice) {
 		t.Fatalf("a failed write: err=%v output=%q", err, output)
@@ -237,7 +235,7 @@ func TestTailscaleOnShowsTheCertificateLogNotice(t *testing.T) {
 	if strings.Contains(notice, "before you turn") {
 		t.Errorf("notice %q", notice)
 	}
-	fake.Update(func(s *tailscaletest.State) { s.WriteError = "" })
+	fake.Update(func(s *tailscaletest.State) { s.WriteDenied = false })
 	output, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--json")
 	noErr(t, err)
 	var result struct {
@@ -342,7 +340,7 @@ func TestTailscaleOffWhileTailscaleIsStopped(t *testing.T) {
 		s.WriteError = "Tailscale is stopped."
 	})
 	_, err = runTailscale(t, "off", "--state-dir", stateDir, "--tailscale", fake.Path)
-	want := webui.Text(webui.LangEN, webui.TailscaleProblemCode("stopped")) + " Tailscale said: Tailscale is stopped."
+	want := webui.Text(webui.LangEN, webui.TailscaleProblemCode("stopped")) + " Tailscale said: updating config: Tailscale is stopped."
 	if err == nil || err.Error() != want {
 		t.Fatalf("off: %v", err)
 	}
@@ -376,7 +374,7 @@ func TestTailscaleCommandUsesAnotherPortWhen443IsTaken(t *testing.T) {
 	if strings.Count(output, webui.Text(webui.LangEN, webui.MsgTSFirstVisit)) != 1 {
 		t.Errorf("on says more than once that the first visit waits: %q", output)
 	}
-	if want := []string{"serve --bg --https=8443 http://127.0.0.1:7654"}; !reflect.DeepEqual(fake.Writes(), want) {
+	if len(fake.Writes()) != 1 || !fake.Endpoint(8443, "http://127.0.0.1:7654").Exact {
 		t.Fatalf("writes=%q", fake.Writes())
 	}
 	output, err = runTailscale(t, "off", "--state-dir", stateDir, "--tailscale", fake.Path)
@@ -413,7 +411,7 @@ func TestTailscaleOnWithANamedPort(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "owngit tailscale off") {
 		t.Fatalf("moving: %v", err)
 	}
-	if want := []string{"serve --bg --https=9443 http://127.0.0.1:7654"}; !reflect.DeepEqual(fake.Writes(), want) {
+	if len(fake.Writes()) != 1 || !fake.Endpoint(9443, "http://127.0.0.1:7654").Exact {
 		t.Fatalf("writes=%q", fake.Writes())
 	}
 }
