@@ -101,6 +101,10 @@ const (
 	// it when one is free. OwnGit never suggests changing an existing
 	// folder, which may belong to the system or other software.
 	MsgSetupStorageDeniedExisting MessageCode = "setup.storage.denied_existing"
+	// MsgSetupStorageDeniedShare is MsgSetupStorageDenied on the setup page
+	// for a folder on a network share or a similar mount, whose server, not
+	// this computer, decides who may create folders there.
+	MsgSetupStorageDeniedShare MessageCode = "setup.storage.denied_share"
 	// MsgSetupStorageReadOnly is a folder on a read-only file system, which
 	// includes the folders a service unit makes read-only.
 	MsgSetupStorageReadOnly MessageCode = "setup.storage.read_only"
@@ -563,6 +567,10 @@ var catalog = map[MessageCode]message{
 	MsgSetupStorageDeniedExisting: {
 		en: "The account OwnGit runs as cannot write to that existing folder. Leave the folder as it is and enter a new folder inside it instead; OwnGit then shows how to create it. For example:",
 		ko: "OwnGit을 실행하는 계정은 이미 있는 그 폴더에 쓸 수 없습니다. 그 폴더는 그대로 두고 그 안에 만들 새 폴더를 입력하세요. 그러면 OwnGit이 새 폴더를 만드는 방법을 알려 줍니다. 예:",
+	},
+	MsgSetupStorageDeniedShare: {
+		en: "The account OwnGit runs as cannot write to that folder, which is on a network share. Create the folder through the share's own settings and let that account write to it, or choose another folder.",
+		ko: "OwnGit을 실행하는 계정은 네트워크 공유에 있는 그 폴더에 쓸 수 없습니다. 공유 자체의 설정에서 폴더를 만들고 그 계정이 쓸 수 있게 하거나, 다른 폴더를 고르세요.",
 	},
 	MsgSetupStorageReadOnly: {
 		en: "That folder is read-only for OwnGit. A service may not write in system folders, and the owngit account may not write in home folders either. Choose the suggested folder or one such as /srv/git.",

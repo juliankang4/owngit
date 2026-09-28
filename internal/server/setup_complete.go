@@ -230,7 +230,9 @@ func storageProblem(err error) webui.MessageCode {
 // new folder inside it, never a command that changes the existing one. Root
 // runs that command, so it is offered only when no other account can put a
 // link where root creates the folder (state.OnlyRootCanChange), and a new
-// folder is suggested only when it would get the command. Other problems
+// folder is suggested only when it would get the command. A folder on a
+// network share gets no command: the owner creates it through the share's
+// own settings. Other problems
 // the owner cannot read from the page come with the system's message.
 func storageNotice(folder string, err error) webui.Notice {
 	code := storageProblem(err)
@@ -241,6 +243,13 @@ func storageNotice(folder string, err error) webui.Notice {
 	switch code {
 	case webui.MsgSetupStorageDenied:
 		clean := filepath.Clean(folder)
+		if state.OnSharedFilesystem(clean) {
+			// The share's server decides who may create folders there,
+			// and a command run on this computer cannot know what it
+			// would change.
+			notice.Code = webui.MsgSetupStorageDeniedShare
+			break
+		}
 		if _, statErr := os.Lstat(clean); !errors.Is(statErr, fs.ErrNotExist) {
 			// It exists, or this account cannot even tell.
 			if inside := freeSubfolder(clean); state.OnlyRootCanChange(inside) {

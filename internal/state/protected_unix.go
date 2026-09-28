@@ -148,6 +148,9 @@ func RequireProtectedPath(path string) error {
 
 // rootEquivalentGroup reports whether gid is a macOS group whose members may
 // act as root: wheel and admin, which own Homebrew's and the system's folders.
+// Their members can become root with sudo, so write access for these groups
+// is inside the administrator boundary that root already is, not another
+// account's authority. OnlyRootCanChange relies on this too.
 func rootEquivalentGroup(gid uint32) bool {
 	return runtime.GOOS == "darwin" && (gid == 0 || gid == 80)
 }
@@ -239,18 +242,37 @@ func accountName(uid uint32) string {
 	return strconv.FormatUint(uint64(uid), 10)
 }
 
+// OnSharedFilesystem reports whether the nearest existing folder of the
+// absolute path is on a filesystem whose owners and modes this computer does
+// not enforce, such as a network share (see ownershipEnforcedHere). A path
+// that cannot be checked is not reported as shared.
+func OnSharedFilesystem(path string) bool {
+	for existing := path; ; existing = filepath.Dir(existing) {
+		if _, err := os.Stat(existing); err == nil {
+			enforced, err := ownershipEnforcedHere(existing)
+			return err == nil && !enforced
+		} else if !errors.Is(err, os.ErrNotExist) || filepath.Dir(existing) == existing {
+			return false
+		}
+	}
+}
+
 var errNotRootOnly = errors.New("an account other than root can change it")
 
 // OnlyRootCanChange reports whether root is the only account that can create,
 // rename or replace anything on the way to the absolute path: "/" and every
 // existing folder and link on the way belong to root, and no other account
-// can write to one of them, not even to a sticky folder. Only then can a
-// folder that root creates at path for another account, with a command
-// OwnGit suggests, not be redirected by a link that another account put
-// there first. Names that do not exist yet are fine, because root creates
+// can write to one of them, not even to a sticky folder (group write by the
+// macOS administrator groups counts as root's, see rootEquivalentGroup). The
+// last existing folder must also be on a filesystem whose owners and modes
+// this computer enforces (ownershipEnforcedHere), because a network share's
+// server or a FUSE program can let others change what it shows as root's.
+// Only then can a folder that root creates at path for another account, with
+// a command OwnGit suggests, not be redirected by a link that another account
+// put there first. Names that do not exist yet are fine, because root creates
 // them. A path that cannot be checked counts as changeable.
 func OnlyRootCanChange(path string) bool {
-	_, _, err := WalkProtected(path, func(name string, info os.FileInfo) error {
+	resolved, _, err := WalkProtected(path, func(name string, info os.FileInfo) error {
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		if !ok || stat.Uid != 0 {
 			return errNotRootOnly
@@ -267,7 +289,11 @@ func OnlyRootCanChange(path string) bool {
 		}
 		return nil
 	})
-	return err == nil
+	if err != nil {
+		return false
+	}
+	enforced, err := ownershipEnforcedHere(resolved)
+	return err == nil && enforced
 }
 
 // OwnPrivateGroup reports whether gid is the private group of a runner that

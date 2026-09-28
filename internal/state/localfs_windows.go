@@ -29,6 +29,10 @@ func checkStateDirectory(path string) (string, error) { return path, nil }
 // OnlyRootCanChange is false on Windows, which has no root account.
 func OnlyRootCanChange(string) bool { return false }
 
+// OnSharedFilesystem is not needed on Windows, where setup offers no command
+// that a share could redirect.
+func OnSharedFilesystem(string) bool { return false }
+
 func ensureLocalStateFilesystem(path string) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
