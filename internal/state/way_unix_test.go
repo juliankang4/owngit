@@ -204,7 +204,7 @@ func TestStateIsOpenedOnlyInTheHeldDirectory(t *testing.T) {
 	defer held.Close()
 	noErr(t, os.Rename(path, filepath.Join(root, "checked")))
 	noErr(t, os.Mkdir(path, 0o700))
-	store, err := OpenIn(context.Background(), held)
+	store, err := OpenIn(context.Background(), held, nil)
 	if store != nil {
 		store.Close()
 	}

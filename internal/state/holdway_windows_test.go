@@ -48,7 +48,7 @@ func TestWindowsStateIsNotSwappedAfterItsCheck(t *testing.T) {
 				renamed = append(renamed, os.Rename(swapped, swapped+".checked"))
 				renamed = append(renamed, os.Rename(replacement, swapped))
 			}
-			store, err := OpenIn(context.Background(), held)
+			store, err := OpenIn(context.Background(), held, nil)
 			preflightHooks.afterRelease = nil
 			t.Logf("renames: %v; open: %v", renamed, err)
 			if err != nil {
@@ -80,7 +80,7 @@ func TestWindowsFolderHeldForRenamingIsAChangeInProgress(t *testing.T) {
 				t.Fatalf("OpenIn panicked: %v", recovered)
 			}
 		}()
-		return OpenIn(context.Background(), held)
+		return OpenIn(context.Background(), held, nil)
 	}
 	requireRenameable := func(when string) {
 		t.Helper()

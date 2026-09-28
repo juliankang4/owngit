@@ -127,22 +127,24 @@ func OpenStateDirectory(dir string) (*os.File, error) {
 }
 
 // Open opens the state in the directory dir, creating it with
-// CreateDirectory.
+// CreateDirectory. An older schema is upgraded with no backup; see OpenIn.
 func Open(ctx context.Context, dir string) (*Store, error) {
 	held, err := CreateDirectory(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer held.Close()
-	return OpenIn(ctx, held)
+	return OpenIn(ctx, held, nil)
 }
 
 // OpenIn opens the state in the directory held, which CreateDirectory or
 // OpenStateDirectory returned. The inspection binds the directory by its
 // path and refuses one that is not the held directory any more, as a change
 // during inspection (ErrInspectionUnstable). SQLite opens the state by that
-// path, so the way to it is held (holdWay) until it has.
-func OpenIn(ctx context.Context, held *os.File) (result *Store, err error) {
+// path, so the way to it is held (holdWay) until it has. When the database
+// has an older schema, beforeUpgrade, unless nil, runs after the inspection
+// and before anything in the directory changes.
+func OpenIn(ctx context.Context, held *os.File, beforeUpgrade BeforeUpgrade) (result *Store, err error) {
 	absolute := held.Name()
 	release, err := holdWay(held)
 	if err != nil {
@@ -174,6 +176,12 @@ func OpenIn(ctx context.Context, held *os.File) (result *Store, err error) {
 			}
 		}
 	}()
+	if beforeUpgrade != nil && inspected.class != schemaEmpty && inspected.class != schemaCurrent {
+		upgrade := &Upgrade{From: inspected.class.version, To: currentSchemaVersion(), in: inspected}
+		if err := beforeUpgrade(ctx, upgrade); err != nil {
+			return nil, err
+		}
+	}
 	if err := inspected.accept(ctx, absolute); err != nil {
 		return nil, err
 	}
