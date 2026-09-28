@@ -226,9 +226,9 @@ func readlinkAt(dir *os.File, name, path string) (string, error) {
 	}
 }
 
-// WalkProtected resolves path like walkWay and calls check for "/" and for
-// every directory, link and file passed through, the last one included,
-// before it trusts anything inside. When a name on the way does not exist,
+// WalkProtected resolves path like walkWay and calls check for "/", for
+// every directory before it looks inside, for every link before it follows
+// it, and for what path leads to. When a name on the way does not exist,
 // it returns the resolved directory that should hold it and the missing
 // name; otherwise it returns the resolved path.
 func WalkProtected(path string, check func(string, os.FileInfo) error) (resolved, missing string, err error) {
@@ -327,9 +327,9 @@ func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
 
 // OpenDirectory opens the directory at path for files that OwnGit keeps
 // there, such as its state, its log or the error of a serve that could not
-// start, and creates it and its missing parents when create is set. It is
-// reached by walkWay, so no link is followed that was not checked, and the
-// check holds for the directory that is returned, not for whatever path
+// start, and creates it and its missing parents when create is set. It
+// walks the way with walkWay, so it follows no link that it did not check,
+// and the check holds for the directory it returns, not for whatever path
 // names later.
 //
 // Every folder and link on the way must be one that no other account can
