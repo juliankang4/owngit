@@ -151,7 +151,9 @@ func OpenUpgradeBackupFolder(stateDir string) (folder *os.File, release func(), 
 		held.Close()
 	}
 	if created {
-		err = ProtectPrivateHandle(held, true)
+		// By path, which leads to the held folder (see above): on Linux
+		// the walk holds it with O_PATH, which cannot change its mode.
+		err = ProtectPrivatePath(held.Name(), true)
 	}
 	if err == nil {
 		err = requirePrivateFolder(held)
