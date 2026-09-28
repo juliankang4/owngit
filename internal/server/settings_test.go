@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"html"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -123,9 +124,21 @@ func TestInsecureAcknowledgementRequiresCurrentAdminPassword(t *testing.T) {
 	}
 }
 
-// Every Settings change redirects to /settings?notice=settings_saved. The
-// page used to replace the notice from the address with the form's own
-// (empty) notices, so a successful change was never confirmed.
+// settingsGroup returns the markup of one Settings group.
+func settingsGroup(t *testing.T, body, group string) string {
+	t.Helper()
+	start := strings.Index(body, `id="grp-`+group+`"`)
+	if start < 0 {
+		t.Fatalf("the page has no %s group", group)
+	}
+	end := strings.Index(body[start:], "</section>")
+	return body[start : start+end]
+}
+
+// Every Settings change redirects to its group on its tab, with a notice
+// that the group shows. The page used to replace the notice from the
+// address with the form's own (empty) notices, so a successful change was
+// never confirmed.
 func TestSettingsChangesConfirmTheSave(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
 	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
@@ -145,21 +158,33 @@ func TestSettingsChangesConfirmTheSave(t *testing.T) {
 	}
 
 	admin := "admin-password"
-	for _, values := range []url.Values{
-		{"action": {webui.ActionAcknowledgeInsecure}, "insecure_ack": {"1"}},
-		{"action": {webui.ActionSetUpdateCheck}, "update_check": {"off"}},
-		{"action": {webui.ActionChangeAdminPassword}, "new_admin_password": {"new-admin-password"}},
+	for _, test := range []struct {
+		values   url.Values
+		location string
+		group    string
+		notice   webui.MessageCode
+	}{
+		{url.Values{"action": {webui.ActionAcknowledgeInsecure}, "insecure_ack": {"1"}},
+			"/settings/network?notice=insecure_acknowledged#grp-connection", "connection", webui.MsgSettingsAckDone},
+		{url.Values{"action": {webui.ActionSetUpdateCheck}, "update_check": {"off"}},
+			"/settings?notice=settings_saved#grp-update", "update", webui.MsgSettingsSaved},
+		{url.Values{"action": {webui.ActionChangeAdminPassword}, "new_admin_password": {"new-admin-password"}},
+			"/settings/access?notice=admin_password_changed#grp-admin", "admin", webui.MsgSettingsAdminChanged},
 	} {
+		values := test.values
 		values.Set("csrf", token)
 		values.Set("admin_password", admin)
 		response := request(t, client, http.MethodPost, server.URL+"/settings", values, server.URL)
 		location := response.Header.Get("Location")
-		if response.StatusCode != http.StatusSeeOther || location != "/settings?notice=settings_saved" {
+		if response.StatusCode != http.StatusSeeOther || location != test.location {
 			t.Fatalf("%s: status=%d location=%q", values.Get("action"), response.StatusCode, location)
 		}
 		body, status := dashboardGET(t, client, server.URL+location)
-		if status != http.StatusOK || !strings.Contains(body, saved) {
-			t.Errorf("%s: the saved change is not confirmed (status %d)", values.Get("action"), status)
+		if status != http.StatusOK || !strings.Contains(settingsGroup(t, body, test.group), html.EscapeString(webui.Text(webui.LangEN, test.notice))) {
+			t.Errorf("%s: the saved change is not confirmed in its group (status %d)", values.Get("action"), status)
+		}
+		if strings.Contains(body, `class="notices"`) {
+			t.Errorf("%s: the confirmation is also shown above the page", values.Get("action"))
 		}
 		if values.Get("action") == webui.ActionChangeAdminPassword {
 			admin = "new-admin-password"
@@ -192,7 +217,7 @@ func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 	client, jar := newBrowserClient(t)
 	parsed, _ := url.Parse(server.URL)
 	jar.SetCookies(parsed, []*http.Cookie{{Name: generalCookie, Value: "general-token", Path: "/"}})
-	saved := webui.Text(webui.LangEN, webui.MsgSettingsSaved)
+	saved := webui.Text(webui.LangEN, webui.MsgSettingsAccessDisabled)
 
 	response := request(t, client, http.MethodPost, server.URL+"/settings", url.Values{
 		"csrf": {"csrf-token"}, "action": {webui.ActionDisableAccessPassword}, "admin_password": {"admin-password"},
@@ -213,13 +238,13 @@ func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("enable status=%d", response.StatusCode)
 	}
-	if location := response.Header.Get("Location"); location != "/login?notice=access_password_saved&next=%2Fsettings" {
+	if location := response.Header.Get("Location"); location != "/login?notice=access_password_saved&next=%2Fsettings%2Faccess" {
 		t.Fatalf("after enabling the shared password location=%q, want sign-in with the confirmation", location)
 	}
 	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
 		afterAction(t, jar, server.URL, "access_password_saved")
 		body, status := dashboardGET(t, client, server.URL+response.Header.Get("Location")+"&lang="+string(lang))
-		if status != http.StatusOK || !strings.Contains(body, webui.Text(lang, webui.MsgSettingsAccessSaved)) || !strings.Contains(body, `name="next" value="/settings"`) {
+		if status != http.StatusOK || !strings.Contains(body, webui.Text(lang, webui.MsgSettingsAccessSaved)) || !strings.Contains(body, `name="next" value="/settings/access"`) {
 			t.Fatalf("%s: the sign-in page does not confirm the saved shared password (status %d)", lang, status)
 		}
 	}
@@ -232,7 +257,7 @@ func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 		"csrf": {"admin-csrf"}, "action": {webui.ActionChangeAccessPassword}, "admin_password": {"admin-password"},
 		"access_password": {"third-shared-password"},
 	}, server.URL)
-	if location := response.Header.Get("Location"); response.StatusCode != http.StatusSeeOther || location != "/settings?notice=settings_saved" {
+	if location := response.Header.Get("Location"); response.StatusCode != http.StatusSeeOther || location != "/settings/access?notice=access_changed#grp-access" {
 		t.Fatalf("change with an administrator session status=%d location=%q", response.StatusCode, location)
 	}
 }

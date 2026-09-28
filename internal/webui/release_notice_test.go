@@ -41,12 +41,11 @@ func TestUpdateCheckSettingStates(t *testing.T) {
 		info  UpdateCheckInfo
 		want  []MessageCode
 		lacks []MessageCode
-		value string
 	}{
-		{UpdateCheckInfo{Enabled: true}, []MessageCode{MsgSettingsUpdateOnNow, MsgSettingsUpdateTurnOff}, []MessageCode{MsgSettingsUpdateForced}, "off"},
-		{UpdateCheckInfo{}, []MessageCode{MsgSettingsUpdateOffNow, MsgSettingsUpdateTurnOn}, []MessageCode{MsgSettingsUpdateForced}, "on"},
-		{UpdateCheckInfo{Enabled: true, ForcedOff: true}, []MessageCode{MsgSettingsUpdateForced, MsgSettingsUpdateSavedOn}, []MessageCode{MsgSettingsUpdateOnNow}, "off"},
-		{UpdateCheckInfo{ForcedOff: true}, []MessageCode{MsgSettingsUpdateForced, MsgSettingsUpdateSavedOff}, []MessageCode{MsgSettingsUpdateOffNow}, "on"},
+		{UpdateCheckInfo{Enabled: true}, []MessageCode{MsgSettingsUpdateSwitch, MsgSettingsUpdateHelp}, []MessageCode{MsgSettingsUpdateForced}},
+		{UpdateCheckInfo{}, []MessageCode{MsgSettingsUpdateSwitch, MsgSettingsUpdateHelp}, []MessageCode{MsgSettingsUpdateForced}},
+		{UpdateCheckInfo{Enabled: true, ForcedOff: true}, []MessageCode{MsgSettingsUpdateForced, MsgSettingsUpdateSavedOn}, []MessageCode{MsgSettingsUpdateSavedOff}},
+		{UpdateCheckInfo{ForcedOff: true}, []MessageCode{MsgSettingsUpdateForced, MsgSettingsUpdateSavedOff}, []MessageCode{MsgSettingsUpdateSavedOn}},
 	}
 	for _, tc := range cases {
 		for _, lang := range Langs() {
@@ -61,9 +60,16 @@ func TestUpdateCheckSettingStates(t *testing.T) {
 					t.Errorf("%+v/%s: shows %s", tc.info, lang, code)
 				}
 			}
+			// The switch shows the saved value, which stays editable while
+			// the start option overrides it, and is saved with the
+			// administrator password.
 			form := formFor(t, out, ActionSetUpdateCheck)
-			if !strings.Contains(form, `name="update_check" value="`+tc.value+`"`) || !strings.Contains(form, `name="admin_password"`) {
-				t.Errorf("%+v/%s: the form does not submit %q with the administrator password", tc.info, lang, tc.value)
+			checked := `name="update_check" value="on" data-saved="off" aria-describedby`
+			if tc.info.Enabled {
+				checked = `name="update_check" value="on" data-saved="on" checked aria-describedby`
+			}
+			if !strings.Contains(strings.Join(strings.Fields(form), " "), checked) || !strings.Contains(form, `name="admin_password"`) {
+				t.Errorf("%+v/%s: the switch is not %q with the administrator password", tc.info, lang, checked)
 			}
 		}
 	}

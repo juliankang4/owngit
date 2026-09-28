@@ -1,5 +1,5 @@
 {{define "body"}}
-{{$p := .Page}}{{$lang := .Lang}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}{{$pending := $p.PendingAction}}
+{{$p := .Page}}{{$lang := .Lang}}{{$tab := or $p.Tab "general"}}
 
 <div class="phead">
   <h1>{{bi $lang "settings.title"}}</h1>
@@ -9,411 +9,545 @@
   <p>{{bi $lang "settings.admin_required"}}</p>
 </div>
 
-<div class="card">
-  <div class="setblock">
-    <h2 class="setblock__h">{{bi $lang "settings.access.title"}}</h2>
-    <p class="setblock__now">
-      {{if eq $p.AccessMode "password"}}{{icon "lock"}}{{bi $lang "settings.access.password_now"}}
-      {{else}}{{icon "unlocked"}}{{bi $lang "settings.access.open_now"}}{{end}}
-    </p>
+{{/* Each tab is its own address, so the strip is a list of ordinary links:
+     it works without scripting, and a tab can be reloaded and shared. */}}
+<nav class="settabs" {{biAttr $lang "aria-label" "settings.tabs"}}>
+  {{range settingsTabs}}
+    <a class="settabs__t" href="{{.URL}}"{{if eq .ID $tab}} aria-current="page"{{end}}>{{icon .Icon}}<span>{{bi $lang .Label}}</span></a>
+  {{end}}
+</nav>
 
-    {{if eq $p.AccessMode "password"}}
-      {{$act := "change_access_password"}}{{$fn := forAction $pending $act $n}}
-      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
-        <summary class="btn">{{bi $lang "settings.access.change"}}</summary>
-        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-          <input type="hidden" name="csrf" value="{{$csrf}}">
-          <input type="hidden" name="action" value="{{$act}}">
-          <div class="f">
-            <label for="chg-access">{{bi $lang "settings.access.change"}}</label>
-            <input id="chg-access" name="access_password" type="password" autocomplete="new-password" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "access_password"}}>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "access_password"}}
-          </div>
-          <div class="f">
-            <label for="chg-access-admin">{{bi $lang "admin.field"}}</label>
-            <input id="chg-access-admin" name="admin_password" type="password" autocomplete="current-password" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-          </div>
-          <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "settings.access.change"}}</button></div>
-        </form>
-      </details>
+{{/* The settings groups.
 
-      {{$act := "disable_access_password"}}{{$fn := forAction $pending $act $n}}
-      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
-        <summary class="btn">{{bi $lang "settings.access.disable"}}</summary>
-        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-          <input type="hidden" name="csrf" value="{{$csrf}}">
-          <input type="hidden" name="action" value="{{$act}}">
-          <p class="fieldnote">{{icon "warning"}}<span>{{bi $lang "settings.access.disable_warning"}}</span></p>
-          <div class="f">
-            <label for="dis-access-admin">{{bi $lang "admin.field"}}</label>
-            <input id="dis-access-admin" name="admin_password" type="password" autocomplete="current-password" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-          </div>
-          <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "settings.access.disable"}}</button></div>
-        </form>
-      </details>
-    {{else}}
-      {{$act := "enable_access_password"}}{{$fn := forAction $pending $act $n}}
-      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
-        <summary class="btn">{{bi $lang "settings.access.enable"}}</summary>
-        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-          <input type="hidden" name="csrf" value="{{$csrf}}">
-          <input type="hidden" name="action" value="{{$act}}">
-          <div class="f">
-            <label for="en-access">{{bi $lang "setup.access.password"}}</label>
-            <input id="en-access" name="access_password" type="password" autocomplete="new-password" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "access_password"}}>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "access_password"}}
-            <p class="f__help">{{bi $lang "setup.access.password_help"}}</p>
-          </div>
-          <div class="f">
-            <label for="en-access-admin">{{bi $lang "admin.field"}}</label>
-            <input id="en-access-admin" name="admin_password" type="password" autocomplete="current-password" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-          </div>
-          <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "settings.access.enable"}}</button></div>
-        </form>
-      </details>
-    {{end}}
-  </div>
+     A group is one form with its own Save and Cancel. Saving it sends only
+     its own fields, so another group's unsaved change is neither saved nor
+     reset. The contract the script relies on:
 
-  <div class="setblock">
-    <h2 class="setblock__h">{{bi $lang "settings.admin.title"}}</h2>
-    {{$act := "change_admin_password"}}{{$fn := forAction $pending $act $n}}
-    <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
-      <summary class="btn">{{bi $lang "settings.admin.change"}}</summary>
-      <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-        <input type="hidden" name="csrf" value="{{$csrf}}">
-        <input type="hidden" name="action" value="{{$act}}">
-        <div class="f">
-          <label for="cur-admin">{{bi $lang "settings.admin.current"}}</label>
-          <input id="cur-admin" name="admin_password" type="password" autocomplete="current-password" required
-                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-        </div>
-        <div class="f">
-          <label for="new-admin">{{bi $lang "settings.admin.new"}}</label>
-          <input id="new-admin" name="new_admin_password" type="password" autocomplete="new-password" required
-                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "new_admin_password"}}>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "new_admin_password"}}
-        </div>
-        <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "settings.admin.change"}}</button></div>
-      </form>
-    </details>
-    <p class="f__help">{{bi $lang "settings.admin.reset_hint"}}</p>
-  </div>
+     - [data-group] is the group, with its name as the value, and holds one
+       [data-group-form]. The server answers a refused form with the whole
+       tab, in which the same group shows the error and what was sent.
+     - A control that holds a setting carries data-saved, the saved value
+       ("on" or "off" for a switch). A password field has no saved value; it
+       counts as changed once something is typed. [data-group-gate] marks
+       what only confirms a save, such as the administrator password.
+     - [data-group-refused] marks a group the server refused: its save bar
+       stays shown, and Cancel follows its link to the tab as saved.
+       [data-group-open] keeps the save bar shown while an action waits,
+       although nothing was changed.
+     - [data-show-if="name=value"] is shown only while that field of the
+       same form has that value. Without the script everything is shown.
+     - [data-group-native] asks the script to leave the form to the browser.
 
-  <div class="setblock">
-    <h2 class="setblock__h">{{bi $lang "settings.connection.title"}}</h2>
-    <p class="setblock__now">
-      {{if .Chrome.Connection.Tailscale}}{{icon "lock"}}{{bi $lang "connection.encrypted_tailscale"}}
-      {{else if .Chrome.Connection.Proxy}}{{icon "lock"}}{{bi $lang "connection.encrypted_proxy"}}
-      {{else if .Chrome.Connection.Encrypted}}{{icon "lock"}}{{bi $lang "connection.encrypted"}}
-      {{else if .Chrome.Connection.Tailnet}}{{icon "lock"}}{{bi $lang "connection.encrypted_tailnet"}}
-      {{else}}{{icon "unlocked"}}{{bi $lang "connection.plain"}}{{end}}
-    </p>
-    {{/* Explain the situation first, then the limit of what OwnGit can
-         actually observe about the rest of the path. */}}
-    {{$protected := or .Chrome.Connection.Encrypted .Chrome.Connection.Tailnet}}
-    {{if not $protected}}
-      <p class="setblock__d">{{bi $lang "connection.plain_detail"}}</p>
-    {{end}}
-    {{/* Through a proxy or Tailscale, OwnGit sees plain HTTP from it, and the
-         encrypted part ends there. */}}
-    {{if .Chrome.Connection.Tailscale}}<p class="setblock__d">{{bi $lang "connection.tailscale_note"}}</p>
-    {{else if .Chrome.Connection.Proxy}}<p class="setblock__d">{{bi $lang "connection.proxy_note"}}</p>
-    {{else if .Chrome.Connection.Tailnet}}<p class="setblock__d">{{bi $lang "connection.tailnet_note"}}</p>
-    {{else}}<p class="setblock__d">{{bi $lang "connection.no_proof"}}</p>{{end}}
+     The script sends a group's form itself, and keeps the page, only when
+     the form has no password field (groupSave in owngit.js). A group that
+     asks for the administrator password, as every group does today, is an
+     ordinary POST. Without the script every form is an ordinary POST, its
+     save bar is always shown, and Cancel reloads the tab. */}}
+<div class="setpanel" data-settings>
+  {{if eq $tab "general"}}<p class="setpanel__lead">{{bi $lang "settings.lead.general"}}</p>{{template "setGeneral" .}}
+  {{else if eq $tab "access"}}<p class="setpanel__lead">{{bi $lang "settings.lead.access"}}</p>{{template "setAccess" .}}
+  {{else if eq $tab "network"}}<p class="setpanel__lead">{{bi $lang "settings.lead.network"}}</p>{{template "setNetwork" .}}
+  {{else if eq $tab "repositories"}}<p class="setpanel__lead">{{bi $lang "settings.lead.repositories"}}</p>{{template "setRepositories" .}}
+  {{else if eq $tab "storage"}}<p class="setpanel__lead">{{bi $lang "settings.lead.storage"}}</p>{{template "setStorage" .}}
+  {{end}}
+  {{/* What the script says when a save gets no usable answer. */}}
+  <p class="notice notice--error" role="alert" tabindex="-1" data-settings-failed hidden>{{statusIcon "error"}}<span>{{bi $lang "settings.send_failed"}}</span></p>
+  <p class="notice notice--error" role="alert" tabindex="-1" data-settings-unexpected hidden>{{statusIcon "error"}}<span>{{bi $lang "settings.unexpected_answer"}}</span></p>
+</div>
+{{end}}
 
-    {{/* Acknowledging plain HTTP is a security setting, so it also verifies
-         the administrator password. */}}
-    {{if and (not $protected) (not .Chrome.Connection.InsecureAcknowledged)}}
-      <p class="setblock__d">{{bi $lang "setup.insecure.help"}}</p>
-      {{$act := "acknowledge_insecure"}}{{$fn := forAction $pending $act $n}}
-      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}" open>
-        <summary class="btn">{{bi $lang "settings.connection.acknowledge"}}</summary>
-        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-          <input type="hidden" name="csrf" value="{{$csrf}}">
-          <input type="hidden" name="action" value="{{$act}}">
-          <label class="check">
-            <input type="checkbox" name="insecure_ack" value="1" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "insecure_ack"}}>
-            <span class="check__t">{{bi $lang "setup.insecure.label"}}</span>
-            <span class="check__d">{{bi $lang "connection.tailscale_hint"}}</span>
-          </label>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "insecure_ack"}}
-          <div class="f">
-            <label for="ack-admin">{{bi $lang "admin.field"}}</label>
-            <input id="ack-admin" name="admin_password" type="password" autocomplete="current-password" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-          </div>
-          <div class="actions"><button type="submit" class="btn">{{bi $lang "settings.connection.acknowledge"}}</button></div>
-        </form>
-      </details>
-    {{else if not $protected}}
-      <p class="f__help">{{bi $lang "connection.tailscale_hint"}}</p>
-    {{end}}
-  </div>
+{{/* ------------------------------------------------------------------ */}}
+{{/* General                                                             */}}
+{{/* ------------------------------------------------------------------ */}}
 
-  {{/* Network settings. Every viewer sees the saved values and what the
-       running server uses; saving asks for the administrator password and
-       only changes what the next start uses. Resetting stays with the
-       host-only command, which is explained instead of offered here. */}}
-  {{$net := $p.Network}}
-  <div class="setblock" id="network">
-    <h2 class="setblock__h">{{bi $lang "settings.network.title"}}</h2>
-    <p class="setblock__d">{{bi $lang "settings.network.intro"}}</p>
-    <p class="setblock__now">
-      {{if and (eq $net.Status "current") $net.FromOption}}{{icon "check"}}{{bi $lang "settings.network.current_with_option"}}
-      {{else if eq $net.Status "current"}}{{icon "check"}}{{bi $lang "settings.network.current"}}
-      {{else if eq $net.Status "restart"}}{{icon "clock"}}{{bi $lang "settings.network.restart"}}
-      {{else}}{{icon "info"}}{{bi $lang "settings.network.unconfirmed"}}{{end}}
-    </p>
-    {{if $net.FromOption}}<p class="setblock__d">{{bi $lang "settings.network.option_note"}}</p>{{end}}
-
-    <div class="netvals">
-      <div class="netvals__head" aria-hidden="true">
-        <span>{{bi $lang "settings.network.setting"}}</span><span>{{bi $lang "settings.network.next_start"}}</span><span>{{bi $lang "settings.network.running_now"}}</span>
-      </div>
-      <dl {{biAttr $lang "aria-label" "settings.network.values_label"}}>
-        {{range $net.Rows}}{{template "netRow" dict "Lang" $lang "Row" .}}{{end}}
-      </dl>
+{{define "setGeneral"}}{{$p := .Page}}{{$lang := .Lang}}{{$csrf := .Chrome.CSRF}}
+{{/* Display preferences belong to this browser, like the buttons at the top
+     of the page, so they ask for no password. Without the script the form
+     saves them through the same address parameters those buttons use; with
+     it a choice applies at once and Apply is hidden. */}}
+<section class="grp" id="grp-display" aria-labelledby="grp-display-h" data-group-instant>
+  <div class="grp__h"><h2 id="grp-display-h">{{bi $lang "settings.display.title"}}</h2></div>
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.display.scope"}}</span></p>
+  <form class="gform" method="get" action="{{tabURL "general"}}" data-display-form>
+    <div class="f f--row">
+      <label for="pref-lang">{{bi $lang "app.language"}}</label>
+      <select id="pref-lang" name="lang" data-pref="lang">
+        <option value="en" lang="en"{{if eq $lang "en"}} selected{{end}}>English</option>
+        <option value="ko" lang="ko"{{if eq $lang "ko"}} selected{{end}}>한국어</option>
+      </select>
     </div>
-    {{if $net.PlainHTTP}}<p class="netnote">{{icon "unlocked"}}<span>{{bi $lang "settings.network.plain_http"}}</span></p>{{end}}
-    {{if $net.NeedsName}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.network.needs_name"}}</span></p>{{end}}
-    {{if $net.HTTPSWithoutProxy}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.network.https_without_proxy"}}</span></p>{{end}}
-
-    {{$act := "save_network"}}{{$fn := forAction $pending $act $n}}
-    <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
-      <summary class="btn">{{bi $lang "settings.network.change"}}</summary>
-      <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-        <input type="hidden" name="csrf" value="{{$csrf}}">
-        <input type="hidden" name="action" value="{{$act}}">
-        <input type="hidden" name="network_revision" value="{{$net.Revision}}">
-        <div class="f">
-          <label for="net-listen">{{bi $lang "settings.network.listen"}}</label>
-          <input id="net-listen" name="listen" type="text" value="{{$net.Form.Listen}}" placeholder="{{$net.DefaultListen}}"
-                 spellcheck="false" autocapitalize="off" autocomplete="off"
-                 {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "listen" "Help" "net-listen-help"}}{{if eq $net.Focus "listen"}} autofocus{{end}}>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "listen"}}
-          <p class="f__help" id="net-listen-help">{{biF $lang "settings.network.listen_help" $net.DefaultListen $net.EveryNetwork}}</p>
-        </div>
-        <div class="f">
-          <label for="net-base">{{bi $lang "settings.network.base_url"}}</label>
-          <input id="net-base" name="base_url" type="text" inputmode="url" value="{{$net.Form.BaseURL}}" placeholder="http://gitbox.local:7654"
-                 spellcheck="false" autocapitalize="off" autocomplete="off"
-                 {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "base_url" "Help" "net-base-help"}}{{if eq $net.Focus "base_url"}} autofocus{{end}}>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "base_url"}}
-          <p class="f__help" id="net-base-help">{{bi $lang "settings.network.base_url_help"}}</p>
-        </div>
-        <div class="f">
-          <label for="net-hosts">{{bi $lang "settings.network.allowed_hosts"}}</label>
-          <textarea id="net-hosts" name="allowed_hosts" rows="3" spellcheck="false" autocapitalize="off"
-                    {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "allowed_hosts" "Help" "net-hosts-help"}}{{if eq $net.Focus "allowed_hosts"}} autofocus{{end}}>{{$net.Form.Hosts}}</textarea>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "allowed_hosts"}}
-          <p class="f__help" id="net-hosts-help">{{bi $lang "settings.network.allowed_hosts_help"}}</p>
-        </div>
-        <div class="f">
-          <label for="net-proxies">{{bi $lang "settings.network.trusted_proxies"}}</label>
-          <textarea id="net-proxies" name="trusted_proxies" rows="2" spellcheck="false" autocapitalize="off"
-                    {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "trusted_proxies" "Help" "net-proxies-help"}}{{if eq $net.Focus "trusted_proxies"}} autofocus{{end}}>{{$net.Form.Proxies}}</textarea>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "trusted_proxies"}}
-          <p class="f__help" id="net-proxies-help">{{biF $lang "settings.network.trusted_proxies_help" $net.ProxyExample}}</p>
-        </div>
-        {{/* The same acknowledgement setup asks for, until it was given
-             once. The server requires it only for an address that other
-             devices can reach. */}}
-        {{if not .Chrome.Connection.InsecureAcknowledged}}
-          <div>
-            <label class="check">
-              <input type="checkbox" name="insecure_ack" value="1"
-                     {{template "netDescribed" dict "Notices" $fn "Scope" $act "Field" "insecure_ack" "Help" "net-ack-help"}}{{if eq $net.Focus "insecure_ack"}} autofocus{{end}}>
-              <span class="check__t">{{bi $lang "setup.insecure.label"}}</span>
-              <span class="check__d" id="net-ack-help">{{bi $lang "settings.network.ack_help"}}</span>
-            </label>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "insecure_ack"}}
-          </div>
+    <div class="f f--row">
+      <label for="pref-appearance">{{bi $lang "app.appearance"}}</label>
+      <select id="pref-appearance" name="appearance" data-pref="appearance">
+        <option value="light" data-en="{{t "en" "settings.display.light"}}" data-ko="{{t "ko" "settings.display.light"}}"{{if eq $.Appearance "light"}} selected{{end}}>{{t $lang "settings.display.light"}}</option>
+        <option value="dark" data-en="{{t "en" "settings.display.dark"}}" data-ko="{{t "ko" "settings.display.dark"}}"{{if eq $.Appearance "dark"}} selected{{end}}>{{t $lang "settings.display.dark"}}</option>
+        <option value="system" data-en="{{t "en" "settings.display.system"}}" data-ko="{{t "ko" "settings.display.system"}}"{{if eq $.Appearance "system"}} selected{{end}}>{{t $lang "settings.display.system"}}</option>
+      </select>
+    </div>
+    <div class="f f--row">
+      <label for="pref-order">{{bi $lang "settings.display.order"}}</label>
+      <select id="pref-order" name="order" data-pref="order">
+        {{range listOrders}}
+          <option value="{{.}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq . $.Chrome.Nav.Order}} selected{{end}}>{{t $lang .Label}}</option>
         {{end}}
-        <div class="f">
-          <label for="net-admin">{{bi $lang "admin.field"}}</label>
-          <input id="net-admin" name="admin_password" type="password" autocomplete="current-password" required
-                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}{{if eq $net.Focus "admin_password"}} autofocus{{end}}>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-        </div>
-        <p class="f__help">{{bi $lang "settings.network.save_note"}}</p>
-        <div class="actions"><button type="submit" class="btn btn--primary">{{bi $lang "settings.network.save"}}</button></div>
-      </form>
-    </details>
-    <p class="f__help">{{biF $lang "settings.network.reset" $net.DefaultListen}}</p>
-    <pre class="clone__cmds netreset">owngit network reset</pre>
-  </div>
+      </select>
+    </div>
+    <div class="actions" data-display-apply><button type="submit" class="btn">{{bi $lang "app.order.apply"}}</button></div>
+  </form>
+</section>
 
-  {{/* Sharing on the tailnet over HTTPS with Tailscale Serve. Every viewer
-       sees the state and the address; turning it on or off asks for the
-       administrator password and applies to the running server at once. The
-       certificate log notice stands next to the switch, and the home network
-       stays closed unless the owner ticks it. */}}
-  {{$ts := $p.Tailscale}}
-  <div class="setblock" id="tailscale">
-    <h2 class="setblock__h">{{bi $lang "settings.tailscale.title"}}</h2>
-    <p class="setblock__d">{{bi $lang "settings.tailscale.intro"}}</p>
-    <p class="setblock__now">
-      {{if and $ts.On $ts.Ready}}{{icon "lock"}}{{bi $lang "settings.tailscale.ready"}}
-      {{else if $ts.On}}{{icon "clock"}}{{bi $lang "settings.tailscale.waiting"}}
-      {{else}}{{icon "slash"}}{{bi $lang "settings.tailscale.off"}}{{end}}
-    </p>
-    {{/* Why turning sharing on or off did nothing. It stands outside the
-         forms, because the state it reports can hide the form it came from. */}}
-    {{$fn := forAction $pending "tailscale_on" $n}}
-    {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $fn "Scope" "tailscale_on" "Field" "tailscale" "Focus" (firstAlert $fn "tailscale")}}
-    {{$fn := forAction $pending "tailscale_off" $n}}
-    {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $fn "Scope" "tailscale_off" "Field" "tailscale" "Focus" (firstAlert $fn "tailscale")}}
-    {{with $ts.Problem}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang .}}{{with $ts.ProblemDetail}} <span class="mono">{{.}}</span>{{end}}</span></p>{{end}}
-    {{if and $ts.On (not $ts.Ready)}}
-      <ul class="tswait">
-        {{range $ts.Waiting}}<li class="netnote">{{icon "clock"}}<span>{{bi $lang .}}</span></li>{{end}}
-      </ul>
-    {{end}}
-    {{if $ts.On}}
-      <div class="clonefield tsaddr" data-clone>
-        <label class="clonefield__l" for="ts-url">{{bi $lang "settings.tailscale.address"}}</label>
-        <div class="clonefield__row">
-          <input id="ts-url" class="clonefield__v mono" type="text" readonly value="{{$ts.URL}}"
-                 spellcheck="false" autocomplete="off" data-select-on-focus aria-describedby="ts-url-help">
-          <button type="button" class="btn clonefield__copy" data-copy="ts-url" hidden>{{icon "copy"}}<span>{{bi $lang "repo.overview.copy"}}</span></button>
+{{/* Apart from imports, which reach only the source hosts an owner
+     configures, the new-release check is OwnGit's only outbound
+     connection. Changing it is an administrator action like every other
+     setting here. The start option --no-update-check overrides the saved
+     value, which stays editable so it is ready for a start without that
+     option. */}}
+{{$u := $p.UpdateCheck}}{{$gn := forAction $p.Group "update" $p.Notices}}{{$focus := firstError $gn "update_check" "admin_password"}}
+{{$on := draft $p.Group $p.Draft "update" "update_check" (onOff $u.Enabled)}}
+<section class="grp" id="grp-update" aria-labelledby="grp-update-h" data-group="update"{{if hasError $gn}} data-group-refused{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "update" "Title" (bi $lang "settings.update.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.update.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $u.ForcedOff}}
+    <p class="setblock__now">{{icon "slash"}}{{bi $lang "settings.update.forced_off"}}</p>
+    <p class="setblock__d">{{if $u.Enabled}}{{bi $lang "settings.update.saved_on"}}{{else}}{{bi $lang "settings.update.saved_off"}}{{end}}</p>
+  {{end}}
+  <form class="gform" method="post" action="{{tabURL "general"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="set_update_check">
+    {{template "switch" dict "Lang" $lang "ID" "upd-check" "Name" "update_check" "On" (eq $on "on") "Saved" (onOff $u.Enabled) "Label" (bi $lang "settings.update.switch") "Help" (bi $lang "settings.update.help") }}
+    {{template "grpBar" dict "Lang" $lang "Group" "update" "Notices" $gn "Focus" $focus "Cancel" (tabURL "general")}}
+  </form>
+</section>
+{{end}}
+
+{{/* ------------------------------------------------------------------ */}}
+{{/* Access                                                              */}}
+{{/* ------------------------------------------------------------------ */}}
+
+{{define "setAccess"}}{{$p := .Page}}{{$lang := .Lang}}
+{{$gn := forAction $p.Group "access" $p.Notices}}{{$focus := firstError $gn "access_mode" "access_password" "admin_password"}}
+{{$saved := print $p.AccessMode}}{{$mode := draft $p.Group $p.Draft "access" "access_mode" $saved}}
+<section class="grp" id="grp-access" aria-labelledby="grp-access-h" data-group="access"{{if hasError $gn}} data-group-refused{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "access" "Title" (bi $lang "settings.access.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.access.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  <p class="setblock__now">
+    {{if eq $saved "password"}}{{icon "lock"}}{{bi $lang "settings.access.password_now"}}
+    {{else}}{{icon "unlocked"}}{{bi $lang "settings.access.open_now"}}{{end}}
+  </p>
+  <form class="gform" method="post" action="{{tabURL "access"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_access">
+    <div class="f f--row">
+      <label for="acc-mode">{{bi $lang "settings.access.mode"}}</label>
+      <select id="acc-mode" name="access_mode" data-saved="{{$saved}}"
+              {{template "fieldInvalid" dict "Notices" $gn "Scope" "access" "Field" "access_mode"}}{{if eq $focus "access_mode"}} autofocus{{end}}>
+        <option value="password" data-en="{{t "en" "settings.access.mode_password"}}" data-ko="{{t "ko" "settings.access.mode_password"}}"{{if eq $mode "password"}} selected{{end}}>{{t $lang "settings.access.mode_password"}}</option>
+        <option value="open" data-en="{{t "en" "settings.access.mode_open"}}" data-ko="{{t "ko" "settings.access.mode_open"}}"{{if ne $mode "password"}} selected{{end}}>{{t $lang "settings.access.mode_open"}}</option>
+      </select>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "access" "Field" "access_mode"}}
+    </div>
+    {{if eq $saved "password"}}
+      {{/* A new shared password is a change of its own, so it stays behind
+           an explicit button. Leaving the field empty keeps the password. */}}
+      <details class="grp__more" data-group-details data-show-if="access_mode=password"{{if eq $focus "access_password"}} open{{end}}>
+        <summary class="btn btn--sm">{{icon "key"}}{{bi $lang "settings.access.change"}}</summary>
+        <div class="f">
+          <label for="acc-pass">{{bi $lang "settings.access.new_password"}}</label>
+          <input id="acc-pass" name="access_password" type="password" autocomplete="new-password"
+                 {{template "fieldInvalid" dict "Notices" $gn "Scope" "access" "Field" "access_password"}}{{if eq $focus "access_password"}} autofocus{{end}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "access" "Field" "access_password"}}
+          <p class="f__help">{{bi $lang "settings.access.keep_help"}}</p>
         </div>
-        <p class="clonefield__note" role="status">
-          <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
-          <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
-        </p>
-        {{/* A --base-url option keeps the running server giving out its own
-             address, so the HTTPS address is not claimed for clones then. */}}
-        {{if $ts.BaseURLOption}}
-          <p class="netnote" id="ts-url-help">{{icon "warning"}}<span>{{biF $lang "settings.tailscale.base_url_option" $ts.BaseURLOption}}</span></p>
-        {{else}}
-          <p class="f__help" id="ts-url-help">{{biF $lang "settings.tailscale.clone_hint" $ts.URL}}</p>
-        {{end}}
+      </details>
+      <p class="wn wn--danger" data-show-if="access_mode=open">{{icon "error"}}<span><b>{{bi $lang "settings.risk"}}</b> {{bi $lang "settings.access.disable_warning"}}</span></p>
+    {{else}}
+      <div class="f" data-show-if="access_mode=password">
+        <label for="acc-pass">{{bi $lang "setup.access.password"}}</label>
+        <input id="acc-pass" name="access_password" type="password" autocomplete="new-password"
+               {{template "fieldInvalid" dict "Notices" $gn "Scope" "access" "Field" "access_password"}}{{if eq $focus "access_password"}} autofocus{{end}}>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "access" "Field" "access_password"}}
+        <p class="f__help">{{bi $lang "setup.access.password_help"}}</p>
       </div>
     {{end}}
-    {{/* A refusal about the port points to this list. */}}
-    {{if $ts.FoundNote}}
-      <div class="netnote">{{icon "warning"}}<div><span>{{bi $lang $ts.FoundNote}}</span>
-        {{with $ts.Found}}<ul class="tsfound">{{range .}}<li>{{tsUse $lang .}}</li>{{end}}</ul>{{end}}
-        {{with $ts.FoundFix}}<span>{{if $ts.FoundFixPort}}{{biF $lang . $ts.FoundFixPort $ts.FoundFixValue}}{{else}}{{bi $lang .}}{{end}}</span>{{end}}</div></div>
-    {{end}}
-    {{if $ts.Stale}}
-      <div class="netnote netnote--info">{{icon "info"}}<div><span>{{bi $lang "tailscale.stale"}}</span>
-        <ul class="tsfound">{{range $ts.Stale}}<li>{{tsUse $lang .}}</li>{{end}}</ul></div></div>
-    {{end}}
-    {{if $ts.MacApp}}<p class="netnote netnote--info">{{icon "info"}}<span>{{bi $lang "tailscale.mac_app"}}</span></p>{{end}}
-    {{if $ts.TurnOnPort}}<p class="netnote netnote--info">{{icon "info"}}<span>{{biF $lang $ts.PortNote $ts.PassedPorts $ts.TurnOnPort}}</span></p>{{end}}
+    {{template "grpBar" dict "Lang" $lang "Group" "access" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access")}}
+  </form>
+</section>
 
-    {{/* While sharing waits to be turned on again, that comes first. */}}
-    {{if $ts.CanTurnOn}}
-      {{$act := "tailscale_on"}}{{$fn := forAction $pending $act $n}}
-      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
-        <summary class="btn">{{bi $lang "settings.tailscale.turn_on"}}</summary>
-        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-          <input type="hidden" name="csrf" value="{{$csrf}}">
-          <input type="hidden" name="action" value="{{$act}}">
-          <p class="setblock__d">{{bi $lang "settings.tailscale.on_note"}}</p>
-          <p class="tslog" id="ts-log">{{icon "info"}}<span>{{biF $lang "settings.tailscale.certificate_log" $ts.Name}}</span></p>
-          {{if $ts.ListenOption}}
-            <p class="netnote netnote--info">{{icon "info"}}<span>{{biF $lang "settings.tailscale.listen_option" $ts.ListenOption}}</span></p>
-          {{else}}
-          <div>
-            <label class="check">
-              <input type="checkbox" name="home_network" value="1"{{if $ts.HomeNetwork}} checked{{end}} aria-describedby="ts-home-help">
-              <span class="check__t">{{bi $lang "settings.tailscale.home_network"}}</span>
-              <span class="check__d" id="ts-home-help">{{biF $lang "settings.tailscale.home_network_help" $ts.HomeListen $ts.LocalListen}}</span>
-            </label>
-          </div>
-          {{end}}
-          <div class="f">
-            <label for="ts-on-admin">{{bi $lang "admin.field"}}</label>
-            <input id="ts-on-admin" name="admin_password" type="password" autocomplete="current-password" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}{{if ge (firstAlert $fn "admin_password") 0}} autofocus{{end}}>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-          </div>
-          <div class="actions"><button type="submit" class="btn btn--primary" aria-describedby="ts-log">{{bi $lang "settings.tailscale.turn_on_button"}}</button></div>
-        </form>
-      </details>
-    {{end}}
-    {{if $ts.CanTurnOff}}
-      {{$act := "tailscale_off"}}{{$fn := forAction $pending $act $n}}
-      <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
-        <summary class="btn">{{bi $lang "settings.tailscale.turn_off"}}</summary>
-        <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-          <input type="hidden" name="csrf" value="{{$csrf}}">
-          <input type="hidden" name="action" value="{{$act}}">
-          <p class="setblock__d">{{bi $lang "settings.tailscale.off_note"}}</p>
-          <div class="f">
-            <label for="ts-off-admin">{{bi $lang "admin.field"}}</label>
-            <input id="ts-off-admin" name="admin_password" type="password" autocomplete="current-password" required
-                   {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}{{if ge (firstAlert $fn "admin_password") 0}} autofocus{{end}}>
-            {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-          </div>
-          <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "settings.tailscale.turn_off_button"}}</button></div>
-        </form>
-      </details>
-    {{end}}
-  </div>
-
-  {{/* Apart from imports, which reach only the source hosts an owner
-       configures, the new-release check is OwnGit's only outbound
-       connection. Changing it is an
-       administrator action like every other setting here. The start option
-       --no-update-check overrides the saved value, which stays editable so
-       it is ready for a start without that option. */}}
-  {{$u := $p.UpdateCheck}}
-  <div class="setblock">
-    <h2 class="setblock__h">{{bi $lang "settings.update.title"}}</h2>
-    <p class="setblock__now">
-      {{if $u.ForcedOff}}{{icon "slash"}}{{bi $lang "settings.update.forced_off"}}
-      {{else if $u.Enabled}}{{icon "check"}}{{bi $lang "settings.update.on_now"}}
-      {{else}}{{icon "slash"}}{{bi $lang "settings.update.off_now"}}{{end}}
-    </p>
-    {{if $u.ForcedOff}}
-      <p class="setblock__d">{{if $u.Enabled}}{{bi $lang "settings.update.saved_on"}}{{else}}{{bi $lang "settings.update.saved_off"}}{{end}}</p>
-    {{end}}
-    <p class="setblock__d">{{bi $lang "settings.update.help"}}</p>
-    {{$act := "set_update_check"}}{{$fn := forAction $pending $act $n}}
-    <details data-disclosure="{{$act}}" data-disclosure-open="{{$pending}}"{{if $fn}} open{{end}}>
-      <summary class="btn">{{if $u.Enabled}}{{bi $lang "settings.update.turn_off"}}{{else}}{{bi $lang "settings.update.turn_on"}}{{end}}</summary>
-      <form class="form" method="post" action="{{$p.SubmitURL}}" style="margin-top:12px">
-        <input type="hidden" name="csrf" value="{{$csrf}}">
-        <input type="hidden" name="action" value="{{$act}}">
-        <input type="hidden" name="update_check" value="{{if $u.Enabled}}off{{else}}on{{end}}">
-        <div class="f">
-          <label for="upd-admin">{{bi $lang "admin.field"}}</label>
-          <input id="upd-admin" name="admin_password" type="password" autocomplete="current-password" required
-                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "admin_password"}}>
-          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "admin_password"}}
-        </div>
-        <div class="actions"><button type="submit" class="btn">{{if $u.Enabled}}{{bi $lang "settings.update.turn_off"}}{{else}}{{bi $lang "settings.update.turn_on"}}{{end}}</button></div>
-      </form>
+{{/* Changing the administrator password stays an explicit form: the current
+     password is its own confirmation. */}}
+{{$gn := forAction $p.Group "admin" $p.Notices}}{{$focus := firstError $gn "admin_password" "new_admin_password"}}
+<section class="grp" id="grp-admin" aria-labelledby="grp-admin-h" data-group="admin"{{if hasError $gn}} data-group-refused{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "admin" "Title" (bi $lang "settings.admin.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.admin.scope"}} {{bi $lang "settings.admin.reset_hint"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  <form class="gform" method="post" action="{{tabURL "access"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="change_admin_password">
+    <details class="grp__more" data-group-details{{if hasError $gn}} open{{end}}>
+      <summary class="btn btn--sm">{{icon "key"}}{{bi $lang "settings.admin.change"}}</summary>
+      <div class="f">
+        <label for="cur-admin">{{bi $lang "settings.admin.current"}}</label>
+        <input id="cur-admin" name="admin_password" type="password" autocomplete="current-password" required data-group-gate
+               {{template "fieldInvalid" dict "Notices" $gn "Scope" "admin" "Field" "admin_password"}}{{if eq $focus "admin_password"}} autofocus{{end}}>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "admin" "Field" "admin_password"}}
+      </div>
+      <div class="f">
+        <label for="new-admin">{{bi $lang "settings.admin.new"}}</label>
+        <input id="new-admin" name="new_admin_password" type="password" autocomplete="new-password" required
+               {{template "fieldInvalid" dict "Notices" $gn "Scope" "admin" "Field" "new_admin_password"}}{{if eq $focus "new_admin_password"}} autofocus{{end}}>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "admin" "Field" "new_admin_password"}}
+      </div>
+      {{template "grpBar" dict "Lang" $lang "Group" "admin" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access") "NoAdmin" true "Save" (bi $lang "settings.admin.change")}}
     </details>
-  </div>
+  </form>
+</section>
+{{end}}
 
-  {{/* Storage location and clone address are administrator information. The
-       backend clears them for an ordinary visitor. */}}
+{{/* ------------------------------------------------------------------ */}}
+{{/* Network                                                             */}}
+{{/* ------------------------------------------------------------------ */}}
+
+{{define "setNetwork"}}{{$p := .Page}}{{$lang := .Lang}}{{$c := .Chrome.Connection}}
+{{/* This connection. Explain the situation first, then the limit of what
+     OwnGit can actually observe about the rest of the path. */}}
+{{$protected := or $c.Encrypted $c.Tailnet}}
+{{$gn := forAction $p.Group "connection" $p.Notices}}{{$focus := firstError $gn "insecure_ack" "admin_password"}}
+<section class="grp" id="grp-connection" aria-labelledby="grp-connection-h" data-group="connection"{{if hasError $gn}} data-group-refused{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "connection" "Title" (bi $lang "settings.connection.title")}}
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  <p class="setblock__now">
+    {{if $c.Tailscale}}{{icon "lock"}}{{bi $lang "connection.encrypted_tailscale"}}
+    {{else if $c.Proxy}}{{icon "lock"}}{{bi $lang "connection.encrypted_proxy"}}
+    {{else if $c.Encrypted}}{{icon "lock"}}{{bi $lang "connection.encrypted"}}
+    {{else if $c.Tailnet}}{{icon "lock"}}{{bi $lang "connection.encrypted_tailnet"}}
+    {{else}}{{icon "unlocked"}}{{bi $lang "connection.plain"}}{{end}}
+  </p>
+  {{if not $protected}}<p class="setblock__d">{{bi $lang "connection.plain_detail"}}</p>{{end}}
+  {{/* Through a proxy or Tailscale, OwnGit sees plain HTTP from it, and the
+       encrypted part ends there. */}}
+  {{if $c.Tailscale}}<p class="setblock__d">{{bi $lang "connection.tailscale_note"}}</p>
+  {{else if $c.Proxy}}<p class="setblock__d">{{bi $lang "connection.proxy_note"}}</p>
+  {{else if $c.Tailnet}}<p class="setblock__d">{{bi $lang "connection.tailnet_note"}}</p>
+  {{else}}<p class="setblock__d">{{bi $lang "connection.no_proof"}}</p>{{end}}
+  {{/* Acknowledging plain HTTP is a security setting, so it also verifies
+       the administrator password. */}}
+  {{if and (not $protected) (not $c.InsecureAcknowledged)}}
+    <p class="setblock__d">{{bi $lang "setup.insecure.help"}}</p>
+    {{$ack := draft $p.Group $p.Draft "connection" "insecure_ack" "off"}}
+    <form class="gform" method="post" action="{{tabURL "network"}}" data-group-form>
+      <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+      <input type="hidden" name="action" value="acknowledge_insecure">
+      <div>
+        <label class="check">
+          <input type="checkbox" name="insecure_ack" value="1" required data-saved="off"{{if eq $ack "on"}} checked{{end}}
+                 {{template "fieldInvalid" dict "Notices" $gn "Scope" "connection" "Field" "insecure_ack"}}{{if eq $focus "insecure_ack"}} autofocus{{end}}>
+          <span class="check__t">{{bi $lang "setup.insecure.label"}}</span>
+          <span class="check__d">{{bi $lang "connection.tailscale_hint"}}</span>
+        </label>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "connection" "Field" "insecure_ack"}}
+      </div>
+      {{template "grpBar" dict "Lang" $lang "Group" "connection" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network") "Save" (bi $lang "settings.connection.acknowledge")}}
+    </form>
+  {{else if not $protected}}
+    <p class="f__help">{{bi $lang "connection.tailscale_hint"}}</p>
+  {{end}}
+</section>
+
+{{/* Network settings. Every viewer sees the saved values and what the
+     running server uses; saving asks for the administrator password and
+     only changes what the next start uses. Resetting stays with the
+     host-only command, which is explained instead of offered here. */}}
+{{$net := $p.Network}}{{$gn := forAction $p.Group "network" $p.Notices}}
+{{$focus := firstError $gn "listen" "base_url" "allowed_hosts" "trusted_proxies" "insecure_ack" "admin_password"}}
+<section class="grp" id="grp-network" aria-labelledby="grp-network-h" data-group="network"{{if hasError $gn}} data-group-refused{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "network" "Title" (bi $lang "settings.network.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.network.intro"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  <p class="setblock__now">
+    {{if and (eq $net.Status "current") $net.FromOption}}{{icon "check"}}{{bi $lang "settings.network.current_with_option"}}
+    {{else if eq $net.Status "current"}}{{icon "check"}}{{bi $lang "settings.network.current"}}
+    {{else if eq $net.Status "restart"}}{{icon "clock"}}{{bi $lang "settings.network.restart"}}
+    {{else}}{{icon "info"}}{{bi $lang "settings.network.unconfirmed"}}{{end}}
+  </p>
+  {{if $net.FromOption}}<p class="setblock__d">{{bi $lang "settings.network.option_note"}}</p>{{end}}
+  <div class="netvals">
+    <div class="netvals__head" aria-hidden="true">
+      <span>{{bi $lang "settings.network.setting"}}</span><span>{{bi $lang "settings.network.next_start"}}</span><span>{{bi $lang "settings.network.running_now"}}</span>
+    </div>
+    <dl {{biAttr $lang "aria-label" "settings.network.values_label"}}>
+      {{range $net.Rows}}{{template "netRow" dict "Lang" $lang "Row" .}}{{end}}
+    </dl>
+  </div>
+  {{if $net.PlainHTTP}}<p class="netnote">{{icon "unlocked"}}<span>{{bi $lang "settings.network.plain_http"}}</span></p>{{end}}
+  {{if $net.NeedsName}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.network.needs_name"}}</span></p>{{end}}
+  {{if $net.HTTPSWithoutProxy}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.network.https_without_proxy"}}</span></p>{{end}}
+  {{/* The clone address is administrator information, like the storage
+       location. The backend clears it for an ordinary visitor. */}}
+  {{if and .Chrome.Viewer.AdminConfirmed $p.CloneHint}}
+    <dl class="kv"><div><dt>{{bi $lang "settings.clone.title"}}</dt><dd class="mono">{{$p.CloneHint}}</dd></div></dl>
+  {{end}}
+
+  <form class="gform" method="post" action="{{tabURL "network"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_network">
+    <input type="hidden" name="network_revision" value="{{$net.Revision}}">
+    <div class="f">
+      <label for="net-listen">{{bi $lang "settings.network.listen"}}</label>
+      <input id="net-listen" name="listen" type="text" value="{{$net.Form.Listen}}" data-saved="{{$net.Saved.Listen}}" placeholder="{{$net.DefaultListen}}"
+             spellcheck="false" autocapitalize="off" autocomplete="off"
+             {{template "netDescribed" dict "Notices" $gn "Scope" "network" "Field" "listen" "Help" "net-listen-help"}}{{if eq $focus "listen"}} autofocus{{end}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "network" "Field" "listen"}}
+      <p class="f__help" id="net-listen-help">{{biF $lang "settings.network.listen_help" $net.DefaultListen $net.EveryNetwork}}</p>
+    </div>
+    <div class="f">
+      <label for="net-base">{{bi $lang "settings.network.base_url"}}</label>
+      <input id="net-base" name="base_url" type="text" inputmode="url" value="{{$net.Form.BaseURL}}" data-saved="{{$net.Saved.BaseURL}}" placeholder="http://gitbox.local:7654"
+             spellcheck="false" autocapitalize="off" autocomplete="off"
+             {{template "netDescribed" dict "Notices" $gn "Scope" "network" "Field" "base_url" "Help" "net-base-help"}}{{if eq $focus "base_url"}} autofocus{{end}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "network" "Field" "base_url"}}
+      <p class="f__help" id="net-base-help">{{bi $lang "settings.network.base_url_help"}}</p>
+    </div>
+    {{/* Allowed names and trusted proxies are for a reverse proxy or a
+         custom name. They open by themselves when they hold a value or an
+         error, so nothing saved is hidden. */}}
+    <details class="grp__more"{{if or $net.Form.Hosts $net.Form.Proxies (eq $focus "allowed_hosts") (eq $focus "trusted_proxies")}} open{{end}}>
+      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "settings.network.more"}}</summary>
+      <div class="f">
+        <label for="net-hosts">{{bi $lang "settings.network.allowed_hosts"}}</label>
+        <textarea id="net-hosts" name="allowed_hosts" rows="3" spellcheck="false" autocapitalize="off" data-saved="{{$net.Saved.Hosts}}"
+                  {{template "netDescribed" dict "Notices" $gn "Scope" "network" "Field" "allowed_hosts" "Help" "net-hosts-help"}}{{if eq $focus "allowed_hosts"}} autofocus{{end}}>{{$net.Form.Hosts}}</textarea>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "network" "Field" "allowed_hosts"}}
+        <p class="f__help" id="net-hosts-help">{{bi $lang "settings.network.allowed_hosts_help"}}</p>
+      </div>
+      <div class="f">
+        <label for="net-proxies">{{bi $lang "settings.network.trusted_proxies"}}</label>
+        <textarea id="net-proxies" name="trusted_proxies" rows="2" spellcheck="false" autocapitalize="off" data-saved="{{$net.Saved.Proxies}}"
+                  {{template "netDescribed" dict "Notices" $gn "Scope" "network" "Field" "trusted_proxies" "Help" "net-proxies-help"}}{{if eq $focus "trusted_proxies"}} autofocus{{end}}>{{$net.Form.Proxies}}</textarea>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "network" "Field" "trusted_proxies"}}
+        <p class="f__help" id="net-proxies-help">{{biF $lang "settings.network.trusted_proxies_help" $net.ProxyExample}}</p>
+      </div>
+    </details>
+    {{/* The same acknowledgement setup asks for, until it was given once.
+         The server requires it only for an address that other devices can
+         reach. It confirms a save rather than being a setting. */}}
+    {{if not .Chrome.Connection.InsecureAcknowledged}}
+      {{$ack := draft $p.Group $p.Draft "network" "insecure_ack" "off"}}
+      <div>
+        <label class="check">
+          <input type="checkbox" name="insecure_ack" value="1" data-group-gate{{if eq $ack "on"}} checked{{end}}
+                 {{template "netDescribed" dict "Notices" $gn "Scope" "network" "Field" "insecure_ack" "Help" "net-ack-help"}}{{if eq $focus "insecure_ack"}} autofocus{{end}}>
+          <span class="check__t">{{bi $lang "setup.insecure.label"}}</span>
+          <span class="check__d" id="net-ack-help">{{bi $lang "settings.network.ack_help"}}</span>
+        </label>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "network" "Field" "insecure_ack"}}
+      </div>
+    {{end}}
+    <p class="f__help">{{bi $lang "settings.network.save_note"}}</p>
+    {{template "grpBar" dict "Lang" $lang "Group" "network" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network")}}
+  </form>
+  <p class="f__help">{{biF $lang "settings.network.reset" $net.DefaultListen}}</p>
+  <pre class="clone__cmds netreset">owngit network reset</pre>
+</section>
+
+{{template "setTailscale" .}}
+{{end}}
+
+{{/* Sharing on the tailnet over HTTPS with Tailscale Serve. Every viewer
+     sees the state and the address; turning it on or off asks for the
+     administrator password and applies to the running server at once. The
+     certificate log notice stands next to the switch, and the home network
+     stays closed unless the owner ticks it. */}}
+{{define "setTailscale"}}{{$p := .Page}}{{$lang := .Lang}}{{$ts := $p.Tailscale}}
+{{$gn := forAction $p.Group "tailscale" $p.Notices}}{{$focus := firstError $gn "tailscale" "admin_password"}}
+{{/* The switch changes only what can change now: on while Tailscale is
+     ready for it, off while turning off would work. Sharing that is on but
+     unfinished keeps its save bar open, because saving turns it on again. */}}
+{{$canSwitch := or (and $ts.On $ts.CanTurnOff) (and (not $ts.On) $ts.CanTurnOn)}}
+{{$again := and $ts.On $ts.CanTurnOn}}
+{{$on := draft $p.Group $p.Draft "tailscale" "tailscale" (onOff $ts.On)}}
+<section class="grp" id="grp-tailscale" aria-labelledby="grp-tailscale-h" data-group="tailscale"{{if hasError $gn}} data-group-refused{{end}}{{if $again}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "tailscale" "Title" (bi $lang "settings.tailscale.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.tailscale.intro"}} {{bi $lang "settings.tailscale.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  <p class="setblock__now">
+    {{if and $ts.On $ts.Ready}}{{icon "lock"}}{{bi $lang "settings.tailscale.ready"}}
+    {{else if $ts.On}}{{icon "clock"}}{{bi $lang "settings.tailscale.waiting"}}
+    {{else}}{{icon "slash"}}{{bi $lang "settings.tailscale.off"}}{{end}}
+  </p>
+  {{/* Why turning sharing on or off did nothing. It has no control of its
+       own to describe it, so it is announced and focused by itself. */}}
+  {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $gn "Scope" "tailscale" "Field" "tailscale" "Focus" (firstAlert $gn "tailscale")}}
+  {{with $ts.Problem}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang .}}{{with $ts.ProblemDetail}} <span class="mono">{{.}}</span>{{end}}</span></p>{{end}}
+  {{if and $ts.On (not $ts.Ready)}}
+    <ul class="tswait">
+      {{range $ts.Waiting}}<li class="netnote">{{icon "clock"}}<span>{{bi $lang .}}</span></li>{{end}}
+    </ul>
+  {{end}}
+  {{if $ts.On}}
+    <div class="clonefield tsaddr" data-clone>
+      <label class="clonefield__l" for="ts-url">{{bi $lang "settings.tailscale.address"}}</label>
+      <div class="clonefield__row">
+        <input id="ts-url" class="clonefield__v mono" type="text" readonly value="{{$ts.URL}}"
+               spellcheck="false" autocomplete="off" data-select-on-focus aria-describedby="ts-url-help">
+        <button type="button" class="btn clonefield__copy" data-copy="ts-url" hidden>{{icon "copy"}}<span>{{bi $lang "repo.overview.copy"}}</span></button>
+      </div>
+      <p class="clonefield__note" role="status">
+        <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
+        <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
+      </p>
+      {{/* A --base-url option keeps the running server giving out its own
+           address, so the HTTPS address is not claimed for clones then. */}}
+      {{if $ts.BaseURLOption}}
+        <p class="netnote" id="ts-url-help">{{icon "warning"}}<span>{{biF $lang "settings.tailscale.base_url_option" $ts.BaseURLOption}}</span></p>
+      {{else}}
+        <p class="f__help" id="ts-url-help">{{biF $lang "settings.tailscale.clone_hint" $ts.URL}}</p>
+      {{end}}
+    </div>
+  {{end}}
+  {{/* A refusal about the port points to this list. */}}
+  {{if $ts.FoundNote}}
+    <div class="netnote">{{icon "warning"}}<div><span>{{bi $lang $ts.FoundNote}}</span>
+      {{with $ts.Found}}<ul class="tsfound">{{range .}}<li>{{tsUse $lang .}}</li>{{end}}</ul>{{end}}
+      {{with $ts.FoundFix}}<span>{{if $ts.FoundFixPort}}{{biF $lang . $ts.FoundFixPort $ts.FoundFixValue}}{{else}}{{bi $lang .}}{{end}}</span>{{end}}</div></div>
+  {{end}}
+  {{if $ts.Stale}}
+    <div class="netnote netnote--info">{{icon "info"}}<div><span>{{bi $lang "tailscale.stale"}}</span>
+      <ul class="tsfound">{{range $ts.Stale}}<li>{{tsUse $lang .}}</li>{{end}}</ul></div></div>
+  {{end}}
+  {{if $ts.MacApp}}<p class="netnote netnote--info">{{icon "info"}}<span>{{bi $lang "tailscale.mac_app"}}</span></p>{{end}}
+  {{if $ts.TurnOnPort}}<p class="netnote netnote--info">{{icon "info"}}<span>{{biF $lang $ts.PortNote $ts.PassedPorts $ts.TurnOnPort}}</span></p>{{end}}
+
+  {{/* A page opened at the HTTPS address loses that address when sharing
+       turns off, so the browser, not the script, follows that answer. */}}
+  <form class="gform" method="post" action="{{tabURL "network"}}" data-group-form{{if .Chrome.Connection.Tailscale}} data-group-native{{end}}>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_tailscale">
+    {{/* A switch that cannot change still says the state; the hidden field
+         sends it, since a disabled control sends nothing. */}}
+    {{if not $canSwitch}}<input type="hidden" name="tailscale" value="{{onOff $ts.On}}">{{end}}
+    {{template "switch" dict "Lang" $lang "ID" "ts-switch" "Name" "tailscale" "On" (eq $on "on") "Saved" (onOff $ts.On) "Label" (bi $lang "settings.tailscale.switch") "Disabled" (not $canSwitch) "Describe" (and (not $ts.On) "ts-log")}}
+    {{if not $ts.On}}
+      {{if $ts.ListenOption}}
+        <p class="netnote netnote--info" data-show-if="tailscale=on">{{icon "info"}}<span>{{biF $lang "settings.tailscale.listen_option" $ts.ListenOption}}</span></p>
+      {{else}}
+        {{$home := draft $p.Group $p.Draft "tailscale" "home_network" (onOff $ts.HomeNetwork)}}
+        <div data-show-if="tailscale=on">
+          <label class="check">
+            <input type="checkbox" name="home_network" value="1" data-saved="{{onOff $ts.HomeNetwork}}"{{if eq $home "on"}} checked{{end}} aria-describedby="ts-home-help">
+            <span class="check__t">{{bi $lang "settings.tailscale.home_network"}}</span>
+            <span class="check__d" id="ts-home-help">{{biF $lang "settings.tailscale.home_network_help" $ts.HomeListen $ts.LocalListen}}</span>
+          </label>
+        </div>
+      {{end}}
+      <p class="setblock__d" data-show-if="tailscale=on">{{bi $lang "settings.tailscale.on_note"}}</p>
+      <p class="tslog" id="ts-log" data-show-if="tailscale=on">{{icon "info"}}<span>{{biF $lang "settings.tailscale.certificate_log" $ts.Name}}</span></p>
+    {{else}}
+      <p class="setblock__d" data-show-if="tailscale=off">{{bi $lang "settings.tailscale.off_note"}}</p>
+      {{if $again}}<p class="netnote" data-show-if="tailscale=on">{{icon "clock"}}<span>{{bi $lang "settings.tailscale.again"}}</span></p>{{end}}
+    {{end}}
+    {{if or $canSwitch $again}}
+      {{template "grpBar" dict "Lang" $lang "Group" "tailscale" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network")}}
+    {{end}}
+  </form>
+</section>
+{{end}}
+
+{{/* ------------------------------------------------------------------ */}}
+{{/* Repositories and Storage & recovery                                 */}}
+{{/* ------------------------------------------------------------------ */}}
+
+{{/* Settings that belong to one repository stay on that repository's own
+     page; this tab only leads there. */}}
+{{define "setRepositories"}}{{$lang := .Lang}}{{$nav := .Chrome.Nav}}
+<section class="grp" id="grp-repositories" aria-labelledby="grp-repositories-h">
+  <div class="grp__h"><h2 id="grp-repositories-h">{{bi $lang "settings.repositories.title"}}</h2></div>
+  {{if $nav.Repositories}}
+    <ul class="setlinks">
+      {{range $nav.Repositories}}
+        <li><a href="{{.URL}}/settings">{{icon "settings"}}<span>{{biF $lang "settings.repositories.link" .Name}}</span>{{template "adminLock" dict "Lang" $lang "Locked" (not $.Chrome.Viewer.AdminConfirmed)}}</a></li>
+      {{end}}
+    </ul>
+  {{else}}
+    <p class="setblock__d">{{bi $lang "settings.repositories.none"}}</p>
+    {{with $nav.NewRepoURL}}<div class="actions"><a class="btn" href="{{.}}">{{icon "plus"}}{{bi $lang "repo.new.title"}}</a></div>{{end}}
+  {{end}}
+</section>
+{{end}}
+
+{{/* The storage location is administrator information. The backend clears
+     it for an ordinary visitor, who is told where to confirm instead. */}}
+{{define "setStorage"}}{{$p := .Page}}{{$lang := .Lang}}
+<section class="grp" id="grp-storage" aria-labelledby="grp-storage-h">
+  <div class="grp__h"><h2 id="grp-storage-h">{{bi $lang "settings.storage.title"}}</h2></div>
   {{if $p.Storage.Visible}}
-  <div class="setblock">
-    <h2 class="setblock__h">{{bi $lang "settings.storage.title"}}</h2>
     <dl class="kv">
       {{with $p.Storage.Label}}<div><dt>{{biText $lang "Installation" "서버 이름"}}</dt><dd>{{.}}</dd></div>{{end}}
       <div><dt>{{bi $lang "settings.storage.title"}}</dt><dd class="mono">{{$p.Storage.Path}}</dd></div>
-      {{with $p.CloneHint}}<div><dt>{{bi $lang "settings.clone.title"}}</dt><dd class="mono">{{.}}</dd></div>{{end}}
     </dl>
-    <p class="f__help">{{bi $lang "settings.storage.help"}}</p>
+    <p class="scope">{{icon "lock"}}<span>{{bi $lang "settings.storage.help"}}</span></p>
+  {{else}}
+    <p class="scope">{{icon "lock"}}<span>{{bi $lang "settings.storage.admin_only"}}</span></p>
+    {{with .Chrome.Nav.AdminLoginURL}}<div class="actions"><a class="btn" href="{{.}}">{{bi $lang "admin.title"}}{{template "adminLock" dict "Lang" $lang "Locked" true}}</a></div>{{end}}
+  {{end}}
+</section>
+{{end}}
+
+{{/* ------------------------------------------------------------------ */}}
+{{/* Shared parts of a group                                             */}}
+{{/* ------------------------------------------------------------------ */}}
+
+{{/* A group heading with its "Not saved" mark, which the script shows while
+     the group holds a change. */}}
+{{define "grpHead"}}
+<div class="grp__h">
+  <h2 id="grp-{{.Group}}-h">{{.Title}}</h2>
+  <span class="gmark" data-group-mark hidden>{{bi .Lang "settings.unsaved"}}</span>
+</div>
+{{end}}
+
+{{/* A group's notices that belong to no field: the result of a save, or why
+     it failed. An error is where a refused save places the reader when no
+     field carries the error. */}}
+{{define "grpNotes"}}{{$lang := .Lang}}{{$focus := .Focus}}
+{{range .Notices}}{{if or (eq .Field "") (eq .Field "action")}}
+  <p class="notice notice--{{.Kind}}" tabindex="-1" data-group-note{{if eq .Kind "error"}} role="alert"{{if eq $focus ""}} autofocus{{end}}{{else}} role="status"{{end}}>
+    {{statusIcon .Kind}}<span>{{biNotice $lang .}}{{with .Detail}} <span class="mono">{{.}}</span>{{end}}</span>
+  </p>
+{{end}}{{end}}
+{{end}}
+
+{{/* An on/off setting. Unticked, a checkbox sends nothing, which the server
+     reads as off. */}}
+{{define "switch"}}{{$lang := .Lang}}
+<div>
+  <label class="check sw">
+    <input type="checkbox" role="switch" id="{{.ID}}" name="{{.Name}}" value="on" data-saved="{{.Saved}}"{{if .On}} checked{{end}}{{if .Disabled}} disabled{{end}}
+           {{if or .Help .Describe}} aria-describedby="{{if .Help}}{{.ID}}-help{{end}}{{if and .Help .Describe}} {{end}}{{.Describe}}"{{end}}>
+    <span class="check__t">{{.Label}} <span class="sw__state"><span class="sw__on">({{bi $lang "settings.on"}})</span><span class="sw__off">({{bi $lang "settings.off"}})</span></span></span>
+    {{with .Help}}<span class="check__d" id="{{$.ID}}-help">{{.}}</span>{{end}}
+  </label>
+</div>
+{{end}}
+
+{{/* The save bar. The administrator password confirms the save, and Cancel
+     puts the saved values back; without the script it reloads the tab. */}}
+{{define "grpBar"}}{{$lang := .Lang}}{{$g := .Group}}
+<div class="sbar" data-group-bar>
+  <p class="sbar__t" data-group-bar-title hidden>{{bi $lang "settings.unsaved_changes"}}</p>
+  {{if not .NoAdmin}}
+  <div class="f sbar__pw">
+    <label for="{{$g}}-admin">{{icon "lock"}}{{bi $lang "admin.field"}}</label>
+    <input id="{{$g}}-admin" name="admin_password" type="password" autocomplete="current-password" required data-group-gate
+           {{template "fieldInvalid" dict "Notices" .Notices "Scope" $g "Field" "admin_password"}}{{if eq .Focus "admin_password"}} autofocus{{end}}>
+    {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" $g "Field" "admin_password"}}
   </div>
   {{end}}
+  <div class="sbar__acts">
+    <button type="submit" class="btn btn--primary" data-group-save>{{with .Save}}{{.}}{{else}}{{bi $lang "settings.save"}}{{end}}</button>
+    <a class="btn" href="{{.Cancel}}" data-group-cancel>{{bi $lang "app.cancel"}}</a>
+  </div>
 </div>
 {{end}}
 

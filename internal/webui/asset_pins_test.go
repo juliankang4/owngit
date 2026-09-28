@@ -73,7 +73,7 @@ func TestAssetPins(t *testing.T) {
 		{name: "a diff file header stays in view", src: rule(".dfile__h"), has: []string{"position: sticky", "top: 0"}},
 		// The approval watcher's one GET is checked on its own in
 		// TestScriptClearsTheSetupFragmentAndNeverStoresIt.
-		{name: "the script adds no observers or external code", src: scriptOutsideApprovalWatcher,
+		{name: "the script adds no observers or external code", src: scriptOutsideRequests,
 			lacks: []string{"IntersectionObserver", "ResizeObserver", "MutationObserver", "import ", "require(", "fetch(", "XMLHttpRequest", "<script"}},
 
 		// The 390px toolbar defect: the language picker dropped onto its own
@@ -212,11 +212,18 @@ func cssRule(t *testing.T, selector string) string {
 	return match[1]
 }
 
-// scriptOutsideApprovalWatcher is the script without the browser approval
-// watcher, the one block allowed to make a request.
-func scriptOutsideApprovalWatcher(t *testing.T) string {
+// scriptOutsideRequests is the script without the two blocks allowed to
+// make a request: the browser approval watcher and the Settings group
+// save. Each is checked on its own.
+func scriptOutsideRequests(t *testing.T) string {
 	js := scriptSource(t)
-	return strings.Replace(js, section(t, js, "(function watchApproval()", "})();"), "", 1)
+	js = strings.Replace(js, section(t, js, "(function watchApproval()", "})();"), "", 1)
+	return strings.Replace(js, groupSaveSource(t), "", 1)
+}
+
+// groupSaveSource is the Settings group save block of the script.
+func groupSaveSource(t *testing.T) string {
+	return section(t, scriptSource(t), "var groupSave = (function groupSave()", "})();")
 }
 
 // section returns source from the first from up to the next to.

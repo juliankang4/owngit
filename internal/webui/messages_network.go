@@ -33,8 +33,6 @@ const (
 	MsgNetNeedsName   MessageCode = "settings.network.needs_name"
 	MsgNetHTTPSProxy  MessageCode = "settings.network.https_without_proxy"
 	MsgNetAckHelp     MessageCode = "settings.network.ack_help"
-	MsgNetChange      MessageCode = "settings.network.change"
-	MsgNetSave        MessageCode = "settings.network.save"
 	MsgNetSaveNote    MessageCode = "settings.network.save_note"
 	MsgNetReset       MessageCode = "settings.network.reset"
 	MsgNetSaved       MessageCode = "settings.network.saved"
@@ -124,8 +122,6 @@ var networkCatalog = map[MessageCode]message{
 		en: "Needed only when this computer's address reaches other devices, because they would connect over plain HTTP.",
 		ko: "이 컴퓨터의 주소로 다른 기기가 접속할 수 있을 때만 필요합니다. 그 기기들은 일반 HTTP로 접속하기 때문입니다.",
 	},
-	MsgNetChange: {en: "Change network settings", ko: "네트워크 설정 바꾸기"},
-	MsgNetSave:   {en: "Save network settings", ko: "네트워크 설정 저장"},
 	MsgNetSaveNote: {
 		en: "Saving does not change the running server. The new values apply the next time OwnGit starts.",
 		ko: "저장해도 실행 중인 서버는 바뀌지 않습니다. 새 값은 OwnGit을 다음에 시작할 때 적용됩니다.",

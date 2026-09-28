@@ -502,7 +502,7 @@ func TestLocalTerminalSetupIsAskedAboutPlainHTTPLater(t *testing.T) {
 	}
 	server := serve(t, app.Handler())
 	browser := newSetupBrowser(t, server)
-	_, _, page := browser.get("/settings")
+	_, _, page := browser.get("/settings/network")
 	if !strings.Contains(page, `value="acknowledge_insecure"`) {
 		t.Fatal("the Settings page does not offer the plain HTTP acknowledgement")
 	}
@@ -517,7 +517,7 @@ func TestLocalTerminalSetupIsAskedAboutPlainHTTPLater(t *testing.T) {
 	if !settings.InsecureHTTPAccepted {
 		t.Fatal("the acknowledgement was not saved")
 	}
-	if _, _, page := browser.get("/settings"); strings.Contains(page, `value="acknowledge_insecure"`) {
+	if _, _, page := browser.get("/settings/network"); strings.Contains(page, `value="acknowledge_insecure"`) {
 		t.Fatal("the Settings page still asks after the acknowledgement")
 	}
 }

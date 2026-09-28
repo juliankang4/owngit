@@ -36,8 +36,9 @@ type NetworkInfo struct {
 	// use, Hosts the allowed names and Proxies the trusted reverse proxies.
 	Listen, BaseURL, Hosts, Proxies NetworkValue
 	// Form holds the text fields: the saved values, or what was submitted
-	// when a save was refused.
-	Form NetworkForm
+	// when a save was refused. Saved always holds the saved values, which
+	// the form compares its fields with and which Cancel puts back.
+	Form, Saved NetworkForm
 	// Revision names the saved values the form shows. A save from a form
 	// opened before another change is refused instead of overwriting it.
 	Revision string
@@ -53,8 +54,6 @@ type NetworkInfo struct {
 	// FromOption is true when the running server took a value from a start
 	// option, which overrides the saved value for that run.
 	FromOption bool
-	// Focus is the form field the refused save should place the reader on.
-	Focus string
 	// DefaultListen is the listen address without a saved value,
 	// EveryNetwork an example that listens on every network, and
 	// ProxyExample example trusted proxies. The help text shows them.

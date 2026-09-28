@@ -104,7 +104,7 @@ func TestTailscaleSharingUsesAnotherPortWhen443IsTaken(t *testing.T) {
 			}
 			// Tailscale Serve passes on the Host the client used, with the
 			// port.
-			request := httptest.NewRequest(http.MethodGet, "/settings", nil)
+			request := httptest.NewRequest(http.MethodGet, "/settings/network", nil)
 			request.RemoteAddr, request.Host = "127.0.0.1:50123", name+":8443"
 			request.Header.Set("X-Forwarded-Host", name+":8443")
 			request.Header.Set("X-Forwarded-Proto", "https")
@@ -144,7 +144,7 @@ func TestTailscaleSharingPortOrder(t *testing.T) {
 	if info := tailscaleInfo(report); info.TurnOnPort != "10000" || info.PassedPorts != "443, 8443" || info.PortNote != webui.MsgTSPortsNote {
 		t.Fatalf("Settings block before turning on=%+v", info)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	request := httptest.NewRequest(http.MethodGet, "/settings/network", nil)
 	request.RemoteAddr, request.Host = "127.0.0.1:50123", "127.0.0.1:7654"
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, request)

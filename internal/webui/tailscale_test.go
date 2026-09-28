@@ -15,11 +15,11 @@ func TestTailscaleBlockSaysWhatSharingDoes(t *testing.T) {
 	r := newRenderer(t)
 	for _, lang := range Langs() {
 		text := func(code MessageCode) string { return html.EscapeString(Text(lang, code)) }
-		off := render(t, r, allPages(lang)["settings"])
+		off := render(t, r, allPages(lang)["settings-network"])
 		for _, want := range []string{
-			`id="tailscale"`, text(MsgTSTitle), text(MsgTSOff), text(MsgTSTurnOn), text(MsgTSTurnOnButton), text(MsgTSHome), text(MsgTSMacApp),
-			`name="action" value="tailscale_on"`, `name="home_network"`, `aria-describedby="ts-home-help"`, `id="ts-home-help"`,
-			// The button that turns sharing on is described by the notice.
+			`id="grp-tailscale"`, text(MsgTSTitle), text(MsgTSOff), text(MsgSettingsTSSwitch), text(MsgTSHome), text(MsgTSMacApp),
+			`name="action" value="save_tailscale"`, `name="home_network"`, `aria-describedby="ts-home-help"`, `id="ts-home-help"`,
+			// The switch that turns sharing on is described by the notice.
 			`id="ts-log"`, `aria-describedby="ts-log"`,
 			// The notice names this computer's name as it will appear in
 			// the certificate log, and the help names both listen
@@ -33,25 +33,37 @@ func TestTailscaleBlockSaysWhatSharingDoes(t *testing.T) {
 		if strings.Contains(off, `name="home_network" value="1" checked`) {
 			t.Errorf("%s: the home network is ticked for an owner who listens on this computer only", lang)
 		}
-		if strings.Contains(off, `value="tailscale_off"`) {
-			t.Errorf("%s: the block offers to turn off sharing that is off", lang)
+		if sw := switchTag(t, off, "ts-switch"); strings.Contains(sw, " checked") || strings.Contains(sw, " disabled") {
+			t.Errorf("%s: the switch of sharing that is off is not an unticked, usable switch: %s", lang, sw)
 		}
 
 		on := render(t, r, allPages(lang)["settings-tailscale"])
 		for _, want := range []string{
-			text(MsgTSWaiting), text(MsgTSAddress), text(MsgTSTurnOff), text(MsgTSTurnOffBtn), text(MsgTSChanged),
+			text(MsgTSWaiting), text(MsgTSAddress), text(MsgTSOffNote), text(MsgTSChanged),
 			text(TailscaleProblemCode("logged_out")), text(TailscaleWaitCode("restart")), text(TailscaleWaitCode("endpoint")),
 			`id="ts-url"`, `value="https://owngit.tail0000.ts.net/"`, `data-copy="ts-url"`, "https://owngit.tail0000.ts.net/git/project.git",
-			"https://owngit.tail0000.ts.net:443/ to http://localhost:3000", `name="action" value="tailscale_off"`,
+			"https://owngit.tail0000.ts.net:443/ to http://localhost:3000", `name="action" value="save_tailscale"`,
 		} {
 			if !strings.Contains(on, want) {
 				t.Errorf("%s: the Tailscale block while on lacks %q", lang, want)
 			}
 		}
-		if strings.Contains(on, `value="tailscale_on"`) || strings.Contains(on, text(MsgTSReady)) {
-			t.Errorf("%s: sharing that is not ready is shown as ready or offered again", lang)
+		if sw := switchTag(t, on, "ts-switch"); !strings.Contains(sw, " checked") || strings.Contains(sw, " disabled") ||
+			strings.Contains(on, "data-group-open") || strings.Contains(on, text(MsgTSReady)) {
+			t.Errorf("%s: sharing that is not ready is shown as ready or offered again: %s", lang, sw)
 		}
 	}
+}
+
+// switchTag returns the input tag of the switch with the given ID.
+func switchTag(t *testing.T, out, id string) string {
+	t.Helper()
+	at := strings.Index(out, `id="`+id+`"`)
+	if at < 0 {
+		t.Fatalf("no switch %s", id)
+	}
+	start := strings.LastIndex(out[:at], "<")
+	return out[start : start+strings.Index(out[start:], ">")]
 }
 
 // The certificate log notice says that only the fact that the address was
@@ -86,7 +98,7 @@ func TestConnectionThroughTailscaleNamesTailscale(t *testing.T) {
 	for _, lang := range Langs() {
 		chrome := fullChrome(lang)
 		chrome.Connection = Connection{Encrypted: true, Tailscale: true, Host: "owngit.tail0000.ts.net"}
-		out := render(t, r, SettingsPage{Chrome: chrome, SubmitURL: "/settings"})
+		out := render(t, r, SettingsPage{Chrome: chrome, Tab: SettingsNetwork, SubmitURL: "/settings/network"})
 		if !strings.Contains(out, wantText(lang, MsgConnTailscaleOn)) || !strings.Contains(out, "conn--secure") {
 			t.Errorf("%s: the indicator does not say Tailscale on this computer encrypted the request", lang)
 		}
@@ -113,7 +125,7 @@ func TestConnectionOverTheTailnetNamesTailscale(t *testing.T) {
 	for _, lang := range Langs() {
 		chrome := fullChrome(lang)
 		chrome.Connection = Connection{Tailnet: true, Host: "100.64.0.7:7654"}
-		out := render(t, r, SettingsPage{Chrome: chrome, SubmitURL: "/settings"})
+		out := render(t, r, SettingsPage{Chrome: chrome, Tab: SettingsNetwork, SubmitURL: "/settings/network"})
 		for _, want := range []string{wantText(lang, MsgConnTailnet), wantText(lang, MsgConnTailnetNote), "conn--secure"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("%s: the page lacks %q", lang, want)
@@ -165,7 +177,7 @@ func TestTailscalePortListIsTranslated(t *testing.T) {
 		{Kind: "funnel", Address: "owngit.tail0000.ts.net:443"},
 		{Kind: "tcp_forward", Address: "443", Target: "localhost:22"},
 	}
-	page := SettingsPage{Chrome: fullChrome(LangKO), SubmitURL: "/settings",
+	page := SettingsPage{Chrome: fullChrome(LangKO), Tab: SettingsNetwork, SubmitURL: "/settings/network",
 		Tailscale: TailscaleInfo{Found: uses, FoundNote: MsgTSTaken}}
 	out := render(t, r, page)
 	for _, want := range []string{
@@ -194,7 +206,7 @@ func TestTailscaleStaleAddressIsExplained(t *testing.T) {
 	r := newRenderer(t)
 	port := map[Lang]string{LangEN: "PORT", LangKO: "포트"}
 	for _, lang := range Langs() {
-		page := SettingsPage{Chrome: fullChrome(lang), SubmitURL: "/settings",
+		page := SettingsPage{Chrome: fullChrome(lang), Tab: SettingsNetwork, SubmitURL: "/settings/network",
 			Tailscale: TailscaleInfo{Stale: []TailscaleUse{{Kind: "proxy", Address: "https://oldbox.tail0000.ts.net:8443/", Target: "http://127.0.0.1:7654"}}}}
 		out := render(t, r, page)
 		if !strings.Contains(out, wantText(lang, MsgTSStale)) || !strings.Contains(out, "https://oldbox.tail0000.ts.net:8443/") {

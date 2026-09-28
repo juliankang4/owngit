@@ -14,6 +14,11 @@ const (
 	ActionTailscaleOn = "tailscale_on"
 	// ActionTailscaleOff turns it off. Fields: admin_password.
 	ActionTailscaleOff = "tailscale_off"
+	// ActionSaveTailscale is the sharing switch of the Tailscale group: it
+	// turns sharing on, or on again, when tailscale is "on", and off when it
+	// is "off" or absent, as an unticked switch sends nothing. Fields:
+	// admin_password, tailscale, home_network.
+	ActionSaveTailscale = "save_tailscale"
 )
 
 // TailscaleInfo is the Tailscale block of the Settings page: sharing OwnGit

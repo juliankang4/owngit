@@ -17,6 +17,10 @@
  *   6. Repository list order: reorder the dashboard list and the sidebar in
  *      place, remember the choice per browser, and keep the order right when
  *      the language changes.
+ *   7. Settings: apply this browser's display choices at once, show which
+ *      settings group holds a change, and save a group whose form has no
+ *      password field without leaving the page, so the other groups keep
+ *      what was typed in them.
  *
  * It never stores a password, a setup code, or any other secret.
  */
@@ -102,6 +106,7 @@
         link.removeAttribute('aria-current');
       }
     });
+    all('[data-pref="appearance"]').forEach(function (select) { select.value = choice; });
   }
 
   function setAppearance(choice) {
@@ -205,6 +210,7 @@
     // Keep the search form and any other lang field in step, so a later
     // ordinary navigation stays in the chosen language.
     all('input[name="lang"]').forEach(function (field) { field.value = lang; });
+    all('[data-pref="lang"]').forEach(function (select) { select.value = lang; });
 
     // Update the address bar without navigating, so a reload or a shared link
     // keeps both the language and the screen the reader is looking at.
@@ -489,11 +495,14 @@
    * gesture. The value is already on the page and stays selectable by hand
    * without this; nothing here stores, sends, or logs it. */
 
-  all('[data-select-on-focus]').forEach(function (field) {
-    field.addEventListener('focus', function () {
-      if (field.select) { field.select(); }
+  function selectOnFocus(scope) {
+    all('[data-select-on-focus]', scope).forEach(function (field) {
+      field.addEventListener('focus', function () {
+        if (field.select) { field.select(); }
+      });
     });
-  });
+  }
+  selectOnFocus(document);
 
   /* Copy an example to the clipboard.
    *
@@ -546,7 +555,7 @@
    * here. Both outcomes are server-rendered in both languages; the script
    * chooses which one to show and never writes text of its own. */
 
-  all('[data-clone]').forEach(function (box) {
+  function cloneField(box) {
     var button = box.querySelector('[data-copy]');
     var field = button && document.getElementById(button.getAttribute('data-copy'));
     if (!field) { return; }
@@ -579,7 +588,8 @@
         fallback();
       }
     });
-  });
+  }
+  all('[data-clone]').forEach(cloneField);
 
   /* Sidebar: bring the open repository into view inside the list on load.
    * On a wide screen the list scrolls on its own, so a repository far down
@@ -792,6 +802,30 @@
     }
   }
 
+  function optionText(option, lang) {
+    return option.getAttribute('data-' + lang) || option.textContent;
+  }
+
+  /* Remember a new order, reorder every list on the page and say the order
+   * in words where the sidebar names it. option is the chosen option, whose
+   * server-rendered text in both languages names the order. */
+  function applyOrder(order, option) {
+    if (!validOrder(order)) { return false; }
+    writeCookie(ORDER_KEY, order);
+    all('[data-order-list]').forEach(function (list) {
+      list.setAttribute('data-order', order);
+      orderRows(list);
+    });
+    var lang = root.getAttribute('data-lang') === 'ko' ? 'ko' : 'en';
+    all('[data-order-name]').forEach(function (node) {
+      node.setAttribute('data-en', optionText(option, 'en'));
+      node.setAttribute('data-ko', optionText(option, 'ko'));
+      node.textContent = optionText(option, lang);
+    });
+    all('[data-pref="order"]').forEach(function (select) { select.value = order; });
+    return true;
+  }
+
   var orderForm = document.querySelector('[data-order-form]');
   var orderSelect = orderForm && orderForm.querySelector('[data-order-select]');
   if (orderSelect) {
@@ -812,33 +846,391 @@
     }
 
     orderSelect.addEventListener('change', function () {
-      var order = orderSelect.value;
-      if (!validOrder(order)) { return; }
-      writeCookie(ORDER_KEY, order);
-      all('[data-order-list]').forEach(function (list) {
-        list.setAttribute('data-order', order);
-        orderRows(list);
-      });
-
-      // Say the new order in words, in the sidebar and to assistive
-      // technology, from the option's own server-rendered text.
       var option = orderSelect.options[orderSelect.selectedIndex];
-      var en = option.getAttribute('data-en') || option.textContent;
-      var ko = option.getAttribute('data-ko') || option.textContent;
+      if (!applyOrder(orderSelect.value, option) || !orderStatus) { return; }
+      // Tell assistive technology, from the option's own text.
       var lang = root.getAttribute('data-lang') === 'ko' ? 'ko' : 'en';
-      all('[data-order-name]').forEach(function (node) {
-        node.setAttribute('data-en', en);
-        node.setAttribute('data-ko', ko);
-        node.textContent = lang === 'ko' ? ko : en;
-      });
-      if (orderStatus) {
-        var sayEN = (orderStatus.getAttribute('data-prefix-en') || '') + ' ' + en;
-        var sayKO = (orderStatus.getAttribute('data-prefix-ko') || '') + ' ' + ko;
-        orderStatus.setAttribute('data-en', sayEN);
-        orderStatus.setAttribute('data-ko', sayKO);
-        orderStatus.textContent = lang === 'ko' ? sayKO : sayEN;
+      var sayEN = (orderStatus.getAttribute('data-prefix-en') || '') + ' ' + optionText(option, 'en');
+      var sayKO = (orderStatus.getAttribute('data-prefix-ko') || '') + ' ' + optionText(option, 'ko');
+      orderStatus.setAttribute('data-en', sayEN);
+      orderStatus.setAttribute('data-ko', sayKO);
+      orderStatus.textContent = lang === 'ko' ? sayKO : sayEN;
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 7. settings                                                         */
+  /* ------------------------------------------------------------------ */
+
+  /* Display choices belong to this browser, like the buttons at the top of
+   * the page, so a choice applies at once and Apply is hidden. */
+
+  var displayForm = document.querySelector('[data-display-form]');
+  if (displayForm) {
+    all('[data-display-apply]', displayForm).forEach(function (node) { node.hidden = true; });
+    displayForm.addEventListener('change', function (event) {
+      var select = event.target;
+      var pref = select.getAttribute ? select.getAttribute('data-pref') : '';
+      if (pref === 'lang') {
+        applyLanguage(select.value, null);
+      } else if (pref === 'appearance' && validAppearance(select.value)) {
+        setAppearance(select.value);
+      } else if (pref === 'order') {
+        applyOrder(select.value, select.options[select.selectedIndex]);
       }
     });
+  }
+
+  /* Settings groups. settings.html describes the markup. A group holds a
+   * change while one of its setting controls differs from its saved value;
+   * only then its "Not saved" mark and its save bar are shown.
+   *
+   * A group whose form has no password field is saved without leaving the
+   * page (see groupSave below and settings.go): a saved change comes back
+   * as the address that shows it, and this page then takes the saved
+   * group, and every group without a change, from that address. A refused
+   * change comes back as the tab with that group showing why. Every other
+   * group is left as it is, with what was typed in it. A form with a
+   * password field, the administrator password that confirms a save
+   * included, is always submitted by the browser as a whole page.
+   *
+   * These functions are the whole interface: groupDirty, discardGroup and
+   * saveGroup, which resolves to true once the change is saved. */
+
+  var settingsPanel = document.querySelector('[data-settings]');
+
+  function groupForm(group) {
+    return group.querySelector('[data-group-form]');
+  }
+
+  // The form's address. form.action would be its field named "action".
+  function formAddress(form) {
+    return new URL(form.getAttribute('action') || '', window.location.href).href;
+  }
+
+  // The controls that hold a setting. A hidden field, a button, a gate
+  // such as the administrator password, and anything not shown are not.
+  function settingControls(form) {
+    return Array.prototype.filter.call(form.elements, function (control) {
+      if (!control.name || control.disabled || control.type === 'hidden' ||
+          control.type === 'submit' || control.type === 'button') { return false; }
+      return !control.hasAttribute('data-group-gate') && !control.closest('[hidden]');
+    });
+  }
+
+  // A password field has no saved value, and its value is never read: it
+  // is a change once something was typed in it (data-typed).
+  function currentValue(control) {
+    if (control.type === 'password') { return control.hasAttribute('data-typed') ? 'typed' : ''; }
+    if (control.type === 'checkbox') { return control.checked ? 'on' : 'off'; }
+    return String(control.value).replace(/\r\n/g, '\n');
+  }
+
+  function savedValue(control) {
+    if (control.type === 'password') { return ''; }
+    return (control.getAttribute('data-saved') || '').replace(/\r\n/g, '\n');
+  }
+
+  function groupDirty(group) {
+    var form = groupForm(group);
+    return !!form && settingControls(form).some(function (control) {
+      return currentValue(control) !== savedValue(control);
+    });
+  }
+
+  // What the named field of form sends now: "on" or "off" for a switch.
+  function sentValue(form, name) {
+    var control = all('[name="' + name + '"]', form).filter(function (field) { return !field.disabled; })[0];
+    if (!control) { return ''; }
+    return control.type === 'checkbox' ? (control.checked ? 'on' : 'off') : control.value;
+  }
+
+  function syncGroup(group) {
+    var form = groupForm(group);
+    if (!form) { return; }
+    all('[data-show-if]', form).forEach(function (node) {
+      var rule = node.getAttribute('data-show-if').split('=');
+      node.hidden = sentValue(form, rule[0]) !== rule[1];
+    });
+    var dirty = groupDirty(group);
+    var open = dirty || group.hasAttribute('data-group-refused') || group.hasAttribute('data-group-open');
+    group.classList.toggle('is-dirty', dirty);
+    all('[data-group-mark]', group).forEach(function (node) { node.hidden = !dirty; });
+    all('[data-group-bar-title]', group).forEach(function (node) { node.hidden = !dirty; });
+    all('[data-group-bar]', group).forEach(function (node) { node.hidden = !open; });
+  }
+
+  // Put the saved values back, as they were when the page was shown.
+  function discardGroup(group) {
+    var form = groupForm(group);
+    if (!form) { return; }
+    Array.prototype.forEach.call(form.elements, function (control) {
+      if (!control.name || control.type === 'hidden' || control.type === 'submit' || control.type === 'button') { return; }
+      if (control.type === 'password') {
+        control.value = '';
+        control.removeAttribute('data-typed');
+      } else if (control.type === 'checkbox') {
+        control.checked = control.getAttribute('data-saved') === 'on';
+      } else if (control.hasAttribute('data-saved')) {
+        control.value = control.getAttribute('data-saved');
+      }
+    });
+    all('details[data-group-details]', group).forEach(function (details) { details.open = false; });
+    all('[data-settings-note]', group).forEach(function (note) { note.parentNode.removeChild(note); });
+    syncGroup(group);
+  }
+
+  /* groupSave is the only part of this file, besides the approval watcher,
+   * that sends a request, and a security review checks it on its own
+   * (asset_pins_test.go pins it). It sends a group's form only when the
+   * form has no password field, so it never builds the form data of a form
+   * that holds a password. It POSTs to the form's own address on this
+   * site, and after a saved change makes one GET of the address the server
+   * returned, again only on this site. Both send only this site's cookies
+   * and follow no redirect. It copies the anti-forgery token of the fetched
+   * page into this page's forms, because a saved change can end the
+   * session that token belongs to. It stores nothing. */
+  var groupSave = (function groupSave() {
+    if (!window.fetch || !window.DOMParser || !window.FormData || !window.URLSearchParams) { return null; }
+
+    // The address, on this site only, or null.
+    function onThisSite(address) {
+      var target;
+      try { target = new URL(address, window.location.href); } catch (e) { return null; }
+      return target.origin === window.location.origin ? target : null;
+    }
+
+    function holdsPassword(form) {
+      return Array.prototype.some.call(form.elements, function (control) { return control.type === 'password'; });
+    }
+
+    function eligible(form) {
+      return !holdsPassword(form) && !!onThisSite(formAddress(form));
+    }
+
+    // Send the form. Rejects, sending nothing, when the form may not be
+    // sent this way.
+    function send(form, name) {
+      var target = onThisSite(formAddress(form));
+      if (holdsPassword(form) || !target) { return Promise.reject(new Error('not sent')); }
+      return window.fetch(target.href, {
+        method: 'POST',
+        body: new URLSearchParams(new FormData(form)),
+        credentials: 'same-origin',
+        cache: 'no-store',
+        redirect: 'manual',
+        headers: { 'X-OwnGit-Group': name }
+      });
+    }
+
+    // Read the page at the address a saved change returned.
+    function read(address) {
+      var target = onThisSite(address);
+      if (!target) { return Promise.reject(new Error('not read')); }
+      return window.fetch(target.href, { method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'manual' })
+        .then(function (response) {
+          if (response.status !== 200) { throw new Error('not read'); }
+          return response.text();
+        });
+    }
+
+    function copyToken(doc) {
+      var token = doc.querySelector('input[name="csrf"]');
+      if (!token) { return; }
+      all('input[name="csrf"]').forEach(function (field) { field.value = token.value; });
+    }
+
+    return { onThisSite: onThisSite, eligible: eligible, send: send, read: read, copyToken: copyToken };
+  })();
+
+  // Put a group from another rendering of this tab in place of group, and
+  // return it.
+  function replaceGroup(group, fresh) {
+    var node = document.importNode(fresh, true);
+    group.parentNode.replaceChild(node, group);
+    all('[data-clone]', node).forEach(cloneField);
+    selectOnFocus(node);
+    syncGroup(node);
+    return node;
+  }
+
+  function parsePage(html) {
+    return new DOMParser().parseFromString(html, 'text/html');
+  }
+
+  // Take from doc, another rendering of this tab, the named group and every
+  // group without a change, so they show what is saved now. A group with a
+  // change keeps it. Returns the named group.
+  function takeGroups(doc, name) {
+    var taken = null;
+    all('[data-group]', settingsPanel).forEach(function (group) {
+      var own = group.getAttribute('data-group');
+      var fresh = doc.querySelector('[data-group="' + own + '"]');
+      if (!fresh || (own !== name && groupDirty(group))) { return; }
+      var node = replaceGroup(group, fresh);
+      if (own === name) { taken = node; }
+    });
+    // A saved change can end a session, the one whose token the forms
+    // carry included, or change how this page is reached. The sidebar's
+    // session controls and the connection label say so.
+    groupSave.copyToken(doc);
+    takeChrome(doc, '[data-session-controls]', document.querySelector('.sidebar__inner'));
+    takeChrome(doc, '[data-connection]', null);
+    return taken;
+  }
+
+  // Put the part of doc that selector finds in place of this page's, or
+  // remove this page's when doc has none, or add doc's to parent when this
+  // page has none.
+  function takeChrome(doc, selector, parent) {
+    var own = document.querySelector(selector);
+    var fresh = doc.querySelector(selector);
+    if (own && fresh) {
+      own.parentNode.replaceChild(document.importNode(fresh, true), own);
+    } else if (own) {
+      own.parentNode.removeChild(own);
+    } else if (fresh && parent) {
+      parent.appendChild(document.importNode(fresh, true));
+    }
+  }
+
+  function showSettingsNote(group, selector) {
+    var template = settingsPanel.querySelector(selector);
+    if (!template) { return; }
+    all('[data-settings-note]', group).forEach(function (note) { note.parentNode.removeChild(note); });
+    var note = template.cloneNode(true);
+    note.removeAttribute(selector.slice(1, -1));
+    note.setAttribute('data-settings-note', '');
+    note.hidden = false;
+    var bar = group.querySelector('[data-group-bar]');
+    if (bar) { bar.parentNode.insertBefore(note, bar); } else { group.appendChild(note); }
+    note.focus();
+  }
+
+  function samePage(target) {
+    return target.pathname === window.location.pathname;
+  }
+
+  function focusFirst(group, selectors) {
+    for (var i = 0; i < selectors.length; i++) {
+      var target = group && group.querySelector(selectors[i]);
+      if (target) { target.focus(); return; }
+    }
+  }
+
+  // Let the browser submit the form as a whole page, as without the
+  // script. The server answers it completely on its own.
+  function submitPage(group) {
+    group.removeAttribute('aria-busy');
+    HTMLFormElement.prototype.submit.call(groupForm(group));
+    return false;
+  }
+
+  function saveGroup(group) {
+    var form = groupForm(group);
+    var name = group.getAttribute('data-group');
+    // A form this script does not send is submitted by the browser, which
+    // checks its fields first.
+    if (!groupSave || !groupSave.eligible(form)) {
+      if (form.requestSubmit) { form.requestSubmit(); } else { submitPage(group); }
+      return Promise.resolve(false);
+    }
+    group.setAttribute('aria-busy', 'true');
+    return groupSave.send(form, name).then(function (response) {
+      var type = response.headers.get('Content-Type') || '';
+      if (response.status === 200 && type.indexOf('application/json') === 0) {
+        return response.json().then(function (answer) { return showSaved(group, name, answer && answer.location); });
+      }
+      // Anything but a saved change or this tab with the group showing why
+      // nothing was saved, such as a redirect to sign in, is left to the
+      // page submission.
+      if (response.type === 'opaqueredirect' || type.indexOf('text/html') !== 0) { return submitPage(group); }
+      return response.text().then(function (html) {
+        var fresh = parsePage(html).querySelector('[data-group="' + name + '"]');
+        if (!fresh) { return submitPage(group); }
+        var node = replaceGroup(group, fresh);
+        focusFirst(node, ['[aria-invalid="true"]', '[role="alert"]', '[data-group-note]', '[data-group-save]']);
+        return false;
+      });
+    }, function () {
+      // Not sent: the page submission sends it.
+      return submitPage(group);
+    });
+  }
+
+  // The change is saved. Show it from the address that the server named, or
+  // go there when it is not this tab. An address on another site is not
+  // followed.
+  function showSaved(group, name, location) {
+    var target = typeof location === 'string' && location !== '' ? groupSave.onThisSite(location) : null;
+    if (!target) {
+      group.removeAttribute('aria-busy');
+      showSettingsNote(group, '[data-settings-unexpected]');
+      return true;
+    }
+    if (!samePage(target)) {
+      window.location.assign(target.href);
+      return true;
+    }
+    return groupSave.read(target.href).then(function (html) {
+      var node = takeGroups(parsePage(html), name);
+      if (!node) { throw new Error('settings group'); }
+      focusFirst(node, ['[data-group-note]', 'h2']);
+      return true;
+    }).catch(function () {
+      // Saved, but this page could not show it: load the page that does.
+      window.location.assign(target.href);
+      return true;
+    });
+  }
+
+  // Focus the group's first control on screen, as the save bar that held
+  // focus is gone.
+  function focusControl(group) {
+    var shown = all('select, textarea, input:not([type="hidden"]), summary', group).filter(function (node) {
+      return node.getClientRects().length > 0;
+    })[0];
+    if (shown) { shown.focus(); }
+  }
+
+  if (settingsPanel) {
+    var editGroup = function (event) {
+      var control = event.target;
+      if (control.type === 'password' && event.type === 'input') { control.setAttribute('data-typed', ''); }
+      var group = control.closest && control.closest('[data-group]');
+      if (group) { syncGroup(group); }
+    };
+    settingsPanel.addEventListener('input', editGroup);
+    settingsPanel.addEventListener('change', editGroup);
+    settingsPanel.addEventListener('submit', function (event) {
+      var form = event.target;
+      var group = form.closest && form.closest('[data-group]');
+      if (!group || !form.hasAttribute('data-group-form') || form.hasAttribute('data-group-native') ||
+          !groupSave || !groupSave.eligible(form)) { return; }
+      event.preventDefault();
+      if (group.getAttribute('aria-busy') !== 'true') { saveGroup(group); }
+    });
+    // Cancel puts the saved values back. A refused group, which shows why,
+    // follows its link to the tab as saved.
+    settingsPanel.addEventListener('click', function (event) {
+      var cancel = event.target.closest && event.target.closest('[data-group-cancel]');
+      var group = cancel && cancel.closest('[data-group]');
+      if (!group || group.hasAttribute('data-group-refused') ||
+          event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) { return; }
+      event.preventDefault();
+      discardGroup(group);
+      focusControl(group);
+    });
+    all('[data-group]', settingsPanel).forEach(syncGroup);
+    // A saved change comes back at an address naming its group. Its notice
+    // takes focus, so it is read out and the reader stays at that group.
+    // The browser moves to the address's group once the page has loaded,
+    // so the notice is focused after that.
+    var savedGroup = window.location.hash.indexOf('#grp-') === 0 ? document.getElementById(window.location.hash.slice(1)) : null;
+    var savedNote = savedGroup && savedGroup.querySelector('[data-group-note]');
+    if (savedNote && !document.querySelector('[autofocus]')) {
+      window.addEventListener('load', function () { savedNote.focus(); });
+    }
   }
 
   // A rendered document's heading anchors carry an "md-" prefix, so they

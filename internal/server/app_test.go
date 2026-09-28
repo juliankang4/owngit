@@ -100,7 +100,7 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 		t.Fatalf("open-mode request unexpectedly persisted a general session: ok=%v err=%v", ok, err)
 	}
 	generalCSRF := generalToken
-	settingsBody, settingsStatus := dashboardGET(t, client, server.URL+"/settings")
+	settingsBody, settingsStatus := dashboardGET(t, client, server.URL+"/settings/storage")
 	if settingsStatus != http.StatusOK || strings.Contains(settingsBody, canonicalRoot) {
 		t.Fatalf("general settings leaked owner storage path: status=%d", settingsStatus)
 	}
@@ -115,7 +115,7 @@ func TestSetupOpenModeRepositoryCreationAndPasswordTransitions(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("admin login status=%d", response.StatusCode)
 	}
-	settingsBody, settingsStatus = dashboardGET(t, client, server.URL+"/settings")
+	settingsBody, settingsStatus = dashboardGET(t, client, server.URL+"/settings/storage")
 	if settingsStatus != http.StatusOK || !strings.Contains(settingsBody, canonicalRoot) {
 		t.Fatalf("confirmed administrator could not see storage path: status=%d", settingsStatus)
 	}

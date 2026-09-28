@@ -38,7 +38,7 @@ func TestSettingsPageShowsWhatTheServeProcessUses(t *testing.T) {
 
 	instance := startServedWith(t, []string{"--state-dir", stateDir, "--no-open"})
 	settings := func() string {
-		response, err := http.Get(instance.url + "/settings?lang=en")
+		response, err := http.Get(instance.url + "/settings/network?lang=en")
 		noErr(t, err)
 		defer response.Body.Close()
 		body, err := io.ReadAll(response.Body)

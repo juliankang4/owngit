@@ -103,6 +103,61 @@ func TestAppearanceDefaultsToSystem(t *testing.T) {
 // The script is the only place that touches browser storage and the address
 // bar, so its promises are checked against its actual source.
 
+// The Settings group save is the other block of the script that makes
+// requests. It sends only a form without a password field, only to this
+// site, as a POST with this site's cookies, and then makes one GET of the
+// address the server returned, again only on this site. Neither follows a
+// redirect. It stores and logs nothing, and the only value it reads is the
+// anti-forgery token of the page it fetched, which it copies into this
+// page's forms.
+func TestSettingsGroupSaveSendsOnlyWhatItMay(t *testing.T) {
+	block := groupSaveSource(t)
+	counts := map[string]int{
+		"fetch(": 2, "method: 'POST'": 1, "method: 'GET'": 1, "credentials: 'same-origin'": 2, "redirect: 'manual'": 2,
+		"new FormData(form)": 1, "target.origin === window.location.origin": 1, `'input[name="csrf"]'`: 2,
+		"control.type === 'password'": 1, ".value": 2,
+	}
+	for part, want := range counts {
+		if got := strings.Count(block, part); got != want {
+			t.Errorf("the group save has %q %d times, want %d", part, got, want)
+		}
+	}
+	// A form with a password field is refused before its data is built, and
+	// both requests go only to an address on this site.
+	send := section(t, block, "function send(", "function read(")
+	if !strings.Contains(send, "if (holdsPassword(form) || !target) { return Promise.reject(") ||
+		strings.Index(send, "holdsPassword(form)") > strings.Index(send, "new FormData(form)") {
+		t.Error("the group save builds form data before refusing a form with a password field")
+	}
+	for _, sender := range []string{send, section(t, block, "function read(", "function copyToken(")} {
+		if !strings.Contains(sender, "onThisSite(") || !strings.Contains(sender, "fetch(target.href") {
+			t.Errorf("a request of the group save is not limited to this site:\n%s", sender)
+		}
+	}
+	if strings.Contains(block, "\"password\"") {
+		t.Error("the group save names a password field")
+	}
+	// The one value it reads is the token of the fetched page.
+	copyToken := section(t, block, "function copyToken(", "return {")
+	if strings.Count(copyToken, ".value") != 2 || !strings.Contains(copyToken, "field.value = token.value") {
+		t.Error("the group save reads a value other than the fetched token")
+	}
+	for _, leak := range []string{
+		"Storage", "sendBeacon", "console.", "location.hash", "document.cookie", "http:", "https:", "://", "XMLHttpRequest",
+		"WebSocket", "EventSource", "postMessage", "Observer", "import", "require(", "<script", "innerHTML", "eval(",
+	} {
+		if strings.Contains(strings.ReplaceAll(block, "'X-OwnGit-Group'", ""), leak) {
+			t.Errorf("the group save touches %q", leak)
+		}
+	}
+	// The rest of the script leaves sending to it: a form it does not send
+	// is submitted by the browser.
+	rest := scriptOutsideRequests(t)
+	if !strings.Contains(rest, "!groupSave || !groupSave.eligible(form)) { return; }") {
+		t.Error("the submit handler takes over a form the group save does not send")
+	}
+}
+
 func TestScriptClearsTheSetupFragmentAndNeverStoresIt(t *testing.T) {
 	js := scriptSource(t)
 
@@ -118,7 +173,7 @@ func TestScriptClearsTheSetupFragmentAndNeverStoresIt(t *testing.T) {
 	// and checked on its own; the rest of the script, the setup fragment
 	// handler included, must not send or record anything.
 	watcher := section(t, js, "(function watchApproval()", "})();")
-	rest := scriptOutsideApprovalWatcher(t)
+	rest := scriptOutsideRequests(t)
 	for _, sink := range []string{"sessionStorage.setItem", "fetch(", "XMLHttpRequest", "console.log"} {
 		if strings.Contains(rest, sink) {
 			t.Errorf("the script sends or records data through %q", sink)

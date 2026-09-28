@@ -75,6 +75,7 @@ func networkInfo(report NetworkReport) webui.NetworkInfo {
 			Proxies: strings.Join(report.Saved.TrustedProxies, "\n"),
 		},
 	}
+	info.Saved = info.Form
 	next := report.NextStart
 	info.Listen = webui.NetworkValue{Next: []string{next.Listen}, NextSource: next.ListenSource}
 	info.BaseURL = webui.NetworkValue{Next: nonEmpty(next.BaseURL), NextSource: next.BaseURLSource}
@@ -150,6 +151,14 @@ func networkEntries(value string) []string {
 	})
 }
 
+// networkForm is what a Network save submitted.
+func networkForm(request *http.Request) webui.NetworkForm {
+	return webui.NetworkForm{
+		Listen: strings.TrimSpace(postValue(request, "listen")), BaseURL: strings.TrimSpace(postValue(request, "base_url")),
+		Hosts: postValue(request, "allowed_hosts"), Proxies: postValue(request, "trusted_proxies"),
+	}
+}
+
 // saveNetwork handles ActionSaveNetwork after the administrator password
 // was verified.
 func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf string) {
@@ -160,14 +169,13 @@ func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, s
 		app.renderNotSaved(writer, request, settings, csrf, action, "network settings read", err)
 		return
 	}
+	// A form opened before another change shows the values saved now, which
+	// the notice asks to check before saving again.
 	if postValue(request, "network_revision") != networkRevision(report) {
-		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgNetStale)}, http.StatusConflict)
+		app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgNetStale)}, http.StatusConflict, settingsView{NetworkStale: true})
 		return
 	}
-	form := webui.NetworkForm{
-		Listen: strings.TrimSpace(postValue(request, "listen")), BaseURL: strings.TrimSpace(postValue(request, "base_url")),
-		Hosts: postValue(request, "allowed_hosts"), Proxies: postValue(request, "trusted_proxies"),
-	}
+	form := networkForm(request)
 	var notices []webui.Notice
 	if form.Listen != "" {
 		if err := ValidateListenAddress(form.Listen); err != nil {
@@ -252,17 +260,5 @@ func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, s
 		app.renderNotSaved(writer, request, settings, csrf, action, "network settings save", err)
 		return
 	}
-	app.noticeRedirect(writer, request, "/settings?notice=network_saved", http.StatusSeeOther)
-}
-
-// networkFocus names the first Network field with an error, in page order.
-func networkFocus(notices []webui.Notice) string {
-	for _, field := range []string{"listen", "base_url", "allowed_hosts", "trusted_proxies", "insecure_ack", "admin_password"} {
-		for _, notice := range notices {
-			if notice.Field == field && notice.Kind == webui.NoticeError {
-				return field
-			}
-		}
-	}
-	return ""
+	app.settingsSaved(writer, request, settingsResultURL(action, "network_saved"))
 }

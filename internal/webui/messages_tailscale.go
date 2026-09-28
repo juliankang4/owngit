@@ -367,10 +367,6 @@ const (
 	MsgTSUnrecorded    MessageCode = "settings.tailscale.unrecorded"
 	MsgTSTakenBrief    MessageCode = "settings.tailscale.taken_brief"
 	MsgTSChangedBrief  MessageCode = "settings.tailscale.changed_brief"
-	MsgTSTurnOn        MessageCode = "settings.tailscale.turn_on"
-	MsgTSTurnOnButton  MessageCode = "settings.tailscale.turn_on_button"
-	MsgTSTurnOff       MessageCode = "settings.tailscale.turn_off"
-	MsgTSTurnOffBtn    MessageCode = "settings.tailscale.turn_off_button"
 	MsgTSCertLog       MessageCode = "settings.tailscale.certificate_log"
 	MsgTSHome          MessageCode = "settings.tailscale.home_network"
 	MsgTSListenOption  MessageCode = "settings.tailscale.listen_option"
@@ -437,10 +433,6 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 		en: "The running OwnGit was started with --base-url %s, so clone addresses and links still use that address. To use the HTTPS address, remove the option from the command or service that starts OwnGit, then restart it.",
 		ko: "실행 중인 OwnGit이 --base-url %s 옵션으로 시작되어 클론 주소와 링크가 아직 그 주소를 씁니다. HTTPS 주소를 쓰려면 OwnGit을 시작하는 명령이나 서비스에서 이 옵션을 빼고 다시 시작하세요.",
 	},
-	MsgTSTurnOn:       {en: "Turn on", ko: "켜기"},
-	MsgTSTurnOnButton: {en: "Turn on sharing", ko: "공유 켜기"},
-	MsgTSTurnOff:      {en: "Turn off", ko: "끄기"},
-	MsgTSTurnOffBtn:   {en: "Turn off sharing", ko: "공유 끄기"},
 	// Value: this computer's MagicDNS name.
 	MsgTSCertLog: {
 		en: "When Tailscale issues the certificate for this address, the names of this computer and your tailnet, as in %s, are recorded in a public certificate log. Only the fact that the address was opened is recorded, not your code, repositories, passwords or other content. To use another name, change it in the Tailscale admin console before turning sharing on. Names that already got a certificate stay in the log, even after a rename.",

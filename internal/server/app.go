@@ -378,9 +378,9 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleLoginPost(writer, request, settings, webui.AuthAdmin)
 	case request.URL.Path == "/admin/logout" && request.Method == http.MethodPost:
 		app.handleLogout(writer, request, webui.AuthAdmin)
-	case request.URL.Path == "/settings" && request.Method == http.MethodGet:
+	case isSettingsPath(request.URL.Path) && request.Method == http.MethodGet:
 		app.handleSettingsGet(writer, request, settings)
-	case request.URL.Path == "/settings" && request.Method == http.MethodPost:
+	case isSettingsPath(request.URL.Path) && request.Method == http.MethodPost:
 		app.handleSettingsPost(writer, request, settings)
 	case request.URL.Path == "/repositories/new" && request.Method == http.MethodGet:
 		app.handleNewRepositoryGet(writer, request, settings, "", "", nil)

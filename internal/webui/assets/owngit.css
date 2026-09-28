@@ -1566,6 +1566,147 @@ span.hm__cell { cursor: default; }
 }
 .tslog .icon { flex: none; margin-top: 2px; color: var(--text-3); }
 
+/* ---------- settings tabs and groups ---------- */
+
+/* The tabs are links, one address each. The current one is marked by its
+   weight, an accent underline and aria-current, not by colour alone. On a
+   narrow window the strip wraps, so every tab, the current one included,
+   stays in view. */
+.settabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: 14px;
+  box-shadow: inset 0 -1px 0 var(--sep);
+}
+.settabs__t {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 8px 12px 9px;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.settabs__t:hover { color: var(--text-1); background: var(--bg-fill); text-decoration: none; }
+.settabs__t[aria-current="page"] { color: var(--text-1); font-weight: 640; border-bottom-color: var(--accent); }
+.settabs__t[aria-current="page"] .icon { color: var(--accent); }
+.settabs__t:focus-visible { outline-offset: -2px; }
+
+.setpanel { max-width: 760px; }
+.setpanel__lead { font-size: 12.5px; color: var(--text-2); max-width: 70ch; }
+
+/* A group is one form with its own Save. A group holding a change gets an
+   accent edge, a "Not saved" mark in words and its save bar. */
+.grp { display: grid; gap: 10px; padding: 16px 0 18px; border-bottom: 1px solid var(--sep); }
+.grp:last-of-type { border-bottom: 0; }
+.grp__h { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.grp__h h2 { font-size: 14px; font-weight: 620; letter-spacing: -0.01em; }
+.grp.is-dirty { box-shadow: inset 3px 0 0 var(--accent); padding-left: 14px; margin-left: -14px; }
+.gmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 9px 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.gmark::before, .sbar__t::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.scope { display: flex; gap: 6px; max-width: 76ch; font-size: 11.5px; color: var(--text-3); }
+.scope .icon { flex: none; margin-top: 1px; }
+.gform { display: grid; gap: 12px; }
+.grp .setblock__now { justify-self: start; }
+
+/* A labelled control beside its label on a wide window. */
+.f--row { grid-template-columns: minmax(170px, 34%) minmax(0, 1fr); align-items: center; column-gap: 16px; }
+.f--row > label { font-weight: 500; }
+.f--row > .fieldnote, .f--row > .f__help { grid-column: 2; }
+.f--row select { max-width: 360px; }
+
+/* An on/off setting. The words say the state as well as the knob. */
+.sw input {
+  appearance: none;
+  position: relative;
+  width: 30px;
+  height: 18px;
+  margin-top: 0;
+  border-radius: 999px;
+  background: var(--sep-strong);
+  cursor: pointer;
+}
+.sw input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.12s;
+}
+.sw input:checked { background: var(--accent); }
+.sw input:checked::after { left: 14px; }
+.sw input:disabled { opacity: 0.55; cursor: not-allowed; }
+.sw input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sw__state { font-weight: 650; }
+.sw input:checked ~ .check__t .sw__off,
+.sw input:not(:checked) ~ .check__t .sw__on { display: none; }
+@media (prefers-reduced-motion: reduce) { .sw input::after { transition: none; } }
+
+/* A choice with a consequence says so beside the control, with a word and
+   a shape as well as the colour. */
+.wn {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  max-width: 66ch;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.wn .icon { flex: none; margin-top: 1px; }
+.wn b { font-weight: 650; }
+.wn--danger { background: var(--bad-soft); box-shadow: inset 3px 0 0 var(--bad); }
+.wn--danger .icon, .wn--danger b { color: var(--bad); }
+
+.grp__more { display: grid; gap: 12px; }
+.grp__more > summary { justify-self: start; }
+.grp__more > summary.linkbtn { display: inline-flex; align-items: center; gap: 6px; list-style: none; cursor: pointer; }
+.grp__more > summary.linkbtn::-webkit-details-marker { display: none; }
+.grp__more > summary.linkbtn .icon { transition: transform 0.12s; }
+.grp__more[open] > summary.linkbtn .icon { transform: rotate(180deg); }
+.grp__more[open] > .f { padding-left: 12px; border-left: 2px solid var(--sep); }
+
+/* The save bar. Without the script it is always shown and stays quiet;
+   while its group holds a change it takes the accent. */
+.sbar { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--sep); border-radius: var(--r-m); }
+.grp.is-dirty .sbar { border-color: var(--accent); background: var(--accent-soft); }
+.sbar__t { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 620; color: var(--accent); }
+.sbar__pw > label { display: inline-flex; align-items: center; gap: 5px; }
+.sbar__pw input[type="password"] { max-width: 300px; }
+.sbar__acts { display: flex; flex-wrap: wrap; gap: 8px; }
+/* A save on its way keeps every label readable; the script ignores a
+   second Save until the answer arrives. */
+.grp[aria-busy="true"] { cursor: progress; }
+
+.setlinks { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 2px 16px; margin: 0; padding: 0; list-style: none; }
+.setlinks a { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-radius: 5px; overflow-wrap: anywhere; }
+.setlinks a .icon { flex: none; color: var(--text-3); }
+.setlinks .adminlock { margin-left: 0; }
+
 /* ---------- error page ---------- */
 
 .errpage { display: grid; gap: 10px; justify-items: start; padding: 40px 0; }
@@ -1713,6 +1854,10 @@ span.hm__cell { cursor: default; }
   :is(.row--repo, .row--act, .row--commit) > .row__msg { grid-row: 3; grid-column: 1 / -1; }
   .rowhead { display: none; }
   .sortctl { margin-left: 0; flex-basis: 100%; }
+  /* Settings: a label sits above its control. */
+  .f--row { grid-template-columns: minmax(0, 1fr); row-gap: 5px; }
+  .f--row > .fieldnote, .f--row > .f__help { grid-column: 1; }
+  .grp.is-dirty { padding-left: 10px; margin-left: -10px; }
 }
 
 @media (max-width: 880px) {

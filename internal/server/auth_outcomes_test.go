@@ -133,9 +133,30 @@ func TestAPIPasswordCheckThatCouldNotFinishIsUnavailable(t *testing.T) {
 func requireUnavailableNotice(t *testing.T, name string, result browserHTTPResult, wrongPassword webui.MessageCode) {
 	t.Helper()
 	notices := noticeRegion(t, result.body)
+	if notices == "" {
+		// A Settings group shows its notices inside the group.
+		notices = groupNotices(result.body)
+	}
 	if result.status != http.StatusServiceUnavailable || !strings.Contains(notices, browserText(webui.MsgErrUnavailable)) ||
 		strings.Contains(notices, browserText(wrongPassword)) || strings.Contains(result.body, `aria-invalid="true"`) {
 		t.Fatalf("%s status=%d notices=%s", name, result.status, notices)
+	}
+}
+
+// groupNotices returns the notices of the Settings groups on a page.
+func groupNotices(body string) string {
+	var notices []string
+	for rest := body; ; {
+		at := strings.Index(rest, "data-group-note")
+		if at < 0 {
+			return strings.Join(notices, "\n")
+		}
+		rest = rest[at:]
+		end := strings.Index(rest, "</p>")
+		if end < 0 {
+			return strings.Join(notices, "\n")
+		}
+		notices, rest = append(notices, rest[:end]), rest[end:]
 	}
 }
 

@@ -164,13 +164,8 @@ func TestUpdateCheckSettingNeedsTheAdministratorAndTakesEffect(t *testing.T) {
 		t.Fatalf("settings status=%d", status)
 	}
 	// Visible to everyone, with the change behind the administrator password.
-	for _, want := range []string{
-		`value="` + webui.ActionSetUpdateCheck + `"`, `name="update_check" value="off"`,
-		webui.Text(webui.LangEN, webui.MsgSettingsUpdateOnNow),
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("settings lacks %q", want)
-		}
+	if !strings.Contains(body, `value="`+webui.ActionSetUpdateCheck+`"`) || !updateSwitchOn(t, body) {
+		t.Fatal("settings does not show the update check switch turned on")
 	}
 	token := cookieValue(t, jar, server.URL, generalCookie)
 	turnOff := url.Values{"csrf": {token}, "action": {webui.ActionSetUpdateCheck}, "update_check": {"off"}}
@@ -205,8 +200,8 @@ func TestUpdateCheckSettingNeedsTheAdministratorAndTakesEffect(t *testing.T) {
 	if endpoint.hits.Load() != before {
 		t.Fatal("a check turned off in Settings still made a request")
 	}
-	if body, _ := dashboardGET(t, client, server.URL+"/settings"); !strings.Contains(body, `name="update_check" value="on"`) {
-		t.Fatal("settings does not offer turning the check back on")
+	if body, _ := dashboardGET(t, client, server.URL+"/settings"); updateSwitchOn(t, body) {
+		t.Fatal("settings does not show the check turned off")
 	}
 
 	// An unknown value is refused.
@@ -236,9 +231,22 @@ func TestSettingsReportTheStartOptionOverride(t *testing.T) {
 			t.Errorf("settings lacks %q", webui.Text(webui.LangEN, want))
 		}
 	}
-	if strings.Contains(body, webui.Text(webui.LangEN, webui.MsgSettingsUpdateOnNow)) {
-		t.Error("settings claims the check is on although the start option disables it")
+}
+
+// updateSwitchOn reports whether the update check switch of a Settings
+// page is turned on.
+func updateSwitchOn(t *testing.T, body string) bool {
+	t.Helper()
+	at := strings.Index(body, `id="upd-check"`)
+	if at < 0 {
+		t.Fatal("settings has no update check switch")
 	}
+	start := strings.LastIndex(body[:at], "<")
+	tag := body[start : start+strings.Index(body[start:], ">")]
+	if !strings.Contains(tag, `name="update_check" value="on"`) {
+		t.Fatalf("the update check switch does not send on: %s", tag)
+	}
+	return strings.Contains(tag, " checked")
 }
 
 // The identity in the toolbar leads to the dashboard on every kind of page,

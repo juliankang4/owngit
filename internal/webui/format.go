@@ -58,6 +58,12 @@ func templateFuncs() template.FuncMap {
 		"noteID":       noteID,
 		"forAction":    noticesForAction,
 		"firstAlert":   firstAlertField,
+		"firstError":   firstErrorField,
+		"hasError":     hasError,
+		"settingsTabs": SettingsTabs,
+		"tabURL":       SettingsTabURL,
+		"draft":        settingsDraft,
+		"onOff":        onOff,
 		"refValue":     refValue,
 		"queryRef":     queryRef,
 		"changeStatus": changeStatus,
@@ -207,6 +213,44 @@ func firstAlertField(notices []Notice, fields ...string) int {
 		}
 	}
 	return -1
+}
+
+// firstErrorField returns the first of fields, in the order they are
+// rendered, that carries an error, or "" when none does. A refused form
+// places the reader on that field.
+func firstErrorField(notices []Notice, fields ...string) string {
+	if i := firstAlertField(notices, fields...); i >= 0 {
+		return notices[i].Field
+	}
+	return ""
+}
+
+// hasError reports whether any notice is an error.
+func hasError(notices []Notice) bool {
+	for _, notice := range notices {
+		if notice.Kind == NoticeError {
+			return true
+		}
+	}
+	return false
+}
+
+// settingsDraft returns what a Settings control shows: the value the
+// refused form of want sent for field, or the saved value when group is
+// another group, nothing was refused or the form did not send field.
+func settingsDraft(group string, draft map[string]string, want, field, saved string) string {
+	if value, sent := draft[field]; sent && group == want {
+		return value
+	}
+	return saved
+}
+
+// onOff writes a switch's state the way a checkbox form field sends it.
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 // noticesForAction keeps only the notices belonging to the form the reader

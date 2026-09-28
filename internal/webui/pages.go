@@ -184,14 +184,114 @@ const (
 	// plain HTTP. Field: insecure_ack.
 	ActionAcknowledgeInsecure = "acknowledge_insecure"
 	// ActionSetUpdateCheck turns the new-release check on or off.
-	// Fields: admin_password, update_check ("on" or "off").
+	// Fields: admin_password, update_check ("on", or "off" or absent for
+	// off, as an unticked switch sends nothing).
 	ActionSetUpdateCheck = "set_update_check"
+	// ActionSaveAccess saves the Access group: who can read and push, and
+	// a new shared password. It turns the shared password on, changes it or
+	// turns it off, as the fields ask. Fields: admin_password, access_mode
+	// ("password" or "open"), access_password.
+	ActionSaveAccess = "save_access"
 )
 
-// SettingsPage renders /settings.
+// The Settings tabs. Each is its own address, so a tab works as an ordinary
+// link and can be opened, reloaded and shared without scripting.
+const (
+	SettingsGeneral      = "general"
+	SettingsAccess       = "access"
+	SettingsNetwork      = "network"
+	SettingsRepositories = "repositories"
+	SettingsStorage      = "storage"
+)
+
+// SettingsTab is one entry of the Settings tab strip.
+type SettingsTab struct {
+	ID    string
+	URL   string
+	Label MessageCode
+	Icon  string
+}
+
+// SettingsTabs returns the tabs in the order the strip shows them.
+func SettingsTabs() []SettingsTab {
+	return []SettingsTab{
+		{SettingsGeneral, SettingsTabURL(SettingsGeneral), MsgSettingsTabGeneral, "settings"},
+		{SettingsAccess, SettingsTabURL(SettingsAccess), MsgSettingsTabAccess, "lock"},
+		{SettingsNetwork, SettingsTabURL(SettingsNetwork), MsgSettingsTabNetwork, "globe"},
+		{SettingsRepositories, SettingsTabURL(SettingsRepositories), MsgSettingsTabRepositories, "repo"},
+		{SettingsStorage, SettingsTabURL(SettingsStorage), MsgSettingsTabStorage, "kept"},
+	}
+}
+
+// SettingsTabURL is the address of a tab. General is Settings itself.
+func SettingsTabURL(tab string) string {
+	if tab == SettingsGeneral || tab == "" {
+		return "/settings"
+	}
+	return "/settings/" + tab
+}
+
+// SettingsTabOfPath returns the tab a Settings address shows.
+func SettingsTabOfPath(path string) (string, bool) {
+	if path == "/settings" {
+		return SettingsGeneral, true
+	}
+	for _, tab := range SettingsTabs() {
+		if tab.ID != SettingsGeneral && path == tab.URL {
+			return tab.ID, true
+		}
+	}
+	return "", false
+}
+
+// The Settings groups. A group is one form with its own Save: saving it
+// never sends or resets another group's fields.
+const (
+	GroupUpdate     = "update"
+	GroupAccess     = "access"
+	GroupAdmin      = "admin"
+	GroupConnection = "connection"
+	GroupNetwork    = "network"
+	GroupTailscale  = "tailscale"
+)
+
+// settingsGroupTabs names the tab of each group.
+var settingsGroupTabs = map[string]string{
+	GroupUpdate: SettingsGeneral,
+	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess,
+	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
+}
+
+// SettingsGroupTab returns the tab that shows group, or "" for an unknown
+// group.
+func SettingsGroupTab(group string) string { return settingsGroupTabs[group] }
+
+// SettingsActionGroup returns the group of a Settings form action, or ""
+// for an unknown action.
+func SettingsActionGroup(action string) string {
+	switch action {
+	case ActionSetUpdateCheck:
+		return GroupUpdate
+	case ActionSaveAccess, ActionEnableAccessPassword, ActionChangeAccessPassword, ActionDisableAccessPassword:
+		return GroupAccess
+	case ActionChangeAdminPassword:
+		return GroupAdmin
+	case ActionAcknowledgeInsecure:
+		return GroupConnection
+	case ActionSaveNetwork:
+		return GroupNetwork
+	case ActionSaveTailscale, ActionTailscaleOn, ActionTailscaleOff:
+		return GroupTailscale
+	}
+	return ""
+}
+
+// SettingsPage renders one Settings tab.
 type SettingsPage struct {
 	Chrome Chrome
-	// SubmitURL is the POST target for every settings form.
+	// Tab is the tab shown, one of the SettingsTab IDs. Empty is General.
+	Tab string
+	// SubmitURL is the POST target of this tab's forms.
 	SubmitURL string
 	// AccessMode is the currently stored mode.
 	AccessMode AccessMode
@@ -199,9 +299,17 @@ type SettingsPage struct {
 	// password before the controls become usable. The forms stay visible and
 	// each one collects "admin_password" inline.
 	AdminRequired bool
-	// PendingAction is the action whose form should be expanded after a
-	// validation failure.
-	PendingAction string
+	// Group is the group that Notices describe: the group whose form was
+	// refused, or whose change was just saved. Every other group shows no
+	// notice.
+	Group string
+	// Notices are the notices of Group, shown inside it.
+	Notices []Notice
+	// Draft holds the non-secret values a refused form sent, by field
+	// name, so that form shows them again instead of the saved ones. A
+	// refused Network save is in Network.Form instead. Secrets are never
+	// in it.
+	Draft map[string]string
 	// Storage is the owner-only storage location. Only an administrator's
 	// settings page shows it.
 	Storage StorageInfo

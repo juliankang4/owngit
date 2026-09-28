@@ -77,9 +77,16 @@ func TestWelcomePageClaimsNothingAboutACodeItCannotSee(t *testing.T) {
 
 func settingsWithFailure(action, field string, code MessageCode, lang Lang, mode AccessMode) SettingsPage {
 	c := fullChrome(lang)
-	c.Notices = []Notice{Error(field, code)}
 	c.Connection = Connection{Encrypted: false, Host: "owngit.example"}
-	return SettingsPage{Chrome: c, SubmitURL: "/settings", AccessMode: mode, PendingAction: action}
+	return refusedSettings(c, mode, action, Error(field, code))
+}
+
+// refusedSettings is the Settings tab the server answers a refused form of
+// action with: the tab of its group, which shows notices.
+func refusedSettings(c Chrome, mode AccessMode, action string, notices ...Notice) SettingsPage {
+	group := SettingsActionGroup(action)
+	tab := SettingsGroupTab(group)
+	return SettingsPage{Chrome: c, Tab: tab, SubmitURL: SettingsTabURL(tab), AccessMode: mode, Group: group, Notices: notices}
 }
 
 // formFor returns the markup of the form carrying the given action value.
@@ -101,12 +108,12 @@ var settingsActions = []struct {
 	action string
 	mode   AccessMode
 }{
-	{ActionEnableAccessPassword, AccessOpen},
-	{ActionDisableAccessPassword, AccessPassword},
-	{ActionChangeAccessPassword, AccessPassword},
+	{ActionSaveAccess, AccessOpen},
+	{ActionSaveAccess, AccessPassword},
 	{ActionChangeAdminPassword, AccessOpen},
 	{ActionAcknowledgeInsecure, AccessOpen},
 	{ActionSetUpdateCheck, AccessOpen},
+	{ActionSaveNetwork, AccessOpen},
 }
 
 func TestWrongAdminPasswordIsShownInTheFormThatWasSubmitted(t *testing.T) {
@@ -120,7 +127,7 @@ func TestWrongAdminPasswordIsShownInTheFormThatWasSubmitted(t *testing.T) {
 				t.Errorf("%s/%s: the rejected password is not reported in the form that was submitted",
 					tc.action, lang)
 			}
-			wantID := noteID(tc.action, "admin_password")
+			wantID := noteID(SettingsActionGroup(tc.action), "admin_password")
 			if !strings.Contains(form, `id="`+wantID+`"`) {
 				t.Errorf("%s/%s: the message has no id unique to this form", tc.action, lang)
 			}
@@ -160,28 +167,65 @@ func TestEveryNoteIDOnSettingsIsUnique(t *testing.T) {
 	}
 }
 
-func TestFailedSettingsFormIsOpenWithoutScripting(t *testing.T) {
-	// The forms are collapsed by default. If the failed one is not expanded by
-	// the server, a reader without scripting sees a rejected submission and no
-	// visible reason.
-	r := newRenderer(t)
-	for _, tc := range settingsActions {
-		if tc.action == ActionAcknowledgeInsecure {
-			continue // always expanded while the connection is unacknowledged
+// closedAround returns the opening tag of a closed details element that
+// holds the position at in out, or "" when none does.
+func closedAround(out string, at int) string {
+	var open []int
+	for i := 0; i < at; i++ {
+		switch {
+		case strings.HasPrefix(out[i:], "<details"):
+			open = append(open, i)
+		case strings.HasPrefix(out[i:], "</details>") && len(open) > 0:
+			open = open[:len(open)-1]
 		}
-		out := render(t, r, settingsWithFailure(tc.action, "admin_password", MsgAdminFailed, LangEN, tc.mode))
-		tag := elementAt(t, out, `data-disclosure="`+tc.action+`"`)
+	}
+	for _, start := range open {
+		tag := out[start : start+strings.Index(out[start:], ">")]
 		if !strings.Contains(tag, " open") {
-			t.Errorf("%s: the failed form stays collapsed without scripting: %s", tc.action, tag)
+			return tag
+		}
+	}
+	return ""
+}
+
+func TestFailedSettingsFormIsOpenWithoutScripting(t *testing.T) {
+	// Some fields are folded away by default. If the server does not unfold
+	// the one that failed, a reader without scripting sees a rejected
+	// submission and no visible reason.
+	r := newRenderer(t)
+	cases := []struct {
+		action, field string
+		code          MessageCode
+		mode          AccessMode
+	}{
+		{ActionChangeAdminPassword, "new_admin_password", MsgSetupAdminShort, AccessOpen},
+		{ActionSaveAccess, "access_password", MsgSetupAccessPassShort, AccessPassword},
+		{ActionSaveNetwork, "allowed_hosts", MsgNetBadHost, AccessOpen},
+	}
+	for _, tc := range settingsActions {
+		cases = append(cases, struct {
+			action, field string
+			code          MessageCode
+			mode          AccessMode
+		}{tc.action, "admin_password", MsgAdminFailed, tc.mode})
+	}
+	for _, tc := range cases {
+		out := render(t, r, settingsWithFailure(tc.action, tc.field, tc.code, LangEN, tc.mode))
+		at := strings.Index(out, `aria-invalid="true"`)
+		if at < 0 {
+			t.Errorf("%s/%s: no field is marked", tc.action, tc.field)
+			continue
+		}
+		if tag := closedAround(out, at); tag != "" {
+			t.Errorf("%s/%s: the failed field stays folded without scripting: %s", tc.action, tc.field, tag)
 		}
 	}
 
-	// A form that did not fail must stay closed, or every form would be open
-	// on every visit.
-	out := render(t, r, SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessOpen})
-	tag := elementAt(t, out, `data-disclosure="`+ActionChangeAdminPassword+`"`)
-	if strings.Contains(tag, " open") {
-		t.Errorf("a form with no error is expanded anyway: %s", tag)
+	// A form that did not fail stays folded, or every form would be open on
+	// every visit.
+	out := render(t, r, SettingsPage{Chrome: fullChrome(LangEN), Tab: SettingsAccess, SubmitURL: "/settings/access", AccessMode: AccessOpen})
+	if tag := closedAround(out, strings.Index(out, `name="new_admin_password"`)); tag == "" {
+		t.Error("the administrator password form with no error is unfolded anyway")
 	}
 }
 

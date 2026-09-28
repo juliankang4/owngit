@@ -78,7 +78,7 @@ func TestTheConnectionLabelNamesTheTailnet(t *testing.T) {
 			}
 			server := serve(t, arriving(t, app, app.Handler(), test.local, test.peer))
 			client, _ := newBrowserClient(t)
-			request, err := http.NewRequest(http.MethodGet, server.URL+"/settings", nil)
+			request, err := http.NewRequest(http.MethodGet, server.URL+"/settings/network", nil)
 			noErr(t, err)
 			for name, values := range test.proxy {
 				request.Header[name] = values

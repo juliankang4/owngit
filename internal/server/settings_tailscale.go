@@ -112,6 +112,18 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 // changeTailscale handles ActionTailscaleOn and ActionTailscaleOff after the
 // administrator password was verified.
 func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, action string) {
+	// The switch of the Tailscale group sends what sharing should be.
+	if action == webui.ActionSaveTailscale {
+		switch postValue(request, "tailscale") {
+		case "on":
+			action = webui.ActionTailscaleOn
+		case "off", "":
+			action = webui.ActionTailscaleOff
+		default:
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+			return
+		}
+	}
 	if action == webui.ActionTailscaleOn {
 		homeNetwork := formChecked(postValue(request, "home_network"))
 		change, err := app.Tailscale.On(request.Context(), &homeNetwork, 0)
@@ -124,7 +136,7 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 		if change.Endpoint != endpointCreated {
 			notice = "tailscale_on_kept"
 		}
-		app.noticeRedirect(writer, request, "/settings?notice="+notice, http.StatusSeeOther)
+		app.settingsSaved(writer, request, settingsResultURL(action, notice))
 		return
 	}
 	// A page opened through the tailnet address is answered through it once
@@ -141,7 +153,7 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 		app.renderTailscaleOff(writer, request, change.Record.Target+"/")
 		return
 	}
-	app.noticeRedirect(writer, request, "/settings?notice=tailscale_off", http.StatusSeeOther)
+	app.settingsSaved(writer, request, settingsResultURL(action, "tailscale_off"))
 }
 
 // renderTailscaleOff answers with the page that needs nothing more from the

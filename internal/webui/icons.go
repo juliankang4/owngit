@@ -21,6 +21,7 @@ var iconPaths = map[string]string{
 	"info":     `<circle cx="8" cy="8" r="5.7"/><path d="M8 7.2v3.6" stroke-linecap="round"/><path d="M8 5h.01" stroke-width="2" stroke-linecap="round"/>`,
 	"check":    `<circle cx="8" cy="8" r="5.7"/><path d="M5.4 8.2l1.9 1.9 3.3-3.9" stroke-linecap="round" stroke-linejoin="round"/>`,
 	"error":    `<rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.6"/><path d="M8 5.2v3.4" stroke-linecap="round"/><path d="M8 11.1h.01" stroke-width="2.1" stroke-linecap="round"/>`,
+	"globe":    `<circle cx="8" cy="8" r="5.7"/><path d="M2.3 8h11.4M8 2.3c1.8 1.7 2.6 3.6 2.6 5.7S9.8 12 8 13.7C6.2 12 5.4 10.1 5.4 8S6.2 4 8 2.3z" stroke-linejoin="round"/>`,
 	"kept":     `<path d="M3.2 4.2h9.6v8.4H3.2z" stroke-linejoin="round"/><path d="M3.2 6.8h9.6M6.4 3v1.2M9.6 3v1.2" stroke-linecap="round"/>`,
 	"plus":     `<path d="M8 3.4v9.2M3.4 8h9.2" stroke-linecap="round"/>`,
 	// Navigation.

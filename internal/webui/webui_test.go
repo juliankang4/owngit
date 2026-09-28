@@ -129,7 +129,18 @@ func allPages(lang Lang) map[string]Page {
 		"auth-admin":   AuthPage{Chrome: bare, Scope: AuthAdmin, SubmitURL: "/admin/login"},
 		"settings": SettingsPage{
 			Chrome: c, SubmitURL: "/settings", AccessMode: AccessPassword,
-			Storage:   StorageInfo{Visible: true, Label: "Home server", Path: "/volume1/git"},
+			UpdateCheck: UpdateCheckInfo{Enabled: true},
+		},
+		"settings-access": SettingsPage{
+			Chrome: c, Tab: SettingsAccess, SubmitURL: "/settings", AccessMode: AccessPassword,
+		},
+		"settings-repositories": SettingsPage{Chrome: c, Tab: SettingsRepositories, SubmitURL: "/settings"},
+		"settings-storage": SettingsPage{
+			Chrome: c, Tab: SettingsStorage, SubmitURL: "/settings",
+			Storage: StorageInfo{Visible: true, Label: "Home server", Path: "/volume1/git"},
+		},
+		"settings-network": SettingsPage{
+			Chrome: c, Tab: SettingsNetwork, SubmitURL: "/settings", AccessMode: AccessPassword,
 			CloneHint: "http://owngit.local:8080/git/",
 			Network: NetworkInfo{
 				Status:   NetworkRestart,
@@ -147,7 +158,7 @@ func allPages(lang Lang) map[string]Page {
 			},
 		},
 		"settings-tailscale": SettingsPage{
-			Chrome: c, SubmitURL: "/settings", AccessMode: AccessOpen,
+			Chrome: c, Tab: SettingsNetwork, SubmitURL: "/settings", AccessMode: AccessOpen,
 			Tailscale: TailscaleInfo{
 				On: true, CanTurnOff: true, URL: "https://owngit.tail0000.ts.net/", Name: "owngit.tail0000.ts.net",
 				Problem: TailscaleProblemCode("logged_out"),
@@ -782,8 +793,7 @@ func TestPasswordsAreNeverEchoedOnValidationFailure(t *testing.T) {
 				AccessPasswordSet: true, AdminPasswordSet: true}},
 		AuthPage{Chrome: c, Scope: AuthGeneral, SubmitURL: "/login"},
 		AuthPage{Chrome: c, Scope: AuthAdmin, SubmitURL: "/admin/login"},
-		SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessPassword,
-			PendingAction: ActionChangeAdminPassword},
+		refusedSettings(fullChrome(LangEN), AccessPassword, ActionChangeAdminPassword),
 	}
 	for _, page := range pages {
 		out := render(t, r, page)
@@ -949,7 +959,7 @@ func TestInsecureAcknowledgementIsAdministratorProtected(t *testing.T) {
 	r := newRenderer(t)
 	c := fullChrome(LangEN)
 	c.Connection = Connection{Encrypted: false, Host: "owngit.local:8080"}
-	out := render(t, r, SettingsPage{Chrome: c, SubmitURL: "/settings", AccessMode: AccessOpen})
+	out := render(t, r, SettingsPage{Chrome: c, Tab: SettingsNetwork, SubmitURL: "/settings/network", AccessMode: AccessOpen})
 
 	idx := strings.Index(out, `value="`+ActionAcknowledgeInsecure+`"`)
 	if idx < 0 {
@@ -980,7 +990,7 @@ func TestEveryFieldErrorReachesItsScreen(t *testing.T) {
 		field string
 		code  MessageCode
 		build func(Chrome) Page
-		// scope is the settings action whose form owns the field, empty on
+		// scope is the settings group whose form owns the field, empty on
 		// pages that show the field only once.
 		scope string
 	}{
@@ -1002,37 +1012,23 @@ func TestEveryFieldErrorReachesItsScreen(t *testing.T) {
 		{"repository name", "name", MsgRepoNameTaken,
 			func(c Chrome) Page { return NewRepositoryPage{Chrome: c, SubmitURL: "/repositories"} }, ""},
 		// Settings repeats one field name across several forms, so its notes
-		// are scoped by the action that was submitted.
+		// are scoped by the group whose form was submitted.
 		{"settings access password", "access_password", MsgSetupAccessPassShort,
 			func(c Chrome) Page {
-				return SettingsPage{Chrome: c, SubmitURL: "/settings", AccessMode: AccessPassword,
-					PendingAction: ActionChangeAccessPassword}
-			}, ActionChangeAccessPassword},
+				return refusedSettings(c, AccessPassword, ActionChangeAccessPassword, c.Notices...)
+			}, SettingsActionGroup(ActionChangeAccessPassword)},
 		{"settings admin password", "admin_password", MsgAdminFailed,
-			func(c Chrome) Page {
-				return SettingsPage{Chrome: c, SubmitURL: "/settings", AccessMode: AccessOpen,
-					PendingAction: ActionChangeAdminPassword}
-			}, ActionChangeAdminPassword},
+			func(c Chrome) Page { return refusedSettings(c, AccessOpen, ActionChangeAdminPassword, c.Notices...) }, SettingsActionGroup(ActionChangeAdminPassword)},
 		{"settings new admin password", "new_admin_password", MsgSetupAdminShort,
-			func(c Chrome) Page {
-				return SettingsPage{Chrome: c, SubmitURL: "/settings", AccessMode: AccessOpen,
-					PendingAction: ActionChangeAdminPassword}
-			}, ActionChangeAdminPassword},
+			func(c Chrome) Page { return refusedSettings(c, AccessOpen, ActionChangeAdminPassword, c.Notices...) }, SettingsActionGroup(ActionChangeAdminPassword)},
 		{"settings insecure ack", "insecure_ack", MsgSetupInsecureNeed,
-			func(c Chrome) Page {
-				return SettingsPage{Chrome: c, SubmitURL: "/settings", AccessMode: AccessOpen,
-					PendingAction: ActionAcknowledgeInsecure}
-			}, ActionAcknowledgeInsecure},
+			func(c Chrome) Page { return refusedSettings(c, AccessOpen, ActionAcknowledgeInsecure, c.Notices...) }, SettingsActionGroup(ActionAcknowledgeInsecure)},
 		{"settings enable admin password", "admin_password", MsgAdminFailed,
-			func(c Chrome) Page {
-				return SettingsPage{Chrome: c, SubmitURL: "/settings", AccessMode: AccessOpen,
-					PendingAction: ActionEnableAccessPassword}
-			}, ActionEnableAccessPassword},
+			func(c Chrome) Page { return refusedSettings(c, AccessOpen, ActionEnableAccessPassword, c.Notices...) }, SettingsActionGroup(ActionEnableAccessPassword)},
 		{"settings disable admin password", "admin_password", MsgAdminFailed,
 			func(c Chrome) Page {
-				return SettingsPage{Chrome: c, SubmitURL: "/settings", AccessMode: AccessPassword,
-					PendingAction: ActionDisableAccessPassword}
-			}, ActionDisableAccessPassword},
+				return refusedSettings(c, AccessPassword, ActionDisableAccessPassword, c.Notices...)
+			}, SettingsActionGroup(ActionDisableAccessPassword)},
 	}
 
 	for _, tc := range cases {
@@ -1115,6 +1111,11 @@ func TestScriptStoresNoSecrets(t *testing.T) {
 	data, err := assetFS.ReadFile("assets/owngit.js")
 	noErr(t, err)
 	js := string(data)
+	// The Settings group save copies the anti-forgery token of a page it
+	// fetched, and is checked on its own
+	// (TestSettingsGroupSaveSendsOnlyWhatItMay). Nothing else may name a
+	// secret field.
+	js = strings.Replace(js, groupSaveSource(t), "", 1)
 	// The appearance and line-wrap preferences are the only things allowed
 	// in local storage.
 	for _, line := range strings.Split(js, "\n") {
@@ -1337,11 +1338,11 @@ func TestRepositoryAndActivityStatesAreHonest(t *testing.T) {
 		screen{name: "the empty dashboard invites without forcing a repository", page: overview(unchanged),
 			want: []MessageCode{MsgOverviewEmpty}, markup: []string{"/repositories/new"}},
 		screen{name: "the storage location is hidden from ordinary visitors",
-			page: SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessOpen,
+			page: SettingsPage{Chrome: fullChrome(LangEN), Tab: SettingsStorage, SubmitURL: "/settings", AccessMode: AccessOpen,
 				Storage: StorageInfo{Visible: false, Label: "Home server", Path: "/volume1/secret-git"}},
 			noMarkup: []string{"/volume1/secret-git", "Home server"}},
 		screen{name: "the storage location is shown to the administrator on Settings",
-			page: SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessOpen,
+			page: SettingsPage{Chrome: fullChrome(LangEN), Tab: SettingsStorage, SubmitURL: "/settings", AccessMode: AccessOpen,
 				Storage: StorageInfo{Visible: true, Path: "/volume1/secret-git"}},
 			markup: []string{"/volume1/secret-git"}},
 		screen{name: "a plain connection is not reported as encrypted",
@@ -1356,20 +1357,25 @@ func TestRepositoryAndActivityStatesAreHonest(t *testing.T) {
 		screen{name: "Settings says OwnGit sees HTTP from the proxy and the encryption ends there",
 			page: SettingsPage{Chrome: with(fullChrome(LangKO), func(c *Chrome) {
 				c.Connection = Connection{Encrypted: true, Proxy: true, Host: "git.example.internal"}
-			}), SubmitURL: "/settings", AccessMode: AccessOpen},
+			}), Tab: SettingsNetwork, SubmitURL: "/settings", AccessMode: AccessOpen},
 			lang: LangKO, want: []MessageCode{MsgConnProxy, MsgConnProxyNote}, absent: []MessageCode{MsgConnNoProof, MsgConnTailscaleNote}},
 		screen{name: "an acknowledged connection stops prompting and shows status",
 			page: SettingsPage{Chrome: with(fullChrome(LangEN), func(c *Chrome) {
 				c.Connection = Connection{Encrypted: false, InsecureAcknowledged: true}
-			}), SubmitURL: "/settings", AccessMode: AccessOpen},
+			}), Tab: SettingsNetwork, SubmitURL: "/settings", AccessMode: AccessOpen},
 			markup: []string{"conn--plain"}, noMarkup: []string{`value="` + ActionAcknowledgeInsecure + `"`}},
+		// Access is one choice. Password-free access asks for a shared
+		// password only once password is chosen; a saved one is replaced
+		// only when a new one is typed.
 		screen{name: "password-free settings offer their actions",
-			page:     SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessOpen},
-			markup:   []string{`value="` + ActionEnableAccessPassword + `"`, `value="` + ActionChangeAdminPassword + `"`},
-			noMarkup: []string{`value="` + ActionDisableAccessPassword + `"`}},
+			page: SettingsPage{Chrome: fullChrome(LangEN), Tab: SettingsAccess, SubmitURL: "/settings/access", AccessMode: AccessOpen},
+			markup: []string{`value="` + ActionSaveAccess + `"`, `value="` + ActionChangeAdminPassword + `"`, `name="access_mode" data-saved="open"`,
+				`<div class="f" data-show-if="access_mode=password">`},
+			noMarkup: []string{`<details class="grp__more" data-group-details data-show-if="access_mode=password"`}},
 		screen{name: "password settings offer their actions",
-			page:   SettingsPage{Chrome: fullChrome(LangEN), SubmitURL: "/settings", AccessMode: AccessPassword},
-			markup: []string{`value="` + ActionChangeAccessPassword + `"`, `value="` + ActionDisableAccessPassword + `"`}},
+			page: SettingsPage{Chrome: fullChrome(LangEN), Tab: SettingsAccess, SubmitURL: "/settings/access", AccessMode: AccessPassword},
+			markup: []string{`value="` + ActionSaveAccess + `"`, `name="access_mode" data-saved="password"`,
+				`<details class="grp__more" data-group-details data-show-if="access_mode=password">`, `<p class="wn wn--danger" data-show-if="access_mode=open">`}},
 		// Decorative separators were deliberately removed from the accepted
 		// design.
 		screen{name: "Korean uses standard Git terms", lang: LangKO, page: repoPage(fullChrome(LangKO), RepoTabOverview),

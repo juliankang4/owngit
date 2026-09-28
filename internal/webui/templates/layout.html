@@ -95,7 +95,7 @@
      trusted proxy was encrypted by that proxy, so it says that instead.
      Plain HTTP that came straight over the tailnet to this computer's
      Tailscale address was encrypted by Tailscale. */}}
-<p class="conn{{if or $c.Encrypted $c.Tailnet}} conn--secure{{else}} conn--plain{{end}}"
+<p class="conn{{if or $c.Encrypted $c.Tailnet}} conn--secure{{else}} conn--plain{{end}}" data-connection
    {{if $c.Tailscale}}{{biAttr .Lang "title" "connection.encrypted_tailscale"}}{{else if $c.Proxy}}{{biAttr .Lang "title" "connection.encrypted_proxy"}}{{else if $c.Encrypted}}{{biAttr .Lang "title" "connection.encrypted"}}{{else if $c.Tailnet}}{{biAttr .Lang "title" "connection.tailnet_note"}}{{else}}{{biAttrText .Lang "title" (printf "%s %s" (t "en" "connection.plain_detail") (t "en" "connection.no_proof")) (printf "%s %s" (t "ko" "connection.plain_detail") (t "ko" "connection.no_proof"))}}{{end}}>
   {{if or $c.Encrypted $c.Tailnet}}{{icon "lock"}}{{else}}{{icon "unlocked"}}{{end}}
   <span class="conn__t">{{if $c.Tailscale}}{{bi .Lang "connection.encrypted_tailscale"}}{{else if $c.Proxy}}{{bi .Lang "connection.encrypted_proxy"}}{{else if $c.Encrypted}}{{bi .Lang "connection.encrypted"}}{{else if $c.Tailnet}}{{bi .Lang "connection.encrypted_tailnet"}}{{else}}{{bi .Lang "connection.plain"}}{{end}}</span>
@@ -181,7 +181,7 @@
   {{end}}
 
     {{if or $nav.LogoutURL $nav.AdminLogoutURL}}
-      <div class="sb__out">
+      <div class="sb__out" data-session-controls>
         {{with $nav.AdminLogoutURL}}
         <form class="sb__admin" method="post" action="{{.}}">
           <input type="hidden" name="csrf" value="{{$.Chrome.CSRF}}">

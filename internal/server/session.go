@@ -426,6 +426,16 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgTSTurnedOff)}
 	case "access_password_saved":
 		return []webui.Notice{webui.Success(webui.MsgSettingsAccessSaved)}
+	case "access_enabled":
+		return []webui.Notice{webui.Success(webui.MsgSettingsAccessEnabled)}
+	case "access_changed":
+		return []webui.Notice{webui.Success(webui.MsgSettingsAccessChanged)}
+	case "access_disabled":
+		return []webui.Notice{webui.Success(webui.MsgSettingsAccessDisabled)}
+	case "admin_password_changed":
+		return []webui.Notice{webui.Success(webui.MsgSettingsAdminChanged)}
+	case "insecure_acknowledged":
+		return []webui.Notice{webui.Success(webui.MsgSettingsAckDone)}
 	case "logout":
 		return []webui.Notice{webui.Success(webui.MsgLogoutDone)}
 	case "admin_logout":

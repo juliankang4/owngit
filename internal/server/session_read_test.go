@@ -181,7 +181,7 @@ func TestSavedPasswordConfirmationSurvivesAnUnreadableAdminSession(t *testing.T)
 		"csrf": {"general-csrf"}, "action": {webui.ActionChangeAccessPassword}, "admin_password": {"admin-password"},
 		"access_password": {"another-shared-password"},
 	}, server.URL)
-	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/login?notice=access_password_saved&next=%2Fsettings" {
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/login?notice=access_password_saved&next=%2Fsettings%2Faccess" {
 		t.Fatalf("save status=%d location=%q", result.status, result.header.Get("Location"))
 	}
 	checkLoggedSteps(t, "save", loggedFailures(serverLog, 0), "session read")

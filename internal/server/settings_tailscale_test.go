@@ -30,14 +30,33 @@ func tailscaleForm(csrf, action, adminPassword string, homeNetwork bool) url.Val
 	return values
 }
 
+// tailscaleOffers reads what the Tailscale group of a Settings page offers:
+// turning sharing on, turning it off, and turning it on again, which saving
+// the group does while sharing is on but unfinished.
+func tailscaleOffers(page string) (on, off, again bool) {
+	at := strings.Index(page, `id="ts-switch"`)
+	group := strings.Index(page, `id="grp-tailscale"`)
+	if at < 0 || group < 0 {
+		return false, false, false
+	}
+	start := strings.LastIndex(page[:at], "<")
+	tag := page[start : start+strings.Index(page[start:], ">")]
+	section := page[group : group+strings.Index(page[group:], ">")]
+	enabled, checked := !strings.Contains(tag, " disabled"), strings.Contains(tag, " checked")
+	return enabled && !checked, enabled && checked, strings.Contains(section, "data-group-open")
+}
+
 // Every Settings viewer sees whether sharing is on, what turning it on
 // records in public and the home network choice, which starts unticked for
 // an owner who listens on this computer only.
 func TestEveryViewerSeesTheTailscaleBlock(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	_, _, _, body := networkSettingsClient(t, app)
+	if on, _, _ := tailscaleOffers(body); !on {
+		t.Error("the Tailscale group does not offer turning sharing on")
+	}
 	for _, want := range []string{
-		`id="tailscale"`, enText(webui.MsgTSOff), `value="tailscale_on"`, enText(webui.MsgTSHome),
+		`id="grp-tailscale"`, enText(webui.MsgTSOff), enText(webui.MsgTSHome),
 		tailscaletest.Name, "0.0.0.0:7654", "127.0.0.1:7654",
 	} {
 		if !strings.Contains(body, want) {
@@ -59,7 +78,7 @@ func TestTurningTailscaleSharingOnAndOffInSettings(t *testing.T) {
 	client, base, csrf, _ := networkSettingsClient(t, app)
 
 	result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "wrong-password", false), base)
-	if result.status != http.StatusUnauthorized || !strings.Contains(result.body, `aria-describedby="tailscale_on-admin_password-note"`) {
+	if result.status != http.StatusUnauthorized || !strings.Contains(result.body, `aria-describedby="tailscale-admin_password-note"`) {
 		t.Fatalf("wrong administrator password: status=%d", result.status)
 	}
 	if len(fake.Writes()) != 0 {
@@ -70,19 +89,22 @@ func TestTurningTailscaleSharingOnAndOffInSettings(t *testing.T) {
 	}
 
 	result = browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false), base)
-	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings?notice=tailscale_on" {
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings/network?notice=tailscale_on#grp-tailscale" {
 		t.Fatalf("turn on: status=%d location=%q body=%s", result.status, result.header.Get("Location"), result.body)
 	}
 	body, _ := dashboardGET(t, client, base+result.header.Get("Location"))
-	for _, want := range []string{enText(webui.MsgTSTurnedOn), enText(webui.MsgTSFirstVisit), enText(webui.MsgTSReady), `value="https://` + tailscaletest.Name + `/"`, `value="tailscale_off"`} {
+	for _, want := range []string{enText(webui.MsgTSTurnedOn), enText(webui.MsgTSFirstVisit), enText(webui.MsgTSReady), `value="https://` + tailscaletest.Name + `/"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("after turning on, Settings lacks %q", want)
 		}
 	}
+	if _, off, _ := tailscaleOffers(body); !off {
+		t.Error("after turning on, Settings does not offer turning off")
+	}
 	// Turning on again keeps the address, which has its certificate, so
 	// the first-visit note is left out.
 	result = browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false), base)
-	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings?notice=tailscale_on_kept" {
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings/network?notice=tailscale_on_kept#grp-tailscale" {
 		t.Fatalf("turn on again: status=%d location=%q", result.status, result.header.Get("Location"))
 	}
 	body, _ = dashboardGET(t, client, base+result.header.Get("Location"))
@@ -91,19 +113,19 @@ func TestTurningTailscaleSharingOnAndOffInSettings(t *testing.T) {
 	}
 	// A page reached through the Tailscale endpoint says that Tailscale on
 	// this computer encrypted it.
-	if response := throughServe(app, "/settings"); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), enText(webui.MsgConnTailscaleOn)) ||
+	if response := throughServe(app, "/settings/network"); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), enText(webui.MsgConnTailscaleOn)) ||
 		strings.Contains(response.Body.String(), enText(webui.MsgConnEncrypted)) {
 		t.Fatalf("through Serve: status=%d, indicator not naming Tailscale", response.Code)
 	}
 
 	result = browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOff, "admin-password", false), base)
-	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings?notice=tailscale_off" {
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings/network?notice=tailscale_off#grp-tailscale" {
 		t.Fatalf("turn off: status=%d body=%s", result.status, result.body)
 	}
 	if len(fake.Writes()) != 2 {
 		t.Fatalf("writes=%q", fake.Writes())
 	}
-	if response := throughServe(app, "/settings"); response.Code != http.StatusMisdirectedRequest {
+	if response := throughServe(app, "/settings/network"); response.Code != http.StatusMisdirectedRequest {
 		t.Fatalf("after turning off, the Tailscale name got %d", response.Code)
 	}
 }
@@ -123,7 +145,7 @@ func TestTailscaleRefusalIsExplainedOnTheBlock(t *testing.T) {
 		t.Fatalf("status=%d", result.status)
 	}
 	for _, want := range []string{
-		`id="tailscale_on-tailscale-note"`, `role="alert"`, "autofocus",
+		`id="tailscale-tailscale-note"`, `role="alert"`, "autofocus",
 		enText(webui.TailscaleRefusalCode(TailscaleProblemTaken, true)),
 		// The list below the alert, in both languages.
 		"https://" + tailscaletest.Name + ":443/ to http://127.0.0.1:3000",
@@ -197,11 +219,12 @@ func TestUnfinishedSharingOffersTurningOnAgain(t *testing.T) {
 		t.Fatalf("waiting=%q", report.Waiting)
 	}
 	client, base, csrf, _ := networkSettingsClient(t, app)
-	body, _ := dashboardGET(t, client, base+"/settings")
-	for _, want := range []string{enText(webui.TailscaleWaitCode(TailscaleWaitUnfinished)), `value="tailscale_on"`, `value="tailscale_off"`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the unfinished state lacks %q", want)
-		}
+	body, _ := dashboardGET(t, client, base+"/settings/network")
+	if !strings.Contains(body, enText(webui.TailscaleWaitCode(TailscaleWaitUnfinished))) || !strings.Contains(body, enText(webui.MsgSettingsTSAgain)) {
+		t.Error("the unfinished state does not say that saving turns sharing on again")
+	}
+	if _, off, again := tailscaleOffers(body); !off || !again {
+		t.Errorf("the unfinished state offers turning off %v and on again %v", off, again)
 	}
 	if strings.Contains(body, enText(webui.TailscaleWaitCode(TailscaleWaitRestart))) {
 		t.Error("the unfinished state asks for a restart")
@@ -238,7 +261,7 @@ func TestOnlyTheAdministratorSeesWhatElseTailscaleServes(t *testing.T) {
 	noErr(t, app.Store.CreateSession(context.Background(), "tailscale-admin-session", "admin", "tailscale-admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	parsed, _ := url.Parse(base)
 	client.Jar.SetCookies(parsed, []*http.Cookie{{Name: adminCookie, Value: "tailscale-admin-session", Path: "/"}})
-	body, _ = dashboardGET(t, client, base+"/settings")
+	body, _ = dashboardGET(t, client, base+"/settings/network")
 	for _, want := range []string{enText(webui.MsgTSTaken), "127.0.0.1:3000", "https://oldbox.tail0000.ts.net:443/"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the administrator does not see %q", want)
@@ -282,17 +305,15 @@ func TestAChangedEndpointOffersTheStepsThatWork(t *testing.T) {
 	noErr(t, app.Store.CreateSession(ctx, "changed-admin-session", "admin", "changed-admin-csrf", settings.AdminSessionVersion, time.Now().Add(time.Hour)))
 	parsed, _ := url.Parse(base)
 	client.Jar.SetCookies(parsed, []*http.Cookie{{Name: adminCookie, Value: "changed-admin-session", Path: "/"}})
-	body, _ := dashboardGET(t, client, base+"/settings")
+	body, _ := dashboardGET(t, client, base+"/settings/network")
 	steps := fmt.Sprintf(enText(webui.MsgTSChangedSteps), "443", change.Record.Target)
 	for _, want := range []string{enText(webui.TailscaleWaitCode(TailscaleWaitChanged)), steps, "http://127.0.0.1:7701"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the changed state lacks %q", want)
 		}
 	}
-	for _, refused := range []string{`value="tailscale_on"`, `value="tailscale_off"`} {
-		if strings.Contains(body, refused) {
-			t.Errorf("the changed state offers %s, which would be refused", refused)
-		}
+	if on, off, again := tailscaleOffers(body); on || off || again {
+		t.Errorf("the changed state offers turning on %v, off %v or on again %v, which would be refused", on, off, again)
 	}
 	// Following the first step: the entry is removed, and turning off works.
 	fake.Update(func(s *tailscaletest.State) { s.Serve = tailscale.ServeConfig{} })
@@ -338,7 +359,7 @@ func TestTurningOffWhileTailscaleIsStoppedSaysSo(t *testing.T) {
 	// turning off, which would be refused.
 	client, base, csrf, page := networkSettingsClient(t, app)
 	shown := func(body string) int { return strings.Count(body, `data-en="`+stopped+`"`) }
-	if shown(page) != 1 || strings.Contains(page, `value="tailscale_off"`) {
+	if _, off, _ := tailscaleOffers(page); shown(page) != 1 || off {
 		t.Fatalf("while stopped the page shows the problem %d times, or offers turning off", shown(page))
 	}
 	// A page opened before Tailscale stopped still sends the form.
@@ -408,7 +429,7 @@ func TestTurningOffThroughTheTailnetAddressEndsOnAPageThatLoads(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	change, err := app.Tailscale.On(t.Context(), nil, 0)
 	noErr(t, err)
-	page := throughServe(app, "/settings?lang=ko&appearance=dark")
+	page := throughServe(app, "/settings/network?lang=ko&appearance=dark")
 	if page.Code != http.StatusOK {
 		t.Fatalf("settings through Serve: %d", page.Code)
 	}
@@ -448,7 +469,7 @@ func TestTurningOffThroughTheTailnetAddressEndsOnAPageThatLoads(t *testing.T) {
 	if _, on, _ := app.Store.TailscaleServe(t.Context()); on {
 		t.Fatal("sharing is still on")
 	}
-	if next := throughServe(app, "/settings"); next.Code != http.StatusMisdirectedRequest {
+	if next := throughServe(app, "/settings/network"); next.Code != http.StatusMisdirectedRequest {
 		t.Fatalf("after turning off, the Tailscale name got %d", next.Code)
 	}
 }

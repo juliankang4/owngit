@@ -20,7 +20,7 @@ func networkSettingsClient(t *testing.T, app *App) (*http.Client, string, string
 	t.Helper()
 	server := serve(t, app.Handler())
 	client, jar := newBrowserClient(t)
-	body, status := dashboardGET(t, client, server.URL+"/settings")
+	body, status := dashboardGET(t, client, server.URL+"/settings/network")
 	if status != http.StatusOK {
 		t.Fatalf("settings status=%d", status)
 	}
@@ -67,7 +67,7 @@ func TestEveryVisitorSeesTheNetworkSettings(t *testing.T) {
 	}))
 	_, _, _, body := networkSettingsClient(t, app)
 	for _, want := range []string{
-		`id="network"`, "0.0.0.0:7654", "http://gitbox.test:7654", "lan.test", "10.0.0.0/8",
+		`id="grp-network"`, "0.0.0.0:7654", "http://gitbox.test:7654", "lan.test", "10.0.0.0/8",
 		`name="action" value="save_network"`, `name="network_revision"`, "owngit network reset",
 		// The listen address reaches other devices over plain HTTP.
 		enText(webui.MsgNetPlainHTTP),
@@ -179,15 +179,18 @@ func TestSavingNetworkSettingsNeedsTheAdministratorPassword(t *testing.T) {
 	if result.status != http.StatusUnauthorized {
 		t.Fatalf("save with a wrong administrator password status=%d", result.status)
 	}
-	if !strings.Contains(result.body, enText(webui.MsgAdminFailed)) || !strings.Contains(result.body, `aria-invalid="true" aria-describedby="save_network-admin_password-note"`) {
+	if !strings.Contains(result.body, enText(webui.MsgAdminFailed)) || !strings.Contains(result.body, `aria-invalid="true" aria-describedby="network-admin_password-note"`) {
 		t.Fatal("the refused save did not mark the administrator password")
 	}
-	// Like the other Settings forms, a failed confirmation shows the saved
-	// values again and repeats nothing that was submitted.
-	for _, typed := range []string{"0.0.0.0:7777", "typed.test", "typed-name.test", "wrong-password"} {
-		if strings.Contains(result.body, typed) {
-			t.Errorf("the refused save echoed %q", typed)
+	// A failed confirmation keeps what was typed, so it can be saved with
+	// the right password, and never repeats the password.
+	for _, typed := range []string{`value="0.0.0.0:7777"`, `value="http://typed.test:7777"`, ">typed-name.test</textarea>"} {
+		if !strings.Contains(result.body, typed) {
+			t.Errorf("the refused save lost %s", typed)
 		}
+	}
+	if strings.Contains(result.body, "wrong-password") {
+		t.Error("the refused save repeated the administrator password")
 	}
 	settings, hosts, _ := savedNetwork(t, app.Store)
 	if settings != (state.NetworkSettings{}) || len(hosts) != 0 {
@@ -215,8 +218,8 @@ func TestSavingNetworkSettingsRefusesInvalidValues(t *testing.T) {
 		if result.status != http.StatusUnprocessableEntity {
 			t.Fatalf("%s=%q: status=%d", test.field, test.value, result.status)
 		}
-		note := `aria-invalid="true" aria-describedby="save_network-` + test.field + `-note`
-		if !strings.Contains(result.body, note) || !strings.Contains(result.body, `id="save_network-`+test.field+`-note"`) ||
+		note := `aria-invalid="true" aria-describedby="network-` + test.field + `-note`
+		if !strings.Contains(result.body, note) || !strings.Contains(result.body, `id="network-`+test.field+`-note"`) ||
 			!strings.Contains(result.body, enText(test.code)) {
 			t.Errorf("%s=%q: the field error is not attached to the field", test.field, test.value)
 		}
@@ -255,7 +258,7 @@ func TestSavedNetworkSettingsApplyAtTheNextStart(t *testing.T) {
 		"listen": " 127.0.0.1:7795 ", "base_url": "HTTP://Gitbox.test:7795", "allowed_hosts": "old.test\r\nLAN.test, lan.test",
 		"trusted_proxies": "10.1.0.0/16\n::ffff:127.0.0.1",
 	}), base)
-	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings?notice=network_saved" {
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings/network?notice=network_saved#grp-network" {
 		t.Fatalf("save status=%d location=%q body=%s", result.status, result.header.Get("Location"), result.body)
 	}
 	settings, hosts, proxies := savedNetwork(t, app.Store)
@@ -269,7 +272,7 @@ func TestSavedNetworkSettingsApplyAtTheNextStart(t *testing.T) {
 	if app.Hosts.Allows("lan.test", remotePeer) || app.Hosts.Allows("gitbox.test:7795", remotePeer) || app.Network.BaseURL() != "" {
 		t.Fatal("saving network settings changed the running server")
 	}
-	body, _ = dashboardGET(t, client, base+"/settings?notice=network_saved")
+	body, _ = dashboardGET(t, client, base+"/settings/network?notice=network_saved")
 	if !strings.Contains(body, enText(webui.MsgNetSaved)) || !strings.Contains(body, enText(webui.MsgNetRestart)) {
 		t.Fatal("after the save the page did not say that the settings apply at the next start")
 	}
@@ -308,10 +311,10 @@ func TestListeningBeyondThisComputerNeedsThePlainHTTPAcknowledgement(t *testing.
 	if result.status != http.StatusSeeOther {
 		t.Fatalf("loopback save status=%d", result.status)
 	}
-	body, _ = dashboardGET(t, client, base+"/settings")
+	body, _ = dashboardGET(t, client, base+"/settings/network")
 	revision = formValue(t, body, "network_revision")
 	result = browserForm(t, client, base+"/settings", saveNetworkForm(csrf, revision, "admin-password", map[string]string{"listen": "0.0.0.0:7797"}), base)
-	if result.status != http.StatusUnprocessableEntity || !strings.Contains(result.body, `aria-describedby="save_network-insecure_ack-note net-ack-help"`) {
+	if result.status != http.StatusUnprocessableEntity || !strings.Contains(result.body, `aria-describedby="network-insecure_ack-note net-ack-help"`) {
 		t.Fatalf("every-network save without the acknowledgement status=%d", result.status)
 	}
 	if settings, _, _ := savedNetwork(t, store); settings.Listen != "127.0.0.1:7797" {

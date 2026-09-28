@@ -13,7 +13,7 @@ import (
 func TestNetworkSettingsStateIsWrittenOut(t *testing.T) {
 	r := newRenderer(t)
 	for _, lang := range Langs() {
-		out := render(t, r, allPages(lang)["settings"])
+		out := render(t, r, allPages(lang)["settings-network"])
 		text := func(code MessageCode) string { return html.EscapeString(Text(lang, code)) }
 		if got := strings.Count(out, `class="netrow__pending"`); got != 2 {
 			t.Errorf("%s: pending rows=%d, want 2", lang, got)
@@ -25,7 +25,7 @@ func TestNetworkSettingsStateIsWrittenOut(t *testing.T) {
 		if got := strings.Count(out, `class="netrow__k"`); got != 8 {
 			t.Errorf("%s: named values=%d, want 8", lang, got)
 		}
-		for _, code := range []MessageCode{MsgNetRestart, MsgNetOptionNote, MsgNetFromOption, MsgNetPlainHTTP, MsgNetHTTPSProxy, MsgNetChange, MsgNetSave, MsgNetNoBaseURL} {
+		for _, code := range []MessageCode{MsgNetRestart, MsgNetOptionNote, MsgNetFromOption, MsgNetPlainHTTP, MsgNetHTTPSProxy, MsgNetSaveNote, MsgNetNoBaseURL} {
 			if !strings.Contains(out, text(code)) {
 				t.Errorf("%s: the Network block lacks %q", lang, Text(lang, code))
 			}

@@ -814,7 +814,7 @@ func TestConcurrentSettingsViewsStartOneReading(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if _, status := dashboardGET(t, client, base+"/settings"); status != http.StatusOK {
+			if _, status := dashboardGET(t, client, base+"/settings/network"); status != http.StatusOK {
 				t.Errorf("status=%d", status)
 			}
 		}()
@@ -853,9 +853,9 @@ func TestAListenOptionDecidesInsteadOfTheHomeNetworkChoice(t *testing.T) {
 		t.Fatalf("report=%+v info=%+v", report, info)
 	}
 	_, _, _, page := networkSettingsClient(t, app)
-	block := page[strings.Index(page, `id="tailscale"`):]
-	block = block[:strings.Index(block, `<div class="setblock"`)]
-	if !strings.Contains(block, `value="tailscale_on"`) || strings.Contains(block, `name="home_network"`) || !strings.Contains(block, "--listen 127.0.0.1:7890") ||
+	block := page[strings.Index(page, `id="grp-tailscale"`):]
+	block = block[:strings.Index(block, "</section>")]
+	if on, _, _ := tailscaleOffers(page); !on || strings.Contains(block, `name="home_network"`) || !strings.Contains(block, "--listen 127.0.0.1:7890") ||
 		strings.Contains(block, "7654") {
 		t.Fatal("the Tailscale block offers the home network choice or names the saved port under a --listen option")
 	}

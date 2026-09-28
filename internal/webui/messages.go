@@ -229,9 +229,7 @@ const (
 	MsgSettingsAccessTitle    MessageCode = "settings.access.title"
 	MsgSettingsAccessOpenNow  MessageCode = "settings.access.open_now"
 	MsgSettingsAccessPassNow  MessageCode = "settings.access.password_now"
-	MsgSettingsEnablePass     MessageCode = "settings.access.enable"
 	MsgSettingsChangePass     MessageCode = "settings.access.change"
-	MsgSettingsDisablePass    MessageCode = "settings.access.disable"
 	MsgSettingsDisableWarning MessageCode = "settings.access.disable_warning"
 	MsgSettingsAccessEnabled  MessageCode = "settings.access.enabled"
 	MsgSettingsAccessChanged  MessageCode = "settings.access.changed"
@@ -255,14 +253,10 @@ const (
 	MsgSettingsUnknownAct MessageCode = "settings.unknown_action"
 
 	MsgSettingsUpdateTitle    MessageCode = "settings.update.title"
-	MsgSettingsUpdateOnNow    MessageCode = "settings.update.on_now"
-	MsgSettingsUpdateOffNow   MessageCode = "settings.update.off_now"
 	MsgSettingsUpdateForced   MessageCode = "settings.update.forced_off"
 	MsgSettingsUpdateSavedOn  MessageCode = "settings.update.saved_on"
 	MsgSettingsUpdateSavedOff MessageCode = "settings.update.saved_off"
 	MsgSettingsUpdateHelp     MessageCode = "settings.update.help"
-	MsgSettingsUpdateTurnOff  MessageCode = "settings.update.turn_off"
-	MsgSettingsUpdateTurnOn   MessageCode = "settings.update.turn_on"
 )
 
 // Connection indicator.
@@ -943,8 +937,8 @@ var catalog = map[MessageCode]message{
 		ko: "현재 관리자 비밀번호와 다른 새 비밀번호를 사용하세요.",
 	},
 	MsgSettingsAdminReq: {
-		en: "Enter the administrator password to apply a change.",
-		ko: "변경을 적용하려면 관리자 비밀번호를 입력하세요.",
+		en: "Saving a change asks for the administrator password. The display settings under General apply to this browser only and never ask for it.",
+		ko: "변경 내용을 저장할 때 관리자 비밀번호를 묻습니다. 일반 탭의 화면 설정은 이 브라우저에만 적용되며 비밀번호를 묻지 않습니다.",
 	},
 	MsgSettingsAccessTitle: {
 		en: "Repository access",
@@ -958,17 +952,9 @@ var catalog = map[MessageCode]message{
 		en: "A shared password is required to read and push.",
 		ko: "지금은 읽기와 푸시에 공용 비밀번호가 필요합니다.",
 	},
-	MsgSettingsEnablePass: {
-		en: "Require a shared password",
-		ko: "공용 비밀번호 켜기",
-	},
 	MsgSettingsChangePass: {
 		en: "Change the shared password",
 		ko: "공용 비밀번호 변경",
-	},
-	MsgSettingsDisablePass: {
-		en: "Stop requiring a shared password",
-		ko: "공용 비밀번호 끄기",
 	},
 	MsgSettingsDisableWarning: {
 		en: "Everyone who can reach this address will be able to read and push.",
@@ -1045,14 +1031,6 @@ var catalog = map[MessageCode]message{
 		ko: "사용할 수 없는 동작입니다.",
 	},
 	MsgSettingsUpdateTitle: {en: "Update check", ko: "업데이트 확인"},
-	MsgSettingsUpdateOnNow: {
-		en: "On. OwnGit asks GitHub once a day whether a newer release exists.",
-		ko: "켜짐. OwnGit이 하루에 한 번 GitHub에 새 릴리스가 있는지 확인합니다.",
-	},
-	MsgSettingsUpdateOffNow: {
-		en: "Off. OwnGit does not check GitHub for new releases.",
-		ko: "꺼짐. OwnGit이 GitHub에서 새 릴리스를 확인하지 않습니다.",
-	},
 	MsgSettingsUpdateForced: {
 		en: "Off by the server start option --no-update-check. OwnGit does not check for new releases, whatever is saved here.",
 		ko: "서버 시작 옵션 --no-update-check로 꺼져 있습니다. 여기 저장된 설정과 관계없이 OwnGit이 새 릴리스를 확인하지 않습니다.",
@@ -1069,8 +1047,6 @@ var catalog = map[MessageCode]message{
 		en: "The request carries only the OwnGit version, and GitHub sees this server's network address. No repository data is sent. A newer release is announced on the dashboard. OwnGit never updates itself.",
 		ko: "요청에는 OwnGit 버전만 담기고 GitHub는 이 서버의 네트워크 주소를 볼 수 있습니다. 저장소 데이터는 보내지 않습니다. 새 릴리스가 나오면 대시보드에 알려 주며 OwnGit이 스스로 업데이트하지는 않습니다.",
 	},
-	MsgSettingsUpdateTurnOff: {en: "Turn off update check", ko: "업데이트 확인 끄기"},
-	MsgSettingsUpdateTurnOn:  {en: "Turn on update check", ko: "업데이트 확인 켜기"},
 
 	// -- new release ---------------------------------------------------
 	MsgReleaseAvailable: {
