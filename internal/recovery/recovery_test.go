@@ -173,11 +173,34 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 	stateParent = filepath.Dir(stateTarget)
 	repositoryTarget := filepath.Join(root, "unused-repositories")
 	err := Restore(ctx, backup, stateTarget, repositoryTarget, "")
-	if err == nil || !strings.Contains(err.Error(), "state destination parent is not protected: another account can change "+stateParent) {
+	if err == nil || !strings.Contains(err.Error(), "state directory parent is not protected: another account can change "+stateParent) {
 		t.Fatalf("exchangeable state destination: %v", err)
 	}
 	assertNoRecoveryOutputOrStages(t, stateTarget, ".owngit-restore-")
 	assertNoRecoveryOutputOrStages(t, repositoryTarget, ".owngit-restore-")
+}
+
+// Root restoring into a folder that another account owns is told to run the
+// restore as that account, as every other state command says, and nothing
+// is created there.
+func TestRestoreAsRootIntoAnotherAccountsFolder(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+	const nobody = 65534
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	noErr(t, err)
+	home = filepath.Join(home, "home")
+	noErr(t, os.Mkdir(home, 0o755))
+	noErr(t, os.Chown(home, nobody, nobody))
+	err = Restore(context.Background(), t.TempDir(), filepath.Join(home, "restored"), filepath.Join(home, "restored-git"), "")
+	var other *state.OtherAccountError
+	if !errors.As(err, &other) || other.Path != home {
+		t.Fatalf("Restore error=%v, want %s named as another account's", err, home)
+	}
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Fatalf("the refused restore created %v (%v)", entries, err)
+	}
 }
 
 func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *testing.T) {

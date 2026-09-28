@@ -127,11 +127,23 @@ func othersCanChange(path string, info os.FileInfo, rootGroups, allowSticky bool
 // anything on the way to it; see WalkProtected and OthersCanChange. On macOS
 // it accepts group write for wheel and admin, like Homebrew's folders. A
 // writable sticky directory is accepted only as an ancestor, not as path.
-func RequireProtectedPath(path string) error { return requireProtectedPath(path, true) }
-
-// RequireProtectedParent applies the ancestor rule to the parent of path.
-func RequireProtectedParent(path string) error {
-	return requireProtectedPath(filepath.Dir(path), false)
+func RequireProtectedPath(path string) error {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	resolved, missing, err := WalkProtected(absolute, protectedCheck(true))
+	if err == nil && missing != "" {
+		return fmt.Errorf("%s does not exist", path)
+	}
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return err
+	}
+	return protectedCheck(false)(resolved, info)
 }
 
 // rootEquivalentGroup reports whether gid is a macOS group whose members may
@@ -156,28 +168,9 @@ func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
 	}
 }
 
-func requireProtectedPath(path string, strictFinal bool) error {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	resolved, missing, err := WalkProtected(absolute, protectedCheck(true))
-	if err == nil && missing != "" {
-		return fmt.Errorf("%s does not exist", path)
-	}
-	if err == nil && strictFinal {
-		info, statErr := os.Lstat(resolved)
-		if statErr != nil {
-			return statErr
-		}
-		err = protectedCheck(false)(resolved, info)
-	}
-	return err
-}
-
-// requireStateParent refuses the absolute state directory path when another
-// account could change a folder on the way to it, the rule of
-// RequireProtectedParent. Before anything is created, names that do not
+// RequireStateParent refuses the absolute path of a state directory, or of
+// another state destination such as a restore target, when another account
+// could change a folder on the way to it. Before anything is created, names that do not
 // exist yet are accepted when the folder that receives them, the last
 // existing one, is one that no other account can write: a sticky folder that
 // every account may write, such as /tmp, keeps others from renaming what is
@@ -187,7 +180,7 @@ func requireProtectedPath(path string, strictFinal bool) error {
 // command, a folder that another account owns belongs to that account, and
 // so would state inside it; state that root created there would lock that
 // account out. The refusal then says to run the command as that account.
-func requireStateParent(path string) error {
+func RequireStateParent(path string) error {
 	protected := protectedCheck(true)
 	resolved, missing, err := WalkProtected(filepath.Dir(path), func(name string, info os.FileInfo) error {
 		if stat, ok := info.Sys().(*syscall.Stat_t); ok && os.Geteuid() == 0 && stat.Uid != 0 {
@@ -218,7 +211,7 @@ func checkStateDirectory(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve state directory identity: %w", err)
 	}
-	if err := requireStateParent(resolved); err != nil {
+	if err := RequireStateParent(resolved); err != nil {
 		return "", err
 	}
 	info, err := os.Stat(resolved)

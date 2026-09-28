@@ -108,7 +108,7 @@ func (e *OtherAccountError) Error() string {
 // directory leaves nothing behind: the nearest existing folder must be on a
 // local filesystem, and on Unix no other account may be able to change a
 // folder on the way to dir or take one of the missing names first (see
-// requireStateParent). Afterwards it checks the created directory again (see
+// RequireStateParent). Afterwards it checks the created directory again (see
 // checkStateDirectory), so a caller such as serve's lock only uses a
 // directory of this account.
 func CreateDirectory(dir string) (string, error) {
@@ -132,7 +132,7 @@ func CreateDirectory(dir string) (string, error) {
 		}
 		ancestor = parent
 	}
-	if err := requireStateParent(absolute); err != nil {
+	if err := RequireStateParent(absolute); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(absolute, 0o700); err != nil {

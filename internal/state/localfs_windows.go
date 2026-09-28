@@ -18,11 +18,9 @@ func RequireProtectedPath(string) error {
 	return errors.New("protected paths are unavailable on Windows")
 }
 
-func RequireProtectedParent(string) error { return nil }
-
-// requireStateParent has nothing to check on Windows, where access lists
-// protect the state directory, as for RequireProtectedParent.
-func requireStateParent(string) error { return nil }
+// RequireStateParent has nothing to check on Windows, where access lists
+// protect the state directory.
+func RequireStateParent(string) error { return nil }
 
 // checkStateDirectory has nothing to check on Windows either; the state
 // directory's owner is checked when Open inspects it.

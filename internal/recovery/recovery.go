@@ -476,8 +476,8 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	if err != nil {
 		return err
 	}
-	if err := state.RequireProtectedParent(stateTarget); err != nil {
-		return fmt.Errorf("state destination parent is not protected: %w; choose a parent that other accounts cannot change", err)
+	if err := state.RequireStateParent(stateTarget); err != nil {
+		return err
 	}
 	repositoryTarget, err := absentTarget(repositoryRoot, "repository")
 	if err != nil {
