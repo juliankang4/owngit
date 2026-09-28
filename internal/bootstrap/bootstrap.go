@@ -40,13 +40,9 @@ type issueJournal struct {
 // completion across processes. The returned function releases all resources.
 func AcquireSetupLock(ctx context.Context, directory string) (func(), error) {
 	lockPath := filepath.Join(directory, lockFileName)
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := state.OpenLockFile(lockPath)
 	if err != nil {
 		return nil, fmt.Errorf("open setup issuance lock: %w", err)
-	}
-	if err := state.ProtectPrivateHandle(lock, false); err != nil {
-		lock.Close()
-		return nil, fmt.Errorf("protect setup issuance lock: %w", err)
 	}
 	unlockFile, err := lockFile(ctx, lock)
 	if err != nil {

@@ -28,33 +28,60 @@ func AcquireExclusiveFileLock(lockPath string) (func(), error) {
 // repository folder may be on a share, or be shared with a group, whose
 // other writers are trusted with the repositories in it anyway.
 func AcquireExclusiveFileLockHandle(lockPath string) (*os.File, func(), error) {
-	dir, err := openFolder(filepath.Dir(lockPath))
+	file, err := OpenLockFile(lockPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open exclusive operation lock: %w", err)
 	}
-	defer dir.Close()
-	return acquireExclusiveFileLockIn(dir, filepath.Base(lockPath))
+	return acquireExclusiveFileLock(file)
 }
 
 // acquireExclusiveFileLockIn is AcquireExclusiveFileLockHandle for the
 // lock file name in the held directory dir.
 func acquireExclusiveFileLockIn(dir *os.File, name string) (*os.File, func(), error) {
-	file, err := OpenOwnFile(dir, name, os.O_RDWR|os.O_CREATE)
+	file, err := openLockFileIn(dir, name)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open exclusive operation lock: %w", err)
 	}
+	return acquireExclusiveFileLock(file)
+}
+
+// OpenLockFile opens, or creates, the lock file at path for a caller that
+// locks it itself, as the lock helpers here do, and makes it private. It is
+// opened through its folder's handle with OpenOwnFile, and protected only
+// once OpenOwnFile accepted it.
+func OpenLockFile(path string) (*os.File, error) {
+	dir, err := openFolder(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	return openLockFileIn(dir, filepath.Base(path))
+}
+
+// openLockFileIn is OpenLockFile for the lock file name in the held
+// directory dir.
+func openLockFileIn(dir *os.File, name string) (*os.File, error) {
+	file, err := OpenOwnFile(dir, name, os.O_RDWR|os.O_CREATE)
+	if err != nil {
+		return nil, err
+	}
 	if err := ProtectPrivateHandle(file, false); err != nil {
 		file.Close()
-		return nil, nil, fmt.Errorf("protect exclusive operation lock: %w", err)
+		return nil, fmt.Errorf("protect %s: %w", file.Name(), err)
 	}
-	return acquireExclusiveFileLock(file)
+	return file, nil
 }
 
 // AcquireExclusivePrivateFileLockHandle locks an existing private file without
 // rewriting its permissions. Validation and later reads use the returned handle,
 // so a pathname replacement cannot change which file was accepted.
 func AcquireExclusivePrivateFileLockHandle(path string) (*os.File, func(), error) {
-	file, err := openLockFile(path, os.O_RDWR)
+	dir, err := openFolder(filepath.Dir(path))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open exclusive private-file lock: %w", err)
+	}
+	defer dir.Close()
+	file, err := OpenOwnFile(dir, filepath.Base(path), os.O_RDWR)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open exclusive private-file lock: %w", err)
 	}
@@ -63,16 +90,6 @@ func AcquireExclusivePrivateFileLockHandle(path string) (*os.File, func(), error
 		return nil, nil, fmt.Errorf("validate exclusive private-file lock: %w", err)
 	}
 	return acquireExclusiveFileLock(file)
-}
-
-// openLockFile opens path with OpenOwnFile in its folder.
-func openLockFile(path string, flag int) (*os.File, error) {
-	dir, err := openFolder(filepath.Dir(path))
-	if err != nil {
-		return nil, err
-	}
-	defer dir.Close()
-	return OpenOwnFile(dir, filepath.Base(path), flag)
 }
 
 func acquireExclusiveFileLock(file *os.File) (*os.File, func(), error) {
