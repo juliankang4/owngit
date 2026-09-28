@@ -170,6 +170,11 @@ func holdWay(held *os.File) (release func(), err error) {
 		}
 		dir := way[len(way)-1]
 		next, err := openAt(dir, filepath.Join(dir.Name(), name), folderAccess, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, windows.FILE_OPEN, folderOptions, "hold")
+		if errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+			// Another program has the folder open to rename or remove
+			// it: the way may be changing, so the caller tries again.
+			return nil, fmt.Errorf("%w: %w", ErrInspectionUnstable, err)
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -4,9 +4,12 @@ package state
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // Between the inspection and SQLite's open by path, no account can put
@@ -59,4 +62,32 @@ func TestWindowsStateIsNotSwappedAfterItsCheck(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A folder on the way that another program holds open to rename or remove
+// it is a change in progress, which OpenIn's callers try again, not a
+// failure.
+func TestWindowsFolderHeldForRenamingIsAChangeInProgress(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "parent", "state")
+	held, err := CreateDirectory(path)
+	noErr(t, err)
+	defer held.Close()
+	name, err := windows.UTF16PtrFromString(filepath.Dir(path))
+	noErr(t, err)
+	parent, err := windows.CreateFile(name, windows.DELETE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	noErr(t, err)
+	store, err := OpenIn(context.Background(), held)
+	noErr(t, windows.CloseHandle(parent))
+	if store != nil {
+		noErr(t, store.Close())
+	}
+	if !errors.Is(err, ErrInspectionUnstable) {
+		t.Fatalf("OpenIn with a folder on the way held for renaming: %v, want a change in progress", err)
+	}
+	store, err = OpenIn(context.Background(), held)
+	noErr(t, err)
+	noErr(t, store.Close())
 }
