@@ -1449,6 +1449,9 @@ type NetworkUpdate struct {
 	// transaction; ClearTailscale removes it.
 	Tailscale      *TailscaleServe
 	ClearTailscale bool
+	// AcknowledgeInsecureHTTP records the plain HTTP acknowledgement in the
+	// same transaction, so a change that is not saved leaves it unrecorded.
+	AcknowledgeInsecureHTTP bool
 }
 
 // tailscaleServeKey holds the TailscaleServe record. Like the network
@@ -1602,6 +1605,11 @@ func (s *Store) UpdateNetwork(ctx context.Context, update NetworkUpdate) error {
 	}
 	if err != nil {
 		return err
+	}
+	if update.AcknowledgeInsecureHTTP {
+		if _, err := tx.ExecContext(ctx, acknowledgeInsecureHTTP); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -1808,9 +1816,12 @@ func (s *Store) DisableAccessPassword(ctx context.Context) error {
 }
 
 func (s *Store) AcknowledgeInsecureHTTP(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE metadata SET value='true' WHERE key='insecure_http_accepted'`)
+	_, err := s.db.ExecContext(ctx, acknowledgeInsecureHTTP)
 	return err
 }
+
+// acknowledgeInsecureHTTP records that plain HTTP was acknowledged.
+const acknowledgeInsecureHTTP = `UPDATE metadata SET value='true' WHERE key='insecure_http_accepted'`
 
 func (s *Store) SetAdminPassword(ctx context.Context, encoded string) error {
 	if encoded == "" {

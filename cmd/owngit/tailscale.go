@@ -108,7 +108,13 @@ func (options tailscaleFlags) failure(code string, err error) error {
 	case err == nil:
 		return nil
 	case errors.As(err, &refusal):
-		code, err = refusal.Problem, tailscaleFailure(refusal)
+		// The explanation replaces the error, so it keeps saying that the
+		// settings were not saved when Tailscale may be ahead of them.
+		explained := tailscaleFailure(refusal)
+		if errors.Is(err, server.ErrTailscaleAhead) {
+			explained = fmt.Errorf("%w: %w", server.ErrTailscaleAhead, explained)
+		}
+		code, err = refusal.Problem, explained
 	case errors.Is(err, state.ErrNotExist):
 		code, err = "state_missing", missingStateError(*options.stateDir)
 	}

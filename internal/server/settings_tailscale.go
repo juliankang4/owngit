@@ -145,24 +145,41 @@ func (app *App) renderTailscaleOff(writer http.ResponseWriter, request *http.Req
 	_, _ = writer.Write(body.Bytes())
 }
 
-// renderTailscaleRefusal shows why turning sharing on or off did nothing,
-// inside the form that was sent.
+// renderTailscaleRefusal shows, inside the form that was sent, why turning
+// sharing on or off did not finish. When Tailscale may already have the
+// change (ErrTailscaleAhead), the page says so first, whatever the cause. A
+// TailscaleError then explains itself; any other failure left the settings
+// unsaved, which the first notice or MsgSettingsNotSaved says. Only a
+// refusal the owner can fix, with Tailscale not ahead, is answered 409;
+// every other failure is unavailable and logged.
 func (app *App) renderTailscaleRefusal(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, action string, err error) {
+	ahead := errors.Is(err, ErrTailscaleAhead)
+	var notices []webui.Notice
+	if ahead {
+		notices = append(notices, webui.Error("tailscale", webui.MsgTSNotSavedAhead))
+	}
+	view := settingsView{AdminVerified: true}
 	var refusal *TailscaleError
-	if !errors.As(err, &refusal) {
-		app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("tailscale", webui.MsgErrUnavailable)}, unavailable(request, "Tailscale sharing change", err), settingsView{AdminVerified: true})
-		return
+	switch {
+	case errors.As(err, &refusal):
+		// What is on the port is listed in the block, in the page's language.
+		notice := webui.Notice{Kind: webui.NoticeError, Code: webui.TailscaleRefusalCode(refusal.Problem, len(refusal.Found) > 0), Field: "tailscale", Detail: refusal.Detail}
+		if len(refusal.Found) > 0 {
+			notice.Detail = ""
+		}
+		notices = append(notices, notice)
+		if refusal.Problem == TailscaleProblemReadBack && refusal.MacApp {
+			notices = append(notices, webui.Notice{Kind: webui.NoticeInfo, Code: webui.MsgTSReadBackMacApp, Field: "tailscale"})
+		}
+		view.TailscaleRefused = refusal.Problem
+	case !ahead:
+		notices = append(notices, webui.Error("tailscale", webui.MsgSettingsNotSaved))
 	}
-	// What is on the port is listed in the block, in the page's language.
-	notice := webui.Notice{Kind: webui.NoticeError, Code: webui.TailscaleRefusalCode(refusal.Problem, len(refusal.Found) > 0), Field: "tailscale", Detail: refusal.Detail}
-	if len(refusal.Found) > 0 {
-		notice.Detail = ""
+	status := http.StatusConflict
+	if ahead || !refused(err) {
+		status = unavailable(request, "Tailscale sharing change", err)
 	}
-	notices := []webui.Notice{notice}
-	if refusal.Problem == TailscaleProblemReadBack && refusal.MacApp {
-		notices = append(notices, webui.Notice{Kind: webui.NoticeInfo, Code: webui.MsgTSReadBackMacApp, Field: "tailscale"})
-	}
-	app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusConflict, settingsView{AdminVerified: true, TailscaleRefused: refusal.Problem})
+	app.renderSettingsPage(writer, request, settings, csrf, action, notices, status, view)
 }
 
 // PortList writes ports for a message, such as "443, 8443".

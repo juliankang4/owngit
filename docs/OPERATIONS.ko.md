@@ -551,7 +551,7 @@ OwnGit은 받아 온 객체에서 Git LFS 포인터 파일을 찾습니다(객�
 
 ### 실패와 취소
 
-저장소마다 한 번에 하나의 실행만 진행되며(그 밖에는 `busy`), 실행은 기본값으로 60분까지입니다(`limit`). 그 밖의 결과는 `cancelled`, `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved`, `nothing_to_resolve`입니다. `owngit serve`가 멈추면 실행 중인 가져오기를 취소하고 각각이 결과를 기록할 때까지 최대 45초 기다리며, 다음 시작 때 중단된 실행을 표시하고 진행 중이던 게시를 쓰기를 반복하거나 되돌리지 않고 확인합니다. 가져오기 서비스를 시작할 수 없으면 가져오기 탭과 `import status`에 그렇게 표시되고 Git은 계속 동작합니다.
+저장소마다 한 번에 하나의 실행만 진행되며(그 밖에는 `busy`), 실행은 기본값으로 60분까지입니다(`limit`). 그 밖의 결과는 `cancelled`, `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved`, `nothing_to_resolve`입니다. OwnGit이 분류하지 못한 실패는 `unclassified`입니다. `unsupported`는 원본이나 대상이 가져오기에서 지원하지 않는 기능을 쓴다는 뜻입니다. `owngit serve`가 멈추면 실행 중인 가져오기를 취소하고 각각이 결과를 기록할 때까지 최대 45초 기다리며, 다음 시작 때 중단된 실행을 표시하고 진행 중이던 게시를 쓰기를 반복하거나 되돌리지 않고 확인합니다. 가져오기 서비스를 시작할 수 없으면 가져오기 탭과 `import status`에 그렇게 표시되고 Git은 계속 동작합니다.
 
 ### 미해결 게시
 

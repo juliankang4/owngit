@@ -320,6 +320,10 @@ func TestInternalFaultsAndUnclassifiedRunsAreLogged(t *testing.T) {
 	if notice := importFailureNotice(gitRun, ""); notice.Code != webui.MsgImportFailed {
 		t.Errorf("an unclassified import error is explained as %q, want %q", notice.Code, webui.MsgImportFailed)
 	}
+	// Its code says it was not classified, not that a feature is unsupported.
+	if _, code, _, _ := importProblemHTTP(request, "import run", gitRun); code != importsync.CodeUnclassified {
+		t.Errorf("an unclassified import error is coded %q, want %q", code, importsync.CodeUnclassified)
+	}
 }
 
 // Input the store refuses stays refused input, not a failure to log.

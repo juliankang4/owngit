@@ -358,6 +358,8 @@ func ImportErrorCode(class string) MessageCode {
 		return MsgImportErrorRuntime
 	case "unsupported":
 		return MsgImportErrorUnsupported
+	case "unclassified":
+		return MsgImportFailed
 	case "limit":
 		return MsgImportErrorLimit
 	case "nothing_to_resolve":

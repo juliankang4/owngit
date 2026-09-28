@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -40,6 +41,37 @@ import (
 // Turning on uses the first one that is free and leaves the others as they
 // are; "owngit tailscale on --https-port" names any other port.
 var tailscaleHTTPSPorts = []int{443, 8443, 10000}
+
+// ErrTailscaleAhead marks a failure after Tailscale accepted a change of
+// its endpoint, or showed the change, while OwnGit's settings were not
+// saved: Tailscale may already have what OwnGit's settings do not.
+var ErrTailscaleAhead = errors.New("OwnGit's settings were not saved, and Tailscale may already have the change")
+
+// tailscaleMayHave reports whether Tailscale may have a change of its
+// endpoint after the change command returned changeErr and the read back
+// returned readErr: the read back shows the change, or it could not be read
+// while the command succeeded or failed without a refusal (Refused), such as
+// a timeout, so its outcome is unknown. A read back that shows no change, or
+// a command Tailscale refused, rules it out.
+func tailscaleMayHave(changeErr, readErr error, shown bool) bool {
+	return shown || readErr != nil && (changeErr == nil || !refused(changeErr))
+}
+
+// refused reports whether err is a refusal the owner can fix
+// (TailscaleError.Refused).
+func refused(err error) bool {
+	var refusal *TailscaleError
+	return errors.As(tailscaleError(err, false), &refusal) && refusal.Refused()
+}
+
+// tailscaleAhead marks err with ErrTailscaleAhead when Tailscale may
+// already have the change.
+func tailscaleAhead(err error, changed bool) error {
+	if changed {
+		return fmt.Errorf("%w: %w", ErrTailscaleAhead, err)
+	}
+	return err
+}
 
 // TailscaleOrigin is the HTTPS origin of name on port, without the port
 // when it is 443.
@@ -507,6 +539,22 @@ const (
 	TailscaleProblemServeChanged = "serve_changed"
 )
 
+// Refused reports whether the problem is a state the owner can fix, such as
+// Tailscale being signed out or a port being taken. Such a refusal is
+// answered as refused input (409). A timeout, an answer OwnGit cannot read,
+// a failure Tailscale did not explain in a way OwnGit recognizes
+// (tailscale.classify), or a change Tailscale accepted and did not keep may
+// pass on another try, so it is work that could not be completed now (503,
+// logged). A change not kept by the Tailscale app for macOS still gets that
+// app's fix on the page (MsgTSReadBackMacApp).
+func (err *TailscaleError) Refused() bool {
+	switch err.Problem {
+	case string(tailscale.KindTimeout), string(tailscale.KindUnreadable), string(tailscale.KindFailed), TailscaleProblemReadBack:
+		return false
+	}
+	return true
+}
+
 func (err *TailscaleError) Error() string {
 	text := "tailscale sharing: " + err.Problem
 	if err.Detail != "" {
@@ -679,9 +727,11 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 		}
 		writeErr := whyWriteFailed(ctx, command, command.ServeHTTPS(ctx, record.HTTPSPort, target))
 		after, readErr := command.ServeConfig(ctx)
-		if writeErr == nil && readErr == nil && !after.Endpoint(record.Name, record.HTTPSPort, target).Exact {
+		shown := readErr == nil && after.Endpoint(record.Name, record.HTTPSPort, target).Exact
+		if writeErr == nil && readErr == nil && !shown {
 			writeErr = &TailscaleError{Problem: TailscaleProblemReadBack, MacApp: command.MacApp}
 		}
+		ahead := tailscaleMayHave(writeErr, readErr, shown)
 		if writeErr == nil {
 			writeErr = readErr
 		}
@@ -689,25 +739,23 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 			if readErr == nil && fresh && after.Endpoint(record.Name, record.HTTPSPort, target).Free {
 				_ = sharing.Store.ClearTailscaleServe(ctx)
 			}
-			return TailscaleChange{}, tailscaleError(writeErr, command.MacApp)
+			return TailscaleChange{}, tailscaleAhead(tailscaleError(writeErr, command.MacApp), ahead)
 		}
 	}
 
+	written := change.Endpoint == endpointCreated
 	update, err := sharing.onUpdate(ctx, saved, change.Listen, &record, fresh)
 	if err != nil {
-		return TailscaleChange{}, err
+		return TailscaleChange{}, tailscaleAhead(err, written)
 	}
 	if len(update.RemoveHosts) > 0 {
 		change.RemovedHost = previous.AddedHost
 	}
 	// Plain HTTP is accepted only when this change opens the home network.
-	if host, _, _ := net.SplitHostPort(change.Listen); change.ListenChanged && !IsLoopbackHost(host) {
-		if err := sharing.Store.AcknowledgeInsecureHTTP(ctx); err != nil {
-			return TailscaleChange{}, err
-		}
-	}
+	host, _, _ := net.SplitHostPort(change.Listen)
+	update.AcknowledgeInsecureHTTP = change.ListenChanged && !IsLoopbackHost(host)
 	if err := sharing.Store.UpdateNetwork(ctx, update); err != nil {
-		return TailscaleChange{}, err
+		return TailscaleChange{}, tailscaleAhead(err, written)
 	}
 	change.Record = record
 	return change, nil
@@ -825,15 +873,18 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 			if err := unchangedPort(ctx, command, config, record.Name, record.HTTPSPort, record.Target); err != nil {
 				return TailscaleChange{}, "", err
 			}
-			if err := whyWriteFailed(ctx, command, command.RemoveHTTPS(ctx, record.HTTPSPort)); err != nil {
-				return TailscaleChange{}, "", tailscaleError(err, command.MacApp)
+			removeErr := whyWriteFailed(ctx, command, command.RemoveHTTPS(ctx, record.HTTPSPort))
+			after, readErr := command.ServeConfig(ctx)
+			shown := readErr == nil && !after.Endpoint(record.Name, record.HTTPSPort, record.Target).Exact
+			if removeErr == nil && readErr == nil && !shown {
+				removeErr = &TailscaleError{Problem: TailscaleProblemReadBack, MacApp: command.MacApp}
 			}
-			after, err := command.ServeConfig(ctx)
-			if err != nil {
-				return TailscaleChange{}, "", tailscaleError(err, command.MacApp)
+			ahead := tailscaleMayHave(removeErr, readErr, shown)
+			if removeErr == nil {
+				removeErr = readErr
 			}
-			if after.Endpoint(record.Name, record.HTTPSPort, record.Target).Exact {
-				return TailscaleChange{}, "", &TailscaleError{Problem: TailscaleProblemReadBack, MacApp: command.MacApp}
+			if removeErr != nil {
+				return TailscaleChange{}, "", tailscaleAhead(tailscaleError(removeErr, command.MacApp), ahead)
 			}
 			change.Endpoint = "removed"
 		case endpoint.Free:
@@ -843,9 +894,10 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 		}
 	}
 
+	removed := change.Endpoint == "removed"
 	saved, err := sharing.Store.NetworkSettings(ctx)
 	if err != nil {
-		return TailscaleChange{}, "", err
+		return TailscaleChange{}, "", tailscaleAhead(err, removed)
 	}
 	update := state.NetworkUpdate{Settings: saved, ClearTailscale: true}
 	if saved.BaseURL == record.BaseURL {
@@ -857,12 +909,12 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 	if record.AddedHost != "" {
 		hosts, err := sharing.Store.TrustedHosts(ctx)
 		if err != nil {
-			return TailscaleChange{}, "", err
+			return TailscaleChange{}, "", tailscaleAhead(err, removed)
 		}
 		update.RemoveHosts = matchingHosts(hosts, record.AddedHost)
 	}
 	if err := sharing.Store.UpdateNetwork(ctx, update); err != nil {
-		return TailscaleChange{}, "", err
+		return TailscaleChange{}, "", tailscaleAhead(err, removed)
 	}
 	change.Listen = nextListen(saved)
 	return change, update.Settings.BaseURL, nil

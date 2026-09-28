@@ -38,6 +38,10 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	}
 
 	var err error
+	// ends is the session cookie a saved change ends in this browser. It is
+	// cleared only once the change is saved; a change that was not saved
+	// changes nothing, this browser's session included.
+	var ends string
 	switch action {
 	case webui.ActionEnableAccessPassword, webui.ActionChangeAccessPassword:
 		password := postValue(request, "access_password")
@@ -54,10 +58,10 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		if err == nil {
 			err = app.Store.SetAccessPassword(request.Context(), encoded)
 		}
-		app.clearCookie(writer, request, generalCookie, true)
+		ends = generalCookie
 	case webui.ActionDisableAccessPassword:
 		err = app.Store.DisableAccessPassword(request.Context())
-		app.clearCookie(writer, request, generalCookie, true)
+		ends = generalCookie
 	case webui.ActionChangeAdminPassword:
 		newPassword := postValue(request, "new_admin_password")
 		if validateErr := auth.ValidatePassword(newPassword); validateErr != nil {
@@ -70,7 +74,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		}
 		accessHash, hashErr := app.Store.PasswordHash(request.Context(), "access")
 		if hashErr != nil {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgErrUnavailable)}, unavailable(request, "shared password read", hashErr))
+			app.renderNotSaved(writer, request, settings, csrf, action, "shared password read", hashErr)
 			return
 		}
 		if accessHash != "" && auth.CheckPassword(accessHash, newPassword) {
@@ -82,7 +86,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		if err == nil {
 			err = app.Store.SetAdminPassword(request.Context(), encoded)
 		}
-		app.clearCookie(writer, request, adminCookie, true)
+		ends = adminCookie
 	case webui.ActionAcknowledgeInsecure:
 		if !formChecked(postValue(request, "insecure_ack")) {
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("insecure_ack", webui.MsgSetupInsecureNeed)}, http.StatusUnprocessableEntity)
@@ -113,8 +117,11 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if err != nil {
-		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgErrUnavailable)}, unavailable(request, "settings save", err))
+		app.renderNotSaved(writer, request, settings, csrf, action, "settings save", err)
 		return
+	}
+	if ends != "" {
+		app.clearCookie(writer, request, ends, true)
 	}
 	// A new shared password signs out every general session, this browser's
 	// too. Without an administrator session Settings would send it to the
@@ -163,6 +170,13 @@ func (app *App) allowSettingsViewer(writer http.ResponseWriter, request *http.Re
 		http.Redirect(writer, request, "/login?next=%2Fsettings", http.StatusSeeOther)
 	}
 	return "", false
+}
+
+// renderNotSaved answers a settings change that failed before anything was
+// changed: the form says the change was not saved, and step and its cause
+// are logged once.
+func (app *App) renderNotSaved(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, action, step string, err error) {
+	app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgSettingsNotSaved)}, unavailable(request, step, err))
 }
 
 func (app *App) renderSettings(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, pending string, notices []webui.Notice, status int) {

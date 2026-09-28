@@ -551,7 +551,7 @@ OwnGit scans the fetched objects for LFS pointer files (up to 200,000 objects, 1
 
 ### Failures and cancellation
 
-One run per repository is active at a time (`busy` otherwise), and a run is limited to 60 minutes by default (`limit`). Other outcomes are `cancelled`, `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved` and `nothing_to_resolve`. When `owngit serve` stops, it cancels running imports and waits up to 45 seconds for each to record its outcome; at the next start it marks interrupted runs and checks any publication that was in progress, without repeating or rolling back a write. If the import service cannot start, the Import tab and `import status` say so, and Git keeps working.
+One run per repository is active at a time (`busy` otherwise), and a run is limited to 60 minutes by default (`limit`). Other outcomes are `cancelled`, `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved` and `nothing_to_resolve`. A failure OwnGit did not classify is `unclassified`; `unsupported` means the source or destination uses a feature import does not support. When `owngit serve` stops, it cancels running imports and waits up to 45 seconds for each to record its outcome; at the next start it marks interrupted runs and checks any publication that was in progress, without repeating or rolling back a write. If the import service cannot start, the Import tab and `import status` say so, and Git keeps working.
 
 ### Unresolved publications
 

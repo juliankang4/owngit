@@ -513,3 +513,19 @@ func TestTailscaleCommandNamesABaseURLOption(t *testing.T) {
 		t.Fatalf("report=%+v", report)
 	}
 }
+
+// A command that failed while Tailscale may already have the change says
+// that OwnGit's settings were not saved, also when a Tailscale problem is
+// explained in its place.
+func TestTailscaleCommandSaysTheSettingsWereNotSaved(t *testing.T) {
+	options := newTailscaleFlags("on")
+	for _, cause := range []error{
+		&server.TailscaleError{Problem: string(tailscale.KindFailed), Detail: "synthetic serve status failure"},
+		fmt.Errorf("synthetic settings save failure"),
+	} {
+		err := options.failure("failed", fmt.Errorf("%w: %w", server.ErrTailscaleAhead, cause))
+		if err == nil || !strings.HasPrefix(err.Error(), server.ErrTailscaleAhead.Error()+": ") {
+			t.Errorf("failure for %v: %v", cause, err)
+		}
+	}
+}

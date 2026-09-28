@@ -220,6 +220,7 @@ const (
 const (
 	MsgSettingsTitle    MessageCode = "settings.title"
 	MsgSettingsSaved    MessageCode = "settings.saved"
+	MsgSettingsNotSaved MessageCode = "settings.not_saved"
 	MsgSettingsAdminReq MessageCode = "settings.admin_required"
 	// The shared password changed, which signed this browser out too.
 	MsgSettingsAccessSaved MessageCode = "settings.access_password_saved"
@@ -927,6 +928,10 @@ var catalog = map[MessageCode]message{
 	MsgSettingsSaved: {
 		en: "Settings saved.",
 		ko: "설정을 저장했습니다.",
+	},
+	MsgSettingsNotSaved: {
+		en: "The change was not saved, so nothing changed. The server log names the cause.",
+		ko: "변경 내용을 저장하지 못해 바뀐 것은 없습니다. 원인은 서버 로그에 있습니다.",
 	},
 	MsgSettingsAccessSaved: {
 		en: "Shared password saved. Sign in with the new shared password.",

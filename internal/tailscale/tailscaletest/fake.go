@@ -49,6 +49,17 @@ type State struct {
 	// ReadDelay does the same for "status --json" and "serve status
 	// --json", as a slow tailscaled does.
 	ReadDelay int `json:"read_delay,omitempty"`
+	// ServeReadErrorAfterWrite is printed to standard error for "serve
+	// status --json" once a Serve change succeeded (Wrote), which then
+	// fails, like a tailscaled that stops answering after a change.
+	ServeReadErrorAfterWrite string `json:"serve_read_error_after_write,omitempty"`
+	// Wrote is set when a Serve change succeeds.
+	Wrote bool `json:"wrote,omitempty"`
+	// WriteErrorAfterChange is printed to standard error after a Serve
+	// change took effect, which then fails, like a command interrupted
+	// after Tailscale kept the change.
+	WriteErrorAfterChange string `json:"write_error_after_change,omitempty"`
+
 	// Calls are the argument lists the fake was run with, in order.
 	Calls [][]string `json:"calls,omitempty"`
 }
@@ -238,6 +249,10 @@ func handle(state *State, arguments []string) int {
 		fmt.Println(string(content))
 		return 0
 	case command == "serve status --json":
+		if state.Wrote && state.ServeReadErrorAfterWrite != "" {
+			fmt.Fprintln(os.Stderr, state.ServeReadErrorAfterWrite)
+			return 1
+		}
 		content, _ := json.MarshalIndent(state.Serve, "", "  ")
 		fmt.Println(string(content))
 		return 0
@@ -247,7 +262,7 @@ func handle(state *State, arguments []string) int {
 			return 1
 		}
 		state.addHandler(strings.TrimPrefix(arguments[2], "--https="), arguments[3])
-		return 0
+		return state.changed()
 	}
 	if len(arguments) == 4 && arguments[0] == "serve" && strings.HasPrefix(arguments[1], "--https=") && arguments[2] == "--set-path=/" && arguments[3] == "off" {
 		if failed := state.writeRefused(); failed {
@@ -257,10 +272,20 @@ func handle(state *State, arguments []string) int {
 			fmt.Fprintln(os.Stderr, "error: failed to remove web serve: handler does not exist")
 			return 1
 		}
-		return 0
+		return state.changed()
 	}
 	fmt.Fprintf(os.Stderr, "fake tailscale: unsupported command %q\n", command)
 	return 2
+}
+
+// changed finishes a Serve change that took effect.
+func (state *State) changed() int {
+	state.Wrote = true
+	if state.WriteErrorAfterChange != "" {
+		fmt.Fprintln(os.Stderr, state.WriteErrorAfterChange)
+		return 1
+	}
+	return 0
 }
 
 func (state *State) writeRefused() bool {

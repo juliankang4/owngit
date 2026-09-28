@@ -2,6 +2,7 @@ package importsync
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,5 +81,22 @@ func TestStatusDoesNotWaitForRepositoryWriter(t *testing.T) {
 	idle, err := f.service.Status(context.Background(), "project")
 	if err != nil || len(idle.Refs) == 0 || idle.Refs[0].State != "tracked" {
 		t.Fatalf("status after the write refs=%+v err=%v", idle.Refs, err)
+	}
+}
+
+// A failure import did not classify is recorded and reported as
+// unclassified, never as a feature import does not support.
+func TestUnclassifiedFailureIsNotReportedAsUnsupported(t *testing.T) {
+	unclassified := errors.New("synthetic reconciliation failure")
+	if code := problemCode(unclassified); code != CodeUnclassified {
+		t.Fatalf("an unclassified failure is coded %q, want %q", code, CodeUnclassified)
+	}
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.mustImport(ImportInput{})
+	f.service.NoteStartupFailure(unclassified)
+	status, err := f.service.Status(context.Background(), "project")
+	if err != nil || status.Runtime.Code != CodeUnclassified {
+		t.Fatalf("status after an unclassified startup failure runtime=%+v err=%v", status.Runtime, err)
 	}
 }

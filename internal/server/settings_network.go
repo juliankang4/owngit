@@ -155,12 +155,9 @@ func networkEntries(value string) []string {
 func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf string) {
 	ctx := request.Context()
 	action := webui.ActionSaveNetwork
-	answerUnavailable := func(step string, err error) {
-		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("", webui.MsgErrUnavailable)}, unavailable(request, step, err))
-	}
 	report, err := app.networkReport(ctx)
 	if err != nil {
-		answerUnavailable("network settings read", err)
+		app.renderNotSaved(writer, request, settings, csrf, action, "network settings read", err)
 		return
 	}
 	if postValue(request, "network_revision") != networkRevision(report) {
@@ -221,7 +218,7 @@ func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, s
 	update := state.NetworkUpdate{Settings: state.NetworkSettings{Listen: form.Listen, BaseURL: baseURL}}
 	stored, err := app.Store.TrustedHosts(ctx)
 	if err != nil {
-		answerUnavailable("network settings read", err)
+		app.renderNotSaved(writer, request, settings, csrf, action, "network settings read", err)
 		return
 	}
 	// Stored names may predate normalization, so each is compared in the
@@ -250,14 +247,9 @@ func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, s
 			update.AddProxies = append(update.AddProxies, proxy)
 		}
 	}
-	if acknowledge {
-		if err := app.Store.AcknowledgeInsecureHTTP(ctx); err != nil {
-			answerUnavailable("plain HTTP acknowledgement", err)
-			return
-		}
-	}
+	update.AcknowledgeInsecureHTTP = acknowledge
 	if err := app.Store.UpdateNetwork(ctx, update); err != nil {
-		answerUnavailable("network settings save", err)
+		app.renderNotSaved(writer, request, settings, csrf, action, "network settings save", err)
 		return
 	}
 	app.noticeRedirect(writer, request, "/settings?notice=network_saved", http.StatusSeeOther)

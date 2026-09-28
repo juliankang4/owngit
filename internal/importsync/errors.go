@@ -44,6 +44,10 @@ const (
 	// CodeInvalidSchedule reports a schedule interval that is not a supported
 	// duration. The source is not involved.
 	CodeInvalidSchedule = "invalid_schedule"
+	// CodeUnclassified reports a failure import did not classify, such as a
+	// local error that reached it unwrapped. It says nothing about the source
+	// or destination; CodeUnsupported is a feature import does not support.
+	CodeUnclassified = "unclassified"
 )
 
 var (
@@ -131,10 +135,12 @@ func stoppedStageFailure(ctx context.Context, stage string, err error) error {
 	if err == nil || ctx.Err() == nil || !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return err
 	}
-	problem := &Problem{Code: CodeUnsupported}
+	problem := &Problem{Code: CodeUnclassified}
 	errors.As(err, &problem)
 	switch problem.Code {
-	case CodeIndexFailed, CodeVerifyFailed, CodePublishFailed, CodeRepositoryMissing, CodeNetwork, CodeProtocol, CodeUnsupported:
+	// An unsupported destination can be one whose HEAD a stopped Git read
+	// could not show, so it is a stop too when it carries the stop's error.
+	case CodeIndexFailed, CodeVerifyFailed, CodePublishFailed, CodeRepositoryMissing, CodeNetwork, CodeProtocol, CodeUnsupported, CodeUnclassified:
 		return stoppedProblem(ctx, "while "+stage, err)
 	case CodeStateUnavailable:
 		if problem.runRead && errors.Is(problem.Cause, ctx.Err()) {
@@ -145,7 +151,7 @@ func stoppedStageFailure(ctx context.Context, stage string, err error) error {
 }
 
 // problemCode returns the stable code of the first classified problem in the
-// error chain, or CodeUnsupported for an unclassified failure.
+// error chain, or CodeUnclassified for an unclassified failure.
 func problemCode(err error) string {
 	var problem *Problem
 	if errors.As(err, &problem) {
@@ -161,7 +167,7 @@ func problemCode(err error) string {
 	case errors.Is(err, context.DeadlineExceeded):
 		return CodeLimit
 	}
-	return CodeUnsupported
+	return CodeUnclassified
 }
 
 // classifyFetchError maps one transport failure to a stable code and a safe

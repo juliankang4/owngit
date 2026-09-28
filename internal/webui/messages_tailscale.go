@@ -99,6 +99,9 @@ const (
 	MsgTSMacApp = MessageCode("tailscale.mac_app")
 	// MsgTSReadBackMacApp is added to the read-back problem for that app.
 	MsgTSReadBackMacApp = MessageCode("tailscale.problem.read_back_mac_app")
+	// MsgTSNotSavedAhead reports a sharing change whose settings were not
+	// saved while Tailscale may already have the change.
+	MsgTSNotSavedAhead = MessageCode("tailscale.not_saved_ahead")
 	// MsgTSStale introduces what Tailscale keeps under an earlier name of
 	// this computer, and how to remove it.
 	MsgTSStale = MessageCode("tailscale.stale")
@@ -206,6 +209,10 @@ var tailscaleCatalog = map[MessageCode]message{
 	MsgTSReadBackMacApp: {
 		en: "The Tailscale app for macOS does this when it cannot save its settings. Quit and reopen the Tailscale app, then try again.",
 		ko: "macOS용 Tailscale 앱은 설정을 저장하지 못할 때 이렇게 됩니다. Tailscale 앱을 종료했다가 다시 연 뒤 다시 시도하세요.",
+	},
+	MsgTSNotSavedAhead: {
+		en: "The settings could not be saved. Tailscale may already have the change. Check the Tailscale status on this page. The server log names the cause.",
+		ko: "설정을 저장하지 못했습니다. Tailscale에는 이미 반영됐을 수 있습니다. 이 페이지의 Tailscale 상태를 확인하세요. 원인은 서버 로그에 있습니다.",
 	},
 	// Detail: what is on the port now.
 	"tailscale.problem.endpoint_changed": {
