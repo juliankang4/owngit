@@ -114,6 +114,8 @@ func TestPagesReplyBeforeTheRequestDeadline(t *testing.T) {
 		"/repositories/stalled/commits": http.StatusServiceUnavailable,
 	} {
 		t.Run(target, func(t *testing.T) {
+			// Each page has its own app and mostly waits for its deadline.
+			t.Parallel()
 			app, _, _ := newActivityFixture(t, "stalled", 1)
 			useGitWrapper(t, app, `for a in "$@"; do case "$a" in for-each-ref|symbolic-ref|rev-parse|log) exec /bin/sleep 30;; esac; done`)
 			app.HTTPTimeout = 2 * time.Second
