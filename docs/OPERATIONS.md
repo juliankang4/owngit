@@ -144,7 +144,7 @@ Settings has five tabs. Each is its own address, so it works as an ordinary link
 - **Repositories** (`/settings/repositories`): a link to the settings of each repository.
 - **Storage & recovery** (`/settings/storage`): the repository folder, shown only to an administrator.
 
-Each part of a tab has its own Save and Cancel. Save asks for the administrator password unless this browser is confirmed as administrator or the check is off. Saving sends only that part, so it never saves another part's values. When Save needs no password, the page stays and a change typed in another part and not saved stays too; when it asks for the password, the page reloads and such a change is lost, so save each part before you change the next. When OwnGit refuses a save, the part says why and keeps what you entered, except passwords. One exception: when the network settings changed after you opened the page, the Network part shows the values saved now, so you can check them before you enter your change again. Network settings apply at the next start; everything else applies as soon as you save. With the shared password already on, leave New shared password empty to keep it. Turning the shared password on or changing it signs out everyone signed in with the shared password; a browser that is not confirmed as administrator then signs in with the new password. Changing the administrator password is a separate form that always asks for the current one.
+Each part of a tab has its own Save and Cancel. Save asks for the administrator password unless this browser is confirmed as administrator or the check is off. Saving sends only that part, so it never saves another part's values. When Save needs no password, the page stays and a change typed in another part and not saved stays too, except in Administrator password check, whose Save reloads the page while the check is on; when it asks for the password, the page reloads and such a change is lost, so save each part before you change the next. When OwnGit refuses a save, the part says why and keeps what you entered, except passwords. One exception: when the network settings changed after you opened the page, the Network part shows the values saved now, so you can check them before you enter your change again. Network settings apply at the next start; everything else applies as soon as you save. With the shared password already on, leave New shared password empty to keep it. Turning the shared password on or changing it signs out everyone signed in with the shared password; a browser that is not confirmed as administrator then signs in with the new password. Changing the administrator password is a separate form that always asks for the current one.
 
 ### Administrator password check
 
@@ -152,7 +152,9 @@ Each part of a tab has its own Save and Cancel. Save asks for the administrator 
 
 - **Every time**: each change asks. Signing in as administrator opens the administrator pages for a short time only.
 - **Again after 30 minutes** (the default), **1 hour**, **8 hours**, **1 day**, **7 days** or **30 days**: after you type the password, on the administrator sign-in or in a form, this browser does not ask again for that long. The time counts from when you typed it; moving between pages does not extend it. Another browser is asked for its own. The sidebar shows until when this browser is confirmed, with End to stop now. Signing out, End, or changing or resetting the administrator password ends it. Choosing a shorter time shortens it to the new time counted from when the password was typed, so it may end at once.
-- **Do not ask**: anyone who can open the dashboard can change settings, delete repositories and issue credentials without the administrator password, and with Open access nobody has to sign in. Turning it on asks for the password one last time and for a tick confirming the warning. While it is on, every page shows "Administrator password check off", which leads back here.
+- **Do not ask**: anyone who can open the dashboard can change settings, delete repositories, issue credentials and turn on automatic checks without the administrator password, and when anyone can reach OwnGit without a password nobody has to sign in. Turning it on asks for the password one last time and for a tick confirming the warning. While it is on, every page shows "Administrator password check off", which leads back here.
+
+To end the confirmation of a browser you no longer have, change the administrator password in Settings, or run `owngit reset-admin`; either ends every browser's confirmation.
 
 The choice belongs to this installation host and is not in backups; a restored installation asks after 30 minutes again. If the saved choice is one this version does not know, for example after going back to an older release, every change asks and Access says so until you choose again. The command line and the administrator API always ask for the administrator password, for reads as well as changes, whatever the choice; a browser that is confirmed in the dashboard is not signed in to the API.
 
@@ -394,7 +396,7 @@ Before setup is complete, a terminal on the installation host issues a replaceme
 owngit setup-link --no-open
 ```
 
-To reset a forgotten administrator password, put the new password in an owner-only file. Resetting ends every browser's administrator confirmation and leaves repositories unchanged:
+To reset a forgotten administrator password, put the new password in an owner-only file. Resetting ends every browser's administrator confirmation and leaves repositories unchanged. It keeps the [administrator password check](#administrator-password-check) choice, Do not ask included:
 
 ```sh
 owngit reset-admin --password-file /path/to/owner-only-password-file

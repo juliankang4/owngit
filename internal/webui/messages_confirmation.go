@@ -62,8 +62,8 @@ var confirmationCatalog = map[MessageCode]message{
 		ko: "시간이 길수록 이 브라우저를 쓰는 사람이 저장소 삭제와 자격 증명 발급을 포함한 관리자 작업을 할 수 있는 시간도 길어집니다. ‘묻지 않기’는 모든 브라우저에 적용됩니다.",
 	},
 	MsgConfirmNeverRisk: {
-		en: "Anyone who can access this dashboard can change settings, delete repositories, and issue credentials without the administrator password. In Open access mode, no sign-in is required.",
-		ko: "이 대시보드에 들어올 수 있는 사람이면 누구나 관리자 비밀번호 없이 설정을 바꾸고 저장소를 삭제하고 자격 증명을 발급할 수 있습니다. 누구나 접속할 수 있게 열어 둔 상태라면 로그인도 필요 없습니다.",
+		en: "Anyone who can access this dashboard can change settings, delete repositories, issue credentials, and turn on automatic checks without the administrator password. When anyone can reach OwnGit without a password, no sign-in is required.",
+		ko: "이 대시보드에 들어올 수 있는 사람이면 누구나 관리자 비밀번호 없이 설정을 바꾸고, 저장소를 삭제하고, 자격 증명을 발급하고, 자동 체크를 켤 수 있습니다. 누구나 접속할 수 있게 열어 둔 상태라면 로그인도 필요 없습니다.",
 	},
 	MsgConfirmOpenRisk: {
 		en: "Access is open right now, so this applies to anyone who can reach OwnGit.",
