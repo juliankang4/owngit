@@ -413,14 +413,6 @@
     window.setTimeout(poll, 2000);
   })();
 
-  /* Settings: expand the form whose control the reader activated, and keep the
-   * requested one open after a failed submission. */
-
-  all('[data-disclosure]').forEach(function (details) {
-    var action = details.getAttribute('data-disclosure');
-    if (details.getAttribute('data-disclosure-open') === action) { details.open = true; }
-  });
-
   /* The ref picker opens the chosen ref as soon as a pointer picks it, and
    * on Enter. A change made with arrow keys only moves the selection: on a
    * closed select those keys change the value one step at a time, and
