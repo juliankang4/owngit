@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
@@ -408,15 +407,18 @@ func TestTailscaleChangesStopWhenTheirPortChangesMeanwhile(t *testing.T) {
 	app, fake = tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	_, err = app.Tailscale.On(ctx, nil, 0)
 	noErr(t, err)
-	// Each read waits, so the change lands while turning off reads again.
-	fake.Update(func(s *tailscaletest.State) { s.ReadDelay = 500 })
-	checked := len(fake.Calls()) + 2
+	// Turning off reads the status and the Serve configuration it decides
+	// on, then reads the configuration again. That second read is held until
+	// the other program's change is in place.
+	before := len(fake.Calls())
+	fake.Update(func(s *tailscaletest.State) { s.HoldReads, s.PassReads = true, 2 })
 	finished := make(chan error, 1)
 	go func() { _, err := app.Tailscale.Off(ctx); finished <- err }()
-	for deadline := time.Now().Add(time.Minute); len(fake.Calls()) < checked && time.Now().Before(deadline); {
-		time.Sleep(5 * time.Millisecond)
+	fake.AwaitHeldReads(1)
+	if decided := fake.Calls()[before:]; !reflect.DeepEqual(decided, []string{"status --json", "serve status --json"}) {
+		t.Fatalf("turning off was held after %q, want after its first status and Serve reads", decided)
 	}
-	fake.Update(func(s *tailscaletest.State) { s.Serve, s.ReadDelay = other, 0 })
+	fake.Update(func(s *tailscaletest.State) { s.Serve, s.HoldReads = other, false })
 	if err := <-finished; !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemServeChanged || len(fake.Writes()) != 1 || !reflect.DeepEqual(fake.State().Serve, other) {
 		t.Fatalf("off: err=%v writes=%q serve=%+v", err, fake.Writes(), fake.State().Serve)
 	}

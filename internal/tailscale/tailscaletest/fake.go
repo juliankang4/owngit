@@ -1,31 +1,36 @@
 // Package tailscaletest provides a fake tailscale command for tests. No test
 // runs the real tailscale or changes this computer's Tailscale settings.
 //
-// The fake is the test binary itself: a package's TestMain calls RunIfFake,
-// which acts as tailscale when the environment names a fake state file and
-// the arguments are a tailscale command. The state file says what the fake
-// reports and records every call, so a test can check exactly which
-// commands OwnGit ran.
+// The fake is the test binary itself, linked under a private path for each
+// fake: a package's TestMain calls RunIfFake, which acts as tailscale when
+// the process runs from such a path and the arguments are a tailscale
+// command. The state file beside that path says what the fake reports and
+// records every call, so a test can check exactly which commands OwnGit ran.
+// A command therefore reaches the state of the fake it was started from,
+// whatever another test set up meanwhile.
+//
+// The test and every command it causes, each in its own process, read and
+// change the state file only while holding the lock file next to it. On
+// Windows a file that one process has open cannot be replaced by another,
+// so a read beside a command's save would fail with a sharing violation.
 package tailscaletest
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"owngit/internal/state"
 	"owngit/internal/tailscale"
 )
-
-// EnvState names the fake's state file. Set only by tests.
-const EnvState = "OWNGIT_TEST_FAKE_TAILSCALE"
 
 // State is what the fake reports and what it was asked.
 type State struct {
@@ -68,6 +73,15 @@ type State struct {
 	// counted.
 	Running    int `json:"running,omitempty"`
 	MaxRunning int `json:"max_running,omitempty"`
+
+	// HoldReads makes "status --json" and "serve status --json" wait,
+	// after any ReadDelay, until the test clears it, so a test can change
+	// the state at a known point: a waiting read answers from the state as
+	// it is when released. PassReads lets that many more reads answer
+	// meanwhile, and HeldReads counts the reads waiting now.
+	HoldReads bool `json:"hold_reads,omitempty"`
+	PassReads int  `json:"pass_reads,omitempty"`
+	HeldReads int  `json:"held_reads,omitempty"`
 }
 
 // Status is the subset of "tailscale status --json" the fake prints.
@@ -114,42 +128,74 @@ type Fake struct {
 	file string
 }
 
-// New creates a fake that reports state and sets EnvState for the test.
-// Tests that use it cannot run in parallel.
+// New creates a fake that reports state. Its executable and state file
+// belong to this test.
 func New(t *testing.T, state State) *Fake {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &Fake{t: t, Path: executable, file: filepath.Join(t.TempDir(), "fake-tailscale.json")}
-	fake.save(state)
-	t.Setenv(EnvState, fake.file)
+	path := filepath.Join(t.TempDir(), "tailscale"+filepath.Ext(executable))
+	if err := os.Link(executable, path); err != nil {
+		// The build cache and the temporary folder can be on different
+		// file systems.
+		if err := copyExecutable(executable, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &Fake{t: t, Path: path, file: stateFile(path)}
+	// No command can run before Path is returned, so this needs no lock.
+	if err := store(fake.file, state); err != nil {
+		t.Fatal(err)
+	}
 	return fake
+}
+
+func stateFile(executable string) string {
+	return executable + ".json"
+}
+
+func copyExecutable(source, target string) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	return errors.Join(copyErr, out.Close())
 }
 
 // Update changes the fake's state.
 func (fake *Fake) Update(change func(*State)) {
 	fake.t.Helper()
-	// The lock keeps a command that runs meanwhile from losing the change.
-	unlock, err := lockFile(fake.file + ".lock")
-	if err != nil {
+	if err := update(fake.file, func(state *State) bool { change(state); return true }); err != nil {
 		fake.t.Fatal(err)
 	}
-	defer unlock()
-	state := fake.State()
-	change(&state)
-	fake.save(state)
 }
 
 // State returns the fake's current state.
 func (fake *Fake) State() State {
 	fake.t.Helper()
-	state, err := load(fake.file)
-	if err != nil {
+	var current State
+	if err := update(fake.file, func(state *State) bool { current = *state; return false }); err != nil {
 		fake.t.Fatal(err)
 	}
-	return state
+	return current
+}
+
+// AwaitHeldReads waits until n reads are held (HoldReads).
+func (fake *Fake) AwaitHeldReads(n int) {
+	fake.t.Helper()
+	for deadline := time.Now().Add(time.Minute); fake.State().HeldReads < n; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			fake.t.Fatalf("fewer than %d Tailscale reads were held within a minute: %q", n, fake.Calls())
+		}
+	}
 }
 
 // Calls returns the commands run so far, each joined with spaces.
@@ -173,14 +219,23 @@ func (fake *Fake) Writes() []string {
 	return writes
 }
 
-func (fake *Fake) save(state State) {
-	fake.t.Helper()
-	if err := store(fake.file, state); err != nil {
-		fake.t.Fatal(err)
+// update runs change on the state with the lock held, and saves the state
+// when change returns true.
+func update(file string, change func(*State) bool) error {
+	unlock, err := lockFile(file + ".lock")
+	if err != nil {
+		return err
 	}
+	defer unlock()
+	state, err := load(file)
+	if err != nil {
+		return err
+	}
+	if !change(&state) {
+		return nil
+	}
+	return store(file, state)
 }
-
-var fileLock sync.Mutex
 
 func load(file string) (State, error) {
 	var state State
@@ -191,75 +246,101 @@ func load(file string) (State, error) {
 	return state, json.Unmarshal(content, &state)
 }
 
+// store writes the state in place. Every reader holds the lock, so none
+// sees a half-written file. Replacing the file by a rename instead fails
+// on Windows while any other handle is open on it, even one that only
+// reads its attributes, such as another fake command checking that the
+// file exists or a virus scanner looking at the last write.
 func store(file string, state State) error {
 	content, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-	temporary := file + ".tmp"
-	if err := os.WriteFile(temporary, content, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temporary, file)
+	return os.WriteFile(file, content, 0o600)
 }
 
 // RunIfFake acts as tailscale and exits when this process was started as
-// the fake. Call it first in TestMain.
+// a fake. Call it first in TestMain. A fake answers every invocation, so an
+// unsupported command fails rather than running the tests.
 func RunIfFake() {
-	file := os.Getenv(EnvState)
-	if file == "" || len(os.Args) < 2 || !slices.Contains([]string{"version", "status", "serve", "funnel", "up", "down", "set", "cert"}, os.Args[1]) {
+	executable, err := os.Executable()
+	if err != nil {
+		return
+	}
+	file := stateFile(executable)
+	if _, err := os.Stat(file); err != nil {
 		return
 	}
 	os.Exit(run(file, os.Args[1:]))
 }
 
-// run handles one fake command. Calls from concurrent processes are
-// serialized with a lock file next to the state.
+// run handles one fake command. It returns the command's exit code, or 3
+// when the state cannot be read or saved.
 func run(file string, arguments []string) int {
+	write := len(arguments) > 1 && arguments[0] == "serve" && arguments[1] != "status"
+	read := slices.Contains([]string{"status --json", "serve status --json"}, strings.Join(arguments, " "))
 	var started State
-	if code := locked(file, func(state *State) int {
+	err := update(file, func(state *State) bool {
 		state.Running++
 		state.MaxRunning = max(state.MaxRunning, state.Running)
 		started = *state
-		return 0
-	}); code != 0 {
-		return code
-	}
-	write := len(arguments) > 1 && arguments[0] == "serve" && arguments[1] != "status"
-	read := slices.Contains([]string{"status --json", "serve status --json"}, strings.Join(arguments, " "))
+		return true
+	})
 	switch {
+	case err != nil:
 	case write && started.WriteDelay > 0:
 		time.Sleep(time.Duration(started.WriteDelay) * time.Millisecond)
 	case read && started.ReadDelay > 0:
 		time.Sleep(time.Duration(started.ReadDelay) * time.Millisecond)
 	}
-	return locked(file, func(state *State) int {
-		state.Running--
-		state.Calls = append(state.Calls, arguments)
-		return handle(state, arguments)
-	})
-}
-
-// locked runs change on the state with the lock held and saves it. It
-// returns change's exit code, or 3 when the state cannot be read or saved.
-func locked(file string, change func(*State) int) int {
-	unlock, err := lockFile(file + ".lock")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 3
+	if err == nil && read {
+		err = awaitRelease(file)
 	}
-	defer unlock()
-	state, err := load(file)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 3
+	code := 0
+	if err == nil {
+		err = update(file, func(state *State) bool {
+			state.Running--
+			state.Calls = append(state.Calls, arguments)
+			code = handle(state, arguments)
+			return true
+		})
 	}
-	code := change(&state)
-	if err := store(file, state); err != nil {
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 3
 	}
 	return code
+}
+
+// awaitRelease returns once this read may answer: nothing holds reads, or a
+// pass is left (HoldReads).
+func awaitRelease(file string) error {
+	held := false
+	for {
+		released := false
+		err := update(file, func(state *State) bool {
+			if state.HoldReads && state.PassReads == 0 {
+				if held {
+					return false
+				}
+				held = true
+				state.HeldReads++
+				return true
+			}
+			released = true
+			if state.HoldReads {
+				state.PassReads--
+			}
+			if held {
+				state.HeldReads--
+			}
+			return state.HoldReads || held
+		})
+		if err != nil || released {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func handle(state *State, arguments []string) int {
@@ -379,21 +460,21 @@ func (state *State) removeHandler(port string) bool {
 	return true
 }
 
-// lockFile takes an exclusive lock by creating a file, waiting up to five
-// seconds for another fake call to finish.
+// lockFile holds the operating system's lock on the file at path, waiting
+// up to five seconds for another fake call to release it. The file is kept
+// between calls: on Windows a name that was just deleted cannot be created
+// again while any handle to it is still open, so a lock taken by creating
+// and deleting a file failed now and then with "Access is denied".
 func lockFile(path string) (func(), error) {
-	fileLock.Lock()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			file.Close()
-			return func() { _ = os.Remove(path); fileLock.Unlock() }, nil
-		}
-		if !errors.Is(err, os.ErrExist) || time.Now().After(deadline) {
-			fileLock.Unlock()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(25 * time.Millisecond) {
+		release, err := state.AcquireExclusiveFileLock(path)
+		switch {
+		case err == nil:
+			return release, nil
+		case !errors.Is(err, state.ErrInstanceRunning):
 			return nil, fmt.Errorf("fake tailscale: lock %s: %w", path, err)
+		case time.Now().After(deadline):
+			return nil, fmt.Errorf("fake tailscale: lock %s is still held after five seconds", path)
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
 }

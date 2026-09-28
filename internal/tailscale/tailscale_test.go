@@ -5,11 +5,14 @@ import (
 	"errors"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
@@ -18,6 +21,84 @@ import (
 func TestMain(m *testing.M) {
 	tailscaletest.RunIfFake()
 	os.Exit(m.Run())
+}
+
+// Each fake's commands reach its own state, also while another fake
+// exists, so a command started for one test cannot report or record the
+// fake of another.
+func TestFakeCommandsKeepTheirOwnState(t *testing.T) {
+	first := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
+	other := tailscaletest.Running()
+	other.Self.DNSName, other.CertDomains = "other.tail0000.ts.net.", []string{"other.tail0000.ts.net"}
+	second := tailscaletest.New(t, tailscaletest.State{Status: other})
+	for _, test := range []struct {
+		fake *tailscaletest.Fake
+		want string
+	}{{first, tailscaletest.Name}, {second, "other.tail0000.ts.net"}} {
+		status, err := tailscale.Command{Path: test.fake.Path}.Status(context.Background())
+		if err != nil || status.Name != test.want || !reflect.DeepEqual(test.fake.Calls(), []string{"status --json"}) {
+			t.Fatalf("want %s: status=%+v err=%v calls=%q", test.want, status, err, test.fake.Calls())
+		}
+	}
+}
+
+// A fake answers every invocation itself, so an unsupported command fails
+// instead of running the test binary's tests.
+func TestFakeCommandsRejectUnknownArguments(t *testing.T) {
+	fake := tailscaletest.New(t, tailscaletest.State{})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, fake.Path, "-test.run=^$").CombinedOutput()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(output), "unsupported command") {
+		t.Fatalf("unknown fake command: err=%v output=%s", err, output)
+	}
+}
+
+// Fake commands in other processes and the test's own reads and changes
+// overlap without failing or losing a change, because each holds the
+// state's lock. On Windows a read beside a command's save failed with a
+// sharing violation.
+func TestFakeStateSurvivesOverlappingCommandsAndReads(t *testing.T) {
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
+	command := tailscale.Command{Path: fake.Path}
+	const commands = 8
+	errs := make(chan error, commands)
+	for range commands {
+		go func() {
+			_, err := command.Status(context.Background())
+			errs <- err
+		}()
+	}
+	changes := 0
+	for done := 0; done < commands; {
+		select {
+		case err := <-errs:
+			if err != nil {
+				t.Fatal(err)
+			}
+			done++
+		default:
+			fake.Update(func(s *tailscaletest.State) { s.Calls = append(s.Calls, []string{"test", strconv.Itoa(changes)}) })
+			changes++
+			_ = fake.State()
+		}
+	}
+	reads, marks := 0, 0
+	for _, call := range fake.Calls() {
+		switch {
+		case call == "status --json":
+			reads++
+		case call == "test "+strconv.Itoa(marks):
+			marks++
+		default:
+			// A lost change shows as a later mark in the place of the missing one.
+			t.Fatalf("unexpected or out of order call %q in %q", call, fake.Calls())
+		}
+	}
+	if reads != commands || marks != changes {
+		t.Fatalf("%d reads and %d changes recorded, want %d and %d", reads, marks, commands, changes)
+	}
 }
 
 func TestFindUsesOnlyTheGivenPath(t *testing.T) {

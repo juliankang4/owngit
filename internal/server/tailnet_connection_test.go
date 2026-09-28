@@ -180,8 +180,10 @@ func TestSetupOverTheTailnetNeedsNoPlainHTTPAcknowledgement(t *testing.T) {
 // without the label; afterwards pages use the latest addresses while a new
 // reading runs in the background.
 func TestTheTailnetLabelDoesNotWaitForTailscale(t *testing.T) {
-	// Each tailscale command answers after 3 s, so a reading takes 6 s.
-	app, fake := withTailscale(t, newUnacknowledgedApp(t), tailscaletest.State{Status: tailscaletest.Running(), ReadDelay: 3000})
+	// Tailscale answers no read until the test lets it.
+	app, fake := withTailscale(t, newUnacknowledgedApp(t), tailscaletest.State{Status: tailscaletest.Running(), HoldReads: true})
+	release := func() { fake.Update(func(s *tailscaletest.State) { s.HoldReads = false }) }
+	t.Cleanup(release)
 	server := serve(t, arriving(t, app, app.Handler(), tailscaletest.IPv4+":7654", "100.64.0.9:50123"))
 	client, _ := newBrowserClient(t)
 	labeled := func() bool {
@@ -207,14 +209,16 @@ func TestTheTailnetLabelDoesNotWaitForTailscale(t *testing.T) {
 	if labeled() || reading() == nil {
 		t.Fatal("the first page waited for the whole reading, or none runs")
 	}
+	release()
 	finished()
 	if !labeled() {
 		t.Fatal("no label after the reading")
 	}
+	fake.Update(func(s *tailscaletest.State) { s.HoldReads = true })
 	app.Tailscale.forget()
 	if !labeled() || reading() == nil {
 		t.Fatal("a page waited for a new reading instead of using the latest addresses")
 	}
+	release()
 	finished()
-	fake.Update(func(s *tailscaletest.State) { s.ReadDelay = 0 })
 }
