@@ -452,3 +452,41 @@ func TestWindowsEntryOpenStatusKeepsItsMeaning(t *testing.T) {
 		}
 	}
 }
+
+// Protecting a directory that is already private writes nothing. Setting a
+// directory's access list rewrites the inherited entries of the files inside
+// it from an earlier reading, which could undo the protection that another
+// process has just given one of them: a concurrent start then failed with
+// "private file ACL must not inherit access entries".
+func TestWindowsProtectingAPrivateDirectoryAgainLeavesItsFilesAlone(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "state")
+	noErr(t, os.Mkdir(directory, 0o700))
+	noErr(t, ProtectPrivatePath(directory, true))
+	child := filepath.Join(directory, "child")
+	noErr(t, os.WriteFile(child, nil, 0o600))
+	// Give the file an access list without the entry its directory passes
+	// on, written without inheritance processing, so any rewrite of the
+	// inherited entries shows.
+	user, _, err := processIdentity()
+	noErr(t, err)
+	acl, err := ownerOnlyACL(user, false)
+	noErr(t, err)
+	descriptor, err := windows.NewSecurityDescriptor()
+	noErr(t, err)
+	noErr(t, descriptor.SetDACL(acl, true, false))
+	name, err := windows.UTF16PtrFromString(child)
+	noErr(t, err)
+	handle, err := windows.CreateFile(name, windows.WRITE_DAC|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, 0, 0)
+	noErr(t, err)
+	err = windows.SetKernelObjectSecurity(handle, windows.DACL_SECURITY_INFORMATION, descriptor)
+	noErr(t, errors.Join(err, windows.CloseHandle(handle)))
+	before, err := protectionFingerprint(child)
+	noErr(t, err)
+	noErr(t, ProtectPrivatePath(directory, true))
+	after, err := protectionFingerprint(child)
+	noErr(t, err)
+	if after != before {
+		t.Fatalf("protecting the private directory again rewrote the file inside it:\nbefore=%s\nafter=%s", before, after)
+	}
+}

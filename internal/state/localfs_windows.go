@@ -200,6 +200,14 @@ func ProtectPrivatePath(path string, directory bool) error {
 	if err != nil {
 		return err
 	}
+	// A path that is already private is left as it is. Setting the access
+	// list of a directory also rewrites the inherited entries of everything
+	// inside it, from a reading taken before the rewrite. Every open of the
+	// state protects its directory, so repeating that write while another
+	// process protects a new file there could undo that file's protection.
+	if validateOwnerOnly(path, user, directory) == nil {
+		return nil
+	}
 	owner, err := validateProcessOwned(path, user, defaultOwner)
 	if err != nil {
 		return err

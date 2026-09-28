@@ -143,7 +143,7 @@ func (issuer *Issuer) issue(ctx context.Context) (string, string, error) {
 	defer os.Remove(temporaryPath)
 	if err := state.ProtectPrivateHandle(temporary, false); err != nil {
 		temporary.Close()
-		return "", "", err
+		return "", "", fmt.Errorf("protect %s: %w", filepath.Base(temporaryPath), err)
 	}
 	if _, err := temporary.Write(content); err != nil {
 		temporary.Close()
@@ -237,7 +237,7 @@ func writeJournal(directory string, journal issueJournal) error {
 	defer os.Remove(name)
 	if err := state.ProtectPrivateHandle(temporary, false); err != nil {
 		temporary.Close()
-		return err
+		return fmt.Errorf("protect %s: %w", filepath.Base(name), err)
 	}
 	if _, err := temporary.Write(content); err != nil {
 		temporary.Close()
