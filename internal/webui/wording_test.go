@@ -285,3 +285,13 @@ func TestSetupStorageWordingMatchesTheSupportedStorage(t *testing.T) {
 		}
 	}
 }
+
+// The Access text names the sidebar button that ends a confirmation by the
+// label the button shows, in both languages.
+func TestConfirmationScopeNamesTheEndButton(t *testing.T) {
+	for _, lang := range []Lang{LangEN, LangKO} {
+		if scope, end := Text(lang, MsgConfirmScope), Text(lang, MsgNavAdminEnd); !strings.Contains(scope, end) {
+			t.Errorf("%s: %q does not name the %q button", lang, scope, end)
+		}
+	}
+}

@@ -54,7 +54,7 @@ var confirmationCatalog = map[MessageCode]message{
 	MsgConfirmTitle: {en: "Administrator password check", ko: "관리자 비밀번호 확인"},
 	MsgConfirmScope: {
 		en: "Settings, repository settings, deletion, imports, checks and credentials in this dashboard all follow this. Time counts from when the password was last typed in this browser; moving between pages does not extend it. A shorter time applies at once, also to browsers already confirmed, counted from when they typed the password. Signing out, End, or changing the administrator password ends a remembered check. The command line and the API always ask, for reads as well as changes.",
-		ko: "이 대시보드의 설정, 저장소 설정, 삭제, 가져오기, 체크, 자격 증명 관리가 모두 이 규칙을 따릅니다. 이 브라우저에서 비밀번호를 마지막으로 입력한 때부터 시간을 재며, 페이지를 옮겨 다녀도 늘어나지 않습니다. 시간을 줄이면 이미 확인된 브라우저에도 비밀번호를 입력한 때부터 따져 바로 적용됩니다. 로그아웃하거나 확인을 끝내거나 관리자 비밀번호를 바꾸면 기억해 둔 확인도 끝납니다. 명령줄과 API는 조회와 변경 모두 언제나 비밀번호를 묻습니다.",
+		ko: "이 대시보드의 설정, 저장소 설정, 삭제, 가져오기, 체크, 자격 증명 관리가 모두 이 규칙을 따릅니다. 이 브라우저에서 비밀번호를 마지막으로 입력한 때부터 시간을 재며, 페이지를 옮겨 다녀도 늘어나지 않습니다. 시간을 줄이면 이미 확인된 브라우저에도 비밀번호를 입력한 때부터 따져 바로 적용됩니다. 로그아웃하거나 종료를 누르거나 관리자 비밀번호를 바꾸면 기억해 둔 확인도 끝납니다. 명령줄과 API는 조회와 변경 모두 언제나 비밀번호를 묻습니다.",
 	},
 	MsgConfirmLabel: {en: "Ask for the administrator password", ko: "관리자 비밀번호 묻기"},
 	MsgConfirmHelp: {
