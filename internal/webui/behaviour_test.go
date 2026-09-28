@@ -184,8 +184,8 @@ func TestLeavingSettingsSendsNothingItself(t *testing.T) {
 	}
 	// The only values it touches: the address being left for, clearing
 	// the dialog's password field, and the value of a choice.
-	for part, want := range map[string]int{".value": 4, "to.value = leave.target": 1, "to.value = ''": 1,
-		"querySelector('[data-leave-password]').value = ''": 1, "item.value === value": 1} {
+	for part, want := range map[string]int{".value": 5, "to.value = leave.target": 1, "to.value = ''": 1,
+		"querySelector('[data-leave-password]').value = ''": 2, "item.value === value": 1} {
 		if got := strings.Count(block, part); got != want {
 			t.Errorf("the leave block has %q %d times, want %d", part, got, want)
 		}
@@ -205,6 +205,12 @@ func TestLeavingSettingsSendsNothingItself(t *testing.T) {
 	// unsaved, and taken back again.
 	if strings.Count(block, "pushState(") != 1 || !strings.Contains(block, "window.history.back();") {
 		t.Error("the leave block adds history entries other than its one guard")
+	}
+	// A tab with no page before Settings gets no guard: its Back would go
+	// nowhere, and leaving by it would only discard the changes.
+	if !strings.Contains(section(t, block, "function arm()", "function unguard("), "if (!leaveHasPast ||") ||
+		!strings.Contains(block, "var leaveHasPast = window.history.length > 1 &&") {
+		t.Error("the guard is added without a page to go back to")
 	}
 }
 

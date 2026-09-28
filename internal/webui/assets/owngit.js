@@ -1251,6 +1251,14 @@
   var leaveListening = false;   // the browser's own question is on
   var leaving = null;           // the way out that the dialog holds
   var leaveReturn = null;       // what had focus before the dialog opened
+  // Whether this tab has a page before this one. Without one (Settings
+  // opened in a new tab), Back cannot leave, so no entry is added for it:
+  // it would only turn on a Back button that goes nowhere. The history
+  // length counts a page of another site too, which navigation.canGoBack
+  // does not; the Navigation API only rules out a tab whose other entries
+  // all come after this page.
+  var leaveHasPast = window.history.length > 1 &&
+    !(window.navigation && window.navigation.canGoBack === false && window.navigation.canGoForward === true);
 
   function dirtyGroups(except) {
     return settingsPanel ? all('[data-group]', settingsPanel).filter(function (group) {
@@ -1305,7 +1313,7 @@
   }
 
   function arm() {
-    if (leaveArmed || leaveUnguarding) { return; }
+    if (!leaveHasPast || leaveArmed || leaveUnguarding) { return; }
     try {
       keepScroll(true);
       window.history.pushState(guardMark(), '', window.location.href);
@@ -1327,7 +1335,10 @@
     leaveUnguarding = true;
     leaveNext = next;
     window.history.back();
-    // A browser that never reports the step back still goes on.
+    // A safety net: should the step back never be reported, the way out
+    // still goes on. No browser is known to skip that popstate; 1.5 s is
+    // far above the few milliseconds a same-page step takes in Chrome and
+    // WebKit, so the net does not race a normal step.
     leaveTimer = window.setTimeout(unguarded, 1500);
   }
 
@@ -1450,6 +1461,8 @@
       list.appendChild(item);
     });
     leaveDialog.querySelector('[data-leave-apart]').hidden = leaving.canSave;
+    // The reason Save and leave is missing is read with the description.
+    leaveDialog.setAttribute('aria-describedby', leaving.canSave ? 'leave-d' : 'leave-d leave-apart');
     leaveDialog.querySelector('[data-leave-save]').hidden = !leaving.canSave;
     leaveDialog.querySelector('[data-leave-password-field]').hidden = !leaving.gate;
   }
@@ -1697,6 +1710,7 @@
       leaveUnguarding = false;
       leaveNext = null;
       detachPage(null);
+      leaveDialog.querySelector('[data-leave-password]').value = '';
       setLeaveBusy(false);
       if (leaveDialog.open) { leaveDialog.close(); }
       leaveArmed = isGuard(window.history.state);
