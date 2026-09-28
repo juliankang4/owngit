@@ -101,8 +101,9 @@ func TestTargetTable(t *testing.T) {
 	}
 }
 
-// TestBuildVerifyAndCounterexamples builds the native target once and then
-// proves that verification rejects a mutated output directory.
+// TestBuildVerifyAndCounterexamples builds the native target once, checks
+// what the archive carries, and then proves that verification rejects a
+// mutated output directory.
 func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	requireGoToolchain(t)
 	root := repoRoot(t)
@@ -123,14 +124,52 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	noErr(t, err)
 	entries, err := readArchive(filepath.Join(dir, document.Artifacts[0].Name), host.format)
 	noErr(t, err)
-	font := false
+	byName := map[string]archiveEntry{}
 	for _, entry := range entries {
-		if entry.name == "THIRD_PARTY_NOTICES/bundled-assets/pretendard/PRETENDARD-LICENSE.txt" {
-			font = true
+		byName[entry.name] = entry
+	}
+	if _, ok := byName["THIRD_PARTY_NOTICES/bundled-assets/pretendard/PRETENDARD-LICENSE.txt"]; !ok {
+		t.Fatal("the archive carries no notice for the embedded font")
+	}
+
+	// An installed user copies the coding-tool skill and its guide from the
+	// archive. Verifying the names alone would pass on an empty file, so the
+	// contents are checked too.
+	for _, name := range releaseResources {
+		entry, ok := byName[name]
+		if !ok {
+			t.Fatalf("the archive does not carry %s", name)
+		}
+		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+		noErr(t, err)
+		if string(entry.data) != string(source) {
+			t.Errorf("%s in the archive does not match the source file", name)
+		}
+		if entry.mode&0o111 != 0 {
+			t.Errorf("%s is packaged executable (mode %04o)", name, entry.mode)
 		}
 	}
-	if !font {
-		t.Fatal("the archive carries no notice for the embedded font")
+	// Each language version of the guide links to the skill and to the other
+	// version by relative path. Keeping the source layout is what makes those
+	// links resolve in an unpacked archive.
+	for guideName, links := range map[string][]string{
+		"docs/CODING_TOOLS.md":    {"../integrations/skills/owngit-checks/SKILL.md", "CODING_TOOLS.ko.md"},
+		"docs/CODING_TOOLS.ko.md": {"../integrations/skills/owngit-checks/SKILL.md", "CODING_TOOLS.md"},
+	} {
+		guide := string(byName[guideName].data)
+		for _, link := range links {
+			if !strings.Contains(guide, "("+link+")") && !strings.Contains(guide, `"`+link+`"`) {
+				t.Fatalf("%s no longer links to %s", guideName, link)
+			}
+			resolved := filepath.Join(filepath.Dir(guideName), filepath.FromSlash(link))
+			if _, ok := byName[filepath.ToSlash(filepath.Clean(resolved))]; !ok {
+				t.Errorf("the link from %s to %s does not resolve inside the archive", guideName, link)
+			}
+		}
+	}
+	// The skill is the reviewed one, not an edited copy.
+	if !strings.Contains(string(byName["integrations/skills/owngit-checks/SKILL.md"].data), "name: owngit-checks") {
+		t.Error("the packaged skill has no skill name in its front matter")
 	}
 
 	t.Run("corrupted archive byte", func(t *testing.T) {
@@ -252,6 +291,54 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 			})
 		})
 		expectVerifyError(t, copied, "not a regular file")
+	})
+
+	// A missing, altered, smuggled or emptied resource fails the build output
+	// rather than reaching a user.
+	t.Run("a resource is missing", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		rewriteDist(t, copied, true, func(files []memFile) []memFile {
+			return removeFile(files, "integrations/skills/owngit-checks/SKILL.md")
+		})
+		expectVerifyError(t, copied, "integrations/skills/owngit-checks/SKILL.md")
+	})
+
+	t.Run("a resource is modified", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		// The manifest is left alone, so the altered bytes are what fails.
+		rewriteDist(t, copied, false, func(files []memFile) []memFile {
+			for i := range files {
+				if files[i].name == "docs/CODING_TOOLS.md" {
+					files[i].data = append(append([]byte{}, files[i].data...), "\nedited\n"...)
+				}
+			}
+			return files
+		})
+		expectVerifyError(t, copied, "docs/CODING_TOOLS.md")
+	})
+
+	t.Run("an undeclared file rides along", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		rewriteDist(t, copied, true, func(files []memFile) []memFile {
+			return append(files, memFile{
+				name: "integrations/skills/owngit-checks/EXTRA.md", mode: 0o644,
+				data: []byte("undeclared\n"),
+			})
+		})
+		expectVerifyError(t, copied, "undeclared resource")
+	})
+
+	t.Run("a resource is emptied", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		rewriteDist(t, copied, true, func(files []memFile) []memFile {
+			for i := range files {
+				if files[i].name == "docs/CODING_TOOLS.md" {
+					files[i].data = nil
+				}
+			}
+			return files
+		})
+		expectVerifyError(t, copied, "empty")
 	})
 }
 

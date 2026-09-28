@@ -100,6 +100,28 @@ func TestNativeDebPrototypes(t *testing.T) {
 			}
 		}
 		assertDesktopLaunchCommand(t, string(dataFiles["usr/share/applications/owngit.desktop"].data))
+		// A user who installed the package, rather than unpacking an archive,
+		// still has to be able to find and copy the coding-tool skill.
+		for _, name := range releaseResources {
+			installed := "usr/share/doc/owngit/" + name
+			file, ok := dataFiles[installed]
+			if !ok {
+				t.Fatalf("%s does not install %s", built.Name, installed)
+			}
+			source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+			noErr(t, err)
+			if string(file.data) != string(source) {
+				t.Errorf("%s in %s does not match the source file", installed, built.Name)
+			}
+			if file.mode&0o111 != 0 {
+				t.Errorf("%s is installed executable (mode %04o)", installed, file.mode)
+			}
+		}
+		// The documented install path is what the README tells a user to look
+		// at, so a silent relocation has to fail here.
+		if !strings.Contains(string(dataFiles["usr/share/doc/owngit/README.Debian"].data), "/usr/share/doc/owngit/integrations/skills/owngit-checks/SKILL.md") {
+			t.Errorf("%s does not tell the user where the skill is installed", built.Name)
+		}
 		for name := range dataFiles {
 			for _, forbidden := range []string{"systemd", "autostart", ".config", "owngit.sqlite", ".local"} {
 				if strings.Contains(strings.ToLower(name), forbidden) {
@@ -608,9 +630,10 @@ func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("macOS prototype requires the native Apple Silicon toolchain")
 	}
+	root := repoRoot(t)
 	out := filepath.Join(t.TempDir(), "native-mac")
 	if err := nativeCommand([]string{
-		"-source", repoRoot(t), "-manifest", filepath.Join(sharedDist(t), "manifest.json"),
+		"-source", root, "-manifest", filepath.Join(sharedDist(t), "manifest.json"),
 		"-out", out, "-formats", "macos", "-baseline", testNativeBaseline,
 	}); err != nil {
 		t.Fatal(err)
@@ -634,9 +657,11 @@ func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 	if digest, err := sha256File(path); err != nil || digest != built.SHA256 {
 		t.Fatalf("DMG digest = %q, %v", digest, err)
 	}
-	paths := map[string]bool{}
+	// The manifest file list is what the bundle is built and verified from,
+	// so the recorded paths, modes and digests are the layout.
+	paths := map[string]fileEntry{}
 	for _, file := range built.Files {
-		paths[file.Path] = true
+		paths[file.Path] = file
 	}
 	for _, required := range []string{
 		"OwnGit.app/Contents/Info.plist",
@@ -647,8 +672,23 @@ func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 		"OwnGit.app/Contents/Resources/package-provenance.json",
 		"README.txt",
 	} {
-		if !paths[required] {
+		if _, ok := paths[required]; !ok {
 			t.Errorf("DMG manifest is missing %s", required)
+		}
+	}
+	for _, name := range releaseResources {
+		bundled := "OwnGit.app/Contents/Resources/" + name
+		file, ok := paths[bundled]
+		if !ok {
+			t.Fatalf("the app does not carry %s", bundled)
+		}
+		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+		noErr(t, err)
+		if file.SHA256 != sha256Bytes(source) {
+			t.Errorf("%s does not match the source file", bundled)
+		}
+		if file.Mode != "0644" {
+			t.Errorf("%s is recorded with mode %s", bundled, file.Mode)
 		}
 	}
 	for path := range paths {

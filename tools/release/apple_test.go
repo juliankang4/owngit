@@ -600,12 +600,23 @@ func TestAdHocSigningWithRealCodesign(t *testing.T) {
 // the ticket and Gatekeeper checks passed. Every earlier failure leaves the
 // output folder and its parent as they were, because the DMG seals the claim
 // that it is notarized. Failures after acceptance name the submission.
+//
+// Every refusal happens after the disk image is made, and none depends on
+// what the image holds, so hdiutil writes a placeholder image here.
+// TestAdHocSigningWithRealCodesign makes and checks a real one. codesign
+// stays real, so each row signs and verifies the app, and signs the
+// placeholder image as a plain file, before it fails.
 func TestSignedDiskImageFailuresLeaveNoOutput(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("building the DMG needs the native Apple silicon toolchain")
 	}
-	root := repoRoot(t)
-	dist := sharedDist(t)
+	// The verified inputs are read once. buildMacPrototype does not change
+	// them; each row brings its own command runner and output folder.
+	inputs, err := loadNativeInputs(repoRoot(t), filepath.Join(sharedDist(t), "manifest.json"), testNativeBaseline, "go", "xcrun", "hdiutil", map[string]bool{"macos": true})
+	noErr(t, err)
+	payload := inputs.payloads["darwin/arm64"]
+	payload.built.AppleSignature = &appleSignature{}
+	inputs.payloads["darwin/arm64"] = payload
 	failure := &nativeCommandError{command: "fake", message: "fake failure"}
 	for _, test := range []struct {
 		name string
@@ -641,19 +652,21 @@ func TestSignedDiskImageFailuresLeaveNoOutput(t *testing.T) {
 				if output, err, handled := test.fail(name, arguments); handled {
 					return output, err
 				}
+				switch {
+				case name == "hdiutil" && arguments[0] == "create":
+					return "", os.WriteFile(arguments[len(arguments)-1], []byte("synthetic disk image\n"), 0o644)
+				case name == "hdiutil" && arguments[0] == "verify":
+					return "", nil
+				}
 				return base(name, arguments, environment)
 			}
-			inputs, err := loadNativeInputs(root, filepath.Join(dist, "manifest.json"), testNativeBaseline, "go", "xcrun", "hdiutil", map[string]bool{"macos": true})
-			noErr(t, err)
-			payload := inputs.payloads["darwin/arm64"]
-			payload.built.AppleSignature = &appleSignature{}
-			inputs.payloads["darwin/arm64"] = payload
-			inputs.run, inputs.signer = run, &appleSigner{identity: "-", profile: testProfile, xcrun: "xcrun", run: run}
+			row := inputs
+			row.run, row.signer = run, &appleSigner{identity: "-", profile: testProfile, xcrun: "xcrun", run: run}
 			parent := t.TempDir()
 			out := filepath.Join(parent, "native")
 			noErr(t, os.Mkdir(out, 0o755))
 
-			_, err = buildMacPrototype(inputs, out)
+			_, err := buildMacPrototype(row, out)
 			for _, want := range test.want {
 				if err == nil || !strings.Contains(err.Error(), want) {
 					t.Errorf("error %v lacks %q", err, want)
@@ -771,8 +784,9 @@ func TestInterruptWhileWaitingForNotarization(t *testing.T) {
 	}
 
 	t.Run("native interrupt", func(t *testing.T) {
+		// The macOS format reads only the darwin/arm64 artifact.
 		portable := filepath.Join(t.TempDir(), "portable")
-		code, output := release(t, t.TempDir(), "accept", nil, append([]string{"build", "-source", root, "-out", portable}, signing...)...)
+		code, output := release(t, t.TempDir(), "accept", nil, append([]string{"build", "-source", root, "-out", portable, "-targets", "darwin/arm64"}, signing...)...)
 		if code != 0 {
 			t.Fatalf("signed build with accepting fakes failed (%d):\n%s", code, output)
 		}

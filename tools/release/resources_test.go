@@ -4,138 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
-
-// TestResourcesTravelInThePortableArchive checks that an installed user gets
-// the coding-tool skill and its guide.
-//
-// The point of packaging them is that a user with only an artifact can copy
-// the skill into a coding tool. Verifying the names alone would pass on an
-// empty file, so the contents are checked too.
-func TestResourcesTravelInThePortableArchive(t *testing.T) {
-	requireGoToolchain(t)
-	root := repoRoot(t)
-	native := nativeTarget(t)
-	dir := t.TempDir()
-	noErrf(t, buildCommand([]string{"-source", root, "-out", dir, "-targets", native}), "build")
-	noErrf(t, verifyDir(dir, "go"), "verify rejected a fresh build")
-
-	document, err := readManifest(filepath.Join(dir, "manifest.json"))
-	noErr(t, err)
-	current, err := targetFor(document.Artifacts[0].Target)
-	noErr(t, err)
-	entries, err := readArchive(filepath.Join(dir, document.Artifacts[0].Name), current.format)
-	noErr(t, err)
-	byName := map[string]archiveEntry{}
-	for _, entry := range entries {
-		byName[entry.name] = entry
-	}
-
-	for _, name := range releaseResources {
-		entry, ok := byName[name]
-		if !ok {
-			t.Fatalf("the archive does not carry %s", name)
-		}
-		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
-		noErr(t, err)
-		if string(entry.data) != string(source) {
-			t.Errorf("%s in the archive does not match the source file", name)
-		}
-		if entry.mode&0o111 != 0 {
-			t.Errorf("%s is packaged executable (mode %04o)", name, entry.mode)
-		}
-	}
-
-	// Each language version of the guide links to the skill and to the other
-	// version by relative path. Keeping the source layout is what makes those
-	// links resolve in an unpacked archive.
-	for guideName, links := range map[string][]string{
-		"docs/CODING_TOOLS.md":    {"../integrations/skills/owngit-checks/SKILL.md", "CODING_TOOLS.ko.md"},
-		"docs/CODING_TOOLS.ko.md": {"../integrations/skills/owngit-checks/SKILL.md", "CODING_TOOLS.md"},
-	} {
-		entry, ok := byName[guideName]
-		if !ok {
-			t.Errorf("the archive does not carry %s", guideName)
-			continue
-		}
-		guide := string(entry.data)
-		for _, link := range links {
-			if !strings.Contains(guide, "("+link+")") && !strings.Contains(guide, `"`+link+`"`) {
-				t.Fatalf("%s no longer links to %s", guideName, link)
-			}
-			resolved := filepath.Join(filepath.Dir(guideName), filepath.FromSlash(link))
-			if _, ok := byName[filepath.ToSlash(filepath.Clean(resolved))]; !ok {
-				t.Errorf("the link from %s to %s does not resolve inside the archive", guideName, link)
-			}
-		}
-	}
-
-	// The skill is the reviewed one, not an edited copy.
-	if !strings.Contains(string(byName["integrations/skills/owngit-checks/SKILL.md"].data), "name: owngit-checks") {
-		t.Error("the packaged skill has no skill name in its front matter")
-	}
-}
-
-// TestVerifyRejectsABrokenResourceSet checks the refusals.
-//
-// Packaging is only useful if a missing, altered or smuggled resource fails
-// the build output rather than reaching a user.
-func TestVerifyRejectsABrokenResourceSet(t *testing.T) {
-	requireGoToolchain(t)
-	root := repoRoot(t)
-	native := nativeTarget(t)
-	dir := t.TempDir()
-	noErrf(t, buildCommand([]string{"-source", root, "-out", dir, "-targets", native}), "build")
-
-	t.Run("a resource is missing", func(t *testing.T) {
-		copied := copyDist(t, dir)
-		rewriteDist(t, copied, true, func(files []memFile) []memFile {
-			return removeFile(files, "integrations/skills/owngit-checks/SKILL.md")
-		})
-		expectVerifyError(t, copied, "integrations/skills/owngit-checks/SKILL.md")
-	})
-
-	t.Run("a resource is modified", func(t *testing.T) {
-		copied := copyDist(t, dir)
-		// The manifest is left alone, so the altered bytes are what fails.
-		rewriteDist(t, copied, false, func(files []memFile) []memFile {
-			for i := range files {
-				if files[i].name == "docs/CODING_TOOLS.md" {
-					files[i].data = append(append([]byte{}, files[i].data...), "\nedited\n"...)
-				}
-			}
-			return files
-		})
-		expectVerifyError(t, copied, "docs/CODING_TOOLS.md")
-	})
-
-	t.Run("an undeclared file rides along", func(t *testing.T) {
-		copied := copyDist(t, dir)
-		rewriteDist(t, copied, true, func(files []memFile) []memFile {
-			return append(files, memFile{
-				name: "integrations/skills/owngit-checks/EXTRA.md", mode: 0o644,
-				data: []byte("undeclared\n"),
-			})
-		})
-		expectVerifyError(t, copied, "undeclared resource")
-	})
-
-	t.Run("a resource is emptied", func(t *testing.T) {
-		copied := copyDist(t, dir)
-		rewriteDist(t, copied, true, func(files []memFile) []memFile {
-			for i := range files {
-				if files[i].name == "docs/CODING_TOOLS.md" {
-					files[i].data = nil
-				}
-			}
-			return files
-		})
-		expectVerifyError(t, copied, "empty")
-	})
-}
 
 // TestResourceCollectionRefusesUnsafeInput checks the source-side rules.
 //
@@ -318,96 +189,6 @@ func mustFail(t *testing.T, root string) error {
 	return err
 }
 
-// TestTheMacAppCarriesTheResources checks the app bundle layout.
-//
-// The manifest file list is what the packaged bundle is built and verified
-// from, so the recorded paths and digests are the layout.
-func TestTheMacAppCarriesTheResources(t *testing.T) {
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("macOS prototype requires the native Apple Silicon toolchain")
-	}
-	root := repoRoot(t)
-	out := filepath.Join(t.TempDir(), "native-mac-resources")
-	if err := nativeCommand([]string{
-		"-source", root, "-manifest", filepath.Join(sharedDist(t), "manifest.json"),
-		"-out", out, "-formats", "macos", "-baseline", testNativeBaseline,
-	}); err != nil {
-		t.Fatalf("native build: %v", err)
-	}
-	document := readNativeManifest(t, out)
-	if len(document.Artifacts) != 1 {
-		t.Fatalf("native manifest has %d artifacts", len(document.Artifacts))
-	}
-	recorded := map[string]fileEntry{}
-	for _, file := range document.Artifacts[0].Files {
-		recorded[file.Path] = file
-	}
-	for _, name := range releaseResources {
-		bundled := "OwnGit.app/Contents/Resources/" + name
-		file, ok := recorded[bundled]
-		if !ok {
-			t.Fatalf("the app does not carry %s", bundled)
-		}
-		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
-		noErr(t, err)
-		if file.SHA256 != sha256Bytes(source) {
-			t.Errorf("%s does not match the source file", bundled)
-		}
-		if file.Mode != "0644" {
-			t.Errorf("%s is recorded with mode %s", bundled, file.Mode)
-		}
-	}
-}
-
-// TestTheDebianPackageInstallsTheResources checks the installed DEB layout.
-//
-// A user who installed the package, rather than unpacking an archive, still
-// has to be able to find and copy the skill.
-func TestTheDebianPackageInstallsTheResources(t *testing.T) {
-	root := repoRoot(t)
-	portable := sharedDist(t)
-	out := filepath.Join(t.TempDir(), "native-resources")
-	if err := nativeCommand([]string{
-		"-source", root, "-manifest", filepath.Join(portable, "manifest.json"),
-		"-out", out, "-formats", "deb", "-baseline", testNativeBaseline,
-	}); err != nil {
-		t.Fatalf("native build: %v", err)
-	}
-	document := readNativeManifest(t, out)
-	if len(document.Artifacts) == 0 {
-		t.Fatal("the native manifest lists no artifacts")
-	}
-
-	for _, built := range document.Artifacts {
-		packageData, err := os.ReadFile(filepath.Join(out, built.Name))
-		noErr(t, err)
-		members, err := readAr(packageData)
-		noErr(t, err)
-		data := readDebTarFiles(t, members[2].data)
-		for _, name := range releaseResources {
-			installed := "usr/share/doc/owngit/" + name
-			file, ok := data[installed]
-			if !ok {
-				t.Fatalf("%s does not install %s", built.Name, installed)
-			}
-			source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
-			noErr(t, err)
-			if string(file.data) != string(source) {
-				t.Errorf("%s in %s does not match the source file", installed, built.Name)
-			}
-			if file.mode&0o111 != 0 {
-				t.Errorf("%s is installed executable (mode %04o)", installed, file.mode)
-			}
-		}
-		// The documented install path is what the README tells a user to
-		// look at, so a silent relocation has to fail here.
-		instructions := data["usr/share/doc/owngit/README.Debian"]
-		if !strings.Contains(string(instructions.data), "/usr/share/doc/owngit/integrations/skills/owngit-checks/SKILL.md") {
-			t.Errorf("%s does not tell the user where the skill is installed", built.Name)
-		}
-	}
-}
-
 // TestNativeResourcesComeFromTheVerifiedPayload checks the native layouts.
 //
 // A native package must ship the bytes the portable artifact was verified
@@ -432,8 +213,12 @@ func TestNativeResourcesComeFromTheVerifiedPayload(t *testing.T) {
 		}
 	}
 
-	// A payload that lost a resource fails rather than producing a package
-	// without it.
+	// A payload whose resource is empty or lost fails rather than producing a
+	// package without it.
+	payload.entries[releaseResources[0]] = archiveEntry{name: releaseResources[0]}
+	if _, err := resourceFiles(payload); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("resourceFiles returned %v for an empty resource", err)
+	}
 	delete(payload.entries, releaseResources[0])
 	if _, err := resourceFiles(payload); err == nil {
 		t.Fatal("resourceFiles accepted a payload with a missing resource")
