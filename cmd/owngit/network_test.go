@@ -149,7 +149,7 @@ func TestNetworkSetShowAndReset(t *testing.T) {
 
 	output, err = runNetwork(t, "reset", "--state-dir", stateDir)
 	noErr(t, err)
-	if !strings.Contains(output, "127.0.0.1:7654") || !strings.Contains(output, "Allowed Hosts kept: 100.64.0.7, gitbox.internal") {
+	if !strings.Contains(output, "127.0.0.1:7654") || !strings.Contains(output, "Allowed Hosts kept: 100.64.0.7, gitbox.internal. localhost, 127.0.0.1 and ::1 are always accepted from this computer.") {
 		t.Fatalf("reset output: %q", output)
 	}
 	after := networkJSON(t, stateDir)

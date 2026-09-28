@@ -24,8 +24,8 @@ import (
 // allowed Host names and the trusted reverse proxies. serve takes each value
 // from its flag, then from the saved setting, then from the default. The saved values apply at the
 // next start; a flag overrides one for that run only and changes nothing
-// saved. Loopback names are always accepted, so no saved value can lock the
-// host itself out, and "owngit network reset" goes back to the defaults.
+// saved. Loopback names are always accepted from this computer, so no saved
+// value can lock the host itself out, and "owngit network reset" goes back to the defaults.
 
 const (
 	sourceFlag    = server.NetworkSourceFlag
@@ -301,7 +301,7 @@ func printNetworkReport(writer io.Writer, report networkReport) {
 		baseURL = "not saved, addresses follow the address each client uses"
 	}
 	fmt.Fprintf(writer, "  Listen address: %s\n  Base URL:       %s\n  Allowed Hosts:  %s\n", listen, baseURL, hostList(report.Saved.AllowedHosts))
-	fmt.Fprintln(writer, "  localhost, 127.0.0.1 and ::1 are always accepted.")
+	fmt.Fprintln(writer, "  localhost, 127.0.0.1 and ::1 are always accepted from this computer.")
 	fmt.Fprintf(writer, "  Trusted proxies: %s\n", hostList(report.Saved.TrustedProxies))
 	if report.StaleRecord {
 		fmt.Fprintln(writer, "A record left by an OwnGit server that stopped without cleaning up was ignored.")
@@ -542,9 +542,9 @@ func networkReset(arguments []string) error {
 	}
 	fmt.Printf("Saved listen address and base URL removed. At the next start OwnGit listens on %s, unless a serve flag says otherwise.\n", server.DefaultListenAddress)
 	if *clearHosts {
-		fmt.Println("Allowed Hosts removed. localhost, 127.0.0.1 and ::1 are always accepted.")
+		fmt.Println("Allowed Hosts removed. localhost, 127.0.0.1 and ::1 are always accepted from this computer.")
 	} else {
-		fmt.Printf("Allowed Hosts kept: %s. localhost, 127.0.0.1 and ::1 are always accepted.\n", hostList(server.NormalizedHosts(hosts)))
+		fmt.Printf("Allowed Hosts kept: %s. localhost, 127.0.0.1 and ::1 are always accepted from this computer.\n", hostList(server.NormalizedHosts(hosts)))
 	}
 	switch {
 	case *clearProxies:
