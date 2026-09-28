@@ -116,29 +116,29 @@ func checkHealth(target string) error {
 // allowed to read. A serve that starts listening removes it.
 const serveErrorFile = "serve-error.txt"
 
-// recordServeError writes the serve error when the state directory exists
-// and belongs to this account, and never through a link at the file's name.
+// recordServeError writes the serve error into the state directory, if
+// there is one that OwnGit may use: it opens the directory with
+// state.OpenDirectory and writes through that handle with state.OpenOwnFile.
 // A serve that was refused another account's folder, for example root's,
-// writes nothing there.
+// writes nothing there, and no link leads the error elsewhere.
 func recordServeError(stateDir string, err error) {
-	directory, openErr := os.Open(stateDir)
+	directory, openErr := state.OpenDirectory(stateDir, false)
 	if openErr != nil {
 		return
 	}
-	info, statErr := directory.Stat()
-	owned, ownerErr := state.OwnedByCurrentUser(directory)
-	directory.Close()
-	if statErr != nil || !info.IsDir() || ownerErr != nil || !owned {
-		return
-	}
-	file, openErr := os.OpenFile(filepath.Join(stateDir, serveErrorFile), os.O_WRONLY|os.O_CREATE|os.O_TRUNC|serveErrorOpenFlags, 0o600)
+	defer directory.Close()
+	file, openErr := state.OpenOwnFile(directory, serveErrorFile, os.O_WRONLY|os.O_CREATE)
 	if openErr != nil {
 		return
 	}
-	_, _ = file.WriteString(err.Error() + "\n")
-	_ = file.Close()
+	defer file.Close()
+	if file.Truncate(0) == nil {
+		_, _ = file.WriteString(err.Error() + "\n")
+	}
 }
 
+// clearServeError removes the serve error from the state directory that
+// serve resolved and opened.
 func clearServeError(stateDir string) {
 	_ = os.Remove(filepath.Join(stateDir, serveErrorFile))
 }

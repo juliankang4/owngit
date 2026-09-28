@@ -4,6 +4,6 @@ package main
 
 import "syscall"
 
-// serveErrorOpenFlags opens serveErrorFile, to read or to write, without
-// following a link and without waiting on a named pipe put in its place.
+// serveErrorOpenFlags opens serveErrorFile to read it without following a
+// link and without waiting on a named pipe put in its place.
 const serveErrorOpenFlags = syscall.O_NOFOLLOW | syscall.O_NONBLOCK

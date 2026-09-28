@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"owngit/internal/version"
 )
 
 func TestRotatingLogFileKeepsOneOlderFile(t *testing.T) {
@@ -151,7 +154,7 @@ func TestOlderLogThatStaysReadableIsLogged(t *testing.T) {
 	if err != nil {
 		t.Skip("no chflags to make a file unchangeable without privileges")
 	}
-	path := filepath.Join(t.TempDir(), "owngit.log")
+	path := filepath.Join(resolvedTempDir(t), "owngit.log")
 	noErr(t, os.WriteFile(path+".1", []byte("an earlier line\n"), 0o644))
 	noErr(t, os.Chmod(path+".1", 0o644))
 	if output, err := exec.Command(chflags, "uchg", path+".1").CombinedOutput(); err != nil {
@@ -180,7 +183,7 @@ func TestLogThatCannotTakeItsFirstLinesIsNotOpened(t *testing.T) {
 	if err != nil {
 		t.Skip("no chflags to make a file unchangeable without privileges")
 	}
-	dir := t.TempDir()
+	dir := resolvedTempDir(t)
 	logFile := filepath.Join(dir, "owngit.log")
 	noErr(t, os.WriteFile(logFile, nil, 0o600))
 	noErr(t, os.Truncate(logFile, logFileLimit))
@@ -242,12 +245,20 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("standard
 // error is not lost: main writes it to its own output, with why the log
 // could not.
 func TestServiceErrorTheLogCouldNotTakeIsWrittenToItsOutput(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedTempDir(t)
 	logFile := filepath.Join(dir, "owngit.log")
-	// A log with room for its first line only, whose rotation then fails:
-	// the older file's place is taken.
+	// A log with room for its first lines only, whose rotation then fails:
+	// the older file's place is taken by a folder, which the second line
+	// reports. Each line starts with the date and time.
+	firstLines := 0
+	for _, line := range []string{
+		fmt.Sprintf("OwnGit %s (process %d) starts, logging to this file", version.Version, os.Getpid()),
+		"the older log file could not be made private: " + logFile + ".1 is not a regular file",
+	} {
+		firstLines += len("2006/01/02 15:04:05 ") + len(line) + 1
+	}
 	noErr(t, os.WriteFile(logFile, nil, 0o600))
-	noErr(t, os.Truncate(logFile, logFileLimit-100))
+	noErr(t, os.Truncate(logFile, logFileLimit-int64(firstLines)))
 	noErr(t, os.Mkdir(logFile+".1", 0o700))
 	var output bytes.Buffer
 	previous := log.Writer()
@@ -285,3 +296,12 @@ type codedError struct{}
 func (codedError) Error() string                 { return "synthetic failure" }
 func (codedError) ErrorCode() string             { return "synthetic" }
 func (codedError) ErrorDetails() json.RawMessage { return nil }
+
+// resolvedTempDir is a new temporary folder by the path that the log's
+// messages use, with no link on the way.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	noErr(t, err)
+	return dir
+}

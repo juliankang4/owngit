@@ -4,12 +4,84 @@ package main
 
 import (
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"owngit/internal/state"
 )
+
+// The serve error goes into the state directory that was checked, even
+// while the state directory's name is switched between that directory and
+// a folder of another account (root's /tmp, which this account may write).
+func TestServeErrorStaysInTheDirectoryThatWasChecked(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("needs an account that /tmp does not belong to")
+	}
+	other, err := filepath.EvalSymlinks("/tmp")
+	noErr(t, err)
+	info, err := os.Stat(other)
+	noErr(t, err)
+	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Uid != 0 || info.Mode().Perm()&0o002 == 0 {
+		t.Skipf("%s is not root's folder that every account may write", other)
+	}
+	stray := filepath.Join(other, serveErrorFile)
+	if _, err := os.Lstat(stray); err == nil {
+		t.Skipf("%s exists already", stray)
+	}
+	own, links := t.TempDir(), t.TempDir()
+	link := filepath.Join(links, "state")
+	noErr(t, os.Symlink(own, link))
+	stop, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		next := filepath.Join(links, "next")
+		for turn := 0; ; turn++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			target := own
+			if turn%2 == 1 {
+				target = other
+			}
+			if os.Symlink(target, next) == nil {
+				_ = os.Rename(next, link)
+			}
+		}
+	}()
+	defer func() { close(stop); <-stopped }()
+	deadline := time.Now().Add(5 * time.Second)
+	for attempt := 1; attempt <= 20000 && time.Now().Before(deadline); attempt++ {
+		recordServeError(link, errors.New("synthetic failure"))
+		if _, err := os.Lstat(stray); err == nil {
+			t.Fatalf("attempt %d wrote the serve error into %s (move that file away before running this test again)", attempt, other)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(own, serveErrorFile)); err != nil {
+		t.Fatalf("the serve error never reached the checked directory: %v", err)
+	}
+}
+
+// A link at the log's name is refused before anything is written, so the
+// file it leads to keeps its content and mode.
+func TestLogIsNotOpenedThroughALink(t *testing.T) {
+	target := plantedProgram(t)
+	path := filepath.Join(t.TempDir(), "owngit.log")
+	noErr(t, os.Symlink(target, path))
+	previous := log.Writer()
+	closeLog, err := writeLogTo(path, true)
+	if err == nil {
+		closeLog()
+		log.SetOutput(previous)
+		t.Error("the log opened through a link")
+	}
+	requirePlantedProgram(t, target)
+}
 
 // Backup takes its lock file only as a file of this account with one name;
 // a link planted there leaves the file it leads to as it was.
@@ -20,6 +92,44 @@ func TestBackupLockChangesNoFileAtItsName(t *testing.T) {
 	noErr(t, os.Symlink(target, filepath.Join(stateDir, ".offline-operation.lock")))
 	if err := backupState([]string{"--state-dir", stateDir, "--output", filepath.Join(t.TempDir(), "backup")}); err == nil {
 		t.Error("backup went ahead")
+	}
+	requirePlantedProgram(t, target)
+}
+
+// When root runs serve for another account's state, a link that account
+// put at the state directory's name must not lead the serve error into a
+// folder of root's.
+func TestRootRecordsNoServeErrorThroughAnotherAccountsLink(t *testing.T) {
+	home, roots := otherAccountsHome(t)
+	kept := filepath.Join(roots, serveErrorFile)
+	noErr(t, os.WriteFile(kept, []byte("kept\n"), 0o600))
+	link := filepath.Join(home, "state")
+	noErr(t, os.Symlink(roots, link))
+	noErr(t, os.Lchown(link, nobody, nobody))
+	recordServeError(link, errors.New("synthetic failure"))
+	if content, err := os.ReadFile(kept); err != nil || string(content) != "kept\n" {
+		t.Fatalf("root's file behind the link now holds %q (%v)", content, err)
+	}
+}
+
+// Root does not open a log in another account's folder: the log would be
+// root's there, and a link that account put at its name would lead root's
+// writes elsewhere.
+func TestRootOpensNoLogInAnotherAccountsFolder(t *testing.T) {
+	home, _ := otherAccountsHome(t)
+	target := plantedProgram(t)
+	path := filepath.Join(home, "service.log")
+	noErr(t, os.Symlink(target, path))
+	noErr(t, os.Lchown(path, nobody, nobody))
+	previous := log.Writer()
+	closeLog, err := writeLogTo(path, true)
+	if err == nil {
+		closeLog()
+		log.SetOutput(previous)
+	}
+	var other *state.OtherAccountError
+	if !errors.As(err, &other) {
+		t.Errorf("writeLogTo error=%v, want the folder refused as another account's", err)
 	}
 	requirePlantedProgram(t, target)
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"owngit/internal/state"
 	"owngit/internal/version"
 )
 
@@ -48,7 +49,7 @@ func writeLogTo(path string, service bool) (func(), error) {
 		log.SetOutput(logAndEarlier{file: file, earlier: previous})
 	}
 	lines := []string{fmt.Sprintf("OwnGit %s (process %d) starts, logging to this file", version.Version, os.Getpid())}
-	if err := os.Chmod(path+".1", 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := file.protectOlder(); err != nil {
 		lines = append(lines, fmt.Sprintf("the older log file could not be made private: %v", err))
 	}
 	for _, line := range lines {
@@ -63,19 +64,47 @@ func writeLogTo(path string, service bool) (func(), error) {
 // rotatingFile appends to a file and moves it aside at a size limit.
 type rotatingFile struct {
 	mu     sync.Mutex
-	path   string
+	dir    *os.File // the folder, opened with state.OpenDirectory
+	name   string
+	path   string // name in the resolved folder
 	limit  int64
 	file   *os.File
 	size   int64
 	broken error // why a failed rotation left no file
 }
 
+// openRotatingFile opens the log at path. Its folder, created when missing,
+// is opened with state.OpenDirectory, and the log file in it with
+// state.OpenOwnFile, so a log path in a folder of another account, or a
+// link at the log's name, is refused before anything is written. No other
+// account can change the way to the resolved folder, so the rotation
+// renames by path there.
 func openRotatingFile(path string, limit int64) (*rotatingFile, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir, err := state.OpenDirectory(filepath.Dir(path), true)
+	if err != nil {
 		return nil, err
 	}
-	rotating := &rotatingFile{path: path, limit: limit}
-	return rotating, rotating.open()
+	name := filepath.Base(path)
+	rotating := &rotatingFile{dir: dir, name: name, path: filepath.Join(dir.Name(), name), limit: limit}
+	if err := rotating.open(); err != nil {
+		dir.Close()
+		return nil, err
+	}
+	return rotating, nil
+}
+
+// protectOlder makes the older log file beside the log private, when there
+// is one.
+func (rotating *rotatingFile) protectOlder() error {
+	older, err := state.OpenOwnFile(rotating.dir, rotating.name+".1", os.O_RDONLY)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer older.Close()
+	return older.Chmod(0o600)
 }
 
 // logAndEarlier writes each log line to the log file and to the earlier
@@ -99,7 +128,7 @@ func (outputs logAndEarlier) Write(line []byte) (int, error) {
 // not opened, since it would hold this run's causes where other accounts
 // may read them; the error keeps OwnGit from starting and says why.
 func (rotating *rotatingFile) open() error {
-	file, err := os.OpenFile(rotating.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	file, err := state.OpenOwnFile(rotating.dir, rotating.name, os.O_CREATE|os.O_WRONLY|os.O_APPEND)
 	if err != nil {
 		return err
 	}
@@ -144,10 +173,14 @@ func (rotating *rotatingFile) Write(data []byte) (int, error) {
 func (rotating *rotatingFile) Close() error {
 	rotating.mu.Lock()
 	defer rotating.mu.Unlock()
-	if rotating.file == nil {
-		return nil
+	var err error
+	if rotating.file != nil {
+		err = rotating.file.Close()
+		rotating.file = nil
 	}
-	err := rotating.file.Close()
-	rotating.file = nil
+	if rotating.dir != nil {
+		err = errors.Join(err, rotating.dir.Close())
+		rotating.dir = nil
+	}
 	return err
 }
