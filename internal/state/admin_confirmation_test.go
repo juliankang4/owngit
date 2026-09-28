@@ -6,21 +6,25 @@ import (
 	"time"
 )
 
-// Nothing saved means the default; a value this build does not know is an
-// error, never quietly the default.
-func TestAdminConfirmationDefaultsAndRefusesAnUnknownValue(t *testing.T) {
+// Nothing saved means the default; a value this build does not know reads
+// as Every time, the strictest choice, and says it was not known.
+func TestAdminConfirmationDefaultsAndReadsAnUnknownValueAsEveryTime(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	choice, err := store.AdminConfirmation(ctx)
-	if err != nil || choice != Confirm30Minutes {
-		t.Fatalf("unsaved choice = %q, %v; want 30m", choice, err)
+	choice, known, err := store.AdminConfirmation(ctx)
+	if err != nil || !known || choice != Confirm30Minutes {
+		t.Fatalf("unsaved choice = %q, %v, %v; want 30m", choice, known, err)
 	}
 	noErr(t, store.Exec(ctx, `INSERT INTO metadata(key,value) VALUES('admin_confirmation','forever')`))
-	if choice, err := store.AdminConfirmation(ctx); err == nil {
-		t.Fatalf("an unknown saved value read as %q", choice)
+	if choice, known, err := store.AdminConfirmation(ctx); err != nil || known || choice != ConfirmEveryTime {
+		t.Fatalf("an unknown saved value read as %q, %v, %v; want every, not known", choice, known, err)
 	}
 	if err := store.SetAdminConfirmation(ctx, "forever", time.Now()); err == nil {
 		t.Fatal("an unknown value was saved")
+	}
+	noErr(t, store.SetAdminConfirmation(ctx, Confirm1Hour, time.Now().Add(time.Hour)))
+	if choice, known, err := store.AdminConfirmation(ctx); err != nil || !known || choice != Confirm1Hour {
+		t.Fatalf("a saved choice did not replace the unknown value: %q, %v, %v", choice, known, err)
 	}
 }
 
@@ -35,7 +39,7 @@ func TestSetAdminConfirmationShortensOnlyAdministratorSessions(t *testing.T) {
 	noErr(t, store.CreateSession(ctx, "general", "general", "c3", 1, now.Add(12*time.Hour)))
 
 	noErr(t, store.SetAdminConfirmation(ctx, Confirm1Hour, now.Add(time.Hour)))
-	if choice, err := store.AdminConfirmation(ctx); err != nil || choice != Confirm1Hour {
+	if choice, _, err := store.AdminConfirmation(ctx); err != nil || choice != Confirm1Hour {
 		t.Fatalf("saved choice = %q, %v", choice, err)
 	}
 	for token, want := range map[string]time.Duration{"long-admin": time.Hour, "short-admin": 10 * time.Minute} {
@@ -61,7 +65,7 @@ func TestRestoredStateDoesNotReviveDoNotAsk(t *testing.T) {
 	noErr(t, err)
 	destination := openTestStore(t)
 	noErr(t, destination.RestoreRecoveryState(ctx, t.TempDir(), snapshot))
-	if choice, err := destination.AdminConfirmation(ctx); err != nil || choice != DefaultAdminConfirmation {
+	if choice, _, err := destination.AdminConfirmation(ctx); err != nil || choice != DefaultAdminConfirmation {
 		t.Fatalf("restored choice = %q, %v; want the default", choice, err)
 	}
 }

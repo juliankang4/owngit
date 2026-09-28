@@ -15,6 +15,7 @@ const (
 	MsgConfirmLastTime  MessageCode = "confirm.last_time"
 	MsgConfirmSaved     MessageCode = "confirm.saved"
 	MsgConfirmTurnedOff MessageCode = "confirm.turned_off"
+	MsgConfirmUnknown   MessageCode = "confirm.unknown"
 
 	MsgConfirmEvery MessageCode = "confirm.choice.every"
 	MsgConfirm30m   MessageCode = "confirm.choice.30m"
@@ -87,6 +88,10 @@ var confirmationCatalog = map[MessageCode]message{
 	MsgConfirmTurnedOff: {
 		en: "The administrator password check is off. Anyone who can open the dashboard can make administrator changes until you turn it back on here.",
 		ko: "관리자 비밀번호 확인을 껐습니다. 여기서 다시 켤 때까지 대시보드를 열 수 있는 사람은 누구나 관리자 작업을 할 수 있습니다.",
+	},
+	MsgConfirmUnknown: {
+		en: "The saved choice was not recognized, perhaps saved by a newer OwnGit, so every change asks for the password. Choose one and save it to replace it.",
+		ko: "저장된 선택을 알아볼 수 없어(새 버전의 OwnGit이 저장했을 수 있습니다) 변경할 때마다 비밀번호를 묻습니다. 하나를 골라 저장하면 바뀝니다.",
 	},
 
 	MsgConfirmEvery: {en: "Every time", ko: "매번 묻기"},

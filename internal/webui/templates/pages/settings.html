@@ -213,16 +213,19 @@
 {{$v := .Chrome.Viewer}}
 {{$gn := forAction $p.Group "confirm" $p.Notices}}{{$focus := firstError $gn "admin_confirmation" "no_ask_ack" "admin_password"}}
 {{$choice := draft $p.Group $p.Draft "confirm" "admin_confirmation" $v.AdminChoice}}
-<section class="grp" id="grp-confirm" aria-labelledby="grp-confirm-h" data-group="confirm"{{if hasError $gn}} data-group-refused{{end}}>
+{{/* A saved value this build does not know shows Every time, which
+     applies, as an unsaved change, so saving any choice replaces it. */}}
+<section class="grp" id="grp-confirm" aria-labelledby="grp-confirm-h" data-group="confirm"{{if hasError $gn}} data-group-refused{{end}}{{if $v.AdminChoiceUnknown}} data-group-open{{end}}>
   {{template "grpHead" dict "Lang" $lang "Group" "confirm" "Title" (bi $lang "confirm.title")}}
   <p class="scope">{{icon "info"}}<span>{{bi $lang "confirm.scope"}}</span></p>
   {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $v.AdminChoiceUnknown}}<p class="wn" data-confirm-unknown>{{icon "warning"}}<span>{{bi $lang "confirm.unknown"}}</span></p>{{end}}
   <form class="gform" method="post" action="{{tabURL "access"}}" data-group-form>
     <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
     <input type="hidden" name="action" value="save_confirmation">
     <div class="f f--row">
       <label for="confirm-choice">{{bi $lang "confirm.label"}}</label>
-      <select id="confirm-choice" name="admin_confirmation" data-saved="{{$v.AdminChoice}}"
+      <select id="confirm-choice" name="admin_confirmation" data-saved="{{if not $v.AdminChoiceUnknown}}{{$v.AdminChoice}}{{end}}"
               {{template "netDescribed" dict "Notices" $gn "Scope" "confirm" "Field" "admin_confirmation" "Help" "confirm-choice-help"}}{{if eq $focus "admin_confirmation"}} autofocus{{end}}>
         {{range adminChoices}}
           <option value="{{.Value}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq .Value $choice}} selected{{end}}>{{t $lang .Label}}</option>

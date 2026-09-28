@@ -157,7 +157,7 @@ func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddres
 // lasts AdminSessionLife and only opens the administrator pages, while
 // every change still asks for the password.
 func (m *Manager) StartAdminSession(ctx context.Context) (NewSession, error) {
-	choice, err := m.Store.AdminConfirmation(ctx)
+	choice, _, err := m.Store.AdminConfirmation(ctx)
 	if err != nil {
 		return NewSession{}, err
 	}

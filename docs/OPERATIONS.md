@@ -154,7 +154,7 @@ Each part of a tab has its own Save and Cancel. Save asks for the administrator 
 - **Again after 30 minutes** (the default), **1 hour**, **8 hours**, **1 day**, **7 days** or **30 days**: after you type the password, on the administrator sign-in or in a form, this browser does not ask again for that long. The time counts from when you typed it; moving between pages does not extend it. Another browser is asked for its own. The sidebar shows until when this browser is confirmed, with End to stop now. Signing out, End, changing or resetting the administrator password, or choosing a shorter time ends it.
 - **Do not ask**: anyone who can open the dashboard can change settings, delete repositories and issue credentials without the administrator password, and with Open access nobody has to sign in. Turning it on asks for the password one last time and for a tick confirming the warning. While it is on, every page shows "Administrator password check off", which leads back here.
 
-The choice belongs to this installation host and is not in backups; a restored installation asks after 30 minutes again. The command line and the API always ask for the administrator password, whatever the choice.
+The choice belongs to this installation host and is not in backups; a restored installation asks after 30 minutes again. If the saved choice is one this version does not know, for example after going back to an older release, every change asks and Access says so until you choose again. The command line and the API always ask for the administrator password, whatever the choice.
 
 ## Reaching the server from another device
 

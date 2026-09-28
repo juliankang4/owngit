@@ -64,21 +64,30 @@ func ParseAdminConfirmation(value string) (AdminConfirmation, bool) {
 const adminConfirmationKey = "admin_confirmation"
 
 // AdminConfirmation returns the saved choice, or the default when none was
-// saved. A value this build does not know is an error, not the default.
-func (s *Store) AdminConfirmation(ctx context.Context) (AdminConfirmation, error) {
+// saved. A value this build does not know, such as one a later release
+// saved before a downgrade, reads as ConfirmEveryTime, the strictest
+// choice, with known false, so the dashboard keeps working and the owner
+// can choose again.
+func (s *Store) AdminConfirmation(ctx context.Context) (choice AdminConfirmation, known bool, err error) {
+	return adminConfirmation(ctx, s.db)
+}
+
+// adminConfirmation reads the choice with query, a store or a transaction.
+func adminConfirmation(ctx context.Context, query interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}) (AdminConfirmation, bool, error) {
 	var value string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key=?`, adminConfirmationKey).Scan(&value)
+	err := query.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key=?`, adminConfirmationKey).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
-		return DefaultAdminConfirmation, nil
+		return DefaultAdminConfirmation, true, nil
 	}
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	choice, ok := ParseAdminConfirmation(value)
-	if !ok {
-		return "", fmt.Errorf("invalid administrator confirmation setting %q", value)
+	if choice, ok := ParseAdminConfirmation(value); ok {
+		return choice, true, nil
 	}
-	return choice, nil
+	return ConfirmEveryTime, false, nil
 }
 
 // SetAdminConfirmation saves choice and, in the same transaction, ends every

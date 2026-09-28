@@ -150,6 +150,10 @@ type Viewer struct {
 	// AdminChoice is the saved "Ask for the administrator password" choice,
 	// one of AdminConfirmChoices.
 	AdminChoice string
+	// AdminChoiceUnknown is true when the saved choice is a value this
+	// build does not know; AdminChoice is then "every", which applies
+	// until the owner chooses again.
+	AdminChoiceUnknown bool
 	// SetupComplete is false only before the installation is configured.
 	SetupComplete bool
 }

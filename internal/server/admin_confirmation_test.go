@@ -402,7 +402,7 @@ func TestDoNotAskOpensTheDashboardButNotTheAPI(t *testing.T) {
 	turnOff.Set("no_ask_ack", "1")
 	turnOff.Del("csrf")
 	requirePasswordAsked(t, "Do not ask in a remembered browser", owner.post("/settings/access", turnOff))
-	if choice, err := fixture.store.AdminConfirmation(ctx); err != nil || choice != state.DefaultAdminConfirmation {
+	if choice, _, err := fixture.store.AdminConfirmation(ctx); err != nil || choice != state.DefaultAdminConfirmation {
 		t.Fatalf("a refused save changed the choice to %q (%v)", choice, err)
 	}
 	turnOff.Set("admin_password", "admin-password")
@@ -446,5 +446,45 @@ func TestDoNotAskOpensTheDashboardButNotTheAPI(t *testing.T) {
 	}
 	if page := stranger.get("/login"); strings.Contains(page.body, "data-admin-check-off") {
 		t.Fatal("the sign-in page tells a stranger that the check is off")
+	}
+}
+
+// A saved choice this build does not know, as after going back to an older
+// release, acts as Every time until the owner chooses again: the dashboard
+// keeps working, each change asks for the password, and saving a choice
+// with the password replaces the value, Every time included.
+func TestAnUnknownSavedChoiceActsAsEveryTime(t *testing.T) {
+	fixture, server, _ := newConfirmationFixture(t, false, state.Confirm8Hours)
+	ctx := context.Background()
+	browser := openConfirmationBrowser(t, server, false)
+	browser.adminSignIn()
+	noErr(t, fixture.store.Exec(ctx, `UPDATE metadata SET value='2h' WHERE key='admin_confirmation'`))
+
+	for _, page := range []string{"/", "/settings", "/repositories/project", baseHelperCredentialsURL("project")} {
+		if result := browser.get(page); result.status != http.StatusOK {
+			t.Fatalf("%s status=%d", page, result.status)
+		}
+	}
+	if result := openConfirmationBrowser(t, server, false).get("/repositories/project"); result.status != http.StatusOK {
+		t.Fatalf("a repository page for another browser: status=%d", result.status)
+	}
+	access := browser.get("/settings/access")
+	if access.status != http.StatusOK || !strings.Contains(access.body, enText(webui.MsgConfirmUnknown)) ||
+		!strings.Contains(access.body, `name="admin_confirmation" data-saved=""`) {
+		t.Fatalf("Access status=%d, or it does not say the saved choice was not recognized", access.status)
+	}
+	requirePasswordAsked(t, "a change without the password", browser.saveUpdateCheck(""))
+	requireSaved(t, "a change with the password", browser.saveUpdateCheck("admin-password"))
+
+	choose := url.Values{"action": {webui.ActionSaveConfirmation}, "admin_confirmation": {"every"}}
+	requirePasswordAsked(t, "choosing again without the password", browser.post("/settings/access", choose))
+	choose.Set("admin_password", "admin-password")
+	choose.Del("csrf")
+	requireSaved(t, "choosing Every time", browser.post("/settings/access", choose))
+	if choice, known, err := fixture.store.AdminConfirmation(ctx); err != nil || !known || choice != state.ConfirmEveryTime {
+		t.Fatalf("saved choice = %q, known=%v, err=%v", choice, known, err)
+	}
+	if page := browser.get("/settings/access"); strings.Contains(page.body, enText(webui.MsgConfirmUnknown)) {
+		t.Fatal("Access still says the saved choice was not recognized")
 	}
 }

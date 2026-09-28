@@ -37,7 +37,10 @@ import (
 
 // adminAuthority is what this browser may do as administrator.
 type adminAuthority struct {
+	// choice is the saved choice, or Every time when the saved value is
+	// one this build does not know (known false).
 	choice state.AdminConfirmation
+	known  bool
 	// session is this browser's administrator session, when confirmed.
 	session   state.Session
 	confirmed bool
@@ -58,7 +61,7 @@ func (a adminAuthority) changesFreely() bool { return a.remembers() || a.checkOf
 // since that is the one the browser holds from now on; otherwise the one
 // the request sent.
 func (app *App) adminAuthority(writer http.ResponseWriter, request *http.Request) (adminAuthority, error) {
-	choice, err := app.Store.AdminConfirmation(request.Context())
+	choice, known, err := app.Store.AdminConfirmation(request.Context())
 	if err != nil {
 		return adminAuthority{}, err
 	}
@@ -73,7 +76,7 @@ func (app *App) adminAuthority(writer http.ResponseWriter, request *http.Request
 	if err != nil {
 		return adminAuthority{}, err
 	}
-	return adminAuthority{choice: choice, session: session, confirmed: ok}, nil
+	return adminAuthority{choice: choice, known: known, session: session, confirmed: ok}, nil
 }
 
 // pendingCookie returns the value of the cookie named name that this
@@ -179,6 +182,7 @@ func (app *App) confirmAdmin(writer http.ResponseWriter, request *http.Request, 
 func fillAdminViewer(chrome *webui.Chrome, authority adminAuthority) {
 	viewer := &chrome.Viewer
 	viewer.AdminChoice = string(authority.choice)
+	viewer.AdminChoiceUnknown = !authority.known
 	viewer.AdminConfirmed = authority.confirmed || (authority.checkOff() && viewer.GeneralUnlocked)
 	viewer.AdminRemembered = authority.remembers()
 	viewer.AdminAsks = !authority.changesFreely()

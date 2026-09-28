@@ -71,19 +71,21 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	// turning Do not ask on asks one last time, even when this browser is
 	// remembered or the check is off.
 	always := action == webui.ActionChangeAdminPassword
-	var choice, savedChoice state.AdminConfirmation
+	var choice state.AdminConfirmation
 	if action == webui.ActionSaveConfirmation {
 		var valid bool
 		if choice, valid = state.ParseAdminConfirmation(postValue(request, "admin_confirmation")); !valid {
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("admin_confirmation", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
 			return
 		}
-		var err error
-		if savedChoice, err = app.Store.AdminConfirmation(request.Context()); err != nil {
+		// A saved value this build does not know is replaced by any
+		// choice, Every time included.
+		savedChoice, known, err := app.Store.AdminConfirmation(request.Context())
+		if err != nil {
 			app.renderNotSaved(writer, request, settings, csrf, action, "administrator confirmation read", err)
 			return
 		}
-		if choice == savedChoice {
+		if known && choice == savedChoice {
 			app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Info(webui.MsgSettingsNothing)}, http.StatusOK, settingsView{Unchanged: true})
 			return
 		}
