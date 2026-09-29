@@ -565,7 +565,12 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 	if err != nil {
 		return err
 	}
-	tx, err := conn.BeginTx(ctx, nil)
+	// Each statement stops on ctx, but the transaction itself does not end
+	// with it: database/sql would roll it back on another goroutine, and
+	// the restore below could then run while SQLite still has it open,
+	// where the pragma does nothing. Only the deferred Rollback or the
+	// Commit ends it, before the restore.
+	tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
 	if err != nil {
 		return err
 	}
@@ -624,6 +629,11 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 	}
 	if violated {
 		return errors.New("state schema migration left a foreign key violation")
+	}
+	// The transaction ignores ctx, so a migration cancelled after its last
+	// statement is refused here rather than committed.
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err

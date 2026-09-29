@@ -527,3 +527,67 @@ func TestInitializeClassifiesOneSnapshot(t *testing.T) {
 		t.Fatalf("schema version %d, want %d", version, currentSchemaVersion())
 	}
 }
+
+// A migration that its context ends at any point fails and leaves the
+// schema it started from, and the connection it held still enforces
+// foreign keys afterwards: the pragma it turned off for the steps is turned
+// on again only after the transaction has ended. The same holds when
+// another opener already migrated and migrate returns early.
+func TestCancelledMigrationLeavesForeignKeysOn(t *testing.T) {
+	open := func(t *testing.T, directory string) (*Store, *sql.DB) {
+		t.Helper()
+		db, err := sql.Open("sqlite", sqliteURI(filepath.Join(directory, databaseName), "_txlock=immediate&mode=rw"))
+		noErr(t, err)
+		db.SetMaxOpenConns(1)
+		t.Cleanup(func() { _ = db.Close() })
+		return &Store{db: db, dir: directory}, db
+	}
+	foreignKeys := func(t *testing.T, db *sql.DB) int {
+		t.Helper()
+		var enabled int
+		noErr(t, db.QueryRow(`PRAGMA foreign_keys`).Scan(&enabled))
+		return enabled
+	}
+	migrateWithin := func(t *testing.T, deadline time.Duration) (error, int, int) {
+		directory := filepath.Join(t.TempDir(), "state")
+		loadReleasedDump(t, directory, "schema15-1.1.2-upgraded-from-1.0.2.sql")
+		store, db := open(t, directory)
+		class, err := classifySchema(context.Background(), db)
+		noErr(t, err)
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		migrateErr := store.migrate(ctx, class)
+		cancel()
+		version, err := store.schemaVersion(context.Background())
+		noErr(t, err)
+		return migrateErr, foreignKeys(t, db), version
+	}
+	started := time.Now()
+	if err, enabled, version := migrateWithin(t, time.Minute); err != nil || enabled != 1 || version != currentSchemaVersion() {
+		t.Fatalf("uncancelled migration err=%v foreign_keys=%d schema=%d", err, enabled, version)
+	}
+	full := time.Since(started)
+	for step := 0; step <= 24; step++ {
+		deadline := time.Duration(step) * full / 16
+		err, enabled, version := migrateWithin(t, deadline)
+		if enabled != 1 || (err == nil) != (version == currentSchemaVersion()) || (err != nil && version != 15) {
+			t.Fatalf("deadline %v: err=%v foreign_keys=%d schema=%d", deadline, err, enabled, version)
+		}
+	}
+
+	directory := filepath.Join(t.TempDir(), "migrated")
+	migrated, err := Open(context.Background(), directory)
+	noErr(t, err)
+	noErr(t, migrated.Close())
+	store, db := open(t, directory)
+	started = time.Now()
+	noErr(t, store.migrate(context.Background(), schemaCurrent))
+	full = time.Since(started)
+	for try := 0; try < 200; try++ {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(try%40)*full/20)
+		_ = store.migrate(ctx, schemaCurrent)
+		cancel()
+		if enabled := foreignKeys(t, db); enabled != 1 {
+			t.Fatalf("try %d: foreign_keys=%d after an already migrated database", try, enabled)
+		}
+	}
+}
