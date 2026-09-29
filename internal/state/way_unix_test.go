@@ -153,7 +153,14 @@ func TestLogMayBeOnAShareButNotTheState(t *testing.T) {
 		}
 		dir.Close()
 	}
-	refused := []error{RequireStateParent(filepath.Join(share, "restored")), RequireStateParent(filepath.Join(local, "restored"))}
+	var refused []error
+	for _, path := range []string{filepath.Join(share, "restored"), filepath.Join(local, "restored")} {
+		destination, err := OpenStateDestination(path)
+		if destination != nil {
+			destination.Close()
+		}
+		refused = append(refused, err)
+	}
 	for _, open := range []func() (*os.File, error){
 		func() (*os.File, error) { return CreateDirectory(filepath.Join(local, "state")) },
 		func() (*os.File, error) { return OpenStateDirectory(filepath.Join(local, "state")) },
@@ -174,6 +181,42 @@ func TestLogMayBeOnAShareButNotTheState(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(share, "state")); !os.IsNotExist(err) {
 		t.Fatalf("a state folder was created on the share: %v", err)
+	}
+}
+
+// A backup, and the repositories that a restore makes, may be on a share
+// for an account other than root, as the repository folder may be. Root
+// uses no folder there, and no account puts a state there. The share is
+// marked by replacing the filesystem check.
+func TestDestinationMayBeOnAShareExceptForRootAndTheState(t *testing.T) {
+	root := resolveTestPath(t, t.TempDir())
+	share := filepath.Join(root, "share")
+	noErr(t, os.Mkdir(share, 0o700))
+	markShare(t, share)
+	destination, err := OpenDestination(filepath.Join(share, "backup"))
+	if os.Geteuid() == 0 {
+		if destination != nil {
+			destination.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "run as root uses nothing there") {
+			t.Fatalf("root's destination on a share: error=%v", err)
+		}
+	} else {
+		noErr(t, err)
+		stage, err := destination.CreateStage(".backup.stage")
+		if err == nil {
+			destination.ReleaseStage()
+			err = os.Rename(stage, destination.Path)
+		}
+		destination.Close()
+		noErr(t, err)
+	}
+	state, err := OpenStateDestination(filepath.Join(share, "state"))
+	if state != nil {
+		state.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "only on a local disk") && !strings.Contains(err.Error(), "run as root uses nothing there") {
+		t.Fatalf("state destination on a share: error=%v", err)
 	}
 }
 

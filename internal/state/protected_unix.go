@@ -399,8 +399,30 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	var mayCreate func(wayEntry) error
+	if create {
+		mayCreate = func(entry wayEntry) error {
+			return notProtected(absolute, requireNoOtherWriter(entry.path, entry.info))
+		}
+	}
+	dir, _, missing, err := walkWay(absolute, wayCheck(absolute, local, true), mayCreate)
+	if err != nil {
+		return nil, err
+	}
+	if missing != "" {
+		dir.Close()
+		return nil, &os.PathError{Op: "open", Path: absolute, Err: fs.ErrNotExist}
+	}
+	return dir, nil
+}
+
+// wayCheck is the check that openDirectory applies on the way to path, with
+// local as there. With own set, the directory that the way leads to must
+// belong to this account; otherwise it is checked like every folder on the
+// way, as the parent of a Destination is.
+func wayCheck(path string, local, own bool) func(wayEntry) error {
 	protected := protectedCheck(true)
-	check := func(entry wayEntry) error {
+	return func(entry wayEntry) error {
 		name, info, last := entry.path, entry.info, entry.last
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		switch {
@@ -414,32 +436,17 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 			return fmt.Errorf("the owner of %s is unavailable", name)
 		case last && !info.IsDir():
 			return fmt.Errorf("%s is not a directory", name)
-		case last && int(stat.Uid) == os.Geteuid():
+		case last && own && int(stat.Uid) == os.Geteuid():
 			return nil
 		case os.Geteuid() == 0 && stat.Uid != 0:
 			return &OtherAccountError{Path: name, Account: accountName(stat.Uid), UID: stat.Uid}
-		case last && stat.Uid == 0:
+		case last && own && stat.Uid == 0:
 			return fmt.Errorf("%s belongs to root, not to this account; choose a folder of this account", name)
-		case last:
+		case last && own:
 			return fmt.Errorf("%s belongs to another account; run the command as its owner", name)
 		}
-		return notProtected(absolute, protected(name, info))
+		return notProtected(path, protected(name, info))
 	}
-	var mayCreate func(wayEntry) error
-	if create {
-		mayCreate = func(entry wayEntry) error {
-			return notProtected(absolute, requireNoOtherWriter(entry.path, entry.info))
-		}
-	}
-	dir, _, missing, err := walkWay(absolute, check, mayCreate)
-	if err != nil {
-		return nil, err
-	}
-	if missing != "" {
-		dir.Close()
-		return nil, &os.PathError{Op: "open", Path: absolute, Err: fs.ErrNotExist}
-	}
-	return dir, nil
 }
 
 // notKnownLocal describes a filesystem that ownershipEnforced does not
@@ -475,26 +482,35 @@ func notProtected(path string, err error) error {
 	return fmt.Errorf("%s is not protected: %w; choose a folder that other accounts cannot change", path, err)
 }
 
-// RequireStateParent refuses a state destination that does not exist yet,
-// such as a restore target, unless OwnGit could create it: its parent must
-// pass OpenStateDirectory, and no other account may be able to create names in
-// the parent. The parent stays as the check found it, since no other account
-// can change the way to it.
-func RequireStateParent(path string) error {
-	absolute, err := filepath.Abs(path)
+// openDestinationParent opens the parent of the Destination path and checks
+// it as a folder on the way to path (wayCheck), so no other account can
+// change the way to it or rename or remove what this account puts in it,
+// and the way needs no hold.
+func openDestinationParent(path string, local bool) (*os.File, func(), error) {
+	dir, _, missing, err := walkWay(filepath.Dir(path), wayCheck(path, local, false), nil)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	dir, err := openStateDirectory(filepath.Dir(absolute), false)
+	if missing != "" {
+		dir.Close()
+		return nil, nil, &os.PathError{Op: "open", Path: filepath.Dir(path), Err: fs.ErrNotExist}
+	}
+	return dir, func() {}, nil
+}
+
+// createStage creates the folder name in the held folder parent with mode
+// 0700, refusing an existing entry, and opens it without following a link.
+func createStage(parent *os.File, name string) (*os.File, error) {
+	path := filepath.Join(parent.Name(), name)
+	defer runtime.KeepAlive(parent)
+	if err := unix.Mkdirat(int(parent.Fd()), name, 0o700); err != nil {
+		return nil, &os.PathError{Op: "create", Path: path, Err: err}
+	}
+	stage, err := openDirectoryAt(int(parent.Fd()), name, path)
 	if err != nil {
-		return err
+		_ = unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR)
 	}
-	defer dir.Close()
-	info, err := dir.Stat()
-	if err != nil {
-		return err
-	}
-	return notProtected(absolute, requireNoOtherWriter(dir.Name(), info))
+	return stage, err
 }
 
 // accountName is the name of the account uid, or "" when it has no name.

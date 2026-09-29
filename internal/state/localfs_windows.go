@@ -19,10 +19,6 @@ func RequireProtectedPath(string) error {
 	return errors.New("protected paths are unavailable on Windows")
 }
 
-// RequireStateParent has nothing to check on Windows, where access lists
-// protect the state directory.
-func RequireStateParent(string) error { return nil }
-
 // InspectFolderWay finds no way that only root can change on Windows, which
 // has no root account, and no shared one, since setup offers no command
 // there that a share could redirect.
@@ -62,6 +58,27 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	dir, err := walkFolders(absolute, create, local)
+	if err != nil {
+		return nil, err
+	}
+	owned, err := OwnedByCurrentUser(dir)
+	if err == nil && !owned {
+		err = fmt.Errorf("%s belongs to another account; run the command as its owner", absolute)
+	}
+	if err == nil && local {
+		dir, err = nameByFinalPath(dir)
+	}
+	if err != nil {
+		dir.Close()
+		return nil, err
+	}
+	return dir, nil
+}
+
+// walkFolders is openDirectory's walk to the absolute path, which checks
+// no owner.
+func walkFolders(absolute string, create, local bool) (*os.File, error) {
 	volume := filepath.VolumeName(absolute)
 	if volume == "" {
 		return nil, fmt.Errorf("%s names no volume", absolute)
@@ -98,17 +115,6 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 			dir.Close()
 			return nil, err
 		}
-	}
-	owned, err := OwnedByCurrentUser(dir)
-	if err == nil && !owned {
-		err = fmt.Errorf("%s belongs to another account; run the command as its owner", absolute)
-	}
-	if err == nil && local {
-		dir, err = nameByFinalPath(dir)
-	}
-	if err != nil {
-		dir.Close()
-		return nil, err
 	}
 	return dir, nil
 }
@@ -210,6 +216,42 @@ func OpenPrivateFolderIn(parent *os.File, name string) (*os.File, error) {
 		return nil, err
 	}
 	return dir, nil
+}
+
+// openDestinationParent opens the parent of the Destination path through
+// openDirectory's walk, which checks no owner of a folder on the way,
+// names it by its final path, as a state directory is named, and holds the
+// way to it (holdWay): the access list that a folder inherits from its
+// drive's root lets other accounts rename it, so the way is held rather
+// than checked.
+func openDestinationParent(path string, local bool) (*os.File, func(), error) {
+	parent, err := walkFolders(filepath.Dir(path), false, local)
+	if err != nil {
+		return nil, nil, err
+	}
+	parent, err = nameByFinalPath(parent)
+	var unhold func()
+	if err == nil {
+		unhold, err = holdWay(parent)
+	}
+	if err != nil {
+		parent.Close()
+		return nil, nil, err
+	}
+	return parent, unhold, nil
+}
+
+// createStage creates the folder name in the held folder parent, refusing
+// an existing entry, with an access list that lets only this account in
+// (see openDirectory), and holds it without delete sharing, so that no
+// account can rename or remove it while it is held; another account that
+// the parent lets remove names could otherwise do both.
+func createStage(parent *os.File, name string) (*os.File, error) {
+	private, err := privateFolderDescriptor()
+	if err != nil {
+		return nil, err
+	}
+	return createAt(parent, filepath.Join(parent.Name(), name), folderAccess, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, windows.FILE_CREATE, folderOptions, private, "create")
 }
 
 // holdWay keeps the way to the held directory, which openDirectory

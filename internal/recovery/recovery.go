@@ -360,8 +360,15 @@ func Create(ctx context.Context, store *state.Store, manager *repository.Manager
 }
 
 func create(ctx context.Context, store *state.Store, manager *repository.Manager, runner commandRunner, output string) error {
-	absolute, err := absentTarget(output, "backup")
+	// The output is held until create returns; see state.Destination for
+	// why its stage is then used by path.
+	destination, err := state.OpenDestination(output)
 	if err != nil {
+		return err
+	}
+	defer destination.Close()
+	absolute := destination.Path
+	if err := requireAbsent(absolute, "backup"); err != nil {
 		return err
 	}
 	stateRoot, err := canonicalExistingDirectory(store.Dir(), "state storage")
@@ -380,19 +387,17 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if err != nil {
 		return err
 	}
-	stage := filepath.Join(parent, "."+filepath.Base(absolute)+".owngit-backup-"+suffix)
-	if err := os.Mkdir(stage, 0o700); err != nil {
+	stage, err := destination.CreateStage("." + filepath.Base(absolute) + ".owngit-backup-" + suffix)
+	if err != nil {
 		return fmt.Errorf("create staged backup: %w", err)
 	}
 	published := false
 	defer func() {
 		if !published {
+			destination.ReleaseStage()
 			_ = os.RemoveAll(stage)
 		}
 	}()
-	if err := state.ProtectPrivatePath(stage, true); err != nil {
-		return err
-	}
 	bundles := filepath.Join(stage, "repositories")
 	if err := os.Mkdir(bundles, 0o700); err != nil {
 		return err
@@ -477,6 +482,7 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if err := requireAbsent(absolute, "backup"); err != nil {
 		return err
 	}
+	destination.ReleaseStage()
 	if err := renameNoReplace(stage, absolute); err != nil {
 		return fmt.Errorf("publish completed backup: %w", err)
 	}
@@ -512,15 +518,24 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	if err != nil {
 		return err
 	}
-	stateTarget, err := absentTarget(stateDirectory, "state")
+	// Both destinations are held until restore returns; see
+	// state.Destination for why their stages are then used by path.
+	stateDestination, err := state.OpenStateDestination(stateDirectory)
 	if err != nil {
 		return err
 	}
-	if err := state.RequireStateParent(stateTarget); err != nil {
+	defer stateDestination.Close()
+	stateTarget := stateDestination.Path
+	if err := requireAbsent(stateTarget, "state"); err != nil {
 		return err
 	}
-	repositoryTarget, err := absentTarget(repositoryRoot, "repository")
+	repositoryDestination, err := state.OpenDestination(repositoryRoot)
 	if err != nil {
+		return err
+	}
+	defer repositoryDestination.Close()
+	repositoryTarget := repositoryDestination.Path
+	if err := requireAbsent(repositoryTarget, "repository"); err != nil {
 		return err
 	}
 	if pathsOverlap(stateTarget, repositoryTarget) || pathsOverlap(inputRoot, stateTarget) || pathsOverlap(inputRoot, repositoryTarget) {
@@ -555,25 +570,24 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	if err != nil {
 		return err
 	}
-	stateStage := stateTarget + ".owngit-restore-" + suffix
-	repositoryStage := repositoryTarget + ".owngit-restore-" + suffix
+	// A stage is removed only once it was created here.
+	var stateStage, repositoryStage string
 	cleanupStateStage := true
 	cleanupRepositoryStage := true
 	defer func() {
-		if cleanupStateStage {
+		if cleanupStateStage && stateStage != "" {
+			stateDestination.ReleaseStage()
 			_ = os.RemoveAll(stateStage)
 		}
-		if cleanupRepositoryStage {
+		if cleanupRepositoryStage && repositoryStage != "" {
+			repositoryDestination.ReleaseStage()
 			_ = os.RemoveAll(repositoryStage)
 		}
 	}()
-	if err := os.Mkdir(stateStage, 0o700); err != nil {
+	if stateStage, err = stateDestination.CreateStage(filepath.Base(stateTarget) + ".owngit-restore-" + suffix); err != nil {
 		return fmt.Errorf("create staged state: %w", err)
 	}
-	if err := state.ProtectPrivatePath(stateStage, true); err != nil {
-		return err
-	}
-	if err := os.Mkdir(repositoryStage, 0o700); err != nil {
+	if repositoryStage, err = repositoryDestination.CreateStage(filepath.Base(repositoryTarget) + ".owngit-restore-" + suffix); err != nil {
 		return fmt.Errorf("create staged repository root: %w", err)
 	}
 	runner, err := gitexec.New(gitPath, filepath.Join(stateStage, "runtime"))
@@ -645,6 +659,7 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	if err := requireAbsent(stateTarget, "state"); err != nil {
 		return err
 	}
+	stateDestination.ReleaseStage()
 	if err := operations.rename(stateStage, stateTarget); err != nil {
 		return fmt.Errorf("publish guarded state directory: %w", err)
 	}
@@ -658,6 +673,7 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 		publishRepositoryErr = requireAbsent(repositoryTarget, "repository")
 	}
 	if publishRepositoryErr == nil {
+		repositoryDestination.ReleaseStage()
 		publishRepositoryErr = operations.rename(repositoryStage, repositoryTarget)
 	}
 	if publishRepositoryErr != nil {
@@ -805,22 +821,6 @@ func checkedInputRoot(input string) (string, error) {
 		return "", errors.New("backup source must be a real directory")
 	}
 	return canonicalExistingDirectory(absolute, "backup source")
-}
-
-func absentTarget(target, label string) (string, error) {
-	absolute, err := filepath.Abs(target)
-	if err != nil {
-		return "", err
-	}
-	parent, err := canonicalExistingDirectory(filepath.Dir(absolute), label+" destination parent")
-	if err != nil {
-		return "", err
-	}
-	identity := filepath.Join(parent, filepath.Base(absolute))
-	if err := requireAbsent(identity, label); err != nil {
-		return "", err
-	}
-	return filepath.Clean(identity), nil
 }
 
 func canonicalExistingDirectory(directory, label string) (string, error) {

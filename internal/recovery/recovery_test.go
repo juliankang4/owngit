@@ -152,32 +152,58 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	assertRef(t, restoredRemote, "refs/owngit/provenance/heads/main/"+oid, oid)
 }
 
+// Backup and restore make their folders only where no other account can
+// rename or remove what they put there: in a folder that no other account
+// can change, or in a sticky one, reached through such folders. Another
+// account could otherwise rename a stage and put a link in its place, and
+// the backup or restore would then write where the link leads. A folder
+// that every account may change and that is not sticky is refused, as is
+// one reached through it, and nothing is created.
 func TestRecoveryTargetParentRules(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix parent permissions")
 	}
 	ctx := context.Background()
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	noErr(t, err)
 	store, manager := newBackupStore(t, root)
-	sharedParent := filepath.Join(root, "shared")
-	noErr(t, os.Mkdir(sharedParent, 0o755))
-	noErr(t, os.Chmod(sharedParent, 0o777))
-	backup := filepath.Join(sharedParent, "backup")
+	shared := filepath.Join(root, "shared")
+	noErr(t, os.Mkdir(shared, 0o700))
+	noErr(t, os.Chmod(shared, 0o777))
+	owned := filepath.Join(shared, "owned")
+	noErr(t, os.Mkdir(owned, 0o700))
+	sticky := filepath.Join(root, "sticky")
+	noErr(t, os.Mkdir(sticky, 0o700))
+	noErr(t, os.Chmod(sticky, 0o777|os.ModeSticky))
+	backup := filepath.Join(root, "backup")
 	noErr(t, Create(ctx, store, manager, backup))
-	noErr(t, Restore(ctx, backup, filepath.Join(root, "restored-state"), filepath.Join(sharedParent, "repositories"), ""))
 
-	stateParent := filepath.Join(root, "shared-state")
-	noErr(t, os.Mkdir(stateParent, 0o755))
-	noErr(t, os.Chmod(stateParent, 0o777))
-	stateTarget := canonicalTestTarget(t, filepath.Join(stateParent, "state"))
-	stateParent = filepath.Dir(stateTarget)
-	repositoryTarget := filepath.Join(root, "unused-repositories")
-	err := Restore(ctx, backup, stateTarget, repositoryTarget, "")
-	if err == nil || !strings.Contains(err.Error(), "is not protected: other accounts can create names in "+stateParent) {
-		t.Fatalf("exchangeable state destination: %v", err)
+	refusal := "is not protected: another account can change " + shared
+	for _, output := range []string{filepath.Join(shared, "backup"), filepath.Join(owned, "backup")} {
+		err := Create(ctx, store, manager, output)
+		if err == nil || !strings.Contains(err.Error(), refusal) || !strings.Contains(err.Error(), "choose a folder that other accounts cannot change") {
+			t.Fatalf("backup to %s: error=%v, want %q", output, err, refusal)
+		}
+		assertNoRecoveryOutputOrStages(t, output, ".owngit-backup-")
 	}
-	assertNoRecoveryOutputOrStages(t, stateTarget, ".owngit-restore-")
-	assertNoRecoveryOutputOrStages(t, repositoryTarget, ".owngit-restore-")
+	for _, test := range []struct{ name, state, repositories string }{
+		{"state in the shared folder", filepath.Join(shared, "state"), filepath.Join(root, "repositories")},
+		{"repositories in the shared folder", filepath.Join(root, "state"), filepath.Join(shared, "repositories")},
+		{"repositories reached through the shared folder", filepath.Join(root, "state"), filepath.Join(owned, "repositories")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := Restore(ctx, backup, test.state, test.repositories, "")
+			if err == nil || !strings.Contains(err.Error(), refusal) {
+				t.Fatalf("Restore error=%v, want %q", err, refusal)
+			}
+			assertNoRecoveryOutputOrStages(t, test.state, ".owngit-restore-")
+			assertNoRecoveryOutputOrStages(t, test.repositories, ".owngit-restore-")
+		})
+	}
+
+	noErr(t, Create(ctx, store, manager, filepath.Join(sticky, "backup")))
+	noErr(t, Restore(ctx, backup, filepath.Join(sticky, "state"), filepath.Join(sticky, "repositories"), ""))
+	noErr(t, Restore(ctx, filepath.Join(sticky, "backup"), filepath.Join(root, "state"), filepath.Join(root, "repositories"), ""))
 }
 
 // Root restoring into a folder that another account owns is told to run the
@@ -761,8 +787,13 @@ func TestBackupRejectsDestinationThroughAncestorSymlinkIntoState(t *testing.T) {
 	defer store.Close()
 	alias := ancestorSymlink(t, root)
 	output := filepath.Join(alias, "source-state", "inside-backup")
-	if err := Create(context.Background(), store, manager, output); err == nil || !strings.Contains(err.Error(), "must not overlap") {
-		t.Fatalf("ancestor-symlink backup overlap error=%v", err)
+	// Windows follows no link on the way to a destination.
+	refusal := "must not overlap"
+	if runtime.GOOS == "windows" {
+		refusal = "is a link, a junction or a mounted volume"
+	}
+	if err := Create(context.Background(), store, manager, output); err == nil || !strings.Contains(err.Error(), refusal) {
+		t.Fatalf("ancestor-symlink backup error=%v, want %q", err, refusal)
 	}
 	if _, err := os.Lstat(filepath.Join(root, "source-state", "inside-backup")); !os.IsNotExist(err) {
 		t.Fatalf("overlapping backup destination was created: %v", err)
@@ -779,8 +810,13 @@ func TestRestoreRejectsTargetThroughAncestorSymlinkIntoBackup(t *testing.T) {
 	alias := ancestorSymlink(t, root)
 	stateTarget := filepath.Join(alias, "backup", "inside-state")
 	repositoryTarget := filepath.Join(root, "restored-repositories")
-	if err := Restore(ctx, backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), "must not overlap") {
-		t.Fatalf("ancestor-symlink restore overlap error=%v", err)
+	// Windows follows no link on the way to a destination.
+	refusal := "must not overlap"
+	if runtime.GOOS == "windows" {
+		refusal = "is a link, a junction or a mounted volume"
+	}
+	if err := Restore(ctx, backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), refusal) {
+		t.Fatalf("ancestor-symlink restore error=%v, want %q", err, refusal)
 	}
 	if _, err := os.Lstat(filepath.Join(backup, "inside-state")); !os.IsNotExist(err) {
 		t.Fatalf("overlapping restore state was created: %v", err)
@@ -1070,11 +1106,13 @@ func objectExists(t *testing.T, repositoryPath, oid string) bool {
 	return err == nil
 }
 
+// canonicalTestTarget names target as restore names it.
 func canonicalTestTarget(t *testing.T, target string) string {
 	t.Helper()
-	identity, err := absentTarget(target, "test")
+	destination, err := state.OpenDestination(target)
 	noErr(t, err)
-	return identity
+	defer destination.Close()
+	return destination.Path
 }
 
 func assertNoRecoveryOutputOrStages(t *testing.T, target, stageInfix string) {
