@@ -10,7 +10,8 @@
 //
 // From owngit:
 //   {"type":"init","name":BUS NAME,"icons":DIR}
-//   {"type":"state","icon":ICON NAME,"symbol":ICON NAME,"panel":PANEL}
+//   {"type":"state","icon":ICON NAME,"symbol":ICON NAME,"panel":PANEL,"open":BOOL}
+//                                     open: show the panel too
 //   {"type":"opened"}                 the dashboard opened; close the panel
 //   {"type":"notice","text":TEXT}     something failed; show it in the panel
 // To owngit:
@@ -462,6 +463,8 @@ function receive(message) {
             announce();
             renderPanel();
         }
+        if (message.open === true)
+            showPanel();
         break;
     }
     case 'opened':

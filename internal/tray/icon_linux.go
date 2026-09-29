@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync/atomic"
 	"time"
 
 	"owngit/internal/bootstrap"
@@ -33,16 +32,6 @@ import (
 
 //go:embed icon_linux.js
 var panelProgram string
-
-// How often the icon reads: often while the panel is open or the icon is
-// hidden (a file check), less often while the server runs, and least often
-// while it does not answer, since the checkup then asks systemd.
-const (
-	pollOpen      = 5 * time.Second
-	pollHidden    = 5 * time.Second
-	pollAnswering = 10 * time.Second
-	pollSilent    = 20 * time.Second
-)
 
 // toolkitCheck loads GTK 4 in gjs without opening a window.
 const toolkitCheck = "imports.gi.versions.Gtk = '4.0'; imports.gi.Gtk;"
@@ -101,14 +90,6 @@ func protectedProgram(path string) (string, error) {
 	return resolved, nil
 }
 
-// reading is one result of the poller.
-type reading struct {
-	// show is false while the icon is hidden, or while its choice cannot
-	// be read (as before the server's first start).
-	show   bool
-	report Report
-}
-
 // panelMessage is a message between this program and the panel program.
 // Only the fields of its type are set.
 type panelMessage struct {
@@ -134,12 +115,8 @@ type panelProcess struct {
 }
 
 type linuxIcon struct {
-	stateDir  string
-	client    *Client
-	lang      webui.Lang
-	icons     string
-	refresh   chan struct{}
-	panelOpen atomic.Bool
+	*poller
+	icons string
 }
 
 // Run shows the icon of the server of options.StateDir until the icon is
@@ -156,15 +133,20 @@ func Run(options Options) error {
 	if err != nil {
 		return fmt.Errorf("start the OwnGit icon: %w", err)
 	}
-	icon := &linuxIcon{
-		stateDir: options.StateDir, client: NewClient(options.StateDir, options.Diagnose),
-		lang: DesktopLanguage(), icons: icons, refresh: make(chan struct{}, 1),
-	}
+	icon := &linuxIcon{poller: newPoller(options, DesktopLanguage()), icons: icons}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	readings := make(chan reading)
-	go icon.poll(ctx, readings)
-	opened := make(chan bool, 1)
+	go icon.poll(ctx, func(next reading) {
+		select {
+		case <-ctx.Done():
+		case readings <- next:
+		}
+	})
+	// opening is true while a click waits for the proof of the dashboard's
+	// address and the browser; a second click meanwhile opens nothing more.
+	opening := false
+	opened := make(chan error, 1)
 	var current *panelProcess
 	defer func() { current.stop() }()
 	for {
@@ -186,9 +168,7 @@ func Run(options Options) error {
 					return err
 				}
 			}
-			panel := NewPanel(next.report, icon.lang, time.Now())
-			name := conditionNames[next.report.Condition]
-			current.send(panelMessage{Type: "state", Icon: "owngit-" + name + "-symbolic", Symbol: "owngit-state-" + name + "-symbolic", Panel: &panel})
+			current.send(icon.stateMessage(next.report, false))
 		case message, ok := <-messages:
 			if !ok {
 				err := <-current.ended
@@ -197,7 +177,10 @@ func Run(options Options) error {
 			}
 			switch message.Type {
 			case "open":
-				go func() { opened <- icon.openDashboard() }()
+				if !opening {
+					opening = true
+					go func() { opened <- icon.openDashboard() }()
+				}
 			case "hide":
 				if err := icon.hide(); err != nil {
 					current.send(panelMessage{Type: "notice", Text: fmt.Sprintf(webui.Text(icon.lang, webui.MsgTrayHideFailed), err)})
@@ -214,14 +197,30 @@ func Run(options Options) error {
 					icon.askAgain()
 				}
 			}
-		case ok := <-opened:
-			if ok && current != nil {
+		case err := <-opened:
+			opening = false
+			switch {
+			case current == nil:
+			case err == nil:
 				current.send(panelMessage{Type: "opened"})
-			} else {
-				icon.askAgain()
+			case errors.Is(err, errNotProven):
+				// Show that at once, as the next reading will, which is
+				// asked for now.
+				current.send(icon.stateMessage(Report{Condition: Unavailable}, true))
+			default:
+				current.send(panelMessage{Type: "notice", Text: fmt.Sprintf(webui.Text(icon.lang, webui.MsgTrayOpenFailed), err)})
 			}
+			icon.askAgain()
 		}
 	}
+}
+
+// stateMessage tells the panel program what to show for report, and to
+// open the panel when open is set.
+func (icon *linuxIcon) stateMessage(report Report, open bool) panelMessage {
+	panel := NewPanel(report, icon.lang, time.Now())
+	name := conditionNames[report.Condition]
+	return panelMessage{Type: "state", Icon: "owngit-" + name + "-symbolic", Symbol: "owngit-state-" + name + "-symbolic", Panel: &panel, Open: open}
 }
 
 // startPanel starts the panel program and waits until its item is on the
@@ -298,65 +297,7 @@ func (process *panelProcess) stop() {
 	}
 }
 
-// poll reads the hidden choice and, while the icon shows, the status.
-func (icon *linuxIcon) poll(ctx context.Context, readings chan<- reading) {
-	for {
-		next := reading{show: icon.mayShow()}
-		wait := pollHidden
-		if next.show {
-			next.report = icon.client.Read(ctx, string(icon.lang))
-			// The server says so too when the choice changed meanwhile.
-			if next.report.Status != nil && !next.report.Status.Shown {
-				next.show = false
-			}
-			switch next.report.Condition {
-			case Running, Attention:
-				wait = pollAnswering
-			default:
-				wait = pollSilent
-			}
-		}
-		if icon.panelOpen.Load() {
-			wait = pollOpen
-		}
-		// The owner may have hidden the icon while the status was read.
-		if next.show && !icon.mayShow() {
-			next.show = false
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case readings <- next:
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-icon.refresh:
-		case <-time.After(wait):
-		}
-	}
-}
-
-// mayShow reports whether the owner lets the icon show: the hidden choice
-// can be read and is not set.
-func (icon *linuxIcon) mayShow() bool {
-	held, err := state.OpenStateDirectory(icon.stateDir)
-	if err != nil {
-		return false
-	}
-	defer held.Close()
-	hidden, err := state.TrayHidden(held)
-	return err == nil && !hidden
-}
-
-func (icon *linuxIcon) askAgain() {
-	select {
-	case icon.refresh <- struct{}{}:
-	default:
-	}
-}
-
-// hide is Hide from the panel: the same choice as "owngit tray off" and the
+// hide is Hide the icon: the same choice as "owngit tray off" and the
 // dashboard switch.
 func (icon *linuxIcon) hide() error {
 	held, err := state.OpenStateDirectory(icon.stateDir)
@@ -367,15 +308,20 @@ func (icon *linuxIcon) hide() error {
 	return state.SetTrayHidden(held, true)
 }
 
+// errNotProven means the server did not prove the dashboard's address when
+// the owner asked to open it, so nothing was opened.
+var errNotProven = errors.New("the dashboard's address was not proven")
+
 // openDashboard opens the dashboard after the server proves, right now,
-// that it still answers there, and reports whether it did. The browser
-// brings the owner's OwnGit sign-in along, so a program that took the
-// address after an earlier reading must not get it.
-func (icon *linuxIcon) openDashboard() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), answerTimeout+connectTimeout)
-	defer cancel()
-	target, err := NewClient(icon.stateDir, nil).Dashboard(ctx, string(icon.lang))
-	return err == nil && bootstrap.Open(target) == nil
+// that it still answers there. The browser brings the owner's OwnGit
+// sign-in along, so a program that took the address after an earlier
+// reading must not get it.
+func (icon *linuxIcon) openDashboard() error {
+	target, err := NewClient(icon.stateDir, nil).Dashboard(context.Background(), string(icon.lang))
+	if err != nil {
+		return fmt.Errorf("%w: %v", errNotProven, err)
+	}
+	return bootstrap.Open(target)
 }
 
 // writeIcons writes the icon files the desktop and the panel draw into a

@@ -18,11 +18,12 @@ import (
 )
 
 type trayReport struct {
-	Available  bool   `json:"available"`
-	Shown      bool   `json:"shown"`
-	Desktop    bool   `json:"desktop"`
-	StateDir   string `json:"state_dir"`
-	AccessFile string `json:"access_file"`
+	Available  bool    `json:"available"`
+	Shown      bool    `json:"shown"`
+	Desktop    bool    `json:"desktop"`
+	StateDir   string  `json:"state_dir"`
+	AccessFile string  `json:"access_file"`
+	Problem    *string `json:"problem"`
 }
 
 func trayJSON(t *testing.T, arguments ...string) trayReport {
@@ -54,6 +55,9 @@ func TestTrayCommand(t *testing.T) {
 	}
 
 	report := trayJSON(t, "--state-dir", stateDir)
+	if report.Problem == nil {
+		t.Fatalf("no problem field: %+v", report)
+	}
 	if !report.Available || !report.Shown || !report.Desktop || report.StateDir != stateDir || report.AccessFile != filepath.Join(stateDir, state.TrayAccessFile) {
 		t.Fatalf("default on a desktop: %+v", report)
 	}
@@ -254,6 +258,20 @@ func TestTrayIconCommand(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
 		if err := runCommand("tray", []string{"icon", "--state-dir", stateDir}); err == nil || !strings.Contains(err.Error(), "needs gjs with GTK 4") {
 			t.Errorf("icon without gjs: %v", err)
+		}
+		// Status says why the icon cannot show, and not that it shows.
+		original := probeEnvironment
+		t.Cleanup(func() { probeEnvironment = original })
+		probeEnvironment = func() service.Environment {
+			return service.Environment{Getenv: func(string) string { return "" }, EUID: 1000, Linux: true, GraphicalSession: true}
+		}
+		noErr(t, os.MkdirAll(stateDir, 0o700))
+		output, err := captureStdout(func() error { return runCommand("tray", []string{"--state-dir", stateDir}) })
+		if err != nil || !strings.Contains(output, "needs gjs with GTK 4") {
+			t.Errorf("status without gjs: %v\n%s", err, output)
+		}
+		if report := trayJSON(t, "--state-dir", stateDir); report.Problem == nil || !strings.Contains(*report.Problem, "needs gjs with GTK 4") {
+			t.Errorf("status --json without gjs: %+v", report)
 		}
 		return
 	}

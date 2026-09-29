@@ -74,7 +74,7 @@ func NewPanel(report Report, lang webui.Lang, now time.Time) Panel {
 			CopyClone: text(webui.MsgTrayCopyClone), Copied: text(webui.MsgTrayCopied),
 			Recent: text(webui.MsgTrayRecent), Open: text(webui.MsgTrayOpen),
 			ShowPanel: text(webui.MsgTrayShowPanel), ThisComputer: text(webui.MsgTrayThisComputer),
-			Hide: text(webui.MsgTrayHidePanel), Quit: text(webui.MsgTrayQuit),
+			Hide: text(webui.MsgTrayHideIcon), Quit: text(webui.MsgTrayQuit),
 			KeepsRunning: text(webui.MsgTrayKeepsRunning),
 		},
 	}

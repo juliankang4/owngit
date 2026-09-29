@@ -306,7 +306,10 @@ func Open(path string) error {
 	command.Stdout = nil
 	command.Stderr = nil
 	if err := command.Start(); err != nil {
-		return fmt.Errorf("open setup file: %w", err)
+		return fmt.Errorf("start the browser: %w", err)
 	}
-	return command.Process.Release()
+	// Wait for the opener in the background, so a long-running caller
+	// such as the icon or "serve --open" keeps no ended child behind.
+	go func() { _ = command.Wait() }()
+	return nil
 }

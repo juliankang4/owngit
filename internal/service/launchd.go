@@ -433,7 +433,8 @@ func AppBundleID(ctx context.Context, run Runner, executable string) (string, er
 	return identifier, nil
 }
 
-// AgentExecutable is the path the agent starts: Homebrew's opt link for a
+// AgentExecutable is the path the agent (and the Linux icon's autostart
+// entry) starts: Homebrew's opt link for a
 // binary in the Cellar, whose versioned folder an upgrade removes, and
 // otherwise the path the command was started by, so that an agent started
 // through a link keeps working when the link moves to a new file.

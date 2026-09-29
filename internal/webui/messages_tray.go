@@ -21,7 +21,8 @@ const (
 	MsgTrayOpen          MessageCode = "tray.open"
 	MsgTrayThisComputer  MessageCode = "tray.this_computer"
 	MsgTrayHide          MessageCode = "tray.hide"
-	MsgTrayHidePanel     MessageCode = "tray.hide_panel"
+	MsgTrayHideIcon      MessageCode = "tray.hide_icon"
+	MsgTrayOpenFailed    MessageCode = "tray.open_failed"
 	MsgTrayShowPanel     MessageCode = "tray.show_panel"
 	MsgTrayQuit          MessageCode = "tray.quit"
 	MsgTrayKeepsRunning  MessageCode = "tray.keeps_running"
@@ -57,7 +58,8 @@ var trayCatalog = map[MessageCode]message{
 	MsgTrayOpen:         {en: "Open dashboard", ko: "대시보드 열기"},
 	MsgTrayThisComputer: {en: "This computer", ko: "이 컴퓨터"},
 	MsgTrayHide:         {en: "Hide from the notification area", ko: "알림 영역에서 숨기기"},
-	MsgTrayHidePanel:    {en: "Hide from the panel", ko: "패널에서 숨기기"},
+	MsgTrayHideIcon:     {en: "Hide the icon", ko: "아이콘 숨기기"},
+	MsgTrayOpenFailed:   {en: "The browser did not open the dashboard: %s", ko: "브라우저가 대시보드를 열지 못했습니다: %s"},
 	MsgTrayShowPanel:    {en: "Open the panel", ko: "패널 열기"},
 	MsgTrayQuit:         {en: "Quit the icon", ko: "아이콘 종료"},
 	MsgTrayKeepsRunning: {

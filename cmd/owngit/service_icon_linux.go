@@ -20,9 +20,13 @@ import (
 // A headless install has no icon and removes the entry of an earlier one;
 // the dedicated owngit account, which no one signs in as, never gets one.
 
-// installIcon registers the icon of the server of stateDir, or removes it
-// for a headless install.
-func (host *serviceHost) installIcon(stateDir string, headless bool) {
+// installIcon registers the icon of the server of stateDir that mode runs,
+// or removes it for a headless install.
+func (host *serviceHost) installIcon(mode service.Mode, stateDir string, headless bool) {
+	if mode == service.ModeAccount {
+		// Nobody signs in to a desktop as the dedicated account.
+		return
+	}
 	if headless || !host.env.Desktop() {
 		host.removeIcon(false)
 		return
@@ -37,7 +41,9 @@ func (host *serviceHost) installIcon(stateDir string, headless bool) {
 		host.printf("The OwnGit icon does not start at sign-in: %s was not written by OwnGit, so it stays.\n", path)
 		return
 	}
-	entry, err := service.RenderAutostart(host.executable, stateDir)
+	// The entry outlives this binary: a Homebrew upgrade removes its
+	// versioned Cellar folder, so the entry names the opt link instead.
+	entry, err := service.RenderAutostart(service.AgentExecutable("", host.executable), stateDir)
 	if err == nil {
 		err = service.WriteAutostart(path, entry)
 	}
@@ -84,7 +90,7 @@ func reloadAutostart() {
 // startIconNow starts "owngit tray icon" in its own session, so it
 // outlives this command. An icon that already runs for the state
 // directory ends the new one at once.
-func startIconNow(executable, stateDir string) {
+var startIconNow = func(executable, stateDir string) {
 	command := exec.Command(executable, "tray", "icon", "--state-dir", stateDir)
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if command.Start() == nil {

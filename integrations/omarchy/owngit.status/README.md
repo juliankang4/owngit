@@ -39,4 +39,4 @@ Up and Down move between Copy and Open dashboard, Enter chooses, Esc closes the 
 
 ## The OwnGit icon in the tray
 
-`owngit service install` also puts the OwnGit icon into the desktop's tray, which on Omarchy is the drawer behind the arrow in the bar. With this widget you may not need both: choose "Hide from the panel" on the tray icon, or run `owngit tray off`. The widget keeps showing either way; remove it with `omarchy plugin disable owngit.status`.
+`owngit service install` also puts the OwnGit icon into the desktop's tray, which on Omarchy is the drawer behind the arrow in the bar. With this widget you may not need both: choose "Hide the icon" in the tray icon's menu or panel, or run `owngit tray off`. The widget keeps showing either way; remove it with `omarchy plugin disable owngit.status`.

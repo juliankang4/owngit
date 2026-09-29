@@ -32,6 +32,11 @@ fi
 echo '{"type":"ready"}'
 read -r reading
 printf '%s\n' "$reading" > "$FAKE_DIR/state"
+if [ "$FAKE_MODE" = open ]; then
+	echo '{"type":"open"}'
+	while read -r line; do printf '%s\n' "$line" >> "$FAKE_DIR/after"; done
+	exit 0
+fi
 echo '{"type":"hide"}'
 while read -r _; do :; done
 echo ended > "$FAKE_DIR/ended"
@@ -101,10 +106,72 @@ func TestLinuxIconKeepsTheHideChoice(t *testing.T) {
 		!strings.Contains(string(reading), `"icon":"owngit-unavailable-symbolic"`) {
 		t.Errorf("the panel program was sent\n%s%s", init, reading)
 	}
+	// While hidden, the next readings start no panel program again.
+	os.Remove(filepath.Join(fakeDir, "init"))
 	select {
 	case err := <-result:
 		t.Fatalf("the hidden icon ended: %v", err)
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(pollHidden + time.Second):
+	}
+	if _, err := os.Stat(filepath.Join(fakeDir, "init")); !os.IsNotExist(err) {
+		t.Fatal("the hidden icon started the panel program again")
+	}
+	close(stop)
+	if err := <-result; err != nil {
+		t.Fatalf("the icon ended with %v", err)
+	}
+}
+
+// An icon that starts hidden starts no panel program until it is shown.
+func TestLinuxIconStartsHidden(t *testing.T) {
+	fakeDir := useFakeGJS(t, "hide")
+	stateDir := newStateDir(t)
+	held, err := state.OpenStateDirectory(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = state.SetTrayHidden(held, true)
+	held.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	result := make(chan error, 1)
+	go func() { result <- Run(Options{StateDir: stateDir, Stop: stop}) }()
+	select {
+	case err := <-result:
+		t.Fatalf("the hidden icon ended: %v", err)
+	case <-time.After(pollHidden + time.Second):
+	}
+	if _, err := os.Stat(filepath.Join(fakeDir, "init")); !os.IsNotExist(err) {
+		t.Fatal("the hidden icon started the panel program")
+	}
+	close(stop)
+	if err := <-result; err != nil {
+		t.Fatalf("the icon ended with %v", err)
+	}
+}
+
+// Open dashboard without a proven answer opens nothing and shows the
+// panel with Status unavailable at once.
+func TestLinuxIconShowsAnUnprovenOpen(t *testing.T) {
+	fakeDir := useFakeGJS(t, "open")
+	stop := make(chan struct{})
+	result := make(chan error, 1)
+	go func() { result <- Run(Options{StateDir: newStateDir(t), Stop: stop}) }()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		after, _ := os.ReadFile(filepath.Join(fakeDir, "after"))
+		if strings.Contains(string(after), `"open":true`) {
+			if !strings.Contains(string(after), `"condition":"unavailable"`) || strings.Contains(string(after), `"type":"opened"`) {
+				t.Fatalf("after Open:\n%s", after)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no answer to Open:\n%s", after)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	close(stop)
 	if err := <-result; err != nil {

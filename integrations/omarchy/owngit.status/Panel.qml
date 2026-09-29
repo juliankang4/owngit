@@ -29,6 +29,13 @@ Panel {
   // is none.
   property var panel: null
   property string problem: ""
+  // notice says why the last Copy or Open dashboard did not work.
+  property string notice: ""
+  property bool reading: false
+  property string copying: ""
+  // The exit code and output of "owngit tray open", which arrive apart.
+  property int openCode: -1
+  property var openText: null
   property int cursor: 0
   property string copied: ""
 
@@ -39,8 +46,10 @@ Panel {
   // The words this widget needs before owngit answers; the rest come from
   // owngit in the chosen language.
   readonly property var words: lang === "ko"
-    ? { unavailable: "상태를 알 수 없음", noProgram: "owngit 명령을 실행하지 못했습니다. 이 위젯 설정에서 owngit 프로그램 경로를 지정하세요." }
-    : { unavailable: "Status unavailable", noProgram: "The owngit command could not be run. Set the owngit program in this widget's settings." }
+    ? { unavailable: "상태를 알 수 없음", noProgram: "owngit 명령을 실행하지 못했습니다. 이 위젯 설정에서 owngit 프로그램 경로를 지정하세요.",
+        copyFailed: "복사하지 못했습니다. wl-copy(wl-clipboard 패키지)가 있는지 확인하세요.", openFailed: "대시보드를 열지 못했습니다." }
+    : { unavailable: "Status unavailable", noProgram: "The owngit command could not be run. Set the owngit program in this widget's settings.",
+        copyFailed: "Could not copy. Check that wl-copy (the wl-clipboard package) is installed.", openFailed: "The dashboard did not open." }
 
   // actions are what Enter does at each cursor position.
   readonly property var actions: {
@@ -60,10 +69,13 @@ Panel {
   function refresh() {
     if (readProc.running) return
     readProc.command = commandFor("read")
+    reading = true
     readProc.running = true
-    // A program that cannot start stops at once without an answer.
+    // A program that cannot start stops at once without an answer; an
+    // answer that already arrived is kept.
     Qt.callLater(function() {
-      if (!readProc.running && readProc.processId === null) {
+      if (root.reading && !readProc.running && readProc.processId === null) {
+        root.reading = false
         root.panel = null
         root.problem = root.words.noProgram
       }
@@ -71,6 +83,7 @@ Panel {
   }
 
   function accept(text) {
+    reading = false
     var answer = null
     try {
       answer = JSON.parse(text)
@@ -87,15 +100,48 @@ Panel {
   }
 
   function copy(value, id) {
-    Quickshell.execDetached(["wl-copy", "--", String(value)])
-    copied = id
-    copiedTimer.restart()
+    if (copyProc.running) return
+    copying = id
+    notice = ""
+    copyProc.command = ["wl-copy", "--", String(value)]
+    copyProc.running = true
+    // wl-copy that cannot start stops at once without an exit code.
+    Qt.callLater(function() {
+      if (root.copying !== "" && !copyProc.running && copyProc.processId === null) copyFailed()
+    })
+  }
+
+  function copyFailed() {
+    copying = ""
+    copied = ""
+    notice = words.copyFailed
   }
 
   function openDashboard() {
     if (openProc.running) return
+    notice = ""
+    openCode = -1
+    openText = null
     openProc.command = commandFor("open")
     openProc.running = true
+  }
+
+  // openDone closes the panel after the dashboard opened, and otherwise
+  // shows why "owngit tray open" opened nothing and reads the status again.
+  function openDone() {
+    if (openCode < 0 || openText === null) return
+    if (openCode === 0) {
+      root.close()
+      return
+    }
+    var answer = null
+    try {
+      answer = JSON.parse(openText)
+    } catch (e) {
+      answer = null
+    }
+    notice = answer && answer.error && answer.error.message ? String(answer.error.message) : words.openFailed
+    refresh()
   }
 
   function activate(action) {
@@ -105,7 +151,10 @@ Panel {
   }
 
   onOpenedChanged: {
-    if (!opened) return
+    if (!opened) {
+      notice = ""
+      return
+    }
     cursor = Math.max(0, actions.indexOf("open"))
     refresh()
   }
@@ -123,11 +172,29 @@ Panel {
 
   Process {
     id: openProc
-    // A dashboard that opened closes the panel; otherwise the status is
-    // read again, and says why.
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.openText = text
+        root.openDone()
+      }
+    }
     onExited: function(exitCode) {
-      if (exitCode === 0) root.close()
-      else root.refresh()
+      root.openCode = exitCode
+      root.openDone()
+    }
+  }
+
+  Process {
+    id: copyProc
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.copyFailed()
+        return
+      }
+      root.copied = root.copying
+      root.copying = ""
+      copiedTimer.restart()
     }
   }
 
@@ -256,8 +323,12 @@ Panel {
         Column {
           width: parent.width
           spacing: Style.space(6)
-          visible: notices.count > 0 || root.problem !== "" || (root.panel && root.panel.command !== "")
+          visible: notices.count > 0 || root.problem !== "" || root.notice !== "" || (root.panel && root.panel.command !== "")
 
+          Line {
+            visible: root.notice !== ""
+            text: root.notice
+          }
           Line {
             visible: root.problem !== ""
             text: root.problem

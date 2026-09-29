@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -49,24 +48,6 @@ const (
 	idEdit        = 100
 )
 
-// How often the poller reads: often while the panel is open or the icon is
-// hidden (a file check), less often while the server runs, and least often
-// while it does not answer, since the checkup then asks Task Scheduler.
-const (
-	pollOpen      = 5 * time.Second
-	pollHidden    = 5 * time.Second
-	pollAnswering = 10 * time.Second
-	pollSilent    = 20 * time.Second
-)
-
-// reading is one result of the poller.
-type reading struct {
-	// show is false while the icon is hidden, or while its choice cannot
-	// be read (as before the server's first start).
-	show   bool
-	report Report
-}
-
 // palette holds the panel's colors (COLORREF).
 type palette struct {
 	bg, fg, fg2, line, field, button, buttonLine, buttonPressed uint32
@@ -75,19 +56,15 @@ type palette struct {
 }
 
 type app struct {
-	stateDir string
-	client   *Client
-	lang     webui.Lang
+	*poller
 	instance uintptr
 	hwnd     uintptr
 	// taskbarCreated is the message Explorer sends when the taskbar
 	// starts again; the icon is then added again.
 	taskbarCreated uint32
 
-	mu        sync.Mutex
-	latest    reading
-	refresh   chan struct{}
-	panelOpen atomic.Bool
+	mu     sync.Mutex
+	latest reading
 
 	// The rest belongs to the window's thread.
 	current   reading
@@ -151,18 +128,19 @@ func Run(options Options) error {
 	defer windows.CloseHandle(mutex)
 	call(procSetProcessDpiAwarenessContext, perMonitorAwareV2)
 
-	a := &app{
-		stateDir: options.StateDir, client: NewClient(options.StateDir, options.Diagnose),
-		lang: userLanguage(), refresh: make(chan struct{}, 1),
-		brushes: map[uint32]uintptr{}, texts: map[uintptr]string{},
-	}
+	a := &app{poller: newPoller(options, userLanguage()), brushes: map[uint32]uintptr{}, texts: map[uintptr]string{}}
 	current = a
 	if err := a.createWindow(); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go a.poll(ctx)
+	go a.poll(ctx, func(next reading) {
+		a.mu.Lock()
+		a.latest = next
+		a.mu.Unlock()
+		call(procPostMessage, a.hwnd, wmReading, 0, 0)
+	})
 	go func() {
 		select {
 		case <-options.Stop:
@@ -294,67 +272,6 @@ func (a *app) isButton(control uintptr) bool {
 		}
 	}
 	return false
-}
-
-// poll reads the hidden choice and, while the icon shows, the status, and
-// hands each reading to the window.
-func (a *app) poll(ctx context.Context) {
-	for {
-		next := reading{show: a.mayShow()}
-		wait := pollHidden
-		if next.show {
-			next.report = a.client.Read(ctx, string(a.lang))
-			// The server says so too when the choice changed meanwhile.
-			if next.report.Status != nil && !next.report.Status.Shown {
-				next.show = false
-			}
-			switch next.report.Condition {
-			case Running, Attention:
-				wait = pollAnswering
-			default:
-				wait = pollSilent
-			}
-		}
-		if a.panelOpen.Load() {
-			wait = pollOpen
-		}
-		// The owner may have hidden the icon while the status was read.
-		if next.show && !a.mayShow() {
-			next.show = false
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		a.mu.Lock()
-		a.latest = next
-		a.mu.Unlock()
-		call(procPostMessage, a.hwnd, wmReading, 0, 0)
-		select {
-		case <-ctx.Done():
-			return
-		case <-a.refresh:
-		case <-time.After(wait):
-		}
-	}
-}
-
-// mayShow reports whether the owner lets the icon show: the hidden choice
-// can be read and is not set.
-func (a *app) mayShow() bool {
-	held, err := state.OpenStateDirectory(a.stateDir)
-	if err != nil {
-		return false
-	}
-	defer held.Close()
-	hidden, err := state.TrayHidden(held)
-	return err == nil && !hidden
-}
-
-func (a *app) askAgain() {
-	select {
-	case a.refresh <- struct{}{}:
-	default:
-	}
 }
 
 func (a *app) handle(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {

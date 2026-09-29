@@ -26,7 +26,7 @@ func TestPanelOfARunningServer(t *testing.T) {
 	panel := NewPanel(Report{Condition: Running, Status: status, Dashboard: "http://127.0.0.1:7654"}, webui.LangKO, now)
 	if panel.Condition != "running" || panel.State != "실행 중" || !panel.CanOpen || panel.CloneAddress != status.CloneAddress ||
 		!reflect.DeepEqual(panel.Pushes, []PanelPush{{Repository: "notes", Branch: "main", When: "오늘 14:48"}}) ||
-		panel.Labels.Hide != "패널에서 숨기기" || panel.Labels.CopyClone != "클론 주소 복사" || panel.Labels.Open != "대시보드 열기" {
+		panel.Labels.Hide != "아이콘 숨기기" || panel.Labels.CopyClone != "클론 주소 복사" || panel.Labels.Open != "대시보드 열기" {
 		t.Fatalf("panel %+v", panel)
 	}
 	encoded, err := json.Marshal(panel)

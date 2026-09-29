@@ -315,9 +315,7 @@ func (host *serviceHost) install(stateDirFlag string, headlessFlag *bool) error 
 	if err := host.reportStarted(mode, unitPath, stateDir); err != nil {
 		return err
 	}
-	if mode != service.ModeAccount {
-		host.installIcon(stateDir, headless)
-	}
+	host.installIcon(mode, stateDir, headless)
 	if earlier == "" {
 		return nil
 	}
@@ -388,7 +386,7 @@ func (host *serviceHost) installHomebrew(stateDir string, headless bool) error {
 	if err := host.reportStarted(service.ModeHomebrew, "", stateDir); err != nil {
 		return err
 	}
-	host.installIcon(stateDir, headless)
+	host.installIcon(service.ModeHomebrew, stateDir, headless)
 	return nil
 }
 
