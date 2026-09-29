@@ -340,6 +340,11 @@ func TestPRTextSurvivesBackupAndRestore(t *testing.T) {
 	if got := commandErrorCode(err); got != "stale_edit" {
 		t.Fatalf("stale edit error=%v code=%q", err, got)
 	}
+	// An empty --body-file path is refused rather than clearing the text.
+	err = prCommand(append([]string{"edit", "--number", number, "--edit-revision", "1", "--body-file", ""}, fixture.remoteFlags...))
+	if got := commandErrorCode(err); got != "invalid_arguments" {
+		t.Fatalf("empty --body-file error=%v code=%q", err, got)
+	}
 	reviewed := runPRCommandJSON(t, append([]string{
 		"review", "submit", "--number", number, "--source-oid", fixture.sourceOID, "--target-oid", fixture.targetOID,
 		"--decision", "approved", "--reviewer", "cli reviewer", "--note-file", write("note.md", "Looks right.\n"),

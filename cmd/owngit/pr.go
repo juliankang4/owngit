@@ -108,6 +108,11 @@ func prEdit(arguments []string) error {
 		input.Title = title
 	}
 	if given["body-file"] {
+		// An empty path is more likely an unset variable than a wish to
+		// clear the description; an empty file clears it.
+		if *bodyFile == "" {
+			return cliProblem("invalid_arguments", "--body-file needs a file, or - for standard input.")
+		}
 		body, err := readPullRequestText(*bodyFile, "--body-file")
 		if err != nil {
 			return err
