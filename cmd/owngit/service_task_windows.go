@@ -35,6 +35,9 @@ var (
 	kernel32                  = windows.NewLazySystemDLL("kernel32.dll")
 	procAttachConsole         = kernel32.NewProc("AttachConsole")
 	procFreeConsole           = kernel32.NewProc("FreeConsole")
+	wtsapi32                  = windows.NewLazySystemDLL("wtsapi32.dll")
+	procWTSEnumerateProcesses = wtsapi32.NewProc("WTSEnumerateProcessesExW")
+	procWTSFreeMemoryEx       = wtsapi32.NewProc("WTSFreeMemoryExW")
 )
 
 // copyVariable marks a copy of owngit that another one started (see
@@ -50,6 +53,48 @@ func platformCurrentAccountSID() (string, error) {
 }
 
 func platformSystemDirectory() (string, error) { return windows.GetSystemDirectory() }
+
+// wtsProcessInfo is WTS_PROCESS_INFO_EXW.
+type wtsProcessInfo struct {
+	session, process                   uint32
+	name                               *uint16
+	user                               *windows.SID
+	threads, handles, pagefile, peakPF uint32
+	workingSet, peakWorkingSet         uint32
+	userTime, kernelTime               int64
+}
+
+// platformRequestingAccount returns the account of the process that
+// started this one, as Windows lists it for every process to an
+// administrator. After a UAC prompt that is the OwnGit that asked, whatever
+// account approved. parentProcess refuses a process that started after
+// this one, so a reused process ID cannot stand in for the parent, and its
+// open handle keeps the ID taken while it is looked up.
+func platformRequestingAccount() (string, error) {
+	parent, err := parentProcess()
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(parent)
+	id, err := windows.GetProcessId(parent)
+	if err != nil {
+		return "", err
+	}
+	const anySession, levelOne = 0xFFFFFFFE, 1
+	level := uint32(levelOne)
+	var list *wtsProcessInfo
+	var count uint32
+	if ok, _, err := procWTSEnumerateProcesses.Call(0, uintptr(unsafe.Pointer(&level)), anySession, uintptr(unsafe.Pointer(&list)), uintptr(unsafe.Pointer(&count))); ok == 0 {
+		return "", fmt.Errorf("list processes: %w", err)
+	}
+	defer procWTSFreeMemoryEx.Call(levelOne, uintptr(unsafe.Pointer(list)), uintptr(count))
+	for _, process := range unsafe.Slice(list, count) {
+		if process.process == id && process.user != nil {
+			return process.user.String(), nil
+		}
+	}
+	return "", fmt.Errorf("process %d has no account that Windows lists", id)
+}
 
 // shellExecuteInfo is SHELLEXECUTEINFOW.
 type shellExecuteInfo struct {

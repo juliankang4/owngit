@@ -18,29 +18,33 @@ var (
 // Probe reads the environment of this process.
 func Probe() Environment {
 	token := windows.GetCurrentProcessToken()
-	elevated := token.IsElevated()
 	return Environment{
 		Getenv: os.Getenv, EUID: os.Geteuid(), Windows: true,
-		NoDesktop: !visibleDesktop(), Elevated: elevated,
-		Administrator: elevated || limitedAdministrator(token),
+		NoDesktop: !visibleDesktop(), Elevated: token.IsElevated(),
+		Administrator: AdministratorAccount(token),
 	}
 }
 
-// limitedAdministrator reports whether the token is the filtered half of an
-// administrator's pair (UAC's "limited" elevation type), or belongs to the
-// Administrators group without UAC.
-func limitedAdministrator(token windows.Token) bool {
-	var elevationType uint32
-	var size uint32
-	if err := windows.GetTokenInformation(token, windows.TokenElevationType, (*byte)(unsafe.Pointer(&elevationType)), uint32(unsafe.Sizeof(elevationType)), &size); err == nil && elevationType == 3 {
-		return true
-	}
+// AdministratorAccount reports whether the account of token belongs to the
+// Administrators group, whatever its rights now: the group is enabled in an
+// elevated token, and deny-only in UAC's limited token and in a copy that
+// OwnGit runs without administrator rights. A standard account's token
+// does not list it.
+func AdministratorAccount(token windows.Token) bool {
 	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
 	if err != nil {
 		return false
 	}
-	member, err := windows.Token(0).IsMember(administrators)
-	return err == nil && member
+	groups, err := token.GetTokenGroups()
+	if err != nil {
+		return false
+	}
+	for _, group := range groups.AllGroups() {
+		if group.Sid.Equals(administrators) {
+			return true
+		}
+	}
+	return false
 }
 
 // visibleDesktop reports whether this process runs in a signed-in

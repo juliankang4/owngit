@@ -90,21 +90,27 @@ const (
 	MsgDoctorRepair   MessageCode = "doctor.repair"
 	MsgDoctorRunIt    MessageCode = "doctor.run_it"
 	// Findings. Each %s is described at its entry.
-	MsgDoctorNotRunning              MessageCode = "doctor.not_running"
-	MsgDoctorSetup                   MessageCode = "doctor.setup"
-	MsgDoctorAdministratorsFolder    MessageCode = "doctor.administrators_folder"
-	MsgDoctorAdministratorsFolderAsk MessageCode = "doctor.administrators_folder_ask"
-	MsgDoctorWindowsRule             MessageCode = "doctor.windows_rule"
-	MsgDoctorWindowsRuleAsk          MessageCode = "doctor.windows_rule_ask"
-	MsgDoctorWindowsBlocked          MessageCode = "doctor.windows_blocked"
-	MsgDoctorWindowsForeignRule      MessageCode = "doctor.windows_foreign_rule"
-	MsgDoctorWindowsPublic           MessageCode = "doctor.windows_public"
-	MsgDoctorMacBlockAll             MessageCode = "doctor.mac_block_all"
-	MsgDoctorMacBlocked              MessageCode = "doctor.mac_blocked"
-	MsgDoctorUFW                     MessageCode = "doctor.ufw"
-	MsgDoctorFirewalld               MessageCode = "doctor.firewalld"
-	MsgDoctorUncheckedFirewall       MessageCode = "doctor.unchecked_firewall"
-	MsgDoctorUncheckedOwner          MessageCode = "doctor.unchecked_owner"
+	MsgDoctorNotRunning           MessageCode = "doctor.not_running"
+	MsgDoctorSilent               MessageCode = "doctor.silent"
+	MsgDoctorAddressTaken         MessageCode = "doctor.address_taken"
+	MsgDoctorSetup                MessageCode = "doctor.setup"
+	MsgDoctorAdministratorsFolder MessageCode = "doctor.administrators_folder"
+	MsgDoctorWindowsRule          MessageCode = "doctor.windows_rule"
+	MsgDoctorWindowsRuleAsk       MessageCode = "doctor.windows_rule_ask"
+	MsgDoctorWindowsBlockAll      MessageCode = "doctor.windows_block_all"
+	MsgDoctorWindowsBlocked       MessageCode = "doctor.windows_blocked"
+	MsgDoctorWindowsForeignRule   MessageCode = "doctor.windows_foreign_rule"
+	MsgDoctorWindowsPublic        MessageCode = "doctor.windows_public"
+	MsgDoctorWindowsDomain        MessageCode = "doctor.windows_domain"
+	MsgDoctorMacBlockAll          MessageCode = "doctor.mac_block_all"
+	MsgDoctorMacBlocked           MessageCode = "doctor.mac_blocked"
+	MsgDoctorUFW                  MessageCode = "doctor.ufw"
+	MsgDoctorUFWManual            MessageCode = "doctor.ufw_manual"
+	MsgDoctorFirewalld            MessageCode = "doctor.firewalld"
+	MsgDoctorFirewalldManual      MessageCode = "doctor.firewalld_manual"
+	MsgDoctorUncheckedServer      MessageCode = "doctor.unchecked_server"
+	MsgDoctorUncheckedFirewall    MessageCode = "doctor.unchecked_firewall"
+	MsgDoctorUncheckedOwner       MessageCode = "doctor.unchecked_owner"
 )
 
 // Setup and bootstrap.
@@ -1133,16 +1139,21 @@ var catalog = map[MessageCode]message{
 		ko: "OwnGit이 실행 중인 컴퓨터의 터미널에서 실행하세요.",
 	},
 	MsgDoctorNotRunning: {en: "OwnGit is not running.", ko: "OwnGit이 실행 중이 아닙니다."},
-	MsgDoctorSetup:      {en: "Setup is not complete.", ko: "설정이 끝나지 않았습니다."},
+	// One %s: the listen address.
+	MsgDoctorSilent: {
+		en: "OwnGit runs for this state directory but does not answer at %s. Its log says why.",
+		ko: "이 상태 폴더의 OwnGit이 실행 중이지만 %s에서 응답하지 않습니다. 이유는 OwnGit 로그에 있습니다.",
+	},
+	// One %s: the listen address.
+	MsgDoctorAddressTaken: {
+		en: "OwnGit is not running for this state directory, and another program answers at %s, so OwnGit cannot listen there. Stop that program, or choose another address with owngit network set --listen.",
+		ko: "이 상태 폴더의 OwnGit은 실행 중이 아닌데 다른 프로그램이 %s에서 응답하고 있어 OwnGit이 그 주소를 쓸 수 없습니다. 그 프로그램을 멈추거나 owngit network set --listen으로 다른 주소를 고르세요.",
+	},
+	MsgDoctorSetup: {en: "Setup is not complete.", ko: "설정이 끝나지 않았습니다."},
 	// One %s: the folder.
 	MsgDoctorAdministratorsFolder: {
-		en: "%s belongs to the Administrators group, so OwnGit, which runs without administrator rights, cannot use it. The repair asks Windows once for administrator approval and makes your account its owner.",
-		ko: "%s의 소유자가 Administrators 그룹이라 관리자 권한 없이 실행되는 OwnGit이 이 폴더를 쓸 수 없습니다. 고치는 명령은 Windows에 관리자 승인을 한 번 요청하고 계정을 폴더 소유자로 바꿉니다.",
-	},
-	// One %s: the folder.
-	MsgDoctorAdministratorsFolderAsk: {
-		en: "%s belongs to the Administrators group, so OwnGit, which runs without administrator rights, cannot use it. An administrator can make your account its owner with this command in a terminal opened with \"Run as administrator\".",
-		ko: "%s의 소유자가 Administrators 그룹이라 관리자 권한 없이 실행되는 OwnGit이 이 폴더를 쓸 수 없습니다. 관리자가 \"관리자 권한으로 실행\"으로 연 터미널에서 이 명령을 실행하면 계정이 폴더 소유자가 됩니다.",
+		en: "%s belongs to the Administrators group, so OwnGit, which runs without administrator rights, cannot use it. The repair asks Windows once for an administrator's approval and makes your account the owner of what the Administrators group owns in it.",
+		ko: "%s의 소유자가 Administrators 그룹이라 관리자 권한 없이 실행되는 OwnGit이 이 폴더를 쓸 수 없습니다. 고치는 명령을 실행하면 Windows가 관리자 승인을 한 번 요청하고 승인되면 이 폴더에서 Administrators 그룹이 소유한 항목의 소유자가 계정으로 바뀝니다.",
 	},
 	// One %s: the owngit program that serves.
 	MsgDoctorWindowsRule: {
@@ -1151,8 +1162,12 @@ var catalog = map[MessageCode]message{
 	},
 	// One %s: the owngit program that serves.
 	MsgDoctorWindowsRuleAsk: {
-		en: "OwnGit listens for other devices, but no Windows Firewall rule lets devices on private networks reach %s. An administrator can allow it with this command in a terminal opened with \"Run as administrator\".",
-		ko: "OwnGit이 다른 기기의 접속을 받도록 설정되어 있지만 개인 네트워크의 기기가 %s에 연결하도록 허용하는 Windows 방화벽 규칙이 없습니다. 관리자가 \"관리자 권한으로 실행\"으로 연 터미널에서 이 명령을 실행하면 허용됩니다.",
+		en: "OwnGit listens for other devices, but no Windows Firewall rule lets devices on private networks reach %s. An administrator can allow it with this command in PowerShell opened with \"Run as administrator\".",
+		ko: "OwnGit이 다른 기기의 접속을 받도록 설정되어 있지만 개인 네트워크의 기기가 %s에 연결하도록 허용하는 Windows 방화벽 규칙이 없습니다. 관리자가 \"관리자 권한으로 실행\"으로 연 PowerShell에서 이 명령을 실행하면 허용됩니다.",
+	},
+	MsgDoctorWindowsBlockAll: {
+		en: "Windows Firewall blocks all incoming connections, including allowed apps, on the network this computer uses, so other devices cannot reach OwnGit. To let them, turn that setting off in Windows Security under Firewall & network protection.",
+		ko: "이 컴퓨터가 쓰는 네트워크에서 Windows 방화벽이 허용된 앱을 포함해 들어오는 연결을 모두 막고 있어 다른 기기가 OwnGit에 접속할 수 없습니다. 접속을 허용하려면 Windows 보안의 방화벽 및 네트워크 보호에서 그 설정을 끄세요.",
 	},
 	// One %s: the owngit program that serves.
 	MsgDoctorWindowsBlocked: {
@@ -1164,8 +1179,12 @@ var catalog = map[MessageCode]message{
 		ko: "OwnGit이 추가하지 않은 OwnGit이라는 이름의 Windows 방화벽 규칙이 있어 OwnGit은 같은 이름의 규칙을 추가하지 않습니다. Windows Defender 방화벽에서 그 규칙의 이름을 바꾸거나 삭제하세요.",
 	},
 	MsgDoctorWindowsPublic: {
-		en: "Windows treats the network this computer uses as public, and OwnGit's firewall rule lets other devices in only on private networks. If it is your home or work network, set it to Private in Windows Settings under Network & internet.",
-		ko: "Windows가 이 컴퓨터의 네트워크를 공용 네트워크로 보고 있는데, OwnGit의 방화벽 규칙은 개인 네트워크에서만 다른 기기의 접속을 허용합니다. 집이나 회사 네트워크라면 Windows 설정의 네트워크 및 인터넷에서 개인 네트워크로 바꾸세요.",
+		en: "Windows treats the network this computer uses as public, and the firewall rules that let other devices reach OwnGit apply only on private networks. If it is your home or work network, set it to Private in Windows Settings under Network & internet.",
+		ko: "Windows가 이 컴퓨터의 네트워크를 공용 네트워크로 보고 있는데, 다른 기기가 OwnGit에 접속하도록 허용하는 방화벽 규칙은 개인 네트워크에만 적용됩니다. 집이나 회사 네트워크라면 Windows 설정의 네트워크 및 인터넷에서 개인 네트워크로 바꾸세요.",
+	},
+	MsgDoctorWindowsDomain: {
+		en: "Windows treats the network this computer uses as a domain network, and the firewall rules that let other devices reach OwnGit apply only on private networks. The administrator of that domain decides which rules apply there.",
+		ko: "Windows가 이 컴퓨터의 네트워크를 도메인 네트워크로 보고 있는데, 다른 기기가 OwnGit에 접속하도록 허용하는 방화벽 규칙은 개인 네트워크에만 적용됩니다. 도메인 네트워크에 어떤 규칙을 적용할지는 그 도메인의 관리자가 정합니다.",
 	},
 	MsgDoctorMacBlockAll: {
 		en: "The macOS firewall blocks all incoming connections, so other devices cannot reach OwnGit. To let them, turn off \"Block all incoming connections\" in System Settings under Network, Firewall, Options.",
@@ -1176,15 +1195,30 @@ var catalog = map[MessageCode]message{
 		en: "The macOS firewall blocks incoming connections to %s, so other devices cannot reach OwnGit.",
 		ko: "macOS 방화벽이 %s에 들어오는 연결을 막고 있어 다른 기기가 OwnGit에 접속할 수 없습니다.",
 	},
-	// One %s: the port.
+	// Two %s: the private networks, then the port.
 	MsgDoctorUFW: {
-		en: "ufw is on. Other devices reach OwnGit on port %s only if a ufw rule allows that port.",
-		ko: "ufw가 켜져 있습니다. ufw 규칙이 %s번 포트를 허용해야 다른 기기가 OwnGit에 접속할 수 있습니다.",
+		en: "ufw is on, and OwnGit cannot read its rules without root. Devices on %s reach OwnGit on port %s only if a ufw rule allows them; this command allows that port from these networks only.",
+		ko: "ufw가 켜져 있고 OwnGit은 root 권한 없이 ufw 규칙을 읽을 수 없습니다. %s의 기기는 ufw 규칙이 %s번 포트를 허용해야 OwnGit에 접속할 수 있습니다. 이 명령은 이 네트워크에서 오는 연결만 그 포트로 허용합니다.",
 	},
 	// One %s: the port.
+	MsgDoctorUFWManual: {
+		en: "ufw is on, and OwnGit cannot read its rules without root. Other devices reach OwnGit on port %s only if a ufw rule allows them. OwnGit found no private network on the address it listens on, so in your ufw settings allow that port from your private network only.",
+		ko: "ufw가 켜져 있고 OwnGit은 root 권한 없이 ufw 규칙을 읽을 수 없습니다. 다른 기기는 ufw 규칙이 %s번 포트를 허용해야 OwnGit에 접속할 수 있습니다. OwnGit이 수신하는 주소에서 사설 네트워크를 찾지 못했으니 ufw 설정에서 그 포트를 사설 네트워크에만 허용하세요.",
+	},
+	// Two %s: the private networks, then the port.
 	MsgDoctorFirewalld: {
-		en: "firewalld is running. Other devices reach OwnGit on port %s only if the active zone allows that port.",
-		ko: "firewalld가 실행 중입니다. 사용 중인 영역이 %s번 포트를 허용해야 다른 기기가 OwnGit에 접속할 수 있습니다.",
+		en: "firewalld is running, and OwnGit cannot read its rules without root. Devices on %s reach OwnGit on port %s only if a rule of their zone allows them; this command allows that port from these networks only, in the zone of each network's interface.",
+		ko: "firewalld가 실행 중이고 OwnGit은 root 권한 없이 규칙을 읽을 수 없습니다. %s의 기기는 그 영역의 규칙이 %s번 포트를 허용해야 OwnGit에 접속할 수 있습니다. 이 명령은 각 네트워크 인터페이스의 영역에 규칙을 넣어 이 네트워크에서 오는 연결만 그 포트로 허용합니다.",
+	},
+	// One %s: the port.
+	MsgDoctorFirewalldManual: {
+		en: "firewalld is running, and OwnGit cannot read its rules without root. Other devices reach OwnGit on port %s only if a rule allows them. OwnGit could not tell which private network and zone it listens on, so in your firewalld settings allow that port from your private network only.",
+		ko: "firewalld가 실행 중이고 OwnGit은 root 권한 없이 규칙을 읽을 수 없습니다. 다른 기기는 규칙이 %s번 포트를 허용해야 OwnGit에 접속할 수 있습니다. OwnGit이 수신하는 사설 네트워크와 영역을 알아내지 못했으니 firewalld 설정에서 그 포트를 사설 네트워크에만 허용하세요.",
+	},
+	// One %s: why, as the system said it.
+	MsgDoctorUncheckedServer: {
+		en: "OwnGit could not tell whether its server runs: %s",
+		ko: "OwnGit 서버가 실행 중인지 알아내지 못했습니다: %s",
 	},
 	// One %s: why, as the system said it.
 	MsgDoctorUncheckedFirewall: {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,11 +8,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"owngit/internal/doctor"
 	"owngit/internal/server"
@@ -46,7 +49,8 @@ func doctorCommand(arguments []string) error {
 	if err != nil {
 		return jsonFailure(*asJSON, "state_unavailable", err)
 	}
-	findings := diagnose(subject)
+	findings := diagnose(context.Background(), subject)
+	running := subject.server == doctor.ServerRunning
 	if *asJSON {
 		type finding struct {
 			webui.Finding
@@ -62,7 +66,7 @@ func doctorCommand(arguments []string) error {
 			Service      bool      `json:"service"`
 			Log          string    `json:"log,omitempty"`
 			Findings     []finding `json:"findings"`
-		}{version.Version, subject.program, dir, subject.repositories, subject.listen, subject.running, subject.service.found, subject.service.log, []finding{}}
+		}{version.Version, subject.program, dir, subject.repositories, subject.listen, running, subject.service.found, subject.service.log, []finding{}}
 		for _, item := range findings {
 			report.Findings = append(report.Findings, finding{item, item.Sentence(webui.LangEN)})
 		}
@@ -89,7 +93,11 @@ func doctorCommand(arguments []string) error {
 		return nil
 	}
 	for _, item := range findings {
-		fmt.Fprintf(out, "\nProblem: %s\n", printable(item.Sentence(webui.LangEN)))
+		heading := "Problem:"
+		if item.Unchecked {
+			heading = "Could not check:"
+		}
+		fmt.Fprintf(out, "\n%s %s\n", heading, printable(item.Sentence(webui.LangEN)))
 		if item.Repair != "" {
 			fmt.Fprintf(out, "Repair:  %s\n", printable(item.Repair))
 		}
@@ -100,9 +108,12 @@ func doctorCommand(arguments []string) error {
 // doctorSubject is the installation that the checkup looks at, as the
 // command or the server sees it.
 type doctorSubject struct {
-	running, setupComplete bool
-	service                servingService
-	listen                 string
+	server doctor.Server
+	// serverReason is why server is doctor.ServerUnknown.
+	serverReason  string
+	setupComplete bool
+	service       servingService
+	listen        string
 	// program is the owngit program that serves.
 	program string
 	// administrator is true on Windows when the account that runs OwnGit
@@ -122,19 +133,63 @@ type servingService struct {
 }
 
 // commandSubject reads the installation of stateDir from outside the
-// server: its service, whether the server answers, and its saved setup.
+// server: its service, and from one reading of the state whether its
+// server runs, where it listens and its saved setup. The server runs when
+// the state says so and it answers there; an answer at the address of a
+// state whose server does not run comes from another program.
 func commandSubject(stateDir string) (doctorSubject, error) {
 	subject := doctorSubject{stateDir: stateDir, service: findServingService(stateDir)}
-	target, _, err := healthAddress(stateDir)
+	observed := state.RunningObservation{Server: state.ServerNotRunning}
+	savedListen := ""
+	switch err := state.RequireExisting(stateDir); {
+	case errors.Is(err, state.ErrNotExist):
+	case err != nil:
+		return doctorSubject{}, err
+	default:
+		ctx := context.Background()
+		store, err := openLiveState(ctx, stateDir)
+		if err != nil {
+			return doctorSubject{}, err
+		}
+		defer store.Close()
+		if observed, err = store.ObserveRunningNetwork(ctx); err != nil {
+			return doctorSubject{}, err
+		}
+		saved, err := store.NetworkSettings(ctx)
+		if err != nil {
+			return doctorSubject{}, err
+		}
+		savedListen = saved.Listen
+		settings, err := store.Settings(ctx)
+		if err != nil {
+			return doctorSubject{}, err
+		}
+		subject.setupComplete = settings.Initialized
+		if settings.Initialized && filepath.IsAbs(settings.RepositoryRoot) {
+			subject.repositories = filepath.Clean(settings.RepositoryRoot)
+		}
+	}
+	address, _ := healthTarget(observed, savedListen)
+	subject.listen = listenOf(observed, savedListen)
+	target, err := localTarget(address)
 	if err != nil {
 		return doctorSubject{}, err
 	}
-	subject.running = checkHealth(target) == nil
-	if subject.listen, err = serverListen(stateDir); err != nil {
-		return doctorSubject{}, err
+	answers := checkHealth(target) == nil
+	switch observed.Server {
+	case state.ServerRunning, state.ServerStarting:
+		subject.server = doctor.ServerSilent
+		if answers {
+			subject.server = doctor.ServerRunning
+		}
+	case state.ServerNotRunning:
+		subject.server = doctor.ServerStopped
+		if answers {
+			subject.server = doctor.ServerElsewhere
+		}
+	default:
+		subject.server, subject.serverReason = doctor.ServerUnknown, "another program holds the state directory, or its running record cannot be vouched for"
 	}
-	_, subject.setupComplete = setupStatus(stateDir)
-	subject.repositories = savedRepositoryRoot(stateDir)
 	subject.program = subject.service.program
 	if subject.program == "" {
 		if subject.program, err = runningExecutable(); err != nil {
@@ -146,50 +201,44 @@ func commandSubject(stateDir string) (doctorSubject, error) {
 }
 
 // serverDiagnosis returns the checkup that the Settings page shows, from
-// the facts of this server: it answers, setup is done, and it listens on
+// the facts of this server: it runs, setup is done, and it listens on
 // listen. asService is true when a service manager started it.
 func serverDiagnosis(stateDir, listen string, asService bool, repositoryRoot func(context.Context) (string, error)) func(context.Context) []webui.Finding {
 	return func(ctx context.Context) []webui.Finding {
 		program, _ := runningExecutable()
 		subject := doctorSubject{
-			running: true, setupComplete: true, service: servingService{found: asService},
+			server: doctor.ServerRunning, setupComplete: true, service: servingService{found: asService},
 			listen: listen, program: program, stateDir: stateDir,
 			administrator: probeEnvironment().Administrator,
 		}
-		// The boot task of an administrator serves from the protected copy
-		// with administrator rights removed.
-		if runtime.GOOS == "windows" && asService {
-			if paths, err := servicePaths(); err == nil && sameFile(program, paths.Executable) {
-				subject.administrator = true
-			}
-		}
 		root, err := repositoryRoot(ctx)
 		if err != nil {
-			return append(diagnose(subject), webui.Finding{Code: webui.MsgDoctorUncheckedOwner, Args: []string{err.Error()}})
+			return append(diagnose(ctx, subject), webui.Finding{Code: webui.MsgDoctorUncheckedOwner, Args: []string{err.Error()}, Unchecked: true})
 		}
 		subject.repositories = root
-		return diagnose(subject)
+		return diagnose(ctx, subject)
 	}
 }
 
 // diagnose reads what this computer says about subject and returns the
-// findings.
-func diagnose(subject doctorSubject) []webui.Finding {
+// findings. Every tool it runs ends with ctx.
+func diagnose(ctx context.Context, subject doctorSubject) []webui.Finding {
 	facts := doctor.Facts{
-		GOOS: runtime.GOOS, Running: subject.running, Service: subject.service.found,
+		GOOS: runtime.GOOS, Server: subject.server, ServerReason: subject.serverReason, Service: subject.service.found,
 		SetupComplete: subject.setupComplete, Listen: subject.listen, Program: subject.program,
 		Administrator: subject.administrator,
 	}
-	if host, _, err := net.SplitHostPort(subject.listen); err == nil {
+	host, _, err := net.SplitHostPort(subject.listen)
+	if err == nil {
 		facts.OtherDevices = !server.IsLoopbackHost(host)
 	}
-	if !subject.running {
+	if subject.server != doctor.ServerRunning {
 		return doctor.Diagnose(facts)
 	}
 	var firewallErr error
 	switch runtime.GOOS {
 	case "windows":
-		host, err := newTaskHost()
+		taskHost, err := newTaskHost()
 		if err != nil {
 			facts.Unchecked = append(facts.Unchecked, doctor.Unchecked{Code: webui.MsgDoctorUncheckedOwner, Reason: err.Error()})
 			if facts.OtherDevices {
@@ -197,14 +246,14 @@ func diagnose(subject doctorSubject) []webui.Finding {
 			}
 			break
 		}
-		firewallErr = host.readDoctorFacts(&facts, []string{subject.stateDir, subject.repositories})
+		firewallErr = taskHost.readDoctorFacts(ctx, &facts, []string{subject.stateDir, subject.repositories})
 	case "darwin":
 		if facts.OtherDevices {
-			facts.Firewall, firewallErr = macFirewall(subject.program)
+			facts.Firewall, firewallErr = macFirewall(ctx, subject.program)
 		}
 	case "linux":
 		if facts.OtherDevices {
-			facts.Firewall, firewallErr = linuxFirewall()
+			facts.Firewall, firewallErr = linuxFirewall(ctx, host, ufwConfig, firewallCmd)
 		}
 	}
 	if firewallErr != nil {
@@ -213,11 +262,70 @@ func diagnose(subject doctorSubject) []webui.Finding {
 	return doctor.Diagnose(facts)
 }
 
+// doctorToolTimeout and doctorOutputLimit bound each tool that the
+// checkup runs: a firewall tool that hangs or floods its output becomes a
+// check that could not run.
+const (
+	doctorToolTimeout = 10 * time.Second
+	doctorOutputLimit = 256 << 10
+)
+
+// doctorTool runs a fixed tool of the checkup (runBounded). Tests replace
+// it, as serviceRunner.
+var doctorTool = runBounded
+
+// runBounded runs name with args and returns its combined output. It ends
+// the tool when ctx ends, after doctorToolTimeout, or when the output
+// passes doctorOutputLimit, and waits for it; each of those is an error.
+// A nil environment is this process's.
+func runBounded(ctx context.Context, environment []string, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, doctorToolTimeout)
+	defer cancel()
+	output := &limitedOutput{limit: doctorOutputLimit, over: cancel}
+	command := exec.CommandContext(ctx, name, args...)
+	command.Env = environment
+	command.Stdout, command.Stderr = output, output
+	// Wait returns even when a child of the tool keeps the output open.
+	command.WaitDelay = time.Second
+	err := command.Run()
+	switch {
+	case output.exceeded:
+		return nil, fmt.Errorf("%s printed more than %d bytes", name, doctorOutputLimit)
+	case ctx.Err() != nil:
+		return nil, fmt.Errorf("%s did not finish: %w", name, context.Cause(ctx))
+	}
+	return output.data, err
+}
+
+// limitedOutput keeps what a tool prints up to limit, and calls over once
+// when it passes the limit.
+type limitedOutput struct {
+	mu       sync.Mutex
+	data     []byte
+	limit    int
+	exceeded bool
+	over     func()
+}
+
+func (output *limitedOutput) Write(data []byte) (int, error) {
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	if output.exceeded || len(output.data)+len(data) > output.limit {
+		if !output.exceeded {
+			output.exceeded = true
+			output.over()
+		}
+		return 0, errors.New("too much output")
+	}
+	output.data = append(output.data, data...)
+	return len(data), nil
+}
+
 // readDoctorFacts reads the owners of folders and, when OwnGit listens for
 // other devices, Windows Firewall. A folder it cannot read is recorded in
 // facts; the firewall error is returned.
-func (host *taskHost) readDoctorFacts(facts *doctor.Facts, folders []string) error {
-	facts.AccountSID = host.sid
+func (host *taskHost) readDoctorFacts(ctx context.Context, facts *doctor.Facts, folders []string) error {
+	facts.System = host.system
 	owned, err := host.administratorsFolders(folders)
 	facts.AdministratorsFolders = owned
 	if err != nil {
@@ -226,10 +334,20 @@ func (host *taskHost) readDoctorFacts(facts *doctor.Facts, folders []string) err
 	if !facts.OtherDevices {
 		return nil
 	}
-	rule, found, foreign, err := host.readFirewallRule()
-	if err != nil {
-		return err
+	// The checkup runs without administrator rights: the server never has
+	// them, and "owngit doctor" drops them first.
+	powershell := func(script string, extra ...string) ([]byte, error) {
+		output, err := doctorTool(ctx, append(os.Environ(), extra...), host.powershell(), service.PowerShellArguments(script)...)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return output, nil
 	}
+	output, err := powershell(service.FirewallShowScript)
+	if err != nil {
+		return fmt.Errorf("read the Windows Firewall rule %q: %w", service.FirewallRuleName, err)
+	}
+	rule, found, foreign := firewallRuleOf(output)
 	switch {
 	case foreign:
 		facts.Firewall.Rule = doctor.RuleForeign
@@ -239,9 +357,8 @@ func (host *taskHost) readDoctorFacts(facts *doctor.Facts, folders []string) err
 		facts.Firewall.Rule = doctor.RuleOther
 	}
 	_, port, _ := net.SplitHostPort(facts.Listen)
-	output, err := host.runPowerShell(service.FirewallAccessScript, service.FirewallProgramVariable+"="+facts.Program)
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	if output, err = powershell(service.FirewallAccessScript, service.FirewallProgramVariable+"="+facts.Program); err != nil {
+		return err
 	}
 	facts.Firewall.Access, err = service.ParseFirewallAccess(string(output), port)
 	return err
@@ -252,9 +369,9 @@ const socketFilter = "/usr/libexec/ApplicationFirewall/socketfilterfw"
 
 // macFirewall reads whether the macOS application firewall is on, blocks
 // every incoming connection, or blocks program.
-func macFirewall(program string) (doctor.Firewall, error) {
+func macFirewall(ctx context.Context, program string) (doctor.Firewall, error) {
 	ask := func(args ...string) (string, error) {
-		output, err := serviceRunner(context.Background(), socketFilter, args...)
+		output, err := doctorTool(ctx, nil, socketFilter, args...)
 		if err != nil {
 			return "", fmt.Errorf("%s %s: %w: %s", socketFilter, args[0], err, strings.TrimSpace(string(output)))
 		}
@@ -293,35 +410,112 @@ func macFirewall(program string) (doctor.Firewall, error) {
 const (
 	ufwConfig   = "/etc/ufw/ufw.conf"
 	firewallCmd = "/usr/bin/firewall-cmd"
+	// ufwConfigLimit bounds how much of ufwConfig is read.
+	ufwConfigLimit = 64 << 10
 )
 
-// linuxFirewall reads whether ufw is enabled and whether firewalld runs.
-// Their rules need root to read, so it does not say whether they allow
-// OwnGit's port.
-func linuxFirewall() (doctor.Firewall, error) {
+// linuxFirewall reads whether ufw is enabled (in the file config) and
+// whether firewalld runs (from the tool firewalld), and, when one of them
+// is on, the private networks that a server listening on host reaches,
+// with each interface's firewalld zone. Their rules need root to read, so
+// it does not say whether they allow OwnGit's port.
+func linuxFirewall(ctx context.Context, host, config, firewalld string) (doctor.Firewall, error) {
 	var firewall doctor.Firewall
-	content, err := os.ReadFile(ufwConfig)
+	content, err := readBounded(config, ufwConfigLimit)
 	switch {
 	case err == nil:
 		firewall.UFW = ufwEnabled(string(content))
 	case !errors.Is(err, os.ErrNotExist):
 		return doctor.Firewall{}, err
 	}
-	if _, err := os.Stat(firewallCmd); err == nil {
-		if err := rootControlledExecutable(firewallCmd); err != nil {
+	if _, err := os.Stat(firewalld); err == nil {
+		if err := rootControlledExecutable(firewalld); err != nil {
 			return doctor.Firewall{}, err
 		}
 		// firewall-cmd --state prints "running" and exits 0, or prints
 		// "not running" and exits 252.
-		output, err := serviceRunner(context.Background(), firewallCmd, "--state")
+		output, err := doctorTool(ctx, nil, firewalld, "--state")
 		switch answer := strings.TrimSpace(string(output)); {
 		case err == nil && answer == "running":
 			firewall.Firewalld = true
-		case answer != "not running":
-			return doctor.Firewall{}, fmt.Errorf("%s --state: %v: %s", firewallCmd, err, answer)
+		case err == nil || answer != "not running":
+			return doctor.Firewall{}, fmt.Errorf("%s --state: %v: %s", firewalld, err, answer)
 		}
 	}
+	if !firewall.UFW && !firewall.Firewalld {
+		return firewall, nil
+	}
+	interfaces, err := localInterfaces()
+	if err != nil {
+		return doctor.Firewall{}, err
+	}
+	if firewall.Firewalld {
+		for index := range interfaces {
+			// The zone decides only for a network OwnGit gives a command
+			// for; one it cannot read leaves the command out.
+			if output, err := doctorTool(ctx, nil, firewalld, "--get-zone-of-interface="+interfaces[index].Name); err == nil {
+				interfaces[index].Zone = zoneName(string(output))
+			}
+		}
+	}
+	firewall.Private = doctor.PrivateNetworks(host, interfaces)
 	return firewall, nil
+}
+
+// zoneName is the zone that firewall-cmd printed, or "" when it printed
+// something else.
+func zoneName(output string) string {
+	zone := strings.TrimSpace(output)
+	if zone == "" || strings.Trim(zone, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {
+		return ""
+	}
+	return zone
+}
+
+// localInterfaces returns the interfaces of this computer that are up,
+// with their addresses.
+func localInterfaces() ([]doctor.Interface, error) {
+	links, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	var interfaces []doctor.Interface
+	for _, link := range links {
+		if link.Flags&net.FlagUp == 0 || link.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := link.Addrs()
+		if err != nil {
+			return nil, err
+		}
+		found := doctor.Interface{Name: link.Name}
+		for _, address := range addresses {
+			if network, ok := address.(*net.IPNet); ok {
+				if prefix, err := netip.ParsePrefix(network.String()); err == nil {
+					found.Prefixes = append(found.Prefixes, prefix)
+				}
+			}
+		}
+		interfaces = append(interfaces, found)
+	}
+	return interfaces, nil
+}
+
+// readBounded reads the file at path, refusing one larger than limit.
+func readBounded(path string, limit int64) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(content)) > limit {
+		return nil, fmt.Errorf("%s is larger than %d bytes", path, limit)
+	}
+	return content, nil
 }
 
 // ufwEnabled reads ENABLED from ufw.conf.
@@ -367,33 +561,4 @@ func findServingService(stateDir string) servingService {
 		return servingService{found: true, log: filepath.Join(prefix, "var", "log", "owngit.log")}
 	}
 	return servingService{}
-}
-
-// serverListen returns the address the server of stateDir listens on, or
-// will listen on by its saved setting.
-func serverListen(stateDir string) (string, error) {
-	listen := server.DefaultListenAddress
-	if err := state.RequireExisting(stateDir); errors.Is(err, state.ErrNotExist) {
-		return listen, nil
-	} else if err != nil {
-		return "", err
-	}
-	ctx := context.Background()
-	store, err := openLiveState(ctx, stateDir)
-	if err != nil {
-		return "", err
-	}
-	defer store.Close()
-	observed, err := store.ObserveRunningNetwork(ctx)
-	if err != nil {
-		return "", err
-	}
-	if observed.Server == state.ServerRunning && observed.Record != nil {
-		return cmp.Or(observed.Record.Listen, observed.Record.Address, listen), nil
-	}
-	saved, err := store.NetworkSettings(ctx)
-	if err != nil {
-		return "", err
-	}
-	return cmp.Or(saved.Listen, listen), nil
 }

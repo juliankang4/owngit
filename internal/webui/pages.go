@@ -349,6 +349,9 @@ type Finding struct {
 	// Repair is the command to run there, or "" when the sentence says
 	// what to change.
 	Repair string `json:"repair,omitempty"`
+	// Unchecked is true when OwnGit could not tell whether this is a
+	// problem: a check that could not run, or settings it cannot read.
+	Unchecked bool `json:"unchecked,omitempty"`
 }
 
 // Sentence is the finding in lang.

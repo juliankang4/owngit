@@ -97,7 +97,7 @@ sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 2. 그 복사본을 실행하는 작업을 등록합니다.
 3. 개인 네트워크용 Windows 방화벽 규칙 `OwnGit`을 추가합니다. 공용 네트워크는 계속 막혀 있습니다. 이 규칙에는 OwnGit의 설명이 붙으며, OwnGit은 그 설명이 붙은 `owngit.exe`용 규칙만 바꾸거나 지웁니다. OwnGit이 추가하지 않은 `OwnGit` 규칙이 있으면 그 이름의 규칙은 추가하지도 지우지도 않습니다. 설치는 아무것도 바꾸기 전에 멈추고 그 사실을 알려 주며, 제거할 때는 규칙을 그대로 둡니다.
 4. 컴퓨터와 사용자 PATH에 Git이 없으면 `winget`으로 Git for Windows를 설치합니다. Git이 설치되어 있는데 그 PATH에 없으면 설치하는 대신 Git의 `cmd` 폴더(예: `C:\Program Files\Git\cmd`)를 PATH에 넣고 다시 실행하라고 알려 줍니다.
-5. 예전에 관리자 권한으로 돌던 OwnGit이 상태 디렉터리와 저장소 폴더에 Administrators 그룹 소유로 남긴 파일을 내 계정에 돌려주고(이런 저장소는 Git이 "dubious ownership"으로 거부합니다) 몇 개를 바꿨는지 알려 줍니다. 다른 계정의 폴더, 드라이브 전체, Windows나 프로그램 폴더는 바꾸지 않습니다. 표준 계정에서는 그 폴더와, 관리자가 "관리자 권한으로 실행"으로 연 PowerShell에서 실행할 명령 `icacls "C:\Users\you\OwnGit-Repositories" /setowner "$env:USERNAME" /T /C`를 알려 줍니다(명령 프롬프트에서는 `%USERNAME%`).
+5. 예전에 관리자 권한으로 돌던 OwnGit이 상태 디렉터리와 저장소 폴더에 Administrators 그룹 소유로 남긴 파일을 내 계정에 돌려주고(이런 저장소는 Git이 "dubious ownership"으로 거부합니다) 몇 개를 바꿨는지 알려 줍니다. Administrators 그룹이 소유한 항목만 바꾸고 링크는 따라가지 않으며 다른 계정의 폴더, 드라이브 전체, Windows나 프로그램 폴더는 바꾸지 않습니다. 표준 계정에서도 `owngit service install`이 관리자 승인을 받아 이 단계를 처리합니다. Windows가 관리자 암호를 한 번 묻고 명령을 실행한 계정에 폴더를 돌려줍니다. SSH에서는 그 확인 창을 띄울 데스크톱이 없으니 컴퓨터 앞에서 실행하세요.
 
 관리자 계정의 작업은 `%ProgramFiles%\OwnGit\owngit.exe serve --state-dir DIR --no-open --log-file DIR\logs\service.log --service --headless=true`(또는 `false`)를 실행하고, 표준 계정의 작업은 설치할 때 쓴 `owngit.exe`를 실행합니다. 첫 프로세스는 감독만 합니다. `--service`가 붙으면 내 계정의 평범한 창과 같은 권한으로 서버 복사본을 시작하므로 Git, hook, 검사, 새 파일은 내 계정의 것이 되고, 서버가 실패하면 5초 뒤 다시 시작합니다. 작업 스케줄러는 출력을 남기지 않으므로 로그는 상태 디렉터리의 `logs\service.log`에 쓰며, 10MB 아래로 유지되고 바로 전 파일 하나가 옆에 남습니다. 서버가 시작하지 못하면 `owngit service install`, `start`, `status`가 그 이유를 보여 주고, 로그도 같은 오류로 끝납니다. `owngit service stop`은 Ctrl-C처럼 서버가 하던 일을 마치고 멈추게 하며, 150초가 지나도 서버가 멈추지 않았을 때만 작업을 끝냅니다. 상태 디렉터리나 저장소 폴더를 `C:\OwnGit`처럼 사용자 폴더 밖에 두어도 됩니다.
 
@@ -139,11 +139,11 @@ Linux의 시스템 서비스에는 systemd 강화 설정이 걸리지만, 이 �
 
 `owngit doctor`는 이 컴퓨터에서 한 상태 디렉터리를 쓰는 OwnGit을 살펴보고 찾은 문제마다 고치는 명령을 하나씩 출력하거나 문제가 없다고 알려 줍니다. 프로그램, 상태 디렉터리, 저장소 폴더, 연결을 받는 주소, 서비스 로그 위치도 함께 보여 주며 `--json`을 붙이면 같은 내용을 JSON으로 출력합니다. 다음을 확인합니다.
 
-- 서버가 응답하는지(`owngit service start`, 서비스가 없으면 `owngit service install`), 설정을 마쳤는지(`owngit setup-link`)
-- Windows에서 상태 디렉터리나 저장소 폴더의 소유자가 Administrators 그룹인지. OwnGit은 관리자 권한 없이 실행되므로 이런 폴더를 쓸 수 없습니다. 관리자 계정에서는 `owngit service install`이 서비스를 설치하는 승인 한 번으로 소유자를 돌려놓고 표준 계정에는 관리자가 실행할 `icacls` 명령을 출력합니다.
-- OwnGit이 다른 기기의 연결을 받을 때 이 컴퓨터의 방화벽([다른 기기에서 서버에 접속하기](#다른-기기에서-서버에-접속하기) 참고). OwnGit은 Windows 방화벽 규칙과 네트워크 종류, macOS 애플리케이션 방화벽을 읽습니다. ufw와 firewalld의 규칙은 root만 읽을 수 있어서 이 둘은 켜져 있다는 사실과 포트를 허용하는 명령만 알려 줍니다.
+- 이 상태 디렉터리의 서버가 실행 중이고 응답하는지(`owngit service start`, 서비스가 없으면 `owngit service install`), 그 주소에서 다른 프로그램이 대신 응답하고 있지 않은지, 설정을 마쳤는지(`owngit setup-link`)
+- Windows에서 상태 디렉터리나 저장소 폴더의 소유자가 Administrators 그룹인지. OwnGit은 관리자 권한 없이 실행되므로 이런 폴더를 쓸 수 없습니다. 고치는 명령은 어느 계정이든 `owngit service install`입니다. 관리자 계정에서는 승인 한 번으로, 표준 계정에서는 관리자 암호를 한 번 입력하면 폴더를 돌려받습니다.
+- OwnGit이 다른 기기의 연결을 받을 때 이 컴퓨터의 방화벽([다른 기기에서 서버에 접속하기](#다른-기기에서-서버에-접속하기) 참고). OwnGit은 Windows 방화벽 규칙과 네트워크 종류, "모두 차단" 설정, macOS 애플리케이션 방화벽을 읽습니다. ufw와 firewalld의 규칙은 root만 읽을 수 있어서 "확인하지 못함"으로 분류하고 OwnGit이 연결을 받는 사설 네트워크에서만 포트를 허용하는 명령을 함께 보여 줍니다. 그런 네트워크를 찾지 못하면 명령 대신 무엇을 허용할지 글로 알려 줍니다.
 
-점검 결과는 이 컴퓨터에서 읽은 내용뿐입니다. 공유기나 상대 기기는 볼 수 없으므로 어떤 기기가 접속하지 못한다고 단정하지 않으며, 실행하지 못한 확인은 그렇다고 표시합니다. OwnGit이 직접 고치지는 않으니 명령은 이 컴퓨터에서 실행하세요. 설정의 일반 탭도 같은 점검 결과를 보여 주지만 이 컴퓨터의 경로가 드러나므로 관리자로 확인한 사람에게만 보입니다.
+점검 결과는 이 컴퓨터의 설정이 무엇을 하는지만 알려 줍니다. 공유기나 상대 기기는 볼 수 없습니다. 실행하지 못한 확인이나 OwnGit이 읽을 수 없는 설정은 문제가 없다고 하지 않고 "확인하지 못함"으로 표시합니다. OwnGit이 직접 고치지는 않으니 명령은 이 컴퓨터에서 실행하세요. 설정의 일반 탭도 같은 점검 결과를 보여 주지만 이 컴퓨터의 경로가 드러나므로 관리자로 확인한 사람에게만 보입니다.
 
 ## 업데이트와 제거
 
@@ -196,11 +196,11 @@ tailnet의 기기가 `http://100.64.0.7:7654/`처럼 이 컴퓨터의 Tailscale 
 
 집 네트워크의 다른 기기는 OwnGit이 네트워크 주소에서 연결을 받고([네트워크 설정](#네트워크-설정)) 이 컴퓨터의 방화벽이 그 연결을 들여보낼 때만 OwnGit에 접속할 수 있습니다.
 
-- Windows: 규칙으로 허용하지 않은 다른 기기의 연결은 Windows 방화벽이 막습니다. 관리자 계정에서 `owngit service install`을 실행하면 개인 네트워크용 규칙 `OwnGit`을 추가하므로, 연결 주소를 바꾸거나 OwnGit을 업데이트해도 규칙은 그대로 있습니다. Windows가 공용으로 보는 네트워크는 계속 막혀 있으니 집 네트워크는 Windows 설정의 네트워크 및 인터넷에서 개인 네트워크로 지정하세요. 데스크톱에서 `owngit serve`를 직접 시작하면 Windows가 대신 물어볼 수 있는데, 이때 개인 네트워크를 허용하면 됩니다. 표준 계정의 서비스에는 규칙이 생기지 않으며 관리자가 추가할 수 있습니다.
+- Windows: 규칙으로 허용하지 않은 다른 기기의 연결은 Windows 방화벽이 막습니다. 관리자 계정에서 `owngit service install`을 실행하면 개인 네트워크용 규칙 `OwnGit`을 추가하므로, 연결 주소를 바꾸거나 OwnGit을 업데이트해도 규칙은 그대로 있습니다. Windows가 공용으로 보는 네트워크는 계속 막혀 있으니 집 네트워크는 Windows 설정의 네트워크 및 인터넷에서 개인 네트워크로 지정하세요. 데스크톱에서 `owngit serve`를 직접 시작하면 Windows가 대신 물어볼 수 있는데, 이때 개인 네트워크를 허용하면 됩니다. 표준 계정의 서비스에는 규칙이 생기지 않으며 관리자가 추가할 수 있습니다. Windows 보안에서 들어오는 연결을 모두 차단하면 어떤 기기도 들어오지 못합니다.
 - macOS: 애플리케이션 방화벽은 직접 켜지 않았다면 꺼져 있습니다. 켜져 있으면 macOS가 OwnGit이 들어오는 연결을 받아도 되는지 물을 수 있으니 허용하세요. "들어오는 연결 모두 차단"을 켜 두면 어떤 기기도 들어오지 못합니다.
-- Linux: ufw나 firewalld가 켜져 있으면(Omarchy는 ufw를 켜 둡니다) OwnGit의 포트를 허용하세요. `sudo ufw allow 7654/tcp` 또는 `sudo firewall-cmd --permanent --add-port=7654/tcp && sudo firewall-cmd --reload`를 실행하면 됩니다.
+- Linux: ufw나 firewalld가 켜져 있으면(Omarchy는 ufw를 켜 둡니다) OwnGit의 포트를 사설 네트워크에만 허용하세요. 예를 들면 `sudo ufw allow from 192.168.1.0/24 to any port 7654 proto tcp`입니다. 포트만 지정한 규칙은 이 컴퓨터가 연결되는 다른 네트워크에도 포트를 엽니다.
 
-이 컴퓨터가 어느 경우인지는 `owngit doctor`가 고치는 명령과 함께 알려 줍니다([점검](#점검)).
+이 컴퓨터가 어느 경우인지는 `owngit doctor`가 찾은 네트워크와 명령을 함께 알려 줍니다([점검](#점검)).
 
 이번 실행에서만 LAN 이름을 쓰려면 다음과 같이 실행합니다.
 

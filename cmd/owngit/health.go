@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -45,7 +46,7 @@ func healthCommand(arguments []string) error {
 // whether a running server published it. Without a published address it
 // is the saved listen address or the default.
 func healthAddress(stateDir string) (string, bool, error) {
-	address, running := server.DefaultListenAddress, false
+	observed, savedListen := state.RunningObservation{}, ""
 	if state.RequireExisting(stateDir) == nil {
 		ctx := context.Background()
 		store, err := openLiveState(ctx, stateDir)
@@ -53,26 +54,68 @@ func healthAddress(stateDir string) (string, bool, error) {
 			return "", false, err
 		}
 		defer store.Close()
-		observed, err := store.ObserveRunningNetwork(ctx)
-		if err != nil {
+		if observed, err = store.ObserveRunningNetwork(ctx); err != nil {
 			return "", false, err
 		}
-		if record := observed.Record; observed.Server == state.ServerRunning && record != nil && record.Address != "" {
-			// The listen setting says which family to use: 0.0.0.0 is
-			// reached at 127.0.0.1 even when the socket reports [::].
-			// The bound address has the actual port.
-			address, running = record.Address, true
-			listenHost, _, listenErr := net.SplitHostPort(record.Listen)
-			_, port, addressErr := net.SplitHostPort(record.Address)
-			if listenErr == nil && addressErr == nil {
-				address = net.JoinHostPort(listenHost, port)
-			}
-		} else if saved, err := store.NetworkSettings(ctx); err == nil && saved.Listen != "" {
-			address = saved.Listen
+		if saved, err := store.NetworkSettings(ctx); err == nil {
+			savedListen = saved.Listen
 		}
 	}
+	address, running := healthTarget(observed, savedListen)
 	target, err := localTarget(address)
 	return target, running, err
+}
+
+// healthTarget returns the address where the server of a state directory
+// answers, and whether a running server published it: its bound address in
+// the family of its listen setting, or else savedListen or the default.
+func healthTarget(observed state.RunningObservation, savedListen string) (string, bool) {
+	if record := observed.Record; observed.Server == state.ServerRunning && record != nil && record.Address != "" {
+		// The listen setting says which family to use: 0.0.0.0 is
+		// reached at 127.0.0.1 even when the socket reports [::].
+		// The bound address has the actual port.
+		listenHost, _, listenErr := net.SplitHostPort(record.Listen)
+		_, port, addressErr := net.SplitHostPort(record.Address)
+		if listenErr == nil && addressErr == nil {
+			return net.JoinHostPort(listenHost, port), true
+		}
+		return record.Address, true
+	}
+	return cmp.Or(savedListen, server.DefaultListenAddress), false
+}
+
+// listenOf returns the address the server listens on, by its running
+// record, or will listen on, by savedListen or the default.
+func listenOf(observed state.RunningObservation, savedListen string) string {
+	if record := observed.Record; observed.Server == state.ServerRunning && record != nil {
+		return cmp.Or(record.Listen, record.Address, server.DefaultListenAddress)
+	}
+	return cmp.Or(savedListen, server.DefaultListenAddress)
+}
+
+// serverListen returns the address the server of stateDir listens on, or
+// will listen on by its saved setting.
+func serverListen(stateDir string) (string, error) {
+	if err := state.RequireExisting(stateDir); errors.Is(err, state.ErrNotExist) {
+		return server.DefaultListenAddress, nil
+	} else if err != nil {
+		return "", err
+	}
+	ctx := context.Background()
+	store, err := openLiveState(ctx, stateDir)
+	if err != nil {
+		return "", err
+	}
+	defer store.Close()
+	observed, err := store.ObserveRunningNetwork(ctx)
+	if err != nil {
+		return "", err
+	}
+	saved, err := store.NetworkSettings(ctx)
+	if err != nil {
+		return "", err
+	}
+	return listenOf(observed, saved.Listen), nil
 }
 
 // localTarget turns a listen address into one this computer can connect

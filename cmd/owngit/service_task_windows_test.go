@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"owngit/internal/service"
 )
 
 // tokenInformation reads one class of token information.
@@ -61,6 +64,11 @@ func TestWithoutAdminTokenDropsAdministratorRights(t *testing.T) {
 		t.Error("this process is in Administrators, but the restricted token does not list it as deny only")
 	}
 	t.Logf("administrator groups denied: %d (this process holds Administrators: %v, elevated: %v)", denied, held["S-1-5-32-544"], own.IsElevated())
+	// The copy still belongs to an administrator account, so its checkup
+	// gives the same repair as the elevated process.
+	if service.AdministratorAccount(restricted) != service.AdministratorAccount(own) {
+		t.Errorf("administrator account: restricted %v, own %v", service.AdministratorAccount(restricted), service.AdministratorAccount(own))
+	}
 
 	label := (*windows.Tokenmandatorylabel)(tokenInformation(t, restricted, windows.TokenIntegrityLevel))
 	if got := label.Label.Sid.String(); got != "S-1-16-8192" {
@@ -160,5 +168,30 @@ func TestGiveOwnershipFollowsNoLink(t *testing.T) {
 		if got, err := platformOwnerOf(path); err != nil || got != want {
 			t.Errorf("%s: owner %s (%v), want %s", path, got, err, want)
 		}
+	}
+}
+
+// The step that gives a standard account its folders takes the account
+// from the process that started it: here this test, so its own account.
+func TestRequestingAccountIsTheParent(t *testing.T) {
+	if os.Getenv("OWNGIT_TEST_REQUESTER") == "1" {
+		sid, err := platformRequestingAccount()
+		if err != nil {
+			fmt.Print("error: ", err)
+			os.Exit(1)
+		}
+		fmt.Print(sid)
+		os.Exit(0)
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestRequestingAccountIsTheParent$")
+	command.Env = append(os.Environ(), "OWNGIT_TEST_REQUESTER=1")
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("%v: %s", err, output)
+	}
+	own, err := platformCurrentAccountSID()
+	noErr(t, err)
+	if string(output) != own {
+		t.Errorf("requesting account %q, want %q", output, own)
 	}
 }

@@ -181,8 +181,8 @@
   {{if $p.Checkup.Visible}}
     <p class="scope">{{icon "info"}}<span>{{bi $lang "doctor.scope"}}</span></p>
     {{range $i, $f := $p.Checkup.Findings}}
-    <div class="finding">
-      <p class="finding__t">{{statusIcon "warning"}}<span>{{biText $lang ($f.Sentence "en") ($f.Sentence "ko")}}</span></p>
+    <div class="finding{{if $f.Unchecked}} finding--unchecked{{end}}">
+      <p class="finding__t">{{if $f.Unchecked}}{{statusIcon "info"}}{{else}}{{statusIcon "warning"}}{{end}}<span>{{biText $lang ($f.Sentence "en") ($f.Sentence "ko")}}</span></p>
       {{with $f.Repair}}
       <div class="clonefield finding__cmd" data-clone>
         <label class="clonefield__l" for="checkup-repair-{{$i}}">{{bi $lang "doctor.repair"}}</label>

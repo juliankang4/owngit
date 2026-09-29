@@ -1643,6 +1643,9 @@ span.hm__cell { cursor: default; }
 .finding + .finding { border-top: 1px solid var(--sep); padding-top: 12px; }
 .finding__t { display: flex; gap: 6px; max-width: 76ch; font-size: 12.5px; }
 .finding__t .icon { flex: none; margin-top: 2px; color: var(--warn); }
+.finding--unchecked .finding__t .icon { color: var(--text-2); }
+/* A long Windows path wraps instead of widening the page. */
+.finding__t > span { min-width: 0; overflow-wrap: anywhere; }
 .finding .finding__cmd { width: min(640px, 100%); }
 
 /* A labelled control beside its label on a wide window. */

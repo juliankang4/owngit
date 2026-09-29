@@ -45,6 +45,9 @@ var (
 	signalServiceStop = platformSignalServiceStop
 	// currentAccountSID returns the security identifier of this account.
 	currentAccountSID = platformCurrentAccountSID
+	// requestingAccount returns the security identifier of the account of
+	// the process that started this one.
+	requestingAccount = platformRequestingAccount
 	// windowsSystemDirectory returns the System32 directory.
 	windowsSystemDirectory = platformSystemDirectory
 	// ownerOf returns the owner of a file or folder as a SID string.
@@ -258,14 +261,15 @@ func taskServiceCommand(action string, arguments []string) error {
 }
 
 // administratorStep runs one of the steps that need administrator rights,
-// "elevated-install" or "elevated-uninstall", with the arguments that the
-// command asking for them passed.
+// "elevated-install", "elevated-owners" or "elevated-uninstall", with the
+// arguments that the command asking for them passed.
 func (host *taskHost) administratorStep(action string, arguments []string) error {
 	flags := flag.NewFlagSet("service "+action, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", "", "state directory the task passes")
 	headless := flags.Bool("headless", false, "the --headless value the task passes to the server")
 	installGit := flags.Bool("install-git", false, "install Git with winget when it is missing")
+	repositories := flags.String("repositories", "", "the repository folder saved in the state directory")
 	attach := flags.Int("attach", 0, "process whose console shows the output")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
@@ -280,8 +284,11 @@ func (host *taskHost) administratorStep(action string, arguments []string) error
 	if !host.env.Elevated {
 		return errors.New("this step runs only with administrator rights, started by \"owngit service install\"")
 	}
-	if action == "elevated-install" {
+	switch action {
+	case "elevated-install":
 		return host.elevatedInstall(*stateDir, *headless, *installGit)
+	case "elevated-owners":
+		return host.elevatedOwners(*stateDir, *repositories)
 	}
 	if action != "elevated-uninstall" {
 		return fmt.Errorf("unknown step %s", action)
@@ -413,10 +420,22 @@ func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
 			return err
 		}
 	default:
-		// No administrator rights: a folder of the Administrators group
-		// stays theirs, and the command says who can change that.
-		for _, folder := range host.foldersOfAdministrators(stateDir) {
-			host.printf("%s belongs to the Administrators group, so OwnGit cannot use it. An administrator can make your account its owner with: icacls \"%s\" /setowner \"*%s\" /T /C\n", folder, folder, host.sid)
+		// A standard account: folders that the Administrators group owns
+		// are given back in one step that an administrator approves. The
+		// folders are this account's state and saved repository folder, as
+		// this process read them; the step checks them again.
+		if folders := host.foldersOfAdministrators(stateDir); len(folders) > 0 {
+			var steps []string
+			for _, folder := range folders {
+				steps = append(steps, "make your account the owner of "+folder)
+			}
+			arguments := []string{"service", "elevated-owners", "--state-dir", stateDir}
+			if repositories := savedRepositoryRoot(stateDir); repositories != "" {
+				arguments = append(arguments, "--repositories", repositories)
+			}
+			if err := host.asAdministrator(arguments, listSteps(steps)); err != nil {
+				return err
+			}
 		}
 		if found {
 			host.stopTask(existing.StateDir)
@@ -443,7 +462,13 @@ func (host *taskHost) asAdministrator(arguments []string, steps string) error {
 		return host.administratorStep(arguments[1], arguments[2:])
 	}
 	if host.env.NoDesktop {
-		host.printf("Windows asks for administrator approval to %s, and this session has no desktop to show that prompt. Run the same command in a terminal opened with \"Run as administrator\", or from the desktop.\n", steps)
+		if !host.env.Administrator {
+			// A terminal opened with "Run as administrator" runs as the
+			// administrator's account, not this one.
+			host.printf("An administrator approves at a Windows prompt to %s, and this session has no desktop to show that prompt. Run the same command from the desktop.\n", steps)
+		} else {
+			host.printf("Windows asks for administrator approval to %s, and this session has no desktop to show that prompt. Run the same command in a terminal opened with \"Run as administrator\", or from the desktop.\n", steps)
+		}
 		return errors.New("administrator approval is needed")
 	}
 	host.printf("Windows asks once for administrator approval to %s.\n", steps)
@@ -470,6 +495,27 @@ func listSteps(steps []string) string {
 		return strings.Join(steps, " and ")
 	}
 	return strings.Join(steps[:len(steps)-1], ", ") + ", and " + steps[len(steps)-1]
+}
+
+// elevatedOwners gives the folders of a standard account's installation
+// back to that account: its state directory and saved repository folder,
+// with what the Administrators group owns in them (giveFolderToAccount).
+// The account is the one that asked for the step, not the one that
+// approved it, and every folder is checked again here.
+func (host *taskHost) elevatedOwners(stateDir, repositories string) error {
+	if stateDir == "" {
+		return errors.New("elevated-owners needs --state-dir")
+	}
+	sid, err := requestingAccount()
+	if err != nil {
+		return fmt.Errorf("find the account that asked: %w", err)
+	}
+	host.sid = sid
+	host.giveFolderToAccount(stateDir)
+	if repositories != "" {
+		host.giveFolderToAccount(repositories)
+	}
+	return nil
 }
 
 // errElevationCancelled means the owner declined the UAC prompt.
@@ -741,21 +787,20 @@ var errFirewallCollision = errors.New(firewallCollisionLine)
 // cannot be read, and foreign is true when a rule of the same name exists
 // that OwnGit did not add.
 func (host *taskHost) firewallRule() (rule service.FirewallRule, found, foreign bool) {
-	rule, found, foreign, _ = host.readFirewallRule()
-	return rule, found, foreign
-}
-
-// readFirewallRule is firewallRule with the error of reading it.
-func (host *taskHost) readFirewallRule() (rule service.FirewallRule, found, foreign bool, err error) {
 	output, err := host.runPowerShell(service.FirewallShowScript)
 	if err != nil {
-		return service.FirewallRule{}, false, false, fmt.Errorf("read the Windows Firewall rule %q: %w: %s", service.FirewallRuleName, err, strings.TrimSpace(string(output)))
+		return service.FirewallRule{}, false, false
 	}
+	return firewallRuleOf(output)
+}
+
+// firewallRuleOf reads what FirewallShowScript printed.
+func firewallRuleOf(output []byte) (rule service.FirewallRule, found, foreign bool) {
 	if service.FirewallCollision(output) {
-		return service.FirewallRule{}, false, true, nil
+		return service.FirewallRule{}, false, true
 	}
 	rule, found = service.ParseFirewallRule(string(output))
-	return rule, found, false, nil
+	return rule, found, false
 }
 
 // stopTask asks a running server to stop, waits until the task no longer
