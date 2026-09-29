@@ -100,7 +100,10 @@ func run(arguments []string) error {
 	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
 		command, arguments = arguments[0], arguments[1:]
 	}
-	if serviceStateCommands[command] && !helpRequested(arguments) {
+	// backup verify reads only the backup it is given, so it runs as the
+	// account that starts it, like any command without a state.
+	readsNoState := command == "backup" && len(arguments) != 0 && arguments[0] == "verify"
+	if serviceStateCommands[command] && !helpRequested(arguments) && !readsNoState {
 		if handled, err := stateCommandWithoutAdminRights(command, arguments); handled {
 			return err
 		}
