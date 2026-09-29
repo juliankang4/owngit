@@ -109,6 +109,11 @@ func TestDiagnose(t *testing.T) {
 		"Windows public network with another rule": {with(running("windows"), func(f *Facts) {
 			f.Firewall.Access = service.FirewallAccess{Active: 4, On: 7, Allowed: 2}
 		}), []webui.Finding{{Code: webui.MsgDoctorWindowsPublic}}},
+		// A rule limited to a LAN range on private networks, and a public
+		// network in use: the network is the fault, not a missing rule.
+		"Windows public network with a rule for some remote addresses": {with(running("windows"), func(f *Facts) {
+			f.Firewall.Access = service.FirewallAccess{Active: 4, On: 7, Scoped: 2}
+		}), []webui.Finding{{Code: webui.MsgDoctorWindowsPublic}}},
 		"Windows domain network": {with(running("windows"), func(f *Facts) {
 			f.Firewall.Rule, f.Firewall.Access = RuleAllows, service.FirewallAccess{Active: 1, On: 7, Allowed: 2}
 		}), []webui.Finding{{Code: webui.MsgDoctorWindowsDomain}}},
