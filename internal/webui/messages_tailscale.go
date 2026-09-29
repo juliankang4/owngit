@@ -171,7 +171,7 @@ var tailscaleCatalog = map[MessageCode]message{
 	},
 	"tailscale.problem.mac_app_admin": {
 		en: "The Standalone Tailscale app for macOS lets only administrator accounts of this Mac change its settings. Run OwnGit with an administrator account, and try again.",
-		ko: "macOS용 Tailscale Standalone 앱은 이 Mac의 관리자 계정만 설정을 바꿀 수 있게 합니다. 관리자 계정으로 OwnGit을 실행한 뒤 다시 시도하세요.",
+		ko: "macOS용 Tailscale Standalone 앱은 이 Mac의 관리자 계정에서만 설정을 바꿀 수 있습니다. 관리자 계정으로 OwnGit을 실행한 뒤 다시 시도하세요.",
 	},
 	"tailscale.problem.outdated": {
 		en: "Tailscale on this computer is older than version 1.50. OwnGit needs 1.50 or later to change Serve settings without overwriting other changes. Update Tailscale and try again.",
