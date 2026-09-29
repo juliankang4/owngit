@@ -244,7 +244,7 @@ func listFolders(ctx context.Context, path string, showHidden bool) (folderResul
 }
 
 func validFolderName(name string) bool {
-	if name == "" || strings.TrimSpace(name) == "" || name == "." || name == ".." || len(name) > 255 || !utf8.ValidString(name) || strings.ContainsAny(name, "/\\\x00") {
+	if name == "" || strings.TrimSpace(name) == "" || name == "." || name == ".." || !utf8.ValidString(name) || strings.ContainsAny(name, "/\\\x00") {
 		return false
 	}
 	return platformFolderName(name)

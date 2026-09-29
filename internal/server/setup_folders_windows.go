@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 
 	"golang.org/x/sys/windows"
 )
@@ -23,7 +24,7 @@ func chooserHidden(path, name string) (bool, error) {
 }
 
 func platformFolderName(name string) bool {
-	if strings.ContainsAny(name, `<>:"|?*`) || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+	if len(utf16.Encode([]rune(name))) > 255 || strings.ContainsAny(name, `<>:"|?*`) || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
 		return false
 	}
 	for _, char := range name {

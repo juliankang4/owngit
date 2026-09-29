@@ -11,7 +11,7 @@ import (
 )
 
 func chooserHidden(_, name string) (bool, error) { return strings.HasPrefix(name, "."), nil }
-func platformFolderName(string) bool             { return true }
+func platformFolderName(name string) bool        { return len(name) <= 255 }
 func folderNotDirectory(err error) bool          { return errors.Is(err, syscall.ENOTDIR) }
 func folderParent(path string) (string, bool) {
 	parent := filepath.Dir(path)
