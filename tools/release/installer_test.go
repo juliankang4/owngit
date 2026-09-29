@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"owngit/internal/testfixture"
 )
 
 // The installers in packaging/installer run here against a synthetic
@@ -475,18 +477,18 @@ func TestInstallSh(t *testing.T) {
 	})
 }
 
-// psInstall is one run of install.ps1 in Windows PowerShell, which trusts
-// the synthetic release's certificate for this run only.
+// psInstall is one run of install.ps1 in Windows PowerShell or PowerShell 7,
+// which trusts the synthetic release's certificate for this run only.
 type psInstall struct {
-	home, log string
-	env       []string
-	thumb     string
+	shell, home, log string
+	env              []string
+	thumb            string
 }
 
-func newPsInstall(t *testing.T, release *syntheticRelease) *psInstall {
+func newPsInstall(t *testing.T, release *syntheticRelease, shell string) *psInstall {
 	home := t.TempDir()
 	sum := sha1.Sum(release.server.Certificate().Raw)
-	run := &psInstall{home: home, log: filepath.Join(home, "owngit.log"), thumb: strings.ToUpper(hex.EncodeToString(sum[:]))}
+	run := &psInstall{shell: shell, home: home, log: filepath.Join(home, "owngit.log"), thumb: strings.ToUpper(hex.EncodeToString(sum[:]))}
 	run.env = append(os.Environ(),
 		"LOCALAPPDATA="+home,
 		"OWNGIT_RELEASES="+release.url(), "OWNGIT_FAKE_LOG="+run.log)
@@ -504,12 +506,22 @@ func (run *psInstall) do(t *testing.T, env []string, arguments ...string) (strin
 	if len(arguments) > 0 {
 		invoke = "& ([scriptblock]::Create([IO.File]::ReadAllText(" + script + "))) " + strings.Join(arguments, " ")
 	}
-	return run.powerShell(env, "[Net.ServicePointManager]::ServerCertificateValidationCallback = { param($s, $c) $c.GetCertHashString() -eq '"+run.thumb+"' }; "+invoke)
+	return run.powerShell(env, trustTestCertificate+"[OwnGitTestTrust]::Thumb = '"+run.thumb+"'; "+invoke)
 }
+
+// trustTestCertificate makes .NET accept the synthetic release's certificate
+// in this PowerShell only. A compiled callback, because PowerShell 7 calls it
+// on a thread where a script block cannot run.
+const trustTestCertificate = `Add-Type -TypeDefinition 'public static class OwnGitTestTrust {
+  public static string Thumb;
+  public static bool Check(object sender, System.Security.Cryptography.X509Certificates.X509Certificate certificate, System.Security.Cryptography.X509Certificates.X509Chain chain, System.Net.Security.SslPolicyErrors errors) { return certificate.GetCertHashString() == Thumb; }
+}'
+[Net.ServicePointManager]::ServerCertificateValidationCallback = [Net.Security.RemoteCertificateValidationCallback][OwnGitTestTrust]::Check
+`
 
 // powerShell runs a command in the environment of this run.
 func (run *psInstall) powerShell(env []string, script string) (string, error) {
-	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	command := exec.Command(run.shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
 	command.Env = append(append([]string{}, run.env...), env...)
 	command.Dir = run.home
 	output, err := command.CombinedOutput()
@@ -560,16 +572,18 @@ func TestInstallPs1(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("OwnGit for Windows is released for x64")
 	}
-	if _, err := exec.LookPath("powershell.exe"); err != nil {
-		t.Skipf("needs Windows PowerShell: %v", err)
-	}
 	release := newSyntheticRelease(t, "1.0.0", "2.0.0")
+	// Every case runs in Windows PowerShell 5.1 and in PowerShell 7.
+	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) { installPs1Cases(t, release, shell) })
+}
+
+func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 	folder := func(dir, version string) string {
 		return filepath.Join(dir, "owngit_"+version+"_windows_amd64")
 	}
 
 	t.Run("fresh install through iex takes the latest release and installs the service", func(t *testing.T) {
-		run := newPsInstall(t, release)
+		run := newPsInstall(t, release, shell)
 		dir := filepath.Join(run.home, "Programs", "OwnGit")
 		output := run.must(t, nil)
 		program := filepath.Join(folder(dir, "2.0.0"), "owngit.exe")
@@ -596,7 +610,7 @@ func TestInstallPs1(t *testing.T) {
 	})
 
 	t.Run("pinned version gets its own folder", func(t *testing.T) {
-		run := newPsInstall(t, release)
+		run := newPsInstall(t, release, shell)
 		dir := filepath.Join(run.home, "og")
 		run.must(t, nil, "-Dir", psQuote(dir))
 		run.must(t, nil, "-Version", "1.0.0", "-Dir", psQuote(dir))
@@ -609,7 +623,7 @@ func TestInstallPs1(t *testing.T) {
 	})
 
 	t.Run("a mismatched or failed download changes nothing", func(t *testing.T) {
-		run := newPsInstall(t, release)
+		run := newPsInstall(t, release, shell)
 		dir := filepath.Join(run.home, "og")
 		run.must(t, nil, "-Version", "1.0.0", "-Dir", psQuote(dir))
 		path := "v2.0.0/" + release.archive["2.0.0"]
@@ -626,7 +640,7 @@ func TestInstallPs1(t *testing.T) {
 	})
 
 	t.Run("no service installs the program only", func(t *testing.T) {
-		run := newPsInstall(t, release)
+		run := newPsInstall(t, release, shell)
 		dir := filepath.Join(run.home, "og")
 		output := run.must(t, nil, "-NoService", "-Dir", psQuote(dir))
 		program := filepath.Join(folder(dir, "2.0.0"), "owngit.exe")
@@ -646,7 +660,7 @@ func TestInstallPs1(t *testing.T) {
 	// The same failure through iex and through the script block: the
 	// installer's lines and one plain message, and a failed command.
 	t.Run("a failed service install is a failure", func(t *testing.T) {
-		run := newPsInstall(t, release)
+		run := newPsInstall(t, release, shell)
 		failing := []string{"OWNGIT_FAKE_FAIL=service install"}
 		want := func(dir string) string {
 			release := folder(dir, "2.0.0")
@@ -661,7 +675,7 @@ func TestInstallPs1(t *testing.T) {
 	})
 
 	t.Run("brackets in the folder are literal", func(t *testing.T) {
-		run := newPsInstall(t, release)
+		run := newPsInstall(t, release, shell)
 		dir := filepath.Join(run.home, "O’Brien [x]")
 		decoy := filepath.Join(run.home, "O’Brien x")
 		noErr(t, os.Mkdir(decoy, 0o755))
@@ -679,7 +693,7 @@ func TestInstallPs1(t *testing.T) {
 	// folder of that drive. A free drive letter is mapped to a temporary
 	// folder for the test.
 	t.Run("a drive root stays a root", func(t *testing.T) {
-		run := newPsInstall(t, release)
+		run := newPsInstall(t, release, shell)
 		letter := ""
 		for drive := 'Z'; drive >= 'H'; drive-- {
 			if _, err := os.Stat(string(drive) + `:\`); err != nil {
@@ -710,7 +724,7 @@ func TestInstallPs1(t *testing.T) {
 	// sees them, so it never touches the real Program Files; the release
 	// address is unreachable, so a failed rule would stop at the download.
 	t.Run("refuses the service folder in Program Files", func(t *testing.T) {
-		run := newPsInstall(t, release)
+		run := newPsInstall(t, release, shell)
 		programFiles := filepath.Join(run.home, "PF")
 		unreachable := "OWNGIT_RELEASES=https://127.0.0.1:1/releases"
 		env := []string{"ProgramW6432=" + programFiles, "ProgramFiles=" + programFiles, unreachable}

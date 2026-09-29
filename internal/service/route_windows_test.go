@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"owngit/internal/testfixture"
 )
 
 // On Windows a running program cannot be replaced: the installer unpacks the
@@ -63,10 +65,10 @@ func TestPowerShellChainRunsInWindowsPowerShell(t *testing.T) {
 // one in such a folder), and the remove command deletes this program, not
 // the one in a folder that the pattern matches.
 func TestWindowsCommandsTakeBracketedPathsLiterally(t *testing.T) {
-	powershell, err := exec.LookPath("powershell.exe")
-	if err != nil {
-		t.Skip("Windows PowerShell is not available")
-	}
+	testfixture.ForEachPowerShell(t, testBracketedPaths)
+}
+
+func testBracketedPaths(t *testing.T, powershell string) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "O\u2019Brien [x]")
 	decoy := filepath.Join(root, "O\u2019Brien x")
