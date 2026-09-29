@@ -2,11 +2,16 @@
 
 <p align="center"><a href="CODING_TOOLS.md">English</a> | <b>한국어</b></p>
 
-이 안내는 OwnGit에 프로젝트 체크를 기록하는 코딩 도구와, 그런 도구를 설정하는 사람을 위한 것입니다. OwnGit은 버전이 붙은 JSON 명령줄 인터페이스와 공용 Agent Skill로 체크를 제공합니다. 코딩 도구가 사용자 환경에서 `owngit` 실행 파일을 실행하고 JSON 결과를 읽으며, 리비전이 바뀌어도 유지되는 고정된 작업 식별자, OwnGit 서버에 기록되는 리비전에 묶인 체크 결과, 작업마다 세 라운드로 정해진 수정 라운드 한도를 얻습니다. MCP를 지원하는 코딩 도구는 같은 명령을 도구로 제공하는 로컬 [MCP 서버](#mcp-서버) `owngit mcp`를 대신 실행할 수 있습니다. 스킬은 지침일 뿐 강제 장치가 아닙니다. 코딩 도구가 스킬을 무시할 수도 있고, 서버는 체크 에이전트(helper)가 실제로 제출한 것만 기록합니다.
+이 안내는 Codex, Claude Code, Pi 같은 코딩 도구를 OwnGit에 연결하는 사람과 그 코딩 도구가 읽는 문서입니다. 코딩 도구는 다음 두 방법 중 하나로 OwnGit을 씁니다.
+
+- 사용자 환경에서 `owngit` 명령을 실행하고 버전이 붙은 JSON 결과를 읽습니다. 이 역할을 하는 명령을 체크 에이전트(helper)라고 부릅니다. 어떤 명령을 실행할지는 공용 Agent Skill이 알려 줍니다.
+- MCP를 지원하는 도구는 같은 명령을 도구로 제공하는 로컬 [MCP 서버](#mcp-서버) `owngit mcp`를 실행합니다.
+
+어느 쪽이든 코딩 도구는 풀 리퀘스트를 읽고 리뷰하고, 저장소 목록을 보고 새로 만들고, 프로젝트 체크를 기록할 수 있습니다. 체크를 기록할 때 OwnGit은 작업 단위마다 작업을 하나 두고 리비전이 바뀌어도 그 작업을 그대로 씁니다. 체크 결과는 테스트한 바로 그 리비전에 묶어 서버에 저장하며 수정 라운드는 작업마다 세 번까지 허용합니다. 스킬은 지침일 뿐입니다. 코딩 도구는 스킬을 무시할 수 있고 서버는 체크 에이전트가 실제로 제출한 것만 기록합니다.
 
 ## 준비 사항
 
-코딩하는 컴퓨터에서 접속할 수 있는 OwnGit 서버, 저장소 식별자, 코딩하는 컴퓨터에 있는 `owngit` 실행 파일([체크 에이전트 실행 파일 찾기](#체크-에이전트-실행-파일-찾기) 참고), 비공개 파일로 전달된 저장소 범위의 체크 에이전트 토큰이 필요합니다. 먼저 이미 전달받은 사실과 프로젝트에서 알 수 있는 사실을 확인하고, 사용자에게는 사용자가 정해야 하는데 아직 정하지 않은 선택만 물으세요.
+코딩하는 컴퓨터에서 접속할 수 있는 OwnGit 서버, 저장소 식별자, 코딩하는 컴퓨터에 있는 `owngit` 실행 파일([체크 에이전트 실행 파일 찾기](#체크-에이전트-실행-파일-찾기) 참고), 비공개 파일로 전달된 저장소 범위의 체크 에이전트 토큰이 필요합니다. 먼저 이미 전달받은 사실과 프로젝트에서 알 수 있는 사실을 확인하고 사용자에게는 사용자가 정해야 하는데 아직 정하지 않은 선택만 물으세요.
 
 관리자 비밀번호로 토큰을 만듭니다.
 
@@ -25,7 +30,7 @@ owngit helper-credential create \
 
 ## 스킬 찾기
 
-공용 스킬은 [integrations/skills/owngit-checks/SKILL.md](../integrations/skills/owngit-checks/SKILL.md)에 있습니다. GitHub Releases의 포터블 압축 파일은 이 스킬을 같은 경로에 `docs/CODING_TOOLS.md`, `docs/CODING_TOOLS.ko.md`와 함께 담고 있고, macOS 앱 프로토타입은 `OwnGit.app/Contents/Resources/` 아래에, Debian 프로토타입 패키지는 `/usr/share/doc/owngit/` 아래에 둡니다. Homebrew와 npm 패키지는 `owngit` 명령만 설치하지만, 모든 실행 파일에는 함께 배포된 스킬이 들어 있습니다.
+공용 스킬은 [integrations/skills/owngit-checks/SKILL.md](../integrations/skills/owngit-checks/SKILL.md)에 있습니다. GitHub Releases의 포터블 압축 파일은 이 스킬을 같은 경로에 `docs/CODING_TOOLS.md`, `docs/CODING_TOOLS.ko.md`와 함께 담고 있습니다. Arch Linux 패키지는 같은 파일을 `/usr/share/doc/owngit-bin/` 아래에 설치합니다. 스킬은 `/usr/share/doc/owngit-bin/integrations/skills/owngit-checks/SKILL.md`에 있습니다. Homebrew와 npm 패키지는 `owngit` 명령만 설치하지만 모든 실행 파일에는 함께 배포된 스킬이 들어 있습니다.
 
 ```sh
 owngit skill --install ~/.agents/skills
@@ -47,11 +52,11 @@ cp -R integrations/skills/owngit-checks ~/.agents/skills/
 
 ### 체크 에이전트 실행 파일 찾기
 
-소스 빌드, 포터블 압축 파일, macOS 앱은 `owngit`을 `PATH`에 넣지 않습니다. 소스 체크아웃에서는 `bin/owngit`, 압축을 푼 디렉터리에서는 `./owngit`, 앱 안에서는 `OwnGit.app/Contents/Helpers/owngit`을 쓰세요. Debian 프로토타입 패키지는 `/usr/bin/owngit`을 설치합니다. 실행 파일이 `PATH`에 없으면 코딩 도구를 대신해 셸 시작 파일을 고치지 말고, 코딩 도구에 전체 경로를 알려 주세요.
+Homebrew, npm, Arch Linux 패키지는 `owngit`을 `PATH`에 넣습니다. 소스 빌드와 포터블 압축 파일은 넣지 않으므로 소스 체크아웃에서는 `bin/owngit`, 압축을 푼 디렉터리에서는 `./owngit`을 쓰세요. 한 줄 설치 스크립트는 Linux와 macOS에서는 `~/.local/bin/owngit`이나 `/usr/local/bin/owngit`에, Windows에서는 `%LOCALAPPDATA%\Programs\OwnGit` 아래의 릴리스 폴더에 프로그램을 두며 `PATH` 설정은 바꾸지 않습니다. 실행 파일이 `PATH`에 없으면 코딩 도구를 대신해 셸 시작 파일을 고치지 말고, 코딩 도구에 전체 경로를 알려 주세요.
 
 ## 클론 안에서 실행하기
 
-OwnGit 저장소의 클론 안에서는 `owngit pr`, `owngit check`, `owngit repo`가 `--server`나 `--repository`가 없을 때 서버와 저장소를 스스로 찾습니다. 클론의 `origin` 원격을 읽고, OwnGit 클론 주소인 `http(s)://HOST[:PORT]/git/ID.git` 형태만 받아들입니다. `check run`은 `--workdir`가 들어 있는 클론을 읽고, 다른 명령은 현재 디렉터리가 들어 있는 클론을 읽습니다. 직접 넘긴 플래그가 항상 우선하고, `--repository`만 넘기면 서버는 계속 `origin`에서 가져오며, `repo list`와 `repo create`는 서버만 가져옵니다. 명령은 무엇을 가져왔는지 표준 오류에 한 줄로 알립니다. 예를 들면 `owngit: using server https://owngit.example.test and repository example-project from the origin remote`이며, 표준 출력의 JSON은 바뀌지 않습니다. 일반 HTTP에는 여전히 `--accept-insecure-http`가 필요합니다.
+OwnGit 저장소의 클론 안에서는 `owngit pr`, `owngit check`, `owngit repo`가 `--server`나 `--repository`가 없을 때 서버와 저장소를 스스로 찾습니다. 클론의 `origin` 원격을 읽고 OwnGit 클론 주소인 `http(s)://HOST[:PORT]/git/ID.git` 형태만 받아들입니다. `check run`은 `--workdir`가 들어 있는 클론을 읽고, 다른 명령은 현재 디렉터리가 들어 있는 클론을 읽습니다. 직접 넘긴 플래그가 항상 우선하고, `--repository`만 넘기면 서버는 계속 `origin`에서 가져오며, `repo list`와 `repo create`는 서버만 가져옵니다. 명령은 무엇을 가져왔는지 표준 오류에 한 줄로 알립니다. 예를 들면 `owngit: using server https://owngit.example.test and repository example-project from the origin remote`이며, 표준 출력의 JSON은 바뀌지 않습니다. 일반 HTTP에는 여전히 `--accept-insecure-http`가 필요합니다.
 
 다음 경우에는 어떤 서버에도 접속하기 전에 멈춥니다. `origin_unavailable`(클론 안이 아니거나 `origin`이 없음), `origin_ambiguous`(`origin`에 URL이 둘 이상), `origin_unsupported`(GitHub URL, SSH 주소, 로컬 경로 같은 다른 종류의 주소), `origin_server_mismatch`(`--server`가 `origin`과 다른 서버를 가리키는데 `--repository`가 없음)입니다.
 
@@ -64,7 +69,7 @@ owngit-server: https://owngit.example.test
 SECRET
 ```
 
-첫 줄은 파일의 맨 처음에서 시작하며 정확히 `owngit-server:`, 공백 하나, 경로 없는 HTTP(S) 오리진 하나로 이루어지고, 비밀 값은 마지막 줄에 둡니다. 바이트 순서 표시나 빈 줄 뒤에 오거나 대소문자가 다른 줄처럼 비슷하기만 한 첫 줄은 거부합니다. 이 줄이 없는 파일은 비밀 값을 한 줄에 담아야 하며 `--server`를 직접 넘기면 지금처럼 동작하고, 이 줄이 있는 파일은 `--server`를 직접 넘겨도 다른 서버로는 보내지 않습니다. 관리자 비밀번호 파일과 러너 토큰 파일도 이 줄을 받아들이며, 이 명령들에는 항상 `--server`를 직접 넘겨야 합니다. 거부 코드는 `credential_origin_required`(서버를 `origin`에서 가져왔는데 파일에 서버가 없음), `credential_origin_mismatch`(파일에 다른 서버가 적혀 있음), `invalid_credential_origin`(첫 줄 형식이 잘못됨)이며, 어느 경우에도 아무것도 보내지 않습니다. 체크 에이전트 토큰 파일이나 러너 토큰 파일을 직접 읽는 스크립트는 마지막 줄을 읽어야 합니다.
+첫 줄은 파일의 맨 처음에서 시작하며 정확히 `owngit-server:`, 공백 하나, 경로 없는 HTTP(S) 오리진 하나로 이루어지고, 비밀 값은 마지막 줄에 둡니다. 바이트 순서 표시나 빈 줄 뒤에 오거나 대소문자가 다른 줄처럼 비슷하기만 한 첫 줄은 거부합니다. 이 줄이 없는 파일은 비밀 값을 한 줄에 담아야 하며 `--server`를 직접 넘기면 지금처럼 동작하고, 이 줄이 있는 파일은 `--server`를 직접 넘겨도 다른 서버로는 보내지 않습니다. 관리자 비밀번호 파일과 러너 토큰 파일도 이 줄을 받아들이며 이 명령들에는 항상 `--server`를 직접 넘겨야 합니다. 거부 코드는 `credential_origin_required`(서버를 `origin`에서 가져왔는데 파일에 서버가 없음), `credential_origin_mismatch`(파일에 다른 서버가 적혀 있음), `invalid_credential_origin`(첫 줄 형식이 잘못됨)이며, 어느 경우에도 아무것도 보내지 않습니다. 체크 에이전트 토큰 파일이나 러너 토큰 파일을 직접 읽는 스크립트는 마지막 줄을 읽어야 합니다.
 
 `helper-credential create`와 `runner-credential issue`는 자신이 사용한 서버로 이 줄을 씁니다. 직접 만든 공용 비밀번호 파일을 묶으려면 텍스트 편집기로 맨 위에 이 줄을 넣거나(파일 권한이 그대로 유지됩니다), macOS나 Linux에서 본인만 읽을 수 있는 새 파일을 만드세요.
 
@@ -89,7 +94,7 @@ $io::SetAccessControl($f, $acl)
 
 ## 작업 흐름
 
-작업 단위마다 고정된 작업을 하나 만듭니다. 작업은 리비전이 바뀌어도 식별자를 유지하며, 새 커밋이 생겨도 수정 라운드 한도가 초기화되지 않습니다.
+작업 단위마다 고정된 작업을 하나 만듭니다. 작업은 리비전이 바뀌어도 식별자를 유지하며 새 커밋이 생겨도 수정 라운드 한도가 초기화되지 않습니다.
 
 ```sh
 owngit check task new \
@@ -99,7 +104,7 @@ owngit check task new \
   --title "Fix the failing build"
 ```
 
-체크를 실행합니다. `--check`를 빼면 `--workdir`의 `HEAD`에 커밋된 `.owngit/checks.json`의 체크를 실행합니다. 워킹 트리의 사본이나 다른 리비전에서 서버에 기록된 구성은 쓰지 않으며, 파일이 없거나 올바르지 않으면 아무것도 실행하기 전에 멈춥니다. `--check name=command`를 넘기면 대신 바로 그 체크들을 실행하고 기록합니다.
+체크를 실행합니다. `--check`를 빼면 `--workdir`의 `HEAD`에 커밋된 `.owngit/checks.json`의 체크를 실행합니다. 워킹 트리의 사본이나 다른 리비전에서 서버에 기록된 구성은 쓰지 않으며 파일이 없거나 올바르지 않으면 아무것도 실행하기 전에 멈춥니다. `--check name=command`를 넘기면 대신 바로 그 체크들을 실행하고 기록합니다.
 
 ```sh
 owngit check run \
@@ -111,7 +116,7 @@ owngit check run \
   --check "lint=go vet ./..."
 ```
 
-`check run`은 실행하기 전에 시도(attempt)를 등록합니다. 그래서 서버가 저장소 전체에 걸친 순번을 매기고, 다시 보낸 요청도 한 번만 처리됩니다. 체크 에이전트는 실행 전후에 Git과 사용자의 Git 설정으로 워킹 트리를 관찰합니다. 처음에 리비전을 읽지 못하면 등록하기 전에 멈추고, 처음 상태 읽기만 실패하면 상태는 `unknown`입니다. 마지막 관찰에서 리비전을 읽지 못해도 `unknown`이며, 리비전이 바뀌었거나 변경이 있거나 상태 읽기가 실패하면 `dirty`로 기록합니다. `dirty`도 `unknown`도 깨끗한 커밋을 테스트했다는 증거가 아닙니다.
+`check run`은 실행하기 전에 시도(attempt)를 등록합니다. 그래서 서버가 저장소 전체에 걸친 순번을 매기고 다시 보낸 요청도 한 번만 처리됩니다. 체크 에이전트는 실행 전후에 Git과 사용자의 Git 설정으로 워킹 트리를 관찰합니다. 처음에 리비전을 읽지 못하면 등록하기 전에 멈추고, 처음 상태 읽기만 실패하면 상태는 `unknown`입니다. 마지막 관찰에서 리비전을 읽지 못해도 `unknown`이며, 리비전이 바뀌었거나 변경이 있거나 상태 읽기가 실패하면 `dirty`로 기록합니다. `dirty`도 `unknown`도 깨끗한 커밋을 테스트했다는 증거가 아닙니다.
 
 에이전트에게 수정을 맡기기 전에 수정 라운드를 예약하고, 그 라운드를 확인용 실행에 넘기세요.
 
@@ -141,7 +146,7 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 
 ## 명령 참조
 
-모든 명령은 `--server`, `--repository`, `--credential-file`, `--accept-insecure-http`(원격 플래그)를 받으며, 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져올 수 있습니다.
+모든 명령은 `--server`, `--repository`, `--credential-file`, `--accept-insecure-http`(원격 플래그)를 받으며 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져올 수 있습니다.
 
 - `check task new`는 작업을 만들고(`--title`), `check task list`는 저장소의 작업과 각 작업의 수정 라운드 한도를 보여 줍니다.
 - `check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값 체크당 65536바이트, 둘 다 0보다 커야 합니다), `--no-upload`(이때 원격 플래그는 선택 사항), 여러 번 쓸 수 있는 `--check name=command`입니다.
@@ -157,22 +162,22 @@ JSON 객체에는 `ok`, `registered`, `uploaded`, `attempt_id`, `cycle_id`, `tas
 
 체크별 상태는 `passed`, `failed`, `error`, `cancelled`, `incomplete`, `unavailable`입니다. 서버는 체크 에이전트가 보낸 종합 결과를 믿지 않고 개별 결과로 시도 상태를 다시 계산합니다. 정리 오류가 있으면 종료 코드가 보이더라도 결과는 `error`이고, 출력이 한도를 넘으면 `incomplete`이며, 줄인 발췌나 로그는 잘렸다고만 표시합니다. 구성된 체크가 하나도 없으면 `passed`가 아니라 `unavailable`이고, 등록된 뒤 완료를 보고하지 않은 시도는 `pending`으로 계속 보입니다.
 
-`upload_error`는 이 클라이언트가 등록이나 완료를 확인하지 못했다는 뜻입니다. 응답을 받지 못했더라도 서버에는 등록이나 완료가 받아들여져 있을 수 있으니, 예약이나 실행을 되풀이하기 전에 `check status`를 확인하고 시도가 없다고 단정하지 마세요. 기록된 실패 체크와는 다릅니다. 기록된 실패 체크에는 `failed` 결과가 담긴 저장된 시도가 있습니다. 서버에 아예 연결하지 못해도 체크는 실행되고, 명령은 2로 끝나며, `upload_error`에 연결 거부나 TLS 오류 같은 원인이 나옵니다.
+`upload_error`가 나오면 이 클라이언트는 등록이나 완료를 확인하지 못한 상태입니다. 응답을 받지 못했더라도 서버에는 등록이나 완료가 받아들여져 있을 수 있으니, 예약이나 실행을 되풀이하기 전에 `check status`를 확인하고 시도가 없다고 단정하지 마세요. 기록된 실패 체크와는 다릅니다. 기록된 실패 체크에는 `failed` 결과가 담긴 저장된 시도가 있습니다. 서버에 아예 연결하지 못해도 체크는 실행되고, 명령은 2로 끝나며, `upload_error`에 연결 거부나 TLS 오류 같은 원인이 나옵니다.
 
 ## 수정 라운드 한도
 
-작업의 한도는 자동 수정 라운드 세 번입니다. 에이전트에게 수정을 맡기기 전에 라운드를 예약하고, 예약 응답의 `cycle.id`를 확인용 실행에 `--cycle`로 넘기세요. 진행 중인 작업에서 이미 승인된 수정은 사용자에게 다시 묻지 않고 한도 안에서 계속할 수 있습니다. 요청받지 않은 수정은 시작하지 말고, 새 식별자를 만들지 말고 고정된 작업 식별자와 라운드 식별자를 다시 쓰세요. 예약한 라운드는 이어지는 체크가 통과하든 실패하든 한 번으로 세며, 라운드 안의 재시도는 그 라운드를 다시 씁니다. 첫 체크와 직접 다시 실행한 체크는 라운드를 쓰지 않으며, 사용할 수 없거나 취소된 실행만으로는 라운드가 생기지 않습니다. 한도를 다 쓰면 예약 명령이 `correction_budget_exhausted`를 돌려줍니다. 자동으로 계속하지 말고 해결되지 않은 작업을 보고하세요. 한도를 다 쓴 뒤에도 직접 실행한 체크는 기록할 수 있습니다.
+작업의 한도는 자동 수정 라운드 세 번입니다. 에이전트에게 수정을 맡기기 전에 라운드를 예약하고 예약 응답의 `cycle.id`를 확인용 실행에 `--cycle`로 넘기세요. 진행 중인 작업에서 이미 승인된 수정은 사용자에게 다시 묻지 않고 한도 안에서 계속할 수 있습니다. 요청받지 않은 수정은 시작하지 말고, 새 식별자를 만들지 말고 고정된 작업 식별자와 라운드 식별자를 다시 쓰세요. 예약한 라운드는 이어지는 체크가 통과하든 실패하든 한 번으로 세며 라운드 안의 재시도는 그 라운드를 다시 씁니다. 첫 체크와 직접 다시 실행한 체크는 라운드를 쓰지 않으며 사용할 수 없거나 취소된 실행만으로는 라운드가 생기지 않습니다. 한도를 다 쓰면 예약 명령이 `correction_budget_exhausted`를 돌려줍니다. 자동으로 계속하지 말고 해결되지 않은 작업을 보고하세요. 한도를 다 쓴 뒤에도 직접 실행한 체크는 기록할 수 있습니다.
 
 한도를 다 썼는지는 `check status`나, `correction_budget_exhausted`를 돌려준 예약 호출로만 알 수 있습니다. 실행 결과의 최상위 `correction_cycles_remaining`은 서버 응답이 있을 때만 채워지고 "알 수 없음"을 나타내는 값이 따로 없어서, 응답이 값을 채우지 않았어도 `0`으로 출력됩니다. 이 `0`은 한도를 다 썼다는 뜻이 아니라 클라이언트가 한도를 읽지 않았다는 뜻입니다. 측정된 한도는 실행 결과에 `task` 객체가 함께 있을 때만 담기므로 `task.correction_cycles_remaining`에서 읽으세요. 측정되지 않은 `0`이 출력되는 경우는 두 가지입니다.
 
 - `--no-upload`는 서버에 접속하지 않으므로 서버의 작업은 바뀌지 않습니다.
 - 등록이 실패해 `registered`가 false이고 `upload_error`가 설정된 경우는 시도가 없다는 뜻이 아니라 확인되지 않았다는 뜻입니다. 요청이 받아들여졌다면 저장된 시도가 있고 순번이 올라갔으며, 받아들여지지 않았다면 아무것도 바뀌지 않았습니다. 어느 쪽이라고도 가정하지 마세요.
 
-확인되지 않은 시도가 있으면 고정된 작업 식별자를 그대로 쓰고, 출력된 `attempt_id`를 진단 근거로 보관한 뒤 `check status --task TASK_ID`를 확인하세요. 불확실함을 풀려고 체크를 다시 실행하거나 라운드를 예약하지 마세요. `check run`은 실행할 때마다 새 시도 식별자를 만들고 기존 식별자를 다시 제출할 수 없으므로 다시 실행하면 별개의 시도가 시작됩니다. 응답을 받지 못한 요청을 클라이언트가 스스로 재시도할 때는 같은 본문을 보내므로 안전하지만, 셸에서 명령을 다시 실행하는 것은 안전하지 않습니다. `check status`로 바로 그 시도를 확인할 수 없으면 확인되지 않았다고 보고하세요. 측정되지 않은 `0`을 근거로 한도를 다 썼다고 보고하거나 승인된 수정을 멈추지 마세요.
+확인되지 않은 시도가 있으면 고정된 작업 식별자를 그대로 쓰고 출력된 `attempt_id`를 진단 근거로 보관한 뒤 `check status --task TASK_ID`를 확인하세요. 불확실함을 풀려고 체크를 다시 실행하거나 라운드를 예약하지 마세요. `check run`은 실행할 때마다 새 시도 식별자를 만들고 기존 식별자를 다시 제출할 수 없으므로 다시 실행하면 별개의 시도가 시작됩니다. 응답을 받지 못한 요청을 클라이언트가 스스로 재시도할 때는 같은 본문을 보내므로 안전하지만 셸에서 명령을 다시 실행하는 것은 안전하지 않습니다. `check status`로 바로 그 시도를 확인할 수 없으면 확인되지 않았다고 보고하세요. 측정되지 않은 `0`을 근거로 한도를 다 썼다고 보고하거나 승인된 수정을 멈추지 마세요.
 
 ## 저장소
 
-`owngit repo`는 저장소 목록을 보여 주고, 저장소 하나의 정보를 읽고, 새 저장소를 만들며, 결과를 JSON 객체 하나로 출력합니다. `owngit pr`과 같이 일반 접근을 쓰므로 공용 비밀번호를 `--password-file`로 넘기고, 접근이 열려 있으면 생략합니다. 삭제나 이름 변경은 없습니다.
+`owngit repo`는 저장소 목록을 보여 주고, 저장소 하나의 정보를 읽고, 새 저장소를 만들며, 결과를 JSON 객체 하나로 출력합니다. `owngit pr`과 같이 일반 접근을 쓰므로 공용 비밀번호를 `--password-file`로 넘기고 접근이 열려 있으면 생략합니다. 삭제나 이름 변경은 없습니다.
 
 ```sh
 owngit repo list --server https://owngit.example.test
@@ -185,7 +190,7 @@ owngit repo create --server https://owngit.example.test --name example-project \
 
 ## 풀 리퀘스트 변경 내용
 
-`owngit pr diff --number N`은 풀 리퀘스트가 바꾸는 내용을 JSON 객체 하나로 출력합니다. 비교한 원본과 대상 커밋, 두 커밋의 병합 기준(merge base), 줄 수가 붙은 변경 파일 목록, 패치가 들어 있습니다. `owngit pr`과 같이 일반 접근을 쓰고, 클론 안에서는 서버와 저장소를 `origin`에서 읽습니다.
+`owngit pr diff --number N`은 풀 리퀘스트가 바꾸는 내용을 JSON 객체 하나로 출력합니다. 비교한 원본과 대상 커밋, 두 커밋의 병합 기준(merge base), 줄 수가 붙은 변경 파일 목록, 패치가 들어 있습니다. `owngit pr`과 같이 일반 접근을 쓰고 클론 안에서는 서버와 저장소를 `origin`에서 읽습니다.
 
 ```sh
 owngit pr diff --number 3
@@ -194,13 +199,13 @@ owngit pr diff --number 3 --patch
 owngit pr diff --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
 ```
 
-변경 내용은 풀 리퀘스트 페이지와 같이 병합 기준에서 원본까지 셉니다. 기본값으로는 풀 리퀘스트의 현재 원본과 대상 커밋을 한 번 읽고 바로 그 두 커밋을 비교하므로, 읽는 도중에 브랜치가 움직여도 `source.oid`와 `target.oid`는 패치와 일치합니다. 읽은 내용을 리뷰하려면 같은 객체 ID를 `pr review submit`에 넘기며, 그사이 브랜치가 움직였으면 리뷰는 `stale_revision`으로 실패합니다. 병합된 풀 리퀘스트의 현재 쌍은 병합한 커밋 쌍입니다. `--source-oid`와 `--target-oid`는 비교할 커밋 쌍을 고정하며, 이 쌍은 현재 쌍이거나 리뷰를 요청한 쌍처럼 그 풀 리퀘스트에 기록된 쌍이어야 합니다. 다른 쌍은 `revision_not_recorded`로 실패하고, 둘 중 하나만 넘기면 CLI에서는 `invalid_arguments`, API에서는 `invalid_revision`으로 실패합니다. 고정한 쌍에서 브랜치가 움직였으면 결과는 여전히 그 쌍을 보여 주면서 `moved`를 true로 두고 현재 쌍을 `current`에 담습니다.
+변경 내용은 풀 리퀘스트 페이지와 같이 병합 기준에서 원본까지 셉니다. 기본값으로는 풀 리퀘스트의 현재 원본과 대상 커밋을 한 번 읽고 바로 그 두 커밋을 비교하므로, 읽는 도중에 브랜치가 움직여도 `source.oid`와 `target.oid`는 패치와 일치합니다. 읽은 내용을 리뷰하려면 같은 객체 ID를 `pr review submit`에 넘기며 그사이 브랜치가 움직였으면 리뷰는 `stale_revision`으로 실패합니다. 병합된 풀 리퀘스트의 현재 쌍은 병합한 커밋 쌍입니다. `--source-oid`와 `--target-oid`는 비교할 커밋 쌍을 고정하며 이 쌍은 현재 쌍이거나 리뷰를 요청한 쌍처럼 그 풀 리퀘스트에 기록된 쌍이어야 합니다. 다른 쌍은 `revision_not_recorded`로 실패하고, 둘 중 하나만 넘기면 CLI에서는 `invalid_arguments`, API에서는 `invalid_revision`으로 실패합니다. 고정한 쌍에서 브랜치가 움직였으면 결과는 여전히 그 쌍을 보여 주면서 `moved`를 true로 두고 현재 쌍을 `current`에 담습니다.
 
 결과에는 크기 제한이 있습니다. 패치에서 빠진 파일이 있으면 `truncated`가 true이고, 파일 목록에서도 빠진 파일이 있으면 `incomplete`가 true이며, 패치는 언제나 파일 경계에서 끝납니다. `reason`은 빠진 이유를 알려 줍니다. `output_limit`는 비교 결과가 8 MiB 제한에 닿은 경우, `time_limit`는 Git의 시간이 다 된 경우(나중에 다시 시도하면 더 읽을 수 있습니다), `response_limit`는 4 MiB 응답에 맞추려고 잘라 낸 경우입니다. 두 브랜치에 공통 커밋이 없거나 병합 기준이 둘 이상이면 `unavailable`이 `no_merge_base` 또는 `multiple_merge_bases`이고 파일 목록과 패치가 없습니다. `--stat`은 `patch`를 뺀 같은 객체를 출력하고, `--patch`는 패치 텍스트만 출력하며 비교한 커밋과 브랜치 이동이나 잘림 여부는 표준 오류에 씁니다. API 경로는 `GET /api/v1/repositories/ID/pull-requests/N/diff`이며 선택 쿼리 매개변수로 `source_oid`와 `target_oid`를 받습니다.
 
 ## MCP 서버
 
-`owngit mcp`는 MCP를 지원하는 코딩 도구를 위한 [Model Context Protocol](https://modelcontextprotocol.io) 서버입니다. 프로토콜 리비전 `2025-11-25`를 표준 입력과 표준 출력(stdio 전송)으로 구현하며, 한 줄에 JSON-RPC 메시지 하나를 주고받고 네트워크 포트는 열지 않습니다. 각 도구는 `owngit` 명령 하나를 감싸고 그 명령이 출력하는 JSON을 돌려줍니다. 셸 명령을 실행할 수 있는 코딩 도구는 명령줄을 그대로 써도 됩니다. 도구 설명 목록보다 명령줄 쪽이 대개 토큰을 덜 씁니다.
+`owngit mcp`는 MCP를 지원하는 코딩 도구를 위한 [Model Context Protocol](https://modelcontextprotocol.io) 서버입니다. 프로토콜 리비전 `2025-11-25`를 표준 입력과 표준 출력(stdio 전송)으로 구현하며 한 줄에 JSON-RPC 메시지 하나를 주고받고 네트워크 포트는 열지 않습니다. 각 도구는 `owngit` 명령 하나를 감싸고 그 명령이 출력하는 JSON을 돌려줍니다. 셸 명령을 실행할 수 있는 코딩 도구는 명령줄을 그대로 써도 됩니다. 도구 설명 목록보다 명령줄 쪽이 대개 토큰을 덜 씁니다.
 
 ### 서버 시작
 
@@ -214,13 +219,13 @@ owngit pr diff --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
 - `--no-run-check`: `check_run`을 뺍니다.
 - `--result-limit BYTES`(기본값 65536, 4096부터 4194304까지): 도구 결과 하나의 최대 크기입니다.
 
-비밀번호 파일과 자격 증명 파일에는 [자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄)의 규칙이 그대로 적용됩니다. 서버를 `origin`에서 가져왔으면 파일에 그 서버가 적혀 있어야 합니다. 파일은 시작할 때 한 번 읽으며 비밀 값은 결과에 나오지 않습니다. `credential_origin_required`나 `insecure_http_confirmation_required`처럼 시작에 실패하면 오류 객체를 표준 오류에 쓰고 종료 상태 1로 끝납니다. 코딩 도구는 이 내용을 MCP 서버 로그에 보여 주며, `origin`에서 무엇을 가져왔는지 알리는 줄도 거기에 나옵니다.
+비밀번호 파일과 자격 증명 파일에는 [자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄)의 규칙이 그대로 적용됩니다. 서버를 `origin`에서 가져왔으면 파일에 그 서버가 적혀 있어야 합니다. 파일은 시작할 때 한 번 읽으며 비밀 값은 결과에 나오지 않습니다. `credential_origin_required`나 `insecure_http_confirmation_required`처럼 시작에 실패하면 오류 객체를 표준 오류에 쓰고 종료 상태 1로 끝납니다. 코딩 도구는 이 내용을 MCP 서버 로그에 보여 주며 `origin`에서 무엇을 가져왔는지 알리는 줄도 거기에 나옵니다.
 
-도구 인수는 풀 리퀘스트 번호, 커밋 ID, 작업 ID, 제목, 브랜치 이름 같은 값입니다. 서버, 경로, 명령처럼 도구의 입력 스키마에 없는 인수는 `invalid_arguments`로 실패하고 시작할 때 정한 저장소가 아닌 `repository`는 `repository_not_allowed`로 실패합니다. 올바른 UTF-8이 아닌 인수도 `invalid_arguments`로 실패합니다. API 요청 본문이 그렇다면 `invalid_json`으로 실패합니다. 서로게이트 쌍의 절반만 적은 `\u` 이스케이프도 여기에 해당합니다. 예를 들어 `\ud800` 뒤에 짝이 되는 `\udc00`~`\udfff` 이스케이프가 없으면 실패합니다. OwnGit은 읽을 수 없는 텍스트를 다른 문자로 바꾸지 않습니다.
+도구 인수는 풀 리퀘스트 번호, 커밋 ID, 작업 ID, 제목, 브랜치 이름 같은 값입니다. 서버, 경로, 명령처럼 도구의 입력 스키마에 없는 인수는 `invalid_arguments`로 실패하고 시작할 때 정한 저장소가 아닌 `repository`는 `repository_not_allowed`로 실패합니다. 올바른 UTF-8이 아닌 텍스트도 `invalid_arguments`로 실패합니다. 짝 없이 홀로 쓴 `\ud800`처럼 서로게이트 쌍의 절반만 적은 `\u` 이스케이프도 마찬가지입니다. OwnGit은 읽을 수 없는 텍스트를 다른 문자로 바꾸지 않기 때문입니다.
 
 ### 클라이언트 설정
 
-경로는 자신의 것으로 바꾸세요. 자격 증명은 플래그가 가리키는 파일에만 두고, 클라이언트 설정이나 환경 변수에는 넣지 마세요.
+경로는 자신의 것으로 바꾸세요. 자격 증명은 플래그가 가리키는 파일에만 두고 클라이언트 설정이나 환경 변수에는 넣지 마세요.
 
 Claude Code는 프로젝트의 `.mcp.json`을 읽습니다. `claude mcp add --scope project owngit -- owngit mcp ...`도 이 파일에 씁니다.
 
@@ -267,7 +272,7 @@ tool_timeout_sec = 1800
 | `pull_request_review` | `pr review submit` | 정확한 커밋 ID에 내린 결정과 호출자가 준 리뷰어 표시, 선택 사항인 메모(`note`)를 기록합니다. 참고용입니다. |
 | `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | 정확한 커밋 ID의 리뷰 상태를 pending이나 skipped로 바꿉니다. 누구에게도 알리지 않습니다. 참고용입니다. |
 | `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | 풀 리퀘스트 상태를 바꿉니다. 브랜치는 움직이지 않습니다. |
-| `pull_request_merge` | `pr merge` | 정확한 커밋 ID로 대상 브랜치에 병합을 게시합니다. 브랜치가 움직였으면 거부하고, 같은 호출을 되풀이해도 두 번 병합하지 않습니다. |
+| `pull_request_merge` | `pr merge` | 정확한 커밋 ID로 대상 브랜치에 병합을 게시합니다. 브랜치가 움직였으면 거부하고 같은 호출을 되풀이해도 두 번 병합하지 않습니다. |
 | `check_task_create` | `check task new` | 작업을 추가합니다. |
 | `check_cycle_reserve` | `check cycle reserve` | 작업의 수정 라운드 세 번 가운데 하나를 씁니다. |
 | `check_run` | `--check` 없는 `check run` | `--workdir`에서 커밋된 체크를 실행하고 시도를 기록합니다. |
@@ -276,7 +281,7 @@ tool_timeout_sec = 1800
 
 ### 결과와 오류
 
-도구 결과는 명령의 JSON을 담은 텍스트 항목 하나입니다. 실패한 호출은 `isError`를 설정하고 명령의 오류 객체 `{"ok":false,"error":{"code":...,"message":...}}`를 담습니다. 시도를 기록하지 못한 `check_run`도 `isError`를 설정하며, 이때 텍스트는 `upload_error`가 들어 있는 실행 결과 JSON입니다.
+도구 결과는 명령의 JSON을 담은 텍스트 항목 하나입니다. 실패한 호출은 `isError`를 설정하고 명령의 오류 객체 `{"ok":false,"error":{"code":...,"message":...}}`를 담습니다. 시도를 기록하지 못한 `check_run`도 `isError`를 설정하며 이때 텍스트는 `upload_error`가 들어 있는 실행 결과 JSON입니다.
 
 한도를 넘는 결과는 잘라 내고 그 사실을 알립니다. `pull_request_diff`는 API가 응답을 자르는 방식을 따릅니다. 패치는 파일 단위로 남기고, 그다음 파일 목록은 들어가는 만큼만 남기며, `truncated`, 목록에서 빠진 항목이 있으면 `incomplete`, 그리고 이유 `response_limit`를 설정합니다. 다른 결과는 가장 긴 글부터 줄이고, 그래도 넘치면 가장 긴 목록의 끝에서 항목을 뺀 뒤, 원래 크기(`bytes`), 한도(`limit`), 잘라 낸 필드(`cut`)를 담은 `result_truncated` 객체를 붙입니다.
 
@@ -286,14 +291,13 @@ tool_timeout_sec = 1800
 
 `check_run`은 `--check` 없이 실행한 `owngit check run`과 똑같이, `--workdir`의 `HEAD`에 커밋된 `.owngit/checks.json`의 체크를 체크당 10분과 출력 65536바이트라는 기본 한도로 실행합니다. 인수로는 작업과, 확인용 실행이라면 예약한 라운드만 넘깁니다. 체크는 사용자의 권한과 환경으로 실행되며 샌드박스 안에서 실행되지 않습니다. 한 번에 하나만 실행할 수 있으며 실행 중에 다시 호출하면 `check_run_busy`로 실패합니다. 코딩 도구가 호출을 취소하거나 입력을 닫으면 체크와 그 자식 프로세스를 멈춥니다. 시도는 취소된 것으로 기록되며, 취소된 호출에는 응답하지 않습니다.
 
-체크는 저장소에 커밋된 명령이므로, 클론에 커밋할 수 있는 사람은 `check_run`이 프로그램을 실행하게 만들 수 있습니다. 에이전트가 파일은 고쳐도 되지만 명령을 실행하면 안 된다면 서버를 `--no-run-check`로 시작하세요. 그러면 도구 목록에서 `check_run`이 빠지고 호출해도 아무것도 실행하기 전에 거부하며, 다른 체크 도구는 남아 있으므로 에이전트는 기록된 결과를 읽고, 작업을 만들고, 라운드를 예약할 수 있습니다.
+체크는 저장소에 커밋된 명령이므로, 클론에 커밋할 수 있는 사람은 `check_run`이 프로그램을 실행하게 만들 수 있습니다. 에이전트가 파일은 고쳐도 되지만 명령을 실행하면 안 된다면 서버를 `--no-run-check`로 시작하세요. 그러면 도구 목록에서 `check_run`이 빠지고 호출해도 아무것도 실행하기 전에 거부하며 다른 체크 도구는 남아 있으므로 에이전트는 기록된 결과를 읽고, 작업을 만들고, 라운드를 예약할 수 있습니다.
 
 ## 제한
 
 - 체크는 참고용입니다. 병합을 막지 않으며, 체크를 통과했다고 코드가 옳다는 증거가 되지는 않습니다. 프로젝트나 팀이 더 엄격한 리뷰나 체크 규칙을 요구할 수 있으며, 이 연동은 그 규칙보다 우선하지 않습니다.
-- 체크 에이전트는 사용자의 환경과 권한을 물려받습니다. 샌드박스가 아니며, 체크는 사용자 계정이 접근할 수 있는 파일과 인증 정보를 읽을 수 있습니다.
+- 체크 에이전트는 사용자의 환경과 권한을 물려받습니다. 샌드박스가 아니며 체크는 사용자 계정이 접근할 수 있는 파일과 인증 정보를 읽을 수 있습니다.
 - 변경이 있거나 상태를 알 수 없는 워킹 트리는 테스트한 커밋이 아닙니다. 그 리비전을 테스트했다고 말하지 말고 기록된 워킹 트리 상태를 보고하세요.
-- `--no-upload`는 로컬에서 실행되며 서버에 기록되지 않습니다. 서버에 기록된 근거라고 설명하지 마세요. 출력에 `task` 객체가 없으며, 최상위 `correction_cycles_remaining`의 `0`은 측정한 한도가 아니라 읽지 않은 필드입니다.
+- `--no-upload`는 로컬에서 실행되며 서버에 기록되지 않습니다. 서버에 기록된 근거라고 설명하지 마세요.
 - 실패한 체크를 무작정 다시 시도하지 말고, 체크를 통과시키려고 커밋된 체크 구성을 약하게 바꾸거나 다른 것으로 바꾸지 마세요.
-- 스킬이 반드시 로드되어 쓰인다는 보장은 없습니다. 직접 호출과 이 안내의 수동 명령이 확실한 방법입니다.
 - 읽기 전용 권한만 있는 리뷰어는 체크를 실행할 수 없습니다. 실행 권한이 있고 승인된 참여자가 체크를 실행해 그 출처와 함께 결과를 전달합니다.

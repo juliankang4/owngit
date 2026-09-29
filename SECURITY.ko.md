@@ -2,9 +2,11 @@
 
 <p align="center"><a href="SECURITY.md">English</a> | <b>한국어</b></p>
 
+OwnGit의 보안 문제는 공개 이슈가 아니라 GitHub를 통해 비공개로 신고해 주세요. 이 문서에는 신고 방법, 수정을 받는 버전, OwnGit이 무엇을 보호하도록 만들어졌는지가 있습니다.
+
 ## 취약점 신고
 
-보안 문제는 GitHub에서 비공개로 신고해 주세요. 저장소의 **Security** 탭을 열고 **Report a vulnerability**를 고르면 됩니다. 공개 이슈로 올리지 마세요.
+GitHub에서 저장소의 **Security** 탭을 열고 **Report a vulnerability**를 고르세요.
 
 OwnGit 버전(`owngit version`), 운영체제, 재현 방법을 적어 주세요. 실제 비밀번호, 토큰, 비공개 저장소 내용은 넣지 말고 가상의 예시를 쓰세요.
 
@@ -16,4 +18,12 @@ OwnGit 버전(`owngit version`), 운영체제, 재현 방법을 적어 주세요
 
 ## 범위
 
-OwnGit은 소유자 한 명이 비공개 네트워크나 VPN으로 접속하는 컴퓨터, NAS, 홈 서버에서 쓰도록 만들었습니다. TLS 없이 일반 HTTP로 동작하며, 공개 인터넷에서 운영하는 용도는 지원 범위가 아닙니다([접근과 보안](README.ko.md#접근과-보안) 참고). TLS는 소유자가 OwnGit을 tailnet에 HTTPS로 공유했을 때는 이 컴퓨터의 Tailscale이, 그 밖에는 OwnGit 앞에 둔 리버스 프록시가 맡습니다. OwnGit은 Tailscale Funnel이 인터넷에서 전달한 요청을 거부하고 `Tailscale-User-*` 신원 헤더를 무시합니다. OwnGit은 `X-Forwarded-Proto`, `X-Forwarded-For`, `X-Forwarded-Host` 헤더를 소유자가 지정한 프록시 주소에서 온 것만 믿으며, 기본값으로는 어떤 주소도 믿지 않습니다. VPN이나 TLS 리버스 프록시 없이 OwnGit을 인터넷에 바로 노출했을 때의 동작에 관한 신고는 예상된 동작으로 봅니다. 호스트와 러너의 체크 명령은 해당 계정의 권한으로 실행되며 샌드박스가 아닙니다.
+OwnGit은 소유자 한 명, 또는 공용 비밀번호 하나를 함께 쓰는 작은 그룹이 비공개 네트워크나 VPN으로 접속하는 컴퓨터, NAS, 홈 서버에서 쓰도록 만들었습니다. 공개 인터넷에서 운영하는 용도는 지원 범위가 아닙니다([접근과 보안](README.ko.md#접근과-보안) 참고). 그래서 VPN이나 TLS 리버스 프록시 없이 OwnGit을 인터넷에 바로 노출했을 때의 동작에 관한 신고는 예상된 동작으로 봅니다.
+
+네트워크 경계에서 OwnGit은 다음과 같이 동작합니다.
+
+- 일반 HTTP로 동작하며 TLS를 내장하지 않습니다. TLS는 소유자가 OwnGit을 tailnet에 HTTPS로 공유했을 때는 이 컴퓨터의 Tailscale이, 그 밖에는 OwnGit 앞에 둔 리버스 프록시가 맡습니다.
+- Tailscale Funnel이 인터넷에서 전달한 요청을 거부하고 `Tailscale-User-*` 신원 헤더를 무시합니다.
+- `X-Forwarded-Proto`, `X-Forwarded-For`, `X-Forwarded-Host` 헤더는 소유자가 지정한 프록시 주소에서 온 것만 믿으며, 기본값으로는 어떤 주소도 믿지 않습니다.
+
+호스트와 러너의 체크 명령은 해당 계정의 권한으로 실행되며 샌드박스가 아닙니다.

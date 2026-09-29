@@ -103,14 +103,12 @@ checks are on, where and when they run, whether the default branch has a valid
 available, and the next thing to do) and walks through five steps: where
 checks run, when they run, the check file (with a minimal example to copy),
 saving, and turning checks on. Enabling approves the policy version shown on
-screen; if someone saved a different policy in the meantime, the request is
-refused with 409.
+screen, and is refused if someone saved a different policy in the meantime.
 
 Limits sit under **Advanced limits** with working values filled in. Times take
-seconds, minutes, or hours and sizes bytes, KB, MB, or GB (1 KB is 1024
-bytes); a time must come to whole milliseconds, a size to whole bytes, and a
-CPU amount to at most three decimal places; each field shows its range and
-default. The time and output limits are maximums: a check gets 10 minutes and
+seconds, minutes, or hours, and sizes take bytes, KB, MB, or GB (1 KB is 1024
+bytes). Each field shows its range and default. The time and output limits are
+maximums: a check gets 10 minutes and
 keeps 64 KiB of output unless its check file asks for a different value under
 `limits`, up to these maximums.
 
@@ -150,9 +148,11 @@ owngit check-job cancel --server https://git.example.test --repository project -
 owngit check-job rerun --server https://git.example.test --repository project --password-file ./admin-password --job JOB_ID
 ```
 
-`check-job list` returns the newest 100 jobs; `check-job log` reads the raw
-log, which expires while the result stays; `check-job cancel` on a finished
-job changes nothing and fails with `check_job_finished`. A failure before
+`check-job list` returns the newest 100 jobs. `check-job log` reads the raw
+log, which OwnGit keeps for the time chosen in Settings (30 days by default;
+see [Project checks](OPERATIONS.md#project-checks)), while the result stays.
+`check-job cancel` on a finished job changes nothing and fails with
+`check_job_finished`. A failure before
 start is recorded as `unavailable`, `error`, or `interrupted`. A push that
 holds the repository while a job copies its source only delays it (up to 10
 minutes for a check OwnGit runs, 20 seconds per source request from a runner)
@@ -250,17 +250,23 @@ issued it, and `runner` refuses it for any other `--server` (see
 --credential ID` manage tokens; the server stores only a hash, and revoking a
 token stops its use and interrupts a claimed job that has not started.
 
-`runner` and `runner-credential` require HTTPS, so put a TLS-terminating proxy
-in front of OwnGit (`--ca-file /path/to/private-ca.pem` trusts a private
-certificate authority in addition to the system roots). The proxy must send a
-Host that OwnGit accepts (a name approved with `--allowed-host` or
-`approve-host`, or `localhost`, `127.0.0.1` or `::1` when it runs on the same
-computer; see
+`runner` and `runner-credential` need an HTTPS address for OwnGit. Either
+share OwnGit on your tailnet and use its `https://NAME.TAILNET.ts.net` address
+from a runner on the same tailnet (see
+[Share on your tailnet over HTTPS](OPERATIONS.md#share-on-your-tailnet-over-https)),
+or put a TLS-terminating reverse proxy in front of OwnGit (see
+[Behind a reverse proxy](OPERATIONS.md#behind-a-reverse-proxy)).
+`--ca-file /path/to/private-ca.pem` trusts a private certificate authority in
+addition to the system roots.
+
+A reverse proxy must send a Host that OwnGit accepts (a name approved with
+`--allowed-host` or `approve-host`, or `localhost`, `127.0.0.1` or `::1` when
+it runs on the same computer; see
 [Reaching the server from another device](OPERATIONS.md#reaching-the-server-from-another-device))
-and pass large bodies without a size cap. OwnGit refuses browser changes that
-arrive through such a proxy, so use it for runners and open the browser
-interface directly. Plain HTTP with `--accept-insecure-http` is accepted only
-for a loopback address.
+and pass large bodies without a size cap. Once OwnGit trusts the proxy, the
+browser interface works through the same address; tailnet sharing sets this
+up by itself. Plain HTTP with `--accept-insecure-http` is accepted only for a
+loopback address.
 
 The runner claims jobs for its repository only, downloads the exact source
 files, runs the commands as its own account (not sandboxed), cleans its

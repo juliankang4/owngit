@@ -16,29 +16,36 @@
 
 <p align="center"><b>English</b> | <a href="README.ko.md">한국어</a></p>
 
-OwnGit is a self-hosted Git server for home labs and local machines. It keeps private repositories and their history on your own computer, NAS, or home server, with a browser dashboard for everyday use. Repositories remain ordinary bare Git repositories served by the Git installation on the host. No cloud Git account or subscription is required.
+OwnGit is a self-hosted Git server for one person or a small group. It keeps private repositories and their history on your own computer, NAS, or home server, and gives you a browser dashboard for everyday work. Repositories stay ordinary bare Git repositories, served by the Git already installed on the computer, and you need no cloud Git account or subscription.
+
+To try it, pick an [install](#install) route and follow the [Quickstart](#quickstart). Setup runs in a terminal or in a browser.
 
 ![The OwnGit dashboard with commit activity, repositories, and latest activity for sample projects.](docs/images/overview.png)
 
-## What it does
+## Features
 
-- Supports clone, fetch, and push over Smart HTTP from standard Git clients.
-- Shares OwnGit over HTTPS on your tailnet through Tailscale Serve, turned on in Settings or with `owngit tailscale on`, or runs behind a reverse proxy such as Caddy, nginx, or Traefik. Once that HTTPS address works, a browser that opens a dashboard page over plain HTTP by its name on OwnGit's own port goes to the same page there. Network settings saved with `owngit network set` apply at every start, also for a background service. See [Share on your tailnet over HTTPS](docs/OPERATIONS.md#share-on-your-tailnet-over-https) and [Behind a reverse proxy](docs/OPERATIONS.md#behind-a-reverse-proxy).
-- Shows repositories, branches, tags, files, commits, diffs, author-date activity, pull requests, check evidence, and the languages a repository is written in (by file size on the default branch, honoring Linguist attributes in `.gitattributes` with Git 2.40 or newer) in the browser, and downloads a branch, tag, or commit as a ZIP or tar.gz archive, from the browser or with `curl`.
-- Creates, edits, closes, reopens, and merges pull requests in the browser at the exact revisions it displays, and from JSON CLI commands. A pull request has an optional Markdown description, and a review can leave a note tied to the commits it reviewed. Ordinary `git push` works without a pull request, and review is optional.
-- Lists, shows, and creates repositories from the command line with `owngit repo`, and offers the pull request, repository, and check commands to coding tools that support MCP through `owngit mcp`, a local server on standard input and output. See [Coding tool integration](docs/CODING_TOOLS.md#mcp-server).
-- Records checks that a helper runs in your own environment, and runs owner-enabled checks on the host, in restricted local Docker, or on a separate runner. Checks and reviews are advisory and never hold a merge.
-- Imports a repository from another HTTPS Git host and refreshes it on demand or on a schedule, without writing to the source.
-- Keeps replaced or deleted branch and tag history in hidden refs. The browser restores a whole tree or selected files after previewing every change.
-- Creates and restores offline backups of repository refs and objects, pull request, check, and import records, and portable settings.
-- Runs as one Go executable with a host-local SQLite database. No Node, Python, or database service is required at runtime.
-- Provides English and Korean interfaces with Light, Dark, and System appearance modes.
+- Clone, fetch, and push from any standard Git client over Smart HTTP.
+- Browse repositories, branches, tags, files, commits, diffs, commit activity, and the languages each repository uses. With Git 2.40 or newer, language statistics follow Linguist attributes in `.gitattributes`.
+- Download a branch, tag, or commit as a ZIP or tar.gz archive, from the browser or with `curl`.
+- Open, review, and merge pull requests in the browser or from JSON CLI commands. A merge uses the exact revisions on screen, and a plain `git push` works without a pull request.
+- Reach OwnGit from your other devices over HTTPS through Tailscale Serve (turned on in Settings or with `owngit tailscale on`) or a reverse proxy such as Caddy, nginx, or Traefik. See [Share on your tailnet over HTTPS](docs/OPERATIONS.md#share-on-your-tailnet-over-https) and [Behind a reverse proxy](docs/OPERATIONS.md#behind-a-reverse-proxy).
+- Keep the history that a force-push, an import, or a deletion replaces (on by default, and adjustable per repository), and restore a whole tree or selected files from the browser after previewing every change. You can also protect the default branch from rewrites and deletion.
+- Create and restore offline backups of repositories, pull request, check, and import records, and portable settings.
+- Import a repository from another HTTPS Git host and refresh it on demand or on a schedule, without writing to the source.
+- Record checks that the `owngit` command runs in your own environment, and run owner-enabled checks on the host, in restricted local Docker, or on a separate runner. See [Automatic checks](docs/AUTOMATIC_CHECKS.md). Checks and reviews are advisory and never hold a merge.
+- Connect coding tools: `owngit repo`, `owngit pr`, and `owngit check` print JSON, and `owngit mcp` offers the same commands to tools that support MCP. See [Coding tool integration](docs/CODING_TOOLS.md).
+- Run one Go executable with a SQLite database on the same computer. There is no database service to run.
+- Use the interface in English or Korean, with Light, Dark, and System appearance modes.
 
 ## Install
 
-Every install route needs Git with an executable `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you.
+Every route needs Git with an executable `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you. The one-line installer is the quickest route; the others follow.
 
-The one-line installer downloads the latest release for this computer, checks it against the release's `SHA256SUMS`, installs `owngit` and runs it as a service with `owngit service install`, which prints the setup link at the end when you run it in a terminal. On Linux (x64, ARM64) and macOS (Apple silicon):
+### One-line installer
+
+The installer downloads the latest release for this computer, checks it against the release's `SHA256SUMS`, installs `owngit`, and runs it as a service with `owngit service install`. Run from a terminal, it prints the setup link at the end.
+
+On Linux (x64, ARM64) and macOS (Apple silicon):
 
 ```sh
 /usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | /bin/sh
@@ -52,6 +59,8 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 
 [One-line installer](docs/OPERATIONS.md#one-line-installer) lists its options, such as a pinned version or no service, and where it puts the program.
 
+### Homebrew, npm, and Arch Linux
+
 With [Homebrew](https://brew.sh) on macOS (Apple silicon) or Linux (x64, ARM64):
 
 ```sh
@@ -64,7 +73,9 @@ With [npm](https://www.npmjs.com/package/owngit) on macOS (Apple silicon), Linux
 npm install -g owngit
 ```
 
-On Arch Linux (x64, ARM64) or Omarchy, build the package from the `PKGBUILD` attached to each release from 1.0.3 on. `makepkg` downloads the release archive, checks its SHA-256, and installs `owngit` with `pacman`; it needs the `base-devel` group. An AUR package, `owngit-bin`, is planned.
+On Windows, PowerShell's default execution policy blocks the `npm` and `owngit` commands that npm installs as PowerShell scripts. Run them in Command Prompt (cmd.exe) instead, or allow local scripts for your account once with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+On Arch Linux (x64, ARM64) or Omarchy, build the package from the `PKGBUILD` attached to each release. `makepkg` downloads the release archive, checks its SHA-256, and installs the package `owngit-bin` with `pacman`. It needs the `base-devel` group.
 
 ```sh
 mkdir owngit-bin && cd owngit-bin
@@ -72,7 +83,9 @@ curl -fLO https://github.com/juliankang4/owngit/releases/latest/download/PKGBUIL
 makepkg -si
 ```
 
-Or download the archive for your platform from [GitHub Releases](https://github.com/juliankang4/owngit/releases) and check it against `SHA256SUMS`. The macOS binary is signed and notarized by Apple; the Linux and Windows binaries are not signed.
+### Release archive or source
+
+You can also download the archive for your platform from [GitHub Releases](https://github.com/juliankang4/owngit/releases) and check it against `SHA256SUMS`. The macOS binary is signed and notarized by Apple; the Linux and Windows binaries are not signed.
 
 To build from source with Go 1.27 or newer:
 
@@ -84,7 +97,7 @@ go build -o bin/owngit ./cmd/owngit
 
 ### Update and remove
 
-OwnGit never updates itself. When a newer release exists, the dashboard notice shows a confirmed administrator the one command that updates OwnGit the way it was installed, with a Copy button, and `owngit update` prints the same command:
+OwnGit never updates itself. When a newer release exists, the dashboard shows a confirmed administrator the command that updates OwnGit the way it was installed, with a Copy button, and `owngit update` prints the same command:
 
 | Installed with | The command |
 | --- | --- |
@@ -95,25 +108,41 @@ OwnGit never updates itself. When a newer release exists, the dashboard notice s
 
 When a service runs this OwnGit, the command also runs `owngit service install`, which restarts the service with the new version.
 
-`owngit uninstall` removes what `owngit service install` created: the service and, on Windows, the copy in Program Files. The state and the repositories stay, and the command says where they are. The program files belong to whatever put them there, so the command ends by naming how to remove them: `brew uninstall owngit`, `npm uninstall -g owngit`, `sudo pacman -R owngit-bin`, or the file to delete for an archive. See [Update and uninstall](docs/OPERATIONS.md#update-and-uninstall).
+`owngit uninstall` removes what `owngit service install` created: the service and, on Windows, the copy in Program Files. The state and the repositories stay, and the command says where they are. It does not remove the program files, which belong to whatever installed them. It ends by naming the command for that: `brew uninstall owngit`, `npm uninstall -g owngit`, `sudo pacman -R owngit-bin`, or, for an archive, the file to delete. See [Update and uninstall](docs/OPERATIONS.md#update-and-uninstall).
 
 ## Quickstart
 
-On Linux, macOS and Windows, install OwnGit as a service that runs in the background and starts again by itself:
+Install OwnGit as a service that runs in the background and starts again by itself. This works on Linux, macOS, and Windows:
 
 ```sh
 owngit service install
 ```
 
-It asks nothing, apart from the `sudo` password on a Linux computer you reached over SSH (and one User Account Control approval from a Windows administrator account, which also installs Git with `winget` if it is missing), and prints a one-time setup link at the end. Open the link in a browser to choose the repository folder and the passwords; it works once, within 15 minutes, and `owngit setup-link` prints a new one. On a desktop, OwnGit runs as your user and answers only on this computer, at `http://127.0.0.1:7654`. On a computer without a screen, such as a server or a container you reach over SSH, it listens on every address and the link uses this computer's LAN or tailnet address, so you open it on another device; until setup is finished, that address answers only the setup page, and a server with only a public address gets an SSH tunnel command instead. [Run as a service](docs/OPERATIONS.md#run-as-a-service) explains who runs the service on each system, [On Windows](docs/OPERATIONS.md#on-windows) what the approval does, and both how to update, stop and remove it. When Homebrew installed OwnGit, the service is handed to `brew services`, whose log is `$(brew --prefix)/var/log/owngit.log`.
+The command prints a one-time setup link at the end. (If you used the one-line installer, it already ran this command and printed the link.) Open the link in a browser to choose the repository folder and the passwords. The link works once, within 15 minutes, and `owngit setup-link` prints a new one.
 
-To run OwnGit in the foreground instead, start it with:
+The command asks no questions, with two exceptions: on a Linux computer you reached over SSH it asks for your `sudo` password, and on a Windows administrator account it asks for one User Account Control approval (it then also installs Git with `winget` if Git is missing). Where OwnGit answers depends on the computer:
+
+- On a desktop, OwnGit runs as your user and answers only on this computer, at `http://127.0.0.1:7654`.
+- On a computer without a screen, such as a server or a container you reach over SSH, OwnGit listens on every address, and the link uses this computer's LAN or tailnet address so that you can open it on another device. Until setup is finished, that address answers only the setup page. A server with only a public address prints an SSH tunnel command instead.
+- When Homebrew installed OwnGit, the command hands the service to `brew services`, whose log is `$(brew --prefix)/var/log/owngit.log`.
+
+[Run as a service](docs/OPERATIONS.md#run-as-a-service) explains who runs the service on each system and how to update, stop, and remove it. [On Windows](docs/OPERATIONS.md#on-windows) explains what the approval does.
+
+### Run in the foreground
+
+To run OwnGit in a terminal instead of as a service:
 
 ```sh
 owngit serve
 ```
 
-From a source build, run `./bin/owngit serve`; from an unpacked archive, `./owngit serve`. The first time OwnGit starts from a terminal, setup runs there: choose English or 한국어, then "Continue in this terminal" or "Open the web dashboard", where the browser shows a short code that you approve in the terminal. Without a terminal, as under `brew services`, OwnGit writes an owner-readable setup file inside the state directory and opens it in your browser, or logs its path with `--no-open`; the link itself never reaches a log. See [First-time setup](docs/OPERATIONS.md#first-time-setup).
+From a source build, run `./bin/owngit serve`. From an unpacked archive, run `./owngit serve` in its folder (in Windows Command Prompt, `owngit serve`).
+
+The first start from a terminal runs setup there. Choose English or 한국어, then "Continue in this terminal" or "Open the web dashboard"; in the browser you get a short code to approve in the terminal.
+
+When OwnGit starts without a terminal, it writes an owner-readable setup file in the state directory and logs the file's path. It also opens that file in your browser, unless it was started with `--no-open`, as every OwnGit service is. `owngit setup-link` prints a new link, and the link itself never reaches a log. See [First-time setup](docs/OPERATIONS.md#first-time-setup).
+
+### First repository
 
 Create a repository from the dashboard, then use its clone address, for example `http://127.0.0.1:7654/git/project.git`, with any Git client. [Operations](docs/OPERATIONS.md) covers access from other devices, moving existing repositories, recovery, and backups. When something does not work, `owngit doctor` names what it found on this computer and the command that fixes it.
 
@@ -127,18 +156,26 @@ OwnGit is one program of about 30 MB (an 18 MB download) plus the Git already on
 | Memory, 100 small repositories | about 50 MB | about 50 MB |
 | CPU | under 0.1% of one core | under 0.1% of one core |
 
-Each password check needs about 70 MB more for a moment, because passwords are hashed with Argon2id. OwnGit checks a password when you set one or sign in, when you confirm a settings change with the administrator password, and on Git and API requests when a shared access password is set. After the shared password is checked once, OwnGit accepts the same password for five minutes without hashing it again, so the several requests of one clone or push need one check. It runs at most four checks at once, and gives the memory back to the system a few minutes later. Each clone or push also runs Git, whose memory depends on the repository. On Linux, memory is the resident set size reported by `/proc` and `ps`; on macOS it is the Memory column of Activity Monitor, where `ps` can show about 120 MB because macOS keeps memory that OwnGit gave back.
+Checking a password briefly needs about 70 MB more, because passwords are hashed with Argon2id. That happens when you set a password, sign in, or confirm a change with the administrator password, and on Git and API requests when a shared access password is set. OwnGit then accepts the same shared password for five minutes without hashing it again, so one clone or push needs one check. It runs at most four checks at once and gives the memory back a few minutes later. Each clone or push also runs Git, whose memory depends on the repository.
+
+On Linux, memory is the resident set size that `/proc` and `ps` report. On macOS it is the Memory column of Activity Monitor; `ps` can show about 120 MB there, because macOS holds on to memory that OwnGit gave back.
 
 ## Access and security
 
-- On a computer with a screen, the server is local-only by default. A computer without one, such as a server reached over SSH or a container, listens on every address from the first start so that setup can happen on another device; until setup is finished it answers only the one-time setup link. General repository access can be password-free or protected by one shared password. There are no individual accounts.
+- On a computer with a screen, OwnGit answers only on that computer by default. A computer without one, such as a server reached over SSH or a container, listens on every address from the first start so that you can finish setup from another device, and until then answers only the one-time setup link.
+- General repository access can be password-free or protected by one shared password. There are no individual accounts.
 - A separate administrator password protects security settings. The dashboard asks for it again after 30 minutes by default; under Settings, Access you can make it ask every time, remember it for up to 30 days in one browser, or turn the check off.
 - After setup, OwnGit asks GitHub once a day whether a newer release exists and shows a notice on the dashboard. It sends no repository data and never updates itself. Turn it off in Settings, or start with `--no-update-check` so it never checks. See [New-release notice](docs/OPERATIONS.md#new-release-notice).
-- OwnGit serves plain HTTP, which is not encrypted, and has no built-in TLS. TLS comes from Tailscale on this computer (see [Share on your tailnet over HTTPS](docs/OPERATIONS.md#share-on-your-tailnet-over-https)) or a reverse proxy in front of OwnGit, and OwnGit believes forwarded headers only from proxies you configure (see [Behind a reverse proxy](docs/OPERATIONS.md#behind-a-reverse-proxy)). Prefer Tailscale or your own VPN for connections from another device. Public Internet hosting is out of scope.
+- OwnGit serves plain HTTP, which is not encrypted, and has no built-in TLS. Encryption comes from Tailscale on this computer (see [Share on your tailnet over HTTPS](docs/OPERATIONS.md#share-on-your-tailnet-over-https)) or from a reverse proxy in front of OwnGit, whose forwarded headers OwnGit believes only when you configure it (see [Behind a reverse proxy](docs/OPERATIONS.md#behind-a-reverse-proxy)). Plain HTTP from another device on the LAN needs your explicit acceptance, which setup and the Settings Network tab ask for, and the page header always shows whether the connection is encrypted. Prefer Tailscale or your own VPN for other devices. Public Internet hosting is out of scope.
 
 ## Status and limits
 
-A force-push or branch deletion leaves the old commits in kept history, so a committed secret stays in OwnGit and its backups. Deleting the whole repository with its files is the only way to remove that history, and earlier backups still contain it; rotate any secret you push by mistake. Kept history is not a backup, and backups run only when you start them. Host and runner check commands run with their account's permissions and are not sandboxes. OwnGit records review labels and check results that other tools supply, but it never runs reviewers or coding agents. Git LFS objects are not hosted or imported. Pull request merge requires Git 2.38 or newer on the OwnGit host.
+- By default, a force-push, an import, or a branch deletion leaves the old commits in kept history, so a secret you committed stays in OwnGit and its backups. Choosing Do not keep only stops keeping later history and removes nothing already kept. Deleting the whole repository with its files is the only way to remove that history, and earlier backups still contain it. Rotate any secret you push by mistake.
+- Kept history is not a backup. Backups run only when you start them.
+- Host and runner check commands run with their account's permissions and are not sandboxes.
+- OwnGit records review labels and check results that other tools supply, but it never runs reviewers or coding agents.
+- Git LFS objects are not hosted or imported.
+- Merging a pull request needs Git 2.38 or newer on the OwnGit host.
 
 ## License
 
@@ -148,7 +185,7 @@ OwnGit's source is available under the [MIT License](LICENSE). Notices for the t
 
 - [Operations](docs/OPERATIONS.md): setup, access, recovery, moving repositories, imports, pull requests, checks, storage, and backups
 - [Automatic checks](docs/AUTOMATIC_CHECKS.md): checks that run on the host, in restricted Docker, or on a separate runner
-- [Coding tools](docs/CODING_TOOLS.md): running project checks from a coding tool, and the shared skill
-- [Contributing](CONTRIBUTING.md): building, testing, and changing OwnGit
+- [Coding tools](docs/CODING_TOOLS.md): connecting a coding tool through the command line or MCP, and recording project checks
+- [Contributing](CONTRIBUTING.md): building, testing, and sending a change to OwnGit
 - [Changelog](CHANGELOG.md): notable changes in each version
 - [Security policy](SECURITY.md): reporting a vulnerability privately

@@ -2,15 +2,22 @@
 
 <p align="center"><b>English</b> | <a href="CODING_TOOLS.ko.md">한국어</a></p>
 
-This guide is for a coding tool that records project checks in OwnGit, and
-for the person who sets one up. OwnGit exposes checks through a versioned JSON
-command line and a shared Agent Skill: the tool runs the `owngit` binary in
-the user's own environment and reads its JSON result. It gets a stable task
-identity that survives revisions, revision-bound check evidence on the OwnGit
-server, and a correction budget of three rounds per task. Tools that support
-MCP can instead start `owngit mcp`, a local [MCP server](#mcp-server) with the
-same commands as tools. The skill is an instruction; a tool can ignore it, and
-the server records only what the helper actually submits.
+This guide is for the person who connects a coding tool, such as Codex,
+Claude Code, or Pi, to OwnGit, and for the tool itself. A coding tool uses
+OwnGit in one of two ways:
+
+- It runs the `owngit` command in the user's own environment and reads its
+  versioned JSON result. In this role the command is called the helper. A
+  shared Agent Skill tells the tool which commands to run.
+- A tool that supports MCP starts `owngit mcp`, a local
+  [MCP server](#mcp-server) that offers the same commands as tools.
+
+Either way, the tool can read and review pull requests, list and create
+repositories, and record project checks. For checks, OwnGit keeps one task per
+unit of work while revisions change, stores each result on the server bound to
+the exact revision it tested, and allows three correction rounds per task. The
+skill is only an instruction: a tool can ignore it, and the server records only
+what the helper actually submits.
 
 ## Prerequisites
 
@@ -47,10 +54,11 @@ for that request. Do not add that flag on the user's behalf.
 The shared skill is
 [integrations/skills/owngit-checks/SKILL.md](../integrations/skills/owngit-checks/SKILL.md).
 The portable archives on GitHub Releases carry it at that path together with
-`docs/CODING_TOOLS.md` and `docs/CODING_TOOLS.ko.md`; the macOS app prototype
-holds them under `OwnGit.app/Contents/Resources/` and the Debian prototype
-package under `/usr/share/doc/owngit/`. The Homebrew and npm packages install
-only the `owngit` command, but every binary carries the skill it shipped with:
+`docs/CODING_TOOLS.md` and `docs/CODING_TOOLS.ko.md`. The Arch Linux package
+installs the same files under `/usr/share/doc/owngit-bin/`, for example
+`/usr/share/doc/owngit-bin/integrations/skills/owngit-checks/SKILL.md`. The
+Homebrew and npm packages install only the `owngit` command, but every binary
+carries the skill it shipped with:
 
 ```sh
 owngit skill --install ~/.agents/skills
@@ -88,12 +96,13 @@ guide directly.
 
 ### Reaching the helper binary
 
-A source build, a portable archive, and the macOS app do not add `owngit` to
-`PATH`: use `bin/owngit` in a source checkout, `./owngit` in an unpacked
-archive, or `OwnGit.app/Contents/Helpers/owngit` inside the app. The
-Debian prototype package installs `/usr/bin/owngit`. When the binary is not on
-`PATH`, give the coding tool the full path instead of editing shell startup
-files on its behalf.
+Homebrew, npm, and the Arch Linux package put `owngit` on `PATH`. A source
+build and a portable archive do not: use `bin/owngit` in a source checkout or
+`./owngit` in an unpacked archive. The one-line installer puts the program in
+`~/.local/bin/owngit` or `/usr/local/bin/owngit` on Linux and macOS, or in a
+release folder under `%LOCALAPPDATA%\Programs\OwnGit` on Windows, and changes
+no `PATH` setting. When the binary is not on `PATH`, give the coding tool the
+full path instead of editing shell startup files on its behalf.
 
 ## Inside a clone
 
@@ -447,11 +456,9 @@ Tool arguments are values such as pull request numbers, commit IDs, task IDs,
 titles, and branch names. An argument outside the tool's input schema, such as
 a server, a path, or a command, fails with `invalid_arguments`, and a
 `repository` other than the one fixed at startup fails with
-`repository_not_allowed`. Arguments that are not valid UTF-8 also fail with
-`invalid_arguments`, like an API request body that is not, which fails with
-`invalid_json`. This includes a `\u` escape of half a surrogate pair, such
-as `\ud800` without the `\udc00` to `\udfff` escape that completes it:
-OwnGit never replaces text it cannot read.
+`repository_not_allowed`. Text that is not valid UTF-8, including a `\u`
+escape of half a surrogate pair such as a lone `\ud800`, also fails with
+`invalid_arguments`, because OwnGit never replaces text it cannot read.
 
 ### Client configuration
 
@@ -573,13 +580,9 @@ evidence, create tasks, and reserve rounds.
 - A dirty or unknown worktree is not a tested commit. Report the recorded
   worktree state instead of calling the revision tested.
 - `--no-upload` runs locally and is not recorded on the server. Do not describe
-  it as server-recorded evidence. Its output has no `task` object, and its
-  top-level `correction_cycles_remaining` of `0` is an unread field, not a
-  measured budget.
+  it as server-recorded evidence.
 - Do not retry a failed check blindly, and do not weaken or replace the
   committed check configuration to make a check pass.
-- Skill loading is not a guaranteed callback. Explicit invocation and the
-  manual commands in this guide are the reliable paths.
 - A reviewer with read-only access cannot run the checks. An authorized
   execution-capable participant runs them and supplies the result with its
   provenance.
