@@ -449,7 +449,9 @@ a server, a path, or a command, fails with `invalid_arguments`, and a
 `repository` other than the one fixed at startup fails with
 `repository_not_allowed`. Arguments that are not valid UTF-8 also fail with
 `invalid_arguments`, like an API request body that is not, which fails with
-`invalid_json`: OwnGit never replaces bytes it cannot read.
+`invalid_json`. This includes a `\u` escape of half a surrogate pair, such
+as `\ud800` without the `\udc00` to `\udfff` escape that completes it:
+OwnGit never replaces text it cannot read.
 
 ### Client configuration
 

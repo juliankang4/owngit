@@ -734,18 +734,21 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	if code := session.callError("pull_request_edit", map[string]any{"number": number, "edit_revision": 3, "body": strings.Repeat("<", 70<<10)}); code != "invalid_body" {
 		t.Fatalf("an edit over the limit: %q", code)
 	}
-	// Arguments that are not UTF-8 are refused before they are decoded,
-	// which would otherwise send U+FFFD in place of the bytes given.
-	session.send("{\"jsonrpc\":\"2.0\",\"id\":9001,\"method\":\"tools/call\",\"params\":{\"name\":\"pull_request_edit\",\"arguments\":{\"number\":" +
-		string(number) + ",\"edit_revision\":3,\"body\":\"a\xffb\"}}}")
-	var raw toolResult
-	if response := session.receive(); string(response.ID) != "9001" || response.Error != nil || json.Unmarshal(response.Result, &raw) != nil || !raw.IsError ||
-		!strings.Contains(raw.Content[0].Text, `"code":"invalid_arguments"`) || !strings.Contains(raw.Content[0].Text, "not valid UTF-8") {
-		t.Fatalf("arguments that are not UTF-8: %s", response.Result)
+	// Arguments that are not UTF-8, or that escape half a surrogate pair, are
+	// refused before they are decoded, which would otherwise send U+FFFD in
+	// place of the text given; a surrogate pair is kept.
+	for _, body := range refusedText {
+		if result := sendRawTool(session, "pull_request_edit", `{"number":`+string(number)+`,"edit_revision":3,"body":"`+body+`"}`); !refusedAsNotUTF8(result) {
+			t.Fatalf("edit body %q: %+v", body, result)
+		}
 	}
-	text, isError = session.call("pull_request_edit", map[string]any{"number": number, "edit_revision": 3, "body": "한글 שלום 🙂"})
+	decodeToolJSON(t, sendRawTool(session, "pull_request_edit", `{"number":`+string(number)+`,"edit_revision":3,"body":"\ud83d\ude00"}`).Content[0].Text, &edited)
+	if *edited.PullRequest.Body != "\U0001F600" || edited.PullRequest.EditRevision != 4 {
+		t.Fatalf("surrogate pair body %q, revision %d", *edited.PullRequest.Body, edited.PullRequest.EditRevision)
+	}
+	text, isError = session.call("pull_request_edit", map[string]any{"number": number, "edit_revision": 4, "body": "한글 שלום 🙂"})
 	decodeToolJSON(t, text, &edited)
-	if isError || *edited.PullRequest.Body != "한글 שלום 🙂" || edited.PullRequest.EditRevision != 4 {
+	if isError || *edited.PullRequest.Body != "한글 שלום 🙂" || edited.PullRequest.EditRevision != 5 {
 		t.Fatalf("multibyte body: %s", text)
 	}
 	if code := session.callError("pull_request_create", map[string]any{"title": "Again", "source_branch": "feature", "target_branch": "main"}); code == "" {
@@ -776,6 +779,13 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	review := map[string]any{"decision": "approved", "reviewer": "mcp-test", "note": "Checked."}
 	for key, value := range pair {
 		review[key] = value
+	}
+	for _, note := range refusedText {
+		arguments := `{"number":` + string(number) + `,"source_oid":"` + pr.Source.OID + `","target_oid":"` + pr.Target.OID +
+			`","decision":"approved","reviewer":"mcp-test","note":"` + note + `"}`
+		if result := sendRawTool(session, "pull_request_review", arguments); !refusedAsNotUTF8(result) {
+			t.Fatalf("review note %q: %+v", note, result)
+		}
 	}
 	var reviewed pullrequest.SuccessEnvelope
 	text, isError = session.call("pull_request_review", review)
@@ -1067,4 +1077,26 @@ func TestMCPCancellationDuringRegistrationRecordsTheAttempt(t *testing.T) {
 		t.Fatal("a check ran after the cancellation")
 	}
 	session.expectSilence()
+}
+
+// refusedText is tool argument text that decoding would change: a byte that
+// is not UTF-8, lone high and low surrogate escapes, a high one before an
+// ordinary escape, and a reversed pair.
+var refusedText = []string{"a\xffb", `a\ud800b`, `a\udc00b`, `a\ud800\u0041b`, `a\ude00\ud83d`}
+
+// sendRawTool calls a tool with arguments written as raw JSON text, which
+// session.call cannot send because it encodes a value.
+func sendRawTool(session *mcpSession, tool, arguments string) toolResult {
+	session.t.Helper()
+	session.send(`{"jsonrpc":"2.0","id":9001,"method":"tools/call","params":{"name":"` + tool + `","arguments":` + arguments + `}}`)
+	response := session.receive()
+	var result toolResult
+	if string(response.ID) != "9001" || response.Error != nil || json.Unmarshal(response.Result, &result) != nil || len(result.Content) == 0 {
+		session.t.Fatalf("%s: %+v", tool, response)
+	}
+	return result
+}
+
+func refusedAsNotUTF8(result toolResult) bool {
+	return result.IsError && strings.Contains(result.Content[0].Text, `"code":"invalid_arguments"`) && strings.Contains(result.Content[0].Text, "not valid UTF-8")
 }

@@ -22,6 +22,7 @@ import (
 
 	"owngit/internal/apiclient"
 	"owngit/internal/bidi"
+	"owngit/internal/jsoninput"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/version"
@@ -665,9 +666,10 @@ func decodeArguments(raw json.RawMessage, target any) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		raw = json.RawMessage("{}")
 	}
-	// JSON text is UTF-8 (RFC 8259). Decoding would replace bytes that are
-	// not with U+FFFD and so send text other than the one given.
-	if !utf8.Valid(raw) {
+	// JSON text is UTF-8 (RFC 8259), and a surrogate escape names a character
+	// only with its pair. Decoding would put U+FFFD in place of either and so
+	// send text other than the one given.
+	if !jsoninput.Valid(raw) {
 		return cliProblem("invalid_arguments", "The tool arguments are not valid UTF-8 text, which JSON requires.")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))

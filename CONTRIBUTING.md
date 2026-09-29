@@ -120,6 +120,7 @@ A change must keep the following behavior.
 
 - Treat hosted code and check commands as untrusted, and record only the protection actually established.
 - Show text from Git or repository users (titles, descriptions, notes, reviewer labels, branch names, commit messages, author names, paths, task and check names) in an element of its own with `dir="auto"`, and write every JSON answer or result through `bidi.MarshalJSON` or `bidi.EscapeJSON`. A Unicode direction control in such text then cannot reorder the states, commit IDs and attribution shown beside it, while right-to-left text keeps its direction.
+- Check a JSON request with `jsoninput.Valid` before decoding it. `encoding/json` would put U+FFFD in place of bytes that are not UTF-8 and of half a surrogate pair, and so store text other than the one sent.
 - Password-free access does not remove administrator confirmation, Host and Origin checks, CSRF protection, or input limits. Only the owner's "Do not ask" choice turns administrator confirmation off, and only in the dashboard. Private-network membership alone does not prove installation ownership.
 - Helper credentials are separate, revocable, and repository-scoped. They cannot change access or security settings or manage other credentials.
 - Keep durable records (history, tasks, check outcomes) separate from disposable raw logs. Log cleanup never removes durable records.

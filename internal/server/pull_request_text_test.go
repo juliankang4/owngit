@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -350,10 +352,12 @@ func TestAPIEscapesDirectionControls(t *testing.T) {
 	}
 }
 
-// A JSON request that is not UTF-8 is refused before it is decoded, which
-// would otherwise store U+FFFD in place of the bytes sent, and nothing
-// changes. Text in other scripts is kept exactly.
+// A JSON request that is not UTF-8, or that escapes half a surrogate pair,
+// is refused before it is decoded, which would otherwise store U+FFFD in
+// place of what was sent, and no edit or review is recorded. A surrogate
+// pair, U+FFFD sent on purpose and text in other scripts are kept exactly.
 func TestAPIRefusesRequestsThatAreNotUTF8(t *testing.T) {
+	ctx := context.Background()
 	fixture := newAPIFixture(t, false)
 	server := serve(t, fixture.app.Handler())
 	endpoint := server.URL + "/api/v1/repositories/project/pull-requests"
@@ -362,27 +366,49 @@ func TestAPIRefusesRequestsThatAreNotUTF8(t *testing.T) {
 		t.Fatalf("create status=%d", created.StatusCode)
 	}
 	created.Body.Close()
-	edit := func(body string) (int, map[string]any) {
-		request, err := http.NewRequest(http.MethodPost, endpoint+"/1/edit", strings.NewReader(body))
+	post := func(path, body string) (int, map[string]any) {
+		request, err := http.NewRequest(http.MethodPost, endpoint+"/1"+path, strings.NewReader(body))
 		noErr(t, err)
 		request.Header.Set("Content-Type", "application/json")
 		response, err := http.DefaultClient.Do(request)
 		noErr(t, err)
 		return response.StatusCode, decodeAPIObject(t, response)
 	}
-	status, refused := edit("{\"edit_revision\":0,\"body\":\"a\xffb\"}")
-	problem, _ := refused["error"].(map[string]any)
-	if status != http.StatusBadRequest || problem["code"] != "invalid_json" || !strings.Contains(problem["message"].(string), "not valid UTF-8") {
-		t.Fatalf("a body that is not UTF-8: status=%d %v", status, refused)
+	review := `{"source_oid":"` + fixture.sourceOID + `","target_oid":"` + fixture.targetOID + `","decision":"approved","reviewer_label":`
+	for _, text := range []string{
+		"a\xffb", `a\ud800b`, `a\uDBFF`, `a\udc00b`, `a\ud800\u0041b`, `a\ud800\ud800\udc00`, `a\ude00\ud83d`,
+	} {
+		for _, request := range []struct{ path, body string }{
+			{"/edit", `{"edit_revision":0,"body":"` + text + `"}`},
+			{"/edit", `{"edit_revision":0,"title":"` + text + `"}`},
+			{"/review/submit", review + `"tool","note":"` + text + `"}`},
+			{"/review/submit", review + `"` + text + `"}`},
+		} {
+			status, refused := post(request.path, request.body)
+			problem, _ := refused["error"].(map[string]any)
+			if status != http.StatusBadRequest || problem["code"] != "invalid_json" || !strings.Contains(fmt.Sprint(problem["message"]), "not valid UTF-8") {
+				t.Fatalf("%s %q: status=%d %v", request.path, request.body, status, refused)
+			}
+		}
 	}
-	record, _, err := fixture.store.PullRequest(context.Background(), "project", 1)
+	record, _, err := fixture.store.PullRequest(ctx, "project", 1)
 	noErr(t, err)
-	if record.EditRevision != 0 || record.Body != "" {
-		t.Fatalf("a refused request changed the record: %+v", record)
+	notes, _, err := fixture.store.PullRequestReviewNotes(ctx, "project", 1, 10)
+	noErr(t, err)
+	if record.EditRevision != 0 || record.Body != "" || record.Title != "Described" || len(notes) != 0 {
+		t.Fatalf("a refused request changed the record: %+v, notes %+v", record, notes)
 	}
-	const text = "한글 שלום مرحبا 🙂"
-	status, kept := edit(`{"edit_revision":0,"body":"` + text + `"}`)
-	if status != http.StatusOK || kept["pull_request"].(map[string]any)["body"] != text {
-		t.Fatalf("multibyte text: status=%d %v", status, kept)
+	if status, _ := post("/review/submit", review+`"tool","note":"x"}`); status != http.StatusOK {
+		t.Fatalf("ordinary review status=%d", status)
+	}
+	for revision, test := range []struct{ sent, stored string }{
+		{`\ud83d\ude00 \uD83D\uDE00`, "\U0001F600 \U0001F600"},
+		{`\ufffd` + "\uFFFD", "\uFFFD\uFFFD"},
+		{"한글 שלום مرحبا 🙂", "한글 שלום مرحبا 🙂"},
+	} {
+		status, kept := post("/edit", `{"edit_revision":`+strconv.Itoa(revision)+`,"body":"`+test.sent+`"}`)
+		if status != http.StatusOK || kept["pull_request"].(map[string]any)["body"] != test.stored {
+			t.Fatalf("%q: status=%d %v", test.sent, status, kept)
+		}
 	}
 }
