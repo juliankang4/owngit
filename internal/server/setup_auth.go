@@ -355,6 +355,9 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 			app.renderLoginFailure(writer, request, scope, field, next, chooseMessage(admin, webui.MsgAdminLocked, webui.MsgLoginLocked), true, http.StatusTooManyRequests)
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			app.renderLoginFailure(writer, request, scope, field, next, chooseMessage(admin, webui.MsgAdminFailed, webui.MsgLoginFailed), false, http.StatusUnauthorized)
+		case errors.As(err, new(*state.PolicyError)):
+			logFailure(request, "sign-in", err)
+			app.renderLoginFailure(writer, request, scope, "", next, webui.MsgSessionUnreadableSignIn, false, http.StatusConflict)
 		default:
 			// The password was not judged, or the session could not be saved.
 			app.renderLoginFailure(writer, request, scope, "", next, webui.MsgErrUnavailable, false, unavailable(request, "sign-in", err))

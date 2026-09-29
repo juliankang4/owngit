@@ -254,13 +254,21 @@ func (app *App) changedTransferLimits(ctx context.Context, change gitTransferJSO
 // saved value the owner has to set again, or a state that could not be
 // read now.
 func (app *App) writeSettingsReadError(writer http.ResponseWriter, request *http.Request, err error) {
-	var policyErr *state.PolicyError
-	if errors.As(err, &policyErr) {
-		logFailure(request, "settings read", err)
-		writeAPIError(writer, http.StatusConflict, "setting_unreadable", policyErr.Error(), nil)
+	if errors.As(err, new(*state.PolicyError)) {
+		writeSettingUnreadable(writer, request, "settings read", err)
 		return
 	}
 	writeAPIError(writer, unavailable(request, "settings read", err), "state_unavailable", "The settings could not be read. Try again later.", nil)
+}
+
+// writeSettingUnreadable answers an operation that a saved setting it needs
+// stopped, err holding the state.PolicyError. The log keeps the stored
+// value; the answer names the setting and how to set it again.
+func writeSettingUnreadable(writer http.ResponseWriter, request *http.Request, operation string, err error) {
+	var policyErr *state.PolicyError
+	errors.As(err, &policyErr)
+	logFailure(request, operation, err)
+	writeAPIError(writer, http.StatusConflict, "setting_unreadable", policyErr.Advice(), map[string]string{"setting": policyErr.Setting()})
 }
 
 func pointer[T any](value T) *T { return &value }

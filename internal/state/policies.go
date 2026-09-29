@@ -19,7 +19,8 @@ import (
 // defaults.
 
 // PolicyError reports a saved policy value that cannot be used. Setting the
-// policy again replaces it.
+// policy again replaces it. Error names the metadata row for the server
+// log; Setting and Advice are what an owner is told.
 type PolicyError struct {
 	// Key is the metadata key of the policy.
 	Key   string
@@ -28,10 +29,26 @@ type PolicyError struct {
 }
 
 func (e *PolicyError) Error() string {
-	return fmt.Sprintf("the saved %s %q cannot be used (%v); set it again in Settings or with owngit settings set", e.Key, e.Value, e.Cause)
+	return fmt.Sprintf("the saved %s %q cannot be used (%v)", e.Key, e.Value, e.Cause)
 }
 
 func (e *PolicyError) Unwrap() error { return e.Cause }
+
+// Setting is the policy's field in the settings API, such as "session".
+func (e *PolicyError) Setting() string { return policyNames[e.Key].field }
+
+// Advice says which setting cannot be read and where to set it again,
+// without the metadata key or the stored value.
+func (e *PolicyError) Advice() string { return policyNames[e.Key].advice }
+
+// policyNames describes each policy, by metadata key, in the names an owner
+// uses to set it.
+var policyNames = map[string]struct{ field, advice string }{
+	generalSessionKey:    {"session", "The saved sign-in length cannot be read. Set it again under Settings, Access, or with owngit settings set --session."},
+	initialBranchKey:     {"initial_branch", "The saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch."},
+	gitTransferLimitsKey: {"git_transfer", "The saved Git transfer limits cannot be read. Set them again under Settings, Repositories, or with owngit settings set --transfer-size and --transfer-time."},
+	checkLogRetentionKey: {"check_logs", "The saved raw check log retention cannot be read. Set it again under Settings, Storage & recovery, or with owngit settings set --check-logs."},
+}
 
 // policyValue reads the metadata row key with query, the store or a
 // transaction; found is false when there is none.

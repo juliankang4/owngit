@@ -45,6 +45,10 @@ const (
 	MsgCheckLogs90d        MessageCode = "check_logs.choice.90d"
 	MsgCheckLogs365d       MessageCode = "check_logs.choice.365d"
 	MsgCheckLogsIndefinite MessageCode = "check_logs.choice.indefinite"
+
+	// What stops while a saved setting cannot be read, and how to fix it.
+	MsgSessionUnreadableSignIn MessageCode = "session.unreadable_sign_in"
+	MsgBranchUnreadableCreate  MessageCode = "initial_branch.unreadable_create"
 )
 
 var policiesCatalog = map[MessageCode]message{
@@ -136,6 +140,15 @@ var policiesCatalog = map[MessageCode]message{
 	MsgCheckLogs90d:        {en: "90 days", ko: "90일"},
 	MsgCheckLogs365d:       {en: "1 year", ko: "1년"},
 	MsgCheckLogsIndefinite: {en: "Keep indefinitely", ko: "계속 보관"},
+
+	MsgSessionUnreadableSignIn: {
+		en: "Nobody can sign in with the shared password because the saved sign-in length cannot be read. An administrator can set it again with owngit settings set --session.",
+		ko: "저장된 로그인 유지 시간을 읽을 수 없어 지금은 공유 비밀번호로 로그인할 수 없습니다. 관리자가 owngit settings set --session으로 다시 정하면 됩니다.",
+	},
+	MsgBranchUnreadableCreate: {
+		en: "The repository was not created because the saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch.",
+		ko: "새 저장소의 처음 브랜치로 저장된 값을 읽을 수 없어 저장소를 만들지 않았습니다. 설정의 저장소 탭이나 owngit settings set --initial-branch로 다시 정해 주세요.",
+	},
 }
 
 // PolicyChoice is one choice of a policy drawn as a menu.

@@ -28,6 +28,7 @@ import (
 	"owngit/internal/logtext"
 	"owngit/internal/repository"
 	"owngit/internal/requestctx"
+	"owngit/internal/state"
 )
 
 type Handler struct {
@@ -100,14 +101,20 @@ func New(git *gitexec.Runner, repositories *repository.Manager, backendPath stri
 }
 
 // transferLimits reads the limits of a transfer that starts now. When they
-// cannot be read it logs why and returns false.
-func (h *Handler) transferLimits(ctx context.Context, what string) (Limits, bool) {
+// cannot be read it logs why and returns the status and message to answer
+// with: a saved value to set again names the setting, and anything else is
+// a state read failure.
+func (h *Handler) transferLimits(ctx context.Context, what string) (Limits, int, string) {
 	limits, err := h.Limits(ctx)
-	if err != nil {
-		logCause(ctx, what+" failed: the Git transfer limits could not be read", err)
-		return Limits{}, false
+	if err == nil {
+		return limits, 0, ""
 	}
-	return limits, true
+	logCause(ctx, what+" failed: the Git transfer limits could not be read", err)
+	var policyErr *state.PolicyError
+	if errors.As(err, &policyErr) {
+		return Limits{}, http.StatusConflict, policyErr.Advice()
+	}
+	return Limits{}, http.StatusServiceUnavailable, "The Git transfer limits could not be read. The OwnGit log says why."
 }
 
 func DiscoverBackend(ctx context.Context, git *gitexec.Runner) (string, error) {
@@ -173,9 +180,9 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.NotFound(writer, request)
 		return
 	}
-	limits, ok := h.transferLimits(request.Context(), fmt.Sprintf("Git %s request for repository %q", requestKind(route, request.Method), route.repositoryID))
-	if !ok {
-		http.Error(writer, "Git transfer settings cannot be read; the OwnGit log says why", http.StatusServiceUnavailable)
+	limits, status, message := h.transferLimits(request.Context(), fmt.Sprintf("Git %s request for repository %q", requestKind(route, request.Method), route.repositoryID))
+	if status != 0 {
+		http.Error(writer, message, status)
 		return
 	}
 	if limits.MaximumRequest > 0 && request.ContentLength > limits.MaximumRequest {

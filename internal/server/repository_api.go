@@ -151,6 +151,8 @@ func (app *App) createRepositoryAPI(writer http.ResponseWriter, request *http.Re
 			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_repository_name", "Use 1 to 100 letters, numbers, dots, underscores, or hyphens, starting with a letter or number. The name cannot end in .git or be a Windows device name such as CON.", nil)
 		case errors.Is(err, repository.ErrInvalidDescription):
 			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_repository_description", "The description can be at most 500 bytes.", nil)
+		case errors.As(err, new(*state.PolicyError)):
+			writeSettingUnreadable(writer, request, "repository creation", err)
 		default:
 			writeAPIError(writer, unavailable(request, "repository creation", err), "repository_create_failed", "The repository could not be created.", nil)
 		}

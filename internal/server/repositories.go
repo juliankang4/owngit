@@ -243,6 +243,9 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("name", webui.MsgRepoNameInvalid)})
 		case errors.Is(err, repository.ErrInvalidDescription):
 			app.handleNewRepositoryGet(writer, request, settings, name, description, []webui.Notice{webui.Error("description", webui.MsgRepoDescriptionTooLong)})
+		case errors.As(err, new(*state.PolicyError)):
+			logFailure(request, "repository creation", err)
+			app.renderError(writer, request, http.StatusConflict, webui.MsgBranchUnreadableCreate, "")
 		default:
 			app.renderError(writer, request, unavailable(request, "repository creation", err), webui.MsgRepoCreateFail, "")
 		}

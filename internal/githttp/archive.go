@@ -89,9 +89,9 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 	defer h.operations.Done()
 
 	ctx := request.Context()
-	limits, ok := h.transferLimits(ctx, fmt.Sprintf("Git archive request for repository %q", repositoryID))
-	if !ok {
-		return &ArchiveError{Status: http.StatusServiceUnavailable, Message: "The Git transfer settings cannot be read. The OwnGit log says why."}
+	limits, status, message := h.transferLimits(ctx, fmt.Sprintf("Git archive request for repository %q", repositoryID))
+	if status != 0 {
+		return &ArchiveError{Status: status, Message: message}
 	}
 	controller := http.NewResponseController(writer)
 	var deadline time.Time

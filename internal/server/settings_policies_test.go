@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -87,12 +88,10 @@ func TestUnreadableSessionLengthIsAnErrorUntilSetAgain(t *testing.T) {
 	browser := openConfirmationBrowser(t, server, false)
 	browser.get("/login")
 	result := browserForm(t, browser.client, server.URL+"/login", url.Values{"csrf": {browser.cookie(preauthCookie)}, "password": {"shared-password"}, "next": {"/"}}, server.URL)
-	if result.status == http.StatusSeeOther || browser.cookie(generalCookie) != "" {
-		t.Fatalf("sign-in with an unreadable length status=%d", result.status)
+	if result.status != http.StatusConflict || browser.cookie(generalCookie) != "" || !strings.Contains(result.body, enText(webui.MsgSessionUnreadableSignIn)) {
+		t.Fatalf("sign-in with an unreadable length status=%d:\n%s", result.status, result.body)
 	}
-	if status, code, _ := settingsAPI(t, server.URL, http.MethodGet, nil); status != http.StatusConflict || code != "setting_unreadable" {
-		t.Fatalf("GET status=%d code=%s", status, code)
-	}
+	requireUnreadable(t, adminAPIRequest(t, http.MethodGet, server.URL+"/api/v1/settings", nil, "admin-password"), "session", "general_session_seconds")
 	browser.adminSignIn()
 	page := browser.get("/settings/access")
 	if page.status != http.StatusOK || !strings.Contains(page.body, enText(webui.MsgPolicyUnreadable)) || !strings.Contains(page.body, `name="general_session" data-saved=""`) {
@@ -212,5 +211,53 @@ func TestRawLogRetentionIsSavedFromStorageAndTheAPI(t *testing.T) {
 	}
 	if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"check_logs": "forever"}); status != http.StatusBadRequest || code != "invalid_settings" {
 		t.Fatalf("PATCH an unknown choice status=%d code=%s", status, code)
+	}
+}
+
+// requireUnreadable checks the answer to an operation a saved setting
+// stopped: 409 setting_unreadable naming the setting and how to set it
+// again, without its metadata key or how it failed to parse.
+func requireUnreadable(t *testing.T, response *http.Response, setting, key string) {
+	t.Helper()
+	defer response.Body.Close()
+	var envelope struct {
+		Error struct {
+			Code    string            `json:"code"`
+			Message string            `json:"message"`
+			Details map[string]string `json:"details"`
+		} `json:"error"`
+	}
+	noErr(t, json.NewDecoder(response.Body).Decode(&envelope))
+	answer := envelope.Error
+	if response.StatusCode != http.StatusConflict || answer.Code != "setting_unreadable" || answer.Details["setting"] != setting ||
+		!strings.Contains(answer.Message, "owngit settings set") || strings.Contains(answer.Message, key) || strings.Contains(answer.Message, "json") {
+		t.Fatalf("status=%d answer=%+v", response.StatusCode, answer)
+	}
+}
+
+// Work a saved setting stops says which setting cannot be read and where
+// to set it again: creating a repository without a usable initial branch,
+// in the dashboard and the API, and a Git transfer or the settings API
+// without usable transfer limits.
+func TestUnreadableSettingsSayWhatToSetAgain(t *testing.T) {
+	fixture, server, _ := newConfirmationFixture(t, false, state.ConfirmEveryTime)
+	ctx := context.Background()
+	browser := openConfirmationBrowser(t, server, false)
+	noErr(t, fixture.store.Exec(ctx, `INSERT INTO metadata(key,value) VALUES('initial_branch','-main')`))
+	page := browser.post("/repositories", url.Values{"name": {"later"}})
+	if page.status != http.StatusConflict || !strings.Contains(page.body, enText(webui.MsgBranchUnreadableCreate)) {
+		t.Fatalf("dashboard creation status=%d:\n%s", page.status, page.body)
+	}
+	requireUnreadable(t, apiRequest(t, http.MethodPost, server.URL+"/api/v1/repositories", map[string]any{"name": "later"}, "", ""), "initial_branch", "initial_branch")
+
+	noErr(t, fixture.store.Exec(ctx, `UPDATE metadata SET key='git_transfer_limits',value='{"maximum_bytes":"big"}' WHERE key='initial_branch'`))
+	requireUnreadable(t, adminAPIRequest(t, http.MethodGet, server.URL+"/api/v1/settings", nil, "admin-password"), "git_transfer", "git_transfer_limits")
+	response, err := http.Get(server.URL + "/git/project.git/info/refs?service=git-upload-pack")
+	noErr(t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	noErr(t, err)
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "--transfer-size") || strings.Contains(string(body), "git_transfer_limits") {
+		t.Fatalf("Git transfer status=%d body=%s", response.StatusCode, body)
 	}
 }

@@ -205,8 +205,8 @@ func TestTransfersUseTheLimitsSavedWhenTheyStart(t *testing.T) {
 		t.Fatal("a 2 MiB push under a 4 MiB limit was refused as too large")
 	}
 	noErr(t, manager.Store.Exec(context.Background(), `UPDATE metadata SET value='{"maximum_bytes":1}' WHERE key='git_transfer_limits'`))
-	if status := push(); status != http.StatusServiceUnavailable {
-		t.Fatalf("a push under limits that cannot be read: status %d, want 503", status)
+	if status := push(); status != http.StatusConflict {
+		t.Fatalf("a push under limits that cannot be read: status %d, want 409", status)
 	}
 	if !strings.Contains(logs.String(), "the Git transfer limits could not be read") {
 		t.Fatalf("the log does not say why: %s", logs.String())
