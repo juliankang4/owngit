@@ -447,10 +447,12 @@ func TestClockCallbackRunsOutsideLifecycleBarrier(t *testing.T) {
 		release()
 		waitStopped(t, reconcileStopped, "reconciliation")
 	})
+	// Each wait below is for progress the test has allowed; the test's
+	// deadline bounds it, so a slow machine only makes the test slower.
 	select {
 	case <-clockReached:
-	case <-time.After(5 * time.Second):
-		t.Fatal("reconciliation did not reach the Clock callback")
+	case <-reconcileStopped:
+		t.Fatalf("reconciliation ended before the Clock callback: %v", <-reconcileErr)
 	}
 	if !f.service.lifecycle.TryLock() {
 		t.Fatal("the lifecycle barrier is held while the clock callback runs")
@@ -470,8 +472,6 @@ func TestClockCallbackRunsOutsideLifecycleBarrier(t *testing.T) {
 	case <-started:
 	case <-done:
 		t.Fatalf("admission ended before the transport: %v", *runErr)
-	case <-time.After(5 * time.Second):
-		t.Fatal("new run did not reach the controlled fetch boundary")
 	}
 	ids := f.service.liveRunIDs()
 	if len(ids) != 1 {
@@ -482,22 +482,13 @@ func TestClockCallbackRunsOutsideLifecycleBarrier(t *testing.T) {
 		t.Fatalf("precondition: live run status=%q exists=%v error=%v", before.Status, exists, err)
 	}
 	release()
-	select {
-	case err := <-reconcileErr:
-		noErr(t, err, "reconciliation")
-	case <-time.After(5 * time.Second):
-		t.Fatal("reconciliation did not finish")
-	}
+	noErr(t, <-reconcileErr, "reconciliation")
 	after, exists, err := f.store.ImportRun(ctx, ids[0])
 	if err != nil || !exists || after.Status != before.Status {
 		t.Fatalf("reconciliation changed a live run: before=%q after=%q exists=%v error=%v", before.Status, after.Status, exists, err)
 	}
 	f.transport.gate <- struct{}{}
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("live run did not finish")
-	}
+	<-done
 	noErr(t, *runErr, "refresh")
 }
 
