@@ -81,7 +81,7 @@ func TestOnPushReportsTheRefsEachPushUpdated(t *testing.T) {
 	// pushes: the same old and new value, and deleting a missing ref. A
 	// request without commands is not one either.
 	empty := exec.Command("git", "pack-objects", "--stdout")
-	empty.Stdin = strings.NewReader("")
+	empty.Dir, empty.Stdin = work, strings.NewReader("")
 	emptyPack, err := empty.Output()
 	noErr(t, err)
 	zero := strings.Repeat("0", len(first))
