@@ -6,60 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-**Upgrading:** the first start of this version upgrades the state database from schema 15 to 16. Before it does, OwnGit makes an offline backup of the state in a folder beside the state directory, such as `~/.config/owngit-backups`, and the log names the command that restores it; `owngit upgrade-backup off` turns this backup off. An earlier version refuses the upgraded database, so to go back, restore that backup with the earlier version. Backups are still written in version 10, which 1.0.3 to 1.1.2 restore, unless they hold records that only the new version 11 can hold, such as a repository's own kept history choice. Every folder on the way to the state directory, to backups and to a restore target must now be on a local disk for every account, so a state directory reached through a network share is refused.
-
-Pushes and imports now refuse branches and tags whose name, or any folder in it, matches another ref apart from letter case, Unicode encoding or letters that some file systems treat as equal, so a repository that already holds two such names (for example `main` and `Main`) refuses pushes that create or update either one. Delete one of them with `git push origin --delete NAME`; the other ref keeps its value, the default branch cannot be deleted this way under any spelling, and the deleted commit stays in kept history when kept history is on.
-
-### Added
-
-- One-line installers for Linux, macOS and Windows download the latest or a named release, check it against `SHA256SUMS`, install `owngit` and run it as a service.
-- `owngit update` prints the command that updates OwnGit the way it was installed, and the new-release notice shows it to a confirmed administrator with a Copy button. `owngit uninstall` removes the service and names the command that removes the program.
-- A container image for Linux on x64 and ARM64, `ghcr.io/juliankang4/owngit`, with a Compose file. It runs as a non-root account with its data in one volume, shows the setup link through `docker compose exec -it owngit owngit setup-link`, and updates with `docker compose pull && docker compose up -d`.
-- A helper script for Proxmox VE hosts, `https://owngit.app/proxmox.sh`, creates an unprivileged Debian 13 container, installs OwnGit in it with the one-line installer, and can keep the repositories in a folder of the host. Nothing from the OwnGit release runs on the host, and the script never changes an existing container.
-- `owngit doctor` and a Checkup card in Settings list problems such as a stopped server, Windows folders that the Administrators group owns, or a firewall that keeps other devices out, each with one command that repairs it.
-- Kept history can be turned off for the whole server or for one repository, and a repository's default branch can be protected from rewrites and deletion, in Settings, the API, `owngit settings set` and `owngit repo settings`.
-- `owngit repo kept-history`, `owngit repo restore preview` and `apply`, the matching API routes and MCP tools list kept history and restore files, with the same preview and the same check that the branch has not moved as the restore pages.
-- Check mergeability on the pull request page, `owngit pr mergeability`, `GET /api/v1/repositories/{id}/pull-requests/{number}/mergeability` and the MCP tool `pull_request_mergeability` answer whether a pull request can merge now: clean with the merge method, conflict with the conflicting paths, unavailable with the reason, or stale when a branch moved. OwnGit checks only when asked and writes nothing.
-- A pull request can have a Markdown description, its title and description can be edited, and a review can carry a note. An edit based on an outdated version is refused with `stale_edit`. `owngit pr edit`, `--body-file`, `--note-file` and the MCP tool `pull_request_edit` do the same from the command line, and results name who recorded the current review.
-- `owngit backup verify` rehearses a restore in a temporary folder and reports whether the backup restores, without changing it or the running OwnGit. `owngit restore --verify` restores only a verified backup.
-- Settings has five tabs, General, Access, Network, Repositories, and Storage & recovery, with a Save for each part, and asks before you leave it with unsaved changes.
-- New settings choose how long a sign-in with the shared password lasts, the branch new repositories start on, the Git transfer size and time limits, and how long raw check logs are kept. `owngit settings show` and `owngit settings set` read and change them.
-- The Access tab chooses how often the dashboard asks for the administrator password, from every time to once in 30 days, or never. By default it asks again after 30 minutes.
-- The repository lists share one row layout, and a Sort control orders them by latest update or by name, remembered in each browser.
-
-### Changed
-
-- Imports ask the source for Git protocol v2, so refs that an import does not use, such as pull request refs, no longer count toward the 50,000-ref limit of such a source.
-- Imports accept old commits and tags with a malformed time zone or a missing tag date, and trees with zero-padded folder modes. They refuse commits whose dates OwnGit cannot show.
-- A commit whose time zone offset is 24 hours or more is shown in UTC instead of breaking the page, and a repository whose latest commit cannot be read stays readable.
-- Merge and restore commits that OwnGit writes carry this computer's UTC offset instead of +0000.
-- A dashboard page opened over plain HTTP by the name of a working HTTPS address, from Tailscale sharing or a trusted proxy, moves to that HTTPS address.
-- OwnGit reads Tailscale's status from Tailscale's own service instead of running the `tailscale` command, and uses a Unix socket only when Tailscale's service is the one listening on it.
-- `owngit serve` opens no browser and asks nothing in a session that nobody watches.
-- Backup and restore create missing parent folders of their targets.
-
-### Fixed
-
-- A Git client that is locked out after wrong shared passwords gets HTTP 429 instead of 401, so it keeps the password its credential helper saved. An upload that stops sending gets 408 instead of 502.
-- A form larger than 1 MiB gets a page that says nothing was saved, instead of a bare error.
-- An import refuses a repository name that Windows reserves, such as `CON`, before it starts.
-
-### Security
-
-- OwnGit opens its state directory, logs, locks and backup folders only through folders that no other account can change, and follows no link that another account could place on the way. The way to the state and to backups must be on a local disk.
-- Text from repository users, such as titles, branch names, commit messages and paths, is shown in its own writing direction, so direction controls in it cannot reorder the text beside it. Every JSON result writes those controls as escapes.
-- A sign-in and an administrator confirmation belong to the password version that OwnGit actually checked, so a password change made at the same moment ends them. A change of the administrator password in Settings is refused when its confirmation is from before another password change.
-- Signing in again replaces the session that the browser held before.
-- The administrator API accepts only the administrator password, for reads as well as changes, and no longer a browser's administrator session.
-
-### Changes for scripts
-
-- JSON from the API, the command line and MCP writes Unicode direction controls as `\uXXXX` escapes; the values are unchanged.
-- API requests and MCP arguments that are not valid UTF-8, or that escape half of a UTF-16 surrogate pair, are refused with `invalid_json` or `invalid_arguments` instead of being stored with replacement characters.
-- The helper credential, check and import owner APIs need the administrator password in the Basic header for reads, as the command line sends it.
-- A source with more refs than an import accepts fails with `too_many_refs`.
-- An interrupted `owngit restore` says that nothing was restored and exits with 130.
-
 ## [1.1.2] - 2026-09-28
 
 This release fixes two low-severity security problems. Upgrading is recommended.
