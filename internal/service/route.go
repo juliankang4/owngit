@@ -191,11 +191,16 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		name := "owngit_" + version + "_" + platform.GOOS + "_" + platform.GOARCH
 		url := releaseDownloads + version + "/" + name + "." + format
 		if windows {
+			// PowerShell parameters that accept wildcards read [ and ] in
+			// a folder name as a pattern, so the paths go to literal
+			// parameters. Windows PowerShell 5.1 has no literal form of
+			// Invoke-WebRequest -OutFile, so .NET downloads the archive.
 			folder := windowsReleaseFolder(install, version)
+			zip := powerShellQuote(folder + ".zip")
 			owngit = "& " + powerShellQuote(filepath.Join(folder, "owngit.exe"))
 			steps = append(steps,
-				"Invoke-WebRequest -UseBasicParsing "+powerShellQuote(url)+" -OutFile "+powerShellQuote(folder+".zip"),
-				"Expand-Archive "+powerShellQuote(folder+".zip")+" "+powerShellQuote(folder))
+				"(New-Object Net.WebClient).DownloadFile("+powerShellQuote(url)+", "+zip+")",
+				"Expand-Archive -LiteralPath "+zip+" -DestinationPath "+powerShellQuote(folder))
 			break
 		}
 		// The new file takes this one's place, which a running program
@@ -237,7 +242,7 @@ func (install Install) RemoveCommand(goos string, sudo bool) string {
 		return "sudo pacman -R " + shellWord(install.Package)
 	case RouteArchive:
 		if goos == "windows" {
-			return "Remove-Item " + powerShellQuote(install.Executable)
+			return "Remove-Item -LiteralPath " + powerShellQuote(install.Executable)
 		}
 		if sudo {
 			return "sudo rm " + shellWord(install.Executable)
