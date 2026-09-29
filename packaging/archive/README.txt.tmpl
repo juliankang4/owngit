@@ -17,7 +17,15 @@ Start
   The path is also logged. Add -no-open to print the path without opening it.
   The dashboard listens on 127.0.0.1:7654 by default.
 
-Data
+{{if .IconApp}}Menu bar icon
+  OwnGit.app beside the program is the OwnGit icon in the macOS menu bar. It
+  shows whether OwnGit runs, the clone address, the latest pushes and Open
+  dashboard. {{.Invocation}} service install opens it in your desktop
+  login, and it then opens whenever you sign in. Keep OwnGit.app next to
+  {{.Binary}}, which it runs. {{.Invocation}} tray off hides it, and
+  {{.Invocation}} tray on shows it again; OwnGit keeps running either way.
+
+{{end}}Data
   Host-local state lives in the platform configuration directory under
   "owngit", or in ~/.owngit when no configuration directory is available.
   Repositories live in the storage directory chosen during setup.

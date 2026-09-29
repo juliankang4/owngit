@@ -343,7 +343,7 @@ func buildTarget(goTool, root, outDir, readmeTemplate string, current target, ap
 	if err := add("LICENSE", filepath.Join(root, "LICENSE"), 0o644); err != nil {
 		return artifact{}, err
 	}
-	readme, err := renderArchiveReadme(readmeTemplate, appVersion, current)
+	readme, err := renderArchiveReadme(readmeTemplate, appVersion, current, app != "")
 	if err != nil {
 		return artifact{}, err
 	}
@@ -464,7 +464,8 @@ func addTree(name, dir string, add func(name, path string, mode int64) error) er
 }
 
 // renderArchiveReadme renders the short note placed inside every archive.
-func renderArchiveReadme(templatePath, appVersion string, current target) ([]byte, error) {
+// iconApp says whether the archive holds OwnGit.app.
+func renderArchiveReadme(templatePath, appVersion string, current target, iconApp bool) ([]byte, error) {
 	parsed, err := template.ParseFiles(templatePath)
 	if err != nil {
 		return nil, err
@@ -481,7 +482,8 @@ func renderArchiveReadme(templatePath, appVersion string, current target) ([]byt
 		Binary     string
 		Target     string
 		Invocation string
-	}{appVersion, current.binary, current.String(), invocation}
+		IconApp    bool
+	}{appVersion, current.binary, current.String(), invocation, iconApp}
 	if err := parsed.Execute(&buffer, data); err != nil {
 		return nil, err
 	}

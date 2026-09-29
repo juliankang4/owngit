@@ -238,7 +238,7 @@ func TestTheArchiveNoteDescribesARelativeInvocation(t *testing.T) {
 	root := repoRoot(t)
 	templatePath := filepath.Join(root, "packaging", "archive", "README.txt.tmpl")
 	for _, current := range releaseTargets {
-		rendered, err := renderArchiveReadme(templatePath, "1.0.0", current)
+		rendered, err := renderArchiveReadme(templatePath, "1.0.0", current, false)
 		noErrf(t, err, "%s", current)
 		note := string(rendered)
 		invocation := "./" + current.binary
