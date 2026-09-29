@@ -187,7 +187,7 @@ func TestBackupPreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 	noErr(t, store.Close())
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
-	if manifest.Version != backupVersion || len(manifest.Tasks) != 1 || len(manifest.CheckConfigurations) != 1 || len(manifest.CheckAttempts) != 1 || len(manifest.CheckResults) != 1 {
+	if manifest.Version != closedPullRequestBackupVersion || len(manifest.Tasks) != 1 || len(manifest.CheckConfigurations) != 1 || len(manifest.CheckAttempts) != 1 || len(manifest.CheckResults) != 1 {
 		t.Fatalf("backup check records: version=%d tasks=%d configs=%d attempts=%d results=%d",
 			manifest.Version, len(manifest.Tasks), len(manifest.CheckConfigurations), len(manifest.CheckAttempts), len(manifest.CheckResults))
 	}
@@ -686,9 +686,9 @@ func TestUnreleasedBackupVersionsAreRefused(t *testing.T) {
 	for _, version := range []int{3, 4, 5, 6, 7, 8, backupVersion + 1} {
 		manifest.Version = version
 		writeManifestFile(t, manifestPath, manifest)
-		want := fmt.Sprintf("backup uses the unreleased development format %d; this build supports versions 1, 2, 9, and 10", version)
+		want := fmt.Sprintf("backup uses the unreleased development format %d; this build supports versions 1, 2, 9, 10, and 11", version)
 		if version > backupVersion {
-			want = "unsupported backup version 11: this build supports versions 1, 2, 9, and 10"
+			want = "unsupported backup version 12: this build supports versions 1, 2, 9, 10, and 11"
 		}
 		before, err := os.ReadFile(manifestPath)
 		noErr(t, err)
@@ -838,7 +838,7 @@ func TestCommittedBaselineUpgradesAndRoundTripsThroughBackup(t *testing.T) {
 	noErr(t, err)
 	again, err := readManifest(filepath.Join(second, manifestName))
 	noErr(t, err)
-	if first.Version != backupVersion || again.Version != backupVersion || first.AccessMode != again.AccessMode || first.AccessHash != again.AccessHash || first.AdminHash != again.AdminHash || !reflect.DeepEqual(first.PullRequests, again.PullRequests) || !reflect.DeepEqual(first.PullRequestRevisions, again.PullRequestRevisions) || !reflect.DeepEqual(first.PullRequestReviews, again.PullRequestReviews) || !reflect.DeepEqual(first.Tasks, again.Tasks) {
+	if first.Version != closedPullRequestBackupVersion || again.Version != closedPullRequestBackupVersion || first.AccessMode != again.AccessMode || first.AccessHash != again.AccessHash || first.AdminHash != again.AdminHash || !reflect.DeepEqual(first.PullRequests, again.PullRequests) || !reflect.DeepEqual(first.PullRequestRevisions, again.PullRequestRevisions) || !reflect.DeepEqual(first.PullRequestReviews, again.PullRequestReviews) || !reflect.DeepEqual(first.Tasks, again.Tasks) {
 		t.Fatalf("re-backup changed baseline records: first=%+v again=%+v", first, again)
 	}
 	if len(first.Repositories) != 1 || len(again.Repositories) != 1 || first.Repositories[0].ID != again.Repositories[0].ID || first.Repositories[0].Name != again.Repositories[0].Name || first.Repositories[0].Description != again.Repositories[0].Description || !reflect.DeepEqual(first.Repositories[0].Head, again.Repositories[0].Head) || !sameRefs(first.Repositories[0].Refs, again.Repositories[0].Refs) {

@@ -14,9 +14,10 @@ const importHEADOwnershipVersion = 1
 // Portable import metadata.
 //
 // Only facts that must survive a restore travel here: source identity and mode,
-// Git-only consent, refresh history, reference observations, and publication
-// intents with their receipts. Transport consent, schedules, and raw
-// credentials are machine-local and absent by construction.
+// Git-only consent, refresh behaviour, refresh history, reference
+// observations, and publication intents with their receipts. Connection
+// choices, schedules, and raw credentials are machine-local and absent by
+// construction.
 
 type ImportSourceManifest struct {
 	RepositoryID      string    `json:"repository_id"`
@@ -27,6 +28,10 @@ type ImportSourceManifest struct {
 	GitOnlyConsent    bool      `json:"git_only_consent,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	// Refresh behaviour, since format 11.
+	OverwriteDiverged       bool     `json:"overwrite_diverged,omitempty"`
+	FollowUpstreamDeletions bool     `json:"follow_upstream_deletions,omitempty"`
+	ExtraRefPrefixes        []string `json:"extra_ref_prefixes,omitempty"`
 }
 
 type ImportRunManifest struct {
@@ -102,6 +107,7 @@ func addImportState(manifest *Manifest, snapshot state.RecoveryState) {
 		manifest.ImportSources = append(manifest.ImportSources, ImportSourceManifest{
 			RepositoryID: source.RepositoryID, URL: source.URL, SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
 			Mode: source.Mode, GitOnlyConsent: source.GitOnlyConsent, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt,
+			OverwriteDiverged: source.OverwriteDiverged, FollowUpstreamDeletions: source.FollowUpstreamDeletions, ExtraRefPrefixes: source.ExtraRefPrefixes,
 		})
 	}
 	for _, run := range snapshot.ImportRuns {
@@ -139,10 +145,11 @@ func addImportState(manifest *Manifest, snapshot state.RecoveryState) {
 
 func attachImportState(snapshot *state.RecoveryState, manifest Manifest) {
 	for _, source := range manifest.ImportSources {
-		// Transport consent is machine-local and not part of the manifest.
+		// Connection choices are machine-local and not part of the manifest.
 		snapshot.ImportSources = append(snapshot.ImportSources, state.ImportSource{
 			RepositoryID: source.RepositoryID, URL: source.URL, SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
 			Mode: source.Mode, GitOnlyConsent: source.GitOnlyConsent, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt,
+			OverwriteDiverged: source.OverwriteDiverged, FollowUpstreamDeletions: source.FollowUpstreamDeletions, ExtraRefPrefixes: source.ExtraRefPrefixes,
 		})
 	}
 	for _, run := range manifest.ImportRuns {

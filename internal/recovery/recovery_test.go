@@ -254,7 +254,7 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	noErr(t, Create(ctx, store, manager, backup))
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
-	if manifest.Version != backupVersion || len(manifest.PullRequests) != 2 || len(manifest.PullRequestReviews) != 3 || len(manifest.PullRequestMergeIntents) != 1 {
+	if manifest.Version != closedPullRequestBackupVersion || len(manifest.PullRequests) != 2 || len(manifest.PullRequestReviews) != 3 || len(manifest.PullRequestMergeIntents) != 1 {
 		t.Fatalf("backup manifest pull request state: version=%d prs=%d reviews=%d intents=%d", manifest.Version, len(manifest.PullRequests), len(manifest.PullRequestReviews), len(manifest.PullRequestMergeIntents))
 	}
 	// Format 2 is the released pull request backup. Rewriting only the format
@@ -306,7 +306,7 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	}
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
 	noErr(t, err)
-	if rebacked.Version != backupVersion || !reflect.DeepEqual(rebacked.PullRequests, manifest.PullRequests) || !reflect.DeepEqual(rebacked.PullRequestRevisions, manifest.PullRequestRevisions) || !reflect.DeepEqual(rebacked.PullRequestReviews, manifest.PullRequestReviews) || !reflect.DeepEqual(rebacked.PullRequestMergeIntents, manifest.PullRequestMergeIntents) {
+	if rebacked.Version != closedPullRequestBackupVersion || !reflect.DeepEqual(rebacked.PullRequests, manifest.PullRequests) || !reflect.DeepEqual(rebacked.PullRequestRevisions, manifest.PullRequestRevisions) || !reflect.DeepEqual(rebacked.PullRequestReviews, manifest.PullRequestReviews) || !reflect.DeepEqual(rebacked.PullRequestMergeIntents, manifest.PullRequestMergeIntents) {
 		t.Fatalf("format 2 re-backup changed pull request history: %+v", rebacked)
 	}
 
@@ -621,7 +621,7 @@ func TestRestoreAcceptsStrictLegacyV1AndRejectsV1PullRequestFields(t *testing.T)
 	noErr(t, restored.Close())
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
 	noErr(t, err)
-	if rebacked.Version != backupVersion || len(rebacked.PullRequests) != 0 || len(rebacked.Tasks) != 0 {
+	if rebacked.Version != closedPullRequestBackupVersion || len(rebacked.PullRequests) != 0 || len(rebacked.Tasks) != 0 {
 		t.Fatalf("format 1 re-backup=%+v", rebacked)
 	}
 

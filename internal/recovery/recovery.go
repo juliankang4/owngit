@@ -43,9 +43,14 @@ const (
 	// identities; the 1.0 releases wrote it. Versions 3 through 8 were
 	// written only by unreleased development builds and are refused.
 	checkBackupVersion = 9
-	// backupVersion is the current format. It adds closed pull requests and
-	// merges recorded as already up to date.
-	backupVersion      = 10
+	// closedPullRequestBackupVersion added closed pull requests and merges
+	// recorded as already up to date. Releases 1.0.3 to 1.1.2 wrote it and
+	// restore it, so a backup without newer records is still written in it.
+	closedPullRequestBackupVersion = 10
+	// backupVersion is the current format. It adds pull request
+	// descriptions, edits and review notes, actors, repository names and
+	// policies, and import refresh behaviour (format11Content).
+	backupVersion      = 11
 	maximumManifest    = 64 << 20
 	pendingRestoreName = state.IncompleteRestoreMarkerName
 )
@@ -238,6 +243,24 @@ type RepositoryManifest struct {
 	Empty           bool   `json:"empty"`
 	Bundle          string `json:"bundle,omitempty"`
 	SHA256          string `json:"sha256,omitempty"`
+	// Since format 11: the names of a renamed repository and its own
+	// policies, omitted when it was never renamed or keeps every default.
+	Names  []RepositoryNameManifest  `json:"names,omitempty"`
+	Policy *RepositoryPolicyManifest `json:"policy,omitempty"`
+}
+
+type RepositoryNameManifest struct {
+	Name       string     `json:"name"`
+	Kind       string     `json:"kind"`
+	CreatedAt  time.Time  `json:"created_at"`
+	AliasUntil *time.Time `json:"alias_until,omitempty"`
+}
+
+type RepositoryPolicyManifest struct {
+	RetainHistory        *bool     `json:"retain_history,omitempty"`
+	ProtectDefaultBranch bool      `json:"protect_default_branch,omitempty"`
+	ExtraRefPrefixes     []string  `json:"extra_ref_prefixes,omitempty"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 type Head struct {
@@ -264,6 +287,13 @@ type PullRequestManifest struct {
 	MergeOID       string     `json:"merge_oid,omitempty"`
 	MergeReceipt   string     `json:"merge_receipt_ref,omitempty"`
 	MergedAt       *time.Time `json:"merged_at,omitempty"`
+	// Since format 11.
+	Body         string      `json:"body,omitempty"`
+	EditRevision int64       `json:"edit_revision,omitempty"`
+	EditedAt     *time.Time  `json:"edited_at,omitempty"`
+	CreatedBy    state.Actor `json:"created_by,omitzero"`
+	EditedBy     state.Actor `json:"edited_by,omitzero"`
+	MergedBy     state.Actor `json:"merged_by,omitzero"`
 }
 
 type PullRequestRevisionManifest struct {
@@ -285,6 +315,9 @@ type PullRequestReviewManifest struct {
 	Provenance        string    `json:"provenance"`
 	ReviewEventID     string    `json:"review_event_id,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
+	// Since format 11.
+	Note  string      `json:"note,omitempty"`
+	Actor state.Actor `json:"actor,omitzero"`
 }
 
 type PullRequestMergeManifest struct {
@@ -365,7 +398,7 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 		return err
 	}
 	manifest := Manifest{
-		Format: backupFormat, Version: backupVersion, CreatedAt: time.Now().UTC(),
+		Format: backupFormat, CreatedAt: time.Now().UTC(),
 		AccessMode: snapshot.AccessMode, AccessHash: snapshot.AccessPasswordHash, AdminHash: snapshot.AdminPasswordHash,
 	}
 	addPullRequestState(&manifest, snapshot)
@@ -405,6 +438,14 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 			}
 		}
 		manifest.Repositories = append(manifest.Repositories, item)
+	}
+	addRepositoryRecords(&manifest, snapshot)
+	// A backup that format 10 can hold is written in it, so the release
+	// before this one can restore it, including every backup made before an
+	// upgrade.
+	manifest.Version = closedPullRequestBackupVersion
+	if format11Content(manifest) != "" {
+		manifest.Version = backupVersion
 	}
 	if err := validateManifest(manifest); err != nil {
 		return fmt.Errorf("validate completed backup manifest: %w", err)
@@ -981,6 +1022,8 @@ func addPullRequestState(manifest *Manifest, snapshot state.RecoveryState) {
 			CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 			MergeSourceOID: record.MergeSourceOID, MergeTargetOID: record.MergeTargetOID,
 			MergeOID: record.MergeOID, MergeReceipt: record.MergeReceipt, MergedAt: record.MergedAt,
+			Body: record.Body, EditRevision: record.EditRevision, EditedAt: record.EditedAt,
+			CreatedBy: record.CreatedBy, EditedBy: record.EditedBy, MergedBy: record.MergedBy,
 		})
 	}
 	for _, revision := range snapshot.PullRequestRevisions {
@@ -994,6 +1037,7 @@ func addPullRequestState(manifest *Manifest, snapshot state.RecoveryState) {
 			RepositoryID: review.RepositoryID, PullRequestNumber: review.PullRequestNumber, Sequence: review.Sequence,
 			SourceOID: review.SourceOID, TargetOID: review.TargetOID, Status: review.Status,
 			ReviewerLabel: review.ReviewerLabel, Provenance: review.Provenance, ReviewEventID: review.ReviewEventID, CreatedAt: review.CreatedAt,
+			Note: review.Note, Actor: review.Actor,
 		})
 	}
 	for _, intent := range snapshot.PullRequestMergeIntents {
@@ -1004,6 +1048,62 @@ func addPullRequestState(manifest *Manifest, snapshot state.RecoveryState) {
 			Status: intent.Status, CreatedAt: intent.CreatedAt, UpdatedAt: intent.UpdatedAt,
 		})
 	}
+}
+
+// addRepositoryRecords adds each repository's names and, unless it keeps
+// every default, its policy.
+func addRepositoryRecords(manifest *Manifest, snapshot state.RecoveryState) {
+	index := make(map[string]*RepositoryManifest, len(manifest.Repositories))
+	for position := range manifest.Repositories {
+		index[manifest.Repositories[position].ID] = &manifest.Repositories[position]
+	}
+	for _, name := range snapshot.RepositoryNames {
+		item := index[name.RepositoryID]
+		item.Names = append(item.Names, RepositoryNameManifest{Name: name.Name, Kind: name.Kind, CreatedAt: name.CreatedAt, AliasUntil: name.AliasUntil})
+	}
+	for _, policy := range snapshot.RepositoryPolicies {
+		if policy.IsDefault() {
+			continue
+		}
+		index[policy.RepositoryID].Policy = &RepositoryPolicyManifest{
+			RetainHistory: policy.RetainHistory, ProtectDefaultBranch: policy.ProtectDefaultBranch,
+			ExtraRefPrefixes: policy.ExtraRefPrefixes, UpdatedAt: policy.UpdatedAt,
+		}
+	}
+}
+
+// format11Content names the first record in manifest that format 10 cannot
+// hold, or returns "" when there is none. Create writes format 11 only for
+// such a backup, and a manifest of an older version that holds one is
+// refused instead of losing it.
+func format11Content(manifest Manifest) string {
+	for _, item := range manifest.Repositories {
+		if len(item.Names) != 0 {
+			return "a renamed repository"
+		}
+		if item.Policy != nil {
+			return "a repository policy"
+		}
+	}
+	for _, record := range manifest.PullRequests {
+		if record.Body != "" || record.EditRevision != 0 || record.EditedAt != nil {
+			return "a pull request description or edit"
+		}
+		if record.CreatedBy != (state.Actor{}) || record.EditedBy != (state.Actor{}) || record.MergedBy != (state.Actor{}) {
+			return "a pull request actor"
+		}
+	}
+	for _, review := range manifest.PullRequestReviews {
+		if review.Note != "" || review.Actor != (state.Actor{}) {
+			return "a review note or actor"
+		}
+	}
+	for _, source := range manifest.ImportSources {
+		if source.OverwriteDiverged || source.FollowUpstreamDeletions || len(source.ExtraRefPrefixes) != 0 {
+			return "an import refresh option"
+		}
+	}
+	return ""
 }
 
 func addCheckState(manifest *Manifest, snapshot state.RecoveryState) {
@@ -1088,6 +1188,17 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 			ID: item.ID, Name: item.Name, Description: item.Description, CreatedAt: item.CreatedAt,
 			AttemptSequence: item.AttemptSequence,
 		})
+		for _, name := range item.Names {
+			snapshot.RepositoryNames = append(snapshot.RepositoryNames, state.RepositoryName{
+				Name: name.Name, RepositoryID: item.ID, Kind: name.Kind, CreatedAt: name.CreatedAt, AliasUntil: name.AliasUntil,
+			})
+		}
+		if item.Policy != nil {
+			snapshot.RepositoryPolicies = append(snapshot.RepositoryPolicies, state.RepositoryPolicy{
+				RepositoryID: item.ID, RetainHistory: item.Policy.RetainHistory, ProtectDefaultBranch: item.Policy.ProtectDefaultBranch,
+				ExtraRefPrefixes: item.Policy.ExtraRefPrefixes, UpdatedAt: item.Policy.UpdatedAt,
+			})
+		}
 	}
 	attachImportState(&snapshot, manifest)
 	for _, record := range manifest.PullRequests {
@@ -1097,6 +1208,8 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 			CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 			MergeSourceOID: record.MergeSourceOID, MergeTargetOID: record.MergeTargetOID,
 			MergeOID: record.MergeOID, MergeReceipt: record.MergeReceipt, MergedAt: record.MergedAt,
+			Body: record.Body, EditRevision: record.EditRevision, EditedAt: record.EditedAt,
+			CreatedBy: record.CreatedBy, EditedBy: record.EditedBy, MergedBy: record.MergedBy,
 		})
 	}
 	for _, revision := range manifest.PullRequestRevisions {
@@ -1110,6 +1223,7 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 			RepositoryID: review.RepositoryID, PullRequestNumber: review.PullRequestNumber, Sequence: review.Sequence,
 			SourceOID: review.SourceOID, TargetOID: review.TargetOID, Status: review.Status,
 			ReviewerLabel: review.ReviewerLabel, Provenance: review.Provenance, ReviewEventID: review.ReviewEventID, CreatedAt: review.CreatedAt,
+			Note: review.Note, Actor: review.Actor,
 		})
 	}
 	for _, intent := range manifest.PullRequestMergeIntents {
@@ -1204,16 +1318,17 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 }
 
 // validateBackupVersion accepts the committed baseline formats, the released
-// format and the current format. Every other version below the current one
+// formats and the current format. Every other version below the current one
 // was written only by unreleased development builds.
 func validateBackupVersion(version int) error {
 	switch {
-	case version == legacyBackupVersion || version == pullRequestBackupVersion || version == checkBackupVersion || version == backupVersion:
+	case version == legacyBackupVersion || version == pullRequestBackupVersion || version == checkBackupVersion ||
+		version == closedPullRequestBackupVersion || version == backupVersion:
 		return nil
 	case version > backupVersion:
-		return fmt.Errorf("unsupported backup version %d: this build supports versions 1, 2, %d, and %d", version, checkBackupVersion, backupVersion)
+		return fmt.Errorf("unsupported backup version %d: this build supports versions 1, 2, %d, %d, and %d", version, checkBackupVersion, closedPullRequestBackupVersion, backupVersion)
 	default:
-		return fmt.Errorf("backup uses the unreleased development format %d; this build supports versions 1, 2, %d, and %d", version, checkBackupVersion, backupVersion)
+		return fmt.Errorf("backup uses the unreleased development format %d; this build supports versions 1, 2, %d, %d, and %d", version, checkBackupVersion, closedPullRequestBackupVersion, backupVersion)
 	}
 }
 
@@ -1246,6 +1361,11 @@ func validateManifest(manifest Manifest) error {
 		ids[item.ID] = true
 		if item.CreatedAt.IsZero() {
 			return errors.New("backup repository creation time is invalid")
+		}
+		for _, name := range item.Names {
+			if repository.ValidateID(name.Name) != nil || repository.ValidateName(name.Name, "") != nil {
+				return fmt.Errorf("backup repository name %q is not a valid repository address", name.Name)
+			}
 		}
 		if item.Head.Symbolic != "" && item.Head.OID != "" {
 			return errors.New("backup HEAD has conflicting forms")
@@ -1283,6 +1403,11 @@ func validateManifest(manifest Manifest) error {
 		}
 	}
 	if manifest.Version < backupVersion {
+		if content := format11Content(manifest); content != "" {
+			return fmt.Errorf("version %d backup contains %s, which only version %d holds", manifest.Version, content, backupVersion)
+		}
+	}
+	if manifest.Version < closedPullRequestBackupVersion {
 		for _, record := range manifest.PullRequests {
 			if record.Status == state.PullRequestClosed {
 				return fmt.Errorf("version %d backup contains an unsupported closed pull request", manifest.Version)
@@ -1308,6 +1433,9 @@ func validateManifest(manifest Manifest) error {
 		}
 	}
 	snapshot := recoveryState(manifest)
+	if err := state.ValidateRepositoryRecords(snapshot); err != nil {
+		return fmt.Errorf("backup repository metadata is invalid: %w", err)
+	}
 	if err := state.ValidatePullRequestRecovery(snapshot); err != nil {
 		return fmt.Errorf("backup pull request metadata is invalid: %w", err)
 	}

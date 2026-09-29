@@ -83,7 +83,7 @@ func TestBackupRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 	noErr(t, Create(ctx, store, manager, backup))
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
-	if manifest.Version != backupVersion || len(manifest.CheckPolicies) != 1 || len(manifest.CheckJobs) != 2 {
+	if manifest.Version != closedPullRequestBackupVersion || len(manifest.CheckPolicies) != 1 || len(manifest.CheckJobs) != 2 {
 		t.Fatalf("backup version=%d policies=%d jobs=%d", manifest.Version, len(manifest.CheckPolicies), len(manifest.CheckJobs))
 	}
 	if manifest.CheckPolicies[0].PolicyVersion != policy.Version || manifest.CheckPolicies[0].RunnerGeneration != 1 {
@@ -148,7 +148,7 @@ func TestBackupRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 	noErr(t, Create(ctx, restored, restoredManager, rebackup))
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
 	noErr(t, err)
-	if rebacked.Version != backupVersion || len(rebacked.CheckJobs) != 2 {
+	if rebacked.Version != closedPullRequestBackupVersion || len(rebacked.CheckJobs) != 2 {
 		t.Fatalf("rebackup version=%d jobs=%d", rebacked.Version, len(rebacked.CheckJobs))
 	}
 }
