@@ -91,6 +91,10 @@ type Platform struct {
 	// Sudo is true when this account cannot write the folder of an archive
 	// install, so replacing the file needs root.
 	Sudo bool
+	// Root is true when root runs the command. makepkg refuses root, so a
+	// pacman install gets no command then; the owner's normal account asks
+	// for it.
+	Root bool
 }
 
 // releaseDownloads is where release assets are.
@@ -121,6 +125,9 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		}
 		steps = append(steps, "npm install -g owngit@"+version)
 	case RoutePacman:
+		if platform.Root {
+			return ""
+		}
 		// The PKGBUILD attached to the release builds the same package.
 		steps = append(steps, "(cd \"$(mktemp -d)\" && curl -fLO "+releaseDownloads+version+"/PKGBUILD && makepkg -si)")
 	case RouteArchive:
@@ -137,7 +144,7 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 			folder := filepath.Join(filepath.Dir(filepath.Dir(install.Executable)), name)
 			owngit = "& " + powerShellQuote(filepath.Join(folder, "owngit.exe"))
 			steps = append(steps,
-				"Invoke-WebRequest "+powerShellQuote(url)+" -OutFile "+powerShellQuote(folder+".zip"),
+				"Invoke-WebRequest -UseBasicParsing "+powerShellQuote(url)+" -OutFile "+powerShellQuote(folder+".zip"),
 				"Expand-Archive "+powerShellQuote(folder+".zip")+" "+powerShellQuote(folder))
 			break
 		}
@@ -157,8 +164,7 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		steps = append(steps, owngit+" service install")
 	}
 	if windows {
-		// Windows PowerShell 5.1 has no &&.
-		return strings.Join(steps, "; ")
+		return powerShellChain(steps)
 	}
 	return strings.Join(steps, " && ")
 }
@@ -183,6 +189,19 @@ func (install Install) RemoveCommand(goos string, sudo bool) string {
 		return "rm " + shellWord(install.Executable)
 	}
 	return ""
+}
+
+// powerShellChain runs each step only when the one before it succeeded, the
+// way && does in a POSIX shell, in both Windows PowerShell 5.1, which has no
+// &&, and PowerShell 7. $? is false after a failed cmdlet and after a program
+// that exits with a nonzero status. The steps nest, because $? after a
+// skipped "if" block is true again.
+func powerShellChain(steps []string) string {
+	chain := steps[len(steps)-1]
+	for index := len(steps) - 2; index >= 0; index-- {
+		chain = steps[index] + "; if ($?) { " + chain + " }"
+	}
+	return chain
 }
 
 // shellWord quotes a word for a POSIX shell only when it needs quoting, so

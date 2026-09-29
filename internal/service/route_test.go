@@ -61,6 +61,7 @@ func TestUpdateCommand(t *testing.T) {
 		{"archive", archive, linux, `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_linux_amd64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && mv -f "$d/owngit" /home/you/bin/owngit`},
 		{"archive as root", archive, withService(root), `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_linux_amd64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && sudo mv -f "$d/owngit" /home/you/bin/owngit && /home/you/bin/owngit service install`},
 		{"archive with a space", spaced, withService(mac), `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_darwin_arm64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && mv -f "$d/owngit" '/Users/you/My Tools/owngit' && '/Users/you/My Tools/owngit' service install`},
+		{"pacman as root", pacman, Platform{GOOS: "linux", GOARCH: "amd64", Service: true, Root: true}, ""},
 		{"archive without a release target", archive, Platform{GOOS: "darwin", GOARCH: "amd64"}, ""},
 		{"app", ClassifyExecutable("/Applications/OwnGit.app/Contents/Helpers/owngit"), withService(mac), ""},
 		{"unknown service copy", Install{Route: RouteUnknown}, withService(linux), ""},

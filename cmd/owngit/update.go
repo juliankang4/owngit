@@ -104,6 +104,8 @@ func noUpdateCommand(install service.Install, latest string) string {
 		return "Replace OwnGit.app with the app of the new release."
 	case service.RouteUnknown:
 		return "Update the owngit.exe you installed the service from, then run its \"owngit service install\"."
+	case service.RoutePacman:
+		return "makepkg does not run as root. Run \"owngit update\" as your normal account for the command that updates the package."
 	}
 	return fmt.Sprintf("No release archive exists for %s/%s; build %s from source.", runtime.GOOS, runtime.GOARCH, latest)
 }
@@ -133,6 +135,7 @@ func updatePlatform(install service.Install, runs serviceState) service.Platform
 	return service.Platform{
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Service: runs.this, ServiceRunsFile: runs.file,
 		Sudo: install.Route == service.RouteArchive && !canWrite(filepath.Dir(install.Executable)),
+		Root: runtime.GOOS != "windows" && os.Geteuid() == 0,
 	}
 }
 
