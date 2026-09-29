@@ -417,6 +417,30 @@ text and writes the compared commits, and any move or cut, to standard error.
 The API route is `GET /api/v1/repositories/ID/pull-requests/N/diff`, with the
 optional query parameters `source_oid` and `target_oid`.
 
+## Pull request mergeability
+
+`owngit pr mergeability --number N` works out whether a pull request can
+merge now and prints one JSON object. It uses general access like
+`owngit pr diff` and writes nothing: no ref, no record, and no object in the
+repository.
+
+```sh
+owngit pr mergeability --number 3
+owngit pr mergeability --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
+```
+
+`source` and `target` are the commits the answer is about. `status` is
+`clean` (with `method`: `fast_forward`, `merge_commit` or `up_to_date`),
+`conflict` (with at most 100 `conflict_paths`, `conflict_paths_truncated` when
+more exist, or `reason` `no_merge_base`), `unavailable` (with `reason`, such
+as `unsupported_git`, `source_branch_missing` or `repository_unavailable`,
+and `message`), or `stale`. With `--source-oid` and `--target-oid` the answer
+is `stale`, with the current pair in `source` and `target`, unless that pair
+is still current. The answer is not stored and does not hold a merge open;
+`pr merge` checks again. The API route is
+`GET /api/v1/repositories/ID/pull-requests/N/mergeability`, with the optional
+query parameters `source_oid` and `target_oid`.
+
 ## MCP server
 
 `owngit mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
@@ -510,6 +534,7 @@ Read tools change nothing:
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show`; only show includes the description and review notes |
 | `pull_request_diff` | `pr diff`; `patch: false` is `--stat`, and `source_oid` with `target_oid` pins a pair |
+| `pull_request_mergeability` | `pr mergeability`; `source_oid` with `target_oid` answers `stale` when they moved |
 | `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 

@@ -205,6 +205,17 @@ owngit pr diff --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
 
 결과에는 크기 제한이 있습니다. 패치에서 빠진 파일이 있으면 `truncated`가 true이고, 파일 목록에서도 빠진 파일이 있으면 `incomplete`가 true이며, 패치는 언제나 파일 경계에서 끝납니다. `reason`은 빠진 이유를 알려 줍니다. `output_limit`는 비교 결과가 8 MiB 제한에 닿은 경우, `time_limit`는 Git의 시간이 다 된 경우(나중에 다시 시도하면 더 읽을 수 있습니다), `response_limit`는 4 MiB 응답에 맞추려고 잘라 낸 경우입니다. 두 브랜치에 공통 커밋이 없거나 병합 기준이 둘 이상이면 `unavailable`이 `no_merge_base` 또는 `multiple_merge_bases`이고 파일 목록과 패치가 없습니다. `--stat`은 `patch`를 뺀 같은 객체를 출력하고, `--patch`는 패치 텍스트만 출력하며 비교한 커밋과 브랜치 이동이나 잘림 여부는 표준 오류에 씁니다. API 경로는 `GET /api/v1/repositories/ID/pull-requests/N/diff`이며 선택 쿼리 매개변수로 `source_oid`와 `target_oid`를 받습니다.
 
+## 풀 리퀘스트 병합 가능 여부
+
+`owngit pr mergeability --number N`은 풀 리퀘스트를 지금 병합할 수 있는지 확인해 JSON 객체 하나로 출력합니다. `owngit pr diff`처럼 일반 접근을 쓰며 아무것도 쓰지 않습니다. ref, 기록, 저장소 안의 객체 어느 것도 만들지 않습니다.
+
+```sh
+owngit pr mergeability --number 3
+owngit pr mergeability --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
+```
+
+`source`와 `target`은 답이 가리키는 커밋입니다. `status`는 `clean`(`method`는 `fast_forward`, `merge_commit`, `up_to_date` 가운데 하나), `conflict`(충돌 경로를 최대 100개 담은 `conflict_paths`, 더 있으면 `conflict_paths_truncated`, 또는 `reason`이 `no_merge_base`), `unavailable`(`unsupported_git`, `source_branch_missing`, `repository_unavailable` 같은 `reason`과 `message`), `stale` 가운데 하나입니다. `--source-oid`와 `--target-oid`를 넘기면 그 쌍이 여전히 현재 쌍일 때만 확인하고, 아니면 `source`와 `target`에 현재 쌍을 담아 `stale`로 답합니다. 답은 저장하지 않으며 병합을 예약하지도 않습니다. `pr merge`는 다시 확인합니다. API 경로는 `GET /api/v1/repositories/ID/pull-requests/N/mergeability`이며 선택 쿼리 매개변수로 `source_oid`와 `target_oid`를 받습니다.
+
 ## MCP 서버
 
 `owngit mcp`는 MCP를 지원하는 코딩 도구를 위한 [Model Context Protocol](https://modelcontextprotocol.io) 서버입니다. 프로토콜 리비전 `2025-11-25`를 표준 입력과 표준 출력(stdio 전송)으로 구현하며 한 줄에 JSON-RPC 메시지 하나를 주고받고 네트워크 포트는 열지 않습니다. 각 도구는 `owngit` 명령 하나를 감싸고 그 명령이 출력하는 JSON을 돌려줍니다. 셸 명령을 실행할 수 있는 코딩 도구는 명령줄을 그대로 써도 됩니다. 도구 설명 목록보다 명령줄 쪽이 대개 토큰을 덜 씁니다.
@@ -262,6 +273,7 @@ tool_timeout_sec = 1800
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show`. 설명과 리뷰 메모는 show에만 들어 있습니다 |
 | `pull_request_diff` | `pr diff`. `patch: false`는 `--stat`과 같고, `source_oid`와 `target_oid`를 함께 넘기면 커밋 쌍을 고정합니다. |
+| `pull_request_mergeability` | `pr mergeability`. `source_oid`와 `target_oid`를 함께 넘기면 그사이 움직였을 때 `stale`로 답합니다. |
 | `check_task_list`, `check_status` | `check task list`, `check status`(작업 하나와 가장 최근 시도) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 

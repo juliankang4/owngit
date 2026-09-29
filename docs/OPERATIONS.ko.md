@@ -1110,6 +1110,7 @@ owngit pr list
 owngit pr show --number 1
 owngit pr edit --number 1 --edit-revision 0 --title "New title" --body-file description.md
 owngit pr diff --number 1
+owngit pr mergeability --number 1
 owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
 owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
   --decision approved --reviewer "existing-tool: reviewer label" --note-file note.md
@@ -1128,6 +1129,7 @@ owngit pr reopen --number 1
 - 리뷰는 `approved` 또는 `changes_requested`입니다. 리뷰어 라벨은 누가 제출했는지 기록할 뿐 독립적인 리뷰였다는 뜻은 아닙니다. 대기 중이거나 변경을 요청한 리뷰가 병합을 막지는 않습니다. 브랜치가 움직이면 이전 결정은 더 이상 적용되지 않으므로 다시 살펴보고 새 객체 ID로 결정하세요. 리뷰에는 메모를 남길 수 있고(`--note-file` 또는 페이지의 리뷰 결과 기록) 메모는 리뷰한 두 커밋에 묶입니다. 어느 브랜치든 움직인 뒤에도 메모는 이전 커밋 기준이라는 표시와 함께 계속 보입니다.
 - 결과의 `created_by`, `edited_by`, `merged_by`, `review.actor`(지금 리뷰, 리뷰 요청 또는 생략)와 각 메모의 `actor`는 그 변경을 한 접근 방식을 알려 줍니다. OwnGit은 요청을 허가한 접근 방식을 기록하며(지금은 일반 접근) Git 커밋 작성자에서 가져오지 않습니다. OwnGit 1.1.3 전에 한 변경과, 중단된 병합을 OwnGit이 스스로 마무리한 경우에는 기록된 사람이 없어 이 필드가 빠집니다.
 - `pr diff`는 풀 리퀘스트가 바꾸는 내용을 비교한 객체 ID와 함께 출력합니다(`--stat`은 패치 없이, `--patch`는 패치만). [풀 리퀘스트 변경 내용](CODING_TOOLS.ko.md#풀-리퀘스트-변경-내용)을 보세요. 변경 내용은 원본이 대상에서 갈라진 뒤 바꾼 내용, 곧 병합 기준(merge base)에서 원본까지의 차이입니다. 두 브랜치에 공통 커밋이 없거나 병합 기준이 여러 개이면 페이지가 그 이유를 알리고 변경 목록을 표시하지 않습니다.
+- `pr mergeability`(또는 풀 리퀘스트 페이지의 병합 가능 여부 확인)는 현재 원본과 대상 커밋으로 지금 병합할 수 있는지 확인하며 아무것도 바꾸지 않습니다. `status`는 병합하면 쓰일 방식 `method`(`fast_forward`, `merge_commit`, `up_to_date`)와 함께 `clean`, 충돌한 경로를 최대 100개 담은 `conflict_paths`와 함께 `conflict`(더 있으면 `conflict_paths_truncated`, 두 브랜치에 공통 기록이 없으면 `reason`이 `no_merge_base`), OwnGit이 알아낼 수 없을 때 `reason`(예: `unsupported_git`, `source_branch_missing`)과 함께 `unavailable`, 또는 `stale`입니다. OwnGit은 요청할 때만 확인하며 풀 리퀘스트를 열거나 목록을 볼 때는 병합을 계산하지 않습니다. 답은 어디에도 저장하지 않고 어느 브랜치든 움직이면 더 이상 맞지 않습니다. 이전 답의 객체 ID를 `--source-oid`와 `--target-oid`로 넘기면 그사이 움직였을 때 `stale`을 받습니다. 병합은 스스로 다시 확인합니다. 페이지에서 충돌이라는 답을 받으면 페이지를 다시 열 때까지 병합 버튼이 꺼집니다.
 - 모든 명령은 JSON 결과를 출력합니다. 실패하면 바뀌지 않는 `error.code`와 0이 아닌 종료 코드를 내고, `connection_failed`에는 원인이 함께 나옵니다. 풀 리퀘스트 결과의 `checks`는 현재 원본 리비전에 기록된 체크 결과를 알려 주며, 기록이 없으면 `absent`입니다. 그 리비전의 `.owngit/checks.json`과 다른 체크를 실행했다면 `stale`입니다. 체크는 참고용이며 병합을 막지 않습니다.
 - 병합은 fast-forward를 하거나, 이전 대상을 첫째 부모로 하는 병합 커밋을 만듭니다. 작성자는 `OwnGit <owngit@localhost>`이고 메시지에는 번호와 제목이 들어갑니다. squash, rebase, 강제 갱신, 원본 브랜치 삭제는 하지 않으며, 병합을 다시 시도하거나 중간에 끊겨도 커밋이 두 번 만들어지지 않습니다. 대상에 원본이 이미 들어 있으면 새 커밋 없이 `merge.mode`가 `up_to_date`인 병합으로 기록됩니다. 병합하려면 OwnGit 호스트에 Git 2.38 이상이 필요합니다(그 밖에는 `unsupported_git`).
 
