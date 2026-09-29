@@ -136,7 +136,8 @@ main() {
 		sudo=sudo
 		say "This account cannot write $existing, so sudo puts owngit there."
 	fi
-	if [ -f "$target" ] && cmp -s "$tmp/owngit" "$target"; then
+	# A file that cannot be read counts as different and is replaced.
+	if [ -f "$target" ] && [ "$(digest_of "$target" 2>/dev/null)" = "$(digest_of "$tmp/owngit")" ]; then
 		say "OwnGit $version is already at $target."
 	else
 		# The new file takes the old one's place in one rename, so the
