@@ -36,6 +36,8 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
     }
 
     if (-not $Dir) { $Dir = [IO.Path]::Combine($env:LOCALAPPDATA, 'Programs', 'OwnGit') }
+    # Not trimmed: D:\ stays a root, where D: would mean the current folder
+    # of that drive.
     $Dir = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir))
     # "owngit service install" keeps its protected copy in the OwnGit folder
     # of the Program Files known folder (not the ProgramFiles variable), and

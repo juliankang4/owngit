@@ -670,6 +670,36 @@ func TestInstallPs1(t *testing.T) {
 		}
 	})
 
+	// A drive root stays a root: "owngit update" prints -Dir 'D:\' for a
+	// program unpacked at a drive root, and D: alone would mean the current
+	// folder of that drive. A free drive letter is mapped to a temporary
+	// folder for the test.
+	t.Run("a drive root stays a root", func(t *testing.T) {
+		run := newPsInstall(t, release)
+		letter := ""
+		for drive := 'Z'; drive >= 'H'; drive-- {
+			if _, err := os.Stat(string(drive) + `:\`); err != nil {
+				letter = string(drive) + ":"
+				break
+			}
+		}
+		if letter == "" {
+			t.Fatal("no free drive letter")
+		}
+		mapped := t.TempDir()
+		if output, err := exec.Command("subst", letter, mapped).CombinedOutput(); err != nil {
+			t.Fatalf("subst %s: %v\n%s", letter, err, output)
+		}
+		t.Cleanup(func() { exec.Command("subst", letter, "/D").Run() })
+		output := run.must(t, nil, "-NoService", "-Dir", psQuote(letter+`\`))
+		if got := release.versionOf(t, filepath.Join(folder(mapped, "2.0.0"), "owngit.exe")); got != "2.0.0" {
+			t.Fatalf("not installed at the root of %s (%s holds %v):\n%s", letter, mapped, dirNames(t, mapped), output)
+		}
+		if !strings.Contains(output, "Installed OwnGit 2.0.0 in "+letter+`\owngit_2.0.0_windows_amd64.`) {
+			t.Errorf("output:\n%s", output)
+		}
+	})
+
 	// The rule is the OwnGit folder of the real Program Files known folder,
 	// whatever case or separators -Dir uses; the ProgramFiles variable does
 	// not move it. The release address is unreachable, so if the rule
