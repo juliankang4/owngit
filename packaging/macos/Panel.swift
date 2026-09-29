@@ -193,7 +193,6 @@ final class PanelViewController: NSViewController {
         if let state {
             row.addView(stateLine(state.name), in: .trailing)
         }
-        row.setFrameSize(NSSize(width: Self.inner, height: 34))
         row.widthAnchor.constraint(equalToConstant: Self.inner).isActive = true
         return row
     }
@@ -210,8 +209,9 @@ final class PanelViewController: NSViewController {
         let image = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
         image.contentTintColor = color
         image.setAccessibilityElement(false)
-        let text = label(words.stateName(name), size: 12, weight: .medium)
+        let text = line(words.stateName(name), size: 12, weight: .medium)
         text.textColor = color
+        text.setContentCompressionResistancePriority(.required, for: .horizontal)
         let line = NSStackView(views: [image, text])
         line.spacing = 4
         return line
@@ -299,11 +299,12 @@ final class PanelViewController: NSViewController {
         relative.locale = Locale(identifier: words.lang)
         relative.unitsStyle = .full
         let rows: [NSView] = pushes.map { push in
-            let repository = label(push.repository, size: 12, weight: .medium)
-            let ref = label(push.branch.isEmpty ? push.ref : push.branch, secondary: true, size: 11)
+            let repository = line(push.repository, size: 12, weight: .medium)
+            let ref = line(push.branch.isEmpty ? push.ref : push.branch, secondary: true, size: 11)
             ref.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
             let when = parsePushTime(push.pushed_at).map { relative.localizedString(for: $0, relativeTo: Date()) } ?? push.pushed_at
-            let time = label(when, secondary: true, size: 11)
+            let time = line(when, secondary: true, size: 11)
+            time.setContentCompressionResistancePriority(.required, for: .horizontal)
             let row = NSStackView(views: [repository, ref])
             row.spacing = 8
             row.addView(time, in: .trailing)
@@ -393,6 +394,16 @@ final class PanelViewController: NSViewController {
         field.textColor = secondary ? .secondaryLabelColor : .labelColor
         field.isSelectable = selectable
         field.preferredMaxLayoutWidth = Self.inner - 20
+        return field
+    }
+
+    /// line is a single-line label that shortens a long text in the middle.
+    private func line(_ text: String, secondary: Bool = false, size: CGFloat = 12, weight: NSFont.Weight = .regular) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = .systemFont(ofSize: size, weight: weight)
+        field.textColor = secondary ? .secondaryLabelColor : .labelColor
+        field.lineBreakMode = .byTruncatingMiddle
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return field
     }
 
