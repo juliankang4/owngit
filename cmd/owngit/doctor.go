@@ -327,10 +327,15 @@ func (output *limitedOutput) Write(data []byte) (int, error) {
 func (host *taskHost) readDoctorFacts(ctx context.Context, facts *doctor.Facts, folders []string) error {
 	facts.System = host.system
 	owned, err := host.administratorsFolders(folders)
-	// A standard account's install gives back only folders in its profile.
+	// A standard account's install gives back only folders in its profile;
+	// without the profile location that is a check that could not run.
 	profile := ""
-	if !facts.Administrator {
-		profile, _ = accountProfile(host.sid)
+	if !facts.Administrator && len(owned) > 0 {
+		var profileErr error
+		if profile, profileErr = accountProfile(host.sid); profileErr != nil {
+			facts.Unchecked = append(facts.Unchecked, doctor.Unchecked{Code: webui.MsgDoctorUncheckedOwner, Reason: "read the location of your user folder: " + profileErr.Error()})
+			owned = nil
+		}
 	}
 	for _, folder := range owned {
 		if facts.Administrator || insideFolder(folder, profile) {

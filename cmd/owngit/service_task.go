@@ -508,7 +508,8 @@ func listSteps(steps []string) string {
 //     process's account, holds the token, and can be removed before
 //     anything changes, so a request is used at most once;
 //   - the step gives only a state directory that holds an OwnGit database,
-//     and only folders inside that account's profile, outside Windows,
+//     and only folders whose final path, after every link on the way, is
+//     inside that account's profile (giveFolderWithin), outside Windows,
 //     program and ProgramData folders, whose owner is the Administrators
 //     group or the account; the walker changes only what the Administrators
 //     group owns below them.
@@ -525,7 +526,12 @@ func (host *taskHost) askForOwnFolders(stateDir string) error {
 	if len(folders) == 0 {
 		return nil
 	}
-	profile, _ := accountProfile(host.sid)
+	// Without the profile folder OwnGit cannot tell which folders the step
+	// may give back, so it asks for nothing and says why.
+	profile, err := accountProfile(host.sid)
+	if err != nil {
+		return fmt.Errorf("read the location of your user folder: %w", err)
+	}
 	var steps []string
 	for _, folder := range folders {
 		if insideFolder(folder, profile) {
@@ -585,14 +591,20 @@ func (host *taskHost) elevatedOwners(requestPath, token string) error {
 		return refuse(stateDir + " holds no OwnGit state")
 	}
 	host.sid = sid
+	var refused []string
 	for _, folder := range []string{stateDir, repositories} {
 		switch {
 		case folder == "":
 		case !insideFolder(folder, profile):
 			host.printf("%s is outside the account's user folder, so OwnGit does not change its owner.\n", folder)
-		default:
-			host.giveFolderToAccount(folder)
+			refused = append(refused, folder)
+		case host.giveFolderWithin(folder, profile):
+			refused = append(refused, folder)
 		}
+	}
+	// The install stops on a refused folder, whose reason is shown above.
+	if len(refused) > 0 {
+		return &checkExit{code: elevatedMessageExit, err: fmt.Errorf("OwnGit did not change the owner of %s", strings.Join(refused, " and "))}
 	}
 	return nil
 }
@@ -779,11 +791,24 @@ func (host *taskHost) administratorsFolders(folders []string) (owned []string, e
 // one line when the folder is not the account's. It needs administrator
 // rights.
 func (host *taskHost) giveFolderToAccount(folder string) {
+	host.giveFolderWithin(folder, "")
+}
+
+// giveFolderWithin is giveFolderToAccount, and with limit set it also
+// refuses a folder whose final path, after every link on the way, is not
+// inside limit. The walker changes owners at that final path and follows
+// no link below it, so the limit holds for everything it changes, whatever
+// junction the requested path passes through.
+// It reports whether it refused the folder.
+func (host *taskHost) giveFolderWithin(folder, limit string) (refusedIt bool) {
 	var refused string
 	changed, failed, err := giveOwnership(folder, host.sid, func(finalPath, owner string) error {
-		if owner != administratorsSID && owner != host.sid {
+		switch {
+		case owner != administratorsSID && owner != host.sid:
 			refused = "it belongs to another account"
-		} else {
+		case limit != "" && !insideFolder(finalPath, limit):
+			refused = "it is, after any link on the way, outside the account's user folder"
+		default:
 			refused = ownershipRefusal(finalPath, host.env.Getenv)
 		}
 		if refused != "" && owner != host.sid {
@@ -798,6 +823,7 @@ func (host *taskHost) giveFolderToAccount(folder string) {
 	case errors.Is(err, errOwnershipNotNeeded), errors.Is(err, os.ErrNotExist):
 	case refused != "":
 		host.printf("OwnGit leaves the owner of %s as it is, because %s. If OwnGit cannot use it, choose a folder in your user folder.\n", folder, refused)
+		return true
 	case err != nil:
 		host.printf("Your account could not be made the owner of %s: %v\n", folder, err)
 	case failed > 0:
@@ -805,6 +831,7 @@ func (host *taskHost) giveFolderToAccount(folder string) {
 	case changed > 0:
 		host.printf("Your account is now the owner of %d files and folders in %s that belonged to the Administrators group.\n", changed, folder)
 	}
+	return false
 }
 
 // errOwnershipNotNeeded stops giveOwnership for a folder that the account

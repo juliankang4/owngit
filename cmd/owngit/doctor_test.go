@@ -62,6 +62,16 @@ func TestDoctorReadsWindowsFoldersAndFirewall(t *testing.T) {
 		t.Errorf("standard account: %+v", got)
 	}
 
+	// Without the location of the profile folder, which of them the install
+	// gives back is a check that could not run, never "outside".
+	fake.profileErr = errors.New("the registry key is missing")
+	facts = doctor.Facts{GOOS: "windows", Server: doctor.ServerRunning, SetupComplete: true, Listen: "127.0.0.1:7654"}
+	noErr(t, standard.readDoctorFacts(ctx, &facts, []string{testStateDir, `D:\OwnGit\repos`}))
+	if got := doctor.Diagnose(facts); len(got) != 1 || got[0].Code != webui.MsgDoctorUncheckedOwner || !strings.Contains(got[0].Args[0], "registry key") {
+		t.Errorf("unknown profile: %+v", got)
+	}
+	fake.profileErr = nil
+
 	// A folder whose owner cannot be read is a check that could not run.
 	fake.ownerErrors[testStateDir] = errors.New("Access is denied.")
 	facts = doctor.Facts{GOOS: "windows", Server: doctor.ServerRunning, SetupComplete: true, Listen: "127.0.0.1:7654"}

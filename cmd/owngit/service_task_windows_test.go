@@ -212,3 +212,47 @@ func TestRequestingProcessIsTheParent(t *testing.T) {
 		t.Error("a folder with owngit.sqlite does not count as a state")
 	}
 }
+
+// The owner step's profile limit applies to the final path the walker
+// changes: a junction inside the "profile" to a folder outside it is
+// refused, and nothing behind it changes, while a real folder inside is
+// given back. Changing owners to the Administrators group needs
+// administrator rights.
+func TestGiveFolderWithinChecksTheFinalPath(t *testing.T) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("changing owners to the Administrators group needs administrator rights")
+	}
+	sid, err := platformCurrentAccountSID()
+	noErr(t, err)
+	administrators, err := windows.StringToSid(administratorsSID)
+	noErr(t, err)
+	temporary, err := windows.UTF16PtrFromString(t.TempDir())
+	noErr(t, err)
+	long := make([]uint16, windows.MAX_LONG_PATH)
+	n, err := windows.GetLongPathName(temporary, &long[0], uint32(len(long)))
+	noErr(t, err)
+	base := windows.UTF16ToString(long[:n])
+	profile, outside := filepath.Join(base, "profile"), filepath.Join(base, "outside")
+	inside := filepath.Join(profile, "repos")
+	for _, dir := range []string{inside, filepath.Join(outside, "tools")} {
+		noErr(t, os.MkdirAll(dir, 0o700))
+	}
+	if output, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(profile, "j"), outside).CombinedOutput(); err != nil {
+		t.Fatalf("mklink: %v\n%s", err, output)
+	}
+	for _, path := range []string{inside, filepath.Join(outside, "tools")} {
+		noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, administrators, nil, nil, nil))
+	}
+	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true, Getenv: os.Getenv})
+	host.sid = sid
+	host.giveFolderWithin(filepath.Join(profile, "j", "tools"), profile)
+	host.giveFolderWithin(inside, profile)
+	for path, want := range map[string]string{filepath.Join(outside, "tools"): administratorsSID, inside: sid} {
+		if got, err := platformOwnerOf(path); err != nil || got != want {
+			t.Errorf("%s: owner %s (%v), want %s", path, got, err, want)
+		}
+	}
+	if !strings.Contains(out.String(), "outside the account's user folder") {
+		t.Errorf("output:\n%s", out.String())
+	}
+}

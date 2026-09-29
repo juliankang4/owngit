@@ -54,6 +54,7 @@ type fakeWindows struct {
 	requester    string          // the account of the process that asked for elevated-owners
 	requesterRun string          // the program of that process (default: testUserExecutable)
 	states       map[string]bool // folders that hold an OwnGit database
+	profileErr   error           // why the profile folder cannot be read
 	repositories string          // the repository folder saved in the state
 	health       *fakeHealth
 }
@@ -209,7 +210,12 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		return fake.requester, cmp.Or(fake.requesterRun, testUserExecutable), nil
 	}
 	// Every account's profile is C:\Users\you, as the test paths use it.
-	accountProfile = func(string) (string, error) { return `C:\Users\you`, nil }
+	accountProfile = func(string) (string, error) {
+		if fake.profileErr != nil {
+			return "", fake.profileErr
+		}
+		return `C:\Users\you`, nil
+	}
 	isOwnGitState = func(dir string) bool { return fake.states[dir] }
 	ownerOf = func(path string) (string, error) {
 		if err := fake.ownerErrors[path]; err != nil {
@@ -1137,6 +1143,16 @@ func TestTaskInstallNamesFoldersOfTheAdministrators(t *testing.T) {
 	} else if _, err := os.Stat(fake.elevated[0][3]); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the request stays after the install: %v", err)
 	}
+	// Without the location of the profile folder the install says so and
+	// asks for nothing.
+	fake = newFakeWindows(t)
+	fake.existing(t, service.ModeLogonTask, testSID, testStateDir)
+	fake.owners[testStateDir] = administratorsSID
+	fake.profileErr = errors.New("the registry key is missing")
+	host, _ = testTaskHost(service.Environment{})
+	if err := host.install("", nil); err == nil || !strings.Contains(err.Error(), "user folder") || len(fake.elevated) != 0 {
+		t.Errorf("unknown profile: %v, elevated %q", err, fake.elevated)
+	}
 	// A folder outside the account's profile is left to an administrator.
 	fake = newFakeWindows(t)
 	fake.existing(t, service.ModeLogonTask, testSID, `D:\OwnGit\state`)
@@ -1181,9 +1197,12 @@ func TestElevatedOwnersGivesToTheAccountThatAsked(t *testing.T) {
 	fake.owners[repositories] = administratorsSID
 	fake.states[testStateDir] = true
 	var given []string
+	// finalPaths stand for junctions on the way: the walker sees the final
+	// path of a folder.
+	finalPaths := map[string]string{}
 	giveOwnership = func(root, sid string, check func(string, string) error) (int, int, error) {
 		owner, _ := ownerOf(root)
-		if err := check(root, owner); err != nil {
+		if err := check(cmp.Or(finalPaths[root], root), owner); err != nil {
 			return 0, 0, err
 		}
 		given = append(given, root+" "+sid)
@@ -1243,13 +1262,28 @@ func TestElevatedOwnersGivesToTheAccountThatAsked(t *testing.T) {
 	given = nil
 	fake.states[`D:\OwnGit\state`] = true
 	fake.owners[`D:\OwnGit\state`] = administratorsSID
-	noErr(t, step(request(standard, token, `D:\OwnGit\state`, `C:\ProgramData\Tool`), token))
-	if len(given) != 0 || !strings.Contains(out.String(), `D:\OwnGit\state is outside the account's user folder`) {
+	if err := step(request(standard, token, `D:\OwnGit\state`, `C:\ProgramData\Tool`), token); err == nil || len(given) != 0 || !strings.Contains(out.String(), `D:\OwnGit\state is outside the account's user folder`) {
 		t.Errorf("outside the profile: given %q\n%s", given, out.String())
 	}
 	if err := step(request(standard, token, testStateDir, `C:\Users\you\..\other\repos`), token); err == nil || len(given) != 0 {
 		t.Errorf("a path with ..: %v, given %q", err, given)
 	}
+	// A junction in the profile to C:\ puts C:\tools behind a path that
+	// reads as inside the profile; the walker's final path decides.
+	given = nil
+	junction := `C:\Users\you\j\tools`
+	fake.owners[junction] = administratorsSID
+	finalPaths[junction] = `C:\tools`
+	if err := step(request(standard, token, testStateDir, junction), token); err == nil || !reflect.DeepEqual(given, []string{testStateDir + " " + standard}) || !strings.Contains(out.String(), "outside the account's user folder") {
+		t.Errorf("through a junction: given %q\n%s", given, out.String())
+	}
+	// Without the profile folder the step gives nothing.
+	given = nil
+	fake.profileErr = errors.New("the registry key is missing")
+	if err := step(request(standard, token, testStateDir, repositories), token); err == nil || len(given) != 0 {
+		t.Errorf("unknown profile: %v, given %q", err, given)
+	}
+	fake.profileErr = nil
 	host, _ = testTaskHost(service.Environment{})
 	if err := host.administratorStep("elevated-owners", []string{"--request", path, "--token", token}); err == nil {
 		t.Error("the step ran without administrator rights")
