@@ -451,7 +451,7 @@ func (app *App) pullRequestText(ctx context.Context, repositoryID, targetBranch,
 		File: "/repositories/" + url.PathEscape(repositoryID) + "/code?ref=" + url.QueryEscape(targetBranch) + "&path=",
 	})
 	if err != nil {
-		result.NotRendered = webui.MsgPRTextPlain
+		result.NotRendered = markdownNotShown(err)
 		return result
 	}
 	// markdown.Render writes no raw HTML from the text and resolves every

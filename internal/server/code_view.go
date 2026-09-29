@@ -48,18 +48,26 @@ func (app *App) renderMarkdown(ctx context.Context, repositoryID, ref, dir strin
 		File: base + "/code?ref=" + ref + "&path=",
 		Raw:  base + "/raw?ref=" + ref + "&path=",
 	})
-	if errors.Is(err, markdown.ErrBusy) {
-		return "", webui.MsgCodeBusy
-	}
-	if errors.Is(err, markdown.ErrUnavailable) {
-		return "", webui.MsgCodeUnavailable
-	}
 	if err != nil {
-		return "", webui.MsgCodeNotShown
+		return "", markdownNotShown(err)
 	}
 	// markdown.Render writes no raw HTML from the file and resolves every
 	// address itself, which is what makes this conversion safe.
 	return template.HTML(rendered), ""
+}
+
+// markdownNotShown says why Markdown that markdown.Render refused with err is
+// shown as written: the renderer is busy, it is unavailable on this server,
+// or the text is too large or complex to format, which trying again does not
+// change.
+func markdownNotShown(err error) webui.MessageCode {
+	switch {
+	case errors.Is(err, markdown.ErrBusy):
+		return webui.MsgCodeBusy
+	case errors.Is(err, markdown.ErrUnavailable):
+		return webui.MsgCodeUnavailable
+	}
+	return webui.MsgCodeNotShown
 }
 
 // folderReadme renders the README of a folder listing, if it has one that is

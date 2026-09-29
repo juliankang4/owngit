@@ -430,7 +430,7 @@ func pullRequestPage(c Chrome, kind prFixture) PullRequestPage {
 		Edit:             PullRequestEditForm{Revision: 1, Title: "Cap retry delays", Body: "Caps **retry** delays."},
 		ReviewNotes: []ReviewNoteView{{
 			Decision: ReviewChanges, ReviewerLabel: "codex", ShortSourceOID: "5d0aa13", ShortTargetOID: "e41c0de",
-			Note: PullRequestText{Text: "Rename <x>.", NotRendered: MsgPRTextPlain}, SubmittedAt: testNow.AddDate(0, 0, -1),
+			Note: PullRequestText{Text: "Rename <x>.", NotRendered: MsgCodeNotShown}, SubmittedAt: testNow.AddDate(0, 0, -1),
 		}},
 	}
 	switch kind {

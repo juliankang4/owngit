@@ -5,7 +5,6 @@ const (
 	MsgPRBodyField       MessageCode = "pr.text.body_field"
 	MsgPRBodyHelp        MessageCode = "pr.text.body_help"
 	MsgPRNoDescription   MessageCode = "pr.text.no_description"
-	MsgPRTextPlain       MessageCode = "pr.text.plain"
 	MsgPRInvalidBody     MessageCode = "pr.text.invalid_body"
 	MsgPREditedAt        MessageCode = "pr.edit.edited_at"
 	MsgPREditOpen        MessageCode = "pr.edit.open"
@@ -37,10 +36,6 @@ var pullRequestTextCatalog = map[MessageCode]message{
 		ko: "선택 사항입니다. 마크다운 서식을 쓸 수 있으며 이미지와 HTML은 표시하지 않습니다. 최대 64KiB까지 쓸 수 있습니다.",
 	},
 	MsgPRNoDescription: {en: "No description.", ko: "설명이 없습니다."},
-	MsgPRTextPlain: {
-		en: "Shown as written, because OwnGit could not format it right now.",
-		ko: "지금은 서식을 적용하지 못해 입력한 그대로 보여 줍니다.",
-	},
 	MsgPRInvalidBody: {
 		en: "The description can hold up to 64 KiB of text.",
 		ko: "설명은 최대 64KiB까지 쓸 수 있습니다.",
