@@ -83,3 +83,29 @@ func TestOpenRunsOnlyAProtectedOpener(t *testing.T) {
 		})
 	}
 }
+
+// Open reports an xdg-open that ends with a failure, as when no browser
+// takes the address, and takes one that keeps running as started.
+func TestOpenReportsAFailedOpener(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "xdg-open")
+	previous := openerWait
+	t.Cleanup(func() { openerWait = previous })
+	openerWait = 500 * time.Millisecond
+	t.Setenv("PATH", dir)
+
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Open("http://127.0.0.1:7654"); err == nil || !strings.Contains(err.Error(), "exit status 3") {
+		t.Fatalf("an opener that failed: %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexec /bin/sleep 5\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if err := Open("http://127.0.0.1:7654"); err != nil || time.Since(start) > 3*time.Second {
+		t.Fatalf("an opener still running: %v after %s", err, time.Since(start))
+	}
+}

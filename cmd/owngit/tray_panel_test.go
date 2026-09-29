@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -48,9 +49,17 @@ func TestTrayReadAndOpen(t *testing.T) {
 		t.Skip("the browser opens through xdg-open on Linux")
 	}
 	bin := t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// An opener that ends with a failure, as when no browser takes the
+	// address, is open_failed, not an opened dashboard.
+	noErr(t, os.WriteFile(filepath.Join(bin, "xdg-open"), []byte("#!/bin/sh\nexit 3\n"), 0o755))
+	err := runCommand("tray", []string{"open", "--json", "--state-dir", stateDir})
+	var coded interface{ ErrorCode() string }
+	if !errors.As(err, &coded) || coded.ErrorCode() != "open_failed" || !strings.Contains(err.Error(), "exit status 3") {
+		t.Fatalf("tray open with a failing opener: %v", err)
+	}
 	opened := filepath.Join(bin, "opened")
 	noErr(t, os.WriteFile(filepath.Join(bin, "xdg-open"), []byte("#!/bin/sh\nprintf '%s\\n' \"$1\" >> "+opened+"\n"), 0o755))
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	output, err := captureStdout(func() error { return runCommand("tray", []string{"open", "--json", "--state-dir", stateDir}) })
 	var result struct {
 		OK  bool   `json:"ok"`

@@ -317,8 +317,25 @@ func Open(path string) error {
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("start the browser: %w", err)
 	}
-	// Wait for the opener in the background, so a long-running caller
-	// such as the icon or "serve --open" keeps no ended child behind.
-	go func() { _ = command.Wait() }()
+	// The opener is always waited for, so a long-running caller such as
+	// the icon or "serve --open" keeps no ended child behind.
+	ended := make(chan error, 1)
+	go func() { ended <- command.Wait() }()
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return nil
+	}
+	// xdg-open hands the address to the browser and ends, failing when
+	// no browser takes it. One still running after openerWait is taken
+	// as started: some browsers keep it until they close.
+	select {
+	case err := <-ended:
+		if err != nil {
+			return fmt.Errorf("start the browser: %s ended with %w", command.Path, err)
+		}
+	case <-time.After(openerWait):
+	}
 	return nil
 }
+
+// openerWait is how long Open waits for xdg-open to report a failure.
+var openerWait = 5 * time.Second
