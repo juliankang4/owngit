@@ -190,7 +190,7 @@ owngit repo create --server https://owngit.example.test --name example-project \
 
 `owngit repo settings show`와 `owngit repo settings set`은 저장소 하나의 [보관된 기록과 기본 브랜치 보호](OPERATIONS.ko.md#보관된-기록) 설정을 읽고 바꿉니다. 다른 `repo` 명령과 달리 `--password-file`에 관리자 비밀번호를 넣어야 합니다. 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져오며 이때 비밀번호 파일에 그 서버가 적혀 있어야 합니다([자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄) 참고).
 
-`owngit repo kept-history`와 `owngit repo restore`는 대시보드의 되돌리기 화면처럼 같은 일반 접근으로 이전 커밋의 파일을 되살립니다([저장소 파일 되돌리기](OPERATIONS.ko.md#저장소-파일-되돌리기) 참고). 먼저 미리 보고, 미리 보기의 `expected_head`로 적용합니다.
+`owngit repo kept-history`와 `owngit repo restore`는 대시보드의 되돌리기 화면과 같은 일반 접근으로 이전 커밋의 파일을 되살립니다([저장소 파일 되돌리기](OPERATIONS.ko.md#저장소-파일-되돌리기) 참고). 먼저 미리 보고, 미리 보기의 `expected_head`로 적용합니다.
 
 ```sh
 owngit repo kept-history
@@ -198,7 +198,7 @@ owngit repo restore preview --source OID --target main --path src/app.go
 owngit repo restore apply --source OID --target main --path src/app.go --expected-head OID
 ```
 
-`--path`가 없으면 트리 전체를 되돌리며, 원본 커밋에 없는 파일은 지워집니다. 미리 보기는 바뀌는 경로마다 `status`(`added`, `modified`, `deleted`), `old_mode`와 `new_mode`, `additions`, `deletions`, `binary`를 보여 주고, 적용하면 브랜치를 새로 만드는지(`creates_branch`) 아니면 `expected_head` 위에 `result_tree`로 커밋 하나를 추가하는지 알려 줍니다. 적용은 `commit_oid`를 돌려주거나, 미리 본 뒤 브랜치가 움직였으면 `stale_revision`, 바뀔 것이 없으면 `restore_no_changes`, 서브모듈이나 바꾸면 그 아래의 선택하지 않은 파일이 지워지는 경로면 `restore_unsupported`, 요청이 잘못됐으면 `invalid_restore`로 실패합니다. 되돌리기는 기록을 다시 쓰지 않습니다. API 경로는 `GET /api/v1/repositories/ID/kept-history`, `POST /api/v1/repositories/ID/restore/preview`, `POST /api/v1/repositories/ID/restore`입니다.
+`--target`에는 `main` 같은 브랜치 이름을 넣습니다. 보관된 기록의 `source_ref`(`refs/heads/main`) 같은 전체 ref 이름은 `invalid_restore`로 거부됩니다. `--path`가 없으면 트리 전체를 되돌리며, 원본 커밋에 없는 파일은 지워집니다. 미리 보기는 바뀌는 경로마다 `status`(`added`, `modified`, `deleted`), `old_mode`와 `new_mode`, `additions`, `deletions`, `binary`를 보여 주고, 적용하면 브랜치를 새로 만드는지(`creates_branch`) 아니면 `expected_head` 위에 `result_tree`로 커밋 하나를 추가하는지 알려 줍니다. 적용은 `commit_oid`를 돌려주거나, 미리 본 뒤 브랜치가 움직였으면 `stale_revision`, 바뀔 것이 없으면 `restore_no_changes`, 서브모듈이나 바꾸면 그 아래의 선택하지 않은 파일이 지워지는 경로면 `restore_unsupported`, 요청이 잘못됐으면 `invalid_restore`로 실패합니다. 되돌리기를 끝내지 못해 실제로 적용됐는지 알 수 없으면 `restore_failed`로 실패하니, 다시 시도하기 전에 대상 브랜치를 읽어 확인합니다. 되돌리기는 기록을 다시 쓰지 않습니다. API 경로는 `GET /api/v1/repositories/ID/kept-history`, `POST /api/v1/repositories/ID/restore/preview`, `POST /api/v1/repositories/ID/restore`입니다.
 
 ## 풀 리퀘스트 변경 내용
 

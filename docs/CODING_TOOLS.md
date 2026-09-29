@@ -388,15 +388,19 @@ owngit repo restore preview --source OID --target main --path src/app.go
 owngit repo restore apply --source OID --target main --path src/app.go --expected-head OID
 ```
 
-Without `--path` the whole tree is restored, which also deletes files the
-source commit does not have. The preview lists each changed path with `status`
+`--target` is a branch name such as `main`, not a full ref name such as the
+`source_ref` of kept history (`refs/heads/main`), which is refused as
+`invalid_restore`. Without `--path` the whole tree is restored, which also
+deletes files the source commit does not have. The preview lists each changed path with `status`
 (`added`, `modified`, `deleted`), `old_mode` and `new_mode`, `additions`,
 `deletions` and `binary`, and says whether applying creates the branch
 (`creates_branch`) or adds one commit with `result_tree` on `expected_head`.
 Apply answers with `commit_oid`, or fails with `stale_revision` when the branch
 moved after the preview, `restore_no_changes`, `restore_unsupported` (a
 submodule, or a path whose replacement would remove unselected files beneath
-it) or `invalid_restore`. A restore never rewrites history. The API routes are
+it), `invalid_restore`, or `restore_failed` when the restore could not be
+completed and may have happened; read the target branch before trying again. A
+restore never rewrites history. The API routes are
 `GET /api/v1/repositories/ID/kept-history`,
 `POST /api/v1/repositories/ID/restore/preview` and
 `POST /api/v1/repositories/ID/restore`.
