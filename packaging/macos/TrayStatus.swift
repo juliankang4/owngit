@@ -305,12 +305,25 @@ func doctorState(output: Data?, asked: DoctorAsked) -> PanelState {
 /// OwnGit starting: about 30 seconds.
 let startingChecks = 15
 
-/// boundedStarting keeps a server that stays "starting" from being asked
-/// every 2 seconds forever: the check after `checks` starting answers in a
-/// row shows the no-status guidance, which names an access file that could
-/// not be written, and the icon returns to its usual interval.
-func boundedStarting(_ state: PanelState, checks: Int) -> PanelState {
-    state == .unavailable(why: .starting) && checks >= startingChecks ? .unavailable(why: .noStatus) : state
+/// StartingBound keeps a server that stays "starting" from being asked
+/// every 2 seconds forever. It counts the checks in a row that answered
+/// starting, and only another answer resets the count. After
+/// `startingChecks` of them a starting answer is shown as the no-status
+/// guidance, which names an access file that could not be written, and
+/// the icon keeps its usual interval.
+struct StartingBound {
+    private(set) var inARow = 0
+
+    /// shown counts answer and returns the state to show; the icon asks
+    /// again in 2 seconds only while that state is starting.
+    mutating func shown(_ answer: PanelState) -> PanelState {
+        guard answer == .unavailable(why: .starting) else {
+            inARow = 0
+            return answer
+        }
+        inARow += 1
+        return inARow > startingChecks ? .unavailable(why: .noStatus) : answer
+    }
 }
 
 /// The service commands the icon may run for the owner, as doctor names

@@ -612,10 +612,14 @@ require(doctor("", running: true, asked: .noAccessFile) == .unavailable(why: .no
 require(doctor("{\"code\":\"doctor.address_taken\",\"message\":\"m\"}", asked: .notFound) == .unavailable(why: .addressTaken), "another program answering 404")
 require(doctor("") == .unavailable(why: .noAnswer), "not running and nothing named")
 require(doctorState(output: nil, asked: .notFound) == .unavailable(why: .noAnswer), "doctor failed")
-require(boundedStarting(.unavailable(why: .starting), checks: 0) == .unavailable(why: .starting), "first starting answer")
-require(boundedStarting(.unavailable(why: .starting), checks: startingChecks - 1) == .unavailable(why: .starting), "starting within the bound")
-require(boundedStarting(.unavailable(why: .starting), checks: startingChecks) == .unavailable(why: .noStatus), "starting past the bound")
-require(boundedStarting(.unavailable(why: .noStatus), checks: startingChecks) == .unavailable(why: .noStatus), "other states pass")
+// A server that stays "starting" gets startingChecks fast retries in all,
+// also across later normal checks; another answer starts the count again.
+var bound = StartingBound()
+let fastRetries = (1...100).filter { _ in bound.shown(.unavailable(why: .starting)) == .unavailable(why: .starting) }.count
+require(fastRetries == startingChecks, "a lasting start is asked again quickly \(fastRetries) times")
+require(bound.shown(.unavailable(why: .starting)) == .unavailable(why: .noStatus), "a lasting start shows the no-status guidance")
+require(bound.shown(.unavailable(why: .noAnswer)) == .unavailable(why: .noAnswer) && bound.inARow == 0, "another answer passes and resets the count")
+require(bound.shown(.unavailable(why: .starting)) == .unavailable(why: .starting), "a new start is asked again quickly")
 require(doctorState(output: data("{\"ok\":false}"), asked: .refused) == .unavailable(why: .noAnswer), "doctor error JSON")
 
 let helper = "/Applications/OwnGit.app/Contents/Helpers/owngit"

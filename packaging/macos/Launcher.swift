@@ -276,8 +276,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// refresh asks the server for its status, and asks owngit doctor when
     /// the server does not answer. done receives the new state; a call
     /// while a check runs waits for that check.
-    /// startingInARow counts the checks in a row that found OwnGit starting.
-    private var startingInARow = 0
+    private var startingBound = StartingBound()
+    /// fastRetry is the one pending check 2 seconds after a starting answer.
+    private var fastRetry: DispatchWorkItem?
 
     private func refresh(done: ((PanelState) -> Void)? = nil) {
         if waiting != nil {
@@ -286,8 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         waiting = done.map { [$0] } ?? []
         requestStatus(retry: true) { [self] answer in
-            let state = boundedStarting(answer, checks: startingInARow)
-            startingInARow = state == .unavailable(why: .starting) ? startingInARow + 1 : 0
+            let state = startingBound.shown(answer)
             let callers = waiting ?? []
             waiting = nil
             if case .status(let status) = state, !status.shown {
@@ -296,8 +296,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             update { $0.state = state }
             callers.forEach { $0(state) }
-            if state == .unavailable(why: .starting) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.refresh() }
+            if state == .unavailable(why: .starting) && fastRetry == nil {
+                let retry = DispatchWorkItem { [weak self] in
+                    self?.fastRetry = nil
+                    self?.refresh()
+                }
+                fastRetry = retry
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: retry)
             }
         }
     }
