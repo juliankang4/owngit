@@ -101,7 +101,7 @@ owngit serve
 
 From a source build, run `./bin/owngit serve`; from an unpacked archive, `./owngit serve`. The first time OwnGit starts from a terminal, setup runs there: choose English or 한국어, then "Continue in this terminal" or "Open the web dashboard", where the browser shows a short code that you approve in the terminal. Without a terminal, as under `brew services`, OwnGit writes an owner-readable setup file inside the state directory and opens it in your browser, or logs its path with `--no-open`; the link itself never reaches a log. See [First-time setup](docs/OPERATIONS.md#first-time-setup).
 
-Create a repository from the dashboard, then use its clone address, for example `http://127.0.0.1:7654/git/project.git`, with any Git client. [Operations](docs/OPERATIONS.md) covers access from other devices, moving existing repositories, recovery, and backups.
+Create a repository from the dashboard, then use its clone address, for example `http://127.0.0.1:7654/git/project.git`, with any Git client. [Operations](docs/OPERATIONS.md) covers access from other devices, moving existing repositories, recovery, and backups. When something does not work, `owngit doctor` names what it found on this computer and the command that fixes it.
 
 ## Resource use
 

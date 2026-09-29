@@ -39,7 +39,7 @@ Only one browser waits for approval at a time; a rejected browser waits a minute
 
 ### Setup with a setup file
 
-When OwnGit starts without a terminal (under `brew services`, a LaunchAgent, systemd, a Windows task, or as a background job), it writes an owner-readable setup file inside the state directory and opens it in the installation owner's browser. With `--no-open`, or when no browser can be opened, the server log shows the file's path. The link itself never goes to the log.
+When OwnGit starts without a terminal (under `brew services`, a LaunchAgent, systemd, a Windows task, or as a background job), it writes an owner-readable setup file inside the state directory and opens it in the installation owner's browser. With `--no-open`, in a session without a screen that someone sees (a service, or a headless session as described below), or when no browser can be opened, the server log shows the file's path instead. On Windows, a program started in the background outside SSH also uses the setup file, since nobody reads its console. The link itself never goes to the log.
 
 `owngit setup-link` issues a new link that replaces the one before. On a terminal it prints the link, which works once within 15 minutes; when its output is a pipe, a file or the journal, it prints only the path of the setup file. Without `--base-url`, the link uses the address the server listens on; when that is every address, it lists this computer's addresses, the most likely first. Before setup is finished, the link also works from another device by an address OwnGit was not started with: `owngit setup-link --base-url http://192.168.1.20:7654` makes the link for that address, which then shows only the setup page. After the link is used, only that browser on that address can continue, and the setup form offers to keep accepting the address after setup.
 
@@ -135,6 +135,16 @@ The unit also sets `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKern
 
 `GET /healthz` answers `200 OK` with an empty body while OwnGit serves HTTP, before and after setup, and reads no state. Like every other path, it answers only a Host name OwnGit accepts, so a monitor on another device must use an approved name or address. `owngit health` checks the server of a state directory on this computer and exits 0 when it answers; `owngit service status` and `install` use the same check.
 
+## Checkup
+
+`owngit doctor` looks at the OwnGit of a state directory on this computer and prints each problem it finds with one command that repairs it, or says that it found none. It also prints the program, the state directory, the repository folder, the listen address and where the service log is; `--json` prints the same as JSON. It checks:
+
+- whether the server answers (`owngit service start`, or `owngit service install` when there is no service) and whether setup is complete (`owngit setup-link`);
+- on Windows, a state directory or repository folder that the Administrators group owns, which OwnGit cannot use because it runs without administrator rights: `owngit service install` from an administrator account gives it back with the same approval that installs the service, and for a standard account OwnGit prints the `icacls` command an administrator runs;
+- when OwnGit listens for other devices, the firewall of this computer, as described in [Reaching the server from another device](#reaching-the-server-from-another-device). OwnGit reads the Windows Firewall rules and network type and the macOS application firewall. The rules of ufw and firewalld need root to read, so for them it says only that they are on and which command allows the port.
+
+The checkup reports what it read on this computer. It cannot see your router or the other device, so it never says that a device cannot connect, and a check that could not run is listed as such. OwnGit never runs a repair itself; you run the command on this computer. The General tab of Settings shows the same checkup, only to a confirmed administrator because it shows this computer's paths.
+
 ## Update and uninstall
 
 OwnGit tells how it was installed from facts on this computer, not from guesses:
@@ -184,7 +194,13 @@ OwnGit serves plain HTTP and has no built-in TLS. For an encrypted address, let 
 
 A device on your tailnet that opens one of this computer's Tailscale addresses, such as `http://100.64.0.7:7654/`, sees "Encrypted by Tailscale" and is not asked to accept plain HTTP. OwnGit checks that the request came from a Tailscale address to an address that Tailscale on this computer reports as its own; the range `100.64.0.0/10` alone is not enough, because NetBird and some Internet providers use it too. Right after a start, or while Tailscale does not answer, a page can go without the label, and Tailscale in userspace networking mode gets none, because it connects from `127.0.0.1`.
 
-On Windows, Windows Firewall blocks other devices unless a rule allows them, and OwnGit cannot tell that it is blocked. `owngit service install` from an administrator account adds the rule `OwnGit` for the Private profile (a network you marked as home or work). When you start `owngit serve` yourself on the desktop with a network listen address, Windows may show its own prompt; allow private networks there. A server started over SSH or as a standard account's service gets no prompt and no rule.
+Other devices on your home network reach OwnGit only when it listens on a network address ([Network settings](#network-settings)) and the firewall of this computer lets them in:
+
+- Windows: Windows Firewall blocks other devices unless a rule allows them. `owngit service install` from an administrator account adds the rule `OwnGit` for private networks, so it is there before and after you change the listen address or update OwnGit. A network that Windows treats as public stays closed; mark your home network as Private in Windows Settings under Network & internet. When you start `owngit serve` yourself on the desktop, Windows may ask instead; allow private networks there. A standard account's service gets no rule, and an administrator can add one.
+- macOS: the application firewall is off unless you turned it on. When it is on, macOS may ask whether OwnGit may accept incoming connections; allow it. "Block all incoming connections" keeps every device out.
+- Linux: when ufw or firewalld is on (Omarchy, for example, turns on ufw), allow OwnGit's port: `sudo ufw allow 7654/tcp`, or `sudo firewall-cmd --permanent --add-port=7654/tcp && sudo firewall-cmd --reload`.
+
+`owngit doctor` says which of these applies on this computer and prints the command that fixes it ([Checkup](#checkup)).
 
 To use a LAN name for one run:
 
