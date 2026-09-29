@@ -28,29 +28,70 @@ var (
 	lsofPath = "/usr/sbin/lsof"
 )
 
-// localAPIDialer reaches the LocalAPI of the open source tailscaled, or of
-// the Tailscale app for macOS when macApp is set.
-func localAPIDialer(macApp bool) Dialer {
-	if !macApp {
-		return unixSocket(openSourceSocket)
-	}
-	return dialMacApp
+// localAPIFor returns whether path's Tailscale is the Tailscale app for
+// macOS, and how to reach its LocalAPI. Both follow the order of Tailscale's
+// own client (client/local defaultDialer and safesocket_darwin.go at
+// v1.102.5, commit 5fb2a81b065b), which the tailscale command uses for
+// status: the app while it answers for this user, otherwise the open source
+// tailscaled's socket. Status and Serve then reach the same Tailscale.
+func localAPIFor(path string) (bool, Dialer) {
+	return macApp(path), dialDarwin
 }
 
-// dialMacApp connects to the LocalAPI of the Tailscale app: the App Store
+// macApp reports whether path's Tailscale is the app: path is the app's
+// bundle executable, or only the app is installed, or both it and the open
+// source tailscaled are and the app answers for this user.
+func macApp(path string) bool {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if strings.Contains(path, ".app/Contents/") {
+		return true
+	}
+	_, bundleErr := os.Stat(macAppBundle)
+	_, socketErr := os.Stat(openSourceSocket)
+	switch {
+	case bundleErr != nil:
+		return false
+	case socketErr != nil:
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+	defer cancel()
+	_, _, err := macAppCredentials(ctx)
+	return err == nil
+}
+
+// dialDarwin connects to the app's LocalAPI when the app answers for this
+// user, and otherwise to the open source tailscaled's socket. When neither
+// answers because this account may not read the Standalone app's password,
+// that is the reason given.
+func dialDarwin(ctx context.Context) (net.Conn, string, error) {
+	port, password, appErr := macAppCredentials(ctx)
+	if appErr == nil {
+		var dialer net.Dialer
+		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		return conn, password, err
+	}
+	if ctx.Err() != nil {
+		return nil, "", ctx.Err()
+	}
+	conn, _, err := unixSocket(openSourceSocket)(ctx)
+	if err != nil && !errors.Is(appErr, errNoMacApp) {
+		return nil, "", appErr
+	}
+	return conn, "", err
+}
+
+// macAppCredentials finds the port and password of the app: the App Store
 // variant, or else the Standalone one, in the order the tailscale command
 // tries them.
-func dialMacApp(ctx context.Context) (net.Conn, string, error) {
+func macAppCredentials(ctx context.Context) (int, string, error) {
 	port, password, err := macAppStoreCredentials(ctx)
 	if err != nil {
 		port, password, err = macStandaloneCredentials()
 	}
-	if err != nil {
-		return nil, "", err
-	}
-	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-	return conn, password, err
+	return port, password, err
 }
 
 // errNoMacApp means that no Tailscale app for macOS runs for this user.
@@ -96,7 +137,7 @@ func macStandaloneCredentials() (int, string, error) {
 	content, err := os.ReadFile(filepath.Join(macStandaloneDir, "sameuserproof-"+portText))
 	switch {
 	case errors.Is(err, fs.ErrPermission):
-		return 0, "", &Error{Kind: KindPermission, Detail: "only members of the admin group can reach the Tailscale app"}
+		return 0, "", &Error{Kind: KindMacAppAdmin}
 	case err != nil:
 		return 0, "", errNoMacApp
 	}

@@ -169,6 +169,10 @@ var tailscaleCatalog = map[MessageCode]message{
 		en: "Tailscale did not let OwnGit change its settings. On Linux, allow your user once in a terminal with \"sudo tailscale set --operator=$USER\", then try again. OwnGit never runs sudo itself.",
 		ko: "Tailscale이 OwnGit의 설정 변경을 거부했습니다. Linux에서는 터미널에서 \"sudo tailscale set --operator=$USER\"를 한 번 실행해 사용자를 허용한 뒤 다시 시도하세요. OwnGit은 sudo를 직접 실행하지 않습니다.",
 	},
+	"tailscale.problem.mac_app_admin": {
+		en: "The Standalone Tailscale app for macOS lets only administrator accounts of this Mac change its settings. Run OwnGit with an administrator account, and try again.",
+		ko: "macOS용 Tailscale Standalone 앱은 이 Mac의 관리자 계정만 설정을 바꿀 수 있게 합니다. 관리자 계정으로 OwnGit을 실행한 뒤 다시 시도하세요.",
+	},
 	"tailscale.problem.outdated": {
 		en: "Tailscale on this computer is older than version 1.50. OwnGit needs 1.50 or later to change Serve settings without overwriting other changes. Update Tailscale and try again.",
 		ko: "이 컴퓨터의 Tailscale이 1.50보다 오래된 버전입니다. OwnGit이 다른 변경을 덮어쓰지 않고 Serve 설정을 바꾸려면 1.50 이상이 필요합니다. Tailscale을 업데이트한 뒤 다시 시도하세요.",
@@ -212,7 +216,7 @@ var tailscaleCatalog = map[MessageCode]message{
 	},
 	"tailscale.problem.serve_changed": {
 		en: "Something else changed Tailscale's Serve settings while OwnGit was about to change them, so OwnGit changed nothing. Try again.",
-		ko: "OwnGit이 바꾸려던 Tailscale Serve 설정을 그사이 다른 것이 바꿔 OwnGit은 아무것도 바꾸지 않았습니다. 다시 시도하세요.",
+		ko: "OwnGit이 바꾸려던 Tailscale Serve 설정을 그사이 다른 프로그램이나 사람이 바꿔 OwnGit은 아무것도 바꾸지 않았습니다. 다시 시도하세요.",
 	},
 	"tailscale.problem.read_back": {
 		en: "Tailscale accepted the change but did not keep it, so OwnGit does not use it.",

@@ -22,10 +22,12 @@ import (
 // If-Match, so OwnGit never writes to a daemon whose read has no version.
 //
 // Where the LocalAPI is depends on the platform and the Tailscale variant
-// (localAPIDialer): tailscaled's Unix socket on Linux and with the open
-// source tailscaled on macOS, a loopback TCP port with a password for the
-// Tailscale app for macOS, and a named pipe on Windows. Tailscale grants the
-// same rights there as to the tailscale command run by the same user.
+// (localAPIFor), found as the tailscale command finds it without --socket:
+// tailscaled's Unix socket on Linux (where Synology, QNAP and gokrazy have
+// their own) and with the open source tailscaled on macOS, a loopback TCP
+// port with a password for the Tailscale app for macOS, and a named pipe on
+// Windows. Tailscale grants the same rights there as to the tailscale
+// command run by the same user.
 
 // Dialer connects to Tailscale's LocalAPI and returns the connection and
 // the password the LocalAPI asks for, or "" when it asks for none.
@@ -129,7 +131,8 @@ func dialFailure(ctx context.Context, err error) error {
 	case ctx.Err() != nil:
 		return &Error{Kind: KindTimeout}
 	case errors.Is(err, fs.ErrPermission):
-		return &Error{Kind: KindPermission, Detail: shorten(err.Error())}
+		// The operating system refused, not Tailscale: no detail.
+		return &Error{Kind: KindPermission}
 	}
 	return &Error{Kind: KindNotRunning}
 }

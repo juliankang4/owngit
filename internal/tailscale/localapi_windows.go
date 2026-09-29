@@ -15,9 +15,9 @@ import (
 // the service's; every user may connect to it.
 const tailscaledPipe = `\\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled`
 
-// localAPIDialer reaches the LocalAPI of the Tailscale service.
-func localAPIDialer(bool) Dialer {
-	return dialPipe
+// localAPIFor reaches the LocalAPI of the Tailscale service.
+func localAPIFor(string) (bool, Dialer) {
+	return false, dialPipe
 }
 
 // dialPipe connects to tailscaledPipe. Tailscale identifies the user by the

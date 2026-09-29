@@ -9,18 +9,26 @@ import (
 	"testing"
 )
 
-// The Tailscale app for macOS is reached where the tailscale command finds
-// it: the App Store variant through the file its IPNExtension keeps open, as
-// lsof lists it, and otherwise the Standalone variant through its port link
-// and password file. The files and lsof here are synthetic.
-func TestMacAppLocalAPIIsFoundAsTheTailscaleCommandFindsIt(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+// OwnGit reaches Tailscale on macOS in the order of Tailscale's own client:
+// the app while it answers for this user (the App Store variant through the
+// file its IPNExtension keeps open, as lsof lists it, then the Standalone
+// variant through its port link and password file), otherwise the open
+// source tailscaled's socket. The Tailscale it reports, app or not, is the
+// one it reaches. The files, lsof and both daemons here are synthetic.
+func TestMacLocalAPIFollowsTheTailscaleCommandsOrder(t *testing.T) {
+	app, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
-	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	defer app.Close()
+	port := strconv.Itoa(app.Addr().(*net.TCPAddr).Port)
 	dir := t.TempDir()
+	// A Unix socket path must be short.
+	short, err := os.MkdirTemp("/tmp", "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(short) })
 	lsof := filepath.Join(dir, "lsof")
 	setLsof := func(output string) {
 		script := "#!/bin/sh\n[ -n \"" + output + "\" ] || exit 1\nprintf '" + output + "'\n"
@@ -32,26 +40,49 @@ func TestMacAppLocalAPIIsFoundAsTheTailscaleCommandFindsIt(t *testing.T) {
 	if err := os.Mkdir(standalone, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	savedDir, savedLsof := macStandaloneDir, lsofPath
+	saved := []string{macStandaloneDir, lsofPath, openSourceSocket, macAppBundle}
 	macStandaloneDir, lsofPath = standalone, lsof
-	t.Cleanup(func() { macStandaloneDir, lsofPath = savedDir, savedLsof })
+	openSourceSocket, macAppBundle = filepath.Join(short, "s.sock"), filepath.Join(dir, "Tailscale.app")
+	t.Cleanup(func() {
+		macStandaloneDir, lsofPath, openSourceSocket, macAppBundle = saved[0], saved[1], saved[2], saved[3]
+	})
 
-	dial := func() (string, error) {
-		conn, password, err := localAPIDialer(true)(context.Background())
+	check := func(name, wantPassword string, wantMacApp bool) {
+		t.Helper()
+		conn, password, err := dialDarwin(context.Background())
 		if err == nil {
 			conn.Close()
 		}
-		return password, err
-	}
-	setLsof("")
-	if _, err := dial(); err == nil {
-		t.Fatal("no app: connected")
+		if err != nil || password != wantPassword {
+			t.Errorf("%s: password=%q err=%v, want %q", name, password, err, wantPassword)
+		}
+		if got := macApp("/opt/homebrew/bin/tailscale"); got != wantMacApp {
+			t.Errorf("%s: mac app=%v, want %v", name, got, wantMacApp)
+		}
 	}
 
-	setLsof("p42\\nn/private/tmp/synthetic/Group Containers/X.io.tailscale.ipn.macos/sameuserproof-" + port + "-appstoretoken\\n")
-	if password, err := dial(); err != nil || password != "appstoretoken" {
-		t.Fatalf("App Store: password=%q err=%v", password, err)
+	setLsof("")
+	if _, _, err := dialDarwin(context.Background()); err == nil || macApp("/opt/homebrew/bin/tailscale") {
+		t.Fatalf("nothing installed: err=%v", err)
 	}
+	if !macApp(filepath.Join(dir, "Tailscale.app/Contents/MacOS/Tailscale")) {
+		t.Error("the app's own executable is not the app")
+	}
+	if err := os.Mkdir(macAppBundle, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !macApp("/opt/homebrew/bin/tailscale") {
+		t.Error("only the app installed: not the app")
+	}
+	tailscaled, err := net.Listen("unix", openSourceSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tailscaled.Close()
+	check("both installed, the app not running", "", false)
+
+	setLsof("p42\\nn/private/tmp/synthetic/Group Containers/X.io.tailscale.ipn.macos/sameuserproof-" + port + "-appstoretoken\\n")
+	check("App Store app running", "appstoretoken", true)
 
 	setLsof("")
 	if err := os.Symlink(port, filepath.Join(standalone, "ipnport")); err != nil {
@@ -61,15 +92,19 @@ func TestMacAppLocalAPIIsFoundAsTheTailscaleCommandFindsIt(t *testing.T) {
 	if err := os.WriteFile(proof, []byte("standalonetoken\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if password, err := dial(); err != nil || password != "standalonetoken" {
-		t.Fatalf("Standalone: password=%q err=%v", password, err)
-	}
+	check("Standalone app running", "standalonetoken", true)
+
 	if os.Geteuid() != 0 {
+		// An account outside the admin group falls back to the socket, as
+		// the tailscale command does, and without it gets the reason.
 		if err := os.Chmod(proof, 0); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := dial(); KindOf(err) != KindPermission {
-			t.Fatalf("unreadable password file: err=%v", err)
+		check("Standalone app unreadable, socket", "", false)
+		tailscaled.Close()
+		os.Remove(openSourceSocket)
+		if _, _, err := dialDarwin(context.Background()); KindOf(err) != KindMacAppAdmin {
+			t.Errorf("Standalone app unreadable, no socket: err=%v", err)
 		}
 	}
 }

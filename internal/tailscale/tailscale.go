@@ -52,8 +52,8 @@ type Command struct {
 	LocalAPI Dialer
 }
 
-// Paths that Find and macApp inspect. Variables only so tests can point
-// them at synthetic files.
+// Paths that Find and the macOS LocalAPI dialer inspect. Variables only so
+// tests can point them at synthetic files.
 var (
 	macAppBundle     = "/Applications/Tailscale.app"
 	openSourceSocket = "/var/run/tailscaled.socket"
@@ -93,32 +93,11 @@ func Find(override string) (Command, error) {
 	}
 	for _, path := range paths {
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			mac := macApp(path)
-			return Command{Path: path, MacApp: mac, LocalAPI: localAPIDialer(mac)}, nil
+			mac, dial := localAPIFor(path)
+			return Command{Path: path, MacApp: mac, LocalAPI: dial}, nil
 		}
 	}
 	return Command{}, ErrNotInstalled
-}
-
-// macApp reports whether path runs the Tailscale app for macOS. The app's
-// command is its bundle executable, or a launcher that the Standalone app
-// installs outside the bundle; the open source tailscaled instead listens on
-// a Unix socket that the app never creates.
-func macApp(path string) bool {
-	if runtime.GOOS != "darwin" {
-		return false
-	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
-	}
-	if strings.Contains(path, ".app/Contents/") {
-		return true
-	}
-	if _, err := os.Stat(openSourceSocket); err == nil {
-		return false
-	}
-	_, err := os.Stat(macAppBundle)
-	return err == nil
 }
 
 // Kind classifies a problem so the owner gets a message with its fix.
@@ -146,6 +125,10 @@ const (
 	// KindPermission: the daemon refused a change for this user, such as a
 	// user who is not the operator on Linux.
 	KindPermission Kind = "permission"
+	// KindMacAppAdmin: the Standalone Tailscale app for macOS lets only
+	// administrator accounts reach its LocalAPI, and this account is not
+	// one.
+	KindMacAppAdmin Kind = "mac_app_admin"
 	// KindOutdated: the daemon is older than Tailscale 1.50 and cannot
 	// apply a change only to the Serve configuration it was made from.
 	KindOutdated Kind = "outdated"
@@ -164,8 +147,8 @@ const (
 // Error is a failed tailscale call or an unusable Tailscale state.
 type Error struct {
 	Kind Kind
-	// Detail is what the command printed on failure, shortened, for
-	// KindFailed and KindPermission.
+	// Detail is what Tailscale printed or answered on failure, shortened,
+	// for KindFailed and KindPermission; never OwnGit's own words.
 	Detail string
 }
 
