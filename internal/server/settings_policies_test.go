@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -188,8 +189,13 @@ func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
 		settings["git_transfer"].(map[string]any)["operation_seconds"] != float64(7200) {
 		t.Fatalf("PATCH one limit status=%d settings=%v", status, settings)
 	}
-	if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"operation_seconds": 30}}); status != http.StatusBadRequest || code != "invalid_settings" {
-		t.Fatalf("PATCH below the bound status=%d code=%s", status, code)
+	for _, seconds := range []int64{math.MinInt64, -9223372036854689408, 59, 86401, math.MaxInt64} {
+		if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"operation_seconds": seconds}}); status != http.StatusBadRequest || code != "invalid_settings" {
+			t.Fatalf("PATCH %d seconds status=%d code=%s", seconds, status, code)
+		}
+	}
+	if limits, err := fixture.store.GitTransferLimits(ctx); err != nil || limits.Operation != 2*time.Hour {
+		t.Fatalf("after refused PATCHes %+v err=%v", limits, err)
 	}
 	noErr(t, fixture.store.Exec(ctx, `UPDATE metadata SET value='{"maximum_bytes":"many"}' WHERE key='git_transfer_limits'`))
 	if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"operation_seconds": 600}}); status != http.StatusConflict || code != "setting_unreadable" {

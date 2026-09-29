@@ -267,12 +267,9 @@ func (app *App) changedTransferLimits(ctx context.Context, change gitTransferJSO
 		limits.MaximumBytes = *change.MaximumBytes
 	}
 	if seconds := change.OperationSeconds; seconds != nil {
-		// A number past the bound is refused before it is converted, where
-		// it could overflow.
-		if maximum := int64(state.MaximumTransferOperation / time.Second); *seconds > maximum {
-			return limits, fmt.Sprintf("git_transfer: operation_seconds is at most %d.", maximum), nil
+		if limits.Operation, err = state.TransferOperationSeconds(*seconds); err != nil {
+			return limits, fmt.Sprintf("git_transfer: operation_seconds is from %d to %d.", int64(state.MinimumTransferOperation/time.Second), int64(state.MaximumTransferOperation/time.Second)), nil
 		}
-		limits.Operation = time.Duration(*seconds) * time.Second
 	}
 	if err := limits.Validate(); err != nil {
 		return limits, "git_transfer: " + err.Error() + ".", nil

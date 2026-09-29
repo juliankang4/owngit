@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -244,4 +246,33 @@ func TestPruneReadsOnlyTheLogsItRemoves(t *testing.T) {
 		t.Fatalf("start rows=%d err=%v, want one per log kept", starts, err)
 	}
 	t.Logf("removed 8000 due logs in %v; an idle cleanup took %v", backlog, idle)
+}
+
+// The longest transfer is checked in whole seconds against both bounds
+// before it is converted, so no stored number, however negative or large,
+// wraps around into a valid limit.
+func TestTransferSecondsAreCheckedBeforeTheyAreConverted(t *testing.T) {
+	minimum, maximum := int64(MinimumTransferOperation/time.Second), int64(MaximumTransferOperation/time.Second)
+	for _, test := range []struct {
+		seconds int64
+		valid   bool
+	}{
+		{math.MinInt64, false}, {-9223372036854689408, false}, {-1, false}, {0, false}, {minimum - 1, false},
+		{minimum, true}, {maximum, true}, {maximum + 1, false}, {math.MaxInt64, false},
+	} {
+		operation, err := TransferOperationSeconds(test.seconds)
+		if (err == nil) != test.valid || (test.valid && operation != time.Duration(test.seconds)*time.Second) {
+			t.Errorf("%d seconds: operation=%v err=%v, want valid=%v", test.seconds, operation, err, test.valid)
+		}
+	}
+	store := openTestStore(t)
+	ctx := context.Background()
+	for _, seconds := range []int64{math.MinInt64, -9223372036854689408, minimum - 1, maximum + 1} {
+		noErr(t, store.Exec(ctx, `INSERT INTO metadata(key,value) VALUES('git_transfer_limits',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+			fmt.Sprintf(`{"maximum_bytes":1048576,"operation_seconds":%d}`, seconds)))
+		var policyErr *PolicyError
+		if limits, err := store.GitTransferLimits(ctx); !errors.As(err, &policyErr) {
+			t.Errorf("stored %d seconds read as %+v, err=%v", seconds, limits, err)
+		}
+	}
 }

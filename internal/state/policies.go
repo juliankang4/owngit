@@ -241,6 +241,16 @@ func ValidTransferOperation(operation time.Duration) bool {
 	return operation >= MinimumTransferOperation && operation <= MaximumTransferOperation && operation%time.Second == 0
 }
 
+// TransferOperationSeconds converts a number of seconds to the longest
+// transfer. It compares the number with both bounds before converting it,
+// so no value, however large or negative, can overflow into a valid one.
+func TransferOperationSeconds(seconds int64) (time.Duration, error) {
+	if seconds < int64(MinimumTransferOperation/time.Second) || seconds > int64(MaximumTransferOperation/time.Second) {
+		return 0, errors.New("the longest transfer is a whole number of seconds from 1 minute to 24 hours")
+	}
+	return time.Duration(seconds) * time.Second, nil
+}
+
 // Validate checks the limits against their bounds.
 func (l GitTransferLimits) Validate() error {
 	if !ValidTransferBytes(l.MaximumBytes) {
@@ -276,12 +286,8 @@ func (s *Store) GitTransferLimits(ctx context.Context) (GitTransferLimits, error
 		if stored.MaximumBytes != nil {
 			limits.MaximumBytes = *stored.MaximumBytes
 		}
-		// A number of seconds past the bound is refused before it is
-		// converted, where it could overflow.
-		if seconds := stored.OperationSeconds; seconds != nil && *seconds > int64(MaximumTransferOperation/time.Second) {
-			err = errors.New("the longest transfer is more than 24 hours")
-		} else if seconds != nil {
-			limits.Operation = time.Duration(*seconds) * time.Second
+		if stored.OperationSeconds != nil {
+			limits.Operation, err = TransferOperationSeconds(*stored.OperationSeconds)
 		}
 	}
 	if err == nil {
