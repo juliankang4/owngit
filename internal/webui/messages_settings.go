@@ -162,7 +162,7 @@ var settingsCatalog = map[MessageCode]message{
 		en: "This kind of install has no OwnGit icon, because OwnGit runs as its own service account, not as the account that signs in at the desktop.",
 		ko: "이 설치 방식에는 OwnGit 아이콘이 없습니다. OwnGit이 데스크톱에 로그인하는 계정이 아니라 전용 서비스 계정으로 실행되기 때문입니다.",
 	},
-	MsgActorAccess:        {en: "Shared access", ko: "공용 접근"},
+	MsgActorAccess:        {en: "General access", ko: "일반 접근"},
 	MsgActorAdministrator: {en: "Administrator", ko: "관리자"},
 	MsgSettingsTrayUnreadable: {
 		en: "OwnGit could not read whether the icon is hidden. The OwnGit log says why. Saving sets it again.",

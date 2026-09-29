@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -166,5 +167,65 @@ func TestServePublishesTrayAccess(t *testing.T) {
 	}
 	if code := status(old); code != http.StatusUnauthorized {
 		t.Fatalf("status with the token of the previous start: %d", code)
+	}
+}
+
+// "owngit tray" runs as other state commands do on Windows: from a process
+// with administrator rights it runs again without them, so tray-hidden
+// belongs to the account. On Linux it never switches to the service
+// account whose state the pointer names, and answers that this install has
+// no icon; another state command still switches.
+func TestTrayCommandRouting(t *testing.T) {
+	previousProbe, previousRun := probeEnvironment, runWithoutAdminRights
+	t.Cleanup(func() { probeEnvironment, runWithoutAdminRights = previousProbe, previousRun })
+	probeEnvironment = func() service.Environment {
+		return service.Environment{Getenv: func(string) string { return "" }, Windows: true, Administrator: true, Elevated: true}
+	}
+	var copies [][]string
+	runWithoutAdminRights = func(arguments []string) (int, error) {
+		copies = append(copies, arguments)
+		return 0, nil
+	}
+	noErr(t, run([]string{"tray", "off", "--state-dir", "state"}))
+	if want := [][]string{{"tray", "off", "--state-dir", "state"}}; !reflect.DeepEqual(copies, want) {
+		t.Fatalf("elevated tray ran as %q, want a copy without administrator rights %q", copies, want)
+	}
+	probeEnvironment = previousProbe
+
+	if runtime.GOOS != "linux" || os.Geteuid() == 0 {
+		t.Skip("the service account pointer applies on Linux, to an account other than root")
+	}
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, "account-state")
+	noErr(t, os.Mkdir(stateDir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(stateDir, 0o700) })
+	previousFile, previousApplies := pointerFile, pointerApplies
+	t.Cleanup(func() { pointerFile, pointerApplies = previousFile, previousApplies })
+	pointerFile, pointerApplies = filepath.Join(dir, "state-dir"), func() bool { return true }
+	noErr(t, os.WriteFile(pointerFile, []byte(stateDir+"\n"), 0o644))
+	output, err := captureStdout(func() error { return run([]string{"tray", "status", "--json"}) })
+	var report trayReport
+	if err != nil || json.Unmarshal([]byte(output), &report) != nil || report.Available || report.StateDir != stateDir {
+		t.Fatalf("tray status on the service account install printed %q err=%v", output, err)
+	}
+	if err := run([]string{"upgrade-backup", "--state-dir", stateDir}); err == nil || !strings.Contains(err.Error(), "sudo") {
+		t.Fatalf("another state command did not switch to the service account: %v", err)
+	}
+}
+
+// A tray access file that cannot be replaced leaves the server running and
+// says why in the log; the status then answers no one.
+func TestServeLogsAnUnwrittenTrayAccessFile(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	noErr(t, os.MkdirAll(filepath.Join(stateDir, state.TrayAccessFile), 0o700))
+	served := startServed(t, stateDir)
+	if log := served.log(); !strings.Contains(log, "the tray access file could not be written: write the tray access file:") {
+		t.Fatalf("serve did not log the failure:\n%s", log)
+	}
+	response, err := http.Get(served.url + server.TrayStatusPath)
+	noErr(t, err)
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("status without a published token: %d", response.StatusCode)
 	}
 }

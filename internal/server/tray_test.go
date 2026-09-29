@@ -104,7 +104,7 @@ func TestTrayStatusListsPushesThroughTheServer(t *testing.T) {
 	for index, push := range status.Pushes {
 		expected := want[index]
 		if push.Repository != expected.repository || push.Ref != expected.ref || push.Branch != expected.branch || push.RefsUpdated != expected.refs ||
-			push.Actor != (state.Actor{Kind: state.ActorAccess}) || push.ActorLabel != "Shared access" || push.PushedAt.Before(start.Truncate(time.Second)) {
+			push.Actor != (state.Actor{Kind: state.ActorAccess}) || push.ActorLabel != "General access" || push.PushedAt.Before(start.Truncate(time.Second)) {
 			t.Errorf("push %d = %+v, want %+v", index, push, expected)
 		}
 	}

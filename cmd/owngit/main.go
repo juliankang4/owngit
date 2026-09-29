@@ -114,16 +114,21 @@ func run(arguments []string) error {
 		if handled, err := stateCommandWithoutAdminRights(command, arguments); handled {
 			return err
 		}
-		stateDir := stateDirArgument(arguments)
-		if stateDir == "" {
-			stateDir = defaultStateDir()
-		}
-		dropped, err := actAsStateOwner(stateDir)
-		if err != nil {
-			return err
-		}
-		if dropped {
-			return accountPathHint(runCommand(command, arguments))
+		// The state of the Linux service account offers no icon, which
+		// tray answers without reading that state, so tray never switches
+		// to that account.
+		if command != "tray" {
+			stateDir := stateDirArgument(arguments)
+			if stateDir == "" {
+				stateDir = defaultStateDir()
+			}
+			dropped, err := actAsStateOwner(stateDir)
+			if err != nil {
+				return err
+			}
+			if dropped {
+				return accountPathHint(runCommand(command, arguments))
+			}
 		}
 	}
 	err := runCommand(command, arguments)
@@ -651,7 +656,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			access, err = state.PublishTrayAccess(stateDirectory, "http://"+target)
 		}
 		if err != nil {
-			logf("the tray icon cannot read the status: %v", err)
+			logf("the OwnGit icon cannot read the status until OwnGit starts again, because the tray access file could not be written: %v", err)
 		}
 		application.TrayToken = access.Token
 	}
