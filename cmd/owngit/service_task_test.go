@@ -899,7 +899,14 @@ func TestServeNobodyWatchesUsesTheSetupFile(t *testing.T) {
 		if len(opened) != 0 {
 			t.Errorf("%s: opened %q", name, opened)
 		}
-		if !slicesContainPrefix(seen, "owner setup file: "+filepath.Join(stateDir, "owner-setup.html")) || slicesContainPrefix(seen, "terminal setup") {
+		// The log names the state folder by its final path (macOS temporary
+		// folders are behind /var, Windows ones may use short names), so the
+		// check matches the file inside it.
+		setupFile := false
+		for _, line := range seen {
+			setupFile = setupFile || strings.HasPrefix(line, "owner setup file: ") && strings.HasSuffix(line, string(filepath.Separator)+filepath.Join("state", "owner-setup.html"))
+		}
+		if !setupFile || slicesContainPrefix(seen, "terminal setup") {
 			t.Errorf("%s: want the setup file without terminal setup:\n%s", name, strings.Join(seen, "\n"))
 		}
 	}
