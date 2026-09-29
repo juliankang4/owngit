@@ -172,18 +172,20 @@ func TestGiveOwnershipFollowsNoLink(t *testing.T) {
 }
 
 // The step that gives a standard account its folders takes the account
-// from the process that started it: here this test, so its own account.
-func TestRequestingAccountIsTheParent(t *testing.T) {
+// and the program from the process that started it: here this test, so its
+// own account and its own program. The profile folder of the account is
+// the one Windows records.
+func TestRequestingProcessIsTheParent(t *testing.T) {
 	if os.Getenv("OWNGIT_TEST_REQUESTER") == "1" {
-		sid, err := platformRequestingAccount()
+		sid, program, err := platformRequestingProcess()
 		if err != nil {
 			fmt.Print("error: ", err)
 			os.Exit(1)
 		}
-		fmt.Print(sid)
+		fmt.Print(sid + "\n" + program)
 		os.Exit(0)
 	}
-	command := exec.Command(os.Args[0], "-test.run=^TestRequestingAccountIsTheParent$")
+	command := exec.Command(os.Args[0], "-test.run=^TestRequestingProcessIsTheParent$")
 	command.Env = append(os.Environ(), "OWNGIT_TEST_REQUESTER=1")
 	output, err := command.Output()
 	if err != nil {
@@ -191,7 +193,22 @@ func TestRequestingAccountIsTheParent(t *testing.T) {
 	}
 	own, err := platformCurrentAccountSID()
 	noErr(t, err)
-	if string(output) != own {
-		t.Errorf("requesting account %q, want %q", output, own)
+	sid, program, _ := strings.Cut(string(output), "\n")
+	if sid != own || !sameFile(program, os.Args[0]) {
+		t.Errorf("requesting process %q %q, want %q %q", sid, program, own, os.Args[0])
+	}
+	profile, err := platformAccountProfile(own)
+	noErr(t, err)
+	if home, _ := os.UserHomeDir(); !strings.EqualFold(profile, home) {
+		t.Errorf("profile %q, home %q", profile, home)
+	}
+	// A folder with an OwnGit database is a state; any other is not.
+	dir := t.TempDir()
+	if platformIsOwnGitState(dir) {
+		t.Error("an empty folder counts as a state")
+	}
+	noErr(t, os.WriteFile(filepath.Join(dir, "owngit.sqlite"), nil, 0o600))
+	if !platformIsOwnGitState(dir) {
+		t.Error("a folder with owngit.sqlite does not count as a state")
 	}
 }

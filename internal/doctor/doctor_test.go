@@ -109,6 +109,9 @@ func TestDiagnose(t *testing.T) {
 		"Windows folders": {with(running("windows"), func(f *Facts) {
 			f.OtherDevices, f.AdministratorsFolders = false, []string{`C:\Users\you\AppData\Roaming\owngit`}
 		}), []webui.Finding{{Code: webui.MsgDoctorAdministratorsFolder, Args: []string{`C:\Users\you\AppData\Roaming\owngit`}, Repair: "owngit service install"}}},
+		"Windows folder of a standard account outside its profile": {with(running("windows"), func(f *Facts) {
+			f.OtherDevices, f.FoldersElsewhere = false, []string{`D:\OwnGit\repos`}
+		}), []webui.Finding{{Code: webui.MsgDoctorAdministratorsFolderElsewhere, Args: []string{`D:\OwnGit\repos`}}}},
 		"Windows folders of an administrator": {with(running("windows"), func(f *Facts) {
 			f.OtherDevices, f.Administrator, f.AdministratorsFolders = false, true, []string{`D:\repos`}
 		}), []webui.Finding{{Code: webui.MsgDoctorAdministratorsFolder, Args: []string{`D:\repos`}, Repair: "owngit service install"}}},

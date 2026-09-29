@@ -45,8 +45,10 @@ type Facts struct {
 	// System is the Windows System32 folder.
 	System string
 	// AdministratorsFolders are the state and repository folders that the
-	// Administrators group owns on Windows.
-	AdministratorsFolders []string
+	// Administrators group owns on Windows, and FoldersElsewhere those of
+	// them that a standard account's install does not give back, being
+	// outside its profile.
+	AdministratorsFolders, FoldersElsewhere []string
 	// Firewall is the firewall configuration of this computer.
 	Firewall Firewall
 	// Unchecked names each check that could not run, with why.
@@ -158,6 +160,9 @@ func Diagnose(facts Facts) []webui.Finding {
 	}
 	for _, folder := range facts.AdministratorsFolders {
 		findings = append(findings, webui.Finding{Code: webui.MsgDoctorAdministratorsFolder, Args: []string{folder}, Repair: "owngit service install"})
+	}
+	for _, folder := range facts.FoldersElsewhere {
+		findings = append(findings, webui.Finding{Code: webui.MsgDoctorAdministratorsFolderElsewhere, Args: []string{folder}})
 	}
 	if facts.OtherDevices {
 		findings = append(findings, firewallFindings(facts)...)

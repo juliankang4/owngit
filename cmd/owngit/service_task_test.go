@@ -51,8 +51,10 @@ type fakeWindows struct {
 	owners       map[string]string
 	ownerErrors  map[string]error
 	adminOwned   map[string]int
-	requester    string // the account of the process that asked for elevated-owners
-	repositories string // the repository folder saved in the state
+	requester    string          // the account of the process that asked for elevated-owners
+	requesterRun string          // the program of that process (default: testUserExecutable)
+	states       map[string]bool // folders that hold an OwnGit database
+	repositories string          // the repository folder saved in the state
 	health       *fakeHealth
 }
 
@@ -175,14 +177,14 @@ func decodeUTF16ForTest(data []byte) (string, error) {
 }
 
 func newFakeWindows(t *testing.T) *fakeWindows {
-	fake := &fakeWindows{t: t, git: true, winget: true, owners: map[string]string{}, ownerErrors: map[string]error{}, adminOwned: map[string]int{}}
+	fake := &fakeWindows{t: t, git: true, winget: true, owners: map[string]string{}, ownerErrors: map[string]error{}, adminOwned: map[string]int{}, states: map[string]bool{}}
 	previousRunner, previousElevated, previousLook, previousStop := serviceRunner, runElevated, lookPath, signalServiceStop
 	previousOwner, previousGive, previousRoot, previousPoll := ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval
 	previousInstallStorage, previousPrepare, previousReplace := prepareServiceInstall, prepareServiceStorage, replaceServiceCopy
 	previousWinget := trustedWinget
 	previousEnvironment, previousApply := serviceEnvironment, applyServiceEnvironment
 	previousEnvironmentRunner, previousAttached, previousGit := runWithEnvironment, runAttachedWithEnvironment, gitOnServicePath
-	previousDoctorTool, previousRequester := doctorTool, requestingAccount
+	previousDoctorTool, previousRequester, previousProfile, previousState := doctorTool, requestingProcess, accountProfile, isOwnGitState
 	t.Cleanup(func() {
 		// The Windows paths of these tests are only text. Elsewhere they are
 		// relative, so a test that used one as a folder left it here.
@@ -196,16 +198,19 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		trustedWinget = previousWinget
 		serviceEnvironment, applyServiceEnvironment = previousEnvironment, previousApply
 		runWithEnvironment, runAttachedWithEnvironment = previousEnvironmentRunner, previousAttached
-		doctorTool, requestingAccount = previousDoctorTool, previousRequester
+		doctorTool, requestingProcess, accountProfile, isOwnGitState = previousDoctorTool, previousRequester, previousProfile, previousState
 	})
 	taskPollInterval = 10 * time.Millisecond
 	fake.health = useFakeHealth(t)
-	requestingAccount = func() (string, error) {
+	requestingProcess = func() (string, string, error) {
 		if fake.requester == "" {
-			return "", errors.New("no parent")
+			return "", "", errors.New("no parent")
 		}
-		return fake.requester, nil
+		return fake.requester, cmp.Or(fake.requesterRun, testUserExecutable), nil
 	}
+	// Every account's profile is C:\Users\you, as the test paths use it.
+	accountProfile = func(string) (string, error) { return `C:\Users\you`, nil }
+	isOwnGitState = func(dir string) bool { return fake.states[dir] }
 	ownerOf = func(path string) (string, error) {
 		if err := fake.ownerErrors[path]; err != nil {
 			return "", err
@@ -1127,8 +1132,20 @@ func TestTaskInstallNamesFoldersOfTheAdministrators(t *testing.T) {
 	host, out := testTaskHost(service.Environment{})
 	_ = host.install("", nil)
 	if !strings.Contains(out.String(), "Windows asks once for administrator approval to make your account the owner of "+testStateDir+".\n") ||
-		len(fake.elevated) != 1 || !reflect.DeepEqual(fake.elevated[0][:4], []string{"service", "elevated-owners", "--state-dir", testStateDir}) {
+		len(fake.elevated) != 1 || !reflect.DeepEqual(fake.elevated[0][:3], []string{"service", "elevated-owners", "--request"}) || fake.elevated[0][4] != "--token" {
 		t.Errorf("standard account: elevated %q\n%s", fake.elevated, out.String())
+	} else if _, err := os.Stat(fake.elevated[0][3]); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the request stays after the install: %v", err)
+	}
+	// A folder outside the account's profile is left to an administrator.
+	fake = newFakeWindows(t)
+	fake.existing(t, service.ModeLogonTask, testSID, `D:\OwnGit\state`)
+	fake.owners[`D:\OwnGit\state`] = administratorsSID
+	fake.failRun = true
+	host, out = testTaskHost(service.Environment{})
+	_ = host.install("", nil)
+	if len(fake.elevated) != 0 || !strings.Contains(out.String(), `D:\OwnGit\state belongs to the Administrators group and is outside your user folder`) {
+		t.Errorf("outside the profile: elevated %q\n%s", fake.elevated, out.String())
 	}
 	// Declined, nothing else changes.
 	fake = newFakeWindows(t)
@@ -1150,15 +1167,19 @@ func TestTaskInstallNamesFoldersOfTheAdministrators(t *testing.T) {
 	}
 }
 
-// The step a standard account asks for gives its folders to the account
-// that asked, whoever approved, and checks them again; without that
-// account it changes nothing.
+// The step a standard account asks for gives the folders of its request
+// to the account that asked, whoever approved, and only when the waiting
+// install of this program started it with its one-use request: a direct
+// start, a request of another account, a used, forged or reused request,
+// a folder that is no OwnGit state, and a folder outside the account's
+// profile or in ProgramData are refused before the walker runs.
 func TestElevatedOwnersGivesToTheAccountThatAsked(t *testing.T) {
 	const standard = "S-1-5-21-1-2-3-1002"
 	repositories := `C:\Users\you\shared-repos`
 	fake := newFakeWindows(t)
 	fake.owners[testStateDir] = administratorsSID
-	fake.owners[repositories] = "S-1-5-21-9-9-9-1003" // another account's folder
+	fake.owners[repositories] = administratorsSID
+	fake.states[testStateDir] = true
 	var given []string
 	giveOwnership = func(root, sid string, check func(string, string) error) (int, int, error) {
 		owner, _ := ownerOf(root)
@@ -1168,17 +1189,69 @@ func TestElevatedOwnersGivesToTheAccountThatAsked(t *testing.T) {
 		given = append(given, root+" "+sid)
 		return 1, 0, nil
 	}
+	dir := t.TempDir()
+	request := func(owner, token, stateDir, repositories string) string {
+		file, err := os.CreateTemp(dir, "owngit-owners-*.request")
+		noErr(t, err)
+		_, err = file.WriteString(strings.Join([]string{ownersRequestHeader, "token " + token, "state-dir " + stateDir, "repositories " + repositories}, "\n") + "\n")
+		noErr(t, err)
+		noErr(t, file.Close())
+		fake.owners[file.Name()] = owner
+		return file.Name()
+	}
+	const token = "0123456789abcdef0123456789abcdef"
 	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
-	if err := host.administratorStep("elevated-owners", []string{"--state-dir", testStateDir, "--repositories", repositories}); err == nil {
-		t.Error("the step ran without the account that asked")
+	step := func(path, token string) error {
+		return host.administratorStep("elevated-owners", []string{"--request", path, "--token", token})
 	}
 	fake.requester = standard
-	noErr(t, host.administratorStep("elevated-owners", []string{"--state-dir", testStateDir, "--repositories", repositories}))
-	if !reflect.DeepEqual(given, []string{testStateDir + " " + standard}) || !strings.Contains(out.String(), "because it belongs to another account") {
+	for name, attempt := range map[string]func() error{
+		"direct start without a request": func() error { return host.administratorStep("elevated-owners", []string{"--state-dir", testStateDir}) },
+		"started by another program": func() error {
+			fake.requesterRun = `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+			defer func() { fake.requesterRun = "" }()
+			return step(request(standard, token, testStateDir, repositories), token)
+		},
+		"a request of another account": func() error { return step(request(testSID, token, testStateDir, repositories), token) },
+		"a forged token":               func() error { return step(request(standard, token, testStateDir, repositories), "f"+token[1:]) },
+		"a request used before": func() error {
+			path := request(standard, token, testStateDir, "")
+			noErr(t, os.Remove(path))
+			return step(path, token)
+		},
+		"a folder that is no OwnGit state": func() error {
+			fake.owners[`D:\Shared\AdministratorArchive`] = administratorsSID
+			return step(request(standard, token, `D:\Shared\AdministratorArchive`, ""), token)
+		},
+	} {
+		if err := attempt(); err == nil || len(given) != 0 {
+			t.Errorf("%s: %v, given %q", name, err, given)
+		}
+	}
+
+	// The waiting install's request: both folders, once.
+	path := request(standard, token, testStateDir, repositories)
+	noErr(t, step(path, token))
+	if !reflect.DeepEqual(given, []string{testStateDir + " " + standard, repositories + " " + standard}) {
 		t.Errorf("given %q\n%s", given, out.String())
 	}
+	if err := step(path, token); err == nil || len(given) != 2 {
+		t.Errorf("the request was used twice: %v, given %q", err, given)
+	}
+
+	// Folders outside the profile, or in ProgramData, stay as they are.
+	given = nil
+	fake.states[`D:\OwnGit\state`] = true
+	fake.owners[`D:\OwnGit\state`] = administratorsSID
+	noErr(t, step(request(standard, token, `D:\OwnGit\state`, `C:\ProgramData\Tool`), token))
+	if len(given) != 0 || !strings.Contains(out.String(), `D:\OwnGit\state is outside the account's user folder`) {
+		t.Errorf("outside the profile: given %q\n%s", given, out.String())
+	}
+	if err := step(request(standard, token, testStateDir, `C:\Users\you\..\other\repos`), token); err == nil || len(given) != 0 {
+		t.Errorf("a path with ..: %v, given %q", err, given)
+	}
 	host, _ = testTaskHost(service.Environment{})
-	if err := host.administratorStep("elevated-owners", []string{"--state-dir", testStateDir}); err == nil {
+	if err := host.administratorStep("elevated-owners", []string{"--request", path, "--token", token}); err == nil {
 		t.Error("the step ran without administrator rights")
 	}
 }
@@ -1206,7 +1279,8 @@ func TestGiveFolderToAccount(t *testing.T) {
 		{`D:\`, administratorsSID, false, "because it is a drive."},
 		{`D:\`, testSID, false, ""},
 		{`C:\Users\you`, testSID, false, ""},
-		{`C:\ProgramData`, administratorsSID, false, "because it holds more than OwnGit's files."},
+		{`C:\ProgramData`, administratorsSID, false, "because it is a folder of Windows or of installed programs."},
+		{`C:\ProgramData\SomeTool\bin`, administratorsSID, false, "because it is a folder of Windows or of installed programs."},
 	} {
 		fake := newFakeWindows(t)
 		fake.owners[test.folder] = test.owner

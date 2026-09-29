@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 
 	"owngit/internal/gitexec"
 	"owngit/internal/service"
@@ -64,36 +65,78 @@ type wtsProcessInfo struct {
 	userTime, kernelTime               int64
 }
 
-// platformRequestingAccount returns the account of the process that
-// started this one, as Windows lists it for every process to an
-// administrator. After a UAC prompt that is the OwnGit that asked, whatever
-// account approved. parentProcess refuses a process that started after
-// this one, so a reused process ID cannot stand in for the parent, and its
-// open handle keeps the ID taken while it is looked up.
-func platformRequestingAccount() (string, error) {
+// platformRequestingProcess returns the account and the program of the
+// process that started this one, as Windows lists them for every process
+// to an administrator. After a UAC prompt that is the OwnGit that asked,
+// whatever account approved. parentProcess refuses a process that started
+// after this one, so a reused process ID cannot stand in for the parent,
+// and its open handle keeps the ID taken while it is looked up.
+func platformRequestingProcess() (sid, program string, err error) {
 	parent, err := parentProcess()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer windows.CloseHandle(parent)
 	id, err := windows.GetProcessId(parent)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
+	name := make([]uint16, windows.MAX_LONG_PATH)
+	size := uint32(len(name))
+	if err := windows.QueryFullProcessImageName(parent, 0, &name[0], &size); err != nil {
+		return "", "", fmt.Errorf("read the program of process %d: %w", id, err)
+	}
+	program = windows.UTF16ToString(name[:size])
 	const anySession, levelOne = 0xFFFFFFFE, 1
 	level := uint32(levelOne)
 	var list *wtsProcessInfo
 	var count uint32
 	if ok, _, err := procWTSEnumerateProcesses.Call(0, uintptr(unsafe.Pointer(&level)), anySession, uintptr(unsafe.Pointer(&list)), uintptr(unsafe.Pointer(&count))); ok == 0 {
-		return "", fmt.Errorf("list processes: %w", err)
+		return "", "", fmt.Errorf("list processes: %w", err)
 	}
 	defer procWTSFreeMemoryEx.Call(levelOne, uintptr(unsafe.Pointer(list)), uintptr(count))
 	for _, process := range unsafe.Slice(list, count) {
 		if process.process == id && process.user != nil {
-			return process.user.String(), nil
+			return process.user.String(), program, nil
 		}
 	}
-	return "", fmt.Errorf("process %d has no account that Windows lists", id)
+	return "", "", fmt.Errorf("process %d has no account that Windows lists", id)
+}
+
+// platformAccountProfile returns the profile folder that Windows records
+// for the account sid.
+func platformAccountProfile(sid string) (string, error) {
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\`+sid, registry.QUERY_VALUE)
+	if err != nil {
+		return "", err
+	}
+	defer key.Close()
+	value, _, err := key.GetStringValue("ProfileImagePath")
+	if err != nil {
+		return "", err
+	}
+	return registry.ExpandString(value)
+}
+
+// platformIsOwnGitState reports whether dir holds an OwnGit state database:
+// a plain file with one name, opened without following a link. It runs
+// with administrator rights, which read a folder private to another
+// account only through backup semantics.
+func platformIsOwnGitState(dir string) bool {
+	enablePrivileges("SeBackupPrivilege")
+	name, err := windows.UTF16PtrFromString(filepath.Join(dir, "owngit.sqlite"))
+	if err != nil {
+		return false
+	}
+	handle, err := windows.CreateFile(name, windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(handle)
+	var info windows.ByHandleFileInformation
+	return windows.GetFileInformationByHandle(handle, &info) == nil &&
+		info.FileAttributes&(windows.FILE_ATTRIBUTE_DIRECTORY|windows.FILE_ATTRIBUTE_REPARSE_POINT) == 0 && info.NumberOfLinks == 1
 }
 
 // shellExecuteInfo is SHELLEXECUTEINFOW.

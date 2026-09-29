@@ -50,6 +50,17 @@ func TestDoctorReadsWindowsFoldersAndFirewall(t *testing.T) {
 		t.Errorf("unreadable firewall: %v", err)
 	}
 
+	// A standard account's folder outside its profile is left to an
+	// administrator, with no command.
+	standard, _ := testTaskHost(service.Environment{})
+	fake.owners[`D:\OwnGit\repos`] = administratorsSID
+	facts = doctor.Facts{GOOS: "windows", Server: doctor.ServerRunning, SetupComplete: true, Listen: "127.0.0.1:7654"}
+	noErr(t, standard.readDoctorFacts(ctx, &facts, []string{testStateDir, `D:\OwnGit\repos`}))
+	if got := doctor.Diagnose(facts); len(got) != 2 || got[0].Code != webui.MsgDoctorAdministratorsFolder || got[0].Repair != "owngit service install" ||
+		got[1].Code != webui.MsgDoctorAdministratorsFolderElsewhere || got[1].Repair != "" {
+		t.Errorf("standard account: %+v", got)
+	}
+
 	// A folder whose owner cannot be read is a check that could not run.
 	fake.ownerErrors[testStateDir] = errors.New("Access is denied.")
 	facts = doctor.Facts{GOOS: "windows", Server: doctor.ServerRunning, SetupComplete: true, Listen: "127.0.0.1:7654"}

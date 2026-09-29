@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -45,9 +48,14 @@ var (
 	signalServiceStop = platformSignalServiceStop
 	// currentAccountSID returns the security identifier of this account.
 	currentAccountSID = platformCurrentAccountSID
-	// requestingAccount returns the security identifier of the account of
-	// the process that started this one.
-	requestingAccount = platformRequestingAccount
+	// requestingProcess returns the account and the program of the process
+	// that started this one.
+	requestingProcess = platformRequestingProcess
+	// accountProfile returns the profile folder of an account.
+	accountProfile = platformAccountProfile
+	// isOwnGitState reports whether a folder holds an OwnGit state database,
+	// read with administrator rights.
+	isOwnGitState = platformIsOwnGitState
 	// windowsSystemDirectory returns the System32 directory.
 	windowsSystemDirectory = platformSystemDirectory
 	// ownerOf returns the owner of a file or folder as a SID string.
@@ -269,7 +277,8 @@ func (host *taskHost) administratorStep(action string, arguments []string) error
 	stateDir := flags.String("state-dir", "", "state directory the task passes")
 	headless := flags.Bool("headless", false, "the --headless value the task passes to the server")
 	installGit := flags.Bool("install-git", false, "install Git with winget when it is missing")
-	repositories := flags.String("repositories", "", "the repository folder saved in the state directory")
+	request := flags.String("request", "", "the request file of the waiting \"owngit service install\"")
+	token := flags.String("token", "", "the one-use token in the request file")
 	attach := flags.Int("attach", 0, "process whose console shows the output")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
@@ -288,7 +297,7 @@ func (host *taskHost) administratorStep(action string, arguments []string) error
 	case "elevated-install":
 		return host.elevatedInstall(*stateDir, *headless, *installGit)
 	case "elevated-owners":
-		return host.elevatedOwners(*stateDir, *repositories)
+		return host.elevatedOwners(*request, *token)
 	}
 	if action != "elevated-uninstall" {
 		return fmt.Errorf("unknown step %s", action)
@@ -420,22 +429,12 @@ func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
 			return err
 		}
 	default:
-		// A standard account: folders that the Administrators group owns
-		// are given back in one step that an administrator approves. The
-		// folders are this account's state and saved repository folder, as
-		// this process read them; the step checks them again.
-		if folders := host.foldersOfAdministrators(stateDir); len(folders) > 0 {
-			var steps []string
-			for _, folder := range folders {
-				steps = append(steps, "make your account the owner of "+folder)
-			}
-			arguments := []string{"service", "elevated-owners", "--state-dir", stateDir}
-			if repositories := savedRepositoryRoot(stateDir); repositories != "" {
-				arguments = append(arguments, "--repositories", repositories)
-			}
-			if err := host.asAdministrator(arguments, listSteps(steps)); err != nil {
-				return err
-			}
+		// A standard account: folders of its own that the Administrators
+		// group owns are given back in one step that an administrator
+		// approves (see elevatedOwners); a folder outside its profile needs
+		// an administrator.
+		if err := host.askForOwnFolders(stateDir); err != nil {
+			return err
 		}
 		if found {
 			host.stopTask(existing.StateDir)
@@ -497,25 +496,169 @@ func listSteps(steps []string) string {
 	return strings.Join(steps[:len(steps)-1], ", ") + ", and " + steps[len(steps)-1]
 }
 
-// elevatedOwners gives the folders of a standard account's installation
-// back to that account: its state directory and saved repository folder,
-// with what the Administrators group owns in them (giveFolderToAccount).
-// The account is the one that asked for the step, not the one that
-// approved it, and every folder is checked again here.
-func (host *taskHost) elevatedOwners(stateDir, repositories string) error {
-	if stateDir == "" {
-		return errors.New("elevated-owners needs --state-dir")
+// A standard account's install asks an administrator once to give back
+// the folders of its own installation that the Administrators group owns:
+// its state directory and the repository folder saved there. The request
+// binds that step to this one install:
+//   - the install writes a request file of its own in its temporary folder,
+//     with a random one-use token and the two folders it read from its
+//     state, and passes the file and the token to the step;
+//   - the step runs only when the process that started it is this owngit
+//     program (the waiting install) and the request file belongs to that
+//     process's account, holds the token, and can be removed before
+//     anything changes, so a request is used at most once;
+//   - the step gives only a state directory that holds an OwnGit database,
+//     and only folders inside that account's profile, outside Windows,
+//     program and ProgramData folders, whose owner is the Administrators
+//     group or the account; the walker changes only what the Administrators
+//     group owns below them.
+// A folder outside the profile is left to an administrator.
+
+// ownersRequestHeader starts a request file.
+const ownersRequestHeader = "owngit elevated-owners request"
+
+// askForOwnFolders asks for the step when the Administrators group owns the
+// state directory or the saved repository folder, and says what an
+// administrator does for a folder outside this account's profile.
+func (host *taskHost) askForOwnFolders(stateDir string) error {
+	folders := host.foldersOfAdministrators(stateDir)
+	if len(folders) == 0 {
+		return nil
 	}
-	sid, err := requestingAccount()
+	profile, _ := accountProfile(host.sid)
+	var steps []string
+	for _, folder := range folders {
+		if insideFolder(folder, profile) {
+			steps = append(steps, "make your account the owner of "+folder)
+		} else {
+			host.printf("%s belongs to the Administrators group and is outside your user folder, so OwnGit does not change its owner. An administrator can make your account its owner, or choose a folder in your user folder.\n", folder)
+		}
+	}
+	if len(steps) == 0 {
+		return nil
+	}
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp("", "owngit-owners-*.request")
 	if err != nil {
-		return fmt.Errorf("find the account that asked: %w", err)
+		return err
+	}
+	path := file.Name()
+	defer os.Remove(path)
+	content := strings.Join([]string{ownersRequestHeader, "token " + hex.EncodeToString(token), "state-dir " + stateDir, "repositories " + savedRepositoryRoot(stateDir)}, "\n") + "\n"
+	_, writeErr := file.WriteString(content)
+	if closeErr := file.Close(); writeErr != nil || closeErr != nil {
+		return errors.Join(writeErr, closeErr)
+	}
+	return host.asAdministrator([]string{"service", "elevated-owners", "--request", path, "--token", hex.EncodeToString(token)}, listSteps(steps))
+}
+
+// elevatedOwners gives the folders named in the request of a waiting
+// standard-account install back to that account (see askForOwnFolders).
+// It checks everything before the walker runs and refuses the step
+// otherwise.
+func (host *taskHost) elevatedOwners(requestPath, token string) error {
+	refuse := func(why string) error {
+		return fmt.Errorf("this step gives folders back only for a waiting \"owngit service install\": %s", why)
+	}
+	if requestPath == "" || token == "" {
+		return refuse("no request")
+	}
+	sid, program, err := requestingProcess()
+	if err != nil {
+		return refuse(err.Error())
+	}
+	if !sameFile(program, host.executable) {
+		return refuse("it was not started by this owngit program")
+	}
+	stateDir, repositories, err := takeOwnersRequest(requestPath, token, sid)
+	if err != nil {
+		return refuse(err.Error())
+	}
+	profile, err := accountProfile(sid)
+	if err != nil {
+		return refuse("the profile folder of the account: " + err.Error())
+	}
+	if !isOwnGitState(stateDir) {
+		return refuse(stateDir + " holds no OwnGit state")
 	}
 	host.sid = sid
-	host.giveFolderToAccount(stateDir)
-	if repositories != "" {
-		host.giveFolderToAccount(repositories)
+	for _, folder := range []string{stateDir, repositories} {
+		switch {
+		case folder == "":
+		case !insideFolder(folder, profile):
+			host.printf("%s is outside the account's user folder, so OwnGit does not change its owner.\n", folder)
+		default:
+			host.giveFolderToAccount(folder)
+		}
 	}
 	return nil
+}
+
+// takeOwnersRequest reads the request file at path, which must be a plain
+// file of the account sid holding token, and removes it before it returns
+// the state directory and the repository folder it names.
+func takeOwnersRequest(path, token, sid string) (stateDir, repositories string, err error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 64<<10 {
+		return "", "", errors.New("the request is not a plain file")
+	}
+	if owner, err := ownerOf(path); err != nil || owner != sid {
+		return "", "", errors.New("the request does not belong to the account that asked")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", err
+	}
+	// Used once: a request that cannot be removed is not used.
+	if err := os.Remove(path); err != nil {
+		return "", "", fmt.Errorf("remove the request: %w", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
+	values := map[string]string{}
+	for _, line := range lines[min(1, len(lines)):] {
+		key, value, _ := strings.Cut(line, " ")
+		values[key] = value
+	}
+	if len(lines) != 4 || lines[0] != ownersRequestHeader || values["token"] == "" ||
+		subtle.ConstantTimeCompare([]byte(values["token"]), []byte(token)) != 1 {
+		return "", "", errors.New("the request does not hold this step's token")
+	}
+	stateDir, repositories = values["state-dir"], values["repositories"]
+	if !plainWindowsPath(stateDir) || repositories != "" && !plainWindowsPath(repositories) {
+		return "", "", errors.New("the request names a folder that is not a plain absolute path")
+	}
+	return stateDir, repositories, nil
+}
+
+// plainWindowsPath reports whether path is an absolute Windows path on a
+// drive with no "." or ".." part, as filepath.Abs gives it, so that
+// comparing it as text with another folder is safe.
+func plainWindowsPath(path string) bool {
+	if len(path) < 3 || path[1] != ':' || path[2] != '\\' || !('A' <= path[0]&^0x20 && path[0]&^0x20 <= 'Z') {
+		return false
+	}
+	for _, part := range strings.Split(path[3:], `\`) {
+		if part == "." || part == ".." || strings.ContainsAny(part, "/") {
+			return false
+		}
+	}
+	return true
+}
+
+// insideFolder reports whether the Windows path folder is inside parent,
+// not parent itself.
+func insideFolder(folder, parent string) bool {
+	normalize := func(path string) string {
+		return strings.TrimRight(strings.ToLower(strings.ReplaceAll(path, "/", `\`)), `\`)
+	}
+	folder, parent = normalize(folder), normalize(parent)
+	return parent != "" && strings.HasPrefix(folder, parent+`\`)
 }
 
 // errElevationCancelled means the owner declined the UAC prompt.
@@ -684,12 +827,12 @@ func ownershipRefusal(folder string, getenv func(string) string) string {
 	within := func(parent string) bool {
 		return parent != "" && (path == parent || strings.HasPrefix(path, parent+`\`))
 	}
-	for _, name := range []string{"SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"} {
+	for _, name := range []string{"SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData"} {
 		if within(normalize(getenv(name))) {
 			return "it is a folder of Windows or of installed programs"
 		}
 	}
-	for _, name := range []string{"ProgramData", "USERPROFILE", "PUBLIC"} {
+	for _, name := range []string{"USERPROFILE", "PUBLIC"} {
 		if parent := normalize(getenv(name)); parent != "" && path == parent {
 			return "it holds more than OwnGit's files"
 		}

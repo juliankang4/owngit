@@ -18,7 +18,9 @@ func platformRunElevated([]string) (int, error)              { return 0, errNotW
 func platformRunWithoutAdminRights([]string) (int, error)    { return 0, errNotWindows }
 func platformSignalServiceStop(string) (bool, error)         { return false, errNotWindows }
 func platformCurrentAccountSID() (string, error)             { return "S-1-5-21-" + strconv.Itoa(os.Getuid()), nil }
-func platformRequestingAccount() (string, error)             { return "", errNotWindows }
+func platformRequestingProcess() (string, string, error)     { return "", "", errNotWindows }
+func platformAccountProfile(string) (string, error)          { return "", errNotWindows }
+func platformIsOwnGitState(string) bool                      { return false }
 func platformSystemDirectory() (string, error)               { return "", errNotWindows }
 func attachToConsole(int)                                    {}
 func platformOwnerOf(string) (string, error)                 { return "", errNotWindows }

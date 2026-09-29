@@ -90,27 +90,28 @@ const (
 	MsgDoctorRepair   MessageCode = "doctor.repair"
 	MsgDoctorRunIt    MessageCode = "doctor.run_it"
 	// Findings. Each %s is described at its entry.
-	MsgDoctorNotRunning           MessageCode = "doctor.not_running"
-	MsgDoctorSilent               MessageCode = "doctor.silent"
-	MsgDoctorAddressTaken         MessageCode = "doctor.address_taken"
-	MsgDoctorSetup                MessageCode = "doctor.setup"
-	MsgDoctorAdministratorsFolder MessageCode = "doctor.administrators_folder"
-	MsgDoctorWindowsRule          MessageCode = "doctor.windows_rule"
-	MsgDoctorWindowsRuleAsk       MessageCode = "doctor.windows_rule_ask"
-	MsgDoctorWindowsBlockAll      MessageCode = "doctor.windows_block_all"
-	MsgDoctorWindowsBlocked       MessageCode = "doctor.windows_blocked"
-	MsgDoctorWindowsForeignRule   MessageCode = "doctor.windows_foreign_rule"
-	MsgDoctorWindowsPublic        MessageCode = "doctor.windows_public"
-	MsgDoctorWindowsDomain        MessageCode = "doctor.windows_domain"
-	MsgDoctorMacBlockAll          MessageCode = "doctor.mac_block_all"
-	MsgDoctorMacBlocked           MessageCode = "doctor.mac_blocked"
-	MsgDoctorUFW                  MessageCode = "doctor.ufw"
-	MsgDoctorUFWManual            MessageCode = "doctor.ufw_manual"
-	MsgDoctorFirewalld            MessageCode = "doctor.firewalld"
-	MsgDoctorFirewalldManual      MessageCode = "doctor.firewalld_manual"
-	MsgDoctorUncheckedServer      MessageCode = "doctor.unchecked_server"
-	MsgDoctorUncheckedFirewall    MessageCode = "doctor.unchecked_firewall"
-	MsgDoctorUncheckedOwner       MessageCode = "doctor.unchecked_owner"
+	MsgDoctorNotRunning                    MessageCode = "doctor.not_running"
+	MsgDoctorSilent                        MessageCode = "doctor.silent"
+	MsgDoctorAddressTaken                  MessageCode = "doctor.address_taken"
+	MsgDoctorSetup                         MessageCode = "doctor.setup"
+	MsgDoctorAdministratorsFolder          MessageCode = "doctor.administrators_folder"
+	MsgDoctorAdministratorsFolderElsewhere MessageCode = "doctor.administrators_folder_elsewhere"
+	MsgDoctorWindowsRule                   MessageCode = "doctor.windows_rule"
+	MsgDoctorWindowsRuleAsk                MessageCode = "doctor.windows_rule_ask"
+	MsgDoctorWindowsBlockAll               MessageCode = "doctor.windows_block_all"
+	MsgDoctorWindowsBlocked                MessageCode = "doctor.windows_blocked"
+	MsgDoctorWindowsForeignRule            MessageCode = "doctor.windows_foreign_rule"
+	MsgDoctorWindowsPublic                 MessageCode = "doctor.windows_public"
+	MsgDoctorWindowsDomain                 MessageCode = "doctor.windows_domain"
+	MsgDoctorMacBlockAll                   MessageCode = "doctor.mac_block_all"
+	MsgDoctorMacBlocked                    MessageCode = "doctor.mac_blocked"
+	MsgDoctorUFW                           MessageCode = "doctor.ufw"
+	MsgDoctorUFWManual                     MessageCode = "doctor.ufw_manual"
+	MsgDoctorFirewalld                     MessageCode = "doctor.firewalld"
+	MsgDoctorFirewalldManual               MessageCode = "doctor.firewalld_manual"
+	MsgDoctorUncheckedServer               MessageCode = "doctor.unchecked_server"
+	MsgDoctorUncheckedFirewall             MessageCode = "doctor.unchecked_firewall"
+	MsgDoctorUncheckedOwner                MessageCode = "doctor.unchecked_owner"
 )
 
 // Setup and bootstrap.
@@ -1154,6 +1155,11 @@ var catalog = map[MessageCode]message{
 	MsgDoctorAdministratorsFolder: {
 		en: "%s belongs to the Administrators group, so OwnGit, which runs without administrator rights, cannot use it. The repair asks Windows once for an administrator's approval and makes your account the owner of what the Administrators group owns in it.",
 		ko: "%s의 소유자가 Administrators 그룹이라 관리자 권한 없이 실행되는 OwnGit이 이 폴더를 쓸 수 없습니다. 고치는 명령을 실행하면 Windows가 관리자 승인을 한 번 요청하고 승인되면 이 폴더에서 Administrators 그룹이 소유한 항목의 소유자가 계정으로 바뀝니다.",
+	},
+	// One %s: the folder.
+	MsgDoctorAdministratorsFolderElsewhere: {
+		en: "%s belongs to the Administrators group, so OwnGit, which runs without administrator rights, cannot use it. It is outside your user folder, so OwnGit does not change its owner: an administrator can make your account its owner, or choose a folder in your user folder.",
+		ko: "%s의 소유자가 Administrators 그룹이라 관리자 권한 없이 실행되는 OwnGit이 이 폴더를 쓸 수 없습니다. 사용자 폴더 밖에 있는 폴더라 OwnGit은 소유자를 바꾸지 않습니다. 관리자에게 계정을 소유자로 바꿔 달라고 하거나 사용자 폴더 안의 폴더를 고르세요.",
 	},
 	// One %s: the owngit program that serves.
 	MsgDoctorWindowsRule: {

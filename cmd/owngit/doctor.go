@@ -327,7 +327,18 @@ func (output *limitedOutput) Write(data []byte) (int, error) {
 func (host *taskHost) readDoctorFacts(ctx context.Context, facts *doctor.Facts, folders []string) error {
 	facts.System = host.system
 	owned, err := host.administratorsFolders(folders)
-	facts.AdministratorsFolders = owned
+	// A standard account's install gives back only folders in its profile.
+	profile := ""
+	if !facts.Administrator {
+		profile, _ = accountProfile(host.sid)
+	}
+	for _, folder := range owned {
+		if facts.Administrator || insideFolder(folder, profile) {
+			facts.AdministratorsFolders = append(facts.AdministratorsFolders, folder)
+		} else {
+			facts.FoldersElsewhere = append(facts.FoldersElsewhere, folder)
+		}
+	}
 	if err != nil {
 		facts.Unchecked = append(facts.Unchecked, doctor.Unchecked{Code: webui.MsgDoctorUncheckedOwner, Reason: err.Error()})
 	}
