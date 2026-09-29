@@ -140,8 +140,8 @@ A change must keep the following behavior.
 
 Git refs and objects are the authoritative repository data. SQLite (`owngit.sqlite` in the state directory) holds pull request, review, task, check, and import records. OwnGit's own refs live under `refs/owngit/`. They are hidden from clients, and client pushes are accepted only for `refs/heads/*` and `refs/tags/*`.
 
-- The state schema version is recorded in the database (`currentSchemaVersion` in `internal/state/store.go`). A schema change needs a migration from each accepted earlier catalog. OwnGit refuses unknown, altered, or newer databases without changing their files.
-- The offline backup format version is `backupVersion` in `internal/recovery/recovery.go`. When you add durable records, add them to the backup and to restore validation, raise the version, keep released versions readable, and reject newer versions before decoding so records are never dropped silently.
+- The state schema version is recorded in the database (`currentSchemaVersion` in `internal/state/store.go`). A schema change needs a migration from each accepted earlier catalog. OwnGit refuses unknown, altered, or newer databases without changing their files: a released schema upgrades only when its tables are exactly the ones its schema steps create. `internal/state/testdata/released` holds dumps of databases that releases wrote; add one when a release writes a new schema.
+- The offline backup format version is `backupVersion` in `internal/recovery/recovery.go`. When you add durable records, add them to the backup and to restore validation, raise the version, keep released versions readable, and reject newer versions before decoding so records are never dropped silently. A backup is written in the previous release's format when it holds none of the new records (`format11Content`), so that release can still restore it; an older manifest that holds a newer record is refused.
 - Machine-local authority (credentials, consent, schedules, sessions) must not be exported or restored.
 
 ## Releases
