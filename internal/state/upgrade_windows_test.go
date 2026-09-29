@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unsafe"
@@ -69,8 +70,8 @@ func TestWindowsExistingBackupFolderMustBePrivate(t *testing.T) {
 // add, list and remove names in the folders it holds: another account
 // that keeps opening the new folder's name while it is created gets
 // nothing, and afterwards it can neither add a backup name nor remove the
-// temporary copy or a published backup. win/run.sh creates the second
-// local account; without it the test is skipped.
+// temporary copy or a published backup. The Windows test run creates the
+// second local account; without it the test is skipped.
 func TestWindowsNewFoldersGiveAnotherAccountNoHandle(t *testing.T) {
 	other, as := otherAccount(t)
 	user, _, err := processIdentity()
@@ -201,13 +202,21 @@ func TestWindowsNewFoldersGiveAnotherAccountNoHandle(t *testing.T) {
 	}
 }
 
-// otherAccount logs on the second local account that win/run.sh creates,
-// named by OWNGIT_TEST_OTHER_ACCOUNT with its password in
+// otherAccountCredentials reads the second local account once per test
+// process and removes its password from the environment, so no process the
+// tests start sees it.
+var otherAccountCredentials = sync.OnceValues(func() (string, string) {
+	name, password := os.Getenv("OWNGIT_TEST_OTHER_ACCOUNT"), os.Getenv("OWNGIT_TEST_OTHER_PASSWORD")
+	os.Unsetenv("OWNGIT_TEST_OTHER_PASSWORD")
+	return name, password
+})
+
+// otherAccount logs on the second local account that the Windows test run
+// creates, named by OWNGIT_TEST_OTHER_ACCOUNT with its password in
 // OWNGIT_TEST_OTHER_PASSWORD, and returns its SID and a function that runs
 // f on a thread that acts as that account.
 func otherAccount(t *testing.T) (*windows.SID, func(f func())) {
-	name, password := os.Getenv("OWNGIT_TEST_OTHER_ACCOUNT"), os.Getenv("OWNGIT_TEST_OTHER_PASSWORD")
-	os.Unsetenv("OWNGIT_TEST_OTHER_PASSWORD")
+	name, password := otherAccountCredentials()
 	if name == "" || password == "" {
 		t.Skip("needs a second local account: OWNGIT_TEST_OTHER_ACCOUNT and OWNGIT_TEST_OTHER_PASSWORD")
 	}

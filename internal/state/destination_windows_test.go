@@ -47,9 +47,11 @@ func TestWindowsDestinationHoldsTheWayAndTheStage(t *testing.T) {
 }
 
 // Another account that the parent lets rename and remove what is in it
-// cannot rename a held stage, and cannot open it: the stage is private
-// from the moment it exists. A folder made by hand beside it is the
-// control. win/run.sh creates the second local account; without it the
+// cannot take a held stage: the delete access a rename needs, which the
+// parent grants it, is refused only because the stage is held, and is
+// granted once the stage is released. The stage is also private, so the
+// account cannot read it. A folder made by hand beside it is the control.
+// The Windows test run creates the second local account; without it the
 // test is skipped.
 func TestWindowsAnotherAccountCannotExchangeTheStage(t *testing.T) {
 	other, as := otherAccount(t)
@@ -87,19 +89,40 @@ func TestWindowsAnotherAccountCannotExchangeTheStage(t *testing.T) {
 	defer destination.Close()
 	stage, err := destination.CreateStage("restored.stage")
 	noErr(t, err)
-	var renameErr, openErr error
+	// Delete access alone, which a rename needs and the parent grants: the
+	// overlapped flag keeps CreateFile from also asking for SYNCHRONIZE,
+	// which only the stage's own access list could give.
+	openForDelete := func() error {
+		name, err := windows.UTF16PtrFromString(stage)
+		if err != nil {
+			return err
+		}
+		handle, err := windows.CreateFile(name, windows.DELETE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+			nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OVERLAPPED, 0)
+		if err == nil {
+			windows.CloseHandle(handle)
+		}
+		return err
+	}
+	var heldErr, readErr error
 	as(func() {
-		renameErr = os.Rename(stage, stage+"-stolen")
+		heldErr = openForDelete()
 		var dir *os.File
-		if dir, openErr = os.Open(stage); openErr == nil {
+		if dir, readErr = os.Open(stage); readErr == nil {
 			dir.Close()
 		}
 	})
-	if !errors.Is(renameErr, windows.ERROR_SHARING_VIOLATION) {
-		t.Fatalf("the other account's rename of the held stage: %v, want a sharing violation", renameErr)
+	if !errors.Is(heldErr, windows.ERROR_SHARING_VIOLATION) {
+		t.Fatalf("the other account's delete access to the held stage: %v, want a sharing violation", heldErr)
 	}
-	if openErr == nil {
+	if readErr == nil {
 		t.Fatal("the other account opened the stage")
+	}
+	destination.ReleaseStage()
+	var releasedErr error
+	as(func() { releasedErr = openForDelete() })
+	if releasedErr != nil {
+		t.Fatalf("the other account had no delete access to the released stage either (%v), so the hold was not what refused it", releasedErr)
 	}
 	if _, err := os.Stat(stage); err != nil {
 		t.Fatal(err)
