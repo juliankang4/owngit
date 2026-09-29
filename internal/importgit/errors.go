@@ -20,6 +20,10 @@ var (
 	// ErrLimitExceeded reports that the response is larger than the effective
 	// limits allow. It is a local bound, not a protocol violation.
 	ErrLimitExceeded = errors.New("advertisement exceeds a parse limit")
+	// ErrTooManyRefs is the ErrLimitExceeded of a ref list with more records
+	// than MaxRefRecords, which counts every record, including refs a caller
+	// would not use.
+	ErrTooManyRefs = fmt.Errorf("%w: too many refs", ErrLimitExceeded)
 	// ErrMalformedPacket reports pkt-line framing this parser cannot trust,
 	// including a non-hexadecimal length, an empty data packet, and a length
 	// beyond the protocol maximum.

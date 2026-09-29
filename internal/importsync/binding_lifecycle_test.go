@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"owngit/internal/importfetch"
+	"owngit/internal/importgit"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
@@ -96,6 +97,20 @@ func TestTLSFailureIsNamed(t *testing.T) {
 		if problem.Code != CodeNetwork || !strings.HasPrefix(problem.Message, test.want) {
 			t.Errorf("cause %T classified as %s %q, want %q", test.cause, problem.Code, problem.Message, test.want)
 		}
+	}
+}
+
+// A source with more refs than an import accepts is told apart from other
+// transfer bounds, and the message says that refs OwnGit does not import
+// count and what to do instead.
+func TestTooManyRefsIsExplained(t *testing.T) {
+	tooLarge := &importfetch.Error{Op: "read advertisement", Kind: importfetch.ErrResponseTooLarge}
+	problem := classifyFetchError(fmt.Errorf("%w: %w", tooLarge, importgit.ErrTooManyRefs))
+	if problem.Code != CodeTooLarge || !strings.Contains(problem.Message, "more refs than an import accepts") || !strings.Contains(problem.Message, "pull request refs") {
+		t.Fatalf("too many refs classified as %s %q", problem.Code, problem.Message)
+	}
+	if problem := classifyFetchError(tooLarge); problem.Code != CodeTooLarge || problem.Message != "source exceeds a configured transfer bound" {
+		t.Fatalf("other bound classified as %s %q", problem.Code, problem.Message)
 	}
 }
 

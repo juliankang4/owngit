@@ -230,6 +230,8 @@ func advertisementCause(err error) error {
 	known := []error{
 		importgit.ErrInvalidLimits,
 		importgit.ErrInvalidOptions,
+		// Before ErrLimitExceeded, which it wraps.
+		importgit.ErrTooManyRefs,
 		importgit.ErrLimitExceeded,
 		importgit.ErrMalformedPacket,
 		importgit.ErrTruncated,

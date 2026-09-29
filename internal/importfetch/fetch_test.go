@@ -471,6 +471,21 @@ func TestUploadPackFramingFailures(t *testing.T) {
 	}
 }
 
+// A ref list over the record limit is a response limit that names its
+// cause: the number of refs, pull request refs included.
+func TestTooManyRefsIsNamed(t *testing.T) {
+	source := &scriptedSource{
+		t: t,
+		advertisement: testAdvertisement(testRef(testSHA1A, "refs/heads/main", "ofs-delta"),
+			testRef(testSHA1A, "refs/pull/1/head", ""), testRef(testSHA1A, "refs/pull/2/head", "")),
+	}
+	_, request := startSource(t, source)
+	request.Limits.Advertisement.MaxRefRecords = 2
+	if _, err := Fetch(context.Background(), request, consumeAll); !errors.Is(err, ErrResponseTooLarge) || !errors.Is(err, importgit.ErrTooManyRefs) {
+		t.Fatalf("error = %v, want the ref limit", err)
+	}
+}
+
 func TestPackLimitAndConsumerCompletion(t *testing.T) {
 	newRequest := func(t *testing.T) Request {
 		t.Helper()

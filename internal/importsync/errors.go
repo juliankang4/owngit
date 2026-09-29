@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"owngit/internal/importfetch"
+	"owngit/internal/importgit"
 )
 
 // Stable problem codes. A later HTTP or CLI binding maps them to user-facing
@@ -205,6 +206,8 @@ func classifyFetchError(err error) *Problem {
 		return newProblem(CodeNetwork, "source returned an unexpected HTTP status", err)
 	case errors.Is(fetchError, importfetch.ErrMediaType), errors.Is(fetchError, importfetch.ErrContentEncoding), errors.Is(fetchError, importfetch.ErrResponseHeaders):
 		return newProblem(CodeProtocol, "source returned an unsupported HTTP response", err)
+	case errors.Is(err, importgit.ErrTooManyRefs):
+		return newProblem(CodeTooLarge, "source advertises more refs than an import accepts, counting refs it does not import such as pull request refs; clone the source and push its branches and tags to a new repository instead", err)
 	case errors.Is(fetchError, importfetch.ErrRequestTooLarge), errors.Is(fetchError, importfetch.ErrResponseTooLarge):
 		return newProblem(CodeTooLarge, "source exceeds a configured transfer bound", err)
 	case errors.Is(fetchError, importfetch.ErrAdvertisement):

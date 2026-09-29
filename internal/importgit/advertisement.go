@@ -418,7 +418,7 @@ func (s *parseState) readRefList() error {
 		// handled above.
 		s.records++
 		if s.records > s.limits.MaxRefRecords {
-			return s.fail(offset, ErrLimitExceeded,
+			return s.fail(offset, ErrTooManyRefs,
 				fmt.Sprintf("the ref list exceeds the %d-record limit", s.limits.MaxRefRecords))
 		}
 		if line == shallowPrefix || strings.HasPrefix(line, shallowPrefix+" ") {
