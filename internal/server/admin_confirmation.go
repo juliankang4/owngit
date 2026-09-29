@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"owngit/internal/auth"
 	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -162,7 +163,15 @@ func (app *App) confirmAdmin(writer http.ResponseWriter, request *http.Request, 
 	}
 	if readErr == nil && !always && authority.choice.Window() > 0 {
 		if err := app.rememberAdmin(writer, request, chrome, version); err != nil {
-			return adminPasswordProof{}, err
+			if errors.Is(err, auth.ErrInvalidCredentials) {
+				return adminPasswordProof{}, err
+			}
+			// A session write failure need not block a change confirmed with
+			// the current password, but an unreadable revision cannot confirm it.
+			if checkErr := app.Auth.ConfirmCredentialVersion(request.Context(), "admin", version); checkErr != nil {
+				return adminPasswordProof{}, checkErr
+			}
+			logFailure(request, "administrator confirmation start", err)
 		}
 	}
 	return adminPasswordProof{password: password, version: version}, nil
