@@ -23,7 +23,7 @@ func (e *SpaceError) Error() string {
 	if e.Err != nil {
 		return fmt.Sprintf("not enough free space in %s: %v", e.Dir, e.Err)
 	}
-	return fmt.Sprintf("not enough free space in %s: the restore needs at least %d MiB and %d MiB is free", e.Dir, mebibytes(e.Needed), e.Free>>20)
+	return fmt.Sprintf("not enough free space in %s: at least %d MiB is needed and %d MiB is free", e.Dir, mebibytes(e.Needed), e.Free>>20)
 }
 
 func (e *SpaceError) Unwrap() error { return e.Err }
