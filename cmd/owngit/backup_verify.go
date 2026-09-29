@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"owngit/internal/recovery"
 )
@@ -31,7 +34,10 @@ func verifyBackup(arguments []string) error {
 	if len(operands) != 1 {
 		return jsonFailure(*asJSON, "invalid_arguments", errors.New("backup verify takes one backup folder"))
 	}
-	result, err := recovery.Verify(context.Background(), operands[0], *temporary, *gitPath)
+	// An interrupt stops the rehearsal, which then removes its folder.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := recovery.Verify(ctx, operands[0], *temporary, *gitPath)
 	if *asJSON {
 		if writeErr := writeJSONValue(result); writeErr != nil {
 			return writeErr
@@ -39,7 +45,10 @@ func verifyBackup(arguments []string) error {
 	} else {
 		printVerification(os.Stdout, result)
 	}
-	if err != nil {
+	switch {
+	case ctx.Err() != nil:
+		return &checkExit{code: 130, err: err}
+	case err != nil:
 		return &checkExit{code: 1, err: err}
 	}
 	return nil
@@ -69,7 +78,19 @@ func printVerification(writer io.Writer, result recovery.Verification) {
 	} else {
 		fmt.Fprintf(writer, "Not verified: %s\n", strings.ReplaceAll(result.Error, "\n", "\n  "))
 	}
+	if len(result.Leftovers) != 0 {
+		fmt.Fprintf(writer, "Note: rehearsal folders that a verification left when it stopped, or that another one still uses: %s. Remove them once no verification runs.\n", strings.Join(quoted(result.Leftovers), ", "))
+	}
 	if result.CleanupError != "" {
 		fmt.Fprintf(writer, "Warning: %s\n", result.CleanupError)
 	}
+}
+
+// quoted quotes each path, so a name shows as the characters it holds.
+func quoted(paths []string) []string {
+	quoted := make([]string, len(paths))
+	for index, path := range paths {
+		quoted[index] = strconv.Quote(path)
+	}
+	return quoted
 }

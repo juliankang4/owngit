@@ -236,3 +236,52 @@ func TestVerifyShowsNothingFromAnInvalidManifest(t *testing.T) {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }
+
+// An interrupted verification stops, reports what it did not check as not
+// run, and removes its folder. Folders that an earlier verification left are
+// named and kept, and this run's own folder name is new.
+func TestVerifyRemovesItsFolderWhenInterrupted(t *testing.T) {
+	root := t.TempDir()
+	backup := newTwoRepositoryBackup(t, root)
+	temporary := t.TempDir()
+	left := filepath.Join(temporary, rehearsalPrefix+"left")
+	noErr(t, os.Mkdir(left, 0o700))
+	assertOnlyLeft := func(t *testing.T) {
+		t.Helper()
+		entries, err := os.ReadDir(temporary)
+		if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(left) {
+			t.Fatalf("temporary folder holds %v (%v), want only %s", entries, err, left)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := Verify(ctx, backup, temporary, "")
+	if err == nil || result.Verified || !strings.Contains(result.Error, "interrupted") {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	for _, item := range result.Repositories {
+		if item.Status != VerifyNotRun {
+			t.Errorf("repository %+v, want not run", item)
+		}
+	}
+	if len(result.Leftovers) != 1 || filepath.Base(result.Leftovers[0]) != filepath.Base(left) {
+		t.Fatalf("leftovers=%v, want %s", result.Leftovers, left)
+	}
+	assertOnlyLeft(t)
+
+	// Interrupted after every repository was restored, while the restore
+	// opens its staged state.
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	operations := defaultRestoreOperations()
+	operations.openState = func(ctx context.Context, dir string) (*state.Store, error) {
+		cancel()
+		return state.Open(ctx, dir)
+	}
+	result, err = verify(ctx, backup, temporary, "", operations)
+	if err == nil || result.Verified || !strings.Contains(result.Error, "interrupted") || result.Database != VerifyNotRun {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	assertOnlyLeft(t)
+}

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"owngit/internal/state"
 )
 
 // The outcome of one verification step.
@@ -35,6 +37,9 @@ type Verification struct {
 	Limits []string `json:"limits"`
 	// CleanupError says that the rehearsal folder could not be removed.
 	CleanupError string `json:"cleanup_error,omitempty"`
+	// Leftovers names rehearsal folders of this account beside this run's
+	// that an earlier verification left, or that another one uses.
+	Leftovers []string `json:"leftovers,omitempty"`
 }
 
 // RepositoryVerification is the result for one repository: its bundle
@@ -47,13 +52,19 @@ type RepositoryVerification struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// rehearsalPrefix starts the name of every rehearsal folder.
+const rehearsalPrefix = "owngit-verify-"
+
 // Verify rehearses a restore of the backup input: Restore, with all its
-// checks, restores it into a new folder private to this account in
-// temporary (the system's temporary folder when empty); the restored
-// database then passes SQLite's integrity and foreign key checks; and the
-// folder is removed. Verify writes nothing beside the backup and never uses
-// the live state. The error says why the backup is not verified, or that
-// the folder could not be removed; the result says how far each check got.
+// checks, restores it into a new folder in temporary (the system's
+// temporary folder when empty); the restored database then passes SQLite's
+// integrity and foreign key checks; and the folder is removed. The folder
+// is a stage of a state.Destination: private to this account from its
+// creation, under a new random name, and held until it is removed. Verify
+// writes nothing beside the backup and never uses the live state. When ctx
+// ends, it stops the work and removes the folder. The error says why the
+// backup is not verified, or that the folder could not be removed; the
+// result says how far each check got.
 func Verify(ctx context.Context, input, temporary, gitPath string) (Verification, error) {
 	return verify(ctx, input, temporary, gitPath, defaultRestoreOperations())
 }
@@ -66,19 +77,37 @@ func verify(ctx context.Context, input, temporary, gitPath string, operations re
 	if temporary == "" {
 		temporary = os.TempDir()
 	}
-	scratch, err := os.MkdirTemp(temporary, "owngit-verify-")
-	if err != nil {
-		err = fmt.Errorf("create the folder for the rehearsal: %w", err)
+	fail := func(err error) (Verification, error) {
 		result.Error = err.Error()
 		return result, err
 	}
+	area, err := state.OpenStagingArea(temporary)
+	if err != nil {
+		return fail(fmt.Errorf("open the folder for the rehearsal: %w", err))
+	}
+	defer area.Close()
+	// Folders that a verification left when it could not remove them, for
+	// example after a power loss, are named, never reused or removed: this
+	// run cannot tell them from those of a verification still running.
+	result.Leftovers, _ = area.Stages(rehearsalPrefix)
+	suffix, err := randomSuffix()
+	if err != nil {
+		return fail(err)
+	}
+	scratch, err := area.CreateStage(rehearsalPrefix + suffix)
+	if err != nil {
+		return fail(fmt.Errorf("create the folder for the rehearsal: %w", err))
+	}
 	err = rehearse(ctx, &result, input, scratch, gitPath, operations)
+	if ctx.Err() != nil {
+		err = fmt.Errorf("the verification was interrupted: %w", ctx.Err())
+	}
 	if err != nil {
 		result.Error = err.Error()
 	} else {
 		result.Verified = true
 	}
-	if removeErr := os.RemoveAll(scratch); removeErr != nil {
+	if removeErr := area.RemoveStage(); removeErr != nil {
 		removeErr = fmt.Errorf("remove the rehearsal folder %s: %w", scratch, removeErr)
 		result.CleanupError = removeErr.Error()
 		err = errors.Join(err, removeErr)

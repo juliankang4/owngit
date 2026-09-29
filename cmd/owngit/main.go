@@ -1031,8 +1031,12 @@ func restoreState(arguments []string) error {
 	if flags.NArg() != 0 || *input == "" || *repositoryRoot == "" {
 		return errors.New("restore requires --input and --repository-root and accepts no positional arguments")
 	}
+	// An interrupt stops the work, and the rehearsal and the restore remove
+	// what they created.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	if *verifyFirst {
-		result, err := recovery.Verify(context.Background(), *input, *temporary, *gitPath)
+		result, err := recovery.Verify(ctx, *input, *temporary, *gitPath)
 		if !result.Verified {
 			printVerification(os.Stdout, result)
 			return errors.New("the backup did not pass verification, so nothing was restored")
@@ -1043,7 +1047,7 @@ func restoreState(arguments []string) error {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
 	}
-	if err := recovery.Restore(context.Background(), *input, *stateDir, *repositoryRoot, *gitPath); err != nil {
+	if err := recovery.Restore(ctx, *input, *stateDir, *repositoryRoot, *gitPath); err != nil {
 		return err
 	}
 	fmt.Printf("Offline backup restored to %s with repositories at %s. Previous sessions, trusted hosts, and network settings were not restored.\n", *stateDir, *repositoryRoot)

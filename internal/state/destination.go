@@ -1,8 +1,10 @@
 package state
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Destination is a folder that does not exist yet and that OwnGit makes
@@ -29,6 +31,8 @@ type Destination struct {
 	parent *os.File
 	unhold func()
 	stage  *os.File
+	// stageName names the stage in the parent until RemoveStage.
+	stageName string
 }
 
 // OpenDestination checks the parent of the folder path and holds it,
@@ -45,6 +49,22 @@ func OpenDestination(path string) (*Destination, error) {
 // OpenStateDirectory.
 func OpenStateDestination(path string) (*Destination, error) {
 	return openDestination(path, true)
+}
+
+// OpenStagingArea holds the folder dir, checked and created like the
+// parent of a Destination, for stages that are removed and never renamed,
+// such as the rehearsal of a restore. Path is empty.
+func OpenStagingArea(dir string) (*Destination, error) {
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	// openDestinationParent takes a path in the folder it opens.
+	parent, unhold, err := openDestinationParent(filepath.Join(absolute, "stage"), false)
+	if err != nil {
+		return nil, err
+	}
+	return &Destination{parent: parent, unhold: unhold}, nil
 }
 
 func openDestination(path string, local bool) (*Destination, error) {
@@ -76,8 +96,52 @@ func (d *Destination) CreateStage(name string) (string, error) {
 		_ = os.Remove(path)
 		return "", err
 	}
-	d.stage = stage
+	d.stage, d.stageName = stage, name
 	return path, nil
+}
+
+// Stages lists the entries of the held parent whose names start with
+// prefix and that are folders of this account, not links: stages that an
+// earlier run left when it stopped, or that another run still uses.
+func (d *Destination) Stages(prefix string) ([]string, error) {
+	entries, err := os.ReadDir(d.parent.Name())
+	if err != nil {
+		return nil, err
+	}
+	var stages []string
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), prefix) || !entry.IsDir() || entry.Name() == d.stageName {
+			continue
+		}
+		path := filepath.Join(d.parent.Name(), entry.Name())
+		folder, err := OpenDirectory(path, false)
+		if err != nil {
+			continue
+		}
+		folder.Close()
+		stages = append(stages, path)
+	}
+	return stages, nil
+}
+
+// RemoveStage removes the stage: first what it holds, while the stage is
+// still held, so on Windows no account can rename it and put another
+// folder in its place meanwhile, then, released, the empty stage.
+func (d *Destination) RemoveStage() error {
+	if d.stageName == "" {
+		return nil
+	}
+	path := filepath.Join(d.parent.Name(), d.stageName)
+	entries, err := os.ReadDir(path)
+	for _, entry := range entries {
+		err = errors.Join(err, os.RemoveAll(filepath.Join(path, entry.Name())))
+	}
+	d.ReleaseStage()
+	d.stageName = ""
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
 }
 
 // ReleaseStage stops holding the stage, which renaming or removing it needs

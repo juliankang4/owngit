@@ -589,6 +589,9 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	// restore stops.
 	var failures []error
 	for index, item := range manifest.Repositories {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := checkBundleFile(inputRoot, item); err != nil {
 			rehearsal.record(index, err)
 			failures = append(failures, repositoryFailure(item.ID, err))
@@ -631,6 +634,10 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 			return err
 		}
 		err := restoreRepository(ctx, runner, inputRoot, repositoryStage, item)
+		if ctx.Err() != nil {
+			// Interrupted, not failed: the repository stays not checked.
+			return ctx.Err()
+		}
 		rehearsal.record(index, err)
 		if err != nil {
 			failures = append(failures, repositoryFailure(item.ID, err))
