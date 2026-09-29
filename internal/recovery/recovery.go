@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -826,6 +827,13 @@ func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath
 	if item.Head, err = readHead(ctx, runner, repositoryPath, refStorage); err != nil {
 		return RepositoryManifest{}, err
 	}
+	// A symbolic HEAD may name a branch that does not exist yet, but not
+	// one whose file exists and Git could not read.
+	if item.Head.Symbolic != "" && refStorage == refStorageFiles && !slices.ContainsFunc(refs, func(ref Ref) bool { return ref.Name == item.Head.Symbolic }) {
+		if _, err := os.Lstat(filepath.Join(repositoryPath, filepath.FromSlash(item.Head.Symbolic))); !errors.Is(err, os.ErrNotExist) {
+			return RepositoryManifest{}, fmt.Errorf("HEAD names %s, which exists but cannot be read", item.Head.Symbolic)
+		}
+	}
 	// Only a symbolic HEAD can name a branch that does not exist yet, so a
 	// repository is empty only when HEAD is symbolic and no ref exists.
 	item.Empty = len(refs) == 0 && item.Head.OID == ""
@@ -889,6 +897,11 @@ func readRefs(ctx context.Context, runner commandRunner, repositoryPath string) 
 	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)")
 	if err != nil {
 		return nil, err
+	}
+	// Git leaves out a ref it cannot read and only warns, so a warning is
+	// an incomplete list, never the refs of the repository.
+	if warning, _, _ := strings.Cut(strings.TrimSpace(string(result.Stderr)), "\n"); warning != "" {
+		return nil, fmt.Errorf("Git could not read every ref: %q", warning)
 	}
 	var refs []Ref
 	for _, line := range strings.Split(strings.TrimSpace(string(result.Stdout)), "\n") {

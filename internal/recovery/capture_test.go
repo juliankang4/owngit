@@ -235,6 +235,22 @@ func TestBackupRefusesRepositoriesItCannotDescribe(t *testing.T) {
 		"promisor remote": func(t *testing.T, manager *repository.Manager, path string) {
 			runGit(t, path, "--git-dir", ".", "config", "remote.origin.promisor", "true")
 		},
+		// Git skips an unreadable ref with a warning: the only branch
+		// would make the repository look empty, another branch would just
+		// be missing.
+		"only branch unreadable": func(t *testing.T, manager *repository.Manager, path string) {
+			writeRefAsAPush(t, manager, "damaged", "update-ref", "refs/heads/main", commitInto(t, path, "lost"))
+			noErr(t, os.WriteFile(filepath.Join(path, "refs", "heads", "main"), []byte("garbage\n"), 0o600))
+		},
+		"one branch unreadable": func(t *testing.T, manager *repository.Manager, path string) {
+			commit := commitInto(t, path, "kept")
+			writeRefAsAPush(t, manager, "damaged", "update-ref", "refs/heads/main", commit)
+			writeRefAsAPush(t, manager, "damaged", "update-ref", "refs/heads/other", commit)
+			noErr(t, os.WriteFile(filepath.Join(path, "refs", "heads", "other"), []byte("garbage\n"), 0o600))
+		},
+		"HEAD names an unreadable ref file": func(t *testing.T, manager *repository.Manager, path string) {
+			noErr(t, os.MkdirAll(filepath.Join(path, "refs", "heads", "main"), 0o700))
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
