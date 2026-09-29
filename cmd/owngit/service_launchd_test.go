@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -44,8 +45,10 @@ func testLaunchAgentHost(t *testing.T, env service.Environment, homebrew string)
 // targets in loaded, and bootstrap, the step that would start a server,
 // fails after saving the agent it was given in bootstrapped.
 type fakeLaunchctl struct {
-	calls        []string
-	loaded       []string
+	calls  []string
+	loaded []string
+	// iconRunning keeps an icon process that pkill does not end.
+	iconRunning  bool
 	bootstrapped string
 }
 
@@ -59,6 +62,11 @@ func recordLaunchctl(t *testing.T, loaded ...string) *fakeLaunchctl {
 		switch {
 		case name == "/usr/bin/open", filepath.Base(name) == "OwnGitLauncher":
 			return nil, nil
+		case name == "/usr/bin/pgrep":
+			if fake.iconRunning {
+				return []byte("4242\n"), nil
+			}
+			return nil, errors.New("exit status 1")
 		case len(args) == 0:
 		case args[0] == "enable":
 			return nil, nil
@@ -439,30 +447,39 @@ func TestLaunchAgentOpensTheIcon(t *testing.T) {
 func TestLaunchAgentUninstallClosesTheIcon(t *testing.T) {
 	fake := recordLaunchctl(t)
 	host, out := testLaunchAgentHost(t, macDesktop(), "")
-	app := filepath.Join(filepath.Dir(host.agentExecutable), "OwnGit.app")
+	// Like Homebrew's opt link: the program's folder is a link, and macOS
+	// runs the app at the folder it resolves to.
+	real := filepath.Join(filepath.Dir(filepath.Dir(host.agentExecutable)), "Cellar")
+	app := filepath.Join(real, "OwnGit.app")
 	noErr(t, os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0o755))
 	noErr(t, os.WriteFile(service.AppLauncher(app), nil, 0o755))
+	noErr(t, os.Symlink(real, filepath.Dir(host.agentExecutable)))
+	resolved, err := filepath.EvalSymlinks(service.AppLauncher(app))
+	noErr(t, err)
 	agent, err := service.RenderLaunchAgent(host.agentPlan(filepath.Join(t.TempDir(), "state"), nil, service.Installed{}, false))
 	noErr(t, err)
 	noErr(t, os.MkdirAll(filepath.Dir(host.agentPath), 0o755))
 	noErr(t, os.WriteFile(host.agentPath, []byte(agent), 0o644))
 
 	noErr(t, host.uninstall())
-	launcher := service.AppLauncher(app)
-	var quit, off int
-	for _, call := range fake.calls {
-		if strings.HasPrefix(call, "/usr/bin/pkill -f ^") && strings.Contains(call, "OwnGitLauncher") {
-			quit++
-		}
-		if call == launcher+" "+service.AppSignInOff {
-			off++
-		}
+	want := "^" + regexp.QuoteMeta(resolved) + "( |$)"
+	if !slices.Contains(fake.calls, "/usr/bin/pkill -f "+want) || !slices.Contains(fake.calls, resolved+" "+service.AppSignInOff) {
+		t.Fatalf("uninstall did not close the icon at its resolved path %s: %v", resolved, fake.calls)
 	}
-	if quit != 1 || off != 1 || !strings.Contains(out.String(), "no longer opens at sign-in") || !strings.Contains(out.String(), "stopped and removed") {
-		t.Fatalf("uninstall ran %v and printed:\n%s", fake.calls, out)
+	if got := out.String(); !strings.Contains(got, "The OwnGit icon is closed.") || !strings.Contains(got, "no longer opens at sign-in") || !strings.Contains(got, "stopped and removed") {
+		t.Fatalf("uninstall printed:\n%s", got)
 	}
 	if _, err := os.Stat(host.agentPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the agent is still there: %v", err)
+	}
+
+	// An icon that does not exit is reported as running, not closed.
+	fake.iconRunning = true
+	out.Reset()
+	noErr(t, os.WriteFile(host.agentPath, []byte(agent), 0o644))
+	noErr(t, host.uninstall())
+	if got := out.String(); strings.Contains(got, "icon is closed") || !strings.Contains(got, "is still running") {
+		t.Fatalf("uninstall with a running icon printed:\n%s", got)
 	}
 }
 

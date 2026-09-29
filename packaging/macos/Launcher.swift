@@ -600,10 +600,16 @@ struct OwnGitLauncher {
             for key in [signInConfiguredKey, signInPathKey, signInOffKey] {
                 UserDefaults.standard.removeObject(forKey: key)
             }
+            // An item that is not registered cannot be unregistered, so the
+            // answer is what macOS reports afterwards.
+            var failure = ""
             do {
                 try SMAppService.mainApp.unregister()
             } catch {
-                FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+                failure = error.localizedDescription
+            }
+            if SMAppService.mainApp.status == .enabled {
+                FileHandle.standardError.write(Data("macOS still opens the icon at sign-in. \(failure)\n".utf8))
                 exit(1)
             }
             exit(0)

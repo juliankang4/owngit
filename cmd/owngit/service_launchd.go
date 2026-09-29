@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"owngit/internal/service"
 	"owngit/internal/state"
@@ -218,29 +219,61 @@ func (host *launchAgentHost) openIcon(stateDir string, headless bool) {
 
 // closeIcon quits OwnGit.app, the menu bar icon, of the given programs and
 // turns off its opening at sign-in, since the service it shows is gone.
-// Each app is asked once; a failure is reported and does not undo the
-// uninstall.
+// macOS runs an app at its resolved path, such as Homebrew's versioned
+// Cellar folder behind the opt link, so the icon is found there. Each app
+// is asked once, and each result is reported as checked; a failure does
+// not undo the uninstall.
 func (host *launchAgentHost) closeIcon(programs ...string) {
 	ctx := context.Background()
 	done := map[string]bool{}
 	for _, program := range programs {
 		app := service.AppPath(program)
-		if app == "" || done[app] {
+		if app == "" {
+			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(app); err == nil {
+			app = resolved
+		}
+		if done[app] {
 			continue
 		}
 		done[app] = true
 		launcher := service.AppLauncher(app)
-		// pkill exits 1 when no icon runs, which is fine.
-		_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-f", "^"+regexp.QuoteMeta(launcher))
+		running := "^" + regexp.QuoteMeta(launcher) + "( |$)"
+		// pkill exits 1 when no icon runs; whether one is left is checked
+		// after it.
+		_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-f", running)
+		if iconExited(ctx, running) {
+			host.printf("The OwnGit icon is closed.\n")
+		} else {
+			host.printf("The OwnGit icon at %s is still running. Quit it with the gear in its panel, then Quit the icon.\n", app)
+		}
 		if err := requireProtectedPath(launcher); err != nil {
 			host.printf("OwnGit did not turn off opening its icon at sign-in, because %v. Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", err)
 			continue
 		}
+		// The launcher exits 0 only when macOS reports the icon's sign-in
+		// item as not enabled any more.
 		if output, err := serviceRunner(ctx, launcher, service.AppSignInOff); err != nil {
-			host.printf("The OwnGit icon is closed, but it could not be kept from opening at sign-in (%v: %s). Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", err, strings.TrimSpace(string(output)))
+			host.printf("The OwnGit icon could not be kept from opening at sign-in (%v: %s). Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", err, strings.TrimSpace(string(output)))
 			continue
 		}
-		host.printf("The OwnGit icon is closed and no longer opens at sign-in.\n")
+		host.printf("The OwnGit icon no longer opens at sign-in.\n")
+	}
+}
+
+// iconExited waits up to three seconds for no process to match running.
+func iconExited(ctx context.Context, running string) bool {
+	for attempt := 0; ; attempt++ {
+		// pgrep prints the matching process IDs and exits 1 without any.
+		output, _ := serviceRunner(ctx, "/usr/bin/pgrep", "-f", running)
+		if strings.TrimSpace(string(output)) == "" {
+			return true
+		}
+		if attempt == 10 {
+			return false
+		}
+		time.Sleep(300 * time.Millisecond)
 	}
 }
 
