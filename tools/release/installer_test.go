@@ -441,6 +441,47 @@ func TestInstallSh(t *testing.T) {
 		}
 	})
 
+	// Every printed command keeps the program's path one word: run as
+	// printed from the installer's own folder, each runs only the program,
+	// and the path's quote, semicolon and $() do nothing.
+	t.Run("printed commands quote the path", func(t *testing.T) {
+		run := newShInstall(t, release)
+		target := filepath.Join(run.home, "a b'c;$(touch marker)", "owngit")
+		printed := func(output, prefix string) string {
+			for _, line := range strings.Split(output, "\n") {
+				if _, command, found := strings.Cut(line, prefix); found {
+					return command
+				}
+			}
+			t.Fatalf("no line with %q:\n%s", prefix, output)
+			return ""
+		}
+		output := run.must(t, nil, "--no-service", "--to", target)
+		failed, _ := run.do(t, []string{"OWNGIT_FAKE_FAIL=service install"}, "--to", target)
+		for _, command := range []string{
+			printed(output, "Run it now with: "),
+			printed(output, "Or run it as a service that starts by itself: "),
+			printed(failed, "after fixing what it reported, run: "),
+		} {
+			noErr(t, os.WriteFile(run.log, nil, 0o644))
+			shell := exec.Command("sh", "-c", command)
+			shell.Env, shell.Dir = run.env, run.home
+			if out, err := shell.CombinedOutput(); err != nil {
+				t.Fatalf("%s: %v\n%s", command, err, out)
+			}
+			want := "2.0.0 service install\n"
+			if strings.HasSuffix(command, " serve") {
+				want = "2.0.0 serve\n"
+			}
+			if log := readLog(t, run.log); log != want {
+				t.Errorf("%s ran owngit as %q", command, log)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(run.home, "marker")); !os.IsNotExist(err) {
+			t.Fatalf("a printed command ran the path as shell syntax (%v)", err)
+		}
+	})
+
 	t.Run("a failed service install is a failure and keeps the new program", func(t *testing.T) {
 		run := newShInstall(t, release)
 		target := filepath.Join(run.home, "bin", "owngit")

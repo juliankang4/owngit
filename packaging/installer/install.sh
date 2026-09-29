@@ -38,6 +38,15 @@ system() {
 	return 1
 }
 
+# quote prints a word as one POSIX shell word, quoted only when it has to
+# be, as "owngit update" quotes paths, so a printed command can be copied.
+quote() {
+	case $1 in
+	"" | *[!A-Za-z0-9_@%+=:,./-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
+	*) printf '%s' "$1" ;;
+	esac
+}
+
 # changeable prints why another account can change FOLDER ($1), or nothing:
 # it belongs to another account (not root), others or a shared group can
 # write it, or an access list allows changes. HOLDS ($2) is 1 for the
@@ -257,16 +266,16 @@ main() {
 		found=$(PATH=$user_path && command -v owngit || true)
 		[ "$found" = "$target" ] || [ -z "$found" ] || say "Note: \"owngit\" on your PATH is $found, not this one."
 		;;
-	*) say "$dir is not on your PATH, so run OwnGit as $target, or add $dir to PATH." ;;
+	*) say "$dir is not on your PATH, so run OwnGit as $(quote "$target"), or add $dir to PATH." ;;
 	esac
 
 	if [ "$service" = 0 ]; then
-		say "Run it now with: $target serve"
-		say "Or run it as a service that starts by itself: $target service install"
+		say "Run it now with: $(quote "$target") serve"
+		say "Or run it as a service that starts by itself: $(quote "$target") service install"
 		return 0
 	fi
 	"$target" service install ||
-		fail "\"$target service install\" did not finish. OwnGit $version stays at $target; after fixing what it reported, run that command again."
+		fail "owngit service install did not finish. OwnGit $version stays at $target; after fixing what it reported, run: $(quote "$target") service install"
 }
 
 main "$@"
