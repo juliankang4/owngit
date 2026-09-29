@@ -1251,14 +1251,15 @@
   var leaveListening = false;   // the browser's own question is on
   var leaving = null;           // the way out that the dialog holds
   var leaveReturn = null;       // what had focus before the dialog opened
-  // Whether this tab has a page before this one. Without one (Settings
-  // opened in a new tab), Back cannot leave, so no entry is added for it:
-  // it would only turn on a Back button that goes nowhere. The history
-  // length counts a page of another site too, which navigation.canGoBack
-  // does not; the Navigation API only rules out a tab whose other entries
-  // all come after this page.
-  var leaveHasPast = window.history.length > 1 &&
-    !(window.navigation && window.navigation.canGoBack === false && window.navigation.canGoForward === true);
+  // Whether Back from here reaches another page of this site. Only then is
+  // an entry added for the dialog; without one (Settings opened in a new
+  // tab or window) it would only turn on a Back button that goes nowhere.
+  // Back to another site unloads this page, so the browser's own question
+  // on leaving covers it. The Navigation API lists only this site's
+  // entries, so canGoBack answers exactly that; the history length, which
+  // also counts other sites, is used only without the API.
+  var leaveHasPast = window.navigation && typeof window.navigation.canGoBack === 'boolean' ?
+    window.navigation.canGoBack : window.history.length > 1;
 
   function dirtyGroups(except) {
     return settingsPanel ? all('[data-group]', settingsPanel).filter(function (group) {

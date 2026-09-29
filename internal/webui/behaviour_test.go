@@ -206,10 +206,12 @@ func TestLeavingSettingsSendsNothingItself(t *testing.T) {
 	if strings.Count(block, "pushState(") != 1 || !strings.Contains(block, "window.history.back();") {
 		t.Error("the leave block adds history entries other than its one guard")
 	}
-	// A tab with no page before Settings gets no guard: its Back would go
-	// nowhere, and leaving by it would only discard the changes.
+	// The guard exists only when Back reaches another page of this site:
+	// with the Navigation API that is canGoBack alone, and the history
+	// length only without the API. Otherwise Back goes nowhere (a new tab
+	// or window) or unloads the page, which the browser's question covers.
 	if !strings.Contains(section(t, block, "function arm()", "function unguard("), "if (!leaveHasPast ||") ||
-		!strings.Contains(block, "var leaveHasPast = window.history.length > 1 &&") {
+		!strings.Contains(block, "window.navigation.canGoBack : window.history.length > 1;") {
 		t.Error("the guard is added without a page to go back to")
 	}
 }
