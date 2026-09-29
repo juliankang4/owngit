@@ -188,17 +188,14 @@ main() {
 			fail "ID $ctid is in use by another container or virtual machine; choose another with --id, or leave it out for the next free one"
 	fi
 
+	storages=$(pvesm status --content rootdir --enabled 1 | awk 'NR > 1 { printf " %s", $1 }') || fail "could not list the storages"
 	if [ -z "$storage" ]; then
 		for name in local-lvm local-zfs; do
-			if pvesm status --content rootdir --enabled 1 2>/dev/null | awk 'NR > 1 { print $1 }' | grep -qx "$name"; then
-				storage=$name
-				break
-			fi
+			case "$storages " in *" $name "*) storage=$name && break ;; esac
 		done
-		[ -n "$storage" ] || fail "neither local-lvm nor local-zfs can hold container disks here; name a storage with --storage ($(pvesm status --content rootdir --enabled 1 | awk 'NR > 1 { print $1 }' | tr '\n' ' '))"
+		[ -n "$storage" ] || fail "neither local-lvm nor local-zfs can hold container disks here; name one of these with --storage:$storages"
 	else
-		pvesm status --content rootdir --enabled 1 2>/dev/null | awk 'NR > 1 { print $1 }' | grep -qx "$storage" ||
-			fail "storage $storage cannot hold container disks here"
+		case "$storages " in *" $storage "*) ;; *) fail "storage $storage cannot hold container disks here; choose one of:$storages" ;; esac
 	fi
 	[ -z "$folder" ] || check_folder "$folder"
 
