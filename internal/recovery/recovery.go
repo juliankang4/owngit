@@ -26,7 +26,7 @@ import (
 	"owngit/internal/state"
 )
 
-var errManifestTooLarge = errors.New("backup manifest is too large")
+var errManifestTooLarge = errors.New("backup manifest is larger than the 64 MiB that backup version 10 and older allow")
 
 // errDirectReviewManifest refuses records of the removed built-in review,
 // which only unreleased development builds wrote.
@@ -50,9 +50,14 @@ const (
 	// backupVersion is the current format. It adds pull request
 	// descriptions, edits and review notes, actors, repository names and
 	// policies, and import refresh behaviour (format11Content).
-	backupVersion      = 11
-	maximumManifest    = 64 << 20
-	pendingRestoreName = state.IncompleteRestoreMarkerName
+	backupVersion = 11
+	// format10ManifestLimit is the manifest size that readers of version 10
+	// and older accept. Version 11 has no size limit of its own: its size
+	// follows from the records the state holds, so every state OwnGit accepts
+	// can be backed up and restored. Backup and restore both hold the
+	// records in memory, so the memory they need grows with the state.
+	format10ManifestLimit = 64 << 20
+	pendingRestoreName    = state.IncompleteRestoreMarkerName
 )
 
 type Manifest struct {
@@ -440,13 +445,7 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 		manifest.Repositories = append(manifest.Repositories, item)
 	}
 	addRepositoryRecords(&manifest, snapshot)
-	// A backup that format 10 can hold is written in it, so the release
-	// before this one can restore it, including every backup made before an
-	// upgrade.
-	manifest.Version = closedPullRequestBackupVersion
-	if format11Content(manifest) != "" {
-		manifest.Version = backupVersion
-	}
+	manifest.Version = backupVersion
 	if err := validateManifest(manifest); err != nil {
 		return fmt.Errorf("validate completed backup manifest: %w", err)
 	}
@@ -455,7 +454,7 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if err != nil {
 		return err
 	}
-	if err := writeManifest(file, manifest, maximumManifest); err != nil {
+	if err := writeBackupManifest(file, &manifest, format10ManifestLimit); err != nil {
 		file.Close()
 		return err
 	}
@@ -942,25 +941,39 @@ func (writer *manifestLimitWriter) Write(content []byte) (int, error) {
 	return written, nil
 }
 
-func writeManifest(destination io.Writer, manifest Manifest, maximum int64) error {
-	limited := &manifestLimitWriter{writer: destination, remaining: maximum}
-	encoder := json.NewEncoder(limited)
+// writeBackupManifest writes manifest in the oldest format whose readers
+// accept it: version 10, which releases 1.0.3 to 1.1.2 restore, when it holds
+// no record that only version 11 holds and fits format10Limit; version 11
+// otherwise. So every backup made before an upgrade that the earlier release
+// could have made itself stays restorable by that release.
+func writeBackupManifest(file *os.File, manifest *Manifest, format10Limit int64) error {
+	if format11Content(*manifest) == "" {
+		manifest.Version = closedPullRequestBackupVersion
+		err := writeManifest(&manifestLimitWriter{writer: file, remaining: format10Limit}, *manifest)
+		if !errors.Is(err, errManifestTooLarge) {
+			return err
+		}
+		if err := file.Truncate(0); err != nil {
+			return err
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+	}
+	manifest.Version = backupVersion
+	return writeManifest(file, *manifest)
+}
+
+// writeManifest encodes without HTML escaping: a manifest is never HTML, and
+// escaping would make each <, > and & in a description six bytes long.
+func writeManifest(destination io.Writer, manifest Manifest) error {
+	encoder := json.NewEncoder(destination)
+	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(manifest); err != nil {
 		return fmt.Errorf("encode backup manifest: %w", err)
 	}
 	return nil
-}
-
-func readManifestContent(source io.Reader, maximum int64) ([]byte, error) {
-	content, err := io.ReadAll(io.LimitReader(source, maximum+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(content)) > maximum {
-		return nil, errManifestTooLarge
-	}
-	return content, nil
 }
 
 func readManifest(manifestPath string) (Manifest, error) {
@@ -971,7 +984,7 @@ func readManifest(manifestPath string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	content, readErr := readManifestContent(file, maximumManifest)
+	content, readErr := io.ReadAll(file)
 	closeErr := file.Close()
 	if readErr != nil {
 		return Manifest{}, readErr
@@ -998,6 +1011,9 @@ func readManifest(manifestPath string) (Manifest, error) {
 	}
 	if err := validateBackupVersion(probe.Version); err != nil {
 		return Manifest{}, err
+	}
+	if probe.Version < backupVersion && len(content) > format10ManifestLimit {
+		return Manifest{}, errManifestTooLarge
 	}
 	if probe.DirectReviewSettings != nil || probe.DirectReviewTaskContexts != nil || probe.DirectReviewRequests != nil {
 		return Manifest{}, errDirectReviewManifest

@@ -2,9 +2,12 @@ package recovery
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -181,6 +184,118 @@ func TestBackupWithoutFormat11RecordsStaysFormat10(t *testing.T) {
 	for _, table := range []string{"repository_policies", "share_links"} {
 		if count, err := restored.TableRowCount(ctx, table); err != nil || count != 0 {
 			t.Fatalf("%s has %d rows after restore, err=%v", table, count, err)
+		}
+	}
+}
+
+// Any state the product accepts backs up and restores: many pull requests
+// and review notes at the largest allowed text, made of the characters HTML
+// escaping would grow sixfold, give a manifest past the 64 MiB that version
+// 10 readers accept, which version 11 holds without escaping them.
+func TestBackupAtTheProductTextLimits(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, manager := newBackupStore(t, root)
+	remote, err := manager.Path("project")
+	noErr(t, err)
+	oid := gitOutput(t, remote, "rev-parse", "refs/heads/main")
+	text := strings.Repeat("<&>", state.MaximumPullRequestTextBytes/3) + strings.Repeat("<", state.MaximumPullRequestTextBytes%3)
+	const pullRequests, reviewsEach = 8, 130
+	var refs strings.Builder
+	noErr(t, store.Exec(ctx, "BEGIN"))
+	for number := 1; number <= pullRequests; number++ {
+		noErr(t, store.Exec(ctx, `INSERT INTO pull_requests(repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,body) VALUES('project',?,'Large',?,'main','open',1800000000,1800000000,?)`,
+			number, "feature-"+strconv.Itoa(number), text))
+		noErr(t, store.Exec(ctx, `INSERT INTO pull_request_revisions(repository_id,pull_request_number,source_oid,target_oid,recorded_at) VALUES('project',?,?,?,1800000000)`, number, oid, oid))
+		for sequence := 1; sequence <= reviewsEach; sequence++ {
+			noErr(t, store.Exec(ctx, `INSERT INTO pull_request_reviews(repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at,note) VALUES('project',?,?,?,?,'approved','tool','supplied_external_tool',1800000000,?)`,
+				number, sequence, oid, oid, text))
+		}
+		sourceRef, targetRef := pullrequest.RevisionRefNames(int64(number), oid, oid)
+		fmt.Fprintf(&refs, "create %s %s\ncreate %s %s\n", sourceRef, oid, targetRef, oid)
+	}
+	noErr(t, store.Exec(ctx, "COMMIT"))
+	command := exec.Command("git", "--git-dir", remote, "update-ref", "--stdin")
+	command.Stdin = strings.NewReader(refs.String())
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("create revision refs: %v %s", err, output)
+	}
+
+	backup := filepath.Join(root, "backup")
+	noErr(t, Create(ctx, store, manager, backup))
+	info, err := os.Stat(filepath.Join(backup, manifestName))
+	noErr(t, err)
+	texts := int64(pullRequests * (1 + reviewsEach) * state.MaximumPullRequestTextBytes)
+	if info.Size() <= format10ManifestLimit || info.Size() > texts+texts/10 {
+		t.Fatalf("manifest is %d bytes for %d bytes of text", info.Size(), texts)
+	}
+	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
+	noErr(t, Restore(ctx, backup, restoredState, canonicalTestTarget(t, filepath.Join(root, "restored-repositories")), ""))
+	restored, err := state.Open(ctx, restoredState)
+	noErr(t, err)
+	defer restored.Close()
+	snapshot, err := restored.RecoverySnapshot(ctx)
+	noErr(t, err)
+	if len(snapshot.PullRequests) != pullRequests || len(snapshot.PullRequestReviews) != pullRequests*reviewsEach {
+		t.Fatalf("restored %d pull requests and %d reviews", len(snapshot.PullRequests), len(snapshot.PullRequestReviews))
+	}
+	for _, record := range snapshot.PullRequests {
+		if record.Body != text {
+			t.Fatalf("pull request %d description changed", record.Number)
+		}
+	}
+	for _, review := range snapshot.PullRequestReviews {
+		if review.Note != text {
+			t.Fatalf("review %d/%d note changed", review.PullRequestNumber, review.Sequence)
+		}
+	}
+}
+
+// Every field that format 11 added makes a backup format 11. A field added
+// to a manifest record later changes the counts pinned here, so its author
+// decides whether it needs a new format instead of it silently travelling
+// in format 10.
+func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
+	blank := func() Manifest {
+		return Manifest{Repositories: []RepositoryManifest{{}}, PullRequests: []PullRequestManifest{{}}, PullRequestReviews: []PullRequestReviewManifest{{}}, ImportSources: []ImportSourceManifest{{}}}
+	}
+	if content := format11Content(blank()); content != "" {
+		t.Fatalf("empty records need format 11: %s", content)
+	}
+	until := time.Unix(1_800_000_000, 0)
+	helper := state.Actor{Kind: state.ActorAccess}
+	for name, edit := range map[string]func(*Manifest){
+		"repository names":          func(m *Manifest) { m.Repositories[0].Names = []RepositoryNameManifest{{Name: "renamed"}} },
+		"repository policy":         func(m *Manifest) { m.Repositories[0].Policy = &RepositoryPolicyManifest{} },
+		"description":               func(m *Manifest) { m.PullRequests[0].Body = "x" },
+		"edit revision":             func(m *Manifest) { m.PullRequests[0].EditRevision = 1 },
+		"edited at":                 func(m *Manifest) { m.PullRequests[0].EditedAt = &until },
+		"created by":                func(m *Manifest) { m.PullRequests[0].CreatedBy = helper },
+		"edited by":                 func(m *Manifest) { m.PullRequests[0].EditedBy = helper },
+		"merged by":                 func(m *Manifest) { m.PullRequests[0].MergedBy = helper },
+		"review note":               func(m *Manifest) { m.PullRequestReviews[0].Note = "x" },
+		"review actor":              func(m *Manifest) { m.PullRequestReviews[0].Actor = helper },
+		"overwrite diverged":        func(m *Manifest) { m.ImportSources[0].OverwriteDiverged = true },
+		"follow upstream deletions": func(m *Manifest) { m.ImportSources[0].FollowUpstreamDeletions = true },
+		"import extra refs":         func(m *Manifest) { m.ImportSources[0].ExtraRefPrefixes = []string{"refs/notes/"} },
+	} {
+		manifest := blank()
+		edit(&manifest)
+		if format11Content(manifest) == "" {
+			t.Errorf("%s does not make a backup format 11", name)
+		}
+	}
+	for recordType, fields := range map[reflect.Type]int{
+		reflect.TypeFor[Manifest](): 24, reflect.TypeFor[RepositoryManifest](): 12, reflect.TypeFor[RepositoryNameManifest](): 4, reflect.TypeFor[RepositoryPolicyManifest](): 4,
+		reflect.TypeFor[Head](): 2, reflect.TypeFor[Ref](): 2, reflect.TypeFor[PullRequestManifest](): 19, reflect.TypeFor[PullRequestRevisionManifest](): 5,
+		reflect.TypeFor[PullRequestReviewManifest](): 12, reflect.TypeFor[PullRequestMergeManifest](): 11, reflect.TypeFor[TaskManifest](): 5, reflect.TypeFor[CheckConfigurationManifest](): 5,
+		reflect.TypeFor[CheckDefinitionManifest](): 2, reflect.TypeFor[CheckCycleManifest](): 6, reflect.TypeFor[CheckAttemptManifest](): 32, reflect.TypeFor[CheckResultManifest](): 10,
+		reflect.TypeFor[CheckPolicyManifest](): 16, reflect.TypeFor[CheckJobManifest](): 37, reflect.TypeFor[CheckJobLimitsManifest](): 2, reflect.TypeFor[state.CheckExecutionSettings](): 9,
+		reflect.TypeFor[ImportSourceManifest](): 11, reflect.TypeFor[ImportRunManifest](): 30, reflect.TypeFor[ImportObservationManifest](): 7, reflect.TypeFor[ImportIntentManifest](): 18,
+		reflect.TypeFor[state.Actor](): 3,
+	} {
+		if recordType.NumField() != fields {
+			t.Errorf("%s has %d fields, not %d: decide whether the new field needs format 11 (format11Content), then update this count", recordType.Name(), recordType.NumField(), fields)
 		}
 	}
 }

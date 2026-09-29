@@ -3,59 +3,69 @@ package recovery
 import (
 	"bytes"
 	"errors"
-	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
-func TestManifestReadAndWriteUseTheSameHardLimit(t *testing.T) {
-	manifest := Manifest{Format: backupFormat, Version: backupVersion, AccessMode: "open", AdminHash: "synthetic-hash"}
-	var complete bytes.Buffer
-	noErr(t, writeManifest(&complete, manifest, 1<<20))
-	maximum := int64(complete.Len())
-	var exact bytes.Buffer
-	if err := writeManifest(&exact, manifest, maximum); err != nil || int64(exact.Len()) != maximum {
-		t.Fatalf("exact-limit write bytes=%d err=%v", exact.Len(), err)
-	}
-	var oversized bytes.Buffer
-	if err := writeManifest(&oversized, manifest, maximum-1); !errors.Is(err, errManifestTooLarge) || int64(oversized.Len()) > maximum-1 {
-		t.Fatalf("oversized write bytes=%d err=%v", oversized.Len(), err)
+// A manifest is written in version 10 while its records fit that version
+// and its size fits what version 10 readers accept, and in version 11
+// otherwise. A version 10 file larger than that is refused like the earlier
+// releases refuse it, and version 11 has no size limit of its own.
+func TestManifestFormatFollowsWhatItsReadersAccept(t *testing.T) {
+	manifest := Manifest{Format: backupFormat, AccessMode: "open", AdminHash: "synthetic-hash", Repositories: []RepositoryManifest{{ID: "project", Name: "project", Description: strings.Repeat("d", 400)}}}
+	for _, test := range []struct {
+		limit int64
+		want  int
+	}{
+		{limit: 1 << 20, want: closedPullRequestBackupVersion},
+		{limit: 200, want: backupVersion},
+	} {
+		path := filepath.Join(t.TempDir(), manifestName)
+		file, err := os.Create(path)
+		noErr(t, err)
+		written := manifest
+		noErr(t, writeBackupManifest(file, &written, test.limit))
+		noErr(t, file.Close())
+		content, err := os.ReadFile(path)
+		noErr(t, err)
+		if written.Version != test.want || !bytes.Contains(content, []byte(`"version": `+strconv.Itoa(test.want)+`,`)) {
+			t.Fatalf("limit %d wrote version %d, want %d:\n%.200s", test.limit, written.Version, test.want, content)
+		}
+		if bytes.Count(content, []byte(`"format"`)) != 1 {
+			t.Fatalf("limit %d left the discarded version 10 attempt in the file", test.limit)
+		}
 	}
 
-	if content, err := readManifestContent(bytes.NewReader(exact.Bytes()), maximum); err != nil || !bytes.Equal(content, exact.Bytes()) {
-		t.Fatalf("exact-limit read bytes=%d err=%v", len(content), err)
-	}
-	counter := &countingManifestReader{reader: bytes.NewReader(append(exact.Bytes(), 'x'))}
-	if _, err := readManifestContent(counter, maximum); !errors.Is(err, errManifestTooLarge) || counter.read != maximum+1 {
-		t.Fatalf("oversized read consumed=%d want=%d err=%v", counter.read, maximum+1, err)
+	// Padding keeps the JSON valid while it passes the version 10 limit.
+	path := filepath.Join(t.TempDir(), manifestName)
+	var content bytes.Buffer
+	manifest.Version = closedPullRequestBackupVersion
+	noErr(t, writeManifest(&content, manifest))
+	content.Write(bytes.Repeat([]byte(" "), format10ManifestLimit))
+	noErr(t, os.WriteFile(path, content.Bytes(), 0o600))
+	if _, err := readManifest(path); !errors.Is(err, errManifestTooLarge) {
+		t.Fatalf("oversized version 10 manifest error=%v", err)
 	}
 }
 
-func TestManifestBoundsPreserveUnderlyingIOErrors(t *testing.T) {
+func TestManifestIsNotHTMLEscaped(t *testing.T) {
+	var content bytes.Buffer
+	noErr(t, writeManifest(&content, Manifest{Format: backupFormat, Version: backupVersion, PullRequests: []PullRequestManifest{{Body: "<a & b>"}}}))
+	if !bytes.Contains(content.Bytes(), []byte(`"body": "<a & b>"`)) {
+		t.Fatalf("manifest escaped HTML characters:\n%s", content.Bytes())
+	}
+}
+
+func TestManifestWritePreservesUnderlyingIOErrors(t *testing.T) {
 	sentinel := errors.New("synthetic manifest I/O failure")
-	manifest := Manifest{Format: backupFormat, Version: backupVersion}
-	if err := writeManifest(errorManifestWriter{err: sentinel}, manifest, maximumManifest); !errors.Is(err, sentinel) {
+	if err := writeManifest(errorManifestWriter{err: sentinel}, Manifest{Format: backupFormat, Version: backupVersion}); !errors.Is(err, sentinel) {
 		t.Fatalf("write error=%v", err)
 	}
-	if _, err := readManifestContent(errorManifestReader{err: sentinel}, maximumManifest); !errors.Is(err, sentinel) {
-		t.Fatalf("read error=%v", err)
-	}
-}
-
-type countingManifestReader struct {
-	reader io.Reader
-	read   int64
-}
-
-func (reader *countingManifestReader) Read(content []byte) (int, error) {
-	count, err := reader.reader.Read(content)
-	reader.read += int64(count)
-	return count, err
 }
 
 type errorManifestWriter struct{ err error }
 
 func (writer errorManifestWriter) Write([]byte) (int, error) { return 0, writer.err }
-
-type errorManifestReader struct{ err error }
-
-func (reader errorManifestReader) Read([]byte) (int, error) { return 0, reader.err }
