@@ -471,9 +471,10 @@ func (m *Manager) RefWriteEnvironment(ctx context.Context, id string) ([]string,
 // previous tip of an overwritten or deleted ref unkept. Without them, as for
 // a push that does not go through OwnGit, history is kept and nothing is
 // protected. OWNGIT_NAME_CONFLICTS_FILE names a file that lists, one per
-// line, the refs of the push whose names a file system can treat as the
-// same as another ref's name (RefNameConflicts); the hook refuses creating, changing
-// or deleting them, and refuses every ref if the file cannot be read.
+// line, the refs of the push that the hook refuses because a file system
+// can treat their name or folder as another ref's (RefNameConflicts; the
+// Git service allows deleting such a ref that exists), and the hook
+// refuses every ref if the file cannot be read.
 func writeRetentionHook(repositoryPath string, runner *gitexec.Runner) error {
 	hooks := filepath.Join(repositoryPath, "hooks")
 	if err := os.MkdirAll(hooks, 0o700); err != nil {
@@ -498,7 +499,7 @@ if test -n "${OWNGIT_NAME_CONFLICTS_FILE:-}"; then
   test -r "$OWNGIT_NAME_CONFLICTS_FILE" || { echo "OwnGit could not check the pushed ref names against the existing ones" >&2; exit 1; }
   while IFS= read -r conflict; do
     if test "$conflict" = "$ref"; then
-      printf 'OwnGit refused changing %%s because another branch or tag has a name that some file systems treat as the same, for example one that differs only in letter case or accent encoding. Use a clearly different name.\n' "$ref" >&2
+      printf 'OwnGit refused changing %%s because another branch or tag, or one of its folders, has a name that some file systems treat as the same, for example one that differs only in letter case or accent encoding. Use a clearly different name. If both names already exist, delete one with: git push origin --delete %%s\n' "$ref" "$short" >&2
       exit 1
     fi
   done <"$OWNGIT_NAME_CONFLICTS_FILE"

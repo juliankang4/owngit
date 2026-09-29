@@ -361,8 +361,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 		defer remove()
 		extraEnvironment = append(extraEnvironment, variable)
-		body = &nameConflictGate{ReadCloser: body, refuseAll: remove, check: func(names []string) error {
-			err := h.writeNameConflicts(streamContext, repositoryPath, path, names)
+		body = &nameConflictGate{ReadCloser: body, refuseAll: remove, check: func(updates []pushCommand) error {
+			err := h.writeNameConflicts(streamContext, repositoryPath, path, updates)
 			if err != nil {
 				logCause(request.Context(), fmt.Sprintf("Git push to repository %q could not check its ref names", route.repositoryID), err)
 			}

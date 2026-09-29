@@ -41,26 +41,47 @@ func RefNameKey(name string) string {
 	return norm.NFD.String(key.String())
 }
 
-// RefNameConflicts returns the names in writes that share their RefNameKey
-// with a different name in existing or in writes. A push or an import
-// creates, changes and deletes none of them: where such names are one file,
-// writing one would change or remove the other.
+// RefNameConflicts returns the names in writes that share their RefNameKey,
+// or the key of one of their folders, with a different spelling in
+// existing or in writes. A folder is every leading part of a name up to a
+// slash: refs/heads/Release is a folder of refs/heads/Release/x. A push or
+// an import creates and changes none of them: where two such spellings are
+// one file or one folder, writing one would change or remove the other,
+// and a ref written into a folder spelled otherwise is listed under that
+// folder's spelling. existing should include the name HEAD points to even
+// when that branch has no commit yet.
 func RefNameConflicts(existing, writes []string) map[string]bool {
-	spellings := make(map[string]map[string]bool, len(existing)+len(writes))
+	spellings := map[string]map[string]bool{}
 	for _, names := range [][]string{existing, writes} {
 		for _, name := range names {
-			key := RefNameKey(name)
-			if spellings[key] == nil {
-				spellings[key] = map[string]bool{}
+			for _, level := range refNameLevels(name) {
+				key := RefNameKey(level)
+				if spellings[key] == nil {
+					spellings[key] = map[string]bool{}
+				}
+				spellings[key][level] = true
 			}
-			spellings[key][name] = true
 		}
 	}
 	conflicts := map[string]bool{}
 	for _, name := range writes {
-		if len(spellings[RefNameKey(name)]) > 1 {
-			conflicts[name] = true
+		for _, level := range refNameLevels(name) {
+			if len(spellings[RefNameKey(level)]) > 1 {
+				conflicts[name] = true
+				break
+			}
 		}
 	}
 	return conflicts
+}
+
+// refNameLevels returns each folder of name and then name itself.
+func refNameLevels(name string) []string {
+	var levels []string
+	for index := 0; index < len(name); index++ {
+		if name[index] == '/' && index > 0 {
+			levels = append(levels, name[:index])
+		}
+	}
+	return append(levels, name)
 }

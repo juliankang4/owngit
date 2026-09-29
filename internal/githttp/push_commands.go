@@ -38,11 +38,11 @@ var errPushRequest = errors.New("invalid Git push request")
 // refuse every ref, and passes the request on unchanged.
 type nameConflictGate struct {
 	io.ReadCloser
-	check     func([]string) error
+	check     func([]pushCommand) error
 	refuseAll func()
 
 	commands bytes.Buffer // the command list read so far
-	names    []string
+	updates  []pushCommand
 	ready    []byte // bytes read and checked, not yet returned
 	done     bool   // the command list has ended; pass the rest through
 }
@@ -85,7 +85,7 @@ func (gate *nameConflictGate) readPacket() error {
 		return errPushRequest
 	}
 	if length == 0 {
-		if err := gate.check(gate.names); err != nil {
+		if err := gate.check(gate.updates); err != nil {
 			return err
 		}
 		gate.ready, gate.done = gate.commands.Bytes()[start:], true
@@ -104,7 +104,7 @@ func (gate *nameConflictGate) readPacket() error {
 		if len(fields) != 3 || fields[2] == "" {
 			return errPushRequest
 		}
-		gate.names = append(gate.names, fields[2])
+		gate.updates = append(gate.updates, pushCommand{name: fields[2], deletes: strings.Trim(fields[1], "0") == ""})
 	}
 	gate.ready = packet
 	return nil
@@ -126,22 +126,59 @@ func (h *Handler) nameConflictFile() (string, string, func(), error) {
 	return path, "OWNGIT_NAME_CONFLICTS_FILE=" + filepath.ToSlash(path), remove, nil
 }
 
-// writeNameConflicts writes to path, one per line, the names that share
-// their repository.RefNameKey with another ref of the repository or
-// with another of names. The caller holds the repository write lock.
-func (h *Handler) writeNameConflicts(ctx context.Context, repositoryPath, path string, names []string) error {
-	if len(names) == 0 {
+// pushCommand is one ref update of a push.
+type pushCommand struct {
+	name    string
+	deletes bool // the new object ID is all zeros
+}
+
+// writeNameConflicts writes to path, one per line, the refs of updates that
+// share a name or folder, apart from spelling, with another ref of the
+// repository, the branch HEAD names, or another ref of the push
+// (repository.RefNameConflicts). A deletion of such a ref that exists under
+// exactly that name is allowed, so an owner can remove one of two
+// look-alike refs; OwnGit first packs the repository's refs, so that Git
+// deletes only that exact entry and no file that the other name shares on
+// storage that ignores letter case. The caller holds the repository write
+// lock.
+func (h *Handler) writeNameConflicts(ctx context.Context, repositoryPath, path string, updates []pushCommand) error {
+	if len(updates) == 0 {
 		return nil
 	}
-	result, err := h.Repositories.Git.RunWithLimits(ctx, repositoryPath, nil, gitexec.CommandLimits{OutputLimit: 64 << 20},
-		"--git-dir", ".", "for-each-ref", "--format=%(refname)")
+	limits := gitexec.CommandLimits{OutputLimit: 64 << 20}
+	result, err := h.Repositories.Git.RunWithLimits(ctx, repositoryPath, nil, limits, "--git-dir", ".", "for-each-ref", "--format=%(refname)")
 	if err != nil {
 		return fmt.Errorf("read repository refs: %w", err)
 	}
 	existing := strings.Split(strings.TrimSuffix(string(result.Stdout), "\n"), "\n")
+	present := make(map[string]bool, len(existing))
+	for _, name := range existing {
+		present[name] = true
+	}
+	head, err := h.Repositories.Git.RunWithLimits(ctx, repositoryPath, nil, limits, "--git-dir", ".", "symbolic-ref", "--quiet", "HEAD")
+	if err == nil {
+		existing = append(existing, strings.TrimSpace(string(head.Stdout)))
+	}
+	names := make([]string, len(updates))
+	for index, update := range updates {
+		names[index] = update.name
+	}
+	conflicts := repository.RefNameConflicts(existing, names)
 	var refused strings.Builder
-	for name := range repository.RefNameConflicts(existing, names) {
-		refused.WriteString(name + "\n")
+	pack := false
+	for _, update := range updates {
+		switch {
+		case !conflicts[update.name]:
+		case update.deletes && present[update.name]:
+			pack = true
+		default:
+			refused.WriteString(update.name + "\n")
+		}
+	}
+	if pack {
+		if _, err := h.Repositories.Git.RunWithLimits(ctx, repositoryPath, nil, limits, "--git-dir", ".", "pack-refs", "--all"); err != nil {
+			return fmt.Errorf("pack refs before deleting a look-alike ref: %w", err)
+		}
 	}
 	return os.WriteFile(path, []byte(refused.String()), 0o600)
 }

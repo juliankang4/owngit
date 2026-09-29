@@ -104,14 +104,18 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		expected: map[string]string{}, desired: map[string]string{}, observed: map[string]string{}, retained: map[string]string{},
 		skipped: run.selected.skipped, headExpected: destHEAD, headDesired: destHEAD, keepHistory: run.writes.KeepHistory,
 	}
-	// A ref whose name a file system can treat as the same as another
-	// destination ref's name, or another name this refresh writes, is left
-	// as it is: the rule pushes follow too (repository.RefNameConflicts).
-	existing := make([]string, 0, len(dest)+len(destSymrefs))
+	// A ref whose name or folder a file system can treat as the same as
+	// another destination ref's, the branch HEAD names, or another ref this
+	// refresh writes, is left as it is: the rule pushes follow too
+	// (repository.RefNameConflicts).
+	existing := make([]string, 0, len(dest)+len(destSymrefs)+1)
 	for _, names := range []map[string]string{dest, destSymrefs} {
 		for name := range names {
 			existing = append(existing, name)
 		}
+	}
+	if destHEAD.kind == headSymbolic {
+		existing = append(existing, destHEAD.target)
 	}
 	writes := make([]string, 0, len(run.selected.refs))
 	for _, ref := range run.selected.refs {

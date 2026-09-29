@@ -192,3 +192,29 @@ func TestUpstreamFoldedVariantOfPackedLocalRefStaysDivergent(t *testing.T) {
 		t.Fatalf("refs after refresh:\n%s", listed)
 	}
 }
+
+// A source ref in a folder spelled like a local destination ref apart from
+// letter case (topic/x beside a local branch Topic) is left uncreated, by
+// the rule pushes follow.
+func TestUpstreamRefInAFolderSpelledLikeALocalRefStaysDivergent(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.mustImport(ImportInput{})
+	path := f.destinationPath()
+	local := f.git(path, "rev-parse", "refs/heads/main")
+	f.git(path, "update-ref", "refs/heads/Topic", local)
+	f.git(path, "pack-refs", "--all")
+
+	f.git(f.source, "branch", "topic/x")
+	run, err := f.refresh()
+	if err != nil || run.Status != state.ImportRunComplete {
+		t.Fatalf("refresh run=%+v err=%v", run, err)
+	}
+	if run.RefsDivergent != 1 || run.RefsCreated != 0 {
+		t.Fatalf("refresh counts created=%d divergent=%d", run.RefsCreated, run.RefsDivergent)
+	}
+	want := "refs/heads/Topic " + local + "\nrefs/heads/main " + local
+	if listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); listed != want {
+		t.Fatalf("refs after refresh:\n%s\nwant\n%s", listed, want)
+	}
+}

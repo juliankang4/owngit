@@ -57,3 +57,28 @@ func TestRefNameConflicts(t *testing.T) {
 		}
 	}
 }
+
+// A name also conflicts when one of its folders matches a folder of
+// another ref, or the ref itself, apart from spelling.
+func TestRefNameConflictsCompareFolders(t *testing.T) {
+	for _, test := range []struct {
+		existing, write string
+		conflict        bool
+	}{
+		{"refs/heads/Release/x", "refs/heads/release/main", true},
+		{"refs/heads/release/main", "refs/heads/Release/x", true},
+		{"refs/heads/release", "refs/heads/Release/x", true},
+		{"refs/heads/Release/x", "refs/heads/release", true},
+		{"refs/heads/cafe\u0301/x", "refs/heads/café/y", true},
+		{"refs/heads/a/B/c", "refs/heads/a/b/d", true},
+		{"refs/heads/release/x", "refs/heads/release/main", false},
+		{"refs/heads/release/x", "refs/heads/releases/main", false},
+		{"refs/heads/Release/x", "refs/tags/release/main", false},
+		{"refs/heads/topic", "refs/heads/topic/x", false}, // Git itself refuses this one
+	} {
+		got := RefNameConflicts([]string{test.existing}, []string{test.write})[test.write]
+		if got != test.conflict {
+			t.Errorf("%q beside %q: conflict=%v, want %v", test.write, test.existing, got, test.conflict)
+		}
+	}
+}
