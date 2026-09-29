@@ -57,7 +57,7 @@ func setupLink(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if environment := probeEnvironment(); !*noOpen && !environment.Headless() && !environment.NoDesktop {
+	if !*noOpen && probeEnvironment().ShowsBrowser() {
 		return bootstrap.Open(path)
 	}
 	return nil

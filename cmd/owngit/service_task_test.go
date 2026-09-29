@@ -818,6 +818,58 @@ func TestServeWithoutADesktopOpensNothing(t *testing.T) {
 	}
 }
 
+// A start that nobody watches opens no browser and asks nothing in the
+// terminal: a headless SSH session opens no browser, and a Windows process
+// in the background (session 0 outside SSH) has a console that answers
+// like a terminal but that nobody reads. Both log the setup file's path.
+func TestServeNobodyWatchesUsesTheSetupFile(t *testing.T) {
+	previousProbe, previousInteractive := probeEnvironment, interactiveSetup
+	t.Cleanup(func() { probeEnvironment, interactiveSetup = previousProbe, previousInteractive })
+	for name, test := range map[string]struct {
+		environment service.Environment
+		// terminal is what the terminal check says about the console.
+		terminal bool
+	}{
+		"Linux over SSH, output to a file": {service.Environment{Getenv: func(name string) string { return map[string]string{"SSH_CONNECTION": "x"}[name] }, Linux: true, EUID: 1000}, false},
+		"Windows in the background":        {service.Environment{Getenv: func(string) string { return "" }, Windows: true, NoDesktop: true}, true},
+	} {
+		probeEnvironment = func() service.Environment { return test.environment }
+		interactiveSetup = func() bool { return test.terminal }
+		stateDir := filepath.Join(t.TempDir(), "state")
+		var opened []string
+		logs := make(chan string, 100)
+		logf := func(format string, arguments ...any) { logs <- fmt.Sprintf(format, arguments...) }
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan error, 1)
+		go func() {
+			result <- serveWithContext(ctx, []string{"--state-dir", stateDir, "--listen", "127.0.0.1:0"},
+				func(target string) error { opened = append(opened, target); return nil }, logf)
+		}()
+		var seen []string
+		for listening := false; !listening; {
+			select {
+			case line := <-logs:
+				seen = append(seen, line)
+				listening = strings.HasPrefix(line, "OwnGit listening on")
+			case err := <-result:
+				t.Fatalf("%s: serve returned: %v\n%s", name, err, strings.Join(seen, "\n"))
+			}
+		}
+		cancel()
+		noErr(t, <-result)
+		close(logs)
+		for line := range logs {
+			seen = append(seen, line)
+		}
+		if len(opened) != 0 {
+			t.Errorf("%s: opened %q", name, opened)
+		}
+		if !slicesContainPrefix(seen, "owner setup file: "+filepath.Join(stateDir, "owner-setup.html")) || slicesContainPrefix(seen, "terminal setup") {
+			t.Errorf("%s: want the setup file without terminal setup:\n%s", name, strings.Join(seen, "\n"))
+		}
+	}
+}
+
 func TestFlagGiven(t *testing.T) {
 	for arguments, want := range map[string]bool{
 		"--service":                 true,

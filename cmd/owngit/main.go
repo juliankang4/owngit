@@ -330,10 +330,11 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			logf("started again after the server exited with status %s", status)
 		}
 	}
-	// Without a desktop that a person sees (a service, a scheduled task,
-	// SSH on Windows), a browser would run where nobody can see or close
-	// it; the log shows the setup file's path instead.
-	if probeEnvironment().NoDesktop {
+	// Without a screen that a person sees in this session (a service, a
+	// scheduled task, SSH), a browser would run where nobody can see or
+	// close it, or not at all; the log shows the setup file's path instead.
+	environment := probeEnvironment()
+	if !environment.ShowsBrowser() {
 		*openOwner, *noOpen = false, true
 	}
 	if *asService {
@@ -596,7 +597,9 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// private setup file. The terminal flow issues no setup file at all.
 	// A service has no one at its console, even where Windows gives it a
 	// hidden one; its setup always goes through the setup file.
-	terminalSetup := !settings.Initialized && !*asService && interactiveSetup()
+	// A console that nobody reads, as a process started in the background
+	// on Windows has, would wait for answers forever.
+	terminalSetup := !settings.Initialized && !*asService && !environment.UnreadConsole() && interactiveSetup()
 	if terminalSetup {
 		application.Approvals = server.NewSetupApprovals()
 	}

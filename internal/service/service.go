@@ -129,7 +129,7 @@ type Environment struct {
 // session, which has no desktop of its own. Other platforms are never
 // headless here yet.
 func (env Environment) Headless() bool {
-	ssh := env.Getenv("SSH_CONNECTION") != "" || env.Getenv("SSH_CLIENT") != "" || env.Getenv("SSH_TTY") != ""
+	ssh := env.ssh()
 	if env.Windows {
 		return ssh
 	}
@@ -147,6 +147,27 @@ func (env Environment) Headless() bool {
 		return true
 	}
 	return !env.GraphicalSession && !(display && !ssh)
+}
+
+// ShowsBrowser reports whether a browser that this process opens appears
+// on a screen that a person sees: this session has a visible desktop and
+// is not headless.
+func (env Environment) ShowsBrowser() bool {
+	return !env.NoDesktop && !env.Headless()
+}
+
+// UnreadConsole reports whether this process's console, if it has one, is
+// one that nobody reads: on Windows, a process without a visible desktop
+// outside an SSH session, such as one started in the background through
+// WMI or Task Scheduler. Windows gives it a console that answers like a
+// terminal.
+func (env Environment) UnreadConsole() bool {
+	return env.Windows && env.NoDesktop && !env.ssh()
+}
+
+// ssh reports whether this process runs in an SSH session.
+func (env Environment) ssh() bool {
+	return env.Getenv("SSH_CONNECTION") != "" || env.Getenv("SSH_CLIENT") != "" || env.Getenv("SSH_TTY") != ""
 }
 
 // ChooseMode picks the mode for a new installation: Homebrew when it
