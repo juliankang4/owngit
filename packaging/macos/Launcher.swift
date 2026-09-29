@@ -57,7 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
     private var model = PanelModel()
     private var timer: Timer?
-    private var refreshing = false
+    /// The callers waiting for the check that runs now, or nil when none
+    /// runs.
+    private var waiting: [(PanelState) -> Void]?
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         // The server's address is on this Mac; no proxy may see the token.
@@ -248,20 +250,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: - Status
 
     /// refresh asks the server for its status, and asks owngit doctor when
-    /// the server does not answer. done receives the new state.
+    /// the server does not answer. done receives the new state; a call
+    /// while a check runs waits for that check.
     private func refresh(done: ((PanelState) -> Void)? = nil) {
-        if refreshing || model.misplaced {
+        if model.misplaced {
             return
         }
-        refreshing = true
+        if waiting != nil {
+            done.map { waiting?.append($0) }
+            return
+        }
+        waiting = done.map { [$0] } ?? []
         requestStatus(retry: true) { [self] state in
-            refreshing = false
+            let callers = waiting ?? []
+            waiting = nil
             if case .status(let status) = state, !status.shown {
                 hideIcon()
                 return
             }
             update { $0.state = state }
-            done?(state)
+            callers.forEach { $0(state) }
         }
     }
 
