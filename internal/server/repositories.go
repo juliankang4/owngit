@@ -981,7 +981,9 @@ func (app *App) noteUnreadableCommits(request *http.Request, page *webui.Reposit
 	if !errors.As(err, &unreadable) {
 		return err
 	}
-	logFailure(request, "commit read", err)
+	// The repository is part of the cause, so the same commit in another
+	// repository is logged on its own line rather than counted with this one.
+	logFailure(request, "commit read", fmt.Errorf("repository %q: %w", page.Repo.ID, err))
 	for _, oid := range unreadable.OIDs {
 		named := func(notice webui.Notice) bool {
 			return notice.Code == webui.MsgCommitUnreadable && notice.Detail == shortOID(oid)

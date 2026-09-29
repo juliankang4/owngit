@@ -86,6 +86,10 @@ func TestUnreadableDefaultTipKeepsOtherPagesWorking(t *testing.T) {
 		if path != "/repositories/tip/commits/"+tip && !strings.Contains(body, "readable parent") {
 			t.Fatalf("%s does not show the readable parent", path)
 		}
+		// The latest commit is unknown; the parent's date is not shown as it.
+		if path == "/repositories/tip" && strings.Contains(body, en(webui.MsgRepoFactLatest)) {
+			t.Fatal("the overview shows a last commit although its tip could not be read")
+		}
 	}
 	for _, path := range []string{"/repositories/tip?ref=other", "/repositories/tip/code?ref=other&path=file.txt", "/repositories/tip/commits?ref=other", "/repositories/tip/pull-requests"} {
 		body, status := dashboardGET(t, client, server.URL+path)
@@ -94,8 +98,24 @@ func TestUnreadableDefaultTipKeepsOtherPagesWorking(t *testing.T) {
 		}
 	}
 
+	// The same unreadable commit in a second repository is logged with that
+	// repository's name, not counted with the first one's line.
+	if _, err := app.Repositories.Create(context.Background(), "twin", ""); err != nil {
+		t.Fatal(err)
+	}
+	twin, _ := app.Repositories.Path("twin")
+	apiRunGit(t, "", "--git-dir", twin, "fetch", remote, "refs/heads/main:refs/heads/main")
+	if _, status := dashboardGET(t, client, server.URL+"/repositories/twin/commits"); status != http.StatusOK {
+		t.Fatalf("twin history status=%d", status)
+	}
+	endFailureWindows()
 	logged := serverLog.String()
-	for _, want := range []string{`activity of repository "tip" could not be counted: "commit ` + tip, `repository \"tip\": commit ` + tip} {
+	for _, want := range []string{
+		`activity of repository "tip" could not be counted: "commit ` + tip,
+		`GET /: latest commit read could not be completed: "repository \"tip\": commit ` + tip,
+		`GET /repositories/tip: commit read could not be completed: "repository \"tip\": commit ` + tip,
+		`GET /repositories/twin/commits: commit read could not be completed: "repository \"twin\": commit ` + tip,
+	} {
 		if !strings.Contains(logged, want) {
 			t.Fatalf("the log does not contain %q:\n%s", want, logged)
 		}
