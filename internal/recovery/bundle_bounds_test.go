@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // assertEmpty stops the test unless dir holds nothing.
@@ -95,12 +96,14 @@ func TestVerifyEndsWhileABundleGrows(t *testing.T) {
 	group.Add(1)
 	go func() {
 		defer group.Done()
+		// 4 MiB at most, a little at a time, for as long as the
+		// rehearsal runs.
 		chunk := make([]byte, 64<<10)
-		for {
+		for range 64 {
 			select {
 			case <-stop:
 				return
-			default:
+			case <-time.After(5 * time.Millisecond):
 				if _, err := file.Write(chunk); err != nil {
 					return
 				}
