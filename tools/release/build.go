@@ -42,6 +42,10 @@ var releaseTargets = []target{
 	{"windows", "amd64", "owngit.exe", "zip"},
 }
 
+// installerScripts are the one-line installers in packaging/installer that
+// every release carries.
+var installerScripts = []string{"install.sh", "install.ps1"}
+
 // selectTargets resolves the -targets flag against the release target table.
 func selectTargets(list string) ([]target, error) {
 	if strings.TrimSpace(list) == "" {
@@ -226,6 +230,17 @@ func buildCommand(arguments []string) error {
 		fmt.Printf("built %s %s\n", current, built.Name)
 	}
 
+	// The one-line installers go into every release unchanged, so the copy
+	// a website serves can be compared with the release's.
+	for _, name := range installerScripts {
+		data, err := os.ReadFile(filepath.Join(root, "packaging", "installer", name))
+		if err != nil {
+			return err
+		}
+		if _, err := writeFile(filepath.Join(outDir, name), data, 0o644); err != nil {
+			return err
+		}
+	}
 	if err := writeChecksums(outDir, document.Artifacts); err != nil {
 		return err
 	}

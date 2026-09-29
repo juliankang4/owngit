@@ -167,6 +167,21 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 			}
 		}
 	}
+	// The one-line installers are in the output folder that is attached to
+	// the release, byte for byte as checked in, and SHA256SUMS still lists
+	// only the archives, as the npm publish workflow requires.
+	for _, name := range []string{"install.sh", "install.ps1"} {
+		attached, err := os.ReadFile(filepath.Join(dir, name))
+		noErrf(t, err, "the release output has no %s", name)
+		source, err := os.ReadFile(filepath.Join(root, "packaging", "installer", name))
+		noErr(t, err)
+		if string(attached) != string(source) {
+			t.Errorf("%s in the release output does not match packaging/installer/%s", name, name)
+		}
+	}
+	if sums := readText(t, filepath.Join(dir, "SHA256SUMS")); strings.Contains(sums, "install.") {
+		t.Errorf("SHA256SUMS lists an installer script:\n%s", sums)
+	}
 	// The skill is the reviewed one, not an edited copy.
 	if !strings.Contains(string(byName["integrations/skills/owngit-checks/SKILL.md"].data), "name: owngit-checks") {
 		t.Error("the packaged skill has no skill name in its front matter")
