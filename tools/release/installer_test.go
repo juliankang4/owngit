@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -487,6 +488,21 @@ func (run *psInstall) must(t *testing.T, env []string, arguments ...string) stri
 	return output
 }
 
+// mustFailWith checks the whole output of a refused run, which is exactly
+// want: the installer's own lines and its message, without PowerShell's
+// error record, and exit code 1.
+func (run *psInstall) mustFailWith(t *testing.T, env []string, want string, arguments ...string) {
+	t.Helper()
+	output, err := run.do(t, env, arguments...)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("install.ps1 %s: %v, want exit code 1:\n%s", strings.Join(arguments, " "), err, output)
+	}
+	if got := strings.ReplaceAll(output, "\r\n", "\n"); got != want {
+		t.Fatalf("install.ps1 %s printed:\n%s\nwant:\n%s", strings.Join(arguments, " "), got, want)
+	}
+}
+
 func (run *psInstall) mustFail(t *testing.T, env []string, want string, arguments ...string) {
 	t.Helper()
 	output, err := run.do(t, env, arguments...)
@@ -590,10 +606,21 @@ func TestInstallPs1(t *testing.T) {
 		}
 	})
 
+	// The same failure through iex and through the script block: the
+	// installer's lines and one plain message, and a failed command.
 	t.Run("a failed service install is a failure", func(t *testing.T) {
 		run := newPsInstall(t, release)
+		failing := []string{"OWNGIT_FAKE_FAIL=service install"}
+		want := func(dir string) string {
+			release := folder(dir, "2.0.0")
+			return "Installed OwnGit 2.0.0 in " + release + ".\n" +
+				"fake owngit 2.0.0: service install\n" +
+				"\"owngit service install\" did not finish. OwnGit 2.0.0 stays in " + release +
+				"; after fixing what it reported, run: & " + psQuote(filepath.Join(release, "owngit.exe")) + " service install\n"
+		}
+		run.mustFailWith(t, failing, want(filepath.Join(run.home, "Programs", "OwnGit")))
 		dir := filepath.Join(run.home, "og")
-		run.mustFail(t, []string{"OWNGIT_FAKE_FAIL=service install"}, "OwnGit 2.0.0 stays in "+folder(dir, "2.0.0"), "-Dir", psQuote(dir))
+		run.mustFailWith(t, failing, want(dir), "-Dir", psQuote(dir))
 	})
 
 	t.Run("brackets in the folder are literal", func(t *testing.T) {

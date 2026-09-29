@@ -50,7 +50,7 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
         try {
             if ($File) { $web.DownloadFile($Url, $File) } else { $web.DownloadString($Url) }
         } catch {
-            throw "Could not download ${Url}: $($_.Exception.GetBaseException().Message) Nothing was changed."
+            throw "Could not download $Url ($($_.Exception.GetBaseException().Message.TrimEnd('.'))). Nothing was changed."
         }
     }
     function DigestOf([string]$File) {
@@ -137,4 +137,15 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
     }
 }
 
-Install-OwnGit -Version $Version -NoService $NoService.IsPresent -Dir $Dir
+try {
+    Install-OwnGit -Version $Version -NoService $NoService.IsPresent -Dir $Dir
+} catch {
+    # The message alone, without PowerShell's error record around it.
+    $Host.UI.WriteErrorLine($_.Exception.Message)
+    # A script file ends with exit code 1. Through iex or a script block,
+    # exit would close the PowerShell window, so the pipeline is stopped
+    # instead: nothing after it runs, PowerShell adds no message, and the
+    # command fails (powershell -Command exits with 1).
+    if ($MyInvocation.MyCommand.Path) { exit 1 }
+    throw [Management.Automation.PipelineStoppedException]::new()
+}
