@@ -216,12 +216,13 @@ func (client *Client) send(request *http.Request) (*http.Response, func(), error
 		cancel(nil)
 	}
 	response, err := client.httpClient.Do(request.WithContext(httptrace.WithClientTrace(ctx, trace)))
+	// A response racing the cancellation does not undo our request limit.
+	if errors.Is(context.Cause(ctx), errRequestTimeout) {
+		err = &url.Error{Op: request.Method, URL: request.URL.String(), Err: errRequestTimeout}
+	}
 	if err != nil {
 		if response != nil {
 			response.Body.Close()
-		}
-		if errors.Is(context.Cause(ctx), errRequestTimeout) {
-			err = &url.Error{Op: request.Method, URL: request.URL.String(), Err: errRequestTimeout}
 		}
 		done()
 		return nil, nil, err
