@@ -42,9 +42,10 @@ func updateCommand(arguments []string) error {
 	release, newer := checker.Newer()
 	runs := serviceRunning(install)
 	platform := updatePlatform(install, runs)
-	command := ""
+	command, start := "", ""
 	if newer {
 		command = install.UpdateCommand(release.Version, platform)
+		start = install.StartAfterUpdate(release.Version, platform)
 	}
 	if *asJSON {
 		// The command keeps its & and > readable.
@@ -58,8 +59,9 @@ func updateCommand(arguments []string) error {
 			Route    string `json:"route"`
 			Program  string `json:"program"`
 			Command  string `json:"command,omitempty"`
+			Start    string `json:"start,omitempty"`
 			NotesURL string `json:"notes_url,omitempty"`
-		}{version.Version, release.Version, newer, string(install.Route), install.Executable, command, release.NotesURL})
+		}{version.Version, release.Version, newer, string(install.Route), install.Executable, command, start, release.NotesURL})
 	}
 	out := os.Stdout
 	if !newer {
@@ -76,7 +78,7 @@ func updateCommand(arguments []string) error {
 		return nil
 	}
 	fmt.Fprintf(out, "Update it with this command; OwnGit does not run it for you:\n  %s\n", printable(command))
-	switch start := install.StartAfterUpdate(release.Version, platform); {
+	switch {
 	case start != "":
 		fmt.Fprintf(out, "Then start OwnGit from %s.\n", printable(start))
 	case !runs.this:

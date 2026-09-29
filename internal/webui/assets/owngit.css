@@ -586,8 +586,9 @@ a:hover { text-decoration: underline; }
 .relnote__form { margin-left: auto; }
 .relnote__dismiss { padding: 4px 12px; }
 .relnote .relnote__cmd { width: 100%; margin: 4px 0 2px; }
-/* A command needs the width, so Dismiss wraps below it on a narrow screen. */
-.relnote__body:has(.relnote__cmd) { flex-basis: 24em; }
+/* A command or its note needs the width, so Dismiss wraps below it on a
+   narrow screen. */
+.relnote__body:has(.relnote__cmd, .relnote__admin) { flex-basis: 24em; }
 
 /* The hidden attribute must win over any display this stylesheet sets.
    The browser's own rule is `[hidden] { display: none }`, which a later
