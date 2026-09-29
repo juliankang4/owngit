@@ -145,8 +145,10 @@ final class PanelViewController: NSViewController {
         if let failure = model.failure {
             add(notice([label(String(format: words.failed, failure), selectable: true)]))
         }
+        var noticeAction: NSView?
         if let lines = noticeLines(state: state, busy: model.busy) {
             add(notice(lines))
+            noticeAction = lines.first { $0 is PanelButton }
         }
         if let status {
             add(caption(words.cloneAddress))
@@ -164,6 +166,9 @@ final class PanelViewController: NSViewController {
             }
         }
         add(footer(primary: primary))
+        if primary == nil, let noticeAction {
+            firstControl = noticeAction
+        }
     }
 
     private func header(state: PanelState?, status: TrayStatus?) -> NSView {

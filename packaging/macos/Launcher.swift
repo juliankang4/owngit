@@ -71,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         popover.behavior = .transient
+        // The panel changes size with its state, often right after it
+        // opens; without the animation every new size applies at once.
+        popover.animates = false
         popover.contentViewController = panel
         popover.delegate = self
         if runsFromTemporaryPlace() {
@@ -204,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.showingSettings = false
         model.signIn = signInState()
         panel.render(model)
+        popover.contentSize = panel.preferredContentSize
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
@@ -221,9 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         change(&model)
         drawIcon()
         panel.render(model)
-        if popover.isShown {
-            popover.contentSize = panel.preferredContentSize
-        }
+        popover.contentSize = panel.preferredContentSize
     }
 
     private func schedule(interval: TimeInterval) {
