@@ -424,7 +424,10 @@ func TestPRTextThatIsNotUTF8IsRefused(t *testing.T) {
 
 // Pull request text made with the command line, its edits, a review note and
 // who made each change are in an offline backup and come back unchanged from
-// a restore. A stale edit is refused on the way.
+// a restore. A stale edit is refused on the way. The final description and
+// the note are as long as allowed, in control characters that the backup's
+// JSON writes as six bytes each, so the backup holds the longest text a pull
+// request can have.
 func TestPRTextSurvivesBackupAndRestore(t *testing.T) {
 	ctx := context.Background()
 	fixture := newPRCLIFixture(t)
@@ -441,11 +444,12 @@ func TestPRTextSurvivesBackupAndRestore(t *testing.T) {
 		t.Fatalf("created=%+v", created)
 	}
 	number := strconv.FormatInt(created.Number, 10)
+	longest := strings.Repeat("\x01", state.MaximumPullRequestTextBytes)
 	edited := runPRCommandJSON(t, append([]string{
-		"edit", "--number", number, "--edit-revision", "0", "--body-file", write("edit.md", "Final text.\n"),
+		"edit", "--number", number, "--edit-revision", "0", "--body-file", write("edit.md", longest),
 	}, fixture.remoteFlags...)).PullRequest
-	if edited.Title != "Described \u2067\u05e9\u2069" || *edited.Body != "Final text.\n" || edited.EditRevision != 1 {
-		t.Fatalf("edited=%+v", edited)
+	if edited.Title != "Described \u2067\u05e9\u2069" || *edited.Body != longest || edited.EditRevision != 1 {
+		t.Fatalf("edited title %q, body of %d bytes, revision %d", edited.Title, len(*edited.Body), edited.EditRevision)
 	}
 	err := prCommand(append([]string{"edit", "--number", number, "--edit-revision", "0", "--title", "Stale"}, fixture.remoteFlags...))
 	if got := commandErrorCode(err); got != "stale_edit" {
@@ -458,10 +462,10 @@ func TestPRTextSurvivesBackupAndRestore(t *testing.T) {
 	}
 	reviewed := runPRCommandJSON(t, append([]string{
 		"review", "submit", "--number", number, "--source-oid", fixture.sourceOID, "--target-oid", fixture.targetOID,
-		"--decision", "approved", "--reviewer", "cli reviewer", "--note-file", write("note.md", "Looks right.\n"),
+		"--decision", "approved", "--reviewer", "cli reviewer", "--note-file", write("note.md", strings.Repeat("\x1f", state.MaximumPullRequestTextBytes)),
 	}, fixture.remoteFlags...)).PullRequest
-	if len(reviewed.ReviewNotes) != 1 || reviewed.ReviewNotes[0].Note != "Looks right.\n" {
-		t.Fatalf("review notes=%+v", reviewed.ReviewNotes)
+	if len(reviewed.ReviewNotes) != 1 || reviewed.ReviewNotes[0].Note != strings.Repeat("\x1f", state.MaximumPullRequestTextBytes) {
+		t.Fatalf("review notes: %d", len(reviewed.ReviewNotes))
 	}
 	runPRCommandJSON(t, append([]string{
 		"merge", "--number", number, "--source-oid", fixture.sourceOID, "--target-oid", fixture.targetOID,
@@ -493,7 +497,8 @@ func TestPRTextSurvivesBackupAndRestore(t *testing.T) {
 	noErr(t, err)
 	notesAfter, _, err := restored.PullRequestReviewNotes(ctx, "project", created.Number, 10)
 	noErr(t, err)
-	if !reflect.DeepEqual(before, after) || !reflect.DeepEqual(notesBefore, notesAfter) {
-		t.Fatalf("pull request text changed through backup and restore:\n%+v\n%+v\n%+v\n%+v", before, after, notesBefore, notesAfter)
+	if before.Body != longest || !reflect.DeepEqual(before, after) || !reflect.DeepEqual(notesBefore, notesAfter) {
+		t.Fatalf("pull request text changed through backup and restore: body %d to %d bytes, notes %d to %d",
+			len(before.Body), len(after.Body), len(notesBefore), len(notesAfter))
 	}
 }
