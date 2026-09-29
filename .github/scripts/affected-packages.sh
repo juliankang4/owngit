@@ -8,8 +8,8 @@
 # with a changed file. A package whose only changed files are its own
 # *_test.go files affects only its own tests, because no other test binary
 # contains them. A changed file outside every package directory, such as
-# go.mod, a workflow or a document that tests read, can affect any test, so
-# the script then prints "./..." alone. Otherwise it prints the affected
+# go.mod, a workflow or a document that tests read, or under integrations/,
+# can affect any test, so the script then prints "./..." alone. Otherwise it prints the affected
 # import paths, one per line and sorted, or nothing when no test can see the
 # change.
 #
@@ -49,6 +49,15 @@ done
 declare -A changed own_tests
 while read -r file; do
 	[ -n "$file" ] || continue
+	case $file in
+	# The release tool reads and ships the files under integrations/ by path,
+	# without importing their packages, so a change there selects everything
+	# like a change outside every package.
+	integrations/*)
+		echo ./...
+		exit 0
+		;;
+	esac
 	dir=$(dirname "$file")
 	while [ -z "${package_of[$dir]-}" ]; do
 		if [ "$dir" = . ]; then
