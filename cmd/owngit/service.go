@@ -480,6 +480,7 @@ func (host *serviceHost) uninstall() error {
 		return nil
 	case !found:
 		host.printf("OwnGit is not installed as a service.\n")
+		host.printDataStays()
 		return nil
 	case installed.Mode == service.ModeUser:
 		if err := service.UninstallUserUnit(context.Background(), serviceRunner, installed.UnitPath); err != nil {
@@ -506,6 +507,15 @@ func (host *serviceHost) uninstall() error {
 		host.printf("Lingering stays on for this account, so its other user services still start at boot. \"loginctl disable-linger\" turns it off.\n")
 	}
 	return nil
+}
+
+// printDataStays says where the default state directory keeps its data,
+// for an uninstall that found no service.
+func (host *serviceHost) printDataStays() {
+	stateDir := mustAbs(defaultStateDir())
+	if line := dataStaysLine(stateDir, savedRepositoryRoot(stateDir)); line != "" {
+		host.printf("%s\n", line)
+	}
 }
 
 func (host *serviceHost) status() error {

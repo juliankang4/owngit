@@ -38,7 +38,7 @@ var helpCommands = []struct {
 	{"import", false}, {"import add", true}, {"import refresh", true}, {"import status", true},
 	{"import history", true}, {"import cancel", true}, {"import schedule", true},
 	{"import credentials", true}, {"import resolve", true},
-	{"skill", true}, {"mcp", true},
+	{"skill", true}, {"mcp", true}, {"update", true},
 }
 
 func TestEveryCommandPrintsHelpAndSucceeds(t *testing.T) {
@@ -64,7 +64,8 @@ func TestHelpCommandListCoversTopLevelUsage(t *testing.T) {
 	var usage strings.Builder
 	printUsage(&usage)
 	listed := strings.TrimSuffix(strings.TrimPrefix(strings.Fields(usage.String())[2], "["), "]")
-	covered := map[string]bool{"version": true}
+	// uninstall has its own help test, since running it bare uninstalls.
+	covered := map[string]bool{"version": true, "uninstall": true}
 	for _, command := range helpCommands {
 		covered[command.path] = true
 	}

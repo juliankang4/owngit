@@ -60,7 +60,8 @@ var (
 	servicePaths          = platformServiceInstallPaths
 	prepareServiceInstall = platformPrepareServiceInstall
 	prepareServiceStorage = platformPrepareServiceStorage
-	// replaceServiceCopy refreshes the protected executable from this one.
+	// replaceServiceCopy refreshes the protected executable from this one
+	// and records which file it came from.
 	replaceServiceCopy = platformReplaceServiceCopy
 	// trustedWinget finds winget only in a verified App Installer package.
 	trustedWinget = platformTrustedWinget
@@ -531,7 +532,7 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 	if moved != "" {
 		entries, err := os.ReadDir(moved)
 		for _, entry := range entries {
-			if entry.Name() != "owngit.exe" && entry.Name() != "temp" {
+			if entry.Name() != "owngit.exe" && entry.Name() != "temp" && entry.Name() != service.ServiceCopyRecord {
 				err = errors.New("it holds files OwnGit did not create")
 				break
 			}
@@ -873,6 +874,10 @@ func (host *taskHost) uninstall() error {
 	}
 	if !found {
 		host.printf("OwnGit is not installed as a service.\n")
+		stateDir := mustAbs(defaultStateDir())
+		if line := dataStaysLine(stateDir, host.repositoryRoot(stateDir)); line != "" {
+			host.printf("%s\n", line)
+		}
 		return nil
 	}
 	_, ruleFound := host.firewallRule()
@@ -895,13 +900,7 @@ func (host *taskHost) uninstall() error {
 		}
 	}
 	host.printf("%s. The state stays in %s", removed, installed.StateDir)
-	repositories := ""
-	if host.env.Elevated {
-		repositories = repositoryRootWithoutAdminRights(installed.StateDir)
-	} else {
-		repositories = savedRepositoryRoot(installed.StateDir)
-	}
-	if repositories != "" {
+	if repositories := host.repositoryRoot(installed.StateDir); repositories != "" {
 		host.printf(" and the repositories in %s", repositories)
 	}
 	host.printf(".\n")
@@ -912,6 +911,15 @@ func (host *taskHost) uninstall() error {
 	}
 	host.printf("Run \"owngit service install\" to use it again.\n")
 	return nil
+}
+
+// repositoryRoot is the saved repository folder of stateDir, read without
+// administrator rights.
+func (host *taskHost) repositoryRoot(stateDir string) string {
+	if host.env.Elevated {
+		return repositoryRootWithoutAdminRights(stateDir)
+	}
+	return savedRepositoryRoot(stateDir)
 }
 
 // elevatedUninstall removes the task, OwnGit's firewall rule and the
@@ -934,7 +942,8 @@ func (host *taskHost) elevatedUninstall() error {
 	if err := host.removeFirewallRule(); err != nil {
 		return err
 	}
-	// Only the copy and temp go, and the folder when nothing else is in it.
+	// Only the copy, its record and temp go, and the folder when nothing
+	// else is in it.
 	// A server that was just ended may hold the copy for a moment; a copy
 	// that runs this command stays.
 	executable := host.serviceInstall.Executable
@@ -942,7 +951,8 @@ func (host *taskHost) elevatedUninstall() error {
 		executable = ""
 	}
 	for attempt := 0; attempt < 10; attempt++ {
-		if err = errors.Join(os.RemoveAll(host.serviceInstall.Temp), os.RemoveAll(executable)); err == nil {
+		if err = errors.Join(os.RemoveAll(host.serviceInstall.Temp), os.RemoveAll(executable),
+			os.RemoveAll(filepath.Join(host.serviceInstall.Directory, service.ServiceCopyRecord))); err == nil {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)

@@ -299,6 +299,7 @@ func (host *launchAgentHost) uninstall() error {
 		if line := describeOtherJob(host.otherJobs()); line != "" {
 			host.printf("%s\n", line)
 		}
+		host.printDataStays()
 		return nil
 	}
 	if err := service.UninstallLaunchAgent(context.Background(), serviceRunner, host.uid, installed.UnitPath); err != nil {

@@ -41,6 +41,8 @@ func TestMain(m *testing.M) {
 	serviceRunner = func(context.Context, string, ...string) ([]byte, error) {
 		return nil, errors.New("tests never run a service manager")
 	}
+	serviceRunning = func(service.Install) serviceState { return serviceState{} }
+	pacmanOwner = func(string) string { return "" }
 	// The helper processes are this test binary.
 	if err := testfixture.SkipRaceExitWaitInChildren(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

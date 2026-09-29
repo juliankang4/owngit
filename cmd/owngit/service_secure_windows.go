@@ -16,6 +16,8 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+
+	"owngit/internal/service"
 )
 
 const (
@@ -121,6 +123,12 @@ func platformReplaceServiceCopy(source string, paths serviceInstallPaths) error 
 	}
 	if err := verifyProtectedServiceACL(paths.Executable, false, true); err != nil {
 		return fmt.Errorf("verify the OwnGit service copy: %w", err)
+	}
+	// The record names the owngit.exe this copy came from, so the service
+	// can show how that program is updated. It takes the protected folder's
+	// permissions.
+	if err := os.WriteFile(filepath.Join(paths.Directory, service.ServiceCopyRecord), []byte(source), 0o644); err != nil {
+		return fmt.Errorf("record where the service copy came from: %w", err)
 	}
 	return nil
 }
