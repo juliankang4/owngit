@@ -289,12 +289,13 @@ func TestFirewallScriptsChangeOnlyOwnGitsRule(t *testing.T) {
 // Only enabled inbound rules for TCP on the listen port count, whether
 // they name the program or no program; a block rule wins.
 func TestParseFirewallAccess(t *testing.T) {
-	output := "2 7\r\n" +
-		"1\t2\t256\t*\r\n" + // OwnGit's rule: any protocol, any port, private
-		"1\t4\t6\t80,443\r\n" + // a public web rule
-		"1\t4\t6\t7000-8000\r\n" + // a public range with the port
-		"0\t1\t17\t7654\r\n" + // UDP does not matter
-		"0\t1\t6\tRPC\r\n" // a keyword port does not match
+	output := "2 7 0\r\n" +
+		"1\t2\t256\t*\t*\r\n" + // OwnGit's rule: any protocol, any port, private
+		"1\t4\t6\t80,443\t*\r\n" + // a public web rule
+		"1\t4\t6\t7000-8000\tLocalSubnet\r\n" + // a public range with the port, nearby devices
+		"1\t1\t6\t7654\t10.1.2.3\r\n" + // one device only
+		"0\t1\t17\t7654\t*\r\n" + // UDP does not matter
+		"0\t1\t6\tRPC\t*\r\n" // a keyword port does not match
 	access, err := ParseFirewallAccess(output, "7654")
 	if err != nil {
 		t.Fatal(err)
@@ -312,20 +313,22 @@ func TestParseFirewallAccess(t *testing.T) {
 	if closed := (FirewallAccess{Active: 5, On: 7, Allowed: 2}).Closed(); closed != 5 {
 		t.Errorf("domain and public without a rule: closed %d", closed)
 	}
-	// As Windows 11 printed it: an allow rule for any protocol on the
-	// domain and private profiles has no local ports, and a rule for every
-	// profile has the mask 0x7FFFFFFF.
-	access, err = ParseFirewallAccess("2 7\r\n1\t2147483647\t6\t80\r\n1\t3\t256\t\r\n", "7654")
+	if closed := (FirewallAccess{Active: 2, On: 7, BlockAll: 2, Allowed: 7}).Closed(); closed != 2 {
+		t.Errorf("block all incoming connections: closed %d", closed)
+	}
+	// As Windows 11 printed it: an allow rule for any protocol has no
+	// local ports, a rule for every profile has the mask 0x7FFFFFFF, and a
+	// block rule for the local subnet blocks the devices nearby.
+	access, err = ParseFirewallAccess("2 7 4\r\n1\t2147483647\t6\t80\t*\r\n1\t3\t256\t\t*\r\n0\t4\t6\t7654\tLocalSubnet\r\n", "7654")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (FirewallAccess{Active: 2, On: 7, Allowed: 3}); access != want {
+	if want := (FirewallAccess{Active: 2, On: 7, BlockAll: 4, Allowed: 3, Blocked: 4}); access != want {
 		t.Fatalf("access %+v, want %+v", access, want)
 	}
-	if _, err := ParseFirewallAccess("", "7654"); err == nil {
-		t.Error("empty output accepted")
-	}
-	if _, err := ParseFirewallAccess("2 7\n1\t2\n", "7654"); err == nil {
-		t.Error("a short rule line accepted")
+	for _, bad := range []string{"", "2 7\n", "2 7 0\n1\t2\t256\t\n", "2 7 0\n1\tx\t256\t\t*\n"} {
+		if _, err := ParseFirewallAccess(bad, "7654"); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
 	}
 }

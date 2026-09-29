@@ -21,7 +21,7 @@ import (
 func TestDoctorReadsWindowsFoldersAndFirewall(t *testing.T) {
 	fake := newFakeWindows(t)
 	fake.owners[testStateDir] = administratorsSID
-	fake.access = "2 7\n1\t4\t6\t7654\n" // a rule for public networks only
+	fake.access = "2 7 0\n1\t4\t6\t7654\t*\n" // a rule for public networks only
 	host, _ := testTaskHost(service.Environment{Administrator: true})
 	facts := doctor.Facts{GOOS: "windows", Running: true, SetupComplete: true, Listen: "0.0.0.0:7654", OtherDevices: true, Program: testServiceExecutable, Administrator: true}
 	noErr(t, host.readDoctorFacts(&facts, []string{testStateDir, ""}))

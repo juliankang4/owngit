@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -409,45 +410,53 @@ if ($rule) { $rule.ApplicationName; $rule.Profiles; $rule.Enabled; $rule.Directi
 `
 
 // FirewallAccessScript prints what decides whether other devices reach
-// the program: on the first line the network profiles in use and the
-// profiles where Windows Firewall is on, as two NET_FW_PROFILE_TYPE2
-// masks; then one line per enabled inbound rule that names the program or
-// no program (action, profiles, protocol, local ports), tab-separated.
-// Rules of a Windows service apply only to that service and are left out.
+// the program: on the first line the network profiles in use, the
+// profiles where Windows Firewall is on, and those where it blocks all
+// incoming connections, including allowed apps, as three
+// NET_FW_PROFILE_TYPE2 masks; then one line per enabled inbound rule that
+// names the program or no program (action, profiles, protocol, local
+// ports, remote addresses), tab-separated. Rules of a Windows service, of an
+// app package or of an account's app packages (LocalUserOwner, as Windows 11
+// adds for its own apps) apply only to those and are left out.
 const FirewallAccessScript = `$ErrorActionPreference = 'Stop'
 $policy = New-Object -ComObject HNetCfg.FwPolicy2
-$on = 0; foreach ($kind in 1, 2, 4) { if ($policy.FirewallEnabled($kind)) { $on = $on -bor $kind } }
-"$($policy.CurrentProfileTypes) $on"
+$on = 0; $all = 0
+foreach ($kind in 1, 2, 4) {
+  if ($policy.FirewallEnabled($kind)) { $on = $on -bor $kind; if ($policy.BlockAllInboundTraffic($kind)) { $all = $all -bor $kind } }
+}
+"$($policy.CurrentProfileTypes) $on $all"
 $program = $env:` + FirewallProgramVariable + `
 foreach ($rule in $policy.Rules) {
-  if ($rule.Direction -ne 1 -or -not $rule.Enabled -or $rule.ServiceName) { continue }
+  if ($rule.Direction -ne 1 -or -not $rule.Enabled -or $rule.ServiceName -or $rule.LocalAppPackageId -or $rule.LocalUserOwner) { continue }
   $app = [Environment]::ExpandEnvironmentVariables([string]$rule.ApplicationName)
   if ($app -and $app -ne $program) { continue }
-  "$($rule.Action)` + "`t" + `$($rule.Profiles)` + "`t" + `$($rule.Protocol)` + "`t" + `$($rule.LocalPorts)"
+  "$($rule.Action)` + "`t" + `$($rule.Profiles)` + "`t" + `$($rule.Protocol)` + "`t" + `$($rule.LocalPorts)` + "`t" + `$($rule.RemoteAddresses)"
 }
 `
 
 // FirewallAccess is what FirewallAccessScript prints, for one TCP port.
 // Each field is a NET_FW_PROFILE_TYPE2 mask.
 type FirewallAccess struct {
-	// Active are the profiles of the networks in use, and On those where
-	// Windows Firewall is on.
-	Active, On int
+	// Active are the profiles of the networks in use, On those where
+	// Windows Firewall is on, and BlockAll those where it blocks all
+	// incoming connections, including allowed apps.
+	Active, On, BlockAll int
 	// Allowed and Blocked are the profiles where a rule allows or blocks
-	// the program on the port.
+	// the program on the port from any address or the local subnet.
 	Allowed, Blocked int
 }
 
 // Closed returns the profiles in use, with the firewall on, where devices
-// cannot reach the program: a rule blocks it, or none allows it. Windows
-// Firewall lets a block rule win over an allow rule.
+// cannot reach the program: the firewall blocks all incoming connections,
+// a rule blocks the program, or none allows it. Windows Firewall lets a
+// block rule win over an allow rule.
 func (access FirewallAccess) Closed() int {
 	guarded := access.Active & access.On
-	return guarded&access.Blocked | guarded&^access.Allowed
+	return guarded & (access.BlockAll | access.Blocked | ^access.Allowed)
 }
 
 // ParseFirewallAccess reads FirewallAccessScript's output for port. A rule
-// for any protocol has no local ports, so its line ends in a tab.
+// for any protocol has no local ports, so its ports field is empty.
 func ParseFirewallAccess(output, port string) (FirewallAccess, error) {
 	var lines []string
 	for _, line := range strings.Split(strings.ReplaceAll(output, "\r", ""), "\n") {
@@ -459,12 +468,12 @@ func ParseFirewallAccess(output, port string) (FirewallAccess, error) {
 	if len(lines) == 0 {
 		return FirewallAccess{}, errors.New("no firewall profiles")
 	}
-	if _, err := fmt.Sscanf(lines[0], "%d %d", &access.Active, &access.On); err != nil {
+	if _, err := fmt.Sscanf(lines[0], "%d %d %d", &access.Active, &access.On, &access.BlockAll); err != nil {
 		return FirewallAccess{}, fmt.Errorf("unexpected firewall profiles %q", lines[0])
 	}
 	for _, line := range lines[1:] {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 4 {
+		if len(fields) != 5 {
 			return FirewallAccess{}, fmt.Errorf("unexpected firewall rule %q", line)
 		}
 		action, actionErr := strconv.Atoi(fields[0])
@@ -474,6 +483,12 @@ func ParseFirewallAccess(output, port string) (FirewallAccess, error) {
 			return FirewallAccess{}, fmt.Errorf("unexpected firewall rule %q", line)
 		}
 		if protocol != firewallProtocolTCP && protocol != firewallProtocolAny || !portListed(fields[3], port) {
+			continue
+		}
+		// A rule for some remote addresses decides only for those devices;
+		// one for any address or the local subnet decides for the devices
+		// nearby.
+		if remote := strings.ToLower(fields[4]); remote != "*" && !slices.Contains(strings.Split(remote, ","), "localsubnet") {
 			continue
 		}
 		if action == firewallActionAllow {
