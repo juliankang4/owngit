@@ -293,7 +293,7 @@ func TestMCPReadToolsReturnTheCommandLineJSON(t *testing.T) {
 	}
 
 	names, schemas := session.toolNames()
-	if got := strings.Join(names, " "); strings.Contains(got, "check_") || !strings.Contains(got, "pull_request_diff pull_request_list") ||
+	if got := strings.Join(names, " "); strings.Contains(got, "check_") || !strings.Contains(got, "pull_request_diff pull_request_edit pull_request_list") ||
 		!strings.Contains(got, "pull_request_show repository_list repository_show") {
 		t.Fatalf("tools without a helper credential: %s", got)
 	}
@@ -683,19 +683,32 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	session := startMCPSession(t, mcpOptions{server: serverURL, repository: "project", credentialFile: credentialFile, acceptInsecureHTTP: true, workdir: work})
 	names, _ := session.toolNames()
 	if got := strings.Join(names, " "); got != "check_config_show check_cycle_list check_cycle_reserve check_log check_run check_status check_task_create check_task_list "+
-		"pull_request_close pull_request_create pull_request_diff pull_request_list pull_request_merge pull_request_reopen pull_request_review "+
+		"pull_request_close pull_request_create pull_request_diff pull_request_edit pull_request_list pull_request_merge pull_request_reopen pull_request_review "+
 		"pull_request_review_request pull_request_review_skip pull_request_show repository_list repository_show" {
 		t.Fatalf("tools: %s", got)
 	}
 
 	var created pullrequest.SuccessEnvelope
-	text, isError := session.call("pull_request_create", map[string]any{"title": "Feature", "source_branch": "feature", "target_branch": "main", "review": "request"})
+	text, isError := session.call("pull_request_create", map[string]any{"title": "Feature", "source_branch": "feature", "target_branch": "main", "review": "request", "body": "First"})
 	decodeToolJSON(t, text, &created)
-	if isError || created.PullRequest == nil || created.PullRequest.State != "open" {
+	if isError || created.PullRequest == nil || created.PullRequest.State != "open" || *created.PullRequest.Body != "First" {
 		t.Fatalf("create: %s", text)
 	}
 	pr := created.PullRequest
 	number := json.Number(strconv.FormatInt(pr.Number, 10))
+	// An edit names the edit revision it read, like the command line.
+	var edited pullrequest.SuccessEnvelope
+	text, isError = session.call("pull_request_edit", map[string]any{"number": number, "edit_revision": 0, "body": "Second"})
+	decodeToolJSON(t, text, &edited)
+	if isError || edited.PullRequest == nil || *edited.PullRequest.Body != "Second" || edited.PullRequest.Title != "Feature" || edited.PullRequest.EditRevision != 1 {
+		t.Fatalf("edit: %s", text)
+	}
+	if code := session.callError("pull_request_edit", map[string]any{"number": number, "edit_revision": 0, "title": "Stale"}); code != "stale_edit" {
+		t.Fatalf("a stale edit: %q", code)
+	}
+	if code := session.callError("pull_request_edit", map[string]any{"number": number, "title": "No revision"}); code != "invalid_arguments" {
+		t.Fatalf("an edit without edit_revision: %q", code)
+	}
 	if code := session.callError("pull_request_create", map[string]any{"title": "Again", "source_branch": "feature", "target_branch": "main"}); code == "" {
 		t.Fatal("a second open pull request for the pair was not refused")
 	}
@@ -721,14 +734,15 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	if shown := runPRCommandJSON(t, append([]string{"show", "--number", string(number)}, general...)); shown.PullRequest.Review.Status != "pending" {
 		t.Fatalf("the command line shows review %q after the request", shown.PullRequest.Review.Status)
 	}
-	review := map[string]any{"decision": "approved", "reviewer": "mcp-test"}
+	review := map[string]any{"decision": "approved", "reviewer": "mcp-test", "note": "Checked."}
 	for key, value := range pair {
 		review[key] = value
 	}
 	var reviewed pullrequest.SuccessEnvelope
 	text, isError = session.call("pull_request_review", review)
 	decodeToolJSON(t, text, &reviewed)
-	if isError || reviewed.PullRequest == nil || reviewed.PullRequest.Review.Status != "approved" || reviewed.PullRequest.Review.ReviewerLabel != "mcp-test" {
+	if isError || reviewed.PullRequest == nil || reviewed.PullRequest.Review.Status != "approved" || reviewed.PullRequest.Review.ReviewerLabel != "mcp-test" ||
+		len(reviewed.PullRequest.ReviewNotes) != 1 || reviewed.PullRequest.ReviewNotes[0].Note != "Checked." {
 		t.Fatalf("review: %s", text)
 	}
 	review["target_oid"] = pr.Source.OID
@@ -888,7 +902,7 @@ func TestMCPBinaryRoundTrip(t *testing.T) {
 		t.Fatalf("initialize: %s", response.Result)
 	}
 	session.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	if names, _ := session.toolNames(); len(names) != 20 {
+	if names, _ := session.toolNames(); len(names) != 21 {
 		t.Fatalf("tools: %v", names)
 	}
 	if text, isError := session.call("pull_request_list", nil); isError || text != `{"ok":true,"pull_requests":[]}` {

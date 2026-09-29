@@ -58,6 +58,14 @@ func (target connection) client() *apiclient.Client {
 	}
 }
 
+// textClient is the client for a request that carries pull request text,
+// which may be larger than an ordinary request.
+func (target connection) textClient() *apiclient.Client {
+	client := target.client()
+	client.MaximumRequest = pullrequest.MaximumTextRequestBytes
+	return client
+}
+
 func (target connection) repositoryPath() string {
 	return "/api/v1/repositories/" + url.PathEscape(target.repository)
 }
@@ -112,7 +120,16 @@ func showPullRequest(ctx context.Context, target connection, number int64) ([]by
 }
 
 func createPullRequest(ctx context.Context, target connection, input pullrequest.CreateInput) ([]byte, error) {
-	return target.client().Do(ctx, http.MethodPost, target.repositoryPath()+"/pull-requests", input)
+	return target.textClient().Do(ctx, http.MethodPost, target.repositoryPath()+"/pull-requests", input)
+}
+
+// editPullRequest replaces the title, the description, or both, of the pull
+// request still at the edit revision input names.
+func editPullRequest(ctx context.Context, target connection, number int64, input pullrequest.EditInput) ([]byte, error) {
+	if err := requirePullRequestNumber(number); err != nil {
+		return nil, err
+	}
+	return target.textClient().Do(ctx, http.MethodPost, target.pullRequestPath(number)+"/edit", input)
 }
 
 // markPullRequestReview requests a review (action "request") or records that
@@ -133,7 +150,7 @@ func submitPullRequestReview(ctx context.Context, target connection, number int6
 	if err := requirePullRequestNumber(number); err != nil {
 		return nil, err
 	}
-	return target.client().Do(ctx, http.MethodPost, target.pullRequestPath(number)+"/review/submit", input)
+	return target.textClient().Do(ctx, http.MethodPost, target.pullRequestPath(number)+"/review/submit", input)
 }
 
 func mergePullRequest(ctx context.Context, target connection, number int64, input pullrequest.RevisionInput) ([]byte, error) {

@@ -11,6 +11,7 @@ import (
 
 	"owngit/internal/apiclient"
 	"owngit/internal/pullrequest"
+	"owngit/internal/state"
 )
 
 // generalRemoteFlags are the connection flags of commands that use general
@@ -26,7 +27,7 @@ type generalRemoteFlags struct {
 func prCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		printPRUsage(os.Stderr)
-		return cliProblem("invalid_arguments", "pr requires create, list, show, diff, review, merge, close, or reopen.")
+		return cliProblem("invalid_arguments", "pr requires create, list, show, edit, diff, review, merge, close, or reopen.")
 	}
 	if isHelpArgument(arguments[0]) {
 		printPRUsage(os.Stdout)
@@ -39,6 +40,8 @@ func prCommand(arguments []string) error {
 		return prList(arguments[1:])
 	case "show":
 		return prShow(arguments[1:])
+	case "edit":
+		return prEdit(arguments[1:])
 	case "diff":
 		return prDiff(arguments[1:])
 	case "review":
@@ -59,19 +62,91 @@ func prCreate(arguments []string) error {
 	source := flags.String("source", "", "source branch")
 	targetBranch := flags.String("target", "", "target branch")
 	review := flags.String("review", "", "optional review choice: request or skip")
+	bodyFile := flags.String("body-file", "", "file with the Markdown description, or - for standard input")
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
 	if *title == "" || *source == "" || *targetBranch == "" {
-		return cliProblem("invalid_arguments", "pr create requires --title, --source, and --target. --review is optional.")
+		return cliProblem("invalid_arguments", "pr create requires --title, --source, and --target. --review and --body-file are optional.")
+	}
+	body, err := readPullRequestText(*bodyFile, "--body-file")
+	if err != nil {
+		return err
 	}
 	target, err := remote.connection()
 	if err != nil {
 		return err
 	}
 	return writeResult(createPullRequest(context.Background(), target, pullrequest.CreateInput{
-		Title: *title, SourceBranch: *source, TargetBranch: *targetBranch, ReviewChoice: *review,
+		Title: *title, Body: body, SourceBranch: *source, TargetBranch: *targetBranch, ReviewChoice: *review,
 	}))
+}
+
+// prEdit replaces the title, the description, or both. --edit-revision is
+// the edit_revision that pr show printed; the edit is refused with stale_edit
+// when the pull request was edited since.
+func prEdit(arguments []string) error {
+	flags := newCommandFlagSet("pr edit")
+	remote := addGeneralRemoteFlags(flags, true)
+	number := flags.Int64("number", 0, "pull request number")
+	revision := flags.Int64("edit-revision", -1, "edit_revision from pr show")
+	title := flags.String("title", "", "new title")
+	bodyFile := flags.String("body-file", "", "file with the new Markdown description, or - for standard input; an empty file clears it")
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
+		return err
+	}
+	given := map[string]bool{}
+	flags.Visit(func(set *flag.Flag) { given[set.Name] = true })
+	if *number <= 0 || *revision < 0 {
+		return cliProblem("invalid_arguments", "pr edit requires --number and --edit-revision (edit_revision from pr show).")
+	}
+	if !given["title"] && !given["body-file"] {
+		return cliProblem("invalid_arguments", "pr edit requires --title, --body-file, or both.")
+	}
+	input := pullrequest.EditInput{EditRevision: revision}
+	if given["title"] {
+		input.Title = title
+	}
+	if given["body-file"] {
+		body, err := readPullRequestText(*bodyFile, "--body-file")
+		if err != nil {
+			return err
+		}
+		input.Body = &body
+	}
+	target, err := remote.connection()
+	if err != nil {
+		return err
+	}
+	return writeResult(editPullRequest(context.Background(), target, *number, input))
+}
+
+// readPullRequestText reads a description or review note from path, or from
+// standard input when path is "-". No path is no text. The server applies the
+// 64 KiB limit after turning CRLF line ends into LF; a file that could not
+// fit even then is refused here without being read to the end.
+func readPullRequestText(path, flagName string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	reader := io.Reader(os.Stdin)
+	if path != "-" {
+		file, err := os.Open(path)
+		if err != nil {
+			return "", &apiclient.Error{Code: "invalid_arguments", Message: flagName + " could not be opened.", Cause: err}
+		}
+		defer file.Close()
+		reader = file
+	}
+	limit := int64(2 * state.MaximumPullRequestTextBytes)
+	content, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return "", &apiclient.Error{Code: "invalid_arguments", Message: flagName + " could not be read.", Cause: err}
+	}
+	if int64(len(content)) > limit {
+		return "", cliProblem("invalid_arguments", flagName+" holds more than 64 KiB of text.")
+	}
+	return string(content), nil
 }
 
 func prList(arguments []string) error {
@@ -227,6 +302,7 @@ func prReview(arguments []string) error {
 	targetOID := flags.String("target-oid", "", "exact target commit object ID")
 	decision := flags.String("decision", "", "review result: approved or changes_requested")
 	reviewer := flags.String("reviewer", "", "supplied reviewer label")
+	noteFile := flags.String("note-file", "", "file with a Markdown review note, or - for standard input")
 	if err := parseFlagsWithoutOperands(flags, arguments[1:]); err != nil {
 		return err
 	}
@@ -241,12 +317,16 @@ func prReview(arguments []string) error {
 		if *decision == "" || *reviewer == "" {
 			return cliProblem("invalid_arguments", "pr review submit requires --decision and --reviewer.")
 		}
+		note, err := readPullRequestText(*noteFile, "--note-file")
+		if err != nil {
+			return err
+		}
 		return writeResult(submitPullRequestReview(context.Background(), target, *number, pullrequest.ReviewSubmitInput{
-			SourceOID: *sourceOID, TargetOID: *targetOID, Decision: *decision, ReviewerLabel: *reviewer,
+			SourceOID: *sourceOID, TargetOID: *targetOID, Decision: *decision, ReviewerLabel: *reviewer, Note: note,
 		}))
 	}
-	if *decision != "" || *reviewer != "" {
-		return cliProblem("invalid_arguments", "--decision and --reviewer are valid only for pr review submit.")
+	if *decision != "" || *reviewer != "" || *noteFile != "" {
+		return cliProblem("invalid_arguments", "--decision, --reviewer and --note-file are valid only for pr review submit.")
 	}
 	return writeResult(markPullRequestReview(context.Background(), target, *number, action, pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID}))
 }
@@ -367,6 +447,6 @@ func writeStructuredCommandError(writer io.Writer, err error) bool {
 }
 
 func printPRUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|diff|review|merge|close|reopen> [options]")
+	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|edit|diff|review|merge|close|reopen> [options]")
 	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server and --repository default to its origin remote. HTTP also requires --accept-insecure-http.")
 }

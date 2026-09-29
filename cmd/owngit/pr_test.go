@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -95,7 +96,22 @@ func TestPRCommandsUseRemoteJSONAPIAndPrivatePasswordFile(t *testing.T) {
 	}
 }
 
-func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) {
+// prCLIFixture is an OwnGit server in open mode with a repository named
+// project, whose main branch has one commit and whose feature branch has one
+// more.
+type prCLIFixture struct {
+	root, stateRoot string
+	store           *state.Store
+	manager         *repository.Manager
+	server          *httptest.Server
+	work            string
+	sourceOID       string
+	targetOID       string
+	remoteFlags     []string
+}
+
+func newPRCLIFixture(t *testing.T) prCLIFixture {
+	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
@@ -103,7 +119,7 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	noErr(t, os.Mkdir(repositoryRoot, 0o700))
 	store, err := state.Open(ctx, stateRoot)
 	noErr(t, err)
-	defer store.Close()
+	t.Cleanup(func() { store.Close() })
 	adminHash, err := auth.HashPassword("admin-password")
 	noErr(t, err)
 	noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, true))
@@ -125,7 +141,7 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	}
 	gitHandler.Authorize = application.AuthorizeGit
 	httpServer := httptest.NewServer(application.Handler())
-	defer httpServer.Close()
+	t.Cleanup(httpServer.Close)
 
 	work := filepath.Join(root, "work")
 	runPRGit(t, "", "init", "--initial-branch=main", work)
@@ -142,12 +158,22 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	runPRGit(t, work, "add", ".")
 	runPRGit(t, work, "commit", "-m", "feature")
 	runPRGit(t, work, "push", "origin", "HEAD:refs/heads/feature")
-	sourceOID := prGitOutput(t, work, "rev-parse", "HEAD")
+	return prCLIFixture{
+		root: root, stateRoot: stateRoot, store: store, manager: manager, server: httpServer, work: work,
+		sourceOID: prGitOutput(t, work, "rev-parse", "HEAD"), targetOID: targetOID,
+		remoteFlags: []string{"--server", httpServer.URL, "--accept-insecure-http", "--repository", "project"},
+	}
+}
+
+func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) {
+	ctx := context.Background()
+	fixture := newPRCLIFixture(t)
+	store, manager, sourceOID, targetOID := fixture.store, fixture.manager, fixture.sourceOID, fixture.targetOID
 	if records, err := store.PullRequests(ctx, "project"); err != nil || len(records) != 0 {
 		t.Fatalf("ordinary push created pull requests: records=%v err=%v", records, err)
 	}
 
-	remoteFlags := []string{"--server", httpServer.URL, "--accept-insecure-http", "--repository", "project"}
+	remoteFlags := fixture.remoteFlags
 	created := runPRCommandJSON(t, append([]string{
 		"create", "--title", "CLI feature", "--source", "feature", "--target", "main", "--review", "request",
 	}, remoteFlags...))
@@ -194,7 +220,7 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	if got := prGitOutput(t, "", "--git-dir", repositoryPath, "rev-parse", "--verify", "refs/heads/main"); got != sourceOID {
 		t.Fatalf("CLI merge target=%s, want %s", got, sourceOID)
 	}
-	err = prCommand(append([]string{"close", "--number", number}, remoteFlags...))
+	err := prCommand(append([]string{"close", "--number", number}, remoteFlags...))
 	if got := commandErrorCode(err); got != "pull_request_merged" {
 		t.Fatalf("CLI close of a merged pull request error=%v code=%q", err, got)
 	}
@@ -282,5 +308,76 @@ func TestStructuredPRFailureContainsStableCodeWithoutCause(t *testing.T) {
 	noErr(t, json.Unmarshal(output.Bytes(), &decoded))
 	if decoded.OK || decoded.Error.Code != "invalid_credentials" {
 		t.Fatalf("structured error=%+v", decoded)
+	}
+}
+
+// Pull request text made with the command line, its edits, a review note and
+// who made each change are in an offline backup and come back unchanged from
+// a restore. A stale edit is refused on the way.
+func TestPRTextSurvivesBackupAndRestore(t *testing.T) {
+	ctx := context.Background()
+	fixture := newPRCLIFixture(t)
+	write := func(name, content string) string {
+		path := filepath.Join(fixture.root, name)
+		noErr(t, os.WriteFile(path, []byte(content), 0o600))
+		return path
+	}
+	created := runPRCommandJSON(t, append([]string{
+		"create", "--title", "Described", "--source", "feature", "--target", "main",
+		"--body-file", write("body.md", "## Why\r\n\r\nFirst draft.\r\n"),
+	}, fixture.remoteFlags...)).PullRequest
+	if created.Body == nil || *created.Body != "## Why\n\nFirst draft.\n" || created.EditRevision != 0 {
+		t.Fatalf("created=%+v", created)
+	}
+	number := strconv.FormatInt(created.Number, 10)
+	edited := runPRCommandJSON(t, append([]string{
+		"edit", "--number", number, "--edit-revision", "0", "--body-file", write("edit.md", "Final text.\n"),
+	}, fixture.remoteFlags...)).PullRequest
+	if edited.Title != "Described" || *edited.Body != "Final text.\n" || edited.EditRevision != 1 {
+		t.Fatalf("edited=%+v", edited)
+	}
+	err := prCommand(append([]string{"edit", "--number", number, "--edit-revision", "0", "--title", "Stale"}, fixture.remoteFlags...))
+	if got := commandErrorCode(err); got != "stale_edit" {
+		t.Fatalf("stale edit error=%v code=%q", err, got)
+	}
+	reviewed := runPRCommandJSON(t, append([]string{
+		"review", "submit", "--number", number, "--source-oid", fixture.sourceOID, "--target-oid", fixture.targetOID,
+		"--decision", "approved", "--reviewer", "cli reviewer", "--note-file", write("note.md", "Looks right.\n"),
+	}, fixture.remoteFlags...)).PullRequest
+	if len(reviewed.ReviewNotes) != 1 || reviewed.ReviewNotes[0].Note != "Looks right.\n" {
+		t.Fatalf("review notes=%+v", reviewed.ReviewNotes)
+	}
+	runPRCommandJSON(t, append([]string{
+		"merge", "--number", number, "--source-oid", fixture.sourceOID, "--target-oid", fixture.targetOID,
+	}, fixture.remoteFlags...))
+
+	before, _, err := fixture.store.PullRequest(ctx, "project", created.Number)
+	noErr(t, err)
+	notesBefore, _, err := fixture.store.PullRequestReviewNotes(ctx, "project", created.Number, 10)
+	noErr(t, err)
+	access := state.Actor{Kind: state.ActorAccess}
+	if before.CreatedBy != access || before.EditedBy != access || before.MergedBy != access || len(notesBefore) != 1 || notesBefore[0].Actor != access {
+		t.Fatalf("recorded actors: %+v, notes %+v", before, notesBefore)
+	}
+	fixture.server.Close()
+	noErr(t, fixture.store.Close())
+	backup := filepath.Join(fixture.root, "backup")
+	_, err = captureStdout(func() error { return backupState([]string{"--state-dir", fixture.stateRoot, "--output", backup}) })
+	noErr(t, err)
+	restoredState, restoredRepositories := filepath.Join(fixture.root, "restored-state"), filepath.Join(fixture.root, "restored-repositories")
+	_, err = captureStdout(func() error {
+		return restoreState([]string{"--input", backup, "--state-dir", restoredState, "--repository-root", restoredRepositories})
+	})
+	noErr(t, err)
+
+	restored, err := state.Open(ctx, restoredState)
+	noErr(t, err)
+	defer restored.Close()
+	after, _, err := restored.PullRequest(ctx, "project", created.Number)
+	noErr(t, err)
+	notesAfter, _, err := restored.PullRequestReviewNotes(ctx, "project", created.Number, 10)
+	noErr(t, err)
+	if !reflect.DeepEqual(before, after) || !reflect.DeepEqual(notesBefore, notesAfter) {
+		t.Fatalf("pull request text changed through backup and restore:\n%+v\n%+v\n%+v\n%+v", before, after, notesBefore, notesAfter)
 	}
 }
