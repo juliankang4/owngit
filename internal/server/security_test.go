@@ -234,6 +234,36 @@ func TestLoopbackHostNamesAreAcceptedOnlyFromLoopbackPeers(t *testing.T) {
 	}
 }
 
+// In the container image the Docker host's own connections arrive from the
+// container's gateway, which then counts as this computer. Other containers
+// on the same network and other devices keep their own addresses and stay
+// refused, and without the container image the gateway is refused too.
+func TestContainerGatewayCountsAsThisComputer(t *testing.T) {
+	gateway := "172.18.0.1:51000"
+	neighbours := append([]string{"172.18.0.3:40000", "172.18.0.2:40000", "172.17.0.1:40000", "[fd00::1]:40000"}, nonLoopbackPeers...)
+	plain := NewHostPolicy()
+	contained := NewHostPolicy()
+	contained.CountAsThisComputer(netip.MustParseAddr("::ffff:172.18.0.1"))
+	for _, name := range loopbackHostValues {
+		if plain.Allows(name, gateway) {
+			t.Errorf("without the container image, Host %q from the gateway is accepted", name)
+		}
+		for _, peer := range []string{gateway, "[::ffff:172.18.0.1]:51000", "172.18.0.1", "127.0.0.1:40000"} {
+			if !contained.Allows(name, peer) {
+				t.Errorf("Host %q from %q is refused in the container image", name, peer)
+			}
+		}
+		for _, peer := range neighbours {
+			if contained.Allows(name, peer) {
+				t.Errorf("Host %q from %q is accepted in the container image", name, peer)
+			}
+		}
+	}
+	if contained.Allows("attacker.invalid", gateway) {
+		t.Error("the gateway made an unknown name acceptable")
+	}
+}
+
 // A device that sends a loopback Host is refused on every path, before and
 // after setup, even in open access mode where Git needs no password. The
 // loopback peer and a kept name from another device still work.

@@ -39,7 +39,7 @@ func updateCommand(arguments []string) error {
 		return fmt.Errorf("could not ask GitHub for the latest release: %w", err)
 	}
 	release, newer := checker.Newer()
-	runs := serviceRunning(install)
+	runs := serviceFor(install)
 	platform := updatePlatform(install, runs)
 	command, start := "", ""
 	if newer {
@@ -93,6 +93,8 @@ func routeDescription(route service.Route) string {
 		return "Installed with pacman"
 	case service.RouteApp:
 		return "Part of OwnGit.app"
+	case service.RouteContainer:
+		return "Part of the OwnGit container image"
 	case service.RouteUnknown:
 		return "Service copy of an unrecorded program"
 	}
@@ -134,7 +136,7 @@ func dashboardUpdateCommand(asService bool) func(string) (command, start string,
 			install = detectInstall()
 			runs = serviceState{this: asService}
 			if !asService && runtime.GOOS != "windows" {
-				runs = serviceRunning(install)
+				runs = serviceFor(install)
 			}
 			if asService && runtime.GOOS == "windows" {
 				// A sign-in task starts the program itself; a boot task
@@ -178,8 +180,9 @@ func runningExecutable() (string, error) {
 }
 
 // detectInstall finds how the running program was installed, from facts on
-// this computer: where the file is, which package pacman lists it in, and
-// for the Windows service copy the record of the file it was copied from.
+// this computer: where the file is, which package pacman lists it in, the
+// route record of the container image, and for the Windows service copy
+// the record of the file it was copied from.
 func detectInstall() service.Install {
 	executable, err := runningExecutable()
 	if err != nil {
@@ -197,9 +200,15 @@ func detectInstall() service.Install {
 	install := service.ClassifyExecutable(executable)
 	if runtime.GOOS == "linux" {
 		install = install.OwnedBy(pacmanOwner(executable))
+		if record, err := os.ReadFile(routeRecord); err == nil {
+			install = install.RecordedAs(string(record))
+		}
 	}
 	return install
 }
+
+// routeRecord is service.RouteRecordPath; tests replace it.
+var routeRecord = service.RouteRecordPath
 
 // pacmanPath is the pacman that install detection asks, at the fixed path
 // Arch Linux installs it; PATH is not searched.
@@ -232,6 +241,17 @@ func askPacman(pacman, path string) string {
 type serviceState struct {
 	this, file bool
 	other      string
+}
+
+// serviceFor tells what starts the installed program. In the container
+// image the container runtime starts it, and the update command recreates
+// the container with the new program; elsewhere it is the service
+// registration of this account.
+func serviceFor(install service.Install) serviceState {
+	if install.Route == service.RouteContainer {
+		return serviceState{this: true}
+	}
+	return serviceRunning(install)
 }
 
 // serviceRunning reads the service registration of this account. Only a

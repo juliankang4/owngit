@@ -45,6 +45,13 @@ func TestClassifyExecutable(t *testing.T) {
 			t.Errorf("%q was taken as a package: %+v", pkg, got)
 		}
 	}
+	// The container image records its route; nothing else is taken from
+	// the record.
+	for record, want := range map[string]Route{"container\n": RouteContainer, "container": RouteContainer, "": RouteArchive, "homebrew": RouteArchive, "container image": RouteArchive} {
+		if got := ClassifyExecutable("/usr/local/bin/owngit").RecordedAs(record); got.Route != want || got.Executable != "/usr/local/bin/owngit" {
+			t.Errorf("record %q: %+v, want %s", record, got, want)
+		}
+	}
 }
 
 // Each route has one update command: the package manager's own, or for an
@@ -84,6 +91,7 @@ func TestUpdateCommand(t *testing.T) {
 		{"archive without a release target", archive, Platform{GOOS: "darwin", GOARCH: "amd64"}, ""},
 		{"app", ClassifyExecutable("/Applications/OwnGit.app/Contents/Helpers/owngit"), withService(mac), ""},
 		{"unknown service copy", Install{Route: RouteUnknown}, withService(linux), ""},
+		{"container", Install{Route: RouteContainer}, withService(linux), "docker compose pull && docker compose up -d"},
 	} {
 		got := tc.install.UpdateCommand("1.1.3", tc.platform)
 		if got != tc.want {

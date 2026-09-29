@@ -68,8 +68,9 @@ func setupLink(arguments []string) error {
 // for each address of this computer that the server can be reached by, the
 // most likely first. Elsewhere it shows only the setup file path.
 func issueAndShowSetupLink(ctx context.Context, store *state.Store, baseURL string, out io.Writer, terminal bool) (string, error) {
-	bases, tunnel := []string{baseURL}, ""
+	bases, tunnel, container := []string{baseURL}, "", false
 	if baseURL == "" {
+		container = inContainerImage()
 		var err error
 		if bases, tunnel, err = setupBases(ctx, store); err != nil {
 			return "", err
@@ -89,6 +90,8 @@ func issueAndShowSetupLink(ctx context.Context, store *state.Store, baseURL stri
 		fmt.Fprintln(out, "This computer has no address on a private network or a tailnet. The setup link is not shown for a public address, where it and your passwords would cross the Internet unencrypted. On your own computer, open an SSH tunnel:")
 		fmt.Fprintf(out, "  %s\n", printable(tunnel))
 		fmt.Fprintln(out, "Keep it open, and open this one-time setup link there. It works once, within 15 minutes:")
+	case container:
+		fmt.Fprintln(out, "Open this one-time setup link in a browser on the computer that runs the OwnGit container; on another device, put that computer's address in place of localhost. It works once, within 15 minutes:")
 	case len(bases) == 1:
 		fmt.Fprintln(out, "Open this one-time setup link in a browser. It works once, within 15 minutes:")
 	default:
@@ -110,7 +113,9 @@ func issueAndShowSetupLink(ctx context.Context, store *state.Store, baseURL stri
 // address means this computer's private and tailnet addresses. A computer
 // with a screen lists 127.0.0.1 before them. A computer without a screen
 // and without such an address gets the link on 127.0.0.1 and, as tunnel,
-// the SSH command that forwards it from the owner's own computer.
+// the SSH command that forwards it from the owner's own computer. In the
+// container image the link names localhost, as the computer that runs the
+// container opens it through the published port.
 func setupBases(ctx context.Context, store *state.Store) (bases []string, tunnel string, err error) {
 	observed, err := store.ObserveRunningNetwork(ctx)
 	if err != nil {
@@ -137,6 +142,13 @@ func setupBases(ctx context.Context, store *state.Store) (bases []string, tunnel
 	loopback := "http://" + net.JoinHostPort("127.0.0.1", port)
 	if ip, err := netip.ParseAddr(host); host != "" && (err != nil || !ip.IsUnspecified()) {
 		return append(bases, "http://"+net.JoinHostPort(host, port)), "", nil
+	}
+	if inContainerImage() {
+		// The container's own addresses are on a network that only the
+		// computer running it reaches, and a browser there reaches OwnGit
+		// through the published port, which Docker forwards from the
+		// container's gateway (see HostPolicy.CountAsThisComputer).
+		return append(bases, "http://"+net.JoinHostPort("localhost", port)), "", nil
 	}
 	headless := probeEnvironment().Headless()
 	if !headless {

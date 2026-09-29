@@ -56,6 +56,8 @@ func programStaysLine(install service.Install, goos string, sudo bool) string {
 		return "The program belongs to the pacman package " + printable(install.Package) + ", which pacman removes: " + command
 	case service.RouteApp:
 		return "The program is part of OwnGit.app; move the app to the Trash to remove it."
+	case service.RouteContainer:
+		return "The program is part of the OwnGit container image. To remove it, remove the container on the computer that runs it, with \"docker compose down\" in the folder of its compose.yaml; the data volume stays."
 	case service.RouteUnknown:
 		return "The program " + program + " stays; remove the owngit.exe you installed the service from as you installed it."
 	}

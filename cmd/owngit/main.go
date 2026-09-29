@@ -560,6 +560,17 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if err := policy.Add(parsedOrigin.Host); err != nil {
 		return fmt.Errorf("trust setup origin: %w", err)
 	}
+	// In the container image, a browser on the computer that runs the
+	// container opens http://localhost:PORT, which reaches OwnGit from the
+	// container's gateway.
+	if inContainerImage() {
+		if gateway, err := containerGateway(); err != nil {
+			logf("could not find the container's gateway, so localhost on the computer that runs the container is refused: %v", err)
+		} else {
+			policy.CountAsThisComputer(gateway)
+			logf("running in the OwnGit container image: connections from its gateway %s, the computer that runs the container, count as this computer", gateway)
+		}
+	}
 
 	home, _ := os.UserHomeDir()
 	imports := &importsync.Service{Store: store, Repositories: repositories, Logf: logf}
@@ -703,6 +714,9 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			return err
 		}
 		logf("owner setup file: %s", path)
+		if inContainerImage() {
+			logf("to see the setup link, run \"docker compose exec -it owngit owngit setup-link\" where the container runs")
+		}
 		if target := serveOpenTarget(false, *openOwner, *noOpen, path, origin); target != "" {
 			openServeTarget(target, "setup file", opener, logf)
 		}

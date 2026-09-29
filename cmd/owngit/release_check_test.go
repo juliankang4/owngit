@@ -46,6 +46,7 @@ func TestMain(m *testing.M) {
 	// which must never be the state of the account running the tests.
 	uninstallStateDir = func() string { return filepath.Join(os.TempDir(), "owngit-tests-have-no-default-state") }
 	pacmanOwner = func(string) string { return "" }
+	routeRecord = filepath.Join(os.TempDir(), "owngit-tests-have-no-route-record")
 	// The helper processes are this test binary.
 	if err := testfixture.SkipRaceExitWaitInChildren(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

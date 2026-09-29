@@ -29,10 +29,24 @@ const (
 	// RouteApp is the helper inside an OwnGit.app bundle, which is replaced
 	// as a whole.
 	RouteApp Route = "app"
+	// RouteContainer is the program inside the OwnGit container image,
+	// which is replaced by pulling a newer image and recreating the
+	// container on the computer that runs it.
+	RouteContainer Route = "container"
 	// RouteUnknown is the Windows service copy when no record says which
 	// file it was copied from, as after an install by an earlier version.
 	RouteUnknown Route = "unknown"
 )
+
+// RouteRecordPath is the file in which an image names the route of the
+// program it holds, for a route that the program's path does not show. The
+// OwnGit container image writes "container" there.
+const RouteRecordPath = "/etc/owngit/install-route"
+
+// ContainerUpdateCommand pulls the newer image and recreates the container
+// with it, run on the computer that runs the container, in the folder of
+// its compose.yaml. The data volume stays.
+const ContainerUpdateCommand = "docker compose pull && docker compose up -d"
 
 // ServiceCopyRecord is the file beside the Windows service copy that names
 // the owngit.exe it was copied from, so that the running service can tell
@@ -95,6 +109,16 @@ func (install Install) ProgramFolder() string {
 		return modules
 	}
 	return ""
+}
+
+// RecordedAs returns the install with the route that the content of
+// RouteRecordPath names. Only RouteContainer is recorded there; anything
+// else, including "", keeps the route.
+func (install Install) RecordedAs(record string) Install {
+	if strings.TrimSpace(record) == string(RouteContainer) {
+		install.Route = RouteContainer
+	}
+	return install
 }
 
 // packageName is a pacman package name as makepkg accepts it: letters,
@@ -198,6 +222,10 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		steps = append(steps, "(cd \"$(mktemp -d)\" && "+httpsOnly+"-fLO "+releaseDownloads+version+"/PKGBUILD && makepkg -si)")
 	case RouteArchive:
 		return install.installerCommand(version, platform)
+	case RouteContainer:
+		// Recreating the container starts the new program, so no service
+		// step follows.
+		return ContainerUpdateCommand
 	default:
 		return ""
 	}

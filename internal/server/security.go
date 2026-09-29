@@ -15,6 +15,10 @@ import (
 type HostPolicy struct {
 	mu      sync.RWMutex
 	allowed map[string]struct{}
+	// dockerHost is the address from which the computer that runs the
+	// OwnGit container reaches it, or the zero Addr outside the container
+	// image. See CountAsThisComputer.
+	dockerHost netip.Addr
 }
 
 func NewHostPolicy(hosts ...string) *HostPolicy {
@@ -47,15 +51,28 @@ func (policy *HostPolicy) Remove(value string) {
 	policy.mu.Unlock()
 }
 
+// CountAsThisComputer makes connections from gateway count as this
+// computer's own, like loopback connections. Only OwnGit in its container
+// image calls it, with the container's default gateway: Docker forwards the
+// connections that the computer running the container makes to a published
+// port on its own loopback address, so they arrive from that gateway. Other
+// containers and devices that reach the container directly keep their own
+// addresses. It must be called before the policy serves requests.
+func (policy *HostPolicy) CountAsThisComputer(gateway netip.Addr) {
+	policy.dockerHost = gateway.Unmap()
+}
+
 // Allows reports whether the policy accepts requestHost on a connection from
 // peer, the raw address of the connection's other end (requestctx.Info.Peer,
 // never a forwarded client address). A name that points at this computer,
-// such as localhost, 127.0.0.1 or ::1, is accepted only when peer is a
-// loopback address: any device can send it as Host, and only this computer's
-// own connections, including a proxy or Tailscale Serve running here, use it.
+// such as localhost, 127.0.0.1 or ::1, is accepted only on a connection from
+// this computer: any device can send it as Host, and only this computer's
+// own connections, including a proxy or Tailscale Serve running here, use
+// it. They come from a loopback address, or in the container image from
+// the address given to CountAsThisComputer.
 func (policy *HostPolicy) Allows(requestHost, peer string) bool {
 	host, err := normalizeHost(requestHost)
-	if err != nil || loopbackName(host) && !loopbackPeer(peer) {
+	if err != nil || loopbackName(host) && !policy.fromThisComputer(peer) {
 		return false
 	}
 	policy.mu.RLock()
@@ -131,14 +148,19 @@ func loopbackName(host string) bool {
 	return err == nil && address.Unmap().IsLoopback()
 }
 
-// loopbackPeer reports whether a connection's raw peer address, with or
-// without a port, is a loopback address, IPv4-mapped IPv6 included.
-func loopbackPeer(peer string) bool {
+// fromThisComputer reports whether a connection's raw peer address, with or
+// without a port, is a loopback address, IPv4-mapped IPv6 included, or the
+// address given to CountAsThisComputer.
+func (policy *HostPolicy) fromThisComputer(peer string) bool {
 	if host, _, err := net.SplitHostPort(peer); err == nil {
 		peer = host
 	}
 	address, err := netip.ParseAddr(peer)
-	return err == nil && address.Unmap().IsLoopback()
+	if err != nil {
+		return false
+	}
+	address = address.Unmap()
+	return address.IsLoopback() || policy.dockerHost.IsValid() && address == policy.dockerHost
 }
 
 // refuseFunnel refuses every request that carries Tailscale's Funnel header.
