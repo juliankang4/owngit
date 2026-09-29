@@ -16,6 +16,7 @@ import (
 
 	"owngit/internal/doctor"
 	"owngit/internal/service"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
@@ -275,5 +276,50 @@ func TestDoctorCommandWithoutAServer(t *testing.T) {
 		if host != "127.0.0.1:18961" {
 			t.Errorf("checked %s", host)
 		}
+	}
+}
+
+// A state whose server runs but does not answer, and one that something
+// else holds, are said so, never taken as running. The health check is a
+// fake that does not answer.
+func TestDoctorCommandTrustsTheStateOnly(t *testing.T) {
+	useFakeHealth(t)
+	codes := func(stateDir string) []string {
+		t.Helper()
+		output, err := captureStdout(func() error { return run([]string{"doctor", "--state-dir", stateDir, "--json"}) })
+		noErr(t, err)
+		var report struct {
+			Running  bool `json:"running"`
+			Findings []struct {
+				Code string `json:"code"`
+			} `json:"findings"`
+		}
+		noErr(t, json.Unmarshal([]byte(output), &report))
+		if report.Running {
+			t.Errorf("reported as running:\n%s", output)
+		}
+		var codes []string
+		for _, finding := range report.Findings {
+			codes = append(codes, finding.Code)
+		}
+		return codes
+	}
+	runningDir := filepath.Join(t.TempDir(), "state")
+	served := startServed(t, runningDir)
+	if got := codes(runningDir); !reflect.DeepEqual(got, []string{string(webui.MsgDoctorSilent)}) {
+		t.Errorf("running without an answer: %q", got)
+	}
+	served.stop()
+
+	stateDir := filepath.Join(t.TempDir(), "held")
+	_, err := captureStdout(func() error {
+		return run([]string{"network", "set", "--state-dir", stateDir, "--listen", "127.0.0.1:18962"})
+	})
+	noErr(t, err)
+	release, err := state.AcquireOfflineLock(stateDir)
+	noErr(t, err)
+	defer release()
+	if got := codes(stateDir); !reflect.DeepEqual(got, []string{string(webui.MsgDoctorUncheckedServer)}) {
+		t.Errorf("held state directory: %q", got)
 	}
 }

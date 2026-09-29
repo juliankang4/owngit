@@ -293,7 +293,8 @@ func networkList(networks []Network) string {
 // only for 0.0.0.0), or the network of the address host names. Loopback,
 // link-local, public and shared (100.64.0.0/10, as Tailscale uses)
 // addresses are never private networks here, nor is a network that reaches
-// past a private block.
+// past a private block, a single address, Tailscale's range, or a network
+// of container, virtual machine or Tailscale interfaces.
 func PrivateNetworks(host string, interfaces []Interface) []Network {
 	listen, err := netip.ParseAddr(host)
 	if host != "" && err != nil {
@@ -301,9 +302,14 @@ func PrivateNetworks(host string, interfaces []Interface) []Network {
 	}
 	var networks []Network
 	for _, link := range interfaces {
+		if virtualInterface(link.Name) {
+			continue
+		}
 		for _, prefix := range link.Prefixes {
 			address := prefix.Addr().Unmap()
-			if !address.IsPrivate() {
+			// A single address is no network other devices are on, and
+			// Tailscale's addresses are its own network, as 100.64.0.0/10.
+			if !address.IsPrivate() || prefix.Bits() == address.BitLen() || tailscaleULA.Contains(address) {
 				continue
 			}
 			switch {
@@ -328,6 +334,21 @@ func PrivateNetworks(host string, interfaces []Interface) []Network {
 		}
 	}
 	return networks
+}
+
+// tailscaleULA is the IPv6 range of Tailscale addresses.
+var tailscaleULA = netip.MustParsePrefix("fd7a:115c:a1e0::/48")
+
+// virtualInterface reports whether name is an interface of containers,
+// virtual machines or Tailscale on this computer, whose networks are not
+// the owner's other devices.
+func virtualInterface(name string) bool {
+	for _, prefix := range []string{"docker", "br-", "veth", "virbr", "cni", "podman", "lxcbr", "lxdbr", "incusbr", "tailscale"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // privateBlocks are the private address blocks (RFC 1918, RFC 4193).

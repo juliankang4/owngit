@@ -1183,7 +1183,7 @@ var catalog = map[MessageCode]message{
 	},
 	MsgDoctorWindowsScoped: {
 		en: "On the network this computer uses, Windows Firewall lets only some remote addresses reach OwnGit, as a rule limits them. OwnGit cannot tell whether your other devices are among them; if one cannot connect, add its address to that rule in Windows Defender Firewall.",
-		ko: "이 컴퓨터가 쓰는 네트워크에서 Windows 방화벽 규칙이 일부 원격 주소만 OwnGit에 접속하도록 허용합니다. 다른 기기가 그 주소에 드는지는 OwnGit이 알 수 없습니다. 접속하지 못하는 기기가 있으면 Windows Defender 방화벽에서 그 규칙에 기기 주소를 추가하세요.",
+		ko: "이 컴퓨터가 쓰는 네트워크에서 Windows 방화벽 규칙이 일부 원격 주소만 OwnGit에 접속하도록 허용합니다. 다른 기기가 그 주소에 속하는지는 OwnGit이 알 수 없습니다. 접속하지 못하는 기기가 있으면 Windows Defender 방화벽에서 그 규칙에 기기 주소를 추가하세요.",
 	},
 	MsgDoctorWindowsForeignRule: {
 		en: "A Windows Firewall rule named OwnGit exists that OwnGit did not add, so OwnGit adds no rule of that name. Rename or remove that rule in Windows Defender Firewall.",

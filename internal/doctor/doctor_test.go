@@ -150,6 +150,14 @@ func TestPrivateNetworks(t *testing.T) {
 		{Name: "tailscale0", Prefixes: []netip.Prefix{netip.MustParsePrefix("100.100.1.2/32")}},
 		{Name: "eth1", Zone: "internal", Prefixes: []netip.Prefix{netip.MustParsePrefix("fd12:3456::5/64")}},
 	}
+	// Container bridges, Tailscale and single addresses are no networks of
+	// the owner's devices.
+	interfaces = append(interfaces,
+		Interface{Name: "docker0", Prefixes: []netip.Prefix{netip.MustParsePrefix("172.17.0.1/16")}},
+		Interface{Name: "br-3f2a", Prefixes: []netip.Prefix{netip.MustParsePrefix("172.18.0.1/16")}},
+		Interface{Name: "tailscale0", Prefixes: []netip.Prefix{netip.MustParsePrefix("fd7a:115c:a1e0::1/128"), netip.MustParsePrefix("fd7a:115c:a1e0::1/48")}},
+		Interface{Name: "wg0", Prefixes: []netip.Prefix{netip.MustParsePrefix("10.8.0.2/32")}},
+	)
 	lan := Network{Prefix: netip.MustParsePrefix("192.168.50.0/24"), Zone: "home"}
 	ula := Network{Prefix: netip.MustParsePrefix("fd12:3456::/64"), Zone: "internal"}
 	for host, want := range map[string][]Network{

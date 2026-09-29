@@ -461,10 +461,16 @@ func linuxFirewall(ctx context.Context, host, config, firewalld string) (doctor.
 		return doctor.Firewall{}, err
 	}
 	if firewall.Firewalld {
+		// The zone decides only for an interface with a network OwnGit
+		// gives a command for; one it cannot read in time leaves the
+		// command out.
+		zones, cancel := context.WithTimeout(ctx, doctorToolTimeout)
+		defer cancel()
 		for index := range interfaces {
-			// The zone decides only for a network OwnGit gives a command
-			// for; one it cannot read leaves the command out.
-			if output, err := doctorTool(ctx, nil, firewalld, "--get-zone-of-interface="+interfaces[index].Name); err == nil {
+			if len(doctor.PrivateNetworks(host, interfaces[index:index+1])) == 0 {
+				continue
+			}
+			if output, err := doctorTool(zones, nil, firewalld, "--get-zone-of-interface="+interfaces[index].Name); err == nil {
 				interfaces[index].Zone = zoneName(string(output))
 			}
 		}
