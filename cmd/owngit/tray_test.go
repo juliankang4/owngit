@@ -265,7 +265,9 @@ func TestTrayIconCommand(t *testing.T) {
 		probeEnvironment = func() service.Environment {
 			return service.Environment{Getenv: func(string) string { return "" }, EUID: 1000, Linux: true, GraphicalSession: true}
 		}
-		noErr(t, os.MkdirAll(stateDir, 0o700))
+		store, err := state.Open(context.Background(), stateDir)
+		noErr(t, err)
+		store.Close()
 		output, err := captureStdout(func() error { return runCommand("tray", []string{"--state-dir", stateDir}) })
 		if err != nil || !strings.Contains(output, "needs gjs with GTK 4") {
 			t.Errorf("status without gjs: %v\n%s", err, output)
