@@ -1,0 +1,24 @@
+# OwnGit with Docker Compose. In the folder of this file:
+#
+#   docker compose up -d
+#   docker compose exec -it owngit owngit setup-link
+#
+# Then open the setup link in a browser on this computer. docs/OPERATIONS.md
+# (Run in a container) explains setup from another device, updates,
+# backups and running as another account.
+services:
+  owngit:
+    image: ghcr.io/juliankang4/owngit:latest
+    restart: unless-stopped
+    ports:
+      - "7654:7654"
+    volumes:
+      - owngit-data:/data
+    # OwnGit needs no Linux capabilities and never gains privileges.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  owngit-data:
