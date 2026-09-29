@@ -122,8 +122,7 @@ func (app *App) handleTrayStatus(writer http.ResponseWriter, request *http.Reque
 	}
 	status, err := app.trayStatus(request)
 	if err != nil {
-		logFailure(request, "tray status read", err)
-		writeAPIError(writer, http.StatusServiceUnavailable, "status_unavailable", "OwnGit runs but could not read its status. The OwnGit log says why.", nil)
+		writeAPIError(writer, unavailable(request, "tray status read", err), "status_unavailable", "OwnGit runs but could not read its status. The OwnGit log says why.", nil)
 		return
 	}
 	writeAPIJSON(writer, http.StatusOK, status)
