@@ -205,8 +205,8 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 	noErr(t, Restore(ctx, backup, filepath.Join(sticky, "state"), filepath.Join(sticky, "repositories"), ""))
 	noErr(t, Restore(ctx, filepath.Join(sticky, "backup"), filepath.Join(root, "state"), filepath.Join(root, "repositories"), ""))
 
-	// Missing folders on the way are created (QA-124), but only where no
-	// other account can create names, as for a state directory.
+	// Missing folders on the way are created, but only where no other
+	// account can create names, as for a state directory.
 	for _, test := range []struct{ folder, refusal string }{
 		{shared, refusal},
 		{sticky, "other accounts can create names in " + sticky},

@@ -8,8 +8,8 @@ import (
 )
 
 // A Destination whose parent is missing creates it and the missing folders
-// above it, each private to this account, as a state directory's are made
-// (QA-124).
+// above it, each private to this account, as a state directory's are made,
+// instead of failing because the parent does not exist.
 func TestDestinationCreatesMissingParentsPrivately(t *testing.T) {
 	root := t.TempDir()
 	destination, err := OpenDestination(filepath.Join(root, "new", "deeper", "restored"))
