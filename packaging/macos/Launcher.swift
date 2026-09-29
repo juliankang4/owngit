@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if runsFromTemporaryPlace() {
             model.misplaced = true
             showIcon()
-            showPanel()
+            showPanelSoon()
             return
         }
         readAgent()
@@ -150,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func startVisible(openPanel: Bool) {
         showIcon()
         if openPanel {
-            showPanel()
+            showPanelSoon()
         }
         refresh { [self] state in
             if let repair = launchRepair(state: state, agent: agent, helper: helper.path, version: appVersion) {
@@ -196,6 +196,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            showPanel()
+        }
+    }
+
+    /// showPanelSoon opens the panel once macOS has placed a new icon in
+    /// the menu bar.
+    private func showPanelSoon() {
+        DispatchQueue.main.async { [self] in
             showPanel()
         }
     }

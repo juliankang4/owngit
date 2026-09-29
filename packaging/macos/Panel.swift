@@ -161,7 +161,9 @@ final class PanelViewController: NSViewController {
         add(header(state: state, status: status))
         if model.misplaced {
             add(notice([label(words.moveApp)]))
-            add(footer(primary: nil))
+            let quit = PanelButton(title: words.quit) { [perform] _ in perform(.quit) }
+            add(quit)
+            firstControl = quit
             return
         }
         if let failure = model.failure {
