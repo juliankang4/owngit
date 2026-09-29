@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 )
 
 // While a backup holds a repository, deleting it is refused as busy, with
@@ -49,5 +51,37 @@ func TestBackupHoldRefusesDeletionAndMaintenance(t *testing.T) {
 	}
 	if _, err := manager.HoldForBackup(); err != nil {
 		t.Fatalf("a new backup after the first ended: %v", err)
+	}
+}
+
+// A backup that holds a repository stops its running maintenance, which
+// would otherwise remove object files the backup reads.
+func TestBackupHoldStopsRunningMaintenance(t *testing.T) {
+	fixture := newMaintenanceFixture(t)
+	manager := fixture.manager
+	manager.maintenance.schedule = MaintenanceSchedule{}.withDefaults()
+	manager.maintenance.logf = func(string, ...any) {}
+	manager.NoteRepositoryWrite("sample")
+	started := make(chan struct{})
+	var once sync.Once
+	manager.maintenanceHook = func(ctx context.Context, id string, args []string) error {
+		once.Do(func() { close(started) })
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	finished := make(chan struct{})
+	go func() {
+		manager.runMaintenance(context.Background(), maintenanceJob{id: "sample"})
+		close(finished)
+	}()
+	<-started
+	hold, err := manager.HoldForBackup()
+	noErr(t, err, "hold")
+	defer hold.Close()
+	hold.Set("sample")
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the running maintenance went on while a backup held the repository")
 	}
 }

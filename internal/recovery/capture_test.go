@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -580,4 +581,43 @@ func (runner *deletingRunner) Run(ctx context.Context, directory string, stdin i
 		}
 	}
 	return runner.delegate.Run(ctx, directory, stdin, arguments...)
+}
+
+// A backup waits for a repository that OwnGit is still preparing, instead
+// of failing or copying it before its recovery ran, and starts once the
+// preparation succeeded.
+func TestBackupWaitsForARepositoryBeingPrepared(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := t.TempDir()
+	store, manager := newBackupStore(t, root)
+	manager.PreparationRetry = 50 * time.Millisecond
+	var ready atomic.Bool
+	noErr(t, manager.StartPreparation(ctx, func(context.Context, string, string) error {
+		if !ready.Load() {
+			return errors.New("not yet")
+		}
+		return nil
+	}, time.Second, nil))
+	defer manager.StopPreparation(context.Background())
+	if !manager.Preparing("project") {
+		t.Fatal("the fixture repository is not being prepared")
+	}
+	done := make(chan error, 1)
+	var report CaptureReport
+	go func() {
+		var err error
+		report, err = CreateWhileServing(ctx, store, manager, filepath.Join(root, "backup"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("backup ended while the repository was being prepared: %v", err)
+	case <-time.After(time.Second):
+	}
+	ready.Store(true)
+	noErr(t, <-done)
+	if report.Attempts < 2 || manager.Preparing("project") {
+		t.Fatalf("report=%+v preparing=%v", report, manager.Preparing("project"))
+	}
 }
