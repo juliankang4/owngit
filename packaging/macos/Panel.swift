@@ -91,13 +91,26 @@ final class PanelViewController: NSViewController {
         perform(.close)
     }
 
-    /// focusFirstControl puts keyboard focus on the main button of the panel.
-    func focusFirstControl() {
+    /// focusFirstControl puts keyboard focus on the button titled
+    /// preferring when the panel has one, and on its main button otherwise.
+    func focusFirstControl(preferring title: String? = nil) {
         guard let window = view.window else {
             return
         }
         window.autorecalculatesKeyViewLoop = true
-        window.makeFirstResponder(firstControl)
+        window.makeFirstResponder(title.flatMap { $0.isEmpty ? nil : button(titled: $0, in: view) } ?? firstControl)
+    }
+
+    private func button(titled title: String, in parent: NSView) -> NSView? {
+        for child in parent.subviews {
+            if let button = child as? PanelButton, button.title == title {
+                return button
+            }
+            if let found = button(titled: title, in: child) {
+                return found
+            }
+        }
+        return nil
     }
 
     /// render shows model. An unchanged model is not drawn again, so the
@@ -107,6 +120,7 @@ final class PanelViewController: NSViewController {
             return
         }
         let focusWasInside = view.window?.firstResponder is NSView
+        let focusedTitle = (view.window?.firstResponder as? NSButton)?.title
         rendered = model
         // Each state is built in a new stack, measured before it joins the
         // panel: a view already in the panel measures as the panel's size.
@@ -132,7 +146,7 @@ final class PanelViewController: NSViewController {
         ])
         preferredContentSize = size
         if focusWasInside {
-            focusFirstControl()
+            focusFirstControl(preferring: focusedTitle)
         }
     }
 
