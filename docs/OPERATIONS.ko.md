@@ -254,6 +254,8 @@ owngit tailscale off
 
 설정 화면에서 바꾸면 다시 시작하지 않아도 바로 적용됩니다. `owngit tailscale on`과 `off`는 같은 내용을 저장하지만 실행 중인 서버에는 전달할 수 없으므로 다시 시작하라고 안내합니다. `owngit tailscale status`는 실행 중인 서버가 이름을 받아들이고 `127.0.0.1`을 신뢰하며 Tailscale에 주소가 남아 있을 때만 "on and ready"를, 설정 화면은 "켜져 있습니다. 이 컴퓨터의 Tailscale이 암호화합니다."를 표시하고, 그렇지 않으면 무엇이 빠졌는지 알려 줍니다. OwnGit이 `--base-url` 옵션으로 시작되었다면 clone 주소는 여전히 그 옵션이 정하므로 옵션을 빼고 다시 시작하세요. 켜기가 중간에 끊겼다면 스위치가 켜진 채로 남으며, 저장하면 공유를 다시 켭니다. OwnGit이 `tailscale` 명령을 스스로 찾지 못하면 `owngit serve --tailscale PATH`와 `owngit tailscale --tailscale PATH`로 지정하세요. OwnGit은 이 명령을 실행하지 않고, 이 명령이 옵션 없이 쓰는 경로로 Tailscale에 연결해 상태와 Serve 설정을 읽으므로 `--socket`을 따로 지정해 시작한 `tailscaled`는 지원하지 않습니다. 그 경로가 Unix 소켓이면, 거기서 응답하는 프로그램이 root 계정으로 실행 중이라고 시스템이 알려 줄 때만 OwnGit이 그 소켓을 씁니다. Synology DSM 7에서는 Tailscale 패키지의 `tailscale` 계정도 인정합니다. 다른 계정의 프로그램이 Tailscale 자리에서 응답해도 Tailscale로 착각하지 않기 위해서입니다. 이 정보는 Linux, macOS, FreeBSD가 알려 주며, 그 밖의 시스템에서는 OwnGit이 Unix 소켓을 쓰지 않고 다른 계정이 응답하는 소켓과 마찬가지로 `untrusted_socket`을 보고합니다. `--json`을 주면 결과와 코드가 붙은 실패를 JSON으로 출력합니다.
 
+공유가 켜져 있고 준비된 동안에는 브라우저가 `http://NAME.TAILNET.ts.net:7654/settings`처럼 Tailscale 이름과 OwnGit 자체 포트로 대시보드 페이지를 열면 HTTPS 주소의 같은 페이지로 이동합니다. 페이지만 이동합니다. Git, API, `/healthz`, 처음 설정, 파일 원본과 압축 파일 내려받기, 양식, 비밀번호가 담긴 요청에는 요청받은 주소에서 그대로 응답합니다. 그 브라우저가 Tailscale 이름으로는 접속하지 못할 수도 있으므로 IP 주소나 `localhost`, 다른 이름으로 연 페이지는 일반 HTTP로 남습니다. 브라우저는 이 이동을 기억하지 않으므로 공유를 끄거나 준비되지 않은 상태가 되면 몇 초 안에 이동도 멈춥니다.
+
 Tailscale이 인증서를 발급할 때 `gitbox.tail0000.ts.net`처럼 이 컴퓨터와 tailnet의 이름이 공개 인증서 투명성(Certificate Transparency) 로그에 기록됩니다. 주소만 기록될 뿐 내용은 기록되지 않습니다. 설정 화면은 이 안내를 스위치 옆에 보여 주고, `owngit tailscale on`은 출력합니다(`--json`에서는 `certificate_log`). Tailscale은 주소를 처음 열 때 인증서를 받으므로 공유를 켠 뒤나 컴퓨터 이름을 바꾼 뒤 첫 HTTPS 연결은 1분 가까이 걸릴 수 있으며, `owngit` 명령, MCP 서버, 러너는 이 연결을 75초까지 기다립니다. 이름을 바꾼 뒤에는(관리 콘솔이나 `tailscale set --hostname NAME`) 새 이름으로 공유를 다시 켜세요. 예전 이름은 로그에 남고, Tailscale에는 아무 데도 연결되지 않는 예전 이름의 주소가 남는데, 설정 화면과 `owngit tailscale status`가 그 주소와 지우는 `tailscale serve` 절차를 보여 줍니다.
 
 끄기는 OwnGit이 만든 Tailscale 주소가 만들 때 모습 그대로일 때만 그 주소를 지우며, 이때도 Tailscale의 Serve 설정이 OwnGit이 읽었을 때와 같아야 합니다. 그렇지 않으면 아무것도 바꾸지 않고, 설정 화면과 `owngit tailscale status`가 포트를 되돌리거나 비우는 `tailscale serve` 절차를 보여 줍니다. 그다음 그 전에 저장되어 있던 기본 URL을 되돌리고, 자신이 추가한 허용 Host와 신뢰하는 프록시를 지우며, 연결 주소는 그대로 둡니다. 끄기에는 Tailscale의 응답이 필요하므로 Tailscale이 꺼져 있거나 로그아웃되어 있거나 1.50보다 오래된 버전이면 끄기를 제공하지 않습니다. HTTPS 주소로 연 페이지에서 끄면 이 컴퓨터에서 쓰는 OwnGit 주소를 알려 주는 짧은 페이지로 끝납니다. OwnGit은 Tailscale Serve를 초기화하거나 Funnel을 켜지 않으며, 다른 Serve 설정은 그대로 둡니다. 다른 포트로 옮기려면 공유를 끈 뒤 `--https-port`로 다시 켜세요.
@@ -294,6 +296,8 @@ owngit network show
 ```
 
 프록시를 거쳐 열면 페이지 위쪽에 "OwnGit 앞의 프록시가 암호화함"이라고 표시됩니다.
+
+프록시가 기본 URL로 온 HTTPS 요청을 OwnGit에 한 번 넘기고 나면 브라우저가 `http://git.example.internal:7654/`처럼 기본 URL의 이름과 OwnGit 포트로 대시보드 페이지를 직접 열 때 기본 URL의 같은 페이지로 이동합니다. 예외는 [tailnet 공유](#tailnet에서-https로-공유하기)와 같습니다. OwnGit은 시작할 때마다, 그리고 기본 URL이 바뀔 때마다 이런 요청을 다시 기다립니다. 프록시가 넘기는 일반 HTTP 요청은 프록시가 알아서 처리하도록 둡니다.
 
 `--trusted-proxy`에는 프록시가 접속해 오는 주소를 씁니다. 같은 컴퓨터에서 돌면 `127.0.0.1`, 이 컴퓨터의 Docker에서 돌면 `172.18.0.0/16` 같은 그 컨테이너의 Docker 네트워크 범위, 다른 컴퓨터에서 돌면 그 컴퓨터의 주소입니다. OwnGit은 기본값으로 어떤 프록시도 믿지 않고, IPv4는 `/8`, IPv6는 `/32`보다 넓은 범위와 지정되지 않은 주소 `0.0.0.0`, `::`는 거부합니다. 범위를 쓰면 그 안의 모든 컴퓨터를 믿게 되므로 가능한 한 좁게 잡으세요. `127.0.0.1`을 믿으면 `ssh -L` 터널처럼 이 컴퓨터에서 요청을 넘겨주는 다른 프로그램도 믿게 됩니다. `owngit serve --trusted-proxy 주소`는 그 실행에서만 저장된 목록 대신 쓰이고, `--trusted-proxy ""`를 주면 아무 프록시도 믿지 않습니다.
 
