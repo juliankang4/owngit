@@ -197,6 +197,45 @@ func TestTurningSharingOffEndsTheMoveEvenWhenTheBaseURLNamesItsAddress(t *testin
 	}
 }
 
+// Turning sharing on replaces a base URL that a trusted proxy served over
+// HTTPS with the Tailscale address. What the proxy passed before no longer
+// counts, so a page opened at the earlier name stays where it is asked.
+func TestTurningSharingOnEndsTheMoveToTheEarlierBaseURL(t *testing.T) {
+	app, _ := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	const base = "https://git.example.internal"
+	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{BaseURL: base}, AddHosts: []string{"git.example.internal"}, AddProxies: []string{"127.0.0.1"}}))
+	noErr(t, app.Hosts.Add("git.example.internal"))
+	// The running network as a start with these saved settings has it.
+	app.Network = NewLiveNetwork(LiveNetworkConfig{
+		Record: state.RunningNetwork{
+			Listen: "127.0.0.1:7654", Address: "127.0.0.1:7654", ListenSource: NetworkSourceDefault,
+			Origin: base, BaseURL: base, BaseURLSource: NetworkSourceSaved,
+			SavedHosts: []string{"git.example.internal"}, TrustedProxies: []string{"127.0.0.1"}, TrustedProxiesSource: NetworkSourceSaved,
+		},
+		BaseURL: base, Proxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Hosts: app.Hosts,
+		Publish: func(running state.RunningNetwork) { noErr(t, app.Store.PublishRunningNetwork(ctx, running)) },
+	})
+	app.Network.Publish()
+	app.Tailscale.Live = app.Network
+	opened := "git.example.internal:7654"
+	if response := sendDirect(app, http.MethodGet, "/", "git.example.internal", "127.0.0.1:50123", "X-Forwarded-Proto", "https", "X-Forwarded-For", "192.168.1.9"); response.Code != http.StatusOK {
+		t.Fatalf("a page through the proxy got %d", response.Code)
+	}
+	if location := movedTo(sendDirect(app, http.MethodGet, "/", opened, "192.168.1.9:50123")); location != base+"/" {
+		t.Fatalf("before sharing: moved to %q", location)
+	}
+
+	_, err := app.Tailscale.On(ctx, nil, 0)
+	noErr(t, err)
+	if address := "https://" + tailscaletest.Name; app.Network.BaseURL() != address {
+		t.Fatalf("after turning on: base URL %q, want %q", app.Network.BaseURL(), address)
+	}
+	if response := sendDirect(app, http.MethodGet, "/", opened, "192.168.1.9:50123"); response.Code != http.StatusOK {
+		t.Fatalf("after turning on, a page by the earlier name: %d to %q", response.Code, response.Header().Get("Location"))
+	}
+}
+
 // Before setup, every page goes to setup where it was asked, and setup, the
 // setup link and the setup file flow stay on the address the owner opened.
 func TestSetupStaysOnTheAddressItWasOpenedBy(t *testing.T) {
@@ -222,8 +261,8 @@ func TestSetupStaysOnTheAddressItWasOpenedBy(t *testing.T) {
 // base URL moves there once a trusted proxy has passed OwnGit a request for
 // that base URL over HTTPS. A proxy OwnGit does not trust, one that passed
 // plain HTTP, or one that passed HTTPS for another name shows nothing, and a
-// new base URL waits for its own
-// request: one for the earlier base URL does not count for it.
+// new base URL waits for its own request: one for the earlier base URL does
+// not count for it.
 func TestBrowserPagesMoveToTheBaseURLOnceItsProxyServedIt(t *testing.T) {
 	app := newConfiguredApp(t)
 	const base = "https://git.example.internal"
