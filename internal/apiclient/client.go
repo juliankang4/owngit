@@ -199,10 +199,10 @@ func newClient(server *url.URL) *Client {
 
 // send sends request and returns the response with the function that ends
 // its time limit and reports a timeout, to call once the body is read. The
-// limit, Timeout or DefaultTimeout, starts when the connection is ready, so a TLS handshake
-// that waits for a certificate does not use it up; opening the connection
-// has the transport's own limits, and this one only guards against a hang
-// before them.
+// limit, Timeout or DefaultTimeout, starts when the connection is ready, so
+// a TLS handshake that waits for a certificate does not use it up; opening
+// the connection has the transport's own limits, and this one only guards
+// against a hang before them.
 func (client *Client) send(request *http.Request) (*http.Response, func() error, error) {
 	limit := client.Timeout
 	if limit <= 0 {
@@ -218,10 +218,6 @@ func (client *Client) send(request *http.Request) (*http.Response, func() error,
 		return err
 	}
 	response, err := client.httpClient.Do(request.WithContext(httptrace.WithClientTrace(ctx, trace)))
-	// A response racing the cancellation does not undo our request limit.
-	if timeoutErr := requestTimeoutError(ctx, request); timeoutErr != nil {
-		err = timeoutErr
-	}
 	if err != nil {
 		if response != nil {
 			response.Body.Close()

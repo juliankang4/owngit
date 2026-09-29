@@ -15,10 +15,11 @@ import (
 // timeoutResponseTransport chooses which side of the request limit delivers
 // the response, without racing a server against a timer.
 type timeoutResponseTransport struct {
-	late        bool
-	content     string
-	contentType string
-	body        io.ReadCloser
+	late           bool
+	content        string
+	contentType    string
+	body           io.ReadCloser
+	bodyForRequest func(*http.Request) io.ReadCloser
 }
 
 func (transport timeoutResponseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -31,6 +32,9 @@ func (transport timeoutResponseTransport) RoundTrip(request *http.Request) (*htt
 		header.Set("Content-Type", transport.contentType)
 	}
 	body := transport.body
+	if transport.bodyForRequest != nil {
+		body = transport.bodyForRequest(request)
+	}
 	if body == nil {
 		body = io.NopCloser(strings.NewReader(transport.content))
 	}

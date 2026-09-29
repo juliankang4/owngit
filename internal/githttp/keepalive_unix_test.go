@@ -116,19 +116,23 @@ func (body *rearmingBody) Close() error {
 	return body.ReadCloser.Close()
 }
 
-// keepaliveProbe releases a quiet Git hook only after four empty sideband
-// packets have crossed the backend connection while that hook is blocked.
+// keepaliveProbe releases a quiet Git hook only after at least four empty
+// sideband packets cross the connection over a phase longer than the timeout.
 type keepaliveProbe struct {
-	mu         sync.Mutex
-	ready      string
-	release    *os.File
-	pending    []byte
-	count      int
-	last       time.Time
-	largestGap time.Duration
+	mu           sync.Mutex
+	ready        string
+	release      *os.File
+	pending      []byte
+	count        int
+	first        time.Time
+	last         time.Time
+	quietFor     time.Duration
+	minimumQuiet time.Duration
+	released     bool
+	largestGap   time.Duration
 }
 
-func newKeepaliveProbe(t *testing.T, root, name string) *keepaliveProbe {
+func newKeepaliveProbe(t *testing.T, root, name string, minimumQuiet time.Duration) *keepaliveProbe {
 	t.Helper()
 	fifo := filepath.Join(root, name+"-release")
 	noErr(t, syscall.Mkfifo(fifo, 0o600))
@@ -137,7 +141,7 @@ func newKeepaliveProbe(t *testing.T, root, name string) *keepaliveProbe {
 	release, err := os.OpenFile(fifo, os.O_RDWR, 0)
 	noErr(t, err)
 	t.Cleanup(func() { _ = release.Close() })
-	return &keepaliveProbe{ready: filepath.Join(root, name+"-ready"), release: release}
+	return &keepaliveProbe{ready: filepath.Join(root, name+"-ready"), release: release, minimumQuiet: minimumQuiet}
 }
 
 func (probe *keepaliveProbe) waitScript() string {
@@ -163,15 +167,22 @@ func (probe *keepaliveProbe) observe(content []byte) error {
 		if size == 5 && (probe.pending[4] == 1 || probe.pending[4] == 2) {
 			if _, err := os.Stat(probe.ready); err == nil {
 				now := time.Now()
+				if probe.count == 0 {
+					probe.first = now
+				}
 				if !probe.last.IsZero() && now.Sub(probe.last) > probe.largestGap {
 					probe.largestGap = now.Sub(probe.last)
 				}
 				probe.last = now
 				probe.count++
-				if probe.count == 4 {
+				quietFor := now.Sub(probe.first)
+				if !probe.released && probe.count >= 4 && quietFor > probe.minimumQuiet {
+					// The hook stays blocked from the first observation to release.
+					probe.quietFor = quietFor
 					if _, err := probe.release.WriteString("continue\n"); err != nil {
 						return err
 					}
+					probe.released = true
 				}
 			} else if !os.IsNotExist(err) {
 				return err
@@ -196,8 +207,8 @@ func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
 	noErr(t, err)
 	var timeouts atomic.Int32
 	root := t.TempDir()
-	cloneProbe := newKeepaliveProbe(t, root, "clone")
-	pushProbe := newKeepaliveProbe(t, root, "push")
+	cloneProbe := newKeepaliveProbe(t, root, "clone", proxyTimeout)
+	pushProbe := newKeepaliveProbe(t, root, "push", proxyTimeout)
 	proxy := httptest.NewServer(&httputil.ReverseProxy{
 		Rewrite:       func(request *httputil.ProxyRequest) { request.SetURL(target) },
 		FlushInterval: -1,
@@ -223,7 +234,10 @@ func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
 		if probe.count < 4 || probe.largestGap >= proxyTimeout {
 			t.Fatalf("%s: %d keepalives while the hook waited, largest gap %s, want four with gaps below %s", what, probe.count, probe.largestGap, proxyTimeout)
 		}
-		t.Logf("%s: %d keepalives while the hook waited, largest gap %s", what, probe.count, probe.largestGap)
+		if probe.quietFor <= proxyTimeout {
+			t.Fatalf("%s: observed quiet phase %s, want longer than %s", what, probe.quietFor, proxyTimeout)
+		}
+		t.Logf("%s: %d keepalives while the hook waited for at least %s, largest gap %s", what, probe.count, probe.quietFor, probe.largestGap)
 	}
 
 	// upload-pack: pack-objects starts only after a quiet phase. Git reads

@@ -1,9 +1,10 @@
 package apiclient
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -20,32 +21,45 @@ func readTestResponse(t *testing.T, client *Client, kind string) error {
 	return err
 }
 
+// stallingResponseBody supplies a partial body, then waits for the actual
+// request limit. Reading it proves that classification used the body path.
+type stallingResponseBody struct {
+	ctx  context.Context
+	read bool
+}
+
+func (body *stallingResponseBody) Read(buffer []byte) (int, error) {
+	if !body.read {
+		body.read = true
+		return copy(buffer, "{"), nil
+	}
+	<-body.ctx.Done()
+	return 0, body.ctx.Err()
+}
+
+func (body *stallingResponseBody) Close() error { return nil }
+
 func TestTheRequestLimitStillAppliesWhileReadingTheBody(t *testing.T) {
 	for _, kind := range []string{"json", "blob"} {
 		t.Run(kind, func(t *testing.T) {
-			stop := make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				contentType := "application/json"
-				if kind == "blob" {
-					contentType = "application/octet-stream"
-				}
-				writer.Header().Set("Content-Type", contentType)
-				_, _ = writer.Write([]byte("{"))
-				writer.(http.Flusher).Flush()
-				select {
-				case <-request.Context().Done():
-				case <-stop:
-				}
-			}))
-			defer server.Close()
-			defer close(stop)
-			origin, err := url.Parse(server.URL)
-			if err != nil {
-				t.Fatal(err)
+			contentType := "application/json"
+			if kind == "blob" {
+				contentType = "application/octet-stream"
 			}
-			client := New(origin, "")
+			var body *stallingResponseBody
+			client := New(&url.URL{Scheme: "http", Host: "example.invalid"}, "")
 			client.Timeout = 20 * time.Millisecond
-			err = readTestResponse(t, client, kind)
+			client.httpClient = &http.Client{Transport: timeoutResponseTransport{
+				contentType: contentType,
+				bodyForRequest: func(request *http.Request) io.ReadCloser {
+					body = &stallingResponseBody{ctx: request.Context()}
+					return body
+				},
+			}}
+			err := readTestResponse(t, client, kind)
+			if body == nil || !body.read {
+				t.Fatal("the response body was not read")
+			}
 			var problem *Error
 			if !errors.As(err, &problem) || problem.Code != "connection_failed" || !strings.Contains(problem.Message, "did not answer in time") {
 				t.Fatalf("request limit during body read: err=%v", err)
