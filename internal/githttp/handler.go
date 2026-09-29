@@ -342,14 +342,34 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 		contentLength = -1
 	}
-	input = &observedBody{ReadCloser: body, stop: cancelStream, closed: make(chan struct{})}
 	extraEnvironment, err := h.cgiEnvironment(request, route, contentLength)
 	if err != nil {
-		_ = input.Close()
+		_ = body.Close()
 		http.Error(writer, "invalid Git protocol request", http.StatusBadRequest)
 		return
 	}
 	extraEnvironment = append(extraEnvironment, refWrites...)
+	if route.service == "git-receive-pack" && request.Method == http.MethodPost {
+		// A push creates, changes and deletes no ref whose name differs from
+		// another only in letter case (caseConflictGate).
+		path, variable, remove, err := h.caseConflictFile()
+		if err != nil {
+			_ = body.Close()
+			logCause(request.Context(), fmt.Sprintf("Git push to repository %q could not start", route.repositoryID), err)
+			http.Error(writer, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		defer remove()
+		extraEnvironment = append(extraEnvironment, variable)
+		body = &caseConflictGate{ReadCloser: body, refuseAll: remove, check: func(names []string) error {
+			err := h.writeCaseConflicts(streamContext, repositoryPath, path, names)
+			if err != nil {
+				logCause(request.Context(), fmt.Sprintf("Git push to repository %q could not check its ref names", route.repositoryID), err)
+			}
+			return err
+		}}
+	}
+	input = &observedBody{ReadCloser: body, stop: cancelStream, closed: make(chan struct{})}
 	// The response can still go out before the end of the request body, when
 	// Git writes more than net/http buffers or stops reading early. Without
 	// full duplex, net/http would then read and discard the rest of the
