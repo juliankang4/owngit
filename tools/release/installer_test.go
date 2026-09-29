@@ -442,6 +442,20 @@ func TestInstallSh(t *testing.T) {
 		}
 	})
 
+	t.Run("SHA256SUMS must list exactly one archive for this computer", func(t *testing.T) {
+		run := newShInstall(t, release)
+		target := filepath.Join(run.home, "bin", "owngit")
+		sums := "v2.0.0/SHA256SUMS"
+		name := release.archive["2.0.0"]
+		release.replace(t, sums, append(append([]byte{}, release.files[sums]...), []byte(digestLine([]byte("another build"), name)+"\n")...))
+		run.mustFail(t, nil, "does not list one archive", "--to", target)
+		release.replace(t, sums, []byte(digestLine([]byte("another platform"), "owngit_2.0.0_plan9_amd64.tar.gz")+"\n"))
+		run.mustFail(t, nil, "does not list one archive", "--to", target)
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Fatalf("a refused run left %s", target)
+		}
+	})
+
 	t.Run("a link at the target is refused before downloading", func(t *testing.T) {
 		run := newShInstall(t, release)
 		target := filepath.Join(run.home, "bin", "owngit")
