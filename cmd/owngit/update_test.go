@@ -27,19 +27,26 @@ func TestUpdateCommandPrintsTheCommandAndRunsNothing(t *testing.T) {
 	output, err := captureStdout(func() error { return run([]string{"update", "--json"}) })
 	noErr(t, err)
 	var answer struct {
-		Current, Latest, Route, Program, Command string
-		Newer                                    bool
+		Current, Latest, Route, Program, Command, Start string
+		Newer                                           bool
 	}
 	noErr(t, json.Unmarshal([]byte(output), &answer))
 	install := detectInstall()
-	want := install.UpdateCommand("99.0.0", updatePlatform(install, serviceState{}))
-	if answer.Current != version.Version || answer.Latest != "99.0.0" || !answer.Newer || answer.Route != string(install.Route) || answer.Command != want {
-		t.Fatalf("answer %+v, want command %q", answer, want)
+	platform := updatePlatform(install, serviceState{})
+	want, start := install.UpdateCommand("99.0.0", platform), install.StartAfterUpdate("99.0.0", platform)
+	if answer.Current != version.Version || answer.Latest != "99.0.0" || !answer.Newer || answer.Route != string(install.Route) || answer.Command != want || answer.Start != start {
+		t.Fatalf("answer %+v, want command %q and start %q", answer, want, start)
 	}
 
+	// Without a service the owner starts OwnGit again: in place, or, after
+	// a Windows archive update, from the new folder.
+	next := "Then restart OwnGit where it runs.\n"
+	if start != "" {
+		next = "Then start OwnGit from " + start + ".\n"
+	}
 	output, err = captureStdout(func() error { return run([]string{"update"}) })
 	noErr(t, err)
-	if !strings.HasPrefix(output, "OwnGit 99.0.0 is available (this is "+version.Version+")") || want != "" && !strings.Contains(output, "OwnGit does not run it for you:\n  "+want+"\nThen restart OwnGit where it runs.\n") {
+	if !strings.HasPrefix(output, "OwnGit 99.0.0 is available (this is "+version.Version+")") || want != "" && !strings.Contains(output, "OwnGit does not run it for you:\n  "+want+"\n"+next) {
 		t.Fatalf("output:\n%s", output)
 	}
 
