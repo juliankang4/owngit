@@ -375,6 +375,9 @@ type ReleaseNotice struct {
 	NotesURL string
 	// GuideURL explains how to update.
 	GuideURL string
+	// Command updates this installation the way it was installed, for the
+	// owner to copy and run. Empty shows only the guide.
+	Command string
 	// DismissURL takes a POST with csrf and version.
 	DismissURL string
 }

@@ -268,3 +268,30 @@ func TestLogoLinksToTheDashboard(t *testing.T) {
 		t.Error("/setup: the logo does not link home")
 	}
 }
+
+// The notice offers the update command of this installation to copy; the
+// server never runs it. Without a command, only the guide link remains.
+func TestReleaseNoticeShowsTheUpdateCommand(t *testing.T) {
+	for _, command := range []string{"brew upgrade owngit && '/x y/owngit' service install", ""} {
+		app, _, _, server := releaseApp(t, "v1.0.3")
+		app.UpdateCommand = func(version string) string {
+			if version != "1.0.3" {
+				t.Errorf("command asked for %q", version)
+			}
+			return command
+		}
+		_ = app.Releases.Check(context.Background())
+		client, _ := newBrowserClient(t)
+		body, _ := dashboardGET(t, client, server.URL+"/")
+		shown := strings.Contains(body, `data-copy="release-command"`)
+		if shown != (command != "") {
+			t.Errorf("%q: copy field shown=%v", command, shown)
+		}
+		if command != "" && !strings.Contains(body, `value="brew upgrade owngit &amp;&amp; &#39;/x y/owngit&#39; service install"`) {
+			t.Errorf("%q: the escaped command is missing", command)
+		}
+		if !strings.Contains(body, `href="`+releasecheck.UpdateGuideURL+`"`) {
+			t.Errorf("%q: the guide link is missing", command)
+		}
+	}
+}

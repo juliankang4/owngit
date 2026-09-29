@@ -24,10 +24,14 @@ func (app *App) releaseNotice(request *http.Request, settings state.Settings) *w
 	if cookie, err := request.Cookie(releaseDismissCookie); err == nil && cookie.Value == release.Version {
 		return nil
 	}
-	return &webui.ReleaseNotice{
+	notice := &webui.ReleaseNotice{
 		Version: release.Version, Current: app.Version, NotesURL: release.NotesURL,
 		GuideURL: releasecheck.UpdateGuideURL, DismissURL: releaseDismissPath,
 	}
+	if app.UpdateCommand != nil {
+		notice.Command = app.UpdateCommand(release.Version)
+	}
+	return notice
 }
 
 // handleReleaseDismiss remembers in this browser that the notice for one

@@ -72,6 +72,8 @@ const (
 	MsgReleaseNotes     MessageCode = "release.notes"
 	MsgReleaseHowTo     MessageCode = "release.how_to_update"
 	MsgReleaseDismiss   MessageCode = "release.dismiss"
+	MsgReleaseCommand   MessageCode = "release.command"
+	MsgReleaseRunIt     MessageCode = "release.run_it"
 )
 
 // Setup and bootstrap.
@@ -1065,6 +1067,11 @@ var catalog = map[MessageCode]message{
 	MsgReleaseNotes:   {en: "Release notes", ko: "릴리스 노트"},
 	MsgReleaseHowTo:   {en: "How to update", ko: "업데이트 방법"},
 	MsgReleaseDismiss: {en: "Dismiss", ko: "알림 닫기"},
+	MsgReleaseCommand: {en: "Update command", ko: "업데이트 명령"},
+	MsgReleaseRunIt: {
+		en: "OwnGit does not update itself. Run this in a terminal on the computer where OwnGit runs.",
+		ko: "OwnGit은 스스로 업데이트하지 않습니다. OwnGit이 실행 중인 컴퓨터의 터미널에서 이 명령을 실행하세요.",
+	},
 
 	// -- connection ----------------------------------------------------
 	// The indicator describes this request's transport only. Encrypted means

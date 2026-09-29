@@ -10,6 +10,21 @@
   {{icon "info"}}
   <div class="relnote__body">
     <p class="relnote__t">{{biRelease $lang .}}</p>
+    {{if .Command}}
+    <div class="clonefield relnote__cmd" data-clone>
+      <label class="clonefield__l" for="release-command">{{bi $lang "release.command"}}</label>
+      <div class="clonefield__row">
+        <input id="release-command" class="clonefield__v mono" type="text" readonly value="{{.Command}}"
+               spellcheck="false" autocomplete="off" data-select-on-focus aria-describedby="release-command-help">
+        <button type="button" class="btn clonefield__copy" data-copy="release-command" hidden>{{icon "copy"}}<span>{{bi $lang "repo.overview.copy"}}</span></button>
+      </div>
+      <p class="clonefield__note" role="status">
+        <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
+        <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
+      </p>
+      <p class="clonefield__note" id="release-command-help">{{bi $lang "release.run_it"}}</p>
+    </div>
+    {{end}}
     <p class="relnote__links">
       <a href="{{.NotesURL}}" rel="noreferrer">{{bi $lang "release.notes"}}</a>
       <a href="{{.GuideURL}}" rel="noreferrer">{{bi $lang "release.how_to_update"}}</a>

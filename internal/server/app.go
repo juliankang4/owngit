@@ -78,8 +78,11 @@ type App struct {
 	Version string
 	// Releases is the new-release check. Nil means the server started with
 	// --no-update-check, which overrides the saved setting.
-	Releases    *releasecheck.Checker
-	HTTPTimeout time.Duration
+	Releases *releasecheck.Checker
+	// UpdateCommand returns the command that updates this installation to
+	// a version, as its install route does, or "". Nil shows none.
+	UpdateCommand func(version string) string
+	HTTPTimeout   time.Duration
 	// ImportRunTimeout is the deadline of an import run started by this
 	// server. The request itself keeps ImportResponseMargin more, so a run
 	// that reaches its deadline still returns its result. Zero uses the import
