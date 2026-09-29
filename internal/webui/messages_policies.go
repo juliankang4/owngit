@@ -87,7 +87,7 @@ var policiesCatalog = map[MessageCode]message{
 	MsgInitialBranchLabel: {en: "Initial branch", ko: "첫 브랜치"},
 	MsgInitialBranchHelp: {
 		en: "The branch a new repository starts on, which becomes its default branch. Up to 100 letters, digits, \"-\", \"_\", \".\" and \"/\". The default is main.",
-		ko: "새 저장소가 처음 쓰는 브랜치로, 그 저장소의 기본 브랜치가 됩니다. 영문자, 숫자, \"-\", \"_\", \".\", \"/\"로 100자까지 씁니다. 기본값은 main입니다.",
+		ko: "새 저장소의 첫 브랜치로, 그 저장소의 기본 브랜치가 됩니다. 영문자, 숫자, \"-\", \"_\", \".\", \"/\"로 100자까지 씁니다. 기본값은 main입니다.",
 	},
 	MsgInitialBranchInvalid: {
 		en: "OwnGit cannot use this branch name. Use up to 100 letters, digits, \"-\", \"_\", \".\" and \"/\", in a name Git accepts, such as main or trunk.",
@@ -148,11 +148,11 @@ var policiesCatalog = map[MessageCode]message{
 	},
 	MsgSessionUnreadableSignIn: {
 		en: "Nobody can sign in with the shared password because the saved sign-in length cannot be read. An administrator can set it again with owngit settings set --session.",
-		ko: "저장된 로그인 유지 시간을 읽을 수 없어 지금은 공유 비밀번호로 로그인할 수 없습니다. 관리자가 owngit settings set --session으로 다시 정하면 됩니다.",
+		ko: "저장된 로그인 유지 시간을 읽을 수 없어 지금은 공용 비밀번호로 로그인할 수 없습니다. 관리자가 owngit settings set --session으로 다시 정하면 됩니다.",
 	},
 	MsgBranchUnreadableCreate: {
 		en: "The repository was not created because the saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch.",
-		ko: "새 저장소의 처음 브랜치로 저장된 값을 읽을 수 없어 저장소를 만들지 않았습니다. 설정의 저장소 탭이나 owngit settings set --initial-branch로 다시 정해 주세요.",
+		ko: "새 저장소의 첫 브랜치로 저장된 값을 읽을 수 없어 저장소를 만들지 않았습니다. 설정의 저장소 탭이나 owngit settings set --initial-branch로 다시 정해 주세요.",
 	},
 }
 
