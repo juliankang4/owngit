@@ -103,11 +103,38 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 	if err == nil && !owned {
 		err = fmt.Errorf("%s belongs to another account; run the command as its owner", absolute)
 	}
+	if err == nil && local {
+		dir, err = nameByFinalPath(dir)
+	}
 	if err != nil {
 		dir.Close()
 		return nil, err
 	}
 	return dir, nil
+}
+
+// nameByFinalPath returns the held directory dir named by its final path,
+// as a state directory is named by its resolved path on Unix. A path can
+// name the same folder by a short (8.3) name, such as RUNNER~1, or in
+// another case; OwnGit prints the state's path and writes it into notes
+// that it compares later, so one folder gets one name. The walk refused
+// every link on the way, so the final path differs from the walked one
+// only in those spellings or, for a drive made with subst, in its drive.
+func nameByFinalPath(dir *os.File) (*os.File, error) {
+	final, err := handleFinalPath(windows.Handle(dir.Fd()))
+	if err != nil {
+		return dir, fmt.Errorf("resolve the path of %s: %w", dir.Name(), err)
+	}
+	if final == dir.Name() {
+		return dir, nil
+	}
+	process := windows.CurrentProcess()
+	var handle windows.Handle
+	if err := windows.DuplicateHandle(process, windows.Handle(dir.Fd()), process, &handle, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		return dir, fmt.Errorf("hold %s: %w", dir.Name(), err)
+	}
+	dir.Close()
+	return os.NewFile(uintptr(handle), final), nil
 }
 
 // The access, sharing and options of each folder that openDirectory holds.
