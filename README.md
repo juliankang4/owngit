@@ -106,6 +106,16 @@ docker compose exec -it owngit owngit setup-link
 
 Open the setup link in a browser on that computer, or from another device with that computer's name or address in place of `localhost`. [Run in a container](docs/OPERATIONS.md#run-in-a-container) covers setup from another device, where the data lives, updates, backups and running as another account.
 
+### Proxmox VE
+
+On a Proxmox VE host, run this as root in the host's shell. It creates an unprivileged Debian 13 container, installs OwnGit in it with the one-line installer, and prints the setup link:
+
+```sh
+/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/proxmox.sh | /bin/sh
+```
+
+[Run on Proxmox VE](docs/OPERATIONS.md#run-on-proxmox-ve) lists its options, such as keeping the repositories in a folder of the host, and how to update.
+
 ### Update and remove
 
 OwnGit never updates itself. When a newer release exists, the dashboard shows a confirmed administrator the command that updates OwnGit the way it was installed, with a Copy button, and `owngit update` prints the same command:

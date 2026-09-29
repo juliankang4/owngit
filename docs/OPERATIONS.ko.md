@@ -60,9 +60,9 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 
 curl 옵션은 모든 요청과 리디렉션을 HTTPS로만 하게 하고 `-MaximumRedirection 0`은 PowerShell이 리디렉션을 따라가지 않게 합니다. 그래서 스크립트가 평문 HTTP로 오는 일은 없습니다. `curl`과 `sh`는 시스템 경로로 부르고 설치 스크립트도 시스템 폴더의 도구만 쓰므로, `PATH` 앞쪽 폴더에 있는 같은 이름의 프로그램이 대신 실행되지 않습니다.
 
-설치 스크립트는 소스의 `packaging/installer/`에 있고, 모든 릴리스에 같은 두 파일이 압축 파일과 함께 올라갑니다. `SHA256SUMS`는 압축 파일과 같은 릴리스에서 옵니다. 그래서 망가졌거나 덜 받았거나 잘못 받은 파일은 걸러 내지만 독립된 서명은 아닙니다. 릴리스 파일을 바꿀 수 있는 사람이라면 두 파일을 함께 바꿀 수 있습니다. macOS 실행 파일은 이와 별도로 Apple의 서명과 공증을 받았습니다.
+설치 스크립트는 소스의 `packaging/installer/`에 있고, 모든 릴리스에 같은 두 파일이 압축 파일, [Proxmox VE 스크립트](#proxmox-ve에서-실행하기) `proxmox.sh`와 함께 올라갑니다. `SHA256SUMS`는 압축 파일과 같은 릴리스에서 옵니다. 그래서 망가졌거나 덜 받았거나 잘못 받은 파일은 걸러 내지만 독립된 서명은 아닙니다. 릴리스 파일을 바꿀 수 있는 사람이라면 두 파일을 함께 바꿀 수 있습니다. macOS 실행 파일은 이와 별도로 Apple의 서명과 공증을 받았습니다.
 
-한 줄 명령은 owngit.app이 HTTPS로 내주는 스크립트를 확인 없이 바로 실행합니다. `SHA256SUMS`에는 압축 파일만 들어 있고, 두 설치 스크립트의 SHA-256은 릴리스의 `manifest.json`에 기록됩니다. 실행하기 전에 스크립트를 확인하려면 이렇게 합니다.
+한 줄 명령은 owngit.app이 HTTPS로 내주는 스크립트를 확인 없이 바로 실행합니다. `SHA256SUMS`에는 압축 파일만 들어 있고, 설치 스크립트와 `proxmox.sh`의 SHA-256은 릴리스의 `manifest.json`에 기록됩니다. 실행하기 전에 스크립트를 확인하려면 이렇게 합니다.
 
 1. 릴리스에서 `install.sh`나 `install.ps1`을 내려받습니다.
 2. 그 SHA-256을 `manifest.json`이나, 릴리스 페이지에서 GitHub가 그 파일에 보여 주는 값과 비교합니다. 그 릴리스 태그의 `packaging/installer/`와 파일을 비교해도 됩니다.
@@ -403,6 +403,66 @@ sudo install -d -o 1000 -g 1000 -m 700 owngit-data
 ```
 
 기본 `compose.yaml`의 이름 있는 볼륨은 `owngit` 계정이 소유하므로 다른 계정은 쓸 수 없습니다. 다른 계정이 바꿀 수 있는 `/data` 폴더는 OwnGit이 거부하며, 로그에 그 문제를 고치는 `chmod` 명령을 알려 줍니다.
+
+## Proxmox VE에서 실행하기
+
+Proxmox VE 호스트에서는 명령 하나로 OwnGit용 컨테이너를 만들고 그 안에 OwnGit을 설치할 수 있습니다. 호스트의 셸(예: Proxmox 웹 화면에서 노드의 Shell)에서 root로 실행하세요.
+
+```sh
+/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/proxmox.sh | /bin/sh
+```
+
+스크립트는 다음 순서로 진행합니다.
+
+1. 비어 있는 다음 ID로 `owngit`이라는 이름의 권한 없는(unprivileged) Debian 13 컨테이너를 만듭니다. 코어 2개, 메모리 1024MB, 스왑 512MB, `local-lvm`(없으면 `local-zfs`)에 8GB 디스크를 두고, 브리지 `vmbr0`에 DHCP로 연결합니다. 컨테이너에는 `owngit` 태그가 붙고, 호스트가 켜질 때 함께 시작하며, `nesting` 기능이 켜집니다. 권한 없는 컨테이너에서 Debian 13의 systemd가 제대로 돌려면 이 기능이 필요합니다.
+2. 호스트에 `debian-13-standard` 템플릿이 없으면 `pveam`으로 최신 템플릿을 내려받습니다. `pveam`은 Proxmox의 서명된 템플릿 목록과 대조해 확인합니다.
+3. 컨테이너 안에 Git과 설치 스크립트에 필요한 도구를 설치하고 패키지를 업데이트한 뒤 릴리스의 `install.sh`를 실행합니다. [한 줄 설치](#한-줄-설치)에서 설명한 대로 설치 스크립트는 압축 파일을 `SHA256SUMS`와 대조하고, 프로그램을 `/usr/local/bin/owngit`에 둔 뒤 root로 `owngit service install`을 실행합니다. 그래서 서비스는 `owngit` 계정으로 실행되고 상태는 `/var/lib/owngit/state`에 있습니다([root로 설치하기](#root로-설치하기) 참고).
+4. `--repositories`를 주면 호스트의 폴더를 저장소 폴더로 OwnGit에 연결합니다(아래 참고).
+5. OwnGit이 응답할 때까지 기다린 뒤 컨테이너 주소를 보여 줍니다. 터미널에서 실행했다면 설정 링크도 보여 주고, 아니면 링크를 보여 주는 명령을 알려 줍니다.
+
+OwnGit 릴리스에서 받은 것은 호스트에서 실행되지 않습니다. `install.sh`와 OwnGit은 권한 없는 컨테이너 안에서만 실행됩니다. 중간 단계가 실패하면 스크립트는 자신이 만든 컨테이너를 지우고 호스트를 원래대로 둡니다.
+
+옵션은 `/bin/sh -s --` 뒤에 붙입니다.
+
+```sh
+/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/proxmox.sh | /bin/sh -s -- --repositories /tank/owngit
+```
+
+| 옵션 | 하는 일 |
+| --- | --- |
+| `--id N` | 비어 있는 다음 ID 대신 이 컨테이너 ID를 씁니다. |
+| `--hostname NAME` | 컨테이너 이름을 `owngit` 대신 NAME으로 합니다. |
+| `--storage NAME` | 컨테이너 디스크를 이 스토리지에 둡니다. |
+| `--disk GB`, `--cores N`, `--memory MB` | 디스크 크기, CPU 코어 수, 메모리를 정합니다. |
+| `--bridge NAME` | `vmbr0` 대신 이 브리지에 연결합니다. |
+| `--ip ADDRESS/PREFIX`, `--gateway ADDRESS` | DHCP 대신 `192.168.1.50/24` 같은 고정 IPv4 주소를 줍니다. |
+| `--repositories FOLDER` | 저장소를 호스트의 FOLDER에 둡니다. |
+| `--template VOLUME` | 이미 있는 Debian 13 템플릿을 씁니다. 예: `local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst` |
+| `--version X.Y.Z` | 최신 릴리스 대신 그 릴리스(1.1.3 이상)를 설치합니다. |
+
+스크립트는 이미 있는 컨테이너를 바꾸지 않습니다. ID나 이름이 이미 쓰이고 있으면 멈춥니다. 그 컨테이너가 `owngit` 태그가 붙은 OwnGit 컨테이너라면 아무것도 바꾸지 않고 업데이트 방법을 알려 줍니다.
+
+컨테이너 안의 OwnGit 명령은 `pct exec`에 컨테이너 ID를 붙여 실행합니다. `pct exec`는 `/usr/local/bin`에서 프로그램을 찾지 않으므로 전체 경로를 쓰세요.
+
+```sh
+pct exec 105 -- /usr/local/bin/owngit service status
+```
+
+### 저장소를 호스트 폴더에 두기
+
+`--repositories /tank/owngit`을 주면 저장소는 호스트의 `/tank/owngit`(예: ZFS 데이터셋)에 남습니다. 컨테이너 안에서는 이 폴더가 설정에서 제안하는 폴더인 `/var/lib/owngit/OwnGit-Repositories`로 보이므로, 설정에서 제안된 폴더를 그대로 쓰세요.
+
+- 폴더는 새 폴더이거나 비어 있어야 하고, 경로에 링크가 끼어 있으면 안 됩니다. 그 위의 폴더는 모두 root 소유여야 하고 root만 바꿀 수 있어야 합니다. 그래야 호스트의 다른 계정이 폴더를 다른 곳으로 돌려놓을 수 없습니다.
+- 권한 없는 컨테이너에서는 컨테이너 안 계정이 호스트에서 다른 ID(보통 100000을 더한 값)로 보입니다. 스크립트는 컨테이너의 `owngit` 계정이 호스트에서 갖는 ID에게 폴더를 넘기고 모드를 0700으로 하며, 호스트의 다른 것은 바꾸지 않습니다.
+- 폴더를 붙이려고 스크립트는 OwnGit을 설치한 뒤 컨테이너를 한 번 멈췄다가 다시 시작합니다.
+- Proxmox 백업(`vzdump`)에는 호스트 폴더가 들어가지 않습니다. 저장소는 [`owngit backup`](#오프라인-백업)이나 호스트 자체 백업으로 백업하세요. 호스트 폴더가 붙은 컨테이너는 다른 노드로 옮길(migrate) 수 없습니다.
+- 기존 저장소는 설정을 마친 뒤 가져오기(import)나 백업 복원으로 들여오세요. 스크립트는 내용이 이미 있는 폴더를 넘겨받지 않습니다.
+
+### 업데이트와 컨테이너 삭제
+
+`pct exec 105 -- /usr/local/bin/owngit update`는 OwnGit을 업데이트하는 명령을 보여 줍니다. 그 명령은 `pct enter 105`로 연 컨테이너 셸에서 실행하세요. [업데이트와 제거](#업데이트와-제거)에서 설명한 대로 새 릴리스의 설치 스크립트가 실행되고, 서비스는 새 버전으로 다시 시작합니다.
+
+`pct destroy 105`는 컨테이너를 상태와 컨테이너 안의 저장소까지 함께 지웁니다. `--repositories`로 준 호스트 폴더는 남습니다. 먼저 백업하세요.
 
 ## 설정 화면
 

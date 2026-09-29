@@ -106,6 +106,16 @@ docker compose exec -it owngit owngit setup-link
 
 설정 링크는 그 컴퓨터의 브라우저에서 열거나, 다른 기기에서 `localhost` 자리에 그 컴퓨터의 이름이나 주소를 넣어 여세요. 다른 기기에서 설정하는 방법, 데이터 위치, 업데이트, 백업, 다른 계정으로 실행하는 방법은 [컨테이너로 실행하기](docs/OPERATIONS.ko.md#컨테이너로-실행하기)에 있습니다.
 
+### Proxmox VE
+
+Proxmox VE 호스트의 셸에서 root로 다음을 실행하세요. 권한 없는(unprivileged) Debian 13 컨테이너를 만들고, 한 줄 설치 스크립트로 그 안에 OwnGit을 설치한 뒤 설정 링크를 보여 줍니다.
+
+```sh
+/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/proxmox.sh | /bin/sh
+```
+
+저장소를 호스트의 폴더에 두는 방법 같은 옵션과 업데이트 방법은 [Proxmox VE에서 실행하기](docs/OPERATIONS.ko.md#proxmox-ve에서-실행하기)에 있습니다.
+
 ### 업데이트와 제거
 
 OwnGit은 스스로 업데이트하지 않습니다. 새 릴리스가 나오면 관리자로 확인한 사람에게 대시보드가 설치한 방법에 맞는 업데이트 명령을 복사 버튼과 함께 보여 줍니다. `owngit update`도 같은 명령을 출력합니다.
