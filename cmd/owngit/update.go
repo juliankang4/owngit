@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -44,7 +45,11 @@ func updateCommand(arguments []string) error {
 		command = install.UpdateCommand(release.Version, updatePlatform(install, runs))
 	}
 	if *asJSON {
-		return printJSON(struct {
+		// The command keeps its & and > readable.
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetEscapeHTML(false)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(struct {
 			Current  string `json:"current"`
 			Latest   string `json:"latest,omitempty"`
 			Newer    bool   `json:"newer"`
