@@ -129,7 +129,9 @@ func (fixture *pushFixture) jobRefs() []string {
 	return refs
 }
 
-const validWorkflow = `{"version":1,"events":{"push":{}},"checks":[{"name":"n","command":"true"}]}`
+// validWorkflow's check succeeds in every check shell without looking up a
+// program: exit is built into both sh and cmd.exe.
+const validWorkflow = `{"version":1,"events":{"push":{}},"checks":[{"name":"n","command":"exit 0"}]}`
 
 // A branch whose workflow cannot be parsed sorts before main. Its failure used
 // to abort the pass before the cursor moved, so main was never admitted.

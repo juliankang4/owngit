@@ -44,7 +44,7 @@ func (fixture *pushFixture) settle() int {
 func TestPolicyChangeDoesNotRequeueHeadsThatAlreadyHadAJob(t *testing.T) {
 	fixture := newPushFixture(t, 1000)
 	fixture.setPolicyVersion(60_000)
-	fixture.pushWorkflow("main", `{"version":1,"events":{"push":{},"pull_request":{}},"checks":[{"name":"n","command":"true"}]}`)
+	fixture.pushWorkflow("main", `{"version":1,"events":{"push":{},"pull_request":{}},"checks":[{"name":"n","command":"exit 0"}]}`)
 	branches := maximumObservedRefs + 6
 	for index := 0; index < branches; index++ {
 		fixture.git("-C", fixture.work, "push", "-q", fixture.repoPath, fmt.Sprintf("HEAD:refs/heads/ci-%02d", index))
