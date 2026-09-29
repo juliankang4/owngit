@@ -28,6 +28,10 @@ type LiveNetwork struct {
 	// tailscale is the MagicDNS name of the Tailscale endpoint this server
 	// serves, or "".
 	tailscale string
+	// httpsBase is baseURL once a trusted proxy has passed a request for it
+	// over HTTPS, or "". Every change of the network drops it, since what
+	// passed that request may have changed with it. See ProveHTTPS.
+	httpsBase string
 }
 
 // LiveNetworkConfig is what a serve run starts with.
@@ -74,6 +78,24 @@ func (live *LiveNetwork) BaseURL() string {
 	return live.baseURL
 }
 
+// ProveHTTPS records that base works over HTTPS, as a trusted proxy passed
+// a request for it as HTTPS, while base is still the base URL in use.
+func (live *LiveNetwork) ProveHTTPS(base string) {
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	if base == live.baseURL {
+		live.httpsBase = base
+	}
+}
+
+// HTTPSBaseURL is the base URL when a trusted proxy has passed a request
+// for it over HTTPS since this network last changed, or "".
+func (live *LiveNetwork) HTTPSBaseURL() string {
+	live.mu.RLock()
+	defer live.mu.RUnlock()
+	return live.httpsBase
+}
+
 // TailscaleName is the MagicDNS name of the Tailscale endpoint in use, or "".
 func (live *LiveNetwork) TailscaleName() string {
 	live.mu.RLock()
@@ -117,7 +139,7 @@ func (live *LiveNetwork) ApplyTailscale(record state.TailscaleServe, removedHost
 		live.record.BaseURLSource = NetworkSourceSaved
 	}
 	_ = live.hosts.Add(record.Name)
-	live.tailscale = record.Name
+	live.tailscale, live.httpsBase = record.Name, ""
 	live.mu.Unlock()
 	live.Publish()
 }
@@ -147,7 +169,7 @@ func (live *LiveNetwork) RemoveTailscale(record state.TailscaleServe, baseURL st
 		live.hosts.Remove(record.AddedHost)
 		live.record.SavedHosts = slices.DeleteFunc(slices.Clone(live.record.SavedHosts), func(host string) bool { return host == record.AddedHost })
 	}
-	live.tailscale = ""
+	live.tailscale, live.httpsBase = "", ""
 	live.mu.Unlock()
 	live.Publish()
 }

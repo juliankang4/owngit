@@ -26,7 +26,8 @@ import (
 //     ready: Tailscale has OwnGit's endpoint and the running server accepts
 //     it, as read at most tailscaleReadingTTL ago; or
 //   - the base URL, and a trusted proxy has passed OwnGit a request for it
-//     over HTTPS since this server started (noteHTTPS).
+//     over HTTPS since the running network last changed: since this server
+//     started or tailnet sharing was last turned on or off (noteHTTPS).
 //
 // Only pages move (dashboardPage), and only for GET and HEAD without an
 // Authorization header, so a form or a password is never sent elsewhere.
@@ -38,8 +39,8 @@ import (
 // move never leads back to itself. The target comes only from OwnGit's own
 // settings, never from the request. The redirect is temporary and not
 // stored, so it ends when the address stops working: at once when sharing
-// is turned off or the base URL changes, and within tailscaleReadingTTL
-// when Tailscale loses the address.
+// is turned on or off or the base URL changes, and within
+// tailscaleReadingTTL when Tailscale loses the address.
 
 // httpsRedirectWait bounds how long a page waits for Tailscale's state to
 // decide whether it moves. When the wait runs out, the page is answered
@@ -91,26 +92,18 @@ func (app *App) workingHTTPS(ctx context.Context, name string) (string, error) {
 		}
 		return TailscaleOrigin(report.Sharing.Name, report.Sharing.HTTPSPort), nil
 	}
-	base := app.Network.BaseURL()
-	if seen := app.httpsSeen.Load(); seen == nil || *seen != base {
-		return "", nil
-	}
-	return base, nil
+	return app.Network.HTTPSBaseURL(), nil
 }
 
 // noteHTTPS records that the base URL works over HTTPS when request came
-// for it as HTTPS. OwnGit itself serves plain HTTP, so only a trusted proxy
-// makes a request HTTPS (requestctx).
+// for it as HTTPS (LiveNetwork.ProveHTTPS). OwnGit itself serves plain
+// HTTP, so only a trusted proxy makes a request HTTPS (requestctx).
 func (app *App) noteHTTPS(request *http.Request) {
 	if !requestctx.Of(request).Secure() {
 		return
 	}
-	base := app.Network.BaseURL()
-	if !sameOrigin(request, base) {
-		return
-	}
-	if seen := app.httpsSeen.Load(); seen == nil || *seen != base {
-		app.httpsSeen.Store(&base)
+	if base := app.Network.BaseURL(); sameOrigin(request, base) && app.Network.HTTPSBaseURL() != base {
+		app.Network.ProveHTTPS(base)
 	}
 }
 

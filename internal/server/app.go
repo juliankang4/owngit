@@ -129,9 +129,6 @@ type App struct {
 	// sanitized owner-visible startup status. Empty code means available.
 	CheckRuntimeUnavailableCode   string
 	CheckRuntimeUnavailableReason string
-	// httpsSeen is the base URL that a trusted proxy has passed a request
-	// for over HTTPS since this server started. See noteHTTPS.
-	httpsSeen atomic.Pointer[string]
 	// activity caches activity observations by ref key. See activityCache.
 	activity activityCache
 	// unreadable remembers the repositories already logged as unreadable.

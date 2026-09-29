@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/state"
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
 )
@@ -160,6 +161,42 @@ func TestBrowserPagesMoveToTheTailnetAddressWhileItIsReady(t *testing.T) {
 	stays("sharing is off")
 }
 
+// When the base URL saved before sharing was turned on is the Tailscale
+// address itself, turning sharing off keeps it as the base URL. What Serve
+// passed over HTTPS while sharing was on no longer counts, so pages stay
+// where they are asked, and move again once sharing is back on.
+func TestTurningSharingOffEndsTheMoveEvenWhenTheBaseURLNamesItsAddress(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	ctx := context.Background()
+	address := "https://" + tailscaletest.Name
+	noErr(t, app.Store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{BaseURL: address}, AddHosts: []string{tailscaletest.Name}}))
+	noErr(t, app.Hosts.Add(tailscaletest.Name))
+	_, err := app.Tailscale.On(ctx, nil, 0)
+	noErr(t, err)
+	opened := tailscaletest.Name + ":7654"
+	if response := throughServe(app, "/"); response.Code != http.StatusOK {
+		t.Fatalf("a page through Serve got %d", response.Code)
+	}
+	if location := movedTo(sendDirect(app, http.MethodGet, "/", opened, tailnetDevice)); location != address+"/" {
+		t.Fatalf("while sharing is ready: moved to %q", location)
+	}
+
+	_, err = app.Tailscale.Off(ctx)
+	noErr(t, err)
+	if app.Network.BaseURL() != address || len(fake.State().Serve.Web) != 0 {
+		t.Fatalf("after turning off: base URL %q, Serve %+v", app.Network.BaseURL(), fake.State().Serve)
+	}
+	if response := sendDirect(app, http.MethodGet, "/", opened, tailnetDevice); response.Code != http.StatusOK {
+		t.Fatalf("after turning off: %d to %q", response.Code, response.Header().Get("Location"))
+	}
+
+	_, err = app.Tailscale.On(ctx, nil, 0)
+	noErr(t, err)
+	if location := movedTo(sendDirect(app, http.MethodGet, "/", opened, tailnetDevice)); location != address+"/" {
+		t.Fatalf("after turning on again: moved to %q", location)
+	}
+}
+
 // Before setup, every page goes to setup where it was asked, and setup, the
 // setup link and the setup file flow stay on the address the owner opened.
 func TestSetupStaysOnTheAddressItWasOpenedBy(t *testing.T) {
@@ -185,7 +222,7 @@ func TestSetupStaysOnTheAddressItWasOpenedBy(t *testing.T) {
 // base URL moves there once a trusted proxy has passed OwnGit a request for
 // that base URL over HTTPS. A proxy OwnGit does not trust, or one that
 // passed plain HTTP, shows nothing, and a new base URL waits for its own
-// request.
+// request: one for the earlier base URL does not count for it.
 func TestBrowserPagesMoveToTheBaseURLOnceItsProxyServedIt(t *testing.T) {
 	app := newConfiguredApp(t)
 	const base = "https://git.example.internal"
@@ -233,6 +270,12 @@ func TestBrowserPagesMoveToTheBaseURLOnceItsProxyServedIt(t *testing.T) {
 	network("https://git2.example.internal", loopback)
 	if location := direct("git2.example.internal:7654"); location != "" {
 		t.Fatalf("a new base URL was used before its proxy passed a request: %q", location)
+	}
+	// A request for the earlier base URL that is noted only after the
+	// change proves nothing about the base URL in use.
+	app.Network.ProveHTTPS(base)
+	if location := direct(opened); location != "" || app.Network.HTTPSBaseURL() != "" {
+		t.Fatalf("the earlier base URL counted after the change: moved to %q", location)
 	}
 }
 
