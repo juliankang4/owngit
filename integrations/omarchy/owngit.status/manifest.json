@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "owngit.status",
+  "name": "OwnGit",
+  "version": "1.0.0",
+  "author": "OwnGit",
+  "description": "Whether OwnGit runs, its clone address and the latest pushes",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "OwnGit",
+    "description": "Whether OwnGit runs, its clone address and the latest pushes",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "command": "owngit",
+      "stateDir": "",
+      "language": ""
+    },
+    "schema": [
+      { "key": "command", "type": "string", "label": "owngit program" },
+      { "key": "stateDir", "type": "string", "label": "State directory (empty: the default)" },
+      { "key": "language", "type": "string", "label": "Language: en or ko (empty: the system's)" }
+    ]
+  }
+}

@@ -83,7 +83,7 @@ func TestTrayCommand(t *testing.T) {
 	}
 
 	output, err = captureStdout(func() error { return runCommand("tray", []string{"hide", "--state-dir", stateDir, "--json"}) })
-	if err == nil || !strings.Contains(err.Error(), "tray takes on, off, status, icon or nothing") {
+	if err == nil || !strings.Contains(err.Error(), "tray takes on, off, status, icon, read, open or nothing") {
 		t.Fatalf("unknown operation: %q err=%v", output, err)
 	}
 }
@@ -239,17 +239,25 @@ func TestServeLogsAnUnwrittenTrayAccessFile(t *testing.T) {
 	}
 }
 
-// The icon is the Windows notification area's; elsewhere the command says
-// so, and it prints no JSON anywhere.
+// The icon runs in the Windows notification area and in a Linux desktop
+// panel, where it needs gjs with GTK 4; elsewhere, and without them, the
+// command says so. It prints no JSON anywhere.
 func TestTrayIconCommand(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := runCommand("tray", []string{"icon", "--json", "--state-dir", stateDir}); err == nil || !strings.Contains(err.Error(), "prints no JSON") {
 		t.Errorf("icon --json: %v", err)
 	}
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		t.Skip("the icon itself runs on the desktop")
+	case "linux":
+		t.Setenv("PATH", t.TempDir())
+		if err := runCommand("tray", []string{"icon", "--state-dir", stateDir}); err == nil || !strings.Contains(err.Error(), "needs gjs with GTK 4") {
+			t.Errorf("icon without gjs: %v", err)
+		}
+		return
 	}
-	if err := runCommand("tray", []string{"icon", "--state-dir", stateDir}); err == nil || !strings.Contains(err.Error(), "only on Windows") {
+	if err := runCommand("tray", []string{"icon", "--state-dir", stateDir}); err == nil || !strings.Contains(err.Error(), "runs only there") {
 		t.Errorf("icon: %v", err)
 	}
 }
