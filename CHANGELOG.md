@@ -15,6 +15,7 @@ Pushes and imports now refuse branches and tags whose name, or any folder in it,
 - One-line installers for Linux, macOS and Windows download the latest or a named release, check it against `SHA256SUMS`, install `owngit` and run it as a service.
 - `owngit update` prints the command that updates OwnGit the way it was installed, and the new-release notice shows it to a confirmed administrator with a Copy button. `owngit uninstall` removes the service and names the command that removes the program.
 - A container image for Linux on x64 and ARM64, `ghcr.io/juliankang4/owngit`, with a Compose file. It runs as a non-root account with its data in one volume, shows the setup link through `docker compose exec -it owngit owngit setup-link`, and updates with `docker compose pull && docker compose up -d`.
+- A helper script for Proxmox VE hosts, `https://owngit.app/proxmox.sh`, creates an unprivileged Debian 13 container, installs OwnGit in it with the one-line installer, and can keep the repositories in a folder of the host. Nothing from the OwnGit release runs on the host, and the script never changes an existing container.
 - `owngit doctor` and a Checkup card in Settings list problems such as a stopped server, Windows folders that the Administrators group owns, or a firewall that keeps other devices out, each with one command that repairs it.
 - Kept history can be turned off for the whole server or for one repository, and a repository's default branch can be protected from rewrites and deletion, in Settings, the API, `owngit settings set` and `owngit repo settings`.
 - `owngit repo kept-history`, `owngit repo restore preview` and `apply`, the matching API routes and MCP tools list kept history and restore files, with the same preview and the same check that the branch has not moved as the restore pages.
@@ -47,6 +48,7 @@ Pushes and imports now refuse branches and tags whose name, or any folder in it,
 
 - OwnGit opens its state directory, logs, locks and backup folders only through folders that no other account can change, and follows no link that another account could place on the way. The way to the state and to backups must be on a local disk.
 - Text from repository users, such as titles, branch names, commit messages and paths, is shown in its own writing direction, so direction controls in it cannot reorder the text beside it. Every JSON result writes those controls as escapes.
+- A sign-in and an administrator confirmation belong to the password version that OwnGit actually checked, so a password change made at the same moment ends them. A change of the administrator password in Settings is refused when its confirmation is from before another password change.
 - Signing in again replaces the session that the browser held before.
 - The administrator API accepts only the administrator password, for reads as well as changes, and no longer a browser's administrator session.
 
