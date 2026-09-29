@@ -558,6 +558,13 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 			err = errors.Join(err, fmt.Errorf("restore foreign key enforcement after schema migration: %w", restoreErr))
 		}
 	}()
+	// The catalog the migration must produce is built before the write
+	// transaction begins: building it runs every schema statement on an
+	// in-memory database, and other openers wait for the write lock.
+	current, err := stepsFingerprint(ctx, currentSchemaVersion())
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -603,10 +610,6 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 	migrated, _, err := schemaFingerprint(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("check the schema after migration: %w", err)
-	}
-	current, err := stepsFingerprint(ctx, previous)
-	if err != nil {
-		return err
 	}
 	if migrated != current {
 		return fmt.Errorf("state schema migration to %d produced a schema other than schema %d; nothing was changed", previous, previous)

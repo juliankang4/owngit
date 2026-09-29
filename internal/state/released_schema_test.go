@@ -242,8 +242,11 @@ func TestSchemaUpgradeIsReportedOnce(t *testing.T) {
 func TestFailingStepLeavesTheReleasedSchema(t *testing.T) {
 	original := schemaSteps
 	schemaSteps = append(slices.Clone(original), schemaStep{version: 17, statements: []string{
-		`CREATE TABLE step_17(value TEXT)`,
-		`INSERT INTO missing_table(value) VALUES(1)`,
+		// Fails only on a database that holds a pull request, so the
+		// steps' own catalog (built on an empty database) succeeds and the
+		// migration itself fails.
+		`CREATE TABLE step_17(value TEXT CHECK(value IS NULL))`,
+		`INSERT INTO step_17(value) SELECT title FROM pull_requests`,
 	}})
 	t.Cleanup(func() { schemaSteps = original })
 	ctx := context.Background()
