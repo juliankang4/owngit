@@ -455,3 +455,109 @@ func platformGitOnServicePath() bool {
 	}
 	return false
 }
+
+// platformReplaceableByOthers returns an error naming what lets another
+// account change the program at path: the file, the folder that holds it,
+// or a folder above that one. Only this account (sid), SYSTEM,
+// Administrators and TrustedInstaller may own them, write the file, add
+// files to its folder, or delete, rename or change the access of any of
+// them. A task that starts the program as this account at sign-in runs
+// whatever is there, so it must be a program no one else can put there.
+// Each path element is opened without following a reparse point.
+func platformReplaceableByOthers(path, sid string) error {
+	trusted := map[string]bool{
+		sid: true, systemSID: true, administratorsSID: true, trustedInstallerSID: true,
+		"S-1-3-0": true, // CREATOR OWNER applies only to what is created later
+		"S-1-3-4": true, // OWNER RIGHTS is the owner, checked below
+	}
+	const (
+		anyElement   = windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_ALL
+		deleteChild  = 0x40 // FILE_DELETE_CHILD
+		programMask  = anyElement | windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.GENERIC_WRITE
+		folderMask   = anyElement | windows.FILE_WRITE_DATA | deleteChild | windows.GENERIC_WRITE // FILE_WRITE_DATA adds a file
+		ancestorMask = anyElement | deleteChild
+	)
+	element, directory, mask := filepath.Clean(path), false, uint32(programMask)
+	for {
+		if err := othersMayChange(element, directory, trusted, mask); err != nil {
+			return fmt.Errorf("%s: %w", element, err)
+		}
+		parent := filepath.Dir(element)
+		if parent == element {
+			return nil
+		}
+		if directory {
+			mask = ancestorMask
+		} else {
+			mask = folderMask
+		}
+		element, directory = parent, true
+	}
+}
+
+// othersMayChange refuses a file or folder that an account outside trusted
+// owns, or that grants it any right in mask.
+func othersMayChange(path string, directory bool, trusted map[string]bool, mask uint32) error {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	flags := uint32(windows.FILE_FLAG_OPEN_REPARSE_POINT)
+	if directory {
+		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS
+	}
+	handle, err := windows.CreateFile(name, windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, flags, 0)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle)
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+		return err
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return errors.New("it is a link to another place")
+	}
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || owner == nil {
+		return errors.New("its owner cannot be read")
+	}
+	if !trusted[owner.String()] {
+		return fmt.Errorf("it belongs to %s", owner)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		return errors.New("its access list cannot be read")
+	}
+	if dacl == nil {
+		return errors.New("it has no access list, so everyone may change it")
+	}
+	const inheritOnly = 0x08
+	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, index, &ace); err != nil || ace == nil {
+			return errors.New("its access list cannot be read")
+		}
+		const accessAllowedCallbackACEType = 0x09
+		switch {
+		case ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE, ace.Header.AceFlags&inheritOnly != 0:
+			continue
+		case ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE && ace.Header.AceType != accessAllowedCallbackACEType:
+			return errors.New("its access list has an entry OwnGit cannot judge")
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if uint32(ace.Mask)&mask != 0 && !trusted[sid.String()] {
+			account := sid.String()
+			if name, domain, _, err := sid.LookupAccount(""); err == nil {
+				account = domain + `\` + name
+			}
+			return fmt.Errorf("%s may change it", account)
+		}
+	}
+	return nil
+}

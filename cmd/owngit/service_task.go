@@ -84,6 +84,9 @@ var (
 	gitOnServicePath = platformGitOnServicePath
 	// readExecutableVersion reads the version reported by a protected copy.
 	readExecutableVersion = executableVersion
+	// replaceableByOthers returns why another account could change the
+	// program at a path, which a task started as the account sid runs.
+	replaceableByOthers = platformReplaceableByOthers
 	// programRunning reports whether a process of this account runs the
 	// program at a path.
 	programRunning = platformProgramRunning
@@ -526,6 +529,12 @@ func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
 			return err
 		}
 	default:
+		// The sign-in tasks run this owngit.exe as the account, so no other
+		// account may be able to replace it.
+		if err := replaceableByOthers(host.executable, host.sid); err != nil {
+			host.printf("OwnGit does not start from %s at sign-in, because another account on this computer could replace it (%v). Move owngit.exe into a folder only you can change, such as one in your user profile, or install OwnGit with \"irm https://owngit.app/install.ps1 | iex\", then run \"owngit service install\" from there.\n", host.executable, err)
+			return &checkExit{code: 1, err: errors.New("another account could replace this owngit.exe")}
+		}
 		// A standard account: folders of its own that the Administrators
 		// group owns are given back in one step that an administrator
 		// approves (see elevatedOwners); a folder outside its profile needs

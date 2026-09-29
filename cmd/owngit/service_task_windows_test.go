@@ -324,3 +324,40 @@ func TestGiveOwnershipWalksWhatItChecked(t *testing.T) {
 		}
 	}
 }
+
+// A program in a folder only this account can change may start at sign-in;
+// one in a folder where the Users group may add or delete files may not,
+// nor one another account owns.
+func TestReplaceableByOthers(t *testing.T) {
+	sid, err := platformCurrentAccountSID()
+	noErr(t, err)
+	folder := t.TempDir()
+	program := filepath.Join(folder, "owngit.exe")
+	noErr(t, os.WriteFile(program, []byte("program"), 0o600))
+	if err := platformReplaceableByOthers(program, sid); err != nil {
+		t.Skipf("the temporary folder is not private to this account here: %v", err)
+	}
+	for name, sddl := range map[string]string{
+		"Users add files":    "D:P(A;OICI;FA;;;" + sid + ")(A;OICI;FA;;;SY)(A;;0x100002;;;BU)",
+		"Users delete files": "D:P(A;OICI;FA;;;" + sid + ")(A;OICI;FA;;;SY)(A;;0x100040;;;BU)",
+		"Everyone full":      "D:P(A;OICI;FA;;;" + sid + ")(A;;FA;;;WD)",
+	} {
+		descriptor, err := windows.SecurityDescriptorFromString(sddl)
+		noErr(t, err)
+		dacl, _, err := descriptor.DACL()
+		noErr(t, err)
+		noErr(t, windows.SetNamedSecurityInfo(folder, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil))
+		if err := platformReplaceableByOthers(program, sid); err == nil || !strings.Contains(err.Error(), folder) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// Reading and running stay open to others.
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + sid + ")(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;BU)")
+	noErr(t, err)
+	dacl, _, err := descriptor.DACL()
+	noErr(t, err)
+	noErr(t, windows.SetNamedSecurityInfo(folder, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil))
+	if err := platformReplaceableByOthers(program, sid); err != nil {
+		t.Errorf("readable by Users: %v", err)
+	}
+}

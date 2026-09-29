@@ -207,7 +207,7 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 	previousEnvironment, previousApply := serviceEnvironment, applyServiceEnvironment
 	previousEnvironmentRunner, previousAttached, previousGit := runWithEnvironment, runAttachedWithEnvironment, gitOnServicePath
 	previousDoctorTool, previousRequester, previousProfile, previousState := doctorTool, requestingProcess, accountProfile, isOwnGitState
-	previousProgramRunning := programRunning
+	previousProgramRunning, previousReplaceable := programRunning, replaceableByOthers
 	t.Cleanup(func() {
 		// The Windows paths of these tests are only text. Elsewhere they are
 		// relative, so a test that used one as a folder left it here.
@@ -222,9 +222,10 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		serviceEnvironment, applyServiceEnvironment = previousEnvironment, previousApply
 		runWithEnvironment, runAttachedWithEnvironment = previousEnvironmentRunner, previousAttached
 		doctorTool, requestingProcess, accountProfile, isOwnGitState = previousDoctorTool, previousRequester, previousProfile, previousState
-		programRunning = previousProgramRunning
+		programRunning, replaceableByOthers = previousProgramRunning, previousReplaceable
 	})
 	programRunning = func(string) bool { return false }
+	replaceableByOthers = func(string, string) error { return nil }
 	taskPollInterval = 10 * time.Millisecond
 	fake.health = useFakeHealth(t)
 	requestingProcess = func() (string, string, error) {
@@ -533,6 +534,27 @@ func TestTaskInstallForAStandardAccount(t *testing.T) {
 	}
 	if slicesContainPrefix(fake.calls, "powershell firewall-allow") {
 		t.Errorf("a standard account changed the firewall: %q", fake.calls)
+	}
+}
+
+// A standard account's tasks start its own owngit.exe as the account, so
+// an owngit.exe another account could replace registers nothing.
+func TestTaskInstallRefusesAProgramOthersCanReplace(t *testing.T) {
+	fake := newFakeWindows(t)
+	fake.existing(t, service.ModeLogonTask, testSID, testStateDir)
+	before := fake.definition
+	var checked []string
+	replaceableByOthers = func(path, sid string) error {
+		checked = append(checked, path+" "+sid)
+		return errors.New(`C:\Shared: BUILTIN\Users may change it`)
+	}
+	host, out := testTaskHost(service.Environment{})
+	err := host.install("", nil)
+	if err == nil || fake.definition != before || fake.icon != "" || slicesContainPrefix(fake.calls, "schtasks") {
+		t.Errorf("%v, calls %q", err, fake.calls)
+	}
+	if !reflect.DeepEqual(checked, []string{testUserExecutable + " " + testSID}) || !strings.Contains(out.String(), "another account on this computer could replace it") || !strings.Contains(out.String(), "install.ps1") {
+		t.Errorf("checked %q, output:\n%s", checked, out.String())
 	}
 }
 

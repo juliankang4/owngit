@@ -48,8 +48,9 @@ func platformRunWithEnvironment(context.Context, []string, string, ...string) ([
 func platformRunAttachedWithEnvironment([]string, string, ...string) (int, error) {
 	return 0, errNotWindows
 }
-func platformGitOnServicePath() bool     { return false }
-func platformProgramRunning(string) bool { return false }
+func platformGitOnServicePath() bool                   { return false }
+func platformProgramRunning(string) bool               { return false }
+func platformReplaceableByOthers(string, string) error { return errNotWindows }
 
 func platformGiveOwnership(string, string, func(string, string) error) (int, int, error) {
 	return 0, 0, errNotWindows
