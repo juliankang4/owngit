@@ -599,7 +599,7 @@ Omarchy에서는 아이콘을 클릭하면 패널이, 오른쪽 클릭하면 메
 - `owngit tray read --json`은 `{"shown": ..., "panel": {...}}`를 출력합니다. `shown`은 아이콘을 숨겼으면 false입니다. `panel`에는 `condition`(`running`, `attention`, `stopped`, `unavailable`), `state`, `tooltip`, `subtitle`, `notice`(문장 목록), `command_intro`와 `command`(복사할 명령, 없으면 빈 문자열), `clone_address`, `pushes`(최대 세 건, 각각 `repository`, `branch`, 말로 적은 시각 `when`), `no_pushes`, `can_open`, `labels`(고른 언어로 된 패널의 문구)가 들어 있습니다. 토큰이나 열 주소는 들어 있지 않습니다. `--lang en`이나 `--lang ko`로 언어를 고르며, 기본값은 `LC_ALL`, `LC_MESSAGES`, `LANG`을 따릅니다.
 - `owngit tray open --json`은 새로 증명을 받은 뒤 대시보드를 열고 `{"ok": true, "url": ...}`를 출력합니다.
 
-두 명령 모두 `--state-dir`을 받습니다. 실패하면 `{"ok": false, "error": {"code": ..., "message": ...}}`를 출력하고 오류로 끝납니다. 코드는 아이콘이 없는 설치 방식이면 `tray_unavailable`, OwnGit이 응답을 증명하지 못하면 `status_unavailable`(아무것도 열지 않음), 브라우저를 시작하지 못하면 `open_failed`입니다. [Omarchy 바 위젯](../integrations/omarchy/owngit.status/README.md)이 이 두 명령으로 만들어져 있습니다.
+두 명령 모두 `--state-dir`을 받습니다. OwnGit이 응답하지 않거나 응답을 증명하지 못해도 `tray read`는 성공으로 끝나고 그 상태를 `panel`에 담습니다. 이때 `condition`은 `unavailable`이고, [점검](#점검)에서 OwnGit이 멈춘 것으로 나오면 `stopped`입니다. 실패한 명령은 `{"ok": false, "error": {"code": ..., "message": ...}}`를 출력하고 오류로 끝납니다. 아이콘이 없는 설치 방식이면 두 명령 모두 `tray_unavailable`을 냅니다. `status_unavailable`(OwnGit이 응답을 증명하지 못함)과 `open_failed`(브라우저를 시작하지 못했거나 여는 프로그램이 실패로 끝남)는 `tray open`만 내며, 두 경우 모두 대시보드를 열지 않았습니다. [Omarchy 바 위젯](../integrations/omarchy/owngit.status/README.md)이 이 두 명령으로 만들어져 있습니다.
 
 ## 다른 기기에서 서버에 접속하기
 
