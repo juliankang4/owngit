@@ -493,6 +493,11 @@ func TestNativeLauncherCommandsOpenOwnerDashboard(t *testing.T) {
 	if !strings.Contains(status, `app.appendingPathComponent("`+appHelperPath+`")`) {
 		t.Fatalf("macOS launcher does not look for the binary at %s", appHelperPath)
 	}
+	// A login item change that fails is reported or tried again, never
+	// dropped: a leftover item would open the icon twice.
+	if launcher := readText(t, filepath.Join(root, "packaging", "macos", "Launcher.swift")); strings.Contains(launcher, "try? SMAppService") {
+		t.Fatal("the launcher ignores a failed login item change")
+	}
 	// owngit service uninstall turns off the icon's sign-in with this argument.
 	if !strings.Contains(status, `let signInOffArgument = "`+service.AppSignInOff+`"`) {
 		t.Fatalf("the launcher does not take %s", service.AppSignInOff)

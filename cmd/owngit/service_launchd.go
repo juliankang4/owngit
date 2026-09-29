@@ -240,10 +240,12 @@ func (host *launchAgentHost) closeIcon(programs ...string) {
 		done[app] = true
 		launcher := service.AppLauncher(app)
 		running := "^" + regexp.QuoteMeta(launcher) + "( |$)"
-		// pkill exits 1 when no icon runs; whether one is left is checked
-		// after it.
-		_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-f", running)
-		if iconExited(ctx, running) {
+		// Only this account's icon: another account may run the same app,
+		// and root must not quit every account's icon. pkill exits 1 when
+		// no icon runs; whether one is left is checked after it.
+		account := strconv.Itoa(host.uid)
+		_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-U", account, "-f", running)
+		if iconExited(ctx, account, running) {
 			host.printf("The OwnGit icon is closed.\n")
 		} else {
 			host.printf("The OwnGit icon at %s is still running. Quit it with the gear in its panel, then Quit the icon.\n", app)
@@ -262,11 +264,12 @@ func (host *launchAgentHost) closeIcon(programs ...string) {
 	}
 }
 
-// iconExited waits up to three seconds for no process to match running.
-func iconExited(ctx context.Context, running string) bool {
+// iconExited waits up to three seconds for no process of the account to
+// match running.
+func iconExited(ctx context.Context, account, running string) bool {
 	for attempt := 0; ; attempt++ {
 		// pgrep prints the matching process IDs and exits 1 without any.
-		output, _ := serviceRunner(ctx, "/usr/bin/pgrep", "-f", running)
+		output, _ := serviceRunner(ctx, "/usr/bin/pgrep", "-U", account, "-f", running)
 		if strings.TrimSpace(string(output)) == "" {
 			return true
 		}

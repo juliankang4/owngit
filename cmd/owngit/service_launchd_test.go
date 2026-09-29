@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -462,8 +463,8 @@ func TestLaunchAgentUninstallClosesTheIcon(t *testing.T) {
 	noErr(t, os.WriteFile(host.agentPath, []byte(agent), 0o644))
 
 	noErr(t, host.uninstall())
-	want := "^" + regexp.QuoteMeta(resolved) + "( |$)"
-	if !slices.Contains(fake.calls, "/usr/bin/pkill -f "+want) || !slices.Contains(fake.calls, resolved+" "+service.AppSignInOff) {
+	want := "-U " + strconv.Itoa(host.uid) + " -f ^" + regexp.QuoteMeta(resolved) + "( |$)"
+	if !slices.Contains(fake.calls, "/usr/bin/pkill "+want) || !slices.Contains(fake.calls, "/usr/bin/pgrep "+want) || !slices.Contains(fake.calls, resolved+" "+service.AppSignInOff) {
 		t.Fatalf("uninstall did not close the icon at its resolved path %s: %v", resolved, fake.calls)
 	}
 	if got := out.String(); !strings.Contains(got, "The OwnGit icon is closed.") || !strings.Contains(got, "no longer opens at sign-in") || !strings.Contains(got, "stopped and removed") {

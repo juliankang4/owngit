@@ -619,9 +619,11 @@ enum SignInItem {
         let data = try PropertyListSerialization.data(fromPropertyList: agent, format: .xml, options: 0)
         try FileManager.default.createDirectory(at: agentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: agentURL, options: .atomic)
-        // An item an earlier icon registered names a versioned folder.
-        if SMAppService.mainApp.status != .notRegistered {
-            try? SMAppService.mainApp.unregister()
+        // An item an earlier icon registered names a versioned folder and
+        // would open the icon twice. Failing to remove it fails the
+        // registration, which is reported and tried again.
+        if [.enabled, .requiresApproval].contains(SMAppService.mainApp.status) {
+            try SMAppService.mainApp.unregister()
         }
     }
 
