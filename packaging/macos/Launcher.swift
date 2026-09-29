@@ -616,9 +616,7 @@ enum SignInItem {
             return
         }
         let agent = iconAgent(app: stableApp.path, bundleID: Bundle.main.bundleIdentifier ?? "")
-        let data = try PropertyListSerialization.data(fromPropertyList: agent, format: .xml, options: 0)
-        try FileManager.default.createDirectory(at: agentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: agentURL, options: .atomic)
+        try writeAgent(agent, to: agentURL)
         // An item an earlier icon registered names a versioned folder and
         // would open the icon twice. Failing to remove it fails the
         // registration, which is reported and tried again.

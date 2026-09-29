@@ -351,6 +351,15 @@ let signInOffArgument = "--sign-in-off"
 /// icon hidden and repairs nothing.
 let atSignInArgument = "--at-sign-in"
 
+/// writeAgent writes a LaunchAgent file whole and leaves it writable only
+/// by its owner (0644), whatever mode an earlier file there had.
+func writeAgent(_ agent: [String: Any], to url: URL) throws {
+    let data = try PropertyListSerialization.data(fromPropertyList: agent, format: .xml, options: 0)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try data.write(to: url, options: .atomic)
+    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+}
+
 /// iconAgentLabel names the LaunchAgent that opens a Homebrew icon at
 /// sign-in.
 let iconAgentLabel = "app.owngit.icon"

@@ -704,6 +704,19 @@ let scratch = CommandLine.arguments[2]
 require(protectedPathProblem(scratch + "/private/owngit") == nil, "a private folder on disk")
 require(protectedPathProblem(scratch + "/shared/owngit") == scratch + "/shared", "a group-writable folder on disk")
 require(protectedPathProblem(scratch + "/acl/owngit") == scratch + "/acl", "an access list that lets everyone add files, on disk")
+// A sign-in agent written over a file that others could change is left
+// writable only by its owner.
+let agentFile = URL(fileURLWithPath: scratch + "/agents/app.owngit.icon.plist")
+try! FileManager.default.createDirectory(at: agentFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+try! Data("old".utf8).write(to: agentFile)
+try! FileManager.default.setAttributes([.posixPermissions: 0o666], ofItemAtPath: agentFile.path)
+// A permissive umask would otherwise leave the new file 0666.
+let oldMask = umask(0)
+try! writeAgent(signInAgent, to: agentFile)
+umask(oldMask)
+let agentMode = (try! FileManager.default.attributesOfItem(atPath: agentFile.path)[.posixPermissions] as! NSNumber).intValue
+require(agentMode == 0o644, "the sign-in agent mode is \(String(agentMode, radix: 8))")
+require((NSDictionary(contentsOf: agentFile)?["Label"] as? String) == iconAgentLabel, "the sign-in agent is written whole")
 require(Words.forLanguages(["ko-KR", "en"]).lang == "ko" && Words.forLanguages(["en-US", "ko"]).lang == "en" && Words.forLanguages([]).lang == "en", "language")
 print("tray status fixture passed")
 `
