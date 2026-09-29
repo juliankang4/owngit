@@ -188,6 +188,8 @@ owngit repo create --server https://owngit.example.test --name example-project \
 
 저장소마다 `id`, `name`, `description`, `created_at`, `clone_url`이 있고, `repo show`는 그 순간 브랜치를 읽을 수 있으면 `default_branch`도 보여 줍니다. `repo list`는 저장소를 최대 1000개까지 돌려주고 더 있으면 `truncated`가 true입니다. `repo create`는 브라우저 양식과 같은 규칙을 적용하며 `repository_exists`, `invalid_repository_name`, `reserved_repository_name`, `invalid_repository_description`(500바이트 초과)으로 실패합니다.
 
+`owngit repo settings show`와 `owngit repo settings set`은 저장소 하나의 [보관된 기록과 기본 브랜치 보호](OPERATIONS.ko.md#보관된-기록) 설정을 읽고 바꿉니다. 다른 `repo` 명령과 달리 `--password-file`에 관리자 비밀번호를 넣어야 합니다. 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져오며 이때 비밀번호 파일에 그 서버가 적혀 있어야 합니다([자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄) 참고).
+
 ## 풀 리퀘스트 변경 내용
 
 `owngit pr diff --number N`은 풀 리퀘스트가 바꾸는 내용을 JSON 객체 하나로 출력합니다. 비교한 원본과 대상 커밋, 두 커밋의 병합 기준(merge base), 줄 수가 붙은 변경 파일 목록, 패치가 들어 있습니다. `owngit pr`과 같이 일반 접근을 쓰고 클론 안에서는 서버와 저장소를 `origin`에서 읽습니다.

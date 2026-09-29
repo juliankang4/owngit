@@ -779,15 +779,15 @@ When a force push, an import or a deletion replaces the commits of a branch or t
 - For every repository that follows the server: Overwritten and deleted history under Kept history on the Settings Repositories tab, or `owngit settings set --kept-history off`.
 - For one repository: Kept history on the repository's Settings tab (Follow the server setting, Keep or Do not keep), or `owngit repo settings set --repository NAME --kept-history off` (`default` follows the server). A repository's own choice applies whatever the server's is.
 
-A change applies to pushes and imports that start after you save. With Do not keep, the commits replaced from then on are not kept, and OwnGit cannot show or restore them. History kept before stays and can still be restored; nothing is deleted. Fast-forward pushes, merges, restores, backups and repository deletion work the same either way.
+A change applies to pushes and imports that start after you save; a run already going keeps the choices it started with. With Do not keep, the commits replaced from then on are not kept, so they are not listed in kept history and cannot be restored from it. They may still open by their full commit ID. History kept before stays and can still be restored; nothing is deleted. Fast-forward pushes, merges, restores, backups and repository deletion work the same either way.
 
-`owngit repo settings show --repository NAME` prints a repository's choices as JSON, with `kept_history_now` for what it does now. Like `owngit settings`, both `repo settings` commands need `--server` and a `--password-file` holding the administrator password. If a repository's saved choices cannot be read, pushes and imports to it are refused until you save them again; on the command line, give both `--kept-history` and `--protect-default-branch`.
+`owngit repo settings show --repository NAME` prints a repository's choices as JSON, with `kept_history_now` for what it does now. Both `repo settings` commands need a `--password-file` holding the administrator password. Inside a clone of the repository they take `--server` and `--repository` from its `origin` remote, and the password file must then name that server on its first line ([Credential files and the server line](CODING_TOOLS.md#credential-files-and-the-server-line)). If a repository's saved choices cannot be read, pushes and imports to it are refused until you save them again; on the command line, give both `--kept-history` and `--protect-default-branch`. While the server-wide choice cannot be read, a repository cannot be set to follow it; choose Keep or Do not keep for the repository, or set the server choice again.
 
 ### Changing the default branch
 
 The default branch is the one OwnGit and `git clone` open first (the repository's `HEAD`). An administrator picks any existing branch in the repository's Settings tab. An imported repository whose only branch is `master` shows no default branch until you choose one. Changing it creates no branch and leaves every ref and kept history as it was.
 
-To keep the default branch from being rewritten or deleted, turn on Protect the default branch on the repository's Settings tab, or run `owngit repo settings set --repository NAME --protect-default-branch on`. It is off by default. While it is on, OwnGit refuses a push that is not a fast-forward of the default branch and a push that deletes it, and Git shows `remote: OwnGit protects the default branch main and refused ...` with `! [remote rejected]`. Pushes that add commits, every other branch and tag, merging a pull request, restoring files and deleting the repository work as before. An import still follows a fast-forward of the default branch; a rewrite at the source stays local and is reported as divergent. Changing the default branch moves the protection to the new one.
+To keep the default branch from being rewritten or deleted, turn on Protect the default branch on the repository's Settings tab, or run `owngit repo settings set --repository NAME --protect-default-branch on`. It is off by default. While it is on, OwnGit refuses a push that is not a fast-forward of the default branch and a push that deletes it, and Git shows `remote: OwnGit protects the default branch main and refused ...` with `! [remote rejected]`. Pushes that add commits, every other branch and tag, merging a pull request, restoring files and deleting the repository work as before. An import still follows a fast-forward of the default branch. When the source rewrote it, the refresh fails with `protected_default_branch` and changes nothing; to follow the source, turn the protection off and refresh again. Changing the default branch moves the protection to the new one.
 
 A new repository starts on `main`. To start new repositories on another branch, such as `trunk`, change Initial branch under New repositories on the Settings Repositories tab, or run `owngit settings set --initial-branch trunk`. The name uses up to 100 letters, digits, `-`, `_`, `.` and `/`, and must be one Git accepts. It applies to repositories created afterwards, in the dashboard, on the command line or through the API. Existing repositories keep their branches, and an import takes its source's default branch. The page of an empty repository shows the `git push` command for its branch.
 
@@ -844,6 +844,8 @@ Compare both sides before you treat the move as complete:
 git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
 git ls-remote --heads --tags owngit
 ```
+
+A push is refused when a branch or tag name matches another one apart from letter case or accents, such as `Main` beside `main`, because some file systems store the two as one file. Git then shows `OwnGit refused changing ... Use a clearly different name.`; rename the branch or tag to a clearly different name.
 
 OwnGit accepts pushes only to `refs/heads/*` and `refs/tags/*`, so `git push --mirror` from another host's mirror clone fails for refs such as `refs/pull/*`. Pushing between two OwnGit installations carries neither kept history nor repository records; use an [offline backup](#offline-backups) for those. To keep pulling from a host that stays in use, see [Importing from another Git host](#importing-from-another-git-host).
 
@@ -981,7 +983,7 @@ A refresh never overwrites local work:
 - A tag changes only while it is still the exact tag last seen.
 - Anything else is divergent and kept, and the run reports it.
 - A ref deleted at the source is never removed locally (**Deleted at source** in the Import tab and `import status`).
-- A source ref whose name differs only by case from a local one is reported as divergent instead of created.
+- A source ref whose name differs from a local one only in letter case or accents is reported as divergent instead of created.
 - Every replaced value stays in kept history.
 - HEAD follows the source only when OwnGit set it on an earlier import from the same source and nothing changed it since.
 
@@ -993,7 +995,7 @@ OwnGit scans the fetched objects for LFS pointer files, up to 200,000 objects, 1
 
 ### Failures and cancellation
 
-One run per repository is active at a time (`busy` otherwise), and a run is limited to 60 minutes by default (`limit`). Other outcomes are `cancelled`, `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved` and `nothing_to_resolve`. A failure OwnGit did not classify is `unclassified`; `unsupported` means the source or destination uses a feature that import does not support.
+One run per repository is active at a time (`busy` otherwise), and a run is limited to 60 minutes by default (`limit`). Other outcomes are `cancelled`, `protected_default_branch` (see [Changing the default branch](#changing-the-default-branch)), `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved` and `nothing_to_resolve`. A failure OwnGit did not classify is `unclassified`; `unsupported` means the source or destination uses a feature that import does not support.
 
 When `owngit serve` stops, it cancels running imports and waits up to 45 seconds for each to record its outcome. At the next start it marks interrupted runs and checks any publication that was in progress, without repeating or rolling back a write. If the import service cannot start, the Import tab and `import status` say so, and Git keeps working.
 

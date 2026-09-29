@@ -779,15 +779,15 @@ $io::SetAccessControl($f, $acl)
 - 서버 설정을 따르는 모든 저장소: 설정 화면 저장소 탭의 보관된 기록 항목에서 덮어쓰거나 지운 기록을 보관하지 않음으로 바꾸거나 `owngit settings set --kept-history off`를 실행합니다.
 - 저장소 하나: 저장소 설정 탭의 보관된 기록에서 서버 설정 따르기, 보관, 보관하지 않음 중 하나를 고르거나 `owngit repo settings set --repository NAME --kept-history off`를 실행합니다(`default`는 서버 설정을 따릅니다). 저장소에서 따로 고른 값은 서버 설정과 관계없이 적용됩니다.
 
-바꾼 값은 저장한 뒤 시작하는 푸시와 가져오기부터 적용됩니다. 보관하지 않음을 고르면 그 뒤로 바뀐 커밋은 보관되지 않고 OwnGit에서 다시 보거나 되돌릴 수 없습니다. 이미 보관된 기록은 그대로 남아 계속 되돌릴 수 있으며 지워지는 것은 없습니다. fast-forward 푸시, 병합, 되돌리기, 백업, 저장소 삭제는 어느 쪽이든 똑같이 동작합니다.
+바꾼 값은 저장한 뒤 시작하는 푸시와 가져오기부터 적용되며 이미 진행 중인 실행은 시작할 때의 선택을 따릅니다. 보관하지 않음을 고르면 그 뒤로 바뀐 커밋은 보관되지 않아 보관된 기록에 나오지 않고 그 기록에서 되돌릴 수도 없습니다. 이런 커밋도 전체 커밋 ID로는 열릴 수 있습니다. 이미 보관된 기록은 그대로 남아 계속 되돌릴 수 있으며 지워지는 것은 없습니다. fast-forward 푸시, 병합, 되돌리기, 백업, 저장소 삭제는 어느 쪽이든 똑같이 동작합니다.
 
-`owngit repo settings show --repository NAME`은 저장소의 선택을 JSON으로 출력하며 지금 실제로 적용되는 값은 `kept_history_now`에 나옵니다. `owngit settings`처럼 두 `repo settings` 명령 모두 `--server`와 관리자 비밀번호가 든 `--password-file`이 필요합니다. 저장소에 저장된 선택을 읽을 수 없으면 다시 저장할 때까지 그 저장소로 오는 푸시와 가져오기를 거부합니다. 명령줄에서 다시 저장할 때는 `--kept-history`와 `--protect-default-branch`를 함께 주세요.
+`owngit repo settings show --repository NAME`은 저장소의 선택을 JSON으로 출력하며 지금 실제로 적용되는 값은 `kept_history_now`에 나옵니다. 두 `repo settings` 명령 모두 관리자 비밀번호가 든 `--password-file`이 필요합니다. 그 저장소의 clone 안에서는 `--server`와 `--repository`를 `origin` 원격에서 가져오며 이때 비밀번호 파일의 첫 줄에 그 서버가 적혀 있어야 합니다([자격 증명 파일과 서버 줄](CODING_TOOLS.ko.md#자격-증명-파일과-서버-줄) 참고). 저장소에 저장된 선택을 읽을 수 없으면 다시 저장할 때까지 그 저장소로 오는 푸시와 가져오기를 거부합니다. 명령줄에서 다시 저장할 때는 `--kept-history`와 `--protect-default-branch`를 함께 주세요. 서버 전체의 선택을 읽을 수 없는 동안에는 저장소를 서버 설정 따르기로 바꿀 수 없습니다. 저장소에서 보관이나 보관하지 않음을 고르거나 서버 설정을 다시 정하세요.
 
 ### 기본 브랜치 바꾸기
 
 기본 브랜치는 OwnGit과 `git clone`이 처음 여는 브랜치(저장소의 `HEAD`)입니다. 관리자는 저장소의 설정 탭에서 기존 브랜치 중 하나를 고릅니다. 브랜치가 `master` 하나뿐인 가져온 저장소는 직접 고르기 전까지 기본 브랜치가 없다고 표시됩니다. 기본 브랜치를 바꿔도 브랜치가 새로 생기지 않으며 모든 ref와 보관된 기록은 그대로입니다.
 
-기본 브랜치를 다시 쓰거나 지우지 못하게 하려면 저장소 설정 탭에서 기본 브랜치 보호를 켜거나 `owngit repo settings set --repository NAME --protect-default-branch on`을 실행하세요. 기본값은 꺼짐입니다. 켜 두면 기본 브랜치에 대한 fast-forward가 아닌 푸시와 기본 브랜치를 지우는 푸시를 거부하고 Git에는 `remote: OwnGit protects the default branch main and refused ...`와 `! [remote rejected]`가 나옵니다. 커밋을 더하는 푸시, 다른 브랜치와 태그, 풀 리퀘스트 병합, 파일 되돌리기, 저장소 삭제는 전과 같이 동작합니다. 가져오기는 기본 브랜치의 fast-forward만 따라가고 원본에서 다시 쓴 기본 브랜치는 OwnGit 쪽 값을 그대로 둔 채 원본과 다름으로 보고합니다. 기본 브랜치를 바꾸면 보호도 새 기본 브랜치로 옮겨 갑니다.
+기본 브랜치를 다시 쓰거나 지우지 못하게 하려면 저장소 설정 탭에서 기본 브랜치 보호를 켜거나 `owngit repo settings set --repository NAME --protect-default-branch on`을 실행하세요. 기본값은 꺼짐입니다. 켜 두면 기본 브랜치에 대한 fast-forward가 아닌 푸시와 기본 브랜치를 지우는 푸시를 거부하고 Git에는 `remote: OwnGit protects the default branch main and refused ...`와 `! [remote rejected]`가 나옵니다. 커밋을 더하는 푸시, 다른 브랜치와 태그, 풀 리퀘스트 병합, 파일 되돌리기, 저장소 삭제는 전과 같이 동작합니다. 가져오기는 기본 브랜치의 fast-forward는 그대로 따라갑니다. 원본이 기본 브랜치를 다시 썼다면 새로고침은 `protected_default_branch`로 실패하고 아무것도 바꾸지 않습니다. 원본을 따르려면 보호를 끄고 다시 새로고침하세요. 기본 브랜치를 바꾸면 보호도 새 기본 브랜치로 옮겨 갑니다.
 
 새 저장소는 `main` 브랜치로 시작합니다. `trunk`처럼 다른 브랜치로 시작하게 하려면 설정 화면 저장소 탭의 새 저장소에서 첫 브랜치를 바꾸거나 `owngit settings set --initial-branch trunk`를 실행하세요. 이름은 Git이 받아들이는 이름이어야 하며 영문자, 숫자, `-`, `_`, `.`, `/`로 100자까지 씁니다. 바꾼 뒤 대시보드, 명령줄, API로 만드는 저장소에 적용되고 이미 있는 저장소의 브랜치는 그대로입니다. 가져온 저장소는 원본의 기본 브랜치를 씁니다. 빈 저장소 페이지에는 그 저장소의 브랜치로 푸시하는 `git push` 명령이 나옵니다.
 
@@ -844,6 +844,8 @@ git push owngit --tags
 git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
 git ls-remote --heads --tags owngit
 ```
+
+`main` 옆의 `Main`처럼 대소문자나 악센트만 다른 이름의 브랜치나 태그가 이미 있으면 푸시를 거부합니다. 일부 파일 시스템이 두 이름을 한 파일로 저장하기 때문입니다. Git에는 `OwnGit refused changing ... Use a clearly different name.`이 나오니 브랜치나 태그 이름을 확실히 다른 이름으로 바꾸세요.
 
 OwnGit은 `refs/heads/*`와 `refs/tags/*`로 가는 푸시만 받으므로, 다른 호스트의 미러 clone에서 `git push --mirror`를 하면 `refs/pull/*` 같은 ref 때문에 실패합니다. 두 OwnGit 서버 사이에서 푸시하면 보관된 기록과 저장소 기록은 옮겨지지 않으니, 그것까지 옮기려면 [오프라인 백업](#오프라인-백업)을 쓰세요. 계속 쓰는 호스트에서 변경 사항을 받아 오려면 [다른 Git 호스트에서 가져오기](#다른-git-호스트에서-가져오기)를 보세요.
 
@@ -981,7 +983,7 @@ OwnGit은 호스트 이름을 한 번 조회하고 돌아온 주소를 모두 �
 - 태그는 마지막으로 본 태그와 정확히 같을 때만 바뀝니다.
 - 그 밖의 경우는 **원본과 다름**으로 보고 그대로 두며, 실행 결과에 보고합니다.
 - 원본에서 지운 ref는 OwnGit에서 지우지 않습니다(가져오기 탭과 `import status`에 **원본에서 삭제됨**).
-- 대소문자만 다른 이름의 원본 ref는 만들지 않고 원본과 다름으로 보고합니다.
+- 로컬 ref와 대소문자나 악센트만 다른 이름의 원본 ref는 만들지 않고 원본과 다름으로 보고합니다.
 - 교체된 값은 모두 보관된 기록에 남습니다.
 - HEAD는 같은 원본의 이전 가져오기에서 OwnGit이 정했고 그 뒤로 아무것도 바꾸지 않았을 때만 원본을 따라갑니다.
 
@@ -993,7 +995,7 @@ OwnGit은 받아 온 객체에서 Git LFS 포인터 파일을 찾습니다(객�
 
 ### 실패와 취소
 
-저장소마다 한 번에 하나의 실행만 진행되며(그 밖에는 `busy`), 실행은 기본값으로 60분까지입니다(`limit`). 그 밖의 결과는 `cancelled`, `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved`, `nothing_to_resolve`입니다. OwnGit이 분류하지 못한 실패는 `unclassified`입니다. `unsupported`는 원본이나 대상이 가져오기에서 지원하지 않는 기능을 쓴다는 뜻입니다.
+저장소마다 한 번에 하나의 실행만 진행되며(그 밖에는 `busy`), 실행은 기본값으로 60분까지입니다(`limit`). 그 밖의 결과는 `cancelled`, `protected_default_branch`([기본 브랜치 바꾸기](#기본-브랜치-바꾸기) 참고), `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved`, `nothing_to_resolve`입니다. OwnGit이 분류하지 못한 실패는 `unclassified`입니다. `unsupported`는 원본이나 대상이 가져오기에서 지원하지 않는 기능을 쓴다는 뜻입니다.
 
 `owngit serve`가 멈추면 실행 중인 가져오기를 취소하고 각각이 결과를 기록할 때까지 최대 45초 기다립니다. 다음 시작 때는 중단된 실행을 표시하고, 진행 중이던 게시를 확인합니다. 이때 쓰기를 반복하거나 되돌리지 않습니다. 가져오기 서비스를 시작할 수 없으면 가져오기 탭과 `import status`에 그렇게 표시되고 Git은 계속 동작합니다.
 

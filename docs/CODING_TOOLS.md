@@ -369,6 +369,13 @@ rules and fails with `repository_exists`, `invalid_repository_name`,
 `reserved_repository_name`, or `invalid_repository_description` (over 500
 bytes).
 
+`owngit repo settings show` and `owngit repo settings set` read and change one
+repository's [kept history and default branch protection](OPERATIONS.md#kept-history).
+Unlike the other `repo` commands, they need the administrator password in
+`--password-file`. Inside a clone they take `--server` and `--repository` from
+`origin`, and the password file must then name that server
+([Credential files and the server line](#credential-files-and-the-server-line)).
+
 ## Pull request changes
 
 `owngit pr diff --number N` prints what a pull request changes as one JSON
