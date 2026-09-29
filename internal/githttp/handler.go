@@ -242,11 +242,15 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			_ = body.Close()
 			status, reason := http.StatusBadRequest, "could not read the request body"
 			var maxErr *http.MaxBytesError
-			if source.firstError() == nil {
+			switch {
+			case source.firstError() == nil:
 				reason = errInvalidGzip.Error()
 				logGitFailure(route, request.Method, reason)
-			} else if errors.As(source.firstError(), &maxErr) {
+			case errors.As(source.firstError(), &maxErr):
 				status, reason = http.StatusRequestEntityTooLarge, requestTooLarge
+			case deadlines.stalled.Load():
+				status, reason = http.StatusRequestTimeout, deadlines.reason()
+				logGitFailure(route, request.Method, reason)
 			}
 			http.Error(writer, reason, status)
 			return
@@ -340,10 +344,15 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		logGitFailure(route, request.Method, reason)
 	}
 	if err != nil && !committed.started() {
+		// A client that stopped sending gets 408, like the log says; 502
+		// would blame OwnGit, or behind a proxy OwnGit's backend, for it.
 		status := http.StatusBadGateway
-		if tooLarge {
+		switch {
+		case deadlines.stalled.Load():
+			status = http.StatusRequestTimeout
+		case tooLarge:
 			status = http.StatusRequestEntityTooLarge
-		} else if invalidGzip {
+		case invalidGzip:
 			status = http.StatusBadRequest
 		}
 		http.Error(committed, http.StatusText(status), status)

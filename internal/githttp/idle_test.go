@@ -1,6 +1,7 @@
 package githttp
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -111,8 +112,8 @@ func TestIdleLimitStopsAStalledReaderAndFreesTheRepository(t *testing.T) {
 	}
 }
 
-// A request body that stops arriving is stopped at the idle limit, and the
-// repository is free again.
+// A request body that stops arriving is stopped at the idle limit with 408
+// Request Timeout, and the repository is free again.
 func TestIdleLimitStopsAStalledRequestBody(t *testing.T) {
 	const idle = 400 * time.Millisecond
 	var gzipped bytes.Buffer
@@ -125,6 +126,7 @@ func TestIdleLimitStopsAStalledRequestBody(t *testing.T) {
 		{"push with a length", "git-receive-pack", "Content-Length: 100000\r\n", "0098"},
 		{"chunked push", "git-receive-pack", "Transfer-Encoding: chunked\r\n", "4\r\n0098\r\n"},
 		{"gzip fetch", "git-upload-pack", "Content-Encoding: gzip\r\nContent-Length: 100000\r\n", gzipped.String()[:gzipped.Len()/2]},
+		{"gzip header", "git-upload-pack", "Content-Encoding: gzip\r\nContent-Length: 100000\r\n", gzipped.String()[:4]},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			handler, _, _ := idleFixture(t, 16, idle)
@@ -154,6 +156,13 @@ func TestIdleLimitStopsAStalledRequestBody(t *testing.T) {
 			}
 			want := fmt.Sprintf(`Git %s request for repository "sample" failed: no data moved for 400ms (Git transfer idle limit)`, kind)
 			waitFor(t, 2*time.Second, "the idle limit log line", func() bool { return strings.Contains(logs.String(), want) })
+			noErr(t, connection.SetReadDeadline(time.Now().Add(5*time.Second)))
+			response, err := http.ReadResponse(bufio.NewReader(connection), nil)
+			noErr(t, err, "read the response to the stalled transfer")
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusRequestTimeout {
+				t.Fatalf("stalled transfer answered %s, want 408 Request Timeout", response.Status)
+			}
 		})
 	}
 }
