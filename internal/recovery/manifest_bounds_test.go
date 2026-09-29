@@ -1,10 +1,12 @@
 package recovery
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -102,12 +104,20 @@ func TestBackupRefusesAStateLargerThanABackupHolds(t *testing.T) {
 }
 
 // Reading a supplied manifest needs memory for its records only: the
-// whitespace between tokens costs nothing, and a file past the limit, one
-// that grows past it while read, or a string longer than any record holds is
-// refused with memory bounded by the limits rather than by the input.
+// whitespace between tokens costs nothing, a file past the limit or one that
+// grows past it while read is refused, and so is a string longer than any
+// record holds, with memory bounded by the limits rather than by the input.
+// Many small records, top-level or nested in a list or map, are charged
+// their size in memory, so they are refused at the budget; an empty record
+// is refused at once.
 func TestManifestReadingIsBounded(t *testing.T) {
 	const prefix = `{"format":"owngit-offline-backup","version":11,"created_at":"2026-09-29T00:00:00Z","access_mode":"open","admin_password_hash":"synthetic","repositories":[]`
 	whitespace := func(size int64) io.Reader { return &repeatReader{pattern: []byte(" \n\t\r"), remaining: size} }
+	// records streams head, then pattern repeated without end.
+	records := func(head, pattern string) io.Reader {
+		return io.MultiReader(strings.NewReader(head), &repeatReader{pattern: []byte(pattern), remaining: 1 << 40})
+	}
+	const budget = 16 << 20
 	type input struct {
 		reader      io.Reader
 		size, limit int64
@@ -135,14 +145,12 @@ func TestManifestReadingIsBounded(t *testing.T) {
 			maxAlloc: 1 << 20,
 		},
 		{
-			name: "records growing past the limit while read",
+			name: "file growing past the limit while read",
 			input: func() input {
-				record := []byte(`{"repository_id":"project","pull_request_number":1,"sequence":1,"source_oid":"` + strings.Repeat("a", 40) + `","target_oid":"` + strings.Repeat("a", 40) + `","status":"approved","provenance":"supplied_external_tool","created_at":"2026-09-29T00:00:00Z"},`)
-				reader := io.MultiReader(strings.NewReader(prefix+`,"pull_request_reviews":[`), &repeatReader{pattern: record, remaining: 1 << 40})
-				return input{reader, int64(len(prefix)), 4 << 20}
+				return input{io.MultiReader(strings.NewReader(prefix), whitespace(1<<40)), int64(len(prefix)), budget}
 			},
-			want:     "backup manifest is larger than the 4 MiB a backup holds",
-			maxAlloc: 32 << 20,
+			want:     "backup manifest is larger than the 16 MiB a backup holds",
+			maxAlloc: 1 << 20,
 		},
 		{
 			name: "a string longer than any record holds",
@@ -152,6 +160,47 @@ func TestManifestReadingIsBounded(t *testing.T) {
 			},
 			want:     "backup manifest holds a text longer than any OwnGit record",
 			maxAlloc: 6 * maxManifestStringBytes,
+		},
+		{
+			name: "empty records",
+			input: func() input {
+				return input{records(prefix+`,"pull_requests":[`, `{},`), int64(len(prefix)), manifestLimit}
+			},
+			want:     `backup record lacks its "repository_id" field`,
+			maxAlloc: 1 << 20,
+		},
+		{
+			name: "many small complete records",
+			input: func() input {
+				return input{records(prefix+`,"tasks":[`, `{"id":"","repository_id":"","title":"","created_at":"2026-09-29T00:00:00Z","updated_at":"2026-09-29T00:00:00Z"},`), int64(len(prefix)), budget}
+			},
+			want:     "backup manifest holds more than the 16 MiB of records a backup holds",
+			maxAlloc: 4 * budget,
+		},
+		{
+			name: "many refs in one repository",
+			input: func() input {
+				head := strings.TrimSuffix(prefix, `[]`) + `[{"id":"project","refs":[`
+				return input{records(head, `{"name":"","oid":""},`), int64(len(prefix)), budget}
+			},
+			want:     "backup manifest holds more than the 16 MiB of records a backup holds",
+			maxAlloc: 4 * budget,
+		},
+		{
+			name: "many check definitions in one configuration",
+			input: func() input {
+				return input{records(prefix+`,"check_configurations":[{"checks":[`, `{"name":"","command":""},`), int64(len(prefix)), budget}
+			},
+			want:     "backup manifest holds more than the 16 MiB of records a backup holds",
+			maxAlloc: 4 * budget,
+		},
+		{
+			name: "many map entries in one import intent",
+			input: func() input {
+				return input{records(prefix+`,"import_intents":[{"expected":{`, `"":"",`), int64(len(prefix)), budget}
+			},
+			want:     `json: key "" appears twice`,
+			maxAlloc: 1 << 20,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -167,6 +216,45 @@ func TestManifestReadingIsBounded(t *testing.T) {
 				t.Fatalf("reading allocated %d bytes, want at most %d", allocated, test.maxAlloc)
 			}
 		})
+	}
+}
+
+// Many distinct map entries are charged like list elements.
+func TestManifestMapEntriesAreCharged(t *testing.T) {
+	const prefix = `{"format":"owngit-offline-backup","version":11,"import_intents":[{"expected":{`
+	reader, writer := io.Pipe()
+	go func() {
+		defer writer.Close()
+		output := bufio.NewWriter(writer)
+		output.WriteString(prefix)
+		for index := 0; ; index++ {
+			if _, err := fmt.Fprintf(output, `"%d":"",`, index); err != nil {
+				return
+			}
+		}
+	}()
+	const budget = 16 << 20
+	var err error
+	allocated := allocatedBy(func() { _, err = decodeManifest(reader, 0, budget) })
+	reader.Close()
+	if err == nil || !strings.Contains(err.Error(), "backup manifest holds more than the 16 MiB of records a backup holds") {
+		t.Fatalf("error=%v", err)
+	}
+	if allocated > 8*budget {
+		t.Fatalf("reading allocated %d bytes, want at most %d", allocated, 8*budget)
+	}
+}
+
+// Whitespace separates tokens as it does for encoding/json, so dropping it
+// never joins two tokens into one.
+func TestManifestWhitespaceKeepsTokensApart(t *testing.T) {
+	for _, content := range []string{
+		`{"format":"owngit-offline-backup","version":1 1}`,
+		`{"format":"owngit-offline-backup","version":11,"import_run_order_known":tr ue}`,
+	} {
+		if _, err := decodeManifest(strings.NewReader(content), int64(len(content)), manifestLimit); err == nil || !strings.Contains(err.Error(), "invalid character") {
+			t.Fatalf("%s decoded with error=%v", content, err)
+		}
 	}
 }
 

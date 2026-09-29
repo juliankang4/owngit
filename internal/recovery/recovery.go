@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"owngit/internal/auth"
@@ -947,26 +948,41 @@ func syncDirectory(directory string) error {
 // otherwise. So every backup made before an upgrade that the earlier release
 // could have made itself stays restorable by that release. Both version
 // numbers have two digits, so the size does not depend on the choice. A
-// manifest larger than limit is refused, never cut short.
+// manifest whose cost (manifestBudget) passes limit is refused, never cut
+// short, so every backup written can be restored.
 func backupManifestVersion(manifest Manifest, format10Limit, limit int64) (int, error) {
 	manifest.Version = backupVersion
-	var size byteCounter
-	if err := writeManifest(&size, manifest); err != nil {
+	var counter manifestCounter
+	if err := writeManifest(&counter, manifest); err != nil {
 		return 0, err
 	}
-	if int64(size) > limit {
-		return 0, fmt.Errorf("cannot back up this state: its OwnGit records take %d MiB, and a backup holds at most %d MiB of them (repositories are not counted)", (int64(size)+1<<20-1)>>20, limit>>20)
+	if cost := counter.charged + recordsCost(reflect.ValueOf(manifest)); cost > limit {
+		return 0, fmt.Errorf("cannot back up this state: its OwnGit records take %d MiB, and a backup holds at most %d MiB of them (repositories are not counted)", (cost+1<<20-1)>>20, limit>>20)
 	}
-	if format11Content(manifest) == "" && int64(size) <= format10Limit {
+	if format11Content(manifest) == "" && counter.written <= format10Limit {
 		return closedPullRequestBackupVersion, nil
 	}
 	return backupVersion, nil
 }
 
-type byteCounter int64
+// manifestCounter counts the bytes of a written manifest and the bytes that
+// restore charges for them.
+type manifestCounter struct {
+	text             manifestText
+	written, charged int64
+}
 
-func (counter *byteCounter) Write(content []byte) (int, error) {
-	*counter += byteCounter(len(content))
+func (counter *manifestCounter) Write(content []byte) (int, error) {
+	for _, character := range content {
+		_, charged, err := counter.text.next(character)
+		if err != nil {
+			return 0, err
+		}
+		if charged {
+			counter.charged++
+		}
+	}
+	counter.written += int64(len(content))
 	return len(content), nil
 }
 
@@ -1051,24 +1067,30 @@ func readManifest(manifestPath string) (Manifest, error) {
 	return decodeManifest(file, info.Size(), manifestLimit)
 }
 
-// decodeManifest reads a manifest of size bytes with memory bounded by what
-// its records need: it refuses a file larger than limit (or than the 64 MiB
-// of version 10 and older) before and while reading, drops the whitespace
-// between tokens as it reads, refuses a string longer than any record holds,
-// and decodes the records of each list one at a time, so the document itself
-// is never held. Format and version come first in every manifest OwnGit
-// writes; they decide how the rest is read, so a backup written by a newer
-// OwnGit is refused as such rather than for its new fields.
+// decodeManifest reads a manifest of size bytes with memory bounded by its
+// cost, which the budget limits (manifestBudget): it refuses a file larger
+// than limit (or than the 64 MiB of version 10 and older) before and while
+// reading, and decodes one value at a time, charging each list element, map
+// entry and record behind a pointer before it exists, so neither the
+// document nor any record is held whole. Each record must hold every field
+// its format always writes, so an empty or partial record stops the read at
+// once. Format and version come first in every manifest OwnGit writes; they
+// decide how the rest is read, so a backup written by a newer OwnGit is
+// refused as such rather than for its new fields.
 func decodeManifest(input io.Reader, size, limit int64) (Manifest, error) {
 	tooLarge := fmt.Errorf("backup manifest is larger than the %d MiB a backup holds", limit>>20)
 	if size > limit {
 		return Manifest{}, tooLarge
 	}
-	reader := &manifestReader{source: input, limit: limit, tooLarge: tooLarge}
+	budget := &manifestBudget{limit: limit}
+	reader := &manifestReader{source: input, budget: budget, limit: limit, tooLarge: tooLarge}
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	var manifest Manifest
 	decodeErr := func(err error) (Manifest, error) {
+		if reader.refused != nil {
+			err = reader.refused
+		}
 		return Manifest{}, fmt.Errorf("decode backup manifest: %w", err)
 	}
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
@@ -1077,13 +1099,10 @@ func decodeManifest(input io.Reader, size, limit int64) (Manifest, error) {
 		}
 		return decodeErr(err)
 	}
-	fields := map[string]int{}
-	for index, field := range manifestFields() {
-		fields[field.name] = index
-	}
+	fields := fieldsOf(reflect.TypeFor[Manifest]())
 	value := reflect.ValueOf(&manifest).Elem()
 	leading := []string{"format", "version"}
-	seen := map[string]bool{}
+	seen := make([]bool, len(fields.list))
 	position := 0
 	for ; decoder.More(); position++ {
 		token, err := decoder.Token()
@@ -1098,15 +1117,11 @@ func decodeManifest(input io.Reader, size, limit int64) (Manifest, error) {
 		if position < len(leading) && key != leading[position] {
 			return Manifest{}, errManifestStart
 		}
-		index, known := fields[key]
-		if !known {
-			return decodeErr(fmt.Errorf("json: unknown field %q", key))
+		field, err := fields.take(key, seen)
+		if err != nil {
+			return decodeErr(err)
 		}
-		if seen[key] {
-			return decodeErr(fmt.Errorf("json: field %q appears twice", key))
-		}
-		seen[key] = true
-		if err := decodeManifestField(decoder, value.Field(index)); err != nil {
+		if err := decodeValue(decoder, value.Field(field.index), budget); err != nil {
 			return decodeErr(err)
 		}
 		if key != "version" {
@@ -1131,49 +1146,295 @@ func decodeManifest(input io.Reader, size, limit int64) (Manifest, error) {
 	if _, err := decoder.Token(); err != nil {
 		return decodeErr(err)
 	}
+	if err := fields.complete(seen); err != nil {
+		return decodeErr(err)
+	}
 	if _, err := decoder.Token(); err != io.EOF {
 		return Manifest{}, errors.New("backup manifest contains trailing data")
 	}
 	return manifest, nil
 }
 
-// decodeManifestField decodes one manifest field, a list one record at a
-// time.
-func decodeManifestField(decoder *json.Decoder, field reflect.Value) error {
-	if field.Kind() != reflect.Slice {
-		return decoder.Decode(field.Addr().Interface())
+// manifestBudget limits the cost of a manifest, which is what backup
+// checks and restore charges as it reads: every byte except whitespace
+// between tokens (manifestText), plus the in-memory size of every list
+// element (twice, for the list's growth), map entry (twice, for the map's)
+// and record behind a pointer. So the budget bounds the memory a manifest
+// takes, however small its records.
+type manifestBudget struct {
+	limit, used int64
+}
+
+func (budget *manifestBudget) charge(cost int64) error {
+	budget.used += cost
+	if budget.used > budget.limit {
+		return fmt.Errorf("backup manifest holds more than the %d MiB of records a backup holds", budget.limit>>20)
 	}
-	token, err := decoder.Token()
-	if err != nil || token == nil {
-		return err
+	return nil
+}
+
+func sliceElementCost(list reflect.Type) int64 { return 2 * int64(list.Elem().Size()) }
+
+func mapEntryCost(table reflect.Type) int64 {
+	return 2 * int64(table.Key().Size()+table.Elem().Size())
+}
+
+// recordsCost is what decodeValue charges for value beyond its bytes.
+func recordsCost(value reflect.Value) int64 {
+	valueType := value.Type()
+	if !streamed(valueType) {
+		if valueType.Kind() == reflect.Pointer && !value.IsNil() {
+			return int64(valueType.Elem().Size())
+		}
+		return 0
 	}
-	if token != json.Delim('[') {
-		return fmt.Errorf("json: cannot unmarshal %v into a list", token)
+	var cost int64
+	switch valueType.Kind() {
+	case reflect.Pointer:
+		if !value.IsNil() {
+			cost = int64(valueType.Elem().Size()) + recordsCost(value.Elem())
+		}
+	case reflect.Struct:
+		for _, field := range fieldsOf(valueType).list {
+			cost += recordsCost(value.Field(field.index))
+		}
+	case reflect.Slice:
+		for index := range value.Len() {
+			cost += sliceElementCost(valueType) + recordsCost(value.Index(index))
+		}
+	case reflect.Map:
+		for entry := value.MapRange(); entry.Next(); {
+			cost += mapEntryCost(valueType) + recordsCost(entry.Value())
+		}
 	}
-	for decoder.More() {
-		record := reflect.New(field.Type().Elem())
-		if err := decoder.Decode(record.Interface()); err != nil {
+	return cost
+}
+
+var unmarshalerType = reflect.TypeFor[json.Unmarshaler]()
+
+// streamed reports whether decodeValue reads a value of this type piece by
+// piece: a list, a map, a record, or a record behind a pointer. Anything
+// else is one JSON scalar, or a type with its own decoding such as
+// time.Time, which encoding/json decodes whole.
+func streamed(valueType reflect.Type) bool {
+	if valueType.Implements(unmarshalerType) || reflect.PointerTo(valueType).Implements(unmarshalerType) {
+		return false
+	}
+	switch valueType.Kind() {
+	case reflect.Slice, reflect.Map, reflect.Struct:
+		return true
+	case reflect.Pointer:
+		return streamed(valueType.Elem()) && valueType.Elem().Kind() == reflect.Struct
+	}
+	return false
+}
+
+// decodeValue decodes the next JSON value into target as encoding/json
+// does, but a list, map or record one piece at a time, charging budget for
+// each piece before it exists.
+func decodeValue(decoder *json.Decoder, target reflect.Value, budget *manifestBudget) error {
+	valueType := target.Type()
+	if !streamed(valueType) {
+		if err := decoder.Decode(target.Addr().Interface()); err != nil {
 			return err
 		}
-		field.Set(reflect.Append(field, record.Elem()))
+		if valueType.Kind() == reflect.Pointer && !target.IsNil() {
+			return budget.charge(int64(valueType.Elem().Size()))
+		}
+		return nil
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if token == nil {
+		target.SetZero()
+		return nil
+	}
+	open := json.Delim('{')
+	if valueType.Kind() == reflect.Slice {
+		open = '['
+	}
+	if token != open {
+		return fmt.Errorf("json: cannot unmarshal %v into Go value of type %s", token, valueType)
+	}
+	switch valueType.Kind() {
+	case reflect.Pointer:
+		if err := budget.charge(int64(valueType.Elem().Size())); err != nil {
+			return err
+		}
+		target.Set(reflect.New(valueType.Elem()))
+		return decodeRecord(decoder, target.Elem(), budget)
+	case reflect.Struct:
+		return decodeRecord(decoder, target, budget)
+	case reflect.Slice:
+		target.Set(reflect.MakeSlice(valueType, 0, 0))
+		for decoder.More() {
+			if err := budget.charge(sliceElementCost(valueType)); err != nil {
+				return err
+			}
+			element := reflect.New(valueType.Elem()).Elem()
+			if err := decodeValue(decoder, element, budget); err != nil {
+				return err
+			}
+			target.Set(reflect.Append(target, element))
+		}
+	case reflect.Map:
+		target.Set(reflect.MakeMap(valueType))
+		for decoder.More() {
+			token, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key := reflect.ValueOf(token).Convert(valueType.Key())
+			if target.MapIndex(key).IsValid() {
+				return fmt.Errorf("json: key %q appears twice", token)
+			}
+			if err := budget.charge(mapEntryCost(valueType)); err != nil {
+				return err
+			}
+			element := reflect.New(valueType.Elem()).Elem()
+			if err := decodeValue(decoder, element, budget); err != nil {
+				return err
+			}
+			target.SetMapIndex(key, element)
+		}
 	}
 	_, err = decoder.Token()
 	return err
 }
 
-// manifestReader passes a manifest to the JSON decoder without the
-// whitespace between tokens, which would otherwise stay in the decoder's
-// buffer, and refuses input longer than limit (with tooLarge) or a string
-// longer than maxManifestStringBytes. A refusal is final: the decoder may
-// read again after an error.
+// decodeRecord decodes the fields of a record whose opening brace was read.
+func decodeRecord(decoder *json.Decoder, target reflect.Value, budget *manifestBudget) error {
+	fields := fieldsOf(target.Type())
+	seen := make([]bool, len(fields.list))
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		field, err := fields.take(token.(string), seen)
+		if err != nil {
+			return err
+		}
+		if err := decodeValue(decoder, target.Field(field.index), budget); err != nil {
+			return err
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	return fields.complete(seen)
+}
+
+// recordFields are the JSON fields of a record type. A field without
+// omitempty or omitzero is required: every OwnGit version that wrote the
+// record wrote it.
+type recordFields struct {
+	list   []recordField
+	byName map[string]int
+}
+
+type recordField struct {
+	name     string
+	index    int
+	required bool
+}
+
+var recordFieldsCache sync.Map
+
+func fieldsOf(recordType reflect.Type) *recordFields {
+	if cached, ok := recordFieldsCache.Load(recordType); ok {
+		return cached.(*recordFields)
+	}
+	fields := &recordFields{byName: map[string]int{}}
+	for index := range recordType.NumField() {
+		structField := recordType.Field(index)
+		name, options, _ := strings.Cut(structField.Tag.Get("json"), ",")
+		if !structField.IsExported() || name == "-" {
+			continue
+		}
+		if name == "" {
+			name = structField.Name
+		}
+		fields.byName[name] = len(fields.list)
+		fields.list = append(fields.list, recordField{name: name, index: index, required: !strings.Contains(options, "omit")})
+	}
+	recordFieldsCache.Store(recordType, fields)
+	return fields
+}
+
+func (fields *recordFields) take(name string, seen []bool) (recordField, error) {
+	position, known := fields.byName[name]
+	if !known {
+		return recordField{}, fmt.Errorf("json: unknown field %q", name)
+	}
+	if seen[position] {
+		return recordField{}, fmt.Errorf("json: field %q appears twice", name)
+	}
+	seen[position] = true
+	return fields.list[position], nil
+}
+
+func (fields *recordFields) complete(seen []bool) error {
+	for position, field := range fields.list {
+		if field.required && !seen[position] {
+			return fmt.Errorf("backup record lacks its %q field", field.name)
+		}
+	}
+	return nil
+}
+
+// manifestText is the rule backup and restore apply to the bytes of a
+// manifest: whitespace between tokens is not charged and shrinks to one
+// space, which keeps tokens apart as encoding/json sees them; every other
+// byte is charged; and a string longer than maxManifestStringBytes is
+// refused.
+type manifestText struct {
+	inString, escaped, space bool
+	stringBytes              int
+}
+
+// next reports whether character is kept and whether it is charged.
+func (text *manifestText) next(character byte) (kept, charged bool, err error) {
+	if text.inString {
+		text.stringBytes++
+		if text.stringBytes > maxManifestStringBytes {
+			return false, false, errors.New("backup manifest holds a text longer than any OwnGit record")
+		}
+		switch {
+		case text.escaped:
+			text.escaped = false
+		case character == '\\':
+			text.escaped = true
+		case character == '"':
+			text.inString = false
+		}
+		return true, true, nil
+	}
+	if character == ' ' || character == '\t' || character == '\n' || character == '\r' {
+		kept = !text.space
+		text.space = true
+		return kept, false, nil
+	}
+	text.space = false
+	if character == '"' {
+		text.inString, text.stringBytes = true, 0
+	}
+	return true, true, nil
+}
+
+// manifestReader passes a manifest to the JSON decoder by manifestText,
+// charging budget, so runs of whitespace never fill the decoder's buffer,
+// and refuses input longer than limit (with tooLarge). A refusal is final:
+// the decoder may read again after an error.
 type manifestReader struct {
 	source      io.Reader
+	budget      *manifestBudget
+	text        manifestText
 	limit, read int64
 	tooLarge    error
 	refused     error
-	inString    bool
-	escaped     bool
-	stringBytes int
 }
 
 func (reader *manifestReader) Read(buffer []byte) (int, error) {
@@ -1184,29 +1445,24 @@ func (reader *manifestReader) Read(buffer []byte) (int, error) {
 			reader.refused = reader.tooLarge
 			return 0, reader.refused
 		}
-		kept := 0
+		kept, charged := 0, int64(0)
 		for _, character := range buffer[:count] {
-			if reader.inString {
-				reader.stringBytes++
-				if reader.stringBytes > maxManifestStringBytes {
-					reader.refused = errors.New("backup manifest holds a text longer than any OwnGit record")
-					return kept, reader.refused
-				}
-				switch {
-				case reader.escaped:
-					reader.escaped = false
-				case character == '\\':
-					reader.escaped = true
-				case character == '"':
-					reader.inString = false
-				}
-			} else if character == '"' {
-				reader.inString, reader.stringBytes = true, 0
-			} else if character == ' ' || character == '\t' || character == '\n' || character == '\r' {
-				continue
+			keep, charge, textErr := reader.text.next(character)
+			if textErr != nil {
+				reader.refused = textErr
+				return 0, reader.refused
 			}
-			buffer[kept] = character
-			kept++
+			if charge {
+				charged++
+			}
+			if keep {
+				buffer[kept] = character
+				kept++
+			}
+		}
+		if chargeErr := reader.budget.charge(charged); chargeErr != nil {
+			reader.refused = chargeErr
+			return 0, reader.refused
 		}
 		if kept > 0 || err != nil {
 			return kept, err
