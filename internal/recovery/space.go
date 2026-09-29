@@ -30,10 +30,6 @@ func (e *SpaceError) Unwrap() error { return e.Err }
 
 func mebibytes(size uint64) uint64 { return (size + 1<<20 - 1) >> 20 }
 
-// freeSpace returns the bytes that this account may still write on the file
-// system that holds dir, and false when it cannot tell. Tests replace it.
-var freeSpace = diskFreeSpace
-
 // checkSpace refuses a restore of repositories into dir when its file
 // system has less room than they need at least (roomNeeded). The sizes are
 // those of the files now; a bundle that cannot be inspected is left to the
@@ -51,7 +47,7 @@ func checkSpace(inputRoot, dir string, repositories []RepositoryManifest) error 
 		sizes = append(sizes, uint64(info.Size()))
 	}
 	needed := roomNeeded(sizes)
-	free, known, err := freeSpace(dir)
+	free, known, err := diskFreeSpace(dir)
 	if err != nil {
 		return fmt.Errorf("read the free space in %s: %w", dir, err)
 	}

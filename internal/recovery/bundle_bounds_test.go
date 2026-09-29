@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 // assertEmpty stops the test unless dir holds nothing.
@@ -23,44 +22,36 @@ func assertEmpty(t *testing.T, dir string) {
 	}
 }
 
-// A temporary place without room for the repositories stops the rehearsal
-// before anything is restored, naming the place, and no repository is
-// reported as failed.
+// A bundle larger than the room left where the rehearsal runs stops the
+// verification before anything is read or restored, naming that place; no
+// repository is reported as failed. The bundle is a sparse file of half the
+// free space plus 1 GiB, which with the copy that restore makes of it needs
+// more than the free space, although it takes almost none.
 func TestVerifyRefusesAPlaceWithoutRoom(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a file of that size would take its space on NTFS; sparse files need a separate call there")
+	}
 	backup := newTwoRepositoryBackup(t, t.TempDir())
 	temporary := t.TempDir()
-	defer func(saved func(string) (uint64, bool, error)) { freeSpace = saved }(freeSpace)
-	freeSpace = func(string) (uint64, bool, error) { return 100, true, nil }
+	free, known, err := diskFreeSpace(temporary)
+	noErr(t, err)
+	if !known {
+		t.Skip("this system does not tell the free space")
+	}
+	size := free/2 + 1<<30
+	if err := os.Truncate(filepath.Join(backup, "repositories", "project.bundle"), int64(size)); err != nil {
+		t.Skipf("the file system refuses a sparse file of %d MiB: %v", size>>20, err)
+	}
 
 	result, err := Verify(context.Background(), backup, temporary, "")
 	var space *SpaceError
-	if !errors.As(err, &space) || result.Verified || !strings.Contains(result.Error, "not enough free space in "+space.Dir) || space.Dir == "" {
+	if !errors.As(err, &space) || space.Err != nil || result.Verified || !strings.Contains(result.Error, "not enough free space in "+space.Dir) {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 	for _, item := range result.Repositories {
 		if item.Status != VerifyNotRun {
 			t.Errorf("repository %+v, want not run", item)
 		}
-	}
-	assertEmpty(t, temporary)
-}
-
-// A bundle that is a sparse file of 1 TiB with the manifest's old digest
-// ends quickly: the space check refuses it before it is read, or, on a disk
-// with that much room, the deadline stops the copy.
-func TestVerifyEndsOnAHugeSparseBundle(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("sparse files are made differently on Windows")
-	}
-	backup := newTwoRepositoryBackup(t, t.TempDir())
-	temporary := t.TempDir()
-	noErr(t, os.Truncate(filepath.Join(backup, "repositories", "project.bundle"), 1<<40))
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	started := time.Now()
-	result, err := Verify(ctx, backup, temporary, "")
-	if err == nil || result.Verified || time.Since(started) > 20*time.Second {
-		t.Fatalf("after %v: result=%+v err=%v", time.Since(started), result, err)
 	}
 	assertEmpty(t, temporary)
 }

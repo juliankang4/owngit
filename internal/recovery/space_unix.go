@@ -9,6 +9,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// diskFreeSpace returns the bytes that this account may still write on
+// the file system that holds dir, and true as it can tell.
 func diskFreeSpace(dir string) (uint64, bool, error) {
 	var stat unix.Statfs_t
 	if err := unix.Statfs(dir, &stat); err != nil {
