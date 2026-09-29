@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +82,16 @@ func TestReviewBoundMergeCreatesExactMergeCommitAndIsIdempotent(t *testing.T) {
 	expectedTree := strings.SplitN(fixture.gitOutput("--git-dir", fixture.remote, "merge-tree", "--write-tree", targetOID, sourceOID), "\n", 2)[0]
 	if tree != expectedTree {
 		t.Fatalf("merge tree=%s, want %s", tree, expectedTree)
+	}
+	// The merge commit is OwnGit's own and carries this computer's offset.
+	for _, line := range strings.Split(commit, "\n") {
+		if name, _, ok := strings.Cut(line, " "); ok && (name == "author" || name == "committer") {
+			fields := strings.Fields(line)
+			seconds, err := strconv.ParseInt(fields[len(fields)-2], 10, 64)
+			if err != nil || fields[len(fields)-1] != time.Unix(seconds, 0).In(time.Local).Format("-0700") {
+				t.Fatalf("merge %s line %q, want this computer's offset", name, line)
+			}
+		}
 	}
 	fixture.git("--git-dir", fixture.remote, "merge-base", "--is-ancestor", targetOID, merged.Merge.OID)
 

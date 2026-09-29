@@ -405,7 +405,10 @@ func (service *Service) createMergeCommit(ctx context.Context, repositoryPath st
 	if intent.Mode != "merge_commit" || !validOID(intent.TreeOID) {
 		return "", NewProblem("repository_integrity_error", "The merge intent does not contain a merge tree.")
 	}
-	identityDate := fmt.Sprintf("%d +0000", intent.CreatedAt.Unix())
+	identityDate, err := service.mergeCommitDate(ctx, repositoryPath, intent)
+	if err != nil {
+		return "", err
+	}
 	environment := []string{
 		"GIT_AUTHOR_NAME=OwnGit",
 		"GIT_AUTHOR_EMAIL=owngit@localhost",
@@ -425,6 +428,40 @@ func (service *Service) createMergeCommit(ctx context.Context, repositoryPath st
 		return "", NewProblem("repository_integrity_error", "Git returned an invalid merge commit object ID.")
 	}
 	return oid, nil
+}
+
+// mergeCommitDate is the author and committer date of the merge commit of
+// intent: when the intent was made, with this computer's offset then. A
+// result already recorded keeps the offset written into it, so a retry
+// recreates the same commit after a time zone change, after a restore on a
+// computer in another zone, or for a result an earlier version wrote in UTC.
+func (service *Service) mergeCommitDate(ctx context.Context, repositoryPath string, intent state.PullRequestMergeIntent) (string, error) {
+	if intent.ResultOID == "" {
+		return gitexec.CommitDate(intent.CreatedAt), nil
+	}
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show", "-s", "--format=%cd", "--date=raw", intent.ResultOID)
+	if err != nil {
+		return "", &Problem{Code: "repository_integrity_error", Message: "A protected merge object is unavailable.", Cause: err}
+	}
+	_, offset, _ := strings.Cut(strings.TrimSpace(string(result.Stdout)), " ")
+	if !validOffset(offset) {
+		return "", NewProblem("repository_integrity_error", "The retained merge result does not match the exact merge intent.")
+	}
+	return strconv.FormatInt(intent.CreatedAt.Unix(), 10) + " " + offset, nil
+}
+
+// validOffset reports whether offset is a Git time zone offset such as
+// +0900.
+func validOffset(offset string) bool {
+	if len(offset) != 5 || (offset[0] != '+' && offset[0] != '-') {
+		return false
+	}
+	for _, c := range offset[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (service *Service) publishMerge(ctx context.Context, repositoryPath string, record state.PullRequest, intent state.PullRequestMergeIntent) error {

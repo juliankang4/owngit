@@ -113,7 +113,9 @@ func (m *Manager) ApplyRestore(ctx context.Context, id string, request RestoreRe
 		if request.Mode == RestoreAll {
 			message = "Restore tree from " + shortObjectID(plan.preview.SourceOID)
 		}
-		commit, err := m.Git.Run(ctx, repositoryPath, strings.NewReader(message+"\n"),
+		date := gitexec.CommitDate(time.Now())
+		commit, err := m.Git.RunWithEnvironment(ctx, repositoryPath, strings.NewReader(message+"\n"),
+			[]string{"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date},
 			"-c", "user.name=OwnGit", "-c", "user.email=owngit@localhost",
 			"--git-dir", ".", "commit-tree", plan.preview.ResultTree, "-p", plan.currentOID, "-F", "-")
 		if err != nil {

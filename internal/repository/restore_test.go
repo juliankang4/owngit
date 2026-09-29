@@ -6,8 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRestoreWholeTreeSelectedFilesCASAndNoOp(t *testing.T) {
@@ -50,6 +52,14 @@ func TestRestoreWholeTreeSelectedFilesCASAndNoOp(t *testing.T) {
 	}
 	if got := gitOutput(t, "", "--git-dir", remote, "rev-parse", applied.CommitOID+"^{tree}"); got != gitOutput(t, "", "--git-dir", remote, "rev-parse", sourceOID+"^{tree}") {
 		t.Fatalf("restored tree=%s, want source tree", got)
+	}
+	// The restore commit is OwnGit's own and carries this computer's offset.
+	identity := strings.Fields(gitOutput(t, "", "--git-dir", remote, "show", "-s", "--date=raw", "--format=%ae %ad %cd", applied.CommitOID))
+	if len(identity) != 5 || identity[0] != "owngit@localhost" || identity[1] != identity[3] || identity[2] != identity[4] {
+		t.Fatalf("restore commit identity %q", identity)
+	}
+	if seconds, err := strconv.ParseInt(identity[1], 10, 64); err != nil || identity[2] != time.Unix(seconds, 0).In(time.Local).Format("-0700") {
+		t.Fatalf("restore commit date %q, want this computer's offset", identity[1:3])
 	}
 	entries := gitOutput(t, "", "--git-dir", remote, "ls-tree", applied.CommitOID, "script.sh", "binary.dat", "link")
 	for _, want := range []string{"100755 blob", "100644 blob", "120000 blob"} {

@@ -197,6 +197,14 @@ func (r *Runner) Environment(extra ...string) []string {
 	return append(env, "GIT_CONFIG_COUNT="+strconv.Itoa(count))
 }
 
+// CommitDate is t as a Git date with this computer's UTC offset at that
+// time. Git runs with TZ=UTC, so a commit OwnGit writes itself gets its
+// date from CommitDate and shows the owner's local time, like the commits
+// pushed next to it.
+func CommitDate(t time.Time) string {
+	return strconv.FormatInt(t.Unix(), 10) + " " + t.In(time.Local).Format("-0700")
+}
+
 func (r *Runner) Run(ctx context.Context, dir string, stdin io.Reader, args ...string) (Result, error) {
 	return r.run(ctx, dir, stdin, r.OutputLimit, nil, 0, args...)
 }

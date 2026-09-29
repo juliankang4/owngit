@@ -399,7 +399,13 @@ func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T
 			intent.UpdatedAt = intent.CreatedAt
 			intent, err = store.UpdatePullRequestMergeIntent(ctx, intent)
 			noErr(t, err)
-			expectedResult := createRecoveryMergeCommit(t, ctx, manager.Git, remote, created, intent)
+			// A planned merge is created on retry with this computer's offset.
+			// A ready result an earlier version recorded in UTC keeps its own.
+			date := gitexec.CommitDate(intent.CreatedAt)
+			if intentStatus == state.MergeIntentReady {
+				date = strconv.FormatInt(intent.CreatedAt.Unix(), 10) + " +0000"
+			}
+			expectedResult := createRecoveryMergeCommit(t, ctx, manager.Git, remote, created, intent, date)
 			if intentStatus == state.MergeIntentReady {
 				resultRef := pullrequest.MergeResultRef(created.Number, sourceOID, targetOID)
 				if _, err := manager.Git.Run(ctx, "", nil, "--git-dir", remote, "update-ref", resultRef, expectedResult); err != nil {
@@ -1035,9 +1041,8 @@ func recoveryProblemCode(err error) string {
 	return ""
 }
 
-func createRecoveryMergeCommit(t *testing.T, ctx context.Context, runner *gitexec.Runner, repositoryPath string, request *pullrequest.View, intent state.PullRequestMergeIntent) string {
+func createRecoveryMergeCommit(t *testing.T, ctx context.Context, runner *gitexec.Runner, repositoryPath string, request *pullrequest.View, intent state.PullRequestMergeIntent, date string) string {
 	t.Helper()
-	date := strconv.FormatInt(intent.CreatedAt.Unix(), 10) + " +0000"
 	environment := []string{
 		"GIT_AUTHOR_NAME=OwnGit",
 		"GIT_AUTHOR_EMAIL=owngit@localhost",
