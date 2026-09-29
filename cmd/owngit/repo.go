@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
-	"strings"
+
+	"owngit/internal/apiclient"
 )
 
 func repoCommand(arguments []string) error {
@@ -94,18 +96,15 @@ func repoSettings(arguments []string) error {
 		return cliProblem("invalid_arguments", "Unknown repo settings command: "+command)
 	}
 	flags := newCommandFlagSet("repo settings " + command)
-	remote := addImportFlags(flags)
+	server := flags.String("server", "", "OwnGit HTTP(S) origin")
 	repositoryName := flags.String("repository", "", "repository identifier")
+	passwordFile := flags.String("password-file", "", "owner-readable file containing the administrator password")
+	acceptInsecureHTTP := flags.Bool("accept-insecure-http", false, "accept unencrypted HTTP for this request")
 	keptHistory := flags.String("kept-history", "", "keep overwritten and deleted history: default (follow the server), on or off")
 	protect := flags.String("protect-default-branch", "", "refuse pushes that rewrite or delete the default branch: on or off")
 	if err := parseFlagsWithoutOperands(flags, arguments[1:]); err != nil {
 		return err
 	}
-	name := strings.TrimSpace(*repositoryName)
-	if name == "" || strings.ToLower(name) != name || strings.Contains(name, "/") {
-		return cliProblem("invalid_arguments", "repo settings requires --repository with a lowercase repository identifier.")
-	}
-	path := "/api/v1/repositories/" + name + "/settings"
 	given := map[string]bool{}
 	flags.Visit(func(option *flag.Flag) { given[option.Name] = true })
 	var change map[string]any
@@ -126,10 +125,22 @@ func repoSettings(arguments []string) error {
 	} else if given["kept-history"] || given["protect-default-branch"] {
 		return cliProblem("invalid_arguments", "repo settings show takes no settings; use repo settings set.")
 	}
-	client, err := remote.client()
+	// Inside a clone, the server and the repository default to its origin
+	// remote, as for the other repo commands.
+	target, err := resolveTarget(context.Background(), *server, *repositoryName, true, *acceptInsecureHTTP, ".")
 	if err != nil {
 		return err
 	}
+	if *passwordFile == "" {
+		return cliProblem("invalid_arguments", "repo settings requires --password-file with the administrator password.")
+	}
+	password, err := readServerPassword(*passwordFile, target.server, target.inferredServer, "The administrator password file")
+	if err != nil {
+		return err
+	}
+	noteInference(target)
+	client := apiclient.NewAdmin(target.server, password)
+	path := "/api/v1/repositories/" + url.PathEscape(target.repository) + "/settings"
 	method, body := http.MethodGet, any(nil)
 	if change != nil {
 		method, body = http.MethodPatch, change
@@ -144,13 +155,14 @@ func repoSettings(arguments []string) error {
 func printRepoUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit repo <list|show|create|settings> [options]")
 	fmt.Fprintln(writer, "Lists, shows, and creates repositories with general access and prints JSON. There is no delete or rename.")
-	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server (and --repository for show) default to its origin remote.")
+	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server (and --repository for show and settings) default to its origin remote.")
 	fmt.Fprintln(writer, "repo settings shows and changes one repository's kept history and default branch protection; see owngit repo settings --help.")
 }
 
 func printRepoSettingsUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit repo settings <show|set> --server URL --password-file PATH --repository NAME [options]")
+	fmt.Fprintln(writer, "Usage: owngit repo settings <show|set> --password-file PATH [--server URL] [--repository NAME] [options]")
 	fmt.Fprintln(writer, "  repo settings show   print the repository's kept history and default branch protection as JSON")
 	fmt.Fprintln(writer, "  repo settings set    change them: --kept-history default|on|off, --protect-default-branch on|off")
-	fmt.Fprintln(writer, "The password file holds the administrator password. A change applies to pushes and imports that start after it is saved.")
+	fmt.Fprintln(writer, "The password file holds the administrator password. Inside a clone of an OwnGit repository, --server and --repository default to its origin remote.")
+	fmt.Fprintln(writer, "A change applies to pushes and imports that start after it is saved.")
 }

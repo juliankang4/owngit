@@ -55,11 +55,15 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 }
 
 // repo settings set changes only the choices it names, and repo settings
-// show prints them with what the repository does now.
+// show prints them with what the repository does now. Inside a clone the
+// server and the repository come from its origin remote.
 func TestRepoSettingsCommandSetsAndShows(t *testing.T) {
 	fixture := startImportCLIServer(t)
 	passwordPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "admin"), "admin-password\n")
 	remote := []string{"--server", fixture.url, "--accept-insecure-http", "--password-file", passwordPath, "--repository", "project"}
+	if err := repoCommand([]string{"settings", "show", "--accept-insecure-http", "--server", fixture.url, "--repository", "project"}); err == nil {
+		t.Fatal("repo settings without an administrator password file was accepted")
+	}
 	for _, refused := range [][]string{
 		{"set"}, {"set", "--protect-default-branch", "yes"}, {"show", "--kept-history", "on"},
 	} {
@@ -83,7 +87,12 @@ func TestRepoSettingsCommandSetsAndShows(t *testing.T) {
 	if saved, err := fixture.store.RepositoryRefPolicy(context.Background(), "project"); err != nil || saved != (state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOff, ProtectDefaultBranch: true}) {
 		t.Fatalf("saved=%+v err=%v", saved, err)
 	}
-	printed, err = captureStdout(func() error { return repoCommand(append([]string{"settings", "show"}, remote...)) })
+	// A password file sent to an inferred server names that server.
+	namedPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "named"), "owngit-server: "+fixture.url+"\nadmin-password\n")
+	t.Chdir(newClone(t, fixture.url+"/git/project.git"))
+	printed, err = captureStdout(func() error {
+		return repoCommand([]string{"settings", "show", "--accept-insecure-http", "--password-file", namedPath})
+	})
 	if err != nil {
 		t.Fatalf("repo settings show: %v", err)
 	}
