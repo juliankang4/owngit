@@ -452,7 +452,7 @@ pct exec 105 -- /usr/local/bin/owngit service status
 
 With `--repositories /tank/owngit`, the repositories stay in `/tank/owngit` on the host, for example on a ZFS dataset. The container sees that folder as `/var/lib/owngit/OwnGit-Repositories`, the folder that setup suggests, so keep the suggested folder in setup.
 
-- The folder must be new or empty, and its path must not go through a link. Every folder above it must belong to root, and only root may be able to change it, so that no other account on the host can redirect the folder.
+- The folder must be new or empty, and its path must not go through a link. The folder, when it exists, and every folder above it must belong to root, and only root may be able to change them, so that no other account on the host can redirect the folder or put files in it before the container gets it. For a folder that you made for OwnGit, `chown root:root FOLDER && chmod go-w FOLDER` does that.
 - In an unprivileged container, the container's accounts have different IDs on the host, usually 100000 higher. The script gives the folder to the host ID of the container's `owngit` account, with mode 0700, and changes nothing else on the host.
 - To add the folder, the script stops the container once after installing OwnGit and starts it again.
 - Proxmox backups (`vzdump`) do not include a folder of the host. Back up the repositories with [`owngit backup`](#offline-backups) or with the host's own backups. A container with a folder of the host cannot be migrated to another node.
