@@ -169,8 +169,8 @@ var policiesCatalog = map[MessageCode]message{
 	MsgKeptHistoryOn:  {en: "Keep", ko: "보관"},
 	MsgKeptHistoryOff: {en: "Do not keep", ko: "보관하지 않음"},
 	MsgKeptHistorySaved: {
-		en: "Saved. Pushes and imports from now on keep overwritten and deleted history.",
-		ko: "저장했습니다. 이제부터 푸시와 가져오기로 덮어쓰거나 지운 기록을 보관합니다.",
+		en: "Saved. From now on, repositories that follow this setting keep overwritten and deleted history.",
+		ko: "저장했습니다. 이제부터 이 설정을 따르는 저장소는 덮어쓰거나 지운 기록을 보관합니다.",
 	},
 	MsgKeptHistorySavedOff: {
 		en: "Saved. From now on, repositories that follow this setting do not keep overwritten or deleted history. History already kept stays.",

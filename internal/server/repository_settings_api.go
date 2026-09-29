@@ -14,25 +14,23 @@ import (
 // settings) save them through saveRefPolicy, so both warn the same way when
 // a change turns one of them off.
 
-// saveRefPolicy saves change for repository id and returns a warning for
-// each protection the change turned off: history that stops being kept, and
-// a default branch that stops being protected. When the earlier choices
-// cannot be read, anything now off is warned about.
-func (app *App) saveRefPolicy(ctx context.Context, id string, change state.RepositoryRefPolicyChange) ([]webui.MessageCode, error) {
-	before, beforeErr := app.Store.RefWrites(ctx, id)
-	if _, err := app.Store.SaveRepositoryRefPolicy(ctx, id, change); err != nil {
-		return nil, err
+// saveRefPolicy saves change for repository id and returns the result
+// with a warning for each protection the change turned off: history that
+// stops being kept, and a default branch that stops being protected. The
+// state decides both in the transaction that saves the change.
+func (app *App) saveRefPolicy(ctx context.Context, id string, change state.RepositoryRefPolicyChange) (state.RefPolicySave, []webui.MessageCode, error) {
+	saved, err := app.Store.SaveRepositoryRefPolicy(ctx, id, change)
+	if err != nil {
+		return state.RefPolicySave{}, nil, err
 	}
 	var warnings []webui.MessageCode
-	if after, err := app.Store.RefWrites(ctx, id); err == nil {
-		if !after.KeepHistory && (beforeErr != nil || before.KeepHistory) {
-			warnings = append(warnings, webui.MsgRepoHistoryKeptOff)
-		}
-		if !after.ProtectDefaultBranch && (beforeErr != nil || before.ProtectDefaultBranch) {
-			warnings = append(warnings, webui.MsgRepoHistoryProtectOff)
-		}
+	if saved.KeptHistoryOff {
+		warnings = append(warnings, webui.MsgRepoHistoryKeptOff)
 	}
-	return warnings, nil
+	if saved.ProtectionOff {
+		warnings = append(warnings, webui.MsgRepoHistoryProtectOff)
+	}
+	return saved, warnings, nil
 }
 
 // repositorySettingsJSON is the owner API's view of a repository's own
@@ -61,7 +59,9 @@ type repositorySettingsResponse struct {
 // /api/v1/repositories/{id}/settings with the administrator password, as
 // every administrator API request needs. A PATCH names what it changes and
 // answers with the choices as saved. A choice that cannot be read answers
-// 409 setting_unreadable; a PATCH that names both choices replaces it.
+// 409 setting_unreadable; a PATCH that names both choices replaces an
+// unreadable row. A PATCH whose result would follow a server default that
+// cannot be read is refused and saves nothing.
 func (app *App) handleRepositorySettingsAPI(writer http.ResponseWriter, request *http.Request, repositoryID, remainder string) {
 	if remainder != "" {
 		writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
@@ -101,7 +101,7 @@ func (app *App) handleRepositorySettingsAPI(writer http.ResponseWriter, request 
 			change.KeptHistory = &kept
 		}
 		change.ProtectDefaultBranch = input.ProtectDefaultBranch
-		warnings, err := app.saveRefPolicy(request.Context(), repositoryID, change)
+		saved, warnings, err := app.saveRefPolicy(request.Context(), repositoryID, change)
 		if errors.As(err, new(*state.PolicyError)) {
 			writeSettingUnreadable(writer, request, "repository settings save", err)
 			return
@@ -113,6 +113,12 @@ func (app *App) handleRepositorySettingsAPI(writer http.ResponseWriter, request 
 		for _, warning := range warnings {
 			response.Warnings = append(response.Warnings, webui.Text(webui.LangEN, warning))
 		}
+		response.Settings = repositorySettingsJSON{
+			KeptHistory: pointer(string(saved.Saved.KeptHistory)), KeptHistoryNow: onOff(saved.Now.KeepHistory),
+			ProtectDefaultBranch: pointer(saved.Saved.ProtectDefaultBranch),
+		}
+		writeAPIJSON(writer, http.StatusOK, response)
+		return
 	}
 	saved, err := app.Store.RepositoryRefPolicy(request.Context(), repositoryID)
 	var writes state.RefWrites

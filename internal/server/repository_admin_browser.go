@@ -244,7 +244,12 @@ func (app *App) handleSaveHistory(writer http.ResponseWriter, request *http.Requ
 		refuse(webui.Error("kept_history", webui.MsgSettingsUnknownAct), http.StatusBadRequest)
 		return
 	}
-	warnings, err := app.saveRefPolicy(request.Context(), stored.ID, state.RepositoryRefPolicyChange{KeptHistory: &form.kept, ProtectDefaultBranch: &form.protect})
+	_, warnings, err := app.saveRefPolicy(request.Context(), stored.ID, state.RepositoryRefPolicyChange{KeptHistory: &form.kept, ProtectDefaultBranch: &form.protect})
+	if errors.As(err, new(*state.PolicyError)) {
+		logFailure(request, "repository settings save", err)
+		refuse(webui.Error("kept_history", webui.MsgRepoHistoryServerUnreadable), http.StatusConflict)
+		return
+	}
 	if err != nil {
 		refuse(webui.Error("", webui.MsgRepoHistoryFailed), unavailable(request, "repository settings save", err))
 		return

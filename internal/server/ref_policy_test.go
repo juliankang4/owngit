@@ -171,6 +171,31 @@ func TestRepositoryHistoryChoicesAreSavedFromTheSettingsTabAndTheAPI(t *testing.
 		t.Fatalf("shared password status=%d code=%s", status, code)
 	}
 
+	// While the server-wide choice cannot be read, a change that would
+	// follow it saves nothing, in the API and on the tab, and a change with
+	// the repository's own choice saves and warns that protection is off.
+	noErr(t, fixture.store.Exec(ctx, `INSERT INTO metadata(key,value) VALUES('retain_history','maybe') ON CONFLICT(key) DO UPDATE SET value=excluded.value`))
+	status, answer, problem = repositorySettingsAPI(t, server.URL, "project", http.MethodPatch, map[string]any{"kept_history": "on", "protect_default_branch": true})
+	if status != http.StatusOK {
+		t.Fatalf("protect with an unreadable server default: status=%d %s", status, problem)
+	}
+	status, _, problem = repositorySettingsAPI(t, server.URL, "project", http.MethodPatch, map[string]any{"kept_history": "default", "protect_default_branch": false})
+	if status != http.StatusConflict || !strings.HasPrefix(problem, "setting_unreadable kept_history ") {
+		t.Fatalf("PATCH following an unreadable server default: status=%d %s", status, problem)
+	}
+	result := browserForm(t, client, target, url.Values{"csrf": {adminTestCSRF}, "kept_history": {"default"}}, server.URL)
+	if result.status != http.StatusConflict || !strings.Contains(result.body, enText(webui.MsgRepoHistoryServerUnreadable)) {
+		t.Fatalf("tab save following an unreadable server default: status=%d", result.status)
+	}
+	if got := saved(); got != (state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOn, ProtectDefaultBranch: true}) {
+		t.Fatalf("a refused change was saved: %+v", got)
+	}
+	status, answer, problem = repositorySettingsAPI(t, server.URL, "project", http.MethodPatch, map[string]any{"kept_history": "off", "protect_default_branch": false})
+	if status != http.StatusOK || answer.Settings.KeptHistoryNow != "off" || len(answer.Warnings) != 2 {
+		t.Fatalf("explicit choices with an unreadable server default: status=%d %+v %s", status, answer, problem)
+	}
+	noErr(t, fixture.store.Exec(ctx, `DELETE FROM metadata WHERE key='retain_history'`))
+
 	// A row that cannot be read is an error in the API and a warning on
 	// the tab; a change that names both choices replaces it.
 	noErr(t, fixture.store.Exec(ctx, `PRAGMA ignore_check_constraints=ON; UPDATE repository_policies SET protect_default_branch=9 WHERE repository_id='project'; PRAGMA ignore_check_constraints=OFF`))
