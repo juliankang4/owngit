@@ -110,7 +110,8 @@ func (app *App) noteHTTPS(request *http.Request) {
 // dashboardPage reports whether path is a page that people open in a
 // browser: the overview, activity, sign-in, Settings, and every page of a
 // repository except its downloads, raw files and archives, which scripts
-// and download tools fetch as well.
+// and download tools fetch as well. A new download route under a
+// repository belongs with them here.
 func dashboardPage(path string) bool {
 	switch {
 	case path == "/", path == "/activity", path == "/login", path == "/admin/login", isSettingsPath(path):
