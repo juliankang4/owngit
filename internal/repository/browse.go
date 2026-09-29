@@ -250,35 +250,6 @@ type lineCount struct {
 	binary    bool
 }
 
-func parseNumstat(output []byte) map[string]lineCount {
-	counts := make(map[string]lineCount)
-	tokens := bytes.Split(output, []byte{0})
-	for index := 0; index < len(tokens); index++ {
-		token := tokens[index]
-		if len(token) == 0 {
-			continue
-		}
-		fields := bytes.SplitN(token, []byte{'\t'}, 3)
-		if len(fields) != 3 {
-			continue
-		}
-		path := string(fields[2])
-		if path == "" && index+2 < len(tokens) {
-			path = string(tokens[index+2])
-			index += 2
-		}
-		count := lineCount{}
-		if string(fields[0]) == "-" || string(fields[1]) == "-" {
-			count.binary = true
-		} else {
-			count.additions, _ = strconv.Atoi(string(fields[0]))
-			count.deletions, _ = strconv.Atoi(string(fields[1]))
-		}
-		counts[path] = count
-	}
-	return counts
-}
-
 func changedStatus(code byte) string {
 	switch code {
 	case 'A':

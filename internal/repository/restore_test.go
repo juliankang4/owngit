@@ -288,6 +288,11 @@ func TestRestoreRejectsTagGitlinkAndUnsafePathCollision(t *testing.T) {
 	if !errors.Is(err, ErrRestoreInvalid) {
 		t.Fatalf("annotated tag error=%v, want invalid", err)
 	}
+	for _, target := range []string{"refs/heads/source", "HEAD"} {
+		if _, err := manager.PreviewRestore(ctx, "sample", RestoreRequest{Source: sourceOID, Target: target, Mode: RestoreAll}); !errors.Is(err, ErrRestoreInvalid) {
+			t.Fatalf("target %s error=%v, want invalid", target, err)
+		}
+	}
 
 	index := filepath.Join(t.TempDir(), "index")
 	env := append(os.Environ(), "GIT_INDEX_FILE="+index)

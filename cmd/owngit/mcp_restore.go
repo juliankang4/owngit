@@ -19,7 +19,7 @@ type restoreArguments struct {
 func (server *mcpServer) restoreTools() []mcpTool {
 	selection := map[string]toolInputField{
 		"source_oid":    {Type: "string", Pattern: objectIDField, Description: "Full ID of the commit to restore from, such as commit_oid from repository_kept_history."},
-		"target_branch": {Type: "string", Description: "Branch to restore onto. A branch that does not exist is created at source_oid."},
+		"target_branch": {Type: "string", Description: "Branch name to restore onto, such as main, not a full ref such as refs/heads/main. A branch that does not exist is created at source_oid."},
 		"paths": {Type: "array", Items: &toolInputField{Type: "string"},
 			Description: "Files to restore, as paths in the repository. Leave out to restore the whole tree, which also deletes files the source commit does not have."},
 	}

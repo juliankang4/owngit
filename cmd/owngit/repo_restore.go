@@ -95,7 +95,7 @@ func repoRestore(arguments []string) error {
 	flags := newCommandFlagSet("repo restore " + command)
 	remote := addGeneralRemoteFlags(flags, true)
 	source := flags.String("source", "", "full `OID` of the commit to restore from")
-	targetBranch := flags.String("target", "", "`BRANCH` to restore onto; a branch that does not exist is created at the source commit")
+	targetBranch := flags.String("target", "", "`BRANCH` name to restore onto, such as main; a branch that does not exist is created at the source commit")
 	var paths stringList
 	flags.Var(&paths, "path", "restore only this `FILE`; repeat for more files (default: the whole tree)")
 	var expectedHead *string

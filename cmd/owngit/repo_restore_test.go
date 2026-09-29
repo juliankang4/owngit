@@ -91,6 +91,14 @@ func TestRepoRestoreCommandsAndMCPTools(t *testing.T) {
 	if got := commandErrorCode(err); got != "invalid_arguments" {
 		t.Fatalf("apply without --expected-head: %v", err)
 	}
+	// kept history names refs/heads/main; the target is the branch name.
+	if code := session.callError("repository_restore_preview", map[string]any{"source_oid": kept, "target_branch": history.KeptHistory[0].SourceRef}); code != "invalid_restore" {
+		t.Fatalf("MCP preview onto a full ref name: code %q", code)
+	}
+	err = repoCommand(append([]string{"restore", "apply", "--source", kept, "--target", "refs/heads/main", "--expected-head", current}, remote...))
+	if got := commandErrorCode(err); got != "invalid_restore" {
+		t.Fatalf("CLI apply onto a full ref name: %v", err)
+	}
 	if code := session.callError("repository_restore_apply", map[string]any{"source_oid": kept, "target_branch": "main", "paths": []string{}, "expected_head": current}); code != "invalid_arguments" {
 		t.Fatalf("apply with empty paths: code %q", code)
 	}

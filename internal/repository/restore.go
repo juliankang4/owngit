@@ -165,6 +165,12 @@ func (m *Manager) prepareRestore(ctx context.Context, repositoryPath string, req
 	if err != nil {
 		return restorePlan{}, err
 	}
+	// The target is a branch name such as main. A full ref name or HEAD
+	// would name a different branch below refs/heads, such as
+	// refs/heads/refs/heads/main, rather than the one meant.
+	if strings.HasPrefix(request.Target, "refs/") || request.Target == "HEAD" {
+		return restorePlan{}, fmt.Errorf("%w: target must be a branch name such as main", ErrRestoreInvalid)
+	}
 	if err := validateShortRef(request.Target); err != nil {
 		return restorePlan{}, fmt.Errorf("%w: invalid target branch", ErrRestoreInvalid)
 	}

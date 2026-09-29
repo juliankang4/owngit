@@ -234,6 +234,20 @@ func TestRestoreAPIListsPreviewsAndAppliesKeptHistory(t *testing.T) {
 			if status, body := restoreAPI(t, http.MethodPost, base+"/restore/preview", map[string]any{"source_oid": history.kept[:12], "target_branch": "main", "mode": "all"}, ""); status != http.StatusUnprocessableEntity || restoreErrorCode(body) != "invalid_restore" {
 				t.Fatalf("short source status=%d body=%v", status, body)
 			}
+			// The kept history's source_ref is a full name; the target is a
+			// branch name, so a full name is refused rather than nested.
+			for _, target := range []string{"refs/heads/main", "HEAD"} {
+				if status, body := restoreAPI(t, http.MethodPost, base+"/restore/preview", map[string]any{"source_oid": history.kept, "target_branch": target, "mode": "all"}, ""); status != http.StatusUnprocessableEntity || restoreErrorCode(body) != "invalid_restore" {
+					t.Fatalf("preview onto %s status=%d body=%v", target, status, body)
+				}
+				full := map[string]any{"source_oid": history.kept, "target_branch": target, "mode": "all", "expected_head": zero}
+				if status, body := restoreAPI(t, http.MethodPost, base+"/restore", full, ""); status != http.StatusUnprocessableEntity || restoreErrorCode(body) != "invalid_restore" {
+					t.Fatalf("apply onto %s status=%d body=%v", target, status, body)
+				}
+			}
+			if refs := apiGitOutput(t, "", "--git-dir", history.remote, "for-each-ref", "--format=%(refname)", "refs/heads/refs", "refs/heads/HEAD"); refs != "" {
+				t.Fatalf("a full target name made %s", refs)
+			}
 			if status, body := restoreAPI(t, http.MethodPost, base+"/restore/preview", map[string]any{"source_oid": history.kept, "target_branch": "main", "mode": "all", "expected_head": history.kept}, ""); status != http.StatusBadRequest || restoreErrorCode(body) != "invalid_json" {
 				t.Fatalf("preview with expected_head status=%d body=%v", status, body)
 			}
@@ -297,6 +311,14 @@ func TestRestoreBrowserAndAPIMakeTheSameCommit(t *testing.T) {
 	}, server.URL)
 	if status != http.StatusSeeOther {
 		t.Fatalf("browser restore status=%d", status)
+	}
+	// A full ref name is not a branch name on the form either.
+	_, status = restorePOST(t, client, server.URL+"/repositories/browser/restore", url.Values{
+		"csrf": {cookieValue(t, jar, server.URL, generalCookie)}, "source": {browserHistory.kept}, "target": {"refs/heads/main"}, "mode": {"all"},
+		"expected_head": {strings.Repeat("0", len(browserHistory.kept))}, "confirm": {"restore"},
+	}, server.URL)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("browser restore onto a full ref name status=%d", status)
 	}
 	apply := map[string]any{"source_oid": apiHistory.kept, "target_branch": "main", "mode": "files", "paths": []string{"kept.txt", "link"}, "expected_head": apiHistory.current}
 	if status, body := restoreAPI(t, http.MethodPost, server.URL+"/api/v1/repositories/api/restore", apply, ""); status != http.StatusOK {
