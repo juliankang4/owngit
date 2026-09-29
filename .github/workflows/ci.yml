@@ -2,18 +2,30 @@ name: CI
 
 # Runs the checks from CONTRIBUTING.md on every pull request. Pull requests
 # merge by fast-forward, so main receives the commits that already passed here
-# and pushes to main do not run the checks again. Instead, main runs the full
-# checks once a day at an off-peak hour, which catches tests that fail only
-# now and then; run them by hand from the Actions tab when needed. Tests run on
-# Linux (with the race detector), Windows, and macOS.
+# and pushes to main do not run the checks again. Tests run on Linux (with the
+# race detector), Windows, and macOS, on clean runners without cached results.
 #
-# The tests of every package are split over four shards per system by
+# A pull request tests only the packages its change can affect, as chosen by
+# .github/scripts/affected-packages.sh: those whose tests contain a changed
+# package. A change outside every package, such as go.mod, this workflow, or a
+# document that tests read, tests every package. gofmt and go vet always cover
+# every package.
+#
+# Full runs test every package: once a day at an off-peak hour, which catches
+# tests that fail only now and then, and when started by hand, which a release
+# does on its commit (gh workflow run ci.yml --ref vX.Y.Z). Full runs also test
+# on Linux arm64 and check for known vulnerabilities; the daily run also
+# shuffles the order of the tests in each package.
+#
+# The tests are split over four shards per system by
 # .github/scripts/test-shard.sh. Each job runs about a quarter of every
-# package, so the slowest package no longer sets the length of a run. Each test
-# runs in exactly one shard, and new tests join a shard without changes here.
+# selected package, so the slowest package no longer sets the length of a
+# run. Each test runs in exactly one shard, and new tests join a shard without
+# changes here.
 #
-# A change to documents alone runs nothing. The documents that tests read or
-# that release archives carry still run the checks.
+# A change to documents alone runs nothing here; doc-links.yml checks their
+# links. The documents that tests read or that release archives carry still
+# run the checks.
 
 on:
   pull_request:
@@ -74,17 +86,72 @@ jobs:
           GOOS=windows go vet ./...
           GOOS=darwin go vet ./...
 
+  select:
+    name: select packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      packages: ${{ steps.select.outputs.packages }}
+      vulncheck: ${{ steps.select.outputs.vulncheck }}
+    steps:
+      # A pull request's checkout is GitHub's merge of the pull request into
+      # its base, so its first parent is the base and the change is the
+      # difference between the two.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Packages to test
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            packages="$(bash .github/scripts/affected-packages.sh HEAD^1 HEAD | tr '\n' ' ')"
+            packages="${packages% }"
+            vulncheck=false
+            if [ -n "$(git diff --name-only HEAD^1 HEAD -- go.mod go.sum)" ]; then
+              vulncheck=true
+            fi
+          else
+            packages=./...
+            vulncheck=true
+          fi
+          echo "Packages to test: ${packages:-none}"
+          echo "packages=$packages" >>"$GITHUB_OUTPUT"
+          echo "vulncheck=$vulncheck" >>"$GITHUB_OUTPUT"
+
   test:
     name: test (${{ matrix.os }}, ${{ matrix.shard }}/4)
+    needs: select
+    # Run even when the selection failed, so that this required check fails
+    # instead of being skipped.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Full runs add Linux arm64, without the race detector, which the
+        # Linux x64 jobs already run.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest", "windows-latest", "macos-latest", "ubuntu-24.04-arm"]') }}
         # Keep in step with the shard count passed to test-shard.sh below.
         shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
+      - name: Selection succeeded
+        env:
+          RESULT: ${{ needs.select.result }}
+        run: |
+          if [ "$RESULT" != success ]; then
+            echo "Selecting the packages to test failed." >&2
+            exit 1
+          fi
+
       # Keep LF line endings on Windows so gofmt and byte-exact fixtures match.
       - name: Keep line endings
         run: git config --global core.autocrlf false
@@ -102,8 +169,43 @@ jobs:
           go version
           git --version
 
-      # Linux runs the tests once, with the race detector, which also runs
-      # every test; test-shard.sh names the packages it leaves out. Windows and
-      # macOS run them without it.
+      # Linux x64 runs the tests with the race detector, which also runs every
+      # test; test-shard.sh names the packages it leaves out. Other systems
+      # run them without it. The daily run shuffles the order of the tests in
+      # each package: a failing package's log starts with "-test.shuffle N",
+      # and "go test -shuffle=N" with the same -run pattern repeats the order.
       - name: go test (shard ${{ matrix.shard }} of 4)
-        run: bash .github/scripts/test-shard.sh ${{ matrix.shard }} 4 ${{ runner.os == 'Linux' && '-race' || '' }}
+        env:
+          PACKAGES: ${{ needs.select.outputs.packages }}
+          FLAGS: ${{ runner.os == 'Linux' && runner.arch == 'X64' && '-race' || '' }} ${{ github.event_name == 'schedule' && '-shuffle=on' || '' }}
+        run: |
+          read -ra flags <<<"$FLAGS"
+          echo "go test flags: ${flags[*]-none}"
+          bash .github/scripts/test-shard.sh --packages "$PACKAGES" ${{ matrix.shard }} 4 ${flags[@]+"${flags[@]}"}
+
+  vulnerabilities:
+    name: govulncheck
+    needs: select
+    # Pull requests that change go.mod or go.sum, and every full run.
+    if: ${{ needs.select.outputs.vulncheck == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # govulncheck reports only vulnerabilities in code OwnGit calls, in its
+      # modules and in the Go standard library, and fails if there is one.
+      # What is called differs by system, so each is checked.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          for goos in linux windows darwin; do
+            echo "== GOOS=$goos"
+            GOOS=$goos "$(go env GOPATH)/bin/govulncheck" ./...
+          done

@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Runs one shard of the Go tests of every package.
+# Runs one shard of the Go tests of every package, or of the packages given.
 #
-# Usage: test-shard.sh [--dry-run] SHARD SHARDS [GO TEST FLAGS...]
+# Usage: test-shard.sh [--dry-run] [--packages LIST] SHARD SHARDS [GO TEST FLAGS...]
 #
-# The script lists the top-level tests, examples and fuzz tests of every
-# package with "go test -list", sorts them by package and name, and numbers
+# LIST holds import paths separated by spaces; the default is "./...", every
+# package. An empty LIST runs nothing and succeeds, for a change that no test
+# can see.
+#
+# The script lists the top-level tests, examples and fuzz tests of the
+# packages with "go test -list", sorts them by package and name, and numbers
 # them from 0 across all packages. Test number i belongs to shard
 # i % SHARDS + 1. Every shard lists the same tests,
 # because it runs on the same commit and operating system, so every test runs
 # in exactly one shard, a package with at least SHARDS tests is spread over all
 # shards, and a test added later is picked up without changing this file.
 #
-# The listing compiles every package, including packages without tests, so a
-# build failure fails every shard. The selected tests then run with one
+# The listing compiles every package given, including packages without tests,
+# so a build failure fails every shard. The selected tests then run with one
 # "go test -run '^(A|B|...)$' PACKAGE" per package: first the packages in
 # $alone one at a time, then the rest several at once, the slowest first. The
 # logs are printed afterwards in package order. The shard fails if any package
@@ -25,15 +29,26 @@
 set -euo pipefail
 
 usage() {
-	echo "usage: $0 [--dry-run] SHARD SHARDS [GO TEST FLAGS...]" >&2
+	echo "usage: $0 [--dry-run] [--packages LIST] SHARD SHARDS [GO TEST FLAGS...]" >&2
 	exit 2
 }
 
 dry_run=
-if [ "${1-}" = --dry-run ]; then
-	dry_run=1
-	shift
-fi
+packages=./...
+while :; do
+	case "${1-}" in
+	--dry-run)
+		dry_run=1
+		shift
+		;;
+	--packages)
+		[ $# -ge 2 ] || usage
+		packages=$2
+		shift 2
+		;;
+	*) break ;;
+	esac
+done
 [ $# -ge 2 ] || usage
 shard=$1
 shards=$2
@@ -57,9 +72,16 @@ alone="owngit/internal/gitexec"
 # without it.
 no_race="owngit/tools/release"
 
+read -ra package_list <<<"$packages"
+if [ ${#package_list[@]} -eq 0 ]; then
+	echo "No package's tests can see this change; shard $shard of $shards runs nothing."
+	exit 0
+fi
+echo "Packages: ${package_list[*]}"
+
 work="$(mktemp -d)"
 
-if ! go test "$@" -list '.*' ./... >"$work/list.out" 2>"$work/list.err"; then
+if ! go test "$@" -list '.*' "${package_list[@]}" >"$work/list.out" 2>"$work/list.err"; then
 	cat "$work/list.out" "$work/list.err"
 	echo "Listing the tests failed." >&2
 	exit 1
