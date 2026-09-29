@@ -1141,11 +1141,11 @@ func TestScriptStoresNoSecrets(t *testing.T) {
 	data, err := assetFS.ReadFile("assets/owngit.js")
 	noErr(t, err)
 	js := string(data)
-	// The Settings group save copies the anti-forgery token of a page it
-	// fetched, and is checked on its own
-	// (TestSettingsGroupSaveSendsOnlyWhatItMay). Nothing else may name a
-	// secret field.
+	// Settings copies a fetched anti-forgery token; the folder chooser
+	// submits the setup token to its guarded endpoints. Both request
+	// blocks are checked separately. Nothing else may name a secret field.
 	js = strings.Replace(js, groupSaveSource(t), "", 1)
+	js = strings.Replace(js, section(t, js, "(function folderChooser()", "})();"), "", 1)
 	// The appearance and line-wrap preferences are the only things allowed
 	// in local storage.
 	for _, line := range strings.Split(js, "\n") {

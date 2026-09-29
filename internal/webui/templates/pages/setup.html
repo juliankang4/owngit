@@ -74,11 +74,14 @@
         <p class="setblock__d">{{bi $lang "setup.storage.help"}}</p>
         <div class="f">
           <label for="storage_path">{{bi $lang "setup.storage.label"}}</label>
-          <input id="storage_path" name="storage_path" type="text" spellcheck="false" autocapitalize="off"
-                 autocomplete="off" required
-                 value="{{$p.Form.StoragePath}}"
-                 {{with $p.Form.SuggestedPath}}placeholder="{{.}}"{{end}}
-                 {{template "fieldInvalid" dict "Notices" $n "Field" "storage_path"}}>
+          <div class="folderfield">
+            <input id="storage_path" name="storage_path" type="text" spellcheck="false" autocapitalize="off"
+                   autocomplete="off" required
+                   value="{{$p.Form.StoragePath}}"
+                   {{with $p.Form.SuggestedPath}}placeholder="{{.}}"{{end}}
+                   {{template "fieldInvalid" dict "Notices" $n "Field" "storage_path"}}>
+            <button type="button" class="btn" data-folder-open aria-haspopup="dialog" aria-controls="folder-chooser" hidden>{{bi $lang "folder.choose"}}</button>
+          </div>
           {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "storage_path"}}
           <p class="f__help">{{bi $lang "setup.storage.local_only"}}</p>
         </div>
@@ -163,6 +166,39 @@
       </div>
     </form>
   </div>
+
+  <dialog id="folder-chooser" class="folderchooser" aria-labelledby="folder-title" aria-describedby="folder-host"
+          data-folder-chooser data-list-url="/setup/folders" data-create-url="/setup/folders/new">
+    <h2 id="folder-title">{{bi $lang "folder.choose"}}</h2>
+    <p id="folder-host" class="f__help">{{bi $lang "folder.host"}}</p>
+    <div class="folderchooser__path">
+      <span class="f__label">{{bi $lang "folder.current"}}</span>
+      <span class="mono" data-folder-path dir="auto"></span>
+      <span data-folder-drives hidden>{{bi $lang "folder.drives"}}</span>
+    </div>
+    <div class="folderchooser__tools">
+      <button type="button" class="btn" data-folder-parent disabled>{{bi $lang "folder.parent"}}</button>
+      <label class="folderchooser__hidden"><input type="checkbox" data-folder-hidden><span>{{bi $lang "folder.hidden"}}</span></label>
+    </div>
+    <ul class="folderchooser__list" data-folder-list {{biAttr $lang "aria-label" "folder.list"}}></ul>
+    <div class="folderchooser__status" role="status" aria-live="polite" data-folder-status>
+      {{range $p.FolderMessages}}<p data-folder-message="{{.}}" hidden>{{bi $lang .}}</p>{{end}}
+    </div>
+    <p class="fieldnote" data-folder-limit hidden>{{bi $lang "folder.limit"}}</p>
+    <button type="button" class="btn" data-folder-retry hidden>{{bi $lang "folder.retry"}}</button>
+    <form class="form folderchooser__new" method="post" action="/setup/folders/new" data-folder-create>
+      <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+      <label for="folder-name">{{bi $lang "folder.name"}}</label>
+      <div class="folderfield">
+        <input id="folder-name" name="name" type="text" maxlength="255" spellcheck="false" autocapitalize="off" autocomplete="off" required>
+        <button type="submit" class="btn" data-folder-create-button disabled>{{bi $lang "folder.create"}}</button>
+      </div>
+    </form>
+    <div class="folderchooser__actions">
+      <button type="button" class="btn" data-folder-cancel autofocus>{{bi $lang "folder.cancel"}}</button>
+      <button type="button" class="btn btn--primary" data-folder-use disabled>{{bi $lang "folder.use"}}</button>
+    </div>
+  </dialog>
 
 {{else}}
   {{/* Expired, already redeemed, or already configured. Recovery is through

@@ -141,6 +141,8 @@ type App struct {
 	// setupHosts binds a setup session redeemed from an unknown Host to that
 	// Host. See setup_host.go.
 	setupHosts setupHostBinding
+	// folderBusy bounds filesystem work that may outlive its response.
+	folderBusy atomic.Bool
 	// OnHostAccepted runs after setup kept the Host it was reached by, so the
 	// serving process can record that it now accepts that Host.
 	OnHostAccepted func()
@@ -399,7 +401,7 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleAPI(writer, request, settings)
 		return
 	}
-	if !settings.Initialized && request.URL.Path != "/setup" && request.URL.Path != "/setup/redeem" && request.URL.Path != "/setup/approval" {
+	if !settings.Initialized && request.URL.Path != "/setup" && request.URL.Path != "/setup/redeem" && request.URL.Path != "/setup/approval" && !isSetupFolderPath(request.URL.Path) {
 		http.Redirect(writer, request, "/setup", http.StatusSeeOther)
 		return
 	}
@@ -416,6 +418,8 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleOverview(writer, request, settings)
 	case request.URL.Path == "/setup" && request.Method == http.MethodGet:
 		app.handleSetupGet(writer, request, settings)
+	case isSetupFolderPath(request.URL.Path) && request.Method == http.MethodPost:
+		app.handleSetupFolders(writer, request, settings)
 	case request.URL.Path == "/setup" && request.Method == http.MethodPost:
 		app.handleSetupPost(writer, request)
 	case request.URL.Path == "/setup/redeem" && request.Method == http.MethodPost:

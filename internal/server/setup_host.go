@@ -90,6 +90,7 @@ func (app *App) admitUnknownHost(request *http.Request) (bool, error) {
 	case path == "/setup" && method == http.MethodGet:
 	case path == "/setup/redeem" && method == http.MethodPost:
 	case path == "/setup" && method == http.MethodPost:
+	case isSetupFolderPath(path) && method == http.MethodPost:
 	default:
 		return false, nil
 	}
@@ -98,7 +99,7 @@ func (app *App) admitUnknownHost(request *http.Request) (bool, error) {
 	if err != nil || settings.Initialized {
 		return false, err
 	}
-	if path == "/setup" && method == http.MethodPost {
+	if (path == "/setup" || isSetupFolderPath(path)) && method == http.MethodPost {
 		_, ok, err := app.setupSessionForHost(request)
 		return ok, err
 	}

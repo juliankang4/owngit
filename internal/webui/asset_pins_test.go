@@ -212,12 +212,12 @@ func cssRule(t *testing.T, selector string) string {
 	return match[1]
 }
 
-// scriptOutsideRequests is the script without the two blocks allowed to
-// make a request: the browser approval watcher and the Settings group
-// save. Each is checked on its own.
+// scriptOutsideRequests excludes the approval watcher, Settings group save
+// and setup folder chooser. Each request block is checked on its own.
 func scriptOutsideRequests(t *testing.T) string {
 	js := scriptSource(t)
 	js = strings.Replace(js, section(t, js, "(function watchApproval()", "})();"), "", 1)
+	js = strings.Replace(js, section(t, js, "(function folderChooser()", "})();"), "", 1)
 	return strings.Replace(js, groupSaveSource(t), "", 1)
 }
 

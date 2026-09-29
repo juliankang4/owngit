@@ -4,7 +4,7 @@
  * server renders the chosen language. The script only improves what a reload
  * would otherwise cost, and never invents text of its own.
  *
- * It does six things:
+ * It provides these enhancements:
  *   1. Appearance: Light, Dark, or System, remembered per browser.
  *   2. Language: switch in place so typing in a form is not lost.
  *   3. Activity graph: arrow-key movement and a spoken day readout.
@@ -22,6 +22,9 @@
  *      password field without leaving the page, so the other groups keep
  *      what was typed in them. Before leaving a page whose groups hold a
  *      change, ask whether to save it, discard it or stay.
+ *
+ *   8. Setup folders: browse folders on the OwnGit host and fill the editable
+ *      storage path, without changing setup submission or its validation.
  *
  * It never stores a password, a setup code, or any other secret.
  */
@@ -385,13 +388,202 @@
     }
   })();
 
+  /* Folder navigation uses the setup session and its anti-forgery token.
+   * Only an explicit choice fills the field. The normal setup form still
+   * submits and validates the path, including when scripting is absent. */
+  (function folderChooser() {
+    var dialog = document.querySelector('[data-folder-chooser]');
+    var opener = document.querySelector('[data-folder-open]');
+    var field = document.getElementById('storage_path');
+    if (!dialog || !opener || !field || !dialog.showModal || !window.fetch || !window.AbortController) { return; }
+    var list = dialog.querySelector('[data-folder-list]');
+    var pathLabel = dialog.querySelector('[data-folder-path]');
+    var drives = dialog.querySelector('[data-folder-drives]');
+    var parent = dialog.querySelector('[data-folder-parent]');
+    var hidden = dialog.querySelector('[data-folder-hidden]');
+    var use = dialog.querySelector('[data-folder-use]');
+    var create = dialog.querySelector('[data-folder-create]');
+    var createButton = dialog.querySelector('[data-folder-create-button]');
+    var name = document.getElementById('folder-name');
+    var retry = dialog.querySelector('[data-folder-retry]');
+    var limit = dialog.querySelector('[data-folder-limit]');
+    var current = '', parentPath = '', roots = false, parentRoots = false;
+    var ready = false, busy = false, generation = 0, controller = null;
+
+    function say(code) {
+      var found = false;
+      all('[data-folder-message]', dialog).forEach(function (node) {
+        node.hidden = node.getAttribute('data-folder-message') !== code;
+        if (!node.hidden) { found = true; }
+      });
+      if (code && !found) { say('folder.failed'); }
+    }
+
+    function setBusy(on) {
+      busy = on;
+      dialog.setAttribute('aria-busy', on ? 'true' : 'false');
+      parent.disabled = on || (!parentPath && !parentRoots);
+      hidden.disabled = on;
+      use.disabled = on || !ready || !current;
+      createButton.disabled = on || !ready || !current;
+      name.disabled = on || !ready || !current;
+      retry.disabled = on;
+      all('button', list).forEach(function (button) { button.disabled = on; });
+    }
+
+    function locationOf(result, showRoots) {
+      current = result.path || '';
+      parentPath = result.parent || '';
+      parentRoots = result.parent_roots === true;
+      pathLabel.textContent = current;
+      pathLabel.hidden = showRoots;
+      drives.hidden = !showRoots;
+      roots = showRoots;
+    }
+
+    function request(address, values, creating) {
+      var target;
+      try { target = new URL(address, window.location.href); } catch (e) { return Promise.reject(e); }
+      var expected = creating ? '/setup/folders/new' : '/setup/folders';
+      if (target.origin !== window.location.origin || target.pathname !== expected || target.search || target.hash) { return Promise.reject(); }
+      var token = field.form.querySelector('input[name="csrf"]');
+      if (!token) { return Promise.reject(); }
+      var body = new URLSearchParams();
+      body.set('csrf', token.value);
+      body.set('path', values.path);
+      body.set('hidden', hidden.checked ? '1' : '');
+      body.set('roots', values.roots ? '1' : '');
+      if (creating) { body.set('name', values.name); }
+      controller = new AbortController();
+      var active = controller;
+      var timer = window.setTimeout(function () { active.abort(); }, 5000);
+      return fetch(target.href, {
+        method: 'POST', credentials: 'same-origin', redirect: 'manual',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+        body: body.toString(), signal: active.signal
+      }).then(function (response) {
+        if (!(response.headers.get('Content-Type') || '').includes('application/json')) { throw new Error(); }
+        return response.json().then(function (result) {
+          if (!response.ok && !result.error) { throw new Error(); }
+          return result;
+        });
+      }).finally(function () {
+        window.clearTimeout(timer);
+        if (controller === active) { controller = null; }
+      });
+    }
+
+    function load(path, showRoots, focusList, created) {
+      var ticket = ++generation;
+      ready = false;
+      locationOf({ path: path }, showRoots);
+      list.replaceChildren();
+      limit.hidden = true;
+      retry.hidden = true;
+      say('folder.loading');
+      setBusy(true);
+      return request(dialog.getAttribute('data-list-url'), { path: path, roots: showRoots }, false).then(function (result) {
+        if (ticket !== generation || !dialog.open) { return; }
+        if (result.error) {
+          if (result.path) { locationOf(result, showRoots); }
+          say(result.error);
+          retry.hidden = false;
+          return;
+        }
+        if (!Array.isArray(result.folders)) { throw new Error(); }
+        locationOf(result, showRoots);
+        ready = true;
+        limit.hidden = !result.truncated;
+        result.folders.forEach(function (folder) {
+          var row = document.createElement('li');
+          var button = document.createElement('button');
+          var label = document.createElement('span');
+          button.type = 'button';
+          button.className = 'folderchooser__folder';
+          label.dir = 'auto';
+          label.textContent = folder.name;
+          button.appendChild(label);
+          button.addEventListener('click', function () { if (!busy) { load(folder.path, false, true, false); } });
+          row.appendChild(button);
+          list.appendChild(row);
+        });
+        say(created ? 'folder.created' : (!result.folders.length && !result.truncated ? 'folder.empty' : ''));
+        if (focusList) {
+          setBusy(false);
+          var first = list.querySelector('button');
+          (first || (current ? use : parent)).focus();
+        }
+      }).catch(function () {
+        if (ticket !== generation || !dialog.open) { return; }
+        say('folder.failed');
+        retry.hidden = false;
+      }).finally(function () {
+        if (ticket === generation && dialog.open) { setBusy(false); }
+      });
+    }
+
+    opener.hidden = false;
+    opener.addEventListener('click', function () {
+      if (dialog.open) { return; }
+      current = field.value || field.getAttribute('placeholder') || '';
+      parentPath = '';
+      parentRoots = false;
+      roots = false;
+      name.value = '';
+      pathLabel.textContent = current;
+      drives.hidden = true;
+      dialog.showModal();
+      load(current, false, false, false);
+    });
+    dialog.addEventListener('close', function () {
+      generation++;
+      if (controller) { controller.abort(); }
+      opener.focus();
+    });
+    dialog.querySelector('[data-folder-cancel]').addEventListener('click', function () { dialog.close(); });
+    parent.addEventListener('click', function () { load(parentPath, parentRoots, true, false); });
+    hidden.addEventListener('change', function () { load(current, roots, false, false); });
+    retry.addEventListener('click', function () { load(current, roots, true, false); });
+    use.addEventListener('click', function () {
+      if (!ready || busy || !current) { return; }
+      field.value = current;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.dispatchEvent(new Event('change', { bubbles: true }));
+      dialog.close();
+    });
+    create.addEventListener('submit', function (event) {
+      event.preventDefault();
+      if (!ready || busy || !current) { return; }
+      var ticket = ++generation;
+      say('folder.loading');
+      setBusy(true);
+      request(dialog.getAttribute('data-create-url'), { path: current, name: name.value }, true).then(function (result) {
+        if (ticket !== generation || !dialog.open) { return; }
+        if (result.error) {
+          say(result.error);
+          if (result.error === 'folder.create_unconfirmed') { ready = false; retry.hidden = false; }
+          setBusy(false);
+          name.focus();
+          return;
+        }
+        name.value = '';
+        load(result.path, false, true, true);
+      }).catch(function () {
+        if (ticket !== generation || !dialog.open) { return; }
+        ready = false;
+        say('folder.create_unconfirmed');
+        retry.hidden = false;
+        setBusy(false);
+      });
+    });
+  })();
+
   /* Browser approval: while the terminal decides, ask the server every two
    * seconds for the state of this browser's own request. The request is a
    * GET with no body, sends only this site's cookies, and redeems nothing.
    * The status line, a polite live region, changes only when the answer
    * arrives, so a screen reader hears it once; then the setup page opens.
    * Without scripting, Check again does the same. */
-
   (function watchApproval() {
     var status = document.querySelector('[data-approval-wait]');
     if (!status || !window.fetch) { return; }
@@ -1008,7 +1200,7 @@
     syncGroup(group);
   }
 
-  /* groupSave is the only part of this file, besides the approval watcher,
+  /* groupSave is the Settings request block, alongside the approval watcher and folder chooser,
    * that sends a request, and a security review checks it on its own
    * (asset_pins_test.go pins it). It sends a group's form only when the
    * form has no password field, so it never builds the form data of a form
