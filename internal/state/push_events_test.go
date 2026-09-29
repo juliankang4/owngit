@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -110,41 +111,42 @@ func TestTrayHiddenPersists(t *testing.T) {
 	}
 }
 
-// The token survives a restart and an address change, is private to this
-// account, and a damaged file is replaced with a new token.
+// Every start makes a new token in a file private to this account, and
+// no temporary file stays behind.
 func TestPublishTrayAccess(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "state")
 	held, err := CreateDirectory(directory)
 	noErr(t, err)
 	defer held.Close()
+	path := filepath.Join(directory, TrayAccessFile)
+	read := func() TrayAccess {
+		t.Helper()
+		content, err := os.ReadFile(path)
+		noErr(t, err)
+		var access TrayAccess
+		noErr(t, json.Unmarshal(content, &access))
+		return access
+	}
 	first, err := PublishTrayAccess(held, "http://127.0.0.1:7654")
 	noErr(t, err)
-	if len(first.Token) != 43 || first.URL != "http://127.0.0.1:7654" {
-		t.Fatalf("first access = %+v", first)
+	if len(first.Token) != 43 || first.URL != "http://127.0.0.1:7654" || read() != first {
+		t.Fatalf("first access = %+v, file %+v", first, read())
 	}
-	path := filepath.Join(directory, TrayAccessFile)
+	// A file another account could read gets a private replacement.
+	if runtime.GOOS != "windows" {
+		noErr(t, os.Chmod(path, 0o644))
+	}
+	second, err := PublishTrayAccess(held, "http://127.0.0.1:8123")
+	noErr(t, err)
+	if second.Token == first.Token || len(second.Token) != 43 || read() != second {
+		t.Fatalf("second access = %+v after %+v, file %+v", second, first, read())
+	}
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(path)
 		noErr(t, err)
 		if info.Mode().Perm() != 0o600 {
 			t.Fatalf("access file mode %v", info.Mode().Perm())
 		}
-	}
-	same, err := PublishTrayAccess(held, "http://127.0.0.1:7654")
-	noErr(t, err)
-	moved, err := PublishTrayAccess(held, "http://127.0.0.1:8123")
-	noErr(t, err)
-	if same != first || moved.Token != first.Token || moved.URL != "http://127.0.0.1:8123" {
-		t.Fatalf("same=%+v moved=%+v first=%+v", same, moved, first)
-	}
-	if read, err := readTrayAccess(held); err != nil || read != moved {
-		t.Fatalf("file holds %+v err=%v", read, err)
-	}
-	noErr(t, os.WriteFile(path, []byte("{\"url\":\"http://127.0.0.1:8123\",\"token\":\"short\"}"), 0o600))
-	replaced, err := PublishTrayAccess(held, "http://127.0.0.1:8123")
-	noErr(t, err)
-	if replaced.Token == first.Token || len(replaced.Token) != 43 {
-		t.Fatalf("damaged file kept token %+v", replaced)
 	}
 	entries, err := os.ReadDir(directory)
 	noErr(t, err)

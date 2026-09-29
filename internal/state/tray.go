@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 )
 
@@ -70,35 +69,24 @@ type TrayAccess struct {
 // trayTokenBytes is the size of the random tray token.
 const trayTokenBytes = 32
 
-// PublishTrayAccess returns the tray access for a server that answers at
-// url, and makes TrayAccessFile in the held state directory say so. The
-// token stays the same while the file holds a valid one, so an icon that
-// read it keeps working across restarts; a missing or unreadable file gets
-// a new token. The file is written under a temporary name, made private to
-// this account and then renamed, so a reader never sees a partial file,
-// and it is rewritten only when its content changes.
+// PublishTrayAccess makes a new token for a server that answers at url and
+// writes both to TrayAccessFile in the held state directory. Every start
+// makes a new token, so a token that reached a program listening at the
+// address while OwnGit was stopped is worthless once OwnGit runs again; the
+// icon reads the file again when its token is refused. The file is written
+// under a temporary name, made private to this account before anything is
+// written to it, and then renamed, so a reader never sees a partial file.
 func PublishTrayAccess(held *os.File, url string) (TrayAccess, error) {
-	current, err := readTrayAccess(held)
-	if err == nil && current.URL == url {
-		return current, nil
+	random := make([]byte, trayTokenBytes+8)
+	if _, err := rand.Read(random); err != nil {
+		return TrayAccess{}, err
 	}
-	access := TrayAccess{URL: url, Token: current.Token}
-	if err != nil {
-		random := make([]byte, trayTokenBytes)
-		if _, err := rand.Read(random); err != nil {
-			return TrayAccess{}, err
-		}
-		access.Token = base64.RawURLEncoding.EncodeToString(random)
-	}
+	access := TrayAccess{URL: url, Token: base64.RawURLEncoding.EncodeToString(random[:trayTokenBytes])}
 	content, err := json.Marshal(access)
 	if err != nil {
 		return TrayAccess{}, err
 	}
-	random := make([]byte, 8)
-	if _, err := rand.Read(random); err != nil {
-		return TrayAccess{}, err
-	}
-	temporary := ".tray-access-" + base64.RawURLEncoding.EncodeToString(random)
+	temporary := ".tray-access-" + base64.RawURLEncoding.EncodeToString(random[trayTokenBytes:])
 	file, err := OpenOwnFile(held, temporary, os.O_WRONLY|os.O_CREATE)
 	if err != nil {
 		return TrayAccess{}, fmt.Errorf("write the tray access file: %w", err)
@@ -117,28 +105,6 @@ func PublishTrayAccess(held *os.File, url string) (TrayAccess, error) {
 	if err != nil {
 		_ = removeOwnFile(held, temporary)
 		return TrayAccess{}, fmt.Errorf("write the tray access file: %w", err)
-	}
-	return access, nil
-}
-
-// readTrayAccess reads TrayAccessFile and returns it when it holds a token
-// PublishTrayAccess could have made.
-func readTrayAccess(held *os.File) (TrayAccess, error) {
-	file, err := OpenOwnFile(held, TrayAccessFile, os.O_RDONLY)
-	if err != nil {
-		return TrayAccess{}, err
-	}
-	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, 4<<10))
-	if err != nil {
-		return TrayAccess{}, err
-	}
-	var access TrayAccess
-	if err := json.Unmarshal(content, &access); err != nil {
-		return TrayAccess{}, err
-	}
-	if token, err := base64.RawURLEncoding.DecodeString(access.Token); err != nil || len(token) != trayTokenBytes {
-		return TrayAccess{}, errors.New("the tray access file holds no valid token")
 	}
 	return access, nil
 }
