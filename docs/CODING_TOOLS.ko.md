@@ -216,7 +216,7 @@ owngit pr diff --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
 
 비밀번호 파일과 자격 증명 파일에는 [자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄)의 규칙이 그대로 적용됩니다. 서버를 `origin`에서 가져왔으면 파일에 그 서버가 적혀 있어야 합니다. 파일은 시작할 때 한 번 읽으며 비밀 값은 결과에 나오지 않습니다. `credential_origin_required`나 `insecure_http_confirmation_required`처럼 시작에 실패하면 오류 객체를 표준 오류에 쓰고 종료 상태 1로 끝납니다. 코딩 도구는 이 내용을 MCP 서버 로그에 보여 주며, `origin`에서 무엇을 가져왔는지 알리는 줄도 거기에 나옵니다.
 
-도구 인수는 풀 리퀘스트 번호, 커밋 ID, 작업 ID, 제목, 브랜치 이름 같은 값입니다. 서버, 경로, 명령처럼 도구의 입력 스키마에 없는 인수는 `invalid_arguments`로 실패하고 시작할 때 정한 저장소가 아닌 `repository`는 `repository_not_allowed`로 실패합니다. 올바른 UTF-8이 아닌 인수도 `invalid_arguments`로 실패하며 API 요청 본문이 그렇다면 `invalid_json`으로 실패합니다. 서로게이트 쌍의 절반만 적은 `\u` 이스케이프도 여기에 해당합니다. 예를 들어 `\ud800` 뒤에 짝이 되는 `\udc00`~`\udfff` 이스케이프가 없으면 실패합니다. OwnGit은 읽을 수 없는 텍스트를 다른 문자로 바꾸지 않습니다.
+도구 인수는 풀 리퀘스트 번호, 커밋 ID, 작업 ID, 제목, 브랜치 이름 같은 값입니다. 서버, 경로, 명령처럼 도구의 입력 스키마에 없는 인수는 `invalid_arguments`로 실패하고 시작할 때 정한 저장소가 아닌 `repository`는 `repository_not_allowed`로 실패합니다. 올바른 UTF-8이 아닌 인수도 `invalid_arguments`로 실패합니다. API 요청 본문이 그렇다면 `invalid_json`으로 실패합니다. 서로게이트 쌍의 절반만 적은 `\u` 이스케이프도 여기에 해당합니다. 예를 들어 `\ud800` 뒤에 짝이 되는 `\udc00`~`\udfff` 이스케이프가 없으면 실패합니다. OwnGit은 읽을 수 없는 텍스트를 다른 문자로 바꾸지 않습니다.
 
 ### 클라이언트 설정
 
