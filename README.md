@@ -157,6 +157,8 @@ The command asks no questions, with two exceptions: on a Linux computer you reac
 
 On Windows the command also puts the OwnGit icon in the notification area: click it for the dashboard, or right-click it for the status, the clone address and the latest pushes. See [The icon on Windows](docs/OPERATIONS.md#the-icon-on-windows).
 
+On a Mac with a desktop the command also opens the OwnGit icon in the menu bar, which then opens whenever you sign in: click it for the status, the clone address, the latest pushes and the dashboard. Hiding or quitting the icon never stops OwnGit. See [The icon on macOS](docs/OPERATIONS.md#the-icon-on-macos).
+
 ### Run in the foreground
 
 To run OwnGit in a terminal instead of as a service:

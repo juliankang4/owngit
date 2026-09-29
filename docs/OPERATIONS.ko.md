@@ -255,7 +255,7 @@ sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 
 `owngit service install`은 내 계정의 LaunchAgent `~/Library/LaunchAgents/app.owngit.server.plist`를 쓰고 관리자 비밀번호 없이 시작합니다. launchd는 로그인할 때마다 OwnGit을 켜고, 멈추면 다시 켭니다. 부팅할 때가 아니라 로그인할 때이며, 자동 로그인을 켜 두었다면 다시 시작한 직후입니다. 상태는 `~/Library/Application Support/owngit`에, 로그는 `~/Library/Logs/owngit/owngit.log`에 있습니다.
 
-macOS는 시스템 설정의 일반 > 로그인 항목 및 확장 프로그램 > 백그라운드에서 허용에 이 에이전트를 `owngit`으로 표시합니다. 그곳에서 끄면 켜지지 않으며, 명령은 그 사실을 알리고 원래 있던 에이전트를 되돌려 놓습니다.
+모든 릴리스 설치처럼 프로그램과 함께 OwnGit.app이 있으면 macOS는 시스템 설정의 일반 > 로그인 항목 및 확장 프로그램 > 백그라운드에서 허용에 이 에이전트를 OwnGit으로 표시하고, 앱이 없는 프로그램은 `owngit`으로 표시합니다. 그곳에서 끄면 켜지지 않으며, 명령은 그 사실을 알리고 원래 있던 에이전트를 되돌려 놓습니다.
 
 - **SSH로 실행할 때** Mac 화면에 로그인해 있다면 그 Mac의 터미널 창에서 실행한 것과 같습니다. 로그인하지 않은 상태라면 OwnGit이 바로 시작하고 Mac을 다시 시작할 때까지 계속 실행되고 그 뒤에는 다음 로그인 때 켜집니다. 이런 Mac은 [화면이 없는 컴퓨터](#화면이-없는-컴퓨터)로 칩니다. root로 실행하면 거부합니다.
 - **Homebrew로 설치했고** 화면에 로그인해 있다면 명령은 `brew services restart owngit`을 실행합니다. `status`, `start`, `stop`, `restart`, `uninstall`도 `brew services`를 쓰며, 로그는 `$(brew --prefix)/var/log/owngit.log`에 있습니다. Homebrew 설치는 항상 기본 상태 디렉터리를 쓰므로 `--state-dir`와 `--headless`는 받지 않고, 주소는 `owngit network set --listen`으로 바꿉니다. 화면에 아무도 로그인하지 않은 상태에서 SSH로 실행하면 Homebrew 서비스가 켜질 수 없으므로, 대신 `$(brew --prefix)/opt/owngit/bin/owngit`을 실행하는 OwnGit LaunchAgent를 설치합니다. 나중에 데스크톱에서 `owngit service install`이나 `brew services start owngit`을 실행하면 Homebrew가 서비스를 넘겨받고 그 에이전트를 지웁니다.
@@ -554,11 +554,23 @@ pct exec 105 -- /usr/local/bin/owngit service status
 
 ### OwnGit 아이콘
 
-Windows에서는 OwnGit 아이콘이 알림 영역에 나옵니다. [Windows의 아이콘](#windows의-아이콘)을 참고하세요. Linux 패널의 아이콘은 아직 이 버전에 들어 있지 않습니다.
+OwnGit 아이콘은 macOS에서는 메뉴 막대에, Windows에서는 알림 영역에 나옵니다. [macOS의 아이콘](#macos의-아이콘)과 [Windows의 아이콘](#windows의-아이콘)을 참고하세요. Linux 패널의 아이콘은 아직 이 버전에 들어 있지 않습니다.
 
 아이콘은 OwnGit이 실행되는 컴퓨터와 OwnGit을 실행하는 계정에 속합니다. 데스크톱이 있는 컴퓨터에서는 기본으로 보이고, SSH로 접속하는 서버처럼 데스크톱이 없는 컴퓨터에서는 보이지 않습니다. Linux에서 root가 설치하면 서비스가 전용 `owngit` 계정으로 실행되는데, 이 계정으로 데스크톱에 로그인하는 사람은 없으므로 이 설치 방식에는 아이콘이 없습니다. 설정 화면과 `owngit tray`가 그렇다고 알려 줍니다. `owngit tray off`로 이 컴퓨터에서 숨기면 다시 로그인하거나 재시작해도 `owngit tray on`으로 다시 켤 때까지 숨겨져 있습니다. `owngit tray`(또는 `owngit tray status`)는 아이콘이 보이는지 알려 주고, `--json`을 붙이면 `available`(아이콘이 없는 설치 방식이면 false), `shown`(숨겼을 때만 false), `desktop`(지금 이 컴퓨터에 데스크톱이 있는지), `state_dir`, `access_file`을 출력합니다. 설정의 일반 탭에 있는 "메뉴 막대, 알림 영역 또는 패널에 OwnGit 아이콘 표시" 스위치도 같은 일을 하며, 설정의 다른 부분처럼 관리자 비밀번호를 묻습니다. 이 스위치는 지금 브라우저가 있는 컴퓨터가 아니라 OwnGit이 실행되는 컴퓨터의 아이콘을 바꿉니다. 아이콘을 숨겨도 OwnGit은 멈추지 않으며 Git과 대시보드는 그대로 동작합니다. 이 선택은 상태 디렉터리의 `tray-hidden` 파일로 저장되므로 이 컴퓨터에 속하고 백업에는 들어가지 않습니다.
 
 OwnGit은 시작할 때마다 상태 디렉터리에 `tray-access.json` 파일을 쓰며, 이 파일은 OwnGit을 실행하는 계정만 읽을 수 있습니다. 파일에는 이 컴퓨터에서 이 서버에 접속하는 주소(예: `http://127.0.0.1:7654`), 새 무작위 토큰, 새 무작위 증명 비밀값이 들어 있습니다. OwnGit이 멈춘 뒤에도 파일은 남지만, 이전 시작 때의 토큰은 더 이상 쓸 수 없습니다. `Authorization: Bearer <토큰>` 헤더와 새 무작위 32바이트를 패딩 없는 base64url로 적은 `X-OwnGit-Tray-Nonce` 헤더를 붙여 `GET /tray/status`를 요청하면 JSON으로 상태를 알려 줍니다. 상태(`running`, 또는 설정이 끝나지 않았거나 새 릴리스가 나왔거나 [점검](#점검)에서 문제가 발견되면 `attention`), 아이콘을 숨겼는지, 버전, 대시보드에 보이는 것과 같은 대시보드 주소와 클론 주소, 새 릴리스와 이 설치 방식의 업데이트 명령, 점검 결과, 최근 푸시 세 건(저장소, ref, 바뀐 ref 수, OwnGit이 푸시를 받은 시각, 어떤 권한으로 푸시했는지. Git 푸시는 언제나 일반 접근입니다)이 들어 있습니다. 푸시는 Git이 ref를 실제로 바꾼 경우에만 기록됩니다. 거부되거나 실패한 푸시, ref를 이미 가진 값으로 바꾸라고 한 푸시는 기록되지 않고, 커밋에 적힌 날짜를 푸시 시각으로 쓰지도 않습니다. 최근 푸시는 100건까지 보관하며 백업에는 들어가지 않습니다. 이 상태는 이 컴퓨터에서 직접 접속한 프로그램에만 답하고, 신뢰하는 프록시가 전달한 요청이나 전달 헤더가 붙은 요청, 토큰이 없는 요청에는 답하지 않습니다. 사용자 공간 네트워킹 모드의 Tailscale처럼 이 컴퓨터의 프로그램을 거쳐 다른 기기가 접속해도 로컬 접속으로 보이므로, 다른 기기와 이 컴퓨터의 다른 계정으로부터 상태를 지키는 것은 토큰입니다. OwnGit을 실행하는 계정으로 도는 프로그램은 상태 디렉터리 자체를 읽을 수 있듯이 토큰도 읽을 수 있습니다. 상태 응답에는 `X-OwnGit-Tray-Proof` 헤더가 붙습니다. 이 값은 증명 비밀값을 키로 `owngit tray status`, 논스, 응답 본문 그대로를 각각 줄바꿈과 함께 이어 계산한 HMAC-SHA256을 패딩 없는 base64url로 적은 것입니다. 증명 비밀값은 전송되지 않으므로 OwnGit이 멈춘 동안 그 주소를 차지한 프로그램은 올바른 증명을 붙일 수 없고, 읽는 쪽은 증명이 없는 응답의 내용을 쓰지 않습니다. `/healthz`는 계속 빈 응답입니다.
+
+#### macOS의 아이콘
+
+macOS의 아이콘은 모든 릴리스 설치에 함께 들어 있는 OwnGit.app입니다. 릴리스 압축 파일과 한 줄 설치 명령은 `owngit` 프로그램 바로 옆(기본값 `~/.local/bin/OwnGit.app`)에, npm은 플랫폼 패키지의 실행 파일 옆에, Homebrew는 `$(brew --prefix)/opt/owngit/OwnGit.app`에 둡니다. 이 앱은 아이콘일 뿐이며 서버는 서비스가 실행합니다. 아이콘을 숨기거나 종료해도 Git과 대시보드는 멈추지 않습니다.
+
+데스크톱이 있는 Mac에서 `owngit service install`은 데스크톱 로그인에서 아이콘을 열고, 앱은 그때 로그인할 때마다 열리도록 스스로 등록합니다. 헤드리스 서비스이거나, Mac 화면에 로그인하지 않은 채 SSH로 접속했거나, 아이콘을 숨긴 경우에는 열지 않습니다. 내 계정의 아이콘이 이미 실행 중이면 `owngit service install`과 `owngit service restart`는 아이콘을 종료했다가 다시 열어, 업데이트 뒤에 새 앱으로 실행되게 합니다. 숨긴 아이콘은 계속 숨겨져 있습니다. 시스템 설정은 이 항목을 로그인 항목 및 확장 프로그램의 로그인 시 열기에 OwnGit으로 표시합니다. Homebrew 설치는 대신 LaunchAgent `~/Library/LaunchAgents/app.owngit.icon.plist`를 쓰며, 이 에이전트는 Homebrew가 업그레이드 뒤에도 유지하는 `$(brew --prefix)/opt/owngit` 폴더에서 앱을 엽니다. 그래서 아이콘이 꺼져 있는 동안 업그레이드해도 다음 로그인 때 아이콘이 열립니다.
+
+아이콘을 클릭하면 패널이 열립니다. 패널은 OwnGit이 실행 중인지, 확인이 필요한지(마칠 설정이 있거나 새 버전이 나온 경우이며, 이 설치를 업데이트하는 명령이 있으면 그 명령과 복사 버튼도 보여 줍니다), 실행되지 않는지(시작 버튼이 있습니다), 지금 상태를 알 수 없는지를 보여 줍니다. OwnGit이 실행 중이면 복사 버튼이 있는 클론 주소, 최근 푸시 세 건, 대시보드 열기도 보여 줍니다. Tab으로 패널 안을 이동하고, Space로 버튼을 누르고, Esc로 닫습니다. 패널은 macOS의 화면 모드(라이트 또는 다크)와 언어(macOS가 한국어를 우선하면 한국어, 아니면 영어)를 따릅니다.
+
+톱니바퀴 버튼에는 이 Mac의 아이콘 설정이 있습니다. "로그인할 때 열기"는 로그인 항목을 켜거나 끕니다. "메뉴 막대에서 숨기기"는 `owngit tray off`와 같으며, OwnGit.app을 열거나 설정의 스위치를 켜거나 `owngit tray on`을 실행하면 다시 보입니다. "아이콘 종료"는 OwnGit.app을 다시 열거나 다시 로그인할 때까지 아이콘을 닫습니다. `owngit service uninstall`은 내 계정의 아이콘을 종료하고 로그인 항목을 끄며, 아이콘이 사라졌는지와 macOS가 항목을 껐다고 알려 주는지 확인한 뒤에만 그렇다고 알립니다.
+
+앱이나 앱이 사용하는 `owngit` 프로그램이 이 Mac의 다른 계정이 바꿀 수 있는 폴더에 있으면 앱은 실행되지 않습니다. OwnGit이 어디에 있는지와 나만 바꿀 수 있는 폴더로 옮기라고 알려 주고, 아무것도 등록하거나 실행하지 않습니다. Windows의 아이콘처럼 서버의 증명이 붙은 상태 응답만 사용하고, 대시보드나 설정을 열기 전에 다시 확인하며, `tray-access.json`에 적힌 주소만 엽니다.
 
 #### Windows의 아이콘
 
