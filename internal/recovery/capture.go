@@ -296,8 +296,16 @@ func (locks *captureLocks) releaseAll() {
 // once the bundle is written.
 func bundleCaptured(ctx context.Context, runner commandRunner, captured capturedRepository, captureRoot, bundlePath string) error {
 	item := captured.item
+	// The folder is new, made here and owner-only whatever the umask, so
+	// only this account can reach what Git writes into it.
 	capturePath := filepath.Join(captureRoot, item.ID+".git")
-	if _, err := runner.Run(ctx, "", nil, "init", "--bare", "--quiet", "--object-format="+captured.objectFormat, capturePath); err != nil {
+	if err := os.Mkdir(capturePath, 0o700); err != nil {
+		return err
+	}
+	if err := state.ProtectPrivatePath(capturePath, true); err != nil {
+		return err
+	}
+	if _, err := runner.Run(ctx, capturePath, nil, "init", "--bare", "--quiet", "--object-format="+captured.objectFormat, "."); err != nil {
 		return err
 	}
 	alternates := filepath.Join(capturePath, "objects", "info", "alternates")
