@@ -15,12 +15,12 @@ import (
 type TailscaleState int
 
 const (
-	// TailscaleMissing means Tailscale was not found, or its answer could not
-	// be read.
+	// TailscaleMissing means the tailscale command was not found, or
+	// Tailscale gives this computer no IPv4 address.
 	TailscaleMissing TailscaleState = iota
-	// TailscaleStopped means the Tailscale command exists but Tailscale is
-	// not connected.
-	TailscaleStopped
+	// TailscaleUnusable means Tailscale was found but cannot be used now,
+	// for the reason in Problem.
+	TailscaleUnusable
 	// TailscaleRunning means Tailscale is connected and has an IPv4 address.
 	TailscaleRunning
 )
@@ -33,6 +33,10 @@ type Tailscale struct {
 	// Name is this computer's MagicDNS name without the trailing dot, or ""
 	// when MagicDNS is off.
 	Name string
+	// Problem is why Tailscale cannot be used, as sharing on the tailnet
+	// names it (a tailscale.Kind), such as "logged_out" or
+	// "untrusted_socket", so setup gives the same guidance.
+	Problem string
 }
 
 // tailscaleTimeout bounds the one status query.
@@ -51,18 +55,19 @@ func detectTailscale(ctx context.Context, override string, timeout time.Duration
 }
 
 // readTailscale reads the status of the Tailscale that command reaches.
-// Tailscale that does not answer in time, or whose answer cannot be read,
-// counts as not found; Tailscale that answers without being connected, or
-// whose service OwnGit cannot use, as installed but not running.
+// When the status cannot be read, or Tailscale is not connected, the
+// Problem is what sharing on the tailnet reports then. Setup needs no
+// MagicDNS or HTTPS certificates, so a connected Tailscale is used without
+// sharing's further checks.
 func readTailscale(ctx context.Context, command tailscale.Command, timeout time.Duration) Tailscale {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	status, err := command.Status(ctx)
-	if kind := tailscale.KindOf(err); err != nil && (kind == tailscale.KindTimeout || kind == tailscale.KindUnreadable) {
-		return Tailscale{State: TailscaleMissing}
+	if err == nil && status.BackendState != "Running" {
+		err = status.Usable()
 	}
-	if err != nil || status.BackendState != "Running" {
-		return Tailscale{State: TailscaleStopped}
+	if err != nil {
+		return Tailscale{State: TailscaleUnusable, Problem: string(tailscale.KindOf(err))}
 	}
 	found := Tailscale{State: TailscaleRunning, Name: status.Name}
 	for _, address := range status.Addresses {

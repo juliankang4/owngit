@@ -29,7 +29,7 @@ owngit serve
 
 터미널에서는 웹 페이지와 같은 내용을 묻습니다. 저장소 폴더, 저장소를 읽고 쓸 수 있는 사람, 관리자 비밀번호(두 번 입력하며 화면에 나타나지 않습니다), "다른 기기에서 접속", 그리고 OwnGit이 네트워크 주소에서 연결을 받는다면 암호화되지 않는 HTTP로 계속할지입니다. 키로 동작하는 것은 Enter, Backspace, Ctrl-U, Ctrl-C, Escape뿐이고, 그 밖의 문자는 답에 그대로 들어갑니다. 확인 카드에서 "설정 완료"를 고르기 전에는 아무것도 저장하지 않습니다. Ctrl-C를 누르면 아무것도 저장하지 않고 서버가 멈추므로, 다시 하려면 `owngit serve`를 다시 실행하세요. OwnGit이 이 컴퓨터에서만 연결을 받으면 일반 HTTP 확인을 묻지 않고, 나중에 다른 기기에서 접속하면 설정 화면이 그때 묻습니다. 일반 HTTP 질문에 아니요라고 답하면 OwnGit을 이 컴퓨터에서만 쓰는 방법을 알려 줍니다. `--listen 127.0.0.1:PORT` 옵션으로 다시 시작하거나, 주소가 저장된 [네트워크 설정](#네트워크-설정)에서 왔다면 `owngit network set --listen 127.0.0.1:PORT --base-url ""`를 실행한 뒤 다시 시작해야 합니다.
 
-"다른 기기에서 접속" 단계는 이 컴퓨터에서 Tailscale이 실행 중인지 확인합니다(tailnet 공유와 같은 방법으로 Tailscale의 상태를 읽기만 합니다). 실행 중이면 이 컴퓨터의 Tailscale 주소와 MagicDNS 이름을 보여 주고, 이 값을 [네트워크 설정](#네트워크-설정)으로 저장하는 `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654` 같은 명령을 출력합니다. 설정 과정에서 이 명령을 실행하지는 않으므로, 설정을 마친 뒤 직접 실행하고 OwnGit을 다시 시작하세요. Tailscale이 연결을 암호화하더라도 OwnGit은 그 사실을 확인할 수 없어 이 주소를 계속 일반 HTTP로 표시합니다. OwnGit이 암호화된 연결로 표시하는 주소를 쓰려면 대신 [tailnet에서 HTTPS로 공유](#tailnet에서-https로-공유하기)하세요.
+"다른 기기에서 접속" 단계는 이 컴퓨터에서 Tailscale이 실행 중인지 확인합니다(tailnet 공유와 같은 방법으로 Tailscale의 상태를 읽기만 합니다). Tailscale을 쓸 수 없으면 tailnet 공유와 같은 안내로 그 이유를 알려 줍니다. 실행 중이면 이 컴퓨터의 Tailscale 주소와 MagicDNS 이름을 보여 주고, 이 값을 [네트워크 설정](#네트워크-설정)으로 저장하는 `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654` 같은 명령을 출력합니다. 설정 과정에서 이 명령을 실행하지는 않으므로, 설정을 마친 뒤 직접 실행하고 OwnGit을 다시 시작하세요. Tailscale이 연결을 암호화하더라도 OwnGit은 그 사실을 확인할 수 없어 이 주소를 계속 일반 HTTP로 표시합니다. OwnGit이 암호화된 연결로 표시하는 주소를 쓰려면 대신 [tailnet에서 HTTPS로 공유](#tailnet에서-https로-공유하기)하세요.
 
 ### 브라우저에서 설정하고 터미널에서 승인하기
 

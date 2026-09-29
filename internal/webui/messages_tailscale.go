@@ -166,8 +166,8 @@ var tailscaleCatalog = map[MessageCode]message{
 		ko: "이 컴퓨터의 tailnet은 HTTPS 인증서를 제공하지 않습니다. Headscale처럼 Tailscale이 아닌 제어 서버를 쓰고 있어 이 컴퓨터에 인증서 이름을 주지 않으므로, OwnGit은 Tailscale로 HTTPS 공유를 할 수 없습니다. 이런 네트워크에서 HTTPS 주소를 쓰는 방법은 운영 안내서의 \"다른 비공개 네트워크\"를 보세요.",
 	},
 	"tailscale.problem.permission": {
-		en: "Tailscale did not let OwnGit change its settings. On Linux, allow your user once in a terminal with \"sudo tailscale set --operator=$USER\", then try again. OwnGit never runs sudo itself.",
-		ko: "Tailscale이 OwnGit의 설정 변경을 거부했습니다. Linux에서는 터미널에서 \"sudo tailscale set --operator=$USER\"를 한 번 실행해 사용자를 허용한 뒤 다시 시도하세요. OwnGit은 sudo를 직접 실행하지 않습니다.",
+		en: "Tailscale did not let OwnGit read or change its settings. On Linux, allow your user once in a terminal with \"sudo tailscale set --operator=$USER\", then try again. OwnGit never runs sudo itself.",
+		ko: "Tailscale이 OwnGit의 설정 읽기나 변경을 거부했습니다. Linux에서는 터미널에서 \"sudo tailscale set --operator=$USER\"를 한 번 실행해 사용자를 허용한 뒤 다시 시도하세요. OwnGit은 sudo를 직접 실행하지 않습니다.",
 	},
 	"tailscale.problem.mac_app_admin": {
 		en: "The Standalone Tailscale app for macOS lets only administrator accounts of this Mac change its settings. Run OwnGit with an administrator account, and try again.",

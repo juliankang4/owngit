@@ -21,6 +21,7 @@ import (
 	"owngit/internal/repository"
 	"owngit/internal/server"
 	"owngit/internal/state"
+	"owngit/internal/tailscale"
 	"owngit/internal/webui"
 )
 
@@ -194,6 +195,21 @@ func TestTerminalSetupUsesTheServerRules(t *testing.T) {
 	}
 	if h.started != 1 {
 		t.Fatalf("setup completion ran %d times", h.started)
+	}
+}
+
+// When Tailscale cannot be used, setup says why in the words sharing on the
+// tailnet uses, as a complete sentence without the detail setup does not
+// have, and prints no command.
+func TestTerminalSetupNamesWhyTailscaleCannotBeUsed(t *testing.T) {
+	h := newHarness(t, "127.0.0.1:7654", Tailscale{State: TailscaleUnusable, Problem: string(tailscale.KindUntrustedSocket)})
+	if err := h.run("1\r", "1\r", "\r", "1\r", "admin-password-1\r", "admin-password-1\r", "\r", "1\r"); err != nil {
+		t.Fatalf("run: %v\n%s", err, h.out)
+	}
+	out := h.out.String()
+	brief := webui.Text(webui.LangEN, webui.TailscaleProblemBrief(webui.TailscaleProblemCode(string(tailscale.KindUntrustedSocket))))
+	if !strings.Contains(out, "[i] "+brief[:40]) || strings.Contains(out, "Socket and account:") || strings.Contains(out, "owngit network set") {
+		t.Fatalf("output:\n%s", out)
 	}
 }
 

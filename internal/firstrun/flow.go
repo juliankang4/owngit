@@ -417,8 +417,11 @@ func (f *flow) showDevices(step string) error {
 		}
 		items = append(items, pairsItem(pairs), blankItem(), textItem(f.say("dev_how"), rolePlain),
 			blankItem(), textItem(f.say("dev_enc"), rolePlain))
-	case TailscaleStopped:
-		items = append(items, tagItem("note", f.say("dev_stopped")), blankItem(), textItem(f.say("dev_docs"), rolePlain))
+	case TailscaleUnusable:
+		// Setup has no detail to show, such as a socket's account, so a
+		// message that would end in one is given as its complete sentence.
+		problem := f.text(webui.TailscaleProblemBrief(webui.TailscaleProblemCode(found.Problem)))
+		items = append(items, tagItem("note", problem), blankItem(), textItem(f.say("dev_docs"), rolePlain))
 	default:
 		items = append(items, tagItem("note", f.say("dev_missing")), blankItem(), textItem(f.say("dev_docs"), rolePlain))
 	}

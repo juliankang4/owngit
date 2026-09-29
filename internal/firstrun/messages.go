@@ -81,7 +81,6 @@ var phrases = map[string]phrase{
 	"dev_title":    {"Other devices", "다른 기기에서 접속"},
 	"dev_found":    {"Tailscale is running on this computer.", "이 컴퓨터에서 Tailscale이 실행 중입니다."},
 	"dev_missing":  {"Tailscale was not found on this computer.", "이 컴퓨터에서 Tailscale을 찾지 못했습니다."},
-	"dev_stopped":  {"Tailscale is installed but not running.", "Tailscale이 설치되어 있지만 실행 중이 아닙니다."},
 	"dev_addr":     {"Tailscale address", "Tailscale 주소"},
 	"dev_name":     {"MagicDNS name", "MagicDNS 이름"},
 	"dev_how":      {"To use OwnGit from your other Tailscale devices, save these network settings with the command below, then restart OwnGit after setup. You can change them later in Settings, under Network.", "다른 Tailscale 기기에서 OwnGit을 쓰려면 아래 명령으로 네트워크 설정을 저장하고, 설정을 마친 뒤 OwnGit을 다시 시작하세요. 나중에 설정 화면의 \"네트워크\"에서 바꿀 수도 있습니다."},
