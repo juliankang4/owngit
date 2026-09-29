@@ -709,6 +709,11 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	if code := session.callError("pull_request_edit", map[string]any{"number": number, "title": "No revision"}); code != "invalid_arguments" {
 		t.Fatalf("an edit without edit_revision: %q", code)
 	}
+	// A body over the limit gets the server's code, although escaping would
+	// make the request itself too large.
+	if code := session.callError("pull_request_edit", map[string]any{"number": number, "edit_revision": 1, "body": strings.Repeat("<", 70<<10)}); code != "invalid_body" {
+		t.Fatalf("an edit over the limit: %q", code)
+	}
 	if code := session.callError("pull_request_create", map[string]any{"title": "Again", "source_branch": "feature", "target_branch": "main"}); code == "" {
 		t.Fatal("a second open pull request for the pair was not refused")
 	}

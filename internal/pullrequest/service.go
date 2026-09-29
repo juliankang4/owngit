@@ -40,11 +40,7 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 	if err := repository.ValidateID(input.Repository); err != nil {
 		return nil, NewProblem("invalid_repository", "The repository identifier is invalid.")
 	}
-	title, err := pullRequestTitle(input.Title)
-	if err != nil {
-		return nil, err
-	}
-	body, err := pullRequestText(input.Body, "invalid_body", "description")
+	input, err := input.CheckText()
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +106,7 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 		return nil, problem
 	}
 	return service.createForHeadsLocked(ctx, repositoryPath, state.PullRequestCreation{
-		RepositoryID: input.Repository, Title: title, Body: body, SourceBranch: source, TargetBranch: target,
+		RepositoryID: input.Repository, Title: input.Title, Body: input.Body, SourceBranch: source, TargetBranch: target,
 		SourceOID: sourceHead.OID, TargetOID: targetHead.OID, InitialReview: reviewStatus, CreatedBy: input.Actor,
 	}, sourceHead, targetHead)
 }
@@ -241,20 +237,9 @@ func (service *Service) Edit(ctx context.Context, repositoryID string, number in
 	if input.Title == nil && input.Body == nil {
 		return nil, NewProblem("invalid_edit", "An edit needs a new title, a new description, or both.")
 	}
-	var title, body *string
-	if input.Title != nil {
-		value, err := pullRequestTitle(*input.Title)
-		if err != nil {
-			return nil, err
-		}
-		title = &value
-	}
-	if input.Body != nil {
-		value, err := pullRequestText(*input.Body, "invalid_body", "description")
-		if err != nil {
-			return nil, err
-		}
-		body = &value
+	input, err := input.CheckText()
+	if err != nil {
+		return nil, err
 	}
 	repositoryPath, err := service.repositoryPath(ctx, repositoryID)
 	if err != nil {
@@ -277,11 +262,11 @@ func (service *Service) Edit(ctx context.Context, repositoryID string, number in
 		RepositoryID: repositoryID, Number: number, BasedOn: record.EditRevision,
 		Title: record.Title, Body: record.Body, EditedBy: input.Actor,
 	}
-	if title != nil {
-		edit.Title = *title
+	if input.Title != nil {
+		edit.Title = *input.Title
 	}
-	if body != nil {
-		edit.Body = *body
+	if input.Body != nil {
+		edit.Body = *input.Body
 	}
 	if edit.Title != record.Title || edit.Body != record.Body {
 		edited, err := service.Store.EditPullRequest(ctx, edit, service.now())
@@ -322,16 +307,12 @@ func (service *Service) SubmitReview(ctx context.Context, repositoryID string, n
 	default:
 		return nil, NewProblem("invalid_review_decision", "A submitted review must be approved or changes_requested.")
 	}
-	reviewer := strings.TrimSpace(input.ReviewerLabel)
-	if !validLabel(reviewer, 200) {
-		return nil, NewProblem("invalid_reviewer_label", "The supplied reviewer label must contain 1 to 200 characters and no line breaks.")
-	}
-	note, err := pullRequestText(input.Note, "invalid_note", "review note")
+	input, err := input.CheckText()
 	if err != nil {
 		return nil, err
 	}
 	return service.recordReview(ctx, repositoryID, number, state.PullRequestReview{
-		SourceOID: input.SourceOID, TargetOID: input.TargetOID, Status: status, ReviewerLabel: reviewer, Note: note, Actor: input.Actor,
+		SourceOID: input.SourceOID, TargetOID: input.TargetOID, Status: status, ReviewerLabel: input.ReviewerLabel, Note: input.Note, Actor: input.Actor,
 	})
 }
 
@@ -1201,36 +1182,11 @@ func staleEditProblem(current int64) *Problem {
 	}
 }
 
-// pullRequestTitle is a title without surrounding spaces, or invalid_title.
-func pullRequestTitle(value string) (string, error) {
-	title := strings.TrimSpace(value)
-	if !validLabel(title, 500) {
-		return "", NewProblem("invalid_title", "The pull request title must contain 1 to 500 characters and no line breaks.")
-	}
-	return title, nil
-}
-
-// pullRequestText is a description or review note as OwnGit keeps it: line
-// ends are LF, so a text saved from a browser or a Windows file does not
-// differ from the same text saved elsewhere. It is refused with code when it
-// is longer than 64 KiB, is not UTF-8, or holds a NUL character.
-func pullRequestText(value, code, name string) (string, error) {
-	text := strings.ReplaceAll(value, "\r\n", "\n")
-	if !state.ValidPullRequestText(text) {
-		return "", NewProblem(code, "The "+name+" must be UTF-8 text of at most 64 KiB (65,536 bytes) without NUL characters.")
-	}
-	return text, nil
-}
-
 func staleRevisionProblem(sourceOID, targetOID string) *Problem {
 	return &Problem{
 		Code: "stale_revision", Message: "The source or target branch changed. Inspect the pull request and use its current object IDs.",
 		Details: map[string]string{"current_source_oid": sourceOID, "current_target_oid": targetOID},
 	}
-}
-
-func validLabel(value string, maximum int) bool {
-	return value != "" && len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsAny(value, "\x00\r\n")
 }
 
 func (service *Service) now() time.Time {

@@ -311,6 +311,43 @@ func TestStructuredPRFailureContainsStableCodeWithoutCause(t *testing.T) {
 	}
 }
 
+// Text over its limit is refused with the server's code before anything is
+// sent, whatever its characters. 70 KiB of "<" grows six times as JSON, so
+// without the check it would be refused as too large a request instead, and a
+// file over twice the limit is not read to its end.
+func TestPRTextIsCheckedBeforeSending(t *testing.T) {
+	fixture := newPRCLIFixture(t)
+	write := func(name, content string) string {
+		path := filepath.Join(fixture.root, name)
+		noErr(t, os.WriteFile(path, []byte(content), 0o600))
+		return path
+	}
+	escaping := write("escaping.md", strings.Repeat("<", 70<<10))
+	long := write("long.md", strings.Repeat("a\r\n", state.MaximumPullRequestTextBytes+1))
+	create := []string{"create", "--title", "Described", "--source", "feature", "--target", "main"}
+	for _, test := range []struct {
+		arguments []string
+		code      string
+	}{
+		{append(create, "--body-file", escaping), "invalid_body"},
+		{append(create, "--body-file", long), "invalid_body"},
+		{[]string{"edit", "--number", "1", "--edit-revision", "0", "--body-file", escaping}, "invalid_body"},
+		{[]string{"edit", "--number", "1", "--edit-revision", "0", "--title", strings.Repeat("<", 70<<10)}, "invalid_title"},
+		{[]string{
+			"review", "submit", "--number", "1", "--source-oid", fixture.sourceOID, "--target-oid", fixture.targetOID,
+			"--decision", "approved", "--reviewer", "cli reviewer", "--note-file", escaping,
+		}, "invalid_note"},
+	} {
+		err := prCommand(append(test.arguments, fixture.remoteFlags...))
+		if got := commandErrorCode(err); got != test.code {
+			t.Fatalf("%s: error=%v code=%q, want %s", test.arguments[:2], err, got, test.code)
+		}
+	}
+	if records, err := fixture.store.PullRequests(context.Background(), "project"); err != nil || len(records) != 0 {
+		t.Fatalf("a refused text created records=%v err=%v", records, err)
+	}
+}
+
 // Pull request text made with the command line, its edits, a review note and
 // who made each change are in an offline backup and come back unchanged from
 // a restore. A stale edit is refused on the way.

@@ -127,9 +127,11 @@ func prEdit(arguments []string) error {
 }
 
 // readPullRequestText reads a description or review note from path, or from
-// standard input when path is "-". No path is no text. The server applies the
-// 64 KiB limit after turning CRLF line ends into LF; a file that could not
-// fit even then is refused here without being read to the end.
+// standard input when path is "-". No path is no text. The bytes are kept as
+// read, so the text check before sending refuses one that is not UTF-8. The
+// 64 KiB limit applies after CRLF line ends become LF, so reading stops at
+// twice the limit: a text that long is over the limit however its line ends
+// convert, and the check refuses it like any other text over the limit.
 func readPullRequestText(path, flagName string) (string, error) {
 	if path == "" {
 		return "", nil
@@ -147,9 +149,6 @@ func readPullRequestText(path, flagName string) (string, error) {
 	content, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil {
 		return "", &apiclient.Error{Code: "invalid_arguments", Message: flagName + " could not be read.", Cause: err}
-	}
-	if int64(len(content)) > limit {
-		return "", cliProblem("invalid_arguments", flagName+" holds more than 64 KiB of text.")
 	}
 	return string(content), nil
 }

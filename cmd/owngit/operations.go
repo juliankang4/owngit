@@ -105,8 +105,9 @@ func createRepository(ctx context.Context, target connection, input repositoryIn
 }
 
 // Pull request operations. The server validates titles, branches, object IDs
-// and review values; these functions only refuse inputs that would address the
-// wrong resource.
+// and review values; these functions refuse inputs that would address the
+// wrong resource, and check text with the server's own rules before sending
+// it (see textProblem).
 
 func listPullRequests(ctx context.Context, target connection) ([]byte, error) {
 	return target.client().Do(ctx, http.MethodGet, target.repositoryPath()+"/pull-requests", nil)
@@ -120,6 +121,9 @@ func showPullRequest(ctx context.Context, target connection, number int64) ([]by
 }
 
 func createPullRequest(ctx context.Context, target connection, input pullrequest.CreateInput) ([]byte, error) {
+	if _, err := input.CheckText(); err != nil {
+		return nil, textProblem(err)
+	}
 	return target.textClient().Do(ctx, http.MethodPost, target.repositoryPath()+"/pull-requests", input)
 }
 
@@ -128,6 +132,9 @@ func createPullRequest(ctx context.Context, target connection, input pullrequest
 func editPullRequest(ctx context.Context, target connection, number int64, input pullrequest.EditInput) ([]byte, error) {
 	if err := requirePullRequestNumber(number); err != nil {
 		return nil, err
+	}
+	if _, err := input.CheckText(); err != nil {
+		return nil, textProblem(err)
 	}
 	return target.textClient().Do(ctx, http.MethodPost, target.pullRequestPath(number)+"/edit", input)
 }
@@ -150,7 +157,19 @@ func submitPullRequestReview(ctx context.Context, target connection, number int6
 	if err := requirePullRequestNumber(number); err != nil {
 		return nil, err
 	}
+	if _, err := input.CheckText(); err != nil {
+		return nil, textProblem(err)
+	}
 	return target.textClient().Do(ctx, http.MethodPost, target.pullRequestPath(number)+"/review/submit", input)
+}
+
+// textProblem reports the server's refusal of a text as the command line
+// reports any problem. The text is checked before it is sent because JSON
+// escaping can grow it up to six times: a text over its limit would otherwise
+// be refused as too large a request, or not, depending on its characters.
+func textProblem(err error) error {
+	problem := pullrequest.AsProblem(err)
+	return cliProblem(problem.Code, problem.Message)
 }
 
 func mergePullRequest(ctx context.Context, target connection, number int64, input pullrequest.RevisionInput) ([]byte, error) {
