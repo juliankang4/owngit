@@ -131,17 +131,24 @@ func TestOnPushReportsTheRefsEachPushUpdated(t *testing.T) {
 	}
 	expect("atomic refused")
 
-	limits := useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 64 << 10 })
+	// A push over the request limit fails. It goes to a handler of its own
+	// with that limit, so no limit changes while a request is served.
+	limited, err := New(runner, manager, "", 2)
+	noErr(t, err)
+	limited.Authorize, limited.OnPush = handler.Authorize, handler.OnPush
+	useLimits(t, limited, func(limits *Limits) { limits.MaximumRequest = 64 << 10 })
+	limitedServer := httptest.NewServer(limited)
+	defer limitedServer.Close()
 	large := make([]byte, 1<<20)
 	_, _ = rand.Read(large)
 	noErr(t, os.WriteFile(filepath.Join(work, "large.bin"), large, 0o600))
 	runHTTPGit(t, work, "add", "large.bin")
 	runHTTPGit(t, work, "commit", "-m", "large")
-	if output, err := httpGitCombined(work, "push", "origin", "HEAD:refs/heads/main"); err == nil {
+	if output, err := httpGitCombined(work, "push", limitedServer.URL+"/git/sample.git", "HEAD:refs/heads/main"); err == nil {
 		t.Fatalf("push over the request limit succeeded: %s", output)
 	}
+	waitForTransfersToEnd(t, limited)
 	expect("failed push")
-	limits.MaximumRequest = 0
 
 	runHTTPGit(t, "", "--git-dir", remotePath, "config", "receive.denyDeletes", "false")
 	runHTTPGit(t, work, "push", "origin", ":refs/heads/other")
