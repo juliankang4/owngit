@@ -90,9 +90,13 @@ type App struct {
 	// TrayToken is the token of state.TrayAccessFile that TrayStatusPath
 	// answers to. Empty leaves that path unanswered.
 	TrayToken string
-	// TrayDesktop is true when this computer has a desktop where the tray
-	// icon can show (service.Environment.Desktop).
-	TrayDesktop bool
+	// TrayAvailable is true when this install offers the OwnGit icon: it
+	// runs as the account that signs in at the desktop, not as a dedicated
+	// service account.
+	TrayAvailable bool
+	// TrayDesktop reports whether this computer has a desktop where the
+	// icon can show now (service.Environment.Desktop).
+	TrayDesktop func() bool
 	// trayCheckup is the checkup the tray status reuses.
 	trayCheckup trayCheckup
 	HTTPTimeout time.Duration

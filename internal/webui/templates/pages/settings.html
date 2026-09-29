@@ -178,8 +178,11 @@
 {{$on := draft $p.Group $p.Draft "tray" "tray_icon" (onOff $ti.Shown)}}
 <section class="grp" id="grp-tray" aria-labelledby="grp-tray-h" data-group="tray"{{if hasError $gn}} data-group-refused{{end}}>
   {{template "grpHead" dict "Lang" $lang "Group" "tray" "Title" (bi $lang "settings.tray.title")}}
-  <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.tray.scope"}}</span></p>
   {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $ti.Unavailable}}
+    <p class="setblock__d">{{bi $lang "settings.tray.unavailable"}}</p>
+  {{else}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.tray.scope"}}</span></p>
   {{if $ti.Unreadable}}
     <p class="setblock__now">{{icon "info"}}{{bi $lang "settings.tray.unreadable"}}</p>
   {{end}}
@@ -192,6 +195,7 @@
     {{template "switch" dict "Lang" $lang "ID" "tray-icon" "Name" "tray_icon" "On" (eq $on "on") "Saved" (onOff $ti.Shown) "Label" (bi $lang "settings.tray.switch") "Help" (bi $lang "settings.tray.help") }}
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "tray" "Notices" $gn "Focus" $focus "Cancel" (tabURL "general")}}
   </form>
+  {{end}}
 </section>
 
 {{/* The checkup is "owngit doctor" of the computer where OwnGit runs: each

@@ -605,7 +605,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			return current.RepositoryRoot, err
 		}),
 		HeadlessListen: headlessListenInUse(headlessSetup, network),
-		TrayDesktop:    environment.Desktop(),
+		TrayAvailable:  trayAvailable(*stateDir),
+		TrayDesktop:    func() bool { return probeEnvironment().Desktop() },
 		// First-run setup inside this process starts the same import runtime
 		// that an initialized startup starts above, and lets the release
 		// check run without waiting a day.
@@ -641,12 +642,17 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	gitHandler.OnPush = application.RecordPush
 	// The tray icon of this computer reads the server's status with the
 	// token of the tray access file, which only this account can read.
-	// Without it Git and the dashboard work as before.
-	if target, err := localTarget(listener.Addr().String()); err != nil {
-		logf("the tray icon cannot read the status: %v", err)
-	} else if access, err := state.PublishTrayAccess(stateDirectory, "http://"+target); err != nil {
-		logf("the tray icon cannot read the status: %v", err)
-	} else {
+	// Without it Git and the dashboard work as before. An install that
+	// offers no icon publishes no token.
+	if application.TrayAvailable {
+		target, err := localTarget(listener.Addr().String())
+		var access state.TrayAccess
+		if err == nil {
+			access, err = state.PublishTrayAccess(stateDirectory, "http://"+target)
+		}
+		if err != nil {
+			logf("the tray icon cannot read the status: %v", err)
+		}
 		application.TrayToken = access.Token
 	}
 	// Activity is counted in the background under the serving lifetime, so

@@ -419,6 +419,8 @@ type TrayInfo struct {
 	Desktop bool
 	// Unreadable is true when whether it is hidden could not be read.
 	Unreadable bool
+	// Unavailable is true when this kind of install offers no icon.
+	Unavailable bool
 }
 
 // Policies are the saved server-wide policies. Only the tab that shows a

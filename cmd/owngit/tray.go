@@ -6,9 +6,26 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"runtime"
 
+	"owngit/internal/service"
 	"owngit/internal/state"
 )
+
+// errTrayUnavailable is the answer of an install that offers no icon.
+var errTrayUnavailable = errors.New("this kind of install has no OwnGit icon, because OwnGit runs as its own service account, not as the account that signs in at the desktop")
+
+// trayAvailable reports whether the OwnGit icon is offered for the state in
+// stateDir: always, except for the Linux service that runs as the dedicated
+// owngit account, which no one signs in as at a desktop. Its state belongs
+// to that account, so a desktop account could not read the icon's files.
+func trayAvailable(stateDir string) bool {
+	if runtime.GOOS != "linux" {
+		return true
+	}
+	dir := filepath.Clean(mustAbs(stateDir))
+	return dir != service.AccountStateDir && dir != pointerStateDir()
+}
 
 // trayCommand shows, hides or reports the OwnGit icon of this computer: its
 // menu bar, notification area or panel icon. Hiding it never stops the
@@ -33,10 +50,28 @@ func trayCommand(arguments []string) error {
 	if len(operands) > 1 || (operation != "on" && operation != "off" && operation != "status") {
 		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray takes on, off, status or nothing"))
 	}
-	if err := state.RequireExisting(*stateDir); err != nil {
+	type report struct {
+		Available  bool   `json:"available"`
+		Shown      bool   `json:"shown"`
+		Desktop    bool   `json:"desktop"`
+		StateDir   string `json:"state_dir"`
+		AccessFile string `json:"access_file"`
+	}
+	dir := filepath.Clean(mustAbs(*stateDir))
+	if !trayAvailable(dir) {
+		if operation != "status" {
+			return jsonFailure(*asJSON, "tray_unavailable", errTrayUnavailable)
+		}
+		if *asJSON {
+			return writeJSONValue(report{StateDir: dir})
+		}
+		fmt.Println("The OwnGit icon is not available: " + errTrayUnavailable.Error() + ".")
+		return nil
+	}
+	if err := state.RequireExisting(dir); err != nil {
 		return jsonFailure(*asJSON, "state_unavailable", err)
 	}
-	held, err := state.OpenStateDirectory(*stateDir)
+	held, err := state.OpenStateDirectory(dir)
 	if err != nil {
 		return jsonFailure(*asJSON, "state_unavailable", err)
 	}
@@ -52,12 +87,7 @@ func trayCommand(arguments []string) error {
 	}
 	desktop := probeEnvironment().Desktop()
 	if *asJSON {
-		return writeJSONValue(struct {
-			Shown      bool   `json:"shown"`
-			Desktop    bool   `json:"desktop"`
-			StateDir   string `json:"state_dir"`
-			AccessFile string `json:"access_file"`
-		}{!hidden, desktop, held.Name(), filepath.Join(held.Name(), state.TrayAccessFile)})
+		return writeJSONValue(report{true, !hidden, desktop, dir, filepath.Join(dir, state.TrayAccessFile)})
 	}
 	switch {
 	case hidden:

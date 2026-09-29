@@ -838,7 +838,7 @@ func mustAbs(path string) string {
 var serviceStateCommands = map[string]bool{
 	"serve": true, "setup-link": true, "approve-host": true, "network": true, "tailscale": true,
 	"forget-check-container": true, "backup": true, "restore": true, "health": true,
-	"upgrade-backup": true, "doctor": true, "tray": true,
+	"upgrade-backup": true, "doctor": true,
 }
 
 // stateDirArgument returns the value of --state-dir among arguments, or ""

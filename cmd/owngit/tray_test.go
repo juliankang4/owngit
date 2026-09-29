@@ -16,6 +16,7 @@ import (
 )
 
 type trayReport struct {
+	Available  bool   `json:"available"`
 	Shown      bool   `json:"shown"`
 	Desktop    bool   `json:"desktop"`
 	StateDir   string `json:"state_dir"`
@@ -51,7 +52,7 @@ func TestTrayCommand(t *testing.T) {
 	}
 
 	report := trayJSON(t, "--state-dir", stateDir)
-	if !report.Shown || !report.Desktop || report.AccessFile != filepath.Join(report.StateDir, state.TrayAccessFile) {
+	if !report.Available || !report.Shown || !report.Desktop || report.StateDir != stateDir || report.AccessFile != filepath.Join(stateDir, state.TrayAccessFile) {
 		t.Fatalf("default on a desktop: %+v", report)
 	}
 	if report := trayJSON(t, "off", "--state-dir", stateDir); report.Shown {
@@ -85,9 +86,28 @@ func TestTrayCommand(t *testing.T) {
 	}
 }
 
+// On Linux the state of the service that runs as the dedicated owngit
+// account offers no icon: status says so in JSON, and on and off refuse
+// with the reason, before anything reads that state.
+func TestTrayCommandOnTheDedicatedAccountInstall(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the dedicated service account is a Linux install")
+	}
+	report := trayJSON(t, "--state-dir", service.AccountStateDir)
+	if report.Available || report.Shown || report.Desktop || report.StateDir != service.AccountStateDir || report.AccessFile != "" {
+		t.Fatalf("status of the dedicated account install: %+v", report)
+	}
+	output, err := captureStdout(func() error {
+		return runCommand("tray", []string{"on", "--state-dir", service.AccountStateDir, "--json"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "own service account") {
+		t.Fatalf("tray on printed %q err=%v", output, err)
+	}
+}
+
 // A running serve publishes the tray access file, private to this account,
-// with its own address, and answers the tray status with its token; the
-// token outlasts a restart.
+// with its own address, and answers the tray status with its token; each
+// start makes a new token and the old one is refused.
 func TestServePublishesTrayAccess(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	read := func() state.TrayAccess {
@@ -135,7 +155,16 @@ func TestServePublishesTrayAccess(t *testing.T) {
 	}
 	served.stop()
 	again := startServed(t, stateDir)
-	if next := read(); next.Token != access.Token || next.URL != again.url {
+	next := read()
+	if next.Token == access.Token || next.URL != again.url {
 		t.Fatalf("after a restart the access file holds %+v, before %+v", next, access)
+	}
+	old := access.Token
+	access = next
+	if code := status(next.Token); code != http.StatusOK {
+		t.Fatalf("status with the new token: %d", code)
+	}
+	if code := status(old); code != http.StatusUnauthorized {
+		t.Fatalf("status with the token of the previous start: %d", code)
 	}
 }

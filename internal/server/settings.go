@@ -215,6 +215,10 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			app.Releases.Wake()
 		}
 	case webui.ActionSetTrayIcon:
+		if !app.TrayAvailable {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("tray_icon", webui.MsgSettingsTrayUnavailable)}, http.StatusConflict)
+			return
+		}
 		// An unticked switch sends nothing, which means off.
 		value := postValue(request, "tray_icon")
 		if value != "on" && value != "off" && value != "" {

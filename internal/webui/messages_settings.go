@@ -36,12 +36,17 @@ const (
 	MsgSettingsUpdateSwitch MessageCode = "settings.update.switch"
 	MsgSettingsUpdateScope  MessageCode = "settings.update.scope"
 
-	MsgSettingsTrayTitle      MessageCode = "settings.tray.title"
-	MsgSettingsTrayScope      MessageCode = "settings.tray.scope"
-	MsgSettingsTraySwitch     MessageCode = "settings.tray.switch"
-	MsgSettingsTrayHelp       MessageCode = "settings.tray.help"
-	MsgSettingsTrayNoDesktop  MessageCode = "settings.tray.no_desktop"
-	MsgSettingsTrayUnreadable MessageCode = "settings.tray.unreadable"
+	MsgSettingsTrayTitle       MessageCode = "settings.tray.title"
+	MsgSettingsTrayScope       MessageCode = "settings.tray.scope"
+	MsgSettingsTraySwitch      MessageCode = "settings.tray.switch"
+	MsgSettingsTrayHelp        MessageCode = "settings.tray.help"
+	MsgSettingsTrayNoDesktop   MessageCode = "settings.tray.no_desktop"
+	MsgSettingsTrayUnreadable  MessageCode = "settings.tray.unreadable"
+	MsgSettingsTrayUnavailable MessageCode = "settings.tray.unavailable"
+
+	// Who made a change, as the OwnGit icon lists recent pushes.
+	MsgActorAccess        MessageCode = "actor.access"
+	MsgActorAdministrator MessageCode = "actor.administrator"
 
 	MsgSettingsAccessScope    MessageCode = "settings.access.scope"
 	MsgSettingsAccessMode     MessageCode = "settings.access.mode"
@@ -153,6 +158,12 @@ var settingsCatalog = map[MessageCode]message{
 		en: "That computer has no desktop session now, so no icon shows there. It follows this setting once it has one.",
 		ko: "그 컴퓨터에는 지금 데스크톱 세션이 없어 아이콘이 보이지 않습니다. 데스크톱 세션이 생기면 이 설정을 따릅니다.",
 	},
+	MsgSettingsTrayUnavailable: {
+		en: "This kind of install has no OwnGit icon, because OwnGit runs as its own service account, not as the account that signs in at the desktop.",
+		ko: "이 설치 방식에는 OwnGit 아이콘이 없습니다. OwnGit이 데스크톱에 로그인하는 계정이 아니라 전용 서비스 계정으로 실행되기 때문입니다.",
+	},
+	MsgActorAccess:        {en: "Shared access", ko: "공용 접근"},
+	MsgActorAdministrator: {en: "Administrator", ko: "관리자"},
 	MsgSettingsTrayUnreadable: {
 		en: "OwnGit could not read whether the icon is hidden. The OwnGit log says why. Saving sets it again.",
 		ko: "아이콘을 숨겼는지 읽지 못했습니다. 이유는 OwnGit 로그에 있으며, 저장하면 다시 설정됩니다.",

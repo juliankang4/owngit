@@ -14,6 +14,7 @@ import (
 
 	"owngit/internal/githttp"
 	"owngit/internal/logtext"
+	"owngit/internal/releasecheck"
 	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -34,6 +35,10 @@ const trayPushes = 3
 // system tools, so an icon that polls does not run them on every read.
 const trayCheckupReuse = time.Minute
 
+// trayCheckupTimeout bounds a checkup the tray status runs. Each tool of the
+// checkup has its own shorter bound.
+const trayCheckupTimeout = time.Minute
+
 // TrayStatus is the answer of TrayStatusPath.
 type TrayStatus struct {
 	OK bool `json:"ok"`
@@ -42,6 +47,9 @@ type TrayStatus struct {
 	// checkup found.
 	State   string `json:"state"`
 	Version string `json:"version"`
+	// Shown is false when the owner hid the icon, from the dashboard or
+	// with "owngit tray off".
+	Shown bool `json:"shown"`
 	// DashboardURL and CloneAddress are the addresses the dashboard shows:
 	// the configured base URL, or else the address of this request.
 	DashboardURL  string `json:"dashboard_url"`
@@ -63,8 +71,11 @@ type TrayUpdate struct {
 	Command string `json:"command"`
 	// Start is the program to start afterwards when no service starts
 	// OwnGit, and Restart asks to restart OwnGit where it runs.
-	Start   string `json:"start,omitempty"`
-	Restart bool   `json:"restart,omitempty"`
+	Start   string `json:"start"`
+	Restart bool   `json:"restart"`
+	// GuideURL explains how each install route updates, for a route
+	// without a command.
+	GuideURL string `json:"guide_url"`
 }
 
 // TrayFinding is one result of the checkup, in the language the request
@@ -72,10 +83,10 @@ type TrayUpdate struct {
 type TrayFinding struct {
 	Code    webui.MessageCode `json:"code"`
 	Message string            `json:"message"`
-	Repair  string            `json:"repair,omitempty"`
+	Repair  string            `json:"repair"`
 	// Unchecked is a check that could not run; it alone does not ask for
 	// attention.
-	Unchecked bool `json:"unchecked,omitempty"`
+	Unchecked bool `json:"unchecked"`
 }
 
 // TrayPush is one successful push.
@@ -90,6 +101,9 @@ type TrayPush struct {
 	// PushedAt is when OwnGit received the push.
 	PushedAt time.Time   `json:"pushed_at"`
 	Actor    state.Actor `json:"actor"`
+	// ActorLabel names how the push was authorized, in the language the
+	// request asked for, or the helper credential's label.
+	ActorLabel string `json:"actor_label"`
 }
 
 // trayCheckup keeps the last checkup the tray status ran.
@@ -136,15 +150,12 @@ func fromThisComputer(request *http.Request) bool {
 	if info.FromProxy || request.Header.Get("X-Forwarded-For") != "" || request.Header.Get("Forwarded") != "" {
 		return false
 	}
-	peer, err := netip.ParseAddrPort(info.Peer)
-	if err != nil {
-		return false
-	}
-	if peer.Addr().Unmap().IsLoopback() {
+	if loopbackPeer(info.Peer) {
 		return true
 	}
+	peer, err := netip.ParseAddrPort(info.Peer)
 	local, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr)
-	if !ok {
+	if err != nil || !ok {
 		return false
 	}
 	own, err := netip.ParseAddrPort(local.String())
@@ -163,13 +174,17 @@ func (app *App) trayStatus(request *http.Request) (TrayStatus, error) {
 		return TrayStatus{}, err
 	}
 	origin := app.serverOrigin(request)
+	hidden, err := app.trayHidden()
+	if err != nil {
+		return TrayStatus{}, err
+	}
 	status := TrayStatus{
-		OK: true, State: "running", Version: app.Version, DashboardURL: origin, CloneAddress: origin + "/git/",
+		OK: true, State: "running", Version: app.Version, Shown: !hidden, DashboardURL: origin, CloneAddress: origin + "/git/",
 		SetupRequired: !settings.Initialized, Findings: []TrayFinding{}, Pushes: []TrayPush{},
 	}
 	if app.Releases != nil && settings.UpdateCheck {
 		if release, newer := app.Releases.Newer(); newer {
-			status.Update = &TrayUpdate{Version: release.Version, NotesURL: release.NotesURL}
+			status.Update = &TrayUpdate{Version: release.Version, NotesURL: release.NotesURL, GuideURL: releasecheck.UpdateGuideURL}
 			if app.UpdateCommand != nil {
 				status.Update.Command, status.Update.Start, status.Update.Restart = app.UpdateCommand(release.Version)
 			}
@@ -188,7 +203,7 @@ func (app *App) trayStatus(request *http.Request) (TrayStatus, error) {
 	for _, event := range events {
 		push := TrayPush{
 			RepositoryID: event.RepositoryID, Repository: event.RepositoryName, Ref: event.Ref,
-			RefsUpdated: event.RefsUpdated, PushedAt: event.PushedAt.UTC(), Actor: event.Actor,
+			RefsUpdated: event.RefsUpdated, PushedAt: event.PushedAt.UTC(), Actor: event.Actor, ActorLabel: actorLabel(event.Actor, lang),
 		}
 		push.Branch, _ = strings.CutPrefix(event.Ref, "refs/heads/")
 		if push.Branch == event.Ref {
@@ -200,7 +215,9 @@ func (app *App) trayStatus(request *http.Request) (TrayStatus, error) {
 }
 
 // trayFindings returns the checkup of this computer, run at most once per
-// trayCheckupReuse.
+// trayCheckupReuse. The checkup runs apart from the request that asked for
+// it, so a request that ends early cannot leave checks that could not run
+// for the next minute.
 func (app *App) trayFindings(ctx context.Context) []webui.Finding {
 	if app.Diagnose == nil {
 		return nil
@@ -208,9 +225,22 @@ func (app *App) trayFindings(ctx context.Context) []webui.Finding {
 	app.trayCheckup.mu.Lock()
 	defer app.trayCheckup.mu.Unlock()
 	if app.trayCheckup.at.IsZero() || app.now().Sub(app.trayCheckup.at) >= trayCheckupReuse {
-		app.trayCheckup.findings, app.trayCheckup.at = app.Diagnose(ctx), app.now()
+		checkupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), trayCheckupTimeout)
+		defer cancel()
+		app.trayCheckup.findings, app.trayCheckup.at = app.Diagnose(checkupContext), app.now()
 	}
 	return app.trayCheckup.findings
+}
+
+// actorLabel names who made a change as the tray shows it.
+func actorLabel(actor state.Actor, lang webui.Lang) string {
+	switch actor.Kind {
+	case state.ActorAccess:
+		return webui.Text(lang, webui.MsgActorAccess)
+	case state.ActorAdministrator:
+		return webui.Text(lang, webui.MsgActorAdministrator)
+	}
+	return actor.Label
 }
 
 // RecordPush records a push that updated refs, for the tray. It is the Git
@@ -239,7 +269,10 @@ func (app *App) RecordPush(ctx context.Context, repositoryID string, updates []g
 // trayInfo is the icon block of the Settings page. A choice that cannot be
 // read is shown as such and logged, not as shown or hidden.
 func (app *App) trayInfo(request *http.Request) webui.TrayInfo {
-	info := webui.TrayInfo{Desktop: app.TrayDesktop}
+	if !app.TrayAvailable {
+		return webui.TrayInfo{Unavailable: true}
+	}
+	info := webui.TrayInfo{Desktop: app.TrayDesktop != nil && app.TrayDesktop()}
 	hidden, err := app.trayHidden()
 	if err != nil {
 		logFailure(request, "tray icon choice read", err)

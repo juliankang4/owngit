@@ -88,7 +88,7 @@ func TestTrayStatusListsPushesThroughTheServer(t *testing.T) {
 	if response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("status %d, Cache-Control %q", response.StatusCode, response.Header.Get("Cache-Control"))
 	}
-	if status.State != "attention" || status.Update == nil || status.Update.Version != "1.0.3" || status.Update.Command != "brew upgrade owngit" {
+	if status.State != "attention" || !status.Shown || status.Update == nil || status.Update.Version != "1.0.3" || status.Update.Command != "brew upgrade owngit" {
 		t.Fatalf("state %q update %+v", status.State, status.Update)
 	}
 	if status.CloneAddress != server.URL+"/git/" || status.DashboardURL != server.URL || status.Version != "1.0.2" {
@@ -104,7 +104,7 @@ func TestTrayStatusListsPushesThroughTheServer(t *testing.T) {
 	for index, push := range status.Pushes {
 		expected := want[index]
 		if push.Repository != expected.repository || push.Ref != expected.ref || push.Branch != expected.branch || push.RefsUpdated != expected.refs ||
-			push.Actor != (state.Actor{Kind: state.ActorAccess}) || push.PushedAt.Before(start.Truncate(time.Second)) {
+			push.Actor != (state.Actor{Kind: state.ActorAccess}) || push.ActorLabel != "Shared access" || push.PushedAt.Before(start.Truncate(time.Second)) {
 			t.Errorf("push %d = %+v, want %+v", index, push, expected)
 		}
 	}
@@ -193,6 +193,30 @@ func TestTrayStatusStates(t *testing.T) {
 		t.Fatalf("after a minute: runs %d, %+v", runs, status)
 	}
 
+	// A request that ends during the checkup does not end the checkup,
+	// whose result the next minute reuses.
+	now = now.Add(trayCheckupReuse)
+	ctx, cancel := context.WithCancel(context.Background())
+	var checkupCancelled bool
+	app.Diagnose = func(checkup context.Context) []webui.Finding {
+		cancel()
+		checkupCancelled = checkup.Err() != nil
+		return findings
+	}
+	trayGET(t, app.Handler(), trayTestToken, func(request *http.Request) { *request = *request.WithContext(ctx) })
+	if checkupCancelled {
+		t.Fatal("the checkup ended with the request that asked for it")
+	}
+
+	// Every field is present, also when false or empty, for clients that
+	// decode into fixed types.
+	if encoded, _ := json.Marshal(TrayFinding{}); !strings.Contains(string(encoded), `"unchecked":false`) || !strings.Contains(string(encoded), `"repair":""`) {
+		t.Errorf("a finding omits fields: %s", encoded)
+	}
+	if encoded, _ := json.Marshal(TrayUpdate{}); !strings.Contains(string(encoded), `"restart":false`) || !strings.Contains(string(encoded), `"start":""`) {
+		t.Errorf("an update omits fields: %s", encoded)
+	}
+
 	// A stored push that cannot be read makes the status unavailable, not
 	// empty and not stopped.
 	_, err := app.Repositories.Create(context.Background(), "notes", "")
@@ -220,7 +244,8 @@ func traySwitchOn(t *testing.T, body string) bool {
 // is; a hidden icon never stops Git.
 func TestSettingsSwitchShowsTheIconAgain(t *testing.T) {
 	app, store, _, server := releaseApp(t, "v1.0.3")
-	app.TrayDesktop = true
+	desktop := true
+	app.TrayAvailable, app.TrayDesktop = true, func() bool { return desktop }
 	client, jar := newBrowserClient(t)
 	body, _ := dashboardGET(t, client, server.URL+"/settings")
 	if !traySwitchOn(t, body) || !strings.Contains(body, webui.Text(webui.LangEN, webui.MsgSettingsTrayScope)) || strings.Contains(body, webui.Text(webui.LangEN, webui.MsgSettingsTrayNoDesktop)) {
@@ -261,8 +286,32 @@ func TestSettingsSwitchShowsTheIconAgain(t *testing.T) {
 	if hidden, err := state.TrayHidden(held); err != nil || hidden {
 		t.Fatalf("showing was not saved: %v %v", hidden, err)
 	}
-	app.TrayDesktop = false
+	// Asked when the page is shown, not when OwnGit started.
+	desktop = false
 	if body, _ := dashboardGET(t, client, server.URL+"/settings"); !traySwitchOn(t, body) || !strings.Contains(body, webui.Text(webui.LangEN, webui.MsgSettingsTrayNoDesktop)) {
 		t.Fatal("settings does not say that a computer without a desktop shows no icon")
+	}
+
+	// A choice that cannot be read is shown as such, not as on or off.
+	noErr(t, os.Mkdir(filepath.Join(store.Dir(), state.TrayHiddenFile), 0o700))
+	body, _ = dashboardGET(t, client, server.URL+"/settings")
+	if traySwitchOn(t, body) || !strings.Contains(body, webui.Text(webui.LangEN, webui.MsgSettingsTrayUnreadable)) {
+		t.Fatal("settings does not say that the choice could not be read")
+	}
+	noErr(t, os.Remove(filepath.Join(store.Dir(), state.TrayHiddenFile)))
+
+	// An install whose service runs as its own account offers no icon: one
+	// line, no switch, and a save is refused.
+	app.TrayAvailable = false
+	body, _ = dashboardGET(t, client, server.URL+"/settings")
+	if strings.Contains(body, `id="tray-icon"`) || !strings.Contains(body, webui.Text(webui.LangEN, webui.MsgSettingsTrayUnavailable)) ||
+		strings.Contains(body, webui.Text(webui.LangEN, webui.MsgSettingsTrayScope)) {
+		t.Fatal("settings offers the icon on an install without one")
+	}
+	if response := request(t, client, http.MethodPost, server.URL+"/settings", hide, server.URL); response.StatusCode != http.StatusConflict {
+		t.Fatalf("hiding on an install without an icon status=%d", response.StatusCode)
+	}
+	if hidden, err := state.TrayHidden(held); err != nil || hidden {
+		t.Fatalf("an install without an icon saved the choice: %v %v", hidden, err)
 	}
 }
