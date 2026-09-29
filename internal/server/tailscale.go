@@ -96,9 +96,15 @@ const loopbackProxy = "127.0.0.1"
 
 // tailscaleChangeTimeout bounds one change of sharing. A change runs to its
 // end even when the request that asked for it is cancelled, such as by a
-// closed browser tab, so that it is not left half done; each tailscale
-// command keeps its own time limit.
+// closed browser tab, so that it is not left half done, but it ends
+// tailscaleAnswerReserve before the request's own deadline, so that the
+// page still reads what it shows and answers; each call to Tailscale keeps
+// its own time limit.
 const tailscaleChangeTimeout = 2 * time.Minute
+
+// tailscaleAnswerReserve is what a change leaves of its request's time for
+// the page that answers it, at most half of what is left when it starts.
+const tailscaleAnswerReserve = 2 * time.Second
 
 // Tailscale reports and changes Tailscale sharing. The Settings page and
 // "owngit tailscale" use it with the same rules.
@@ -637,10 +643,21 @@ func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool, port int) (
 }
 
 // lock starts a change: it runs to its end even when ctx is cancelled,
-// within tailscaleChangeTimeout, and after every other change of this state
-// directory.
+// within tailscaleChangeTimeout and before ctx's deadline (see
+// tailscaleChangeTimeout), and after every other change of this state
+// directory. A call to Tailscale cut at that deadline has an unknown
+// outcome, which the change reports as such (ErrTailscaleAhead) and the next
+// change finishes or undoes.
 func (sharing *Tailscale) lock(ctx context.Context) (context.Context, func(), error) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tailscaleChangeTimeout)
+	now := time.Now()
+	deadline := now.Add(tailscaleChangeTimeout)
+	if requestDeadline, ok := ctx.Deadline(); ok {
+		answer := requestDeadline.Add(-min(tailscaleAnswerReserve, requestDeadline.Sub(now)/2))
+		if answer.Before(deadline) {
+			deadline = answer
+		}
+	}
+	ctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	sharing.changing.Lock()
 	release, err := sharing.Store.LockTailscaleChange(ctx)
 	if err != nil {

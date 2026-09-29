@@ -318,3 +318,49 @@ func TestTailscaleChangeThatWasNotKeptIsUnavailable(t *testing.T) {
 	}
 	checkLoggedSteps(t, "a change not kept", loggedFailures(serverLog, 0), "Tailscale sharing change")
 }
+
+// A change of sharing ignores a browser that goes away, but not the page's
+// deadline: a Serve write that Tailscale holds past it is cut there, and the
+// page answers in full before the connection's deadline that the change may
+// already be in Tailscale, keeping the pending record so the next change
+// finishes or undoes it. A fast write still succeeds.
+func TestTailscaleWriteHeldPastThePageDeadlineStillGetsAnAnswer(t *testing.T) {
+	post := func(t *testing.T, delay time.Duration) (*App, *tailscaletest.Fake, browserHTTPResult, time.Duration) {
+		t.Helper()
+		app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), WriteDelay: int(delay / time.Millisecond)})
+		app.HTTPTimeout = verifiedPage
+		client, base, csrf, _ := networkSettingsClient(t, app)
+		started := time.Now()
+		result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false), base)
+		return app, fake, result, time.Since(started)
+	}
+	t.Run("fast", func(t *testing.T) {
+		app, _, result, _ := post(t, 0)
+		if result.status != http.StatusSeeOther {
+			t.Fatalf("status=%d body=%s", result.status, result.body)
+		}
+		if _, _, _, record := savedSharing(t, app.Store); record == nil || !record.Confirmed {
+			t.Fatalf("record=%+v", record)
+		}
+	})
+	t.Run("held past the page deadline", func(t *testing.T) {
+		app, fake, result, elapsed := post(t, verifiedPage+2*time.Second)
+		if result.status != http.StatusServiceUnavailable || !strings.Contains(result.body, enText(webui.MsgTSNotSavedAhead)) || elapsed >= verifiedPage {
+			t.Fatalf("status=%d after %v, body=%s", result.status, elapsed, result.body)
+		}
+		if _, _, _, record := savedSharing(t, app.Store); record == nil || record.Confirmed || !record.Created {
+			t.Fatalf("pending record=%+v", record)
+		}
+		// Tailscale kept the write after all; turning on again finishes it.
+		for deadline := time.Now().Add(hangBound); !fake.State().Wrote; time.Sleep(20 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("the held write never took effect")
+			}
+		}
+		fake.Update(func(s *tailscaletest.State) { s.WriteDelay = 0 })
+		change, err := app.Tailscale.On(context.Background(), nil, 0)
+		if err != nil || change.Endpoint != endpointKept || !change.Record.Confirmed {
+			t.Fatalf("turning on again: %+v %v", change, err)
+		}
+	})
+}

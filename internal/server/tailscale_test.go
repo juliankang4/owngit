@@ -551,20 +551,27 @@ func TestTurningOnAfterAnInterruptionKeepsThePreviousBaseURL(t *testing.T) {
 }
 
 // A request cancelled halfway, such as by a closed browser tab, does not
-// leave the change half done.
+// leave the change half done, also when its deadline has not passed.
 func TestACancelledRequestStillFinishesTheChange(t *testing.T) {
-	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := app.Tailscale.On(cancelled, nil, 0)
-	noErr(t, err)
-	if _, _, _, record := savedSharing(t, app.Store); record == nil || !record.Confirmed {
-		t.Fatalf("record after a cancelled request: %+v", record)
-	}
-	_, err = app.Tailscale.Off(cancelled)
-	noErr(t, err)
-	if len(fake.Writes()) != 2 {
-		t.Fatalf("writes=%q", fake.Writes())
+	for name, deadline := range map[string]time.Duration{"no deadline": 0, "deadline not passed": time.Minute} {
+		t.Run(name, func(t *testing.T) {
+			app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+			cancelled, cancel := context.WithCancel(context.Background())
+			if deadline > 0 {
+				cancelled, cancel = context.WithTimeout(context.Background(), deadline)
+			}
+			cancel()
+			_, err := app.Tailscale.On(cancelled, nil, 0)
+			noErr(t, err)
+			if _, _, _, record := savedSharing(t, app.Store); record == nil || !record.Confirmed {
+				t.Fatalf("record after a cancelled request: %+v", record)
+			}
+			_, err = app.Tailscale.Off(cancelled)
+			noErr(t, err)
+			if len(fake.Writes()) != 2 {
+				t.Fatalf("writes=%q", fake.Writes())
+			}
+		})
 	}
 }
 
