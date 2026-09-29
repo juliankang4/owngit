@@ -550,14 +550,16 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 		return fmt.Errorf("prepare state schema migration: %w", err)
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
-		return fmt.Errorf("prepare state schema migration: %w", err)
-	}
+	// The restore is registered first: a statement that ctx interrupts may
+	// already have turned enforcement off when it reports the error.
 	defer func() {
 		if _, restoreErr := conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`); restoreErr != nil {
 			err = errors.Join(err, fmt.Errorf("restore foreign key enforcement after schema migration: %w", restoreErr))
 		}
 	}()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return fmt.Errorf("prepare state schema migration: %w", err)
+	}
 	// The catalog the migration must produce is built before the write
 	// transaction begins: building it runs every schema statement on an
 	// in-memory database, and other openers wait for the write lock.
