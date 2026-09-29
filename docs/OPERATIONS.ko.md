@@ -845,7 +845,7 @@ git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
 git ls-remote --heads --tags owngit
 ```
 
-브랜치나 태그를 만들거나 바꾸는 푸시는 그 이름이나 이름 속 어느 폴더가 다른 ref와 대소문자만 다르거나, 악센트 글자나 한글 음절을 적는 방식(한 글자로 적는지 여러 부분으로 나눠 적는지)만 다르거나, `ß`와 `ss`, `ı`와 `i`처럼 일부 파일 시스템이 같다고 보는 글자로만 다르면 거부합니다. 그런 파일 시스템은 두 이름을 한 파일로 저장하기 때문입니다. 예를 들어 `main` 옆의 `Main`, `release/main` 옆의 `Release/x`, 음절로 적은 `기본` 옆에 자모로 적은 `기본`이 그렇습니다. 글자 자체가 다른 이름은 다른 이름이므로 `cafe`와 `café`는 함께 있을 수 있습니다. Git에는 `OwnGit refused changing refs/heads/NAME because another branch or tag, or one of its folders, has a name that some file systems treat as the same, ...`가 나오니 확실히 다른 이름을 쓰세요.
+브랜치나 태그를 만들거나 바꾸는 푸시는 그 이름이나 이름 속 어느 폴더가 다른 ref와 대소문자만 다르거나, 악센트 글자나 한글 음절을 적는 방식(한 글자로 적는지 여러 부분으로 나눠 적는지)만 다르거나, `ß`와 `ss`, `ı`와 `i`처럼 일부 파일 시스템이 같다고 보는 글자로만 다르면 거부합니다. 그런 파일 시스템은 이런 이름이나 폴더를 같은 자리에 저장해서, 한 ref가 다른 ref를 덮어쓰거나 가릴 수 있기 때문입니다. 예를 들어 `main` 옆의 `Main`, `release/main` 옆의 `Release/x`, 음절로 적은 `기본` 옆에 자모로 적은 `기본`이 그렇습니다. 글자 자체가 다른 이름은 다른 이름이므로 `cafe`와 `café`는 함께 있을 수 있습니다. Git에는 `OwnGit refused changing refs/heads/NAME because another branch or tag, or one of its folders, has a name that some file systems treat as the same, ...`가 나오니 확실히 다른 이름을 쓰세요.
 
 이런 두 이름을 이미 가진 저장소도 있을 수 있습니다. 두 이름을 구별하는 시스템에서 복사해 온 경우가 그 예입니다. 이때는 둘 중 하나를 `git push origin --delete NAME`으로 지울 때까지 두 이름 모두 만들거나 바꾸는 푸시를 거부합니다. 이 삭제는 지정한 ref만 바꾸며 기록 보관이 켜져 있으면 그 ref의 마지막 커밋이 보관된 기록에 남습니다. 기본 브랜치는 어떤 철자로도 이렇게 지울 수 없으니 다른 쪽 이름을 지우거나 먼저 다른 기본 브랜치를 고르세요.
 
