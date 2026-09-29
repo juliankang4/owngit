@@ -46,12 +46,15 @@ func TestWindowsDestinationHoldsTheWayAndTheStage(t *testing.T) {
 }
 
 // Another account that the parent lets rename and remove what is in it can
-// neither open nor rename a held stage: the stage's owner-only access list
-// refuses it. The hold is what stops a rename by the owner itself, whom the
-// access list allows everything; the same-account tests show that
-// (TestWindowsDestinationHoldsTheWayAndTheStage). A folder made by hand
-// beside the stage is the control. The Windows test run creates the second
-// local account; without it the test is skipped.
+// neither open nor rename a held stage. Two layers act. The parent's right to
+// remove names gives that account delete access to the stage whatever the
+// stage's own access list says, and the hold's sharing mode refuses that
+// access while the stage is held; it also stops a rename by this account,
+// as the same-account tests show (TestWindowsDestinationHoldsTheWayAndTheStage).
+// The stage's owner-only access list additionally refuses ordinary opens,
+// which ask for more than delete access, so this test sees that refusal
+// first. A folder made by hand beside the stage is the control. The Windows
+// test run creates the second local account; without it the test is skipped.
 func TestWindowsAnotherAccountCannotExchangeTheStage(t *testing.T) {
 	other, as := otherAccount(t)
 	user, _, err := processIdentity()
