@@ -3,8 +3,10 @@ package state
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -112,18 +114,99 @@ func (s *Store) CheckDatabase(ctx context.Context) error {
 // schedules, recent pushes, and every setting kept in metadata other than
 // the access mode and the two password hashes.
 func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
-	// Active import runs and unconfirmed publication intents are not portable
-	// authority. Record them as interrupted before the snapshot is taken so the
-	// manifest never claims a run finished while a process stopped mid-flight.
-	if _, _, err := s.InterruptImportAuthority(ctx, time.Now().UTC()); err != nil {
-		return RecoveryState{}, fmt.Errorf("interrupt import authority before snapshot: %w", err)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	read, err := s.BeginPortableRead(ctx)
 	if err != nil {
 		return RecoveryState{}, err
 	}
-	defer tx.Rollback()
+	return read.Finish(ctx)
+}
 
+// PortableRead is a portable state snapshot in progress: a read-only
+// transaction on a connection of its own, so the store's connection stays
+// free and writers continue while it is open (write-ahead logging gives the
+// reader one unchanging view). Its first read, the repository list, fixes
+// the instant the snapshot describes. It never writes.
+type PortableRead struct {
+	db           *sql.DB
+	tx           *sql.Tx
+	repositories []Repository
+}
+
+// BeginPortableRead opens the snapshot and reads the recorded repositories.
+// Finish reads the rest; Close ends a read that is not finished.
+func (s *Store) BeginPortableRead(ctx context.Context) (*PortableRead, error) {
+	// The same driver and pragmas as the store's own connection, read-only
+	// and without an immediate transaction, which would take the write lock.
+	db := sql.OpenDB(dsnConnector{dsn: sqliteURI(filepath.Join(s.dir, databaseName), "mode=ro"), driver: s.db.Driver()})
+	db.SetMaxOpenConns(1)
+	read := &PortableRead{db: db}
+	if err := read.begin(ctx); err != nil {
+		return nil, errors.Join(err, read.Close())
+	}
+	return read, nil
+}
+
+func (read *PortableRead) begin(ctx context.Context) error {
+	var err error
+	if read.tx, err = read.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true}); err != nil {
+		return err
+	}
+	rows, err := read.tx.QueryContext(ctx, `SELECT r.id,r.name,r.description,r.created_at,COALESCE(c.attempt_sequence,0)
+		FROM repositories r LEFT JOIN repository_attempt_counters c ON c.repository_id=r.id ORDER BY r.id`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var repository Repository
+		var createdAt int64
+		if err := rows.Scan(&repository.ID, &repository.Name, &repository.Description, &createdAt, &repository.AttemptSequence); err != nil {
+			rows.Close()
+			return err
+		}
+		repository.CreatedAt = unixTime(createdAt)
+		read.repositories = append(read.repositories, repository)
+	}
+	return closeRows(rows)
+}
+
+// Repositories returns the repositories recorded at the snapshot's instant.
+func (read *PortableRead) Repositories() []Repository { return read.repositories }
+
+// Close ends the snapshot. It may be called more than once.
+func (read *PortableRead) Close() error {
+	var err error
+	if read.tx != nil {
+		err = read.tx.Rollback()
+		read.tx = nil
+	}
+	if read.db != nil {
+		err = errors.Join(err, read.db.Close())
+		read.db = nil
+	}
+	return err
+}
+
+// Finish reads the rest of the portable state from the same snapshot,
+// validates it and ends the snapshot. Live import authority is settled in
+// the copy the way a restore settles it (settleImportAuthority), so the
+// state itself is never changed and a running import continues.
+func (read *PortableRead) Finish(ctx context.Context) (RecoveryState, error) {
+	defer read.Close()
+	snapshot, err := read.finish(ctx)
+	if err != nil {
+		return RecoveryState{}, err
+	}
+	if err := read.Close(); err != nil {
+		return RecoveryState{}, err
+	}
+	return snapshot, nil
+}
+
+func (read *PortableRead) finish(ctx context.Context) (RecoveryState, error) {
+	tx := read.tx
+	if tx == nil {
+		return RecoveryState{}, errors.New("the portable state snapshot is closed")
+	}
 	values := make(map[string]string)
 	rows, err := tx.QueryContext(ctx, `SELECT key,value FROM metadata WHERE key IN ('initialized','access_mode')`)
 	if err != nil {
@@ -144,7 +227,7 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 		return RecoveryState{}, errors.New("setup is not complete")
 	}
 
-	snapshot := RecoveryState{AccessMode: values["access_mode"]}
+	snapshot := RecoveryState{AccessMode: values["access_mode"], Repositories: read.repositories}
 	passwords, err := tx.QueryContext(ctx, `SELECT kind,encoded FROM passwords ORDER BY kind`)
 	if err != nil {
 		return RecoveryState{}, err
@@ -163,25 +246,6 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 		}
 	}
 	if err := closeRows(passwords); err != nil {
-		return RecoveryState{}, err
-	}
-
-	repositories, err := tx.QueryContext(ctx, `SELECT r.id,r.name,r.description,r.created_at,COALESCE(c.attempt_sequence,0)
-		FROM repositories r LEFT JOIN repository_attempt_counters c ON c.repository_id=r.id ORDER BY r.id`)
-	if err != nil {
-		return RecoveryState{}, err
-	}
-	for repositories.Next() {
-		var repository Repository
-		var createdAt int64
-		if err := repositories.Scan(&repository.ID, &repository.Name, &repository.Description, &createdAt, &repository.AttemptSequence); err != nil {
-			repositories.Close()
-			return RecoveryState{}, err
-		}
-		repository.CreatedAt = unixTime(createdAt)
-		snapshot.Repositories = append(snapshot.Repositories, repository)
-	}
-	if err := closeRows(repositories); err != nil {
 		return RecoveryState{}, err
 	}
 	if snapshot.AdminPasswordHash == "" || (snapshot.AccessMode == "password" && snapshot.AccessPasswordHash == "") {
@@ -205,6 +269,7 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 	if err := readImportRecovery(ctx, tx, &snapshot); err != nil {
 		return RecoveryState{}, err
 	}
+	settleImportAuthority(&snapshot)
 	if err := ValidateRepositoryRecords(snapshot); err != nil {
 		return RecoveryState{}, fmt.Errorf("portable repository state is invalid: %w", err)
 	}
@@ -217,11 +282,17 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 	if err := ValidateImportRecovery(snapshot); err != nil {
 		return RecoveryState{}, fmt.Errorf("portable import state is invalid: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return RecoveryState{}, err
-	}
 	return snapshot, nil
 }
+
+// dsnConnector opens connections of driver to one database name.
+type dsnConnector struct {
+	dsn    string
+	driver driver.Driver
+}
+
+func (c dsnConnector) Connect(context.Context) (driver.Conn, error) { return c.driver.Open(c.dsn) }
+func (c dsnConnector) Driver() driver.Driver                        { return c.driver }
 
 // ErrDirectReviewRecords refuses a backup of a database that still holds
 // records of the removed built-in review. Only unreleased development builds

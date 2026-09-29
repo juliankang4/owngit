@@ -117,28 +117,17 @@ func restoreImportRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoverySta
 			return fmt.Errorf("restore import source %q: %w", source.RepositoryID, err)
 		}
 	}
+	settleImportAuthority(&snapshot)
 	for _, run := range snapshot.ImportRuns {
-		status := run.Status
-		finished := run.FinishedAt
-		message := run.Message
-		if importRunActive(status) {
-			status = ImportRunInterrupted
-			if finished.IsZero() {
-				finished = run.StartedAt
-			}
-			if message == "" {
-				message = "interrupted before restore"
-			}
-		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO import_runs(
 			id,repository_id,source_generation,authority_revision,kind,status,started_at,finished_at,cancel_requested_at,object_format,
 			refs_seen,refs_created,refs_updated,refs_unchanged,refs_divergent,refs_deleted_upstream,refs_skipped,
 			pack_bytes,http_body_bytes,head_advertised,head_symref,error_class,message,
 			lfs_detected,lfs_inspection_complete,lfs_scanned_blobs,lfs_scanned_bytes,staging_name,cleanup_error,created_at)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			run.ID, run.RepositoryID, run.SourceGeneration, run.AuthorityRevision, run.Kind, status, run.StartedAt.Unix(), finished.Unix(), nullableUnix(run.CancelRequestedAt), run.ObjectFormat,
+			run.ID, run.RepositoryID, run.SourceGeneration, run.AuthorityRevision, run.Kind, run.Status, run.StartedAt.Unix(), run.FinishedAt.Unix(), nullableUnix(run.CancelRequestedAt), run.ObjectFormat,
 			run.RefsSeen, run.RefsCreated, run.RefsUpdated, run.RefsUnchanged, run.RefsDivergent, run.RefsDeletedUpstream, run.RefsSkipped,
-			run.PackBytes, run.HTTPBodyBytes, boolInt(run.HeadAdvertised), run.HeadSymref, run.ErrorClass, message,
+			run.PackBytes, run.HTTPBodyBytes, boolInt(run.HeadAdvertised), run.HeadSymref, run.ErrorClass, run.Message,
 			run.LFSDetected, boolInt(run.LFSInspectionDone), run.LFSScannedBlobs, run.LFSScannedBytes, run.StagingName, run.CleanupError, run.CreatedAt.Unix()); err != nil {
 			return fmt.Errorf("restore import run %q: %w", run.ID, err)
 		}
@@ -167,26 +156,54 @@ func restoreImportRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoverySta
 		if err != nil {
 			return err
 		}
-		status := intent.Status
-		reason := intent.Reason
-		headOwned := intent.HeadOwned
-		if status == ImportIntentPlanning || status == ImportIntentApplied || status == ImportIntentInvalidated {
-			status = ImportIntentInvalidated
-			headOwned = false
-			if reason == "" {
-				reason = "unfinished publication authority invalidated by restore"
-			}
-		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO import_publication_intents(
 			id,repository_id,run_id,source_generation,authority_revision,status,expected_json,desired_json,observed_json,retained_json,head_symref,head_detach,head_owned,
 			receipt_json,receipt_digest,reason,created_at,updated_at)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			intent.ID, intent.RepositoryID, intent.RunID, intent.SourceGeneration, intent.AuthorityRevision, status, expected, desired, observed, retained,
-			intent.HeadSymref, intent.HeadDetach, headOwned, intent.ReceiptJSON, intent.ReceiptDigest, reason, intent.CreatedAt.Unix(), intent.UpdatedAt.Unix()); err != nil {
+			intent.ID, intent.RepositoryID, intent.RunID, intent.SourceGeneration, intent.AuthorityRevision, intent.Status, expected, desired, observed, retained,
+			intent.HeadSymref, intent.HeadDetach, intent.HeadOwned, intent.ReceiptJSON, intent.ReceiptDigest, intent.Reason, intent.CreatedAt.Unix(), intent.UpdatedAt.Unix()); err != nil {
 			return fmt.Errorf("restore import intent %q: %w", intent.ID, err)
 		}
 	}
 	return nil
+}
+
+// settleImportAuthority settles import authority that belonged to a running
+// process: an active run becomes interrupted and a planning, applied or
+// invalidated publication intent becomes invalidated without HEAD
+// ownership. Neither can continue in a restored copy. A backup applies it to
+// its copy, never to the state, so a running import carries on; a restore
+// applies it again, for backups made before backups settled it.
+func settleImportAuthority(snapshot *RecoveryState) {
+	runs := make([]ImportRun, len(snapshot.ImportRuns))
+	for index, run := range snapshot.ImportRuns {
+		if importRunActive(run.Status) {
+			run.Status = ImportRunInterrupted
+			// An active run has no finish time: the database keeps 0 and
+			// an older manifest may have none. It ends where it is known
+			// to have run.
+			if run.FinishedAt.Unix() <= 0 {
+				run.FinishedAt = run.StartedAt
+			}
+			if run.Message == "" {
+				run.Message = "interrupted before restore"
+			}
+		}
+		runs[index] = run
+	}
+	snapshot.ImportRuns = runs
+	intents := make([]ImportIntent, len(snapshot.ImportIntents))
+	for index, intent := range snapshot.ImportIntents {
+		if intent.Status == ImportIntentPlanning || intent.Status == ImportIntentApplied || intent.Status == ImportIntentInvalidated {
+			intent.Status = ImportIntentInvalidated
+			intent.HeadOwned = false
+			if intent.Reason == "" {
+				intent.Reason = "unfinished publication authority invalidated by restore"
+			}
+		}
+		intents[index] = intent
+	}
+	snapshot.ImportIntents = intents
 }
 
 // ValidateImportRecovery checks a complete snapshot's import state, including

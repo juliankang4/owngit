@@ -52,14 +52,25 @@ type faultConnector struct {
 }
 
 func (c faultConnector) Connect(context.Context) (driver.Conn, error) {
-	conn, err := c.driver.Open(c.dsn)
+	return c.Driver().Open(c.dsn)
+}
+
+// Driver injects the fault into every connection it opens, including the
+// portable snapshot's own read-only connection, which uses the store's driver.
+func (c faultConnector) Driver() driver.Driver { return faultDriver{driver: c.driver, fault: c.fault} }
+
+type faultDriver struct {
+	driver driver.Driver
+	fault  *rowFault
+}
+
+func (d faultDriver) Open(dsn string) (driver.Conn, error) {
+	conn, err := d.driver.Open(dsn)
 	if err != nil {
 		return nil, err
 	}
-	return faultConn{Conn: conn, fault: c.fault}, nil
+	return faultConn{Conn: conn, fault: d.fault}, nil
 }
-
-func (c faultConnector) Driver() driver.Driver { return c.driver }
 
 type faultConn struct {
 	driver.Conn
