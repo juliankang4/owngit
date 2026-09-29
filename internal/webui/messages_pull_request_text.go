@@ -33,7 +33,7 @@ var pullRequestTextCatalog = map[MessageCode]message{
 	MsgPRBodyField: {en: "Description", ko: "설명"},
 	MsgPRBodyHelp: {
 		en: "Optional. Markdown formatting works; images and HTML are not shown. Up to 64 KiB.",
-		ko: "선택 사항입니다. 마크다운 서식을 쓸 수 있으며 이미지와 HTML은 표시하지 않습니다. 최대 64KiB까지 쓸 수 있습니다.",
+		ko: "선택 사항입니다. 마크다운 서식을 쓸 수 있으며 이미지와 HTML은 표시하지 않습니다. 최대 64KiB입니다.",
 	},
 	MsgPRNoDescription: {en: "No description.", ko: "설명이 없습니다."},
 	MsgPRInvalidBody: {
