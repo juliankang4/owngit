@@ -11,9 +11,10 @@ name: CI
 # A pull request tests only the packages its change can affect, as chosen by
 # .github/scripts/affected-packages.sh: those whose tests contain a changed
 # package or read its files. A Markdown file outside every package tests only
-# the packages whose tests read it (every Markdown file is read by one). Any
-# other change outside every package, such as go.mod or this workflow, tests
-# every package. gofmt and go vet always cover every package.
+# the packages whose tests read it; one under testdata, node_modules or a
+# directory whose name starts with a dot, which those tests skip, tests every
+# package. Any other change outside every package, such as go.mod or this
+# workflow, tests every package. gofmt and go vet always cover every package.
 #
 # Full runs test every package: once a day at an off-peak hour, which catches
 # tests that fail only now and then, and when started by hand, which a release
