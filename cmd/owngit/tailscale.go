@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"owngit/internal/apiclient"
-	"owngit/internal/bidi"
 	"owngit/internal/server"
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
@@ -450,15 +449,16 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 	}
 }
 
-// printJSON prints value as indented JSON, with direction controls escaped
-// like every JSON result.
+// printJSON prints value as indented JSON through writeJSON, so direction
+// controls are escaped like in every JSON result. It is never HTML, so &, <
+// and > in a command or URL stay readable.
 func printJSON(value any) error {
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(value); err != nil {
-		return err
+		return &apiclient.Error{Code: "output_failed", Message: "The JSON result could not be encoded.", Cause: err}
 	}
-	_, err := os.Stdout.Write(bidi.EscapeJSON(output.Bytes()))
-	return err
+	return writeJSON(output.Bytes())
 }

@@ -324,6 +324,13 @@ func TestCLIJSONEscapesDirectionControls(t *testing.T) {
 	if printed != `{"title":"a\u202eb\u2066c"}`+"\n" {
 		t.Fatalf("printed %q", printed)
 	}
+	// Indented results, as owngit update, network and tailscale print them,
+	// go through the same writer and keep a command's & and > readable.
+	printed, err = captureStdout(func() error { return printJSON(struct{ Command string }{"a\u202eb && c > d"}) })
+	noErr(t, err)
+	if printed != "{\n  \"Command\": \"a\\u202eb && c > d\"\n}\n" {
+		t.Fatalf("printed %q", printed)
+	}
 	var output bytes.Buffer
 	writeStructuredCommandError(&output, cliProblem("invalid_title", "Refused \u202etitle"))
 	if strings.IndexFunc(output.String(), bidi.Control) >= 0 || !strings.Contains(output.String(), `Refused \u202etitle`) {
