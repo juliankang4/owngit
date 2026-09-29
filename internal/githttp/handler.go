@@ -43,6 +43,11 @@ type Handler struct {
 	// OnReceive wakes check reconciliation after git-receive-pack exits. It is
 	// advisory and must never change the already completed Git response.
 	OnReceive func(string)
+	// OnPush runs after a push updated at least one ref, with the refs it
+	// updated in the order Git reported them. It runs once the response is
+	// complete, and must never change it. A push that updated no ref, and
+	// one whose report did not reach the client complete, does not run it.
+	OnPush func(ctx context.Context, repositoryID string, updates []RefUpdate)
 	// Limits returns the limits of a transfer that starts now. New reads
 	// the ones the owner saved (state.GitTransferLimits), so a change
 	// applies to the next transfer. A transfer whose limits cannot be read
@@ -334,12 +339,15 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	network.onEnd = committed.requestBodyEnded
 	defer committed.stop()
 	var report *pushReport
+	var commands *pushCommands
 	var observer io.Writer
 	var quarantinesBefore []string
 	quarantinesListed := false
 	if route.service == "git-receive-pack" && request.Method == http.MethodPost {
 		report = &pushReport{}
 		observer = report
+		commands = &pushCommands{}
+		input.tee = commands
 		var listErr error
 		quarantinesBefore, listErr = repository.IncomingQuarantines(repositoryPath)
 		quarantinesListed = listErr == nil
@@ -361,6 +369,11 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		report.scan(stderr)
 		inBand = report.reason()
 		refsUnchanged = err == nil && !consumeFailed.Load() && report.refsUnchanged()
+		// Deferred, so it runs after the response is complete and before
+		// the repository lock is released.
+		if updates := report.updates(commands); len(updates) > 0 && h.OnPush != nil {
+			defer h.OnPush(context.WithoutCancel(request.Context()), route.repositoryID, updates)
+		}
 	}
 	if err == nil {
 		// Make sure the end of the response went out while the transfer still
@@ -550,6 +563,8 @@ func (body *gzipBody) Close() error {
 // complete.
 type observedBody struct {
 	io.ReadCloser
+	// tee, when set, receives every byte that Read returns.
+	tee       io.Writer
 	stop      context.CancelCauseFunc
 	closed    chan struct{}
 	closeOnce sync.Once
@@ -571,6 +586,9 @@ func (body *observedBody) Read(buffer []byte) (int, error) {
 			// Withhold bytes read together with the error.
 			return 0, err
 		}
+	}
+	if n > 0 && body.tee != nil {
+		_, _ = body.tee.Write(buffer[:n])
 	}
 	return n, err
 }

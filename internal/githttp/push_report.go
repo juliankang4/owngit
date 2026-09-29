@@ -35,6 +35,8 @@ type pushReport struct {
 	ended          bool
 	accepted       bool
 	mayHaveWritten bool
+	// acceptedRefs names each ref of an "ok" line, in the report's order.
+	acceptedRefs []string
 }
 
 func (report *pushReport) Write(content []byte) (int, error) {
@@ -114,6 +116,7 @@ func (report *pushReport) status(line []byte) {
 		}
 	case bytes.HasPrefix(line, []byte("ok ")):
 		report.accepted = true
+		report.acceptedRefs = append(report.acceptedRefs, string(line[len("ok "):]))
 	case bytes.HasPrefix(line, []byte("ng ")):
 		report.refusedRefs = true
 		report.scan(line)
@@ -192,4 +195,106 @@ func (report *pushReport) reason() string {
 	default:
 		return "Git backend reported a fatal error"
 	}
+}
+
+// RefUpdate is a ref that a push updated. Old is "" when the push created
+// the ref, and New is "" when it deleted it.
+type RefUpdate struct {
+	Ref, Old, New string
+}
+
+// pushCommands reads the ref update commands at the start of a receive-pack
+// request, "<old> <new> <ref>" packets up to the first flush packet, as the
+// backend reads the request. It keeps at most one incomplete packet and the
+// commands themselves, which receive-pack also holds for the same request.
+type pushCommands struct {
+	pending []byte
+	done    bool
+	byRef   map[string]RefUpdate
+}
+
+func (commands *pushCommands) Write(content []byte) (int, error) {
+	if commands.done {
+		return len(content), nil
+	}
+	buffer := append(commands.pending, content...)
+	for !commands.done && len(buffer) >= 4 {
+		length, err := strconv.ParseUint(string(buffer[:4]), 16, 16)
+		switch {
+		case err != nil || length < 4 || length > maximumPacket:
+			// A flush packet ends the commands; anything else is not a
+			// command list.
+			commands.done = true
+		case len(buffer) < int(length):
+			commands.pending = append([]byte(nil), buffer...)
+			return len(content), nil
+		default:
+			commands.command(buffer[4:length])
+			buffer = buffer[length:]
+		}
+	}
+	commands.pending = nil
+	if !commands.done {
+		commands.pending = append([]byte(nil), buffer...)
+	}
+	return len(content), nil
+}
+
+// command notes one packet that is a ref update command. The first command
+// carries the capabilities after a NUL byte. Other packets, such as
+// "shallow" lines and the header of a push certificate, are not commands.
+func (commands *pushCommands) command(payload []byte) {
+	payload, _, _ = bytes.Cut(payload, []byte{0})
+	fields := bytes.SplitN(bytes.TrimSuffix(payload, []byte("\n")), []byte(" "), 3)
+	if len(fields) != 3 || !objectID(fields[0]) || !objectID(fields[1]) || len(fields[2]) == 0 {
+		return
+	}
+	ref := string(fields[2])
+	if _, seen := commands.byRef[ref]; seen {
+		return
+	}
+	if commands.byRef == nil {
+		commands.byRef = map[string]RefUpdate{}
+	}
+	commands.byRef[ref] = RefUpdate{Ref: ref, Old: presentObject(fields[0]), New: presentObject(fields[1])}
+}
+
+// objectID reports whether value is a SHA-1 or SHA-256 object ID as Git
+// writes it.
+func objectID(value []byte) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// presentObject returns the object ID, or "" for the all-zero ID with which
+// a command names a ref that does not exist.
+func presentObject(value []byte) string {
+	if len(bytes.Trim(value, "0")) == 0 {
+		return ""
+	}
+	return string(value)
+}
+
+// updates returns the refs the push updated: each ref that a complete
+// report accepted, with the command the request gave for it, in the
+// report's order. receive-pack reports only the refs it was asked to
+// update, so every accepted ref has a command.
+func (report *pushReport) updates(commands *pushCommands) []RefUpdate {
+	if !report.unpackSeen || !report.ended || report.stopped {
+		return nil
+	}
+	var updates []RefUpdate
+	for _, ref := range report.acceptedRefs {
+		if update, found := commands.byRef[ref]; found {
+			updates = append(updates, update)
+		}
+	}
+	return updates
 }
