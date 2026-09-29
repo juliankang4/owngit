@@ -5,7 +5,7 @@ The files here are inputs for `tools/release`. They produce portable archives, n
 ## Layout
 
 - `archive/README.txt.tmpl` is placed in every portable archive.
-- `container/` holds the container image: `Dockerfile`, `compose.yaml`, and `context.sh`, which prepares the build context from the release's Linux archives after checking them against `SHA256SUMS`. The `container publish` workflow builds and publishes the image; see [Releases in CONTRIBUTING.md](../CONTRIBUTING.md#releases).
+- `container/` holds the container image: `Dockerfile`, `compose.yaml`, and `context.sh`, which prepares the build context from the release's Linux archives after checking them against `SHA256SUMS`. The `container publish` workflow builds and publishes the image; see [Releases in docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#releases).
 - `installer/` holds the one-line installers, `install.sh` for Linux and macOS and `install.ps1` for Windows. `build` copies them unchanged into its output folder, so every release carries the same files. Their tests are `tools/release/installer_test.go`.
 - `macos/` contains the AppKit launcher, the prototype `Info.plist`, and the app instructions.
 - `linux/` contains the Debian control file, the desktop entry, and the package instructions.
