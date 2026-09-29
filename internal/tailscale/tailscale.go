@@ -204,7 +204,9 @@ type Status struct {
 	CertDomains []string
 	// Version is the daemon's version.
 	Version string
-	// Addresses are this computer's own Tailscale IP addresses.
+	// Addresses are this computer's own Tailscale IP addresses, as Tailscale
+	// reports them. A control server such as Headscale can give addresses
+	// outside Tailscale's ranges (InTailnetRange).
 	Addresses []netip.Addr
 }
 
@@ -297,7 +299,7 @@ func (command Command) Status(ctx context.Context) (Status, error) {
 		}
 	}
 	for _, text := range addresses {
-		if addr, err := netip.ParseAddr(text); err == nil && InTailnetRange(addr) {
+		if addr, err := netip.ParseAddr(text); err == nil {
 			status.Addresses = append(status.Addresses, addr.Unmap())
 		}
 	}

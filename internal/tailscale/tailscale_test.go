@@ -397,8 +397,9 @@ func TestEndpointTellsOwnGitsFromEverythingElse(t *testing.T) {
 	}
 }
 
-// Only Tailscale's address ranges count as tailnet addresses, and only
-// such addresses of this computer are kept from its status.
+// Only Tailscale's address ranges count as tailnet addresses. The status
+// keeps every address Tailscale reports for this computer, also outside
+// those ranges, as a control server such as Headscale can give.
 func TestTailnetAddresses(t *testing.T) {
 	for address, want := range map[string]bool{
 		"100.64.0.1": true, "100.127.255.254": true, "::ffff:100.100.1.2": true, "fd7a:115c:a1e0::1": true, "fd7a:115c:a1e0:ab12::9": true,
@@ -409,10 +410,10 @@ func TestTailnetAddresses(t *testing.T) {
 		}
 	}
 	state := tailscaletest.State{Status: tailscaletest.Running()}
-	state.Status.Self.TailscaleIPs = []string{"100.64.0.7", "not an address", "192.168.1.5"}
+	state.Status.Self.TailscaleIPs = []string{"100.64.0.7", "not an address", "10.1.2.3"}
 	fake := tailscaletest.New(t, state)
 	status, err := fake.Command().Status(context.Background())
-	if err != nil || !reflect.DeepEqual(status.Addresses, []netip.Addr{netip.MustParseAddr("100.64.0.7")}) {
+	if err != nil || !reflect.DeepEqual(status.Addresses, []netip.Addr{netip.MustParseAddr("100.64.0.7"), netip.MustParseAddr("10.1.2.3")}) {
 		t.Fatalf("addresses=%v err=%v", status.Addresses, err)
 	}
 }

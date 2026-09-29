@@ -41,7 +41,10 @@ func arriving(t *testing.T, app *App, handler http.Handler, local, peer string) 
 // HTTP. The same request on the LAN, from this computer, to an address in
 // the range that Tailscale does not list (another private network), or
 // from a tailnet device that is a trusted proxy is not, whatever
-// forwarding headers the proxy sent, valid or not.
+// forwarding headers the proxy sent, valid or not. Neither is a request to an
+// address outside Tailscale's ranges that Tailscale lists for this computer,
+// as a control server such as Headscale can give: the label says that
+// Tailscale carried the request.
 func TestTheConnectionLabelNamesTheTailnet(t *testing.T) {
 	proxy := func(header ...string) http.Header {
 		values := http.Header{}
@@ -63,6 +66,7 @@ func TestTheConnectionLabelNamesTheTailnet(t *testing.T) {
 		{"an address Tailscale does not list", "100.64.0.8:7654", "100.64.0.9:50123", nil, false},
 		{"this computer at its own Tailscale address", tailscaletest.IPv4 + ":7654", tailscaletest.IPv4 + ":50123", nil, false},
 		{"a device outside the tailnet ranges", tailscaletest.IPv4 + ":7654", "192.168.1.9:50123", nil, false},
+		{"an own address outside the tailnet ranges", "10.1.2.3:7654", "10.1.2.9:50123", nil, false},
 		{"a tailnet proxy that forwarded plain HTTP", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", proxy("X-Forwarded-Proto", "http"), false},
 		{"a tailnet proxy without forwarding headers", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", proxy(), false},
 		{"a tailnet proxy with an invalid scheme", tailscaletest.IPv4 + ":7654", "100.64.0.9:50123", proxy("X-Forwarded-Proto", "gopher"), false},
@@ -71,7 +75,9 @@ func TestTheConnectionLabelNamesTheTailnet(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			app, _ := withTailscale(t, newUnacknowledgedApp(t), tailscaletest.State{Status: tailscaletest.Running()})
+			state := tailscaletest.State{Status: tailscaletest.Running()}
+			state.Status.Self.TailscaleIPs = append(state.Status.Self.TailscaleIPs, "10.1.2.3")
+			app, _ := withTailscale(t, newUnacknowledgedApp(t), state)
 			readAddresses(t, app)
 			if test.proxy != nil {
 				app.Network = NewLiveNetwork(LiveNetworkConfig{Proxies: []netip.Prefix{netip.MustParsePrefix("100.64.0.9/32")}, Hosts: app.Hosts})
