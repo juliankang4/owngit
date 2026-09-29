@@ -215,3 +215,24 @@ func TestVerifyChecksOlderFormatsTheSameWay(t *testing.T) {
 		t.Fatalf("result=%+v", result)
 	}
 }
+
+// A manifest that fails validation lists no repositories, so nothing it
+// holds, such as terminal control characters in a repository ID, reaches the
+// result.
+func TestVerifyShowsNothingFromAnInvalidManifest(t *testing.T) {
+	root := t.TempDir()
+	backup := newTwoRepositoryBackup(t, root)
+	manifestPath := filepath.Join(backup, manifestName)
+	manifest, err := readManifest(manifestPath)
+	noErr(t, err)
+	manifest.Repositories[0].ID = "\x1b]0;title\a\x1b[31m"
+	file, err := os.OpenFile(manifestPath, os.O_WRONLY|os.O_TRUNC, 0)
+	noErr(t, err)
+	noErr(t, writeManifest(file, manifest))
+	noErr(t, file.Close())
+
+	result, err := Verify(context.Background(), backup, t.TempDir(), "")
+	if err == nil || result.Verified || len(result.Repositories) != 0 || result.Version != 0 || strings.ContainsRune(result.Error, 0x1b) {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}

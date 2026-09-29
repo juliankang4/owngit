@@ -578,11 +578,13 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	if err != nil {
 		return err
 	}
-	rehearsal := operations.rehearsal
-	rehearsal.begin(manifest)
 	if err := validateManifest(manifest); err != nil {
 		return err
 	}
+	// Only a valid manifest is reported: its repository IDs are then
+	// portable names, safe to show.
+	rehearsal := operations.rehearsal
+	rehearsal.begin(manifest)
 	// Every repository is checked, and each failure is named, before
 	// restore stops.
 	var failures []error

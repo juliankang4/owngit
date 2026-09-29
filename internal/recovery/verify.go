@@ -24,7 +24,8 @@ type Verification struct {
 	Backup   string `json:"backup"`
 	Verified bool   `json:"verified"`
 	Error    string `json:"error,omitempty"`
-	// Version and CreatedAt are the manifest's, once it was read.
+	// Version, CreatedAt and Repositories come from the manifest once it
+	// was validated.
 	Version      int                      `json:"version,omitempty"`
 	CreatedAt    *time.Time               `json:"created_at,omitempty"`
 	Repositories []RepositoryVerification `json:"repositories"`
@@ -106,7 +107,8 @@ func rehearse(ctx context.Context, result *Verification, input, scratch, gitPath
 	return nil
 }
 
-// begin records what the manifest holds, each repository not checked yet.
+// begin records what the validated manifest holds, each repository not
+// checked yet.
 func (v *Verification) begin(manifest Manifest) {
 	if v == nil {
 		return
