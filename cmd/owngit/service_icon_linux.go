@@ -37,7 +37,12 @@ func (host *serviceHost) installIcon(mode service.Mode, stateDir string, headles
 		return
 	}
 	found, err := service.ReadAutostart(path)
-	if err == nil && found == service.AutostartForeign {
+	if err != nil {
+		// A file OwnGit could not read may be someone else's; it stays.
+		host.printf("The OwnGit icon does not start at sign-in: %s could not be read (%v), so it stays.\n", path, err)
+		return
+	}
+	if found == service.AutostartForeign {
 		host.printf("The OwnGit icon does not start at sign-in: %s was not written by OwnGit, so it stays.\n", path)
 		return
 	}

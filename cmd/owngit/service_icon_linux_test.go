@@ -47,6 +47,19 @@ func TestServiceInstallRegistersTheIconAtSignIn(t *testing.T) {
 	}
 	noErr(t, os.Remove(path))
 
+	// A file that cannot be read may be someone else's: it stays too.
+	if os.Geteuid() != 0 {
+		noErr(t, os.WriteFile(path, []byte("[Desktop Entry]\nExec=unreadable\n"), 0o644))
+		noErr(t, os.Chmod(path, 0))
+		fixture.out.Reset()
+		fixture.host.installIcon(service.ModeUser, stateDir, false)
+		noErr(t, os.Chmod(path, 0o644))
+		if kept, _ := os.ReadFile(path); string(kept) != "[Desktop Entry]\nExec=unreadable\n" || !strings.Contains(fixture.out.String(), path+" could not be read") || strings.Contains(fixture.out.String(), "when you sign in") {
+			t.Fatalf("an unreadable entry: %q\n%s", kept, fixture.out.String())
+		}
+		noErr(t, os.Remove(path))
+	}
+
 	fixture.host.installIcon(service.ModeUser, stateDir, false)
 	fixture.out.Reset()
 	fixture.host.removeIcon(true)
