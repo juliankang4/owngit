@@ -183,7 +183,28 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 }
 
 func (app *App) handlePullRequestGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64) {
-	app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, nil, nil, pullRequestDrafts{}, http.StatusOK)
+	app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, nil, nil, pullRequestDrafts{}, nil, http.StatusOK)
+}
+
+// handlePullRequestMergeability answers Check mergeability on the page where
+// it was pressed. The answer is shown once and kept nowhere, so opening or
+// reloading the pull request page never works out a merge.
+func (app *App) handlePullRequestMergeability(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64) {
+	if !app.parseForm(writer, request) {
+		return
+	}
+	if !app.requireCSRF(writer, request) {
+		return
+	}
+	expected := pullrequest.RevisionInput{SourceOID: postValue(request, "source_oid"), TargetOID: postValue(request, "target_oid")}
+	answer, err := app.pullRequestMergeability(request, stored.ID, number, expected)
+	writer.Header().Set("Cache-Control", "no-store")
+	if err != nil {
+		notice, status := browserPullRequestProblem(request, "pull request mergeability", err, "mergeability")
+		app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, []webui.Notice{notice}, nil, pullRequestDrafts{}, nil, status)
+		return
+	}
+	app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, []webui.Notice{}, nil, pullRequestDrafts{}, answer, http.StatusOK)
 }
 
 // pullRequestDrafts are the forms a refused change shows again, open and
@@ -270,14 +291,14 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 		if action == "merge" {
 			blockers = browserMergeProblemBlockers(err)
 		}
-		app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, []webui.Notice{problemNotice}, blockers, drafts, status)
+		app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, []webui.Notice{problemNotice}, blockers, drafts, nil, status)
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")
 	app.noticeRedirect(writer, request, pullRequestURL(stored.ID, view.Number)+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }
 
-func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, view *pullrequest.View, notices []webui.Notice, extraBlockers []webui.MergeBlocker, drafts pullRequestDrafts, status int) {
+func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, view *pullrequest.View, notices []webui.Notice, extraBlockers []webui.MergeBlocker, drafts pullRequestDrafts, answer *pullrequest.Mergeability, status int) {
 	if view == nil {
 		var err error
 		view, err = app.PullRequests.Show(request.Context(), stored.ID, number)
@@ -367,6 +388,10 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 		page.ReviewSkipURL = self + "/review/skip"
 		page.ReviewSubmitURL = self + "/review/submit"
 		page.MergeURL = self + "/merge"
+		page.MergeabilityURL = self + "/mergeability"
+		if answer != nil {
+			page.Mergeability = browserMergeability(answer, page.Source, page.Target)
+		}
 	}
 	// Closing needs no branch, so it stays available after the source branch
 	// was deleted, which is a common reason to close.
@@ -458,6 +483,21 @@ func (app *App) pullRequestText(ctx context.Context, repositoryID, targetBranch,
 	// address itself, which is what makes this conversion safe.
 	result.HTML = template.HTML(rendered)
 	return result
+}
+
+// browserMergeability shows answer for the commits the page shows. The page
+// reads the branches again after the answer, so an answer about other
+// commits is shown as stale rather than as an answer about these.
+func browserMergeability(answer *pullrequest.Mergeability, source, target webui.RevisionState) *webui.MergeabilityAnswer {
+	shown := &webui.MergeabilityAnswer{
+		Status: answer.Status, Method: answer.Method, Reason: answer.Reason,
+		ConflictPaths: answer.ConflictPaths, ConflictPathsTruncated: answer.ConflictPathsTruncated,
+		ShortSourceOID: source.ShortOID, ShortTargetOID: target.ShortOID,
+	}
+	if answer.Source.OID != source.OID || answer.Target.OID != target.OID {
+		*shown = webui.MergeabilityAnswer{Status: webui.MergeabilityStale, ShortSourceOID: source.ShortOID, ShortTargetOID: target.ShortOID}
+	}
+	return shown
 }
 
 func browserRevision(revision pullrequest.Revision) webui.RevisionState {

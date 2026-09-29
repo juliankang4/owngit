@@ -396,6 +396,7 @@ func TestFormPagesAnswerGET(t *testing.T) {
 	for _, path := range []string{
 		"/repositories",
 		"/repositories/project/pull-requests/1/merge",
+		"/repositories/project/pull-requests/1/mergeability",
 		"/repositories/project/pull-requests/1/close",
 		"/repositories/project/pull-requests/1/reopen",
 		"/repositories/project/pull-requests/1/review/request",

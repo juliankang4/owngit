@@ -171,6 +171,14 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		query := request.URL.Query()
 		pinned := pullrequest.RevisionInput{SourceOID: query.Get("source_oid"), TargetOID: query.Get("target_oid")}
 		result, err = app.pullRequestDiff(request.Context(), repositoryID, number, pinned)
+	case "mergeability":
+		if request.Method != http.MethodGet {
+			writeAPIMethodError(writer, http.MethodGet)
+			return
+		}
+		query := request.URL.Query()
+		expected := pullrequest.RevisionInput{SourceOID: query.Get("source_oid"), TargetOID: query.Get("target_oid")}
+		result, err = app.pullRequestMergeability(request, repositoryID, number, expected)
 	case "close", "reopen":
 		if request.Method != http.MethodPost {
 			writeAPIMethodError(writer, http.MethodPost)
@@ -311,7 +319,7 @@ func parsePullRequestAPIRoute(requestPath string) (string, int64, string, bool) 
 	if len(parts) == 3 {
 		return parts[0], number, "show", true
 	}
-	if len(parts) == 4 && (parts[3] == "merge" || parts[3] == "close" || parts[3] == "reopen" || parts[3] == "diff" || parts[3] == "edit") {
+	if len(parts) == 4 && (parts[3] == "merge" || parts[3] == "close" || parts[3] == "reopen" || parts[3] == "diff" || parts[3] == "edit" || parts[3] == "mergeability") {
 		return parts[0], number, parts[3], true
 	}
 	if len(parts) == 5 && parts[3] == "review" {

@@ -146,17 +146,49 @@
            overwritten. */}}
       <input type="hidden" name="source_oid" value="{{$p.Source.OID}}">
       <input type="hidden" name="target_oid" value="{{$p.Target.OID}}">
-      <button type="submit" class="btn btn--primary"{{if not $p.Merge.Offered}} disabled{{end}}>
+      <button type="submit" class="btn btn--primary"{{if or (not $p.Merge.Offered) $p.MergeHeld}} disabled{{end}}>
         {{icon "merge"}}{{bi $lang "pr.actions.merge"}}
       </button>
+    </form>
+    {{end}}
+
+    {{/* Whether the commits merge is worked out only when asked: a page
+         view never runs a merge. The answer is about the commits this form
+         sends and is shown once, here. */}}
+    {{if and $actionable $p.MergeabilityURL}}
+    <form class="prmerge" method="post" action="{{$p.MergeabilityURL}}#mergeability">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <input type="hidden" name="source_oid" value="{{$p.Source.OID}}">
+      <input type="hidden" name="target_oid" value="{{$p.Target.OID}}">
+      <button type="submit" class="btn">{{bi $lang "pr.mergeability.check"}}</button>
     </form>
     {{end}}
   </div>
 
   {{/* What the merge control actually does, beside the control itself. */}}
   {{if and $actionable $p.MergeURL}}
-    <p class="f__help evfoot__h">{{bi $lang "pr.actions.merge_help"}}</p>
+    <p class="f__help evfoot__h">{{bi $lang "pr.actions.merge_help"}} {{bi $lang "pr.mergeability.help"}}</p>
   {{end}}
+
+  {{if $actionable}}{{with $p.Mergeability}}
+  <div class="prmergeability" id="mergeability" role="status" tabindex="-1">
+    {{if .Clean}}
+      <p class="prmergeability__ok">{{icon "check"}}<span>{{bi $lang .Note}}</span></p>
+    {{else}}
+      <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang .Note}}</span></p>
+    {{end}}
+    {{if .ConflictPaths}}
+      <ul class="prmergeability__paths">
+        {{range .ConflictPaths}}<li class="mono" dir="auto">{{.}}</li>{{end}}
+      </ul>
+      {{if .ConflictPathsTruncated}}<p class="ev__note">{{bi $lang "pr.mergeability.more_paths"}}</p>{{end}}
+    {{end}}
+    <dl class="ev__facts">
+      <div><dt>{{bi $lang "pr.source"}}</dt><dd class="mono">{{.ShortSourceOID}}</dd></div>
+      <div><dt>{{bi $lang "pr.target"}}</dt><dd class="mono">{{.ShortTargetOID}}</dd></div>
+    </dl>
+  </div>
+  {{end}}{{end}}
 
   {{/* A refusal is not a detail. It is the answer to "can I merge this", so
        it stays on the default screen with its reasons. */}}

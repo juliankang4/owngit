@@ -180,6 +180,10 @@ type PullRequestPage struct {
 	ReviewRequestURL string
 	ReviewSkipURL    string
 	MergeURL         string
+	// MergeabilityURL receives Check mergeability: csrf, source_oid and
+	// target_oid. Mergeability is its answer, on the page that asked only.
+	MergeabilityURL string
+	Mergeability    *MergeabilityAnswer
 	// CloseURL closes an open pull request and ReopenURL reopens a closed
 	// one. Each is set only in the state where it applies.
 	CloseURL  string
@@ -248,6 +252,12 @@ type ReviewDraft struct {
 	ReviewerLabel string
 	Note          string
 	Open          bool
+}
+
+// MergeHeld reports that the answer shown says merging now conflicts, so
+// the merge control is not offered for these commits.
+func (p PullRequestPage) MergeHeld() bool {
+	return p.Mergeability != nil && p.Mergeability.Conflict()
 }
 
 func (PullRequestPage) page() string     { return "pull-request" }

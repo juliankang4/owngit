@@ -14,12 +14,13 @@ import (
 var maximumDiffResponse = maximumAPIResponse
 
 // pullRequestDiffQueryAllowed accepts the optional pinned pair of a pull
-// request diff: source_oid and target_oid, each at most once.
+// request diff or mergeability check: source_oid and target_oid, each at most
+// once.
 func pullRequestDiffQueryAllowed(request *http.Request) bool {
 	if request.Method != http.MethodGet {
 		return false
 	}
-	if _, _, operation, ok := parsePullRequestAPIRoute(request.URL.Path); !ok || operation != "diff" {
+	if _, _, operation, ok := parsePullRequestAPIRoute(request.URL.Path); !ok || (operation != "diff" && operation != "mergeability") {
 		return false
 	}
 	for key, values := range request.URL.Query() {
@@ -46,6 +47,16 @@ func (app *App) pullRequestDiff(ctx context.Context, repositoryID string, number
 	diff := diffFromComparison(revisions, comparison)
 	diff.Fit(maximumDiffResponse)
 	return diff, nil
+}
+
+// pullRequestMergeability answers whether pull request number can merge now.
+// An unavailable answer's cause goes to the server log.
+func (app *App) pullRequestMergeability(request *http.Request, repositoryID string, number int64, expected pullrequest.RevisionInput) (*pullrequest.Mergeability, error) {
+	answer, err := app.PullRequests.Mergeability(request.Context(), repositoryID, number, expected)
+	if err == nil && answer.Cause != nil {
+		logFailure(request, "pull request mergeability", answer.Cause)
+	}
+	return answer, err
 }
 
 func diffFromComparison(revisions pullrequest.DiffRevisions, comparison repository.Comparison) *pullrequest.Diff {
