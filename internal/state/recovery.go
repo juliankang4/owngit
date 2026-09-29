@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -137,13 +138,39 @@ type PortableRead struct {
 func (s *Store) BeginPortableRead(ctx context.Context) (*PortableRead, error) {
 	// The same driver and pragmas as the store's own connection, read-only
 	// and without an immediate transaction, which would take the write lock.
-	db := sql.OpenDB(dsnConnector{dsn: sqliteURI(filepath.Join(s.dir, databaseName), "mode=ro"), driver: s.db.Driver()})
+	path := filepath.Join(s.dir, databaseName)
+	if err := s.sameDatabase(path); err != nil {
+		return nil, err
+	}
+	db := sql.OpenDB(dsnConnector{dsn: sqliteURI(path, "mode=ro"), driver: s.db.Driver()})
 	db.SetMaxOpenConns(1)
 	read := &PortableRead{db: db}
 	if err := read.begin(ctx); err != nil {
 		return nil, errors.Join(err, read.Close())
 	}
+	// The connection opened its file by path during its first read. The
+	// same file at the path before and after that read is the file the
+	// store opened; anything else fails.
+	if err := s.sameDatabase(path); err != nil {
+		return nil, errors.Join(err, read.Close())
+	}
 	return read, nil
+}
+
+// ErrDatabaseReplaced reports a state database path that no longer names
+// the file this store opened: the state folder was moved or replaced
+// while OwnGit ran.
+var ErrDatabaseReplaced = errors.New("the state database is no longer the file OwnGit opened; the state folder was moved or replaced while OwnGit ran. Restart OwnGit with the intended state folder")
+
+func (s *Store) sameDatabase(path string) error {
+	current, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrDatabaseReplaced, err)
+	}
+	if s.database == nil || !os.SameFile(current, s.database) {
+		return ErrDatabaseReplaced
+	}
+	return nil
 }
 
 func (read *PortableRead) begin(ctx context.Context) error {

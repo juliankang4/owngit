@@ -35,6 +35,9 @@ var ErrSetupComplete = errors.New("setup is already complete")
 type Store struct {
 	db  *sql.DB
 	dir string
+	// database identifies the database file the store opened, so a later
+	// connection to it by path can prove it reached the same file.
+	database os.FileInfo
 	// schemaUpgrade describes the upgrade this Open applied, for SchemaUpgrade.
 	schemaUpgrade string
 
@@ -213,6 +216,10 @@ func OpenIn(ctx context.Context, held *os.File, beforeUpgrade BeforeUpgrade) (re
 	if err := protectSQLiteFilesAfterOpen(path); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("protect state database file: %w", err)
+	}
+	if store.database, err = os.Stat(path); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("identify state database file: %w", err)
 	}
 	return store, nil
 }

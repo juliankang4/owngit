@@ -2,6 +2,9 @@ package state
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -78,5 +81,33 @@ func TestPortableReadLetsTheStoreWrite(t *testing.T) {
 	}
 	if _, err := read.Finish(ctx); err == nil {
 		t.Fatal("a finished snapshot was read again")
+	}
+}
+
+// A backup reads the database the store opened. When another state folder
+// takes the store's path while it runs, the snapshot refuses instead of
+// reading the other database.
+func TestPortableReadRefusesAnotherDatabaseAtThePath(t *testing.T) {
+	ctx := context.Background()
+	parent := t.TempDir()
+	serving := filepath.Join(parent, "state")
+	store, err := Open(ctx, serving)
+	noErr(t, err)
+	defer store.Close()
+	noErr(t, store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
+
+	other := filepath.Join(parent, "other")
+	replacement, err := Open(ctx, other)
+	noErr(t, err)
+	noErr(t, replacement.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
+	noErr(t, replacement.AddRepository(ctx, Repository{ID: "replacement", Name: "replacement", CreatedAt: time.Unix(1_800_000_000, 0)}))
+	noErr(t, replacement.Close())
+
+	if err := os.Rename(serving, filepath.Join(parent, "moved")); err != nil {
+		t.Skipf("this system does not let a state folder in use move: %v", err)
+	}
+	noErr(t, os.Rename(other, serving))
+	if _, err := store.BeginPortableRead(ctx); !errors.Is(err, ErrDatabaseReplaced) {
+		t.Fatalf("snapshot of a replaced state err=%v", err)
 	}
 }
