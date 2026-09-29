@@ -344,6 +344,7 @@ const (
 	MsgRepoEmptyPush        MessageCode = "repo.empty.push_hint"
 	MsgRepoCloneTitle       MessageCode = "repo.clone.title"
 	MsgRepoUnreadable       MessageCode = "repo.unreadable"
+	MsgRepoHeadUnreadable   MessageCode = "repo.head_unreadable"
 	MsgRepoPreparing        MessageCode = "repo.preparing"
 	MsgRepoPreparingDetail  MessageCode = "repo.preparing.detail"
 	MsgRepoPreparingShort   MessageCode = "repo.preparing.short"
@@ -1369,6 +1370,10 @@ var catalog = map[MessageCode]message{
 	MsgRepoUnreadable: {
 		en: "This repository's Git data could not be read.",
 		ko: "이 저장소의 Git 데이터를 읽지 못했습니다.",
+	},
+	MsgRepoHeadUnreadable: {
+		en: "The latest commit could not be read.",
+		ko: "최근 커밋을 읽지 못했습니다.",
 	},
 	MsgRepoPreparing: {
 		en: "This repository is being prepared.",

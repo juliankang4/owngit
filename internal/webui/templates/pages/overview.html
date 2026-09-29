@@ -102,6 +102,7 @@
             {{else if .Unreadable}}{{bi $lang "repo.unreadable"}}
             {{else if .Busy}}{{bi $lang "repo.busy.row"}}
             {{else if .Empty}}<span dir="auto">{{.Description}}</span>
+            {{else if .HeadUnreadable}}{{bi $lang "repo.head_unreadable"}}
             {{else if .Head.Subject}}<span dir="auto">{{.Head.Subject}}</span>
             {{else if .Description}}<span dir="auto">{{.Description}}</span>{{end}}
           </span>

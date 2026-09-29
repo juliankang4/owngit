@@ -1221,8 +1221,12 @@ func (app *App) repositorySummary(request *http.Request, stored state.Repository
 		DefaultBranchMissing: !summary.Empty && summary.DefaultBranch != "" && summary.DefaultOID == "",
 		BranchCount:          len(summary.Branches), TagCount: len(summary.Tags), Counted: true,
 	}
-	if snapshot.HeadFound {
+	switch {
+	case snapshot.HeadFound:
 		result.Head = app.commitSummary(stored.ID, "refs/heads/"+summary.DefaultBranch, snapshot.Head)
+	case snapshot.HeadErr != nil:
+		result.HeadUnreadable = true
+		logFailure(request, "latest commit read", snapshot.HeadErr)
 	}
 	return result
 }

@@ -527,8 +527,12 @@ type RepositorySummary struct {
 	// DefaultBranchMissing is true when the recorded default branch no longer
 	// resolves, for example after it was deleted.
 	DefaultBranchMissing bool
-	// Head is the latest commit. Zero when Empty.
+	// Head is the latest commit. Zero when Empty or HeadUnreadable.
 	Head CommitSummary
+	// HeadUnreadable is true when the default branch has a latest commit but
+	// its author, date or subject could not be read. The row says so rather
+	// than showing no latest commit.
+	HeadUnreadable bool
 	// BranchCount and TagCount are displayed when Counted is true.
 	BranchCount   int
 	TagCount      int

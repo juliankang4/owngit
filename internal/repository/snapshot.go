@@ -20,9 +20,13 @@ type RefSnapshot struct {
 	Summary Summary
 	// Head holds the OID, author name, author date, and subject of the default
 	// branch tip. HeadFound is false when the default branch is missing or
-	// does not point to a commit.
+	// does not point to a commit, or when HeadErr is set.
 	Head      Commit
 	HeadFound bool
+	// HeadErr says why the default branch tip, a commit, could not be read,
+	// such as a date Git cannot print. Head then holds only its OID. The refs
+	// are still listed, so the repository's other pages keep working.
+	HeadErr error
 	// ActivityKey equals the Key of an Activity observation of the same refs.
 	ActivityKey string
 	// Stale is set when RefSnapshotWithin returned the last snapshot read
@@ -75,12 +79,14 @@ func (m *Manager) readRefSnapshot(ctx context.Context, repositoryPath string) (s
 			if string(parts[3]) == "*" && len(parts) == 7 {
 				summary.DefaultBranch, summary.DefaultOID = branch.Name, oid
 				if objectType == "commit" {
+					snapshot.Head = Commit{OID: oid}
 					authored, err := ParseGitDate(parts[5])
 					if err != nil {
-						return RefSnapshot{}, false, fmt.Errorf("parse default branch author date: %w", err)
+						snapshot.HeadErr = fmt.Errorf("parse default branch author date: %w", err)
+					} else {
+						snapshot.Head = Commit{OID: oid, AuthorName: string(parts[4]), AuthoredAt: authored, Subject: string(parts[6])}
+						snapshot.HeadFound = true
 					}
-					snapshot.Head = Commit{OID: oid, AuthorName: string(parts[4]), AuthoredAt: authored, Subject: string(parts[6])}
-					snapshot.HeadFound = true
 				}
 			}
 		case strings.HasPrefix(name, "refs/tags/"):
@@ -92,8 +98,13 @@ func (m *Manager) readRefSnapshot(ctx context.Context, repositoryPath string) (s
 	summary.Empty = len(summary.Branches) == 0 && len(summary.Tags) == 0 && !hasRetained
 	snapshot.ActivityKey = activityKey(keyed)
 	if snapshot.HeadFound && !sameAsLog(snapshot.Head) {
+		// A failure here may be transient, so the snapshot is not cached.
 		metadata, err := commitMetadataByOID(ctx, m.Git, repositoryPath, []string{snapshot.Head.OID})
-		snapshot.Head, snapshot.HeadFound = metadata[snapshot.Head.OID], err == nil
+		if err != nil {
+			snapshot.Head, snapshot.HeadFound, snapshot.HeadErr = Commit{OID: snapshot.Head.OID}, false, err
+		} else {
+			snapshot.Head = metadata[snapshot.Head.OID]
+		}
 		complete = err == nil
 	}
 	if summary.DefaultBranch == "" {
