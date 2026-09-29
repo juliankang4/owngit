@@ -123,6 +123,7 @@ const (
 	MsgImportErrorPublish       MessageCode = "import.error.publish_failed"
 	MsgImportErrorLFS           MessageCode = "import.error.git_lfs_required"
 	MsgImportErrorDestination   MessageCode = "import.error.destination_changed"
+	MsgImportErrorProtected     MessageCode = "import.error.protected_default_branch"
 	MsgImportErrorUnresolved    MessageCode = "import.error.publication_unresolved"
 	MsgImportErrorSuperseded    MessageCode = "import.error.superseded"
 	MsgImportErrorInterrupted   MessageCode = "import.error.interrupted"
@@ -271,36 +272,40 @@ var importCatalog = map[MessageCode]message{
 	MsgImportErrorPublish:       {en: "The imported refs could not be published.", ko: "가져온 ref를 게시하지 못했습니다."},
 	MsgImportErrorLFS:           {en: "The source uses Git LFS. Accept Git-only content to import it.", ko: "원본이 Git LFS를 사용합니다. 가져오려면 Git 내용만 받기를 선택하세요."},
 	MsgImportErrorDestination:   {en: "The destination repository changed during the import.", ko: "가져오는 동안 대상 저장소가 바뀌었습니다."},
-	MsgImportErrorUnresolved:    {en: "The publication result is uncertain and needs attention.", ko: "게시 결과가 확실하지 않아 확인이 필요합니다."},
-	MsgImportErrorSuperseded:    {en: "A newer source setting replaced this run.", ko: "새 원본 설정이 이 실행을 대신했습니다."},
-	MsgImportErrorInterrupted:   {en: "The run was interrupted when OwnGit stopped.", ko: "OwnGit이 멈추면서 실행이 중단되었습니다."},
-	MsgImportErrorState:         {en: "OwnGit could not read or record import state.", ko: "OwnGit이 가져오기 상태를 읽거나 기록하지 못했습니다."},
-	MsgImportErrorRuntime:       {en: "The import workspace is not available.", ko: "가져오기 작업 공간을 사용할 수 없습니다."},
-	MsgImportErrorUnsupported:   {en: "The source or destination uses a feature that import does not support.", ko: "원본이나 대상이 가져오기에서 지원하지 않는 기능을 사용합니다."},
-	MsgImportErrorLimit:         {en: "The import reached its time limit.", ko: "가져오기가 시간 제한에 도달했습니다."},
-	MsgImportName:               {en: "Name", ko: "이름"},
-	MsgImportDescription:        {en: "Description", ko: "설명"},
-	MsgImportListLink:           {en: "Import a repository", ko: "저장소 가져오기"},
-	MsgImportKindInitial:        {en: "Initial", ko: "처음 가져오기"},
-	MsgImportKindRefresh:        {en: "Refresh", ko: "새로고침"},
-	MsgImportKindScheduled:      {en: "Scheduled", ko: "예약"},
-	MsgImportStatusPreparing:    {en: "Preparing", ko: "준비 중"},
-	MsgImportStatusFetching:     {en: "Fetching", ko: "받는 중"},
-	MsgImportStatusIndexing:     {en: "Indexing", ko: "색인 중"},
-	MsgImportStatusInspecting:   {en: "Inspecting", ko: "검사 중"},
-	MsgImportStatusPublishing:   {en: "Publishing", ko: "게시 중"},
-	MsgImportStatusComplete:     {en: "Complete", ko: "완료"},
-	MsgImportStatusFailed:       {en: "Failed", ko: "실패"},
-	MsgImportStatusCancelled:    {en: "Cancelled", ko: "취소됨"},
-	MsgImportStatusSuperseded:   {en: "Superseded", ko: "대체됨"},
-	MsgImportStatusInterrupted:  {en: "Interrupted", ko: "중단됨"},
-	MsgImportStatusUnresolved:   {en: "Unresolved", ko: "미해결"},
-	MsgImportRefTracked:         {en: "Tracked", ko: "원본과 같음"},
-	MsgImportRefDiverged:        {en: "Diverged", ko: "원본과 다름"},
-	MsgImportRefAbsent:          {en: "Absent locally", ko: "OwnGit에 없음"},
-	MsgImportRefEarlier:         {en: "Earlier source", ko: "예전 원본 기록"},
-	MsgImportRefUnknown:         {en: "Local unknown", ko: "OwnGit 쪽 확인 못 함"},
-	MsgImportRefDeleted:         {en: "Deleted at source", ko: "원본에서 삭제됨"},
+	MsgImportErrorProtected: {
+		en: "The source rewrote the protected default branch, so nothing was changed. To follow the source, turn off the protection in the repository's Settings tab and refresh again.",
+		ko: "원본이 보호된 기본 브랜치를 다시 써서 아무것도 바꾸지 않았습니다. 원본을 따르려면 저장소 설정 탭에서 보호를 끄고 다시 새로 받으세요.",
+	},
+	MsgImportErrorUnresolved:   {en: "The publication result is uncertain and needs attention.", ko: "게시 결과가 확실하지 않아 확인이 필요합니다."},
+	MsgImportErrorSuperseded:   {en: "A newer source setting replaced this run.", ko: "새 원본 설정이 이 실행을 대신했습니다."},
+	MsgImportErrorInterrupted:  {en: "The run was interrupted when OwnGit stopped.", ko: "OwnGit이 멈추면서 실행이 중단되었습니다."},
+	MsgImportErrorState:        {en: "OwnGit could not read or record import state.", ko: "OwnGit이 가져오기 상태를 읽거나 기록하지 못했습니다."},
+	MsgImportErrorRuntime:      {en: "The import workspace is not available.", ko: "가져오기 작업 공간을 사용할 수 없습니다."},
+	MsgImportErrorUnsupported:  {en: "The source or destination uses a feature that import does not support.", ko: "원본이나 대상이 가져오기에서 지원하지 않는 기능을 사용합니다."},
+	MsgImportErrorLimit:        {en: "The import reached its time limit.", ko: "가져오기가 시간 제한에 도달했습니다."},
+	MsgImportName:              {en: "Name", ko: "이름"},
+	MsgImportDescription:       {en: "Description", ko: "설명"},
+	MsgImportListLink:          {en: "Import a repository", ko: "저장소 가져오기"},
+	MsgImportKindInitial:       {en: "Initial", ko: "처음 가져오기"},
+	MsgImportKindRefresh:       {en: "Refresh", ko: "새로고침"},
+	MsgImportKindScheduled:     {en: "Scheduled", ko: "예약"},
+	MsgImportStatusPreparing:   {en: "Preparing", ko: "준비 중"},
+	MsgImportStatusFetching:    {en: "Fetching", ko: "받는 중"},
+	MsgImportStatusIndexing:    {en: "Indexing", ko: "색인 중"},
+	MsgImportStatusInspecting:  {en: "Inspecting", ko: "검사 중"},
+	MsgImportStatusPublishing:  {en: "Publishing", ko: "게시 중"},
+	MsgImportStatusComplete:    {en: "Complete", ko: "완료"},
+	MsgImportStatusFailed:      {en: "Failed", ko: "실패"},
+	MsgImportStatusCancelled:   {en: "Cancelled", ko: "취소됨"},
+	MsgImportStatusSuperseded:  {en: "Superseded", ko: "대체됨"},
+	MsgImportStatusInterrupted: {en: "Interrupted", ko: "중단됨"},
+	MsgImportStatusUnresolved:  {en: "Unresolved", ko: "미해결"},
+	MsgImportRefTracked:        {en: "Tracked", ko: "원본과 같음"},
+	MsgImportRefDiverged:       {en: "Diverged", ko: "원본과 다름"},
+	MsgImportRefAbsent:         {en: "Absent locally", ko: "OwnGit에 없음"},
+	MsgImportRefEarlier:        {en: "Earlier source", ko: "예전 원본 기록"},
+	MsgImportRefUnknown:        {en: "Local unknown", ko: "OwnGit 쪽 확인 못 함"},
+	MsgImportRefDeleted:        {en: "Deleted at source", ko: "원본에서 삭제됨"},
 }
 
 func importToken(lang Lang, token string) string {
@@ -348,6 +353,8 @@ func ImportErrorCode(class string) MessageCode {
 		return MsgImportErrorLFS
 	case "destination_changed":
 		return MsgImportErrorDestination
+	case "protected_default_branch":
+		return MsgImportErrorProtected
 	case "publication_unresolved":
 		return MsgImportErrorUnresolved
 	case "cancelled":

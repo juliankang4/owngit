@@ -53,6 +53,10 @@ type runState struct {
 	// refProcessUnreaped is set when the ref transaction process could not be
 	// reaped and may still write to the destination.
 	refProcessUnreaped bool
+	// writes are the repository's kept history and default branch
+	// protection, read when the run starts; publication follows them even
+	// if they are saved again meanwhile.
+	writes state.RefWrites
 }
 
 // execute runs one import or refresh from start to terminal state. The
@@ -229,6 +233,15 @@ func (s *Service) runPipeline(ctx context.Context, run *runState) error {
 	if err := s.authorityCurrent(ctx, run); err != nil {
 		return err
 	}
+	writes, err := s.Store.RefWrites(ctx, run.run.RepositoryID)
+	if err != nil {
+		message := "the repository's kept history and default branch protection could not be read"
+		if policyErr := (*state.PolicyError)(nil); errors.As(err, &policyErr) {
+			message = policyErr.Advice()
+		}
+		return runStateReadProblem(message, err)
+	}
+	run.writes = writes
 	if err := s.fetchAndStage(ctx, run); err != nil {
 		return err
 	}

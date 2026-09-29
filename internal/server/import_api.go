@@ -524,7 +524,7 @@ func importProblemHTTP(request *http.Request, step string, err error) (int, stri
 	var details any
 	switch problem.Code {
 	case importsync.CodeRepositoryTaken, importsync.CodeBusy, importsync.CodeSuperseded, importsync.CodeLFSRequired, importsync.CodeUnresolved, importsync.CodeDestinationChanged,
-		importsync.CodeNothingToResolve:
+		importsync.CodeNothingToResolve, importsync.CodeProtectedBranch:
 		status = http.StatusConflict
 	case importsync.CodeNotConfigured:
 		status = http.StatusNotFound

@@ -32,6 +32,9 @@ const (
 	CodePublishFailed      = "publish_failed"
 	CodeLFSRequired        = "git_lfs_required"
 	CodeDestinationChanged = "destination_changed"
+	// CodeProtectedBranch reports a refresh that would rewrite the
+	// repository's protected default branch; it changes nothing.
+	CodeProtectedBranch    = "protected_default_branch"
 	CodeUnresolved         = "publication_unresolved"
 	CodeCancelled          = "cancelled"
 	CodeSuperseded         = "superseded"

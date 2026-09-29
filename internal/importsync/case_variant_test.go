@@ -123,3 +123,42 @@ func TestOwnedHEADDoesNotFollowCaseBlockedTarget(t *testing.T) {
 		t.Fatal("local main was replaced through its case variant")
 	}
 }
+
+// A source ref whose destination ref shares its name apart from letter case
+// with another destination ref keeps its local value, as a push to it would
+// be refused; both are packed, as git pack-refs --all leaves them.
+func TestRefreshLeavesRefsThatShareANameApartFromCase(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.git(f.source, "branch", "feature")
+	f.mustImport(ImportInput{})
+	path := f.destinationPath()
+	local := f.git(path, "rev-parse", "refs/heads/feature")
+	f.git(path, "pack-refs", "--all")
+	f.git(path, "update-ref", "refs/heads/Feature", local)
+	f.git(path, "pack-refs", "--all")
+
+	f.git(f.source, "checkout", "-q", "feature")
+	f.commit("two", "two\n")
+	f.git(f.source, "checkout", "-q", "main")
+	run, err := f.refresh()
+	if err != nil || run.Status != state.ImportRunComplete {
+		t.Fatalf("refresh run=%+v err=%v", run, err)
+	}
+	if run.RefsDivergent != 1 || run.RefsUpdated != 0 {
+		t.Fatalf("refresh counts updated=%d divergent=%d", run.RefsUpdated, run.RefsDivergent)
+	}
+	listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/feature", "refs/heads/Feature")
+	if want := "refs/heads/Feature " + local + "\nrefs/heads/feature " + local; listed != want {
+		t.Fatalf("refs after refresh:\n%s\nwant\n%s", listed, want)
+	}
+	intent, exists, err := f.store.CompletedImportIntentForRun(context.Background(), run.ID)
+	if err != nil || !exists {
+		t.Fatalf("completed intent exists=%v err=%v", exists, err)
+	}
+	var reconciled state.ImportRun
+	completeRunFromIntent(&reconciled, intent, f.now)
+	if reconciled.RefsUpdated != run.RefsUpdated || reconciled.RefsDivergent != run.RefsDivergent {
+		t.Fatalf("reconciled counts=%+v normal counts=%+v", reconciled, run)
+	}
+}

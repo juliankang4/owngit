@@ -89,28 +89,35 @@ func (plan publicationPlan) changesRefs() bool {
 //     the destination, and every replaced tag object is retained;
 //   - anything else is divergent and stays local.
 //
-// Upstream deletions never remove a local ref. While the repository protects
-// its default branch, the branch HEAD names follows only a fast-forward;
-// a replacement that would rewrite it is divergent and stays local. While it
-// does not keep history, a replaced tip is not retained.
+// Upstream deletions never remove a local ref. The run follows the kept
+// history and default branch protection read when it started (run.writes):
+// without kept history a replaced tip is not retained, and while the
+// default branch is protected a refresh that would rewrite the branch HEAD
+// names is refused and publishes nothing, so a later refresh follows the
+// source once the protection is off or the source is a fast-forward again.
 func (s *Service) planPublication(ctx context.Context, run *runState, repositoryPath string, dest, destSymrefs map[string]string, destHEAD headIdentity, observations priorObservations) (*publicationPlan, error) {
-	writes, err := s.Store.RefWrites(ctx, run.run.RepositoryID)
-	if err != nil {
-		message := "the repository's kept history and default branch protection could not be read"
-		if policyErr := (*state.PolicyError)(nil); errors.As(err, &policyErr) {
-			message = policyErr.Advice()
-		}
-		return nil, runStateReadProblem(message, err)
-	}
 	protected := ""
-	if writes.ProtectDefaultBranch && destHEAD.kind == headSymbolic {
+	if run.writes.ProtectDefaultBranch && destHEAD.kind == headSymbolic {
 		protected = destHEAD.target
 	}
 	plan := &publicationPlan{
 		expected: map[string]string{}, desired: map[string]string{}, observed: map[string]string{}, retained: map[string]string{},
-		skipped: run.selected.skipped, headExpected: destHEAD, headDesired: destHEAD, keepHistory: writes.KeepHistory,
+		skipped: run.selected.skipped, headExpected: destHEAD, headDesired: destHEAD, keepHistory: run.writes.KeepHistory,
 	}
-	caseVariants := destinationCaseVariants(dest, destSymrefs)
+	// A name that differs only in letter case from another destination ref,
+	// or from another ref this refresh writes, is left as it is: the rule
+	// pushes follow too (repository.RefCaseConflicts).
+	existing := make([]string, 0, len(dest)+len(destSymrefs))
+	for _, names := range []map[string]string{dest, destSymrefs} {
+		for name := range names {
+			existing = append(existing, name)
+		}
+	}
+	writes := make([]string, 0, len(run.selected.refs))
+	for _, ref := range run.selected.refs {
+		writes = append(writes, ref.Name)
+	}
+	conflicts := repository.RefCaseConflicts(existing, writes)
 	caseBlocked := map[string]bool{}
 	for _, ref := range run.selected.refs {
 		upstream := ref.OID
@@ -128,13 +135,9 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 				plan.divergent++
 				plan.divergentRefs = append(plan.divergentRefs, ref.Name)
 			}
-		case destination == "" && hasCaseVariant(caseVariants, ref.Name):
-			// A destination ref whose name differs only by case is local state.
-			// On a case-insensitive filesystem the loose file created for this
-			// name would also answer for a packed variant and silently replace
-			// that local branch or tag, so the name is left uncreated. A loose
-			// variant is the same file and was already read as this ref. The
-			// exact name stays expected absent and has no desired value.
+		case destination == "" && conflicts[ref.Name]:
+			// The name is left uncreated: it stays expected absent and has no
+			// desired value.
 			plan.divergent++
 			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
 			caseBlocked[ref.Name] = true
@@ -144,11 +147,13 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		case destination == upstream:
 			plan.desired[ref.Name] = upstream
 			plan.unchanged++
-		case observations.refs[ref.Name] != "" && observations.refs[ref.Name] == destination && ref.Name == protected &&
-			!s.isAncestor(ctx, run, repositoryPath, destination, upstream):
+		case conflicts[ref.Name]:
 			plan.desired[ref.Name] = destination
 			plan.divergent++
 			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
+		case observations.refs[ref.Name] != "" && observations.refs[ref.Name] == destination && ref.Name == protected &&
+			!s.isAncestor(ctx, run, repositoryPath, destination, upstream):
+			return nil, newProblem(CodeProtectedBranch, fmt.Sprintf("the source rewrote %s, the protected default branch; nothing was changed. Turn off its protection in the repository settings to follow the source", ref.Name), nil)
 		case observations.refs[ref.Name] != "" && observations.refs[ref.Name] == destination:
 			plan.desired[ref.Name] = upstream
 			plan.updated++
@@ -221,30 +226,6 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 	sort.Strings(plan.divergentRefs)
 	sort.Strings(plan.deletedRefs)
 	return plan, nil
-}
-
-// destinationCaseVariants groups destination ref names by their case-folded
-// form.
-func destinationCaseVariants(dest, destSymrefs map[string]string) map[string][]string {
-	variants := make(map[string][]string, len(dest))
-	for _, names := range []map[string]string{dest, destSymrefs} {
-		for name := range names {
-			folded := strings.ToLower(name)
-			variants[folded] = append(variants[folded], name)
-		}
-	}
-	return variants
-}
-
-// hasCaseVariant reports whether the destination holds a ref whose name equals
-// name except for case.
-func hasCaseVariant(variants map[string][]string, name string) bool {
-	for _, existing := range variants[strings.ToLower(name)] {
-		if existing != name {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Service) isAncestor(ctx context.Context, run *runState, repositoryPath, oldOID, newOID string) bool {

@@ -12,10 +12,11 @@ import (
 )
 
 // A refresh follows the repository's kept history and default branch
-// protection as a push does: a replaced tip is kept only while history is
-// kept, and the protected default branch follows only a fast-forward, so a
-// source rewrite of it stays local as a diverged branch. Other branches
-// still follow the source.
+// protection as they were when it started. A replaced tip is kept only
+// while history is kept. While the default branch is protected, a refresh
+// that would rewrite it is refused and changes nothing, however often the
+// source moves on; once the protection is off, the next refresh follows the
+// source again.
 func TestRefreshFollowsKeptHistoryAndDefaultBranchProtection(t *testing.T) {
 	for _, format := range []string{"sha1", "sha256"} {
 		t.Run(format, func(t *testing.T) {
@@ -37,39 +38,85 @@ func TestRefreshFollowsKeptHistoryAndDefaultBranchProtection(t *testing.T) {
 				f.git(f.source, "commit", "--quiet", "--amend", "-m", content)
 				return f.git(f.source, "rev-parse", "HEAD")
 			}
+			saveRepository := func(change state.RepositoryRefPolicyChange) {
+				_, err := f.store.SaveRepositoryRefPolicy(ctx, "project", change)
+				noErr(t, err)
+			}
 
+			// History is kept by default; turning it off while a refresh runs
+			// applies to the next refresh.
 			off := false
-			noErr(t, f.store.SavePolicies(ctx, state.PolicyChange{KeptHistory: &off}))
-			rewritten := amend("main", "rewritten main\n")
+			f.service.beforeStagingVerification = func(context.Context) {
+				noErr(t, f.store.SavePolicies(ctx, state.PolicyChange{KeptHistory: &off}))
+			}
+			second := amend("main", "second main\n")
 			run, err := f.refresh()
 			noErr(t, err, "refresh")
+			f.service.beforeStagingVerification = nil
 			refs := f.destinationRefs()
-			if run.RefsUpdated != 1 || refs["refs/heads/main"] != rewritten {
+			if run.RefsUpdated != 1 || refs["refs/heads/main"] != second || refs[repository.RetainedRefName("heads", first)] != first {
+				t.Fatalf("refresh that started with kept history: run=%+v refs=%v", run, refs)
+			}
+			rewritten := amend("main", "rewritten main\n")
+			run, err = f.refresh()
+			noErr(t, err, "refresh")
+			refs = f.destinationRefs()
+			if run.RefsUpdated != 1 || refs["refs/heads/main"] != rewritten || refs[repository.RetainedRefName("heads", first)] != first {
 				t.Fatalf("run=%+v main=%s want %s", run, refs["refs/heads/main"], rewritten)
 			}
-			for _, name := range []string{repository.RetainedRefName("heads", first), repository.ProvenanceRefName("heads", "main", first)} {
+			for _, name := range []string{repository.RetainedRefName("heads", second), repository.ProvenanceRefName("heads", "main", second)} {
 				if refs[name] != "" {
 					t.Fatalf("a replaced tip was kept while history is not: %s", name)
 				}
 			}
 
-			protect := true
-			_, err = f.store.SaveRepositoryRefPolicy(ctx, "project", state.RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
-			noErr(t, err)
+			protect, unprotect := true, false
+			saveRepository(state.RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
+			devBefore := refs["refs/heads/dev"]
 			amend("main", "rewritten again\n")
-			devTip := amend("dev", "rewritten dev\n")
+			amend("dev", "rewritten dev\n")
+			refused := func(what string) {
+				t.Helper()
+				_, err := f.refresh()
+				var problem *Problem
+				if !errors.As(err, &problem) || problem.Code != CodeProtectedBranch {
+					t.Fatalf("%s: err=%v, want %s", what, err, CodeProtectedBranch)
+				}
+				if refs := f.destinationRefs(); refs["refs/heads/main"] != rewritten || refs["refs/heads/dev"] != devBefore {
+					t.Fatalf("%s changed main=%s dev=%s", what, refs["refs/heads/main"], refs["refs/heads/dev"])
+				}
+			}
+			refused("a rewrite of the protected default branch")
+			f.git(f.source, "checkout", "--quiet", "main")
+			sourceMain := f.commit("more", "more on main\n")
+			refused("a source that moved on from its rewrite")
+
+			// A change saved while a refresh runs applies to the next one.
+			f.service.beforeStagingVerification = func(context.Context) {
+				saveRepository(state.RepositoryRefPolicyChange{ProtectDefaultBranch: &unprotect})
+			}
+			refused("a refresh that started while protection was on")
+			f.service.beforeStagingVerification = nil
 			run, err = f.refresh()
-			noErr(t, err, "refresh")
+			noErr(t, err, "refresh after protection was turned off")
 			refs = f.destinationRefs()
-			if run.RefsDivergent != 1 || run.RefsUpdated != 1 || refs["refs/heads/main"] != rewritten || refs["refs/heads/dev"] != devTip {
-				t.Fatalf("protected refresh run=%+v main=%s dev=%s", run, refs["refs/heads/main"], refs["refs/heads/dev"])
+			if run.RefsUpdated != 2 || refs["refs/heads/main"] != sourceMain || refs["refs/heads/dev"] == devBefore {
+				t.Fatalf("after protection off run=%+v main=%s want %s", run, refs["refs/heads/main"], sourceMain)
+			}
+			status, err := f.service.Status(ctx, "project")
+			noErr(t, err)
+			for _, ref := range status.Refs {
+				if ref.State != "tracked" {
+					t.Fatalf("ref %s is %s after following the source", ref.Name, ref.State)
+				}
 			}
 
 			// A saved choice that cannot be read stops the refresh before it
 			// writes anything.
+			devTip := refs["refs/heads/dev"]
 			noErr(t, f.store.Exec(ctx, `PRAGMA ignore_check_constraints=ON; UPDATE repository_policies SET retain_history=3 WHERE repository_id='project'; PRAGMA ignore_check_constraints=OFF`))
 			f.git(f.source, "checkout", "--quiet", "dev")
-			f.commit("more", "more dev\n")
+			f.commit("more dev", "more dev\n")
 			_, err = f.refresh()
 			var problem *Problem
 			if !errors.As(err, &problem) || problem.Code != CodeStateUnavailable {
