@@ -36,13 +36,18 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
     }
 
     if (-not $Dir) { $Dir = [IO.Path]::Combine($env:LOCALAPPDATA, 'Programs', 'OwnGit') }
-    $Dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir).TrimEnd('\', '/')
-    # "owngit service install" keeps its protected copy in
-    # %ProgramFiles%\OwnGit, and "owngit uninstall" removes what it finds
-    # there, so the program you install lives elsewhere.
-    $serviceFolder = [IO.Path]::Combine($env:ProgramFiles, 'OwnGit')
-    if ($Dir -eq $serviceFolder -or $Dir.StartsWith($serviceFolder + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "$serviceFolder belongs to ""owngit service install""; choose another -Dir."
+    $Dir = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir))
+    # "owngit service install" keeps its protected copy in the OwnGit folder
+    # of the Program Files known folder (not the ProgramFiles variable), and
+    # "owngit uninstall" removes what it finds there, so the program you
+    # install lives elsewhere. Both sides are full paths, compared without
+    # regard to case.
+    $programFiles = [Environment]::GetFolderPath('ProgramFiles')
+    if ($programFiles) {
+        $serviceFolder = [IO.Path]::Combine($programFiles, 'OwnGit')
+        if (($Dir.TrimEnd('\', '/') + '\').StartsWith($serviceFolder + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "$serviceFolder belongs to ""owngit service install""; choose another -Dir."
+        }
     }
 
     $web = New-Object Net.WebClient

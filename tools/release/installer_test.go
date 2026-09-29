@@ -455,7 +455,7 @@ func newPsInstall(t *testing.T, release *syntheticRelease) *psInstall {
 	sum := sha1.Sum(release.server.Certificate().Raw)
 	run := &psInstall{home: home, log: filepath.Join(home, "owngit.log"), thumb: strings.ToUpper(hex.EncodeToString(sum[:]))}
 	run.env = append(os.Environ(),
-		"LOCALAPPDATA="+home, "ProgramFiles="+filepath.Join(home, "Program Files"),
+		"LOCALAPPDATA="+home,
 		"OWNGIT_RELEASES="+release.url(), "OWNGIT_FAKE_LOG="+run.log)
 	return run
 }
@@ -637,12 +637,33 @@ func TestInstallPs1(t *testing.T) {
 		}
 	})
 
+	// The rule is the OwnGit folder of the real Program Files known folder,
+	// whatever case or separators -Dir uses; the ProgramFiles variable does
+	// not move it. The release address is unreachable, so if the rule
+	// failed the run would stop at the download before writing anything
+	// into Program Files.
 	t.Run("refuses the service folder in Program Files", func(t *testing.T) {
 		run := newPsInstall(t, release)
-		dir := filepath.Join(run.home, "Program Files", "OwnGit")
-		run.mustFail(t, nil, "belongs to \"owngit service install\"", "-Dir", psQuote(dir))
-		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Fatalf("the refused run created %s", dir)
+		programFiles := os.Getenv("ProgramFiles")
+		if programFiles == "" {
+			t.Fatal("no ProgramFiles folder")
+		}
+		serviceFolder := filepath.Join(programFiles, "OwnGit")
+		refused := serviceFolder + " belongs to \"owngit service install\"; choose another -Dir.\n"
+		unreachable := []string{"OWNGIT_RELEASES=https://127.0.0.1:1/releases"}
+		for _, dir := range []string{
+			serviceFolder,
+			filepath.Join(serviceFolder, "releases"),
+			strings.ToLower(filepath.ToSlash(serviceFolder)) + "/",
+		} {
+			run.mustFailWith(t, unreachable, refused, "-Dir", psQuote(dir))
+		}
+		moved := append([]string{"ProgramFiles=" + filepath.Join(run.home, "elsewhere")}, unreachable...)
+		run.mustFailWith(t, moved, refused, "-Dir", psQuote(serviceFolder))
+		// A folder that only starts with the same name is not the service folder.
+		run.mustFail(t, unreachable, "Could not download", "-Dir", psQuote(serviceFolder+"-other"))
+		if created, _ := filepath.Glob(filepath.Join(serviceFolder+"*", "owngit_*_windows_amd64")); len(created) != 0 {
+			t.Fatalf("a refused run created %v", created)
 		}
 	})
 }
