@@ -609,6 +609,71 @@ func TestInstallSh(t *testing.T) {
 		run.must(t, nil, "--no-service", "--to", target)
 	})
 
+	// The other folder rules: a folder that belongs to another account, one
+	// whose group (not this account's private group) can write it, and one
+	// with an access list that lets others change it. Changing an owner or
+	// group needs root, so those cases run as root or with sudo that asks
+	// for no password.
+	t.Run("another owner, a shared group and an access list are refused", func(t *testing.T) {
+		run := newShInstall(t, release)
+		asRoot := func(t *testing.T, command ...string) {
+			t.Helper()
+			if !root {
+				if exec.Command("sudo", "-n", "true").Run() != nil {
+					t.Skip("needs root or sudo without a password")
+				}
+				command = append([]string{"sudo", "-n"}, command...)
+			}
+			if output, err := exec.Command(command[0], command[1:]...).CombinedOutput(); err != nil {
+				t.Fatalf("%v: %v\n%s", command, err, output)
+			}
+		}
+		refused := func(t *testing.T, dir, reason string) {
+			t.Helper()
+			before := release.served()
+			run.mustFail(t, nil, "another account can change "+dir+" ("+reason+")", "--to", filepath.Join(dir, "owngit"))
+			if served := release.served(); served != before {
+				t.Errorf("a refused run downloaded %d files", served-before)
+			}
+		}
+		folder := func(t *testing.T, mode os.FileMode) string {
+			dir := filepath.Join(run.home, strings.ReplaceAll(t.Name(), "/", "-"))
+			noErr(t, os.Mkdir(dir, 0o755))
+			noErr(t, os.Chmod(dir, mode))
+			return dir
+		}
+		t.Run("another owner", func(t *testing.T) {
+			dir := folder(t, 0o755)
+			asRoot(t, "chown", "65534", dir)
+			t.Cleanup(func() { asRoot(t, "chown", fmt.Sprint(os.Getuid()), dir) })
+			refused(t, dir, "it belongs to another account")
+		})
+		t.Run("a group that is not this account's own", func(t *testing.T) {
+			dir := folder(t, 0o775)
+			asRoot(t, "chgrp", "54321", dir)
+			refused(t, dir, "its group can write it")
+		})
+		t.Run("an access list", func(t *testing.T) {
+			dir := folder(t, 0o755)
+			switch runtime.GOOS {
+			case "linux":
+				setfacl, err := exec.LookPath("setfacl")
+				if err != nil {
+					t.Skip("setfacl is not installed")
+				}
+				if output, err := exec.Command(setfacl, "-m", "u:65534:rx", dir).CombinedOutput(); err != nil {
+					t.Skipf("this file system takes no access list: %v\n%s", err, output)
+				}
+				refused(t, dir, "it has an access list")
+			case "darwin":
+				if output, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file", dir).CombinedOutput(); err != nil {
+					t.Fatalf("chmod +a: %v\n%s", err, output)
+				}
+				refused(t, dir, "its access list lets others change it")
+			}
+		})
+	})
+
 	t.Run("a link at the target is refused before downloading", func(t *testing.T) {
 		run := newShInstall(t, release)
 		target := filepath.Join(run.home, "bin", "owngit")
