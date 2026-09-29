@@ -344,12 +344,12 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	input = &observedBody{ReadCloser: body, stop: cancelStream, closed: make(chan struct{})}
 	extraEnvironment, err := h.cgiEnvironment(request, route, contentLength)
-	extraEnvironment = append(extraEnvironment, refWrites...)
 	if err != nil {
 		_ = input.Close()
 		http.Error(writer, "invalid Git protocol request", http.StatusBadRequest)
 		return
 	}
+	extraEnvironment = append(extraEnvironment, refWrites...)
 	// The response can still go out before the end of the request body, when
 	// Git writes more than net/http buffers or stops reading early. Without
 	// full duplex, net/http would then read and discard the rest of the
