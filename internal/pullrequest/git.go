@@ -432,14 +432,24 @@ func (service *Service) createMergeCommit(ctx context.Context, repositoryPath st
 
 // mergeCommitDate is the author and committer date of the merge commit of
 // intent: when the intent was made, with this computer's offset then. A
-// result already recorded keeps the offset written into it, so a retry
-// recreates the same commit after a time zone change, after a restore on a
-// computer in another zone, or for a result an earlier version wrote in UTC.
+// result already recorded, in the intent or in its protected result ref
+// when a merge stopped before the intent recorded it, keeps the offset
+// written into it, so a retry recreates the same commit after a time zone
+// change, after a restore on a computer in another zone, or for a result an
+// earlier version wrote in UTC.
 func (service *Service) mergeCommitDate(ctx context.Context, repositoryPath string, intent state.PullRequestMergeIntent) (string, error) {
-	if intent.ResultOID == "" {
-		return gitexec.CommitDate(intent.CreatedAt), nil
+	recorded := intent.ResultOID
+	if recorded == "" {
+		oid, exists, err := service.readRef(ctx, repositoryPath, MergeResultRef(intent.PullRequestNumber, intent.SourceOID, intent.TargetOID))
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return gitexec.CommitDate(intent.CreatedAt), nil
+		}
+		recorded = oid
 	}
-	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show", "-s", "--format=%cd", "--date=raw", intent.ResultOID)
+	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show", "-s", "--format=%cd", "--date=raw", recorded)
 	if err != nil {
 		return "", &Problem{Code: "repository_integrity_error", Message: "A protected merge object is unavailable.", Cause: err}
 	}

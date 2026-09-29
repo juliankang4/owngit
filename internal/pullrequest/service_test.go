@@ -102,6 +102,45 @@ func TestReviewBoundMergeCreatesExactMergeCommitAndIsIdempotent(t *testing.T) {
 	}
 }
 
+// A merge that stopped after it wrote its result ref and before the intent
+// recorded it is retried with the offset written in that result, here UTC
+// from an earlier version while this computer is at +0900.
+func TestPlannedMergeWithARecordedResultKeepsItsOffset(t *testing.T) {
+	saved := time.Local
+	time.Local = time.FixedZone("KST", 9*3600)
+	defer func() { time.Local = saved }()
+	fixture := newServiceFixture(t)
+	fixture.commitFile("base.txt", "base\n", "base")
+	fixture.push("HEAD:refs/heads/main")
+	fixture.git("checkout", "-b", "feature")
+	sourceOID := fixture.commitFile("feature.txt", "feature\n", "feature")
+	fixture.push("HEAD:refs/heads/feature")
+	fixture.git("checkout", "main")
+	targetOID := fixture.commitFile("target.txt", "target\n", "target")
+	fixture.push("HEAD:refs/heads/main")
+	created, err := fixture.service.Create(fixture.ctx, CreateInput{Repository: fixture.repositoryID, Title: "Crash window", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip"})
+	noErr(t, err)
+	record, _, err := fixture.store.PullRequest(fixture.ctx, fixture.repositoryID, created.Number)
+	noErr(t, err)
+	intent, err := fixture.store.BeginPullRequestMerge(fixture.ctx, state.PullRequestMergeIntent{RepositoryID: fixture.repositoryID, PullRequestNumber: created.Number, SourceOID: sourceOID, TargetOID: targetOID, ReceiptRef: MergeReceiptRef(created.Number), CreatedAt: time.Now()})
+	noErr(t, err)
+	intent, err = fixture.service.planMerge(fixture.ctx, fixture.remote, intent)
+	noErr(t, err)
+	noErr(t, fixture.service.ensurePlannedMergeTree(fixture.ctx, fixture.remote, record, intent, true))
+	intent, err = fixture.store.UpdatePullRequestMergeIntent(fixture.ctx, intent)
+	noErr(t, err)
+	// What 1.1.2 wrote before the crash: the +0000 merge commit and its ref.
+	date := strconv.FormatInt(intent.CreatedAt.Unix(), 10) + " +0000"
+	env := []string{"GIT_AUTHOR_NAME=OwnGit", "GIT_AUTHOR_EMAIL=owngit@localhost", "GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_NAME=OwnGit", "GIT_COMMITTER_EMAIL=owngit@localhost", "GIT_COMMITTER_DATE=" + date}
+	result, err := fixture.manager.Git.RunWithEnvironment(fixture.ctx, fixture.remote, strings.NewReader("Merge pull request #1: Crash window\n"), env, "--git-dir", ".", "commit-tree", intent.TreeOID, "-p", targetOID, "-p", sourceOID)
+	noErr(t, err)
+	fixture.git("--git-dir", fixture.remote, "update-ref", MergeResultRef(created.Number, sourceOID, targetOID), strings.TrimSpace(string(result.Stdout)))
+	noErr(t, fixture.service.ReconcileAll(fixture.ctx))
+	if _, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: sourceOID, TargetOID: targetOID}); err != nil {
+		t.Fatalf("retry of a planned merge with a recorded UTC result: %v (code %q)", err, problemCode(err))
+	}
+}
+
 func TestObserveCurrentRevisionsBindsSourcePushWithoutViewRead(t *testing.T) {
 	fixture := newServiceFixture(t)
 	fixture.commitFile("base.txt", "base\n", "base")
