@@ -126,12 +126,24 @@ type gitTransferJSON struct {
 type settingsResponse struct {
 	OK       bool         `json:"ok"`
 	Settings settingsJSON `json:"settings"`
+	// Unreadable names each saved setting that cannot be read, which
+	// Settings leaves out. Only a PATCH answers with it: the change it
+	// asked for was saved.
+	Unreadable []unreadableSetting `json:"unreadable,omitempty"`
+}
+
+type unreadableSetting struct {
+	Setting string `json:"setting"`
+	Message string `json:"message"`
 }
 
 // handleSettingsAPI answers GET and PATCH /api/v1/settings. Both need the
 // administrator password in the request, as every administrator API
 // request does. A PATCH checks every value it names and saves them all at
-// once, or none, and answers with every policy as saved.
+// once, or none, and answers with every policy as saved. A GET that cannot
+// read a saved setting fails with setting_unreadable; a PATCH that saved
+// its change succeeds and names in Unreadable the other settings to set
+// again.
 func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet && request.Method != http.MethodPatch {
 		writeAPIMethodError(writer, "GET, PATCH")
@@ -190,35 +202,49 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 			return
 		}
 	}
-	current, err := app.savedSettings(request.Context())
+	current, unreadable, err := app.savedSettings(request.Context())
+	if err == nil && len(unreadable) > 0 && request.Method == http.MethodGet {
+		err = unreadable[0]
+	}
 	if err != nil {
 		app.writeSettingsReadError(writer, request, err)
 		return
 	}
-	writeAPIJSON(writer, http.StatusOK, settingsResponse{OK: true, Settings: current})
+	response := settingsResponse{OK: true, Settings: current}
+	for _, problem := range unreadable {
+		logFailure(request, "settings read", problem)
+		response.Unreadable = append(response.Unreadable, unreadableSetting{Setting: problem.Setting(), Message: problem.Advice()})
+	}
+	writeAPIJSON(writer, http.StatusOK, response)
 }
 
-// savedSettings reads every policy as saved.
-func (app *App) savedSettings(ctx context.Context) (settingsJSON, error) {
-	session, err := app.Store.GeneralSession(ctx)
-	if err != nil {
-		return settingsJSON{}, err
+// savedSettings reads every policy as saved, leaving out and returning in
+// unreadable each one whose saved value cannot be read.
+func (app *App) savedSettings(ctx context.Context) (current settingsJSON, unreadable []*state.PolicyError, err error) {
+	// keep sorts one read: a value, a saved value to set again, or a
+	// failure to read the state at all.
+	keep := func(readErr error) bool {
+		var policyErr *state.PolicyError
+		if errors.As(readErr, &policyErr) {
+			unreadable = append(unreadable, policyErr)
+		} else if readErr != nil && err == nil {
+			err = readErr
+		}
+		return readErr == nil
 	}
-	branch, err := app.Store.InitialBranch(ctx)
-	if err != nil {
-		return settingsJSON{}, err
+	if session, readErr := app.Store.GeneralSession(ctx); keep(readErr) {
+		current.Session = pointer(string(session))
 	}
-	limits, err := app.Store.GitTransferLimits(ctx)
-	if err != nil {
-		return settingsJSON{}, err
+	if branch, readErr := app.Store.InitialBranch(ctx); keep(readErr) {
+		current.InitialBranch = &branch
 	}
-	retention, err := app.Store.CheckLogRetention(ctx)
-	if err != nil {
-		return settingsJSON{}, err
+	if limits, readErr := app.Store.GitTransferLimits(ctx); keep(readErr) {
+		current.GitTransfer = &gitTransferJSON{MaximumBytes: &limits.MaximumBytes, OperationSeconds: pointer(int64(limits.Operation / time.Second))}
 	}
-	return settingsJSON{Session: pointer(string(session)), InitialBranch: &branch, GitTransfer: &gitTransferJSON{
-		MaximumBytes: &limits.MaximumBytes, OperationSeconds: pointer(int64(limits.Operation / time.Second)),
-	}, CheckLogs: pointer(string(retention))}, nil
+	if retention, readErr := app.Store.CheckLogRetention(ctx); keep(readErr) {
+		current.CheckLogs = pointer(string(retention))
+	}
+	return current, unreadable, err
 }
 
 // changedTransferLimits applies a PATCH of the Git transfer limits to the

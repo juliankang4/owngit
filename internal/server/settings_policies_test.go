@@ -93,6 +93,15 @@ func TestUnreadableSessionLengthIsAnErrorUntilSetAgain(t *testing.T) {
 		t.Fatalf("sign-in with an unreadable length status=%d:\n%s", result.status, result.body)
 	}
 	requireUnreadable(t, adminAPIRequest(t, http.MethodGet, server.URL+"/api/v1/settings", nil, "admin-password"), "session", "general_session_seconds")
+	// A change to another setting is saved and answered as saved, naming
+	// the one to set again.
+	response := adminAPIRequest(t, http.MethodPatch, server.URL+"/api/v1/settings", map[string]any{"check_logs": "90d"}, "admin-password")
+	var patched settingsResponse
+	decodeCheckJSON(t, response, &patched)
+	if response.StatusCode != http.StatusOK || patched.Settings.CheckLogs == nil || *patched.Settings.CheckLogs != "90d" || patched.Settings.Session != nil ||
+		len(patched.Unreadable) != 1 || patched.Unreadable[0].Setting != "session" || !strings.Contains(patched.Unreadable[0].Message, "--session") {
+		t.Fatalf("PATCH beside an unreadable setting status=%d answer=%+v", response.StatusCode, patched)
+	}
 	browser.adminSignIn()
 	page := browser.get("/settings/access")
 	if page.status != http.StatusOK || !strings.Contains(page.body, enText(webui.MsgPolicyUnreadable)) || !strings.Contains(page.body, `name="general_session" data-saved=""`) {
