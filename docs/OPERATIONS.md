@@ -350,7 +350,7 @@ docker compose up -d
 docker compose exec -it owngit owngit setup-link
 ```
 
-`setup-link` shows the one-time setup link only on a terminal, which `-it` gives it. The log that `docker compose logs` shows names only the setup file inside the container, never the link. Open the link, `http://localhost:7654/setup#...`, in a browser on the computer that runs the container. From another device, put that computer's address in place of `localhost`; the setup page then offers to keep accepting that address. `docker compose ps` shows the container as `healthy` once `owngit health` inside it gets an answer.
+`setup-link` shows the one-time setup link only on a terminal, which `-it` gives it. The log that `docker compose logs` shows names only the setup file inside the container, never the link. Open the link, `http://localhost:7654/setup#...`, in a browser on the computer that runs the container. From another device, use that computer's name or address in place of `localhost`, for example `http://nas.local:7654/setup#...`; the setup page then offers to keep accepting that name, which other devices use from then on. `docker compose ps` shows the container as `healthy` once `owngit health` inside it gets an answer.
 
 Other commands run the same way, for example `docker compose exec owngit owngit doctor`.
 
@@ -364,7 +364,7 @@ The state must stay on a local disk. To keep the repositories on a network share
 
 OwnGit listens on every address inside the container, and the `ports` line of `compose.yaml` decides who reaches it. `"7654:7654"` publishes it on every address of the computer that runs the container; `"127.0.0.1:7654:7654"` keeps it on that computer only. To use another port, change the first number, for example `"8080:7654"`, and use that port in the setup link.
 
-A browser on the computer that runs the container opens `http://localhost:7654`. OwnGit accepts `localhost`, `127.0.0.1` and `::1` only on connections from this computer. Docker forwards that computer's own connections to a published port from the gateway of the container's network, so in the container image OwnGit counts connections from that gateway as this computer, and says so in its log when it starts. Other containers that connect to the OwnGit container directly, and other devices, keep their own addresses, so they must use a name you allowed. Programs on the computer that runs the container, including other containers that connect through the published port on that computer's address, count as this computer, as programs on the computer do when OwnGit runs there directly.
+Inside a container, OwnGit cannot tell the computer that runs it from other devices by their address: Docker forwards IPv6 connections, and rootless Docker every connection, from an address inside the container network. So OwnGit in the container image accepts `localhost`, `127.0.0.1` and `::1` from outside the container only while access needs the shared password, and every visitor then meets the sign-in page. In open access, the default, it refuses them with a page that says to use the computer's name or address instead, on that computer too. So for open access, finish setup at that name or address and keep it, or allow one later with `docker compose exec owngit owngit network set --allowed-host nas.local` and `docker compose restart`. Before setup only the setup link works, as on every computer. Wrong passwords are counted per address, so under the forwarding above several devices can share one count.
 
 ### Update
 

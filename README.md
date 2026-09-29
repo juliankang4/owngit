@@ -104,7 +104,7 @@ docker compose up -d
 docker compose exec -it owngit owngit setup-link
 ```
 
-Open the setup link in a browser on that computer. [Run in a container](docs/OPERATIONS.md#run-in-a-container) covers setup from another device, where the data lives, updates, backups and running as another account.
+Open the setup link in a browser on that computer, or from another device with that computer's name or address in place of `localhost`. [Run in a container](docs/OPERATIONS.md#run-in-a-container) covers setup from another device, where the data lives, updates, backups and running as another account.
 
 ### Update and remove
 
