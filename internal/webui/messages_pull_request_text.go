@@ -50,7 +50,7 @@ var pullRequestTextCatalog = map[MessageCode]message{
 	MsgPREditSaved: {en: "Title and description saved.", ko: "제목과 설명을 저장했습니다."},
 	MsgPREditStale: {
 		en: "Someone edited this pull request after you opened it. Their text is shown above and yours is kept in the form. Save again to replace theirs.",
-		ko: "이 페이지를 연 뒤에 다른 곳에서 풀 리퀘스트를 수정했습니다. 수정된 내용은 위에 있고, 입력한 내용은 양식에 그대로 두었습니다. 다시 저장하면 입력한 내용으로 바뀝니다.",
+		ko: "이 페이지를 연 뒤에 다른 곳에서 풀 리퀘스트를 수정했습니다. 수정된 내용은 위에 있고 입력한 내용은 양식에 그대로 두었습니다. 다시 저장하면 입력한 내용으로 바뀝니다.",
 	},
 	MsgPRNotesTitle:   {en: "Review notes", ko: "리뷰 메모"},
 	MsgPRNotesEarlier: {en: "About earlier commits", ko: "이전 커밋 기준"},
@@ -69,7 +69,7 @@ var pullRequestTextCatalog = map[MessageCode]message{
 	MsgPRReviewNote: {en: "Note", ko: "메모"},
 	MsgPRReviewNoteHelp: {
 		en: "Optional. Markdown, up to 64 KiB. It stays tied to the current commits of both branches.",
-		ko: "선택 사항입니다. 마크다운으로 최대 64KiB까지 쓸 수 있으며, 두 브랜치의 현재 커밋에 묶여 기록됩니다.",
+		ko: "선택 사항입니다. 마크다운으로 최대 64KiB까지 쓸 수 있으며 두 브랜치의 현재 커밋에 묶여 기록됩니다.",
 	},
 	MsgPRReviewSubmit:   {en: "Record review", ko: "리뷰 기록"},
 	MsgPRReviewRecorded: {en: "Review recorded.", ko: "리뷰를 기록했습니다."},
