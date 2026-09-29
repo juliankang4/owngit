@@ -2,10 +2,14 @@ package importsync
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"owngit/internal/auth"
+	"owngit/internal/gitexec"
 	"owngit/internal/recovery"
 	"owngit/internal/state"
 )
@@ -107,5 +111,34 @@ func TestBackupCarriesOwnerResolvedIntent(t *testing.T) {
 	}
 	if count, err := restored.UnresolvedImportIntentCount(ctx, "project"); err != nil || count != 0 {
 		t.Fatalf("restored unresolved count=%d err=%v", count, err)
+	}
+}
+
+// An import refresh whose ref update process could not be stopped may still
+// change the repository's refs, so a backup made while OwnGit serves
+// refuses that repository, by name, and publishes nothing.
+func TestBackupRefusesARepositoryWithAnUnstoppedRefWriter(t *testing.T) {
+	f := newFixture(t)
+	completeFixtureSetup(t, f)
+	f.commit("one", "one\n")
+	f.mustImport(ImportInput{})
+	f.commit("two", "two\n")
+	if f.manager.UnsettledRefWriter("project") {
+		t.Fatal("a finished import left the repository marked")
+	}
+	unreapedRefTransaction(f, nil)
+	if _, err := f.refresh(); !errors.Is(err, gitexec.ErrPreparedProcessNotReaped) {
+		t.Fatalf("unreaped refresh err=%v", err)
+	}
+	if !f.manager.UnsettledRefWriter("project") {
+		t.Fatal("the unreaped refresh did not mark the repository")
+	}
+	output := filepath.Join(f.root, "backup")
+	_, err := recovery.CreateWhileServing(context.Background(), f.store, f.manager, output)
+	if err == nil || !strings.Contains(err.Error(), `repository "project"`) || !strings.Contains(err.Error(), "could not be stopped") {
+		t.Fatalf("backup err=%v", err)
+	}
+	if _, statErr := os.Lstat(output); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a refused backup was published: %v", statErr)
 	}
 }
