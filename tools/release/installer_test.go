@@ -504,8 +504,12 @@ func (run *psInstall) do(t *testing.T, env []string, arguments ...string) (strin
 	if len(arguments) > 0 {
 		invoke = "& ([scriptblock]::Create([IO.File]::ReadAllText(" + script + "))) " + strings.Join(arguments, " ")
 	}
-	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
-		"[Net.ServicePointManager]::ServerCertificateValidationCallback = { param($s, $c) $c.GetCertHashString() -eq '"+run.thumb+"' }; "+invoke)
+	return run.powerShell(env, "[Net.ServicePointManager]::ServerCertificateValidationCallback = { param($s, $c) $c.GetCertHashString() -eq '"+run.thumb+"' }; "+invoke)
+}
+
+// powerShell runs a command in the environment of this run.
+func (run *psInstall) powerShell(env []string, script string) (string, error) {
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
 	command.Env = append(append([]string{}, run.env...), env...)
 	command.Dir = run.home
 	output, err := command.CombinedOutput()
@@ -700,33 +704,37 @@ func TestInstallPs1(t *testing.T) {
 		}
 	})
 
-	// The rule is the OwnGit folder of the real Program Files known folder,
-	// whatever case or separators -Dir uses; the ProgramFiles variable does
-	// not move it. The release address is unreachable, so if the rule
-	// failed the run would stop at the download before writing anything
-	// into Program Files.
+	// The rule is the OwnGit folder of the 64-bit Program Files, which
+	// ProgramW6432 names (ProgramFiles in a 64-bit PowerShell). The test
+	// points both at a temporary folder and first proves that PowerShell
+	// sees them, so it never touches the real Program Files; the release
+	// address is unreachable, so a failed rule would stop at the download.
 	t.Run("refuses the service folder in Program Files", func(t *testing.T) {
 		run := newPsInstall(t, release)
-		programFiles := os.Getenv("ProgramFiles")
-		if programFiles == "" {
-			t.Fatal("no ProgramFiles folder")
+		programFiles := filepath.Join(run.home, "PF")
+		unreachable := "OWNGIT_RELEASES=https://127.0.0.1:1/releases"
+		env := []string{"ProgramW6432=" + programFiles, "ProgramFiles=" + programFiles, unreachable}
+		seen, err := run.powerShell(env, "$env:ProgramW6432; $env:ProgramFiles")
+		if want := programFiles + "\n" + programFiles + "\n"; err != nil || strings.ReplaceAll(seen, "\r\n", "\n") != want {
+			t.Fatalf("PowerShell sees ProgramW6432 and ProgramFiles as %q (%v), not %q; the rule cannot be tested without the real Program Files", seen, err, programFiles)
 		}
 		serviceFolder := filepath.Join(programFiles, "OwnGit")
 		refused := "owngit install: " + serviceFolder + " belongs to \"owngit service install\"; choose another -Dir.\n"
-		unreachable := []string{"OWNGIT_RELEASES=https://127.0.0.1:1/releases"}
 		for _, dir := range []string{
 			serviceFolder,
 			filepath.Join(serviceFolder, "releases"),
 			strings.ToLower(filepath.ToSlash(serviceFolder)) + "/",
 		} {
-			run.mustFailWith(t, unreachable, refused, "-Dir", psQuote(dir))
+			run.mustFailWith(t, env, refused, "-Dir", psQuote(dir))
 		}
-		moved := append([]string{"ProgramFiles=" + filepath.Join(run.home, "elsewhere")}, unreachable...)
-		run.mustFailWith(t, moved, refused, "-Dir", psQuote(serviceFolder))
+		// ProgramW6432 comes first, as for a 32-bit PowerShell whose
+		// ProgramFiles names Program Files (x86).
+		x86 := []string{"ProgramW6432=" + programFiles, "ProgramFiles=" + filepath.Join(run.home, "PF86"), unreachable}
+		run.mustFailWith(t, x86, refused, "-Dir", psQuote(serviceFolder))
 		// A folder that only starts with the same name is not the service folder.
-		run.mustFail(t, unreachable, "Could not download", "-Dir", psQuote(serviceFolder+"-other"))
-		if created, _ := filepath.Glob(filepath.Join(serviceFolder+"*", "owngit_*_windows_amd64")); len(created) != 0 {
-			t.Fatalf("a refused run created %v", created)
+		run.mustFail(t, env, "Could not download", "-Dir", psQuote(serviceFolder+"-other"))
+		if names := dirNames(t, programFiles); len(names) != 0 {
+			t.Fatalf("a refused run created %v in %s", names, programFiles)
 		}
 	})
 }

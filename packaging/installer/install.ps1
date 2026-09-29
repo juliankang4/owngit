@@ -40,13 +40,15 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
     # of that drive.
     $Dir = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir))
     # "owngit service install" keeps its protected copy in the OwnGit folder
-    # of the Program Files known folder (not the ProgramFiles variable), and
-    # "owngit uninstall" removes what it finds there, so the program you
-    # install lives elsewhere. Both sides are full paths, compared without
-    # regard to case.
-    $programFiles = [Environment]::GetFolderPath('ProgramFiles')
+    # of the 64-bit Program Files, and "owngit uninstall" removes what it
+    # finds there, so the program you install lives elsewhere. A 32-bit
+    # PowerShell's ProgramFiles names Program Files (x86), so ProgramW6432
+    # comes first. Both sides are full paths, compared without regard to
+    # case.
+    $programFiles = $env:ProgramW6432
+    if (-not $programFiles) { $programFiles = $env:ProgramFiles }
     if ($programFiles) {
-        $serviceFolder = [IO.Path]::Combine($programFiles, 'OwnGit')
+        $serviceFolder = [IO.Path]::GetFullPath([IO.Path]::Combine($programFiles, 'OwnGit')).TrimEnd('\')
         if (($Dir.TrimEnd('\', '/') + '\').StartsWith($serviceFolder + '\', [StringComparison]::OrdinalIgnoreCase)) {
             throw "$serviceFolder belongs to ""owngit service install""; choose another -Dir."
         }
