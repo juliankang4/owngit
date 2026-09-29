@@ -125,12 +125,10 @@ final class PanelViewController: NSViewController {
         }
         let size = NSSize(width: Self.width, height: stack.fittingSize.height)
         view.subviews.forEach { $0.removeFromSuperview() }
-        view.setFrameSize(size)
         view.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             stack.topAnchor.constraint(equalTo: view.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         preferredContentSize = size
         if focusWasInside {
