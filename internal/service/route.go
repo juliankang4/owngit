@@ -175,15 +175,18 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 				"Expand-Archive "+powerShellQuote(folder+".zip")+" "+powerShellQuote(folder))
 			break
 		}
-		// The new file replaces this one by rename, which a running
-		// program allows, so the path the service starts stays the same.
+		// The new file takes this one's place, which a running program
+		// allows, so the path the service starts stays the same. mv keeps
+		// the owner of the unpacked file, so in a folder only root can
+		// write, install puts a copy that root owns, as a service installed
+		// by root requires; it removes the old file first.
 		owngit = shellWord(install.Executable)
-		move := "mv -f \"$d/owngit\" " + owngit
+		replace := "mv -f \"$d/owngit\" " + owngit
 		if platform.Sudo {
-			move = "sudo " + move
+			replace = "sudo install -m 0755 \"$d/owngit\" " + owngit
 		}
 		steps = append(steps, "d=$(mktemp -d) && curl -fLo \"$d/owngit."+format+"\" "+url+
-			" && tar -xzf \"$d/owngit."+format+"\" -C \"$d\" owngit && "+move)
+			" && tar -xzf \"$d/owngit."+format+"\" -C \"$d\" owngit && "+replace)
 	default:
 		return ""
 	}

@@ -56,8 +56,8 @@ func TestUpdateCommand(t *testing.T) {
 	mac := Platform{GOOS: "darwin", GOARCH: "arm64"}
 	linux := Platform{GOOS: "linux", GOARCH: "amd64"}
 	withService := func(platform Platform) Platform { platform.Service = true; return platform }
-	root := linux
-	root.Sudo = true
+	sudo := linux
+	sudo.Sudo = true
 	for _, tc := range []struct {
 		name     string
 		install  Install
@@ -70,7 +70,7 @@ func TestUpdateCommand(t *testing.T) {
 		{"npm service", npm, withService(linux), "npm install -g owngit@1.1.3 && owngit service install"},
 		{"pacman service", pacman, withService(linux), `(cd "$(mktemp -d)" && curl -fLO https://github.com/juliankang4/owngit/releases/download/v1.1.3/PKGBUILD && makepkg -si) && owngit service install`},
 		{"archive", archive, linux, `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_linux_amd64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && mv -f "$d/owngit" /home/you/bin/owngit`},
-		{"archive as root", archive, withService(root), `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_linux_amd64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && sudo mv -f "$d/owngit" /home/you/bin/owngit && /home/you/bin/owngit service install`},
+		{"archive with sudo", archive, withService(sudo), `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_linux_amd64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && sudo install -m 0755 "$d/owngit" /home/you/bin/owngit && /home/you/bin/owngit service install`},
 		{"archive with a space", spaced, withService(mac), `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_darwin_arm64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && mv -f "$d/owngit" '/Users/you/My Tools/owngit' && '/Users/you/My Tools/owngit' service install`},
 		{"pacman as root", pacman, Platform{GOOS: "linux", GOARCH: "amd64", Service: true, Root: true}, ""},
 		{"another pacman package", ClassifyExecutable("/usr/bin/owngit").OwnedBy("owngit-git"), withService(linux), ""},
