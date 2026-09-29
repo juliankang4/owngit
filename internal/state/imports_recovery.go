@@ -9,17 +9,19 @@ import (
 
 // Portable import recovery.
 //
-// Source identity, mode, Git-only consent, refresh history, reference
-// observations, and publication intents travel in a backup. Transport consent
-// and schedules are machine-local: the snapshot clears them, and a restore
-// refuses to revive them. Credentials live in a file outside the database and
+// Source identity, mode, Git-only consent, refresh behaviour, refresh
+// history, reference observations, and publication intents travel in a
+// backup. Connection choices (private and reserved addresses, plain HTTP,
+// redirects, limits) and schedules are machine-local: the snapshot does not
+// read them, and a restore starts them at their defaults. Credentials live in a file outside the database and
 // are therefore absent after restore. Active runs and unconfirmed intents
 // become visible recoverable states instead of being treated as finished.
 
 // readImportRecovery reads portable import state inside the snapshot
 // transaction.
 func readImportRecovery(ctx context.Context, tx *sql.Tx, snapshot *RecoveryState) error {
-	rows, err := tx.QueryContext(ctx, `SELECT repository_id,url,source_generation,authority_revision,mode,git_only_consent,created_at,updated_at
+	rows, err := tx.QueryContext(ctx, `SELECT repository_id,url,source_generation,authority_revision,mode,git_only_consent,created_at,updated_at,
+		overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes
 		FROM import_sources ORDER BY repository_id`)
 	if err != nil {
 		return err
@@ -27,14 +29,18 @@ func readImportRecovery(ctx context.Context, tx *sql.Tx, snapshot *RecoveryState
 	for rows.Next() {
 		var record ImportSource
 		var created, updated int64
-		if err := rows.Scan(&record.RepositoryID, &record.URL, &record.SourceGeneration, &record.AuthorityRevision, &record.Mode, &record.GitOnlyConsent, &created, &updated); err != nil {
+		var prefixes string
+		if err := rows.Scan(&record.RepositoryID, &record.URL, &record.SourceGeneration, &record.AuthorityRevision, &record.Mode, &record.GitOnlyConsent, &created, &updated,
+			&record.OverwriteDiverged, &record.FollowUpstreamDeletions, &prefixes); err != nil {
 			rows.Close()
 			return err
 		}
 		record.CreatedAt = unixTime(created)
 		record.UpdatedAt = unixTime(updated)
-		// Transport consent is machine-local.
-		record.AllowPrivateNetwork = false
+		if record.ExtraRefPrefixes, err = decodeRefPrefixes(prefixes); err != nil {
+			rows.Close()
+			return fmt.Errorf("import source %q: %w", record.RepositoryID, err)
+		}
 		snapshot.ImportSources = append(snapshot.ImportSources, record)
 	}
 	if err := closeRows(rows); err != nil {
@@ -99,9 +105,15 @@ func restoreImportRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoverySta
 	for _, source := range snapshot.ImportSources {
 		// Restore creates a new machine-local execution authority while retaining
 		// source identity and observation ownership.
-		if _, err := tx.ExecContext(ctx, `INSERT INTO import_sources(repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,0,?,?)`,
-			source.RepositoryID, source.URL, source.SourceGeneration, source.AuthorityRevision+1, "", source.Mode, boolInt(source.GitOnlyConsent), source.CreatedAt.Unix(), source.UpdatedAt.Unix()); err != nil {
+		prefixes, err := encodeRefPrefixes(source.ExtraRefPrefixes)
+		if err != nil {
+			return fmt.Errorf("restore import source %q: %w", source.RepositoryID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO import_sources(repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
+			overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes)
+			VALUES(?,?,?,?,?,?,?,0,?,?,?,?,?)`,
+			source.RepositoryID, source.URL, source.SourceGeneration, source.AuthorityRevision+1, "", source.Mode, boolInt(source.GitOnlyConsent), source.CreatedAt.Unix(), source.UpdatedAt.Unix(),
+			boolInt(source.OverwriteDiverged), boolInt(source.FollowUpstreamDeletions), prefixes); err != nil {
 			return fmt.Errorf("restore import source %q: %w", source.RepositoryID, err)
 		}
 	}

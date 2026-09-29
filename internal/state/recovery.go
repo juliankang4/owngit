@@ -13,6 +13,8 @@ type RecoveryState struct {
 	AccessPasswordHash      string
 	AdminPasswordHash       string
 	Repositories            []Repository
+	RepositoryNames         []RepositoryName
+	RepositoryPolicies      []RepositoryPolicy
 	PullRequests            []PullRequest
 	PullRequestRevisions    []PullRequestRevision
 	PullRequestReviews      []PullRequestReview
@@ -64,8 +66,12 @@ type CheckResultRecord struct {
 }
 
 // RecoverySnapshot reads all portable state in one database transaction.
-// Raw check logs, sessions, setup capabilities, login attempts, trusted hosts,
-// repository-root paths, and insecure-transport consent are excluded.
+// Portable state describes the repositories and their history. Everything
+// that grants authority or describes how this computer runs is excluded:
+// raw check logs, sessions, setup capabilities, login attempts, trusted
+// hosts, repository-root paths, credentials, share links, consents,
+// schedules, recent pushes, and every setting kept in metadata other than
+// the access mode and the two password hashes.
 func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 	// Active import runs and unconfirmed publication intents are not portable
 	// authority. Record them as interrupted before the snapshot is taken so the
@@ -145,6 +151,9 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 	if snapshot.AccessMode != "open" && snapshot.AccessMode != "password" {
 		return RecoveryState{}, errors.New("portable access mode is invalid")
 	}
+	if err := readRepositoryRecords(ctx, tx, &snapshot); err != nil {
+		return RecoveryState{}, err
+	}
 	if err := readPullRequestRecovery(ctx, tx, &snapshot); err != nil {
 		return RecoveryState{}, err
 	}
@@ -156,6 +165,9 @@ func (s *Store) RecoverySnapshot(ctx context.Context) (RecoveryState, error) {
 	}
 	if err := readImportRecovery(ctx, tx, &snapshot); err != nil {
 		return RecoveryState{}, err
+	}
+	if err := ValidateRepositoryRecords(snapshot); err != nil {
+		return RecoveryState{}, fmt.Errorf("portable repository state is invalid: %w", err)
 	}
 	if err := ValidatePullRequestRecovery(snapshot); err != nil {
 		return RecoveryState{}, fmt.Errorf("portable pull request state is invalid: %w", err)
@@ -202,6 +214,9 @@ func (s *Store) RestoreRecoveryState(ctx context.Context, repositoryRoot string,
 	}
 	if snapshot.AdminPasswordHash == "" || (snapshot.AccessMode == "password" && snapshot.AccessPasswordHash == "") {
 		return errors.New("recovery password hashes are incomplete")
+	}
+	if err := ValidateRepositoryRecords(snapshot); err != nil {
+		return fmt.Errorf("invalid recovered repository state: %w", err)
 	}
 	if err := ValidatePullRequestRecovery(snapshot); err != nil {
 		return fmt.Errorf("invalid recovered pull request state: %w", err)
@@ -273,6 +288,9 @@ func (s *Store) RestoreRecoveryState(ctx context.Context, repositoryRoot string,
 		if _, err := tx.ExecContext(ctx, `INSERT INTO repository_attempt_counters(repository_id,attempt_sequence) VALUES(?,?)`, repository.ID, repository.AttemptSequence); err != nil {
 			return fmt.Errorf("restore repository %q attempt counter: %w", repository.ID, err)
 		}
+	}
+	if err := restoreRepositoryRecords(ctx, tx, snapshot); err != nil {
+		return err
 	}
 	if err := restorePullRequestRecovery(ctx, tx, snapshot); err != nil {
 		return err

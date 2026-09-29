@@ -109,6 +109,12 @@ type ImportSource struct {
 	AllowPrivateNetwork  bool
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+	// OverwriteDiverged, FollowUpstreamDeletions and ExtraRefPrefixes say
+	// what a refresh does to the repository. They are portable; connection
+	// choices such as AllowPrivateNetwork are machine-local.
+	OverwriteDiverged       bool
+	FollowUpstreamDeletions bool
+	ExtraRefPrefixes        []string
 }
 
 // ImportSourceInput is one explicit source configuration mutation.
@@ -1749,6 +1755,9 @@ func validateImportSourceRecord(record ImportSource) error {
 	}
 	if record.CreatedAt.IsZero() || record.UpdatedAt.IsZero() || record.UpdatedAt.Before(record.CreatedAt) {
 		return errors.New("invalid import source times")
+	}
+	if err := ValidateExtraRefPrefixes(record.ExtraRefPrefixes); err != nil {
+		return fmt.Errorf("invalid import source: %w", err)
 	}
 	return nil
 }
