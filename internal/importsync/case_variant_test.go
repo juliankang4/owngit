@@ -218,3 +218,32 @@ func TestUpstreamRefInAFolderSpelledLikeALocalRefStaysDivergent(t *testing.T) {
 		t.Fatalf("refs after refresh:\n%s\nwant\n%s", listed, want)
 	}
 }
+
+// A source that advertises the default branch under a spelling HFS+
+// compares as equal (Georgian U+10D0 for U+10A0) does not create it beside
+// the packed local branch.
+func TestUpstreamHFSPlusVariantOfPackedDefaultBranchStaysDivergent(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.git(f.source, "branch", "\u10a0\u10a1")
+	f.mustImport(ImportInput{})
+	path := f.destinationPath()
+	local := f.git(path, "rev-parse", "refs/heads/\u10a0\u10a1")
+	f.git(path, "pack-refs", "--all")
+
+	f.git(f.source, "checkout", "-q", "\u10a0\u10a1")
+	f.commit("two", "two\n")
+	f.git(f.source, "checkout", "-q", "main")
+	renameAdvertisedRef(f, "refs/heads/\u10a0\u10a1", "refs/heads/\u10d0\u10d1")
+	run, err := f.refresh()
+	if err != nil || run.Status != state.ImportRunComplete {
+		t.Fatalf("refresh run=%+v err=%v", run, err)
+	}
+	if run.RefsDivergent != 1 || run.RefsCreated != 0 {
+		t.Fatalf("refresh counts created=%d divergent=%d", run.RefsCreated, run.RefsDivergent)
+	}
+	listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+	if strings.Contains(listed, "\u10d0") || !strings.Contains(listed, "refs/heads/\u10a0\u10a1 "+local) {
+		t.Fatalf("refs after refresh:\n%s", listed)
+	}
+}

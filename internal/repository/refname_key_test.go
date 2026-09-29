@@ -82,3 +82,45 @@ func TestRefNameConflictsCompareFolders(t *testing.T) {
 		}
 	}
 }
+
+// HFS+ compares names with its own case table, fixed when HFS+ was
+// defined, rather than current Unicode (Apple Technical Note TN1150, "Case-
+// Insensitive String Comparison Algorithm":
+// https://developer.apple.com/library/archive/technotes/tn/tn1150.html).
+// Where that comparison differs from current Unicode folding, the classes
+// are listed here as facts: HFS+ treats Georgian Asomtavruli U+10A0 to
+// U+10C5 as the Mkhedruli letters U+10D0 to U+10F5, and it ignores the
+// format characters U+200C to U+200F, U+202A to U+202E, U+206A to U+206F
+// and U+FEFF. Each listed class shares one key, every ignored character
+// has an empty key, and without the Georgian step exactly the 38 Georgian
+// pairs fail.
+func TestRefNameKeyMatchesHFSPlusComparison(t *testing.T) {
+	georgian := 0
+	for offset := rune(0); offset <= 0x25; offset++ {
+		asomtavruli, mkhedruli, nuskhuri := 0x10A0+offset, 0x10D0+offset, 0x2D00+offset
+		want := RefNameKey(string(mkhedruli))
+		for _, member := range []rune{asomtavruli, nuskhuri} {
+			if got := RefNameKey(string(member)); got != want {
+				t.Errorf("HFS+ compares U+%04X as U+%04X but their keys are %q and %q", member, mkhedruli, got, want)
+			}
+		}
+		georgian++
+	}
+	if georgian != 38 {
+		t.Fatalf("checked %d Georgian pairs, want 38", georgian)
+	}
+	var ignored []rune
+	for _, span := range [][2]rune{{0x200C, 0x200F}, {0x202A, 0x202E}, {0x206A, 0x206F}, {0xFEFF, 0xFEFF}} {
+		for character := span[0]; character <= span[1]; character++ {
+			ignored = append(ignored, character)
+		}
+	}
+	for _, character := range ignored {
+		if key := RefNameKey("ma" + string(character) + "in"); key != RefNameKey("main") {
+			t.Errorf("HFS+ ignores U+%04X but %q has the key %q", character, "ma"+string(character)+"in", key)
+		}
+	}
+	if len(ignored) != 16 {
+		t.Fatalf("checked %d ignored characters, want 16", len(ignored))
+	}
+}

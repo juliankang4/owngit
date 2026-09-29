@@ -174,7 +174,8 @@ func TestPushWithACommandListOverTheLimitChangesNothing(t *testing.T) {
 
 // A push creates no ref whose name a file system opens as the same file as
 // the packed, protected default branch: other Unicode forms, folded
-// letters and letters that NTFS upper-cases alike. The client keeps the
+// letters, letters that NTFS upper-cases alike and Georgian letters that
+// HFS+ compares as equal. The client keeps the
 // spelling it was given (core.precomposeUnicode=false), as a Linux client
 // does. A fast-forward of the default branch itself still works.
 func TestPushRefusesNamesThatAFileSystemTreatsAsTheDefaultBranch(t *testing.T) {
@@ -185,6 +186,9 @@ func TestPushRefusesNamesThatAFileSystemTreatsAsTheDefaultBranch(t *testing.T) {
 		{"sharp s", "strasse", "straße"},
 		{"dotless i", "list", "l\u0131st"},
 		{"letter case", "main", "MAIN"},
+		{"Georgian as HFS+ compares it", "\u10a0\u10a1", "\u10d0\u10d1"},
+		{"Georgian as HFS+ compares it, reversed", "\u10d0\u10d1", "\u10a0\u10a1"},
+		{"Georgian as current Unicode folds it", "\u10a0\u10a1", "\u2d00\u2d01"},
 	}
 	for _, format := range []string{repository.ObjectFormatSHA1, repository.ObjectFormatSHA256} {
 		t.Run(format, func(t *testing.T) {

@@ -12,7 +12,8 @@ import (
 // same name. Git stores a loose ref as a file named after the ref, and file
 // systems that ignore letter case or Unicode form (APFS and HFS+ on macOS,
 // NTFS on Windows, case-insensitive SMB shares) open one file for names
-// that differ only in those ways. The key makes every such pair equal:
+// that differ only in those ways. The key is the union of their
+// equivalences, and makes every such pair equal:
 //
 //  1. canonical decomposition (NFD), so composed and decomposed spellings,
 //     such as "café" with U+00E9 or with "e" and U+0301 and Hangul
@@ -23,7 +24,13 @@ import (
 //  4. mapping each character to upper case and back to lower case, so
 //     characters that NTFS's upper-case table makes equal match, such as
 //     the dotless "ı" and "i";
-//  5. NFD again, because steps 2 and 4 can produce composed characters.
+//  5. mapping Georgian Nuskhuri (U+2D00 to U+2D25, what folding makes of
+//     Asomtavruli U+10A0 to U+10C5) to Mkhedruli (U+10D0 to U+10F5):
+//     HFS+ compares names with a case table frozen in 1997 (Apple TN1150)
+//     that makes U+10A0 equal to U+10D0, where current Unicode folding
+//     does not (TestRefNameKeyMatchesHFSPlusComparison); the other names
+//     HFS+ compares as equal already share a key through steps 1 to 4;
+//  6. NFD again, because steps 2 to 5 can produce composed characters.
 //
 // It matches some names that a given file system keeps apart, which only
 // refuses more pushes; the rule is the same on every system, so a
@@ -36,7 +43,11 @@ func RefNameKey(name string) string {
 		if unicode.Is(unicode.Cf, character) {
 			continue
 		}
-		key.WriteRune(unicode.ToLower(unicode.ToUpper(character)))
+		character = unicode.ToLower(unicode.ToUpper(character))
+		if character >= 0x2D00 && character <= 0x2D25 {
+			character += 0x10D0 - 0x2D00
+		}
+		key.WriteRune(character)
 	}
 	return norm.NFD.String(key.String())
 }
