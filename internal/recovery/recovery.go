@@ -265,6 +265,10 @@ type RepositoryManifest struct {
 	// policies, omitted when it was never renamed or keeps every default.
 	Names  []RepositoryNameManifest  `json:"names,omitempty"`
 	Policy *RepositoryPolicyManifest `json:"policy,omitempty"`
+	// Since format 11: "sha256" for an empty SHA-256 repository. A bundle
+	// names its own object format, so a repository with one never records
+	// it here, and an empty repository without it uses SHA-1.
+	ObjectFormat string `json:"object_format,omitempty"`
 }
 
 type RepositoryNameManifest struct {
@@ -423,7 +427,15 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 		if err != nil {
 			return fmt.Errorf("inspect repository %q: %w", stored.ID, err)
 		}
-		if !item.Empty {
+		if item.Empty {
+			format, err := manager.ObjectFormat(ctx, repositoryPath)
+			if err != nil {
+				return fmt.Errorf("inspect repository %q: %w", stored.ID, err)
+			}
+			if format == repository.ObjectFormatSHA256 {
+				item.ObjectFormat = format
+			}
+		} else {
 			item.Bundle = path.Join("repositories", stored.ID+".bundle")
 			// Replaced by the bundle's digest, which has the same length,
 			// so the size checked below is the size written.
@@ -886,6 +898,52 @@ func copyBundle(ctx context.Context, inputRoot, repositoryStage string, item Rep
 }
 
 // contextReader reads until ctx ends.
+// bundleObjectFormat reads the object format that a bundle's header names:
+// a version 2 bundle is SHA-1, and a version 3 bundle names its format in
+// an @object-format capability, SHA-1 when it has none (gitformat-bundle(5)).
+// The repository is created with that format before Git reads the bundle,
+// because Git cannot index a pack of another object format.
+func bundleObjectFormat(bundlePath string) (string, error) {
+	file, err := os.Open(bundlePath)
+	if err != nil {
+		return "", fmt.Errorf("open bundle: %w", err)
+	}
+	defer file.Close()
+	// Capabilities are short; the limit bounds a header that never ends.
+	header := bufio.NewReader(io.LimitReader(file, 64<<10))
+	line, err := header.ReadString('\n')
+	if err != nil {
+		return "", errors.New("bundle header is incomplete")
+	}
+	switch line {
+	case "# v2 git bundle\n":
+		return repository.ObjectFormatSHA1, nil
+	case "# v3 git bundle\n":
+	default:
+		return "", errors.New("file is not a Git bundle of a supported version")
+	}
+	format := repository.ObjectFormatSHA1
+	for {
+		next, err := header.Peek(1)
+		if err != nil {
+			return "", errors.New("bundle header is incomplete")
+		}
+		if next[0] != '@' {
+			return format, nil
+		}
+		line, err := header.ReadString('\n')
+		if err != nil {
+			return "", errors.New("bundle header is incomplete")
+		}
+		if value, found := strings.CutPrefix(strings.TrimSuffix(line, "\n"), "@object-format="); found {
+			if value != repository.ObjectFormatSHA1 && value != repository.ObjectFormatSHA256 {
+				return "", fmt.Errorf("bundle uses unsupported object format %q", value)
+			}
+			format = value
+		}
+	}
+}
+
 type contextReader struct {
 	ctx    context.Context
 	reader io.Reader
@@ -909,15 +967,25 @@ func (reader contextReader) Read(buffer []byte) (int, error) {
 // zone.
 func restoreRepository(ctx context.Context, runner commandRunner, inputRoot, repositoryStage string, item RepositoryManifest) error {
 	repositoryPath := filepath.Join(repositoryStage, item.ID+".git")
-	if _, err := runner.Run(ctx, "", nil, "init", "--bare", "--initial-branch=main", repositoryPath); err != nil {
-		return err
+	objectFormat := repository.ObjectFormatSHA1
+	if item.ObjectFormat != "" {
+		objectFormat = item.ObjectFormat
 	}
+	var bundlePath string
 	if !item.Empty {
-		bundlePath, err := copyBundle(ctx, inputRoot, repositoryStage, item)
-		if err != nil {
+		var err error
+		if bundlePath, err = copyBundle(ctx, inputRoot, repositoryStage, item); err != nil {
 			return err
 		}
 		defer os.Remove(bundlePath)
+		if objectFormat, err = bundleObjectFormat(bundlePath); err != nil {
+			return err
+		}
+	}
+	if _, err := runner.Run(ctx, "", nil, "init", "--bare", "--object-format="+objectFormat, "--initial-branch=main", repositoryPath); err != nil {
+		return err
+	}
+	if !item.Empty {
 		if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "bundle", "verify", bundlePath); err != nil {
 			return fmt.Errorf("verify bundle: %w", err)
 		}
@@ -1674,6 +1742,9 @@ func format11Content(manifest Manifest) string {
 		if item.Policy != nil {
 			return "a repository policy"
 		}
+		if item.ObjectFormat != "" {
+			return "an empty SHA-256 repository"
+		}
 	}
 	for _, record := range manifest.PullRequests {
 		if record.Body != "" || record.EditRevision != 0 || record.EditedAt != nil {
@@ -1979,7 +2050,13 @@ func validateManifest(manifest Manifest) error {
 			if len(item.Refs) != 0 || item.Head.OID != "" || item.Bundle != "" || item.SHA256 != "" {
 				return errors.New("empty repository backup contains bundle data")
 			}
+			if item.ObjectFormat != "" && item.ObjectFormat != repository.ObjectFormatSHA256 {
+				return errors.New("backup repository object format is invalid")
+			}
 			continue
+		}
+		if item.ObjectFormat != "" {
+			return errors.New("backup records an object format for a repository whose bundle names it")
 		}
 		expectedBundle := path.Join("repositories", item.ID+".bundle")
 		if (len(item.Refs) == 0 && item.Head.OID == "") || item.Bundle != expectedBundle || !validSHA256(item.SHA256) || bundles[item.Bundle] {

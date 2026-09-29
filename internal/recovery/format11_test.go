@@ -276,6 +276,7 @@ func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
 	for name, edit := range map[string]func(*Manifest){
 		"repository names":          func(m *Manifest) { m.Repositories[0].Names = []RepositoryNameManifest{{Name: "renamed"}} },
 		"repository policy":         func(m *Manifest) { m.Repositories[0].Policy = &RepositoryPolicyManifest{} },
+		"empty SHA-256 repository":  func(m *Manifest) { m.Repositories[0].ObjectFormat = "sha256" },
 		"description":               func(m *Manifest) { m.PullRequests[0].Body = "x" },
 		"edit revision":             func(m *Manifest) { m.PullRequests[0].EditRevision = 1 },
 		"edited at":                 func(m *Manifest) { m.PullRequests[0].EditedAt = &until },
@@ -295,7 +296,7 @@ func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
 		}
 	}
 	for recordType, fields := range map[reflect.Type]int{
-		reflect.TypeFor[Manifest](): 24, reflect.TypeFor[RepositoryManifest](): 12, reflect.TypeFor[RepositoryNameManifest](): 4, reflect.TypeFor[RepositoryPolicyManifest](): 4,
+		reflect.TypeFor[Manifest](): 24, reflect.TypeFor[RepositoryManifest](): 13, reflect.TypeFor[RepositoryNameManifest](): 4, reflect.TypeFor[RepositoryPolicyManifest](): 4,
 		reflect.TypeFor[Head](): 2, reflect.TypeFor[Ref](): 2, reflect.TypeFor[PullRequestManifest](): 19, reflect.TypeFor[PullRequestRevisionManifest](): 5,
 		reflect.TypeFor[PullRequestReviewManifest](): 12, reflect.TypeFor[PullRequestMergeManifest](): 11, reflect.TypeFor[TaskManifest](): 5, reflect.TypeFor[CheckConfigurationManifest](): 5,
 		reflect.TypeFor[CheckDefinitionManifest](): 2, reflect.TypeFor[CheckCycleManifest](): 6, reflect.TypeFor[CheckAttemptManifest](): 32, reflect.TypeFor[CheckResultManifest](): 10,
