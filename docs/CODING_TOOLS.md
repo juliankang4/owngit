@@ -376,6 +376,31 @@ Unlike the other `repo` commands, they need the administrator password in
 `origin`, and the password file must then name that server
 ([Credential files and the server line](#credential-files-and-the-server-line)).
 
+`owngit repo kept-history` and `owngit repo restore` bring back files from an
+earlier commit, as the dashboard's restore pages do and with the same general
+access
+([Restoring repository files](OPERATIONS.md#restoring-repository-files)).
+Preview first, then apply with the preview's `expected_head`:
+
+```sh
+owngit repo kept-history
+owngit repo restore preview --source OID --target main --path src/app.go
+owngit repo restore apply --source OID --target main --path src/app.go --expected-head OID
+```
+
+Without `--path` the whole tree is restored, which also deletes files the
+source commit does not have. The preview lists each changed path with `status`
+(`added`, `modified`, `deleted`), `old_mode` and `new_mode`, `additions`,
+`deletions` and `binary`, and says whether applying creates the branch
+(`creates_branch`) or adds one commit with `result_tree` on `expected_head`.
+Apply answers with `commit_oid`, or fails with `stale_revision` when the branch
+moved after the preview, `restore_no_changes`, `restore_unsupported` (a
+submodule, or a path whose replacement would remove unselected files beneath
+it) or `invalid_restore`. A restore never rewrites history. The API routes are
+`GET /api/v1/repositories/ID/kept-history`,
+`POST /api/v1/repositories/ID/restore/preview` and
+`POST /api/v1/repositories/ID/restore`.
+
 ## Pull request changes
 
 `owngit pr diff --number N` prints what a pull request changes as one JSON
@@ -532,6 +557,7 @@ Read tools change nothing:
 | Tool | Command |
 |---|---|
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
+| `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview`; the preview lists every path a restore would change and its `expected_head` |
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show`; only show includes the description and review notes |
 | `pull_request_diff` | `pr diff`; `patch: false` is `--stat`, and `source_oid` with `target_oid` pins a pair |
 | `pull_request_mergeability` | `pr mergeability`; `source_oid` with `target_oid` answers `stale` when they moved |
@@ -548,6 +574,7 @@ Write tools and their effects:
 | `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | Sets the review state to pending or skipped for the exact commit IDs. Notifies no one. Advisory. |
 | `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | Changes the pull request state. No branch moves. |
 | `pull_request_merge` | `pr merge` | Publishes the merge to the target branch for the exact commit IDs. Refused when a branch moved; a repeated call does not merge twice. |
+| `repository_restore_apply` | `repo restore apply` | Adds one commit with the previewed files on the target branch, or creates a branch that does not exist, only while the branch is at the preview's `expected_head`; otherwise refused with `stale_revision`. Never rewrites history; a repeated call does not restore twice. |
 | `check_task_create` | `check task new` | Adds a task. |
 | `check_cycle_reserve` | `check cycle reserve` | Uses one of the task's three correction rounds. |
 | `check_run` | `check run` without `--check` | Runs the committed checks in `--workdir` and records the attempt. |

@@ -190,6 +190,16 @@ owngit repo create --server https://owngit.example.test --name example-project \
 
 `owngit repo settings show`와 `owngit repo settings set`은 저장소 하나의 [보관된 기록과 기본 브랜치 보호](OPERATIONS.ko.md#보관된-기록) 설정을 읽고 바꿉니다. 다른 `repo` 명령과 달리 `--password-file`에 관리자 비밀번호를 넣어야 합니다. 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져오며 이때 비밀번호 파일에 그 서버가 적혀 있어야 합니다([자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄) 참고).
 
+`owngit repo kept-history`와 `owngit repo restore`는 대시보드의 되돌리기 화면처럼 같은 일반 접근으로 이전 커밋의 파일을 되살립니다([저장소 파일 되돌리기](OPERATIONS.ko.md#저장소-파일-되돌리기) 참고). 먼저 미리 보고, 미리 보기의 `expected_head`로 적용합니다.
+
+```sh
+owngit repo kept-history
+owngit repo restore preview --source OID --target main --path src/app.go
+owngit repo restore apply --source OID --target main --path src/app.go --expected-head OID
+```
+
+`--path`가 없으면 트리 전체를 되돌리며, 원본 커밋에 없는 파일은 지워집니다. 미리 보기는 바뀌는 경로마다 `status`(`added`, `modified`, `deleted`), `old_mode`와 `new_mode`, `additions`, `deletions`, `binary`를 보여 주고, 적용하면 브랜치를 새로 만드는지(`creates_branch`) 아니면 `expected_head` 위에 `result_tree`로 커밋 하나를 추가하는지 알려 줍니다. 적용은 `commit_oid`를 돌려주거나, 미리 본 뒤 브랜치가 움직였으면 `stale_revision`, 바뀔 것이 없으면 `restore_no_changes`, 서브모듈이나 바꾸면 그 아래의 선택하지 않은 파일이 지워지는 경로면 `restore_unsupported`, 요청이 잘못됐으면 `invalid_restore`로 실패합니다. 되돌리기는 기록을 다시 쓰지 않습니다. API 경로는 `GET /api/v1/repositories/ID/kept-history`, `POST /api/v1/repositories/ID/restore/preview`, `POST /api/v1/repositories/ID/restore`입니다.
+
 ## 풀 리퀘스트 변경 내용
 
 `owngit pr diff --number N`은 풀 리퀘스트가 바꾸는 내용을 JSON 객체 하나로 출력합니다. 비교한 원본과 대상 커밋, 두 커밋의 병합 기준(merge base), 줄 수가 붙은 변경 파일 목록, 패치가 들어 있습니다. `owngit pr`과 같이 일반 접근을 쓰고 클론 안에서는 서버와 저장소를 `origin`에서 읽습니다.
@@ -271,6 +281,7 @@ tool_timeout_sec = 1800
 | 도구 | 명령 |
 |---|---|
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
+| `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview`. 미리 보기는 되돌리기로 바뀔 모든 경로와 `expected_head`를 보여 줍니다 |
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show`. 설명과 리뷰 메모는 show에만 들어 있습니다 |
 | `pull_request_diff` | `pr diff`. `patch: false`는 `--stat`과 같고, `source_oid`와 `target_oid`를 함께 넘기면 커밋 쌍을 고정합니다. |
 | `pull_request_mergeability` | `pr mergeability`. `source_oid`와 `target_oid`를 함께 넘기면 그사이 움직였을 때 `stale`로 답합니다. |
@@ -287,6 +298,7 @@ tool_timeout_sec = 1800
 | `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | 정확한 커밋 ID의 리뷰 상태를 pending이나 skipped로 바꿉니다. 누구에게도 알리지 않습니다. 참고용입니다. |
 | `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | 풀 리퀘스트 상태를 바꿉니다. 브랜치는 움직이지 않습니다. |
 | `pull_request_merge` | `pr merge` | 정확한 커밋 ID로 대상 브랜치에 병합을 게시합니다. 브랜치가 움직였으면 거부하고 같은 호출을 되풀이해도 두 번 병합하지 않습니다. |
+| `repository_restore_apply` | `repo restore apply` | 브랜치가 미리 보기의 `expected_head`에 그대로 있을 때만 미리 본 파일로 대상 브랜치에 커밋 하나를 추가하거나, 없는 브랜치를 만듭니다. 브랜치가 움직였으면 `stale_revision`으로 거부합니다. 기록을 다시 쓰지 않으며 같은 호출을 되풀이해도 두 번 되돌리지 않습니다. |
 | `check_task_create` | `check task new` | 작업을 추가합니다. |
 | `check_cycle_reserve` | `check cycle reserve` | 작업의 수정 라운드 세 번 가운데 하나를 씁니다. |
 | `check_run` | `--check` 없는 `check run` | `--workdir`에서 커밋된 체크를 실행하고 시도를 기록합니다. |

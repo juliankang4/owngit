@@ -835,7 +835,9 @@ To bring back files from an earlier commit, start a restore from one of these pl
 
 Choose a source commit and a target branch, preview the complete list of additions, changes and deletions, and apply. OwnGit adds a new commit on the target branch, or recreates a deleted branch at the selected commit, only if the branch still has the previewed tip.
 
-A selected-file restore keeps unselected files, modes, binary files and symbolic links as they are, and never follows links on the host. It refuses a submodule, or a path whose replacement would remove unselected files beneath it. Restore changes only Git content in OwnGit, never another computer's working tree.
+The same restore works on the command line and through the [MCP server](CODING_TOOLS.md#mcp-server), with general access like the restore pages. `owngit repo kept-history --repository NAME` lists kept history as JSON, each entry with the branch or tag it came from, its commit and the new branch the dashboard offers for it (`restore_target`). `owngit repo restore preview --repository NAME --source OID --target BRANCH` previews a whole-tree restore; add `--path FILE` once for each file to restore only those. The preview changes nothing and lists every path the restore adds, changes or deletes with its Git modes before and after (`120000` is a symbolic link), and the branch tip it was made against as `expected_head`. `owngit repo restore apply` with the same options and `--expected-head` set to that value applies it. When the branch moved after the preview, apply is refused with `stale_revision` and changes nothing; preview again.
+
+A selected-file restore keeps unselected files, modes, binary files and symbolic links as they are, and never follows links on the host. It refuses a submodule, or a path whose replacement would remove unselected files beneath it. Restore changes only Git content in OwnGit, never another computer's working tree. A restore never rewrites history, so it also works on a [protected default branch](#changing-the-default-branch) and keeps nothing in kept history.
 
 ### Kept history
 
