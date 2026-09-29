@@ -210,7 +210,7 @@ func classifyFetchError(err error) *Problem {
 	case errors.Is(fetchError, importfetch.ErrMediaType), errors.Is(fetchError, importfetch.ErrContentEncoding), errors.Is(fetchError, importfetch.ErrResponseHeaders):
 		return newProblem(CodeProtocol, "source returned an unsupported HTTP response", err)
 	case errors.Is(err, importgit.ErrTooManyRefs):
-		return newProblem(CodeTooManyRefs, fmt.Sprintf("source lists more than %d refs, the most an import accepts; a source without Git protocol v2 also counts refs it does not import such as pull request refs; clone the source and push its branches and tags to a new repository instead", importgit.DefaultLimits().MaxRefRecords), err)
+		return newProblem(CodeTooManyRefs, fmt.Sprintf("source lists more than %d refs, the most an import accepts; for a source without Git protocol v2, refs it does not import such as pull request refs count too; clone the source and push its branches and tags to a new repository instead", importgit.DefaultLimits().MaxRefRecords), err)
 	case errors.Is(fetchError, importfetch.ErrRequestTooLarge), errors.Is(fetchError, importfetch.ErrResponseTooLarge):
 		return newProblem(CodeTooLarge, "source exceeds a configured transfer bound", err)
 	case errors.Is(fetchError, importfetch.ErrAdvertisement):
