@@ -474,6 +474,7 @@
     }
 
     function load(path, showRoots, focusList, created) {
+      var focused = document.activeElement;
       var ticket = ++generation;
       ready = false;
       locationOf({ path: path }, showRoots);
@@ -518,7 +519,14 @@
         say('folder.failed');
         retry.hidden = false;
       }).finally(function () {
-        if (ticket === generation && dialog.open) { setBusy(false); }
+        if (ticket !== generation || !dialog.open) { return; }
+        setBusy(false);
+        if (focusList && !ready) {
+          (parent.disabled ? retry : parent).focus();
+        } else if (!focusList && dialog.contains(focused) && !focused.disabled &&
+                   (document.activeElement === document.body || document.activeElement === dialog)) {
+          focused.focus();
+        }
       });
     }
 
@@ -563,7 +571,7 @@
           say(result.error);
           if (result.error === 'folder.create_unconfirmed') { ready = false; retry.hidden = false; }
           setBusy(false);
-          name.focus();
+          (ready ? name : retry).focus();
           return;
         }
         name.value = '';
@@ -574,6 +582,7 @@
         say('folder.create_unconfirmed');
         retry.hidden = false;
         setBusy(false);
+        retry.focus();
       });
     });
   })();
