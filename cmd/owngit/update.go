@@ -199,11 +199,19 @@ func detectInstall() service.Install {
 	return install
 }
 
-// pacmanOwner returns the pacman package that holds path, or "" when pacman
-// is missing or no package holds it. Tests replace it.
-var pacmanOwner = func(path string) string {
-	pacman, err := exec.LookPath("pacman")
-	if err != nil {
+// pacmanPath is the pacman that install detection asks, at the fixed path
+// Arch Linux installs it; PATH is not searched.
+const pacmanPath = "/usr/bin/pacman"
+
+// pacmanOwner returns pacman's answer for the package that holds path, or
+// "" when pacman is missing or no package holds it. The answer is checked
+// as a package name by service.Install.OwnedBy. Tests replace it.
+var pacmanOwner = func(path string) string { return askPacman(pacmanPath, path) }
+
+// askPacman runs pacman only when it is a program that only root can change,
+// by the rule for programs root runs (rootControlledExecutable).
+func askPacman(pacman, path string) string {
+	if err := rootControlledExecutable(pacman); err != nil {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -212,7 +220,7 @@ var pacmanOwner = func(path string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return strings.TrimSuffix(string(output), "\n")
 }
 
 // serviceState is whether an OwnGit service of this account starts the

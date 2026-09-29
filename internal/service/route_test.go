@@ -31,6 +31,17 @@ func TestClassifyExecutable(t *testing.T) {
 	if got := ClassifyExecutable("/opt/homebrew/Cellar/owngit/1.1.2/bin/owngit").OwnedBy("other"); got.Route != RouteHomebrew {
 		t.Errorf("a package manager's own route changed: %+v", got)
 	}
+	// Only a valid package name makes the file part of a package.
+	for _, pkg := range []string{"owngit-bin", "owngit-git", "lib32-x+y@1.0_z"} {
+		if got := ClassifyExecutable("/usr/bin/owngit").OwnedBy(pkg); got.Route != RoutePacman || got.Package != pkg {
+			t.Errorf("%q: %+v", pkg, got)
+		}
+	}
+	for _, pkg := range []string{"", "owngit-bin\nother", "a b", "x;touch y", "$(id)", "-x", ".x", "x'y"} {
+		if got := ClassifyExecutable("/usr/bin/owngit").OwnedBy(pkg); got.Route != RouteArchive || got.Package != "" {
+			t.Errorf("%q was taken as a package: %+v", pkg, got)
+		}
+	}
 }
 
 // Each route has one update command: the package manager's own, or for an
@@ -96,6 +107,8 @@ func TestRemoveCommand(t *testing.T) {
 		{ClassifyExecutable("/usr/local/bin/owngit"), true, "sudo rm /usr/local/bin/owngit"},
 		{ClassifyExecutable("/home/you/it's/owngit"), false, `rm '/home/you/it'\''s/owngit'`},
 		{ClassifyExecutable("/Applications/OwnGit.app/Contents/Helpers/owngit"), false, ""},
+		// Every value in a printed command is quoted for its shell.
+		{Install{Route: RoutePacman, Package: "a b"}, false, "sudo pacman -R 'a b'"},
 	} {
 		if got := tc.install.RemoveCommand("linux", tc.sudo); got != tc.want {
 			t.Errorf("%+v: %q, want %q", tc.install, got, tc.want)

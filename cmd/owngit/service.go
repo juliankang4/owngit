@@ -762,10 +762,10 @@ func servicePath() string {
 	return strings.Join(entries, string(os.PathListSeparator))
 }
 
-// rootControlledExecutable checks the binary a root-installed service
-// runs: the owngit account must be able to run it, and only root may change
-// it or any folder on its path, because root runs the same binary to
-// update and manage the service.
+// rootControlledExecutable checks a program that root or an administrator
+// relies on: the binary a root-installed service runs, and the pacman that
+// install detection asks. Other accounts must be able to run it, and only
+// root may change it or any folder on its path.
 func rootControlledExecutable(path string) error {
 	for current := path; ; current = filepath.Dir(current) {
 		info, err := os.Stat(current)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -65,14 +66,19 @@ func ClassifyExecutable(path string) Install {
 	return install
 }
 
-// OwnedBy returns the install as part of a pacman package when package is
-// not empty.
+// OwnedBy returns the install as part of the pacman package pkg when pkg is
+// a valid package name. Anything else, including "", several lines or shell
+// syntax, is not a package, so the install keeps its route.
 func (install Install) OwnedBy(pkg string) Install {
-	if install.Route == RouteArchive && pkg != "" {
+	if install.Route == RouteArchive && packageName.MatchString(pkg) {
 		install.Route, install.Package = RoutePacman, pkg
 	}
 	return install
 }
+
+// packageName is a pacman package name as makepkg accepts it: letters,
+// digits and @._+-, not starting with a hyphen or a dot.
+var packageName = regexp.MustCompile(`^[A-Za-z0-9@_+][A-Za-z0-9@._+-]{0,254}$`)
 
 // Platform is the release target an update downloads for and how the
 // running service picks up the new program.
@@ -199,7 +205,7 @@ func (install Install) RemoveCommand(goos string, sudo bool) string {
 	case RouteNPM:
 		return "npm uninstall -g owngit"
 	case RoutePacman:
-		return "sudo pacman -R " + install.Package
+		return "sudo pacman -R " + shellWord(install.Package)
 	case RouteArchive:
 		if goos == "windows" {
 			return "Remove-Item " + powerShellQuote(install.Executable)
