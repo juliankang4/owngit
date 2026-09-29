@@ -56,6 +56,8 @@ type publicationPlan struct {
 	divergentRefs   []string
 	deletedRefs     []string
 	skipped         []string
+	// keepHistory retains each replaced tip; see planPublication.
+	keepHistory bool
 }
 
 // changesRefs reports whether applying the plan writes a destination ref or
@@ -87,11 +89,26 @@ func (plan publicationPlan) changesRefs() bool {
 //     the destination, and every replaced tag object is retained;
 //   - anything else is divergent and stays local.
 //
-// Upstream deletions never remove a local ref.
+// Upstream deletions never remove a local ref. While the repository protects
+// its default branch, the branch HEAD names follows only a fast-forward;
+// a replacement that would rewrite it is divergent and stays local. While it
+// does not keep history, a replaced tip is not retained.
 func (s *Service) planPublication(ctx context.Context, run *runState, repositoryPath string, dest, destSymrefs map[string]string, destHEAD headIdentity, observations priorObservations) (*publicationPlan, error) {
+	writes, err := s.Store.RefWrites(ctx, run.run.RepositoryID)
+	if err != nil {
+		message := "the repository's kept history and default branch protection could not be read"
+		if policyErr := (*state.PolicyError)(nil); errors.As(err, &policyErr) {
+			message = policyErr.Advice()
+		}
+		return nil, runStateReadProblem(message, err)
+	}
+	protected := ""
+	if writes.ProtectDefaultBranch && destHEAD.kind == headSymbolic {
+		protected = destHEAD.target
+	}
 	plan := &publicationPlan{
 		expected: map[string]string{}, desired: map[string]string{}, observed: map[string]string{}, retained: map[string]string{},
-		skipped: run.selected.skipped, headExpected: destHEAD, headDesired: destHEAD,
+		skipped: run.selected.skipped, headExpected: destHEAD, headDesired: destHEAD, keepHistory: writes.KeepHistory,
 	}
 	caseVariants := destinationCaseVariants(dest, destSymrefs)
 	caseBlocked := map[string]bool{}
@@ -127,6 +144,11 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		case destination == upstream:
 			plan.desired[ref.Name] = upstream
 			plan.unchanged++
+		case observations.refs[ref.Name] != "" && observations.refs[ref.Name] == destination && ref.Name == protected &&
+			!s.isAncestor(ctx, run, repositoryPath, destination, upstream):
+			plan.desired[ref.Name] = destination
+			plan.divergent++
+			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
 		case observations.refs[ref.Name] != "" && observations.refs[ref.Name] == destination:
 			plan.desired[ref.Name] = upstream
 			plan.updated++
@@ -168,7 +190,7 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		plan.headDesired = sourceHEAD
 		plan.headChange = !sameHEADIdentity(destHEAD, sourceHEAD)
 		plan.headOwned = true
-		if plan.headChange && destHEAD.kind == headDetached {
+		if plan.headChange && destHEAD.kind == headDetached && plan.keepHistory {
 			for _, name := range detachedHEADRetentionNames(destHEAD.oid) {
 				if err := addRequiredRetention(plan, dest, destSymrefs, name, destHEAD.oid); err != nil {
 					return nil, err
@@ -242,6 +264,9 @@ func (s *Service) isAncestor(ctx context.Context, run *runState, repositoryPath,
 }
 
 func (s *Service) addRetention(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan, dest, destSymrefs map[string]string, refName, oldOID, newOID string) error {
+	if !plan.keepHistory {
+		return nil
+	}
 	kind, ok := refKind(refName)
 	if kind == "heads" && s.isAncestor(ctx, run, repositoryPath, oldOID, newOID) {
 		return nil

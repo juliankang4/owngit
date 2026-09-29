@@ -22,7 +22,8 @@ import (
 // policy again replaces it. Error names the metadata row for the server
 // log; Setting and Advice are what an owner is told.
 type PolicyError struct {
-	// Key is the metadata key of the policy.
+	// Key is the metadata key of the policy, or repositoryPolicyKey for a
+	// repository's own row.
 	Key   string
 	Value string
 	Cause error
@@ -48,6 +49,8 @@ var policyNames = map[string]struct{ field, advice string }{
 	initialBranchKey:     {"initial_branch", "The saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch."},
 	gitTransferLimitsKey: {"git_transfer", "The saved Git transfer limits cannot be read. Set them again under Settings, Repositories, or with owngit settings set --transfer-size and --transfer-time."},
 	checkLogRetentionKey: {"check_logs", "The saved raw check log retention cannot be read. Set it again under Settings, Storage & recovery, or with owngit settings set --check-logs."},
+	keptHistoryKey:       {"kept_history", "The saved server-wide kept history choice cannot be read. Set it again under Settings, Repositories, or with owngit settings set --kept-history."},
+	repositoryPolicyKey:  {"repository_policy", "This repository's saved kept history and default branch protection cannot be read. Set both again in the repository's Settings tab, or with owngit repo settings set --kept-history and --protect-default-branch."},
 }
 
 // policyValue reads the metadata row key with query, the store or a
@@ -67,6 +70,7 @@ type PolicyChange struct {
 	InitialBranch *string
 	GitTransfer   *GitTransferLimits
 	CheckLogs     *CheckLogRetention
+	KeptHistory   *bool
 }
 
 // SavePolicies checks every policy change names and saves them all in one
@@ -100,6 +104,9 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 			return fmt.Errorf("invalid raw check log retention %q", *change.CheckLogs)
 		}
 		values[checkLogRetentionKey] = change.CheckLogs.stored()
+	}
+	if change.KeptHistory != nil {
+		values[keptHistoryKey] = onOff(*change.KeptHistory)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

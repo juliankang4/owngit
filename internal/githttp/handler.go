@@ -244,6 +244,25 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		lock.RLock()
 		defer lock.RUnlock()
 	}
+	// A push follows the repository's kept history and default branch
+	// protection as they are when it starts; the update hook applies them.
+	// Its ref advertisement reads them too, so a Git client shows the
+	// refusal of an unreadable choice, which it does not show for the push
+	// request itself.
+	var refWrites []string
+	if route.service == "git-receive-pack" {
+		var err error
+		if refWrites, err = h.Repositories.RefWriteEnvironment(request.Context(), route.repositoryID); err != nil {
+			what := fmt.Sprintf("Git push to repository %q failed: its kept history and default branch protection could not be read", route.repositoryID)
+			logCause(request.Context(), what, err)
+			if policyErr := (*state.PolicyError)(nil); errors.As(err, &policyErr) {
+				http.Error(writer, policyErr.Advice(), http.StatusConflict)
+			} else {
+				http.Error(writer, "The repository's kept history and default branch protection could not be read. The OwnGit log says why.", http.StatusServiceUnavailable)
+			}
+			return
+		}
+	}
 
 	controller := http.NewResponseController(writer)
 	operationContext := request.Context()
@@ -325,6 +344,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	input = &observedBody{ReadCloser: body, stop: cancelStream, closed: make(chan struct{})}
 	extraEnvironment, err := h.cgiEnvironment(request, route, contentLength)
+	extraEnvironment = append(extraEnvironment, refWrites...)
 	if err != nil {
 		_ = input.Close()
 		http.Error(writer, "invalid Git protocol request", http.StatusBadRequest)

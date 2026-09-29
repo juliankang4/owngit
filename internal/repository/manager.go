@@ -445,6 +445,32 @@ func (m *Manager) localConfig(ctx context.Context, repositoryPath string) (map[s
 	return values, nil
 }
 
+// RefWriteEnvironment returns the variables that give a push to repository
+// id the kept history and default branch protection it follows now (see
+// writeRetentionHook). A choice that cannot be read is a state.PolicyError.
+func (m *Manager) RefWriteEnvironment(ctx context.Context, id string) ([]string, error) {
+	writes, err := m.Store.RefWrites(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	keep, protect := "off", "off"
+	if writes.KeepHistory {
+		keep = "on"
+	}
+	if writes.ProtectDefaultBranch {
+		protect = "on"
+	}
+	return []string{"OWNGIT_KEEP_HISTORY=" + keep, "OWNGIT_PROTECT_DEFAULT_BRANCH=" + protect}, nil
+}
+
+// writeRetentionHook writes the update hook that checks every branch and tag
+// update a push makes. Two variables that OwnGit's Git service sets for each
+// push (RefWriteEnvironment) carry the repository's choices, read when the
+// push starts: OWNGIT_PROTECT_DEFAULT_BRANCH=on refuses rewriting or
+// deleting the branch HEAD names, and OWNGIT_KEEP_HISTORY=off leaves the
+// previous tip of an overwritten or deleted ref unkept. Without them, as for
+// a push that does not go through OwnGit, history is kept and nothing is
+// protected.
 func writeRetentionHook(repositoryPath string, runner *gitexec.Runner) error {
 	hooks := filepath.Join(repositoryPath, "hooks")
 	if err := os.MkdirAll(hooks, 0o700); err != nil {
@@ -496,6 +522,20 @@ if test "$kind" = heads && ! is_null_oid "$new"; then
     test "$status" = 1 || { echo "could not compare branch history" >&2; exit 1; }
   fi
 fi
+if test "$kind" = heads && test "${OWNGIT_PROTECT_DEFAULT_BRANCH:-}" = on; then
+  default=$(run_git symbolic-ref --quiet HEAD) || {
+    status=$?
+    test "$status" = 1 || { echo "could not read the default branch" >&2; exit 1; }
+    default=
+  }
+  if test "$ref" = "$default"; then
+    change="a push that is not a fast-forward"
+    is_null_oid "$new" && change="deleting it"
+    printf 'OwnGit protects the default branch %%s and refused %%s. The repository settings can turn this protection off.\n' "$short" "$change" >&2
+    exit 1
+  fi
+fi
+test "${OWNGIT_KEEP_HISTORY:-}" = off && exit 0
 commands=$(mktemp %s) || exit 1
 trap 'rm -f "$commands"' EXIT HUP INT TERM
 retained="refs/owngit/retained/$kind/$old"
