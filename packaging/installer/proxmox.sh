@@ -26,6 +26,9 @@ export PATH
 home=/var/lib/owngit
 inner=$home/OwnGit-Repositories
 tag=owngit
+# install.sh puts the program here for root. pct exec runs commands with
+# a PATH that does not include /usr/local/bin, so commands name it whole.
+program=/usr/local/bin/owngit
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -76,9 +79,9 @@ is_owngit() {
 # ends the run.
 already_there() {
 	say "OwnGit's container $1 ($(config_value "$2" hostname)) already exists, so nothing was changed."
-	say "To update OwnGit in it, see the command with: pct exec $1 -- owngit update"
-	say "and run that command inside the container, after: pct enter $1"
-	say "(If the container is stopped, start it first with: pct start $1)"
+	say "To update OwnGit in it, run \"pct exec $1 -- $program update\", which prints the update command,"
+	say "and run that command in the container's shell, which \"pct enter $1\" opens."
+	say "If the container is stopped, start it first with \"pct start $1\"."
 	exit 0
 }
 
@@ -231,7 +234,7 @@ main() {
 	pct create "$ctid" "$template" --unprivileged 1 --features nesting=1 --ostype debian \
 		--hostname "$hostname" --tags "$tag" --onboot 1 \
 		--cores "$cores" --memory "$memory" --swap 512 --rootfs "$storage:$disk" --net0 "$network" \
-		--description "OwnGit. To update it: pct exec $ctid -- owngit update" >/dev/null ||
+		--description "OwnGit. To update it: pct exec $ctid -- $program update" >/dev/null ||
 		fail "could not create container $ctid"
 	created=$ctid
 
@@ -243,7 +246,9 @@ main() {
 	inside apt-get upgrade -y -q >/dev/null || fail "could not update the container's packages"
 
 	# install.sh comes from the same release as the archive it checks and
-	# runs only inside the container.
+	# runs only inside the container. Its output goes to a file first, so
+	# that pct gives it no terminal and the setup link is shown once, at
+	# the end.
 	if [ -n "$version" ]; then script=$releases/download/v$version/install.sh; else script=$releases/latest/download/install.sh; fi
 	say "Running $script in the container."
 	# shellcheck disable=SC2016 # expanded by the container's shell
@@ -252,9 +257,10 @@ main() {
 		shift
 		file=$(mktemp)
 		/usr/bin/curl --proto "=https" --proto-redir "=https" --tlsv1.2 -fsSL --retry 2 -o "$file" "$url" &&
-			/bin/sh "$file" "$@"
+			/bin/sh "$file" "$@" >"$file.log" 2>&1
 		status=$?
-		rm -f "$file"
+		[ ! -f "$file.log" ] || cat "$file.log"
+		rm -f "$file" "$file.log"
 		exit $status' sh "$script" ${version:+--version "$version"} ||
 		fail "the OwnGit installer did not finish in container $ctid"
 
@@ -277,35 +283,36 @@ main() {
 	fi
 
 	tries=0
-	until inside owngit health >/dev/null 2>&1; do
+	until inside "$program" health >/dev/null 2>&1; do
 		tries=$((tries + 1))
 		[ "$tries" -lt 60 ] || fail "OwnGit does not answer in container $ctid; see: pct exec $ctid -- journalctl -u owngit.service"
 		sleep 1
 	done
 	created="" made="" before=""
 
-	addresses=$(inside hostname -I | tr ' ' '\n' | grep -v : | tr '\n' ' ' || true)
+	addresses=$(inside hostname -I | awk '{ for (i = 1; i <= NF; i++) if ($i !~ /:/) printf "%s%s", (n++ ? ", " : ""), $i }' || true)
 	say ""
-	say "OwnGit runs in container $ctid ($hostname), address ${addresses:-unknown}, port 7654."
+	say "OwnGit runs in container $ctid ($hostname) at ${addresses:-an address that the container did not report}, port 7654."
 	say "It starts with the host, and the container runs it as a service."
 	if [ -n "$folder" ]; then
 		say "Repositories: keep the suggested folder $inner in setup. It is $folder on this host."
 	fi
-	if [ -t 1 ] && [ -r /dev/tty ]; then
-		# pct gives the command a terminal only when it has one on every
-		# side, and the setup link is shown only on a terminal.
-		inside owngit setup-link </dev/tty || say "To see the setup link, run: pct exec $ctid -- owngit setup-link"
+	if [ -t 1 ]; then
+		# pct gives the command a terminal when this output is one, and
+		# the setup link is shown only on a terminal.
+		inside "$program" setup-link || say "To see the setup link, run: pct exec $ctid -- $program setup-link"
 	else
-		say "To see the setup link, run in a terminal on this host: pct exec $ctid -- owngit setup-link"
+		say "To see the setup link, run in a terminal on this host: pct exec $ctid -- $program setup-link"
 	fi
-	say "Other commands work the same way, such as: pct exec $ctid -- owngit service status"
+	say "Other commands work the same way, such as: pct exec $ctid -- $program service status"
 }
 
 # inside runs a command in the new container as root, with a clean
-# environment.
+# environment and no input, so that it cannot read the rest of a script
+# that comes through a pipe.
 inside() {
 	pct exec "$ctid" -- /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-		HOME=/root LANG=C.UTF-8 DEBIAN_FRONTEND=noninteractive "$@"
+		HOME=/root LANG=C.UTF-8 DEBIAN_FRONTEND=noninteractive "$@" </dev/null
 }
 
 # start_and_wait starts the new container and waits until systemd has
