@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
+	"owngit/internal/markdown"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -69,10 +71,12 @@ func (app *App) pullRequestRow(repositoryID string, view *pullrequest.View) webu
 
 func (app *App) handleNewPullRequestGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	app.renderNewPullRequest(writer, request, stored, summary, chrome,
-		request.URL.Query().Get("source"), request.URL.Query().Get("target"), "", webui.ReviewChoiceNone, nil, http.StatusOK)
+		request.URL.Query().Get("source"), request.URL.Query().Get("target"), pullrequest.CreateInput{}, nil, http.StatusOK)
 }
 
-func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, sourceBranch, targetBranch, title, reviewChoice string, notices []webui.Notice, status int) {
+// renderNewPullRequest shows the creation screen for a branch pair, with the
+// title, description and review choice of draft typed back in.
+func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, sourceBranch, targetBranch string, draft pullrequest.CreateInput, notices []webui.Notice, status int) {
 	basePage := app.baseRepositoryPage(request, chrome, stored, summary)
 	base := basePage.Repo.URL + "/pull-requests"
 	page := webui.NewPullRequestPage{
@@ -82,8 +86,9 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 		SelectURL:    base + "/new",
 		SubmitURL:    base,
 		CancelURL:    base,
-		Title:        title,
-		ReviewChoice: reviewChoice,
+		Title:        draft.Title,
+		Body:         draft.Body,
+		ReviewChoice: draft.ReviewChoice,
 	}
 	if notices != nil {
 		page.Chrome.Notices = notices
@@ -150,14 +155,16 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 	input := pullrequest.CreateInput{
 		Repository:   stored.ID,
 		Title:        postValue(request, "title"),
+		Body:         postValue(request, "body"),
 		SourceBranch: postValue(request, "source_branch"),
 		TargetBranch: postValue(request, "target_branch"),
 		ReviewChoice: postValue(request, "review"),
 		SourceOID:    postValue(request, "source_oid"),
 		TargetOID:    postValue(request, "target_oid"),
+		Actor:        generalAccessActor,
 	}
 	if !validOID(input.SourceOID) || !validOID(input.TargetOID) {
-		app.renderNewPullRequest(writer, request, stored, summary, chrome, input.SourceBranch, input.TargetBranch, input.Title, input.ReviewChoice,
+		app.renderNewPullRequest(writer, request, stored, summary, chrome, input.SourceBranch, input.TargetBranch, input,
 			[]webui.Notice{webui.Error("", webui.MsgPRStale)}, http.StatusUnprocessableEntity)
 		return
 	}
@@ -167,7 +174,7 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
 			notice = notice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.ID, existing.Number))
 		}
-		app.renderNewPullRequest(writer, request, stored, summary, chrome, input.SourceBranch, input.TargetBranch, input.Title, input.ReviewChoice,
+		app.renderNewPullRequest(writer, request, stored, summary, chrome, input.SourceBranch, input.TargetBranch, input,
 			[]webui.Notice{notice}, status)
 		return
 	}
@@ -176,7 +183,14 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 }
 
 func (app *App) handlePullRequestGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64) {
-	app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, nil, nil, http.StatusOK)
+	app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, nil, nil, pullRequestDrafts{}, http.StatusOK)
+}
+
+// pullRequestDrafts are the forms a refused change shows again, open and
+// filled with what was typed, so nothing typed is lost.
+type pullRequestDrafts struct {
+	Edit   *webui.PullRequestEditForm
+	Review *webui.ReviewDraft
 }
 
 func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, action string) {
@@ -186,13 +200,38 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 	if !app.requireCSRF(writer, request) {
 		return
 	}
-	input := pullrequest.RevisionInput{SourceOID: postValue(request, "source_oid"), TargetOID: postValue(request, "target_oid")}
+	input := pullrequest.RevisionInput{SourceOID: postValue(request, "source_oid"), TargetOID: postValue(request, "target_oid"), Actor: generalAccessActor}
 	var (
 		view   *pullrequest.View
 		err    error
 		notice string
+		drafts pullRequestDrafts
 	)
 	switch action {
+	case "edit":
+		title, body := postValue(request, "title"), postValue(request, "body")
+		edit := pullrequest.EditInput{Title: &title, Body: &body, Actor: generalAccessActor}
+		revision, parseErr := strconv.ParseInt(postValue(request, "edit_revision"), 10, 64)
+		if parseErr == nil {
+			edit.EditRevision = &revision
+		}
+		view, err = app.PullRequests.Edit(request.Context(), stored.ID, number, edit)
+		notice = "pull_request_edited"
+		drafts.Edit = &webui.PullRequestEditForm{Revision: revision, Title: title, Body: body, Open: true}
+		// After a refused stale edit the page shows the newer text and keeps
+		// this one in the form, so saving again is a choice made after seeing
+		// both.
+		if stale, ok := pullrequest.AsProblem(err).Details.(pullrequest.StaleEdit); ok {
+			drafts.Edit.Revision = stale.CurrentEditRevision
+		}
+	case "review_submit":
+		review := pullrequest.ReviewSubmitInput{
+			SourceOID: input.SourceOID, TargetOID: input.TargetOID, Decision: postValue(request, "decision"),
+			ReviewerLabel: postValue(request, "reviewer_label"), Note: postValue(request, "note"), Actor: generalAccessActor,
+		}
+		view, err = app.PullRequests.SubmitReview(request.Context(), stored.ID, number, review)
+		notice = "review_recorded"
+		drafts.Review = &webui.ReviewDraft{Decision: review.Decision, ReviewerLabel: review.ReviewerLabel, Note: review.Note, Open: true}
 	case "review_request":
 		view, err = app.PullRequests.RequestReview(request.Context(), stored.ID, number, input)
 		notice = "review_requested"
@@ -224,14 +263,14 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 		if action == "merge" {
 			blockers = browserMergeProblemBlockers(err)
 		}
-		app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, []webui.Notice{problemNotice}, blockers, status)
+		app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, []webui.Notice{problemNotice}, blockers, drafts, status)
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")
 	app.noticeRedirect(writer, request, pullRequestURL(stored.ID, view.Number)+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }
 
-func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, view *pullrequest.View, notices []webui.Notice, extraBlockers []webui.MergeBlocker, status int) {
+func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, view *pullrequest.View, notices []webui.Notice, extraBlockers []webui.MergeBlocker, drafts pullRequestDrafts, status int) {
 	if view == nil {
 		var err error
 		view, err = app.PullRequests.Show(request.Context(), stored.ID, number)
@@ -269,6 +308,32 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 		TasksURL:  basePage.TasksURL,
 		CreatedAt: view.CreatedAt,
 		UpdatedAt: view.UpdatedAt,
+		// A description can be edited in every state: it changes no branch
+		// and no recorded result.
+		EditURL: self + "/edit",
+		Edit:    webui.PullRequestEditForm{Revision: view.EditRevision, Title: view.Title},
+	}
+	if view.Body != nil {
+		page.Description = app.pullRequestText(request.Context(), stored.ID, view.Target.Branch, *view.Body)
+		page.Edit.Body = *view.Body
+	}
+	if view.EditedAt != nil {
+		page.EditedAt = *view.EditedAt
+	}
+	for _, note := range view.ReviewNotes {
+		page.ReviewNotes = append(page.ReviewNotes, webui.ReviewNoteView{
+			Decision: note.Decision, ReviewerLabel: note.ReviewerLabel,
+			ShortSourceOID: shortOID(note.SourceOID), ShortTargetOID: shortOID(note.TargetOID),
+			Current: note.Current, Note: app.pullRequestText(request.Context(), stored.ID, view.Target.Branch, note.Note),
+			SubmittedAt: note.SubmittedAt,
+		})
+	}
+	page.ReviewNotesTruncated = view.ReviewNotesTruncated
+	if drafts.Edit != nil {
+		page.Edit = *drafts.Edit
+	}
+	if drafts.Review != nil {
+		page.ReviewDraft = *drafts.Review
 	}
 	if notices != nil {
 		page.Chrome.Notices = notices
@@ -293,6 +358,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 	if view.State == state.PullRequestOpen && page.Source.Resolved() && page.Target.Resolved() {
 		page.ReviewRequestURL = self + "/review/request"
 		page.ReviewSkipURL = self + "/review/skip"
+		page.ReviewSubmitURL = self + "/review/submit"
 		page.MergeURL = self + "/merge"
 	}
 	// Closing needs no branch, so it stays available after the source branch
@@ -352,11 +418,39 @@ func pullRequestNotices(key string, view *pullrequest.View) []webui.Notice {
 		confirmed, code = view.State == state.PullRequestClosed, webui.MsgPRClosedDone
 	case "pull_request_reopened":
 		confirmed, code = open, webui.MsgPRReopenedDone
+	case "pull_request_edited":
+		confirmed, code = view.EditedAt != nil, webui.MsgPREditSaved
+	case "review_recorded":
+		confirmed = open && (view.Review.Status == state.ReviewApproved || view.Review.Status == state.ReviewChangesRequested)
+		code = webui.MsgPRReviewRecorded
 	}
 	if !confirmed {
 		return nil
 	}
 	return []webui.Notice{webui.Success(code)}
+}
+
+// pullRequestText renders a description or review note. The Markdown
+// renderer writes no raw HTML from the text, and no image: Raw is empty, so a
+// picture in the repository is dropped, and one elsewhere becomes a link that
+// the page never loads. Relative links open files on the target branch. Text
+// that cannot be rendered now is shown as written.
+func (app *App) pullRequestText(ctx context.Context, repositoryID, targetBranch, text string) webui.PullRequestText {
+	result := webui.PullRequestText{Text: text}
+	if text == "" {
+		return result
+	}
+	rendered, err := markdown.Render(ctx, []byte(text), markdown.Links{
+		File: "/repositories/" + url.PathEscape(repositoryID) + "/code?ref=" + url.QueryEscape(targetBranch) + "&path=",
+	})
+	if err != nil {
+		result.NotRendered = webui.MsgPRTextPlain
+		return result
+	}
+	// markdown.Render writes no raw HTML from the text and resolves every
+	// address itself, which is what makes this conversion safe.
+	result.HTML = template.HTML(rendered)
+	return result
 }
 
 func browserRevision(revision pullrequest.Revision) webui.RevisionState {
@@ -419,7 +513,6 @@ func browserReviewEvidence(review pullrequest.Review, source, target pullrequest
 		ShortSourceOID:         shortOID(review.SourceOID),
 		BoundToCurrentRevision: bound,
 		ReadFailure:            browserEvidenceReadFailure(review.ReadFailure, webui.MsgReviewRecordUnreadable),
-		Detail:                 review.Detail,
 	}
 	if review.SubmittedAt != nil {
 		evidence.SubmittedAt = *review.SubmittedAt
@@ -483,6 +576,16 @@ func browserPullRequestProblem(request *http.Request, step string, err error, ac
 	switch problem.Code {
 	case "invalid_title":
 		field, code = "title", webui.MsgPRInvalidTitle
+	case "invalid_body":
+		field, code = "body", webui.MsgPRInvalidBody
+	case "invalid_note":
+		field, code = "note", webui.MsgPRInvalidNote
+	case "invalid_reviewer_label":
+		field, code = "reviewer_label", webui.MsgPRInvalidReviewer
+	case "invalid_review_decision":
+		field, code = "decision", webui.MsgPRInvalidDecision
+	case "stale_edit":
+		field, code = "edit", webui.MsgPREditStale
 	case "invalid_branch", "reserved_ref":
 		field, code = "source_branch", webui.MsgPRInvalidBranch
 	case "source_branch_missing", "source_not_commit":

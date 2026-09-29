@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -99,4 +100,35 @@ func TestPullRequestNumbersAreDurableAndPerRepository(t *testing.T) {
 	if err != nil || !exists || review.Status != ReviewSkipped || review.Provenance != ReviewProvenanceSkip {
 		t.Fatalf("durable review=%+v exists=%v err=%v", review, exists, err)
 	}
+}
+
+// An edit names the edit revision it read. A second edit from the same
+// revision is refused and changes nothing, so a later edit is never
+// overwritten. An edit is never recorded as earlier than the creation.
+func TestPullRequestEditIsRefusedOnceAnotherEditMovedIt(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state"))
+	noErr(t, err)
+	defer store.Close()
+	now := time.Unix(1_800_000_000, 0).UTC()
+	noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}))
+	created, err := store.CreatePullRequest(ctx, "project", "Title", "feature", "main", strings.Repeat("a", 40), strings.Repeat("b", 40), ReviewNotRequested, now)
+	noErr(t, err)
+	access := Actor{Kind: ActorAccess}
+
+	edited, err := store.EditPullRequest(ctx, PullRequestEdit{RepositoryID: "project", Number: created.Number, BasedOn: 0, Title: "First", Body: "one", EditedBy: access}, now.Add(-time.Hour))
+	noErr(t, err)
+	if edited.EditRevision != 1 || edited.Title != "First" || edited.Body != "one" || edited.EditedBy != access || edited.EditedAt == nil || edited.EditedAt.Before(edited.CreatedAt) {
+		t.Fatalf("first edit=%+v", edited)
+	}
+	if _, err := store.EditPullRequest(ctx, PullRequestEdit{RepositoryID: "project", Number: created.Number, BasedOn: 0, Title: "Stale", Body: "two", EditedBy: access}, now.Add(time.Minute)); !errors.Is(err, ErrPullRequestEdited) {
+		t.Fatalf("stale edit err=%v", err)
+	}
+	current, _, err := store.PullRequest(ctx, "project", created.Number)
+	noErr(t, err)
+	if current.EditRevision != 1 || current.Title != "First" || current.Body != "one" {
+		t.Fatalf("a stale edit changed the record: %+v", current)
+	}
+	// A restore accepts the record as it was written.
+	noErr(t, validatePullRequestRecord(current))
 }

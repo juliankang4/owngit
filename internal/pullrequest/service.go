@@ -40,9 +40,13 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 	if err := repository.ValidateID(input.Repository); err != nil {
 		return nil, NewProblem("invalid_repository", "The repository identifier is invalid.")
 	}
-	title := strings.TrimSpace(input.Title)
-	if !validLabel(title, 500) {
-		return nil, NewProblem("invalid_title", "The pull request title must contain 1 to 500 characters and no line breaks.")
+	title, err := pullRequestTitle(input.Title)
+	if err != nil {
+		return nil, err
+	}
+	body, err := pullRequestText(input.Body, "invalid_body", "description")
+	if err != nil {
+		return nil, err
 	}
 	source, err := service.normalizeBranch(ctx, input.SourceBranch)
 	if err != nil {
@@ -105,12 +109,14 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 		}
 		return nil, problem
 	}
-	return service.createForHeadsLocked(ctx, input.Repository, title, source, target, reviewStatus, repositoryPath, sourceHead, targetHead)
+	return service.createForHeadsLocked(ctx, repositoryPath, state.PullRequestCreation{
+		RepositoryID: input.Repository, Title: title, Body: body, SourceBranch: source, TargetBranch: target,
+		SourceOID: sourceHead.OID, TargetOID: targetHead.OID, InitialReview: reviewStatus, CreatedBy: input.Actor,
+	}, sourceHead, targetHead)
 }
 
-func (service *Service) createForHeadsLocked(ctx context.Context, repositoryID, title, source, target, reviewStatus, repositoryPath string, sourceHead, targetHead branchHead) (*View, error) {
-	now := service.now()
-	record, err := service.Store.BeginPullRequestCreation(ctx, repositoryID, title, source, target, sourceHead.OID, targetHead.OID, reviewStatus, now)
+func (service *Service) createForHeadsLocked(ctx context.Context, repositoryPath string, creation state.PullRequestCreation, sourceHead, targetHead branchHead) (*View, error) {
+	record, err := service.Store.BeginPullRequestCreation(ctx, creation, service.now())
 	if err != nil {
 		return nil, &Problem{Code: "state_unavailable", Message: "The provisional pull request metadata could not be saved.", Cause: err}
 	}
@@ -124,7 +130,7 @@ func (service *Service) createForHeadsLocked(ctx context.Context, repositoryID, 
 		}
 		return service.viewForHeads(ctx, repositoryPath, reconciled, sourceHead, targetHead)
 	}
-	record, err = service.Store.ActivatePullRequestCreation(ctx, repositoryID, record.Number, service.now())
+	record, err = service.Store.ActivatePullRequestCreation(ctx, creation.RepositoryID, record.Number, service.now())
 	if err != nil {
 		return nil, &Problem{Code: "pull_request_creation_reconciliation_pending", Message: "The pull request revision was retained, but its visible state still needs reconciliation.", Cause: err}
 	}
@@ -183,7 +189,8 @@ func (service *Service) List(ctx context.Context, repositoryID string) ([]*View,
 		return nil, NewProblem("result_too_large", "The pull request list exceeds the supported response limit. Use show with a pull request number.")
 	}
 	// One ref listing serves every pull request, so the list starts the same
-	// number of ref reads however many pull requests it shows.
+	// number of ref reads however many pull requests it shows. A list leaves
+	// out each description and its review notes, so its size stays bounded.
 	var heads map[string]branchHead
 	views := make([]*View, 0, len(records))
 	for _, record := range records {
@@ -192,7 +199,8 @@ func (service *Service) List(ctx context.Context, repositoryID string) ([]*View,
 				return nil, err
 			}
 		}
-		view, err := service.viewFromHeadsLocked(ctx, repositoryPath, record, heads)
+		source, target := recordHeads(record, heads)
+		view, err := service.summaryForHeads(ctx, repositoryPath, record, source, target)
 		if err != nil {
 			return nil, err
 		}
@@ -221,12 +229,87 @@ func (service *Service) Show(ctx context.Context, repositoryID string, number in
 	return service.readViewLocked(ctx, repositoryPath, record)
 }
 
+// Edit replaces the title, the description, or both, when the pull request
+// is still at the edit revision the caller read. A later edit is never
+// overwritten: the caller gets stale_edit and the current revision. An edit
+// that changes nothing records nothing. Revisions, reviews, checks and merge
+// records stay as they are, in every state of the pull request.
+func (service *Service) Edit(ctx context.Context, repositoryID string, number int64, input EditInput) (*View, error) {
+	if input.EditRevision == nil || *input.EditRevision < 0 {
+		return nil, NewProblem("invalid_edit_revision", "An edit needs the edit_revision of the pull request it changes, from show.")
+	}
+	if input.Title == nil && input.Body == nil {
+		return nil, NewProblem("invalid_edit", "An edit needs a new title, a new description, or both.")
+	}
+	var title, body *string
+	if input.Title != nil {
+		value, err := pullRequestTitle(*input.Title)
+		if err != nil {
+			return nil, err
+		}
+		title = &value
+	}
+	if input.Body != nil {
+		value, err := pullRequestText(*input.Body, "invalid_body", "description")
+		if err != nil {
+			return nil, err
+		}
+		body = &value
+	}
+	repositoryPath, err := service.repositoryPath(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	// Text changes no ref, so reading the branches is all the lock is for.
+	lock := service.Repositories.Locks.For(repositoryID)
+	if err := lockForRequest(ctx, lock.RLockContext); err != nil {
+		return nil, err
+	}
+	defer lock.RUnlock()
+	record, err := service.requirePullRequest(ctx, repositoryID, number)
+	if err != nil {
+		return nil, err
+	}
+	if record.EditRevision != *input.EditRevision {
+		return nil, staleEditProblem(record.EditRevision)
+	}
+	edit := state.PullRequestEdit{
+		RepositoryID: repositoryID, Number: number, BasedOn: record.EditRevision,
+		Title: record.Title, Body: record.Body, EditedBy: input.Actor,
+	}
+	if title != nil {
+		edit.Title = *title
+	}
+	if body != nil {
+		edit.Body = *body
+	}
+	if edit.Title != record.Title || edit.Body != record.Body {
+		edited, err := service.Store.EditPullRequest(ctx, edit, service.now())
+		if errors.Is(err, state.ErrPullRequestEdited) {
+			current, readErr := service.requirePullRequest(ctx, repositoryID, number)
+			if readErr != nil {
+				return nil, readErr
+			}
+			return nil, staleEditProblem(current.EditRevision)
+		}
+		if err != nil {
+			return nil, &Problem{Code: "state_unavailable", Message: "The pull request text could not be saved.", Cause: err}
+		}
+		record = edited
+	}
+	return service.readViewLocked(ctx, repositoryPath, record)
+}
+
 func (service *Service) RequestReview(ctx context.Context, repositoryID string, number int64, input RevisionInput) (*View, error) {
-	return service.recordReview(ctx, repositoryID, number, input.SourceOID, input.TargetOID, state.ReviewPending, "")
+	return service.recordReview(ctx, repositoryID, number, state.PullRequestReview{
+		SourceOID: input.SourceOID, TargetOID: input.TargetOID, Status: state.ReviewPending, Actor: input.Actor,
+	})
 }
 
 func (service *Service) SkipReview(ctx context.Context, repositoryID string, number int64, input RevisionInput) (*View, error) {
-	return service.recordReview(ctx, repositoryID, number, input.SourceOID, input.TargetOID, state.ReviewSkipped, "")
+	return service.recordReview(ctx, repositoryID, number, state.PullRequestReview{
+		SourceOID: input.SourceOID, TargetOID: input.TargetOID, Status: state.ReviewSkipped, Actor: input.Actor,
+	})
 }
 
 func (service *Service) SubmitReview(ctx context.Context, repositoryID string, number int64, input ReviewSubmitInput) (*View, error) {
@@ -243,10 +326,19 @@ func (service *Service) SubmitReview(ctx context.Context, repositoryID string, n
 	if !validLabel(reviewer, 200) {
 		return nil, NewProblem("invalid_reviewer_label", "The supplied reviewer label must contain 1 to 200 characters and no line breaks.")
 	}
-	return service.recordReview(ctx, repositoryID, number, input.SourceOID, input.TargetOID, status, reviewer)
+	note, err := pullRequestText(input.Note, "invalid_note", "review note")
+	if err != nil {
+		return nil, err
+	}
+	return service.recordReview(ctx, repositoryID, number, state.PullRequestReview{
+		SourceOID: input.SourceOID, TargetOID: input.TargetOID, Status: status, ReviewerLabel: reviewer, Note: note, Actor: input.Actor,
+	})
 }
 
-func (service *Service) recordReview(ctx context.Context, repositoryID string, number int64, sourceOID, targetOID, status, reviewer string) (*View, error) {
+// recordReview appends review, which names the exact revision pair, its
+// status and what was supplied with it, when that pair is still current.
+func (service *Service) recordReview(ctx context.Context, repositoryID string, number int64, review state.PullRequestReview) (*View, error) {
+	sourceOID, targetOID := review.SourceOID, review.TargetOID
 	if err := validateExpectedRevision(sourceOID, targetOID); err != nil {
 		return nil, err
 	}
@@ -276,11 +368,8 @@ func (service *Service) recordReview(ctx context.Context, repositoryID string, n
 	if err := service.bindRevision(ctx, repositoryPath, record, sourceOID, targetOID); err != nil {
 		return nil, err
 	}
-	review := state.PullRequestReview{
-		RepositoryID: repositoryID, PullRequestNumber: number, SourceOID: sourceOID, TargetOID: targetOID,
-		Status: status, ReviewerLabel: reviewer, CreatedAt: service.now(),
-	}
-	switch status {
+	review.RepositoryID, review.PullRequestNumber, review.CreatedAt = repositoryID, number, service.now()
+	switch review.Status {
 	case state.ReviewPending:
 		review.Provenance = state.ReviewProvenanceRequest
 	case state.ReviewSkipped:
@@ -368,7 +457,7 @@ func (service *Service) Merge(ctx context.Context, repositoryID string, number i
 		return nil, &Problem{Code: "state_unavailable", Message: "The durable merge intent could not be saved.", Cause: err}
 	}
 	if intent.Status == state.MergeIntentReady {
-		published, reconcileErr := service.reconcileIntentLocked(ctx, repositoryPath, intent)
+		published, reconcileErr := service.reconcileIntentLocked(ctx, repositoryPath, intent, input.Actor)
 		if reconcileErr != nil {
 			return nil, reconcileErr
 		}
@@ -417,7 +506,7 @@ func (service *Service) Merge(ctx context.Context, repositoryID string, number i
 	}
 
 	publishErr := service.publishMerge(ctx, repositoryPath, record, intent)
-	published, reconcileErr := service.reconcileIntentLocked(ctx, repositoryPath, intent)
+	published, reconcileErr := service.reconcileIntentLocked(ctx, repositoryPath, intent, input.Actor)
 	if reconcileErr != nil {
 		return nil, reconcileErr
 	}
@@ -506,7 +595,8 @@ func (service *Service) setClosed(ctx context.Context, repositoryID string, numb
 }
 
 // completePublishedMergeLocked records a merge of this pull request that Git
-// already published. It returns the current record, merged or not.
+// already published. It returns the current record, merged or not. Who asked
+// for that merge is not known here, so nobody is recorded.
 func (service *Service) completePublishedMergeLocked(ctx context.Context, repositoryPath string, record state.PullRequest) (state.PullRequest, error) {
 	intents, err := service.Store.PullRequestMergeIntents(ctx, true)
 	if err != nil {
@@ -516,7 +606,7 @@ func (service *Service) completePublishedMergeLocked(ctx context.Context, reposi
 		if intent.RepositoryID != record.RepositoryID || intent.PullRequestNumber != record.Number || intent.Status != state.MergeIntentReady {
 			continue
 		}
-		published, err := service.reconcileIntentLocked(ctx, repositoryPath, intent)
+		published, err := service.reconcileIntentLocked(ctx, repositoryPath, intent, state.Actor{})
 		if err != nil {
 			return state.PullRequest{}, err
 		}
@@ -693,7 +783,7 @@ func (service *Service) RecoverRepositoryLocked(ctx context.Context, repositoryI
 		}
 		switch intent.Status {
 		case state.MergeIntentReady:
-			_, err = service.reconcileIntentLocked(ctx, repositoryPath, intent)
+			_, err = service.reconcileIntentLocked(ctx, repositoryPath, intent, state.Actor{})
 		case state.MergeIntentPlanned:
 			err = service.validateProtectedMergeObjects(ctx, repositoryPath, intent)
 		default:
@@ -706,7 +796,9 @@ func (service *Service) RecoverRepositoryLocked(ctx context.Context, repositoryI
 	return nil
 }
 
-func (service *Service) reconcileIntentLocked(ctx context.Context, repositoryPath string, intent state.PullRequestMergeIntent) (bool, error) {
+// reconcileIntentLocked records a merge that Git published for intent, made
+// by mergedBy, and reports whether Git published it.
+func (service *Service) reconcileIntentLocked(ctx context.Context, repositoryPath string, intent state.PullRequestMergeIntent, mergedBy state.Actor) (bool, error) {
 	published, err := service.validateReceipt(ctx, repositoryPath, intent)
 	if err != nil || !published {
 		return published, err
@@ -714,7 +806,9 @@ func (service *Service) reconcileIntentLocked(ctx context.Context, repositoryPat
 	completedAt := service.now()
 	complete := service.CompleteMerge
 	if complete == nil {
-		complete = service.Store.CompletePullRequestMerge
+		complete = func(ctx context.Context, intent state.PullRequestMergeIntent, completedAt time.Time) error {
+			return service.Store.CompletePullRequestMerge(ctx, intent, completedAt, mergedBy)
+		}
 	}
 	if err := complete(ctx, intent, completedAt); err != nil {
 		return true, &Problem{Code: "merge_reconciliation_pending", Message: "Git published the merge, but its durable state still needs reconciliation. Retry the same merge command.", Cause: err}
@@ -750,27 +844,66 @@ func (service *Service) readViewLocked(ctx context.Context, repositoryPath strin
 			return nil, err
 		}
 	}
-	return service.viewFromHeadsLocked(ctx, repositoryPath, record, heads)
+	source, target := recordHeads(record, heads)
+	return service.viewForHeads(ctx, repositoryPath, record, source, target)
 }
 
-// viewFromHeadsLocked is readViewLocked with the branch heads already read
-// by branchHeads. A merged pull request shows its recorded merge revisions
-// and needs no heads.
-func (service *Service) viewFromHeadsLocked(ctx context.Context, repositoryPath string, record state.PullRequest, heads map[string]branchHead) (*View, error) {
+// recordHeads returns the pair a pull request is about: its current branch
+// heads from heads, which branchHeads read, or the recorded merge revisions
+// of a merged pull request, which needs no heads.
+func recordHeads(record state.PullRequest, heads map[string]branchHead) (branchHead, branchHead) {
 	if record.Status == state.PullRequestMerged {
-		source := branchHead{Branch: record.SourceBranch, OID: record.MergeSourceOID, Status: "commit"}
-		target := branchHead{Branch: record.TargetBranch, OID: record.MergeTargetOID, Status: "commit"}
-		return service.viewForHeads(ctx, repositoryPath, record, source, target)
+		return branchHead{Branch: record.SourceBranch, OID: record.MergeSourceOID, Status: "commit"},
+			branchHead{Branch: record.TargetBranch, OID: record.MergeTargetOID, Status: "commit"}
 	}
-	return service.viewForHeads(ctx, repositoryPath, record, headOf(heads, record.SourceBranch), headOf(heads, record.TargetBranch))
+	return headOf(heads, record.SourceBranch), headOf(heads, record.TargetBranch)
 }
 
+// viewForHeads is the whole view of a pull request at source and target:
+// its summary with the description and the newest review notes.
 func (service *Service) viewForHeads(ctx context.Context, repositoryPath string, record state.PullRequest, source, target branchHead) (*View, error) {
+	view, err := service.summaryForHeads(ctx, repositoryPath, record, source, target)
+	if err != nil {
+		return nil, err
+	}
+	body := record.Body
+	view.Body = &body
+	notes, more, err := service.Store.PullRequestReviewNotes(ctx, record.RepositoryID, record.Number, MaximumReviewNotes)
+	if err != nil {
+		// Review notes are review evidence: a failed read is reported like
+		// one of the review record, never as no notes.
+		view.Review = Review{ReadFailure: &ReadFailure{Code: ReadFailureReviewEvidence}}
+		return view, nil
+	}
+	for _, note := range notes {
+		view.ReviewNotes = append(view.ReviewNotes, ReviewNote{
+			Decision: note.Status, ReviewerLabel: note.ReviewerLabel, SourceOID: note.SourceOID, TargetOID: note.TargetOID,
+			Current: source.Status == "commit" && target.Status == "commit" && note.SourceOID == source.OID && note.TargetOID == target.OID,
+			Note:    note.Note, SubmittedAt: note.CreatedAt, Actor: recordedActor(note.Actor),
+		})
+	}
+	view.ReviewNotesTruncated = more
+	return view, nil
+}
+
+// recordedActor is actor, or nil when nobody was recorded.
+func recordedActor(actor state.Actor) *state.Actor {
+	if actor == (state.Actor{}) {
+		return nil
+	}
+	return &actor
+}
+
+// summaryForHeads is the view of a pull request at source and target without
+// its description and review notes, as a list shows it.
+func (service *Service) summaryForHeads(ctx context.Context, repositoryPath string, record state.PullRequest, source, target branchHead) (*View, error) {
 	view := &View{
 		Repository: record.RepositoryID, Number: record.Number, Title: record.Title, State: record.Status,
+		EditRevision: record.EditRevision, EditedAt: record.EditedAt,
 		Source:    Revision{Branch: record.SourceBranch, OID: source.OID, Status: source.Status},
 		Target:    Revision{Branch: record.TargetBranch, OID: target.OID, Status: target.Status},
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
+		CreatedBy: recordedActor(record.CreatedBy), EditedBy: recordedActor(record.EditedBy), MergedBy: recordedActor(record.MergedBy),
 	}
 	// Checks and review are advisory, so an advisory read failure is reported
 	// in the view instead of failing the whole operation, including a merge.
@@ -1053,6 +1186,40 @@ func validateExpectedRevision(sourceOID, targetOID string) error {
 		return NewProblem("invalid_revision", "Exact lowercase source and target commit object IDs are required.")
 	}
 	return nil
+}
+
+// StaleEdit is the detail of a stale_edit problem: the edit revision the pull
+// request has now.
+type StaleEdit struct {
+	CurrentEditRevision int64 `json:"current_edit_revision"`
+}
+
+func staleEditProblem(current int64) *Problem {
+	return &Problem{
+		Code: "stale_edit", Message: "The pull request was edited after you read it. Show it again and reapply your change.",
+		Details: StaleEdit{CurrentEditRevision: current},
+	}
+}
+
+// pullRequestTitle is a title without surrounding spaces, or invalid_title.
+func pullRequestTitle(value string) (string, error) {
+	title := strings.TrimSpace(value)
+	if !validLabel(title, 500) {
+		return "", NewProblem("invalid_title", "The pull request title must contain 1 to 500 characters and no line breaks.")
+	}
+	return title, nil
+}
+
+// pullRequestText is a description or review note as OwnGit keeps it: line
+// ends are LF, so a text saved from a browser or a Windows file does not
+// differ from the same text saved elsewhere. It is refused with code when it
+// is longer than 64 KiB, is not UTF-8, or holds a NUL character.
+func pullRequestText(value, code, name string) (string, error) {
+	text := strings.ReplaceAll(value, "\r\n", "\n")
+	if !state.ValidPullRequestText(text) {
+		return "", NewProblem(code, "The "+name+" must be UTF-8 text of at most 64 KiB (65,536 bytes) without NUL characters.")
+	}
+	return text, nil
 }
 
 func staleRevisionProblem(sourceOID, targetOID string) *Problem {

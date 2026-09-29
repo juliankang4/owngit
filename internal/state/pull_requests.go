@@ -109,24 +109,43 @@ type PullRequestMergeIntent struct {
 	UpdatedAt         time.Time
 }
 
+// PullRequestCreation is what creating a pull request records: the pull
+// request, the revision pair it starts at, and the initial review choice for
+// that pair, made by CreatedBy.
+type PullRequestCreation struct {
+	RepositoryID  string
+	Title         string
+	Body          string
+	SourceBranch  string
+	TargetBranch  string
+	SourceOID     string
+	TargetOID     string
+	InitialReview string
+	CreatedBy     Actor
+}
+
 func (s *Store) CreatePullRequest(ctx context.Context, repositoryID, title, sourceBranch, targetBranch, sourceOID, targetOID, initialReview string, now time.Time) (PullRequest, error) {
-	record, err := s.BeginPullRequestCreation(ctx, repositoryID, title, sourceBranch, targetBranch, sourceOID, targetOID, initialReview, now)
+	record, err := s.BeginPullRequestCreation(ctx, PullRequestCreation{
+		RepositoryID: repositoryID, Title: title, SourceBranch: sourceBranch, TargetBranch: targetBranch,
+		SourceOID: sourceOID, TargetOID: targetOID, InitialReview: initialReview,
+	}, now)
 	if err != nil {
 		return PullRequest{}, err
 	}
 	return s.ActivatePullRequestCreation(ctx, repositoryID, record.Number, now)
 }
 
-func (s *Store) BeginPullRequestCreation(ctx context.Context, repositoryID, title, sourceBranch, targetBranch, sourceOID, targetOID, initialReview string, now time.Time) (PullRequest, error) {
+func (s *Store) BeginPullRequestCreation(ctx context.Context, creation PullRequestCreation, now time.Time) (PullRequest, error) {
+	repositoryID, sourceOID, targetOID, initialReview := creation.RepositoryID, creation.SourceOID, creation.TargetOID, creation.InitialReview
 	if initialReview != ReviewPending && initialReview != ReviewSkipped && initialReview != ReviewNotRequested {
 		return PullRequest{}, errors.New("invalid initial review choice")
 	}
 	record := PullRequest{
-		RepositoryID: repositoryID, Title: title, SourceBranch: sourceBranch, TargetBranch: targetBranch,
-		Status: PullRequestCreating, CreatedAt: now, UpdatedAt: now,
+		RepositoryID: repositoryID, Title: creation.Title, Body: creation.Body, SourceBranch: creation.SourceBranch, TargetBranch: creation.TargetBranch,
+		Status: PullRequestCreating, CreatedAt: now, UpdatedAt: now, CreatedBy: creation.CreatedBy,
 	}
 	revision := PullRequestRevision{RepositoryID: repositoryID, SourceOID: sourceOID, TargetOID: targetOID, RecordedAt: now}
-	review := PullRequestReview{RepositoryID: repositoryID, SourceOID: sourceOID, TargetOID: targetOID, Status: initialReview, CreatedAt: now}
+	review := PullRequestReview{RepositoryID: repositoryID, SourceOID: sourceOID, TargetOID: targetOID, Status: initialReview, CreatedAt: now, Actor: creation.CreatedBy}
 	switch initialReview {
 	case ReviewPending:
 		review.Provenance = ReviewProvenanceRequest
@@ -141,6 +160,10 @@ func (s *Store) BeginPullRequestCreation(ctx context.Context, repositoryID, titl
 	if !validObjectID(sourceOID) || !validObjectID(targetOID) {
 		return PullRequest{}, errors.New("invalid pull request revision")
 	}
+	createdBy, err := encodeActor(record.CreatedBy)
+	if err != nil {
+		return PullRequest{}, err
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -151,8 +174,8 @@ func (s *Store) BeginPullRequestCreation(ctx context.Context, repositoryID, titl
 		return PullRequest{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO pull_requests(
-		repository_id,number,title,source_branch,target_branch,status,created_at,updated_at
-	) VALUES(?,?,?,?,?,?,?,?)`, record.RepositoryID, record.Number, record.Title, record.SourceBranch, record.TargetBranch, record.Status, record.CreatedAt.Unix(), record.UpdatedAt.Unix()); err != nil {
+		repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,body,created_by
+	) VALUES(?,?,?,?,?,?,?,?,?,?)`, record.RepositoryID, record.Number, record.Title, record.SourceBranch, record.TargetBranch, record.Status, record.CreatedAt.Unix(), record.UpdatedAt.Unix(), record.Body, createdBy); err != nil {
 		return PullRequest{}, err
 	}
 	revision.PullRequestNumber = record.Number
@@ -163,9 +186,7 @@ func (s *Store) BeginPullRequestCreation(ctx context.Context, repositoryID, titl
 	}
 	review.PullRequestNumber = record.Number
 	review.Sequence = 1
-	if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(
-		repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,review_event_id,created_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.ReviewEventID, review.CreatedAt.Unix()); err != nil {
+	if err := insertPullRequestReview(ctx, tx, review); err != nil {
 		return PullRequest{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -523,9 +544,7 @@ func (s *Store) AppendPullRequestReview(ctx context.Context, review PullRequestR
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0)+1 FROM pull_request_reviews WHERE repository_id=? AND pull_request_number=?`, review.RepositoryID, review.PullRequestNumber).Scan(&review.Sequence); err != nil {
 		return PullRequestReview{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(
-		repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,review_event_id,created_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.ReviewEventID, review.CreatedAt.Unix()); err != nil {
+	if err := insertPullRequestReview(ctx, tx, review); err != nil {
 		return PullRequestReview{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE pull_requests SET updated_at=? WHERE repository_id=? AND number=?`, review.CreatedAt.Unix(), review.RepositoryID, review.PullRequestNumber); err != nil {
@@ -535,6 +554,104 @@ func (s *Store) AppendPullRequestReview(ctx context.Context, review PullRequestR
 		return PullRequestReview{}, err
 	}
 	return review, nil
+}
+
+// insertPullRequestReview writes one review row with every column.
+func insertPullRequestReview(ctx context.Context, tx *sql.Tx, review PullRequestReview) error {
+	actor, err := encodeActor(review.Actor)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(
+		repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,review_event_id,created_at,note,actor
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.ReviewEventID, review.CreatedAt.Unix(), review.Note, actor)
+	return err
+}
+
+// PullRequestReviewNotes returns the newest reviews of a pull request that
+// carry a note, at most limit of them, newest first, and whether older ones
+// exist. Each keeps the revision pair it reviewed.
+func (s *Store) PullRequestReviewNotes(ctx context.Context, repositoryID string, number int64, limit int) ([]PullRequestReview, bool, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, false, errors.New("invalid review note limit")
+	}
+	rows, err := s.db.QueryContext(ctx, pullRequestReviewSelect+` WHERE repository_id=? AND pull_request_number=? AND note!='' ORDER BY sequence DESC LIMIT ?`, repositoryID, number, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	var reviews []PullRequestReview
+	for rows.Next() {
+		review, err := scanPullRequestReview(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		reviews = append(reviews, review)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(reviews) > limit
+	if more {
+		reviews = reviews[:limit]
+	}
+	return reviews, more, nil
+}
+
+// PullRequestEdit replaces the title and description of the pull request
+// whose edit revision is still BasedOn.
+type PullRequestEdit struct {
+	RepositoryID string
+	Number       int64
+	BasedOn      int64
+	Title        string
+	Body         string
+	EditedBy     Actor
+}
+
+// ErrPullRequestEdited reports that a pull request was edited after the
+// revision an edit was based on. Nothing was changed.
+var ErrPullRequestEdited = errors.New("pull request was edited since it was read")
+
+// EditPullRequest applies edit when the pull request is still at the edit
+// revision it was based on, and counts one more edit. Otherwise it changes
+// nothing and returns ErrPullRequestEdited. Revisions, reviews, checks and
+// merge records are not touched.
+func (s *Store) EditPullRequest(ctx context.Context, edit PullRequestEdit, now time.Time) (PullRequest, error) {
+	if now.IsZero() || edit.BasedOn < 0 || !validText(edit.Title, 500) || !ValidPullRequestText(edit.Body) {
+		return PullRequest{}, errors.New("invalid pull request edit")
+	}
+	editedBy, err := encodeActor(edit.EditedBy)
+	if err != nil {
+		return PullRequest{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PullRequest{}, err
+	}
+	defer tx.Rollback()
+	// An edit is never earlier than the creation, even when the clock moved
+	// back, because a record that says so is refused on restore.
+	result, err := tx.ExecContext(ctx, `UPDATE pull_requests SET title=?,body=?,edit_revision=edit_revision+1,edited_at=MAX(created_at,COALESCE(edited_at,0),?),
+		edited_by=?,updated_at=MAX(updated_at,?) WHERE repository_id=? AND number=? AND status!='creating' AND edit_revision=?`,
+		edit.Title, edit.Body, now.Unix(), editedBy, now.Unix(), edit.RepositoryID, edit.Number, edit.BasedOn)
+	if err != nil {
+		return PullRequest{}, err
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		if err != nil {
+			return PullRequest{}, err
+		}
+		return PullRequest{}, ErrPullRequestEdited
+	}
+	record, err := scanPullRequest(tx.QueryRowContext(ctx, pullRequestSelect+` WHERE repository_id=? AND number=?`, edit.RepositoryID, edit.Number))
+	if err != nil {
+		return PullRequest{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return PullRequest{}, err
+	}
+	return record, nil
 }
 
 func (s *Store) PullRequestReviewForRevision(ctx context.Context, repositoryID string, number int64, sourceOID, targetOID string) (PullRequestReview, bool, error) {
@@ -652,9 +769,16 @@ func scanMergeIntent(scanner rowScanner) (PullRequestMergeIntent, error) {
 	return intent, nil
 }
 
-func (s *Store) CompletePullRequestMerge(ctx context.Context, intent PullRequestMergeIntent, completedAt time.Time) error {
+// CompletePullRequestMerge records the merge that Git published for intent.
+// mergedBy is who asked for the merge, or nobody when OwnGit completes it on
+// its own after an interruption.
+func (s *Store) CompletePullRequestMerge(ctx context.Context, intent PullRequestMergeIntent, completedAt time.Time, mergedBy Actor) error {
 	if intent.Status != MergeIntentReady || intent.ResultOID == "" || completedAt.IsZero() {
 		return errors.New("merge intent is not ready")
+	}
+	merger, err := encodeActor(mergedBy)
+	if err != nil {
+		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -678,8 +802,8 @@ func (s *Store) CompletePullRequestMerge(ctx context.Context, intent PullRequest
 			return errors.New("pull request is already merged with another result")
 		}
 	} else if requestStatus == PullRequestOpen {
-		if _, err := tx.ExecContext(ctx, `UPDATE pull_requests SET status='merged',updated_at=?,merge_source_oid=?,merge_target_oid=?,merge_oid=?,merge_receipt_ref=?,merged_at=?
-			WHERE repository_id=? AND number=? AND status='open'`, completedAt.Unix(), intent.SourceOID, intent.TargetOID, intent.ResultOID, intent.ReceiptRef, completedAt.Unix(), intent.RepositoryID, intent.PullRequestNumber); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE pull_requests SET status='merged',updated_at=?,merge_source_oid=?,merge_target_oid=?,merge_oid=?,merge_receipt_ref=?,merged_at=?,merged_by=?
+			WHERE repository_id=? AND number=? AND status='open'`, completedAt.Unix(), intent.SourceOID, intent.TargetOID, intent.ResultOID, intent.ReceiptRef, completedAt.Unix(), merger, intent.RepositoryID, intent.PullRequestNumber); err != nil {
 			return err
 		}
 	} else {
@@ -786,11 +910,7 @@ func restorePullRequestRecovery(ctx context.Context, tx *sql.Tx, snapshot Recove
 		}
 	}
 	for _, review := range snapshot.PullRequestReviews {
-		actor, err := encodeActor(review.Actor)
-		if err != nil {
-			return fmt.Errorf("restore pull request review: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request_reviews(repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,review_event_id,created_at,note,actor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, review.RepositoryID, review.PullRequestNumber, review.Sequence, review.SourceOID, review.TargetOID, review.Status, review.ReviewerLabel, review.Provenance, review.ReviewEventID, review.CreatedAt.Unix(), review.Note, actor); err != nil {
+		if err := insertPullRequestReview(ctx, tx, review); err != nil {
 			return fmt.Errorf("restore pull request review: %w", err)
 		}
 	}
@@ -927,7 +1047,7 @@ func validatePullRequestRecord(record PullRequest) error {
 	default:
 		return errors.New("invalid pull request status")
 	}
-	if !validPullRequestText(record.Body) {
+	if !ValidPullRequestText(record.Body) {
 		return errors.New("invalid pull request description")
 	}
 	if record.EditRevision < 0 || (record.EditRevision == 0) != (record.EditedAt == nil) || (record.EditedAt != nil && record.EditedAt.Before(record.CreatedAt)) ||
@@ -945,9 +1065,9 @@ func validatePullRequestRecord(record PullRequest) error {
 	return nil
 }
 
-// validPullRequestText accepts a description or review note: empty or UTF-8
+// ValidPullRequestText accepts a description or review note: empty or UTF-8
 // text of at most MaximumPullRequestTextBytes without NUL.
-func validPullRequestText(value string) bool {
+func ValidPullRequestText(value string) bool {
 	return len(value) <= MaximumPullRequestTextBytes && utf8.ValidString(value) && !strings.ContainsRune(value, 0)
 }
 
@@ -972,7 +1092,7 @@ func validateReviewRecord(review PullRequestReview, requireSequence bool) error 
 	if review.ReviewEventID != "" && !validReviewEventID(review.ReviewEventID) {
 		return errors.New("invalid pull request review event identity")
 	}
-	if !validPullRequestText(review.Note) {
+	if !ValidPullRequestText(review.Note) {
 		return errors.New("invalid pull request review note")
 	}
 	if err := review.Actor.Validate(); err != nil {

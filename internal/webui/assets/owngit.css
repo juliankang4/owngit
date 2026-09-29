@@ -2175,6 +2175,13 @@ span.hm__cell { cursor: default; }
 .evfoot__h { margin-top: 8px; }
 
 .pract { display: grid; gap: 12px; margin-top: 10px; }
+/* Pull request description and review notes. Plain text keeps its line
+   breaks and wraps long words instead of widening the page. */
+.prtext { padding-bottom: 4px; }
+.prtext--plain { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; max-width: 80ch; }
+.prnote + .prnote { border-top: 1px solid var(--sep); margin-top: 14px; padding-top: 14px; }
+.prnote__head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--text-2); }
+.prreview { margin-top: 18px; }
 .pract form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .card > .pract:first-child { margin-top: 0; }
 .disc + .card { margin-top: 16px; }

@@ -380,6 +380,12 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 			case len(parts) == 5 && parts[3] == "review" && parts[4] == "skip" && request.Method == http.MethodPost:
 				app.handlePullRequestAction(writer, request, stored, summary, chrome, number, "review_skip")
 				return
+			case len(parts) == 5 && parts[3] == "review" && parts[4] == "submit" && request.Method == http.MethodPost:
+				app.handlePullRequestAction(writer, request, stored, summary, chrome, number, "review_submit")
+				return
+			case len(parts) == 4 && parts[3] == "edit" && request.Method == http.MethodPost:
+				app.handlePullRequestAction(writer, request, stored, summary, chrome, number, "edit")
+				return
 			case len(parts) == 4 && parts[3] == "merge" && request.Method == http.MethodPost:
 				app.handlePullRequestAction(writer, request, stored, summary, chrome, number, "merge")
 				return

@@ -4,9 +4,21 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"owngit/internal/state"
 )
 
 const MaximumListResults = 1000
+
+const (
+	// MaximumTextRequestBytes bounds a JSON request that carries pull request
+	// text: a title and a description or review note at their limits, which
+	// JSON may escape to six bytes for each byte.
+	MaximumTextRequestBytes = 6*(500+state.MaximumPullRequestTextBytes) + 16<<10
+	// MaximumReviewNotes is how many review notes a pull request shows, newest
+	// first. Older notes stay recorded and backed up.
+	MaximumReviewNotes = 5
+)
 
 type Problem struct {
 	Code    string
@@ -69,12 +81,26 @@ type Review struct {
 	Independent    bool       `json:"independent"`
 	ExecutedChecks bool       `json:"executed_checks"`
 	SubmittedAt    *time.Time `json:"submitted_at,omitempty"`
-	// ReadFailure reports that OwnGit could not read its own review evidence.
-	// Review remains advisory, so this never becomes a merge blocker.
+	// ReadFailure reports that OwnGit could not read its own review evidence,
+	// including the review notes. Review remains advisory, so this never
+	// becomes a merge blocker.
 	ReadFailure *ReadFailure `json:"read_failure,omitempty"`
-	// Detail is quoted evidence supplied by an external reviewer. It is kept
-	// verbatim rather than treated as system-authored interface text.
-	Detail string `json:"detail,omitempty"`
+}
+
+// ReviewNote is what a reviewer wrote with a decision, bound to the exact
+// source and target revisions reviewed. It is untrusted text, kept verbatim.
+type ReviewNote struct {
+	Decision      string `json:"decision"`
+	ReviewerLabel string `json:"reviewer_label"`
+	SourceOID     string `json:"source_oid"`
+	TargetOID     string `json:"target_oid"`
+	// Current is true while both revisions are the pull request's current
+	// ones (its merged pair once merged). Once either branch moves, the note
+	// is about earlier revisions; it is still shown.
+	Current     bool         `json:"current"`
+	Note        string       `json:"note"`
+	SubmittedAt time.Time    `json:"submitted_at"`
+	Actor       *state.Actor `json:"actor,omitempty"`
 }
 
 type Checks struct {
@@ -164,9 +190,16 @@ type MergeResult struct {
 }
 
 type View struct {
-	Repository       string       `json:"repository"`
-	Number           int64        `json:"number"`
-	Title            string       `json:"title"`
+	Repository string `json:"repository"`
+	Number     int64  `json:"number"`
+	Title      string `json:"title"`
+	// Body is the description. A list leaves it out (nil) to stay bounded;
+	// show and every change include it, empty or not.
+	Body *string `json:"body,omitempty"`
+	// EditRevision counts title and description edits. An edit names the
+	// revision it read and is refused once another edit moved it.
+	EditRevision     int64        `json:"edit_revision"`
+	EditedAt         *time.Time   `json:"edited_at,omitempty"`
 	State            string       `json:"state"`
 	Source           Revision     `json:"source"`
 	Target           Revision     `json:"target"`
@@ -176,6 +209,16 @@ type View struct {
 	Merge            *MergeResult `json:"merge,omitempty"`
 	CreatedAt        time.Time    `json:"created_at"`
 	UpdatedAt        time.Time    `json:"updated_at"`
+	// CreatedBy, EditedBy and MergedBy name the access that made each change,
+	// when OwnGit recorded it.
+	CreatedBy *state.Actor `json:"created_by,omitempty"`
+	EditedBy  *state.Actor `json:"edited_by,omitempty"`
+	MergedBy  *state.Actor `json:"merged_by,omitempty"`
+	// ReviewNotes are the newest review notes, at most MaximumReviewNotes,
+	// newest first; ReviewNotesTruncated says that older ones exist. A list
+	// leaves them out.
+	ReviewNotes          []ReviewNote `json:"review_notes,omitempty"`
+	ReviewNotesTruncated bool         `json:"review_notes_truncated,omitempty"`
 }
 
 // Diff is what a pull request changes between an exact source and target
@@ -234,8 +277,10 @@ type DiffFile struct {
 }
 
 type CreateInput struct {
-	Repository   string `json:"repository,omitempty"`
-	Title        string `json:"title"`
+	Repository string `json:"repository,omitempty"`
+	Title      string `json:"title"`
+	// Body is the optional Markdown description.
+	Body         string `json:"body,omitempty"`
 	SourceBranch string `json:"source_branch"`
 	TargetBranch string `json:"target_branch"`
 	ReviewChoice string `json:"review"`
@@ -244,11 +289,24 @@ type CreateInput struct {
 	// revision the user never saw.
 	SourceOID string `json:"source_oid,omitempty"`
 	TargetOID string `json:"target_oid,omitempty"`
+	// Actor, in this input and the others, is the access that authorized
+	// the request. The server sets it; it is never read from a request body.
+	Actor state.Actor `json:"-"`
+}
+
+// EditInput replaces the title, the description, or both. EditRevision is
+// the edit revision the caller read; the edit is refused when it moved.
+type EditInput struct {
+	EditRevision *int64      `json:"edit_revision"`
+	Title        *string     `json:"title,omitempty"`
+	Body         *string     `json:"body,omitempty"`
+	Actor        state.Actor `json:"-"`
 }
 
 type RevisionInput struct {
-	SourceOID string `json:"source_oid"`
-	TargetOID string `json:"target_oid"`
+	SourceOID string      `json:"source_oid"`
+	TargetOID string      `json:"target_oid"`
+	Actor     state.Actor `json:"-"`
 }
 
 type ReviewSubmitInput struct {
@@ -256,6 +314,9 @@ type ReviewSubmitInput struct {
 	TargetOID     string `json:"target_oid"`
 	Decision      string `json:"decision"`
 	ReviewerLabel string `json:"reviewer_label"`
+	// Note is optional Markdown about the reviewed revisions.
+	Note  string      `json:"note,omitempty"`
+	Actor state.Actor `json:"-"`
 }
 
 type SuccessEnvelope struct {

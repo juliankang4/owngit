@@ -77,6 +77,8 @@ func templateFuncs() template.FuncMap {
 		// a value instead of repeating a status string.
 		"checkState":  checkStateOf,
 		"reviewState": reviewStateOf,
+		// A review note's own decision, whatever the current revision is.
+		"reviewDecisionState": reviewState,
 		// The pull request summary rows. Each names which revision the result
 		// describes, which stays on the row rather than behind a disclosure.
 		"checkRelevance":  checkRelevance,

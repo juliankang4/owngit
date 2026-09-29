@@ -860,7 +860,10 @@ func TestBranchMovementDuringCreateLeavesNoVisiblePullRequestAndRetryCreatesOne(
 	newSourceOID := fixture.commitFile("feature.txt", "two\n", "feature two")
 	fixture.push("HEAD:refs/heads/feature")
 
-	_, err = fixture.service.createForHeadsLocked(fixture.ctx, fixture.repositoryID, "Moved during creation", "feature", "main", state.ReviewSkipped, fixture.remote, sourceHead, targetHead)
+	_, err = fixture.service.createForHeadsLocked(fixture.ctx, fixture.remote, state.PullRequestCreation{
+		RepositoryID: fixture.repositoryID, Title: "Moved during creation", SourceBranch: "feature", TargetBranch: "main",
+		SourceOID: sourceHead.OID, TargetOID: targetHead.OID, InitialReview: state.ReviewSkipped,
+	}, sourceHead, targetHead)
 	if problemCode(err) != "stale_revision" {
 		t.Fatalf("create error=%v, want stale_revision", err)
 	}
@@ -915,7 +918,10 @@ func TestReconcileAllResolvesProvisionalCreateCrashWindows(t *testing.T) {
 			sourceOID := fixture.commitFile("feature.txt", "feature\n", "feature")
 			fixture.push("HEAD:refs/heads/feature")
 			targetOID := fixture.ref("refs/heads/main")
-			record, err := fixture.store.BeginPullRequestCreation(fixture.ctx, fixture.repositoryID, "Interrupted creation", "feature", "main", sourceOID, targetOID, state.ReviewSkipped, time.Now())
+			record, err := fixture.store.BeginPullRequestCreation(fixture.ctx, state.PullRequestCreation{
+				RepositoryID: fixture.repositoryID, Title: "Interrupted creation", SourceBranch: "feature", TargetBranch: "main",
+				SourceOID: sourceOID, TargetOID: targetOID, InitialReview: state.ReviewSkipped,
+			}, time.Now())
 			noErr(t, err)
 			if retained {
 				noErr(t, fixture.service.ensureRevisionRefs(fixture.ctx, fixture.remote, record, sourceOID, targetOID))

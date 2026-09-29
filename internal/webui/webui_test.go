@@ -384,6 +384,7 @@ func newPullRequestPage(c Chrome, observed bool) NewPullRequestPage {
 	page.Source = sourceRevision()
 	page.Target = targetRevision()
 	page.Title = "Cap retry delays"
+	page.Body = "Caps the delay at 30 seconds."
 	page.ReviewChoice = ReviewChoiceRequest
 	page.Changes = diffFixture()
 	return page
@@ -420,8 +421,17 @@ func pullRequestPage(c Chrome, kind prFixture) PullRequestPage {
 		TasksURL:         "/repositories/r1/tasks",
 		ReviewRequestURL: "/repositories/r1/pull-requests/12/review/request",
 		ReviewSkipURL:    "/repositories/r1/pull-requests/12/review/skip",
+		ReviewSubmitURL:  "/repositories/r1/pull-requests/12/review/submit",
 		MergeURL:         "/repositories/r1/pull-requests/12/merge",
 		Merge:            MergeAvailability{Eligible: true},
+		Description:      PullRequestText{Text: "Caps **retry** delays.", HTML: template.HTML("<p>Caps <strong>retry</strong> delays.</p>")},
+		EditedAt:         testNow.Add(-time.Hour),
+		EditURL:          "/repositories/r1/pull-requests/12/edit",
+		Edit:             PullRequestEditForm{Revision: 1, Title: "Cap retry delays", Body: "Caps **retry** delays."},
+		ReviewNotes: []ReviewNoteView{{
+			Decision: ReviewChanges, ReviewerLabel: "codex", ShortSourceOID: "5d0aa13", ShortTargetOID: "e41c0de",
+			Note: PullRequestText{Text: "Rename <x>.", NotRendered: MsgPRTextPlain}, SubmittedAt: testNow.AddDate(0, 0, -1),
+		}},
 	}
 	switch kind {
 	case prFixtureFailing:
@@ -1015,6 +1025,14 @@ func TestEveryFieldErrorReachesItsScreen(t *testing.T) {
 			func(c Chrome) Page { return AuthPage{Chrome: c, Scope: AuthAdmin, SubmitURL: "/admin/login"} }, ""},
 		{"repository name", "name", MsgRepoNameTaken,
 			func(c Chrome) Page { return NewRepositoryPage{Chrome: c, SubmitURL: "/repositories"} }, ""},
+		{"pull request description", "body", MsgPRInvalidBody,
+			func(c Chrome) Page { return newPullRequestPage(c, true) }, ""},
+		{"pull request edit title", "title", MsgPRInvalidTitle,
+			func(c Chrome) Page { return pullRequestPage(c, prFixtureFailing) }, ""},
+		{"review note", "note", MsgPRInvalidNote,
+			func(c Chrome) Page { return pullRequestPage(c, prFixtureFailing) }, ""},
+		{"reviewer label", "reviewer_label", MsgPRInvalidReviewer,
+			func(c Chrome) Page { return pullRequestPage(c, prFixtureFailing) }, ""},
 		// Settings repeats one field name across several forms, so its notes
 		// are scoped by the group whose form was submitted.
 		{"settings access password", "access_password", MsgSetupAccessPassShort,

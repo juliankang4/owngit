@@ -109,14 +109,14 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 			return
 		}
 		var input pullrequest.CreateInput
-		if !decodeAPIJSON(writer, request, &input) {
+		if !decodeAPIJSONLimit(writer, request, &input, pullrequest.MaximumTextRequestBytes) {
 			return
 		}
 		if input.Repository != "" && input.Repository != repositoryID {
 			writeAPIError(writer, http.StatusBadRequest, "invalid_repository", "The body repository does not match the API path.", nil)
 			return
 		}
-		input.Repository = repositoryID
+		input.Repository, input.Actor = repositoryID, generalAccessActor
 		var view *pullrequest.View
 		view, err = app.PullRequests.Create(request.Context(), input)
 		if err == nil {
@@ -141,6 +141,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		if !decodeAPIJSON(writer, request, &input) {
 			return
 		}
+		input.Actor = generalAccessActor
 		var view *pullrequest.View
 		switch operation {
 		case "review_request":
@@ -181,15 +182,31 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		if err == nil {
 			result = pullrequest.SuccessEnvelope{OK: true, PullRequest: view}
 		}
+	case "edit":
+		if request.Method != http.MethodPost {
+			writeAPIMethodError(writer, http.MethodPost)
+			return
+		}
+		var input pullrequest.EditInput
+		if !decodeAPIJSONLimit(writer, request, &input, pullrequest.MaximumTextRequestBytes) {
+			return
+		}
+		input.Actor = generalAccessActor
+		var view *pullrequest.View
+		view, err = app.PullRequests.Edit(request.Context(), repositoryID, number, input)
+		if err == nil {
+			result = pullrequest.SuccessEnvelope{OK: true, PullRequest: view}
+		}
 	case "review_submit":
 		if request.Method != http.MethodPost {
 			writeAPIMethodError(writer, http.MethodPost)
 			return
 		}
 		var input pullrequest.ReviewSubmitInput
-		if !decodeAPIJSON(writer, request, &input) {
+		if !decodeAPIJSONLimit(writer, request, &input, pullrequest.MaximumTextRequestBytes) {
 			return
 		}
+		input.Actor = generalAccessActor
 		var view *pullrequest.View
 		view, err = app.PullRequests.SubmitReview(request.Context(), repositoryID, number, input)
 		if err == nil {
@@ -206,6 +223,11 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 	}
 	writeAPIJSON(writer, http.StatusOK, result)
 }
+
+// generalAccessActor is who a pull request change records. Every one is
+// authorized by general access: open mode, the shared password, or a browser
+// session that holds it.
+var generalAccessActor = state.Actor{Kind: state.ActorAccess}
 
 func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, settings state.Settings) bool {
 	if settings.AccessMode == "open" {
@@ -280,7 +302,7 @@ func parsePullRequestAPIRoute(requestPath string) (string, int64, string, bool) 
 	if len(parts) == 3 {
 		return parts[0], number, "show", true
 	}
-	if len(parts) == 4 && (parts[3] == "merge" || parts[3] == "close" || parts[3] == "reopen" || parts[3] == "diff") {
+	if len(parts) == 4 && (parts[3] == "merge" || parts[3] == "close" || parts[3] == "reopen" || parts[3] == "diff" || parts[3] == "edit") {
 		return parts[0], number, parts[3], true
 	}
 	if len(parts) == 5 && parts[3] == "review" {
@@ -377,12 +399,12 @@ func writeAPIJSON(writer http.ResponseWriter, status int, value any) {
 // answered as unavailable. Both are logged as step of request.
 func apiStatus(request *http.Request, step string, err error) int {
 	switch pullrequest.AsProblem(err).Code {
-	case "invalid_repository", "invalid_pull_request_number", "invalid_title", "invalid_branch", "reserved_ref", "same_branch", "invalid_review_choice", "invalid_review_decision", "invalid_reviewer_label", "invalid_revision",
+	case "invalid_repository", "invalid_pull_request_number", "invalid_title", "invalid_body", "invalid_note", "invalid_edit", "invalid_edit_revision", "invalid_branch", "reserved_ref", "same_branch", "invalid_review_choice", "invalid_review_decision", "invalid_reviewer_label", "invalid_revision",
 		"invalid_task", "invalid_credential", "invalid_attempt", "invalid_attempt_id", "invalid_job_id", "invalid_check_definition", "invalid_worktree_state", "invalid_revision_oid", "invalid_cycle_id", "revision_not_recorded":
 		return http.StatusUnprocessableEntity
 	case "repository_not_found", "pull_request_not_found", "task_not_found", "configuration_not_found", "attempt_not_found", "log_not_recorded", "cycle_not_found":
 		return http.StatusNotFound
-	case "stale_revision", "merge_conflict", "merge_blocked", "pull_request_not_open", "pull_request_exists", "pull_request_merged", "git_update_failed",
+	case "stale_revision", "stale_edit", "merge_conflict", "merge_blocked", "pull_request_not_open", "pull_request_exists", "pull_request_merged", "git_update_failed",
 		"source_branch_missing", "target_branch_missing", "source_not_commit", "target_not_commit", "credential_not_found", "attempt_conflict", "cycle_conflict", "correction_budget_exhausted":
 		return http.StatusConflict
 	case "helper_authentication_required", "invalid_helper_credential", "admin_authentication_required", "invalid_admin_credentials", "admin_password_required":

@@ -352,3 +352,20 @@
   {{end}}
 </article>
 {{end}}
+
+{{/* A pull request description or review note. HTML is OwnGit's Markdown
+     rendering, which holds no raw HTML from the text and no images; text
+     that was not rendered is shown as written, with the reason.
+
+     Call as: {{template "prText" dict "Lang" $lang "T" $p.Description "Empty" "pr.text.no_description"}} */}}
+{{define "prText"}}
+{{$lang := .Lang}}{{$t := .T}}
+{{if $t.HTML}}
+  <article class="md prtext">{{$t.HTML}}</article>
+{{else if $t.Text}}
+  <p class="hm__note">{{bi $lang $t.NotRendered}}</p>
+  <div class="prtext prtext--plain">{{$t.Text}}</div>
+{{else}}
+  <p class="ev__note">{{bi $lang (code .Empty)}}</p>
+{{end}}
+{{end}}

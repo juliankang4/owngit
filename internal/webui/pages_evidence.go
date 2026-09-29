@@ -1,6 +1,9 @@
 package webui
 
-import "time"
+import (
+	"html/template"
+	"time"
+)
 
 // Pull request, task, and helper credential screens.
 //
@@ -81,8 +84,9 @@ type NewPullRequestPage struct {
 	// Observed is true once the backend has resolved the chosen pair. Until
 	// then the screen is a selection and there is no create form at all.
 	Observed bool
-	// Title redisplays the typed title.
+	// Title and Body redisplay the typed title and description.
 	Title string
+	Body  string
 	// ReviewChoice is the "review" field: "request", "skip", or empty for
 	// leaving review unrequested. An omitted choice is a real option, not a
 	// hidden waiting state.
@@ -185,6 +189,65 @@ type PullRequestPage struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// Description is the pull request's description; ReviewNotes are its
+	// newest review notes, newest first. ReviewNotesTruncated says that
+	// older notes exist and are not shown.
+	Description          PullRequestText
+	ReviewNotes          []ReviewNoteView
+	ReviewNotesTruncated bool
+	// EditedAt is when the title or description was last edited, zero when
+	// never.
+	EditedAt time.Time
+	// EditURL receives an edit: csrf, edit_revision, title and body. Edit
+	// holds what the form shows.
+	EditURL string
+	Edit    PullRequestEditForm
+	// ReviewSubmitURL receives a review: csrf, source_oid, target_oid,
+	// decision, reviewer_label and note. ReviewDraft keeps a refused one.
+	ReviewSubmitURL string
+	ReviewDraft     ReviewDraft
+}
+
+// PullRequestText is a description or a review note. HTML is the Markdown
+// rendering, which holds no raw HTML and no images; when it is empty,
+// NotRendered says why and the text is shown as written.
+type PullRequestText struct {
+	Text        string
+	HTML        template.HTML
+	NotRendered MessageCode
+}
+
+// ReviewNoteView is one review note and the revisions it reviewed.
+type ReviewNoteView struct {
+	// Decision is ReviewApproved or ReviewChangesRequested.
+	Decision       string
+	ReviewerLabel  string
+	ShortSourceOID string
+	ShortTargetOID string
+	// Current is false once either branch moved: the note is then about
+	// earlier revisions, which the screen says.
+	Current     bool
+	Note        PullRequestText
+	SubmittedAt time.Time
+}
+
+// PullRequestEditForm is the title and description form. Revision is the
+// edit revision the form was filled from; Open shows the form at once, as
+// after a refused edit, so nothing typed is lost.
+type PullRequestEditForm struct {
+	Revision int64
+	Title    string
+	Body     string
+	Open     bool
+}
+
+// ReviewDraft is a review form's values. Open shows the form at once.
+type ReviewDraft struct {
+	Decision      string
+	ReviewerLabel string
+	Note          string
+	Open          bool
 }
 
 func (PullRequestPage) page() string     { return "pull-request" }

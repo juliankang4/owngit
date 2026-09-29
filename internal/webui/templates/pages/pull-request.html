@@ -38,7 +38,47 @@
   <p class="prhead__meta">
     {{template "stateChip" dict "Lang" $lang "S" (prState $p.State)}}
     <span>{{bi $lang "pr.updated_at"}} {{biRelative $lang $now $p.UpdatedAt}}</span>
+    {{if notZero $p.EditedAt}}<span>{{bi $lang "pr.edit.edited_at"}} {{biRelative $lang $now $p.EditedAt}}</span>{{end}}
   </p>
+</div>
+
+{{/* The description is what the author says the change is for. It is
+     untrusted text: Markdown is rendered without raw HTML or images, and
+     when it cannot be rendered it is shown as written. Editing sends the
+     edit revision the form was filled from, so a later edit made elsewhere
+     is never overwritten without the reader seeing it first. */}}
+<div class="card">
+  <h2 class="setblock__h">{{bi $lang "pr.text.body_field"}}</h2>
+  {{template "prText" dict "Lang" $lang "T" $p.Description "Empty" "pr.text.no_description"}}
+  {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "edit"}}
+  {{with $p.EditURL}}
+  <details class="disc disc--act"{{if $p.Edit.Open}} open{{end}}>
+    <summary>{{bi $lang "pr.edit.open"}}</summary>
+    <div class="disc__body">
+      <form class="form form--wide" method="post" action="{{.}}">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="edit_revision" value="{{$p.Edit.Revision}}">
+        <div class="f">
+          <label for="pr-edit-title">{{bi $lang "pr.new.title_field"}}</label>
+          <input id="pr-edit-title" name="title" type="text" required maxlength="500" value="{{$p.Edit.Title}}"
+                 {{template "fieldInvalid" dict "Notices" $n "Field" "title"}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "title"}}
+        </div>
+        <div class="f">
+          <label for="pr-edit-body">{{bi $lang "pr.text.body_field"}}</label>
+          <textarea id="pr-edit-body" name="body" rows="10"
+                    {{template "fieldInvalid" dict "Notices" $n "Field" "body"}}>
+{{$p.Edit.Body}}</textarea>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "body"}}
+          <p class="f__help">{{bi $lang "pr.text.body_help"}}</p>
+        </div>
+        <div class="actions">
+          <button type="submit" class="btn btn--primary">{{bi $lang "pr.edit.save"}}</button>
+        </div>
+      </form>
+    </div>
+  </details>
+  {{end}}
 </div>
 
 {{/* Two kinds of evidence, one compact row each. They are not merged into
@@ -147,6 +187,31 @@
   {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "merge"}}
 </div>
 
+{{/* Review notes, newest first. Each stays with the two commits it
+     reviewed; once either branch moves, the note says it is about earlier
+     commits instead of disappearing. */}}
+{{if $p.ReviewNotes}}
+<div class="card">
+  <h2 class="setblock__h">{{bi $lang "pr.notes.title"}}</h2>
+  {{range $p.ReviewNotes}}
+  <section class="prnote">
+    <p class="prnote__head">
+      {{template "stateChip" dict "Lang" $lang "S" (reviewDecisionState .Decision)}}
+      <span>{{.ReviewerLabel}}</span>
+      <span>{{biDateTime $lang .SubmittedAt}}</span>
+      {{if not .Current}}<span class="pill pill--missing">{{icon "clock"}}{{bi $lang "pr.notes.earlier"}}</span>{{end}}
+    </p>
+    <dl class="ev__facts">
+      <div><dt>{{bi $lang "pr.source"}}</dt><dd class="mono">{{.ShortSourceOID}}</dd></div>
+      <div><dt>{{bi $lang "pr.target"}}</dt><dd class="mono">{{.ShortTargetOID}}</dd></div>
+    </dl>
+    {{template "prText" dict "Lang" $lang "T" .Note "Empty" "pr.text.no_description"}}
+  </section>
+  {{end}}
+  {{if $p.ReviewNotesTruncated}}<p class="ev__note">{{bi $lang "pr.notes.truncated"}}</p>{{end}}
+</div>
+{{end}}
+
 {{if $p.Merged}}
 <div class="card">
   <h2 class="setblock__h">{{bi $lang "pr.merged.title"}}</h2>
@@ -166,8 +231,8 @@
      explanation the summary already makes, so they fold into one compact
      disclosure. The forms, their CSRF tokens, the revision they bind to and
      the note that no model is called are unchanged. */}}
-{{if and $actionable (or $p.ReviewRequestURL $p.ReviewSkipURL)}}
-<details class="disc disc--act">
+{{if and $actionable (or $p.ReviewRequestURL $p.ReviewSkipURL $p.ReviewSubmitURL)}}
+<details class="disc disc--act"{{if $p.ReviewDraft.Open}} open{{end}}>
   <summary>{{bi $lang "pr.actions.title"}}</summary>
   <div class="disc__body">
     <div class="pract">
@@ -193,6 +258,48 @@
     </div>
     {{/* Recording a request is not asking a model to review. */}}
     <p class="f__help">{{bi $lang "evidence.review.request_intent"}}</p>
+
+    {{/* A review result with an optional note, for the commits on this page.
+         The reviewer label is what the reviewer says, not a verified
+         identity. */}}
+    {{with $p.ReviewSubmitURL}}
+    <form class="form form--wide prreview" method="post" action="{{.}}">
+      <h3 class="ev__h">{{bi $lang "pr.review.open"}}</h3>
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <input type="hidden" name="source_oid" value="{{$p.Source.OID}}">
+      <input type="hidden" name="target_oid" value="{{$p.Target.OID}}">
+      <fieldset class="fset">
+        <legend>{{bi $lang "pr.review.decision"}}</legend>
+        <label class="choice">
+          <input type="radio" name="decision" value="approved" required{{if eq $p.ReviewDraft.Decision "approved"}} checked{{end}}>
+          <span class="choice__t">{{bi $lang "pr.review.approve"}}</span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="decision" value="changes_requested"{{if eq $p.ReviewDraft.Decision "changes_requested"}} checked{{end}}>
+          <span class="choice__t">{{bi $lang "pr.review.request_changes"}}</span>
+        </label>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "decision"}}
+      </fieldset>
+      <div class="f">
+        <label for="pr-reviewer">{{bi $lang "evidence.review.reviewer"}}</label>
+        <input id="pr-reviewer" name="reviewer_label" type="text" required maxlength="200" value="{{$p.ReviewDraft.ReviewerLabel}}"
+               {{template "fieldInvalid" dict "Notices" $n "Field" "reviewer_label"}}>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "reviewer_label"}}
+        <p class="f__help">{{bi $lang "pr.review.reviewer_help"}}</p>
+      </div>
+      <div class="f">
+        <label for="pr-note">{{bi $lang "pr.review.note"}}</label>
+        <textarea id="pr-note" name="note" rows="6"
+                  {{template "fieldInvalid" dict "Notices" $n "Field" "note"}}>
+{{$p.ReviewDraft.Note}}</textarea>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "note"}}
+        <p class="f__help">{{bi $lang "pr.review.note_help"}}</p>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn">{{bi $lang "pr.review.submit"}}</button>
+      </div>
+    </form>
+    {{end}}
   </div>
 </details>
 {{end}}

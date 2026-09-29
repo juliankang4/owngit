@@ -95,6 +95,15 @@
         <p class="f__help">{{bi $lang "pr.new.title_help"}}</p>
       </div>
 
+      <div class="f">
+        <label for="pr-body">{{bi $lang "pr.text.body_field"}}</label>
+        <textarea id="pr-body" name="body" rows="8"
+                  {{template "fieldInvalid" dict "Notices" $n "Field" "body"}}>
+{{$p.Body}}</textarea>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "body"}}
+        <p class="f__help">{{bi $lang "pr.text.body_help"}}</p>
+      </div>
+
       <fieldset class="fset">
         <legend>{{bi $lang "pr.new.review"}}</legend>
         {{/* Leaving review undecided is a real choice, so it is offered as
