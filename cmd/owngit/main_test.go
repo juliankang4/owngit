@@ -251,3 +251,55 @@ func noErrf(t testing.TB, err error, format string, args ...any) {
 		t.Fatalf("%s: %v", fmt.Sprintf(format, args...), err)
 	}
 }
+
+// A restore starts the server-wide settings at their defaults whether the
+// backed-up installation chose stricter or looser ones, and says so with
+// where to set them again.
+func TestRestoreStartsServerSettingsAtTheirDefaultsAndSaysSo(t *testing.T) {
+	ctx := context.Background()
+	for name, change := range map[string]state.PolicyChange{
+		"strict": {Session: pointerTo(state.Session1Hour), InitialBranch: pointerTo("trunk"), CheckLogs: pointerTo(state.CheckLogs7Days),
+			GitTransfer: &state.GitTransferLimits{MaximumBytes: state.MinimumTransferBytes, Operation: state.MinimumTransferOperation}},
+		"loose": {Session: pointerTo(state.Session30Days), InitialBranch: pointerTo("develop"), CheckLogs: pointerTo(state.KeepCheckLogs),
+			GitTransfer: &state.GitTransferLimits{MaximumBytes: state.MaximumTransferBytes, Operation: state.MaximumTransferOperation}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			stateDir := filepath.Join(root, "state")
+			repositoryRoot := filepath.Join(root, "repositories")
+			noErr(t, os.Mkdir(repositoryRoot, 0o700))
+			store, err := state.Open(ctx, stateDir)
+			noErr(t, err)
+			adminHash, _ := auth.HashPassword("admin-password")
+			noErr(t, store.CompleteSetup(ctx, repositoryRoot, "open", "", adminHash, false))
+			noErr(t, store.SavePolicies(ctx, change))
+			noErr(t, store.Close())
+			backup := filepath.Join(root, "backup")
+			_, err = captureStdout(func() error { return backupState([]string{"--state-dir", stateDir, "--output", backup}) })
+			noErr(t, err)
+
+			restoredState := filepath.Join(root, "restored-state")
+			output, err := captureStdout(func() error {
+				return restoreState([]string{"--input", backup, "--state-dir", restoredState, "--repository-root", filepath.Join(root, "restored-repositories")})
+			})
+			noErr(t, err)
+			if !strings.Contains(output, restoredSettingsNotice()) || !strings.Contains(output, "a sign-in with the shared password lasts 12 hours") ||
+				!strings.Contains(output, "owngit settings set") {
+				t.Fatalf("restore output:\n%s", output)
+			}
+			restored, err := state.Open(ctx, restoredState)
+			noErr(t, err)
+			defer restored.Close()
+			session, sessionErr := restored.GeneralSession(ctx)
+			branch, branchErr := restored.InitialBranch(ctx)
+			limits, limitsErr := restored.GitTransferLimits(ctx)
+			logs, logsErr := restored.CheckLogRetention(ctx)
+			if err := errors.Join(sessionErr, branchErr, limitsErr, logsErr); err != nil || session != state.DefaultGeneralSession ||
+				branch != state.DefaultInitialBranch || limits != state.DefaultGitTransferLimits || logs != state.DefaultCheckLogRetention {
+				t.Fatalf("restored settings: %s %s %+v %s err=%v", session, branch, limits, logs, err)
+			}
+		})
+	}
+}
+
+func pointerTo[T any](value T) *T { return &value }

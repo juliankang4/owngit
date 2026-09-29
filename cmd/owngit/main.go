@@ -1076,7 +1076,36 @@ func restoreState(arguments []string) error {
 		return err
 	}
 	fmt.Printf("Offline backup restored to %s with repositories at %s. Previous sessions, trusted hosts, and network settings were not restored.\n", *stateDir, *repositoryRoot)
+	fmt.Println(restoredSettingsNotice())
 	return nil
+}
+
+// restoredSettingsNotice names the server-wide settings that a restore
+// starts at their defaults, as on a new installation, and where to set
+// them again. A backup does not carry them, whether they were stricter or
+// looser than the defaults.
+func restoredSettingsNotice() string {
+	limits := state.DefaultGitTransferLimits
+	return fmt.Sprintf("Server-wide settings start at their defaults, as on a new installation: a sign-in with the shared password lasts %s, "+
+		"new repositories start on %s, one Git transfer may move %d GiB and take %s, and raw check logs are kept %s. "+
+		"Set them again under Settings or with owngit settings set. The administrator password check and the new release check are also at their defaults; set them under Settings.",
+		plainDuration(state.DefaultGeneralSession.Length()), state.DefaultInitialBranch, limits.MaximumBytes>>30,
+		plainDuration(limits.Operation), plainDuration(state.DefaultCheckLogRetention.Duration()))
+}
+
+// plainDuration writes a whole number of days, hours or minutes in words.
+func plainDuration(duration time.Duration) string {
+	for _, unit := range []struct {
+		size time.Duration
+		name string
+	}{{24 * time.Hour, "day"}, {time.Hour, "hour"}, {time.Minute, "minute"}} {
+		if count := duration / unit.size; count == 1 && duration == unit.size {
+			return "1 " + unit.name
+		} else if count > 1 && duration%unit.size == 0 {
+			return fmt.Sprintf("%d %ss", count, unit.name)
+		}
+	}
+	return duration.String()
 }
 
 // readPrivatePassword reads a password file for a command that sends it to
