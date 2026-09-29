@@ -763,7 +763,7 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 		if err := ops.insertRawLog(ctx, tx, registered.ID, []byte(completion.Log), expiresAt.Unix()); err != nil {
 			return Task{}, CheckAttempt{}, rawLogTransactionError(err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO check_raw_log_starts(started_at,attempt_id) VALUES(?,?)`, registered.CreatedAt.Unix(), registered.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO check_raw_log_starts(created_at,attempt_id) VALUES(?,?)`, registered.CreatedAt.Unix(), registered.ID); err != nil {
 			return Task{}, CheckAttempt{}, rawLogTransactionError(err)
 		}
 		rawStored = true
@@ -1478,7 +1478,7 @@ func (s *Store) ReadCheckLog(attempt CheckAttempt, retention CheckLogRetention, 
 // its key, so it reads only the logs it deletes and the first one it keeps,
 // however many attempts and kept logs there are.
 const pruneCheckLogBatch = `DELETE FROM check_raw_logs WHERE attempt_id IN (
-	SELECT attempt_id FROM check_raw_log_starts WHERE started_at<=? ORDER BY started_at,attempt_id LIMIT ?
+	SELECT attempt_id FROM check_raw_log_starts WHERE created_at<=? ORDER BY created_at,attempt_id LIMIT ?
 )`
 
 // PruneCheckLogs deletes every raw log the saved retention no longer keeps

@@ -698,7 +698,9 @@ func TestPruneDrainsDueRowsAndReportsCommittedProgress(t *testing.T) {
 	_, futureStored := recordAttemptWithLog(t, store, futureAttempt, "future raw output")
 	cutoff := now.Add(DefaultCheckLogRetention.Duration() + time.Hour)
 	var failID string
-	noErr(t, store.db.QueryRowContext(ctx, `SELECT attempt_id FROM check_raw_logs WHERE expires_at<=? ORDER BY expires_at,attempt_id LIMIT 1 OFFSET ?`, cutoff.Unix(), checkLogPruneBatch).Scan(&failID))
+	// The first row of the second batch, in the order the cleanup reads.
+	noErr(t, store.db.QueryRowContext(ctx, `SELECT attempt_id FROM check_raw_log_starts WHERE created_at<=? ORDER BY created_at,attempt_id LIMIT 1 OFFSET ?`,
+		cutoff.Add(-DefaultCheckLogRetention.Duration()).Unix(), checkLogPruneBatch).Scan(&failID))
 	if _, err := store.db.ExecContext(ctx, fmt.Sprintf(`CREATE TRIGGER fail_second_prune_batch BEFORE DELETE ON check_raw_logs WHEN OLD.attempt_id='%s' BEGIN SELECT RAISE(ABORT,'injected prune failure'); END`, failID)); err != nil {
 		t.Fatal(err)
 	}
@@ -717,7 +719,7 @@ func TestPruneDrainsDueRowsAndReportsCommittedProgress(t *testing.T) {
 		t.Fatalf("remaining prune progress=%d err=%v", removed, err)
 	}
 	var remaining int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_raw_logs WHERE expires_at<=?`, cutoff.Unix()).Scan(&remaining); err != nil || remaining != 0 {
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_raw_logs r JOIN check_raw_log_starts s ON s.attempt_id=r.attempt_id WHERE s.created_at<=?`, cutoff.Add(-DefaultCheckLogRetention.Duration()).Unix()).Scan(&remaining); err != nil || remaining != 0 {
 		t.Fatalf("due raw logs=%d err=%v", remaining, err)
 	}
 	if count := checkRawLogCount(t, store, futureStored.ID); count != 1 {

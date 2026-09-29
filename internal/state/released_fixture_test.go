@@ -64,7 +64,7 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 			// first cleanup reaches the logs the upgrade kept.
 			var unindexed int
 			noErr(t, store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_raw_logs r JOIN check_attempts a ON a.id=r.attempt_id
-				LEFT JOIN check_raw_log_starts s ON s.attempt_id=r.attempt_id WHERE s.started_at IS NOT a.created_at`).Scan(&unindexed))
+				LEFT JOIN check_raw_log_starts s ON s.attempt_id=r.attempt_id WHERE s.created_at IS NOT a.created_at`).Scan(&unindexed))
 			if unindexed != 0 || after["check_raw_log_starts"] != before["check_raw_logs"] {
 				store.Close()
 				t.Fatalf("raw logs=%d starts=%d unindexed=%d", before["check_raw_logs"], after["check_raw_log_starts"], unindexed)

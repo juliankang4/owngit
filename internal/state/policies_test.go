@@ -189,7 +189,7 @@ func TestPruneReadsOnlyTheLogsItRemoves(t *testing.T) {
 	noErr(t, rows.Err())
 	noErr(t, rows.Close())
 	joined := strings.Join(plan, "\n")
-	if strings.Contains(joined, "SCAN") || strings.Contains(joined, "TEMP B-TREE") || !strings.Contains(joined, "check_raw_log_starts USING PRIMARY KEY (started_at<?)") {
+	if strings.Contains(joined, "SCAN") || strings.Contains(joined, "TEMP B-TREE") || !strings.Contains(joined, "check_raw_log_starts USING PRIMARY KEY (created_at<?)") {
 		t.Fatalf("cleanup plan:\n%s", joined)
 	}
 
@@ -290,7 +290,7 @@ func addRawLogs(t *testing.T, store *Store, from, to int) {
 	ctx := context.Background()
 	noErr(t, store.Exec(ctx, `INSERT INTO check_raw_logs(attempt_id,content,expires_at)
 		SELECT id,x'2e',created_at+2592000 FROM check_attempts WHERE id BETWEEN printf('%032x',?) AND printf('%032x',?)`, from, to))
-	noErr(t, store.Exec(ctx, `INSERT INTO check_raw_log_starts(started_at,attempt_id)
+	noErr(t, store.Exec(ctx, `INSERT INTO check_raw_log_starts(created_at,attempt_id)
 		SELECT created_at,id FROM check_attempts WHERE id BETWEEN printf('%032x',?) AND printf('%032x',?)`, from, to))
 }
 

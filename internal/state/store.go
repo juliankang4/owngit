@@ -1515,16 +1515,17 @@ var schemaSteps = []schemaStep{
 			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX push_events_repository ON push_events(repository_id,sequence)`,
-		// Each raw check log by the time its check started, which never
-		// changes, so a cleanup reads the logs it removes in order and stops
-		// at the first it keeps. A row goes with its raw log.
+		// Each raw check log by its attempt's created_at, the time its check
+		// started, which never changes, so a cleanup reads the logs it
+		// removes in order and stops at the first it keeps. A row goes with
+		// its raw log.
 		`CREATE TABLE check_raw_log_starts (
-			started_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
 			attempt_id TEXT NOT NULL UNIQUE,
-			PRIMARY KEY (started_at, attempt_id),
+			PRIMARY KEY (created_at, attempt_id),
 			FOREIGN KEY (attempt_id) REFERENCES check_raw_logs(attempt_id) ON DELETE CASCADE
 		) WITHOUT ROWID`,
-		`INSERT INTO check_raw_log_starts(started_at,attempt_id)
+		`INSERT INTO check_raw_log_starts(created_at,attempt_id)
 			SELECT a.created_at,r.attempt_id FROM check_raw_logs r JOIN check_attempts a ON a.id=r.attempt_id`,
 	}},
 }

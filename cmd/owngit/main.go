@@ -1083,11 +1083,12 @@ func restoreState(arguments []string) error {
 // restoredSettingsNotice names the server-wide settings that a restore
 // starts at their defaults, as on a new installation, and where to set
 // them again. A backup does not carry them, whether they were stricter or
-// looser than the defaults.
+// looser than the defaults. Sizes use the units of Settings, where 1 GB is
+// 1024 MB.
 func restoredSettingsNotice() string {
 	limits := state.DefaultGitTransferLimits
 	return fmt.Sprintf("Server-wide settings start at their defaults, as on a new installation: a sign-in with the shared password lasts %s, "+
-		"new repositories start on %s, one Git transfer may move %d GiB and take %s, and raw check logs are kept %s. "+
+		"new repositories start on %s, one Git transfer may move %d GB and take %s, and raw check logs are kept %s. "+
 		"Set them again under Settings or with owngit settings set. The administrator password check and the new release check are also at their defaults; set them under Settings.",
 		plainDuration(state.DefaultGeneralSession.Length()), state.DefaultInitialBranch, limits.MaximumBytes>>30,
 		plainDuration(limits.Operation), plainDuration(state.DefaultCheckLogRetention.Duration()))
