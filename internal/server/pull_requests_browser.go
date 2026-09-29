@@ -232,6 +232,13 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 		view, err = app.PullRequests.SubmitReview(request.Context(), stored.ID, number, review)
 		notice = "review_recorded"
 		drafts.Review = &webui.ReviewDraft{Decision: review.Decision, ReviewerLabel: review.ReviewerLabel, Note: review.Note, Open: true}
+		// When a branch moved, the page shows the new commits and its form
+		// is bound to them. The note and name stay, but the result is chosen
+		// again, so a review of commits the reviewer has not seen is never
+		// one click away.
+		if movedRevision(err) {
+			drafts.Review.Decision = ""
+		}
 	case "review_request":
 		view, err = app.PullRequests.RequestReview(request.Context(), stored.ID, number, input)
 		notice = "review_requested"
@@ -615,7 +622,14 @@ func browserPullRequestProblem(request *http.Request, step string, err error, ac
 	case "invalid_review_choice":
 		field, code = "review", webui.MsgPRFailed
 	case "invalid_revision", "stale_revision":
-		code = webui.MsgPRStale
+		switch action {
+		case "merge":
+			field, code = "merge", webui.MsgPRStale
+		case "review_submit":
+			field, code = "decision", webui.MsgPRReviewMoved
+		default:
+			code = webui.MsgPRStale
+		}
 	case "merge_conflict", "merge_blocked", "git_update_failed":
 		field, code = "merge", webui.MsgPRMergeBlocked
 	case "pull_request_not_found", "invalid_pull_request_number":
@@ -625,10 +639,17 @@ func browserPullRequestProblem(request *http.Request, step string, err error, ac
 	case "merge_reconciliation_pending", "pull_request_creation_reconciliation_pending":
 		code = webui.MsgPRReconciling
 	}
-	if action == "merge" && field == "" && (problem.Code == "stale_revision" || problem.Code == "invalid_revision") {
-		field = "merge"
-	}
 	return webui.Error(field, code), apiStatus(request, step, err)
+}
+
+// movedRevision reports whether err refused a change because a branch is no
+// longer at the commit the page showed.
+func movedRevision(err error) bool {
+	if err == nil {
+		return false
+	}
+	code := pullrequest.AsProblem(err).Code
+	return code == "stale_revision" || code == "invalid_revision"
 }
 
 func observedBranch(summary repository.Summary, name string) webui.RevisionState {

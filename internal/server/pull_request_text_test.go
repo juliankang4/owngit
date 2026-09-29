@@ -179,6 +179,28 @@ func TestBrowserPullRequestTextRendersSafelyAndKeepsDrafts(t *testing.T) {
 	if !strings.Contains(moved.body, "About earlier commits") || !strings.Contains(html.UnescapeString(moved.body), "Owner") {
 		t.Fatalf("a moved branch hid the review note:\n%s", moved.body)
 	}
+
+	// A review sent from the page loaded before the branch moved records
+	// nothing. The form comes back bound to the new commits with the note and
+	// name kept but no result chosen, so approving what was never seen takes
+	// a new choice, and the notice says so.
+	movedSource := strings.TrimSpace(apiGitOutput(t, fixture.work, "rev-parse", "HEAD"))
+	refused := browserForm(t, client, page+"/review/submit", url.Values{
+		"csrf": {csrf}, "source_oid": {fixture.sourceOID}, "target_oid": {fixture.targetOID}, "decision": {"approved"},
+		"reviewer_label": {"Second reader"}, "note": {"Reviewed the first commit only."},
+	}, server.URL)
+	form := refused.body[strings.Index(refused.body, `class="form form--wide prreview"`):]
+	form = form[:strings.Index(form, "</form>")]
+	if refused.status != http.StatusConflict || !strings.Contains(refused.body, "A branch moved before this review was recorded") ||
+		!strings.Contains(form, "Reviewed the first commit only.</textarea>") || !strings.Contains(form, `value="Second reader"`) ||
+		strings.Contains(form, " checked") || !strings.Contains(form, `name="source_oid" value="`+movedSource+`"`) {
+		t.Fatalf("review after a moved branch status=%d:\n%s", refused.status, form)
+	}
+	notes, _, err := fixture.store.PullRequestReviewNotes(context.Background(), "project", 1, 10)
+	noErr(t, err)
+	if len(notes) != 1 {
+		t.Fatalf("a refused review recorded a note: %+v", notes)
+	}
 }
 
 // A helper credential that submits a check result still shows that use as its

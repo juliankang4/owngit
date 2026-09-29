@@ -27,6 +27,7 @@ const (
 	MsgPRInvalidNote     MessageCode = "pr.review.invalid_note"
 	MsgPRInvalidReviewer MessageCode = "pr.review.invalid_reviewer"
 	MsgPRInvalidDecision MessageCode = "pr.review.invalid_decision"
+	MsgPRReviewMoved     MessageCode = "pr.review.moved"
 )
 
 var pullRequestTextCatalog = map[MessageCode]message{
@@ -82,6 +83,10 @@ var pullRequestTextCatalog = map[MessageCode]message{
 		ko: "리뷰한 사람이나 도구를 한 줄로 1자에서 200자 사이로 입력하세요.",
 	},
 	MsgPRInvalidDecision: {en: "Choose Approve or Request changes.", ko: "승인이나 변경 요청 중 하나를 고르세요."},
+	MsgPRReviewMoved: {
+		en: "A branch moved before this review was recorded, so nothing was recorded. The page now shows the new commits, and your note and reviewer name are kept. Check the new commits, then choose a result again: it will be recorded for them.",
+		ko: "리뷰를 기록하기 전에 브랜치가 움직여 아무것도 기록하지 않았습니다. 페이지에는 이제 새 커밋이 보이고, 메모와 리뷰어 이름은 그대로 두었습니다. 새 커밋을 확인한 뒤 결과를 다시 고르면 그 커밋에 대한 리뷰로 기록됩니다.",
+	},
 }
 
 func init() {
