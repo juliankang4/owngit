@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A container image for Linux on x64 and ARM64, `ghcr.io/juliankang4/owngit`, with a Compose file. It runs as a non-root account with its data in one volume, checks its health with `owngit health`, shows the setup link only through `docker compose exec -it owngit owngit setup-link`, and accepts `http://localhost` from the computer that runs the container. Its update notice names `docker compose pull && docker compose up -d`.
+
 ## [1.1.2] - 2026-09-28
 
 This release fixes two low-severity security problems. Upgrading is recommended.

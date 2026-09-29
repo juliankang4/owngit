@@ -339,6 +339,71 @@ What the printed command does with the service:
 
 It never deletes the state directory or the repositories, and it prints where they are, so a later install uses them again. There is no separate step that deletes data. Files that a package manager installed are its to remove, so OwnGit leaves them and prints its command. A program you placed yourself stays, and OwnGit prints the command that deletes it. Running `owngit service install` again, or reinstalling with the same route, keeps the state and the repositories.
 
+## Run in a container
+
+The OwnGit container image, `ghcr.io/juliankang4/owngit`, runs on Linux on x64 and ARM64 computers with Docker Engine and Docker Compose. Each release has the tags `X.Y.Z`, `X.Y` and `latest`, with build provenance. The image holds the release's `owngit` program and Git on Debian 13, and runs as the account `owngit` (user and group ID 10001), never as root. It needs no privileged mode, no Linux capabilities, no Docker socket and no host network.
+
+Save [`compose.yaml`](../packaging/container/compose.yaml) in a new folder and start OwnGit there:
+
+```sh
+docker compose up -d
+docker compose exec -it owngit owngit setup-link
+```
+
+`setup-link` shows the one-time setup link only on a terminal, which `-it` gives it. The log that `docker compose logs` shows names only the setup file inside the container, never the link. Open the link, `http://localhost:7654/setup#...`, in a browser on the computer that runs the container. From another device, put that computer's address in place of `localhost`; the setup page then offers to keep accepting that address. `docker compose ps` shows the container as `healthy` once `owngit health` inside it gets an answer.
+
+Other commands run the same way, for example `docker compose exec owngit owngit doctor`.
+
+### Where the data lives
+
+Everything lives in the volume `owngit-data`, mounted at `/data`: the state in `/data/owngit`, the repositories in `/data/OwnGit-Repositories` (the folder setup suggests), and the [backups made before an upgrade](#backup-before-an-upgrade) in `/data/owngit-backups`. Restarting, recreating or updating the container keeps the volume. `docker compose down` removes the container and keeps the volume; `docker compose down -v` deletes the volume with all repositories.
+
+The state must stay on a local disk. To keep the repositories on a network share, mount the share at another path in the container, such as `/repositories`, and choose that folder in setup; the state stays in the volume.
+
+### localhost and other addresses
+
+OwnGit listens on every address inside the container, and the `ports` line of `compose.yaml` decides who reaches it. `"7654:7654"` publishes it on every address of the computer that runs the container; `"127.0.0.1:7654:7654"` keeps it on that computer only. To use another port, change the first number, for example `"8080:7654"`, and use that port in the setup link.
+
+A browser on the computer that runs the container opens `http://localhost:7654`. OwnGit accepts `localhost`, `127.0.0.1` and `::1` only on connections from this computer. Docker forwards that computer's own connections to a published port from the gateway of the container's network, so in the container image OwnGit counts connections from that gateway as this computer, and says so in its log when it starts. Other containers that connect to the OwnGit container directly, and other devices, keep their own addresses, so they must use a name you allowed. Programs on the computer that runs the container, including other containers that connect through the published port on that computer's address, count as this computer, as programs on the computer do when OwnGit runs there directly.
+
+### Update
+
+When a newer release exists, the dashboard notice and `owngit update` show the command for the container:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+Run it in the folder of `compose.yaml` on the computer that runs the container. It downloads the new image and recreates the container with it; the volume stays. OwnGit backs up the state before it upgrades it, as described in [Backup before an upgrade](#backup-before-an-upgrade). To keep a backup that you made yourself as well, stop OwnGit and make one first:
+
+```sh
+docker compose stop
+docker compose run --rm owngit owngit backup --output /data/backup-before-update
+docker compose pull
+docker compose up -d
+docker compose exec owngit owngit backup verify /data/backup-before-update
+```
+
+The output folder must not exist yet, so use a new name each time. A backup in the volume goes when the volume goes; to keep one elsewhere, mount a folder that the account `owngit` (ID 10001) owns and that no other account can change, and write the backup there.
+
+### Running as another account
+
+To run OwnGit as another account, for example to match the owner of a folder on the computer, set `user:` in `compose.yaml` and keep `/data` in a folder that this account owns and that no other account can change:
+
+```yaml
+services:
+  owngit:
+    user: "1000:1000"
+    volumes:
+      - ./owngit-data:/data
+```
+
+```sh
+sudo install -d -o 1000 -g 1000 -m 700 owngit-data
+```
+
+The named volume of the default `compose.yaml` belongs to the account `owngit`, so another account cannot use it. OwnGit refuses a `/data` folder that other accounts can change, and its log names the `chmod` command that fixes it.
+
 ## Settings
 
 Settings has five tabs. Each is its own address, so it works as an ordinary link, also without JavaScript:

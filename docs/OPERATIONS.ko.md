@@ -339,6 +339,71 @@ OwnGit이 직접 고치지는 않으니 명령은 이 컴퓨터에서 실행하�
 
 상태 디렉터리와 저장소는 절대 지우지 않고 위치를 알려 주므로, 나중에 다시 설치하면 그대로 이어서 씁니다. 데이터를 지우는 단계는 따로 없습니다. 패키지 관리자가 설치한 파일은 그 관리자가 지울 몫이라 OwnGit은 남겨 두고 해당 명령을 알려 줍니다. 직접 가져다 둔 프로그램도 남겨 두고 지우는 명령을 알려 줍니다. `owngit service install`을 다시 실행하거나 같은 방법으로 다시 설치해도 상태와 저장소는 그대로 남습니다.
 
+## 컨테이너로 실행하기
+
+OwnGit 컨테이너 이미지 `ghcr.io/juliankang4/owngit`은 x64와 ARM64 Linux 컴퓨터에서 Docker Engine과 Docker Compose로 실행합니다. 릴리스마다 `X.Y.Z`, `X.Y`, `latest` 태그가 붙고 빌드 출처 증명(provenance)이 함께 올라갑니다. 이미지에는 Debian 13 위에 릴리스의 `owngit` 프로그램과 Git이 들어 있고, root가 아닌 `owngit` 계정(사용자와 그룹 ID 10001)으로 실행합니다. 특권 모드, Linux 권한(capability), Docker 소켓, 호스트 네트워크는 필요하지 않습니다.
+
+[`compose.yaml`](../packaging/container/compose.yaml)을 새 폴더에 저장하고 그 폴더에서 OwnGit을 시작하세요.
+
+```sh
+docker compose up -d
+docker compose exec -it owngit owngit setup-link
+```
+
+`setup-link`는 터미널에서만 일회용 설정 링크를 보여 주며, `-it`가 터미널을 붙여 줍니다. `docker compose logs`로 보는 로그에는 컨테이너 안 설정 파일의 경로만 남고 링크는 남지 않습니다. 링크 `http://localhost:7654/setup#...`는 컨테이너를 실행하는 컴퓨터의 브라우저에서 여세요. 다른 기기에서 열 때는 `localhost` 자리에 그 컴퓨터의 주소를 넣으세요. 설정 페이지가 그 주소를 계속 받아들일지 묻습니다. 컨테이너 안에서 `owngit health`가 응답을 받으면 `docker compose ps`에 `healthy`로 보입니다.
+
+다른 명령도 같은 방식으로 실행합니다. 예: `docker compose exec owngit owngit doctor`
+
+### 데이터 위치
+
+모든 데이터는 `/data`에 연결된 볼륨 `owngit-data`에 있습니다. 상태는 `/data/owngit`, 저장소는 `/data/OwnGit-Repositories`(설정에서 제안하는 폴더), [업그레이드 전 백업](#업그레이드-전-백업)은 `/data/owngit-backups`에 둡니다. 컨테이너를 다시 시작하거나 새로 만들거나 업데이트해도 볼륨은 그대로입니다. `docker compose down`은 컨테이너만 지우고 볼륨은 남깁니다. `docker compose down -v`는 저장소를 모두 포함한 볼륨까지 지웁니다.
+
+상태는 로컬 디스크에 있어야 합니다. 저장소를 네트워크 공유 폴더에 두려면 공유 폴더를 컨테이너 안의 다른 경로(예: `/repositories`)에 연결하고 설정에서 그 폴더를 고르세요. 상태는 볼륨에 그대로 남습니다.
+
+### localhost와 다른 주소
+
+OwnGit은 컨테이너 안의 모든 주소에서 연결을 받고, 누가 접속할 수 있는지는 `compose.yaml`의 `ports` 줄이 정합니다. `"7654:7654"`는 컨테이너를 실행하는 컴퓨터의 모든 주소에 포트를 엽니다. `"127.0.0.1:7654:7654"`로 쓰면 그 컴퓨터에서만 접속할 수 있습니다. 다른 포트를 쓰려면 앞의 숫자를 바꾸고(예: `"8080:7654"`) 설정 링크에서도 그 포트를 쓰세요.
+
+컨테이너를 실행하는 컴퓨터의 브라우저에서는 `http://localhost:7654`로 엽니다. OwnGit은 `localhost`, `127.0.0.1`, `::1`을 이 컴퓨터에서 온 연결에서만 받아들입니다. Docker는 그 컴퓨터가 게시된 포트로 보내는 연결을 컨테이너 네트워크의 게이트웨이 주소에서 전달하므로, 컨테이너 이미지의 OwnGit은 그 게이트웨이에서 온 연결을 이 컴퓨터로 보고, 시작할 때 로그에 이를 남깁니다. OwnGit 컨테이너에 직접 연결하는 다른 컨테이너와 다른 기기는 자기 주소로 보이므로, 허용한 이름을 써야 합니다. 컨테이너를 실행하는 컴퓨터의 프로그램은 이 컴퓨터로 봅니다. 그 컴퓨터의 주소로 게시된 포트를 거쳐 들어오는 다른 컨테이너도 마찬가지이며, OwnGit을 그 컴퓨터에 직접 설치했을 때 그 컴퓨터의 프로그램을 보는 방식과 같습니다.
+
+### 업데이트
+
+새 릴리스가 나오면 대시보드 알림과 `owngit update`가 컨테이너용 명령을 보여 줍니다.
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+컨테이너를 실행하는 컴퓨터의 `compose.yaml`이 있는 폴더에서 실행하세요. 새 이미지를 내려받아 그 이미지로 컨테이너를 새로 만들며, 볼륨은 그대로 남습니다. OwnGit은 [업그레이드 전 백업](#업그레이드-전-백업)에 나온 대로 상태를 업그레이드하기 전에 백업합니다. 직접 만든 백업도 따로 남기려면 OwnGit을 멈추고 먼저 백업하세요.
+
+```sh
+docker compose stop
+docker compose run --rm owngit owngit backup --output /data/backup-before-update
+docker compose pull
+docker compose up -d
+docker compose exec owngit owngit backup verify /data/backup-before-update
+```
+
+출력 폴더는 아직 없어야 하므로 매번 새 이름을 쓰세요. 볼륨 안의 백업은 볼륨을 지우면 함께 사라집니다. 다른 곳에 남기려면 `owngit` 계정(ID 10001)이 소유하고 다른 계정은 바꿀 수 없는 폴더를 연결해 그곳에 백업하세요.
+
+### 다른 계정으로 실행하기
+
+컴퓨터에 있는 폴더의 소유자에 맞추는 경우처럼 OwnGit을 다른 계정으로 실행하려면 `compose.yaml`에 `user:`를 지정하고, `/data`를 그 계정이 소유하며 다른 계정은 바꿀 수 없는 폴더로 두세요.
+
+```yaml
+services:
+  owngit:
+    user: "1000:1000"
+    volumes:
+      - ./owngit-data:/data
+```
+
+```sh
+sudo install -d -o 1000 -g 1000 -m 700 owngit-data
+```
+
+기본 `compose.yaml`의 이름 있는 볼륨은 `owngit` 계정이 소유하므로 다른 계정은 쓸 수 없습니다. 다른 계정이 바꿀 수 있는 `/data` 폴더는 OwnGit이 거부하며, 로그에 그 문제를 고치는 `chmod` 명령을 알려 줍니다.
+
 ## 설정 화면
 
 설정 화면은 탭 다섯 개로 나뉩니다. 탭마다 주소가 따로 있어 JavaScript 없이도 일반 링크처럼 열립니다.

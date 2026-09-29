@@ -95,6 +95,17 @@ cd owngit
 go build -o bin/owngit ./cmd/owngit
 ```
 
+### Container
+
+On Linux (x64, ARM64) with Docker Engine and Docker Compose, save [`packaging/container/compose.yaml`](packaging/container/compose.yaml) in a new folder and run:
+
+```sh
+docker compose up -d
+docker compose exec -it owngit owngit setup-link
+```
+
+Open the setup link in a browser on that computer. [Run in a container](docs/OPERATIONS.md#run-in-a-container) covers setup from another device, where the data lives, updates, backups and running as another account.
+
 ### Update and remove
 
 OwnGit never updates itself. When a newer release exists, the dashboard shows a confirmed administrator the command that updates OwnGit the way it was installed, with a Copy button, and `owngit update` prints the same command:
