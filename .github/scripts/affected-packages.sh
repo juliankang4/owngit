@@ -13,6 +13,9 @@
 # import paths, one per line and sorted, or nothing when no test can see the
 # change.
 #
+# A few tests also read other packages' files by path, which their test
+# binary does not show; they are declared below with what they read.
+#
 # Test binaries include different files on each system, so the packages and
 # their dependencies are taken from Linux, Windows and macOS together.
 # Renames count as a removal and an addition, so both paths are considered.
@@ -46,7 +49,20 @@ for goos in $systems; do
 	done <<<"$packages"
 done
 
-declare -A changed own_tests
+# The tests that read files of other packages by path, and what they read.
+# internal/gitexec: TestNoCodeReachesTheEmbeddedRepositoryMutex parses every
+# .go file of the module, test files included, outside testdata and dot
+# directories.
+# tools/release: TestInstallerCommandsAreTheSafeForms reads every .md, .sh
+# and .ps1 file outside testdata, node_modules and dot directories. Its other
+# tests build ./cmd/owngit and compare the checked-in notices with those
+# collected from its module graph and from the license files bundled in its
+# packages, so every package ./cmd/owngit is built from counts as part of
+# the tools/release test binary (below).
+gitexec=$module/internal/gitexec
+release=$module/tools/release
+
+declare -A changed own_tests affected
 while read -r file; do
 	[ -n "$file" ] || continue
 	case $file in
@@ -66,6 +82,12 @@ while read -r file; do
 		fi
 		dir=$(dirname "$dir")
 	done
+	case /$file in
+	*/testdata/* | */.*/*) ;;
+	*.go) affected[$gitexec]=1 ;;
+	*/node_modules/*) ;;
+	*.md | *.sh | *.ps1) affected[$release]=1 ;;
+	esac
 	case $file in
 	*_test.go) own_tests[${package_of[$dir]}]=1 ;;
 	*) changed[${package_of[$dir]}]=1 ;;
@@ -73,13 +95,18 @@ while read -r file; do
 done <<<"$files"
 
 # Each test binary "P.test" lists every package it contains; entries such as
-# "P [P.test]" are packages compiled with P's test files.
-declare -A affected
+# "P [P.test]" are packages compiled with P's test files. The tools/release
+# test binary also counts every package ./cmd/owngit is built from.
 for goos in $systems; do
+	built="$(GOOS=$goos go list -f '{{.ImportPath}}' -deps ./cmd/owngit)"
+	built=${built//$'\n'/,}
 	tests="$(GOOS=$goos go list -test -f '{{.ImportPath}} {{join .Deps ","}}' ./...)"
 	while read -r binary deps; do
 		case $binary in *.test) ;; *) continue ;; esac
 		pkg=${binary%.test}
+		if [ "$pkg" = "$release" ]; then
+			deps="$deps,$built"
+		fi
 		if [ -n "${changed[$pkg]-}" ] || [ -n "${own_tests[$pkg]-}" ]; then
 			affected[$pkg]=1
 			continue
