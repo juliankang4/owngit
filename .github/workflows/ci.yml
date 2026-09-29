@@ -27,14 +27,16 @@ name: CI
 # run. Each test runs in exactly one shard, and new tests join a shard without
 # changes here.
 #
-# Only a change to docs/images alone, which no test reads, runs nothing here;
-# doc-links.yml checks the links to those images.
+# Only a change to images in docs/images alone, which no test reads, runs
+# nothing here; doc-links.yml checks the links to those images. Markdown there
+# is still read by the release tests, so it still runs the checks.
 
 on:
   pull_request:
     paths:
       - "**"
       - "!docs/images/**"
+      - "docs/images/**.md"
   # GitHub runs scheduled workflows on the default branch only.
   schedule:
     - cron: "17 3 * * *"
