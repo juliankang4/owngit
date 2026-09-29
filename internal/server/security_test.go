@@ -179,11 +179,11 @@ func forwardedHeadersChangeNothing(t *testing.T, trusted []netip.Prefix) {
 			t.Fatalf("wrong password attempt %d status=%d", attempt, response.Code)
 		}
 	}
-	if err := app.Auth.VerifyCredential(context.Background(), "admin", "admin-password", "192.0.2.50"); !errors.Is(err, auth.ErrRateLimited) {
+	if _, err := app.Auth.VerifyCredential(context.Background(), "admin", "admin-password", "192.0.2.50"); !errors.Is(err, auth.ErrRateLimited) {
 		t.Fatalf("peer 192.0.2.50 is not locked out: %v", err)
 	}
 	for attempt := 1; attempt <= 4; attempt++ {
-		if err := app.Auth.VerifyCredential(context.Background(), "admin", "admin-password", "203.0.113."+strconv.Itoa(attempt)); err != nil {
+		if _, err := app.Auth.VerifyCredential(context.Background(), "admin", "admin-password", "203.0.113."+strconv.Itoa(attempt)); err != nil {
 			t.Fatalf("forwarded address 203.0.113.%d was charged: %v", attempt, err)
 		}
 	}

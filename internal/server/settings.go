@@ -113,8 +113,8 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			always = true
 		}
 	}
-	// verified is the administrator password when this request typed it,
-	// and "" when the change needed none.
+	// verified holds the administrator password and its version when this
+	// request typed it, and is empty when the change needed none.
 	verified, err := app.confirmAdmin(writer, request, nil, always)
 	if err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")

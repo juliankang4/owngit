@@ -90,11 +90,11 @@ func TestAdminConfirmationRejectsAReplacedPassword(t *testing.T) {
 		}
 		return accepted
 	}
-	if err := manager.VerifyCredential(ctx, "admin", "admin-password-old", "192.0.2.1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := manager.VerifyCredential(ctx, "admin", "admin-password-old", "192.0.2.1"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("replaced administrator password authorized a change: %v", err)
 	}
 	manager.passwordCheck = nil
-	if err := manager.VerifyCredential(ctx, "admin", "admin-password-new", "192.0.2.1"); err != nil {
+	if _, err := manager.VerifyCredential(ctx, "admin", "admin-password-new", "192.0.2.1"); err != nil {
 		t.Fatalf("current administrator password refused: %v", err)
 	}
 }

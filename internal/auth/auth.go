@@ -141,7 +141,7 @@ func withinMaximum(password string) bool {
 // replaced, the token of the session of kind this browser holds ("" for
 // none), which ends with it.
 func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddress, replaced string) (NewSession, error) {
-	version, err := m.VerifyCredentialVersion(ctx, kind, password, remoteAddress)
+	version, err := m.verifyPassword(ctx, kind, password, remoteAddress)
 	if err != nil {
 		return NewSession{}, err
 	}
@@ -202,31 +202,27 @@ func (m *Manager) adminLife(choice state.AdminConfirmation) time.Duration {
 }
 
 // VerifyCredential accepts a password only while the version it checked
-// remains current.
-func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAddress string) error {
-	version, err := m.VerifyCredentialVersion(ctx, kind, password, remoteAddress)
+// remains current, and returns that version. A caller that later saves
+// something bound to the password passes the version on so the saving
+// transaction can compare it again.
+func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAddress string) (int64, error) {
+	version, err := m.verifyPassword(ctx, kind, password, remoteAddress)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return m.ConfirmCredentialVersion(ctx, kind, version)
-}
-
-// ConfirmCredentialVersion rejects a password whose checked revision changed
-// before the authorization decision.
-func (m *Manager) ConfirmCredentialVersion(ctx context.Context, kind string, version int64) error {
 	current, err := m.Store.CredentialVersionCurrent(ctx, kind, version)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !current {
-		return ErrInvalidCredentials
+		return 0, ErrInvalidCredentials
 	}
-	return nil
+	return version, nil
 }
 
-// VerifyCredentialVersion returns the version read with the password hash.
-// Callers that grant access must check that version when they act.
-func (m *Manager) VerifyCredentialVersion(ctx context.Context, kind, password, remoteAddress string) (int64, error) {
+// verifyPassword checks password for kind and returns the version read with
+// the password hash. The caller must compare that version when it acts.
+func (m *Manager) verifyPassword(ctx context.Context, kind, password, remoteAddress string) (int64, error) {
 	if kind != "general" && kind != "admin" {
 		return 0, errors.New("invalid authentication kind")
 	}

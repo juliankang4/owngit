@@ -180,7 +180,7 @@ func (app *App) AuthorizeGit(request *http.Request) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	err = app.Auth.VerifyCredential(request.Context(), "general", password, requestctx.Of(request).ClientAddress)
+	_, err = app.Auth.VerifyCredential(request.Context(), "general", password, requestctx.Of(request).ClientAddress)
 	switch {
 	case err == nil:
 		return true, nil

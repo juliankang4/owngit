@@ -46,7 +46,7 @@ func TestSharedPasswordRunsArgon2idOnceForSeveralRequests(t *testing.T) {
 	ctx := context.Background()
 	for request := 0; request < 8; request++ {
 		address := fmt.Sprintf("192.0.2.%d:4000", 10+request%2)
-		if err := manager.VerifyCredential(ctx, "general", "shared-password", address); err != nil {
+		if _, err := manager.VerifyCredential(ctx, "general", "shared-password", address); err != nil {
 			t.Fatalf("request %d: %v", request, err)
 		}
 	}
@@ -54,7 +54,7 @@ func TestSharedPasswordRunsArgon2idOnceForSeveralRequests(t *testing.T) {
 		t.Fatalf("8 requests ran %d full password checks, want 1", got)
 	}
 	advance(rememberedCheckLife)
-	if err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err != nil {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err != nil {
 		t.Fatal(err)
 	}
 	if got := runs.Load(); got != 2 {
@@ -65,7 +65,7 @@ func TestSharedPasswordRunsArgon2idOnceForSeveralRequests(t *testing.T) {
 func TestRememberedPasswordEndsWhenAnotherProcessChangesIt(t *testing.T) {
 	manager, directory, runs, _ := countingManager(t)
 	ctx := context.Background()
-	if err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err != nil {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err != nil {
 		t.Fatal(err)
 	}
 	other, err := state.Open(ctx, directory)
@@ -77,13 +77,13 @@ func TestRememberedPasswordEndsWhenAnotherProcessChangesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	other.Close()
-	if err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err == nil {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err == nil {
 		t.Fatal("the old password was accepted after another process changed it")
 	}
 	if got := runs.Load(); got != 2 {
 		t.Fatalf("the old password ran %d full checks in total, want 2 (it must be checked again)", got)
 	}
-	if err := manager.VerifyCredential(ctx, "general", "replacement-password", "192.0.2.10:4000"); err != nil {
+	if _, err := manager.VerifyCredential(ctx, "general", "replacement-password", "192.0.2.10:4000"); err != nil {
 		t.Fatalf("new password: %v", err)
 	}
 	// Setting the same password again stores a new salt and hash, so the
@@ -93,7 +93,7 @@ func TestRememberedPasswordEndsWhenAnotherProcessChangesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := runs.Load()
-	if err := manager.VerifyCredential(ctx, "general", "replacement-password", "192.0.2.10:4000"); err != nil {
+	if _, err := manager.VerifyCredential(ctx, "general", "replacement-password", "192.0.2.10:4000"); err != nil {
 		t.Fatal(err)
 	}
 	if runs.Load() != before+1 {
@@ -104,21 +104,21 @@ func TestRememberedPasswordEndsWhenAnotherProcessChangesIt(t *testing.T) {
 func TestRememberedPasswordDoesNotPassABlockedAddress(t *testing.T) {
 	manager, _, runs, _ := countingManager(t)
 	ctx := context.Background()
-	if err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err != nil {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err != nil {
 		t.Fatal(err)
 	}
 	for attempt := 0; attempt < maximumFailures; attempt++ {
-		if err := manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.20:4000"); !errors.Is(err, ErrInvalidCredentials) {
+		if _, err := manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.20:4000"); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("wrong password %d: %v, want an ordinary failure", attempt+1, err)
 		}
 	}
 	if got := runs.Load(); got != 1+maximumFailures {
 		t.Fatalf("%d full checks, want one for the correct password and one per wrong password", got)
 	}
-	if err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.20:4000"); !errors.Is(err, ErrRateLimited) {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.20:4000"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("remembered password from a blocked address: %v, want the rate limit", err)
 	}
-	if err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err != nil {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.10:4000"); err != nil {
 		t.Fatalf("another address: %v", err)
 	}
 	if got := runs.Load(); got != 1+maximumFailures {
@@ -130,7 +130,7 @@ func TestWrongPasswordsAndAdministratorChecksAreNotRemembered(t *testing.T) {
 	manager, _, runs, _ := countingManager(t)
 	ctx := context.Background()
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.30:4000"); !errors.Is(err, ErrInvalidCredentials) {
+		if _, err := manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.30:4000"); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("a wrong password gave %v", err)
 		}
 	}
@@ -139,14 +139,14 @@ func TestWrongPasswordsAndAdministratorChecksAreNotRemembered(t *testing.T) {
 	}
 	// The failures counted: two more reach the limit.
 	for attempt := 0; attempt < maximumFailures-2; attempt++ {
-		_ = manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.30:4000")
+		_, _ = manager.VerifyCredential(ctx, "general", "wrong-password", "192.0.2.30:4000")
 	}
-	if err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.30:4000"); !errors.Is(err, ErrRateLimited) {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password", "192.0.2.30:4000"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("after %d wrong passwords: %v, want the rate limit", maximumFailures, err)
 	}
 	before := runs.Load()
 	for attempt := 0; attempt < 3; attempt++ {
-		if err := manager.VerifyCredential(ctx, "admin", "admin-password", "192.0.2.31:4000"); err != nil {
+		if _, err := manager.VerifyCredential(ctx, "admin", "admin-password", "192.0.2.31:4000"); err != nil {
 			t.Fatal(err)
 		}
 	}

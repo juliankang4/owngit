@@ -70,7 +70,7 @@ func TestParallelCorrectPasswordsAreAcceptedAndParallelGuessesStopAtTheLimit(t *
 			group.Add(1)
 			go func() {
 				defer group.Done()
-				errs[index] = manager.VerifyCredential(context.Background(), "general", password, "192.0.2.7:4000")
+				_, errs[index] = manager.VerifyCredential(context.Background(), "general", password, "192.0.2.7:4000")
 			}()
 		}
 		group.Wait()
@@ -97,10 +97,10 @@ func TestParallelCorrectPasswordsAreAcceptedAndParallelGuessesStopAtTheLimit(t *
 	if checked != maximumFailures || limited != 20-maximumFailures {
 		t.Fatalf("parallel guesses: %d checked and %d refused, want %d checked", checked, limited, maximumFailures)
 	}
-	if err := manager.VerifyCredential(context.Background(), "general", "shared-password", "192.0.2.7:4000"); !errors.Is(err, ErrRateLimited) {
+	if _, err := manager.VerifyCredential(context.Background(), "general", "shared-password", "192.0.2.7:4000"); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("correct password after the limit: %v, want the rate limit", err)
 	}
-	if err := manager.VerifyCredential(context.Background(), "general", "shared-password", "192.0.2.8:4000"); err != nil {
+	if _, err := manager.VerifyCredential(context.Background(), "general", "shared-password", "192.0.2.8:4000"); err != nil {
 		t.Fatalf("another address was refused: %v", err)
 	}
 	if len(manager.clients) != 0 {
@@ -145,7 +145,7 @@ func TestUnfinishedPasswordChecksAreNotInvalidCredentials(t *testing.T) {
 			manager, _, _, _ := countingManager(t)
 			ctx := failure.inject(t, manager)
 			for attempt := 0; attempt <= maximumFailures; attempt++ {
-				err := manager.VerifyCredential(ctx, "general", failure.password, "192.0.2.40:4000")
+				_, err := manager.VerifyCredential(ctx, "general", failure.password, "192.0.2.40:4000")
 				if err == nil || errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrRateLimited) || (failure.cause != nil && !errors.Is(err, failure.cause)) {
 					t.Fatalf("attempt %d: %v", attempt+1, err)
 				}

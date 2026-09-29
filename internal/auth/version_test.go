@@ -90,17 +90,17 @@ func TestVerifiedSharedPasswordMustStillBeCurrentForBasicAuth(t *testing.T) {
 		}
 		return accepted
 	}
-	if err := manager.VerifyCredential(ctx, "general", "shared-password-old", "192.0.2.1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password-old", "192.0.2.1"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("replaced password was accepted: %v", err)
 	}
 	manager.passwordCheck = nil
-	if err := manager.VerifyCredential(ctx, "general", "shared-password-new", "192.0.2.1"); err != nil {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password-new", "192.0.2.1"); err != nil {
 		t.Fatalf("current password was refused: %v", err)
 	}
 	if err := store.DisableAccessPassword(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.VerifyCredential(ctx, "general", "shared-password-new", "192.0.2.1"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := manager.VerifyCredential(ctx, "general", "shared-password-new", "192.0.2.1"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("disabled password was accepted: %v", err)
 	}
 	settings, err := store.Settings(ctx)

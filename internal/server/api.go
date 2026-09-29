@@ -267,7 +267,7 @@ func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, 
 // for a wrong password, 429 for a rate limit, and 503 without a challenge
 // when the check could not be completed, because the password may be right.
 func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Request, kind, password string) bool {
-	err := app.Auth.VerifyCredential(request.Context(), kind, password, requestctx.Of(request).ClientAddress)
+	_, err := app.Auth.VerifyCredential(request.Context(), kind, password, requestctx.Of(request).ClientAddress)
 	switch {
 	case err == nil:
 		return true

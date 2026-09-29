@@ -276,7 +276,7 @@ func TestClientsBehindATrustedProxyLockOutSeparately(t *testing.T) {
 		if status := gitStatus("shared-password", locked); status == http.StatusOK {
 			t.Fatalf("client %s was not locked out", locked)
 		}
-		if err := fixture.app.Auth.VerifyCredential(context.Background(), "general", "shared-password", locked); !errors.Is(err, auth.ErrRateLimited) {
+		if _, err := fixture.app.Auth.VerifyCredential(context.Background(), "general", "shared-password", locked); !errors.Is(err, auth.ErrRateLimited) {
 			t.Fatalf("client %s: %v, want the rate limit", locked, err)
 		}
 	}
@@ -284,7 +284,7 @@ func TestClientsBehindATrustedProxyLockOutSeparately(t *testing.T) {
 		t.Fatalf("another client behind the same proxy status=%d, want 200", status)
 	}
 	for _, address := range []string{"127.0.0.1", "203.0.113.1", "203.0.113.4"} {
-		if err := fixture.app.Auth.VerifyCredential(context.Background(), "general", "shared-password", address); err != nil {
+		if _, err := fixture.app.Auth.VerifyCredential(context.Background(), "general", "shared-password", address); err != nil {
 			t.Fatalf("address %s was charged: %v", address, err)
 		}
 	}

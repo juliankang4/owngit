@@ -121,24 +121,26 @@ func (app *App) requireAdminPage(writer http.ResponseWriter, request *http.Reque
 // count toward the limit.
 var errAdminPasswordMissing = errors.New("administrator password missing")
 
+// adminPasswordProof is the administrator password a request typed and the
+// version it was verified at.
+type adminPasswordProof struct {
+	password string
+	version  int64
+}
+
 // confirmAdmin decides whether this request may make an administrator
 // change, from the "admin_password" field when the change needs it. always
 // asks for the password even when this browser is remembered or Do not ask
 // is on; it is for changing the administrator password and for turning Do
 // not ask on.
 //
-// It returns the password and version when this request verified them, and
-// an empty password when the change needed none. A verified password starts
-// this browser's remembered confirmation under a remembering choice, unless
-// always; chrome, when
-// given, then shows it. An error is errAdminPasswordMissing, an
-// authentication error of auth.Manager.VerifyCredential, or a failure to
-// decide; adminPasswordNotice describes each.
-type adminPasswordProof struct {
-	password string
-	version  int64
-}
-
+// It returns the typed password and its version when this request verified
+// them, and an empty proof when the change needed none. A verified password
+// starts this browser's remembered confirmation under a remembering choice,
+// unless always; chrome, when given, then shows it. An error is
+// errAdminPasswordMissing, an authentication error of
+// auth.Manager.VerifyCredential, or a failure to decide;
+// adminPasswordNotice describes each.
 func (app *App) confirmAdmin(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome, always bool) (adminPasswordProof, error) {
 	// A typed password confirms a change whatever the choice and this
 	// browser's session are, so a failure to read them decides only a
@@ -154,11 +156,8 @@ func (app *App) confirmAdmin(writer http.ResponseWriter, request *http.Request, 
 		}
 		return adminPasswordProof{}, errAdminPasswordMissing
 	}
-	version, err := app.Auth.VerifyCredentialVersion(request.Context(), "admin", password, requestctx.Of(request).ClientAddress)
+	version, err := app.Auth.VerifyCredential(request.Context(), "admin", password, requestctx.Of(request).ClientAddress)
 	if err != nil {
-		return adminPasswordProof{}, err
-	}
-	if err := app.Auth.ConfirmCredentialVersion(request.Context(), "admin", version); err != nil {
 		return adminPasswordProof{}, err
 	}
 	if readErr == nil && !always && authority.choice.Window() > 0 {
@@ -166,11 +165,8 @@ func (app *App) confirmAdmin(writer http.ResponseWriter, request *http.Request, 
 			if errors.Is(err, auth.ErrInvalidCredentials) {
 				return adminPasswordProof{}, err
 			}
-			// A session write failure need not block a change confirmed with
-			// the current password, but an unreadable revision cannot confirm it.
-			if checkErr := app.Auth.ConfirmCredentialVersion(request.Context(), "admin", version); checkErr != nil {
-				return adminPasswordProof{}, checkErr
-			}
+			// The current password confirmed this change; only remembering
+			// it failed, so the next change asks again.
 			logFailure(request, "administrator confirmation start", err)
 		}
 	}
