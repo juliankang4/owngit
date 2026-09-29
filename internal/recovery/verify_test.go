@@ -79,7 +79,7 @@ func TestVerifyRehearsesTheRestoreAndLeavesNothingBehind(t *testing.T) {
 			t.Errorf("repository %+v, want passed with %d refs", item, want[item.ID])
 		}
 	}
-	if len(result.Limits) != 2 || !strings.Contains(result.Limits[1], "version 10 has no place for pull request descriptions") {
+	if len(result.Limits) != 1 || !strings.Contains(result.Limits[0], "SHA-256") {
 		t.Fatalf("limits=%q", result.Limits)
 	}
 
@@ -195,9 +195,8 @@ func TestVerifyChecksTheRestoredDatabase(t *testing.T) {
 	}
 }
 
-// A released format older than the current one is verified with the same
-// checks, and the result says what that format has no place for.
-func TestVerifyStatesTheLimitsOfOlderFormats(t *testing.T) {
+// A released format older than the current one gets the same checks.
+func TestVerifyChecksOlderFormatsTheSameWay(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	backup := newTwoRepositoryBackup(t, root)
@@ -212,8 +211,7 @@ func TestVerifyStatesTheLimitsOfOlderFormats(t *testing.T) {
 
 	result, err := Verify(ctx, backup, t.TempDir(), "")
 	noErr(t, err)
-	if !result.Verified || result.Version != checkBackupVersion || len(result.Limits) != 3 ||
-		!strings.Contains(result.Limits[1], "version 9") || !strings.Contains(result.Limits[2], "closed pull requests") {
+	if !result.Verified || result.Version != checkBackupVersion || result.Database != VerifyPassed || len(result.Repositories) != 3 {
 		t.Fatalf("result=%+v", result)
 	}
 }

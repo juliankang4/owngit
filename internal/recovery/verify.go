@@ -30,7 +30,7 @@ type Verification struct {
 	Repositories []RepositoryVerification `json:"repositories"`
 	// Database is the check of the restored database and its schema.
 	Database string `json:"database"`
-	// Limits says what the checks cannot show for this backup.
+	// Limits says what the checks cannot show.
 	Limits []string `json:"limits"`
 	// CleanupError says that the rehearsal folder could not be removed.
 	CleanupError string `json:"cleanup_error,omitempty"`
@@ -58,7 +58,7 @@ func Verify(ctx context.Context, input, temporary, gitPath string) (Verification
 }
 
 func verify(ctx context.Context, input, temporary, gitPath string, operations restoreOperations) (Verification, error) {
-	result := Verification{Backup: input, Repositories: []RepositoryVerification{}, Database: VerifyNotRun, Limits: []string{}}
+	result := Verification{Backup: input, Repositories: []RepositoryVerification{}, Database: VerifyNotRun, Limits: []string{hashLimit}}
 	if absolute, err := filepath.Abs(input); err == nil {
 		result.Backup = absolute
 	}
@@ -112,7 +112,7 @@ func (v *Verification) begin(manifest Manifest) {
 		return
 	}
 	created := manifest.CreatedAt
-	v.Version, v.CreatedAt, v.Limits = manifest.Version, &created, formatLimits(manifest.Version)
+	v.Version, v.CreatedAt = manifest.Version, &created
 	for _, item := range manifest.Repositories {
 		v.Repositories = append(v.Repositories, RepositoryVerification{ID: item.ID, Status: VerifyNotRun, Refs: len(item.Refs)})
 	}
@@ -131,22 +131,7 @@ func (v *Verification) record(index int, err error) {
 	}
 }
 
-// formatLimits says what verification cannot show for a backup of version:
-// who made it, and the records that its format has no place for, which the
-// restored state therefore lacks.
-func formatLimits(version int) []string {
-	limits := []string{"The SHA-256 hashes detect damage, not a backup that someone replaced along with its manifest."}
-	if version < backupVersion {
-		limits = append(limits, fmt.Sprintf("Backup version %d has no place for pull request descriptions and edits, review notes, who made a change, repository renames or repository policies, so the restored state has none of them.", version))
-	}
-	if version < closedPullRequestBackupVersion {
-		limits = append(limits, "It has no place for closed pull requests or merges recorded as already up to date either.")
-	}
-	if version < checkBackupVersion {
-		limits = append(limits, "It has no place for checks, automatic-check policies and jobs, imports or review event identities either.")
-	}
-	if version < pullRequestBackupVersion {
-		limits = append(limits, "It has no place for pull requests and reviews either.")
-	}
-	return limits
-}
+// hashLimit says what verification cannot show for any backup. Every
+// backup version records refs, HEAD and bundle digests in the same way, so
+// every version gets every check.
+const hashLimit = "The SHA-256 hashes detect damage, not a backup that someone replaced along with its manifest."
