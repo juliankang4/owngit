@@ -102,8 +102,11 @@ func (app *App) workingHTTPS(ctx context.Context, name string) (string, error) {
 // for it as HTTPS. OwnGit itself serves plain HTTP, so only a trusted proxy
 // makes a request HTTPS (requestctx).
 func (app *App) noteHTTPS(request *http.Request) {
+	if !requestctx.Of(request).Secure() {
+		return
+	}
 	base := app.Network.BaseURL()
-	if !strings.HasPrefix(base, "https://") || !sameOrigin(request, base) {
+	if !sameOrigin(request, base) {
 		return
 	}
 	if seen := app.httpsSeen.Load(); seen == nil || *seen != base {
