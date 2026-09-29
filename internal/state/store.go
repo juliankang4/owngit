@@ -53,9 +53,6 @@ type Settings struct {
 	AccessSessionVersion int64
 	AdminSessionVersion  int64
 	InsecureHTTPAccepted bool
-	// CheckLogRetentionDays bounds disposable raw check logs. Durable task and
-	// attempt records are never removed by log retention.
-	CheckLogRetentionDays int
 	// UpdateCheck allows the daily new-release check. It is machine-local:
 	// a missing key (older state, a restored backup) means on.
 	UpdateCheck bool
@@ -1588,14 +1585,6 @@ func (s *Store) Settings(ctx context.Context) (Settings, error) {
 	if err != nil {
 		return Settings{}, fmt.Errorf("invalid admin session version: %w", err)
 	}
-	retentionDays := DefaultCheckLogRetentionDays
-	if raw := values["check_log_retention_days"]; raw != "" {
-		parsed, parseErr := strconv.Atoi(raw)
-		if parseErr != nil || parsed < 1 || parsed > 3650 {
-			return Settings{}, fmt.Errorf("invalid check log retention days %q", raw)
-		}
-		retentionDays = parsed
-	}
 	updateCheck := true
 	switch raw := values[updateCheckKey]; raw {
 	case "", "on":
@@ -1605,14 +1594,13 @@ func (s *Store) Settings(ctx context.Context) (Settings, error) {
 		return Settings{}, fmt.Errorf("invalid update check setting %q", raw)
 	}
 	return Settings{
-		Initialized:           values["initialized"] == "true",
-		RepositoryRoot:        values["repository_root"],
-		AccessMode:            values["access_mode"],
-		AccessSessionVersion:  accessVersion,
-		AdminSessionVersion:   adminVersion,
-		InsecureHTTPAccepted:  values["insecure_http_accepted"] == "true",
-		CheckLogRetentionDays: retentionDays,
-		UpdateCheck:           updateCheck,
+		Initialized:          values["initialized"] == "true",
+		RepositoryRoot:       values["repository_root"],
+		AccessMode:           values["access_mode"],
+		AccessSessionVersion: accessVersion,
+		AdminSessionVersion:  adminVersion,
+		InsecureHTTPAccepted: values["insecure_http_accepted"] == "true",
+		UpdateCheck:          updateCheck,
 	}, nil
 }
 

@@ -31,6 +31,7 @@ func templateFuncs() template.FuncMap {
 		"adminChoices": AdminConfirmChoices,
 		"sessionMenu":  SessionChoices,
 		"unitsFrom":    UnitsFrom,
+		"logsMenu":     CheckLogChoices,
 		"confirmAfter": confirmAfter,
 		"tsUse":        tsUse,
 		"diffTotals":   diffTotals,

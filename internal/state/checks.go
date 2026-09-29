@@ -88,8 +88,6 @@ const (
 	// one task. The budget belongs to the task, so moving the revision does
 	// not reset it.
 	CorrectionCycleLimit = 3
-	// DefaultCheckLogRetentionDays bounds disposable raw logs.
-	DefaultCheckLogRetentionDays = 30
 	// MaximumCheckDefinitions bounds one versioned configuration.
 	MaximumCheckDefinitions = 50
 	// MaximumCheckNameBytes and MaximumCheckCommandBytes bound one check
@@ -745,11 +743,13 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 	logTruncated := false
 	rawStored := false
 	if storeRawLog {
-		retentionDays, err := readCheckLogRetentionTx(ctx, tx)
+		// A raw log is kept for the chosen time from when its check
+		// started, as SavePolicies counts it for the logs kept already.
+		retention, err := checkLogRetention(ctx, tx)
 		if err != nil {
 			return Task{}, CheckAttempt{}, err
 		}
-		expiresAt := now.UTC().Add(retention(retentionDays))
+		expiresAt := retention.expiry(registered.CreatedAt)
 		if err := ops.insertRawLog(ctx, tx, registered.ID, []byte(completion.Log), expiresAt.Unix()); err != nil {
 			return Task{}, CheckAttempt{}, rawLogTransactionError(err)
 		}
@@ -1401,29 +1401,6 @@ func exitCodeField(code *int) string {
 
 func checkLogFailureMessage() string {
 	return "the raw log could not be stored"
-}
-
-func retention(days int) time.Duration {
-	if days <= 0 {
-		days = DefaultCheckLogRetentionDays
-	}
-	return time.Duration(days) * 24 * time.Hour
-}
-
-func readCheckLogRetentionTx(ctx context.Context, queryer querier) (int, error) {
-	var value string
-	err := queryer.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='check_log_retention_days'`).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return DefaultCheckLogRetentionDays, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	days, err := strconv.Atoi(value)
-	if err != nil || days <= 0 {
-		return DefaultCheckLogRetentionDays, nil
-	}
-	return days, nil
 }
 
 var errCheckLogIntegrity = errors.New("raw check log does not match its durable metadata")

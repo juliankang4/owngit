@@ -312,7 +312,7 @@ func (app *App) writeCheckAttemptLog(writer http.ResponseWriter, request *http.R
 		writeAPIError(writer, http.StatusNotFound, "log_missing", "The raw log is no longer present. The durable attempt record remains.", nil)
 		return
 	}
-	writeAPIJSON(writer, http.StatusOK, checkapi.LogResponse{OK: true, LogID: attempt.LogID, ExpiresAt: attempt.LogExpiresAt, Truncated: attempt.LogTruncated, Content: string(content)})
+	writeAPIJSON(writer, http.StatusOK, checkapi.LogResponse{OK: true, LogID: attempt.LogID, ExpiresAt: state.CheckLogExpiry(attempt.LogExpiresAt), Truncated: attempt.LogTruncated, Content: string(content)})
 }
 
 // handleHelperCredentialAPI manages revocable helper credentials. Issuing and
@@ -597,7 +597,7 @@ func attemptJSON(attempt state.CheckAttempt) *checkapi.Attempt {
 		Summary: attempt.Summary, Sequence: attempt.Sequence, CycleID: attempt.CycleID, JobID: attempt.JobID,
 		Protection: attempt.Protection, ExecutionScope: attempt.ExecutionScope,
 		CredentialID: attempt.CredentialID, TimeoutMS: attempt.TimeoutMS, OutputLimitBytes: attempt.OutputLimitBytes,
-		LogID: attempt.LogID, LogExpiresAt: attempt.LogExpiresAt, LogTruncated: attempt.LogTruncated, LogError: attempt.LogError,
+		LogID: attempt.LogID, LogExpiresAt: state.CheckLogExpiry(attempt.LogExpiresAt), LogTruncated: attempt.LogTruncated, LogError: attempt.LogError,
 		CleanupFailed: attempt.CleanupFailed(),
 	}
 	for _, result := range attempt.Results {

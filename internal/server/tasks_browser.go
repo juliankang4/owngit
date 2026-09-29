@@ -154,8 +154,8 @@ func (app *App) browserAttemptRecord(attempt state.CheckAttempt) webui.AttemptRe
 	if attempt.Status != state.AttemptPending {
 		record.FinishedAt = attempt.FinishedAt
 		record.LogStatus = webui.LogStatusOf(app.Store.CheckLogState(attempt.LogID, attempt.LogExpiresAt, app.now()))
-		if attempt.LogExpiresAt != nil {
-			record.LogExpiresAt = *attempt.LogExpiresAt
+		if expires := state.CheckLogExpiry(attempt.LogExpiresAt); expires != nil {
+			record.LogExpiresAt = *expires
 		}
 	}
 	record.CredentialProvenance = browserProvenance(attempt.JobID, attempt.CredentialID, attempt.ExecutionScope)

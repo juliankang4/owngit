@@ -74,3 +74,74 @@ func TestSavePoliciesSavesAllOrNothing(t *testing.T) {
 		t.Fatalf("branch=%q err=%v after a refused change", saved, err)
 	}
 }
+
+// A raw log is kept for the chosen time from when its check started. A new
+// choice applies at once to every log kept: a log past it can no longer be
+// read and the next cleanup deletes it, while Keep indefinitely keeps them
+// all readable through any cleanup. Durable attempt records stay.
+func TestRawLogRetentionAppliesToTheLogsKept(t *testing.T) {
+	store, ctx, now := newProjectStore(t)
+	task, err := store.CreateTask(ctx, "project", "Retention", now)
+	noErr(t, err)
+	_, older := recordAttemptWithLog(t, store, attemptFor(task, "1111111111111111111111111111111111111111", now, AttemptFailed), "older output")
+	_, newer := recordAttemptWithLog(t, store, attemptFor(task, "2222222222222222222222222222222222222222", now.Add(20*24*time.Hour), AttemptFailed), "newer output")
+	if want := now.Add(30 * 24 * time.Hour); !older.LogExpiresAt.Equal(want) {
+		t.Fatalf("default expiry %v, want %v", older.LogExpiresAt, want)
+	}
+	save := func(retention CheckLogRetention) {
+		t.Helper()
+		noErr(t, store.SavePolicies(ctx, PolicyChange{CheckLogs: &retention}))
+	}
+	logState := func(attempt CheckAttempt, at time.Time) string {
+		t.Helper()
+		reloaded, exists, err := store.CheckAttemptByID(ctx, attempt.RepositoryID, attempt.ID)
+		noErr(t, err)
+		if !exists {
+			t.Fatalf("attempt %s is gone", attempt.ID)
+		}
+		_, found, err := store.ReadCheckLog(reloaded.LogID, reloaded.LogExpiresAt, at)
+		noErr(t, err)
+		return found
+	}
+
+	save(KeepCheckLogs)
+	later := now.Add(3 * 365 * 24 * time.Hour)
+	if removed, err := store.PruneCheckLogs(ctx, later); err != nil || removed != 0 {
+		t.Fatalf("a cleanup under Keep indefinitely removed %d, err=%v", removed, err)
+	}
+	if got := logState(older, later); got != CheckLogFound {
+		t.Fatalf("a log kept indefinitely reads as %s", got)
+	}
+	reloaded, _, err := store.CheckAttemptByID(ctx, older.RepositoryID, older.ID)
+	noErr(t, err)
+	if CheckLogExpiry(reloaded.LogExpiresAt) != nil {
+		t.Fatalf("a log kept indefinitely has the expiry %v", reloaded.LogExpiresAt)
+	}
+
+	save(CheckLogs7Days)
+	cleanup := now.Add(10 * 24 * time.Hour)
+	if got := logState(older, cleanup); got != CheckLogExpired {
+		t.Fatalf("a log past the new time reads as %s", got)
+	}
+	if removed, err := store.PruneCheckLogs(ctx, cleanup); err != nil || removed != 1 {
+		t.Fatalf("the next cleanup removed %d, err=%v", removed, err)
+	}
+	if got := logState(newer, cleanup); got != CheckLogFound {
+		t.Fatalf("a log within the new time reads as %s", got)
+	}
+	if _, exists, err := store.CheckAttemptByID(ctx, older.RepositoryID, older.ID); err != nil || !exists {
+		t.Fatalf("the attempt record went with its log: exists=%v err=%v", exists, err)
+	}
+
+	noErr(t, store.Exec(ctx, `UPDATE metadata SET value='45' WHERE key='check_log_retention_days'`))
+	var policyErr *PolicyError
+	if _, err := store.CheckLogRetention(ctx); !errors.As(err, &policyErr) {
+		t.Fatalf("an unknown retention read with err=%v", err)
+	}
+	third := attemptFor(task, "3333333333333333333333333333333333333333", now.Add(21*24*time.Hour), AttemptFailed)
+	_, _, err = store.RegisterCheckAttempt(ctx, third)
+	noErr(t, err)
+	if _, _, err := store.CompleteCheckAttempt(ctx, completionFor(third, "third output"), third.CreatedAt); !errors.As(err, &policyErr) {
+		t.Fatalf("a log stored under an unknown retention: err=%v", err)
+	}
+}

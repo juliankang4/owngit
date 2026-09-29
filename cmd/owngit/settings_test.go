@@ -20,7 +20,7 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 		t.Fatal("settings set without a setting was accepted")
 	}
 	if _, err := captureStdout(func() error {
-		return settingsCommand(append([]string{"set", "--session", "7d", "--initial-branch", "trunk", "--transfer-size", "512MB", "--transfer-time", "2h"}, remote...))
+		return settingsCommand(append([]string{"set", "--session", "7d", "--initial-branch", "trunk", "--transfer-size", "512MB", "--transfer-time", "2h", "--check-logs", "indefinite"}, remote...))
 	}); err != nil {
 		t.Fatalf("settings set: %v", err)
 	}
@@ -42,6 +42,9 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 	}
 	if saved, err := fixture.store.GitTransferLimits(context.Background()); err != nil || saved != (state.GitTransferLimits{MaximumBytes: 512 << 20, Operation: 2 * time.Hour}) {
 		t.Fatalf("saved=%+v err=%v", saved, err)
+	}
+	if saved, err := fixture.store.CheckLogRetention(context.Background()); err != nil || saved != state.KeepCheckLogs {
+		t.Fatalf("saved=%q err=%v", saved, err)
 	}
 	if err := settingsCommand(append([]string{"set", "--transfer-size", "4gb"}, remote...)); err == nil {
 		t.Fatal("a size without a known unit was accepted")

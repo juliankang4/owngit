@@ -696,7 +696,7 @@ func TestPruneDrainsDueRowsAndReportsCommittedProgress(t *testing.T) {
 	}
 	futureAttempt := attemptFor(task, fmt.Sprintf("%040x", 1000), now.Add(100*24*time.Hour), AttemptFailed)
 	_, futureStored := recordAttemptWithLog(t, store, futureAttempt, "future raw output")
-	cutoff := now.Add(retention(DefaultCheckLogRetentionDays) + time.Hour)
+	cutoff := now.Add(DefaultCheckLogRetention.Duration() + time.Hour)
 	var failID string
 	noErr(t, store.db.QueryRowContext(ctx, `SELECT attempt_id FROM check_raw_logs WHERE expires_at<=? ORDER BY expires_at,attempt_id LIMIT 1 OFFSET ?`, cutoff.Unix(), checkLogPruneBatch).Scan(&failID))
 	if _, err := store.db.ExecContext(ctx, fmt.Sprintf(`CREATE TRIGGER fail_second_prune_batch BEFORE DELETE ON check_raw_logs WHEN OLD.attempt_id='%s' BEGIN SELECT RAISE(ABORT,'injected prune failure'); END`, failID)); err != nil {

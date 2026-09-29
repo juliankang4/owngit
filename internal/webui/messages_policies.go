@@ -34,6 +34,17 @@ const (
 	MsgTransferTimeHelp MessageCode = "transfer.time_help"
 	MsgTransferHigher   MessageCode = "transfer.higher"
 	MsgTransferSaved    MessageCode = "transfer.saved"
+
+	MsgCheckLogsTitle      MessageCode = "check_logs.title"
+	MsgCheckLogsScope      MessageCode = "check_logs.scope"
+	MsgCheckLogsLabel      MessageCode = "check_logs.label"
+	MsgCheckLogsHelp       MessageCode = "check_logs.help"
+	MsgCheckLogsSaved      MessageCode = "check_logs.saved"
+	MsgCheckLogs7d         MessageCode = "check_logs.choice.7d"
+	MsgCheckLogs30d        MessageCode = "check_logs.choice.30d"
+	MsgCheckLogs90d        MessageCode = "check_logs.choice.90d"
+	MsgCheckLogs365d       MessageCode = "check_logs.choice.365d"
+	MsgCheckLogsIndefinite MessageCode = "check_logs.choice.indefinite"
 )
 
 var policiesCatalog = map[MessageCode]message{
@@ -105,6 +116,26 @@ var policiesCatalog = map[MessageCode]message{
 		en: "Saved. Transfers that start from now on use the new limits.",
 		ko: "저장했습니다. 이제부터 시작하는 전송에 새 한도가 적용됩니다.",
 	},
+
+	MsgCheckLogsTitle: {en: "Raw check logs", ko: "체크 원본 로그"},
+	MsgCheckLogsScope: {
+		en: "The full output of project checks, counted from when each check started. A new choice applies at once to every raw log kept now: a log it no longer keeps cannot be opened, and the next cleanup, when OwnGit starts or a check result arrives, deletes it. Check results, summaries and excerpts are always kept.",
+		ko: "프로젝트 체크의 전체 출력에 적용되며, 각 체크가 시작된 때부터 기간을 셉니다. 새로 고른 기간은 지금 보관 중인 원본 로그 전체에 바로 적용됩니다. 기간이 지난 로그는 더는 열 수 없고, OwnGit이 시작하거나 체크 결과가 들어올 때 하는 다음 정리에서 지워집니다. 체크 결과, 요약, 발췌는 언제나 남습니다.",
+	},
+	MsgCheckLogsLabel: {en: "Keep raw logs", ko: "원본 로그 보관"},
+	MsgCheckLogsHelp: {
+		en: "A shorter time deletes older raw logs, which are then no longer available. A longer time, or keeping them indefinitely, uses more space in the state database.",
+		ko: "기간을 줄이면 오래된 원본 로그가 지워져 더는 볼 수 없습니다. 기간을 늘리거나 계속 보관하면 상태 데이터베이스가 공간을 더 씁니다.",
+	},
+	MsgCheckLogsSaved: {
+		en: "Saved. Every raw log kept now follows the new choice.",
+		ko: "저장했습니다. 지금 보관 중인 원본 로그 모두에 새 기간이 적용됩니다.",
+	},
+	MsgCheckLogs7d:         {en: "7 days", ko: "7일"},
+	MsgCheckLogs30d:        {en: "30 days", ko: "30일"},
+	MsgCheckLogs90d:        {en: "90 days", ko: "90일"},
+	MsgCheckLogs365d:       {en: "1 year", ko: "1년"},
+	MsgCheckLogsIndefinite: {en: "Keep indefinitely", ko: "계속 보관"},
 }
 
 // PolicyChoice is one choice of a policy drawn as a menu.
@@ -119,6 +150,15 @@ func SessionChoices() []PolicyChoice {
 	return []PolicyChoice{
 		{"1h", MsgSession1h}, {"8h", MsgSession8h}, {"12h", MsgSession12h},
 		{"1d", MsgSession1d}, {"7d", MsgSession7d}, {"30d", MsgSession30d},
+	}
+}
+
+// CheckLogChoices lists how long raw check logs can be kept, shortest
+// first. Their values are those of state.CheckLogRetention.
+func CheckLogChoices() []PolicyChoice {
+	return []PolicyChoice{
+		{"7d", MsgCheckLogs7d}, {"30d", MsgCheckLogs30d}, {"90d", MsgCheckLogs90d},
+		{"365d", MsgCheckLogs365d}, {"indefinite", MsgCheckLogsIndefinite},
 	}
 }
 

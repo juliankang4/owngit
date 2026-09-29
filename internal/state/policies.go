@@ -33,9 +33,10 @@ func (e *PolicyError) Error() string {
 
 func (e *PolicyError) Unwrap() error { return e.Cause }
 
-// policyValue reads the metadata row key; found is false when there is none.
-func (s *Store) policyValue(ctx context.Context, key string) (value string, found bool, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key=?`, key).Scan(&value)
+// policyValue reads the metadata row key with query, the store or a
+// transaction; found is false when there is none.
+func policyValue(ctx context.Context, query querier, key string) (value string, found bool, err error) {
+	err = query.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key=?`, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -48,6 +49,7 @@ type PolicyChange struct {
 	Session       *GeneralSession
 	InitialBranch *string
 	GitTransfer   *GitTransferLimits
+	CheckLogs     *CheckLogRetention
 }
 
 // SavePolicies checks every policy change names and saves them all in one
@@ -76,6 +78,12 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 		}
 		values[gitTransferLimitsKey] = stored
 	}
+	if change.CheckLogs != nil {
+		if _, valid := ParseCheckLogRetention(string(*change.CheckLogs)); !valid {
+			return fmt.Errorf("invalid raw check log retention %q", *change.CheckLogs)
+		}
+		values[checkLogRetentionKey] = change.CheckLogs.stored()
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -83,6 +91,11 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 	defer tx.Rollback()
 	for key, value := range values {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
+			return err
+		}
+	}
+	if change.CheckLogs != nil {
+		if err := change.CheckLogs.applyTo(ctx, tx); err != nil {
 			return err
 		}
 	}
@@ -128,7 +141,7 @@ func ParseGeneralSession(value string) (GeneralSession, bool) {
 // GeneralSession returns how long a new general session lasts. A change
 // applies to sessions that start afterwards.
 func (s *Store) GeneralSession(ctx context.Context) (GeneralSession, error) {
-	raw, found, err := s.policyValue(ctx, generalSessionKey)
+	raw, found, err := policyValue(ctx, s.db, generalSessionKey)
 	if err != nil || !found {
 		return DefaultGeneralSession, err
 	}
@@ -168,7 +181,7 @@ func ValidateInitialBranch(name string) error {
 // InitialBranch returns the branch new repositories start on. A change
 // applies to repositories created afterwards.
 func (s *Store) InitialBranch(ctx context.Context) (string, error) {
-	name, found, err := s.policyValue(ctx, initialBranchKey)
+	name, found, err := policyValue(ctx, s.db, initialBranchKey)
 	if err != nil || !found {
 		return DefaultInitialBranch, err
 	}
@@ -235,7 +248,7 @@ type gitTransferJSON struct {
 
 // GitTransferLimits returns the limits of a transfer that starts now.
 func (s *Store) GitTransferLimits(ctx context.Context) (GitTransferLimits, error) {
-	raw, found, err := s.policyValue(ctx, gitTransferLimitsKey)
+	raw, found, err := policyValue(ctx, s.db, gitTransferLimitsKey)
 	if err != nil || !found {
 		return DefaultGitTransferLimits, err
 	}
@@ -272,4 +285,105 @@ func (l GitTransferLimits) stored() (string, error) {
 	seconds := int64(l.Operation / time.Second)
 	encoded, err := json.Marshal(gitTransferJSON{MaximumBytes: &l.MaximumBytes, OperationSeconds: &seconds})
 	return string(encoded), err
+}
+
+// CheckLogRetention is how long raw check logs are kept, counted from when
+// their check started: one of CheckLogRetentions. It is stored as a number
+// of days, or as "indefinite". It applies to raw logs only; check results,
+// summaries and excerpts stay.
+type CheckLogRetention string
+
+const (
+	CheckLogs7Days   CheckLogRetention = "7d"
+	CheckLogs30Days  CheckLogRetention = "30d"
+	CheckLogs90Days  CheckLogRetention = "90d"
+	CheckLogs365Days CheckLogRetention = "365d"
+	// KeepCheckLogs keeps raw logs until another choice is saved.
+	KeepCheckLogs CheckLogRetention = "indefinite"
+
+	DefaultCheckLogRetention = CheckLogs30Days
+
+	checkLogRetentionKey = "check_log_retention_days"
+)
+
+// CheckLogRetentions lists the choices from the shortest to the longest.
+var CheckLogRetentions = []CheckLogRetention{CheckLogs7Days, CheckLogs30Days, CheckLogs90Days, CheckLogs365Days, KeepCheckLogs}
+
+var checkLogRetentionDays = map[CheckLogRetention]int{CheckLogs7Days: 7, CheckLogs30Days: 30, CheckLogs90Days: 90, CheckLogs365Days: 365}
+
+// CheckLogKeptIndefinitely is the expiry of a raw log kept under
+// KeepCheckLogs, the last second RFC 3339 can write. The raw log table
+// needs an expiry for every log; this one never passes, so no cleanup
+// deletes the log and it stays readable.
+var CheckLogKeptIndefinitely = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+
+// ParseCheckLogRetention returns the choice value names.
+func ParseCheckLogRetention(value string) (CheckLogRetention, bool) {
+	choice := CheckLogRetention(value)
+	return choice, choice == KeepCheckLogs || checkLogRetentionDays[choice] > 0
+}
+
+// Duration is how long a raw log is kept, or zero under KeepCheckLogs.
+func (r CheckLogRetention) Duration() time.Duration {
+	return time.Duration(checkLogRetentionDays[r]) * 24 * time.Hour
+}
+
+func (r CheckLogRetention) stored() string {
+	if r == KeepCheckLogs {
+		return string(KeepCheckLogs)
+	}
+	return strconv.Itoa(checkLogRetentionDays[r])
+}
+
+// expiry is when a raw log of a check that started at started is removed.
+func (r CheckLogRetention) expiry(started time.Time) time.Time {
+	if r == KeepCheckLogs {
+		return CheckLogKeptIndefinitely
+	}
+	return started.UTC().Add(r.Duration())
+}
+
+// applyTo gives every raw log kept now the expiry of r, in both places the
+// expiry is recorded, so the choice applies to them at once: a log past it
+// can no longer be read and the next cleanup deletes it.
+func (r CheckLogRetention) applyTo(ctx context.Context, tx *sql.Tx) error {
+	expiry, arguments := `?`, []any{CheckLogKeptIndefinitely.Unix()}
+	if r != KeepCheckLogs {
+		expiry, arguments = `(SELECT a.created_at FROM check_attempts a WHERE a.id=check_raw_logs.attempt_id)+?`, []any{int64(r.Duration() / time.Second)}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE check_raw_logs SET expires_at=`+expiry, arguments...); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE check_attempts SET log_expires_at=(SELECT r.expires_at FROM check_raw_logs r WHERE r.attempt_id=check_attempts.id)
+		WHERE id IN (SELECT attempt_id FROM check_raw_logs)`)
+	return err
+}
+
+// CheckLogRetention returns how long raw check logs are kept.
+func (s *Store) CheckLogRetention(ctx context.Context) (CheckLogRetention, error) {
+	return checkLogRetention(ctx, s.db)
+}
+
+// checkLogRetention reads the choice with query, the store or a
+// transaction.
+func checkLogRetention(ctx context.Context, query querier) (CheckLogRetention, error) {
+	raw, found, err := policyValue(ctx, query, checkLogRetentionKey)
+	if err != nil || !found {
+		return DefaultCheckLogRetention, err
+	}
+	for _, choice := range CheckLogRetentions {
+		if raw == choice.stored() {
+			return choice, nil
+		}
+	}
+	return "", &PolicyError{Key: checkLogRetentionKey, Value: raw, Cause: errors.New("not one of the raw log retention choices")}
+}
+
+// CheckLogExpiry returns when a raw log with the recorded expiry is
+// removed, or nil when it is kept indefinitely or there is none.
+func CheckLogExpiry(expires *time.Time) *time.Time {
+	if expires == nil || expires.Equal(CheckLogKeptIndefinitely) {
+		return nil
+	}
+	return expires
 }

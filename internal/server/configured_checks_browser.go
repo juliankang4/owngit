@@ -478,8 +478,8 @@ func (app *App) browserCheckJobLog(attempt state.CheckAttempt) webui.CheckJobLog
 		Truncated: attempt.LogTruncated,
 		Error:     attempt.LogError,
 	}
-	if attempt.LogExpiresAt != nil {
-		view.ExpiresAt = *attempt.LogExpiresAt
+	if expires := state.CheckLogExpiry(attempt.LogExpiresAt); expires != nil {
+		view.ExpiresAt = *expires
 	}
 	// One call decides everything: it answers missing for an absent or
 	// unusable identity, expired past the retention bound, and found only when

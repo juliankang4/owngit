@@ -19,6 +19,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 		GroupSession:    {"general_session"},
 		GroupBranch:     {"initial_branch"},
 		GroupTransfer:   {"transfer_size", "transfer_size_unit", "transfer_time", "transfer_time_unit"},
+		GroupLogs:       {"check_logs"},
 		GroupConnection: {"insecure_ack"},
 		GroupNetwork:    {"network_revision", "listen", "base_url", "allowed_hosts", "trusted_proxies", "insecure_ack"},
 		GroupTailscale:  {"tailscale", "home_network"},
@@ -26,7 +27,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 	groupPattern := regexp.MustCompile(`<section class="grp" id="grp-([a-z]+)"`)
 	namePattern := regexp.MustCompile(`name="([a-z_]+)"`)
 	seen := map[string]bool{}
-	for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories"} {
+	for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories", "settings-storage"} {
 		c := fullChrome(LangEN)
 		c.Connection = Connection{Encrypted: false, Host: "owngit.local:8080"}
 		page := allPages(LangEN)[name].(SettingsPage)
@@ -99,7 +100,7 @@ func TestSettingsGroupsAskForThePasswordOnlyWhenAChangeNeedsIt(t *testing.T) {
 			v.AdminConfirmed, v.AdminCheckOff, v.AdminChoice, v.AdminAsks = true, true, "never", false
 		}, MsgConfirmCheckOff},
 	} {
-		for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories"} {
+		for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories", "settings-storage"} {
 			c := fullChrome(LangEN)
 			check.viewer(&c.Viewer)
 			page := allPages(LangEN)[name].(SettingsPage)
@@ -140,7 +141,7 @@ func TestSettingsGroupsAskForThePasswordOnlyWhenAChangeNeedsIt(t *testing.T) {
 // them to one group's form only for Save and leave.
 func TestTheLeaveDialogBelongsToNoForm(t *testing.T) {
 	r := newRenderer(t)
-	for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories"} {
+	for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories", "settings-storage"} {
 		page := allPages(LangKO)[name].(SettingsPage)
 		out := render(t, r, page)
 		start := strings.Index(out, `<dialog class="leave"`)

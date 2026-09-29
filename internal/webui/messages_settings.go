@@ -93,8 +93,8 @@ var settingsCatalog = map[MessageCode]message{
 		ko: "기본 브랜치, 가져오기, 체크, 자격 증명, 삭제는 저장소마다 따로 정합니다. 각 저장소의 설정 페이지에서 바꿀 수 있습니다.",
 	},
 	MsgSettingsLeadStorage: {
-		en: "Where OwnGit keeps your repositories.",
-		ko: "OwnGit이 저장소를 보관하는 곳입니다.",
+		en: "Where OwnGit keeps your repositories, and how long it keeps raw check logs.",
+		ko: "OwnGit이 저장소를 보관하는 곳과 체크 원본 로그를 보관하는 기간입니다.",
 	},
 
 	MsgSettingsSave:       {en: "Save", ko: "저장"},

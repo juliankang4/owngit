@@ -697,6 +697,33 @@
     {{with .Chrome.Nav.AdminLoginURL}}<div class="actions"><a class="btn" href="{{.}}">{{bi $lang "admin.title"}}{{template "adminLock" dict "Lang" $lang "Locked" true}}</a></div>{{end}}
   {{end}}
 </section>
+
+{{/* How long raw check logs are kept. Results and excerpts always stay. */}}
+{{$gn := forAction $p.Group "logs" $p.Notices}}{{$focus := firstError $gn "check_logs" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "logs"}}
+{{$saved := $p.Policies.CheckLogs}}{{$logs := draft $p.Group $p.Draft "logs" "check_logs" $saved}}
+<section class="grp" id="grp-logs" aria-labelledby="grp-logs-h" data-group="logs"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "logs" "Title" (bi $lang "check_logs.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "check_logs.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  <form class="gform" method="post" action="{{tabURL "storage"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_check_logs">
+    <div class="f f--row">
+      <label for="check-logs">{{bi $lang "check_logs.label"}}</label>
+      <select id="check-logs" name="check_logs" data-saved="{{if not $bad}}{{$saved}}{{end}}"
+              {{template "netDescribed" dict "Notices" $gn "Scope" "logs" "Field" "check_logs" "Help" "check-logs-help"}}{{if eq $focus "check_logs"}} autofocus{{end}}>
+        {{range logsMenu}}
+          <option value="{{.Value}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq .Value $logs}} selected{{end}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "logs" "Field" "check_logs"}}
+      <p class="f__help" id="check-logs-help">{{bi $lang "check_logs.help"}}</p>
+    </div>
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "logs" "Notices" $gn "Focus" $focus "Cancel" (tabURL "storage")}}
+  </form>
+</section>
 {{end}}
 
 {{/* ------------------------------------------------------------------ */}}

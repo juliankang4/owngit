@@ -249,6 +249,14 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		}
 		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{GitTransfer: &limits})
 		notice = "transfer_saved"
+	case webui.ActionSaveCheckLogs:
+		retention, valid := state.ParseCheckLogRetention(postValue(request, "check_logs"))
+		if !valid {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("check_logs", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{CheckLogs: &retention})
+		notice = "check_logs_saved"
 	case webui.ActionSaveNetwork:
 		app.saveNetwork(writer, request, settings, csrf)
 		return
@@ -340,6 +348,7 @@ var settingsNoticeGroups = map[string]string{
 	"session_saved":          webui.GroupSession,
 	"initial_branch_saved":   webui.GroupBranch,
 	"transfer_saved":         webui.GroupTransfer,
+	"check_logs_saved":       webui.GroupLogs,
 	"insecure_acknowledged":  webui.GroupConnection,
 	"network_saved":          webui.GroupNetwork,
 	"tailscale_on":           webui.GroupTailscale,
@@ -449,7 +458,7 @@ type settingsView struct {
 // sends nothing.
 var settingsDraftFields = map[string]bool{
 	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "general_session": false, "initial_branch": false,
-	"transfer_size": false, "transfer_size_unit": false, "transfer_time": false, "transfer_time_unit": false, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
+	"transfer_size": false, "transfer_size_unit": false, "transfer_time": false, "transfer_time_unit": false, "check_logs": false, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.

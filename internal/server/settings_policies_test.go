@@ -187,3 +187,30 @@ func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
 		t.Fatalf("PATCH both limits over an unreadable value status=%d", status)
 	}
 }
+
+// Storage & recovery saves how long raw check logs are kept, refuses a
+// choice it does not offer, and the API reads and changes the same choice.
+func TestRawLogRetentionIsSavedFromStorageAndTheAPI(t *testing.T) {
+	fixture, server, _ := newConfirmationFixture(t, false, state.ConfirmEveryTime)
+	ctx := context.Background()
+	browser := openConfirmationBrowser(t, server, false)
+	save := func(choice string) browserHTTPResult {
+		return browser.post("/settings/storage", url.Values{"action": {webui.ActionSaveCheckLogs}, "check_logs": {choice}, "admin_password": {"admin-password"}})
+	}
+	if result := save("45d"); result.status != http.StatusBadRequest {
+		t.Fatalf("an unknown choice: status=%d", result.status)
+	}
+	requireSaved(t, "raw log retention", save("indefinite"))
+	if retention, err := fixture.store.CheckLogRetention(ctx); err != nil || retention != state.KeepCheckLogs {
+		t.Fatalf("saved=%q err=%v", retention, err)
+	}
+	if page := browser.get("/settings/storage"); !strings.Contains(page.body, `name="check_logs" data-saved="indefinite"`) {
+		t.Fatalf("Storage does not show the saved choice:\n%s", page.body)
+	}
+	if status, _, settings := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"check_logs": "90d"}); status != http.StatusOK || settings["check_logs"] != "90d" {
+		t.Fatalf("PATCH status=%d settings=%v", status, settings)
+	}
+	if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"check_logs": "forever"}); status != http.StatusBadRequest || code != "invalid_settings" {
+		t.Fatalf("PATCH an unknown choice status=%d code=%s", status, code)
+	}
+}

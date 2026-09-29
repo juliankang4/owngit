@@ -208,6 +208,9 @@ const (
 	// admin_password, transfer_size and transfer_time, each with its
 	// _unit (see LimitInput).
 	ActionSaveTransfers = "save_transfers"
+	// ActionSaveCheckLogs saves how long raw check logs are kept. Fields:
+	// admin_password, check_logs (one of CheckLogChoices).
+	ActionSaveCheckLogs = "save_check_logs"
 )
 
 // The Settings tabs. Each is its own address, so a tab works as an ordinary
@@ -270,6 +273,7 @@ const (
 	GroupSession    = "session"
 	GroupBranch     = "branch"
 	GroupTransfer   = "transfer"
+	GroupLogs       = "logs"
 	GroupConnection = "connection"
 	GroupNetwork    = "network"
 	GroupTailscale  = "tailscale"
@@ -281,6 +285,7 @@ var settingsGroupTabs = map[string]string{
 	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess, GroupConfirm: SettingsAccess, GroupSession: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
 	GroupBranch: SettingsRepositories, GroupTransfer: SettingsRepositories,
+	GroupLogs: SettingsStorage,
 }
 
 // SettingsGroupTab returns the tab that shows group, or "" for an unknown
@@ -305,6 +310,8 @@ func SettingsActionGroup(action string) string {
 		return GroupBranch
 	case ActionSaveTransfers:
 		return GroupTransfer
+	case ActionSaveCheckLogs:
+		return GroupLogs
 	case ActionAcknowledgeInsecure:
 		return GroupConnection
 	case ActionSaveNetwork:
@@ -406,6 +413,9 @@ type Policies struct {
 	// TransferSize and TransferTime are the Git transfer limits: the
 	// largest transfer and the longest.
 	TransferSize, TransferTime LimitInput
+	// CheckLogs is how long raw check logs are kept, one of
+	// CheckLogChoices.
+	CheckLogs string
 	// Unreadable holds the groups whose saved value could not be read.
 	// Such a group says so and shows the default as a change to save.
 	Unreadable map[string]bool

@@ -13,11 +13,12 @@ import (
 )
 
 // Server-wide policies: how long a sign-in lasts, the branch new
-// repositories start on and the Git transfer limits. The Settings tabs and
-// the owner API (/api/v1/settings) read and save them through the same
-// state accessors, which hold their choices and bounds. Each applies from
-// the moment it is saved to what starts afterwards: a sign-in, a new
-// repository, a transfer.
+// repositories start on, the Git transfer limits and how long raw check logs
+// are kept. The Settings tabs and the owner API (/api/v1/settings) read and
+// save them through the same state accessors, which hold their choices and
+// bounds. The first three apply to what starts after they are saved: a
+// sign-in, a new repository, a transfer. The log choice applies at once to
+// the logs kept, and the next cleanup deletes the ones it no longer keeps.
 
 // tabPolicies reads the policies tab shows. A saved value that cannot be
 // read (state.PolicyError) does not stop the page: its group says so and
@@ -64,6 +65,16 @@ func (app *App) tabPolicies(request *http.Request, tab string) (webui.Policies, 
 		policies.TransferSize = webui.FormatLimit(webui.LimitSize, limits.MaximumBytes, "")
 		policies.TransferTime = webui.FormatLimit(webui.LimitDuration, limits.Operation.Milliseconds(), "")
 	}
+	if tab == webui.SettingsStorage {
+		retention, err := app.Store.CheckLogRetention(request.Context())
+		if err = unreadable(webui.GroupLogs, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if retention == "" {
+			retention = state.DefaultCheckLogRetention
+		}
+		policies.CheckLogs = string(retention)
+	}
 	return policies, nil
 }
 
@@ -102,6 +113,9 @@ type settingsJSON struct {
 	// GitTransfer holds the Git transfer limits. A PATCH may name one of
 	// them; the other keeps its saved value.
 	GitTransfer *gitTransferJSON `json:"git_transfer,omitempty"`
+	// CheckLogs is how long raw check logs are kept, one of
+	// state.CheckLogRetentions.
+	CheckLogs *string `json:"check_logs,omitempty"`
 }
 
 type gitTransferJSON struct {
@@ -163,6 +177,14 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 			}
 			policies.GitTransfer = &limits
 		}
+		if change.CheckLogs != nil {
+			retention, valid := state.ParseCheckLogRetention(*change.CheckLogs)
+			if !valid {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "check_logs must be one of "+choiceList(state.CheckLogRetentions)+".", nil)
+				return
+			}
+			policies.CheckLogs = &retention
+		}
 		if err := app.Store.SavePolicies(request.Context(), policies); err != nil {
 			writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
 			return
@@ -190,9 +212,13 @@ func (app *App) savedSettings(ctx context.Context) (settingsJSON, error) {
 	if err != nil {
 		return settingsJSON{}, err
 	}
+	retention, err := app.Store.CheckLogRetention(ctx)
+	if err != nil {
+		return settingsJSON{}, err
+	}
 	return settingsJSON{Session: pointer(string(session)), InitialBranch: &branch, GitTransfer: &gitTransferJSON{
 		MaximumBytes: &limits.MaximumBytes, OperationSeconds: pointer(int64(limits.Operation / time.Second)),
-	}}, nil
+	}, CheckLogs: pointer(string(retention))}, nil
 }
 
 // changedTransferLimits applies a PATCH of the Git transfer limits to the

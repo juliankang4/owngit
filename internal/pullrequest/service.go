@@ -1008,7 +1008,7 @@ func (service *Service) checksFromAttempt(attempt state.CheckAttempt, sourceOID 
 			checks.FinishedAt = &finished
 		}
 		checks.LogStatus = service.Store.CheckLogState(attempt.LogID, attempt.LogExpiresAt, service.now())
-		checks.LogExpiresAt = attempt.LogExpiresAt
+		checks.LogExpiresAt = state.CheckLogExpiry(attempt.LogExpiresAt)
 	}
 	checks.Passed = attempt.Status == state.AttemptPassed
 	checks.TestedCommit = attempt.Status != state.AttemptPending && attempt.RevisionOID == sourceOID && worktreeState == state.WorktreeClean && !checks.CleanupFailed
