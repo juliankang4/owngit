@@ -563,6 +563,11 @@ func serveWithoutAdminRights(arguments []string) (handled bool, err error) {
 
 // stopWithParent sets stop when the process that started this one exits.
 func stopWithParent(stop windows.Handle) {
+	watchParentExit(func() { _ = windows.SetEvent(stop) })
+}
+
+// watchParentExit calls end when the process that started this one exits.
+func watchParentExit(end func()) {
 	parent, err := parentProcess()
 	if err != nil {
 		return
@@ -570,7 +575,7 @@ func stopWithParent(stop windows.Handle) {
 	go func() {
 		defer windows.CloseHandle(parent)
 		if result, err := windows.WaitForSingleObject(parent, windows.INFINITE); err == nil && result == windows.WAIT_OBJECT_0 {
-			_ = windows.SetEvent(stop)
+			end()
 		}
 	}()
 }
@@ -623,4 +628,30 @@ const serviceRestartDelay = 5 * time.Second
 func stopRequested(stop windows.Handle, wait time.Duration) bool {
 	result, err := windows.WaitForSingleObject(stop, uint32(wait/time.Millisecond))
 	return err == nil && result == windows.WAIT_OBJECT_0
+}
+
+// platformProgramRunning reports whether a process that this process may
+// inspect runs the program at path.
+func platformProgramRunning(path string) bool {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(snapshot)
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	for err = windows.Process32First(snapshot, &entry); err == nil; err = windows.Process32Next(snapshot, &entry) {
+		process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, entry.ProcessID)
+		if err != nil {
+			continue
+		}
+		name := make([]uint16, windows.MAX_LONG_PATH)
+		size := uint32(len(name))
+		err = windows.QueryFullProcessImageName(process, 0, &name[0], &size)
+		windows.CloseHandle(process)
+		if err == nil && strings.EqualFold(windows.UTF16ToString(name[:size]), path) {
+			return true
+		}
+	}
+	return false
 }

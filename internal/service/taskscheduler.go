@@ -23,6 +23,9 @@ import (
 const (
 	// TaskName is the name of the scheduled task, in the root folder.
 	TaskName = "OwnGit"
+	// IconTaskName is the name of the task that starts the OwnGit icon
+	// when the account signs in.
+	IconTaskName = "OwnGit icon"
 	// FirewallRuleName is the name (the rule ID) and display name of the
 	// inbound Windows Firewall rule for owngit.exe.
 	FirewallRuleName = "OwnGit"
@@ -86,39 +89,86 @@ func RenderTask(plan TaskPlan) (string, error) {
 	if plan.Mode != ModeBootTask && plan.Mode != ModeLogonTask {
 		return "", fmt.Errorf("no scheduled task for mode %q", plan.Mode)
 	}
-	if err := checkWindowsPath("executable", plan.Executable); err != nil {
+	if err := plan.check(plan.Mode == ModeLogonTask); err != nil {
 		return "", err
+	}
+	definition := taskDefinition{
+		description: `OwnGit private Git server. Run "owngit service install" again to update this task, or "owngit service uninstall" to remove it. Both keep the state directory and the repositories.`,
+		user:        plan.UserSID, trigger: "<BootTrigger><Enabled>true</Enabled></BootTrigger>", logonType: "S4U",
+		command: plan.Executable, arguments: plan.ServeArguments(), restart: true,
+	}
+	if plan.Mode == ModeLogonTask {
+		definition.trigger, definition.logonType = plan.logonTrigger(), "InteractiveToken"
+		definition.command, definition.arguments = plan.Conhost, append([]string{"--headless", plan.Executable}, definition.arguments...)
+	}
+	return renderTask(definition), nil
+}
+
+// IconArguments are the arguments of "owngit tray icon" in the icon's task.
+func (plan TaskPlan) IconArguments() []string {
+	return []string{"tray", "icon", "--state-dir", plan.StateDir}
+}
+
+// RenderIconTask writes the Task Scheduler XML of the OwnGit icon of a
+// plan, whichever mode starts the server: when the account signs in,
+// "owngit tray icon" starts on its desktop through "conhost.exe
+// --headless", without administrator rights and without a time limit.
+func RenderIconTask(plan TaskPlan) (string, error) {
+	if err := plan.check(true); err != nil {
+		return "", err
+	}
+	return renderTask(taskDefinition{
+		description: `Shows the OwnGit icon in the notification area when you sign in. "owngit tray off" hides the icon; "owngit service uninstall" removes this task. OwnGit runs without it.`,
+		user:        plan.UserSID, trigger: plan.logonTrigger(), logonType: "InteractiveToken",
+		command: plan.Conhost, arguments: append([]string{"--headless", plan.Executable}, plan.IconArguments()...),
+	}), nil
+}
+
+// check refuses a plan whose paths or account a task cannot hold; conhost
+// is checked when the task starts through it.
+func (plan TaskPlan) check(conhost bool) error {
+	if err := checkWindowsPath("executable", plan.Executable); err != nil {
+		return err
 	}
 	if err := checkWindowsPath("state directory", plan.StateDir); err != nil {
-		return "", err
+		return err
 	}
 	if !validSID(plan.UserSID) {
-		return "", fmt.Errorf("unsupported account SID %q", plan.UserSID)
+		return fmt.Errorf("unsupported account SID %q", plan.UserSID)
 	}
-	command, words := plan.Executable, plan.ServeArguments()
-	if plan.Mode == ModeLogonTask {
-		if err := checkWindowsPath("conhost", plan.Conhost); err != nil {
-			return "", err
-		}
-		command, words = plan.Conhost, append([]string{"--headless", plan.Executable}, words...)
+	if conhost {
+		return checkWindowsPath("conhost", plan.Conhost)
 	}
-	trigger, logonType := "<BootTrigger><Enabled>true</Enabled></BootTrigger>", "S4U"
-	if plan.Mode == ModeLogonTask {
-		trigger, logonType = "<LogonTrigger><Enabled>true</Enabled><UserId>"+plan.UserSID+"</UserId></LogonTrigger>", "InteractiveToken"
-	}
+	return nil
+}
+
+func (plan TaskPlan) logonTrigger() string {
+	return "<LogonTrigger><Enabled>true</Enabled><UserId>" + plan.UserSID + "</UserId></LogonTrigger>"
+}
+
+// taskDefinition is what differs between OwnGit's tasks.
+type taskDefinition struct {
+	description, user, trigger, logonType, command string
+	arguments                                      []string
+	// restart makes Task Scheduler start the task again when it cannot
+	// start it.
+	restart bool
+}
+
+func renderTask(definition taskDefinition) string {
 	var task strings.Builder
 	line := func(format string, args ...any) { fmt.Fprintf(&task, format+"\n", args...) }
 	line(`<?xml version="1.0" encoding="UTF-16"?>`)
 	line(`<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">`)
 	line(`  <RegistrationInfo>`)
 	line(`    <Source>%s</Source>`, taskSource)
-	line(`    <Description>OwnGit private Git server. Run "owngit service install" again to update this task, or "owngit service uninstall" to remove it. Both keep the state directory and the repositories.</Description>`)
+	line(`    <Description>%s</Description>`, definition.description)
 	line(`  </RegistrationInfo>`)
-	line(`  <Triggers>%s</Triggers>`, trigger)
+	line(`  <Triggers>%s</Triggers>`, definition.trigger)
 	line(`  <Principals>`)
 	line(`    <Principal id="Author">`)
-	line(`      <UserId>%s</UserId>`, plan.UserSID)
-	line(`      <LogonType>%s</LogonType>`, logonType)
+	line(`      <UserId>%s</UserId>`, definition.user)
+	line(`      <LogonType>%s</LogonType>`, definition.logonType)
 	line(`      <RunLevel>LeastPrivilege</RunLevel>`)
 	line(`    </Principal>`)
 	line(`  </Principals>`)
@@ -140,16 +190,18 @@ func RenderTask(plan TaskPlan) (string, error) {
 	// 5 is normal process and thread priority; the default 7 is below
 	// normal, with lower I/O and memory priority as well.
 	line(`    <Priority>5</Priority>`)
-	line(`    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>`)
+	if definition.restart {
+		line(`    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>`)
+	}
 	line(`  </Settings>`)
 	line(`  <Actions Context="Author">`)
 	line(`    <Exec>`)
-	line(`      <Command>%s</Command>`, escapeXML(command))
-	line(`      <Arguments>%s</Arguments>`, escapeXML(WindowsCommandLine(words)))
+	line(`      <Command>%s</Command>`, escapeXML(definition.command))
+	line(`      <Arguments>%s</Arguments>`, escapeXML(WindowsCommandLine(definition.arguments)))
 	line(`    </Exec>`)
 	line(`  </Actions>`)
 	line(`</Task>`)
-	return task.String(), nil
+	return task.String()
 }
 
 // taskDocument is the part of a task definition that ParseTask reads.
@@ -591,9 +643,17 @@ func (rule FirewallRule) Allows(program string) bool {
 
 // TaskDefinitionScript prints the definition of the task as XML, or
 // nothing when there is none.
-const TaskDefinitionScript = `$ErrorActionPreference = 'Stop'
+const TaskDefinitionScript = taskDefinitionScript + TaskName + taskDefinitionEnd
+
+// IconTaskDefinitionScript prints the definition of the icon's task as
+// XML, or nothing when there is none.
+const IconTaskDefinitionScript = taskDefinitionScript + IconTaskName + taskDefinitionEnd
+
+const taskDefinitionScript = `$ErrorActionPreference = 'Stop'
 $scheduler = New-Object -ComObject Schedule.Service; $scheduler.Connect()
-$task = $scheduler.GetFolder('\').GetTasks(1) | Where-Object { $_.Name -eq '` + TaskName + `' }
+$task = $scheduler.GetFolder('\').GetTasks(1) | Where-Object { $_.Name -eq '`
+
+const taskDefinitionEnd = `' }
 if ($task) { $task.Xml }
 `
 

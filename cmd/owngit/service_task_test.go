@@ -29,6 +29,8 @@ type fakeWindows struct {
 	t             *testing.T
 	calls         []string
 	definition    string // the task XML, "" when there is none
+	icon          string // the icon task's XML, "" when there is none
+	iconRunning   bool   // whether the icon task runs
 	state         string // TaskStateScript output
 	firewall      string // FirewallShowScript output
 	access        string // FirewallAccessScript output, "" when it fails
@@ -72,7 +74,7 @@ func (fake *fakeWindows) script(args []string) string {
 	}
 	script := string(utf16.Decode(units))
 	for name, text := range map[string]string{
-		"definition": service.TaskDefinitionScript, "state": service.TaskStateScript,
+		"definition": service.TaskDefinitionScript, "icon-definition": service.IconTaskDefinitionScript, "state": service.TaskStateScript,
 		"firewall-show": service.FirewallShowScript, "firewall-allow": service.FirewallAllowScript,
 		"firewall-remove": service.FirewallRemoveScript, "firewall-access": service.FirewallAccessScript,
 	} {
@@ -96,6 +98,8 @@ func (fake *fakeWindows) run(_ context.Context, name string, args ...string) ([]
 		switch script {
 		case "definition":
 			return []byte(fake.definition), nil
+		case "icon-definition":
+			return []byte(fake.icon), nil
 		case "state":
 			if fake.definition == "" {
 				return []byte("task not found"), errors.New("exit status 1")
@@ -131,6 +135,23 @@ func (fake *fakeWindows) run(_ context.Context, name string, args ...string) ([]
 		return nil, nil
 	case fakeSystem + `\schtasks.exe`:
 		fake.calls = append(fake.calls, "schtasks "+strings.Join(args, " "))
+		if args[2] == `\`+service.IconTaskName {
+			switch args[0] {
+			case "/Create":
+				data, err := os.ReadFile(args[4])
+				if err != nil {
+					fake.t.Fatal(err)
+				}
+				fake.icon, _ = decodeUTF16ForTest(data)
+			case "/Run":
+				fake.iconRunning = true
+			case "/End":
+				fake.iconRunning = false
+			case "/Delete":
+				fake.icon, fake.iconRunning = "", false
+			}
+			return nil, nil
+		}
 		switch args[0] {
 		case "/Create":
 			// Like schtasks, an existing task is replaced only with /F.
@@ -186,6 +207,7 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 	previousEnvironment, previousApply := serviceEnvironment, applyServiceEnvironment
 	previousEnvironmentRunner, previousAttached, previousGit := runWithEnvironment, runAttachedWithEnvironment, gitOnServicePath
 	previousDoctorTool, previousRequester, previousProfile, previousState := doctorTool, requestingProcess, accountProfile, isOwnGitState
+	previousProgramRunning := programRunning
 	t.Cleanup(func() {
 		// The Windows paths of these tests are only text. Elsewhere they are
 		// relative, so a test that used one as a folder left it here.
@@ -200,7 +222,9 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		serviceEnvironment, applyServiceEnvironment = previousEnvironment, previousApply
 		runWithEnvironment, runAttachedWithEnvironment = previousEnvironmentRunner, previousAttached
 		doctorTool, requestingProcess, accountProfile, isOwnGitState = previousDoctorTool, previousRequester, previousProfile, previousState
+		programRunning = previousProgramRunning
 	})
+	programRunning = func(string) bool { return false }
 	taskPollInterval = 10 * time.Millisecond
 	fake.health = useFakeHealth(t)
 	requestingProcess = func() (string, string, error) {
@@ -548,11 +572,13 @@ func TestTaskElevatedInstall(t *testing.T) {
 		t.Errorf("stop asked %q", fake.stopAsked)
 	}
 	want := []string{
-		"powershell firewall-show", "powershell state", "powershell state",
+		"powershell firewall-show", "powershell state", "powershell state", "powershell icon-definition",
 		"move " + host.serviceInstall.Directory, "protect " + host.serviceInstall.Directory,
 		"copy " + host.executable + " to " + host.serviceInstall.Executable,
 		"give " + testStateDir, "give " + fake.repositories,
 		"schtasks /Create", "powershell firewall-allow " + host.serviceInstall.Executable, "schtasks /End /TN \\OwnGit", "schtasks /Run /TN \\OwnGit",
+		// A headless install has no icon.
+		"powershell icon-definition",
 	}
 	if len(fake.calls) != len(want) {
 		t.Fatalf("calls %q, want %q", fake.calls, want)
@@ -570,10 +596,94 @@ func TestTaskElevatedInstall(t *testing.T) {
 	if !strings.Contains(out.String(), `Your account is now the owner of 42 files and folders in D:\Repositories that belonged to the Administrators group.`) {
 		t.Errorf("output:\n%s", out.String())
 	}
+	if fake.icon != "" || strings.Contains(out.String(), iconStartsLine) {
+		t.Errorf("a headless install registered the icon:\n%s", fake.icon)
+	}
 	// The temporary definition file is gone.
-	path := strings.Fields(fake.calls[8])[5]
+	path := strings.Fields(fake.calls[9])[5]
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("definition file %s stayed: %v", path, err)
+	}
+}
+
+// iconOf is the icon task of an earlier install for executable, as it runs.
+func (fake *fakeWindows) iconOf(t *testing.T, mode service.Mode, executable string) {
+	t.Helper()
+	definition, err := service.RenderIconTask(service.TaskPlan{
+		Mode: mode, Executable: executable, StateDir: testStateDir, UserSID: testSID, Conhost: fakeSystem + `\conhost.exe`,
+	})
+	noErr(t, err)
+	fake.icon, fake.iconRunning = definition, true
+	// The icon's program runs until its task ends.
+	programRunning = func(path string) bool { return fake.iconRunning && path == executable }
+}
+
+// The icon runs the service copy, so an install ends the icon an earlier
+// install started before it replaces the copy, and starts the new icon,
+// without administrator rights at sign-in, once the server runs.
+func TestTaskElevatedInstallRestartsTheIcon(t *testing.T) {
+	fake := newFakeWindows(t)
+	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
+	fake.serviceFolder = true
+	fake.iconOf(t, service.ModeBootTask, testServiceExecutable)
+	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	serviceFolder(t, host)
+	host.serviceInstall.Executable = testServiceExecutable
+	noErr(t, host.elevatedInstall(testStateDir, false, false))
+	index := func(call string) int {
+		position := slices.Index(fake.calls, call)
+		if position < 0 {
+			t.Fatalf("no %q in %q", call, fake.calls)
+		}
+		return position
+	}
+	iconEnded, moved := index(`schtasks /End /TN \OwnGit icon`), index("move "+host.serviceInstall.Directory)
+	serverStarted, iconStarted := index(`schtasks /Run /TN \OwnGit`), index(`schtasks /Run /TN \OwnGit icon`)
+	if iconEnded > moved || iconStarted < serverStarted {
+		t.Errorf("icon ended at %d, copy moved at %d, server started at %d, icon started at %d: %q", iconEnded, moved, serverStarted, iconStarted, fake.calls)
+	}
+	installed, err := service.ParseTask([]byte(fake.icon))
+	noErr(t, err)
+	for _, want := range []string{"<LogonType>InteractiveToken</LogonType>", "<RunLevel>LeastPrivilege</RunLevel>", "tray icon --state-dir"} {
+		if !strings.Contains(fake.icon, want) {
+			t.Errorf("icon task lacks %s:\n%s", want, fake.icon)
+		}
+	}
+	if installed.Executable != host.serviceInstall.Executable || installed.StateDir != testStateDir || !fake.iconRunning || !strings.HasSuffix(out.String(), iconStartsLine) {
+		t.Errorf("icon %+v running=%t, output:\n%s", installed, fake.iconRunning, out.String())
+	}
+}
+
+// A standard account's icon runs its own owngit.exe, like its server.
+func TestTaskIconOfAStandardAccount(t *testing.T) {
+	fake := newFakeWindows(t)
+	host, _ := testTaskHost(service.Environment{})
+	host.startIcon(host.plan(service.ModeLogonTask, testStateDir, false))
+	installed, err := service.ParseTask([]byte(fake.icon))
+	noErr(t, err)
+	if installed.Executable != testUserExecutable || !fake.iconRunning {
+		t.Errorf("icon %+v running=%t", installed, fake.iconRunning)
+	}
+}
+
+// A headless install has no icon, and a task of that name that OwnGit did
+// not register stays as it is.
+func TestTaskIconOnlyWhereItBelongs(t *testing.T) {
+	fake := newFakeWindows(t)
+	fake.iconOf(t, service.ModeBootTask, testServiceExecutable)
+	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	host.startIcon(host.plan(service.ModeBootTask, testStateDir, true))
+	if fake.icon != "" || fake.iconRunning || out.Len() != 0 {
+		t.Errorf("headless: icon %q running=%t, output %q", fake.icon, fake.iconRunning, out.String())
+	}
+
+	fake.iconOf(t, service.ModeBootTask, testServiceExecutable)
+	foreign := strings.Replace(fake.icon, "owngit service install", "someone", 1)
+	fake.icon, fake.calls = foreign, nil
+	host.startIcon(host.plan(service.ModeBootTask, testStateDir, false))
+	host.removeIcon()
+	if fake.icon != foreign || slicesContainPrefix(fake.calls, "schtasks") || !strings.Contains(out.String(), "did not register") {
+		t.Errorf("foreign task changed: %q, calls %q, output %q", fake.icon, fake.calls, out.String())
 	}
 }
 
@@ -606,7 +716,7 @@ func TestTaskElevatedInstallCreatesFreshServiceFolder(t *testing.T) {
 					if err != nil || string(data) != "keep" || !strings.Contains(out.String(), moved+" stays:") {
 						t.Fatalf("content=%q, error=%v, output=%q", data, err, out.String())
 					}
-				} else if _, err := os.Stat(moved); !os.IsNotExist(err) || out.Len() != 0 {
+				} else if _, err := os.Stat(moved); !os.IsNotExist(err) || out.String() != iconStartsLine {
 					t.Fatalf("old folder remains: %v, output=%q", err, out.String())
 				}
 			})
@@ -621,7 +731,7 @@ func TestTaskElevatedInstallContinuesAfterCleanupFailure(t *testing.T) {
 	noErr(t, os.WriteFile(moved, []byte("keep"), 0o600))
 	prepareServiceInstall = func(serviceInstallPaths) (string, error) { return moved, nil }
 	noErr(t, host.elevatedInstall(testStateDir, false, false))
-	if !strings.Contains(out.String(), moved+" stays:") || strings.Count(out.String(), "\n") != 1 || fake.created == "" || fake.firewall == "" {
+	if !strings.Contains(out.String(), moved+" stays:") || strings.Count(out.String(), "\n") != 2 || !strings.HasSuffix(out.String(), iconStartsLine) || fake.created == "" || fake.firewall == "" {
 		t.Fatalf("output=%q, task=%q, firewall=%q", out.String(), fake.created, fake.firewall)
 	}
 	if data, err := os.ReadFile(moved); err != nil || string(data) != "keep" {
@@ -639,7 +749,7 @@ func TestTaskElevatedInstallRefusesFolderItCannotMove(t *testing.T) {
 	if !errors.As(err, &exit) || exit.code != elevatedMessageExit || out.String() != "OwnGit could not prepare a fresh service folder at "+host.serviceInstall.Directory+". Check that folder, then run \"owngit service install\" again.\n" {
 		t.Fatalf("error=%v, output=%q", err, out.String())
 	}
-	if want := []string{"powershell firewall-show", "powershell state", "move " + host.serviceInstall.Directory}; !reflect.DeepEqual(fake.calls, want) || fake.definition != "" {
+	if want := []string{"powershell firewall-show", "powershell state", "powershell icon-definition", "move " + host.serviceInstall.Directory}; !reflect.DeepEqual(fake.calls, want) || fake.definition != "" {
 		t.Fatalf("calls=%q, task=%q", fake.calls, fake.definition)
 	}
 	if _, err := os.Stat(host.serviceInstall.Executable); err != nil {
@@ -699,7 +809,11 @@ func TestTaskElevatedUninstallKeepsTheData(t *testing.T) {
 	serviceFolder(t, host)
 	readme := filepath.Join(host.serviceInstall.Directory, "README.txt")
 	noErr(t, os.WriteFile(readme, []byte("the owner's file"), 0o600))
+	fake.iconOf(t, service.ModeBootTask, testServiceExecutable)
 	noErr(t, host.uninstall())
+	if fake.icon != "" || fake.iconRunning {
+		t.Errorf("the icon stayed: %q running=%t", fake.icon, fake.iconRunning)
+	}
 	_, copyErr := os.Stat(host.serviceInstall.Executable)
 	_, tempErr := os.Stat(host.serviceInstall.Temp)
 	if _, err := os.Stat(readme); fake.definition != "" || fake.firewall != "" || !errors.Is(copyErr, os.ErrNotExist) || !errors.Is(tempErr, os.ErrNotExist) || err != nil {

@@ -484,6 +484,11 @@ func sameDay(a, b civil) bool {
 	return a == b
 }
 
+// ListTime is the list-row timestamp that the dashboard shows, for other
+// surfaces that list the same kind of rows, such as the OwnGit icon's
+// recent pushes. It is formatRelative.
+func ListTime(lang Lang, now, t time.Time) string { return formatRelative(lang, now, t) }
+
 // formatRelative is the list-row timestamp: today and yesterday get a clock,
 // this year gets a date and clock, older gets the year too. The clock is the
 // author's recorded time of day.

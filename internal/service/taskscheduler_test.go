@@ -74,6 +74,49 @@ func TestRenderLogonTaskStartsThroughHeadlessConhost(t *testing.T) {
 	}
 }
 
+// The icon starts at sign-in on the account's desktop without
+// administrator rights, whichever mode starts the server, and is read back
+// like the server's task.
+func TestRenderIconTask(t *testing.T) {
+	for _, mode := range []Mode{ModeBootTask, ModeLogonTask} {
+		plan := bootPlan()
+		plan.Mode = mode
+		definition, err := RenderIconTask(plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"<Source>owngit service install</Source>",
+			"<LogonTrigger><Enabled>true</Enabled><UserId>" + testSID + "</UserId></LogonTrigger>",
+			"<UserId>" + testSID + "</UserId>",
+			"<LogonType>InteractiveToken</LogonType>",
+			"<RunLevel>LeastPrivilege</RunLevel>",
+			"<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+			"<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+			`<Command>C:\Windows\System32\conhost.exe</Command>`,
+			`<Arguments>--headless "C:\Program Files\OwnGit\owngit.exe" tray icon --state-dir "C:\Users\you\My Files\AppData\Roaming\owngit"</Arguments>`,
+		} {
+			if !strings.Contains(definition, want) {
+				t.Errorf("%s: icon task lacks %s:\n%s", mode, want, definition)
+			}
+		}
+		for _, unwanted := range []string{"BootTrigger", "S4U", "HighestAvailable", "RestartOnFailure", "serve"} {
+			if strings.Contains(definition, unwanted) {
+				t.Errorf("%s: icon task contains %s", mode, unwanted)
+			}
+		}
+		installed, err := ParseTask(EncodeUTF16(definition))
+		if err != nil || installed.Executable != plan.Executable || installed.StateDir != plan.StateDir || installed.User != testSID {
+			t.Errorf("%s: read back as %+v, %v", mode, installed, err)
+		}
+	}
+	plan := bootPlan()
+	plan.Conhost = ""
+	if definition, err := RenderIconTask(plan); err == nil {
+		t.Errorf("without conhost: rendered\n%s", definition)
+	}
+}
+
 func TestRenderTaskRefusesWhatATaskCannotHold(t *testing.T) {
 	for name, change := range map[string]func(*TaskPlan){
 		"relative executable":   func(plan *TaskPlan) { plan.Executable = `owngit.exe` },

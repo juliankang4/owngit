@@ -84,6 +84,9 @@ var (
 	gitOnServicePath = platformGitOnServicePath
 	// readExecutableVersion reads the version reported by a protected copy.
 	readExecutableVersion = executableVersion
+	// programRunning reports whether a process of this account runs the
+	// program at a path.
+	programRunning = platformProgramRunning
 	// taskPollInterval is how often waiting for the server also checks
 	// whether Windows keeps the task queued.
 	taskPollInterval = 5 * time.Second
@@ -339,18 +342,112 @@ func stateCommandWithoutAdminRights(command string, arguments []string) (bool, e
 
 // installed finds the task of an earlier install.
 func (host *taskHost) installed() (service.Installed, bool, error) {
-	output, err := host.runPowerShell(service.TaskDefinitionScript)
+	installed, found, err := host.readTask(service.TaskName, service.TaskDefinitionScript)
+	if errors.Is(err, service.ErrForeignTask) {
+		return installed, true, fmt.Errorf("%w; OwnGit leaves it alone. Remove or rename it first", err)
+	}
+	return installed, found, err
+}
+
+// readTask reads the task name with its definition script. The error
+// wraps service.ErrForeignTask for a task of that name that "owngit service
+// install" did not register.
+func (host *taskHost) readTask(name, script string) (service.Installed, bool, error) {
+	output, err := host.runPowerShell(script)
 	if err != nil {
-		return service.Installed{}, false, fmt.Errorf("read the scheduled task %q: %w: %s", service.TaskName, err, strings.TrimSpace(string(output)))
+		return service.Installed{}, false, fmt.Errorf("read the scheduled task %q: %w: %s", name, err, strings.TrimSpace(string(output)))
 	}
 	if strings.TrimSpace(string(output)) == "" {
 		return service.Installed{}, false, nil
 	}
 	installed, err := service.ParseTask(output)
 	if errors.Is(err, service.ErrForeignTask) {
-		return installed, true, fmt.Errorf("%w; OwnGit leaves it alone. Remove or rename it first", err)
+		return installed, true, fmt.Errorf("a scheduled task named %q that owngit service install did not register already exists: %w", name, err)
 	}
 	return installed, err == nil, err
+}
+
+// The OwnGit icon has a sign-in task of its own, service.IconTaskName,
+// which runs "owngit tray icon" as the account, without administrator
+// rights, on its desktop. "owngit service install" registers it beside the
+// server's task, except for a headless install, which has no icon, and
+// "owngit service uninstall" removes it. It runs the program of the
+// server's task, so it is ended before that program is replaced. The
+// server runs without the icon, so an icon step that fails is reported and
+// changes nothing else.
+
+// iconStartsLine says where the icon shows after an install.
+const iconStartsLine = "The OwnGit icon shows in the notification area when you sign in at this computer, and now if you are signed in there. \"owngit tray off\" hides it; OwnGit keeps running without it.\n"
+
+// iconStopTimeout bounds the wait for the icon's program to exit after its
+// task was ended.
+const iconStopTimeout = 10 * time.Second
+
+func (host *taskHost) iconTask() (service.Installed, bool, error) {
+	return host.readTask(service.IconTaskName, service.IconTaskDefinitionScript)
+}
+
+// stopIcon ends the icon that its task started.
+func (host *taskHost) stopIcon() {
+	if icon, found, err := host.iconTask(); err == nil && found {
+		host.endIcon(icon)
+	}
+}
+
+// endIcon ends the icon's task and waits until its program exits. Ending
+// the task ends its console host, and the icon exits with it.
+func (host *taskHost) endIcon(icon service.Installed) {
+	_ = host.runStep(host.schtasks(), "/End", "/TN", `\`+service.IconTaskName)
+	for deadline := time.Now().Add(iconStopTimeout); programRunning(icon.Executable) && time.Now().Before(deadline); {
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// startIcon registers the icon's task for plan and starts it now, in place
+// of an icon an earlier install started. A headless install has no icon:
+// its task is removed.
+func (host *taskHost) startIcon(plan service.TaskPlan) {
+	icon, found, err := host.iconTask()
+	if err != nil {
+		host.printf("The OwnGit icon does not start at sign-in: %v.\n", err)
+		return
+	}
+	if found {
+		host.endIcon(icon)
+	}
+	if plan.Headless {
+		if found {
+			if err := host.runStep(host.schtasks(), "/Delete", "/TN", `\`+service.IconTaskName, "/F"); err != nil {
+				host.printf("The task %q stays: %v.\n", service.IconTaskName, err)
+			}
+		}
+		return
+	}
+	definition, err := service.RenderIconTask(plan)
+	if err == nil {
+		err = host.registerDefinition(service.IconTaskName, definition)
+	}
+	if err != nil {
+		host.printf("The OwnGit icon does not start at sign-in: %v.\n", err)
+		return
+	}
+	// Task Scheduler starts it only on the desktop of the signed-in
+	// account; otherwise it starts at the next sign-in.
+	_ = host.runStep(host.schtasks(), "/Run", "/TN", `\`+service.IconTaskName)
+	host.printf(iconStartsLine)
+}
+
+// removeIcon ends the icon and removes its task. A task of that name that
+// OwnGit did not register stays.
+func (host *taskHost) removeIcon() {
+	icon, found, err := host.iconTask()
+	if err != nil || !found {
+		return
+	}
+	host.endIcon(icon)
+	if err := host.runStep(host.schtasks(), "/Delete", "/TN", `\`+service.IconTaskName, "/F"); err != nil {
+		host.printf("The task %q stays: %v.\n", service.IconTaskName, err)
+	}
 }
 
 func (host *taskHost) plan(mode service.Mode, stateDir string, headless bool) service.TaskPlan {
@@ -445,6 +542,7 @@ func (host *taskHost) install(stateDirFlag string, headlessFlag *bool) error {
 		if err := host.runTask(); err != nil {
 			return err
 		}
+		host.startIcon(plan)
 		host.printf("OwnGit starts when you sign in. To start it at boot, run \"owngit service install\" from an administrator account.\n")
 	}
 	if host.env.Elevated {
@@ -689,6 +787,7 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 		return &checkExit{code: elevatedMessageExit, err: errFirewallCollision}
 	}
 	host.stopTask(stateDir)
+	host.stopIcon()
 	moved, err := prepareServiceInstall(host.serviceInstall)
 	if err != nil {
 		host.printf("OwnGit could not prepare a fresh service folder at %s. Check that folder, then run \"owngit service install\" again.\n", host.serviceInstall.Directory)
@@ -730,7 +829,8 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 	if repositories := repositoryRootWithoutAdminRights(stateDir); repositories != "" {
 		host.giveFolderToAccount(repositories)
 	}
-	if err := host.registerTask(host.plan(service.ModeBootTask, stateDir, headless)); err != nil {
+	plan := host.plan(service.ModeBootTask, stateDir, headless)
+	if err := host.registerTask(plan); err != nil {
 		return err
 	}
 	if moved != "" {
@@ -754,7 +854,11 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 	// A server that did not stop in time is ended; the task starts the new
 	// one.
 	_ = host.runStep(host.schtasks(), "/End", "/TN", `\`+service.TaskName)
-	return host.runTask()
+	if err := host.runTask(); err != nil {
+		return err
+	}
+	host.startIcon(plan)
+	return nil
 }
 
 // foldersOfAdministrators returns the state directory and the saved
@@ -879,6 +983,11 @@ func (host *taskHost) registerTask(plan service.TaskPlan) error {
 	if err != nil {
 		return err
 	}
+	return host.registerDefinition(service.TaskName, definition)
+}
+
+// registerDefinition creates or replaces the task name with definition.
+func (host *taskHost) registerDefinition(name, definition string) error {
 	directory := ""
 	if host.env.Elevated {
 		directory = host.serviceInstall.Temp
@@ -893,7 +1002,7 @@ func (host *taskHost) registerTask(plan service.TaskPlan) error {
 	if closeErr := file.Close(); writeErr != nil || closeErr != nil {
 		return errors.Join(writeErr, closeErr)
 	}
-	return host.runStep(host.schtasks(), "/Create", "/TN", `\`+service.TaskName, "/XML", path, "/F")
+	return host.runStep(host.schtasks(), "/Create", "/TN", `\`+name, "/XML", path, "/F")
 }
 
 func (host *taskHost) runTask() error {
@@ -1140,6 +1249,7 @@ func (host *taskHost) uninstall() error {
 		if err := host.runStep(host.schtasks(), "/Delete", "/TN", `\`+service.TaskName, "/F"); err != nil {
 			return err
 		}
+		host.removeIcon()
 		if ruleFound {
 			host.printf("The Windows Firewall rule %q stays; an administrator can remove it with \"owngit service uninstall\".\n", service.FirewallRuleName)
 		}
@@ -1211,6 +1321,8 @@ func (host *taskHost) elevatedUninstall() error {
 			return err
 		}
 	}
+	// The icon runs the service copy, which goes next.
+	host.removeIcon()
 	if err := host.removeFirewallRule(); err != nil {
 		return err
 	}

@@ -82,7 +82,7 @@ func TestTrayCommand(t *testing.T) {
 	}
 
 	output, err = captureStdout(func() error { return runCommand("tray", []string{"hide", "--state-dir", stateDir, "--json"}) })
-	if err == nil || !strings.Contains(err.Error(), "tray takes on, off, status or nothing") {
+	if err == nil || !strings.Contains(err.Error(), "tray takes on, off, status, icon or nothing") {
 		t.Fatalf("unknown operation: %q err=%v", output, err)
 	}
 }
@@ -227,5 +227,42 @@ func TestServeLogsAnUnwrittenTrayAccessFile(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("status without a published token: %d", response.StatusCode)
+	}
+}
+
+// The icon is the Windows notification area's; elsewhere the command says
+// so, and it prints no JSON anywhere.
+func TestTrayIconCommand(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := runCommand("tray", []string{"icon", "--json", "--state-dir", stateDir}); err == nil || !strings.Contains(err.Error(), "prints no JSON") {
+		t.Errorf("icon --json: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("the icon itself runs on the desktop")
+	}
+	if err := runCommand("tray", []string{"icon", "--state-dir", stateDir}); err == nil || !strings.Contains(err.Error(), "only on Windows") {
+		t.Errorf("icon: %v", err)
+	}
+}
+
+// The icon's checkup is the one "owngit doctor" runs: a server that does
+// not run is stopped, with the repair doctor prints, in the icon's
+// language; another program at the address is not.
+func TestTrayDiagnosis(t *testing.T) {
+	health := useFakeHealth(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if _, err := captureStdout(func() error {
+		return run([]string{"network", "set", "--state-dir", stateDir, "--listen", "127.0.0.1:18962"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	diagnosis, err := trayDiagnosis(stateDir)(context.Background(), "ko")
+	if err != nil || !diagnosis.Stopped || diagnosis.Repair != "owngit service install" || !strings.Contains(diagnosis.Message, "OwnGit") || strings.Contains(diagnosis.Message, "is not running") {
+		t.Errorf("stopped: %+v, %v", diagnosis, err)
+	}
+	health.answering = true
+	diagnosis, err = trayDiagnosis(stateDir)(context.Background(), "en")
+	if err != nil || diagnosis.Stopped || !strings.Contains(diagnosis.Message, "another program answers") {
+		t.Errorf("another program: %+v, %v", diagnosis, err)
 	}
 }

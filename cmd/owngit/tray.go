@@ -1,15 +1,23 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"syscall"
 
+	"owngit/internal/doctor"
 	"owngit/internal/service"
 	"owngit/internal/state"
+	"owngit/internal/tray"
+	"owngit/internal/webui"
 )
 
 // errTrayUnavailable is the answer of an install that offers no icon.
@@ -30,7 +38,7 @@ func trayAvailable(stateDir string) bool {
 // trayCommand shows, hides or reports the OwnGit icon of this computer: its
 // menu bar, notification area or panel icon. Hiding it never stops the
 // server. The choice belongs to this computer, like the dashboard switch
-// that does the same.
+// that does the same. On Windows "icon" runs the notification area icon.
 func trayCommand(arguments []string) error {
 	flags := flag.NewFlagSet("tray", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -47,8 +55,14 @@ func trayCommand(arguments []string) error {
 	if len(operands) == 1 {
 		operation = operands[0]
 	}
-	if len(operands) > 1 || (operation != "on" && operation != "off" && operation != "status") {
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray takes on, off, status or nothing"))
+	if len(operands) > 1 || (operation != "on" && operation != "off" && operation != "status" && operation != "icon") {
+		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray takes on, off, status, icon or nothing"))
+	}
+	if operation == "icon" {
+		if *asJSON {
+			return jsonFailure(true, "invalid_arguments", errors.New("tray icon prints no JSON"))
+		}
+		return runTrayIcon(filepath.Clean(mustAbs(*stateDir)))
 	}
 	type report struct {
 		Available  bool   `json:"available"`
@@ -98,4 +112,56 @@ func trayCommand(arguments []string) error {
 		fmt.Println("The OwnGit icon shows on this computer. \"owngit tray off\" hides it; OwnGit keeps running.")
 	}
 	return nil
+}
+
+// runTrayIcon runs the notification area icon of the server of stateDir
+// until it is quit, this program is interrupted, or the program that
+// started it ends: the sign-in task ends its console host that way.
+func runTrayIcon(stateDir string) error {
+	if !trayAvailable(stateDir) {
+		return errTrayUnavailable
+	}
+	stop := make(chan struct{})
+	var once sync.Once
+	end := func() { once.Do(func() { close(stop) }) }
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(interrupts)
+	go func() {
+		<-interrupts
+		end()
+	}()
+	watchParentExit(end)
+	err := tray.Run(tray.Options{StateDir: stateDir, Diagnose: trayDiagnosis(stateDir), Stop: stop})
+	if errors.Is(err, tray.ErrAlreadyRunning) {
+		fmt.Println("The OwnGit icon already runs for " + printable(stateDir) + ".")
+		return nil
+	}
+	return err
+}
+
+// trayDiagnosis is the checkup the icon runs when the server does not
+// answer, as "owngit doctor" runs it: only the finding that the server does
+// not run makes the icon say that OwnGit stopped.
+func trayDiagnosis(stateDir string) func(context.Context, string) (tray.Diagnosis, error) {
+	return func(ctx context.Context, lang string) (tray.Diagnosis, error) {
+		subject, err := commandSubject(stateDir)
+		if err != nil {
+			return tray.Diagnosis{}, err
+		}
+		if subject.server == doctor.ServerRunning {
+			return tray.Diagnosis{}, errors.New("OwnGit answers again")
+		}
+		language, _ := webui.ParseLang(lang)
+		for _, finding := range diagnose(ctx, subject) {
+			switch finding.Code {
+			case webui.MsgDoctorNotRunning, webui.MsgDoctorSilent, webui.MsgDoctorAddressTaken, webui.MsgDoctorUncheckedServer:
+				return tray.Diagnosis{
+					Stopped: finding.Code == webui.MsgDoctorNotRunning,
+					Message: finding.Sentence(language), Repair: finding.Repair,
+				}, nil
+			}
+		}
+		return tray.Diagnosis{}, errors.New("the checkup did not say why OwnGit does not answer")
+	}
 }
