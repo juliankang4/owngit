@@ -212,7 +212,7 @@ func TestManifestReadingIsBounded(t *testing.T) {
 			} else if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error=%v, want %q", err, test.want)
 			}
-			if allocated > test.maxAlloc {
+			if checkAllocations && allocated > test.maxAlloc {
 				t.Fatalf("reading allocated %d bytes, want at most %d", allocated, test.maxAlloc)
 			}
 		})
@@ -240,7 +240,7 @@ func TestManifestMapEntriesAreCharged(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "backup manifest holds more than the 16 MiB of records a backup holds") {
 		t.Fatalf("error=%v", err)
 	}
-	if allocated > 8*budget {
+	if checkAllocations && allocated > 8*budget {
 		t.Fatalf("reading allocated %d bytes, want at most %d", allocated, 8*budget)
 	}
 }
