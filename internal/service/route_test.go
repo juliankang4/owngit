@@ -3,7 +3,10 @@
 package service
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -45,8 +48,11 @@ func TestClassifyExecutable(t *testing.T) {
 }
 
 // Each route has one update command: the package manager's own, or for an
-// archive the download that replaces this file. Only a service that starts
-// this program gets "owngit service install" to restart it.
+// archive the release's installer, which checks the download against
+// SHA256SUMS and replaces this file, using sudo by itself when this account
+// cannot write the folder. Only a service that starts this program gets
+// "owngit service install" to restart it; the installer skips it with
+// --no-service.
 func TestUpdateCommand(t *testing.T) {
 	brew := ClassifyExecutable("/opt/homebrew/Cellar/owngit/1.1.2/bin/owngit")
 	npm := ClassifyExecutable("/usr/lib/node_modules/owngit/node_modules/owngit-linux-x64/bin/owngit")
@@ -70,9 +76,9 @@ func TestUpdateCommand(t *testing.T) {
 		{"npm service", npm, withService(linux), "npm install -g owngit@1.1.3 && owngit service install"},
 		{"npm with sudo", npm, withService(sudo), "sudo npm install -g owngit@1.1.3 && owngit service install"},
 		{"pacman service", pacman, withService(linux), `(cd "$(mktemp -d)" && curl -fLO https://github.com/juliankang4/owngit/releases/download/v1.1.3/PKGBUILD && makepkg -si) && owngit service install`},
-		{"archive", archive, linux, `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_linux_amd64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && mv -f "$d/owngit" /home/you/bin/owngit`},
-		{"archive with sudo", archive, withService(sudo), `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_linux_amd64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && sudo install -m 0755 "$d/owngit" /home/you/bin/owngit && /home/you/bin/owngit service install`},
-		{"archive with a space", spaced, withService(mac), `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_darwin_arm64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && mv -f "$d/owngit" '/Users/you/My Tools/owngit' && '/Users/you/My Tools/owngit' service install`},
+		{"archive", archive, linux, "curl -fsSL https://github.com/juliankang4/owngit/releases/download/v1.1.3/install.sh | sh -s -- --version 1.1.3 --to /home/you/bin/owngit --no-service"},
+		{"archive with sudo", archive, withService(sudo), "curl -fsSL https://github.com/juliankang4/owngit/releases/download/v1.1.3/install.sh | sh -s -- --version 1.1.3 --to /home/you/bin/owngit"},
+		{"archive with a space", spaced, withService(mac), "curl -fsSL https://github.com/juliankang4/owngit/releases/download/v1.1.3/install.sh | sh -s -- --version 1.1.3 --to '/Users/you/My Tools/owngit'"},
 		{"pacman as root", pacman, Platform{GOOS: "linux", GOARCH: "amd64", Service: true, Root: true}, ""},
 		{"another pacman package", ClassifyExecutable("/usr/bin/owngit").OwnedBy("owngit-git"), withService(linux), ""},
 		{"archive without a release target", archive, Platform{GOOS: "darwin", GOARCH: "amd64"}, ""},
@@ -91,6 +97,31 @@ func TestUpdateCommand(t *testing.T) {
 		if output, err := exec.Command("sh", "-n", "-c", got).CombinedOutput(); err != nil {
 			t.Errorf("%s: sh -n: %v: %s", tc.name, err, output)
 		}
+	}
+}
+
+// Pasted into a shell, the archive command hands the installer this
+// program's path as one argument, spaces and quotes included. A stub stands
+// in for the downloaded installer, so nothing is downloaded or installed.
+func TestArchiveCommandPassesThePathToTheInstaller(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "install.sh")
+	got := filepath.Join(dir, "arguments")
+	noErr(t, os.WriteFile(stub, []byte("printf '%s\\n' \"$@\" >"+shellQuote(got)+"\n"), 0o644))
+	program := "/Users/you/O'Brien Tools/owngit"
+	command := ClassifyExecutable(program).UpdateCommand("1.1.3", Platform{GOOS: "darwin", GOARCH: "arm64"})
+	download := "curl -fsSL " + releaseDownloads + "1.1.3/install.sh"
+	if !strings.HasPrefix(command, download+" | ") {
+		t.Fatalf("command %s", command)
+	}
+	command = "cat " + shellQuote(stub) + strings.TrimPrefix(command, download)
+	if output, err := exec.Command("sh", "-c", command).CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v\n%s", command, err, output)
+	}
+	arguments, err := os.ReadFile(got)
+	noErr(t, err)
+	if want := "--version\n1.1.3\n--to\n" + program + "\n--no-service\n"; string(arguments) != want {
+		t.Errorf("the installer got %q, want %q", arguments, want)
 	}
 }
 

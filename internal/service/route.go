@@ -116,7 +116,9 @@ type Platform struct {
 	// first.
 	ServiceRunsFile bool
 	// Sudo is true when this account cannot write the ProgramFolder of the
-	// install, so the command runs npm or replaces the file as root.
+	// install, so the command runs npm as root. The installer that updates
+	// an archive checks the same folder itself and uses sudo only for the
+	// file it replaces.
 	Sudo bool
 	// Root is true when root runs the command. makepkg refuses root, so a
 	// pacman install gets no command then; the owner's normal account asks
@@ -136,9 +138,9 @@ var releaseTargets = map[string]string{
 // builds.
 const ReleasePackage = "owngit-bin"
 
-// windowsReleaseFolder is where a Windows archive update unpacks version: a
-// running program cannot be replaced on Windows, so the new release gets its
-// own folder beside this one, named like the archive.
+// windowsReleaseFolder is where the installer unpacks version for a Windows
+// archive update: a running program cannot be replaced on Windows, so the
+// new release gets its own folder beside this one, named like the archive.
 func windowsReleaseFolder(install Install, version string) string {
 	return filepath.Join(filepath.Dir(filepath.Dir(install.Executable)), "owngit_"+version+"_windows_amd64")
 }
@@ -186,37 +188,7 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		}
 		steps = append(steps, "(cd \"$(mktemp -d)\" && curl -fLO "+releaseDownloads+version+"/PKGBUILD && makepkg -si)")
 	case RouteArchive:
-		format, ok := releaseTargets[platform.GOOS+"/"+platform.GOARCH]
-		if !ok {
-			return ""
-		}
-		name := "owngit_" + version + "_" + platform.GOOS + "_" + platform.GOARCH
-		url := releaseDownloads + version + "/" + name + "." + format
-		if windows {
-			// PowerShell parameters that accept wildcards read [ and ] in
-			// a folder name as a pattern, so the paths go to literal
-			// parameters. Windows PowerShell 5.1 has no literal form of
-			// Invoke-WebRequest -OutFile, so .NET downloads the archive.
-			folder := windowsReleaseFolder(install, version)
-			zip := PowerShellQuote(folder + ".zip")
-			owngit = "& " + PowerShellQuote(filepath.Join(folder, "owngit.exe"))
-			steps = append(steps,
-				"(New-Object Net.WebClient).DownloadFile("+PowerShellQuote(url)+", "+zip+")",
-				"Expand-Archive -LiteralPath "+zip+" -DestinationPath "+PowerShellQuote(folder))
-			break
-		}
-		// The new file takes this one's place, which a running program
-		// allows, so the path the service starts stays the same. mv keeps
-		// the owner of the unpacked file, so in a folder only root can
-		// write, install puts a copy that root owns, as a service installed
-		// by root requires; it removes the old file first.
-		owngit = shellWord(install.Executable)
-		replace := "mv -f \"$d/owngit\" " + owngit
-		if platform.Sudo {
-			replace = "sudo install -m 0755 \"$d/owngit\" " + owngit
-		}
-		steps = append(steps, "d=$(mktemp -d) && curl -fLo \"$d/owngit."+format+"\" "+url+
-			" && tar -xzf \"$d/owngit."+format+"\" -C \"$d\" owngit && "+replace)
+		return install.installerCommand(version, platform)
 	default:
 		return ""
 	}
@@ -227,6 +199,36 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		return powerShellChain(steps)
 	}
 	return strings.Join(steps, " && ")
+}
+
+// installerCommand runs the installer attached to the release, which is
+// also the one-line install: it checks the archive against the release's
+// SHA256SUMS before anything changes, uses sudo only when this account
+// cannot write the program's folder (so a copy root owns stays root's),
+// and runs "owngit service install" unless --no-service says no service
+// runs this program. On Unix the new file takes this one's place, which a
+// running program allows, so the path a service starts stays the same. A
+// running program cannot be replaced on Windows, so there the release gets
+// its own folder beside this one (windowsReleaseFolder); the installer
+// takes every path literally.
+func (install Install) installerCommand(version string, platform Platform) string {
+	if _, ok := releaseTargets[platform.GOOS+"/"+platform.GOARCH]; !ok {
+		return ""
+	}
+	if platform.GOOS == "windows" {
+		script := PowerShellQuote(releaseDownloads + version + "/install.ps1")
+		command := "& ([scriptblock]::Create((New-Object Net.WebClient).DownloadString(" + script + "))) -Version " + version +
+			" -Dir " + PowerShellQuote(filepath.Dir(filepath.Dir(install.Executable)))
+		if !platform.Service {
+			command += " -NoService"
+		}
+		return command
+	}
+	command := "curl -fsSL " + releaseDownloads + version + "/install.sh | sh -s -- --version " + version + " --to " + shellWord(install.Executable)
+	if !platform.Service {
+		command += " --no-service"
+	}
+	return command
 }
 
 // RemoveCommand is the command that removes the program files, which OwnGit
