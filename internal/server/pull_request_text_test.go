@@ -349,3 +349,40 @@ func TestAPIEscapesDirectionControls(t *testing.T) {
 		}
 	}
 }
+
+// A JSON request that is not UTF-8 is refused before it is decoded, which
+// would otherwise store U+FFFD in place of the bytes sent, and nothing
+// changes. Text in other scripts is kept exactly.
+func TestAPIRefusesRequestsThatAreNotUTF8(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	endpoint := server.URL + "/api/v1/repositories/project/pull-requests"
+	created := apiRequest(t, http.MethodPost, endpoint, map[string]any{"title": "Described", "source_branch": "feature", "target_branch": "main"}, "", "")
+	if created.StatusCode != http.StatusOK {
+		t.Fatalf("create status=%d", created.StatusCode)
+	}
+	created.Body.Close()
+	edit := func(body string) (int, map[string]any) {
+		request, err := http.NewRequest(http.MethodPost, endpoint+"/1/edit", strings.NewReader(body))
+		noErr(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(request)
+		noErr(t, err)
+		return response.StatusCode, decodeAPIObject(t, response)
+	}
+	status, refused := edit("{\"edit_revision\":0,\"body\":\"a\xffb\"}")
+	problem, _ := refused["error"].(map[string]any)
+	if status != http.StatusBadRequest || problem["code"] != "invalid_json" || !strings.Contains(problem["message"].(string), "not valid UTF-8") {
+		t.Fatalf("a body that is not UTF-8: status=%d %v", status, refused)
+	}
+	record, _, err := fixture.store.PullRequest(context.Background(), "project", 1)
+	noErr(t, err)
+	if record.EditRevision != 0 || record.Body != "" {
+		t.Fatalf("a refused request changed the record: %+v", record)
+	}
+	const text = "한글 שלום مرحبا 🙂"
+	status, kept := edit(`{"edit_revision":0,"body":"` + text + `"}`)
+	if status != http.StatusOK || kept["pull_request"].(map[string]any)["body"] != text {
+		t.Fatalf("multibyte text: status=%d %v", status, kept)
+	}
+}

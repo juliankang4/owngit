@@ -368,6 +368,60 @@ func TestPRTextIsCheckedBeforeSending(t *testing.T) {
 	}
 }
 
+// Text that is not UTF-8 is refused with its field's code, as the page
+// refuses it, before anything is sent: from a file, from standard input and
+// in a flag. JSON encoding would otherwise send U+FFFD in its place. Text in
+// other scripts is sent exactly.
+func TestPRTextThatIsNotUTF8IsRefused(t *testing.T) {
+	fixture := newPRCLIFixture(t)
+	invalid := filepath.Join(fixture.root, "invalid.md")
+	noErr(t, os.WriteFile(invalid, []byte("a\xffb"), 0o600))
+	stdin := func(content string) {
+		path := filepath.Join(t.TempDir(), "stdin")
+		noErr(t, os.WriteFile(path, []byte(content), 0o600))
+		file, err := os.Open(path)
+		noErr(t, err)
+		previous := os.Stdin
+		os.Stdin = file
+		t.Cleanup(func() {
+			os.Stdin = previous
+			file.Close()
+		})
+	}
+	create := func(arguments ...string) []string {
+		return append(append([]string{"create", "--source", "feature", "--target", "main"}, arguments...), fixture.remoteFlags...)
+	}
+	review := append([]string{
+		"review", "submit", "--number", "1", "--source-oid", fixture.sourceOID, "--target-oid", fixture.targetOID,
+		"--decision", "approved", "--reviewer", "cli reviewer", "--note-file", invalid,
+	}, fixture.remoteFlags...)
+	for _, test := range []struct {
+		name, stdin, code string
+		arguments         []string
+	}{
+		{"file", "", "invalid_body", create("--title", "Described", "--body-file", invalid)},
+		{"standard input", "a\xffb", "invalid_body", create("--title", "Described", "--body-file", "-")},
+		{"flag", "", "invalid_title", create("--title", "a\xffb")},
+		{"note", "", "invalid_note", review},
+	} {
+		if test.stdin != "" {
+			stdin(test.stdin)
+		}
+		if got := commandErrorCode(prCommand(test.arguments)); got != test.code {
+			t.Fatalf("%s: code=%q, want %s", test.name, got, test.code)
+		}
+	}
+	if records, err := fixture.store.PullRequests(context.Background(), "project"); err != nil || len(records) != 0 {
+		t.Fatalf("refused text created records=%v err=%v", records, err)
+	}
+	const text = "한글 שלום مرحبا 🙂\n"
+	stdin(text)
+	created := runPRCommandJSON(t, create("--title", "한글 제목", "--body-file", "-")).PullRequest
+	if created.Title != "한글 제목" || created.Body == nil || *created.Body != text {
+		t.Fatalf("multibyte text: title %q body %v", created.Title, created.Body)
+	}
+}
+
 // Pull request text made with the command line, its edits, a review note and
 // who made each change are in an offline backup and come back unchanged from
 // a restore. A stale edit is refused on the way.

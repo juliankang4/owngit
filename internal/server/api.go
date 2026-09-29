@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"owngit/internal/auth"
 	"owngit/internal/bidi"
@@ -330,15 +331,25 @@ func decodeAPIJSONLimit(writer http.ResponseWriter, request *http.Request, desti
 		return false
 	}
 	request.Body = http.MaxBytesReader(writer, request.Body, limit)
-	decoder := json.NewDecoder(request.Body)
+	content, err := io.ReadAll(request.Body)
+	var maximum *http.MaxBytesError
+	if errors.As(err, &maximum) {
+		writeAPIError(writer, http.StatusRequestEntityTooLarge, "request_too_large", "The JSON request exceeds the supported size.", nil)
+		return false
+	}
+	// JSON text is UTF-8 (RFC 8259). Decoding would replace bytes that are
+	// not with U+FFFD and so store text other than the one sent.
+	if err == nil && !utf8.Valid(content) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_json", "The request body is not valid UTF-8 text, which JSON requires.", nil)
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		var maximum *http.MaxBytesError
-		if errors.As(err, &maximum) {
-			writeAPIError(writer, http.StatusRequestEntityTooLarge, "request_too_large", "The JSON request exceeds the supported size.", nil)
-		} else {
-			writeAPIError(writer, http.StatusBadRequest, "invalid_json", "The request body must contain one valid JSON object with known fields.", nil)
-		}
+	if err == nil {
+		err = decoder.Decode(destination)
+	}
+	if err != nil {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_json", "The request body must contain one valid JSON object with known fields.", nil)
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {

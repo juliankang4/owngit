@@ -734,6 +734,20 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	if code := session.callError("pull_request_edit", map[string]any{"number": number, "edit_revision": 3, "body": strings.Repeat("<", 70<<10)}); code != "invalid_body" {
 		t.Fatalf("an edit over the limit: %q", code)
 	}
+	// Arguments that are not UTF-8 are refused before they are decoded,
+	// which would otherwise send U+FFFD in place of the bytes given.
+	session.send("{\"jsonrpc\":\"2.0\",\"id\":9001,\"method\":\"tools/call\",\"params\":{\"name\":\"pull_request_edit\",\"arguments\":{\"number\":" +
+		string(number) + ",\"edit_revision\":3,\"body\":\"a\xffb\"}}}")
+	var raw toolResult
+	if response := session.receive(); string(response.ID) != "9001" || response.Error != nil || json.Unmarshal(response.Result, &raw) != nil || !raw.IsError ||
+		!strings.Contains(raw.Content[0].Text, `"code":"invalid_arguments"`) || !strings.Contains(raw.Content[0].Text, "not valid UTF-8") {
+		t.Fatalf("arguments that are not UTF-8: %s", response.Result)
+	}
+	text, isError = session.call("pull_request_edit", map[string]any{"number": number, "edit_revision": 3, "body": "한글 שלום 🙂"})
+	decodeToolJSON(t, text, &edited)
+	if isError || *edited.PullRequest.Body != "한글 שלום 🙂" || edited.PullRequest.EditRevision != 4 {
+		t.Fatalf("multibyte body: %s", text)
+	}
 	if code := session.callError("pull_request_create", map[string]any{"title": "Again", "source_branch": "feature", "target_branch": "main"}); code == "" {
 		t.Fatal("a second open pull request for the pair was not refused")
 	}

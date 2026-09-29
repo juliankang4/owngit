@@ -447,7 +447,9 @@ Tool arguments are values such as pull request numbers, commit IDs, task IDs,
 titles, and branch names. An argument outside the tool's input schema, such as
 a server, a path, or a command, fails with `invalid_arguments`, and a
 `repository` other than the one fixed at startup fails with
-`repository_not_allowed`.
+`repository_not_allowed`. Arguments that are not valid UTF-8 also fail with
+`invalid_arguments`, like an API request body that is not, which fails with
+`invalid_json`: OwnGit never replaces bytes it cannot read.
 
 ### Client configuration
 
