@@ -12,15 +12,27 @@ Requirements
   Git refuses the merge instead of guessing.
 
 Start
-  {{.Invocation}} serve
-  The first start from a terminal runs setup there. Choose English or Korean,
-  then "Continue in this terminal" or "Open the web dashboard"; in the
-  browser you get a short code to approve in the terminal.
-  Started without a terminal, OwnGit writes an owner-readable setup file in
-  the state directory, logs the file's path, and opens the file in a browser
-  unless it was started with --no-open. {{.Invocation}} setup-link prints a
-  new link.
+  From this unpacked directory, run:
+    {{.Invocation}} serve
+  {{.Invocation}} is a relative invocation that works while your shell is in
+  this unpacked directory. Unpacking adds nothing to PATH, so from anywhere
+  else use the actual absolute path of the {{.Binary}} file in this
+  directory. The same applies to every command in this note.
+
   The dashboard listens on 127.0.0.1:7654 by default.
+
+  First start from a terminal
+    Setup runs in the terminal. Choose English or Korean, then one of:
+    - "Continue in this terminal" to answer the setup questions there.
+    - "Open the web dashboard" to finish setup in a browser. The browser
+      shows a short code; approve the browser in the terminal only if the
+      terminal shows the same code.
+
+  First start without a terminal (for example as a background service)
+    OwnGit writes an owner-readable setup file in the state directory and
+    logs the file's path. It also opens the file in a browser, unless it
+    was started with --no-open. To get a new setup link, run
+    {{.Invocation}} setup-link.
 
 {{if .IconApp}}Menu bar icon
   OwnGit.app beside the program is the OwnGit icon in the macOS menu bar. It
@@ -56,10 +68,6 @@ Coding tool integration
   Installing the skill is your choice. Copy it, or run
   {{.Invocation}} skill --install DIR with the skills directory your coding
   tool scans. Nothing installs it for you otherwise.
-  {{.Invocation}} is a relative invocation that works while your shell is in
-  this unpacked directory. Unpacking adds nothing to PATH, so from anywhere
-  else supply the actual absolute path of the {{.Binary}} file in this
-  directory.
 
 Licenses
   LICENSE               OwnGit's MIT license
