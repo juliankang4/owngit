@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -187,11 +186,10 @@ func TestRoomNeededSaturates(t *testing.T) {
 
 // A full disk is recognized as Go, Git and SQLite report it.
 func TestDiskFullIsRecognized(t *testing.T) {
-	for _, err := range []error{
-		fmt.Errorf("write: %w", syscall.ENOSPC),
+	for _, err := range append(systemDiskFullErrors(),
 		errors.New("fetch: exit status 128: fatal: write error: No space left on device"),
 		errors.New("database or disk is full (13)"),
-	} {
+	) {
 		if !diskFull(err) {
 			t.Errorf("%v is not taken for a full disk", err)
 		}
