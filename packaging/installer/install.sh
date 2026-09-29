@@ -89,6 +89,10 @@ main() {
 	fi
 	case $target in /*) ;; *) target=$(pwd)/$target ;; esac
 	[ ! -d "$target" ] || fail "--to names the program file, such as $target/owngit, not a folder"
+	# A link belongs to whatever made it, such as npm's owngit in
+	# /usr/local/bin, so the installer does not replace it with a program.
+	[ ! -L "$target" ] ||
+		fail "$target is a link to $(readlink "$target"), which another install may own; update that install its own way, or choose a regular file with --to"
 	dir=$(dirname "$target")
 
 	tmp=$(mktemp -d)

@@ -41,6 +41,7 @@ type syntheticRelease struct {
 	mu       sync.Mutex
 	files    map[string][]byte // "vX.Y.Z/NAME" -> content
 	override map[string][]byte // replaces files; nil content answers 404
+	requests int
 }
 
 var fakeBuilds sync.Map // version -> []byte
@@ -108,6 +109,7 @@ func (release *syntheticRelease) serve(writer http.ResponseWriter, request *http
 	}
 	path, _ := strings.CutPrefix(request.URL.Path, "/releases/download/")
 	release.mu.Lock()
+	release.requests++
 	data, found := release.files[path]
 	if replaced, ok := release.override[path]; ok {
 		data, found = replaced, replaced != nil
@@ -133,6 +135,13 @@ func (release *syntheticRelease) replace(t *testing.T, path string, content []by
 }
 
 func (release *syntheticRelease) url() string { return release.server.URL + "/releases" }
+
+// served is how many files the release has answered for so far.
+func (release *syntheticRelease) served() int {
+	release.mu.Lock()
+	defer release.mu.Unlock()
+	return release.requests
+}
 
 // versionOf says which release's program the file is, or "" for none.
 func (release *syntheticRelease) versionOf(t *testing.T, path string) string {
@@ -428,6 +437,30 @@ func TestInstallSh(t *testing.T) {
 		sudo := readLog(t, run.sudoLog)
 		if !strings.Contains(sudo, "install -m 0755 ") || !strings.Contains(sudo, "mv -f ") || strings.Contains(sudo, "service") {
 			t.Errorf("sudo ran %q; want install -m 0755 and mv, and never the service", sudo)
+		}
+	})
+
+	t.Run("a link at the target is refused before downloading", func(t *testing.T) {
+		run := newShInstall(t, release)
+		target := filepath.Join(run.home, "bin", "owngit")
+		other := filepath.Join(run.home, "lib", "node_modules", "owngit", "bin", "owngit.js")
+		noErr(t, os.MkdirAll(filepath.Dir(target), 0o755))
+		noErr(t, os.MkdirAll(filepath.Dir(other), 0o755))
+		noErr(t, os.WriteFile(other, []byte("another install\n"), 0o755))
+		noErr(t, os.Symlink(other, target))
+		before := release.served()
+		run.mustFail(t, nil, target+" is a link to "+other+", which another install may own", "--to", target)
+		if link, err := os.Readlink(target); err != nil || link != other {
+			t.Fatalf("the link is now %q, %v", link, err)
+		}
+		if data, err := os.ReadFile(other); err != nil || string(data) != "another install\n" {
+			t.Fatalf("the linked file is now %q, %v", data, err)
+		}
+		if served := release.served(); served != before {
+			t.Errorf("the refused run downloaded %d files", served-before)
+		}
+		if log := readLog(t, run.log); log != "" {
+			t.Errorf("owngit ran as %q", log)
 		}
 	})
 
