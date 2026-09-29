@@ -145,12 +145,11 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
 try {
     Install-OwnGit -Version $Version -NoService $NoService.IsPresent -Dir $Dir
 } catch {
-    # The message alone, without PowerShell's error record around it.
-    $Host.UI.WriteErrorLine($_.Exception.Message)
-    # A script file ends with exit code 1. Through iex or a script block,
-    # exit would close the PowerShell window, so the pipeline is stopped
-    # instead: nothing after it runs, PowerShell adds no message, and the
-    # command fails (powershell -Command exits with 1).
-    if ($MyInvocation.MyCommand.Path) { exit 1 }
+    # One plain line, without PowerShell's error record around it, so a
+    # command in the message can be copied as it is.
+    $Host.UI.WriteErrorLine('owngit install: ' + $_.Exception.Message)
+    # exit would close the PowerShell window under iex, so the pipeline is
+    # stopped instead: nothing after it runs, PowerShell adds no message,
+    # and the command fails (powershell -Command exits with 1).
     throw [Management.Automation.PipelineStoppedException]::new()
 }

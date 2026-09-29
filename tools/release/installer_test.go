@@ -615,7 +615,7 @@ func TestInstallPs1(t *testing.T) {
 			release := folder(dir, "2.0.0")
 			return "Installed OwnGit 2.0.0 in " + release + ".\n" +
 				"fake owngit 2.0.0: service install\n" +
-				"\"owngit service install\" did not finish. OwnGit 2.0.0 stays in " + release +
+				"owngit install: \"owngit service install\" did not finish. OwnGit 2.0.0 stays in " + release +
 				"; after fixing what it reported, run: & " + psQuote(filepath.Join(release, "owngit.exe")) + " service install\n"
 		}
 		run.mustFailWith(t, failing, want(filepath.Join(run.home, "Programs", "OwnGit")))
@@ -649,7 +649,7 @@ func TestInstallPs1(t *testing.T) {
 			t.Fatal("no ProgramFiles folder")
 		}
 		serviceFolder := filepath.Join(programFiles, "OwnGit")
-		refused := serviceFolder + " belongs to \"owngit service install\"; choose another -Dir.\n"
+		refused := "owngit install: " + serviceFolder + " belongs to \"owngit service install\"; choose another -Dir.\n"
 		unreachable := []string{"OWNGIT_RELEASES=https://127.0.0.1:1/releases"}
 		for _, dir := range []string{
 			serviceFolder,
