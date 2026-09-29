@@ -446,10 +446,19 @@ func (access FirewallAccess) Closed() int {
 	return guarded&access.Blocked | guarded&^access.Allowed
 }
 
-// ParseFirewallAccess reads FirewallAccessScript's output for port.
+// ParseFirewallAccess reads FirewallAccessScript's output for port. A rule
+// for any protocol has no local ports, so its line ends in a tab.
 func ParseFirewallAccess(output, port string) (FirewallAccess, error) {
-	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(output, "\r", "")), "\n")
+	var lines []string
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r", ""), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
 	var access FirewallAccess
+	if len(lines) == 0 {
+		return FirewallAccess{}, errors.New("no firewall profiles")
+	}
 	if _, err := fmt.Sscanf(lines[0], "%d %d", &access.Active, &access.On); err != nil {
 		return FirewallAccess{}, fmt.Errorf("unexpected firewall profiles %q", lines[0])
 	}

@@ -312,6 +312,16 @@ func TestParseFirewallAccess(t *testing.T) {
 	if closed := (FirewallAccess{Active: 5, On: 7, Allowed: 2}).Closed(); closed != 5 {
 		t.Errorf("domain and public without a rule: closed %d", closed)
 	}
+	// As Windows 11 printed it: an allow rule for any protocol on the
+	// domain and private profiles has no local ports, and a rule for every
+	// profile has the mask 0x7FFFFFFF.
+	access, err = ParseFirewallAccess("2 7\r\n1\t2147483647\t6\t80\r\n1\t3\t256\t\r\n", "7654")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (FirewallAccess{Active: 2, On: 7, Allowed: 3}); access != want {
+		t.Fatalf("access %+v, want %+v", access, want)
+	}
 	if _, err := ParseFirewallAccess("", "7654"); err == nil {
 		t.Error("empty output accepted")
 	}
