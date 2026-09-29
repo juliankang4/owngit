@@ -45,7 +45,7 @@ func TestPullRequestAPIJourneyUsesJSONAndExactRevisions(t *testing.T) {
 	}
 
 	oversized := apiRequest(t, http.MethodPost, endpoint, map[string]any{
-		"title": strings.Repeat("x", maximumAPIRequest), "source_branch": "feature", "target_branch": "main", "review": "request",
+		"title": strings.Repeat("x", pullrequest.MaximumTextRequestBytes), "source_branch": "feature", "target_branch": "main", "review": "request",
 	}, "", "")
 	if oversized.StatusCode != http.StatusRequestEntityTooLarge || apiErrorCode(t, oversized) != "request_too_large" {
 		t.Fatalf("oversized mutation status=%d", oversized.StatusCode)

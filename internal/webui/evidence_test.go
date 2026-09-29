@@ -1322,14 +1322,15 @@ func TestCredentialScreenStates(t *testing.T) {
 
 func TestCreateAndSummaryScreenStates(t *testing.T) {
 	// A result about an earlier revision, or a record that could not be read,
-	// is placed before the disclosure so it is read without opening anything.
+	// is placed before the evidence disclosure so it is read without opening
+	// anything. The edit form above it is a disclosure of its own.
 	relevance := func(code MessageCode) func(*testing.T, string) {
 		return func(t *testing.T, out string) {
 			at := strings.Index(out, wantText(LangEN, code))
 			if at < 0 {
 				t.Fatalf("the screen does not say %q", wantText(LangEN, code))
 			}
-			if disclosure := strings.Index(out, "<details"); disclosure >= 0 && at > disclosure {
+			if disclosure := strings.Index(out, `<details class="disc">`); disclosure >= 0 && at > disclosure {
 				t.Error("the relevance label was folded behind the disclosure")
 			}
 		}
