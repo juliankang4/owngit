@@ -64,8 +64,8 @@ var policiesCatalog = map[MessageCode]message{
 	},
 	MsgSessionLabel: {en: "A sign-in lasts", ko: "로그인 유지 시간"},
 	MsgSessionHelp: {
-		en: "The longer it lasts, the longer someone using a signed-in browser can read and push without the password.",
-		ko: "길게 할수록 로그인된 브라우저를 쓰는 사람이 비밀번호 없이 저장소를 읽고 푸시할 수 있는 시간도 길어집니다.",
+		en: "The longer it lasts, the longer someone using a signed-in browser can use the dashboard without the password.",
+		ko: "길게 할수록 로그인된 브라우저를 쓰는 사람이 비밀번호 없이 대시보드를 쓸 수 있는 시간도 길어집니다.",
 	},
 	MsgSessionSaved: {
 		en: "Saved. Sign-ins from now on last the new time.",
@@ -104,7 +104,7 @@ var policiesCatalog = map[MessageCode]message{
 	},
 	MsgTransferSize: {en: "Largest transfer", ko: "최대 전송 크기"},
 	MsgTransferSizeHelp: {
-		en: "The most one transfer may receive, and apart the most it may send: from 1 MB to 64 GB (1 GB is 1024 MB). The default is 4 GB. A larger push is refused, and a larger clone or fetch is cut off.",
+		en: "The most one transfer may receive and, separately, the most it may send: from 1 MB to 64 GB (1 GB is 1024 MB). The default is 4 GB. A larger push is refused, and a larger clone or fetch is cut off.",
 		ko: "전송 하나가 받을 수 있는 최대 크기이자, 따로 보낼 수 있는 최대 크기입니다. 1 MB부터 64 GB까지 정할 수 있고(1 GB는 1024 MB) 기본값은 4 GB입니다. 이보다 큰 푸시는 거부되고, 이보다 큰 클론이나 가져오기(fetch)는 중간에 끊깁니다.",
 	},
 	MsgTransferTime: {en: "Longest transfer", ko: "최대 전송 시간"},

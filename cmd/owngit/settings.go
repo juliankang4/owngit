@@ -63,7 +63,7 @@ func settingsSet(arguments []string) error {
 	remote := addImportFlags(flags)
 	session := flags.String("session", "", "how long a sign-in with the shared password lasts: 1h, 8h, 12h, 1d, 7d or 30d")
 	initialBranch := flags.String("initial-branch", "", "the branch new repositories start on, such as main")
-	transferSize := flags.String("transfer-size", "", "the most one Git transfer may receive, and apart send, such as 4GB or 512MB, from 1MB to 64GB")
+	transferSize := flags.String("transfer-size", "", "the most one Git transfer may receive and, separately, send, such as 4GB or 512MB, from 1MB to 64GB")
 	transferTime := flags.String("transfer-time", "", "how long one Git transfer may take, such as 30m or 2h, from 1m to 24h")
 	checkLogs := flags.String("check-logs", "", "how long raw check logs are kept: 7d, 30d, 90d, 365d or indefinite")
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {

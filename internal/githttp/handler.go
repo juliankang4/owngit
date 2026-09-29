@@ -70,8 +70,9 @@ type Limits struct {
 	// inflated, and MaximumResponse the bytes it sends.
 	MaximumRequest  int64
 	MaximumResponse int64
-	// Operation bounds how long it takes, from when it starts to wait for
-	// a transfer slot.
+	// Operation bounds how long it takes: a clone, fetch or push from when
+	// it gets a transfer slot, and an archive download from when it starts
+	// to wait for one.
 	Operation time.Duration
 }
 

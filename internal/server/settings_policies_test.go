@@ -358,3 +358,21 @@ func TestRawLogsFollowTheRetentionSavedNow(t *testing.T) {
 		t.Fatalf("tasks page status=%d:\n%s", page.status, page.body)
 	}
 }
+
+// The Settings menus offer exactly the choices the state accepts, in the
+// same order, so no saved choice lacks its menu entry.
+func TestPolicyMenusOfferEveryStateChoice(t *testing.T) {
+	values := func(choices []webui.PolicyChoice) []string {
+		names := make([]string, len(choices))
+		for index, choice := range choices {
+			names[index] = choice.Value
+		}
+		return names
+	}
+	if menu, stateChoices := values(webui.SessionChoices()), choiceList(state.GeneralSessions); strings.Join(menu, ", ") != stateChoices {
+		t.Fatalf("session menu %v, state %s", menu, stateChoices)
+	}
+	if menu, stateChoices := values(webui.CheckLogChoices()), choiceList(state.CheckLogRetentions); strings.Join(menu, ", ") != stateChoices {
+		t.Fatalf("raw log menu %v, state %s", menu, stateChoices)
+	}
+}
