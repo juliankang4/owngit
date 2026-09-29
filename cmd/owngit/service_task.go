@@ -484,6 +484,13 @@ var errElevationCancelled = errors.New("administrator approval was declined")
 // the boot task and firewall rule before starting the service. It creates
 // nothing in the state directory, which the restricted server creates itself.
 func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool) error {
+	// The rule is checked before anything changes, so an install beside a
+	// rule of the same name that OwnGit did not add stops with the old
+	// service still in place.
+	if _, _, foreign := host.firewallRule(); foreign {
+		host.printf("%s\n", firewallCollisionLine)
+		return &checkExit{code: elevatedMessageExit, err: errFirewallCollision}
+	}
 	host.stopTask(stateDir)
 	moved, err := prepareServiceInstall(host.serviceInstall)
 	if err != nil {
@@ -697,27 +704,49 @@ func (host *taskHost) allowThroughFirewall() error {
 
 func (host *taskHost) allowThroughFirewallFor(program string) error {
 	output, err := host.runPowerShell(service.FirewallAllowScript, service.FirewallProgramVariable+"="+program)
-	if err != nil {
+	switch {
+	case err != nil:
 		return fmt.Errorf("add the Windows Firewall rule %q: %w: %s", service.FirewallRuleName, err, strings.TrimSpace(string(output)))
+	case service.FirewallCollision(output):
+		return errFirewallCollision
 	}
 	return nil
 }
 
+// removeFirewallRule removes OwnGit's rule. Beside a rule of the same name
+// that OwnGit did not add, it removes none and says so.
 func (host *taskHost) removeFirewallRule() error {
-	if output, err := host.runPowerShell(service.FirewallRemoveScript); err != nil {
+	output, err := host.runPowerShell(service.FirewallRemoveScript)
+	switch {
+	case err != nil:
 		return fmt.Errorf("remove the Windows Firewall rule %q: %w: %s", service.FirewallRuleName, err, strings.TrimSpace(string(output)))
+	case service.FirewallCollision(output):
+		host.printf("%s\n", firewallCollisionLine)
 	}
 	return nil
 }
+
+// firewallCollisionLine explains a rule named OwnGit that OwnGit did not
+// add. Windows removes firewall rules by name, so OwnGit then changes none.
+var firewallCollisionLine = fmt.Sprintf("A Windows Firewall rule named %q exists that OwnGit did not add, so OwnGit adds and removes no rule of that name. Rename or remove that rule in Windows Defender Firewall, then run the command again.", service.FirewallRuleName)
+
+// errFirewallCollision stops an install beside a rule named OwnGit that
+// OwnGit did not add.
+var errFirewallCollision = errors.New(firewallCollisionLine)
 
 // firewallRule reads OwnGit's rule; found is false when there is none or it
-// cannot be read.
-func (host *taskHost) firewallRule() (service.FirewallRule, bool) {
+// cannot be read, and foreign is true when a rule of the same name exists
+// that OwnGit did not add.
+func (host *taskHost) firewallRule() (rule service.FirewallRule, found, foreign bool) {
 	output, err := host.runPowerShell(service.FirewallShowScript)
 	if err != nil {
-		return service.FirewallRule{}, false
+		return service.FirewallRule{}, false, false
 	}
-	return service.ParseFirewallRule(string(output))
+	if service.FirewallCollision(output) {
+		return service.FirewallRule{}, false, true
+	}
+	rule, found = service.ParseFirewallRule(string(output))
+	return rule, found, false
 }
 
 // ensureWindowsFirewallRule lets devices on private networks reach this
@@ -730,7 +759,10 @@ func ensureWindowsFirewallRule(out io.Writer) error {
 		return err
 	}
 	host.out = out
-	if rule, found := host.firewallRule(); found && rule.Allows(host.executable) {
+	switch rule, found, foreign := host.firewallRule(); {
+	case foreign:
+		return errFirewallCollision
+	case found && rule.Allows(host.executable):
 		return nil
 	}
 	return host.asAdministrator([]string{"service", "elevated-firewall"}, "allow OwnGit through Windows Firewall on private networks")
@@ -837,7 +869,9 @@ func (host *taskHost) printTaskFacts(stateDir, address, executable string) {
 	if address != "" {
 		host.printf("  Address:  %s\n", address)
 	}
-	switch rule, found := host.firewallRule(); {
+	switch rule, found, foreign := host.firewallRule(); {
+	case foreign:
+		host.printf("  Firewall: %s\n", firewallCollisionLine)
 	case found && rule.Allows(executable):
 		host.printf("  Firewall: devices on private networks may connect (rule %q)\n", service.FirewallRuleName)
 	case listensBeyondThisComputer(stateDir):
@@ -880,7 +914,7 @@ func (host *taskHost) uninstall() error {
 		}
 		return nil
 	}
-	_, ruleFound := host.firewallRule()
+	_, ruleFound, foreign := host.firewallRule()
 	removed := "The OwnGit service is stopped and removed"
 	switch {
 	case installed.Mode == service.ModeBootTask || ruleFound && host.env.Administrator:
@@ -889,7 +923,9 @@ func (host *taskHost) uninstall() error {
 		if err := host.asAdministrator([]string{"service", "elevated-uninstall"}, "remove the OwnGit task, its Windows Firewall rule and "+host.serviceInstall.Directory); err != nil {
 			return err
 		}
-		removed += ", with its Windows Firewall rule"
+		if ruleFound {
+			removed += ", with its Windows Firewall rule"
+		}
 	default:
 		host.stopTask(installed.StateDir)
 		if err := host.runStep(host.schtasks(), "/Delete", "/TN", `\`+service.TaskName, "/F"); err != nil {
@@ -897,6 +933,9 @@ func (host *taskHost) uninstall() error {
 		}
 		if ruleFound {
 			host.printf("The Windows Firewall rule %q stays; an administrator can remove it with \"owngit service uninstall\".\n", service.FirewallRuleName)
+		}
+		if foreign {
+			host.printf("%s\n", firewallCollisionLine)
 		}
 	}
 	host.printf("%s. The state stays in %s", removed, installed.StateDir)

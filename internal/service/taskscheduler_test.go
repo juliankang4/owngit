@@ -267,3 +267,21 @@ func TestWindowsEnvironment(t *testing.T) {
 		t.Errorf("standard account mode = %s", mode)
 	}
 }
+
+// Every firewall script decides ownership by the same test and changes only
+// the rules that pass it, and none beside a same-name rule that fails it.
+func TestFirewallScriptsChangeOnlyOwnGitsRule(t *testing.T) {
+	for name, script := range map[string]string{"allow": FirewallAllowScript, "remove": FirewallRemoveScript, "show": FirewallShowScript} {
+		if !strings.HasPrefix(script, firewallRules) || strings.Count(script, "Rules.Remove") > strings.Count(script, "$owned | ForEach-Object { $policy.Rules.Remove") {
+			t.Errorf("%s script:\n%s", name, script)
+		}
+	}
+	if !strings.Contains(firewallRules, "$_.Description -eq '"+FirewallRuleDescription+"'") || !strings.Contains(firewallRules, "-eq 'owngit.exe'") ||
+		!strings.Contains(firewallRules, "if ($owned.Count -ne $same.Count) { '"+FirewallForeign+"'; exit }") ||
+		!strings.Contains(FirewallAllowScript, "$rule.Description = '"+FirewallRuleDescription+"'") {
+		t.Errorf("ownership test:\n%s", firewallRules)
+	}
+	if !FirewallCollision([]byte(FirewallForeign+"\r\n")) || FirewallCollision([]byte(`C:\Program Files\OwnGit\owngit.exe`+"\n2\nTrue\n1\n1\n")) {
+		t.Error("collision output misread")
+	}
+}

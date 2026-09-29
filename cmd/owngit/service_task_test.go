@@ -97,7 +97,16 @@ func (fake *fakeWindows) run(_ context.Context, name string, args ...string) ([]
 			return []byte(fake.state), nil
 		case "firewall-show":
 			return []byte(fake.firewall), nil
-		case "firewall-allow":
+		case "firewall-allow", "firewall-remove":
+			// Like the scripts, nothing changes beside a rule of the same
+			// name that OwnGit did not add.
+			if service.FirewallCollision([]byte(fake.firewall)) {
+				return []byte(service.FirewallForeign + "\n"), nil
+			}
+			if script == "firewall-remove" {
+				fake.firewall = ""
+				return nil, nil
+			}
 			// Like the COM API, the script removes the named rule before it
 			// adds the replacement.
 			remove := strings.Index(service.FirewallAllowScript, "$policy.Rules.Remove")
@@ -105,8 +114,6 @@ func (fake *fakeWindows) run(_ context.Context, name string, args ...string) ([]
 				return []byte("already exists"), errors.New("exit status 1")
 			}
 			fake.firewall = fake.commandEnv[service.FirewallProgramVariable] + "\n2\nTrue\n1\n1\n"
-		case "firewall-remove":
-			fake.firewall = ""
 		}
 		return nil, nil
 	case fakeSystem + `\schtasks.exe`:
@@ -506,7 +513,7 @@ func TestTaskElevatedInstall(t *testing.T) {
 		t.Errorf("stop asked %q", fake.stopAsked)
 	}
 	want := []string{
-		"powershell state", "powershell state",
+		"powershell firewall-show", "powershell state", "powershell state",
 		"move " + host.serviceInstall.Directory, "protect " + host.serviceInstall.Directory,
 		"copy " + host.executable + " to " + host.serviceInstall.Executable,
 		"give " + testStateDir, "give " + fake.repositories,
@@ -529,7 +536,7 @@ func TestTaskElevatedInstall(t *testing.T) {
 		t.Errorf("output:\n%s", out.String())
 	}
 	// The temporary definition file is gone.
-	path := strings.Fields(fake.calls[7])[5]
+	path := strings.Fields(fake.calls[8])[5]
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("definition file %s stayed: %v", path, err)
 	}
@@ -597,7 +604,7 @@ func TestTaskElevatedInstallRefusesFolderItCannotMove(t *testing.T) {
 	if !errors.As(err, &exit) || exit.code != elevatedMessageExit || out.String() != "OwnGit could not prepare a fresh service folder at "+host.serviceInstall.Directory+". Check that folder, then run \"owngit service install\" again.\n" {
 		t.Fatalf("error=%v, output=%q", err, out.String())
 	}
-	if want := []string{"powershell state", "move " + host.serviceInstall.Directory}; !reflect.DeepEqual(fake.calls, want) || fake.definition != "" {
+	if want := []string{"powershell firewall-show", "powershell state", "move " + host.serviceInstall.Directory}; !reflect.DeepEqual(fake.calls, want) || fake.definition != "" {
 		t.Fatalf("calls=%q, task=%q", fake.calls, fake.definition)
 	}
 	if _, err := os.Stat(host.serviceInstall.Executable); err != nil {
@@ -1095,5 +1102,38 @@ func TestGiveFolderToAccount(t *testing.T) {
 		if changed != test.given || test.line == "" && out.Len() != 0 || test.line != "" && !strings.Contains(out.String(), test.line) {
 			t.Errorf("%s owned by %s: changed %v, output %q", test.folder, test.owner, changed, out.String())
 		}
+	}
+}
+
+// A firewall rule named OwnGit that OwnGit did not add is never changed.
+// Windows removes rules by name, so beside it OwnGit adds and removes none:
+// an install stops before it changes anything, and an uninstall removes the
+// task and the copy and leaves the rules.
+func TestTaskLeavesAFirewallRuleOwnGitDidNotAdd(t *testing.T) {
+	fake := newFakeWindows(t)
+	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
+	fake.firewall = service.FirewallForeign + "\n"
+	definition := fake.definition
+	host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	serviceFolder(t, host)
+	err := host.elevatedInstall(testStateDir, false, false)
+	var exit *checkExit
+	if !errors.As(err, &exit) || exit.code != elevatedMessageExit || !reflect.DeepEqual(fake.calls, []string{"powershell firewall-show"}) || fake.definition != definition {
+		t.Fatalf("install beside the rule: error=%v, calls=%q", err, fake.calls)
+	}
+	if !strings.Contains(out.String(), "exists that OwnGit did not add, so OwnGit adds and removes no rule of that name.") {
+		t.Errorf("install output:\n%s", out.String())
+	}
+	if err := host.allowThroughFirewall(); !errors.Is(err, errFirewallCollision) {
+		t.Errorf("allow beside the rule: %v", err)
+	}
+
+	out.Reset()
+	noErr(t, host.uninstall())
+	if fake.definition != "" || fake.firewall != service.FirewallForeign+"\n" {
+		t.Errorf("uninstall: task %q, rule %q", fake.definition, fake.firewall)
+	}
+	if !strings.Contains(out.String(), "exists that OwnGit did not add") || strings.Contains(out.String(), "with its Windows Firewall rule") {
+		t.Errorf("uninstall output:\n%s", out.String())
 	}
 }

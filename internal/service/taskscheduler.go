@@ -30,6 +30,13 @@ const (
 	// FirewallProgramVariable passes the program path to the firewall
 	// scripts, so that no path is ever part of script text.
 	FirewallProgramVariable = "OWNGIT_FIREWALL_PROGRAM"
+	// FirewallRuleDescription marks the rule as OwnGit's. Every OwnGit that
+	// adds the rule writes this text.
+	FirewallRuleDescription = "Lets devices on private networks reach OwnGit. Added by owngit service install; owngit service uninstall removes it."
+	// FirewallForeign is what the firewall scripts print when a rule named
+	// FirewallRuleName exists that is not OwnGit's; they then change
+	// nothing.
+	FirewallForeign = "foreign"
 )
 
 // ErrForeignTask means a task named OwnGit exists that "owngit service
@@ -360,16 +367,26 @@ func SplitWindowsCommandLine(line string) []string {
 // the environment variable FirewallProgramVariable, never from the text.
 // They use the Windows Firewall COM API, not PowerShell modules found through
 // a user-controlled module path.
+//
+// A rule is OwnGit's when it is named FirewallRuleName, carries
+// FirewallRuleDescription and lets a program named owngit.exe through. The
+// COM API removes rules by name only, so while a rule of that name exists
+// that is not OwnGit's, the scripts add and remove nothing and print
+// FirewallForeign; that rule and OwnGit's stay as they are.
+const firewallRules = `$ErrorActionPreference = 'Stop'
+$policy = New-Object -ComObject HNetCfg.FwPolicy2
+$same = @($policy.Rules | Where-Object { $_.Name -eq '` + FirewallRuleName + `' })
+$owned = @($same | Where-Object { $_.Description -eq '` + FirewallRuleDescription + `' -and [IO.Path]::GetFileName([string]$_.ApplicationName) -eq 'owngit.exe' })
+if ($owned.Count -ne $same.Count) { '` + FirewallForeign + `'; exit }
+`
 
 // FirewallAllowScript replaces OwnGit's rule with one that lets
 // connections from the Private network profile reach the program. Public
 // networks stay closed.
-const FirewallAllowScript = `$ErrorActionPreference = 'Stop'
-$policy = New-Object -ComObject HNetCfg.FwPolicy2
-@($policy.Rules) | Where-Object { $_.Name -eq '` + FirewallRuleName + `' } | ForEach-Object { $policy.Rules.Remove($_.Name) }
+const FirewallAllowScript = firewallRules + `$owned | ForEach-Object { $policy.Rules.Remove($_.Name) }
 $rule = New-Object -ComObject HNetCfg.FWRule
 $rule.Name = '` + FirewallRuleName + `'
-$rule.Description = 'Lets devices on private networks reach OwnGit. Added by owngit service install; owngit service uninstall removes it.'
+$rule.Description = '` + FirewallRuleDescription + `'
 $rule.Direction = 1
 $rule.Action = 1
 $rule.Enabled = $true
@@ -380,19 +397,22 @@ $policy.Rules.Add($rule)
 `
 
 // FirewallRemoveScript removes OwnGit's rule and nothing else.
-const FirewallRemoveScript = `$ErrorActionPreference = 'Stop'
-$policy = New-Object -ComObject HNetCfg.FwPolicy2
-@($policy.Rules) | Where-Object { $_.Name -eq '` + FirewallRuleName + `' } | ForEach-Object { $policy.Rules.Remove($_.Name) }
+const FirewallRemoveScript = firewallRules + `$owned | ForEach-Object { $policy.Rules.Remove($_.Name) }
 `
 
 // FirewallShowScript prints the program, profiles, enabled state, direction
-// and action of OwnGit's rule, one per line, or nothing when there is no rule.
-// The COM interface works for any account, including an SSH session where
-// administrator-only firewall writes are unavailable.
-const FirewallShowScript = `$ErrorActionPreference = 'Stop'
-$rule = (New-Object -ComObject HNetCfg.FwPolicy2).Rules | Where-Object { $_.Name -eq '` + FirewallRuleName + `' } | Select-Object -First 1
+// and action of OwnGit's rule, one per line, nothing when there is no rule,
+// or FirewallForeign. The COM interface works for any account, including an
+// SSH session where administrator-only firewall writes are unavailable.
+const FirewallShowScript = firewallRules + `$rule = $owned | Select-Object -First 1
 if ($rule) { $rule.ApplicationName; $rule.Profiles; $rule.Enabled; $rule.Direction; $rule.Action }
 `
+
+// FirewallCollision reports whether a firewall script found a rule named
+// FirewallRuleName that is not OwnGit's.
+func FirewallCollision(output []byte) bool {
+	return strings.TrimSpace(string(output)) == FirewallForeign
+}
 
 // FirewallRule is OwnGit's rule as FirewallShowScript prints it.
 type FirewallRule struct {

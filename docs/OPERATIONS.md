@@ -95,7 +95,7 @@ The one approval from an administrator account does the following:
 
 1. Copies the program to `%ProgramFiles%\OwnGit\owngit.exe` and protects that folder so that only Administrators and SYSTEM can change it.
 2. Registers the task for that copy.
-3. Adds a Windows Firewall rule named `OwnGit` for private networks; public networks stay closed.
+3. Adds a Windows Firewall rule named `OwnGit` for private networks; public networks stay closed. The rule carries OwnGit's description, and OwnGit changes or removes only a rule with that description for an `owngit.exe`. If a rule named `OwnGit` that OwnGit did not add exists, OwnGit adds and removes no rule of that name: the install stops before it changes anything and says so, and uninstall leaves the rules.
 4. Installs Git for Windows with `winget` if Git is missing from the machine and user PATH. If Git is installed but not on that PATH, the command instead asks you to add Git's `cmd` folder, for example `C:\Program Files\Git\cmd`, and run it again.
 5. Returns to your account any files in the state directory and the repository folder that an earlier OwnGit with administrator rights left to the Administrators group (Git refuses such repositories as having "dubious ownership"), and says how many it changed. It changes nothing in another account's folder, a whole drive, or a Windows or program folder. From a standard account, the command names the folder and the command an administrator can run in a PowerShell opened with "Run as administrator": `icacls "C:\Users\you\OwnGit-Repositories" /setowner "$env:USERNAME" /T /C` (in Command Prompt, `%USERNAME%`).
 

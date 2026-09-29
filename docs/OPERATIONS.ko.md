@@ -95,7 +95,7 @@ sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 
 1. 프로그램을 `%ProgramFiles%\OwnGit\owngit.exe`에 복사하고, Administrators와 SYSTEM만 바꿀 수 있게 그 폴더를 보호합니다.
 2. 그 복사본을 실행하는 작업을 등록합니다.
-3. 개인 네트워크용 Windows 방화벽 규칙 `OwnGit`을 추가합니다. 공용 네트워크는 계속 막혀 있습니다.
+3. 개인 네트워크용 Windows 방화벽 규칙 `OwnGit`을 추가합니다. 공용 네트워크는 계속 막혀 있습니다. 이 규칙에는 OwnGit의 설명이 붙으며, OwnGit은 그 설명이 붙은 `owngit.exe`용 규칙만 바꾸거나 지웁니다. OwnGit이 추가하지 않은 `OwnGit` 규칙이 있으면 그 이름의 규칙은 추가하지도 지우지도 않습니다. 설치는 아무것도 바꾸기 전에 멈추고 그 사실을 알려 주며, 제거할 때는 규칙을 그대로 둡니다.
 4. 컴퓨터와 사용자 PATH에 Git이 없으면 `winget`으로 Git for Windows를 설치합니다. Git이 설치되어 있는데 그 PATH에 없으면 설치하는 대신 Git의 `cmd` 폴더(예: `C:\Program Files\Git\cmd`)를 PATH에 넣고 다시 실행하라고 알려 줍니다.
 5. 예전에 관리자 권한으로 돌던 OwnGit이 상태 디렉터리와 저장소 폴더에 Administrators 그룹 소유로 남긴 파일을 내 계정에 돌려주고(이런 저장소는 Git이 "dubious ownership"으로 거부합니다) 몇 개를 바꿨는지 알려 줍니다. 다른 계정의 폴더, 드라이브 전체, Windows나 프로그램 폴더는 바꾸지 않습니다. 표준 계정에서는 그 폴더와, 관리자가 "관리자 권한으로 실행"으로 연 PowerShell에서 실행할 명령 `icacls "C:\Users\you\OwnGit-Repositories" /setowner "$env:USERNAME" /T /C`를 알려 줍니다(명령 프롬프트에서는 `%USERNAME%`).
 
