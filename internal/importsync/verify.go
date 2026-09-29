@@ -51,13 +51,29 @@ func (s *Service) createStagingRepository(ctx context.Context, path, objectForma
 	return nil
 }
 
+// historicFormatWarnings are the fsck message IDs that strict indexing
+// reports as warnings instead of refusing the pack. Each one is a formatting
+// fault in the author, committer or tagger line of an old commit or tag,
+// found in popular public repositories, and says nothing about paths, file
+// modes, links, submodules or object structure, so accepting it cannot place
+// a file or reach outside the repository. Every other check, including the
+// .git, .gitmodules and symbolic link checks, still refuses the pack.
+//
+//   - badTimezone: an offset such as +051800 (rails/rails commit 4cf94979,
+//     psf/requests commit 5e6ecdad).
+//   - missingSpaceBeforeDate: a tagger line without a date (30 tags in
+//     coreutils/coreutils, such as v4.5.1).
+var historicFormatWarnings = []string{"badTimezone", "missingSpaceBeforeDate"}
+
 // strictIndexPackArguments is shared by staging and destination indexing so a
-// pack cannot pass through either object store without Git's strict checks.
-// The keep message is written into the pack's .keep file, which protects the
-// new pack from a concurrent repack until refs use it. A .keep file left by a
-// crash therefore names the OwnGit import that created it.
+// pack cannot pass through either object store without Git's strict checks,
+// apart from historicFormatWarnings. The keep message is written into the
+// pack's .keep file, which protects the new pack from a concurrent repack
+// until refs use it. A .keep file left by a crash therefore names the OwnGit
+// import that created it.
 func strictIndexPackArguments(keepMessage string) []string {
-	return []string{"--git-dir", ".", "index-pack", "--stdin", "--strict", "--keep=" + keepMessage}
+	strict := "--strict=" + strings.Join(historicFormatWarnings, "=warn,") + "=warn"
+	return []string{"--git-dir", ".", "index-pack", "--stdin", strict, "--keep=" + keepMessage}
 }
 
 // createdPackKeep returns the pack hash when index-pack reported that it
