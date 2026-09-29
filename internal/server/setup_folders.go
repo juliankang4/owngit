@@ -53,7 +53,7 @@ func isSetupFolderPath(path string) bool {
 // administrator gate here; no initialized installation is admitted now.
 func (app *App) requireFolderOwner(writer http.ResponseWriter, request *http.Request, settings state.Settings) bool {
 	if settings.Initialized {
-		writeFolderResult(writer, http.StatusConflict, folderResult{Error: webui.MsgSetupAlreadyDone})
+		writeFolderResult(writer, request, http.StatusConflict, folderResult{Error: webui.MsgSetupAlreadyDone})
 		return false
 	}
 	if !app.parseForm(writer, request) {
@@ -61,15 +61,15 @@ func (app *App) requireFolderOwner(writer http.ResponseWriter, request *http.Req
 	}
 	session, ok, err := app.setupSessionForHost(request)
 	if err != nil {
-		writeFolderResult(writer, http.StatusServiceUnavailable, folderResult{Error: webui.MsgErrUnavailable})
+		writeFolderResult(writer, request, unavailable(request, "folder session read", err), folderResult{Error: webui.MsgErrUnavailable})
 		return false
 	}
 	if !ok {
-		writeFolderResult(writer, http.StatusForbidden, folderResult{Error: webui.MsgSetupSessionEnded})
+		writeFolderResult(writer, request, http.StatusForbidden, folderResult{Error: webui.MsgSetupSessionEnded})
 		return false
 	}
 	if !constantEqual(session.CSRF, postValue(request, "csrf")) {
-		writeFolderResult(writer, http.StatusForbidden, folderResult{Error: webui.MsgErrCSRF})
+		writeFolderResult(writer, request, http.StatusForbidden, folderResult{Error: webui.MsgErrCSRF})
 		return false
 	}
 	return true
@@ -82,11 +82,11 @@ func (app *App) handleSetupFolders(writer http.ResponseWriter, request *http.Req
 	path, name := postValue(request, "path"), postValue(request, "name")
 	create := request.URL.Path == setupFolderCreatePath
 	if len(path) > 32768 || !utf8.ValidString(path) || strings.ContainsRune(path, 0) {
-		writeFolderResult(writer, http.StatusBadRequest, folderResult{Error: webui.MsgFolderInvalidPath})
+		writeFolderResult(writer, request, http.StatusBadRequest, folderResult{Error: webui.MsgFolderInvalidPath})
 		return
 	}
 	if create && !validFolderName(name) {
-		writeFolderResult(writer, http.StatusBadRequest, folderResult{Error: webui.MsgFolderInvalidName})
+		writeFolderResult(writer, request, http.StatusBadRequest, folderResult{Error: webui.MsgFolderInvalidName})
 		return
 	}
 	if path == "" && !create && !formChecked(postValue(request, "roots")) {
@@ -95,7 +95,7 @@ func (app *App) handleSetupFolders(writer http.ResponseWriter, request *http.Req
 			var err error
 			path, err = os.UserHomeDir()
 			if err != nil {
-				writeFolderResult(writer, http.StatusUnprocessableEntity, folderResult{Error: webui.MsgFolderFailed})
+				writeFolderResult(writer, request, http.StatusUnprocessableEntity, folderResult{Error: webui.MsgFolderFailed})
 				return
 			}
 		}
@@ -141,16 +141,16 @@ func (app *App) handleSetupFolders(writer http.ResponseWriter, request *http.Req
 		return listFolders(ctx, path, formChecked(postValue(request, "hidden")))
 	})
 	if err != nil {
-		status, code := folderProblem(err, create)
+		status, code := folderProblem(request, err, create)
 		failure := folderResult{Error: code}
 		if filepath.IsAbs(path) {
 			failure.Path = filepath.Clean(path)
 			failure.Parent, failure.ParentRoots = folderParent(failure.Path)
 		}
-		writeFolderResult(writer, status, failure)
+		writeFolderResult(writer, request, status, failure)
 		return
 	}
-	writeFolderResult(writer, http.StatusOK, result)
+	writeFolderResult(writer, request, http.StatusOK, result)
 }
 
 // A deadline bounds the response, not an OS call on a stalled mount. One
@@ -250,7 +250,7 @@ func validFolderName(name string) bool {
 	return platformFolderName(name)
 }
 
-func folderProblem(err error, create bool) (int, webui.MessageCode) {
+func folderProblem(request *http.Request, err error, create bool) (int, webui.MessageCode) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		if create {
@@ -258,7 +258,7 @@ func folderProblem(err error, create bool) (int, webui.MessageCode) {
 		}
 		return http.StatusGatewayTimeout, webui.MsgFolderTimeout
 	case errors.Is(err, errFolderBusy):
-		return http.StatusServiceUnavailable, webui.MsgFolderBusy
+		return unavailable(request, "folder operation still running", err), webui.MsgFolderBusy
 	case errors.Is(err, errFolderSetupDone):
 		return http.StatusConflict, webui.MsgSetupAlreadyDone
 	case errors.Is(err, errFolderPath):
@@ -276,10 +276,10 @@ func folderProblem(err error, create bool) (int, webui.MessageCode) {
 	}
 }
 
-func writeFolderResult(writer http.ResponseWriter, status int, result folderResult) {
+func writeFolderResult(writer http.ResponseWriter, request *http.Request, status int, result folderResult) {
 	body, err := bidi.MarshalJSON(result)
 	if err != nil {
-		http.Error(writer, "response unavailable", http.StatusInternalServerError)
+		http.Error(writer, "response unavailable", internalError(request, "folder response encoding", err))
 		return
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")

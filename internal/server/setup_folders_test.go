@@ -269,6 +269,34 @@ func TestSetupFoldersErrorsAndLimits(t *testing.T) {
 	}
 }
 
+func TestSetupFoldersUnavailableAnswersLogTheirCause(t *testing.T) {
+	app, store, _ := newTestApp(t)
+	root := folderFixture(t)
+	noErr(t, store.StartApprovedSetupSession(context.Background(), "owner-session", "owner-csrf", time.Now().Add(time.Hour)))
+	serverLog := captureServerLog(t)
+	app.folderBusy.Store(true)
+	response := folderRequest(t, app, setupFoldersPath, root, "", "owner-session", "owner-csrf", "localhost", "http://localhost")
+	if response.Code != http.StatusServiceUnavailable || readFolderResult(t, response).Error != webui.MsgFolderBusy {
+		t.Fatalf("busy: %d %s", response.Code, response.Body.String())
+	}
+	app.folderBusy.Store(false)
+	endFailureWindows()
+	damageSession(t, store, "owner-session", "setup")
+	for _, route := range []string{setupFoldersPath, setupFolderCreatePath} {
+		response := folderRequest(t, app, route, root, "not-created", "owner-session", "owner-csrf", "localhost", "http://localhost")
+		if response.Code != http.StatusServiceUnavailable || readFolderResult(t, response).Error != webui.MsgErrUnavailable {
+			t.Fatalf("session read: %d %s", response.Code, response.Body.String())
+		}
+		endFailureWindows()
+	}
+	if lines := loggedFailures(serverLog, 0); len(lines) != 3 {
+		t.Fatalf("logged %d causes, want 3: %s", len(lines), strings.Join(lines, "\n"))
+	}
+	if _, err := os.Stat(filepath.Join(root, "not-created")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("unavailable authorization created a folder: %v", err)
+	}
+}
+
 func TestFolderOperationDeadlineKeepsBlockedWorkBounded(t *testing.T) {
 	app := &App{}
 	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -297,7 +325,7 @@ func TestFolderOperationDeadlineKeepsBlockedWorkBounded(t *testing.T) {
 		t.Fatalf("second operation=%v", err)
 	}
 	for _, create := range []bool{false, true} {
-		status, code := folderProblem(context.DeadlineExceeded, create)
+		status, code := folderProblem(httptest.NewRequest(http.MethodPost, setupFoldersPath, nil), context.DeadlineExceeded, create)
 		want := webui.MsgFolderTimeout
 		if create {
 			want = webui.MsgFolderCreateUnconfirmed
