@@ -1143,7 +1143,7 @@ func TestInstallerCommandsAreTheSafeForms(t *testing.T) {
 		}
 		relative, _ := filepath.Rel(root, path)
 		for number, line := range strings.Split(readText(t, path), "\n") {
-			shell := strings.Contains(line, "curl") && strings.Contains(line, "install.sh")
+			shell := strings.Contains(line, "curl") && (strings.Contains(line, "install.sh") || strings.Contains(line, "proxmox.sh"))
 			powerShell := strings.Contains(line, "install.ps1") && (strings.Contains(line, "irm") || strings.Contains(line, "Invoke-RestMethod") || strings.Contains(line, "Invoke-WebRequest") || strings.Contains(line, "iwr ") || strings.Contains(line, "DownloadString"))
 			switch {
 			case shell && (!strings.Contains(line, "/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL ") || !strings.Contains(line, "| /bin/sh")),

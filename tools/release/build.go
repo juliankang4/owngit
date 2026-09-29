@@ -43,8 +43,9 @@ var releaseTargets = []target{
 }
 
 // installerScripts are the one-line installers in packaging/installer that
-// every release carries.
-var installerScripts = []string{"install.sh", "install.ps1"}
+// every release carries: install.sh and install.ps1, and proxmox.sh, which
+// runs install.sh in a new container on a Proxmox VE host.
+var installerScripts = []string{"install.sh", "install.ps1", "proxmox.sh"}
 
 // selectTargets resolves the -targets flag against the release target table.
 func selectTargets(list string) ([]target, error) {

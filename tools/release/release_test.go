@@ -170,7 +170,7 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	// The one-line installers are in the output folder that is attached to
 	// the release, byte for byte as checked in, and SHA256SUMS still lists
 	// only the archives, as the npm publish workflow requires.
-	for _, name := range []string{"install.sh", "install.ps1"} {
+	for _, name := range installerScripts {
 		attached, err := os.ReadFile(filepath.Join(dir, name))
 		noErrf(t, err, "the release output has no %s", name)
 		source, err := os.ReadFile(filepath.Join(root, "packaging", "installer", name))

@@ -124,7 +124,7 @@ func verifyRelease(dir, source, goTool string) error {
 			return fmt.Errorf("installer %s differs from packaging/installer/%s in %s", recorded.Path, recorded.Path, source)
 		}
 	}
-	fmt.Printf("verified the installers %s in %s\n", strings.Join(names, " and "), dir)
+	fmt.Printf("verified the installers %s in %s\n", strings.Join(names, ", "), dir)
 	return nil
 }
 
