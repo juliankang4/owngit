@@ -1,0 +1,192 @@
+name: container publish
+
+# Publishes the OwnGit container image of an existing GitHub Release to the
+# GitHub Container Registry as ghcr.io/juliankang4/owngit, for linux/amd64
+# and linux/arm64. The image holds the release's own linux archives, checked
+# against its SHA256SUMS, so the program in the image is the released one.
+# Tags: the version (1.2.3), its minor (1.2), and latest when the version is
+# the latest release. Each image carries SLSA provenance and an SBOM.
+# Each architecture is built and checked on a runner of that architecture,
+# pushed by digest, and the tags then name both digests.
+#
+# Run this by hand after the GitHub Release is published. dry_run builds and
+# checks both images and publishes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix, for example 1.0.3
+        required: true
+        type: string
+      dry_run:
+        description: Build and check the images and publish nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-publish
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  IMAGE: ghcr.io/juliankang4/owngit
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Pushes the image to the GitHub Container Registry.
+      packages: write
+    outputs:
+      digest_amd64: ${{ steps.push.outputs.digest_amd64 }}
+      digest_arm64: ${{ steps.push.outputs.digest_arm64 }}
+    env:
+      VERSION: ${{ inputs.version }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      PLATFORM: linux/${{ matrix.arch }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Check the inputs
+        run: |
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "version must look like 1.2.3, without a v prefix: $VERSION" >&2
+            exit 1
+          fi
+          if [ "$DRY_RUN" != true ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "a real publish runs only from main; this run uses $GITHUB_REF" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ inputs.version }}
+          persist-credentials: false
+
+      - name: Check the source version
+        run: |
+          declared="$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/version/version.go)"
+          if [ "$declared" != "$VERSION" ]; then
+            echo "tag v$VERSION declares version '$declared'" >&2
+            exit 1
+          fi
+
+      - name: Download the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir "$RUNNER_TEMP/release"
+          cd "$RUNNER_TEMP/release"
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS \
+            --pattern "owngit_${VERSION}_linux_amd64.tar.gz" --pattern "owngit_${VERSION}_linux_arm64.tar.gz"
+
+      - name: Prepare the build context
+        run: packaging/container/context.sh "$RUNNER_TEMP/release" "$RUNNER_TEMP/context"
+
+      - name: Set up the builder
+        run: |
+          docker buildx create --name owngit --driver docker-container --use
+          docker buildx inspect --bootstrap
+
+      - name: Check the image
+        run: |
+          docker buildx build --load --platform "$PLATFORM" \
+            --build-arg "VERSION=$VERSION" --build-arg "REVISION=$GITHUB_SHA" \
+            --tag owngit-check -f packaging/container/Dockerfile "$RUNNER_TEMP/context"
+          reported="$(docker run --rm owngit-check owngit version)"
+          if [ "$reported" != "owngit $VERSION" ]; then
+            echo "the $PLATFORM image reports '$reported'" >&2
+            exit 1
+          fi
+          docker run --rm owngit-check git --version
+          [ "$(docker run --rm owngit-check uname -m)" = "$(uname -m)" ]
+          [ "$(docker run --rm owngit-check id -u)" = 10001 ]
+          [ "$(docker run --rm owngit-check cat /etc/owngit/install-route)" = container ]
+          echo "$PLATFORM: $reported"
+
+      - name: Log in to the GitHub Container Registry
+        if: ${{ !inputs.dry_run }}
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push by digest
+        id: push
+        if: ${{ !inputs.dry_run }}
+        run: |
+          docker buildx build --platform "$PLATFORM" \
+            --build-arg "VERSION=$VERSION" --build-arg "REVISION=$GITHUB_SHA" \
+            --provenance mode=max --sbom true \
+            --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file "$RUNNER_TEMP/metadata.json" \
+            -f packaging/container/Dockerfile "$RUNNER_TEMP/context"
+          digest="$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/metadata.json")"
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "unexpected digest '$digest'" >&2
+            exit 1
+          fi
+          echo "digest_$ARCH=$digest" >> "$GITHUB_OUTPUT"
+          echo "$PLATFORM: $IMAGE@$digest"
+
+  publish:
+    needs: build
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ inputs.version }}
+      AMD64: ${{ needs.build.outputs.digest_amd64 }}
+      ARM64: ${{ needs.build.outputs.digest_arm64 }}
+    steps:
+      - name: Choose the tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for digest in "$AMD64" "$ARM64"; do
+            if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "missing image digest: '$AMD64' '$ARM64'" >&2
+              exit 1
+            fi
+          done
+          tags=("$IMAGE:$VERSION" "$IMAGE:${VERSION%.*}")
+          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          if [ "$latest" = "v$VERSION" ]; then
+            tags+=("$IMAGE:latest")
+          else
+            echo "the latest release is $latest, so latest stays where it is"
+          fi
+          printf '%s\n' "${tags[@]}" > "$RUNNER_TEMP/tags"
+          cat "$RUNNER_TEMP/tags"
+
+      - name: Log in to the GitHub Container Registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      # The index names both images with their provenance and SBOM.
+      - name: Publish the tags
+        run: |
+          arguments=()
+          while read -r tag; do
+            arguments+=(--tag "$tag")
+          done < "$RUNNER_TEMP/tags"
+          docker buildx imagetools create "${arguments[@]}" "$IMAGE@$AMD64" "$IMAGE@$ARM64"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
