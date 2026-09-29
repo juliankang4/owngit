@@ -51,7 +51,7 @@ func (app *App) handleReleaseDismiss(writer http.ResponseWriter, request *http.R
 	if _, ok := app.requireGeneral(writer, request, settings); !ok {
 		return
 	}
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {

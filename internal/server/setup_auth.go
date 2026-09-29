@@ -70,7 +70,7 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 }
 
 func (app *App) handleSetupRedeem(writer http.ResponseWriter, request *http.Request) {
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.validPreauthCSRF(request, postValue(request, "csrf")) {
@@ -106,7 +106,7 @@ func (app *App) handleSetupRedeem(writer http.ResponseWriter, request *http.Requ
 }
 
 func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Request) {
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	session, ok, err := app.setupSessionForHost(request)
@@ -317,7 +317,7 @@ func (app *App) keepRepositoryContext(request *http.Request, page *webui.AuthPag
 }
 
 func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Request, settings state.Settings, scope webui.AuthScope) {
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.validPreauthCSRF(request, postValue(request, "csrf")) {
@@ -396,7 +396,7 @@ func adminPasswordNotice(request *http.Request, err error, field string) (webui.
 }
 
 func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, scope webui.AuthScope) {
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {

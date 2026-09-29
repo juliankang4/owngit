@@ -423,7 +423,7 @@ func (app *App) startApprovedSession(writer http.ResponseWriter, request *http.R
 
 // handleSetupApprovalRequest asks the terminal to approve this browser.
 func (app *App) handleSetupApprovalRequest(writer http.ResponseWriter, request *http.Request) {
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.validPreauthCSRF(request, postValue(request, "csrf")) {

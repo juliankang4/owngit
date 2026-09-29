@@ -222,7 +222,7 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 	if _, ok := app.requireGeneral(writer, request, settings); !ok {
 		return
 	}
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {

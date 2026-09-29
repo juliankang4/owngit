@@ -33,7 +33,7 @@ func (app *App) handleRestoreGet(writer http.ResponseWriter, request *http.Reque
 }
 
 func (app *App) handleRestorePreview(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {
@@ -67,7 +67,7 @@ func (app *App) renderRestorePreview(writer http.ResponseWriter, request *http.R
 }
 
 func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {

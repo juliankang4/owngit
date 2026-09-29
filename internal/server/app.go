@@ -570,13 +570,26 @@ func localNext(value, fallback string) string {
 	return value
 }
 
-func parseForm(writer http.ResponseWriter, request *http.Request) bool {
+// maximumForm bounds a form sent from a page. The longest pull request text,
+// 64 KiB, is well inside it even when every byte is percent-encoded.
+const maximumForm = 1 << 20
+
+// parseForm reads a form sent from one of this server's pages, and answers
+// the request itself when it cannot. A form over maximumForm is answered with
+// a page that says so: nothing was read, so what was entered cannot be shown
+// again, and the page says that too.
+func (app *App) parseForm(writer http.ResponseWriter, request *http.Request) bool {
 	if !requireFormOrigin(request) {
 		http.Error(writer, "request origin is required", http.StatusForbidden)
 		return false
 	}
-	request.Body = http.MaxBytesReader(writer, request.Body, 1<<20)
+	request.Body = http.MaxBytesReader(writer, request.Body, maximumForm)
 	if err := request.ParseForm(); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			app.renderError(writer, request, http.StatusRequestEntityTooLarge, webui.MsgErrFormTooLarge, "")
+			return false
+		}
 		http.Error(writer, "invalid form", http.StatusBadRequest)
 		return false
 	}

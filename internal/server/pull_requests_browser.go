@@ -145,7 +145,7 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 }
 
 func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {
@@ -194,7 +194,7 @@ type pullRequestDrafts struct {
 }
 
 func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, action string) {
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {

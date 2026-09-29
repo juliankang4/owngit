@@ -463,6 +463,7 @@ const (
 	MsgErrHostRejected MessageCode = "error.host_rejected"
 	MsgErrMethod       MessageCode = "error.method_not_allowed"
 	MsgErrTooLarge     MessageCode = "error.payload_too_large"
+	MsgErrFormTooLarge MessageCode = "error.form_too_large"
 	MsgErrRateLimited  MessageCode = "error.rate_limited"
 	MsgErrInternal     MessageCode = "error.internal"
 	MsgErrUnavailable  MessageCode = "error.unavailable"
@@ -1824,6 +1825,10 @@ var catalog = map[MessageCode]message{
 	MsgErrTooLarge: {
 		en: "That upload is larger than this installation accepts.",
 		ko: "이 서버가 받을 수 있는 크기를 넘었습니다.",
+	},
+	MsgErrFormTooLarge: {
+		en: "This form is larger than 1 MiB, so nothing was read or saved. What you entered cannot be shown here again. Go back, shorten the text, and send it again.",
+		ko: "양식이 1MiB보다 커서 아무것도 읽거나 저장하지 않았습니다. 입력한 내용은 여기서 다시 보여 줄 수 없습니다. 이전 페이지로 돌아가 내용을 줄인 뒤 다시 보내세요.",
 	},
 	MsgErrRateLimited: {
 		en: "Too many requests. Try again shortly.",

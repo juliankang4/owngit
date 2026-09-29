@@ -282,3 +282,31 @@ func TestHelperCredentialUseStaysVisibleBesidePullRequestProvenance(t *testing.T
 		t.Fatalf("helper credential rows=%d err=%v", count, err)
 	}
 }
+
+// A page form larger than OwnGit reads is answered with a page that says so,
+// and that what was entered cannot be shown again, instead of a bare error.
+// Nothing changes.
+func TestBrowserFormOverTheLimitSaysSo(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	csrf := cookieValue(t, jar, server.URL, generalCookie)
+	created := browserForm(t, client, server.URL+"/repositories/project/pull-requests", url.Values{
+		"csrf": {csrf}, "title": {"Described"}, "body": {"Kept"}, "source_branch": {"feature"}, "target_branch": {"main"},
+		"source_oid": {fixture.sourceOID}, "target_oid": {fixture.targetOID},
+	}, server.URL)
+	if created.status != http.StatusSeeOther {
+		t.Fatalf("create status=%d", created.status)
+	}
+	oversized := browserForm(t, client, server.URL+"/repositories/project/pull-requests/1/edit", url.Values{
+		"csrf": {csrf}, "edit_revision": {"0"}, "title": {"Described"}, "body": {strings.Repeat("x", maximumForm)},
+	}, server.URL)
+	if oversized.status != http.StatusRequestEntityTooLarge || !strings.Contains(oversized.body, "This form is larger than 1 MiB") ||
+		!strings.Contains(oversized.body, "cannot be shown here again") {
+		t.Fatalf("oversized form status=%d:\n%s", oversized.status, oversized.body)
+	}
+	record, _, err := fixture.store.PullRequest(context.Background(), "project", 1)
+	noErr(t, err)
+	if record.Body != "Kept" || record.EditRevision != 0 {
+		t.Fatalf("an oversized form changed the record: %+v", record)
+	}
+}

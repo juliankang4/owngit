@@ -73,7 +73,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	if !ok {
 		return
 	}
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {

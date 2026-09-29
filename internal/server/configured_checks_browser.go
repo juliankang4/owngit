@@ -76,7 +76,7 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{}, http.StatusOK)
 		return
 	}
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	action := postValue(request, "action")
@@ -922,7 +922,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 	// Every token change, including a refusal, is private and must not be
 	// cached. No response path puts a token value in a redirect URL.
 	writer.Header().Set("Cache-Control", "no-store")
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	action := postValue(request, "action")

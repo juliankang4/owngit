@@ -83,7 +83,7 @@ func (app *App) handleRepositorySettingsGet(writer http.ResponseWriter, request 
 
 func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, session state.Session) {
 	writer.Header().Set("Cache-Control", "no-store")
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !constantEqual(session.CSRF, postValue(request, "csrf")) {
@@ -188,7 +188,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		app.renderRepositoryDelete(writer, request, stored, chrome, "", http.StatusOK)
 		return
 	}
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !constantEqual(session.CSRF, postValue(request, "csrf")) {

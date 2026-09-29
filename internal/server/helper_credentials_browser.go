@@ -35,7 +35,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 	// Every credential mutation, including an early refusal, is private and
 	// must not be cached. No response path puts a token in a redirect URL.
 	writer.Header().Set("Cache-Control", "no-store")
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	action := postValue(request, "action")

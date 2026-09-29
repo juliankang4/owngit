@@ -29,7 +29,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		app.render(writer, request, http.StatusOK, page)
 		return
 	}
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	page.Name = strings.TrimSpace(postValue(request, "name"))
@@ -148,7 +148,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
-	if !parseForm(writer, request) {
+	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {
