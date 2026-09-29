@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"owngit/internal/state"
@@ -486,5 +490,85 @@ func TestTailscaleRefusedChangeWasNotAppliedWhateverTheReadBackShows(t *testing.
 				t.Fatalf("Tailscale has %+v, want the other user's %+v", serve, meanwhile)
 			}
 		})
+	}
+}
+
+// answerLostConn passes a Serve change to the fake LocalAPI, which applies
+// it, then stops Tailscale and loses the answer, as when Tailscale goes down
+// right after it applied a change. It does so once, while armed.
+type answerLostConn struct {
+	net.Conn
+	fake  *tailscaletest.Fake
+	armed *atomic.Bool
+	post  bool
+}
+
+func (conn *answerLostConn) Write(content []byte) (int, error) {
+	if bytes.HasPrefix(content, []byte("POST ")) {
+		conn.post = true
+	}
+	return conn.Conn.Write(content)
+}
+
+func (conn *answerLostConn) Read(content []byte) (int, error) {
+	if !conn.post || !conn.armed.CompareAndSwap(true, false) {
+		return conn.Conn.Read(content)
+	}
+	if response, err := http.ReadResponse(bufio.NewReader(conn.Conn), nil); err == nil {
+		io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+	}
+	conn.fake.Update(func(s *tailscaletest.State) { s.Status.BackendState = "Stopped" })
+	return 0, io.ErrUnexpectedEOF
+}
+
+// A change whose answer was lost may be in Tailscale even when Tailscale
+// is stopped afterwards: the stopped state explains the failure but is not
+// Tailscale refusing the change. Turning on keeps its pending record, which
+// turning on again confirms, and turning off says the change may be there.
+func TestTailscaleChangeWithALostAnswerMayBeApplied(t *testing.T) {
+	ctx := context.Background()
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	var armed atomic.Bool
+	app.Tailscale.Find = func() (tailscale.Command, error) {
+		command := fake.Command()
+		dial := command.LocalAPI
+		command.LocalAPI = func(ctx context.Context) (net.Conn, string, error) {
+			conn, password, err := dial(ctx)
+			if err != nil {
+				return nil, "", err
+			}
+			return &answerLostConn{Conn: conn, fake: fake, armed: &armed}, password, nil
+		}
+		return command, nil
+	}
+	target := tailscale.Target(7654)
+	running := func() { fake.Update(func(s *tailscaletest.State) { s.Status.BackendState = "Running" }) }
+
+	armed.Store(true)
+	_, err := app.Tailscale.On(ctx, nil, 0)
+	if !errors.Is(err, ErrTailscaleAhead) || !fake.Endpoint(443, target).Exact {
+		t.Fatalf("turning on: err=%v, endpoint %+v", err, fake.Endpoint(443, target))
+	}
+	if _, _, _, record := savedSharing(t, app.Store); record == nil || !record.Created || record.Confirmed {
+		t.Fatalf("record after a lost answer: %+v", record)
+	}
+	running()
+	change, err := app.Tailscale.On(ctx, nil, 0)
+	if err != nil || change.Endpoint != endpointKept || !change.Record.Confirmed {
+		t.Fatalf("turning on again: %+v %v", change, err)
+	}
+
+	armed.Store(true)
+	_, err = app.Tailscale.Off(ctx)
+	if !errors.Is(err, ErrTailscaleAhead) || fake.Endpoint(443, target).Exact {
+		t.Fatalf("turning off: err=%v, endpoint %+v", err, fake.Endpoint(443, target))
+	}
+	running()
+	if _, err := app.Tailscale.Off(ctx); err != nil {
+		t.Fatalf("turning off again: %v", err)
+	}
+	if _, _, _, record := savedSharing(t, app.Store); record != nil {
+		t.Fatalf("record after turning off: %+v", record)
 	}
 }

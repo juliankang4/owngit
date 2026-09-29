@@ -51,7 +51,8 @@ var tailscaleHTTPSPorts = []int{443, 8443, 10000}
 var ErrTailscaleAhead = errors.New("OwnGit's settings were not saved, and Tailscale may already have the change")
 
 // tailscaleMayHave reports whether Tailscale may have a change of its
-// endpoint after the change command returned changeErr and the read back
+// endpoint after the change returned changeErr, as Tailscale answered it and
+// before whyWriteFailed explains it by a later state, and the read back
 // returned readErr: the read back shows the change, or it could not be read
 // while the command succeeded or failed without a refusal (Refused), such as
 // a timeout, so its outcome is unknown. A read back that shows no change
@@ -791,13 +792,14 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 		if sharing.BeforeServe != nil {
 			sharing.BeforeServe(record.Name)
 		}
-		writeErr := whyWriteFailed(ctx, command, command.ServeHTTPS(ctx, config, record.Name, record.HTTPSPort, target))
+		changeErr := command.ServeHTTPS(ctx, config, record.Name, record.HTTPSPort, target)
+		writeErr := whyWriteFailed(ctx, command, changeErr)
 		after, readErr := command.ServeConfig(ctx)
 		shown := readErr == nil && after.Endpoint(record.Name, record.HTTPSPort, target).Exact
 		if writeErr == nil && readErr == nil && !shown {
 			writeErr = &TailscaleError{Problem: TailscaleProblemReadBack, MacApp: command.MacApp}
 		}
-		ahead := tailscaleMayHave(writeErr, readErr, shown)
+		ahead := tailscaleMayHave(changeErr, readErr, shown)
 		if writeErr == nil {
 			writeErr = readErr
 		}
@@ -920,13 +922,14 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 				change.Endpoint = "stale"
 			}
 		case endpoint.Exact:
-			removeErr := whyWriteFailed(ctx, command, command.RemoveHTTPS(ctx, config, record.Name, record.HTTPSPort))
+			changeErr := command.RemoveHTTPS(ctx, config, record.Name, record.HTTPSPort)
+			removeErr := whyWriteFailed(ctx, command, changeErr)
 			after, readErr := command.ServeConfig(ctx)
 			shown := readErr == nil && !after.Endpoint(record.Name, record.HTTPSPort, record.Target).Exact
 			if removeErr == nil && readErr == nil && !shown {
 				removeErr = &TailscaleError{Problem: TailscaleProblemReadBack, MacApp: command.MacApp}
 			}
-			ahead := tailscaleMayHave(removeErr, readErr, shown)
+			ahead := tailscaleMayHave(changeErr, readErr, shown)
 			if removeErr == nil {
 				removeErr = readErr
 			}
