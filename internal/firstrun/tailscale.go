@@ -1,16 +1,9 @@
 package firstrun
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -46,116 +39,42 @@ type Tailscale struct {
 const tailscaleTimeout = 2 * time.Second
 
 // detectTailscale asks Tailscale for its status without changing anything.
-// It finds the command the way Tailscale sharing does (override, when not
-// empty, is the only path tried) and runs only `tailscale status --json`,
-// with a time limit, a minimal environment and no input.
+// It finds Tailscale the way Tailscale sharing does (override, when not
+// empty, is the only tailscale command tried) and reads its status as
+// sharing does, from Tailscale's own service (tailscale.Command.Status).
 func detectTailscale(ctx context.Context, override string, timeout time.Duration) Tailscale {
 	command, err := tailscale.Find(override)
 	if err != nil {
 		return Tailscale{State: TailscaleMissing}
 	}
-	return tailscaleStatus(ctx, command.Path, timeout)
+	return readTailscale(ctx, command, timeout)
 }
 
-func tailscaleStatus(ctx context.Context, executable string, timeout time.Duration) Tailscale {
+// readTailscale reads the status of the Tailscale that command reaches.
+// Tailscale that does not answer in time, or whose answer cannot be read,
+// counts as not found; Tailscale that answers without being connected, or
+// whose service OwnGit cannot use, as installed but not running.
+func readTailscale(ctx context.Context, command tailscale.Command, timeout time.Duration) Tailscale {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, executable, "status", "--json")
-	// A minimal environment: the command finds its daemon by its own
-	// defaults, and nothing from this process, such as a proxy or a token,
-	// is passed on.
-	command.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
-	if home, err := os.UserHomeDir(); err == nil {
-		command.Env = append(command.Env, "HOME="+home)
-	}
-	command.Dir = filepath.Dir(executable)
-	command.Stdin = nil
-	command.Stderr = io.Discard
-	command.WaitDelay = time.Second
-	var output limitedBuffer
-	command.Stdout = &output
-	err := command.Run()
-	if ctx.Err() != nil {
+	status, err := command.Status(ctx)
+	if kind := tailscale.KindOf(err); err != nil && (kind == tailscale.KindTimeout || kind == tailscale.KindUnreadable) {
 		return Tailscale{State: TailscaleMissing}
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		// The command answered but could not report a running Tailscale,
-		// for example because its daemon is not running.
+	if err != nil || status.BackendState != "Running" {
 		return Tailscale{State: TailscaleStopped}
 	}
-	if err != nil || output.overflow {
-		return Tailscale{State: TailscaleMissing}
-	}
-	return parseTailscaleStatus(output.Bytes())
-}
-
-// parseTailscaleStatus reads the parts of `tailscale status --json` setup
-// uses. Anything unexpected means not detected.
-func parseTailscaleStatus(content []byte) Tailscale {
-	var status struct {
-		BackendState string
-		Self         *struct {
-			DNSName      string
-			TailscaleIPs []string
-		}
-	}
-	if err := json.Unmarshal(content, &status); err != nil || status.BackendState == "" {
-		return Tailscale{State: TailscaleMissing}
-	}
-	if status.BackendState != "Running" {
-		return Tailscale{State: TailscaleStopped}
-	}
-	if status.Self == nil {
-		return Tailscale{State: TailscaleMissing}
-	}
-	found := Tailscale{State: TailscaleRunning}
-	for _, address := range status.Self.TailscaleIPs {
-		if ip := net.ParseIP(address); ip != nil && ip.To4() != nil {
-			found.IPv4 = ip.To4().String()
+	found := Tailscale{State: TailscaleRunning, Name: status.Name}
+	for _, address := range status.Addresses {
+		if address.Is4() {
+			found.IPv4 = address.String()
 			break
 		}
 	}
 	if found.IPv4 == "" {
 		return Tailscale{State: TailscaleMissing}
 	}
-	if name := strings.TrimSuffix(strings.ToLower(status.Self.DNSName), "."); validHostName(name) {
-		found.Name = name
-	}
 	return found
-}
-
-// validHostName accepts a DNS name made of letters, digits and hyphens, so
-// nothing else can reach the printed command.
-func validHostName(name string) bool {
-	if name == "" || len(name) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(name, ".") {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, c := range label {
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// limitedBuffer keeps at most 4 MiB of command output.
-type limitedBuffer struct {
-	bytes.Buffer
-	overflow bool
-}
-
-func (buffer *limitedBuffer) Write(p []byte) (int, error) {
-	if buffer.Len()+len(p) > 4<<20 {
-		buffer.overflow = true
-		return len(p), nil
-	}
-	return buffer.Buffer.Write(p)
 }
 
 // tailscaleCommand is the command that saves network settings for the

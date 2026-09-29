@@ -4,83 +4,55 @@ package firstrun
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"owngit/internal/tailscale/tailscaletest"
 )
 
-// fakeTailscale writes a fake tailscale command that records its arguments
-// and then runs body. All values are synthetic.
-func fakeTailscale(t *testing.T, body string) (string, string) {
-	t.Helper()
-	dir := t.TempDir()
-	record := filepath.Join(dir, "arguments")
-	path := filepath.Join(dir, "tailscale")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + record + "'\nenv > '" + record + ".env'\n" + body + "\n"
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return path, record
-}
-
+// Setup only reads Tailscale's status, from the fake's LocalAPI here, and
+// tells running, installed but not running, and not found apart. All values
+// are synthetic.
 func TestTailscaleDetectionIsReadOnly(t *testing.T) {
-	running := `echo '{"BackendState":"Running","Self":{"DNSName":"my-mac.tail0000.ts.net.","TailscaleIPs":["fd7a:115c:a1e0::7","100.64.0.7"]}}'`
+	running := tailscaletest.Running()
 	for _, c := range []struct {
-		name string
-		body string
-		want Tailscale
+		name   string
+		change func(*tailscaletest.State)
+		want   Tailscale
 	}{
-		{"found", running, Tailscale{State: TailscaleRunning, IPv4: "100.64.0.7", Name: "my-mac.tail0000.ts.net"}},
-		{"no MagicDNS", `echo '{"BackendState":"Running","Self":{"DNSName":"","TailscaleIPs":["100.64.0.7"]}}'`, Tailscale{State: TailscaleRunning, IPv4: "100.64.0.7"}},
-		{"stopped", `echo '{"BackendState":"Stopped","Self":null}'`, Tailscale{State: TailscaleStopped}},
-		{"logged out", `echo '{"BackendState":"NeedsLogin"}'`, Tailscale{State: TailscaleStopped}},
-		{"daemon not running", `echo 'failed to connect to local tailscaled' >&2; exit 1`, Tailscale{State: TailscaleStopped}},
-		{"malformed", `echo '{"BackendState":'`, Tailscale{State: TailscaleMissing}},
-		{"no IPv4", `echo '{"BackendState":"Running","Self":{"TailscaleIPs":["fd7a::7"]}}'`, Tailscale{State: TailscaleMissing}},
-		{"hostile name", `echo '{"BackendState":"Running","Self":{"DNSName":"x\u001b[2J.ts.net.","TailscaleIPs":["100.64.0.7"]}}'`, Tailscale{State: TailscaleRunning, IPv4: "100.64.0.7"}},
-		{"timeout", `sleep 5`, Tailscale{State: TailscaleMissing}},
+		{"found", func(*tailscaletest.State) {}, Tailscale{State: TailscaleRunning, IPv4: tailscaletest.IPv4, Name: tailscaletest.Name}},
+		{"no MagicDNS name", func(s *tailscaletest.State) { s.Status.Self.DNSName = "" }, Tailscale{State: TailscaleRunning, IPv4: tailscaletest.IPv4}},
+		{"stopped", func(s *tailscaletest.State) { s.Status.BackendState, s.Status.Self = "Stopped", nil }, Tailscale{State: TailscaleStopped}},
+		{"logged out", func(s *tailscaletest.State) { s.Status.BackendState = "NeedsLogin" }, Tailscale{State: TailscaleStopped}},
+		{"daemon not running", func(s *tailscaletest.State) { s.NotRunning = true }, Tailscale{State: TailscaleStopped}},
+		{"status failed", func(s *tailscaletest.State) { s.StatusError = "synthetic failure" }, Tailscale{State: TailscaleStopped}},
+		{"no IPv4", func(s *tailscaletest.State) { s.Status.Self.TailscaleIPs = []string{tailscaletest.IPv6} }, Tailscale{State: TailscaleMissing}},
+		{"hostile name", func(s *tailscaletest.State) { s.Status.Self.DNSName = "x\u001b[2J.ts.net." }, Tailscale{State: TailscaleRunning, IPv4: tailscaletest.IPv4}},
+		{"timeout", func(s *tailscaletest.State) { s.ReadDelay = 1200 }, Tailscale{State: TailscaleMissing}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			path, record := fakeTailscale(t, c.body)
-			t.Setenv("OWNGIT_TEST_SECRET", "must-not-leak")
+			state := tailscaletest.State{Status: running}
+			state.Status.Self = &tailscaletest.Self{DNSName: running.Self.DNSName, TailscaleIPs: running.Self.TailscaleIPs}
+			c.change(&state)
+			fake := tailscaletest.New(t, state)
 			started := time.Now()
-			got := detectTailscale(context.Background(), path, 500*time.Millisecond)
+			got := readTailscale(context.Background(), fake.Command(), 300*time.Millisecond)
 			if got != c.want {
 				t.Fatalf("got %+v want %+v", got, c.want)
 			}
-			if time.Since(started) > 3*time.Second {
+			if time.Since(started) > time.Second {
 				t.Fatal("detection was not bounded")
 			}
-			arguments, _ := os.ReadFile(record)
-			if strings.TrimSpace(string(arguments)) != "status --json" {
-				t.Fatalf("tailscale was run with %q", arguments)
-			}
-			environment, _ := os.ReadFile(record + ".env")
-			if strings.Contains(string(environment), "must-not-leak") {
-				t.Fatal("the environment was passed on")
+			if writes := fake.Writes(); len(writes) != 0 {
+				t.Fatalf("detection asked Tailscale for %q", writes)
 			}
 		})
 	}
 	if got := detectTailscale(context.Background(), filepath.Join(t.TempDir(), "absent"), time.Second); got.State != TailscaleMissing {
 		t.Fatalf("missing command: %+v", got)
-	}
-}
-
-// Without --tailscale, setup finds the command where Tailscale sharing does,
-// starting with PATH.
-func TestTailscaleDetectionFindsTheCommandOnPath(t *testing.T) {
-	path, record := fakeTailscale(t, `echo '{"BackendState":"Running","Self":{"DNSName":"my-mac.tail0000.ts.net.","TailscaleIPs":["100.64.0.7"]}}'`)
-	t.Setenv("PATH", filepath.Dir(path))
-	want := Tailscale{State: TailscaleRunning, IPv4: "100.64.0.7", Name: "my-mac.tail0000.ts.net"}
-	if got := detectTailscale(context.Background(), "", 2*time.Second); got != want {
-		t.Fatalf("got %+v want %+v", got, want)
-	}
-	if arguments, _ := os.ReadFile(record); strings.TrimSpace(string(arguments)) != "status --json" {
-		t.Fatalf("tailscale was run with %q", arguments)
 	}
 }
 
