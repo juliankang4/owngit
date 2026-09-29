@@ -15,7 +15,7 @@ import (
 func repoCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		printRepoUsage(os.Stderr)
-		return cliProblem("invalid_arguments", "repo requires list, show, create, or settings.")
+		return cliProblem("invalid_arguments", "repo requires list, show, create, settings, kept-history, or restore.")
 	}
 	if isHelpArgument(arguments[0]) {
 		printRepoUsage(os.Stdout)
@@ -30,6 +30,10 @@ func repoCommand(arguments []string) error {
 		return repoCreate(arguments[1:])
 	case "settings":
 		return repoSettings(arguments[1:])
+	case "kept-history":
+		return repoKeptHistory(arguments[1:])
+	case "restore":
+		return repoRestore(arguments[1:])
 	default:
 		return cliProblem("invalid_arguments", "Unknown repo command: "+arguments[0])
 	}
@@ -153,10 +157,12 @@ func repoSettings(arguments []string) error {
 }
 
 func printRepoUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit repo <list|show|create|settings> [options]")
+	fmt.Fprintln(writer, "Usage: owngit repo <list|show|create|settings|kept-history|restore> [options]")
 	fmt.Fprintln(writer, "Lists, shows, and creates repositories with general access and prints JSON. There is no delete or rename.")
 	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server (and --repository for show and settings) default to its origin remote.")
 	fmt.Fprintln(writer, "repo settings shows and changes one repository's kept history and default branch protection; see owngit repo settings --help.")
+	fmt.Fprintln(writer, "repo kept-history lists the history kept from overwritten and deleted branches and tags.")
+	fmt.Fprintln(writer, "repo restore previews and restores files from an earlier commit; see owngit repo restore --help.")
 }
 
 func printRepoSettingsUsage(writer io.Writer) {

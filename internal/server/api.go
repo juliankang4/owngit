@@ -73,6 +73,9 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		case "archive":
 			app.handleArchiveAPI(writer, request, settings, repositoryID, remainder)
 			return
+		case "kept-history", "restore":
+			app.handleRestoreAPI(writer, request, settings, repositoryID, resource, remainder)
+			return
 		}
 	}
 	if !app.authorizeAPI(writer, request, settings) {

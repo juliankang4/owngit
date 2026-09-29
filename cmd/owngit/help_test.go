@@ -19,6 +19,7 @@ var helpCommands = []struct {
 	{"tailscale", false}, {"tailscale status", true}, {"tailscale on", true}, {"tailscale off", true},
 	{"forget-check-container", true}, {"backup", true}, {"backup verify", true}, {"restore", true}, {"upgrade-backup", true}, {"tray", true},
 	{"repo", false}, {"repo list", true}, {"repo show", true}, {"repo create", true},
+	{"repo kept-history", true}, {"repo restore", false}, {"repo restore preview", true}, {"repo restore apply", true},
 	{"pr", false}, {"pr create", true}, {"pr list", true}, {"pr show", true}, {"pr diff", true},
 	{"pr review", false}, {"pr review request", true}, {"pr review submit", true}, {"pr review skip", true},
 	{"pr mergeability", true}, {"pr merge", true},
@@ -132,6 +133,8 @@ func TestActionHelpListsOnlyItsOwnOptions(t *testing.T) {
 		{"repo list", []string{"--server", "--password-file"}, []string{"--repository", "--name"}},
 		{"repo show", []string{"--repository"}, []string{"--name"}},
 		{"repo create", []string{"--name", "--description"}, []string{"--repository"}},
+		{"repo restore preview", []string{"--source OID", "--target BRANCH", "--path FILE"}, []string{"--expected-head"}},
+		{"repo restore apply", []string{"--source OID", "--target BRANCH", "--path FILE", "--expected-head OID"}, nil},
 	} {
 		output, err := captureStdout(func() error { return run(append(strings.Fields(test.path), "--help")) })
 		if err != nil {

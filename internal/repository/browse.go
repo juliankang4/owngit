@@ -60,9 +60,14 @@ type Commit struct {
 }
 
 type ChangedFile struct {
-	Path      string
-	OldPath   string
-	Status    string
+	Path    string
+	OldPath string
+	Status  string
+	// OldMode and NewMode are the Git file modes before and after the
+	// change, such as 100644, 100755, 120000 (a symbolic link) or 160000 (a
+	// submodule), and 000000 where the path did not exist.
+	OldMode   string
+	NewMode   string
 	Additions int
 	Deletions int
 	Binary    bool

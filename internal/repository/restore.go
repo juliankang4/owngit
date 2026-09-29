@@ -396,30 +396,17 @@ func (m *Manager) emptyTree(ctx context.Context, repositoryPath string) (string,
 	return strings.TrimSpace(string(result.Stdout)), nil
 }
 
+// restoreChanges lists every path whose Git entry differs between oldTree
+// and newTree, with its modes, so a symbolic link or a mode change is
+// reported as the Git data it is.
 func (m *Manager) restoreChanges(ctx context.Context, repositoryPath, oldTree, newTree string) ([]ChangedFile, error) {
-	statusResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--no-commit-id", "--name-status", "--no-renames", "-r", "-z", oldTree, newTree)
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--no-commit-id", "--raw", "--numstat", "--no-renames", "--no-ext-diff", "--no-textconv", "-r", "-z", oldTree, newTree)
 	if err != nil {
 		return nil, fmt.Errorf("read restore changes: %w", err)
 	}
-	tokens := bytes.Split(statusResult.Stdout, []byte{0})
-	var changes []ChangedFile
-	for index := 0; index+1 < len(tokens) && len(tokens[index]) != 0; index += 2 {
-		status := tokens[index]
-		if len(status) != 1 || len(tokens[index+1]) == 0 {
-			return nil, errors.New("Git returned malformed restore changes")
-		}
-		changes = append(changes, ChangedFile{Path: string(tokens[index+1]), Status: changedStatus(status[0])})
-	}
-	numResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--no-commit-id", "--numstat", "--no-renames", "-r", "-z", oldTree, newTree)
-	if err != nil {
-		return nil, fmt.Errorf("read restore change sizes: %w", err)
-	}
-	counts := parseNumstat(numResult.Stdout)
-	for index := range changes {
-		count := counts[changes[index].Path]
-		changes[index].Additions = count.additions
-		changes[index].Deletions = count.deletions
-		changes[index].Binary = count.binary
+	changes, end, complete, _ := parseChanges(result.Stdout)
+	if !complete || end != len(result.Stdout) {
+		return nil, errors.New("Git returned malformed restore changes")
 	}
 	return changes, nil
 }

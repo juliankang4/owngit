@@ -634,7 +634,10 @@ func parseChanges(data []byte) (files []ChangedFile, end int, complete, separate
 		if !ok || len(fields) != 5 || len(path) == 0 {
 			return files, start, false, false
 		}
-		files = append(files, ChangedFile{Path: string(path), Status: changedStatus(fields[4][0])})
+		files = append(files, ChangedFile{
+			Path: string(path), Status: changedStatus(fields[4][0]),
+			OldMode: strings.TrimPrefix(fields[0], ":"), NewMode: fields[1],
+		})
 	}
 	counts := make(map[string]lineCount, len(files))
 	for position < len(data) {

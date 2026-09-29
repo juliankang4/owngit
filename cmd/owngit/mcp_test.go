@@ -302,7 +302,7 @@ func TestMCPReadToolsReturnTheCommandLineJSON(t *testing.T) {
 
 	names, schemas := session.toolNames()
 	if got := strings.Join(names, " "); strings.Contains(got, "check_") || !strings.Contains(got, "pull_request_diff pull_request_edit pull_request_list") ||
-		!strings.Contains(got, "pull_request_show repository_list repository_show") {
+		!strings.Contains(got, "pull_request_show repository_kept_history repository_list repository_restore_apply repository_restore_preview repository_show") {
 		t.Fatalf("tools without a helper credential: %s", got)
 	}
 	if _, ok := schemas["pull_request_show"].Properties["repository"]; ok {
@@ -693,7 +693,7 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	names, _ := session.toolNames()
 	if got := strings.Join(names, " "); got != "check_config_show check_cycle_list check_cycle_reserve check_log check_run check_status check_task_create check_task_list "+
 		"pull_request_close pull_request_create pull_request_diff pull_request_edit pull_request_list pull_request_merge pull_request_mergeability pull_request_reopen pull_request_review "+
-		"pull_request_review_request pull_request_review_skip pull_request_show repository_list repository_show" {
+		"pull_request_review_request pull_request_review_skip pull_request_show repository_kept_history repository_list repository_restore_apply repository_restore_preview repository_show" {
 		t.Fatalf("tools: %s", got)
 	}
 
@@ -952,7 +952,7 @@ func TestMCPBinaryRoundTrip(t *testing.T) {
 		t.Fatalf("initialize: %s", response.Result)
 	}
 	session.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	if names, _ := session.toolNames(); len(names) != 22 {
+	if names, _ := session.toolNames(); len(names) != 25 {
 		t.Fatalf("tools: %v", names)
 	}
 	if text, isError := session.call("pull_request_list", nil); isError || text != `{"ok":true,"pull_requests":[]}` {

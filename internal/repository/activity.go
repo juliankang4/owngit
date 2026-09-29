@@ -30,7 +30,10 @@ type Activity struct {
 }
 
 type RetainedRef struct {
-	Kind      string
+	Kind string
+	// Source is the full name of the branch or tag whose earlier value this
+	// is, such as refs/heads/main.
+	Source    string
 	OID       string
 	CommitOID string
 	Commit    Commit
@@ -349,7 +352,7 @@ func retainedRefs(ctx context.Context, runner retainedRunner, repositoryPath str
 		if err != nil {
 			return nil, err
 		}
-		retained = append(retained, RetainedRef{Kind: candidate.kind, OID: candidate.oid, CommitOID: commitOID})
+		retained = append(retained, RetainedRef{Kind: candidate.kind, Source: candidate.source, OID: candidate.oid, CommitOID: commitOID})
 		if commitOID != "" {
 			commitOIDs = append(commitOIDs, commitOID)
 		}

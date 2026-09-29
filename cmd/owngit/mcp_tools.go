@@ -39,6 +39,8 @@ type toolInputField struct {
 	Minimum     int      `json:"minimum,omitempty"`
 	Pattern     string   `json:"pattern,omitempty"`
 	Default     any      `json:"default,omitempty"`
+	// Items describes the elements of an array field.
+	Items *toolInputField `json:"items,omitempty"`
 }
 
 type toolAnnotations struct {
@@ -355,6 +357,7 @@ func (server *mcpServer) buildTools() []mcpTool {
 			},
 		},
 	}
+	tools = append(tools, server.restoreTools()...)
 	if server.checks != nil {
 		tools = append(tools,
 			mcpTool{
