@@ -440,3 +440,57 @@ func TestBackupWhileServingWithSharedRepositories(t *testing.T) {
 		t.Fatalf("verification=%+v", verification)
 	}
 }
+
+// HEAD is read from the files backend's HEAD file and from the reftable
+// backend's tables alike: symbolic, detached, and symbolic to a branch that
+// does not exist yet. Each backup restores the same HEAD.
+func TestBackupReadsHeadInEachRefBackend(t *testing.T) {
+	for _, backend := range []string{refStorageFiles, refStorageReftable} {
+		t.Run(backend, func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			store, manager := newBackupStore(t, root)
+			project, err := manager.Path("project")
+			noErr(t, err)
+			tip := gitOutput(t, project, "--git-dir", ".", "rev-parse", "refs/heads/main")
+			heads := map[string]Head{}
+			for _, name := range []string{"symbolic", "detached", "unborn"} {
+				id := backend + "-" + name
+				path := filepath.Join(filepath.Dir(project), id+".git")
+				if output, err := gitCombined("", "init", "--bare", "--quiet", "--ref-format="+backend, "--initial-branch=main", path); err != nil {
+					t.Skipf("this Git cannot create a %s repository: %v %s", backend, err, output)
+				}
+				noErr(t, store.AddRepository(ctx, state.Repository{ID: id, Name: id, CreatedAt: time.Now().UTC().Truncate(time.Second)}))
+				switch name {
+				case "symbolic":
+					runGit(t, project, "--git-dir", ".", "push", "--quiet", path, "refs/heads/main:refs/heads/main")
+					heads[id] = Head{Symbolic: "refs/heads/main"}
+				case "detached":
+					runGit(t, project, "--git-dir", ".", "push", "--quiet", path, "refs/heads/main:refs/heads/other")
+					runGit(t, path, "--git-dir", ".", "update-ref", "--no-deref", "HEAD", tip)
+					heads[id] = Head{OID: tip}
+				case "unborn":
+					heads[id] = Head{Symbolic: "refs/heads/main"}
+				}
+			}
+			backup := filepath.Join(root, "backup")
+			_, err = CreateWhileServing(ctx, store, manager, backup)
+			noErr(t, err)
+			manifest, err := readManifest(filepath.Join(backup, manifestName))
+			noErr(t, err)
+			for _, item := range manifest.Repositories {
+				want, checked := heads[item.ID]
+				if checked && (item.Head != want || item.Empty != strings.HasSuffix(item.ID, "unborn")) {
+					t.Fatalf("%s head=%+v empty=%v, want %+v", item.ID, item.Head, item.Empty, want)
+				}
+			}
+			temporary := filepath.Join(root, "temporary")
+			noErr(t, os.Mkdir(temporary, 0o700))
+			verification, err := Verify(ctx, backup, temporary, "")
+			noErr(t, err)
+			if !verification.Verified {
+				t.Fatalf("verification=%+v", verification)
+			}
+		})
+	}
+}

@@ -440,20 +440,12 @@ func createBackup(ctx context.Context, store *state.Store, manager *repository.M
 	addPullRequestState(&manifest, snapshot)
 	addCheckState(&manifest, snapshot)
 	addImportState(&manifest, snapshot)
-	objectFormats := make([]string, len(captured.repositories))
 	for index := range captured.repositories {
 		item := &captured.repositories[index].item
-		folder := captured.repositories[index].path
-		if err := refuseBorrowedObjects(ctx, runner, item.ID, folder); err != nil {
-			return err
-		}
-		if objectFormats[index], err = manager.ObjectFormat(ctx, folder); err != nil {
-			return fmt.Errorf("inspect repository %q: %w", item.ID, err)
-		}
 		if item.Empty {
 			hold.Release(item.ID)
-			if objectFormats[index] == repository.ObjectFormatSHA256 {
-				item.ObjectFormat = objectFormats[index]
+			if captured.repositories[index].objectFormat == repository.ObjectFormatSHA256 {
+				item.ObjectFormat = repository.ObjectFormatSHA256
 			}
 		} else {
 			item.Bundle = path.Join("repositories", item.ID+".bundle")
@@ -500,7 +492,7 @@ func createBackup(ctx context.Context, store *state.Store, manager *repository.M
 			continue
 		}
 		bundlePath := filepath.Join(stage, filepath.FromSlash(item.Bundle))
-		if err := bundleCaptured(ctx, runner, captured.repositories[index], objectFormats[index], captureRoot, bundlePath); err != nil {
+		if err := bundleCaptured(ctx, runner, captured.repositories[index], captureRoot, bundlePath); err != nil {
 			return err
 		}
 		if err := syncRegularFile(bundlePath); err != nil {
@@ -821,7 +813,7 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	return nil
 }
 
-func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath string, stored state.Repository) (RepositoryManifest, error) {
+func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath string, stored state.Repository, refStorage string) (RepositoryManifest, error) {
 	item := RepositoryManifest{
 		ID: stored.ID, Name: stored.Name, Description: stored.Description, CreatedAt: stored.CreatedAt,
 		AttemptSequence: stored.AttemptSequence,
@@ -831,25 +823,66 @@ func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath
 		return RepositoryManifest{}, err
 	}
 	item.Refs = refs
-	// Only a symbolic HEAD can name a branch that does not exist yet, so a
-	// repository is empty only when HEAD is symbolic and no ref exists. Any
-	// other failure to read HEAD fails, so history is never left out.
-	symbolic, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--quiet", "HEAD")
-	if err == nil {
-		item.Head.Symbolic = strings.TrimSpace(string(symbolic.Stdout))
-	} else if code, ok := gitexec.ExitCode(err); ok && code == 1 {
-		// Exit status 1 without a message: HEAD is detached. ^{object}
-		// requires the object to exist, which a full ID alone does not.
-		detached, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "HEAD^{object}")
-		if err != nil {
-			return RepositoryManifest{}, fmt.Errorf("detached HEAD cannot be resolved: %w", err)
-		}
-		item.Head.OID = strings.TrimSpace(string(detached.Stdout))
-	} else {
-		return RepositoryManifest{}, fmt.Errorf("read HEAD: %w", err)
+	if item.Head, err = readHead(ctx, runner, repositoryPath, refStorage); err != nil {
+		return RepositoryManifest{}, err
 	}
+	// Only a symbolic HEAD can name a branch that does not exist yet, so a
+	// repository is empty only when HEAD is symbolic and no ref exists.
 	item.Empty = len(refs) == 0 && item.Head.OID == ""
 	return item, nil
+}
+
+// readHead reads HEAD as symbolic or detached. The files backend keeps it
+// in the HEAD file, read without starting Git; the reftable backend keeps
+// it in its tables, so Git reads it there. A HEAD that is neither fails, so
+// history is never left out. A detached HEAD's object is checked by the
+// caller.
+func readHead(ctx context.Context, runner commandRunner, repositoryPath, refStorage string) (Head, error) {
+	if refStorage == refStorageFiles {
+		return readHeadFile(repositoryPath)
+	}
+	symbolic, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--quiet", "HEAD")
+	if err == nil {
+		return Head{Symbolic: strings.TrimSpace(string(symbolic.Stdout))}, nil
+	}
+	if code, ok := gitexec.ExitCode(err); !ok || code != 1 {
+		return Head{}, fmt.Errorf("read HEAD: %w", err)
+	}
+	// Exit status 1 without a message: HEAD is detached.
+	detached, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return Head{}, fmt.Errorf("detached HEAD cannot be resolved: %w", err)
+	}
+	return Head{OID: strings.TrimSpace(string(detached.Stdout))}, nil
+}
+
+// readHeadFile parses a files-backend HEAD (gitrepository-layout(5)): a
+// regular file holding "ref: " and a ref name, or an object ID.
+func readHeadFile(repositoryPath string) (Head, error) {
+	headPath := filepath.Join(repositoryPath, "HEAD")
+	info, err := os.Lstat(headPath)
+	if err != nil {
+		return Head{}, fmt.Errorf("read HEAD: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > 4096 {
+		return Head{}, errors.New("HEAD is not a file Git writes")
+	}
+	content, err := os.ReadFile(headPath)
+	if err != nil {
+		return Head{}, fmt.Errorf("read HEAD: %w", err)
+	}
+	line, _ := strings.CutSuffix(string(content), "\n")
+	if target, symbolic := strings.CutPrefix(line, "ref:"); symbolic {
+		target = strings.TrimLeft(target, " \t")
+		if !validRefName(target) {
+			return Head{}, errors.New("HEAD names an invalid ref")
+		}
+		return Head{Symbolic: target}, nil
+	}
+	if !validOID(line) {
+		return Head{}, errors.New("HEAD is neither a ref nor an object ID")
+	}
+	return Head{OID: line}, nil
 }
 
 func readRefs(ctx context.Context, runner commandRunner, repositoryPath string) ([]Ref, error) {

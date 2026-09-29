@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -39,9 +40,16 @@ const (
 	// named.
 	captureRetryPause = 5 * time.Second
 	captureLimit      = 2 * time.Minute
-	// captureReaders read refs of that many repositories at once, so the
-	// last repository is released sooner.
-	captureReaders = 4
+)
+
+// captureReaders read refs of that many repositories at once, so the last
+// repository is released sooner.
+var captureReaders = min(8, runtime.NumCPU())
+
+// Ref storage backends (extensions.refStorage).
+const (
+	refStorageFiles    = "files"
+	refStorageReftable = "reftable"
 )
 
 // CaptureReport says how a backup affected OwnGit's work.
@@ -62,6 +70,15 @@ type CaptureReport struct {
 type capturedRepository struct {
 	item RepositoryManifest
 	path string
+	repositoryStorage
+}
+
+// repositoryStorage is how a repository stores objects and refs, read from
+// its configuration before the instant, so no Git process for it runs while
+// writes wait.
+type repositoryStorage struct {
+	objectFormat string
+	refStorage   string
 }
 
 type capturedState struct {
@@ -111,6 +128,21 @@ func captureOnce(ctx context.Context, store *state.Store, manager *repository.Ma
 	if preparing := preparingRepositories(manager, ids); preparing != "" {
 		return capturedState{}, preparing, nil
 	}
+	folders := make(map[string]capturedRepository, len(ids))
+	for _, id := range ids {
+		if err := repository.ValidateID(id); err != nil {
+			return capturedState{}, "", fmt.Errorf("repository %q has an unsupported ID: %w", id, err)
+		}
+		path, err := manager.StoragePath(id)
+		if err != nil {
+			return capturedState{}, "", fmt.Errorf("open repository %q: %w", id, err)
+		}
+		storage, err := readRepositoryStorage(ctx, runner, id, path)
+		if err != nil {
+			return capturedState{}, "", err
+		}
+		folders[id] = capturedRepository{path: path, repositoryStorage: storage}
+	}
 
 	locks := &captureLocks{manager: manager, taken: map[string]time.Time{}}
 	defer locks.releaseAll()
@@ -142,17 +174,10 @@ func captureOnce(ctx context.Context, store *state.Store, manager *repository.Ma
 
 	repositories := make([]capturedRepository, len(roster))
 	for index, stored := range roster {
-		if err := repository.ValidateID(stored.ID); err != nil {
-			return capturedState{}, "", fmt.Errorf("repository %q has an unsupported ID: %w", stored.ID, err)
-		}
 		if manager.UnsettledRefWriter(stored.ID) {
 			return capturedState{}, "", fmt.Errorf("repository %q: an import's Git process that writes its refs could not be stopped and may still change them; restart OwnGit, then back up again", stored.ID)
 		}
-		path, err := manager.StoragePath(stored.ID)
-		if err != nil {
-			return capturedState{}, "", fmt.Errorf("open repository %q: %w", stored.ID, err)
-		}
-		repositories[index] = capturedRepository{path: path}
+		repositories[index] = folders[stored.ID]
 	}
 	if err := readCapturedRefs(ctx, runner, roster, repositories, locks, report); err != nil {
 		return capturedState{}, "", err
@@ -186,13 +211,22 @@ func readCapturedRefs(ctx context.Context, runner commandRunner, roster []state.
 	for range min(captureReaders, len(roster)) {
 		workers.Go(func() {
 			for index := range indexes {
-				item, err := inspectRepository(ctx, runner, repositories[index].path, roster[index])
+				captured := &repositories[index]
+				item, err := inspectRepository(ctx, runner, captured.path, roster[index], captured.refStorage)
 				locks.release(roster[index].ID, report)
+				// Objects are never removed while the backup holds the
+				// repository, so a detached HEAD's object is checked after
+				// the lock is released.
+				if err == nil && item.Head.OID != "" {
+					if _, err = runner.Run(ctx, captured.path, nil, "--git-dir", ".", "cat-file", "-e", item.Head.OID+"^{object}"); err != nil {
+						err = fmt.Errorf("detached HEAD names a missing object: %w", err)
+					}
+				}
 				if err != nil {
 					failures[index] = fmt.Errorf("inspect repository %q: %w", roster[index].ID, err)
 					continue
 				}
-				repositories[index].item = item
+				captured.item = item
 			}
 		})
 	}
@@ -260,10 +294,10 @@ func (locks *captureLocks) releaseAll() {
 // exactly the captured refs and HEAD and reads the objects of the
 // repository through objects/info/alternates. That repository is removed
 // once the bundle is written.
-func bundleCaptured(ctx context.Context, runner commandRunner, captured capturedRepository, objectFormat, captureRoot, bundlePath string) error {
+func bundleCaptured(ctx context.Context, runner commandRunner, captured capturedRepository, captureRoot, bundlePath string) error {
 	item := captured.item
 	capturePath := filepath.Join(captureRoot, item.ID+".git")
-	if _, err := runner.Run(ctx, "", nil, "init", "--bare", "--quiet", "--object-format="+objectFormat, capturePath); err != nil {
+	if _, err := runner.Run(ctx, "", nil, "init", "--bare", "--quiet", "--object-format="+captured.objectFormat, capturePath); err != nil {
 		return err
 	}
 	alternates := filepath.Join(capturePath, "objects", "info", "alternates")
@@ -310,24 +344,45 @@ func alternatesLine(objectsPath string) string {
 	return `"` + replacer.Replace(objectsPath) + "\"\n"
 }
 
-// refuseBorrowedObjects refuses a repository that keeps part of its objects
-// elsewhere: in another repository (objects/info/alternates) or on a
-// promisor remote (a partial clone). OwnGit creates neither, and a backup
-// could not keep the other place from removing them.
-func refuseBorrowedObjects(ctx context.Context, runner commandRunner, id, path string) error {
+// readRepositoryStorage reads the object format and ref backend of a
+// repository in one Git call, and refuses a repository that keeps part of
+// its objects elsewhere: in another repository (objects/info/alternates) or
+// on a promisor remote (a partial clone). OwnGit creates neither, and a
+// backup could not keep the other place from removing them.
+func readRepositoryStorage(ctx context.Context, runner commandRunner, id, path string) (repositoryStorage, error) {
 	if _, err := os.Lstat(filepath.Join(path, "objects", "info", "alternates")); err == nil {
-		return fmt.Errorf("repository %q borrows objects from another repository (objects/info/alternates), which OwnGit cannot back up; repack it so it holds its own objects", id)
+		return repositoryStorage{}, fmt.Errorf("repository %q borrows objects from another repository (objects/info/alternates), which OwnGit cannot back up; repack it so it holds its own objects", id)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect repository %q: %w", id, err)
+		return repositoryStorage{}, fmt.Errorf("inspect repository %q: %w", id, err)
 	}
-	_, err := runner.Run(ctx, path, nil, "--git-dir", ".", "config", "--local", "--get-regexp", `^(extensions\.partialclone|remote\..*\.promisor)$`)
-	if err == nil {
-		return fmt.Errorf("repository %q is a partial clone whose missing objects are on another server, which OwnGit cannot back up", id)
+	storage := repositoryStorage{objectFormat: repository.ObjectFormatSHA1, refStorage: refStorageFiles}
+	result, err := runner.Run(ctx, path, nil, "--git-dir", ".", "config", "--local", "--get-regexp",
+		`^(extensions\.(objectformat|refstorage|partialclone)|remote\..*\.promisor)$`)
+	if err != nil {
+		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
+			return storage, nil
+		}
+		return repositoryStorage{}, fmt.Errorf("inspect repository %q: %w", id, err)
 	}
-	if code, ok := gitexec.ExitCode(err); ok && code == 1 {
-		return nil
+	for _, line := range strings.Split(strings.TrimSpace(string(result.Stdout)), "\n") {
+		key, value, _ := strings.Cut(line, " ")
+		value = strings.ToLower(strings.TrimSpace(value))
+		switch key {
+		case "extensions.objectformat":
+			if value != repository.ObjectFormatSHA1 && value != repository.ObjectFormatSHA256 {
+				return repositoryStorage{}, fmt.Errorf("repository %q uses unsupported object format %q", id, value)
+			}
+			storage.objectFormat = value
+		case "extensions.refstorage":
+			if value != refStorageFiles && value != refStorageReftable {
+				return repositoryStorage{}, fmt.Errorf("repository %q uses unsupported ref storage %q", id, value)
+			}
+			storage.refStorage = value
+		default:
+			return repositoryStorage{}, fmt.Errorf("repository %q is a partial clone whose missing objects are on another server, which OwnGit cannot back up", id)
+		}
 	}
-	return fmt.Errorf("inspect repository %q: %w", id, err)
+	return storage, nil
 }
 
 func quotedList(values []string) string {
