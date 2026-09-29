@@ -10,9 +10,10 @@ name: CI
 #
 # A pull request tests only the packages its change can affect, as chosen by
 # .github/scripts/affected-packages.sh: those whose tests contain a changed
-# package or read its files. A change outside every package, such as go.mod, this workflow, or a
-# document that tests read, tests every package. gofmt and go vet always cover
-# every package.
+# package or read its files. A Markdown file outside every package tests only
+# the packages whose tests read it (every Markdown file is read by one). Any
+# other change outside every package, such as go.mod or this workflow, tests
+# every package. gofmt and go vet always cover every package.
 #
 # Full runs test every package: once a day at an off-peak hour, which catches
 # tests that fail only now and then, and when started by hand, which a release
@@ -26,22 +27,14 @@ name: CI
 # run. Each test runs in exactly one shard, and new tests join a shard without
 # changes here.
 #
-# A change to documents alone runs nothing here; doc-links.yml checks their
-# links. The documents that tests read or that release archives carry still
-# run the checks.
+# Only a change to docs/images alone, which no test reads, runs nothing here;
+# doc-links.yml checks the links to those images.
 
 on:
   pull_request:
     paths:
       - "**"
-      - "!**.md"
       - "!docs/images/**"
-      - "docs/CODING_TOOLS.md"
-      - "docs/CODING_TOOLS.ko.md"
-      - "docs/OPERATIONS.md"
-      - "docs/OPERATIONS.ko.md"
-      - "integrations/**"
-      - "THIRD_PARTY_NOTICES/**"
   # GitHub runs scheduled workflows on the default branch only.
   schedule:
     - cron: "17 3 * * *"

@@ -8,13 +8,13 @@
 # with a changed file. A package whose only changed files are its own
 # *_test.go files affects only its own tests, because no other test binary
 # contains them. A changed file outside every package directory, such as
-# go.mod, a workflow or a document that tests read, or under integrations/,
-# can affect any test, so the script then prints "./..." alone. Otherwise it prints the affected
-# import paths, one per line and sorted, or nothing when no test can see the
-# change.
+# go.mod or a workflow, or under integrations/, can affect any test, so the
+# script then prints "./..." alone. Otherwise it prints the affected import
+# paths, one per line and sorted, or nothing when no test can see the change.
 #
-# A few tests also read other packages' files by path, which their test
-# binary does not show; they are declared below with what they read.
+# A few tests also read files by path that their test binary does not show;
+# they are declared below with what they read. A Markdown file outside every
+# package selects only those readers.
 #
 # Test binaries include different files on each system, so the packages and
 # their dependencies are taken from Linux, Windows and macOS together.
@@ -49,7 +49,8 @@ for goos in $systems; do
 	done <<<"$packages"
 done
 
-# The tests that read files of other packages by path, and what they read.
+# The tests that read files by path beyond their test binary, and what they
+# read.
 # internal/gitexec: TestNoCodeReachesTheEmbeddedRepositoryMutex parses every
 # .go file of the module, test files included, outside testdata and dot
 # directories.
@@ -59,8 +60,11 @@ done
 # collected from its module graph and from the license files bundled in its
 # packages, so every package ./cmd/owngit is built from counts as part of
 # the tools/release test binary (below).
+# cmd/owngit: its document tests read docs/OPERATIONS.md, docs/CODING_TOOLS.md
+# and their Korean versions.
 gitexec=$module/internal/gitexec
 release=$module/tools/release
+owngit=$module/cmd/owngit
 
 declare -A changed own_tests affected
 while read -r file; do
@@ -74,20 +78,28 @@ while read -r file; do
 		exit 0
 		;;
 	esac
-	dir=$(dirname "$file")
-	while [ -z "${package_of[$dir]-}" ]; do
-		if [ "$dir" = . ]; then
-			echo ./...
-			exit 0
-		fi
-		dir=$(dirname "$dir")
-	done
 	case /$file in
 	*/testdata/* | */.*/*) ;;
 	*.go) affected[$gitexec]=1 ;;
 	*/node_modules/*) ;;
 	*.md | *.sh | *.ps1) affected[$release]=1 ;;
 	esac
+	dir=$(dirname "$file")
+	while [ -z "${package_of[$dir]-}" ] && [ "$dir" != . ]; do
+		dir=$(dirname "$dir")
+	done
+	if [ -z "${package_of[$dir]-}" ]; then
+		case /$file in
+		*/testdata/* | */.*/* | */node_modules/*) ;;
+		/docs/OPERATIONS.md | /docs/OPERATIONS.ko.md | /docs/CODING_TOOLS.md | /docs/CODING_TOOLS.ko.md)
+			affected[$owngit]=1
+			continue
+			;;
+		*.md) continue ;;
+		esac
+		echo ./...
+		exit 0
+	fi
 	case $file in
 	*_test.go) own_tests[${package_of[$dir]}]=1 ;;
 	*) changed[${package_of[$dir]}]=1 ;;
