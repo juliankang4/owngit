@@ -76,6 +76,25 @@ func (install Install) OwnedBy(pkg string) Install {
 	return install
 }
 
+// ProgramFolder is the folder that updating or removing the program changes:
+// the folder of an archive program, and for npm the global node_modules
+// folder that holds the owngit package. It is "" for the routes whose own
+// tool asks for any rights it needs.
+func (install Install) ProgramFolder() string {
+	switch install.Route {
+	case RouteArchive:
+		return filepath.Dir(install.Executable)
+	case RouteNPM:
+		// .../node_modules/owngit/node_modules/owngit-<platform>/bin/owngit
+		modules := filepath.Dir(filepath.Dir(filepath.Dir(install.Executable)))
+		if owngit := filepath.Dir(modules); filepath.Base(owngit) == "owngit" {
+			return filepath.Dir(owngit)
+		}
+		return modules
+	}
+	return ""
+}
+
 // packageName is a pacman package name as makepkg accepts it: letters,
 // digits and @._+-, not starting with a hyphen or a dot.
 var packageName = regexp.MustCompile(`^[A-Za-z0-9@_+][A-Za-z0-9@._+-]{0,254}$`)
@@ -94,8 +113,8 @@ type Platform struct {
 	// being replaced while it runs, so an npm update stops the service
 	// first.
 	ServiceRunsFile bool
-	// Sudo is true when this account cannot write the folder of an archive
-	// install, so replacing the file needs root.
+	// Sudo is true when this account cannot write the ProgramFolder of the
+	// install, so the command runs npm or replaces the file as root.
 	Sudo bool
 	// Root is true when root runs the command. makepkg refuses root, so a
 	// pacman install gets no command then; the owner's normal account asks
@@ -151,7 +170,11 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		if windows && platform.Service && platform.ServiceRunsFile {
 			steps = append(steps, "owngit service stop")
 		}
-		steps = append(steps, "npm install -g owngit@"+version)
+		npm := "npm"
+		if platform.Sudo {
+			npm = "sudo npm"
+		}
+		steps = append(steps, npm+" install -g owngit@"+version)
 	case RoutePacman:
 		// The PKGBUILD attached to the release builds ReleasePackage and
 		// replaces any other package that provides owngit, so another
@@ -206,6 +229,9 @@ func (install Install) RemoveCommand(goos string, sudo bool) string {
 	case RouteHomebrew:
 		return shellWord(filepath.Join(install.Prefix, "bin", "brew")) + " uninstall owngit"
 	case RouteNPM:
+		if sudo {
+			return "sudo npm uninstall -g owngit"
+		}
 		return "npm uninstall -g owngit"
 	case RoutePacman:
 		return "sudo pacman -R " + shellWord(install.Package)

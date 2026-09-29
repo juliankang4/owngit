@@ -142,7 +142,7 @@ OwnGit은 어떻게 설치됐는지 짐작하지 않고 이 컴퓨터에서 확�
 | 설치 방법 | 판단 근거 | 업데이트 명령 | 프로그램 지우기 |
 | --- | --- | --- | --- |
 | Homebrew | 프로그램이 Homebrew의 `Cellar/owngit` 안에 있습니다 | `brew upgrade owngit` | `brew uninstall owngit` |
-| npm | 프로그램이 `node_modules` 안 `owngit-<플랫폼>` 패키지의 `bin/owngit`입니다 | `npm install -g owngit@X.Y.Z` | `npm uninstall -g owngit` |
+| npm | 프로그램이 `node_modules` 안 `owngit-<플랫폼>` 패키지의 `bin/owngit`입니다 | `npm install -g owngit@X.Y.Z`. 내 계정이 전역 `node_modules` 폴더에 쓸 수 없으면 `sudo npm`으로 실행합니다 | `npm uninstall -g owngit`. 같은 경우 `sudo`를 붙입니다 |
 | Arch Linux 패키지 | root만 바꿀 수 있는 `/usr/bin/pacman`의 `-Qo`가 프로그램이 든 패키지를 알려 줍니다 | `owngit-bin`이면 새 임시 폴더에서 새 릴리스의 `PKGBUILD`를 `makepkg -si`로 빌드합니다. 다른 패키지라면 릴리스 `PKGBUILD`가 그 패키지를 바꿔 버리므로 명령을 보여 주지 않습니다. 설치한 방법 그대로 업데이트하세요 | `sudo pacman -R`과 패키지 이름 |
 | 릴리스 압축 파일 | 위 어디에도 해당하지 않습니다 | 이 플랫폼의 릴리스 압축 파일을 내려받아 그 안의 `owngit`을 지금 파일 자리로 옮깁니다. 내 계정이 그 폴더에 쓸 수 없으면 `sudo install -m 0755`로 root 소유의 복사본을 넣습니다. root가 설치한 서비스는 root 소유의 프로그램만 실행하기 때문입니다. Windows에서는 새 릴리스를 지금 폴더 옆에 릴리스 이름으로 된 폴더에 풉니다 | 파일을 지웁니다(따로 만든 폴더에 풀었다면 그 폴더도) |
 

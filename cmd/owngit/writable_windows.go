@@ -1,6 +1,5 @@
 package main
 
-// canWrite is only asked about archive installs on Linux and macOS, where
-// replacing the file may need root. Windows installs a new release beside
-// the old one instead.
+// canWrite decides whether a command needs sudo, which Windows does not have:
+// an archive update there unpacks the new release beside the old one.
 func canWrite(string) bool { return true }

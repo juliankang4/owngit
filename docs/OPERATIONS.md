@@ -142,7 +142,7 @@ OwnGit tells how it was installed from facts on this computer, not from guesses:
 | Route | How OwnGit knows | Update command | Removing the program |
 | --- | --- | --- | --- |
 | Homebrew | The program is in Homebrew's `Cellar/owngit` | `brew upgrade owngit` | `brew uninstall owngit` |
-| npm | The program is `bin/owngit` of an `owngit-<platform>` package in `node_modules` | `npm install -g owngit@X.Y.Z` | `npm uninstall -g owngit` |
+| npm | The program is `bin/owngit` of an `owngit-<platform>` package in `node_modules` | `npm install -g owngit@X.Y.Z`, as `sudo npm` when your account cannot write the global `node_modules` folder | `npm uninstall -g owngit`, with `sudo` in the same case |
 | Arch Linux package | `/usr/bin/pacman -Qo`, a program only root can change, names the package that holds the program | for `owngit-bin`, builds the new release's `PKGBUILD` with `makepkg -si` in a new temporary folder; another package gets no command, because the release `PKGBUILD` would replace it, so update it the way you installed it | `sudo pacman -R` and the package name |
 | Release archive | None of the above | downloads the release archive for this platform and moves its `owngit` over this one; when your account cannot write that folder, `sudo install -m 0755` puts a copy there that root owns, as a service installed by root requires; on Windows, unpacks the new release into a folder named after it beside the current one | delete the file (and the folder you unpacked, if you made one) |
 

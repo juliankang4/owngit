@@ -68,6 +68,7 @@ func TestUpdateCommand(t *testing.T) {
 		{"homebrew service", brew, withService(mac), "/opt/homebrew/bin/brew upgrade owngit && /opt/homebrew/bin/owngit service install"},
 		{"npm", npm, linux, "npm install -g owngit@1.1.3"},
 		{"npm service", npm, withService(linux), "npm install -g owngit@1.1.3 && owngit service install"},
+		{"npm with sudo", npm, withService(sudo), "sudo npm install -g owngit@1.1.3 && owngit service install"},
 		{"pacman service", pacman, withService(linux), `(cd "$(mktemp -d)" && curl -fLO https://github.com/juliankang4/owngit/releases/download/v1.1.3/PKGBUILD && makepkg -si) && owngit service install`},
 		{"archive", archive, linux, `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_linux_amd64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && mv -f "$d/owngit" /home/you/bin/owngit`},
 		{"archive with sudo", archive, withService(sudo), `d=$(mktemp -d) && curl -fLo "$d/owngit.tar.gz" https://github.com/juliankang4/owngit/releases/download/v1.1.3/owngit_1.1.3_linux_amd64.tar.gz && tar -xzf "$d/owngit.tar.gz" -C "$d" owngit && sudo install -m 0755 "$d/owngit" /home/you/bin/owngit && /home/you/bin/owngit service install`},
@@ -103,6 +104,7 @@ func TestRemoveCommand(t *testing.T) {
 	}{
 		{ClassifyExecutable("/opt/homebrew/Cellar/owngit/1.1.2/bin/owngit"), false, "/opt/homebrew/bin/brew uninstall owngit"},
 		{ClassifyExecutable("/usr/lib/node_modules/owngit/node_modules/owngit-linux-x64/bin/owngit"), false, "npm uninstall -g owngit"},
+		{ClassifyExecutable("/usr/lib/node_modules/owngit/node_modules/owngit-linux-x64/bin/owngit"), true, "sudo npm uninstall -g owngit"},
 		{ClassifyExecutable("/usr/bin/owngit").OwnedBy("owngit-bin"), false, "sudo pacman -R owngit-bin"},
 		{ClassifyExecutable("/usr/local/bin/owngit"), true, "sudo rm /usr/local/bin/owngit"},
 		{ClassifyExecutable("/home/you/it's/owngit"), false, `rm '/home/you/it'\''s/owngit'`},
@@ -113,5 +115,24 @@ func TestRemoveCommand(t *testing.T) {
 		if got := tc.install.RemoveCommand("linux", tc.sudo); got != tc.want {
 			t.Errorf("%+v: %q, want %q", tc.install, got, tc.want)
 		}
+	}
+}
+
+// The program folder is what the update and remove commands change, so it
+// decides whether they need sudo.
+func TestProgramFolder(t *testing.T) {
+	for path, want := range map[string]string{
+		"/usr/local/bin/owngit": "/usr/local/bin",
+		"/usr/local/lib/node_modules/owngit/node_modules/owngit-linux-x64/bin/owngit": "/usr/local/lib/node_modules",
+		"/home/you/.npm-global/lib/node_modules/owngit-linux-x64/bin/owngit":          "/home/you/.npm-global/lib/node_modules",
+		"/opt/homebrew/Cellar/owngit/1.1.2/bin/owngit":                                "",
+		"/Applications/OwnGit.app/Contents/Helpers/owngit":                            "",
+	} {
+		if got := ClassifyExecutable(path).ProgramFolder(); got != want {
+			t.Errorf("%s: %q, want %q", path, got, want)
+		}
+	}
+	if got := ClassifyExecutable("/usr/bin/owngit").OwnedBy("owngit-bin").ProgramFolder(); got != "" {
+		t.Errorf("pacman: %q, want none", got)
 	}
 }

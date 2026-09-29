@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"owngit/internal/service"
 )
 
 // Install detection asks only the pacman at its fixed path, and only when
@@ -30,5 +32,31 @@ func TestPacmanIsAskedOnlyAtItsFixedRootOwnedPath(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Errorf("a pacman that is not root's ran (%v)", err)
+	}
+}
+
+// A command needs sudo exactly when this account cannot write the folder it
+// changes, for an archive program and for npm alike.
+func TestNeedsSudoWhenTheProgramFolderIsNotWritable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write every folder")
+	}
+	for _, name := range []string{"archive", "npm"} {
+		root := t.TempDir()
+		program := filepath.Join(root, "bin", "owngit")
+		if name == "npm" {
+			program = filepath.Join(root, "lib", "node_modules", "owngit", "node_modules", "owngit-linux-x64", "bin", "owngit")
+		}
+		noErr(t, os.MkdirAll(filepath.Dir(program), 0o755))
+		install := service.ClassifyExecutable(program)
+		if string(install.Route) != name || needsSudo(install) {
+			t.Fatalf("%s: route %q, sudo in a writable folder", name, install.Route)
+		}
+		folder := install.ProgramFolder()
+		noErr(t, os.Chmod(folder, 0o555))
+		t.Cleanup(func() { _ = os.Chmod(folder, 0o755) })
+		if !needsSudo(install) {
+			t.Errorf("%s: no sudo for %s, which this account cannot write", name, folder)
+		}
 	}
 }

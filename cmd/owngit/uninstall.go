@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 
 	"owngit/internal/service"
@@ -32,7 +31,7 @@ func uninstallCommand(arguments []string) error {
 	install := detectInstall()
 	// Read before the service step, which can make root act as the owngit
 	// account.
-	sudo := install.Route == service.RouteArchive && !canWrite(filepath.Dir(install.Executable))
+	sudo := needsSudo(install)
 	switch runtime.GOOS {
 	case "linux", "darwin", "windows":
 		if err := serviceCommand([]string{"uninstall"}); err != nil {

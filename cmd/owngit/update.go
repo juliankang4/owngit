@@ -158,9 +158,16 @@ func dashboardUpdateCommand(asService bool) func(string) (command, start string,
 func updatePlatform(install service.Install, runs serviceState) service.Platform {
 	return service.Platform{
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Service: runs.this, ServiceRunsFile: runs.file,
-		Sudo: install.Route == service.RouteArchive && !canWrite(filepath.Dir(install.Executable)),
+		Sudo: needsSudo(install),
 		Root: runtime.GOOS != "windows" && os.Geteuid() == 0,
 	}
+}
+
+// needsSudo reports whether the update and remove commands need root,
+// because this account cannot write the folder they change.
+func needsSudo(install service.Install) bool {
+	folder := install.ProgramFolder()
+	return folder != "" && !canWrite(folder)
 }
 
 // runningExecutable is this program with links resolved.
