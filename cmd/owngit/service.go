@@ -312,8 +312,14 @@ func (host *serviceHost) install(stateDirFlag string, headlessFlag *bool) error 
 			}
 		}
 	}
-	if err := host.reportStarted(mode, unitPath, stateDir); err != nil || earlier == "" {
+	if err := host.reportStarted(mode, unitPath, stateDir); err != nil {
 		return err
+	}
+	if mode != service.ModeAccount {
+		host.installIcon(stateDir, headless)
+	}
+	if earlier == "" {
+		return nil
 	}
 	if read, complete := setupStatus(stateDir); read && !complete {
 		fmt.Fprint(host.out, earlierStateNotice(host.executable, earlier, os.Getenv("SUDO_USER") != ""))
@@ -379,7 +385,11 @@ func (host *serviceHost) installHomebrew(stateDir string, headless bool) error {
 	if err := host.brewServices("restart"); err != nil {
 		return err
 	}
-	return host.reportStarted(service.ModeHomebrew, "", stateDir)
+	if err := host.reportStarted(service.ModeHomebrew, "", stateDir); err != nil {
+		return err
+	}
+	host.installIcon(stateDir, headless)
+	return nil
 }
 
 // brewServices runs "brew services ACTION owngit" of the Homebrew that
@@ -477,6 +487,7 @@ func (host *serviceHost) uninstall() error {
 			return err
 		}
 		host.printf("The Homebrew service is stopped and no longer starts. The data stays in %s.\n", mustAbs(defaultStateDir()))
+		host.removeIcon(true)
 		return nil
 	case !found:
 		host.printf("OwnGit is not installed as a service.\n")
@@ -503,6 +514,9 @@ func (host *serviceHost) uninstall() error {
 		host.printf(", and the %s account stays", service.AccountName)
 	}
 	host.printf(".\nRun \"owngit service install\" to use it again.\n")
+	if installed.Mode != service.ModeAccount {
+		host.removeIcon(true)
+	}
 	if installed.Mode == service.ModeUser {
 		host.printf("Lingering stays on for this account, so its other user services still start at boot. \"loginctl disable-linger\" turns it off.\n")
 	}

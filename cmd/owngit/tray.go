@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"syscall"
 
@@ -38,12 +39,15 @@ func trayAvailable(stateDir string) bool {
 // trayCommand shows, hides or reports the OwnGit icon of this computer: its
 // menu bar, notification area or panel icon. Hiding it never stops the
 // server. The choice belongs to this computer, like the dashboard switch
-// that does the same. On Windows "icon" runs the notification area icon.
+// that does the same. "icon" runs the icon itself on Windows and Linux;
+// "read" prints what its panel shows and "open" opens the dashboard after
+// the server proves it answers, for panels drawn by other programs.
 func trayCommand(arguments []string) error {
 	flags := flag.NewFlagSet("tray", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	asJSON := flags.Bool("json", false, "print JSON")
+	lang := flags.String("lang", string(tray.DesktopLanguage()), "language of \"read\": en or ko")
 	operands, err := parseFlagsAndOperands(flags, arguments)
 	if err != nil {
 		if errors.Is(err, errUsageShown) {
@@ -55,14 +59,21 @@ func trayCommand(arguments []string) error {
 	if len(operands) == 1 {
 		operation = operands[0]
 	}
-	if len(operands) > 1 || (operation != "on" && operation != "off" && operation != "status" && operation != "icon") {
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray takes on, off, status, icon or nothing"))
+	if len(operands) > 1 || !slices.Contains([]string{"on", "off", "status", "icon", "read", "open"}, operation) {
+		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray takes on, off, status, icon, read, open or nothing"))
 	}
-	if operation == "icon" {
+	switch operation {
+	case "icon":
 		if *asJSON {
 			return jsonFailure(true, "invalid_arguments", errors.New("tray icon prints no JSON"))
 		}
 		return runTrayIcon(filepath.Clean(mustAbs(*stateDir)))
+	case "read", "open":
+		language, ok := webui.ParseLang(*lang)
+		if !ok {
+			return jsonFailure(*asJSON, "invalid_arguments", errors.New("--lang is en or ko"))
+		}
+		return trayPanelCommand(operation, filepath.Clean(mustAbs(*stateDir)), language, *asJSON)
 	}
 	type report struct {
 		Available  bool   `json:"available"`
@@ -70,6 +81,8 @@ func trayCommand(arguments []string) error {
 		Desktop    bool   `json:"desktop"`
 		StateDir   string `json:"state_dir"`
 		AccessFile string `json:"access_file"`
+		// Problem says why the icon cannot show on this computer, or "".
+		Problem string `json:"problem"`
 	}
 	dir := filepath.Clean(mustAbs(*stateDir))
 	if !trayAvailable(dir) {
@@ -100,14 +113,17 @@ func trayCommand(arguments []string) error {
 		return jsonFailure(*asJSON, "state_unavailable", err)
 	}
 	desktop := probeEnvironment().Desktop()
+	problem := tray.IconProblem()
 	if *asJSON {
-		return writeJSONValue(report{true, !hidden, desktop, dir, filepath.Join(dir, state.TrayAccessFile)})
+		return writeJSONValue(report{true, !hidden, desktop, dir, filepath.Join(dir, state.TrayAccessFile), problem})
 	}
 	switch {
 	case hidden:
 		fmt.Println("The OwnGit icon is hidden on this computer. OwnGit keeps running. \"owngit tray on\" shows the icon again.")
 	case !desktop:
 		fmt.Println("The OwnGit icon is not hidden, but this computer has no desktop session now, so it does not show. OwnGit keeps running.")
+	case problem != "":
+		fmt.Println("The OwnGit icon is not hidden, but it cannot show on this computer: " + problem + ".")
 	default:
 		fmt.Println("The OwnGit icon shows on this computer. \"owngit tray off\" hides it; OwnGit keeps running.")
 	}

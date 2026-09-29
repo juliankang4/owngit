@@ -79,26 +79,7 @@ func Glyph(condition Condition, size int) []uint8 {
 // Symbol returns the small symbol that stands beside the condition's name
 // in the panel, at size by size pixels, as Glyph does.
 func Symbol(condition Condition, size int) []uint8 {
-	circle := ring{point{8, 8}, 5.7, 1.5}
-	var strokes []stroke
-	var rings []ring
-	switch condition {
-	case Running:
-		rings = []ring{circle}
-		strokes = []stroke{{points: []point{{5.4, 8.2}, {7.3, 10.1}, {10.6, 6.2}}, w: 1.5}}
-	case Attention:
-		strokes = []stroke{
-			{points: []point{{8, 2.6}, {13.6, 12.6}, {2.4, 12.6}, {8, 2.6}}, w: 1.5},
-			{points: []point{{8, 6.2}, {8, 8.7}}, w: 1.5},
-			{points: []point{{8, 10.8}, {8, 10.81}}, w: 2},
-		}
-	case Stopped:
-		rings = []ring{circle}
-		strokes = []stroke{{points: []point{{4.3, 11.7}, {11.7, 4.3}}, w: 1.5}}
-	default:
-		rings = []ring{circle}
-		strokes = []stroke{{points: []point{{5.5, 8}, {10.5, 8}}, w: 1.5}}
-	}
+	strokes, rings := symbolShapes(condition)
 	return raster(size, 16, func(p point) float64 {
 		for _, r := range rings {
 			if onRing(p, r) {
@@ -112,6 +93,26 @@ func Symbol(condition Condition, size int) []uint8 {
 		}
 		return 0
 	})
+}
+
+// symbolShapes are the strokes and rings of the condition's symbol in a
+// 16 by 16 box.
+func symbolShapes(condition Condition) ([]stroke, []ring) {
+	circle := ring{point{8, 8}, 5.7, 1.5}
+	switch condition {
+	case Running:
+		return []stroke{{points: []point{{5.4, 8.2}, {7.3, 10.1}, {10.6, 6.2}}, w: 1.5}}, []ring{circle}
+	case Attention:
+		return []stroke{
+			{points: []point{{8, 2.6}, {13.6, 12.6}, {2.4, 12.6}, {8, 2.6}}, w: 1.5},
+			{points: []point{{8, 6.2}, {8, 8.7}}, w: 1.5},
+			{points: []point{{8, 10.8}, {8, 10.81}}, w: 2},
+		}, nil
+	case Stopped:
+		return []stroke{{points: []point{{4.3, 11.7}, {11.7, 4.3}}, w: 1.5}}, []ring{circle}
+	default:
+		return []stroke{{points: []point{{5.5, 8}, {10.5, 8}}, w: 1.5}}, []ring{circle}
+	}
 }
 
 // Tile returns the OwnGit app tile of the panel's heading at size by size

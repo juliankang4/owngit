@@ -1357,7 +1357,7 @@ var commandOperands = map[string]string{
 	"import credentials": "<name>",
 	"import resolve":     "<name>",
 	"upgrade-backup":     "[on|off]",
-	"tray":               "[on|off|status|icon]",
+	"tray":               "[on|off|status|icon|read|open]",
 }
 
 // parseFlags parses a command's flags. On -h or --help it prints the

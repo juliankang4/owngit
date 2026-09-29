@@ -1,7 +1,7 @@
 package webui
 
-// The panel of the OwnGit icon in the Windows notification area. The icon
-// shows these sentences natively, not in a page.
+// The panel of the OwnGit icon in the Windows notification area and the
+// Linux panel. The icon shows these sentences natively, not in a page.
 const (
 	MsgTrayRunning       MessageCode = "tray.state.running"
 	MsgTrayAttention     MessageCode = "tray.state.attention"
@@ -11,6 +11,8 @@ const (
 	MsgTrayCloneAddress  MessageCode = "tray.clone_address"
 	MsgTrayCloneHelp     MessageCode = "tray.clone_help"
 	MsgTrayCopy          MessageCode = "tray.copy"
+	MsgTrayCopyCommand   MessageCode = "tray.copy_command"
+	MsgTrayCopyClone     MessageCode = "tray.copy_clone"
 	MsgTrayCopied        MessageCode = "tray.copied"
 	MsgTrayCopyFailed    MessageCode = "tray.copy_failed"
 	MsgTrayRecent        MessageCode = "tray.recent"
@@ -19,6 +21,8 @@ const (
 	MsgTrayOpen          MessageCode = "tray.open"
 	MsgTrayThisComputer  MessageCode = "tray.this_computer"
 	MsgTrayHide          MessageCode = "tray.hide"
+	MsgTrayHidePanel     MessageCode = "tray.hide_panel"
+	MsgTrayShowPanel     MessageCode = "tray.show_panel"
 	MsgTrayQuit          MessageCode = "tray.quit"
 	MsgTrayKeepsRunning  MessageCode = "tray.keeps_running"
 	MsgTrayHideFailed    MessageCode = "tray.hide_failed"
@@ -43,6 +47,8 @@ var trayCatalog = map[MessageCode]message{
 	MsgTrayCloneAddress: {en: "Clone address", ko: "클론 주소"},
 	MsgTrayCloneHelp:    {en: "Add the repository name to this address when cloning.", ko: "클론할 때 이 주소 뒤에 저장소 이름을 붙이세요."},
 	MsgTrayCopy:         {en: "Copy", ko: "복사"},
+	MsgTrayCopyCommand:  {en: "Copy the command", ko: "명령 복사"},
+	MsgTrayCopyClone:    {en: "Copy the clone address", ko: "클론 주소 복사"},
 	MsgTrayCopied:       {en: "Copied", ko: "복사됨"},
 	MsgTrayCopyFailed:   {en: "Not copied", ko: "복사하지 못함"},
 	MsgTrayRecent:       {en: "Recent pushes", ko: "최근 푸시"},
@@ -51,6 +57,8 @@ var trayCatalog = map[MessageCode]message{
 	MsgTrayOpen:         {en: "Open dashboard", ko: "대시보드 열기"},
 	MsgTrayThisComputer: {en: "This computer", ko: "이 컴퓨터"},
 	MsgTrayHide:         {en: "Hide from the notification area", ko: "알림 영역에서 숨기기"},
+	MsgTrayHidePanel:    {en: "Hide from the panel", ko: "패널에서 숨기기"},
+	MsgTrayShowPanel:    {en: "Show status and recent pushes", ko: "상태와 최근 푸시 보기"},
 	MsgTrayQuit:         {en: "Quit the icon", ko: "아이콘 종료"},
 	MsgTrayKeepsRunning: {
 		en: "OwnGit keeps running either way. Quit closes the icon until you sign in again. Hide keeps it hidden, also after you sign in again, until you turn it on in the dashboard Settings or run \"owngit tray on\".",
