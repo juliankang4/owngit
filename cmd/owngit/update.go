@@ -113,7 +113,7 @@ func noUpdateCommand(install service.Install, latest string) string {
 // the server starts. asService is true when a service manager started this
 // server with --service; a systemd unit of "owngit service" does not pass
 // it, so the registration is read as the command reads it.
-func dashboardUpdateCommand(asService bool) func(string) string {
+func dashboardUpdateCommand(asService bool) func(string) (string, bool) {
 	install := detectInstall()
 	runs := serviceState{this: asService}
 	if !asService && runtime.GOOS != "windows" {
@@ -126,7 +126,7 @@ func dashboardUpdateCommand(asService bool) func(string) string {
 		runs.file = sameFile(executable, install.Executable)
 	}
 	platform := updatePlatform(install, runs)
-	return func(latest string) string { return install.UpdateCommand(latest, platform) }
+	return func(latest string) (string, bool) { return install.UpdateCommand(latest, platform), !runs.this }
 }
 
 func updatePlatform(install service.Install, runs serviceState) service.Platform {

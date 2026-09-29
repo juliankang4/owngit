@@ -274,11 +274,11 @@ func TestLogoLinksToTheDashboard(t *testing.T) {
 func TestReleaseNoticeShowsTheUpdateCommand(t *testing.T) {
 	for _, command := range []string{"brew upgrade owngit && '/x y/owngit' service install", ""} {
 		app, _, _, server := releaseApp(t, "v1.0.3")
-		app.UpdateCommand = func(version string) string {
+		app.UpdateCommand = func(version string) (string, bool) {
 			if version != "1.0.3" {
 				t.Errorf("command asked for %q", version)
 			}
-			return command
+			return command, true
 		}
 		_ = app.Releases.Check(context.Background())
 		client, _ := newBrowserClient(t)
@@ -287,8 +287,8 @@ func TestReleaseNoticeShowsTheUpdateCommand(t *testing.T) {
 		if shown != (command != "") {
 			t.Errorf("%q: copy field shown=%v", command, shown)
 		}
-		if command != "" && !strings.Contains(body, `value="brew upgrade owngit &amp;&amp; &#39;/x y/owngit&#39; service install"`) {
-			t.Errorf("%q: the escaped command is missing", command)
+		if command != "" && (!strings.Contains(body, `value="brew upgrade owngit &amp;&amp; &#39;/x y/owngit&#39; service install"`) || !strings.Contains(body, "then restart OwnGit.")) {
+			t.Errorf("%q: the escaped command or the restart note is missing", command)
 		}
 		if !strings.Contains(body, `href="`+releasecheck.UpdateGuideURL+`"`) {
 			t.Errorf("%q: the guide link is missing", command)

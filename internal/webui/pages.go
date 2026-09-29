@@ -378,6 +378,9 @@ type ReleaseNotice struct {
 	// Command updates this installation the way it was installed, for the
 	// owner to copy and run. Empty shows only the guide.
 	Command string
+	// Restart says to restart OwnGit after the command, because no service
+	// runs this installation.
+	Restart bool
 	// DismissURL takes a POST with csrf and version.
 	DismissURL string
 }

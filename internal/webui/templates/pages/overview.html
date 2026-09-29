@@ -22,7 +22,7 @@
         <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
         <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
       </p>
-      <p class="clonefield__note" id="release-command-help">{{bi $lang "release.run_it"}}</p>
+      <p class="clonefield__note" id="release-command-help">{{if .Restart}}{{bi $lang "release.restart"}}{{else}}{{bi $lang "release.run_it"}}{{end}}</p>
     </div>
     {{end}}
     <p class="relnote__links">

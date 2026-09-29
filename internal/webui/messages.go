@@ -74,6 +74,7 @@ const (
 	MsgReleaseDismiss   MessageCode = "release.dismiss"
 	MsgReleaseCommand   MessageCode = "release.command"
 	MsgReleaseRunIt     MessageCode = "release.run_it"
+	MsgReleaseRestart   MessageCode = "release.restart"
 )
 
 // Setup and bootstrap.
@@ -1071,6 +1072,10 @@ var catalog = map[MessageCode]message{
 	MsgReleaseRunIt: {
 		en: "OwnGit does not update itself. Run this in a terminal on the computer where OwnGit runs.",
 		ko: "OwnGit은 스스로 업데이트하지 않습니다. OwnGit이 실행 중인 컴퓨터의 터미널에서 이 명령을 실행하세요.",
+	},
+	MsgReleaseRestart: {
+		en: "OwnGit does not update itself. Run this in a terminal on the computer where OwnGit runs, then restart OwnGit.",
+		ko: "OwnGit은 스스로 업데이트하지 않습니다. OwnGit이 실행 중인 컴퓨터의 터미널에서 이 명령을 실행한 뒤 OwnGit을 다시 시작하세요.",
 	},
 
 	// -- connection ----------------------------------------------------

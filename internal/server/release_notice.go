@@ -29,7 +29,7 @@ func (app *App) releaseNotice(request *http.Request, settings state.Settings) *w
 		GuideURL: releasecheck.UpdateGuideURL, DismissURL: releaseDismissPath,
 	}
 	if app.UpdateCommand != nil {
-		notice.Command = app.UpdateCommand(release.Version)
+		notice.Command, notice.Restart = app.UpdateCommand(release.Version)
 	}
 	return notice
 }
