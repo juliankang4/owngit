@@ -146,8 +146,8 @@ func (m *Manager) activityLog(ctx context.Context, repositoryPath string, roots,
 		return nil, len(roots) != 0, nil
 	}
 	input := activityRevisionInput(roots, excluded)
-	format := "%H%x00%S%x00%aI%x00%an%x00%s"
-	args := []string{"--git-dir", ".", "log", "--stdin", "-z", "--source", "--no-decorate", "--max-count=" + strconv.Itoa(maximum+1), "--format=" + format}
+	format := "%H%x00%S%x00%ad%x00%an%x00%s"
+	args := []string{"--git-dir", ".", "log", "--stdin", "-z", "--source", "--no-decorate", "--max-count=" + strconv.Itoa(maximum+1), gitDateOption, "--format=" + format}
 	result, err := m.Git.RunWithOutputLimit(ctx, repositoryPath, strings.NewReader(input), 64<<20, args...)
 	if err != nil {
 		return nil, false, err
@@ -162,7 +162,7 @@ func (m *Manager) activityLog(ctx context.Context, repositoryPath string, roots,
 	records := make([]ActivityRecord, 0, len(fields)/5)
 	for offset := 0; offset < len(fields); offset += 5 {
 		record := fields[offset : offset+5]
-		authored, err := time.Parse(time.RFC3339, string(record[2]))
+		authored, err := parseGitDate(record[2])
 		if err != nil {
 			return nil, false, fmt.Errorf("parse activity author date: %w", err)
 		}

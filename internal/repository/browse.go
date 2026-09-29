@@ -42,7 +42,7 @@ type Blob struct {
 	Truncated bool
 }
 
-const commitLogFormat = "%H%x00%P%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%s%x00%b"
+const commitLogFormat = "%H%x00%P%x00%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b"
 
 var errTreeEntryNotFound = errors.New("tree entry not found")
 
@@ -220,7 +220,7 @@ func commitMetadataByOID(ctx context.Context, runner retainedRunner, repositoryP
 		}
 	}
 	result, err := runner.RunWithOutputLimit(ctx, repositoryPath, strings.NewReader(strings.Join(unique, "\n")+"\n"), 64<<20,
-		"--git-dir", ".", "log", "--no-walk", "--stdin", "-z", "--no-decorate", "--format="+commitLogFormat)
+		"--git-dir", ".", "log", "--no-walk", "--stdin", "-z", "--no-decorate", gitDateOption, "--format="+commitLogFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -300,11 +300,11 @@ func parseCommits(output []byte) ([]Commit, error) {
 	commits := make([]Commit, 0, len(fields)/10)
 	for offset := 0; offset < len(fields); offset += 10 {
 		record := fields[offset : offset+10]
-		authored, err := time.Parse(time.RFC3339, string(record[4]))
+		authored, err := parseGitDate(record[4])
 		if err != nil {
 			return nil, fmt.Errorf("parse commit author date: %w", err)
 		}
-		committed, err := time.Parse(time.RFC3339, string(record[7]))
+		committed, err := parseGitDate(record[7])
 		if err != nil {
 			return nil, fmt.Errorf("parse commit committer date: %w", err)
 		}

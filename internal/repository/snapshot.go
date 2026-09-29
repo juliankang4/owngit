@@ -6,9 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -32,7 +32,7 @@ type RefSnapshot struct {
 
 // snapshotFormat prints each ref, and for the ref HEAD points to, the tip
 // commit fields the dashboard shows.
-const snapshotFormat = "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(HEAD)%(if)%(HEAD)%(then)%00%(authorname)%00%(authordate:iso-strict)%00%(subject)%(end)"
+const snapshotFormat = "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(HEAD)%(if)%(HEAD)%(then)%00%(authorname)%00%(authordate:raw)%00%(subject)%(end)"
 
 // readRefSnapshot lists the refs of the repository at repositoryPath. The
 // caller holds the repository's read lock.
@@ -74,7 +74,11 @@ func (m *Manager) readRefSnapshot(ctx context.Context, repositoryPath string) (s
 			summary.Branches = append(summary.Branches, branch)
 			if string(parts[3]) == "*" && len(parts) == 7 {
 				summary.DefaultBranch, summary.DefaultOID = branch.Name, oid
-				if authored, err := time.Parse(time.RFC3339, string(parts[5])); err == nil && objectType == "commit" {
+				if objectType == "commit" {
+					authored, err := parseGitDate(parts[5])
+					if err != nil {
+						return RefSnapshot{}, false, fmt.Errorf("parse default branch author date: %w", err)
+					}
 					snapshot.Head = Commit{OID: oid, AuthorName: string(parts[4]), AuthoredAt: authored, Subject: string(parts[6])}
 					snapshot.HeadFound = true
 				}
