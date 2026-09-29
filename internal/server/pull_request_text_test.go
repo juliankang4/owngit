@@ -94,6 +94,22 @@ func TestPullRequestTextThroughTheAPI(t *testing.T) {
 		t.Fatalf("stale edit answer=%v", stale)
 	}
 
+	// Every recorded review names the access that recorded it, with or
+	// without a note: a request, a skip and a decision.
+	revisions := pullrequest.RevisionInput{SourceOID: fixture.sourceOID, TargetOID: fixture.targetOID}
+	for _, step := range []struct {
+		path  string
+		input any
+	}{
+		{"/review/request", revisions},
+		{"/review/skip", revisions},
+		{"/review/submit", pullrequest.ReviewSubmitInput{SourceOID: fixture.sourceOID, TargetOID: fixture.targetOID, Decision: state.ReviewChangesRequested, ReviewerLabel: "tool: api"}},
+	} {
+		marked := decodeAPISuccess(t, apiRequest(t, http.MethodPost, endpoint+"/"+number+step.path, step.input, "", "")).PullRequest
+		if marked.Review.Actor == nil || marked.Review.Actor.Kind != state.ActorAccess || len(marked.ReviewNotes) != 0 {
+			t.Fatalf("%s review=%+v notes=%+v", step.path, marked.Review, marked.ReviewNotes)
+		}
+	}
 	reviewed := decodeAPISuccess(t, apiRequest(t, http.MethodPost, endpoint+"/"+number+"/review/submit", pullrequest.ReviewSubmitInput{
 		SourceOID: fixture.sourceOID, TargetOID: fixture.targetOID, Decision: state.ReviewApproved, ReviewerLabel: "tool: api", Note: "Checked **both** commits.",
 	}, "", "")).PullRequest

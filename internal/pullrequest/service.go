@@ -920,7 +920,7 @@ func (service *Service) summaryForHeads(ctx context.Context, repositoryPath stri
 			view.Review = Review{
 				Status: review.Status, SourceOID: review.SourceOID, TargetOID: review.TargetOID,
 				ReviewerLabel: review.ReviewerLabel, Provenance: review.Provenance,
-				Independent: false, ExecutedChecks: false, SubmittedAt: &submitted,
+				Independent: false, ExecutedChecks: false, SubmittedAt: &submitted, Actor: recordedActor(review.Actor),
 			}
 		} else {
 			view.Review = Review{Status: "decision_required", Independent: false, ExecutedChecks: false}

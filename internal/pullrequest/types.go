@@ -81,6 +81,9 @@ type Review struct {
 	Independent    bool       `json:"independent"`
 	ExecutedChecks bool       `json:"executed_checks"`
 	SubmittedAt    *time.Time `json:"submitted_at,omitempty"`
+	// Actor is the access that recorded this review, request or skip, when
+	// OwnGit recorded it. The reviewer label is what the caller supplied.
+	Actor *state.Actor `json:"actor,omitempty"`
 	// ReadFailure reports that OwnGit could not read its own review evidence,
 	// including the review notes. Review remains advisory, so this never
 	// becomes a merge blocker.
