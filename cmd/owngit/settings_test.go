@@ -19,7 +19,7 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 		t.Fatal("settings set without a setting was accepted")
 	}
 	if _, err := captureStdout(func() error {
-		return settingsCommand(append([]string{"set", "--session", "7d"}, remote...))
+		return settingsCommand(append([]string{"set", "--session", "7d", "--initial-branch", "trunk"}, remote...))
 	}); err != nil {
 		t.Fatalf("settings set: %v", err)
 	}
@@ -30,10 +30,13 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 	var shown struct {
 		Settings map[string]any `json:"settings"`
 	}
-	if err := json.Unmarshal([]byte(printed), &shown); err != nil || shown.Settings["session"] != "7d" {
+	if err := json.Unmarshal([]byte(printed), &shown); err != nil || shown.Settings["session"] != "7d" || shown.Settings["initial_branch"] != "trunk" {
 		t.Fatalf("settings show printed %q (%v)", printed, err)
 	}
 	if saved, err := fixture.store.GeneralSession(context.Background()); err != nil || saved != state.Session7Days {
+		t.Fatalf("saved=%q err=%v", saved, err)
+	}
+	if saved, err := fixture.store.InitialBranch(context.Background()); err != nil || saved != "trunk" {
 		t.Fatalf("saved=%q err=%v", saved, err)
 	}
 }

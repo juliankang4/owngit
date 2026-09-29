@@ -17,6 +17,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 		GroupAdmin:      {"new_admin_password"},
 		GroupConfirm:    {"admin_confirmation", "no_ask_ack"},
 		GroupSession:    {"general_session"},
+		GroupBranch:     {"initial_branch"},
 		GroupConnection: {"insecure_ack"},
 		GroupNetwork:    {"network_revision", "listen", "base_url", "allowed_hosts", "trusted_proxies", "insecure_ack"},
 		GroupTailscale:  {"tailscale", "home_network"},
@@ -24,7 +25,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 	groupPattern := regexp.MustCompile(`<section class="grp" id="grp-([a-z]+)"`)
 	namePattern := regexp.MustCompile(`name="([a-z_]+)"`)
 	seen := map[string]bool{}
-	for _, name := range []string{"settings", "settings-access", "settings-network"} {
+	for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories"} {
 		c := fullChrome(LangEN)
 		c.Connection = Connection{Encrypted: false, Host: "owngit.local:8080"}
 		page := allPages(LangEN)[name].(SettingsPage)
@@ -97,7 +98,7 @@ func TestSettingsGroupsAskForThePasswordOnlyWhenAChangeNeedsIt(t *testing.T) {
 			v.AdminConfirmed, v.AdminCheckOff, v.AdminChoice, v.AdminAsks = true, true, "never", false
 		}, MsgConfirmCheckOff},
 	} {
-		for _, name := range []string{"settings", "settings-access", "settings-network"} {
+		for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories"} {
 			c := fullChrome(LangEN)
 			check.viewer(&c.Viewer)
 			page := allPages(LangEN)[name].(SettingsPage)
@@ -138,7 +139,7 @@ func TestSettingsGroupsAskForThePasswordOnlyWhenAChangeNeedsIt(t *testing.T) {
 // them to one group's form only for Save and leave.
 func TestTheLeaveDialogBelongsToNoForm(t *testing.T) {
 	r := newRenderer(t)
-	for _, name := range []string{"settings", "settings-access", "settings-network"} {
+	for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories"} {
 		page := allPages(LangKO)[name].(SettingsPage)
 		out := render(t, r, page)
 		start := strings.Index(out, `<dialog class="leave"`)

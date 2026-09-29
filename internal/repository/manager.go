@@ -207,7 +207,12 @@ func (m *Manager) InitBareRepository(ctx context.Context, directory string, opti
 	if err := m.claimStorageForWrite(); err != nil {
 		return err
 	}
-	initArguments := []string{"init", "--bare", "--initial-branch=main"}
+	// A new repository starts on the branch the owner chose in Settings.
+	branch, err := m.Store.InitialBranch(ctx)
+	if err != nil {
+		return err
+	}
+	initArguments := []string{"init", "--bare", "--initial-branch=" + branch}
 	if options.ObjectFormat == ObjectFormatSHA256 {
 		initArguments = append(initArguments, "--object-format=sha256")
 	}

@@ -435,6 +435,8 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgConfirmTurnedOff}}
 	case "session_saved":
 		return []webui.Notice{webui.Success(webui.MsgSessionSaved)}
+	case "initial_branch_saved":
+		return []webui.Notice{webui.Success(webui.MsgInitialBranchSaved)}
 	case "insecure_acknowledged":
 		return []webui.Notice{webui.Success(webui.MsgSettingsAckDone)}
 	case "logout":

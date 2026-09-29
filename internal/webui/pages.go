@@ -201,6 +201,9 @@ const (
 	// lasts. Fields: admin_password, general_session (one of
 	// SessionChoices).
 	ActionSaveSession = "save_session"
+	// ActionSaveInitialBranch saves the branch new repositories start on.
+	// Fields: admin_password, initial_branch.
+	ActionSaveInitialBranch = "save_initial_branch"
 )
 
 // The Settings tabs. Each is its own address, so a tab works as an ordinary
@@ -261,6 +264,7 @@ const (
 	GroupAdmin      = "admin"
 	GroupConfirm    = "confirm"
 	GroupSession    = "session"
+	GroupBranch     = "branch"
 	GroupConnection = "connection"
 	GroupNetwork    = "network"
 	GroupTailscale  = "tailscale"
@@ -271,6 +275,7 @@ var settingsGroupTabs = map[string]string{
 	GroupUpdate: SettingsGeneral,
 	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess, GroupConfirm: SettingsAccess, GroupSession: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
+	GroupBranch: SettingsRepositories,
 }
 
 // SettingsGroupTab returns the tab that shows group, or "" for an unknown
@@ -291,6 +296,8 @@ func SettingsActionGroup(action string) string {
 		return GroupConfirm
 	case ActionSaveSession:
 		return GroupSession
+	case ActionSaveInitialBranch:
+		return GroupBranch
 	case ActionAcknowledgeInsecure:
 		return GroupConnection
 	case ActionSaveNetwork:
@@ -387,6 +394,8 @@ type Policies struct {
 	// Session is how long a sign-in with the shared password lasts, one
 	// of SessionChoices.
 	Session string
+	// InitialBranch is the branch new repositories start on.
+	InitialBranch string
 	// Unreadable holds the groups whose saved value could not be read.
 	// Such a group says so and shows the default as a change to save.
 	Unreadable map[string]bool

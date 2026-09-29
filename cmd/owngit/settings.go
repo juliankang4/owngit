@@ -58,6 +58,7 @@ func settingsSet(arguments []string) error {
 	flags := newCommandFlagSet("settings set")
 	remote := addImportFlags(flags)
 	session := flags.String("session", "", "how long a sign-in with the shared password lasts: 1h, 8h, 12h, 1d, 7d or 30d")
+	initialBranch := flags.String("initial-branch", "", "the branch new repositories start on, such as main")
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
@@ -68,6 +69,8 @@ func settingsSet(arguments []string) error {
 		switch given.Name {
 		case "session":
 			change["session"] = *session
+		case "initial-branch":
+			change["initial_branch"] = *initialBranch
 		}
 	})
 	if len(change) == 0 {

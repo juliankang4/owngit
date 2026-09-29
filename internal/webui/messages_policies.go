@@ -18,6 +18,13 @@ const (
 	MsgSession1d    MessageCode = "session.choice.1d"
 	MsgSession7d    MessageCode = "session.choice.7d"
 	MsgSession30d   MessageCode = "session.choice.30d"
+
+	MsgInitialBranchTitle   MessageCode = "initial_branch.title"
+	MsgInitialBranchScope   MessageCode = "initial_branch.scope"
+	MsgInitialBranchLabel   MessageCode = "initial_branch.label"
+	MsgInitialBranchHelp    MessageCode = "initial_branch.help"
+	MsgInitialBranchInvalid MessageCode = "initial_branch.invalid"
+	MsgInitialBranchSaved   MessageCode = "initial_branch.saved"
 )
 
 var policiesCatalog = map[MessageCode]message{
@@ -46,6 +53,25 @@ var policiesCatalog = map[MessageCode]message{
 	MsgSession1d:  {en: "1 day", ko: "1일"},
 	MsgSession7d:  {en: "7 days", ko: "7일"},
 	MsgSession30d: {en: "30 days", ko: "30일"},
+
+	MsgInitialBranchTitle: {en: "New repositories", ko: "새 저장소"},
+	MsgInitialBranchScope: {
+		en: "Repositories created after you save, in the dashboard, on the command line or through the API. Existing repositories keep their branches, and an import takes its source's default branch. Change one repository's default branch on its own settings page.",
+		ko: "저장한 뒤 대시보드, 명령줄, API로 만드는 저장소에 적용됩니다. 이미 있는 저장소의 브랜치는 그대로이고, 가져온 저장소는 원본의 기본 브랜치를 씁니다. 저장소 하나의 기본 브랜치는 그 저장소의 설정 페이지에서 바꿉니다.",
+	},
+	MsgInitialBranchLabel: {en: "Initial branch", ko: "첫 브랜치"},
+	MsgInitialBranchHelp: {
+		en: "The branch a new repository starts on, which becomes its default branch. Up to 100 letters, digits, \"-\", \"_\", \".\" and \"/\". The default is main.",
+		ko: "새 저장소가 처음 쓰는 브랜치로, 그 저장소의 기본 브랜치가 됩니다. 영문자, 숫자, \"-\", \"_\", \".\", \"/\"로 100자까지 씁니다. 기본값은 main입니다.",
+	},
+	MsgInitialBranchInvalid: {
+		en: "OwnGit cannot use this branch name. Use up to 100 letters, digits, \"-\", \"_\", \".\" and \"/\", in a name Git accepts, such as main or trunk.",
+		ko: "이 브랜치 이름은 쓸 수 없습니다. main이나 trunk처럼 Git이 받아들이는 이름을 영문자, 숫자, \"-\", \"_\", \".\", \"/\"로 100자까지 쓰세요.",
+	},
+	MsgInitialBranchSaved: {
+		en: "Saved. Repositories created from now on start on this branch.",
+		ko: "저장했습니다. 이제부터 만드는 저장소는 이 브랜치로 시작합니다.",
+	},
 }
 
 // PolicyChoice is one choice of a policy drawn as a menu.

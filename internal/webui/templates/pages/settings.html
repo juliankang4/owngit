@@ -623,7 +623,31 @@
 
 {{/* Settings that belong to one repository stay on that repository's own
      page; this tab only leads there. */}}
-{{define "setRepositories"}}{{$lang := .Lang}}{{$nav := .Chrome.Nav}}
+{{define "setRepositories"}}{{$p := .Page}}{{$lang := .Lang}}{{$nav := .Chrome.Nav}}
+{{/* The branch new repositories start on. */}}
+{{$gn := forAction $p.Group "branch" $p.Notices}}{{$focus := firstError $gn "initial_branch" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "branch"}}
+{{$saved := $p.Policies.InitialBranch}}{{$branch := draft $p.Group $p.Draft "branch" "initial_branch" $saved}}
+<section class="grp" id="grp-branch" aria-labelledby="grp-branch-h" data-group="branch"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "branch" "Title" (bi $lang "initial_branch.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "initial_branch.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  <form class="gform" method="post" action="{{tabURL "repositories"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_initial_branch">
+    <div class="f f--row">
+      <label for="initial-branch">{{bi $lang "initial_branch.label"}}</label>
+      <input id="initial-branch" name="initial_branch" type="text" class="mono" autocomplete="off" spellcheck="false" maxlength="100" required
+             value="{{$branch}}" data-saved="{{if not $bad}}{{$saved}}{{end}}"
+             {{template "netDescribed" dict "Notices" $gn "Scope" "branch" "Field" "initial_branch" "Help" "initial-branch-help"}}{{if eq $focus "initial_branch"}} autofocus{{end}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "branch" "Field" "initial_branch"}}
+      <p class="f__help" id="initial-branch-help">{{bi $lang "initial_branch.help"}}</p>
+    </div>
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "branch" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
+  </form>
+</section>
+
 <section class="grp" id="grp-repositories" aria-labelledby="grp-repositories-h">
   <div class="grp__h"><h2 id="grp-repositories-h">{{bi $lang "settings.repositories.title"}}</h2></div>
   {{if $nav.Repositories}}

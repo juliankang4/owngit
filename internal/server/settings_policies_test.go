@@ -102,3 +102,43 @@ func TestUnreadableSessionLengthIsAnErrorUntilSetAgain(t *testing.T) {
 		t.Fatalf("PATCH status=%d settings=%v", status, settings)
 	}
 }
+
+// Repositories created after the initial branch is saved start on it, and
+// the empty repository page says to push that branch. A repository created
+// before keeps its branch, and a name OwnGit cannot use is refused.
+func TestInitialBranchAppliesToLaterRepositories(t *testing.T) {
+	fixture, server, _ := newConfirmationFixture(t, false, state.ConfirmEveryTime)
+	ctx := context.Background()
+	before, err := fixture.app.Repositories.Create(ctx, "before", "")
+	noErr(t, err)
+	browser := openConfirmationBrowser(t, server, false)
+	for _, refused := range []string{"-main", "feature..x", "a b", "HEAD", "topic.lock", "브랜치"} {
+		result := browser.post("/settings/repositories", url.Values{
+			"action": {webui.ActionSaveInitialBranch}, "initial_branch": {refused}, "admin_password": {"admin-password"},
+		})
+		if result.status != http.StatusUnprocessableEntity || !strings.Contains(result.body, enText(webui.MsgInitialBranchInvalid)) {
+			t.Fatalf("%q: status=%d", refused, result.status)
+		}
+	}
+	requireSaved(t, "initial branch", browser.post("/settings/repositories", url.Values{
+		"action": {webui.ActionSaveInitialBranch}, "initial_branch": {"release/trunk"}, "admin_password": {"admin-password"},
+	}))
+	after, err := fixture.app.Repositories.Create(ctx, "after", "")
+	noErr(t, err)
+	for _, check := range []struct{ id, branch string }{{before.ID, "main"}, {after.ID, "release/trunk"}} {
+		path, err := fixture.app.Repositories.Path(check.id)
+		noErr(t, err)
+		if head := apiGitOutput(t, path, "symbolic-ref", "HEAD"); head != "refs/heads/"+check.branch {
+			t.Fatalf("%s HEAD=%s, want %s", check.id, head, check.branch)
+		}
+	}
+	if page := browser.get("/repositories/after"); !strings.Contains(page.body, "git push -u origin release/trunk") {
+		t.Fatalf("the empty repository does not say to push its branch:\n%s", page.body)
+	}
+	if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"initial_branch": "no spaces"}); status != http.StatusBadRequest || code != "invalid_settings" {
+		t.Fatalf("API refusal status=%d code=%s", status, code)
+	}
+	if status, _, settings := settingsAPI(t, server.URL, http.MethodGet, nil); status != http.StatusOK || settings["initial_branch"] != "release/trunk" {
+		t.Fatalf("GET status=%d settings=%v", status, settings)
+	}
+}

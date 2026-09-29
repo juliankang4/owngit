@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -40,9 +41,40 @@ func (s *Store) policyValue(ctx context.Context, key string) (value string, foun
 	return value, err == nil, err
 }
 
-func (s *Store) setPolicyValue(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
-	return err
+// PolicyChange names the policies to save. A nil field keeps its policy
+// as it is.
+type PolicyChange struct {
+	Session       *GeneralSession
+	InitialBranch *string
+}
+
+// SavePolicies checks every policy change names and saves them all in one
+// transaction, or none. Each applies to what starts after it is saved.
+func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
+	values := map[string]string{}
+	if change.Session != nil {
+		if change.Session.Length() == 0 {
+			return fmt.Errorf("invalid session length %q", *change.Session)
+		}
+		values[generalSessionKey] = strconv.FormatInt(int64(change.Session.Length()/time.Second), 10)
+	}
+	if change.InitialBranch != nil {
+		if err := ValidateInitialBranch(*change.InitialBranch); err != nil {
+			return err
+		}
+		values[initialBranchKey] = *change.InitialBranch
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for key, value := range values {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // GeneralSession is how long a sign-in with the shared password lasts, one
@@ -81,7 +113,8 @@ func ParseGeneralSession(value string) (GeneralSession, bool) {
 	return choice, choice.Length() > 0
 }
 
-// GeneralSession returns how long a new general session lasts.
+// GeneralSession returns how long a new general session lasts. A change
+// applies to sessions that start afterwards.
 func (s *Store) GeneralSession(ctx context.Context) (GeneralSession, error) {
 	raw, found, err := s.policyValue(ctx, generalSessionKey)
 	if err != nil || !found {
@@ -95,11 +128,40 @@ func (s *Store) GeneralSession(ctx context.Context) (GeneralSession, error) {
 	return "", &PolicyError{Key: generalSessionKey, Value: raw, Cause: errors.New("not one of the session lengths")}
 }
 
-// SetGeneralSession saves how long new general sessions last. Sessions
-// that already started keep their end.
-func (s *Store) SetGeneralSession(ctx context.Context, choice GeneralSession) error {
-	if choice.Length() == 0 {
-		return fmt.Errorf("invalid session length %q", choice)
+// The initial branch of new repositories: the branch HEAD names until the
+// first push. It is stored as the branch name.
+const (
+	DefaultInitialBranch = "main"
+
+	initialBranchKey = "initial_branch"
+)
+
+// ValidateInitialBranch checks a branch name for new repositories: a name
+// Git accepts for a branch, written with ASCII letters, digits and "-", "_",
+// "." and "/", at most 100 bytes, so it can be typed in a command as it is
+// shown.
+func ValidateInitialBranch(name string) error {
+	valid := len(name) <= 100 && name != "HEAD" && !strings.HasPrefix(name, "-") && validBranchText(name)
+	for _, character := range name {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("-_./", character)) {
+			valid = false
+		}
 	}
-	return s.setPolicyValue(ctx, generalSessionKey, strconv.FormatInt(int64(choice.Length()/time.Second), 10))
+	if !valid {
+		return errors.New(`a branch name has at most 100 characters, only letters, digits, "-", "_", "." and "/", and must be one Git accepts`)
+	}
+	return nil
+}
+
+// InitialBranch returns the branch new repositories start on. A change
+// applies to repositories created afterwards.
+func (s *Store) InitialBranch(ctx context.Context) (string, error) {
+	name, found, err := s.policyValue(ctx, initialBranchKey)
+	if err != nil || !found {
+		return DefaultInitialBranch, err
+	}
+	if err := ValidateInitialBranch(name); err != nil {
+		return "", &PolicyError{Key: initialBranchKey, Value: name, Cause: err}
+	}
+	return name, nil
 }

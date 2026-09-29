@@ -231,8 +231,16 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("general_session", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
 			return
 		}
-		err = app.Store.SetGeneralSession(request.Context(), choice)
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{Session: &choice})
 		notice = "session_saved"
+	case webui.ActionSaveInitialBranch:
+		branch := postValue(request, "initial_branch")
+		if state.ValidateInitialBranch(branch) != nil {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("initial_branch", webui.MsgInitialBranchInvalid)}, http.StatusUnprocessableEntity)
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{InitialBranch: &branch})
+		notice = "initial_branch_saved"
 	case webui.ActionSaveNetwork:
 		app.saveNetwork(writer, request, settings, csrf)
 		return
@@ -322,6 +330,7 @@ var settingsNoticeGroups = map[string]string{
 	"confirmation_saved":     webui.GroupConfirm,
 	"confirmation_off":       webui.GroupConfirm,
 	"session_saved":          webui.GroupSession,
+	"initial_branch_saved":   webui.GroupBranch,
 	"insecure_acknowledged":  webui.GroupConnection,
 	"network_saved":          webui.GroupNetwork,
 	"tailscale_on":           webui.GroupTailscale,
@@ -430,7 +439,7 @@ type settingsView struct {
 // A switch or checkbox is written "on" or "off", since an unticked one
 // sends nothing.
 var settingsDraftFields = map[string]bool{
-	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "general_session": false, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
+	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "general_session": false, "initial_branch": false, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.

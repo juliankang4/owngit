@@ -668,9 +668,15 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	page.Overview.BranchCount = len(summary.Branches)
 	page.Overview.TagCount = len(summary.Tags)
 	if page.Repo.Empty {
+		// HEAD names the branch the repository started on, as Settings
+		// chose it when the repository was created.
+		branch := summary.DefaultBranch
+		if branch == "" {
+			branch = "HEAD"
+		}
 		page.Overview.PushCommands = []string{
 			"git remote add origin " + page.Repo.CloneURL,
-			"git push -u origin main",
+			"git push -u origin " + branch,
 		}
 		page.Overview.Activity = emptyActivityGraph(selectedYear(request, app.now().Year()), app.now(), page.Repo.Name)
 		return nil

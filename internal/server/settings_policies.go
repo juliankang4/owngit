@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,10 +10,11 @@ import (
 	"owngit/internal/webui"
 )
 
-// Server-wide policies: how long a sign-in lasts. The Settings tabs and the
-// owner API (/api/v1/settings) read and save them through the same state
-// accessors, which hold their choices and bounds. Each applies from the
-// moment it is saved to what starts afterwards: a sign-in.
+// Server-wide policies: how long a sign-in lasts and the branch new
+// repositories start on. The Settings tabs and the owner API
+// (/api/v1/settings) read and save them through the same state accessors,
+// which hold their choices and bounds. Each applies from the moment it is
+// saved to what starts afterwards: a sign-in, a new repository.
 
 // tabPolicies reads the policies tab shows. A saved value that cannot be
 // read (state.PolicyError) does not stop the page: its group says so and
@@ -40,6 +42,16 @@ func (app *App) tabPolicies(request *http.Request, tab string) (webui.Policies, 
 		}
 		policies.Session = string(session)
 	}
+	if tab == webui.SettingsRepositories {
+		branch, err := app.Store.InitialBranch(request.Context())
+		if err = unreadable(webui.GroupBranch, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if branch == "" {
+			branch = state.DefaultInitialBranch
+		}
+		policies.InitialBranch = branch
+	}
 	return policies, nil
 }
 
@@ -49,6 +61,8 @@ type settingsJSON struct {
 	// Session is how long a sign-in with the shared password lasts, one of
 	// state.GeneralSessions.
 	Session *string `json:"session,omitempty"`
+	// InitialBranch is the branch new repositories start on.
+	InitialBranch *string `json:"initial_branch,omitempty"`
 }
 
 type settingsResponse struct {
@@ -58,8 +72,8 @@ type settingsResponse struct {
 
 // handleSettingsAPI answers GET and PATCH /api/v1/settings. Both need the
 // administrator password in the request, as every administrator API
-// request does. A PATCH checks every value it names before it saves any,
-// then saves each and answers with every policy as saved.
+// request does. A PATCH checks every value it names and saves them all at
+// once, or none, and answers with every policy as saved.
 func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet && request.Method != http.MethodPatch {
 		writeAPIMethodError(writer, "GET, PATCH")
@@ -77,29 +91,46 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 			writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "Name at least one setting to change.", nil)
 			return
 		}
-		var session state.GeneralSession
+		var policies state.PolicyChange
 		if change.Session != nil {
-			var valid bool
-			if session, valid = state.ParseGeneralSession(*change.Session); !valid {
+			session, valid := state.ParseGeneralSession(*change.Session)
+			if !valid {
 				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "session must be one of "+choiceList(state.GeneralSessions)+".", nil)
 				return
 			}
+			policies.Session = &session
 		}
-		if change.Session != nil {
-			if err := app.Store.SetGeneralSession(request.Context(), session); err != nil {
-				writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
+		if change.InitialBranch != nil {
+			if err := state.ValidateInitialBranch(*change.InitialBranch); err != nil {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "initial_branch: "+err.Error()+".", nil)
 				return
 			}
+			policies.InitialBranch = change.InitialBranch
+		}
+		if err := app.Store.SavePolicies(request.Context(), policies); err != nil {
+			writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
+			return
 		}
 	}
-	var current settingsJSON
-	session, err := app.Store.GeneralSession(request.Context())
+	current, err := app.savedSettings(request.Context())
 	if err != nil {
 		app.writeSettingsReadError(writer, request, err)
 		return
 	}
-	current.Session = pointer(string(session))
 	writeAPIJSON(writer, http.StatusOK, settingsResponse{OK: true, Settings: current})
+}
+
+// savedSettings reads every policy as saved.
+func (app *App) savedSettings(ctx context.Context) (settingsJSON, error) {
+	session, err := app.Store.GeneralSession(ctx)
+	if err != nil {
+		return settingsJSON{}, err
+	}
+	branch, err := app.Store.InitialBranch(ctx)
+	if err != nil {
+		return settingsJSON{}, err
+	}
+	return settingsJSON{Session: pointer(string(session)), InitialBranch: &branch}, nil
 }
 
 // writeSettingsReadError answers a policy that could not be read: one whose
