@@ -18,6 +18,7 @@ type timeoutResponseTransport struct {
 	late        bool
 	content     string
 	contentType string
+	body        io.ReadCloser
 }
 
 func (transport timeoutResponseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -29,7 +30,11 @@ func (transport timeoutResponseTransport) RoundTrip(request *http.Request) (*htt
 	if transport.contentType != "" {
 		header.Set("Content-Type", transport.contentType)
 	}
-	return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader(transport.content)), Request: request}, nil
+	body := transport.body
+	if body == nil {
+		body = io.NopCloser(strings.NewReader(transport.content))
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: header, Body: body, Request: request}, nil
 }
 
 func TestAResponseAfterTheRequestLimitIsStillATimeout(t *testing.T) {

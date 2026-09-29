@@ -198,12 +198,12 @@ func newClient(server *url.URL) *Client {
 }
 
 // send sends request and returns the response with the function that ends
-// its time limit, to call once the body is read. The limit, Timeout or
-// DefaultTimeout, starts when the connection is ready, so a TLS handshake
+// its time limit and reports a timeout, to call once the body is read. The
+// limit, Timeout or DefaultTimeout, starts when the connection is ready, so a TLS handshake
 // that waits for a certificate does not use it up; opening the connection
 // has the transport's own limits, and this one only guards against a hang
 // before them.
-func (client *Client) send(request *http.Request) (*http.Response, func(), error) {
+func (client *Client) send(request *http.Request) (*http.Response, func() error, error) {
 	limit := client.Timeout
 	if limit <= 0 {
 		limit = DefaultTimeout
@@ -211,23 +211,47 @@ func (client *Client) send(request *http.Request) (*http.Response, func(), error
 	ctx, cancel := context.WithCancelCause(request.Context())
 	timer := time.AfterFunc(dialTimeout+TLSHandshakeTimeout+limit, func() { cancel(errRequestTimeout) })
 	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { timer.Reset(limit) }}
-	done := func() {
+	done := func() error {
 		timer.Stop()
+		err := requestTimeoutError(ctx, request)
 		cancel(nil)
+		return err
 	}
 	response, err := client.httpClient.Do(request.WithContext(httptrace.WithClientTrace(ctx, trace)))
 	// A response racing the cancellation does not undo our request limit.
-	if errors.Is(context.Cause(ctx), errRequestTimeout) {
-		err = &url.Error{Op: request.Method, URL: request.URL.String(), Err: errRequestTimeout}
+	if timeoutErr := requestTimeoutError(ctx, request); timeoutErr != nil {
+		err = timeoutErr
 	}
 	if err != nil {
 		if response != nil {
 			response.Body.Close()
 		}
-		done()
+		if timeoutErr := done(); timeoutErr != nil {
+			err = timeoutErr
+		}
 		return nil, nil, err
 	}
 	return response, done, nil
+}
+
+func requestTimeoutError(ctx context.Context, request *http.Request) error {
+	if errors.Is(context.Cause(ctx), errRequestTimeout) {
+		return &url.Error{Op: request.Method, URL: request.URL.String(), Err: errRequestTimeout}
+	}
+	return nil
+}
+
+// readResponseBody ends the request limit after the bounded read. Its own
+// timeout takes precedence over any response or body error received later.
+func readResponseBody(response *http.Response, done func() error, limit int64, failureMessage string) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if timeoutErr := done(); timeoutErr != nil {
+		return nil, connectionFailed(timeoutErr)
+	}
+	if err != nil {
+		return nil, responseError(response, &Error{Code: "invalid_response", Message: failureMessage, Cause: err})
+	}
+	return content, nil
 }
 
 // AddCertificateAuthorities extends the system trust store for a private CA
@@ -325,10 +349,9 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 	if responseLimit <= 0 {
 		responseLimit = maximumResponse
 	}
-	limited := io.LimitReader(response.Body, responseLimit+1)
-	content, err := io.ReadAll(limited)
+	content, err := readResponseBody(response, done, responseLimit, "The OwnGit API response could not be read.")
 	if err != nil {
-		return nil, responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit API response could not be read.", Cause: err})
+		return nil, err
 	}
 	if int64(len(content)) > responseLimit {
 		return nil, responseError(response, &Error{Code: "response_too_large", Message: "The OwnGit API response exceeds the supported size."})
@@ -379,9 +402,9 @@ func (client *Client) GetBytes(ctx context.Context, apiPath string, headers map[
 	}
 	defer done()
 	defer response.Body.Close()
-	content, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	content, readErr := readResponseBody(response, done, limit, "The OwnGit blob response could not be read.")
 	if readErr != nil {
-		return nil, nil, responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit blob response could not be read.", Cause: readErr})
+		return nil, nil, readErr
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var envelope pullrequest.ErrorEnvelope
