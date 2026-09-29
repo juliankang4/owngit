@@ -1495,8 +1495,8 @@ func (host *taskHost) control(action string) error {
 	}
 	// A sign-in install's icon runs the same owngit.exe as the server, so
 	// stop ends it too: an update replaces that file after "owngit service
-	// stop", which Windows refuses while any program runs it. Start and
-	// install start the icon again.
+	// stop", which Windows refuses while any program runs it. Start,
+	// restart and install start the icon again.
 	iconStopped := action == "stop" && installed.Mode == service.ModeLogonTask && host.stopIcon()
 	if action == "stop" {
 		when := "at the next boot"
@@ -1513,7 +1513,7 @@ func (host *taskHost) control(action string) error {
 	if err := host.runTask(); err != nil {
 		return err
 	}
-	if action == "start" && installed.Mode == service.ModeLogonTask {
+	if installed.Mode == service.ModeLogonTask {
 		if _, found, err := host.iconTask(); err == nil && found {
 			_ = host.runStep(host.schtasks(), "/Run", "/TN", `\`+service.IconTaskName)
 		}

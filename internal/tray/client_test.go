@@ -281,3 +281,24 @@ func TestDashboardIsProvenAtTheClick(t *testing.T) {
 		t.Fatalf("stopped: %q, %v", dashboard, err)
 	}
 }
+
+// The owner waits for the check at the click, so a server that does not
+// answer in time opens nothing, soon.
+func TestDashboardGivesUpSoon(t *testing.T) {
+	previous := dashboardTimeout
+	t.Cleanup(func() { dashboardTimeout = previous })
+	dashboardTimeout = 200 * time.Millisecond
+	fake := newFakeServer(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	answer := fake.answer
+	fake.answer = func(writer http.ResponseWriter) {
+		<-release
+		answer(writer)
+	}
+	started := time.Now()
+	dashboard, err := NewClient(fake.stateDir, nil).Dashboard(context.Background(), "en")
+	if err == nil || dashboard != "" || time.Since(started) > 5*time.Second {
+		t.Fatalf("%q, %v after %s", dashboard, err, time.Since(started))
+	}
+}

@@ -88,6 +88,9 @@ const (
 	answerTimeout  = 75 * time.Second
 )
 
+// dashboardTimeout bounds the check when the owner opens the dashboard.
+var dashboardTimeout = 4 * time.Second
+
 // NewClient returns a client for the server of stateDir.
 func NewClient(stateDir string, diagnose func(context.Context, string) (Diagnosis, error)) *Client {
 	transport := &http.Transport{
@@ -130,7 +133,11 @@ func (client *Client) Read(ctx context.Context, lang string) Report {
 // right when the owner asks to open the dashboard, so a status read
 // earlier, from a server that stopped since, never sends the browser to a
 // program that took its address.
+//
+// The owner waits for it, so it gives up after dashboardTimeout.
 func (client *Client) Dashboard(ctx context.Context, lang string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, dashboardTimeout)
+	defer cancel()
 	_, dashboard, err := client.status(ctx, lang)
 	if err != nil {
 		return "", err

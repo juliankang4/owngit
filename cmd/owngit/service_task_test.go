@@ -967,6 +967,12 @@ func TestTaskStopEndsTheIconOfASignInInstall(t *testing.T) {
 	if !fake.iconRunning {
 		t.Errorf("start left the icon closed: %q", fake.calls)
 	}
+	// Restart brings back an icon that was quit.
+	fake.iconRunning, fake.state = false, "4\n267009"
+	noErr(t, host.control("restart"))
+	if !fake.iconRunning {
+		t.Errorf("restart left the icon closed: %q", fake.calls)
+	}
 
 	fake = newFakeWindows(t)
 	fake.existing(t, service.ModeBootTask, testSID, testStateDir)

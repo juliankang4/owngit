@@ -372,9 +372,16 @@ func (a *app) handle(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		a.mu.Unlock()
 		if target != "" && openURL(target) {
 			a.closePanel()
-		} else {
-			a.askAgain()
+			return 0
 		}
+		// Not proven in time: show that in the panel until the next
+		// reading, which is asked for now.
+		a.current.report = Report{Condition: Unavailable}
+		a.apply()
+		if !a.panelOpen.Load() {
+			a.openPanel()
+		}
+		a.askAgain()
 		return 0
 	case wmTray:
 		switch lParam & 0xFFFF {
@@ -479,9 +486,7 @@ func (a *app) openDashboard() {
 	}
 	a.opening = true
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), answerTimeout+connectTimeout)
-		defer cancel()
-		target, err := NewClient(a.stateDir, nil).Dashboard(ctx, string(a.lang))
+		target, err := NewClient(a.stateDir, nil).Dashboard(context.Background(), string(a.lang))
 		if err != nil {
 			target = ""
 		}
