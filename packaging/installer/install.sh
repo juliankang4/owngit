@@ -81,11 +81,13 @@ changeable() {
 		fi
 		;;
 	esac
-	case $mode in ??????????+*)
+	# macOS marks a folder with extended attributes by @, which hides the +
+	# of an access list, so either one means the list is read.
+	case $os$mode in
+	linux??????????+*) echo "it has an access list" ;;
+	darwin??????????[+@]*)
 		# shellcheck disable=SC2010 # the access list lines of ls are read, not names
-		if [ "$os" = linux ]; then
-			echo "it has an access list"
-		elif ls -lde -- "$1" | grep -Eq '^ *[0-9]+: .* allow .*(add_file|add_subdirectory|delete|writesecurity|chown)'; then
+		if ls -lde -- "$1" | grep -Eq '^ *[0-9]+: .* allow .*(add_file|add_subdirectory|delete|writesecurity|chown)'; then
 			echo "its access list lets others change it"
 		fi
 		;;

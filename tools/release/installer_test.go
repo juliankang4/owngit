@@ -707,8 +707,11 @@ func TestInstallSh(t *testing.T) {
 				}
 				refused(t, dir, "it has an access list")
 			case "darwin":
-				if output, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file", dir).CombinedOutput(); err != nil {
-					t.Fatalf("chmod +a: %v\n%s", err, output)
+				// An extended attribute makes ls show @ instead of +.
+				for _, command := range [][]string{{"/bin/chmod", "+a", "everyone allow add_file", dir}, {"/usr/bin/xattr", "-w", "org.owngit.test", "1", dir}} {
+					if output, err := exec.Command(command[0], command[1:]...).CombinedOutput(); err != nil {
+						t.Fatalf("%v: %v\n%s", command, err, output)
+					}
 				}
 				refused(t, dir, "its access list lets others change it")
 			}
