@@ -742,13 +742,20 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 	var logExpiresAt *time.Time
 	logTruncated := false
 	rawStored := false
+	var retention CheckLogRetention
 	if storeRawLog {
 		// A raw log is kept for the chosen time from when its check
-		// started, as SavePolicies counts it for the logs kept already.
-		retention, err := checkLogRetention(ctx, tx)
-		if err != nil {
+		// started. Without a retention to keep it by, the result is stored
+		// without it, as when the log itself cannot be stored.
+		var unreadable *PolicyError
+		retention, err = checkLogRetention(ctx, tx)
+		if errors.As(err, &unreadable) {
+			storeRawLog, logError = false, "The raw log was not kept. "+unreadable.Advice()
+		} else if err != nil {
 			return Task{}, CheckAttempt{}, err
 		}
+	}
+	if storeRawLog {
 		expiresAt := retention.expiry(registered.CreatedAt)
 		if err := ops.insertRawLog(ctx, tx, registered.ID, []byte(completion.Log), expiresAt.Unix()); err != nil {
 			return Task{}, CheckAttempt{}, rawLogTransactionError(err)

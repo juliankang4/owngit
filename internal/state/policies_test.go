@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -141,7 +142,15 @@ func TestRawLogRetentionAppliesToTheLogsKept(t *testing.T) {
 	third := attemptFor(task, "3333333333333333333333333333333333333333", now.Add(21*24*time.Hour), AttemptFailed)
 	_, _, err = store.RegisterCheckAttempt(ctx, third)
 	noErr(t, err)
-	if _, _, err := store.CompleteCheckAttempt(ctx, completionFor(third, "third output"), third.CreatedAt); !errors.As(err, &policyErr) {
-		t.Fatalf("a log stored under an unknown retention: err=%v", err)
+	// The result is kept without its raw log, and the attempt says which
+	// setting to set again.
+	_, stored, err := store.CompleteCheckAttempt(ctx, completionFor(third, "third output"), third.CreatedAt)
+	noErr(t, err)
+	if stored.Status != AttemptFailed || len(stored.Results) != 1 || stored.Results[0].OutputExcerpt != "out" ||
+		stored.LogID != "" || stored.LogExpiresAt != nil || !strings.Contains(stored.LogError, "--check-logs") {
+		t.Fatalf("attempt stored under an unknown retention: %+v", stored)
+	}
+	if count, err := store.TableRowCount(ctx, "check_raw_logs"); err != nil || count != 1 {
+		t.Fatalf("raw logs=%d err=%v, want only the newer one", count, err)
 	}
 }
