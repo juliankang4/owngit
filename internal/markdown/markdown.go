@@ -272,7 +272,7 @@ func convert(source []byte, resolve Resolver) (string, error) {
 	// Writing past the limit stops the render at once, so the HTML never
 	// grows past it and no more time is spent on it.
 	out := &cappedWriter{limit: maxOutput, exceeded: func() { panic(errOutputTooLarge) }}
-	parseContext := parser.NewContext(parser.WithIDs(&headingIDs{used: map[string]int{}}))
+	parseContext := parser.NewContext(parser.WithIDs(NewHeadingIDs(IDPrefix)))
 	if err := convertInto(engine, source, out, parseContext); err != nil {
 		return "", err
 	}
@@ -650,20 +650,28 @@ func nesting(line []byte) int {
 	}
 }
 
-// headingIDs gives headings GitHub's anchors behind a prefix, so a README's
-// table of contents written for GitHub still works, and a heading such as
-// "main" can never take the id of an element of OwnGit's own page.
+// headingIDs gives headings GitHub's anchors behind a prefix. The file view
+// uses IDPrefix, so a README's table of contents written for GitHub still
+// works, and a heading such as "main" can never take the id of an element of
+// OwnGit's own page.
 //
 // used maps every anchor handed out to the last number tried for it as a
 // base, as GitHub's slugger does. Each heading therefore costs time in its
 // own length only, however many headings repeat.
 type headingIDs struct {
-	used map[string]int
+	prefix string
+	used   map[string]int
 }
 
-// IDPrefix starts every heading anchor. A link written as "#setup" in the
-// file is rewritten to "#" + IDPrefix + "setup".
+// IDPrefix starts every heading anchor in the file view. A link written as
+// "#setup" in the file is rewritten to "#" + IDPrefix + "setup".
 const IDPrefix = "md-"
+
+// NewHeadingIDs gives the headings of one document GitHub's anchors, each
+// after prefix, when passed to goldmark with parser.WithIDs.
+func NewHeadingIDs(prefix string) parser.IDs {
+	return &headingIDs{prefix: prefix, used: map[string]int{}}
+}
 
 func (ids *headingIDs) Generate(value []byte, _ ast.NodeKind) []byte {
 	base := Slug(string(value))
@@ -678,11 +686,11 @@ func (ids *headingIDs) Generate(value []byte, _ ast.NodeKind) []byte {
 		}
 	}
 	ids.used[id] = 0
-	return []byte(IDPrefix + id)
+	return []byte(ids.prefix + id)
 }
 
 func (ids *headingIDs) Put(value []byte) {
-	id := strings.TrimPrefix(string(value), IDPrefix)
+	id := strings.TrimPrefix(string(value), ids.prefix)
 	if _, taken := ids.used[id]; !taken {
 		ids.used[id] = 0
 	}
@@ -705,14 +713,20 @@ func Slug(heading string) string {
 	return b.String()
 }
 
-// fragmentID rewrites a link's fragment to the anchor Generate gives the
-// heading it names. GitHub matches fragments without regard to case, so the
-// fragment is lowered as the anchors are.
-func fragmentID(fragment string) string {
+// FragmentAnchor gives the heading anchor a link's fragment names, without
+// its "#". GitHub matches fragments without regard to case, so the fragment
+// is lowered as the anchors are.
+func FragmentAnchor(fragment string) string {
 	if decoded, err := url.PathUnescape(fragment); err == nil {
 		fragment = decoded
 	}
-	return "#" + (&url.URL{Fragment: IDPrefix + strings.ToLower(fragment)}).EscapedFragment()
+	return strings.ToLower(fragment)
+}
+
+// fragmentID rewrites a link's fragment to the id the file view gives the
+// heading it names.
+func fragmentID(fragment string) string {
+	return "#" + (&url.URL{Fragment: IDPrefix + FragmentAnchor(fragment)}).EscapedFragment()
 }
 
 // destinations rewrites every link and image through the resolver.
