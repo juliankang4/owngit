@@ -134,7 +134,7 @@ func TestMergeabilityUnavailable(t *testing.T) {
 		script string
 		reason string
 	}{
-		"old Git": {"if test \"$1\" = --version; then echo 'git version 2.37.6'; exit 0; fi\n", "unsupported_git"},
+		"old Git":       {"if test \"$1\" = --version; then echo 'git version 2.37.6'; exit 0; fi\n", "unsupported_git"},
 		"failing merge": {"for arg in \"$@\"; do\n  if test \"$arg\" = merge-tree; then echo 'fatal: synthetic failure' >&2; exit 128; fi\ndone\n", "repository_unavailable"},
 	} {
 		t.Run(name, func(t *testing.T) {
