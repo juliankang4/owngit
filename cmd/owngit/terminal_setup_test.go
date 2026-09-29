@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -87,13 +86,11 @@ func requireSetupFilePage(t *testing.T, base string) {
 	}
 }
 
-// canonicalStateDir returns the state directory as OwnGit reports it: Unix
-// resolves links (macOS /var is /private/var); Windows keeps the path as given.
+// canonicalStateDir returns the state directory as OwnGit reports it, by
+// its resolved path: Unix resolves links (macOS /var is /private/var), and
+// Windows short (8.3) names, such as RUNNER~1 in a temp folder, and case.
 func canonicalStateDir(t *testing.T, dir string) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		return dir
-	}
 	resolved, err := filepath.EvalSymlinks(dir)
 	noErr(t, err)
 	return resolved

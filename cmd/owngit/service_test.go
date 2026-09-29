@@ -161,7 +161,7 @@ func TestSetupLinkShowsTheLinkOnlyOnATerminal(t *testing.T) {
 	output, err := captureStdout(func() error { return run([]string{"setup-link", "--state-dir", stateDir, "--no-open"}) })
 	noErr(t, err)
 	capability := setupFileCapability(t, stateDir)
-	if strings.Contains(output, capability) || strings.Contains(output, "#") || !strings.Contains(output, filepath.Join(stateDir, "owner-setup.html")) {
+	if strings.Contains(output, capability) || strings.Contains(output, "#") || !strings.Contains(output, filepath.Join(canonicalStateDir(t, stateDir), "owner-setup.html")) {
 		t.Fatalf("setup-link through a pipe printed %q", output)
 	}
 

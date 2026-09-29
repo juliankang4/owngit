@@ -46,7 +46,7 @@ func TestServeRefusesACopiedStateThatSharesARunningServersRepositories(t *testin
 
 	instance := startServed(t, original)
 	hook := readHook()
-	if !strings.Contains(hook, filepath.Join(original, "runtime")) {
+	if !strings.Contains(hook, filepath.Join(canonicalStateDir(t, original), "runtime")) {
 		t.Fatalf("hook does not name the original runtime:\n%s", hook)
 	}
 	copyContext, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -70,7 +70,7 @@ func TestServeRefusesACopiedStateThatSharesARunningServersRepositories(t *testin
 	// Moving a stopped state directory keeps working: the copy now serves.
 	moved := startServed(t, copied)
 	moved.stop()
-	if got := readHook(); !strings.Contains(got, filepath.Join(copied, "runtime")) {
+	if got := readHook(); !strings.Contains(got, filepath.Join(canonicalStateDir(t, copied), "runtime")) {
 		t.Fatalf("the moved state did not refresh the hook:\n%s", got)
 	}
 }
