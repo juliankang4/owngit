@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +127,43 @@ func TestPullRequestTextLimits(t *testing.T) {
 	}
 	if records, err := fixture.store.PullRequests(fixture.ctx, fixture.repositoryID); err != nil || len(records) != 0 {
 		t.Fatalf("a refused description created records=%v err=%v", records, err)
+	}
+}
+
+// Edits that read the same revision race: exactly one is saved, and every
+// other one is refused with the revision the winner made, whether it lost
+// before writing or in the write itself.
+func TestParallelEditsSaveExactlyOne(t *testing.T) {
+	fixture, _, _ := newTextFixture(t)
+	created, err := fixture.service.Create(fixture.ctx, CreateInput{
+		Repository: fixture.repositoryID, Title: "Original", SourceBranch: "feature", TargetBranch: "main",
+	})
+	noErr(t, err)
+	const editors = 8
+	results := make(chan error, editors)
+	for editor := range editors {
+		go func() {
+			body := "edit " + strconv.Itoa(editor)
+			_, err := fixture.service.Edit(fixture.ctx, fixture.repositoryID, created.Number, EditInput{EditRevision: int64Pointer(0), Body: &body, Actor: access})
+			results <- err
+		}()
+	}
+	saved := 0
+	for range editors {
+		err := <-results
+		if err == nil {
+			saved++
+			continue
+		}
+		var problem *Problem
+		if !errors.As(err, &problem) || problem.Code != "stale_edit" || problem.Details != (StaleEdit{CurrentEditRevision: 1}) {
+			t.Errorf("a losing edit: %v", err)
+		}
+	}
+	shown, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, created.Number)
+	noErr(t, err)
+	if saved != 1 || shown.EditRevision != 1 || !strings.HasPrefix(*shown.Body, "edit ") {
+		t.Fatalf("saved %d edits; revision %d, body %q", saved, shown.EditRevision, *shown.Body)
 	}
 }
 
