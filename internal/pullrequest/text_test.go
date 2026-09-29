@@ -3,6 +3,7 @@ package pullrequest
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -111,6 +112,12 @@ func TestPullRequestEditRefusesStaleRevisionsAndLeavesEvidence(t *testing.T) {
 	})
 	noErr(t, err)
 	number := created.Number
+	recordPassedCheck(t, fixture, sourceOID)
+	checked, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, number)
+	noErr(t, err)
+	if checked.Checks.Status == "absent" {
+		t.Fatalf("the recorded check is not shown: %+v", checked.Checks)
+	}
 	if _, err := fixture.service.Edit(fixture.ctx, fixture.repositoryID, number, EditInput{Title: stringPointer("x")}); problemCode(err) != "invalid_edit_revision" {
 		t.Fatalf("edit without a revision err=%v", err)
 	}
@@ -128,6 +135,9 @@ func TestPullRequestEditRefusesStaleRevisionsAndLeavesEvidence(t *testing.T) {
 	noErr(t, err)
 	if titled.Title != "Renamed" || *titled.Body != "first" || titled.EditRevision != 1 || titled.EditedAt == nil || titled.EditedBy == nil || *titled.EditedBy != access {
 		t.Fatalf("title edit=%+v", titled)
+	}
+	if !reflect.DeepEqual(titled.Checks, checked.Checks) || !reflect.DeepEqual(titled.Review, checked.Review) {
+		t.Fatalf("a title edit changed the evidence: checks %+v, then %+v; review %+v, then %+v", checked.Checks, titled.Checks, checked.Review, titled.Review)
 	}
 	_, err = fixture.service.Edit(fixture.ctx, fixture.repositoryID, number, EditInput{EditRevision: int64Pointer(0), Body: stringPointer("overwrite"), Actor: access})
 	var problem *Problem
@@ -151,7 +161,7 @@ func TestPullRequestEditRefusesStaleRevisionsAndLeavesEvidence(t *testing.T) {
 	noErr(t, err)
 	if *described.Body != "after the merge" || described.EditRevision != 2 || described.State != state.PullRequestMerged || described.Merge == nil ||
 		described.Merge.OID != merged.Merge.OID || !described.Merge.MergedAt.Equal(merged.Merge.MergedAt) || described.MergedBy == nil ||
-		described.Review.Status != merged.Review.Status || described.Checks.Status != merged.Checks.Status {
+		!reflect.DeepEqual(described.Review, merged.Review) || !reflect.DeepEqual(described.Checks, merged.Checks) {
 		t.Fatalf("an edit of a merged pull request changed its record: %+v", described)
 	}
 	revisionsAfter, err := fixture.store.PullRequestRevisionsFor(fixture.ctx, fixture.repositoryID, number)
@@ -159,6 +169,28 @@ func TestPullRequestEditRefusesStaleRevisionsAndLeavesEvidence(t *testing.T) {
 	if len(revisionsAfter) != len(revisionsBefore) {
 		t.Fatalf("text edits changed revision bindings: %d, then %d", len(revisionsBefore), len(revisionsAfter))
 	}
+}
+
+// recordPassedCheck records a completed, passed check attempt for revision.
+func recordPassedCheck(t *testing.T, fixture *serviceFixture, revision string) {
+	t.Helper()
+	now := time.Now().UTC()
+	task, err := fixture.store.CreateTask(fixture.ctx, fixture.repositoryID, "Check the change", now.Add(-time.Second))
+	noErr(t, err)
+	const attemptID = "22222222222222222222222222222222"
+	_, _, err = fixture.store.RegisterCheckAttempt(fixture.ctx, state.CheckAttempt{
+		ID: attemptID, TaskID: task.ID, RepositoryID: fixture.repositoryID, RevisionOID: revision,
+		WorktreeState: state.WorktreeClean, StartedAt: now.Add(-time.Second), CreatedAt: now.Add(-time.Second),
+		Protection: state.ProtectionUnknown, ExecutionScope: state.ExecutionScopeInherited,
+		Checks: []state.CheckDefinition{{Name: "unit", Command: "go test ./..."}},
+	})
+	noErr(t, err)
+	exitCode := 0
+	_, _, err = fixture.store.CompleteCheckAttempt(fixture.ctx, state.CheckCompletion{
+		AttemptID: attemptID, RepositoryID: fixture.repositoryID, TaskID: task.ID, FinishedAt: now, WorktreeState: state.WorktreeClean,
+		Results: []state.CheckResult{{Name: "unit", Command: "go test ./...", Status: state.AttemptPassed, ExitCode: &exitCode, DurationMS: 5}},
+	}, now)
+	noErr(t, err)
 }
 
 // A review note stays with the pair it reviewed. After a branch moves the
