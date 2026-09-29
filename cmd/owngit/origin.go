@@ -284,7 +284,7 @@ func readPasswordFile(path string) (secretFile, error) {
 		return secretFile{}, err
 	}
 	if len(content) > maximumPasswordBytes {
-		return secretFile{}, errors.New("password file is too large")
+		return secretFile{}, &passwordContentError{"is too large to hold one password"}
 	}
 	password := strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")
 	// A file holds exactly one secret line, so extra lines can never travel
@@ -293,13 +293,25 @@ func readPasswordFile(path string) (secretFile, error) {
 		if origin != "" {
 			return secretFile{}, errOriginLine("After the server line, the file must hold only the password line.")
 		}
-		return secretFile{}, errors.New("password file must hold the password on one line")
+		return secretFile{}, &passwordContentError{"must hold the password on one line, optionally followed by one line break"}
 	}
-	if err := auth.ValidatePassword(password); err != nil {
+	switch err := auth.ValidatePassword(password); {
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		return secretFile{}, &passwordContentError{fmt.Sprintf("holds a password shorter than %d characters", auth.MinimumPasswordCharacters)}
+	case errors.Is(err, auth.ErrPasswordTooLong):
+		return secretFile{}, &passwordContentError{fmt.Sprintf("holds a password longer than %d characters", auth.MaximumPasswordCharacters)}
+	case err != nil:
 		return secretFile{}, err
 	}
 	return secretFile{secret: password, origin: origin}, nil
 }
+
+// passwordContentError is a password file that could be read but does not
+// hold one valid password line. Its problem completes a sentence about the
+// file, so the message points at the content, never at permissions.
+type passwordContentError struct{ problem string }
+
+func (e *passwordContentError) Error() string { return "password file " + e.problem }
 
 // readTokenFile reads a helper or runner credential file with owner-only
 // permissions and the optional server line.
@@ -351,9 +363,14 @@ const privateFileGuide = `"Password and token files" in docs/OPERATIONS.md`
 
 // secretFileMessage describes a refused password or credential file named
 // what, such as "The shared password file". A file that is not private gets
-// what is wrong and a one-line fix; any other failure gets the general
-// sentence. Neither includes the file's content.
+// what is wrong and a one-line fix, and a password file whose content is
+// refused gets what the content must be; any other failure gets the general
+// sentence. None includes the file's content.
 func secretFileMessage(what string, err error) string {
+	var content *passwordContentError
+	if errors.As(err, &content) {
+		return what + " " + content.problem + "."
+	}
 	var notPrivate *state.NotPrivateError
 	if errors.As(err, &notPrivate) {
 		run := "To fix it, run: "

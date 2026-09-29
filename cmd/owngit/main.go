@@ -1029,7 +1029,8 @@ func restoreState(arguments []string) error {
 func readPrivatePassword(path string) (string, error) {
 	file, err := readPasswordFile(path)
 	var notPrivate *state.NotPrivateError
-	if errors.As(err, &notPrivate) {
+	var content *passwordContentError
+	if errors.As(err, &notPrivate) || errors.As(err, &content) {
 		return "", errors.New(secretFileMessage("The password file", err))
 	}
 	return file.secret, err

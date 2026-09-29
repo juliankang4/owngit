@@ -428,7 +428,7 @@ owngit reset-admin --password-file /path/to/owner-only-password-file
 
 ### Password and token files
 
-Every command that reads a password or token file you wrote yourself, including `reset-admin`, `import`, `pr` and `repo`, requires a regular file that only your account can read; OwnGit never accepts a password as a command-line value. When it refuses a file, it says which accounts can also read it and gives the command that fixes it.
+Every command that reads a password or token file you wrote yourself, including `reset-admin`, `import`, `pr` and `repo`, requires a regular file that only your account can read; OwnGit never accepts a password as a command-line value. When it refuses a file, it says which accounts can also read it and gives the command that fixes it. A password file holds the password on one line, and one line break after it is fine; a file with more lines or a password that is too short is refused with a message that says so.
 
 On macOS and Linux, create the file while `umask 077` is in effect, or fix it with `chmod 600 FILE`. On Windows, a file made with Notepad or `echo` inherits its folder's access entries, so in PowerShell create the file, limit it to your account, and only then write the password:
 

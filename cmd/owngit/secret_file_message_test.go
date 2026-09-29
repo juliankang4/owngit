@@ -74,3 +74,40 @@ func TestSecretFileRefusalSaysWhatIsWrongAndHowToFixIt(t *testing.T) {
 		t.Fatalf("missing file refusal %v", err)
 	}
 }
+
+// A private password file whose content is refused says what the content
+// must be, not that the file is unavailable or not private. One line break
+// after the password is accepted.
+func TestPasswordFileContentRefusalNamesTheContent(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		noErr(t, os.WriteFile(path, []byte(content), 0o600))
+		noErr(t, state.ProtectPrivatePath(path, false))
+		return path
+	}
+	server, err := url.Parse("http://127.0.0.1:7654")
+	noErr(t, err)
+	for _, content := range []string{"valid-password-7351", "valid-password-7351\n", "valid-password-7351\r\n"} {
+		if password, err := readServerPassword(write("accepted", content), server, false, "The shared password file"); err != nil || password != "valid-password-7351" {
+			t.Errorf("%q: password=%q err=%v", content, password, err)
+		}
+	}
+	oneLine := "must hold the password on one line, optionally followed by one line break."
+	for _, test := range []struct{ content, problem string }{
+		{"valid-password-7351\n\n", oneLine},
+		{"\nvalid-password-7351\n", oneLine},
+		{"valid-password-7351\nsecond line\n", oneLine},
+		{"short\n", "holds a password shorter than 8 characters."},
+	} {
+		path := write("refused", test.content)
+		_, err := readServerPassword(path, server, false, "The shared password file")
+		var refusal *apiclient.Error
+		if !errors.As(err, &refusal) || refusal.Code != "invalid_password_file" || refusal.Message != "The shared password file "+test.problem {
+			t.Errorf("%q: refusal %v", test.content, err)
+		}
+		if _, err := readPrivatePassword(path); err == nil || err.Error() != "The password file "+test.problem {
+			t.Errorf("%q: reset-admin refusal %v", test.content, err)
+		}
+	}
+}
