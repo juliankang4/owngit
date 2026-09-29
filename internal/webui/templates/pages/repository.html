@@ -271,7 +271,7 @@
     {{else if and .Document (not .ShowSource) .Rendered}}
       {{/* Rendered by internal/markdown: raw HTML from the file is never
            passed through, and every address was resolved by OwnGit. */}}
-      <article class="md" dir="auto">{{.Rendered}}</article>
+      <article class="md">{{.Rendered}}</article>
     {{else}}
       {{if and .Document (not .Rendered) (not .ShowSource) .NotRendered}}<p class="hm__note">{{bi $lang .NotRendered}}</p>{{end}}
       {{/* Repository content is rendered as text through the template's
@@ -327,7 +327,7 @@
     {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CommitsURL}}
     <div class="chead">
       <h2 class="chead__msg" dir="auto">{{.Commit.Subject}}</h2>
-      {{with .Body}}<p class="cdetail__body" dir="auto">{{.}}</p>{{end}}
+      {{with .Body}}<p class="cdetail__body textdoc">{{.}}</p>{{end}}
       <p class="cdetail__meta">
         <span class="mono">{{.Commit.ShortOID}}</span>
         <span dir="auto">{{.Commit.AuthorName}}</span>
@@ -416,7 +416,7 @@
 {{with .R}}
   <section class="readme" aria-labelledby="readme-h">
     <h2 class="readme__h" id="readme-h">{{icon "file"}}<a href="{{.URL}}" dir="auto">{{.Path}}</a></h2>
-    {{if .Rendered}}<article class="md" dir="auto">{{.Rendered}}</article>{{else}}<p class="hm__note">{{bi $lang .Note}}</p>{{end}}
+    {{if .Rendered}}<article class="md">{{.Rendered}}</article>{{else}}<p class="hm__note">{{bi $lang .Note}}</p>{{end}}
   </section>
 {{end}}
 {{end}}

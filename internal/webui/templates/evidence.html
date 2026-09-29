@@ -361,10 +361,10 @@
 {{define "prText"}}
 {{$lang := .Lang}}{{$t := .T}}
 {{if $t.HTML}}
-  <article class="md prtext" dir="auto">{{$t.HTML}}</article>
+  <article class="md prtext">{{$t.HTML}}</article>
 {{else if $t.Text}}
   <p class="hm__note">{{bi $lang $t.NotRendered}}</p>
-  <div class="prtext prtext--plain" dir="auto">{{$t.Text}}</div>
+  <div class="prtext prtext--plain textdoc">{{$t.Text}}</div>
 {{else}}
   <p class="ev__note">{{bi $lang (code .Empty)}}</p>
 {{end}}

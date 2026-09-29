@@ -82,7 +82,7 @@ func TestCodeViewRendersDocumentsWithoutRepositoryMarkup(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("preview status=%d", status)
 	}
-	document := preview[strings.Index(preview, `<article class="md" dir="auto">`):]
+	document := preview[strings.Index(preview, `<article class="md">`):]
 	document = document[:strings.Index(document, "</article>")]
 	for _, want := range []string{
 		`<h1 id="md-guide">Guide</h1>`,
@@ -437,7 +437,7 @@ func TestUnavailableHelperIsNamedOnThePage(t *testing.T) {
 	}
 
 	markdown.SetHelper(executable)
-	if folder, _ = dashboardGET(t, client, base); !strings.Contains(folder, `<article class="md" dir="auto">`) {
+	if folder, _ = dashboardGET(t, client, base); !strings.Contains(folder, `<article class="md">`) {
 		t.Error("the README was remembered as a failure and stays unrendered")
 	}
 }
@@ -570,7 +570,7 @@ func TestOverviewShowsTheRenderedReadme(t *testing.T) {
 	client := &http.Client{}
 
 	body, status := dashboardGET(t, client, server.URL+"/repositories/with-readme")
-	if status != http.StatusOK || !strings.Contains(body, `<section class="readme"`) || !strings.Contains(body, `<article class="md" dir="auto">`) {
+	if status != http.StatusOK || !strings.Contains(body, `<section class="readme"`) || !strings.Contains(body, `<article class="md">`) {
 		t.Fatalf("overview status=%d has no rendered README", status)
 	}
 	readme := body[strings.Index(body, `<section class="readme"`):]

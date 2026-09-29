@@ -34,7 +34,7 @@ func decodeAPIObject(t *testing.T, response *http.Response) map[string]any {
 // renderedText is the first rendered description or note in a page.
 func renderedText(t *testing.T, page string) string {
 	t.Helper()
-	const open = `<article class="md prtext" dir="auto">`
+	const open = `<article class="md prtext">`
 	start := strings.Index(page, open)
 	if start < 0 {
 		t.Fatalf("the page has no rendered text:\n%s", page)

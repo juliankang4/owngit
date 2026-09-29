@@ -1205,6 +1205,16 @@ span.hm__cell { cursor: default; }
 .md img { max-width: 100%; height: auto; }
 .md del { color: var(--text-2); }
 
+/* A document from a repository user, rendered Markdown (.md) or plain text
+   kept in lines (.textdoc), takes its direction a paragraph at a time: each
+   paragraph, list item, heading and table cell, and each line of plain text,
+   follows its own first strong letter. So a right-to-left line neither turns
+   the English and code after it around nor is turned around by them, and the
+   document itself stays in the page's direction. Code is always left to
+   right. */
+.md :is(p, li, h1, h2, h3, h4, h5, h6, th, td), .textdoc { unicode-bidi: plaintext; text-align: start; }
+.md pre, .md code { direction: ltr; unicode-bidi: isolate; text-align: left; }
+
 .tree {
   border: 1px solid var(--sep);
   border-radius: var(--r-m);

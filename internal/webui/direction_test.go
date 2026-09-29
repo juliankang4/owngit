@@ -10,6 +10,8 @@ import (
 // cannot reorder the states, commit IDs and labels beside it. The window
 // title has no elements, so there the pull request title is set between
 // FIRST STRONG ISOLATE and POP DIRECTIONAL ISOLATE without its controls.
+// A document (the plain fallback, a rendered note) has no dir of its own:
+// the style sheet gives .md and .textdoc a direction per paragraph or line.
 func TestTextFromUsersIsIsolated(t *testing.T) {
 	r := newRenderer(t)
 	const control = "\u202e"
@@ -28,8 +30,8 @@ func TestTextFromUsersIsIsolated(t *testing.T) {
 		`<span class="mono" dir="auto">main` + control + `</span>`,
 		`<dd dir="auto">codex` + control + `</dd>`,
 		`<span dir="auto">reader` + control + `</span>`,
-		`<div class="prtext prtext--plain" dir="auto">plain` + control + `</div>`,
-		`<article class="md prtext" dir="auto"><p>note` + control + `</p></article>`,
+		`<div class="prtext prtext--plain textdoc">plain` + control + `</div>`,
+		`<article class="md prtext"><p>note` + control + `</p></article>`,
 		"<title>#12 \u2068Capdelays\u2069",
 	} {
 		if !strings.Contains(out, want) {

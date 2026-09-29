@@ -107,7 +107,7 @@ func TestCodeTabDocumentAndSource(t *testing.T) {
 		PreviewURL: "/c?path=README.md", SourceURL: "/c?path=README.md&view=source",
 		Rendered: template.HTML(`<h1 id="md-title">Title</h1>`)}
 	out := render(t, r, codePage(LangEN, doc))
-	if !strings.Contains(out, `<article class="md" dir="auto"><h1 id="md-title">Title</h1></article>`) || strings.Contains(out, `class="codebox"`) {
+	if !strings.Contains(out, `<article class="md"><h1 id="md-title">Title</h1></article>`) || strings.Contains(out, `class="codebox"`) {
 		t.Error("the preview does not show the rendered document alone")
 	}
 	if !strings.Contains(out, `href="/c?path=README.md" aria-current="true"`) || strings.Contains(out, "data-wrap-toggle") {
@@ -176,7 +176,7 @@ func TestCodeTabFolderShowsListingAndReadme(t *testing.T) {
 	page.Code.File = nil
 	page.Code.Readme = &ReadmeView{Path: "internal/README.md", URL: "/r", Rendered: template.HTML("<p>Hello</p>")}
 	out := render(t, r, page)
-	if !strings.Contains(out, `<nav class="flist"`) || !strings.Contains(out, `<article class="md" dir="auto"><p>Hello</p></article>`) {
+	if !strings.Contains(out, `<nav class="flist"`) || !strings.Contains(out, `<article class="md"><p>Hello</p></article>`) {
 		t.Error("the folder lacks its listing or README")
 	}
 	if strings.Contains(out, "data-drawer") {
