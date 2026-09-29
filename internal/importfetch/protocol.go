@@ -267,11 +267,18 @@ const (
 	sidebandHeader    = 5
 )
 
-// sidebandOverhead is the largest number of framing bytes around maxPack
-// bytes of pack data in a protocol v2 fetch answer: the packfile section
-// header, a band header per full packet, and the final flush packet.
+// sidebandPackChunk is the smallest share of the pack a side-band packet is
+// expected to carry. Git before 2.32 relayed the pack 8 KiB at a time; newer
+// Git fills packets up to maxSidebandPacket.
+const sidebandPackChunk = 8192
+
+// sidebandOverhead is the framing allowed around maxPack bytes of pack data
+// in a protocol v2 fetch answer: the packfile section header, a band header
+// per packet of at least sidebandPackChunk bytes, and the final flush packet.
+// It is about 10 MB for a 16 GiB pack. A pack framed in still smaller
+// packets can reach the response bound slightly below MaxPackBytes.
 func sidebandOverhead(maxPack int64) int64 {
-	packets := maxPack/(maxSidebandPacket-sidebandHeader) + 1
+	packets := maxPack/sidebandPackChunk + 1
 	return int64(len("000dpackfile\n")) + packets*sidebandHeader + 4
 }
 

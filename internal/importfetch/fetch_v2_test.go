@@ -214,14 +214,14 @@ func TestFetchV2PackLimitsAndConsumer(t *testing.T) {
 	}
 }
 
-// The response bound in a Content-Length allows side-band framing around a
-// pack of the largest size and no more.
+// The response bound in a Content-Length allows side-band framing in 8 KiB
+// packets around a pack of the largest size.
 func TestSidebandOverhead(t *testing.T) {
-	for _, pack := range []int64{0, 1, 65515, 65516, 16 << 30} {
-		// Full band-1 packets carry 65515 bytes each; count them by
+	for _, pack := range []int64{0, 1, 8191, 8192, 8193, 16 << 30} {
+		// Git before 2.32 sent the pack in packets of 8 KiB; count them by
 		// repeated subtraction rather than the formula under test.
 		packets := int64(0)
-		for remaining := pack; remaining > 0; remaining -= 65515 {
+		for remaining := pack; remaining > 0; remaining -= 8192 {
 			packets++
 		}
 		minimum := int64(len("000dpackfile\n")) + 5*packets + 4
