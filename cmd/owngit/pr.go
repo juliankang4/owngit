@@ -28,7 +28,7 @@ type generalRemoteFlags struct {
 func prCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		printPRUsage(os.Stderr)
-		return cliProblem("invalid_arguments", "pr requires create, list, show, edit, diff, review, merge, close, or reopen.")
+		return cliProblem("invalid_arguments", "pr requires create, list, show, edit, diff, review, mergeability, merge, close, or reopen.")
 	}
 	if isHelpArgument(arguments[0]) {
 		printPRUsage(os.Stdout)
@@ -47,6 +47,8 @@ func prCommand(arguments []string) error {
 		return prDiff(arguments[1:])
 	case "review":
 		return prReview(arguments[1:])
+	case "mergeability":
+		return prMergeability(arguments[1:])
 	case "merge":
 		return prMerge(arguments[1:])
 	case "close", "reopen":
@@ -336,6 +338,28 @@ func prReview(arguments []string) error {
 	return writeResult(markPullRequestReview(context.Background(), target, *number, action, pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID}))
 }
 
+// prMergeability prints whether the pull request can merge now. With
+// --source-oid and --target-oid the answer is stale unless that pair is still
+// the current one.
+func prMergeability(arguments []string) error {
+	flags := newCommandFlagSet("pr mergeability")
+	remote := addGeneralRemoteFlags(flags, true)
+	number := flags.Int64("number", 0, "pull request number")
+	sourceOID := flags.String("source-oid", "", "answer stale unless the source is still this commit (with --target-oid)")
+	targetOID := flags.String("target-oid", "", "answer stale unless the target is still this commit (with --source-oid)")
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
+		return err
+	}
+	if *number <= 0 {
+		return cliProblem("invalid_arguments", "pr mergeability requires a positive --number.")
+	}
+	target, err := remote.connection()
+	if err != nil {
+		return err
+	}
+	return writeResult(pullRequestMergeability(context.Background(), target, *number, pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID}))
+}
+
 func prMerge(arguments []string) error {
 	flags := newCommandFlagSet("pr merge")
 	remote := addGeneralRemoteFlags(flags, true)
@@ -453,6 +477,6 @@ func writeStructuredCommandError(writer io.Writer, err error) bool {
 }
 
 func printPRUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|edit|diff|review|merge|close|reopen> [options]")
+	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|edit|diff|review|mergeability|merge|close|reopen> [options]")
 	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server and --repository default to its origin remote. HTTP also requires --accept-insecure-http.")
 }

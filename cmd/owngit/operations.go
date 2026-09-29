@@ -196,6 +196,23 @@ func pullRequestDiff(ctx context.Context, target connection, number int64, pinne
 	return target.client().Do(ctx, http.MethodGet, path, nil)
 }
 
+// pullRequestMergeability reads whether a pull request can merge now, for
+// its current pair; with expected set, the answer is stale unless that pair
+// is still current.
+func pullRequestMergeability(ctx context.Context, target connection, number int64, expected pullrequest.RevisionInput) ([]byte, error) {
+	if err := requirePullRequestNumber(number); err != nil {
+		return nil, err
+	}
+	if (expected.SourceOID == "") != (expected.TargetOID == "") {
+		return nil, cliProblem("invalid_arguments", "Give both the source and the target object ID, or neither.")
+	}
+	path := target.pullRequestPath(number) + "/mergeability"
+	if expected.SourceOID != "" {
+		path += "?" + url.Values{"source_oid": {expected.SourceOID}, "target_oid": {expected.TargetOID}}.Encode()
+	}
+	return target.client().Do(ctx, http.MethodGet, path, nil)
+}
+
 // setPullRequestClosed closes (closed true) or reopens a pull request. Neither
 // changes a branch, so no object IDs are needed.
 func setPullRequestClosed(ctx context.Context, target connection, number int64, closed bool) ([]byte, error) {

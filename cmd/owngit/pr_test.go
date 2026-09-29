@@ -72,6 +72,7 @@ func TestPRCommandsUseRemoteJSONAPIAndPrivatePasswordFile(t *testing.T) {
 		{"review request", append([]string{"review", "request", "--number", "1", "--source-oid", strings.Repeat("a", 40), "--target-oid", strings.Repeat("b", 40)}, remote...), http.MethodPost, "/api/v1/repositories/project/pull-requests/1/review/request", "source_oid"},
 		{"review submit", append([]string{"review", "submit", "--number", "1", "--source-oid", strings.Repeat("a", 40), "--target-oid", strings.Repeat("b", 40), "--decision", "approved", "--reviewer", "existing-tool:test"}, remote...), http.MethodPost, "/api/v1/repositories/project/pull-requests/1/review/submit", "reviewer_label"},
 		{"review skip", append([]string{"review", "skip", "--number", "1", "--source-oid", strings.Repeat("a", 40), "--target-oid", strings.Repeat("b", 40)}, remote...), http.MethodPost, "/api/v1/repositories/project/pull-requests/1/review/skip", "source_oid"},
+		{"mergeability", append([]string{"mergeability", "--number", "1"}, remote...), http.MethodGet, "/api/v1/repositories/project/pull-requests/1/mergeability", ""},
 		{"merge", append([]string{"merge", "--number", "1", "--source-oid", strings.Repeat("a", 40), "--target-oid", strings.Repeat("b", 40)}, remote...), http.MethodPost, "/api/v1/repositories/project/pull-requests/1/merge", "source_oid"},
 	}
 	for _, test := range tests {

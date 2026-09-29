@@ -320,6 +320,7 @@ func TestMCPReadToolsReturnTheCommandLineJSON(t *testing.T) {
 		{"pull_request_show", map[string]any{"number": json.Number(number)}, cliOutput(t, prCommand, append([]string{"show", "--number", number}, remote...)...)},
 		{"pull_request_diff", map[string]any{"number": json.Number(number)}, cliOutput(t, prCommand, append([]string{"diff", "--number", number}, remote...)...)},
 		{"pull_request_diff", map[string]any{"number": json.Number(number), "patch": false}, cliOutput(t, prCommand, append([]string{"diff", "--number", number, "--stat"}, remote...)...)},
+		{"pull_request_mergeability", map[string]any{"number": json.Number(number)}, cliOutput(t, prCommand, append([]string{"mergeability", "--number", number}, remote...)...)},
 	} {
 		text, isError := session.call(test.tool, test.arguments)
 		if isError || text != test.want {
@@ -691,7 +692,7 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	session := startMCPSession(t, mcpOptions{server: serverURL, repository: "project", credentialFile: credentialFile, acceptInsecureHTTP: true, workdir: work})
 	names, _ := session.toolNames()
 	if got := strings.Join(names, " "); got != "check_config_show check_cycle_list check_cycle_reserve check_log check_run check_status check_task_create check_task_list "+
-		"pull_request_close pull_request_create pull_request_diff pull_request_edit pull_request_list pull_request_merge pull_request_reopen pull_request_review "+
+		"pull_request_close pull_request_create pull_request_diff pull_request_edit pull_request_list pull_request_merge pull_request_mergeability pull_request_reopen pull_request_review "+
 		"pull_request_review_request pull_request_review_skip pull_request_show repository_list repository_show" {
 		t.Fatalf("tools: %s", got)
 	}

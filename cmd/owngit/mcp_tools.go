@@ -228,6 +228,25 @@ func (server *mcpServer) buildTools() []mcpTool {
 			call:        server.pullRequestDiff,
 		},
 		{
+			Name: "pull_request_mergeability",
+			Description: "Work out whether an open pull request can merge now, like owngit pr mergeability. status is clean (method says how it would merge), conflict (conflict_paths lists at most 100 paths, conflict_paths_truncated says more exist), unavailable (reason says why OwnGit could not tell), or stale. " +
+				"The answer is about exactly the source and target commit IDs it names and no longer applies once either branch moves. Pass source_oid and target_oid from an earlier answer to get stale when they moved. Read only: it writes nothing, and a merge checks again.",
+			InputSchema: server.schema(true, []string{"number"}, map[string]toolInputField{
+				"number":     numberField,
+				"source_oid": {Type: "string", Pattern: objectIDField, Description: "Expected source commit ID, together with target_oid."},
+				"target_oid": {Type: "string", Pattern: objectIDField, Description: "Expected target commit ID, together with source_oid."},
+			}),
+			Annotations: readOnly,
+			call: func(ctx context.Context, raw json.RawMessage) ([]byte, error) {
+				var arguments revisionArguments
+				target, err := server.decodeRepositoryArguments(raw, &arguments, &arguments.Repository)
+				if err != nil {
+					return nil, err
+				}
+				return pullRequestMergeability(ctx, target, arguments.Number, pullrequest.RevisionInput{SourceOID: arguments.SourceOID, TargetOID: arguments.TargetOID})
+			},
+		},
+		{
 			Name: "pull_request_create",
 			Description: "Create a pull request from source_branch into target_branch. It adds a pull request record on the OwnGit server and moves no branch. " +
 				"review is request (ask for a review) or skip (record that review is skipped); leave it out to decide later. An open pull request for the same branch pair is refused.",
