@@ -164,10 +164,10 @@ function menuProperties(entry) {
         properties.type = new GLib.Variant('s', entry.type);
     if (entry.label !== undefined)
         properties.label = new GLib.Variant('s', entry.label.replace(/_/g, '__'));
-    if (entry.enabled === false)
-        properties.enabled = new GLib.Variant('b', false);
-    if (entry.visible === false)
-        properties.visible = new GLib.Variant('b', false);
+    // Always sent: a desktop that keeps an entry's properties between
+    // layouts would otherwise keep an earlier false.
+    properties.enabled = new GLib.Variant('b', entry.enabled !== false);
+    properties.visible = new GLib.Variant('b', entry.visible !== false);
     return properties;
 }
 
