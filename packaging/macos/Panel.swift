@@ -64,7 +64,7 @@ final class PanelViewController: NSViewController {
     private let words: Words
     private let appVersion: String
     private let perform: (PanelAction) -> Void
-    private let stack = NSStackView()
+    private var stack = NSStackView()
     private var rendered: PanelModel?
     private weak var firstControl: NSView?
     private static let width: CGFloat = 320
@@ -82,12 +82,8 @@ final class PanelViewController: NSViewController {
     }
 
     override func loadView() {
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
-        stack.setAccessibilityLabel("OwnGit")
-        view = stack
+        view = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 100))
+        view.setAccessibilityLabel("OwnGit")
     }
 
     /// Esc closes the panel.
@@ -112,16 +108,30 @@ final class PanelViewController: NSViewController {
         }
         let focusWasInside = view.window?.firstResponder is NSView
         rendered = model
-        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        // Each state is built in a new stack, measured before it joins the
+        // panel: a view already in the panel measures as the panel's size.
+        stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: Self.width).isActive = true
         firstControl = nil
         if model.showingSettings {
             buildSettings(model)
         } else {
             buildPanel(model)
         }
-        stack.layoutSubtreeIfNeeded()
         let size = NSSize(width: Self.width, height: stack.fittingSize.height)
+        view.subviews.forEach { $0.removeFromSuperview() }
         view.setFrameSize(size)
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            stack.topAnchor.constraint(equalTo: view.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
         preferredContentSize = size
         if focusWasInside {
             focusFirstControl()
