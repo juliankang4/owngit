@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1004,25 +1005,44 @@ func (host *taskHost) elevatedUninstall() error {
 		return err
 	}
 	// Only the copy, its record and temp go, and the folder when nothing
-	// else is in it.
-	// A server that was just ended may hold the copy for a moment; a copy
-	// that runs this command stays.
-	executable := host.serviceInstall.Executable
-	if strings.EqualFold(executable, host.executable) {
-		executable = ""
+	// else is in it. A copy that runs this command stays, and so does its
+	// folder. A server that was just ended, or a virus scan, may hold the
+	// copy for a moment, and Windows removes a folder only after the files
+	// deleted in it are gone.
+	directory := host.serviceInstall.Directory
+	owned := []string{host.serviceInstall.Temp, host.serviceInstall.Executable, filepath.Join(directory, service.ServiceCopyRecord)}
+	running := strings.EqualFold(owned[1], host.executable)
+	if running {
+		owned[1] = ""
 	}
-	for attempt := 0; attempt < 10; attempt++ {
-		if err = errors.Join(os.RemoveAll(host.serviceInstall.Temp), os.RemoveAll(executable),
-			os.RemoveAll(filepath.Join(host.serviceInstall.Directory, service.ServiceCopyRecord))); err == nil {
+	for attempt := 1; ; attempt++ {
+		err = errors.Join(os.RemoveAll(owned[0]), os.RemoveAll(owned[1]), os.RemoveAll(owned[2]))
+		if err == nil && !running && holdsOnly(directory, owned) {
+			err = os.Remove(directory)
+		}
+		if err == nil || attempt == 10 {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	if err != nil {
-		host.printf("The service copy could not be removed: %v\n", err)
+		host.printf("%s could not be removed completely: %v\n", directory, err)
 	}
-	_ = os.Remove(host.serviceInstall.Directory)
 	return nil
+}
+
+// holdsOnly reports whether directory exists and holds nothing but paths.
+func holdsOnly(directory string, paths []string) bool {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !slices.ContainsFunc(paths, func(path string) bool { return strings.EqualFold(path, filepath.Join(directory, entry.Name())) }) {
+			return false
+		}
+	}
+	return true
 }
 
 func (host *taskHost) status() error {
