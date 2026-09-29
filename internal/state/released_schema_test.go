@@ -267,3 +267,37 @@ func TestFailingStepLeavesTheReleasedSchema(t *testing.T) {
 		t.Fatalf("failed migration left %d new tables and %d pull requests", added, requests)
 	}
 }
+
+// A migration commits the current catalog or nothing. This synthetic step
+// adds a view only when the database holds a repository, so it ends at a
+// catalog other than the one the steps build on an empty database, and the
+// migration is rolled back.
+func TestMigrationEndingAtAnotherCatalogIsRolledBack(t *testing.T) {
+	original := schemaSteps
+	schemaSteps = append(slices.Clone(original), schemaStep{version: 17, statements: []string{
+		`PRAGMA writable_schema=ON`,
+		`INSERT INTO sqlite_master(type,name,tbl_name,rootpage,sql) SELECT 'view','step_17','repositories',0,'CREATE VIEW step_17 AS SELECT id FROM repositories' FROM repositories LIMIT 1`,
+		`PRAGMA writable_schema=OFF`,
+	}})
+	t.Cleanup(func() { schemaSteps = original })
+	ctx := context.Background()
+	directory := filepath.Join(t.TempDir(), "state")
+	createReleasedSchemaWithPullRequest(t, directory, 15)
+	store, err := Open(ctx, directory)
+	if store != nil {
+		_ = store.Close()
+	}
+	if err == nil || err.Error() != "state schema migration to 17 produced a schema other than schema 17; nothing was changed" {
+		t.Fatalf("migration error=%v", err)
+	}
+	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
+	defer db.Close()
+	if version, _, err := readSchemaVersion(ctx, db); err != nil || version != 15 {
+		t.Fatalf("rolled-back migration left schema %d err=%v", version, err)
+	}
+	var added int
+	noErr(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('share_links','step_17')`).Scan(&added))
+	if added != 0 {
+		t.Fatalf("rolled-back migration left %d new objects", added)
+	}
+}

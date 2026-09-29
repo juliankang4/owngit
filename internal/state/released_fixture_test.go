@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+
+	"owngit/internal/testfixture"
 )
 
 // Databases that released builds wrote upgrade once to the current schema,
@@ -73,29 +76,66 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 	}
 }
 
-// A released database whose tables someone changed is refused before
-// anything changes, whether an object was added or one was altered.
-func TestAlteredReleasedDatabaseIsRefusedUnchanged(t *testing.T) {
+// A database whose catalog someone changed is refused before anything
+// changes, whatever its version marker says and whatever the name of what
+// was added: the catalog decides. A trigger in these databases would make
+// Do not ask the confirmation policy; the files stay byte-identical, so
+// none ran.
+func TestAlteredDatabaseIsRefusedUnchanged(t *testing.T) {
 	ctx := context.Background()
-	for name, statement := range map[string]string{
-		"added table":  `CREATE TABLE notes_by_hand(text TEXT)`,
-		"added column": `ALTER TABLE repositories ADD COLUMN colour TEXT`,
-		"added index":  `CREATE INDEX pull_requests_title ON pull_requests(title)`,
+	const hostile = `BEGIN INSERT OR REPLACE INTO metadata(key,value) VALUES('admin_confirmation','never'); END`
+	hidden := func(name string) []string {
+		return []string{`PRAGMA writable_schema=ON`,
+			`INSERT INTO sqlite_master(type,name,tbl_name,rootpage,sql) VALUES('trigger','` + name + `','metadata',0,'CREATE TRIGGER ` + name + ` AFTER UPDATE ON metadata ` + strings.ReplaceAll(hostile, "'", "''") + `')`}
+	}
+	changedColumn := []string{`PRAGMA writable_schema=ON`, `UPDATE sqlite_master SET sql=replace(sql,'description TEXT NOT NULL','description BLOB') WHERE name='repositories'`}
+	released15 := func(t *testing.T, directory string) { loadReleasedDump(t, directory, "schema15-1.1.2.sql") }
+	current := func(t *testing.T, directory string) {
+		store, err := Open(ctx, directory)
+		noErr(t, err)
+		noErr(t, store.Close())
+	}
+	baseline := func(t *testing.T, directory string) {
+		noErr(t, testfixture.CreateCommittedBaselineState(ctx, directory, testfixture.BaselineStateOptions{RepositoryRoot: t.TempDir(), AdminPasswordHash: "synthetic-admin-hash"}))
+	}
+	altered := func(version int) string {
+		return "state database says schema " + strconv.Itoa(version) + " but its tables, indexes, triggers or views differ from the ones OwnGit creates at schema " + strconv.Itoa(version) + ", so this build does not open it; undo the change, or restore a backup of the state with the OwnGit version that made the backup"
+	}
+	for _, test := range []struct {
+		name       string
+		prepare    func(*testing.T, string)
+		statements []string
+		want       string
+	}{
+		{"released: added table", released15, []string{`CREATE TABLE notes_by_hand(text TEXT)`}, altered(15)},
+		{"released: added column", released15, []string{`ALTER TABLE repositories ADD COLUMN colour TEXT`}, altered(15)},
+		{"released: added index", released15, []string{`CREATE INDEX pull_requests_title ON pull_requests(title)`}, altered(15)},
+		{"released: added view", released15, []string{`CREATE VIEW titles AS SELECT title FROM pull_requests`}, altered(15)},
+		{"released: trigger", released15, []string{`CREATE TRIGGER u07_trigger AFTER UPDATE ON metadata ` + hostile}, altered(15)},
+		{"released: trigger under a name SQLite reserves", released15, hidden("sqlite_u07_trigger"), altered(15)},
+		{"released: changed column", released15, changedColumn, altered(15)},
+		{"released catalog marked current", released15, []string{`CREATE TRIGGER u07_trigger AFTER INSERT ON sessions ` + hostile, `UPDATE metadata SET value='16' WHERE key='schema_version'`}, altered(16)},
+		{"current: trigger under a name SQLite reserves", current, hidden("sqlite_u07_trigger"), altered(16)},
+		{"current: added view", current, []string{`CREATE VIEW titles AS SELECT title FROM pull_requests`}, altered(16)},
+		{"current: added table", current, []string{`CREATE TABLE notes_by_hand(text TEXT)`}, altered(16)},
+		{"current: changed column", current, changedColumn, altered(16)},
+		{"baseline: trigger under a name SQLite reserves", baseline, hidden("sqlite_u07_trigger"), "state database has no schema version and does not match the committed baseline"},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
-			loadReleasedDump(t, directory, "schema15-1.1.2.sql")
+			test.prepare(t, directory)
 			db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
-			_, err := db.Exec(statement)
-			noErr(t, err)
+			for _, statement := range test.statements {
+				_, err := db.Exec(statement)
+				noErr(t, err)
+			}
 			noErr(t, db.Close())
 			before := captureSchemaDirectory(t, directory)
 			store, err := Open(ctx, directory)
 			if store != nil {
 				_ = store.Close()
 			}
-			want := "state database says schema 15 but its tables differ from the ones OwnGit wrote at schema 15, so this build does not upgrade it; undo the change to its tables, or restore a backup of the state with the OwnGit version that made the backup"
-			if err == nil || err.Error() != want {
+			if err == nil || err.Error() != test.want {
 				t.Fatalf("altered schema error=%v", err)
 			}
 			assertSchemaDirectoryUnchanged(t, directory, before)

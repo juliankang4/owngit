@@ -86,8 +86,8 @@ func TestUnsupportedSchemaInCommittedWALPreservesSource(t *testing.T) {
 // currentSchemaFingerprint pins the catalog of schema 16. A changed migration
 // statement changes it, so the current schema cannot drift unnoticed.
 const (
-	currentSchemaFingerprint = "e18f9bbae45bf06c824cd61bc738ccf3fba5d5cec5ac502c5ebf42bb08225217"
-	currentSchemaObjects     = 73
+	currentSchemaFingerprint = "160e90a7366722c060287d1557e2b4cbb277867bb2a4a5edb0bfe44024a827a0"
+	currentSchemaObjects     = 118
 )
 
 func TestFreshSchemaOpen(t *testing.T) {
@@ -150,6 +150,11 @@ func TestFreshSchemaOpen(t *testing.T) {
 			if err != nil || fingerprint != currentSchemaFingerprint || objects != currentSchemaObjects {
 				store.Close()
 				t.Fatalf("fresh schema fingerprint=%s objects=%d err=%v", fingerprint, objects, err)
+			}
+			var trusted int
+			if err := store.db.QueryRowContext(ctx, `PRAGMA trusted_schema`).Scan(&trusted); err != nil || trusted != 0 {
+				store.Close()
+				t.Fatalf("trusted_schema=%d err=%v", trusted, err)
 			}
 			noErr(t, store.Close())
 			store, err = Open(ctx, directory)

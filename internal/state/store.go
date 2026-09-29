@@ -24,10 +24,10 @@ const (
 	IncompleteRestoreMarkerName = ".owngit-restore-pending"
 
 	// The committed baseline wrote no schema version marker; numbered
-	// schemas are defined by schemaSteps. This SHA-256 fingerprint covers
-	// normalized, non-internal sqlite_master entries of the baseline emitted
-	// by commit 8fdefd1bf10bd4a41b7261131efc119d46666260.
-	committedBaselineSchemaFingerprint = "0b1acb0288e7a64da492d7a2a768538052492f887c3b5e6ec2efc7a42b465600"
+	// schemas are defined by schemaSteps. This is the schemaFingerprint of
+	// the catalog that commit 8fdefd1bf10bd4a41b7261131efc119d46666260
+	// created.
+	committedBaselineSchemaFingerprint = "db9b1e019e93bef8c876e693049084504fa9715d8e6db0f29d96294439c0f5a8"
 )
 
 var ErrSetupComplete = errors.New("setup is already complete")
@@ -231,13 +231,18 @@ func sqliteFileURI(path string) string {
 	return sqliteURI(path, "_txlock=immediate")
 }
 
+// sqliteURI names the state database at path for every connection OwnGit
+// opens to it. Each connection turns trusted_schema off, so that nothing in
+// the database's own schema may call a function with side effects or use a
+// virtual table; OwnGit's schema needs neither. This backs up the catalog
+// check (classifySchema), which is what refuses statements no build wrote.
 func sqliteURI(path, query string) string {
 	slashPath := filepath.ToSlash(path)
 	if len(slashPath) >= 3 && slashPath[1] == ':' && slashPath[2] == '/' &&
 		(('a' <= slashPath[0] && slashPath[0] <= 'z') || ('A' <= slashPath[0] && slashPath[0] <= 'Z')) {
 		slashPath = "/" + slashPath
 	}
-	return (&url.URL{Scheme: "file", Path: slashPath, RawQuery: query}).String()
+	return (&url.URL{Scheme: "file", Path: slashPath, RawQuery: query + "&_pragma=trusted_schema(0)"}).String()
 }
 
 // initialize prepares the accepted database. The inspection result selects
@@ -326,12 +331,10 @@ func classifySchema(ctx context.Context, db queryRower) (schemaClass, error) {
 	}
 	current := currentSchemaVersion()
 	switch {
-	case version == current:
-		return schemaCurrent, nil
 	case version > current:
 		return schemaClass{}, fmt.Errorf("state database schema version %d is newer than this OwnGit build supports (%d)", version, current)
-	case isReleasedSchema(version):
-		return validateReleasedSchema(ctx, db, version)
+	case version == current || isReleasedSchema(version):
+		return validateSteppedSchema(ctx, db, version)
 	case version >= 1:
 		return schemaClass{}, fmt.Errorf("state database uses the unreleased development schema %d; this build upgrades only the committed baseline (no schema version) and %s, and opens schema %d", version, describeReleasedSchemas(), current)
 	default:
@@ -402,12 +405,13 @@ func readSchemaVersion(ctx context.Context, db queryRower) (int, bool, error) {
 	return version, true, nil
 }
 
-// validateReleasedSchema accepts a database at the released version only
-// when its catalog is exactly the one the schema steps up to that version
-// create. A database someone altered is refused before anything changes,
-// like an unknown schema, instead of being upgraded into a catalog that no
-// build wrote.
-func validateReleasedSchema(ctx context.Context, db queryRower, version int) (schemaClass, error) {
+// validateSteppedSchema accepts a database that says it is at the current
+// or a released version only when its catalog is exactly the one the schema
+// steps up to that version create. The catalog decides, never the version
+// marker alone: a table, column, index, trigger or view that someone added
+// or changed, under any name, is refused before anything changes, instead
+// of being opened or upgraded with statements that no build wrote.
+func validateSteppedSchema(ctx context.Context, db queryRower, version int) (schemaClass, error) {
 	fingerprint, _, err := schemaFingerprint(ctx, db)
 	if err != nil {
 		return schemaClass{}, fmt.Errorf("inspect state database schema %d: %w", version, err)
@@ -417,14 +421,43 @@ func validateReleasedSchema(ctx context.Context, db queryRower, version int) (sc
 		return schemaClass{}, err
 	}
 	if fingerprint != expected {
-		return schemaClass{}, fmt.Errorf("state database says schema %d but its tables differ from the ones OwnGit wrote at schema %d, so this build does not upgrade it; undo the change to its tables, or restore a backup of the state with the OwnGit version that made the backup", version, version)
+		return schemaClass{}, fmt.Errorf("state database says schema %d but its tables, indexes, triggers or views differ from the ones OwnGit creates at schema %d, so this build does not open it; undo the change, or restore a backup of the state with the OwnGit version that made the backup", version, version)
+	}
+	if version == currentSchemaVersion() {
+		return schemaCurrent, nil
 	}
 	return schemaReleased(version), nil
 }
 
+// stepCatalogs caches stepsFingerprint by the text of the statements it
+// ran, which alone decides the result.
+var stepCatalogs sync.Map
+
 // stepsFingerprint returns the catalog fingerprint that the schema steps up
 // to version produce on an empty in-memory database.
 func stepsFingerprint(ctx context.Context, version int) (string, error) {
+	statements := sha256.New()
+	for _, step := range schemaSteps {
+		if step.version > version {
+			break
+		}
+		for _, statement := range step.statements {
+			_, _ = fmt.Fprintf(statements, "%d:%s", len(statement), statement)
+		}
+	}
+	key := string(statements.Sum(nil))
+	if fingerprint, ok := stepCatalogs.Load(key); ok {
+		return fingerprint.(string), nil
+	}
+	fingerprint, err := buildStepsFingerprint(ctx, version)
+	if err != nil {
+		return "", err
+	}
+	stepCatalogs.Store(key, fingerprint)
+	return fingerprint, nil
+}
+
+func buildStepsFingerprint(ctx context.Context, version int) (string, error) {
 	db, err := sql.Open("sqlite", "file:owngit-schema-steps?mode=memory")
 	if err != nil {
 		return "", fmt.Errorf("prepare the schema %d catalog: %w", version, err)
@@ -470,8 +503,15 @@ func validateUnversionedSchema(ctx context.Context, db queryRower) (schemaClass,
 	return schemaClass{}, errors.New("state database has no schema version and does not match the committed baseline")
 }
 
+// schemaFingerprint hashes every entry of the catalog (sqlite_master): its
+// type, name, table and statement with runs of white space made one space.
+// No entry is left out by its name. SQLite's own entries, such as the
+// indexes of primary keys and sqlite_sequence, follow from the tables, so
+// the expected catalogs have them too, and an entry that someone added under
+// a name SQLite reserves, which SQLite still loads and runs, is counted like
+// any other.
 func schemaFingerprint(ctx context.Context, db queryRower) (string, int, error) {
-	rows, err := db.QueryContext(ctx, `SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name`)
+	rows, err := db.QueryContext(ctx, `SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name,tbl_name,sql`)
 	if err != nil {
 		return "", 0, err
 	}
@@ -479,16 +519,16 @@ func schemaFingerprint(ctx context.Context, db queryRower) (string, int, error) 
 	digest := sha256.New()
 	objects := 0
 	for rows.Next() {
-		var objectType, name string
+		var objectType, name, table string
 		var statement sql.NullString
-		if err := rows.Scan(&objectType, &name, &statement); err != nil {
+		if err := rows.Scan(&objectType, &name, &table, &statement); err != nil {
 			return "", 0, err
 		}
 		normalized := ""
 		if statement.Valid {
 			normalized = strings.Join(strings.Fields(statement.String), " ")
 		}
-		for _, field := range []string{objectType, name, normalized} {
+		for _, field := range []string{objectType, name, table, normalized} {
 			_, _ = fmt.Fprintf(digest, "%d:", len(field))
 			_, _ = digest.Write([]byte(field))
 		}
@@ -556,6 +596,20 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 			return fmt.Errorf("record state schema migration %d: %w", step.version, err)
 		}
 		previous = step.version
+	}
+	// The steps produce the current catalog from the one classifySchema
+	// accepted; the result is compared as well, so that a migration commits
+	// exactly the current schema or nothing.
+	migrated, _, err := schemaFingerprint(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("check the schema after migration: %w", err)
+	}
+	current, err := stepsFingerprint(ctx, previous)
+	if err != nil {
+		return err
+	}
+	if migrated != current {
+		return fmt.Errorf("state schema migration to %d produced a schema other than schema %d; nothing was changed", previous, previous)
 	}
 	violations, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
 	if err != nil {
