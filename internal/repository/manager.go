@@ -100,8 +100,8 @@ type CreateOptions struct {
 // Create, so an importer can reject a name before starting network work.
 func ValidateName(name, description string) error {
 	trimmed := strings.TrimSpace(name)
-	if !validName.MatchString(trimmed) || trimmed == "." || trimmed == ".." || strings.HasSuffix(strings.ToLower(trimmed), ".git") {
-		return fmt.Errorf("%w: use 1-100 letters, numbers, dots, underscores, or hyphens and do not end in .git", ErrInvalidName)
+	if !validName.MatchString(trimmed) || ValidateID(strings.ToLower(trimmed)) != nil {
+		return fmt.Errorf("%w: use 1-100 letters, numbers, dots, underscores, or hyphens, do not end in .git, and do not use a Windows device name such as CON", ErrInvalidName)
 	}
 	switch strings.ToLower(trimmed) {
 	case "new", "new-import":
@@ -130,9 +130,6 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		return state.Repository{}, err
 	}
 	id := strings.ToLower(name)
-	if err := ValidateID(id); err != nil {
-		return state.Repository{}, fmt.Errorf("%w: %v", ErrInvalidName, err)
-	}
 	// Hold the repository lock from the existence check through the row write so
 	// an initial import cannot configure this id between those steps.
 	lock := m.Locks.For(id)

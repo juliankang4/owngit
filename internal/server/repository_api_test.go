@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/pullrequest"
 	"owngit/internal/state"
 )
 
@@ -98,6 +99,17 @@ func TestRepositoryAPIListsShowsAndCreatesRepositories(t *testing.T) {
 		response := apiRequest(t, http.MethodPost, collection, test.input, "", "")
 		if response.StatusCode != test.status || apiErrorCode(t, response) != test.code {
 			t.Errorf("%s: status=%d, want %d %s", test.name, response.StatusCode, test.status, test.code)
+		}
+	}
+	// A Windows device name meets the character rules, so the refusal names
+	// device names too.
+	for _, name := range []string{"CON", "aux.txt", "lpt1"} {
+		response := apiRequest(t, http.MethodPost, collection, map[string]string{"name": name}, "", "")
+		var envelope pullrequest.ErrorEnvelope
+		noErr(t, json.NewDecoder(response.Body).Decode(&envelope))
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnprocessableEntity || envelope.Error.Code != "invalid_repository_name" || !strings.Contains(envelope.Error.Message, "Windows device name") {
+			t.Errorf("%s: status=%d error=%+v", name, response.StatusCode, envelope.Error)
 		}
 	}
 	if response := apiRequest(t, http.MethodPost, collection, map[string]any{"name": "extra", "admin": true}, "", ""); response.StatusCode != http.StatusBadRequest || apiErrorCode(t, response) != "invalid_json" {

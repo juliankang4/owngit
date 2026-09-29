@@ -148,7 +148,7 @@ func (app *App) createRepositoryAPI(writer http.ResponseWriter, request *http.Re
 		case errors.Is(err, repository.ErrReservedName):
 			writeAPIError(writer, http.StatusUnprocessableEntity, "reserved_repository_name", "The repository name is reserved for a form page. Choose another name.", nil)
 		case errors.Is(err, repository.ErrInvalidName):
-			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_repository_name", "Use 1 to 100 letters, numbers, dots, underscores, or hyphens, starting with a letter or number and not ending in .git.", nil)
+			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_repository_name", "Use 1 to 100 letters, numbers, dots, underscores, or hyphens, starting with a letter or number. The name cannot end in .git or be a Windows device name such as CON.", nil)
 		case errors.Is(err, repository.ErrInvalidDescription):
 			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_repository_description", "The description can be at most 500 bytes.", nil)
 		default:
