@@ -300,7 +300,7 @@ func TestParseFirewallAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (FirewallAccess{Active: 2, On: 7, Allowed: 6}); access != want {
+	if want := (FirewallAccess{Active: 2, On: 7, Allowed: 6, Scoped: 1}); access != want {
 		t.Fatalf("access %+v, want %+v", access, want)
 	}
 	if closed := access.Closed(); closed != 0 {
@@ -325,6 +325,19 @@ func TestParseFirewallAccess(t *testing.T) {
 	}
 	if want := (FirewallAccess{Active: 2, On: 7, BlockAll: 4, Allowed: 3, Blocked: 4}); access != want {
 		t.Fatalf("access %+v, want %+v", access, want)
+	}
+	// An allow rule that the owner limited to a LAN range: devices there
+	// may connect, so it is neither a missing rule nor an open one.
+	access, err = ParseFirewallAccess("2 7 0\r\n1\t2\t256\t\t192.168.1.0/255.255.255.0\r\n", "7654")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (FirewallAccess{Active: 2, On: 7, Scoped: 2}); access != want {
+		t.Fatalf("access %+v, want %+v", access, want)
+	}
+	// Replacing OwnGit's rule keeps the remote addresses the owner set.
+	if !strings.Contains(FirewallAllowScript, "$rule.RemoteAddresses = $remote") {
+		t.Error("the allow script drops the rule's remote addresses")
 	}
 	for _, bad := range []string{"", "2 7\n", "2 7 0\n1\t2\t256\t\n", "2 7 0\n1\tx\t256\t\t*\n"} {
 		if _, err := ParseFirewallAccess(bad, "7654"); err == nil {

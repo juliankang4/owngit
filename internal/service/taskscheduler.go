@@ -383,8 +383,10 @@ if ($owned.Count -ne $same.Count) { '` + FirewallForeign + `'; exit }
 
 // FirewallAllowScript replaces OwnGit's rule with one that lets
 // connections from the Private network profile reach the program. Public
-// networks stay closed.
-const FirewallAllowScript = firewallRules + `$owned | ForEach-Object { $policy.Rules.Remove($_.Name) }
+// networks stay closed. Remote addresses that the owner set on the rule
+// stay, so a replacement never lets more devices in.
+const FirewallAllowScript = firewallRules + `$remote = [string]($owned | Select-Object -First 1 | ForEach-Object { $_.RemoteAddresses })
+$owned | ForEach-Object { $policy.Rules.Remove($_.Name) }
 $rule = New-Object -ComObject HNetCfg.FWRule
 $rule.Name = '` + FirewallRuleName + `'
 $rule.Description = '` + FirewallRuleDescription + `'
@@ -394,6 +396,7 @@ $rule.Enabled = $true
 $rule.Profiles = 2
 $rule.Protocol = 256
 $rule.ApplicationName = $env:` + FirewallProgramVariable + `
+if ($remote -and $remote -ne '*') { $rule.RemoteAddresses = $remote }
 $policy.Rules.Add($rule)
 `
 
@@ -444,6 +447,10 @@ type FirewallAccess struct {
 	// Allowed and Blocked are the profiles where a rule allows or blocks
 	// the program on the port from any address or the local subnet.
 	Allowed, Blocked int
+	// Scoped are the profiles where a rule allows the program on the port
+	// from some remote addresses only: whether a device is among them
+	// cannot be told here.
+	Scoped int
 }
 
 // Closed returns the profiles in use, with the firewall on, where devices
@@ -489,6 +496,9 @@ func ParseFirewallAccess(output, port string) (FirewallAccess, error) {
 		// one for any address or the local subnet decides for the devices
 		// nearby.
 		if remote := strings.ToLower(fields[4]); remote != "*" && !slices.Contains(strings.Split(remote, ","), "localsubnet") {
+			if action == firewallActionAllow {
+				access.Scoped |= profiles
+			}
 			continue
 		}
 		if action == firewallActionAllow {

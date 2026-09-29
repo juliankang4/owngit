@@ -188,6 +188,10 @@ func firewallFindings(facts Facts) []webui.Finding {
 			return []webui.Finding{{Code: webui.MsgDoctorWindowsBlockAll}}
 		case closed&access.Blocked != 0:
 			return []webui.Finding{{Code: webui.MsgDoctorWindowsBlocked, Args: []string{facts.Program}}}
+		// A rule the owner limited to some remote addresses may let the
+		// owner's devices in; a repair would let more in.
+		case closed&access.Scoped != 0:
+			return []webui.Finding{{Code: webui.MsgDoctorWindowsScoped, Unchecked: true}}
 		// A rule lets devices in on private networks, and the network in
 		// use is another kind.
 		case access.Allowed&privateProfile != 0 && closed&privateProfile == 0:

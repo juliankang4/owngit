@@ -100,6 +100,7 @@ const (
 	MsgDoctorWindowsRuleAsk                MessageCode = "doctor.windows_rule_ask"
 	MsgDoctorWindowsBlockAll               MessageCode = "doctor.windows_block_all"
 	MsgDoctorWindowsBlocked                MessageCode = "doctor.windows_blocked"
+	MsgDoctorWindowsScoped                 MessageCode = "doctor.windows_scoped"
 	MsgDoctorWindowsForeignRule            MessageCode = "doctor.windows_foreign_rule"
 	MsgDoctorWindowsPublic                 MessageCode = "doctor.windows_public"
 	MsgDoctorWindowsDomain                 MessageCode = "doctor.windows_domain"
@@ -1179,6 +1180,10 @@ var catalog = map[MessageCode]message{
 	MsgDoctorWindowsBlocked: {
 		en: "A Windows Firewall rule blocks incoming connections to %s on the network this computer uses. Allow or remove that rule in Windows Defender Firewall.",
 		ko: "이 컴퓨터가 쓰는 네트워크에서 Windows 방화벽 규칙이 %s에 들어오는 연결을 막고 있습니다. Windows Defender 방화벽에서 그 규칙을 허용으로 바꾸거나 삭제하세요.",
+	},
+	MsgDoctorWindowsScoped: {
+		en: "On the network this computer uses, Windows Firewall lets only some remote addresses reach OwnGit, as a rule limits them. OwnGit cannot tell whether your other devices are among them; if one cannot connect, add its address to that rule in Windows Defender Firewall.",
+		ko: "이 컴퓨터가 쓰는 네트워크에서 Windows 방화벽 규칙이 일부 원격 주소만 OwnGit에 접속하도록 허용합니다. 다른 기기가 그 주소에 드는지는 OwnGit이 알 수 없습니다. 접속하지 못하는 기기가 있으면 Windows Defender 방화벽에서 그 규칙에 기기 주소를 추가하세요.",
 	},
 	MsgDoctorWindowsForeignRule: {
 		en: "A Windows Firewall rule named OwnGit exists that OwnGit did not add, so OwnGit adds no rule of that name. Rename or remove that rule in Windows Defender Firewall.",

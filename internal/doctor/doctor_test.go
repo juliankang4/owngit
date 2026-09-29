@@ -89,6 +89,13 @@ func TestDiagnose(t *testing.T) {
 		"Windows block rule": {with(running("windows"), func(f *Facts) {
 			f.Firewall.Rule, f.Firewall.Access = RuleAllows, service.FirewallAccess{Active: 2, On: 7, Allowed: 2, Blocked: 2}
 		}), []webui.Finding{{Code: webui.MsgDoctorWindowsBlocked, Args: []string{`C:\Program Files\OwnGit\owngit.exe`}}}},
+		// The owner narrowed OwnGit's rule, or another, to a LAN range.
+		"Windows rule for some remote addresses": {with(running("windows"), func(f *Facts) {
+			f.Administrator, f.Firewall.Rule, f.Firewall.Access = true, RuleAllows, service.FirewallAccess{Active: 2, On: 7, Scoped: 2}
+		}), []webui.Finding{{Code: webui.MsgDoctorWindowsScoped, Unchecked: true}}},
+		"Windows standard account with a rule for some remote addresses": {with(running("windows"), func(f *Facts) {
+			f.Firewall.Access = service.FirewallAccess{Active: 2, On: 7, Scoped: 2}
+		}), []webui.Finding{{Code: webui.MsgDoctorWindowsScoped, Unchecked: true}}},
 		"Windows blocks all incoming connections": {with(running("windows"), func(f *Facts) {
 			f.Firewall.Rule, f.Firewall.Access = RuleAllows, service.FirewallAccess{Active: 2, On: 7, BlockAll: 2, Allowed: 2}
 		}), []webui.Finding{{Code: webui.MsgDoctorWindowsBlockAll}}},
