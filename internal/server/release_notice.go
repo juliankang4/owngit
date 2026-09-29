@@ -12,8 +12,11 @@ import (
 const releaseDismissPath = "/release-notice/dismiss"
 
 // releaseNotice returns the dashboard notice when the check may run, found a
-// newer release, and this browser has not dismissed that version.
-func (app *App) releaseNotice(request *http.Request, settings state.Settings) *webui.ReleaseNotice {
+// newer release, and this browser has not dismissed that version. The
+// update command holds the program's path on this computer, which is
+// administrator data like the repository folder, so only a confirmed
+// administrator sees it; others are told where to get it.
+func (app *App) releaseNotice(request *http.Request, settings state.Settings, admin bool) *webui.ReleaseNotice {
 	if app.Releases == nil || !settings.UpdateCheck {
 		return nil
 	}
@@ -29,7 +32,14 @@ func (app *App) releaseNotice(request *http.Request, settings state.Settings) *w
 		GuideURL: releasecheck.UpdateGuideURL, DismissURL: releaseDismissPath,
 	}
 	if app.UpdateCommand != nil {
-		notice.Command, notice.Restart = app.UpdateCommand(release.Version)
+		command, start, restart := app.UpdateCommand(release.Version)
+		switch {
+		case command == "":
+		case admin:
+			notice.Command, notice.Start, notice.Restart = command, start, restart
+		default:
+			notice.CommandHidden = true
+		}
 	}
 	return notice
 }

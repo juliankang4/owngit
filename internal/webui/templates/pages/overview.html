@@ -22,12 +22,15 @@
         <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
         <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
       </p>
-      <p class="clonefield__note" id="release-command-help">{{if .Restart}}{{bi $lang "release.restart"}}{{else}}{{bi $lang "release.run_it"}}{{end}}</p>
+      <p class="clonefield__note" id="release-command-help">{{if .Start}}{{biF $lang "release.start" .Start}}{{else if .Restart}}{{bi $lang "release.restart"}}{{else}}{{bi $lang "release.run_it"}}{{end}}</p>
     </div>
+    {{else if .CommandHidden}}
+    <p class="scope relnote__admin">{{icon "lock"}}<span>{{bi $lang "release.for_admin"}}</span></p>
     {{end}}
     <p class="relnote__links">
       <a href="{{.NotesURL}}" rel="noreferrer">{{bi $lang "release.notes"}}</a>
       <a href="{{.GuideURL}}" rel="noreferrer">{{bi $lang "release.how_to_update"}}</a>
+      {{if .CommandHidden}}{{with $.Chrome.Nav.AdminLoginURL}}<a href="{{.}}">{{bi $lang "admin.title"}}</a>{{end}}{{end}}
     </p>
   </div>
   <form class="relnote__form" method="post" action="{{.DismissURL}}">

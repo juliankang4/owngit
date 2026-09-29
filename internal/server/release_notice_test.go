@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -270,28 +271,54 @@ func TestLogoLinksToTheDashboard(t *testing.T) {
 }
 
 // The notice offers the update command of this installation to copy; the
-// server never runs it. Without a command, only the guide link remains.
-func TestReleaseNoticeShowsTheUpdateCommand(t *testing.T) {
-	for _, command := range []string{"brew upgrade owngit && '/x y/owngit' service install", ""} {
+// server never runs it. The command holds this computer's paths, so only a
+// confirmed administrator sees it; everyone else is told where to get it.
+// Without a command, only the guide link remains.
+func TestReleaseNoticeShowsTheUpdateCommandToTheAdministrator(t *testing.T) {
+	for _, tc := range []struct {
+		command, start string
+		restart        bool
+		note           string
+	}{
+		{"brew upgrade owngit && '/x y/owngit' service install", "", false, "Run this in a terminal on the computer where OwnGit runs."},
+		{"npm install -g owngit@1.0.3", "", true, "then restart OwnGit."},
+		{"Expand-Archive 'z.zip' 'C:\\new'", "C:\\new\\owngit.exe", false, "then start OwnGit from C:\\new\\owngit.exe."},
+		{"", "", false, ""},
+	} {
 		app, _, _, server := releaseApp(t, "v1.0.3")
-		app.UpdateCommand = func(version string) (string, bool) {
+		app.UpdateCommand = func(version string) (string, string, bool) {
 			if version != "1.0.3" {
 				t.Errorf("command asked for %q", version)
 			}
-			return command, true
+			return tc.command, tc.start, tc.restart
 		}
 		_ = app.Releases.Check(context.Background())
-		client, _ := newBrowserClient(t)
+		client, jar := newBrowserClient(t)
 		body, _ := dashboardGET(t, client, server.URL+"/")
-		shown := strings.Contains(body, `data-copy="release-command"`)
-		if shown != (command != "") {
-			t.Errorf("%q: copy field shown=%v", command, shown)
+		if strings.Contains(body, `data-copy="release-command"`) || strings.Contains(body, "/x y/owngit") || strings.Contains(body, "C:\\new") {
+			t.Errorf("%q: a visitor who is not a confirmed administrator sees the command", tc.command)
 		}
-		if command != "" && (!strings.Contains(body, `value="brew upgrade owngit &amp;&amp; &#39;/x y/owngit&#39; service install"`) || !strings.Contains(body, "then restart OwnGit.")) {
-			t.Errorf("%q: the escaped command or the restart note is missing", command)
+		if hidden := strings.Contains(body, "only the administrator sees it here"); hidden != (tc.command != "") {
+			t.Errorf("%q: visitor note shown=%v", tc.command, hidden)
+		}
+		if tc.command != "" && !strings.Contains(body, `href="/admin/login?next=`) {
+			t.Errorf("%q: the visitor has no way to confirm as administrator", tc.command)
+		}
+
+		browserGET(t, client, server.URL+"/admin/login")
+		browserForm(t, client, server.URL+"/admin/login", url.Values{"csrf": {cookieValue(t, jar, server.URL, preauthCookie)}, "admin_password": {"admin-password"}, "next": {"/"}}, server.URL)
+		body, _ = dashboardGET(t, client, server.URL+"/")
+		if shown := strings.Contains(body, `data-copy="release-command"`); shown != (tc.command != "") {
+			t.Errorf("%q: administrator copy field shown=%v", tc.command, shown)
+		}
+		if tc.command != "" && (!strings.Contains(body, `value="`+html.EscapeString(tc.command)+`"`) || !strings.Contains(body, tc.note)) {
+			t.Errorf("%q: the escaped command or the note %q is missing", tc.command, tc.note)
+		}
+		if strings.Contains(body, "only the administrator sees it here") {
+			t.Errorf("%q: the administrator is told to confirm", tc.command)
 		}
 		if !strings.Contains(body, `href="`+releasecheck.UpdateGuideURL+`"`) {
-			t.Errorf("%q: the guide link is missing", command)
+			t.Errorf("%q: the guide link is missing", tc.command)
 		}
 	}
 }

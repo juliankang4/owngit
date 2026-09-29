@@ -80,9 +80,10 @@ type App struct {
 	// --no-update-check, which overrides the saved setting.
 	Releases *releasecheck.Checker
 	// UpdateCommand returns the command that updates this installation to
-	// a version, as its install route does, or "", and whether the owner
-	// restarts OwnGit afterwards because no service does. Nil shows none.
-	UpdateCommand func(version string) (command string, restart bool)
+	// a version, as its install route does, or "", and what the owner
+	// starts afterwards when no service does: a program in a new place
+	// (start), or OwnGit where it runs (restart). Nil shows none.
+	UpdateCommand func(version string) (command, start string, restart bool)
 	HTTPTimeout   time.Duration
 	// ImportRunTimeout is the deadline of an import run started by this
 	// server. The request itself keeps ImportResponseMargin more, so a run

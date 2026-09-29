@@ -378,9 +378,15 @@ type ReleaseNotice struct {
 	// Command updates this installation the way it was installed, for the
 	// owner to copy and run. Empty shows only the guide.
 	Command string
+	// Start is the program to start after the command, because no service
+	// runs this installation and the new program is in a new place.
+	Start string
 	// Restart says to restart OwnGit after the command, because no service
 	// runs this installation.
 	Restart bool
+	// CommandHidden is true when a command exists but the viewer is not a
+	// confirmed administrator, who alone sees the program's path.
+	CommandHidden bool
 	// DismissURL takes a POST with csrf and version.
 	DismissURL string
 }

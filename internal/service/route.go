@@ -105,6 +105,28 @@ var releaseTargets = map[string]string{
 	"darwin/arm64": "tar.gz", "linux/amd64": "tar.gz", "linux/arm64": "tar.gz", "windows/amd64": "zip",
 }
 
+// ReleasePackage is the pacman package that the PKGBUILD of each release
+// builds.
+const ReleasePackage = "owngit-bin"
+
+// windowsReleaseFolder is where a Windows archive update unpacks version: a
+// running program cannot be replaced on Windows, so the new release gets its
+// own folder beside this one, named like the archive.
+func windowsReleaseFolder(install Install, version string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(install.Executable)), "owngit_"+version+"_windows_amd64")
+}
+
+// StartAfterUpdate is the program the owner starts after the update command
+// when no service restarts OwnGit, or "" when restarting OwnGit where it
+// runs starts the new version. Only a Windows archive update puts the new
+// program somewhere else.
+func (install Install) StartAfterUpdate(version string, platform Platform) string {
+	if platform.Service || install.Route != RouteArchive || platform.GOOS != "windows" || install.UpdateCommand(version, platform) == "" {
+		return ""
+	}
+	return filepath.Join(windowsReleaseFolder(install, version), "owngit.exe")
+}
+
 // UpdateCommand is the one command that updates this install to version, or
 // "" when the route has no command: an app bundle, an unknown service copy,
 // or an archive for a platform without a release archive. OwnGit never runs
@@ -125,10 +147,12 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		}
 		steps = append(steps, "npm install -g owngit@"+version)
 	case RoutePacman:
-		if platform.Root {
+		// The PKGBUILD attached to the release builds ReleasePackage and
+		// replaces any other package that provides owngit, so another
+		// package gets no command. makepkg refuses root.
+		if install.Package != ReleasePackage || platform.Root {
 			return ""
 		}
-		// The PKGBUILD attached to the release builds the same package.
 		steps = append(steps, "(cd \"$(mktemp -d)\" && curl -fLO "+releaseDownloads+version+"/PKGBUILD && makepkg -si)")
 	case RouteArchive:
 		format, ok := releaseTargets[platform.GOOS+"/"+platform.GOARCH]
@@ -138,10 +162,7 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		name := "owngit_" + version + "_" + platform.GOOS + "_" + platform.GOARCH
 		url := releaseDownloads + version + "/" + name + "." + format
 		if windows {
-			// A running program cannot be replaced on Windows, so the new
-			// release gets its own folder beside this one, named like the
-			// archive, and its service install moves the service to it.
-			folder := filepath.Join(filepath.Dir(filepath.Dir(install.Executable)), name)
+			folder := windowsReleaseFolder(install, version)
 			owngit = "& " + powerShellQuote(filepath.Join(folder, "owngit.exe"))
 			steps = append(steps,
 				"Invoke-WebRequest -UseBasicParsing "+powerShellQuote(url)+" -OutFile "+powerShellQuote(folder+".zip"),
@@ -213,7 +234,19 @@ func shellWord(word string) string {
 	return shellQuote(word)
 }
 
-// powerShellQuote quotes a word for PowerShell.
+// powerShellQuote quotes a word for PowerShell. PowerShell ends a
+// single-quoted string at any of the single-quote characters U+0027 and
+// U+2018 to U+201B, so each is doubled, as PowerShell's own escaping does.
 func powerShellQuote(word string) string {
-	return "'" + strings.ReplaceAll(word, "'", "''") + "'"
+	var quoted strings.Builder
+	quoted.WriteByte('\'')
+	for _, r := range word {
+		quoted.WriteRune(r)
+		switch r {
+		case '\'', '\u2018', '\u2019', '\u201a', '\u201b':
+			quoted.WriteRune(r)
+		}
+	}
+	quoted.WriteByte('\'')
+	return quoted.String()
 }

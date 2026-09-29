@@ -75,6 +75,9 @@ const (
 	MsgReleaseCommand   MessageCode = "release.command"
 	MsgReleaseRunIt     MessageCode = "release.run_it"
 	MsgReleaseRestart   MessageCode = "release.restart"
+	// MsgReleaseStart carries one %s: the new program to start.
+	MsgReleaseStart    MessageCode = "release.start"
+	MsgReleaseForAdmin MessageCode = "release.for_admin"
 )
 
 // Setup and bootstrap.
@@ -1072,6 +1075,14 @@ var catalog = map[MessageCode]message{
 	MsgReleaseRunIt: {
 		en: "OwnGit does not update itself. Run this in a terminal on the computer where OwnGit runs.",
 		ko: "OwnGit은 스스로 업데이트하지 않습니다. OwnGit이 실행 중인 컴퓨터의 터미널에서 이 명령을 실행하세요.",
+	},
+	MsgReleaseStart: {
+		en: "OwnGit does not update itself. Run this in a terminal on the computer where OwnGit runs, then start OwnGit from %s.",
+		ko: "OwnGit은 스스로 업데이트하지 않습니다. OwnGit이 실행 중인 컴퓨터의 터미널에서 이 명령을 실행한 뒤 %s로 OwnGit을 시작하세요.",
+	},
+	MsgReleaseForAdmin: {
+		en: "The update command shows this computer's paths, so only the administrator sees it here. Run owngit update on the computer where OwnGit runs, or confirm as administrator.",
+		ko: "업데이트 명령에는 이 컴퓨터의 경로가 들어 있어 여기서는 관리자에게만 보입니다. OwnGit이 실행 중인 컴퓨터에서 owngit update를 실행하거나 관리자로 확인하세요.",
 	},
 	MsgReleaseRestart: {
 		en: "OwnGit does not update itself. Run this in a terminal on the computer where OwnGit runs, then restart OwnGit.",

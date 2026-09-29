@@ -70,13 +70,13 @@ go build -o bin/owngit ./cmd/owngit
 
 ### Update and remove
 
-OwnGit never updates itself. When a newer release exists, the dashboard notice shows the one command that updates OwnGit the way it was installed, with a Copy button, and `owngit update` prints the same command:
+OwnGit never updates itself. When a newer release exists, the dashboard notice shows a confirmed administrator the one command that updates OwnGit the way it was installed, with a Copy button, and `owngit update` prints the same command:
 
 | Installed with | The command |
 | --- | --- |
 | Homebrew | `brew upgrade owngit` |
 | npm | `npm install -g owngit@X.Y.Z` |
-| The Arch Linux `PKGBUILD` | builds the new release's `PKGBUILD` with `makepkg -si` |
+| The Arch Linux `PKGBUILD` (`owngit-bin`) | builds the new release's `PKGBUILD` with `makepkg -si` |
 | A release archive | downloads the new archive and puts its `owngit` in place of this one; on Windows it unpacks the new release into a folder beside the current one |
 
 When a service runs this OwnGit, the command ends with `owngit service install`, which restarts the service with the new version.

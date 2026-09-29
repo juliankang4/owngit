@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"owngit/internal/releasecheck"
@@ -40,9 +41,10 @@ func updateCommand(arguments []string) error {
 	}
 	release, newer := checker.Newer()
 	runs := serviceRunning(install)
+	platform := updatePlatform(install, runs)
 	command := ""
 	if newer {
-		command = install.UpdateCommand(release.Version, updatePlatform(install, runs))
+		command = install.UpdateCommand(release.Version, platform)
 	}
 	if *asJSON {
 		// The command keeps its & and > readable.
@@ -74,7 +76,10 @@ func updateCommand(arguments []string) error {
 		return nil
 	}
 	fmt.Fprintf(out, "Update it with this command; OwnGit does not run it for you:\n  %s\n", printable(command))
-	if !runs.this {
+	switch start := install.StartAfterUpdate(release.Version, platform); {
+	case start != "":
+		fmt.Fprintf(out, "Then start OwnGit from %s.\n", printable(start))
+	case !runs.this:
 		fmt.Fprintln(out, "Then restart OwnGit where it runs.")
 	}
 	return nil
@@ -105,30 +110,47 @@ func noUpdateCommand(install service.Install, latest string) string {
 	case service.RouteUnknown:
 		return "Update the owngit.exe you installed the service from, then run its \"owngit service install\"."
 	case service.RoutePacman:
+		if install.Package != service.ReleasePackage {
+			return "Installed by the pacman package " + printable(install.Package) + "; update it the way you installed it."
+		}
 		return "makepkg does not run as root. Run \"owngit update\" as your normal account for the command that updates the package."
 	}
 	return fmt.Sprintf("No release archive exists for %s/%s; build %s from source.", runtime.GOOS, runtime.GOARCH, latest)
 }
 
 // dashboardUpdateCommand prepares the update command that the dashboard's
-// new-release notice shows. The route and the service are read once, when
-// the server starts. asService is true when a service manager started this
-// server with --service; a systemd unit of "owngit service" does not pass
-// it, so the registration is read as the command reads it.
-func dashboardUpdateCommand(asService bool) func(string) (string, bool) {
-	install := detectInstall()
-	runs := serviceState{this: asService}
-	if !asService && runtime.GOOS != "windows" {
-		runs = serviceRunning(install)
+// new-release notice shows, with what the owner starts afterwards: start
+// is a program in a new place, and restart means restarting OwnGit where it
+// runs. The route and the service are read once, when the first notice
+// needs them. asService is true when a service manager started this server
+// with --service; a systemd unit of "owngit service" does not pass it, so
+// the registration is read as the command reads it.
+func dashboardUpdateCommand(asService bool) func(string) (command, start string, restart bool) {
+	var (
+		once     sync.Once
+		install  service.Install
+		platform service.Platform
+		runs     serviceState
+	)
+	return func(latest string) (string, string, bool) {
+		once.Do(func() {
+			install = detectInstall()
+			runs = serviceState{this: asService}
+			if !asService && runtime.GOOS != "windows" {
+				runs = serviceRunning(install)
+			}
+			if asService && runtime.GOOS == "windows" {
+				// A sign-in task starts the program itself; a boot task
+				// starts the service copy.
+				executable, _ := runningExecutable()
+				runs.file = sameFile(executable, install.Executable)
+			}
+			platform = updatePlatform(install, runs)
+		})
+		command := install.UpdateCommand(latest, platform)
+		start := install.StartAfterUpdate(latest, platform)
+		return command, start, command != "" && !runs.this && start == ""
 	}
-	if asService && runtime.GOOS == "windows" {
-		// A sign-in task starts the program itself; a boot task starts
-		// the service copy.
-		executable, _ := runningExecutable()
-		runs.file = sameFile(executable, install.Executable)
-	}
-	platform := updatePlatform(install, runs)
-	return func(latest string) (string, bool) { return install.UpdateCommand(latest, platform), !runs.this }
 }
 
 func updatePlatform(install service.Install, runs serviceState) service.Platform {

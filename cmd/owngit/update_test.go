@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"owngit/internal/service"
 	"owngit/internal/version"
 )
 
@@ -83,5 +84,18 @@ func TestDataStaysLine(t *testing.T) {
 	}
 	if line := dataStaysLine(stateDir, repositories); line != "The state stays in "+stateDir+" and the repositories in "+repositories+"." {
 		t.Errorf("line %q", line)
+	}
+}
+
+// A pacman package other than the release's own gets no command and no
+// guess; root gets none either, because makepkg refuses root.
+func TestPacmanWithoutACommandSaysWhy(t *testing.T) {
+	other := service.ClassifyExecutable("/usr/bin/owngit").OwnedBy("owngit-git")
+	if got := noUpdateCommand(other, "9.9.9"); got != "Installed by the pacman package owngit-git; update it the way you installed it." {
+		t.Errorf("other package: %q", got)
+	}
+	release := service.ClassifyExecutable("/usr/bin/owngit").OwnedBy(service.ReleasePackage)
+	if got := noUpdateCommand(release, "9.9.9"); !strings.HasPrefix(got, "makepkg does not run as root.") {
+		t.Errorf("root: %q", got)
 	}
 }

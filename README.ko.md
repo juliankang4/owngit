@@ -70,13 +70,13 @@ go build -o bin/owngit ./cmd/owngit
 
 ### 업데이트와 제거
 
-OwnGit은 스스로 업데이트하지 않습니다. 새 릴리스가 나오면 대시보드 알림에 설치한 방법에 맞는 업데이트 명령이 복사 버튼과 함께 나오고 `owngit update`도 같은 명령을 출력합니다.
+OwnGit은 스스로 업데이트하지 않습니다. 새 릴리스가 나오면 관리자로 확인한 사람에게 대시보드 알림으로 설치한 방법에 맞는 업데이트 명령이 복사 버튼과 함께 보이고 `owngit update`도 같은 명령을 출력합니다.
 
 | 설치한 방법 | 명령 |
 | --- | --- |
 | Homebrew | `brew upgrade owngit` |
 | npm | `npm install -g owngit@X.Y.Z` |
-| Arch Linux `PKGBUILD` | 새 릴리스의 `PKGBUILD`를 `makepkg -si`로 빌드합니다 |
+| Arch Linux `PKGBUILD`(`owngit-bin`) | 새 릴리스의 `PKGBUILD`를 `makepkg -si`로 빌드합니다 |
 | 릴리스 압축 파일 | 새 압축 파일을 내려받아 그 안의 `owngit`으로 지금 파일을 바꿉니다. Windows에서는 새 릴리스를 지금 폴더 옆의 새 폴더에 풉니다 |
 
 서비스가 이 OwnGit을 실행하고 있으면 명령 끝에 `owngit service install`이 붙어 서비스를 새 버전으로 다시 시작합니다.

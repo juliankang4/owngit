@@ -35,7 +35,12 @@ func TestWindowsCommandStopsAfterAFailedDownload(t *testing.T) {
 	if err != nil {
 		t.Skip("Windows PowerShell is not available")
 	}
-	dir := t.TempDir()
+	// The folder name has a typographic quote, which PowerShell also reads
+	// as a single quote.
+	dir := filepath.Join(t.TempDir(), "O\u2019Brien")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	install := Install{Route: RouteArchive, Executable: filepath.Join(dir, "owngit_1.1.2_windows_amd64", "owngit.exe")}
 	command := install.UpdateCommand("1.1.3", Platform{GOOS: "windows", GOARCH: "amd64", Service: true})
 	folder := filepath.Join(dir, "owngit_1.1.3_windows_amd64")
