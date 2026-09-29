@@ -138,6 +138,10 @@ type Options struct {
 	// Service is the service name the caller requested. The advertised name
 	// must match it exactly. An empty value means DefaultService.
 	Service string
+	// ProtocolV2 accepts a protocol v2 capability advertisement, the answer
+	// of a server that supports v2 to a request that asked for it. Parse then
+	// returns its capabilities and no refs; ParseLsRefs reads the refs.
+	ProtocolV2 bool
 }
 
 // Ref is one advertised reference. Names are preserved exactly as received;
@@ -196,8 +200,10 @@ type Advertisement struct {
 	// Service is the advertised service name, always the requested one.
 	Service string
 	// ProtocolVersion is 0 when no version packet was sent and 1 when the
-	// server sent "version 1". Protocol v2 is never reported here; it is
-	// refused with ErrUnsupportedVersion.
+	// server sent "version 1". It is 2 only for a protocol v2 capability
+	// advertisement accepted with Options.ProtocolV2, and for the refs
+	// ParseLsRefs read after it; without that option v2 is refused with
+	// ErrUnsupportedVersion.
 	ProtocolVersion int
 	// ObjectFormat is FormatSHA1 or FormatSHA256. It is FormatSHA1 when the
 	// server advertised no object-format capability, as the capability
@@ -258,6 +264,7 @@ func Parse(source io.Reader, options Options) (*Advertisement, error) {
 		limits: limits,
 		result: &Advertisement{Service: service, ObjectFormat: FormatSHA1, EffectiveLimits: limits},
 		names:  map[string]int{},
+		v2:     options.ProtocolV2,
 	}
 	if err := state.run(); err != nil {
 		return nil, err
@@ -278,6 +285,8 @@ type parseState struct {
 	oidWidth int
 	// records counts data packets consumed in the ref list.
 	records int
+	// v2 accepts a protocol v2 capability advertisement.
+	v2 bool
 }
 
 func (s *parseState) fail(offset int64, err error, detail string) error {
@@ -286,32 +295,41 @@ func (s *parseState) fail(offset int64, err error, detail string) error {
 
 // run parses the complete response.
 func (s *parseState) run() error {
-	if err := s.readServiceAnnouncement(); err != nil {
+	v2, err := s.readServiceAnnouncement()
+	if err != nil {
 		return err
 	}
-	if err := s.readRefList(); err != nil {
+	if v2 {
+		err = s.readV2Capabilities()
+	} else {
+		err = s.readRefList()
+	}
+	if err != nil {
 		return err
 	}
 	return s.requireEndOfResponse()
 }
 
 // readServiceAnnouncement consumes the "# service=<name>" packet and the flush
-// packet that follows it, as required by gitprotocol-http(5).
-func (s *parseState) readServiceAnnouncement() error {
+// packet that follows it, as required by gitprotocol-http(5). With
+// Options.ProtocolV2 a response may instead begin with the "version 2"
+// packet, as git-http-backend sends it; it then reports true, and the
+// capabilities follow.
+func (s *parseState) readServiceAnnouncement() (bool, error) {
 	kind, payload, err := s.reader.next()
 	offset := s.reader.offset
 	switch {
 	case err == io.EOF:
-		return s.fail(offset, ErrTruncated, "the response body was empty")
+		return false, s.fail(offset, ErrTruncated, "the response body was empty")
 	case err != nil:
-		return err
+		return false, err
 	}
 	if kind != packetData {
-		return s.unsupportedControl(offset, kind, "before the service announcement")
+		return false, s.unsupportedControl(offset, kind, "before the service announcement")
 	}
 	line := string(trimLF(payload))
 	if err := s.checkErrorPacket(offset, line); err != nil {
-		return err
+		return false, err
 	}
 	if !strings.HasPrefix(line, "# service=") {
 		// A v2 server answers the same request with "version 2" as its first
@@ -321,37 +339,40 @@ func (s *parseState) readServiceAnnouncement() error {
 		// packet, so a leading "version 1" is a broken HTTP response from a
 		// version this parser supports, not an unsupported version.
 		if version, ok := parseVersionLine(line); ok {
+			if version == 2 && s.v2 {
+				return true, nil
+			}
 			if version > 1 {
-				return s.fail(offset, ErrUnsupportedVersion,
+				return false, s.fail(offset, ErrUnsupportedVersion,
 					fmt.Sprintf("the response begins with a protocol version %d capability advertisement", version))
 			}
-			return s.fail(offset, ErrMalformedService,
+			return false, s.fail(offset, ErrMalformedService,
 				fmt.Sprintf("a protocol version %d packet precedes the service announcement", version))
 		}
-		return s.fail(offset, ErrMalformedService, "the first packet is not a service announcement")
+		return false, s.fail(offset, ErrMalformedService, "the first packet is not a service announcement")
 	}
 	if advertised := strings.TrimPrefix(line, "# service="); advertised != s.result.Service {
-		return s.fail(offset, ErrMalformedService,
+		return false, s.fail(offset, ErrMalformedService,
 			fmt.Sprintf("the advertised service is not the requested %s", s.result.Service))
 	}
 	kind, payload, err = s.reader.next()
 	offset = s.reader.offset
 	switch {
 	case err == io.EOF:
-		return s.fail(offset, ErrTruncated, "the service announcement has no flush packet")
+		return false, s.fail(offset, ErrTruncated, "the service announcement has no flush packet")
 	case err != nil:
-		return err
+		return false, err
 	}
 	switch kind {
 	case packetFlush:
-		return nil
+		return false, nil
 	case packetData:
 		if err := s.checkErrorPacket(offset, string(trimLF(payload))); err != nil {
-			return err
+			return false, err
 		}
-		return s.fail(offset, ErrMalformedService, "the service announcement is not followed by a flush packet")
+		return false, s.fail(offset, ErrMalformedService, "the service announcement is not followed by a flush packet")
 	default:
-		return s.unsupportedControl(offset, kind, "after the service announcement")
+		return false, s.unsupportedControl(offset, kind, "after the service announcement")
 	}
 }
 
@@ -393,6 +414,9 @@ func (s *parseState) readRefList() error {
 			// An unsupported version is unsupported wherever it appears; a v2
 			// capability advertisement in a v1 response body is the case Main's
 			// matrix exercised.
+			if version == 2 && s.v2 && first && !sawVersion {
+				return s.readV2Capabilities()
+			}
 			if version > 1 {
 				return s.fail(offset, ErrUnsupportedVersion,
 					fmt.Sprintf("the server announced protocol version %d", version))

@@ -32,6 +32,7 @@ func FuzzParse(f *testing.F) {
 		advertisement("version 1", pkt(mixed1A+" refs/tags/v1\x00ofs-delta"), pkt(upper1B+" refs/tags/v1^{}")),
 		advertisement("version 1", pkt(sha1A+" HEAD\x00ofs-delta"), pkt(sha1A+" refs/heads/main"), pkt("shallow "+upper1B)),
 		pkt("version 2") + pkt("ls-refs") + "0000",
+		pkt("version 2") + pkt("ls-refs=unborn") + pkt("fetch=shallow filter") + pkt("object-format=sha1") + "0000",
 		pkt("# service=git-upload-pack") + "0000" + "0001" + "0000",
 		pkt("# service=git-upload-pack") + "0000" + pkt("ERR no such repository") + "0000",
 		sha1A + "\trefs/heads/main\n",
@@ -124,6 +125,61 @@ func FuzzParse(f *testing.F) {
 		}
 		if len(result.Capabilities) == 0 {
 			t.Fatal("a parsed advertisement always carries at least one capability")
+		}
+	})
+}
+
+// FuzzParseLsRefs checks that an ls-refs answer, untrusted like any
+// advertisement, never panics and never yields a ref outside the requested
+// prefixes or a fact that was not validated.
+func FuzzParseLsRefs(f *testing.F) {
+	for _, seed := range []string{
+		"",
+		"0000",
+		pkt(sha1A+" HEAD symref-target:refs/heads/main") + pkt(sha1A+" refs/heads/main") + "0000",
+		pkt(sha1B+" refs/tags/v1 peeled:"+sha1C) + "0000",
+		pkt(sha1A+" refs/pull/1/head") + "0000",
+		pkt("unborn HEAD symref-target:refs/heads/main") + "0000",
+		pkt("ERR denied"),
+	} {
+		f.Add([]byte(seed))
+	}
+	capabilities := &Advertisement{Service: DefaultService, ProtocolVersion: 2, ObjectFormat: FormatSHA1, Capabilities: []string{"ls-refs", "fetch"}}
+	f.Fuzz(func(t *testing.T, body []byte) {
+		options := Options{Limits: Limits{MaxPacketBytes: 4096, MaxTotalBytes: 1 << 16, MaxRefRecords: 64, MaxNameBytes: 256}}
+		result, err := ParseLsRefs(strings.NewReader(string(body)), capabilities, options)
+		if err != nil {
+			var parseError *ParseError
+			if result != nil || !errors.As(err, &parseError) {
+				t.Fatalf("failure %v returned %+v or is not a *ParseError", err, result)
+			}
+			return
+		}
+		if result.Empty != (len(result.Refs) == 0) || result.TotalBytes != int64(len(body)) {
+			t.Fatalf("empty=%v with %d refs, %d of %d bytes", result.Empty, len(result.Refs), result.TotalBytes, len(body))
+		}
+		oids := map[string]string{}
+		for _, ref := range result.Refs {
+			if ref.Name != "HEAD" && !strings.HasPrefix(ref.Name, "refs/heads/") && !strings.HasPrefix(ref.Name, "refs/tags/") {
+				t.Fatalf("ref %q outside the requested prefixes survived", ref.Name)
+			}
+			if _, duplicate := oids[ref.Name]; duplicate || validateRefName(ref.Name) != nil {
+				t.Fatalf("duplicate or invalid ref %q survived", ref.Name)
+			}
+			oids[ref.Name] = ref.OID
+			for _, oid := range []string{ref.OID, ref.PeeledOID} {
+				if oid != "" && (len(oid) != 40 || !isHexOID(oid) || oid != canonicalOID(oid) || isZeroOID(oid)) {
+					t.Fatalf("invalid object ID %q survived for %q", oid, ref.Name)
+				}
+			}
+		}
+		if result.Head.Advertised != (oids["HEAD"] != "") {
+			t.Fatal("HEAD facts contradict the ref list")
+		}
+		for _, symref := range result.Symrefs {
+			if target, ok := oids[symref.Target]; ok && target != oids[symref.Name] {
+				t.Fatalf("symref %q and its target %q kept different object IDs", symref.Name, symref.Target)
+			}
 		}
 	})
 }

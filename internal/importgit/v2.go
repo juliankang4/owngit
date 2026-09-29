@@ -1,0 +1,199 @@
+package importgit
+
+import (
+	"fmt"
+	"io"
+	"strings"
+)
+
+// LsRefsPrefixes are the ref prefixes an importer asks a protocol v2 server
+// for: HEAD, branches and tags, the refs an import can use. Refs in other
+// namespaces, such as pull request refs, are then never listed, so they
+// neither count toward MaxRefRecords nor enter a fetch.
+var LsRefsPrefixes = []string{"HEAD", "refs/heads/", "refs/tags/"}
+
+// readV2Capabilities reads a protocol v2 capability advertisement after its
+// "version 2" packet, up to its flush packet. Its lines are bounded like the
+// v0 capability list: MaxCapabilities lines of at most MaxCapabilityBytes.
+// The server must offer the ls-refs and fetch commands.
+func (s *parseState) readV2Capabilities() error {
+	s.result.ProtocolVersion = 2
+	seen := map[string]bool{}
+	for {
+		kind, payload, err := s.reader.next()
+		offset := s.reader.offset
+		switch {
+		case err == io.EOF:
+			return s.fail(offset, ErrTruncated, "the capability advertisement has no terminating flush packet")
+		case err != nil:
+			return err
+		}
+		if kind == packetFlush {
+			break
+		}
+		if kind != packetData {
+			return s.fail(offset, ErrMalformedPacket, "an unexpected "+kind.String()+" appeared in the capability advertisement")
+		}
+		line := string(trimLF(payload))
+		if err := s.checkErrorPacket(offset, line); err != nil {
+			return err
+		}
+		if len(s.result.Capabilities) >= s.limits.MaxCapabilities {
+			return s.fail(offset, ErrLimitExceeded,
+				fmt.Sprintf("the capability list exceeds the %d-capability limit", s.limits.MaxCapabilities))
+		}
+		if len(line) > s.limits.MaxCapabilityBytes {
+			return s.fail(offset, ErrLimitExceeded,
+				fmt.Sprintf("a capability exceeds the %d-byte limit", s.limits.MaxCapabilityBytes))
+		}
+		key, value, hasValue := strings.Cut(line, "=")
+		if !validCapabilityKey(key) {
+			return s.fail(offset, ErrInvalidCapability, "a capability name is outside the documented grammar")
+		}
+		// A v2 value may hold spaces, such as "fetch=shallow filter".
+		if hasValue && (value == "" || strings.ContainsFunc(value, func(r rune) bool { return r < ' ' || r > '~' })) {
+			return s.fail(offset, ErrInvalidCapability, "a capability value is empty or holds a non-printable byte")
+		}
+		if seen[key] {
+			return s.fail(offset, ErrInvalidCapability, "a capability is repeated")
+		}
+		seen[key] = true
+		if key == "object-format" {
+			if value != FormatSHA1 && value != FormatSHA256 {
+				return s.fail(offset, ErrObjectFormat, "the advertised hash algorithm is not supported")
+			}
+			s.result.ObjectFormat = value
+			s.result.ObjectFormatAdvertised = true
+		}
+		s.result.Capabilities = append(s.result.Capabilities, line)
+	}
+	if !seen["ls-refs"] || !seen["fetch"] {
+		return s.fail(s.reader.consumed, ErrInvalidCapability, "the protocol v2 server offers no ls-refs or fetch command")
+	}
+	return nil
+}
+
+// ParseLsRefs reads the answer to an ls-refs command that asked a protocol
+// v2 server for LsRefsPrefixes with the symrefs and peel arguments, after
+// capabilities, the Advertisement Parse returned for that server. The result
+// describes the source as Parse does for a v0 server: the refs, HEAD, their
+// peeled values and symrefs, validated by the same rules and bounded by the
+// same limits. A ref outside LsRefsPrefixes is refused, because a server
+// that lists one was not asked for it. No refs at all is Empty.
+func ParseLsRefs(source io.Reader, capabilities *Advertisement, options Options) (*Advertisement, error) {
+	if source == nil || capabilities == nil || capabilities.ProtocolVersion != 2 {
+		return nil, fmt.Errorf("%w: ls-refs needs a protocol v2 capability advertisement and a response body", ErrInvalidOptions)
+	}
+	limits, err := options.Limits.Effective()
+	if err != nil {
+		return nil, err
+	}
+	s := &parseState{
+		reader: &packetReader{source: source, maxPacket: limits.MaxPacketBytes, maxTotal: limits.MaxTotalBytes},
+		limits: limits,
+		result: &Advertisement{
+			Service: capabilities.Service, ProtocolVersion: 2, ObjectFormat: capabilities.ObjectFormat,
+			ObjectFormatAdvertised: capabilities.ObjectFormatAdvertised,
+			Capabilities:           append([]string(nil), capabilities.Capabilities...), EffectiveLimits: limits,
+		},
+		names:    map[string]int{},
+		oidWidth: oidWidth(capabilities.ObjectFormat),
+	}
+	if err := s.readLsRefs(); err != nil {
+		return nil, err
+	}
+	s.result.Empty = len(s.result.Refs) == 0
+	if err := s.requireEndOfResponse(); err != nil {
+		return nil, err
+	}
+	s.result.TotalBytes = s.reader.consumed
+	return s.result, nil
+}
+
+// readLsRefs reads ls-refs records, "obj-id SP refname *(SP attribute)", up
+// to the flush packet. Every record counts toward MaxRefRecords once.
+func (s *parseState) readLsRefs() error {
+	for {
+		kind, payload, err := s.reader.next()
+		offset := s.reader.offset
+		switch {
+		case err == io.EOF:
+			return s.fail(offset, ErrTruncated, "the ref list has no terminating flush packet")
+		case err != nil:
+			return err
+		}
+		if kind == packetFlush {
+			return nil
+		}
+		if kind != packetData {
+			return s.fail(offset, ErrMalformedPacket, "an unexpected "+kind.String()+" appeared in the ref list")
+		}
+		line := string(trimLF(payload))
+		if err := s.checkErrorPacket(offset, line); err != nil {
+			return err
+		}
+		s.records++
+		if s.records > s.limits.MaxRefRecords {
+			return s.fail(offset, ErrTooManyRefs,
+				fmt.Sprintf("the ref list exceeds the %d-record limit", s.limits.MaxRefRecords))
+		}
+		if err := s.readLsRefsRecord(offset, line); err != nil {
+			return err
+		}
+	}
+}
+
+func (s *parseState) readLsRefsRecord(offset int64, line string) error {
+	fields := strings.Split(line, " ")
+	if len(fields) < 2 {
+		return s.fail(offset, ErrInvalidRecord, "the record is not an object ID followed by a name")
+	}
+	oid, name, err := s.splitRecord(offset, fields[0]+" "+fields[1])
+	if err != nil {
+		return err
+	}
+	requested := false
+	for _, prefix := range LsRefsPrefixes {
+		requested = requested || name == prefix || (strings.HasSuffix(prefix, "/") && strings.HasPrefix(name, prefix))
+	}
+	if !requested {
+		return s.fail(offset, ErrInvalidRecord, "the server listed a ref outside the requested prefixes")
+	}
+	if err := s.addRef(offset, oid, name); err != nil {
+		return err
+	}
+	ref := &s.result.Refs[len(s.result.Refs)-1]
+	for _, attribute := range fields[2:] {
+		switch key, value, _ := strings.Cut(attribute, ":"); key {
+		case "symref-target":
+			if ref.SymrefTarget != "" {
+				return s.fail(offset, ErrConflictingRefs, "a ref has more than one symref target")
+			}
+			if err := validateRefName(value); err != nil {
+				return s.fail(offset, ErrInvalidName, "symref target: "+err.Error())
+			}
+			// applySymrefs copies the statement onto the ref and HEAD and
+			// checks it against an advertised target.
+			ref.SymrefTarget = value
+			s.result.Symrefs = append(s.result.Symrefs, Symref{Name: name, Target: value})
+		case "peeled":
+			if ref.PeeledOID != "" {
+				return s.fail(offset, ErrConflictingRefs, "a ref has more than one peeled value")
+			}
+			if len(value) != s.oidWidth || !isHexOID(value) {
+				return s.fail(offset, ErrInvalidObjectID, "a peeled value is not an object ID of the advertised format")
+			}
+			value = canonicalOID(value)
+			if isZeroOID(value) {
+				return s.fail(offset, ErrInvalidObjectID, "a peeled value is the zero object ID")
+			}
+			ref.PeeledOID = value
+			if name == "HEAD" {
+				s.result.Head.PeeledOID = value
+			}
+		default:
+			return s.fail(offset, ErrInvalidRecord, "the record carries an attribute that was not requested")
+		}
+	}
+	return nil
+}
