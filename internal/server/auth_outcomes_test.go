@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"owngit/internal/auth"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/testfixture"
 	"owngit/internal/webui"
 )
 
@@ -287,30 +291,64 @@ func TestAdminFormsReportAPasswordCheckThatCouldNotFinish(t *testing.T) {
 
 // A Git client whose password check could not be completed is told the
 // server is unavailable, not asked for another password. A rate limit is
-// still a refusal with a challenge.
+// answered 429 without a challenge.
 func TestGitPasswordCheckThatCouldNotFinishIsUnavailable(t *testing.T) {
 	fixture := newAPIFixture(t, true)
 	server := serve(t, fixture.app.Handler())
 	failAttemptClearing(t, fixture.store)
 	serverLog := captureServerLog(t)
-	discover := func() (int, string) {
+	discover := func() (int, http.Header) {
 		request, err := http.NewRequest(http.MethodGet, server.URL+"/git/project.git/info/refs?service=git-upload-pack", nil)
 		noErr(t, err)
 		request.SetBasicAuth("owngit", "shared-password")
 		response, err := http.DefaultClient.Do(request)
 		noErr(t, err)
 		response.Body.Close()
-		return response.StatusCode, response.Header.Get("WWW-Authenticate")
+		return response.StatusCode, response.Header
 	}
-	if status, challenge := discover(); status != http.StatusServiceUnavailable || challenge != "" {
-		t.Fatalf("unfinished check status=%d challenge=%q", status, challenge)
+	if status, header := discover(); status != http.StatusServiceUnavailable || header.Get("WWW-Authenticate") != "" {
+		t.Fatalf("unfinished check status=%d header=%v", status, header)
 	}
 	requireLogged(t, serverLog, "GET /git/project.git/info/refs: Git password check could not be completed: ")
 	for range 3 {
 		noErr(t, fixture.store.RecordFailedAttempt(context.Background(), "general", "127.0.0.1", time.Now(), 4, 10*time.Minute, 15*time.Minute))
 	}
-	if status, challenge := discover(); status != http.StatusUnauthorized || challenge == "" {
-		t.Fatalf("rate-limited status=%d challenge=%q", status, challenge)
+	// Retry-After is the whole lockout, so Git does not repeat the request
+	// before it ends.
+	if status, header := discover(); status != http.StatusTooManyRequests || header.Get("WWW-Authenticate") != "" || header.Get("Retry-After") != "900" {
+		t.Fatalf("rate-limited status=%d header=%v", status, header)
+	}
+}
+
+// Git erases the password its credential helper stored when the server
+// answers 401. During a lockout Git is told why it was refused, and the
+// right password it stored stays.
+func TestGitLockoutKeepsTheStoredPassword(t *testing.T) {
+	fixture := newAPIFixture(t, true)
+	server := serve(t, fixture.app.Handler())
+	for range 4 {
+		noErr(t, fixture.store.RecordFailedAttempt(context.Background(), "general", "127.0.0.1", time.Now(), 4, 10*time.Minute, 15*time.Minute))
+	}
+	home := t.TempDir()
+	emptyConfig := filepath.Join(home, "gitconfig")
+	noErr(t, os.WriteFile(emptyConfig, nil, 0o600))
+	credentials := filepath.Join(home, "credentials")
+	stored, err := url.Parse(server.URL)
+	noErr(t, err)
+	stored.User = url.UserPassword("owngit", "shared-password")
+	noErr(t, os.WriteFile(credentials, []byte(stored.String()+"\n"), 0o600))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, "git", "-c", "credential.helper=", "-c", "credential.helper=store --file="+filepath.ToSlash(credentials),
+		"ls-remote", server.URL+"/git/project.git")
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL="+emptyConfig, "HOME="+home))
+	output, err := command.CombinedOutput()
+	if err == nil || ctx.Err() != nil || !strings.Contains(string(output), "429") {
+		t.Fatalf("locked-out ls-remote err=%v output:\n%s", err, output)
+	}
+	if content, err := os.ReadFile(credentials); err != nil || string(content) != stored.String()+"\n" {
+		t.Fatalf("the stored password did not survive the lockout: err=%v, file holds %d bytes", err, len(content))
 	}
 }
 

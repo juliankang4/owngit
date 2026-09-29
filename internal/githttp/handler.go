@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"owngit/internal/auth"
 	"owngit/internal/gitexec"
 	"owngit/internal/logtext"
 	"owngit/internal/repository"
@@ -33,9 +34,10 @@ type Handler struct {
 	Git          *gitexec.Runner
 	Repositories *repository.Manager
 	BackendPath  string
-	// Authorize reports whether a request may use Git. An error means that
-	// could not be decided: the client is told to try later and is not asked
-	// for another password. Authorize logs the cause of that error.
+	// Authorize reports whether a request may use Git. auth.ErrRateLimited
+	// means the client's address may not try a password now. Any other error
+	// means that could not be decided: the client is told to try later and is
+	// not asked for another password. Authorize logs the cause of that error.
 	Authorize func(*http.Request) (bool, error)
 	// OnReceive wakes check reconciliation after git-receive-pack exits. It is
 	// advisory and must never change the already completed Git response.
@@ -96,7 +98,17 @@ func DiscoverBackend(ctx context.Context, git *gitexec.Runner) (string, error) {
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if h.Authorize != nil {
 		allowed, err := h.Authorize(request)
-		if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrRateLimited):
+			// Not 401: Git erases the stored password it sent when the answer
+			// is 401, and a right password must outlast a lockout. Git 2.54
+			// repeats a 429 at once, without end, unless Retry-After asks it
+			// to wait; it stops at a wait over http.maxRetryTime. The lockout
+			// ends within FailureBlock.
+			writer.Header().Set("Retry-After", strconv.Itoa(int(auth.FailureBlock/time.Second)))
+			http.Error(writer, "too many authentication attempts; try again later", http.StatusTooManyRequests)
+			return
+		case err != nil:
 			http.Error(writer, "authentication is unavailable; try again later", http.StatusServiceUnavailable)
 			return
 		}

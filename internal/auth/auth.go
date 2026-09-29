@@ -36,11 +36,12 @@ var (
 )
 
 // Failed password limit per client address and kind: the fourth wrong
-// password within the window refuses that address for the block time.
+// password within the window refuses that address for FailureBlock, after
+// which ErrRateLimited ends.
 const (
 	maximumFailures = 4
 	failureWindow   = 10 * time.Minute
-	failureBlock    = 15 * time.Minute
+	FailureBlock    = 15 * time.Minute
 )
 
 // Password length limits, in characters (Unicode code points) rather than
@@ -248,7 +249,7 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 	if !check(encoded, password) {
 		// A client that leaves after its guess was checked still counts. A
 		// guess that could not be counted is not reported as checked.
-		if err := m.Store.RecordFailedAttempt(context.WithoutCancel(ctx), kind, address, m.now(), maximumFailures, failureWindow, failureBlock); err != nil {
+		if err := m.Store.RecordFailedAttempt(context.WithoutCancel(ctx), kind, address, m.now(), maximumFailures, failureWindow, FailureBlock); err != nil {
 			return err
 		}
 		return ErrInvalidCredentials

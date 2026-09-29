@@ -143,8 +143,9 @@ func (app *App) Handler() http.Handler {
 	}))
 }
 
-// AuthorizeGit reports whether a Git request may proceed. An error means
-// that could not be decided. Git clients get a rate limit as a refusal.
+// AuthorizeGit reports whether a Git request may proceed. auth.ErrRateLimited
+// means the client's address is locked out after wrong passwords; any other
+// error means that could not be decided.
 func (app *App) AuthorizeGit(request *http.Request) (bool, error) {
 	settings, err := app.Store.Settings(request.Context())
 	if err != nil {
@@ -165,8 +166,10 @@ func (app *App) AuthorizeGit(request *http.Request) (bool, error) {
 	switch {
 	case err == nil:
 		return true, nil
-	case errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, auth.ErrRateLimited):
+	case errors.Is(err, auth.ErrInvalidCredentials):
 		return false, nil
+	case errors.Is(err, auth.ErrRateLimited):
+		return false, err
 	}
 	logFailure(request, "Git password check", err)
 	return false, err

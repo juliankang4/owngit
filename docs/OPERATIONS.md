@@ -680,7 +680,7 @@ owngit check run \
 
 - Each Git request (clone, fetch, push, archive) can send or receive at most 4 GiB and must finish within 30 minutes; no option changes this. A push over the size is refused with HTTP 413, which Git may show only as `fatal: the remote end hung up unexpectedly`; a clone or fetch over a limit is cut off. A transfer whose client moves no data for 60 seconds is stopped too. OwnGit does not host Git LFS, so a repository whose history is larger than 4 GiB cannot be cloned through it; keep large binary files out of Git history.
 - At most 5 Git requests run at once, and one repository can use at most 4 of them, so one repository's slow transfers never block the others. A request that finds no free place waits up to 90 seconds, then gets HTTP 503 with `Git service is busy with other transfers; try again shortly`; run the command again.
-- With shared-password protection, 4 wrong passwords from one address within 10 minutes block that address for 15 minutes; correct passwords never count. The administrator password has the same limit, counted separately.
+- With shared-password protection, 4 wrong passwords from one address within 10 minutes block that address for 15 minutes; correct passwords never count. During the block Git gets HTTP 429 (Too Many Requests) instead of the authentication failure a wrong password gets, so Git keeps the password its credential helper saved. The administrator password has the same limit, counted separately.
 - When OwnGit is stopped, it waits up to 10 seconds for running requests, then ends the rest and logs how many it ended.
 
 ## Storage
