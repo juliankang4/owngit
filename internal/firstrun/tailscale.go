@@ -106,7 +106,9 @@ func tailscaleCommand(command string, found Tailscale, port, stateDir string) st
 // would name an address other devices use. Like tailscaleCommand it is
 // printed for the owner and never run.
 func localOnlyCommand(command, port, stateDir string) string {
-	return networkSetCommand(command, stateDir, "--listen", net.JoinHostPort("127.0.0.1", port), "--base-url", "")
+	// "--base-url=" rather than an empty argument, which Windows PowerShell
+	// 5.1 drops.
+	return networkSetCommand(command, stateDir, "--listen", net.JoinHostPort("127.0.0.1", port), "--base-url=")
 }
 
 // networkSetCommand is "network set" with options, run by command (see

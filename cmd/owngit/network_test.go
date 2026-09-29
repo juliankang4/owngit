@@ -140,8 +140,9 @@ func TestNetworkSetShowAndReset(t *testing.T) {
 		t.Fatalf("a refused set changed %+v to %+v", report.Saved, after.Saved)
 	}
 
-	// An empty value removes one saved setting.
-	_, err = runNetwork(t, "set", "--state-dir", stateDir, "--base-url", "")
+	// An empty value removes one saved setting, written as the docs and
+	// terminal setup print it, which every shell passes as one argument.
+	_, err = runNetwork(t, "set", "--state-dir", stateDir, "--base-url=")
 	noErr(t, err)
 	if after := networkJSON(t, stateDir); after.Saved.BaseURL != "" || after.Saved.Listen != "0.0.0.0:7720" {
 		t.Fatalf("after removing the base URL: %+v", after.Saved)

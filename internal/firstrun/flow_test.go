@@ -256,7 +256,7 @@ func TestSavedNetworkListenSuggestsSavingALocalAddress(t *testing.T) {
 			t.Fatalf("%s run: %v\n%s", test.lang, err, h.out)
 		}
 		out := h.out.String()
-		for _, want := range append(test.want, "\nowngit network set --listen 127.0.0.1:7700 --base-url '' --state-dir '/tmp/owngit state'\n") {
+		for _, want := range append(test.want, "\nowngit network set --listen 127.0.0.1:7700 --base-url= --state-dir '/tmp/owngit state'\n") {
 			if !strings.Contains(out, want) {
 				t.Errorf("%s: output lacks %q", test.lang, want)
 			}
