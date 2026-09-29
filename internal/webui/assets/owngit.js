@@ -533,6 +533,7 @@
     opener.hidden = false;
     opener.addEventListener('click', function () {
       if (dialog.open) { return; }
+      if (controller) { controller.abort(); }
       current = field.value || field.getAttribute('placeholder') || '';
       parentPath = '';
       parentRoots = false;
@@ -544,6 +545,8 @@
       load(current, false, false, false);
     });
     dialog.addEventListener('close', function () {
+      // Native close events are queued. A reopened dialog owns its new request.
+      if (dialog.open) { return; }
       generation++;
       if (controller) { controller.abort(); }
       opener.focus();

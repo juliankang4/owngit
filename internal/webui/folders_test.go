@@ -47,6 +47,10 @@ func TestFolderChooserRequestsOnlySetupEndpoints(t *testing.T) {
 			t.Errorf("folder chooser missing %q", required)
 		}
 	}
+	close := section(t, block, "dialog.addEventListener('close'", "dialog.querySelector('[data-folder-cancel]')")
+	if guard, cancel := strings.Index(close, "if (dialog.open) { return; }"), strings.Index(close, "generation++"); guard < 0 || cancel < 0 || guard > cancel {
+		t.Error("a queued close event can cancel a reopened dialog's request")
+	}
 	if strings.Count(block, "fetch(") != 1 {
 		t.Error("chooser has more than one transport boundary")
 	}
