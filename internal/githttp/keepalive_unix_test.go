@@ -12,58 +12,174 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
 
-// readTimeoutTransport behaves like a reverse proxy's read timeout: a request
-// fails when the backend sends nothing for timeout, from the moment the
+// readTimeoutTransport behaves like a half-duplex proxy's read timeout: a
+// request fails when the backend sends nothing for timeout, after the
 // request is sent until the end of the response.
 type readTimeoutTransport struct {
 	timeout  time.Duration
 	timeouts *atomic.Int32
+	probes   map[string]*keepaliveProbe
 }
 
 func (transport readTimeoutTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithCancel(request.Context())
-	timer := time.AfterFunc(transport.timeout, func() {
+	clock := &proxyReadClock{timeout: transport.timeout, cancel: func() {
 		transport.timeouts.Add(1)
 		cancel()
-	})
-	response, err := http.DefaultTransport.RoundTrip(request.WithContext(ctx))
+	}}
+	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
+		if info.Err == nil {
+			clock.start()
+		}
+	}}
+	response, err := http.DefaultTransport.RoundTrip(request.WithContext(httptrace.WithClientTrace(ctx, trace)))
 	if err != nil {
-		timer.Stop()
+		clock.stop()
 		cancel()
 		return nil, err
 	}
-	response.Body = &rearmingBody{ReadCloser: response.Body, timer: timer, timeout: transport.timeout, cancel: cancel}
+	response.Body = &rearmingBody{ReadCloser: response.Body, clock: clock, cancel: cancel, probe: transport.probes[request.URL.Path]}
 	return response, nil
+}
+
+// WroteRequest starts the clock only once the transport has flushed the whole
+// request. A response read before that event cannot start the clock itself.
+type proxyReadClock struct {
+	mu      sync.Mutex
+	timer   *time.Timer
+	timeout time.Duration
+	cancel  func()
+	stopped bool
+}
+
+func (clock *proxyReadClock) start() {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	if !clock.stopped {
+		clock.timer = time.AfterFunc(clock.timeout, clock.cancel)
+	}
+}
+
+func (clock *proxyReadClock) rearm() {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	if clock.timer != nil && !clock.stopped {
+		clock.timer.Reset(clock.timeout)
+	}
+}
+
+func (clock *proxyReadClock) stop() {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	clock.stopped = true
+	if clock.timer != nil {
+		clock.timer.Stop()
+	}
 }
 
 type rearmingBody struct {
 	io.ReadCloser
-	timer   *time.Timer
-	timeout time.Duration
-	cancel  context.CancelFunc
+	clock  *proxyReadClock
+	cancel context.CancelFunc
+	probe  *keepaliveProbe
 }
 
 func (body *rearmingBody) Read(buffer []byte) (int, error) {
 	n, err := body.ReadCloser.Read(buffer)
 	if n > 0 {
-		body.timer.Reset(body.timeout)
+		body.clock.rearm()
+		if body.probe != nil {
+			if probeErr := body.probe.observe(buffer[:n]); probeErr != nil {
+				return n, probeErr
+			}
+		}
 	}
 	return n, err
 }
 
 func (body *rearmingBody) Close() error {
-	body.timer.Stop()
+	body.clock.stop()
 	body.cancel()
 	return body.ReadCloser.Close()
+}
+
+// keepaliveProbe releases a quiet Git hook only after four empty sideband
+// packets have crossed the backend connection while that hook is blocked.
+type keepaliveProbe struct {
+	mu         sync.Mutex
+	ready      string
+	release    *os.File
+	pending    []byte
+	count      int
+	last       time.Time
+	largestGap time.Duration
+}
+
+func newKeepaliveProbe(t *testing.T, root, name string) *keepaliveProbe {
+	t.Helper()
+	fifo := filepath.Join(root, name+"-release")
+	noErr(t, syscall.Mkfifo(fifo, 0o600))
+	// Keeping both ends open makes releasing the hook a nonblocking write,
+	// even if cancellation stops Git just before it opens the FIFO.
+	release, err := os.OpenFile(fifo, os.O_RDWR, 0)
+	noErr(t, err)
+	t.Cleanup(func() { _ = release.Close() })
+	return &keepaliveProbe{ready: filepath.Join(root, name+"-ready"), release: release}
+}
+
+func (probe *keepaliveProbe) waitScript() string {
+	return "printf ready >" + quoteShell(probe.ready) + "\nread -r release <" + quoteShell(probe.release.Name()) + "\n"
+}
+
+func (probe *keepaliveProbe) observe(content []byte) error {
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	probe.pending = append(probe.pending, content...)
+	for len(probe.pending) >= 4 {
+		size, err := strconv.ParseUint(string(probe.pending[:4]), 16, 16)
+		if err != nil || size == 3 {
+			return fmt.Errorf("invalid Git packet header %q", probe.pending[:4])
+		}
+		if size < 4 {
+			probe.pending = probe.pending[4:]
+			continue
+		}
+		if len(probe.pending) < int(size) {
+			break
+		}
+		if size == 5 && (probe.pending[4] == 1 || probe.pending[4] == 2) {
+			if _, err := os.Stat(probe.ready); err == nil {
+				now := time.Now()
+				if !probe.last.IsZero() && now.Sub(probe.last) > probe.largestGap {
+					probe.largestGap = now.Sub(probe.last)
+				}
+				probe.last = now
+				probe.count++
+				if probe.count == 4 {
+					if _, err := probe.release.WriteString("continue\n"); err != nil {
+						return err
+					}
+				}
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
+		probe.pending = probe.pending[size:]
+	}
+	return nil
 }
 
 // Git's keepalive packets reach the client while Git prepares a pack or runs
@@ -73,17 +189,22 @@ func (body *rearmingBody) Close() error {
 // stops forwarding once it passes response headers on.
 func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
 	const proxyTimeout = 2500 * time.Millisecond
-	const quiet = "4"
 	handler, work, _ := idleFixture(t, 64<<10, time.Minute)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	target, err := url.Parse(server.URL)
 	noErr(t, err)
 	var timeouts atomic.Int32
+	root := t.TempDir()
+	cloneProbe := newKeepaliveProbe(t, root, "clone")
+	pushProbe := newKeepaliveProbe(t, root, "push")
 	proxy := httptest.NewServer(&httputil.ReverseProxy{
 		Rewrite:       func(request *httputil.ProxyRequest) { request.SetURL(target) },
 		FlushInterval: -1,
-		Transport:     readTimeoutTransport{timeout: proxyTimeout, timeouts: &timeouts},
+		Transport: readTimeoutTransport{timeout: proxyTimeout, timeouts: &timeouts, probes: map[string]*keepaliveProbe{
+			"/git/sample.git/git-upload-pack":  cloneProbe,
+			"/git/sample.git/git-receive-pack": pushProbe,
+		}},
 	})
 	defer proxy.Close()
 	remote := proxy.URL + "/git/sample.git"
@@ -92,28 +213,29 @@ func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
 	// Keepalives every second instead of every five, so the test is short.
 	runHTTPGit(t, "", "--git-dir", repositoryPath, "config", "uploadpack.keepAlive", "1")
 	runHTTPGit(t, "", "--git-dir", repositoryPath, "config", "receive.keepAlive", "1")
-	check := func(what string, started time.Time, output string, err error) {
+	check := func(what string, probe *keepaliveProbe, output string, err error) {
 		t.Helper()
 		if err != nil || timeouts.Load() != 0 {
 			t.Fatalf("%s through a proxy with a %s read timeout: %v, proxy timeouts %d: %s", what, proxyTimeout, err, timeouts.Load(), output)
 		}
-		if elapsed := time.Since(started); elapsed < 4*time.Second {
-			t.Fatalf("%s took %s; Git was not quiet for longer than the proxy timeout", what, elapsed)
+		probe.mu.Lock()
+		defer probe.mu.Unlock()
+		if probe.count < 4 || probe.largestGap >= proxyTimeout {
+			t.Fatalf("%s: %d keepalives while the hook waited, largest gap %s, want four with gaps below %s", what, probe.count, probe.largestGap, proxyTimeout)
 		}
+		t.Logf("%s: %d keepalives while the hook waited, largest gap %s", what, probe.count, probe.largestGap)
 	}
 
 	// upload-pack: pack-objects starts only after a quiet phase. Git reads
 	// uploadpack.packObjectsHook only from protected configuration, which
 	// for OwnGit is its own global configuration file.
-	root := t.TempDir()
 	packHook := filepath.Join(root, "pack-objects-hook")
-	noErr(t, os.WriteFile(packHook, []byte("#!/bin/sh\nsleep "+quiet+"\nexec \"$@\"\n"), 0o700))
+	noErr(t, os.WriteFile(packHook, []byte("#!/bin/sh\n"+cloneProbe.waitScript()+"exec \"$@\"\n"), 0o700))
 	globalConfig := handler.Git.GlobalConfigPath
 	noErr(t, os.WriteFile(globalConfig, []byte("[uploadpack]\n\tpackObjectsHook = "+packHook+"\n"), 0o600))
 	t.Cleanup(func() { _ = os.WriteFile(globalConfig, nil, 0o600) })
-	started := time.Now()
 	output, err := httpGitCombined("", "clone", "-q", remote, filepath.Join(t.TempDir(), "clone"))
-	check("clone", started, output, err)
+	check("clone", cloneProbe, output, err)
 	noErr(t, os.WriteFile(globalConfig, nil, 0o600))
 
 	// receive-pack: the update hook runs after the whole pack arrived.
@@ -121,7 +243,7 @@ func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
 	original, err := os.ReadFile(hook)
 	noErr(t, err)
 	noErr(t, os.WriteFile(hook+".owngit", original, 0o700))
-	noErr(t, os.WriteFile(hook, []byte("#!/bin/sh\nsleep "+quiet+"\nexec "+quoteShell(hook+".owngit")+" \"$@\"\n"), 0o700))
+	noErr(t, os.WriteFile(hook, []byte("#!/bin/sh\n"+pushProbe.waitScript()+"exec "+quoteShell(hook+".owngit")+" \"$@\"\n"), 0o700))
 	// A push larger than Git's 1 MiB post buffer is sent chunked, and the
 	// proxy, which serves HTTP/1.1 half duplex, forwards it only until it
 	// passes response headers on.
@@ -131,9 +253,8 @@ func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
 	noErr(t, os.WriteFile(filepath.Join(work, "keepalive.bin"), content, 0o600))
 	runHTTPGit(t, work, "add", ".")
 	runHTTPGit(t, work, "commit", "-q", "-m", "keepalive")
-	started = time.Now()
 	output, err = httpGitCombined(work, "push", "-q", remote, "HEAD:refs/heads/main")
-	check("push", started, output, err)
+	check("push", pushProbe, output, err)
 	if got, want := httpGitOutput(t, "", "--git-dir", repositoryPath, "rev-parse", "refs/heads/main"), httpGitOutput(t, work, "rev-parse", "HEAD"); got != want {
 		t.Fatalf("main is %s after the push, want %s", got, want)
 	}
