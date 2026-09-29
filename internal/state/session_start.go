@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// ErrAccessChanged means the shared password changed or was disabled after
+// the supplied credential version was read.
+var ErrAccessChanged = errors.New("shared access password changed")
+
 // StartSession stores a new session of kind that ends at expires, in place
 // of the session of kind with token replaced, if there is one ("" for
 // none). The browser that held replaced holds the new token from then on,
@@ -26,6 +30,15 @@ func (s *Store) StartSession(ctx context.Context, replaced, token, kind, csrf st
 		return err
 	}
 	defer tx.Rollback()
+	if kind == "general" {
+		current, err := accessVersionCurrent(ctx, tx, version)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return ErrAccessChanged
+		}
+	}
 	if err := replaceSession(ctx, tx, replaced, token, kind, csrf, version, expires); err != nil {
 		return err
 	}

@@ -141,7 +141,8 @@ func withinMaximum(password string) bool {
 // replaced, the token of the session of kind this browser holds ("" for
 // none), which ends with it.
 func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddress, replaced string) (NewSession, error) {
-	if err := m.VerifyCredential(ctx, kind, password, remoteAddress); err != nil {
+	version, err := m.VerifyCredentialVersion(ctx, kind, password, remoteAddress)
+	if err != nil {
 		return NewSession{}, err
 	}
 	if kind == "admin" {
@@ -152,13 +153,12 @@ func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddres
 	if err != nil {
 		return NewSession{}, err
 	}
-	settings, err := m.Store.Settings(ctx)
-	if err != nil {
-		return NewSession{}, err
-	}
 	token, csrf := RandomToken(32), RandomToken(32)
 	expires := m.now().Add(choice.Length())
-	if err := m.Store.StartSession(ctx, replaced, token, kind, csrf, settings.AccessSessionVersion, expires); err != nil {
+	if err := m.Store.StartSession(ctx, replaced, token, kind, csrf, version, expires); err != nil {
+		if errors.Is(err, state.ErrAccessChanged) {
+			return NewSession{}, ErrInvalidCredentials
+		}
 		return NewSession{}, err
 	}
 	return NewSession{Token: token, CSRF: csrf, Expires: expires}, nil
@@ -198,9 +198,28 @@ func (m *Manager) adminLife(choice state.AdminConfirmation) time.Duration {
 	return 15 * time.Minute
 }
 
+// VerifyCredential accepts the shared password only while the version it
+// checked remains current. Administrator checks have no access version.
 func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAddress string) error {
+	version, err := m.VerifyCredentialVersion(ctx, kind, password, remoteAddress)
+	if err != nil || kind != "general" {
+		return err
+	}
+	current, err := m.Store.AccessVersionCurrent(ctx, version)
+	if err != nil {
+		return err
+	}
+	if !current {
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
+// VerifyCredentialVersion returns the access version read with the password
+// hash. Callers that grant access must check that version when they act.
+func (m *Manager) VerifyCredentialVersion(ctx context.Context, kind, password, remoteAddress string) (int64, error) {
 	if kind != "general" && kind != "admin" {
-		return errors.New("invalid authentication kind")
+		return 0, errors.New("invalid authentication kind")
 	}
 	address := clientAddress(remoteAddress)
 	// Only wrong passwords count toward the limit. Checks from one address
@@ -209,24 +228,33 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 	// refused for being parallel.
 	release, err := m.takeTurn(ctx, kind+"\x00"+address)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer release()
 	blocked, err := m.Store.AttemptBlocked(ctx, kind, address, m.now())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if blocked {
-		return ErrRateLimited
+		return 0, ErrRateLimited
 	}
-	encoded, err := m.Store.PasswordHash(ctx, map[string]string{"general": "access", "admin": "admin"}[kind])
+	var encoded string
+	var version int64
+	if kind == "general" {
+		encoded, version, err = m.Store.AccessPassword(ctx)
+	} else {
+		encoded, err = m.Store.PasswordHash(ctx, "admin")
+	}
+	if errors.Is(err, state.ErrAccessChanged) {
+		return 0, ErrInvalidCredentials
+	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// A missing or damaged stored password cannot tell a right password
 	// from a wrong one.
 	if err := ValidatePasswordHash(encoded); err != nil {
-		return fmt.Errorf("stored %s password: %w", kind, err)
+		return 0, fmt.Errorf("stored %s password: %w", kind, err)
 	}
 	// Only the shared access password is remembered. Administrator
 	// confirmations are rare and typed by a person, so they keep the full
@@ -235,11 +263,11 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 	if kind == "general" && withinMaximum(password) {
 		remembered = m.remembered.digest(kind, encoded, password)
 		if m.remembered.contains(remembered, m.now()) {
-			return m.Store.ClearAttempts(ctx, kind, address)
+			return version, m.Store.ClearAttempts(ctx, kind, address)
 		}
 	}
 	if err := m.acquireCheck(ctx); err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { <-m.checkSlots }()
 	check := m.passwordCheck
@@ -250,15 +278,15 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 		// A client that leaves after its guess was checked still counts. A
 		// guess that could not be counted is not reported as checked.
 		if err := m.Store.RecordFailedAttempt(context.WithoutCancel(ctx), kind, address, m.now(), maximumFailures, failureWindow, FailureBlock); err != nil {
-			return err
+			return 0, err
 		}
-		return ErrInvalidCredentials
+		return 0, ErrInvalidCredentials
 	}
 	if err := m.Store.ClearAttempts(ctx, kind, address); err != nil {
-		return err
+		return 0, err
 	}
 	m.remembered.add(remembered, m.now())
-	return nil
+	return version, nil
 }
 
 // takeTurn waits until no other check of key runs and returns the release

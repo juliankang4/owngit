@@ -2043,6 +2043,47 @@ func (s *Store) PasswordHash(ctx context.Context, kind string) (string, error) {
 	return encoded, err
 }
 
+// AccessPassword reads the shared password and its session version from one
+// state snapshot. The version identifies the credential the caller checks.
+func (s *Store) AccessPassword(ctx context.Context) (string, int64, error) {
+	var encoded, mode, rawVersion string
+	err := s.db.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT encoded FROM passwords WHERE kind='access'), ''), mode.value, version.value
+		FROM metadata AS mode, metadata AS version
+		WHERE mode.key='access_mode' AND version.key='access_session_version'`).Scan(&encoded, &mode, &rawVersion)
+	if err != nil {
+		return "", 0, err
+	}
+	if mode != "password" {
+		return "", 0, ErrAccessChanged
+	}
+	version, err := strconv.ParseInt(rawVersion, 10, 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid access session version: %w", err)
+	}
+	return encoded, version, nil
+}
+
+// AccessVersionCurrent checks that shared-password access still uses the
+// credential version the caller verified.
+func (s *Store) AccessVersionCurrent(ctx context.Context, version int64) (bool, error) {
+	return accessVersionCurrent(ctx, s.db, version)
+}
+
+func accessVersionCurrent(ctx context.Context, db queryRower, version int64) (bool, error) {
+	var mode, rawVersion string
+	err := db.QueryRowContext(ctx, `SELECT mode.value, version.value FROM metadata AS mode, metadata AS version
+		WHERE mode.key='access_mode' AND version.key='access_session_version'`).Scan(&mode, &rawVersion)
+	if err != nil {
+		return false, err
+	}
+	current, err := strconv.ParseInt(rawVersion, 10, 64)
+	if err != nil {
+		return false, fmt.Errorf("invalid access session version: %w", err)
+	}
+	return mode == "password" && current == version, nil
+}
+
 func (s *Store) SetAccessPassword(ctx context.Context, encoded string) error {
 	if encoded == "" {
 		return errors.New("password hash is required")
