@@ -827,10 +827,13 @@ func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath
 	if item.Head, err = readHead(ctx, runner, repositoryPath, refStorage); err != nil {
 		return RepositoryManifest{}, err
 	}
-	// A symbolic HEAD may name a branch that does not exist yet, but not
-	// one whose file exists and Git could not read.
+	// A symbolic HEAD may name a branch that does not exist yet: no file at
+	// its path, or a folder of other branches such as main/topic. Anything
+	// else there that Git did not list, such as a link Git skips without a
+	// warning, is a ref Git could not read.
 	if item.Head.Symbolic != "" && refStorage == refStorageFiles && !slices.ContainsFunc(refs, func(ref Ref) bool { return ref.Name == item.Head.Symbolic }) {
-		if _, err := os.Lstat(filepath.Join(repositoryPath, filepath.FromSlash(item.Head.Symbolic))); !errors.Is(err, os.ErrNotExist) {
+		info, err := os.Lstat(filepath.Join(repositoryPath, filepath.FromSlash(item.Head.Symbolic)))
+		if !errors.Is(err, os.ErrNotExist) && (err != nil || !info.IsDir()) {
 			return RepositoryManifest{}, fmt.Errorf("HEAD names %s, which exists but cannot be read", item.Head.Symbolic)
 		}
 	}

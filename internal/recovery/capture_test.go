@@ -255,8 +255,11 @@ func TestBackupRefusesRepositoriesItCannotDescribe(t *testing.T) {
 			writeRefAsAPush(t, manager, "damaged", "update-ref", "refs/heads/other", commit)
 			noErr(t, os.WriteFile(filepath.Join(path, "refs", "heads", "other"), []byte("garbage\n"), 0o600))
 		},
-		"HEAD names an unreadable ref file": func(t *testing.T, manager *repository.Manager, path string) {
-			noErr(t, os.MkdirAll(filepath.Join(path, "refs", "heads", "main"), 0o700))
+		// Git skips a loose ref that is a link to nowhere without a warning.
+		"HEAD names a ref Git skips": func(t *testing.T, manager *repository.Manager, path string) {
+			if err := os.Symlink(filepath.Join(path, "missing"), filepath.Join(path, "refs", "heads", "main")); err != nil {
+				t.Skipf("this system cannot create the link: %v", err)
+			}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -620,4 +623,39 @@ func TestBackupWaitsForARepositoryBeingPrepared(t *testing.T) {
 	if report.Attempts < 2 || manager.Preparing("project") {
 		t.Fatalf("report=%+v preparing=%v", report, manager.Preparing("project"))
 	}
+}
+
+// A branch main/topic keeps its refs under a folder named main, while HEAD
+// still names the unborn branch main. That repository is healthy: it backs
+// up, verifies and restores with HEAD unchanged.
+func TestBackupKeepsAnUnbornHeadBesideANestedBranch(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, manager := newBackupStore(t, root)
+	if _, err := manager.Create(ctx, "nested", ""); err != nil {
+		t.Fatal(err)
+	}
+	nested, err := manager.Path("nested")
+	noErr(t, err)
+	runGit(t, filepath.Join(root, "backup-work"), "push", nested, "HEAD:refs/heads/main/topic")
+	if head := gitOutput(t, nested, "--git-dir", ".", "symbolic-ref", "HEAD"); head != "refs/heads/main" {
+		t.Fatalf("fixture HEAD=%s", head)
+	}
+	backup := filepath.Join(root, "backup")
+	_, err = CreateWhileServing(ctx, store, manager, backup)
+	noErr(t, err)
+	temporary := filepath.Join(root, "temporary")
+	noErr(t, os.Mkdir(temporary, 0o700))
+	verification, err := Verify(ctx, backup, temporary, "")
+	noErr(t, err)
+	if !verification.Verified {
+		t.Fatalf("verification=%+v", verification)
+	}
+	restored := filepath.Join(root, "restored-repositories")
+	noErr(t, Restore(ctx, backup, filepath.Join(root, "restored-state"), restored, ""))
+	path := filepath.Join(restored, "nested.git")
+	if head := gitOutput(t, path, "--git-dir", ".", "symbolic-ref", "HEAD"); head != "refs/heads/main" {
+		t.Fatalf("restored HEAD=%s", head)
+	}
+	gitOutput(t, path, "--git-dir", ".", "rev-parse", "--verify", "refs/heads/main/topic")
 }
