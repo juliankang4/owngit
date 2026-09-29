@@ -49,6 +49,14 @@ func TestWithEndpointKeepsFieldsOwnGitDoesNotKnow(t *testing.T) {
 	if err != nil || string(removed) != "{}" {
 		t.Fatalf("removed=%s err=%v", removed, err)
 	}
+	// An empty answer is read as "null" is, by ParseServeConfig too.
+	fromEmpty, err := ServeConfig{content: []byte(" \n")}.withEndpoint("box.tail0000.ts.net", 443, "http://127.0.0.1:7654")
+	if err != nil || string(fromEmpty) != string(added) {
+		t.Fatalf("from an empty answer: %s err=%v, want %s", fromEmpty, err, added)
+	}
+	if parsed, err := ParseServeConfig(nil); err != nil || len(parsed.Web) != 0 {
+		t.Fatalf("ParseServeConfig(empty) = %+v, %v", parsed, err)
+	}
 }
 
 func sameJSON(t *testing.T, got []byte, want string) bool {

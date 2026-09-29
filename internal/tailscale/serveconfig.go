@@ -52,17 +52,23 @@ type Handler struct {
 	AcceptAppCaps []string `json:"AcceptAppCaps,omitempty"`
 }
 
-// ParseServeConfig reads a Serve configuration in Tailscale's JSON; "null"
-// and an empty answer mean nothing is configured.
+// ParseServeConfig reads a Serve configuration in Tailscale's JSON.
 func ParseServeConfig(output []byte) (ServeConfig, error) {
 	var config ServeConfig
-	if trimmed := bytes.TrimSpace(output); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+	if nothingConfigured(output) {
 		return config, nil
 	}
 	if err := json.Unmarshal(output, &config); err != nil {
 		return ServeConfig{}, &Error{Kind: KindUnreadable}
 	}
 	return config, nil
+}
+
+// nothingConfigured reports whether a Serve configuration in Tailscale's
+// JSON is empty: "null", as Tailscale writes it, or no answer at all.
+func nothingConfigured(content []byte) bool {
+	trimmed := bytes.TrimSpace(content)
+	return len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null"))
 }
 
 // withEndpoint returns the configuration as read with the HTTPS endpoint for
@@ -72,12 +78,11 @@ func ParseServeConfig(output []byte) (ServeConfig, error) {
 // Tailscale gave it, also fields OwnGit does not know. The port's TCP entry
 // goes with its last web server, as "tailscale serve" does.
 func (config ServeConfig) withEndpoint(name string, port int, target string) ([]byte, error) {
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(config.content, &top); err != nil {
-		return nil, &Error{Kind: KindUnreadable}
-	}
-	if top == nil {
-		top = map[string]json.RawMessage{}
+	top := map[string]json.RawMessage{}
+	if !nothingConfigured(config.content) {
+		if err := json.Unmarshal(config.content, &top); err != nil || top == nil {
+			return nil, &Error{Kind: KindUnreadable}
+		}
 	}
 	var tcp, web map[string]json.RawMessage
 	if err := decodeEntries(top, "TCP", &tcp); err != nil {
