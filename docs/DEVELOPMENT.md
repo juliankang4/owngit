@@ -112,6 +112,10 @@ Contributors send code only. Before merging, the maintainers update the document
 
 Some tests read these documents: `cmd/owngit/check_budget_test.go` (`docs/CODING_TOOLS.md`), `cmd/owngit/docs_windows_test.go` (the PowerShell password-file commands in `docs/OPERATIONS*.md` and `docs/CODING_TOOLS*.md`, run on Windows), and `tools/release/release_test.go` (the links in `docs/CODING_TOOLS*.md`). Headings are link targets for other documents, program messages, and tests, so search for a heading's anchor before you rename it.
 
+## Continuous integration
+
+The `CI` workflow ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs gofmt and `go vet` on every package and the tests on Linux (with the race detector), Windows, and macOS. A pull request tests only the packages its change can affect, as chosen by [`.github/scripts/affected-packages.sh`](../.github/scripts/affected-packages.sh). A test that reads files from another package or from the whole repository by path is listed once in that script; when you add such a test, add it there. A daily run and a run started by hand test every package, add Linux arm64, and check for known vulnerabilities. Before tagging a release, start a full run on the release commit and wait for it to pass. The `Document links` workflow checks the links and heading anchors between documents on every pull request.
+
 ## Real Docker test (opt-in)
 
 One Linux test runs configured checks in a real Docker container. Run it only as a trusted nonroot user with Git, the Docker CLI, and the local default Docker socket available. The test does not pull images, install tools, use `sudo`, or contact an external network.
