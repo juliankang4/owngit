@@ -13,6 +13,29 @@ struct TrayAccess: Decodable, Equatable {
     let token: String
 }
 
+/// dashboardURL is the address of this computer's server from the access
+/// file, which only this account can read. The icon never opens a local
+/// address taken from a status answer.
+func dashboardURL(access: String) -> URL? {
+    guard let url = URL(string: access), url.scheme == "http",
+          let host = url.host, ["127.0.0.1", "::1", "localhost"].contains(host),
+          url.port != nil, url.path.isEmpty || url.path == "/",
+          url.query == nil, url.user == nil
+    else {
+        return nil
+    }
+    return url
+}
+
+/// webLink accepts only an https address, the form of the release notes and
+/// install guide links.
+func webLink(_ address: String) -> URL? {
+    guard let url = URL(string: address), url.scheme == "https", url.host != nil else {
+        return nil
+    }
+    return url
+}
+
 /// The answer of "owngit tray status --json".
 struct TrayReport: Decodable, Equatable {
     let available: Bool
@@ -52,7 +75,6 @@ struct TrayStatus: Decodable, Equatable {
     let state: String
     let version: String
     let shown: Bool
-    let dashboard_url: String
     let clone_address: String
     let setup_required: Bool
     let update: Update?

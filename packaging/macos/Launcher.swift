@@ -268,7 +268,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let accessFile = stateDir.appendingPathComponent("tray-access.json")
         guard let data = try? Data(contentsOf: accessFile),
               let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
-              let url = URL(string: access.url + "/tray/status?lang=" + words.lang)
+              let server = dashboardURL(access: access.url),
+              let url = URL(string: "/tray/status?lang=" + words.lang, relativeTo: server)?.absoluteURL
         else {
             // No access file: this state directory's server never started,
             // or it is unreadable. doctor tells which.
@@ -312,9 +313,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func perform(_ action: PanelAction) {
         switch action {
-        case .openDashboard(let address):
+        case .openDashboard:
             popover.performClose(nil)
-            if let url = URL(string: address) {
+            let accessFile = stateDir.appendingPathComponent("tray-access.json")
+            if let data = try? Data(contentsOf: accessFile),
+               let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
+               let url = dashboardURL(access: access.url) {
                 NSWorkspace.shared.open(url)
             }
         case .finishSetup:
@@ -325,7 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSPasteboard.general.setString(text, forType: .string)
         case .openLink(let address):
             popover.performClose(nil)
-            if let url = URL(string: address) {
+            if let url = webLink(address) {
                 NSWorkspace.shared.open(url)
             }
         case .run(let arguments):

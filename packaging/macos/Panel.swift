@@ -24,7 +24,7 @@ struct PanelModel: Equatable {
 
 /// What the owner asked for in the panel.
 enum PanelAction {
-    case openDashboard(String)
+    case openDashboard
     case finishSetup
     case copy(String)
     case openLink(String)
@@ -177,7 +177,7 @@ final class PanelViewController: NSViewController {
             if status.setup_required {
                 primary = PanelButton(title: words.finishSetup) { [perform] _ in perform(.finishSetup) }
             } else {
-                primary = PanelButton(title: words.openDashboard) { [perform] _ in perform(.openDashboard(status.dashboard_url)) }
+                primary = PanelButton(title: words.openDashboard) { [perform] _ in perform(.openDashboard) }
             }
         }
         add(footer(primary: primary))

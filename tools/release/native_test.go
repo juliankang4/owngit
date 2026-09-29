@@ -552,6 +552,15 @@ for code in [403, 404, 405, 421, 503, -1] {
 require(statusAnswer(httpStatus: 200, body: data("service unavailable")) == .unavailable, "a body that is not the status")
 require(statusAnswer(httpStatus: 200, body: data(running.replacingOccurrences(of: "\"running\"", with: "\"stopped\""))) == .unavailable, "an unknown state")
 
+require(dashboardURL(access: "http://127.0.0.1:7654") != nil && dashboardURL(access: "http://[::1]:8123/") != nil, "the loopback address from the access file")
+for other in ["https://127.0.0.1:7654", "http://example.invalid:7654", "http://127.0.0.1", "http://127.0.0.1:7654/elsewhere", "http://u@127.0.0.1:7654", "file:///tmp"] {
+    require(dashboardURL(access: other) == nil, "not a local dashboard: \(other)")
+}
+require(webLink("https://github.com/juliankang4/owngit#install") != nil, "an https guide")
+for other in ["http://example.invalid", "file:///Applications", "owngit://x", ""] {
+    require(webLink(other) == nil, "not a web link: \(other)")
+}
+
 func doctor(_ findings: String, running: Bool = false) -> PanelState {
     doctorState(output: data("{\"version\":\"1.1.3\",\"running\":\(running),\"findings\":[\(findings)]}"))
 }
