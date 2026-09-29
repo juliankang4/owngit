@@ -274,7 +274,7 @@ var importCatalog = map[MessageCode]message{
 	MsgImportErrorDestination:   {en: "The destination repository changed during the import.", ko: "가져오는 동안 대상 저장소가 바뀌었습니다."},
 	MsgImportErrorProtected: {
 		en: "The source rewrote the protected default branch, so nothing was changed. To follow the source, turn off the protection in the repository's Settings tab and refresh again.",
-		ko: "원본이 보호된 기본 브랜치를 다시 써서 아무것도 바꾸지 않았습니다. 원본을 따르려면 저장소 설정 탭에서 보호를 끄고 다시 새로 받으세요.",
+		ko: "원본이 보호된 기본 브랜치를 다시 써서 아무것도 바꾸지 않았습니다. 원본을 따르려면 저장소 설정 탭에서 보호를 끄고 다시 새로고침하세요.",
 	},
 	MsgImportErrorUnresolved:   {en: "The publication result is uncertain and needs attention.", ko: "게시 결과가 확실하지 않아 확인이 필요합니다."},
 	MsgImportErrorSuperseded:   {en: "A newer source setting replaced this run.", ko: "새 원본 설정이 이 실행을 대신했습니다."},

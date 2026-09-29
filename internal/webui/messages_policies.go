@@ -163,8 +163,8 @@ var policiesCatalog = map[MessageCode]message{
 		ko: "강제 푸시나 가져오기, 삭제로 브랜치나 태그의 커밋이 바뀌면 OwnGit은 이전 커밋을 보관된 기록으로 남겨 두고, 이 기록은 둘러보거나 되돌릴 수 있습니다. 기본값은 보관입니다.",
 	},
 	MsgKeptHistoryOffWarning: {
-		en: "With Do not keep, commits that a force push, an import or a deletion replaces after you save are not kept, and OwnGit cannot show or restore them. History kept before stays and can still be restored; nothing is deleted.",
-		ko: "보관하지 않음을 고르면, 저장한 뒤 강제 푸시나 가져오기, 삭제로 바뀐 커밋은 보관되지 않으며 OwnGit에서 다시 보거나 되돌릴 수 없습니다. 이미 보관된 기록은 그대로 남아 있어 계속 되돌릴 수 있고, 지워지는 것은 없습니다.",
+		en: "With Do not keep, commits that a force push, an import or a deletion replaces after you save are not kept, so they are not listed in kept history and cannot be restored from it. A commit that is no longer kept may still open by its full commit ID. History kept before stays and can still be restored; nothing is deleted.",
+		ko: "보관하지 않음을 고르면, 저장한 뒤 강제 푸시나 가져오기, 삭제로 바뀐 커밋은 보관되지 않아 보관된 기록에 나오지 않고 그 기록에서 되돌릴 수도 없습니다. 보관되지 않은 커밋도 전체 커밋 ID로는 열릴 수 있습니다. 이미 보관된 기록은 그대로 남아 있어 계속 되돌릴 수 있고, 지워지는 것은 없습니다.",
 	},
 	MsgKeptHistoryOn:  {en: "Keep", ko: "보관"},
 	MsgKeptHistoryOff: {en: "Do not keep", ko: "보관하지 않음"},
