@@ -204,6 +204,29 @@ func TestTransfersUseTheLimitsSavedWhenTheyStart(t *testing.T) {
 	if status := push(); status == http.StatusRequestEntityTooLarge {
 		t.Fatal("a 2 MiB push under a 4 MiB limit was refused as too large")
 	}
+
+	// The same size bounds what a transfer sends: a clone of a 2 MiB
+	// history is cut off under 1 MiB and completes under 4 MiB.
+	work := filepath.Join(t.TempDir(), "work")
+	runHTTPGit(t, "", "init", "--initial-branch=main", work)
+	noise := make([]byte, 2<<20)
+	_, err = rand.Read(noise)
+	noErr(t, err)
+	noErr(t, os.WriteFile(filepath.Join(work, "noise.bin"), noise, 0o600))
+	runHTTPGit(t, work, "add", ".")
+	runHTTPGit(t, work, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "noise")
+	bare, err := manager.Path("sample")
+	noErr(t, err)
+	runHTTPGit(t, work, "push", bare, "HEAD:refs/heads/main")
+	save(1 << 20)
+	if output, err := httpGitCombined("", "clone", "--bare", server.URL+"/git/sample.git", filepath.Join(t.TempDir(), "cut")); err == nil {
+		t.Fatalf("a 2 MiB clone under a 1 MiB limit completed:\n%s", output)
+	}
+	if !strings.Contains(logs.String(), "response exceeded the size limit") {
+		t.Fatalf("the log does not name the response limit:\n%s", logs.String())
+	}
+	save(4 << 20)
+	runHTTPGit(t, "", "clone", "--bare", server.URL+"/git/sample.git", filepath.Join(t.TempDir(), "whole"))
 	noErr(t, manager.Store.Exec(context.Background(), `UPDATE metadata SET value='{"maximum_bytes":1}' WHERE key='git_transfer_limits'`))
 	if status := push(); status != http.StatusConflict {
 		t.Fatalf("a push under limits that cannot be read: status %d, want 409", status)
