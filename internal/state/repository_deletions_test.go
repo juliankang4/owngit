@@ -53,7 +53,7 @@ func repositoryKeyedCounts(t *testing.T, store *Store, repositoryID string) map[
 		noErr(t, store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM "`+table+`" WHERE repository_id=?`, repositoryID).Scan(&count))
 		counts[table] = count
 	}
-	for _, table := range []string{"check_results", "check_raw_logs"} {
+	for _, table := range []string{"check_results", "check_raw_logs", "check_raw_log_starts"} {
 		var count int
 		noErr(t, store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM "`+table+`" WHERE attempt_id IN (SELECT id FROM check_attempts WHERE repository_id=?)
 			OR attempt_id NOT IN (SELECT id FROM check_attempts)`, repositoryID).Scan(&count))
@@ -137,7 +137,7 @@ func TestRepositoryDeletionRemovesEveryRecordKeyedByRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := repositoryKeyedCounts(t, store, "project")
-	for _, table := range []string{"check_jobs", "check_attempts", "check_results", "check_raw_logs", "tasks", "check_policies", "check_runner_credentials",
+	for _, table := range []string{"check_jobs", "check_attempts", "check_results", "check_raw_logs", "check_raw_log_starts", "tasks", "check_policies", "check_runner_credentials",
 		"helper_credentials", "pull_requests", "import_sources", "import_runs", "import_publication_intents", "import_schedules", "import_stagings",
 		"import_initial_destinations", "direct_review_credentials", "repositories"} {
 		if before[table] == 0 {

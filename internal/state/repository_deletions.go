@@ -115,6 +115,7 @@ func decodeRepositoryDeletion(key, value string) (RepositoryDeletion, error) {
 // described stays in place and import reconciliation reports it as unknown
 // instead of removing it.
 var repositoryDeletionStatements = []string{
+	`DELETE FROM check_raw_log_starts WHERE attempt_id IN (SELECT id FROM check_attempts WHERE repository_id=?)`,
 	`DELETE FROM check_raw_logs WHERE attempt_id IN (SELECT id FROM check_attempts WHERE repository_id=?)`,
 	`DELETE FROM check_results WHERE attempt_id IN (SELECT id FROM check_attempts WHERE repository_id=?)`,
 	`DELETE FROM check_job_runtime_ownership WHERE repository_id=?`,
