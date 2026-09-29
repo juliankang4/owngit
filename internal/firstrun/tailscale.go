@@ -138,6 +138,11 @@ func commandWord() string {
 	}
 	quoted := shellQuote(self)
 	if runtime.GOOS == "windows" && quoted != self {
+		if strings.HasPrefix(quoted, "$'") {
+			// PowerShell cannot take the escaped form, and the path must
+			// not reach the terminal raw.
+			return "owngit"
+		}
 		// PowerShell runs a quoted path only after its call operator.
 		return "& '" + strings.ReplaceAll(self, "'", "''") + "'"
 	}
