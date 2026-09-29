@@ -56,6 +56,9 @@ type Manager struct {
 	preparation preparationState
 	// maintenance schedules repository maintenance; see StartMaintenance.
 	maintenance maintenanceState
+	// backup records the repositories a running backup holds; see
+	// HoldForBackup.
+	backup backupState
 	// maintenanceHook, when set by tests, runs before each maintenance
 	// command with the repository write lock held.
 	maintenanceHook func(ctx context.Context, id string, args []string) error
@@ -275,21 +278,32 @@ func (m *Manager) existingPath(ctx context.Context, id string) (string, state.Re
 	if err != nil || !exists {
 		return "", state.Repository{}, exists, err
 	}
+	path, err := m.StoragePath(id)
+	if err != nil {
+		return "", state.Repository{}, false, err
+	}
+	return path, repository, true, nil
+}
+
+// StoragePath returns the folder of repository id, which must be a
+// directory and not a link. It does not read the state, so a caller that
+// already knows the repository is recorded, such as a backup, uses it.
+func (m *Manager) StoragePath(id string) (string, error) {
 	path, err := m.Path(id)
 	if err != nil {
-		return "", state.Repository{}, false, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+		return "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", state.Repository{}, false, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+		return "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return "", state.Repository{}, false, fmt.Errorf("%w: repository path must not be a symbolic link", ErrStorageUnavailable)
+		return "", fmt.Errorf("%w: repository path must not be a symbolic link", ErrStorageUnavailable)
 	}
 	if !info.IsDir() {
-		return "", state.Repository{}, false, fmt.Errorf("%w: repository path is not a directory", ErrStorageUnavailable)
+		return "", fmt.Errorf("%w: repository path is not a directory", ErrStorageUnavailable)
 	}
-	return path, repository, true, nil
+	return path, nil
 }
 
 func canonicalRoot(root string) (string, error) {

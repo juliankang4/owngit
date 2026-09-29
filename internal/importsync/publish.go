@@ -689,6 +689,9 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 					commandErr = newProblem(CodeUnresolved, "destination ref transaction process could not be reaped; its outcome is left for reconciliation", err)
 					processUnreaped = true
 					run.refProcessUnreaped = true
+					// Until a restart settles it, a backup cannot know the
+					// repository's refs, so it refuses the repository.
+					s.Repositories.NoteUnsettledRefWriter(run.run.RepositoryID)
 				} else if errors.As(err, &problem) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					commandErr = err
 				} else {

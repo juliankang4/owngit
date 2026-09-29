@@ -59,6 +59,8 @@ func busyNotice(err error) (webui.MessageCode, bool) {
 		return webui.MsgRepoBusyCheckCleanup, true
 	case errors.Is(err, repository.ErrRepositoryInUse):
 		return webui.MsgRepoBusyInUse, true
+	case errors.Is(err, repository.ErrBackupReading):
+		return webui.MsgRepoBusyBackup, true
 	case errors.Is(err, repository.ErrRepositoryBusy):
 		return webui.MsgRepoBusy, true
 	}

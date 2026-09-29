@@ -507,6 +507,12 @@ func (m *Manager) maintain(ctx context.Context, id string, kind MaintenanceKind,
 		if lock.Waiting() || m.repositoryUses(id) != uses || !lock.TryLock() {
 			return index, errMaintenanceBusy
 		}
+		// A backup reads the repository's object files until its bundle is
+		// written; repacking would remove some of them.
+		if m.heldForBackup(id) {
+			lock.UnlockWithoutRefChanges()
+			return index, errMaintenanceBusy
+		}
 		timeout := schedule.CommandTimeout
 		if kind == MaintenanceFull && args[0] == "repack" {
 			timeout = schedule.FullRepackTimeout

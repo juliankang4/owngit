@@ -104,6 +104,12 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 		return DeleteResult{}, err
 	}
 	defer lock.Unlock()
+	// A backup holds the repository until its bundle is written. Checked
+	// with the lock held, so a backup that has not reached the repository
+	// yet waits for this deletion instead.
+	if m.heldForBackup(id) {
+		return DeleteResult{}, ErrBackupReading
+	}
 	root, err := canonicalRoot(m.RepositoryRoot())
 	if err != nil {
 		return DeleteResult{}, err
