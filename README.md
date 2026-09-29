@@ -155,6 +155,8 @@ The command asks no questions, with two exceptions: on a Linux computer you reac
 
 [Run as a service](docs/OPERATIONS.md#run-as-a-service) explains who runs the service on each system and how to update, stop, and remove it. [On Windows](docs/OPERATIONS.md#on-windows) explains what the approval does.
 
+On Windows the command also puts the OwnGit icon in the notification area: click it for the dashboard, or right-click it for the status, the clone address and the latest pushes. See [The icon on Windows](docs/OPERATIONS.md#the-icon-on-windows).
+
 ### Run in the foreground
 
 To run OwnGit in a terminal instead of as a service:

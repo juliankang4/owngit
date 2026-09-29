@@ -155,6 +155,8 @@ owngit service install
 
 시스템마다 누가 서비스를 실행하는지, 서비스를 업데이트하고 멈추고 지우는 방법은 [서비스로 실행하기](docs/OPERATIONS.ko.md#서비스로-실행하기)에 있습니다. Windows의 승인이 하는 일은 [Windows에서](docs/OPERATIONS.ko.md#windows에서)를 보세요.
 
+Windows에서는 이 명령이 알림 영역에 OwnGit 아이콘도 놓습니다. 클릭하면 대시보드가 열리고, 오른쪽 클릭하면 상태, 클론 주소, 최근 푸시가 보입니다. [Windows의 아이콘](docs/OPERATIONS.ko.md#windows의-아이콘)을 참고하세요.
+
 ### 터미널에서 실행하기
 
 서비스 대신 터미널에서 바로 실행하려면 다음 명령을 씁니다.
