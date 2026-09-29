@@ -52,6 +52,10 @@ type Mergeability struct {
 	Message string `json:"message,omitempty"`
 	// Cause is the failure behind an unavailable answer, for the server log.
 	Cause error `json:"-"`
+	// Leftover is why the temporary object folder of the check could not be
+	// removed, for the server log. The folder is in OwnGit's runtime folder,
+	// never in the repository, and the answer stands.
+	Leftover error `json:"-"`
 }
 
 // Mergeability works out whether pull request number can merge now, for its
@@ -120,7 +124,7 @@ func (service *Service) decideMergeability(ctx context.Context, repositoryPath s
 		return nil
 	}
 	if method == "merge_commit" {
-		paths, truncated, conflicted, err := service.trialMerge(ctx, repositoryPath, answer.Target.OID, answer.Source.OID)
+		paths, truncated, conflicted, err := service.trialMerge(ctx, repositoryPath, answer.Target.OID, answer.Source.OID, &answer.Leftover)
 		if err != nil {
 			return err
 		}
@@ -138,8 +142,9 @@ func (service *Service) decideMergeability(ctx context.Context, repositoryPath s
 // commit records, and reports whether it conflicts and which paths do, at
 // most MaximumConflictPaths. Git writes the merged trees and files into a
 // temporary object directory that borrows the repository's objects and is
-// removed afterwards, so the repository gains no object.
-func (service *Service) trialMerge(ctx context.Context, repositoryPath, targetOID, sourceOID string) (paths []string, truncated, conflicted bool, err error) {
+// removed afterwards, so the repository gains no object. A failed removal is
+// reported in leftover.
+func (service *Service) trialMerge(ctx context.Context, repositoryPath, targetOID, sourceOID string, leftover *error) (paths []string, truncated, conflicted bool, err error) {
 	objects, err := filepath.Abs(filepath.Join(repositoryPath, "objects"))
 	if err != nil {
 		return nil, false, false, &Problem{Code: "repository_unavailable", Message: "The repository objects could not be located.", Cause: err}
@@ -148,7 +153,11 @@ func (service *Service) trialMerge(ctx context.Context, repositoryPath, targetOI
 	if err != nil {
 		return nil, false, false, &Problem{Code: "repository_unavailable", Message: "A temporary folder for the merge check could not be created.", Cause: err}
 	}
-	defer os.RemoveAll(scratch)
+	defer func() {
+		if removeErr := os.RemoveAll(scratch); removeErr != nil {
+			*leftover = removeErr
+		}
+	}()
 	environment := []string{"GIT_OBJECT_DIRECTORY=" + scratch, "GIT_ALTERNATE_OBJECT_DIRECTORIES=" + quotedObjectDirectory(objects)}
 	result, err := service.Repositories.Git.RunWithEnvironment(ctx, repositoryPath, nil, environment,
 		"--git-dir", ".", "merge-tree", "--write-tree", "--name-only", "-z", "--no-messages", targetOID, sourceOID)

@@ -2,17 +2,18 @@ package webui
 
 // Check mergeability wording.
 const (
-	MsgMergeabilityCheck       MessageCode = "pr.mergeability.check"
-	MsgMergeabilityHelp        MessageCode = "pr.mergeability.help"
-	MsgMergeabilityFastForward MessageCode = "pr.mergeability.fast_forward"
-	MsgMergeabilityMergeCommit MessageCode = "pr.mergeability.merge_commit"
-	MsgMergeabilityUpToDate    MessageCode = "pr.mergeability.up_to_date"
-	MsgMergeabilityConflict    MessageCode = "pr.mergeability.conflict"
-	MsgMergeabilityMorePaths   MessageCode = "pr.mergeability.more_paths"
-	MsgMergeabilityNoBase      MessageCode = "pr.mergeability.no_base"
-	MsgMergeabilityStale       MessageCode = "pr.mergeability.stale"
-	MsgMergeabilityOldGit      MessageCode = "pr.mergeability.old_git"
-	MsgMergeabilityFailed      MessageCode = "pr.mergeability.failed"
+	MsgMergeabilityCheck            MessageCode = "pr.mergeability.check"
+	MsgMergeabilityHelp             MessageCode = "pr.mergeability.help"
+	MsgMergeabilityFastForward      MessageCode = "pr.mergeability.fast_forward"
+	MsgMergeabilityMergeCommit      MessageCode = "pr.mergeability.merge_commit"
+	MsgMergeabilityUpToDate         MessageCode = "pr.mergeability.up_to_date"
+	MsgMergeabilityConflict         MessageCode = "pr.mergeability.conflict"
+	MsgMergeabilityMorePaths        MessageCode = "pr.mergeability.more_paths"
+	MsgMergeabilityConflictUnlisted MessageCode = "pr.mergeability.conflict_unlisted"
+	MsgMergeabilityNoBase           MessageCode = "pr.mergeability.no_base"
+	MsgMergeabilityStale            MessageCode = "pr.mergeability.stale"
+	MsgMergeabilityOldGit           MessageCode = "pr.mergeability.old_git"
+	MsgMergeabilityFailed           MessageCode = "pr.mergeability.failed"
 )
 
 var mergeabilityCatalog = map[MessageCode]message{
@@ -36,6 +37,10 @@ var mergeabilityCatalog = map[MessageCode]message{
 	MsgMergeabilityConflict: {
 		en: "These files conflict. Resolve them on a branch and push, then check again.",
 		ko: "다음 파일이 충돌합니다. 브랜치에서 충돌을 해결해 푸시한 뒤 다시 확인하세요.",
+	},
+	MsgMergeabilityConflictUnlisted: {
+		en: "Merging now would conflict, but Git named no file. Change a branch and push, then check again.",
+		ko: "지금 병합하면 충돌하지만 Git이 충돌한 파일을 알려 주지 않았습니다. 브랜치를 고쳐 푸시한 뒤 다시 확인하세요.",
 	},
 	MsgMergeabilityMorePaths: {
 		en: "More files conflict than are listed here.",

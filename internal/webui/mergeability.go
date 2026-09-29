@@ -40,8 +40,13 @@ func (a MergeabilityAnswer) Note() MessageCode {
 			return MsgMergeabilityMergeCommit
 		}
 	case MergeabilityConflict:
-		if a.Reason == "no_merge_base" {
+		switch {
+		case a.Reason == "no_merge_base":
 			return MsgMergeabilityNoBase
+		case len(a.ConflictPaths) == 0:
+			// Git can report a conflict without naming a file, such as for
+			// some directory renames.
+			return MsgMergeabilityConflictUnlisted
 		}
 		return MsgMergeabilityConflict
 	case MergeabilityStale:

@@ -50,11 +50,15 @@ func (app *App) pullRequestDiff(ctx context.Context, repositoryID string, number
 }
 
 // pullRequestMergeability answers whether pull request number can merge now.
-// An unavailable answer's cause goes to the server log.
+// An unavailable answer's cause, and a temporary folder the check could not
+// remove, go to the server log.
 func (app *App) pullRequestMergeability(request *http.Request, repositoryID string, number int64, expected pullrequest.RevisionInput) (*pullrequest.Mergeability, error) {
 	answer, err := app.PullRequests.Mergeability(request.Context(), repositoryID, number, expected)
 	if err == nil && answer.Cause != nil {
 		logFailure(request, "pull request mergeability", answer.Cause)
+	}
+	if err == nil && answer.Leftover != nil {
+		logFailure(request, "pull request mergeability temporary folder removal", answer.Leftover)
 	}
 	return answer, err
 }
