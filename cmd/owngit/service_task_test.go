@@ -31,6 +31,7 @@ type fakeWindows struct {
 	definition    string // the task XML, "" when there is none
 	icon          string // the icon task's XML, "" when there is none
 	iconRunning   bool   // whether the icon task runs
+	iconErr       bool   // whether reading the icon task fails
 	state         string // TaskStateScript output
 	firewall      string // FirewallShowScript output
 	access        string // FirewallAccessScript output, "" when it fails
@@ -99,6 +100,9 @@ func (fake *fakeWindows) run(_ context.Context, name string, args ...string) ([]
 		case "definition":
 			return []byte(fake.definition), nil
 		case "icon-definition":
+			if fake.iconErr {
+				return []byte("access denied"), errors.New("exit status 1")
+			}
 			return []byte(fake.icon), nil
 		case "state":
 			if fake.definition == "" {
@@ -940,6 +944,70 @@ func TestTaskStopAsksTheServerFirst(t *testing.T) {
 	noErr(t, host.control("stop"))
 	if !slicesContainPrefix(fake.calls, "schtasks /End") {
 		t.Errorf("calls %q", fake.calls)
+	}
+}
+
+// A sign-in install's icon runs the owngit.exe that an npm update replaces
+// after "owngit service stop", so stop ends the icon too and start starts
+// it again. A boot install's icon runs the service copy, which stop leaves.
+func TestTaskStopEndsTheIconOfASignInInstall(t *testing.T) {
+	fake := newFakeWindows(t)
+	fake.existing(t, service.ModeLogonTask, testSID, t.TempDir())
+	fake.iconOf(t, service.ModeLogonTask, testUserExecutable)
+	fake.state, fake.listening = "4\n267009", true
+	host, out := testTaskHost(service.Environment{})
+	noErr(t, host.control("stop"))
+	if fake.iconRunning || programRunning(testUserExecutable) || !strings.Contains(out.String(), "OwnGit and its icon are stopped.") {
+		t.Errorf("icon running=%t, calls %q\n%s", fake.iconRunning, fake.calls, out.String())
+	}
+	previous := waitForService
+	t.Cleanup(func() { waitForService = previous })
+	waitForService = func(string, time.Duration) (string, error) { return "127.0.0.1:7654", nil }
+	noErr(t, host.control("start"))
+	if !fake.iconRunning {
+		t.Errorf("start left the icon closed: %q", fake.calls)
+	}
+
+	fake = newFakeWindows(t)
+	fake.existing(t, service.ModeBootTask, testSID, testStateDir)
+	fake.iconOf(t, service.ModeBootTask, testServiceExecutable)
+	fake.state, fake.listening = "4\n267009", true
+	host, out = testTaskHost(service.Environment{Administrator: true})
+	noErr(t, host.control("stop"))
+	if !fake.iconRunning || slices.Contains(fake.calls, `schtasks /End /TN \OwnGit icon`) || strings.Contains(out.String(), "its icon") {
+		t.Errorf("boot install: icon running=%t, calls %q\n%s", fake.iconRunning, fake.calls, out.String())
+	}
+}
+
+// An icon task that cannot be read is reported where the icon would be
+// ended or removed, never passed over.
+func TestTaskIconThatCannotBeReadIsReported(t *testing.T) {
+	fake := newFakeWindows(t)
+	fake.existing(t, service.ModeLogonTask, testSID, testStateDir)
+	fake.iconErr = true
+	host, out := testTaskHost(service.Environment{})
+	noErr(t, host.uninstall())
+	if !strings.Contains(out.String(), `The task "OwnGit icon" stays: read the scheduled task "OwnGit icon"`) {
+		t.Errorf("uninstall:\n%s", out.String())
+	}
+	out.Reset()
+	fake.state, fake.listening = "4\n267009", true
+	fake.existing(t, service.ModeLogonTask, testSID, testStateDir)
+	noErr(t, host.control("stop"))
+	if !strings.Contains(out.String(), "The OwnGit icon could not be checked") || !strings.Contains(out.String(), "OwnGit is stopped.") {
+		t.Errorf("stop:\n%s", out.String())
+	}
+}
+
+// The icon's task goes with "owngit service uninstall" also when its server
+// task was removed by hand.
+func TestTaskUninstallRemovesTheIconWithoutTheServerTask(t *testing.T) {
+	fake := newFakeWindows(t)
+	fake.iconOf(t, service.ModeLogonTask, testUserExecutable)
+	host, out := testTaskHost(service.Environment{})
+	noErr(t, host.uninstall())
+	if fake.icon != "" || fake.iconRunning || !strings.HasPrefix(out.String(), "OwnGit is not installed as a service.\n") {
+		t.Errorf("icon %q running=%t\n%s", fake.icon, fake.iconRunning, out.String())
 	}
 }
 

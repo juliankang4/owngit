@@ -390,11 +390,22 @@ func (host *taskHost) iconTask() (service.Installed, bool, error) {
 	return host.readTask(service.IconTaskName, service.IconTaskDefinitionScript)
 }
 
-// stopIcon ends the icon that its task started.
-func (host *taskHost) stopIcon() {
-	if icon, found, err := host.iconTask(); err == nil && found {
-		host.endIcon(icon)
+// stopIcon ends the icon that its task started and reports whether there
+// was one. An icon that cannot be checked is reported, since it may keep
+// the program in use.
+func (host *taskHost) stopIcon() bool {
+	icon, found, err := host.iconTask()
+	switch {
+	case errors.Is(err, service.ErrForeignTask):
+		return false
+	case err != nil:
+		host.printf("The OwnGit icon could not be checked (%v). If it shows, choose Quit the icon in its panel so it does not keep owngit.exe in use.\n", err)
+		return false
+	case !found:
+		return false
 	}
+	host.endIcon(icon)
+	return true
 }
 
 // endIcon ends the icon's task and waits until its program exits. Ending
@@ -444,7 +455,11 @@ func (host *taskHost) startIcon(plan service.TaskPlan) {
 // OwnGit did not register stays.
 func (host *taskHost) removeIcon() {
 	icon, found, err := host.iconTask()
-	if err != nil || !found {
+	if err != nil {
+		host.printf("The task %q stays: %v.\n", service.IconTaskName, err)
+		return
+	}
+	if !found {
 		return
 	}
 	host.endIcon(icon)
@@ -1225,15 +1240,21 @@ func (host *taskHost) uninstall() error {
 		// the firewall rule without the task. OwnGit made them, so the same
 		// administrator step removes them. A folder that holds only files
 		// OwnGit did not create needs no approval, since nothing goes.
+		// The administrator step removes the icon's task too; otherwise it
+		// goes here, as it may outlive a server task removed by hand.
 		switch {
 		case (host.serviceCopyLeft() || ruleFound) && host.env.Administrator:
 			if err := host.asAdministrator([]string{"service", "elevated-uninstall"}, "remove "+host.serviceInstall.Directory+" and the Windows Firewall rule that an earlier OwnGit service install left"); err != nil {
 				return err
 			}
 		case ruleFound:
+			host.removeIcon()
 			host.printf("The Windows Firewall rule %q stays; an administrator can remove it with \"owngit service uninstall\".\n", service.FirewallRuleName)
 		case foreign:
+			host.removeIcon()
 			host.printf("%s\n", firewallCollisionLine)
+		default:
+			host.removeIcon()
 		}
 		host.printServiceCopyLeft()
 		stateDir := uninstallStateDir()
@@ -1472,16 +1493,30 @@ func (host *taskHost) control(action string) error {
 	if action == "stop" || action == "restart" {
 		host.stopTask(installed.StateDir)
 	}
+	// A sign-in install's icon runs the same owngit.exe as the server, so
+	// stop ends it too: an update replaces that file after "owngit service
+	// stop", which Windows refuses while any program runs it. Start and
+	// install start the icon again.
+	iconStopped := action == "stop" && installed.Mode == service.ModeLogonTask && host.stopIcon()
 	if action == "stop" {
 		when := "at the next boot"
 		if installed.Mode == service.ModeLogonTask {
 			when = "when you sign in next time"
 		}
-		host.printf("OwnGit is stopped. It starts again %s, or with \"owngit service start\".\n", when)
+		stopped := "OwnGit is stopped"
+		if iconStopped {
+			stopped = "OwnGit and its icon are stopped"
+		}
+		host.printf("%s. It starts again %s, or with \"owngit service start\".\n", stopped, when)
 		return nil
 	}
 	if err := host.runTask(); err != nil {
 		return err
+	}
+	if action == "start" && installed.Mode == service.ModeLogonTask {
+		if _, found, err := host.iconTask(); err == nil && found {
+			_ = host.runStep(host.schtasks(), "/Run", "/TN", `\`+service.IconTaskName)
+		}
 	}
 	address, err := host.waitForServer(installed.StateDir)
 	if err != nil {
