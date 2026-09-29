@@ -93,25 +93,50 @@ changeable() {
 }
 
 # require_way refuses when another account can change FOLDER ($1), which
-# exists, or a folder on the way to it; see changeable. USE ($3) says what
-# to do instead.
+# exists, or anything on the path to it, which is walked as the system
+# follows it later: every folder from / and every link on the way, and then
+# the path each link names, from the folder the link is in (or from / for
+# an absolute link). A link counts only if it belongs to this account or
+# root; the folder it is in is checked before it. HOLDS ($2) and USE ($3)
+# as for changeable: HOLDS is 1 when the folder gets entries.
 require_way() {
-	way=$(cd -P -- "$1" && pwd -P) || fail "could not read $1"
-	holds=$2 use=$3 folder=""
-	set -f
-	old_ifs=$IFS
-	IFS=/
-	# shellcheck disable=SC2086 # split at every /
-	set -- $way
-	IFS=$old_ifs
-	set +f
-	for part in "$@"; do
-		folder=${folder%/}/$part
-		last=0
-		[ "$folder" != "$way" ] || last=$holds
-		reason=$(changeable "$folder" "$last")
+	path=$1 holds=$2 use=$3 links=0 folder=/
+	case $path in /*) rest=$path ;; *) rest=$PWD/$path ;; esac
+	reason=$(changeable / 0)
+	[ -z "$reason" ] || fail "another account can change / ($reason); $use"
+	while [ -n "$rest" ]; do
+		part=${rest%%/*}
+		case $rest in */*) rest=${rest#*/} ;; *) rest="" ;; esac
+		case $part in
+		"" | .) continue ;;
+		..)
+			folder=$(dirname "$folder")
+			continue
+			;;
+		esac
+		next=${folder%/}/$part
+		if [ -L "$next" ]; then
+			links=$((links + 1))
+			[ "$links" -le 40 ] || fail "$path goes through more than 40 links"
+			set -f
+			# shellcheck disable=SC2046 # the fields of ls are wanted
+			set -- $(ls -ldn -- "$next")
+			set +f
+			[ "$3" = 0 ] || [ "$3" = "$euid" ] ||
+				fail "another account can change $next (it is a link that belongs to another account); $use"
+			link=$(readlink "$next") || fail "could not read the link $next"
+			case $link in /*) folder=/ ;; esac
+			rest=$link/$rest
+			continue
+		fi
+		folder=$next
+		reason=$(changeable "$folder" 0)
 		[ -z "$reason" ] || fail "another account can change $folder ($reason); $use"
 	done
+	if [ "$holds" = 1 ]; then
+		reason=$(changeable "$folder" 1)
+		[ -z "$reason" ] || fail "another account can change $folder ($reason); $use"
+	fi
 }
 
 usage() {

@@ -572,6 +572,9 @@ func TestInstallSh(t *testing.T) {
 		run := newShInstall(t, release)
 		base := filepath.Join(run.home, "ways")
 		noErr(t, os.Mkdir(base, 0o755))
+		// The installer names folders by the path the system follows.
+		base, err := filepath.EvalSymlinks(base)
+		noErr(t, err)
 		folder := func(name string, mode os.FileMode) string {
 			path := filepath.Join(base, name)
 			noErr(t, os.MkdirAll(path, 0o755))
@@ -583,8 +586,20 @@ func TestInstallSh(t *testing.T) {
 		above := folder("above", 0o757)
 		below := folder(filepath.Join("above", "private"), 0o755)
 		noErr(t, os.Chmod(above, 0o757))
+		// Links: one in the shared folder that leads to a private folder
+		// (another account could point it elsewhere after the check), and
+		// a private link, absolute or relative, that leads to the shared
+		// folder.
+		mine := folder("mine", 0o755)
+		noErr(t, os.Symlink(folder("dest", 0o755), filepath.Join(shared, "link")))
+		noErr(t, os.Symlink(shared, filepath.Join(mine, "to-shared")))
+		noErr(t, os.Symlink(filepath.Join("..", "shared"), filepath.Join(mine, "up-to-shared")))
 		before := release.served()
 		for _, tc := range []struct{ target, refused, env string }{
+			{filepath.Join(shared, "link", "owngit"), shared + " (every account can write it)", ""},
+			{filepath.Join(mine, "to-shared", "owngit"), shared + " (every account can write it)", ""},
+			{filepath.Join(mine, "up-to-shared", "new", "owngit"), shared + " (every account can write it)", ""},
+			{filepath.Join(run.home, "bin", "owngit"), shared + " (every account can write it); set TMPDIR", "TMPDIR=" + filepath.Join(mine, "to-shared")},
 			{filepath.Join(shared, "owngit"), shared + " (every account can write it)", ""},
 			{filepath.Join(shared, "new", "owngit"), shared + " (every account can write it)", ""},
 			{filepath.Join(sticky, "owngit"), sticky + " (every account can write it)", ""},
@@ -607,6 +622,16 @@ func TestInstallSh(t *testing.T) {
 		// folder that gets the program, as /tmp is for every other case.
 		target := filepath.Join(folder(filepath.Join("sticky", "mine"), 0o755), "owngit")
 		run.must(t, nil, "--no-service", "--to", target)
+		// A private link to a private folder is fine, and so is /tmp,
+		// which on macOS is a link to /private/tmp, and a private link
+		// to it.
+		noErr(t, os.Symlink(filepath.Join(base, "dest"), filepath.Join(mine, "to-dest")))
+		noErr(t, os.Symlink("/tmp", filepath.Join(mine, "to-tmp")))
+		run.must(t, []string{"TMPDIR=/tmp"}, "--no-service", "--to", filepath.Join(mine, "to-dest", "owngit"))
+		if got := release.versionOf(t, filepath.Join(base, "dest", "owngit")); got != "2.0.0" {
+			t.Errorf("the private link led to version %q", got)
+		}
+		run.must(t, []string{"TMPDIR=" + filepath.Join(mine, "to-tmp")}, "--no-service", "--to", filepath.Join(mine, "owngit"))
 	})
 
 	// The other folder rules: a folder that belongs to another account, one
@@ -640,6 +665,9 @@ func TestInstallSh(t *testing.T) {
 			dir := filepath.Join(run.home, strings.ReplaceAll(t.Name(), "/", "-"))
 			noErr(t, os.Mkdir(dir, 0o755))
 			noErr(t, os.Chmod(dir, mode))
+			// The installer names folders by the path the system follows.
+			dir, err := filepath.EvalSymlinks(dir)
+			noErr(t, err)
 			return dir
 		}
 		t.Run("another owner", func(t *testing.T) {
@@ -647,6 +675,18 @@ func TestInstallSh(t *testing.T) {
 			asRoot(t, "chown", "65534", dir)
 			t.Cleanup(func() { asRoot(t, "chown", fmt.Sprint(os.Getuid()), dir) })
 			refused(t, dir, "it belongs to another account")
+		})
+		t.Run("a link of another account", func(t *testing.T) {
+			dir := folder(t, 0o755)
+			link := filepath.Join(dir, "link")
+			noErr(t, os.Mkdir(filepath.Join(dir, "dest"), 0o755))
+			noErr(t, os.Symlink(filepath.Join(dir, "dest"), link))
+			asRoot(t, "chown", "-h", "65534", link)
+			before := release.served()
+			run.mustFail(t, nil, "another account can change "+link+" (it is a link that belongs to another account)", "--to", filepath.Join(link, "owngit"))
+			if served := release.served(); served != before {
+				t.Errorf("a refused run downloaded %d files", served-before)
+			}
 		})
 		t.Run("a group that is not this account's own", func(t *testing.T) {
 			dir := folder(t, 0o775)
