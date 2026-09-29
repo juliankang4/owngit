@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -102,7 +103,7 @@ func newHarness(t *testing.T, listen string, tailscale Tailscale) *harness {
 	h.flow = &flow{
 		ctx: context.Background(), lang: webui.LangEN, screen: s, console: con, app: app,
 		origin: "http://127.0.0.1:7654", listen: listen, suggested: app.SuggestedRepositoryRoot, tailscale: found,
-		stateDir: "/tmp/owngit state",
+		stateDir: "/tmp/owngit state", command: "owngit",
 	}
 	h.flow.network, h.flow.otherDevices = networkReach(listen, h.flow.origin)
 	return h
@@ -516,5 +517,43 @@ func TestNetworkReach(t *testing.T) {
 		if network != c.network || other != c.other {
 			t.Errorf("%s %s: %v %q", c.listen, c.origin, network, other)
 		}
+	}
+}
+
+// A printed command starts with "owngit" only when that name on PATH is
+// this executable; otherwise it names this executable, as for a copy from
+// an archive that is not on PATH.
+func TestCommandWordRunsThisExecutable(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	want := shellQuote(self)
+	if runtime.GOOS == "windows" && want != self {
+		want = "& '" + strings.ReplaceAll(self, "'", "''") + "'"
+	}
+	if got := commandWord(); got != want {
+		t.Fatalf("with no owngit on PATH: %q, want %q", got, want)
+	}
+	onPath := t.TempDir()
+	name := "owngit"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(onPath, name), []byte("another OwnGit"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", onPath)
+	if got := commandWord(); got != want {
+		t.Fatalf("with another owngit on PATH: %q, want %q", got, want)
+	}
+	linked := t.TempDir()
+	if err := os.Link(self, filepath.Join(linked, name)); err != nil {
+		t.Skipf("cannot link this executable into a folder on PATH: %v", err)
+	}
+	t.Setenv("PATH", linked)
+	if got := commandWord(); got != "owngit" {
+		t.Fatalf("with this executable on PATH: %q, want owngit", got)
 	}
 }

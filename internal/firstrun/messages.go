@@ -92,7 +92,7 @@ var phrases = map[string]phrase{
 
 	"stop_title":  {"Setup stopped", "설정을 멈췄습니다"},
 	"stop_body":   {"Nothing was saved. OwnGit is still not set up.", "저장한 내용은 없습니다. OwnGit은 아직 설정되지 않은 상태입니다."},
-	"stop_resume": {"To continue, run owngit serve again.", "이어서 하려면 owngit serve를 다시 실행하세요."},
+	"stop_resume": {"To continue, run {cmd} serve again.", "이어서 하려면 {cmd} serve를 다시 실행하세요."},
 }
 
 // The language prompt comes before a language is chosen, so it is bilingual.

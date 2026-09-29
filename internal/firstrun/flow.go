@@ -40,8 +40,11 @@ type flow struct {
 	suggested    string
 	openBrowser  func(string) error
 	stateDir     string
-	tailscale    <-chan Tailscale
-	found        *Tailscale
+	// command starts this OwnGit in the commands setup prints; see
+	// commandWord.
+	command   string
+	tailscale <-chan Tailscale
+	found     *Tailscale
 
 	folder   string
 	access   string
@@ -433,7 +436,7 @@ func (f *flow) showDevices(step string) error {
 		f.screen.blankLine()
 		f.screen.emit(colored("  "+f.say("dev_cmd"), roleMuted))
 		f.screen.blankLine()
-		f.screen.write(f.screen.painter.paint(rolePlain, tailscaleCommand(found, f.port(), f.stateDir), true) + "\n")
+		f.screen.write(f.screen.painter.paint(rolePlain, tailscaleCommand(f.command, found, f.port(), f.stateDir), true) + "\n")
 		f.screen.blankLine()
 		for _, line := range wrapText(f.say("dev_service"), limit-2) {
 			f.screen.emit(plain("  "), colored(line, roleMuted))
@@ -467,7 +470,7 @@ func (f *flow) askConnection(step string) error {
 		// line so it copies as one command.
 		f.screen.notice("err", f.say("conn_need_saved"))
 		f.screen.blankLine()
-		f.screen.write(f.screen.painter.paint(rolePlain, localOnlyCommand(f.port(), f.stateDir), true) + "\n")
+		f.screen.write(f.screen.painter.paint(rolePlain, localOnlyCommand(f.command, f.port(), f.stateDir), true) + "\n")
 		f.screen.blankLine()
 	}
 }
@@ -615,7 +618,7 @@ func (f *flow) finishedElsewhere() error {
 
 func (f *flow) stopped() {
 	f.screen.blankLine()
-	f.screen.card(f.say("stop_title"), []item{textItem(f.say("stop_body"), rolePlain), textItem(f.say("stop_resume"), rolePlain)},
+	f.screen.card(f.say("stop_title"), []item{textItem(f.say("stop_body"), rolePlain), textItem(f.say("stop_resume", "cmd", f.command), rolePlain)},
 		cardStyle{titleRole: roleWarn, marker: "[!]", markerRole: roleWarn})
 	f.screen.blankLine()
 }

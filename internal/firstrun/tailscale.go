@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -89,35 +92,64 @@ func readTailscale(ctx context.Context, command tailscale.Command, timeout time.
 // printed for the owner to copy; OwnGit never runs it and saves nothing.
 // Every part is quoted by shellQuote, so the command holds no control or
 // direction characters and can be printed as it is.
-func tailscaleCommand(found Tailscale, port, stateDir string) string {
+func tailscaleCommand(command string, found Tailscale, port, stateDir string) string {
 	address := net.JoinHostPort(found.IPv4, port)
 	host := found.Name
 	if host == "" {
 		host = found.IPv4
 	}
-	parts := []string{"owngit", "network", "set", "--listen", address, "--base-url", "http://" + net.JoinHostPort(host, port)}
-	if stateDir != "" {
-		parts = append(parts, "--state-dir", stateDir)
-	}
-	for i, part := range parts {
-		parts[i] = shellQuote(part)
-	}
-	return strings.Join(parts, " ")
+	return networkSetCommand(command, stateDir, "--listen", address, "--base-url", "http://"+net.JoinHostPort(host, port))
 }
 
 // localOnlyCommand is the command that saves a listen address only this
 // computer can reach, on the same port, and removes the saved base URL, which
 // would name an address other devices use. Like tailscaleCommand it is
 // printed for the owner and never run.
-func localOnlyCommand(port, stateDir string) string {
-	parts := []string{"owngit", "network", "set", "--listen", net.JoinHostPort("127.0.0.1", port), "--base-url", ""}
+func localOnlyCommand(command, port, stateDir string) string {
+	return networkSetCommand(command, stateDir, "--listen", net.JoinHostPort("127.0.0.1", port), "--base-url", "")
+}
+
+// networkSetCommand is "network set" with options, run by command (see
+// commandWord) and with the state folder when it is not the default.
+func networkSetCommand(command, stateDir string, options ...string) string {
+	parts := append([]string{"network", "set"}, options...)
 	if stateDir != "" {
 		parts = append(parts, "--state-dir", stateDir)
 	}
 	for i, part := range parts {
 		parts[i] = shellQuote(part)
 	}
-	return strings.Join(parts, " ")
+	return command + " " + strings.Join(parts, " ")
+}
+
+// commandWord is how a printed command starts this OwnGit: "owngit" when
+// that name on PATH is this executable, and otherwise this executable's
+// path, as for a copy from an archive that is not on PATH. Without the path
+// of this executable, "owngit" is the best hint left.
+func commandWord() string {
+	self, err := os.Executable()
+	if err != nil {
+		return "owngit"
+	}
+	if onPath, err := exec.LookPath("owngit"); err == nil && sameFile(onPath, self) {
+		return "owngit"
+	}
+	quoted := shellQuote(self)
+	if runtime.GOOS == "windows" && quoted != self {
+		// PowerShell runs a quoted path only after its call operator.
+		return "& '" + strings.ReplaceAll(self, "'", "''") + "'"
+	}
+	return quoted
+}
+
+// sameFile reports whether the paths name the same file.
+func sameFile(first, second string) bool {
+	a, err := os.Stat(first)
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(second)
+	return err == nil && os.SameFile(a, b)
 }
 
 // shellQuote quotes a value for a shell when it needs quoting. A value with

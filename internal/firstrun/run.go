@@ -176,7 +176,7 @@ func newFlow(ctx context.Context, config Config, input <-chan []byte, colors dep
 	f := &flow{
 		ctx: ctx, lang: localeLanguage(getenv), screen: s, console: con, app: config.App,
 		origin: config.Origin, listen: config.Listen, suggested: config.SuggestedFolder,
-		openBrowser: config.OpenBrowser, stateDir: config.StateDir, tailscale: found,
+		openBrowser: config.OpenBrowser, stateDir: config.StateDir, command: commandWord(), tailscale: found,
 	}
 	f.network, f.otherDevices = networkReach(config.Listen, config.Origin)
 	f.listenSaved = config.ListenSaved
