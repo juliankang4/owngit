@@ -111,11 +111,6 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 			return err
 		}
 	}
-	if change.CheckLogs != nil {
-		if err := change.CheckLogs.applyTo(ctx, tx); err != nil {
-			return err
-		}
-	}
 	return tx.Commit()
 }
 
@@ -328,10 +323,10 @@ var CheckLogRetentions = []CheckLogRetention{CheckLogs7Days, CheckLogs30Days, Ch
 
 var checkLogRetentionDays = map[CheckLogRetention]int{CheckLogs7Days: 7, CheckLogs30Days: 30, CheckLogs90Days: 90, CheckLogs365Days: 365}
 
-// CheckLogKeptIndefinitely is the expiry of a raw log kept under
-// KeepCheckLogs, the last second RFC 3339 can write. The raw log table
-// needs an expiry for every log; this one never passes, so no cleanup
-// deletes the log and it stays readable.
+// CheckLogKeptIndefinitely is the expiry recorded for a raw log stored
+// under KeepCheckLogs, the last second RFC 3339 can write. A recorded
+// expiry only ties the log to its attempt record; whether the log is kept
+// follows the retention saved when it is read or cleaned up (LogExpiry).
 var CheckLogKeptIndefinitely = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 
 // ParseCheckLogRetention returns the choice value names.
@@ -352,7 +347,8 @@ func (r CheckLogRetention) stored() string {
 	return strconv.Itoa(checkLogRetentionDays[r])
 }
 
-// expiry is when a raw log of a check that started at started is removed.
+// expiry is the expiry recorded for a raw log of a check that started at
+// started.
 func (r CheckLogRetention) expiry(started time.Time) time.Time {
 	if r == KeepCheckLogs {
 		return CheckLogKeptIndefinitely
@@ -360,20 +356,17 @@ func (r CheckLogRetention) expiry(started time.Time) time.Time {
 	return started.UTC().Add(r.Duration())
 }
 
-// applyTo gives every raw log kept now the expiry of r, in both places the
-// expiry is recorded, so the choice applies to them at once: a log past it
-// can no longer be read and the next cleanup deletes it.
-func (r CheckLogRetention) applyTo(ctx context.Context, tx *sql.Tx) error {
-	expiry, arguments := `?`, []any{CheckLogKeptIndefinitely.Unix()}
-	if r != KeepCheckLogs {
-		expiry, arguments = `(SELECT a.created_at FROM check_attempts a WHERE a.id=check_raw_logs.attempt_id)+?`, []any{int64(r.Duration() / time.Second)}
+// LogExpiry is when the raw log of attempt stops being readable under r:
+// its check's start plus r. It is nil when r keeps logs indefinitely or the
+// attempt stored no log. It follows the choice saved now, not the expiry
+// recorded with the log, so a new choice applies to every log kept without
+// rewriting them.
+func (r CheckLogRetention) LogExpiry(attempt CheckAttempt) *time.Time {
+	if r == KeepCheckLogs || attempt.LogID == "" || attempt.LogExpiresAt == nil {
+		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE check_raw_logs SET expires_at=`+expiry, arguments...); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `UPDATE check_attempts SET log_expires_at=(SELECT r.expires_at FROM check_raw_logs r WHERE r.attempt_id=check_attempts.id)
-		WHERE id IN (SELECT attempt_id FROM check_raw_logs)`)
-	return err
+	expires := r.expiry(attempt.CreatedAt)
+	return &expires
 }
 
 // CheckLogRetention returns how long raw check logs are kept.
@@ -394,13 +387,4 @@ func checkLogRetention(ctx context.Context, query querier) (CheckLogRetention, e
 		}
 	}
 	return "", &PolicyError{Key: checkLogRetentionKey, Value: raw, Cause: errors.New("not one of the raw log retention choices")}
-}
-
-// CheckLogExpiry returns when a raw log with the recorded expiry is
-// removed, or nil when it is kept indefinitely or there is none.
-func CheckLogExpiry(expires *time.Time) *time.Time {
-	if expires == nil || expires.Equal(CheckLogKeptIndefinitely) {
-		return nil
-	}
-	return expires
 }

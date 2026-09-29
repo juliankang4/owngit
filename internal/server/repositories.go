@@ -808,7 +808,7 @@ func (app *App) fillOverviewEvidence(request *http.Request, page *webui.Reposito
 	page.Overview.DefaultCheckKnown = true
 	if exists {
 		page.Overview.HasDefaultCheck = true
-		page.Overview.DefaultCheck = app.browserAttemptRecord(attempt)
+		page.Overview.DefaultCheck = app.browserAttemptRecord(request.Context(), attempt)
 	}
 }
 

@@ -81,6 +81,9 @@ const (
 	CheckLogFound   = "found"
 	CheckLogExpired = "expired"
 	CheckLogMissing = "missing"
+	// CheckLogUnavailable: the saved retention cannot be read, so whether
+	// the log is still kept is unknown.
+	CheckLogUnavailable = "unavailable"
 )
 
 const (
@@ -1436,33 +1439,28 @@ func (s *Store) readCheckRawLog(logID string, expiresAt *time.Time) ([]byte, boo
 	return content, true, nil
 }
 
-// CheckLogState reports whether a raw log remains readable. The durable
-// attempt record stays readable after the log expires or its local BLOB is
-// absent.
-func (s *Store) CheckLogState(logID string, expiresAt *time.Time, now time.Time) string {
-	if !validAttemptID(logID) || expiresAt == nil {
+// CheckLogState reports whether the raw log of attempt remains readable
+// under retention, the choice saved now. The durable attempt record stays
+// readable after the log expires or its local BLOB is absent.
+func (s *Store) CheckLogState(attempt CheckAttempt, retention CheckLogRetention, now time.Time) string {
+	_, state, err := s.ReadCheckLog(attempt, retention, now)
+	if err != nil {
 		return CheckLogMissing
 	}
-	if !now.Before(*expiresAt) {
-		return CheckLogExpired
-	}
-	_, found, err := s.readCheckRawLog(logID, expiresAt)
-	if err != nil || !found {
-		return CheckLogMissing
-	}
-	return CheckLogFound
+	return state
 }
 
-// ReadCheckLog reads a raw log and enforces its expiry. The durable attempt
-// record stays readable after the log expires.
-func (s *Store) ReadCheckLog(logID string, expiresAt *time.Time, now time.Time) ([]byte, string, error) {
-	if !validAttemptID(logID) || expiresAt == nil {
+// ReadCheckLog reads the raw log of attempt and enforces its expiry under
+// retention, the choice saved now. The durable attempt record stays
+// readable after the log expires.
+func (s *Store) ReadCheckLog(attempt CheckAttempt, retention CheckLogRetention, now time.Time) ([]byte, string, error) {
+	if !validAttemptID(attempt.LogID) || attempt.LogExpiresAt == nil {
 		return nil, CheckLogMissing, nil
 	}
-	if !now.Before(*expiresAt) {
+	if expires := retention.LogExpiry(attempt); expires != nil && !now.Before(*expires) {
 		return nil, CheckLogExpired, nil
 	}
-	content, found, err := s.readCheckRawLog(logID, expiresAt)
+	content, found, err := s.readCheckRawLog(attempt.LogID, attempt.LogExpiresAt)
 	if err != nil {
 		return nil, CheckLogMissing, err
 	}
@@ -1472,11 +1470,13 @@ func (s *Store) ReadCheckLog(logID string, expiresAt *time.Time, now time.Time) 
 	return content, CheckLogFound, nil
 }
 
-// PruneCheckLogs deletes every raw-log row due at the fixed cutoff. Each
-// transaction handles at most 4 MiB of maximum-size logical content, and the
-// indexed loop stops only after that due set is empty or an error occurs.
+// PruneCheckLogs deletes every raw log the saved retention no longer keeps
+// at now: each one whose check started at least the retention before now.
+// Under Keep indefinitely it deletes nothing. Each transaction reads the
+// retention again, so a choice saved meanwhile applies to the rest, and
+// handles at most 4 MiB of maximum-size logical content. The loop stops
+// only after the due set is empty or an error occurs.
 func (s *Store) PruneCheckLogs(ctx context.Context, now time.Time) (int, error) {
-	cutoff := now.Unix()
 	removed := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1486,9 +1486,14 @@ func (s *Store) PruneCheckLogs(ctx context.Context, now time.Time) (int, error) 
 		if err != nil {
 			return removed, err
 		}
+		retention, err := checkLogRetention(ctx, tx)
+		if err != nil || retention == KeepCheckLogs {
+			return removed, errors.Join(err, tx.Rollback())
+		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM check_raw_logs WHERE attempt_id IN (
-			SELECT attempt_id FROM check_raw_logs WHERE expires_at<=? ORDER BY expires_at,attempt_id LIMIT ?
-		)`, cutoff, checkLogPruneBatch)
+			SELECT r.attempt_id FROM check_raw_logs r JOIN check_attempts a ON a.id=r.attempt_id
+			WHERE a.created_at<=? ORDER BY a.created_at,r.attempt_id LIMIT ?
+		)`, now.Add(-retention.Duration()).Unix(), checkLogPruneBatch)
 		if err != nil {
 			return removed, errors.Join(err, tx.Rollback())
 		}

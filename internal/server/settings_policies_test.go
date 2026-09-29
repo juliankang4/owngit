@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/checkapi"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -308,5 +309,52 @@ func TestUnreadableSettingsSayWhatToSetAgain(t *testing.T) {
 	noErr(t, err)
 	if response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "--transfer-size") || strings.Contains(string(body), "git_transfer_limits") {
 		t.Fatalf("Git transfer status=%d body=%s", response.StatusCode, body)
+	}
+}
+
+// A raw log's expiry follows the retention saved now in every answer about
+// it. Under Keep indefinitely the log reads without an expiry; while the
+// retention cannot be read the log API names the setting, and the tasks
+// page and attempt answers say nothing about a log they cannot judge.
+func TestRawLogsFollowTheRetentionSavedNow(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
+	server := strings.TrimSuffix(base, "/api/v1/repositories/project")
+	taskID := createCheckTask(t, base, token, "Retention")
+	var recorded checkapi.TaskResponse
+	decodeCheckJSON(t, recordAttempt(t, base, taskID, token, attemptUploadBody(fixture.sourceOID, "clean", "failed")), &recorded)
+	attempt := recorded.Attempt
+	if attempt == nil || attempt.LogExpiresAt == nil {
+		t.Fatalf("recorded attempt=%+v", attempt)
+	}
+	logURL := base + "/check-attempts/" + attempt.ID + "/log"
+	latest := func() *checkapi.Attempt {
+		t.Helper()
+		var response checkapi.TaskResponse
+		decodeCheckJSON(t, checkRequest(t, http.MethodGet, base+"/tasks/"+taskID, nil, token), &response)
+		return response.Attempt
+	}
+
+	keep := state.KeepCheckLogs
+	noErr(t, fixture.store.SavePolicies(ctx, state.PolicyChange{CheckLogs: &keep}))
+	var kept checkapi.LogResponse
+	decodeCheckJSON(t, checkRequest(t, http.MethodGet, logURL, nil, token), &kept)
+	if !kept.OK || kept.Content == "" || kept.ExpiresAt != nil {
+		t.Fatalf("log kept indefinitely=%+v", kept)
+	}
+	if got := latest(); got == nil || got.LogExpiresAt != nil {
+		t.Fatalf("attempt kept indefinitely=%+v", got)
+	}
+
+	noErr(t, fixture.store.Exec(ctx, `UPDATE metadata SET value='45' WHERE key='check_log_retention_days'`))
+	requireUnreadable(t, checkRequest(t, http.MethodGet, logURL, nil, token), "check_logs", "check_log_retention_days")
+	if got := latest(); got == nil || got.LogID != attempt.ID || got.LogExpiresAt != nil {
+		t.Fatalf("attempt under an unreadable retention=%+v", got)
+	}
+	client, _ := newBrowserClient(t)
+	page := browserGET(t, client, server+tasksURL("project", taskID))
+	if page.status != http.StatusOK || !strings.Contains(page.body, enText(webui.MsgCheckLogUnavailable)) {
+		t.Fatalf("tasks page status=%d:\n%s", page.status, page.body)
 	}
 }

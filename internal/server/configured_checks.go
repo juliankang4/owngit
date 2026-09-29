@@ -164,7 +164,7 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 				writeJobRecordError(writer, request, err, jobAttemptUnreadable, nil)
 				return
 			}
-			response.Attempt = attemptJSON(attempt)
+			response.Attempt = app.attemptJSON(request, attempt)
 		}
 		writeAPIJSON(writer, http.StatusOK, response)
 		return
@@ -386,7 +386,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			writeRunnerError(writer, request, err)
 			return
 		}
-		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(started, attempt.Checks), Attempt: attemptJSON(attempt)})
+		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(started, attempt.Checks), Attempt: app.attemptJSON(request, attempt)})
 	case "complete":
 		var input checkapi.RunnerCompletionInput
 		if !decodeAPIJSONLimit(writer, request, &input, maximumCheckUpload) {
@@ -415,7 +415,7 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			writeRunnerError(writer, request, err)
 			return
 		}
-		writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: attemptJSON(attempt)})
+		writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: app.attemptJSON(request, attempt)})
 	case "unavailable":
 		var input checkapi.RunnerUnavailableInput
 		if !decodeAPIJSON(writer, request, &input) {

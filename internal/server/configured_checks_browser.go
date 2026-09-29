@@ -457,9 +457,9 @@ func (app *App) browserCheckJobDetail(request *http.Request, repositoryID, jobID
 		detail.AttemptMissing = true
 		return detail
 	}
-	record := app.browserAttemptRecord(attempt)
+	record := app.browserAttemptRecord(request.Context(), attempt)
 	detail.Attempt = &record
-	detail.Log = app.browserCheckJobLog(attempt)
+	detail.Log = app.browserCheckJobLog(request.Context(), attempt)
 	return detail
 }
 
@@ -473,18 +473,24 @@ func (app *App) browserCheckJobDetail(request *http.Request, repositoryID, jobID
 // describes what the record claims, which can disagree with the file after an
 // expiry sweep or a failed write, so the state it returns is used solely for
 // the case where no read is attempted at all.
-func (app *App) browserCheckJobLog(attempt state.CheckAttempt) webui.CheckJobLogView {
+func (app *App) browserCheckJobLog(ctx context.Context, attempt state.CheckAttempt) webui.CheckJobLogView {
 	view := webui.CheckJobLogView{
 		Truncated: attempt.LogTruncated,
 		Error:     attempt.LogError,
 	}
-	if expires := state.CheckLogExpiry(attempt.LogExpiresAt); expires != nil {
+	// Whether the log is kept follows the retention saved now.
+	retention, err := app.Store.CheckLogRetention(ctx)
+	if err != nil {
+		view.Status = webui.LogUnavailable
+		return view
+	}
+	if expires := retention.LogExpiry(attempt); expires != nil {
 		view.ExpiresAt = *expires
 	}
 	// One call decides everything: it answers missing for an absent or
 	// unusable identity, expired past the retention bound, and found only when
 	// the content is actually there.
-	content, logState, err := app.Store.ReadCheckLog(attempt.LogID, attempt.LogExpiresAt, app.now())
+	content, logState, err := app.Store.ReadCheckLog(attempt, retention, app.now())
 	if err != nil {
 		// The log could not be read. That is not the same as "it produced no
 		// output" and not the same as "it expired".

@@ -134,7 +134,7 @@ func (app *App) showTask(writer http.ResponseWriter, request *http.Request, repo
 		return
 	}
 	if hasAttempt {
-		response.Attempt = attemptJSON(attempt)
+		response.Attempt = app.attemptJSON(request, attempt)
 	}
 	writeAPIJSON(writer, http.StatusOK, response)
 }
@@ -166,7 +166,7 @@ func (app *App) registerAttempt(writer http.ResponseWriter, request *http.Reques
 		}
 		return
 	}
-	writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: attemptJSON(stored)})
+	writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: app.attemptJSON(request, stored)})
 }
 
 // completeAttempt stores the results and the raw log of a registered attempt.
@@ -201,7 +201,7 @@ func (app *App) completeAttempt(writer http.ResponseWriter, request *http.Reques
 	if _, err := app.Store.PruneCheckLogs(request.Context(), app.now()); err != nil {
 		log.Printf("could not prune expired check logs: %s", logtext.Cause(err))
 	}
-	writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: attemptJSON(stored)})
+	writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: app.attemptJSON(request, stored)})
 }
 
 func (app *App) reserveCycle(writer http.ResponseWriter, request *http.Request, repositoryID, taskID string) {
@@ -299,7 +299,16 @@ func (app *App) writeCheckAttemptLog(writer http.ResponseWriter, request *http.R
 		writeAPIError(writer, http.StatusNotFound, "log_not_recorded", "The attempt has no raw log.", nil)
 		return
 	}
-	content, logState, err := app.Store.ReadCheckLog(attempt.LogID, attempt.LogExpiresAt, app.now())
+	retention, err := app.Store.CheckLogRetention(request.Context())
+	if errors.As(err, new(*state.PolicyError)) {
+		writeSettingUnreadable(writer, request, "raw log read", err)
+		return
+	}
+	var content []byte
+	logState := ""
+	if err == nil {
+		content, logState, err = app.Store.ReadCheckLog(attempt, retention, app.now())
+	}
 	if err != nil {
 		writeAPIError(writer, unavailable(request, "raw log read", err), "state_unavailable", "The raw log could not be read.", nil)
 		return
@@ -312,7 +321,7 @@ func (app *App) writeCheckAttemptLog(writer http.ResponseWriter, request *http.R
 		writeAPIError(writer, http.StatusNotFound, "log_missing", "The raw log is no longer present. The durable attempt record remains.", nil)
 		return
 	}
-	writeAPIJSON(writer, http.StatusOK, checkapi.LogResponse{OK: true, LogID: attempt.LogID, ExpiresAt: state.CheckLogExpiry(attempt.LogExpiresAt), Truncated: attempt.LogTruncated, Content: string(content)})
+	writeAPIJSON(writer, http.StatusOK, checkapi.LogResponse{OK: true, LogID: attempt.LogID, ExpiresAt: retention.LogExpiry(attempt), Truncated: attempt.LogTruncated, Content: string(content)})
 }
 
 // handleHelperCredentialAPI manages revocable helper credentials. Issuing and
@@ -589,7 +598,16 @@ func taskJSON(task state.Task) *checkapi.Task {
 	}
 }
 
-func attemptJSON(attempt state.CheckAttempt) *checkapi.Attempt {
+// attemptJSON is the API's view of attempt. Its raw log expiry follows the
+// retention saved now; while that cannot be read the expiry is left out and
+// the server log says why.
+func (app *App) attemptJSON(request *http.Request, attempt state.CheckAttempt) *checkapi.Attempt {
+	var logExpiresAt *time.Time
+	if retention, err := app.Store.CheckLogRetention(request.Context()); err != nil {
+		logFailure(request, "raw log retention read", err)
+	} else {
+		logExpiresAt = retention.LogExpiry(attempt)
+	}
 	response := &checkapi.Attempt{
 		ID: attempt.ID, TaskID: attempt.TaskID, RepositoryID: attempt.RepositoryID, RevisionOID: attempt.RevisionOID,
 		WorktreeState: attempt.EffectiveWorktreeState(), ConfigurationVersion: attempt.ConfigurationVersion, Status: attempt.Status,
@@ -597,7 +615,7 @@ func attemptJSON(attempt state.CheckAttempt) *checkapi.Attempt {
 		Summary: attempt.Summary, Sequence: attempt.Sequence, CycleID: attempt.CycleID, JobID: attempt.JobID,
 		Protection: attempt.Protection, ExecutionScope: attempt.ExecutionScope,
 		CredentialID: attempt.CredentialID, TimeoutMS: attempt.TimeoutMS, OutputLimitBytes: attempt.OutputLimitBytes,
-		LogID: attempt.LogID, LogExpiresAt: state.CheckLogExpiry(attempt.LogExpiresAt), LogTruncated: attempt.LogTruncated, LogError: attempt.LogError,
+		LogID: attempt.LogID, LogExpiresAt: logExpiresAt, LogTruncated: attempt.LogTruncated, LogError: attempt.LogError,
 		CleanupFailed: attempt.CleanupFailed(),
 	}
 	for _, result := range attempt.Results {

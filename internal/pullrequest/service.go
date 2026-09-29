@@ -960,14 +960,14 @@ func (service *Service) checksForRevision(ctx context.Context, repositoryPath st
 			return checks
 		}
 		if hasLatest {
-			checks = service.checksFromAttempt(latest, source.OID)
+			checks = service.checksFromAttempt(ctx, latest, source.OID)
 			checks.Status = "stale"
 			checks.Stale = true
 			checks.Summary = "Latest check ran for " + shortOID(latest.RevisionOID) + " (" + latest.Status + ")"
 		}
 		return checks
 	}
-	checks = service.checksFromAttempt(attempt, source.OID)
+	checks = service.checksFromAttempt(ctx, attempt, source.OID)
 	// The configuration that applies is the one committed in the source
 	// revision. Without one, the evidence ran explicitly chosen checks and
 	// nothing newer can replace them.
@@ -990,7 +990,7 @@ func (service *Service) checksForRevision(ctx context.Context, repositoryPath st
 	return checks
 }
 
-func (service *Service) checksFromAttempt(attempt state.CheckAttempt, sourceOID string) Checks {
+func (service *Service) checksFromAttempt(ctx context.Context, attempt state.CheckAttempt, sourceOID string) Checks {
 	worktreeState := attempt.EffectiveWorktreeState()
 	registered := attempt.CreatedAt
 	checks := Checks{
@@ -1007,8 +1007,13 @@ func (service *Service) checksFromAttempt(attempt state.CheckAttempt, sourceOID 
 		if !finished.IsZero() {
 			checks.FinishedAt = &finished
 		}
-		checks.LogStatus = service.Store.CheckLogState(attempt.LogID, attempt.LogExpiresAt, service.now())
-		checks.LogExpiresAt = state.CheckLogExpiry(attempt.LogExpiresAt)
+		// Whether the log is kept follows the retention saved now; while
+		// that cannot be read, neither can the log.
+		checks.LogStatus = state.CheckLogUnavailable
+		if retention, err := service.Store.CheckLogRetention(ctx); err == nil {
+			checks.LogStatus = service.Store.CheckLogState(attempt, retention, service.now())
+			checks.LogExpiresAt = retention.LogExpiry(attempt)
+		}
 	}
 	checks.Passed = attempt.Status == state.AttemptPassed
 	checks.TestedCommit = attempt.Status != state.AttemptPending && attempt.RevisionOID == sourceOID && worktreeState == state.WorktreeClean && !checks.CleanupFailed

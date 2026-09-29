@@ -116,7 +116,7 @@ func TestChecksFromAttemptPreservesCleanupAndPendingEvidence(t *testing.T) {
 		Results: []state.CheckResult{{Name: "test", Command: "go test ./...", Status: state.AttemptPassed, ExitCode: &exitCode, CleanupError: "cleanup not confirmed"}},
 	}
 
-	checks := service.checksFromAttempt(attempt, attempt.RevisionOID)
+	checks := service.checksFromAttempt(context.Background(), attempt, attempt.RevisionOID)
 	if !checks.CleanupFailed || checks.TestedCommit || checks.WorktreeState != state.WorktreeDirty {
 		t.Fatalf("cleanup mapping=%+v", checks)
 	}
@@ -132,7 +132,7 @@ func TestChecksFromAttemptPreservesCleanupAndPendingEvidence(t *testing.T) {
 	attempt.Results = nil
 	attempt.SubmittedWorktreeState = ""
 	attempt.LogError = ""
-	pending := service.checksFromAttempt(attempt, attempt.RevisionOID)
+	pending := service.checksFromAttempt(context.Background(), attempt, attempt.RevisionOID)
 	if pending.FinishedAt != nil || pending.LogStatus != "" || pending.TestedCommit || pending.RegisteredAt == nil {
 		t.Fatalf("pending mapping=%+v", pending)
 	}
@@ -164,14 +164,14 @@ func TestChecksCarryTheRecordedJobLinkWithoutWideningTheAPI(t *testing.T) {
 		CredentialID: "credential-one",
 	}
 
-	manual := service.checksFromAttempt(base, base.RevisionOID)
+	manual := service.checksFromAttempt(context.Background(), base, base.RevisionOID)
 	if manual.JobID != "" {
 		t.Errorf("an unlinked attempt projected the job %q", manual.JobID)
 	}
 
 	linked := base
 	linked.JobID = strings.Repeat("e", 32)
-	automatic := service.checksFromAttempt(linked, linked.RevisionOID)
+	automatic := service.checksFromAttempt(context.Background(), linked, linked.RevisionOID)
 	if automatic.JobID != linked.JobID {
 		t.Errorf("the projected job link = %q, want %q", automatic.JobID, linked.JobID)
 	}

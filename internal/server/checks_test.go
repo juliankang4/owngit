@@ -88,7 +88,9 @@ func TestHelperCredentialAuthAndAttemptUpload(t *testing.T) {
 		t.Fatalf("prune raw log removed=%d err=%v", removed, err)
 	}
 	requestNow := attemptResponse.Attempt.LogExpiresAt.Add(-time.Second)
-	content, logState, err := fixture.store.ReadCheckLog(attemptResponse.Attempt.LogID, attemptResponse.Attempt.LogExpiresAt, requestNow)
+	stored, _, err := fixture.store.CheckAttemptByID(ctx, "project", attemptResponse.Attempt.ID)
+	noErr(t, err)
+	content, logState, err := fixture.store.ReadCheckLog(stored, state.DefaultCheckLogRetention, requestNow)
 	if err != nil || logState != state.CheckLogMissing || content != nil {
 		t.Fatalf("pruned raw log content=%q state=%q err=%v", content, logState, err)
 	}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"sort"
 
@@ -58,7 +59,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 			}
 			detail := &webui.TaskDetail{Task: browserTaskSummary(task), AttemptsTruncated: more}
 			for _, attempt := range attempts {
-				detail.Attempts = append(detail.Attempts, app.browserAttemptRecord(attempt))
+				detail.Attempts = append(detail.Attempts, app.browserAttemptRecord(request.Context(), attempt))
 			}
 			page.Detail = detail
 			app.render(writer, request, http.StatusOK, page)
@@ -90,7 +91,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 			return
 		}
 		if exists {
-			summaryView.Latest = app.browserAttemptRecord(latest)
+			summaryView.Latest = app.browserAttemptRecord(request.Context(), latest)
 		}
 		page.Tasks = append(page.Tasks, summaryView)
 	}
@@ -130,7 +131,7 @@ func browserTaskSummary(task state.Task) webui.TaskSummary {
 	}
 }
 
-func (app *App) browserAttemptRecord(attempt state.CheckAttempt) webui.AttemptRecord {
+func (app *App) browserAttemptRecord(ctx context.Context, attempt state.CheckAttempt) webui.AttemptRecord {
 	record := webui.AttemptRecord{
 		ID:                   attempt.ID,
 		ShortID:              shortOpaqueID(attempt.ID),
@@ -153,9 +154,14 @@ func (app *App) browserAttemptRecord(attempt state.CheckAttempt) webui.AttemptRe
 	}
 	if attempt.Status != state.AttemptPending {
 		record.FinishedAt = attempt.FinishedAt
-		record.LogStatus = webui.LogStatusOf(app.Store.CheckLogState(attempt.LogID, attempt.LogExpiresAt, app.now()))
-		if expires := state.CheckLogExpiry(attempt.LogExpiresAt); expires != nil {
-			record.LogExpiresAt = *expires
+		// Whether the log is kept follows the retention saved now; while
+		// that cannot be read, neither can the log.
+		record.LogStatus = webui.LogUnavailable
+		if retention, err := app.Store.CheckLogRetention(ctx); err == nil {
+			record.LogStatus = webui.LogStatusOf(app.Store.CheckLogState(attempt, retention, app.now()))
+			if expires := retention.LogExpiry(attempt); expires != nil {
+				record.LogExpiresAt = *expires
+			}
 		}
 	}
 	record.CredentialProvenance = browserProvenance(attempt.JobID, attempt.CredentialID, attempt.ExecutionScope)

@@ -387,7 +387,7 @@ func TestSimultaneousDuplicateUploadsStoreOneAttempt(t *testing.T) {
 	if attempts[0].LogDigest == "" {
 		t.Fatal("the accepted log digest was not recorded")
 	}
-	content, logState, err := store.ReadCheckLog(attempts[0].LogID, attempts[0].LogExpiresAt, now)
+	content, logState, err := store.ReadCheckLog(attempts[0], DefaultCheckLogRetention, now)
 	if err != nil || logState != CheckLogFound || string(content) != "shared log" {
 		t.Fatalf("accepted log=%q state=%q err=%v", content, logState, err)
 	}
@@ -450,7 +450,7 @@ func TestAcceptedLogAndResultSurviveAConflictingRetransmit(t *testing.T) {
 	if expiredReplay.LogExpiresAt == nil || !expiredReplay.LogExpiresAt.Equal(originalExpiry) {
 		t.Fatalf("expired replay changed the accepted expiry: %+v", expiredReplay)
 	}
-	if state := store.CheckLogState(expiredReplay.LogID, expiredReplay.LogExpiresAt, originalExpiry.Add(time.Hour)); state != CheckLogExpired {
+	if state := store.CheckLogState(expiredReplay, DefaultCheckLogRetention, originalExpiry.Add(time.Hour)); state != CheckLogExpired {
 		t.Fatalf("expired replay log state=%q", state)
 	}
 	reloaded, exists, err := store.CheckAttemptByID(ctx, "project", attempt.ID)
@@ -662,18 +662,18 @@ func TestCheckLogsAreDisposableAndPruned(t *testing.T) {
 	if stored.LogID != attempt.ID || stored.LogExpiresAt == nil || stored.LogTruncated {
 		t.Fatalf("stored log metadata=%+v", stored)
 	}
-	content, logState, err := store.ReadCheckLog(stored.LogID, stored.LogExpiresAt, now)
+	content, logState, err := store.ReadCheckLog(stored, DefaultCheckLogRetention, now)
 	if err != nil || logState != CheckLogFound || string(content) != "raw output" {
 		t.Fatalf("log content=%q state=%q err=%v", content, logState, err)
 	}
-	if _, logState, err := store.ReadCheckLog(stored.LogID, stored.LogExpiresAt, stored.LogExpiresAt.Add(time.Second)); err != nil || logState != CheckLogExpired {
+	if _, logState, err := store.ReadCheckLog(stored, DefaultCheckLogRetention, stored.LogExpiresAt.Add(time.Second)); err != nil || logState != CheckLogExpired {
 		t.Fatalf("expired read state=%q err=%v", logState, err)
 	}
 	removed, err := store.PruneCheckLogs(ctx, stored.LogExpiresAt.Add(time.Second))
 	if err != nil || removed != 1 {
 		t.Fatalf("pruned=%d err=%v", removed, err)
 	}
-	if _, logState, _ := store.ReadCheckLog(stored.LogID, stored.LogExpiresAt, now); logState != CheckLogMissing {
+	if _, logState, _ := store.ReadCheckLog(stored, DefaultCheckLogRetention, now); logState != CheckLogMissing {
 		t.Fatalf("pruned log state=%q", logState)
 	}
 	reloaded, exists, err := store.CheckAttemptByID(ctx, "project", attempt.ID)
@@ -766,10 +766,10 @@ func TestRecoveryExcludesRawLogsAndRestoreDoesNotReviveThem(t *testing.T) {
 	if err != nil || !exists || reloaded.LogID != stored.LogID || reloaded.LogExpiresAt == nil {
 		t.Fatalf("restored metadata=%+v exists=%v err=%v", reloaded, exists, err)
 	}
-	if state := restored.CheckLogState(reloaded.LogID, reloaded.LogExpiresAt, now); state != CheckLogMissing {
+	if state := restored.CheckLogState(reloaded, DefaultCheckLogRetention, now); state != CheckLogMissing {
 		t.Fatalf("restored raw log before expiry=%q", state)
 	}
-	if state := restored.CheckLogState(reloaded.LogID, reloaded.LogExpiresAt, reloaded.LogExpiresAt.Add(time.Second)); state != CheckLogExpired {
+	if state := restored.CheckLogState(reloaded, DefaultCheckLogRetention, reloaded.LogExpiresAt.Add(time.Second)); state != CheckLogExpired {
 		t.Fatalf("restored raw log after expiry=%q", state)
 	}
 }
@@ -800,7 +800,7 @@ func checkRawLogCount(t *testing.T, store *Store, attemptID string) int {
 // conflicting retransmit.
 func assertAcceptedLog(t *testing.T, store *Store, attempt CheckAttempt, now time.Time, want string) {
 	t.Helper()
-	content, logState, err := store.ReadCheckLog(attempt.LogID, attempt.LogExpiresAt, now)
+	content, logState, err := store.ReadCheckLog(attempt, DefaultCheckLogRetention, now)
 	if err != nil || logState != CheckLogFound || string(content) != want {
 		t.Fatalf("accepted log=%q state=%q err=%v want %q", content, logState, err, want)
 	}
@@ -1535,10 +1535,10 @@ func TestRawLogDigestMismatchIsMissingAndReplayDoesNotRepairIt(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE check_raw_logs SET content=? WHERE attempt_id=?`, []byte("damaged bytes"), stored.ID); err != nil {
 		t.Fatal(err)
 	}
-	if state := store.CheckLogState(stored.LogID, stored.LogExpiresAt, now); state != CheckLogMissing {
+	if state := store.CheckLogState(stored, DefaultCheckLogRetention, now); state != CheckLogMissing {
 		t.Fatalf("damaged raw log state=%q", state)
 	}
-	if content, state, err := store.ReadCheckLog(stored.LogID, stored.LogExpiresAt, now); err == nil || state != CheckLogMissing || content != nil {
+	if content, state, err := store.ReadCheckLog(stored, DefaultCheckLogRetention, now); err == nil || state != CheckLogMissing || content != nil {
 		t.Fatalf("damaged raw log content=%q state=%q err=%v", content, state, err)
 	}
 	if _, replayed, err := store.CompleteCheckAttempt(ctx, completionFor(attempt, "accepted bytes"), now); err != nil || replayed.CompletionDigest != stored.CompletionDigest {
@@ -1589,7 +1589,7 @@ func TestConcurrentDifferentCompletionsKeepOneHonestOutcome(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("stored attempt found=%v err=%v", found, err)
 	}
-	content, state, err := store.ReadCheckLog(stored.LogID, stored.LogExpiresAt, now)
+	content, state, err := store.ReadCheckLog(stored, DefaultCheckLogRetention, now)
 	if err != nil || state != CheckLogFound {
 		t.Fatalf("accepted raw log state=%q err=%v", state, err)
 	}

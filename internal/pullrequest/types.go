@@ -133,7 +133,8 @@ type Checks struct {
 	AttemptID            string     `json:"attempt_id,omitempty"`
 	FinishedAt           *time.Time `json:"finished_at,omitempty"`
 	Summary              string     `json:"summary,omitempty"`
-	// LogStatus is found, expired, or missing. The durable attempt record
+	// LogStatus is found, expired, or missing, or unavailable while the
+	// saved raw log retention cannot be read. The durable attempt record
 	// outlives its disposable log.
 	LogStatus    string     `json:"log_status,omitempty"`
 	LogExpiresAt *time.Time `json:"log_expires_at,omitempty"`

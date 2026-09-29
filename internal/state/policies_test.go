@@ -77,9 +77,10 @@ func TestSavePoliciesSavesAllOrNothing(t *testing.T) {
 }
 
 // A raw log is kept for the chosen time from when its check started. A new
-// choice applies at once to every log kept: a log past it can no longer be
-// read and the next cleanup deletes it, while Keep indefinitely keeps them
-// all readable through any cleanup. Durable attempt records stay.
+// choice applies at once to every log kept, without rewriting any: a log
+// past it can no longer be read and the next cleanup deletes it, while Keep
+// indefinitely keeps them all readable through any cleanup. Durable
+// attempt records stay.
 func TestRawLogRetentionAppliesToTheLogsKept(t *testing.T) {
 	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Retention", now)
@@ -89,18 +90,27 @@ func TestRawLogRetentionAppliesToTheLogsKept(t *testing.T) {
 	if want := now.Add(30 * 24 * time.Hour); !older.LogExpiresAt.Equal(want) {
 		t.Fatalf("default expiry %v, want %v", older.LogExpiresAt, want)
 	}
+	// recorded is every expiry the log tables hold; saving a choice leaves
+	// them as they are.
+	recorded := func() string {
+		t.Helper()
+		var value string
+		noErr(t, store.db.QueryRowContext(ctx, `SELECT group_concat(r.expires_at||':'||a.log_expires_at) FROM check_raw_logs r JOIN check_attempts a ON a.id=r.attempt_id`).Scan(&value))
+		return value
+	}
+	before := recorded()
 	save := func(retention CheckLogRetention) {
 		t.Helper()
 		noErr(t, store.SavePolicies(ctx, PolicyChange{CheckLogs: &retention}))
+		if after := recorded(); after != before {
+			t.Fatalf("saving %s rewrote the logs' expiries: %s, was %s", retention, after, before)
+		}
 	}
 	logState := func(attempt CheckAttempt, at time.Time) string {
 		t.Helper()
-		reloaded, exists, err := store.CheckAttemptByID(ctx, attempt.RepositoryID, attempt.ID)
+		retention, err := store.CheckLogRetention(ctx)
 		noErr(t, err)
-		if !exists {
-			t.Fatalf("attempt %s is gone", attempt.ID)
-		}
-		_, found, err := store.ReadCheckLog(reloaded.LogID, reloaded.LogExpiresAt, at)
+		_, found, err := store.ReadCheckLog(attempt, retention, at)
 		noErr(t, err)
 		return found
 	}
@@ -113,13 +123,14 @@ func TestRawLogRetentionAppliesToTheLogsKept(t *testing.T) {
 	if got := logState(older, later); got != CheckLogFound {
 		t.Fatalf("a log kept indefinitely reads as %s", got)
 	}
-	reloaded, _, err := store.CheckAttemptByID(ctx, older.RepositoryID, older.ID)
-	noErr(t, err)
-	if CheckLogExpiry(reloaded.LogExpiresAt) != nil {
-		t.Fatalf("a log kept indefinitely has the expiry %v", reloaded.LogExpiresAt)
+	if expires := KeepCheckLogs.LogExpiry(older); expires != nil {
+		t.Fatalf("a log kept indefinitely has the expiry %v", expires)
 	}
 
 	save(CheckLogs7Days)
+	if expires := CheckLogs7Days.LogExpiry(older); expires == nil || !expires.Equal(now.Add(7*24*time.Hour)) {
+		t.Fatalf("expiry under 7 days=%v", expires)
+	}
 	cleanup := now.Add(10 * 24 * time.Hour)
 	if got := logState(older, cleanup); got != CheckLogExpired {
 		t.Fatalf("a log past the new time reads as %s", got)
@@ -138,6 +149,9 @@ func TestRawLogRetentionAppliesToTheLogsKept(t *testing.T) {
 	var policyErr *PolicyError
 	if _, err := store.CheckLogRetention(ctx); !errors.As(err, &policyErr) {
 		t.Fatalf("an unknown retention read with err=%v", err)
+	}
+	if removed, err := store.PruneCheckLogs(ctx, later); !errors.As(err, &policyErr) || removed != 0 {
+		t.Fatalf("a cleanup under an unknown retention removed %d, err=%v", removed, err)
 	}
 	third := attemptFor(task, "3333333333333333333333333333333333333333", now.Add(21*24*time.Hour), AttemptFailed)
 	_, _, err = store.RegisterCheckAttempt(ctx, third)
