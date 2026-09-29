@@ -58,7 +58,7 @@ var trayCatalog = map[MessageCode]message{
 	MsgTrayThisComputer: {en: "This computer", ko: "이 컴퓨터"},
 	MsgTrayHide:         {en: "Hide from the notification area", ko: "알림 영역에서 숨기기"},
 	MsgTrayHidePanel:    {en: "Hide from the panel", ko: "패널에서 숨기기"},
-	MsgTrayShowPanel:    {en: "Show status and recent pushes", ko: "상태와 최근 푸시 보기"},
+	MsgTrayShowPanel:    {en: "Open the panel", ko: "패널 열기"},
 	MsgTrayQuit:         {en: "Quit the icon", ko: "아이콘 종료"},
 	MsgTrayKeepsRunning: {
 		en: "OwnGit keeps running either way. Quit closes the icon until you sign in again. Hide keeps it hidden, also after you sign in again, until you turn it on in the dashboard Settings or run \"owngit tray on\".",

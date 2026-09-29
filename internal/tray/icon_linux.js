@@ -363,10 +363,12 @@ function panelContent() {
     return box;
 }
 
-function renderPanel() {
+// renderPanel draws the panel again. The focus stays on the control that
+// had it; a panel that just opened starts at its first button.
+function renderPanel(opening = false) {
     if (!window || !window.get_visible() || !panel)
         return;
-    const focused = window.get_focus();
+    const focused = opening ? null : window.get_focus();
     const focusedName = focused ? focused.get_name() : '';
     window.set_title(`OwnGit, ${panel.state}`);
     window.set_child(panelContent());
@@ -418,7 +420,7 @@ function showPanel() {
         activationToken = '';
     }
     window.present();
-    renderPanel();
+    renderPanel(true);
 }
 
 function hidePanel() {
@@ -448,13 +450,20 @@ function receive(message) {
         icons = String(message.icons);
         start(String(message.name));
         break;
-    case 'state':
+    case 'state': {
+        // The panel is drawn again only when what it shows changed, so the
+        // focus, a selection and a "Copied" stay while nothing changes.
+        const changed = JSON.stringify([message.icon, message.symbol, message.panel]) !==
+            JSON.stringify([iconName, symbolName, panel]);
         iconName = String(message.icon);
         symbolName = String(message.symbol);
         panel = message.panel;
-        announce();
-        renderPanel();
+        if (changed) {
+            announce();
+            renderPanel();
+        }
         break;
+    }
     case 'opened':
         hidePanel();
         break;
