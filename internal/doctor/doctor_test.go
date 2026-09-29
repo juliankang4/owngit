@@ -155,6 +155,36 @@ func TestPrivateNetworks(t *testing.T) {
 			t.Errorf("%q: %+v, want %+v", host, got, want)
 		}
 	}
+	// A private address whose prefix reaches past its private block names
+	// public addresses too, so it is no private network; ordinary private
+	// subnets of every block still are.
+	for prefix, want := range map[string]string{
+		"10.1.2.3/0":      "",
+		"10.1.2.3/7":      "",
+		"172.20.1.2/11":   "",
+		"192.168.1.2/15":  "",
+		"fd12:3456::1/1":  "",
+		"fd12:3456::1/6":  "",
+		"10.1.2.3/8":      "10.0.0.0/8",
+		"172.20.1.2/12":   "172.16.0.0/12",
+		"172.20.1.2/16":   "172.20.0.0/16",
+		"192.168.1.2/24":  "192.168.1.0/24",
+		"fd12:3456::1/7":  "fc00::/7",
+		"fd12:3456::1/64": "fd12:3456::/64",
+	} {
+		got := PrivateNetworks("", []Interface{{Name: "eth0", Zone: "home", Prefixes: []netip.Prefix{netip.MustParsePrefix(prefix)}}})
+		switch {
+		case want == "" && len(got) != 0:
+			t.Errorf("%s: %+v, want none", prefix, got)
+		case want != "" && (len(got) != 1 || got[0].Prefix.String() != want):
+			t.Errorf("%s: %+v, want %s", prefix, got, want)
+		}
+		if want == "" {
+			if finding := ufwFinding(got, "7654"); finding.Repair != "" || finding.Code != webui.MsgDoctorUFWManual {
+				t.Errorf("%s: %+v", prefix, finding)
+			}
+		}
+	}
 	// A computer on a public network only gets no command at all.
 	public := PrivateNetworks("0.0.0.0", interfaces[1:3])
 	finding := ufwFinding(public, "7654")

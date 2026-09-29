@@ -283,7 +283,8 @@ func networkList(networks []Network) string {
 // private network of an up interface for an every-address listener (IPv4
 // only for 0.0.0.0), or the network of the address host names. Loopback,
 // link-local, public and shared (100.64.0.0/10, as Tailscale uses)
-// addresses are never private networks here.
+// addresses are never private networks here, nor is a network that reaches
+// past a private block.
 func PrivateNetworks(host string, interfaces []Interface) []Network {
 	listen, err := netip.ParseAddr(host)
 	if host != "" && err != nil {
@@ -306,6 +307,11 @@ func PrivateNetworks(host string, interfaces []Interface) []Network {
 				continue
 			}
 			network := Network{Prefix: netip.PrefixFrom(address, prefix.Bits()).Masked()}
+			// A private address with a wider prefix, such as 10.1.2.3/0,
+			// would name public addresses too.
+			if !privateBlock(network.Prefix) {
+				continue
+			}
 			if !containsNetwork(networks, network.Prefix) {
 				network.Zone = link.Zone
 				networks = append(networks, network)
@@ -313,6 +319,22 @@ func PrivateNetworks(host string, interfaces []Interface) []Network {
 		}
 	}
 	return networks
+}
+
+// privateBlocks are the private address blocks (RFC 1918, RFC 4193).
+var privateBlocks = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("fc00::/7"),
+}
+
+// privateBlock reports whether prefix lies wholly inside a private block.
+func privateBlock(prefix netip.Prefix) bool {
+	for _, block := range privateBlocks {
+		if prefix.Bits() >= block.Bits() && block.Contains(prefix.Addr()) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsNetwork(networks []Network, prefix netip.Prefix) bool {
