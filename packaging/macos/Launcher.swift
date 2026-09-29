@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // sign-in launch: it keeps a hidden icon hidden.
         openedAtSignIn = event?.eventID == kAEOpenApplication
             && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
-            || CommandLine.arguments.contains(afterUpdateArgument)
+            || CommandLine.arguments.contains(atSignInArgument)
         popover.behavior = .transient
         // The panel changes size with its state, often right after it
         // opens; without the animation every new size applies at once.
@@ -463,17 +463,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// the settings view shows the switch off meanwhile, and turning it on
     /// there shows the reason.
     /// When the app now runs from another place than the one registered,
-    /// as after a Homebrew upgrade, the registration is renewed for this
-    /// place, unless the owner turned it off in the panel. One turned off in
-    /// System Settings stays off there.
+    /// as after it was moved, the registration is renewed for this place,
+    /// unless the owner turned it off in the panel. One turned off in System
+    /// Settings stays off there.
     private func setUpSignInOnce() {
         let defaults = UserDefaults.standard
-        let here = Bundle.main.bundlePath
+        let here = SignInItem.place
         let configured = defaults.bool(forKey: signInConfiguredKey)
         if configured && defaults.string(forKey: signInPathKey) == here || defaults.bool(forKey: signInOffKey) {
             return
         }
-        if (try? SMAppService.mainApp.register()) != nil {
+        if (try? SignInItem.register()) != nil {
             defaults.set(true, forKey: signInConfiguredKey)
             defaults.set(here, forKey: signInPathKey)
         }
@@ -492,7 +492,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        open.arguments = ["-n", stable.path, "--args", afterUpdateArgument]
+        open.arguments = ["-n", stable.path, "--args", atSignInArgument]
         guard (try? open.run()) != nil else {
             return false
         }
@@ -501,21 +501,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func signInState() -> SignIn {
-        switch SMAppService.mainApp.status {
-        case .enabled: return .on
-        case .requiresApproval: return .needsApproval
-        default: return .off
-        }
+        SignInItem.state()
     }
 
     private func setOpenAtSignIn(_ on: Bool) {
         var failure: String?
         do {
             if on {
-                try SMAppService.mainApp.register()
-                UserDefaults.standard.set(Bundle.main.bundlePath, forKey: signInPathKey)
+                try SignInItem.register()
+                UserDefaults.standard.set(SignInItem.place, forKey: signInPathKey)
             } else {
-                try SMAppService.mainApp.unregister()
+                try SignInItem.unregister()
             }
             UserDefaults.standard.set(!on, forKey: signInOffKey)
         } catch {
@@ -595,6 +591,58 @@ private func runCommand(_ executable: URL, _ arguments: [String]) -> HelperResul
     return HelperResult(status: process.terminationStatus, output: data, errorOutput: errorText)
 }
 
+/// SignInItem opens the icon at sign-in. For most places it is the app's
+/// own login item (SMAppService). macOS runs a Homebrew app from its
+/// versioned Cellar folder, which an upgrade removes, and such an item
+/// names that folder; a Homebrew icon is therefore opened by a LaunchAgent
+/// that names Homebrew's stable folder, so it survives an upgrade while the
+/// icon is not running.
+enum SignInItem {
+    static let stableApp = homebrewStableFolder(app: Bundle.main.bundleURL)?.appendingPathComponent("OwnGit.app")
+    static let agentURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/LaunchAgents/\(iconAgentLabel).plist")
+
+    /// place is the app the item opens.
+    static var place: String { stableApp?.path ?? Bundle.main.bundlePath }
+
+    static func register() throws {
+        guard let stableApp else {
+            try SMAppService.mainApp.register()
+            return
+        }
+        let agent = iconAgent(app: stableApp.path, bundleID: Bundle.main.bundleIdentifier ?? "")
+        let data = try PropertyListSerialization.data(fromPropertyList: agent, format: .xml, options: 0)
+        try FileManager.default.createDirectory(at: agentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: agentURL, options: .atomic)
+        // An item an earlier icon registered names a versioned folder.
+        if SMAppService.mainApp.status != .notRegistered {
+            try? SMAppService.mainApp.unregister()
+        }
+    }
+
+    static func unregister() throws {
+        if FileManager.default.fileExists(atPath: agentURL.path) {
+            try FileManager.default.removeItem(at: agentURL)
+        }
+        // An item that is not registered cannot be unregistered.
+        if [.enabled, .requiresApproval].contains(SMAppService.mainApp.status) {
+            try SMAppService.mainApp.unregister()
+        }
+    }
+
+    static func state() -> SignIn {
+        var status = SMAppService.mainApp.status
+        if stableApp != nil && status != .enabled {
+            status = SMAppService.statusForLegacyPlist(at: agentURL)
+        }
+        switch status {
+        case .enabled: return .on
+        case .requiresApproval: return .needsApproval
+        default: return .off
+        }
+    }
+}
+
 @main
 struct OwnGitLauncher {
     static func main() {
@@ -605,15 +653,14 @@ struct OwnGitLauncher {
             for key in [signInConfiguredKey, signInPathKey, signInOffKey] {
                 UserDefaults.standard.removeObject(forKey: key)
             }
-            // An item that is not registered cannot be unregistered, so the
-            // answer is what macOS reports afterwards.
             var failure = ""
             do {
-                try SMAppService.mainApp.unregister()
+                try SignInItem.unregister()
             } catch {
                 failure = error.localizedDescription
             }
-            if SMAppService.mainApp.status == .enabled {
+            // The answer is what macOS reports afterwards.
+            if SignInItem.state() != .off {
                 FileHandle.standardError.write(Data("macOS still opens the icon at sign-in. \(failure)\n".utf8))
                 exit(1)
             }

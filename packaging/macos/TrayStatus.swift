@@ -332,9 +332,28 @@ func helperArguments(_ repair: String?) -> [String]? {
 /// exit (service.AppSignInOff).
 let signInOffArgument = "--sign-in-off"
 
-/// afterUpdateArgument marks an icon that opened itself again after an
-/// update removed the folder it ran from.
-let afterUpdateArgument = "--after-update"
+/// atSignInArgument marks a launch the owner did not ask for: by the
+/// Homebrew sign-in item, or an icon opening itself again after an upgrade
+/// removed the folder it ran from. Like a sign-in launch it keeps a hidden
+/// icon hidden and repairs nothing.
+let atSignInArgument = "--at-sign-in"
+
+/// iconAgentLabel names the LaunchAgent that opens a Homebrew icon at
+/// sign-in.
+let iconAgentLabel = "app.owngit.icon"
+
+/// iconAgent is that LaunchAgent: it opens the app at Homebrew's stable
+/// place, which every upgrade keeps, in the owner's desktop session.
+/// System Settings lists it under the app's name.
+func iconAgent(app: String, bundleID: String) -> [String: Any] {
+    [
+        "Label": iconAgentLabel,
+        "ProgramArguments": ["/usr/bin/open", app, "--args", atSignInArgument],
+        "RunAtLoad": true,
+        "LimitLoadToSessionType": "Aqua",
+        "AssociatedBundleIdentifiers": [bundleID],
+    ]
+}
 
 /// The icon's own settings: whether it registered to open at sign-in, and
 /// from which place.

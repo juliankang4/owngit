@@ -654,6 +654,8 @@ require(program("/opt/homebrew/opt/owngit/OwnGit.app", ["/opt/homebrew/opt/owngi
 require(program("/opt/x/OwnGit.app", []) == "/opt/x/OwnGit.app/Contents/Helpers/owngit", "no program")
 require(program("/opt/homebrew/Cellar/owngit/1.1.3/OwnGit.app", ["/opt/homebrew/opt/owngit/bin/owngit", "/opt/homebrew/Cellar/owngit/1.1.3/bin/owngit"]) == "/opt/homebrew/opt/owngit/bin/owngit", "Homebrew's stable folder, which survives an upgrade")
 require(homebrewStableFolder(app: URL(fileURLWithPath: "/opt/homebrew/Cellar/owngit/1.1.3/OwnGit.app"))?.path == "/opt/homebrew/opt/owngit" && homebrewStableFolder(app: URL(fileURLWithPath: "/Applications/OwnGit.app")) == nil, "the stable folder only for Homebrew's Cellar")
+let signInAgent = iconAgent(app: "/opt/homebrew/opt/owngit/OwnGit.app", bundleID: "app.owngit.OwnGit")
+require(signInAgent["Label"] as? String == "app.owngit.icon" && signInAgent["ProgramArguments"] as? [String] == ["/usr/bin/open", "/opt/homebrew/opt/owngit/OwnGit.app", "--args", "--at-sign-in"] && signInAgent["RunAtLoad"] as? Bool == true && signInAgent["LimitLoadToSessionType"] as? String == "Aqua" && signInAgent["AssociatedBundleIdentifiers"] as? [String] == ["app.owngit.OwnGit"], "the Homebrew sign-in item opens the stable app as a sign-in launch")
 
 // Who may change the way to a program (the rule of state.RequireProtectedPath).
 let me: uid_t = 501, own: gid_t = 501
