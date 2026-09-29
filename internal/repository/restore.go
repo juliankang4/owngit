@@ -256,19 +256,62 @@ func (m *Manager) restoreSourceCommit(ctx context.Context, repositoryPath, sourc
 	return source, nil
 }
 
+// readBranch returns the tip of targetRef, found by its exact name among the
+// repository's refs, so storage that ignores letter case cannot answer with
+// a look-alike branch. A target that shares its RefNameKey, or that of a
+// folder, with another ref or with the branch HEAD names is refused: on such
+// storage the two are one file, and updating one would change the other.
+// The caller holds the repository lock.
 func (m *Manager) readBranch(ctx context.Context, repositoryPath, targetRef string) (string, bool, error) {
-	_, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show-ref", "--verify", "--quiet", targetRef)
+	limits := gitexec.CommandLimits{OutputLimit: 64 << 20}
+	result, err := m.Git.RunWithLimits(ctx, repositoryPath, nil, limits, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)")
 	if err != nil {
-		if gitAnsweredNo(ctx, err) {
-			return "", false, nil
+		return "", false, fmt.Errorf("read repository refs: %w", err)
+	}
+	tips := map[string]string{}
+	var names []string
+	for _, line := range strings.Split(strings.TrimSuffix(string(result.Stdout), "\n"), "\n") {
+		if line == "" {
+			continue
 		}
-		return "", false, fmt.Errorf("read target branch: %w", err)
+		name, oid, ok := strings.Cut(line, "\x00")
+		if !ok || !isOID(oid) {
+			return "", false, errors.New("Git returned a malformed ref record")
+		}
+		tips[name] = oid
+		names = append(names, name)
 	}
-	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", targetRef)
-	if err != nil {
-		return "", false, fmt.Errorf("resolve target branch: %w", err)
+	head, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--quiet", "HEAD")
+	switch {
+	case err == nil:
+		names = append(names, strings.TrimSpace(string(head.Stdout)))
+	case !gitAnsweredNo(ctx, err):
+		return "", false, fmt.Errorf("read the default branch: %w", err)
 	}
-	return strings.TrimSpace(string(result.Stdout)), true, nil
+	if other := lookAlikeRef(names, targetRef); other != "" {
+		return "", false, fmt.Errorf("%w: the branch %s and the existing %s have names that some file systems treat as the same; delete or rename one of them first",
+			ErrRestoreInvalid, strings.TrimPrefix(targetRef, "refs/heads/"), strings.TrimPrefix(other, "refs/heads/"))
+	}
+	oid, exists := tips[targetRef]
+	return oid, exists, nil
+}
+
+// lookAlikeRef returns a name in existing, or a folder of one, that is
+// spelled differently from name or one of its folders but shares its
+// RefNameKey, or "" when there is none (see RefNameConflicts).
+func lookAlikeRef(existing []string, name string) string {
+	levels := map[string]string{}
+	for _, level := range refNameLevels(name) {
+		levels[RefNameKey(level)] = level
+	}
+	for _, other := range existing {
+		for _, level := range refNameLevels(other) {
+			if spelling, ok := levels[RefNameKey(level)]; ok && spelling != level {
+				return level
+			}
+		}
+	}
+	return ""
 }
 
 func (m *Manager) selectedRestoreTree(ctx context.Context, repositoryPath, sourceOID, targetOID string, paths []string) (string, map[string]bool, error) {
