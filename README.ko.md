@@ -39,7 +39,7 @@ OwnGit은 혼자 또는 작은 그룹이 쓰는 셀프 호스팅 Git 서버(self
 
 ## 설치
 
-컨테이너를 빼면 어느 방법으로 설치하든 호스트에 실행 가능한 `git-http-backend`가 들어 있는 Git이 필요합니다. Homebrew와 Arch Linux 패키지는 Git을 함께 설치하고 컨테이너 이미지에는 Git이 들어 있습니다. 가장 빠른 방법은 한 줄 설치입니다. 다른 방법은 그 아래에 있습니다.
+컨테이너를 빼면 어느 방법으로 설치하든 호스트에 실행 가능한 `git-http-backend`가 들어 있는 Git이 필요합니다. Homebrew, Arch Linux 패키지, Proxmox VE 도우미 스크립트는 Git을 함께 설치하고 컨테이너 이미지에는 Git이 들어 있습니다. 가장 빠른 방법은 한 줄 설치입니다. 다른 방법은 그 아래에 있습니다.
 
 ### 한 줄 설치
 
@@ -110,13 +110,15 @@ Docker가 OwnGit을 백그라운드에서 계속 실행하므로 [빠른 시작]
 
 ### Proxmox VE
 
-Proxmox VE 호스트의 셸에서 root로 다음을 실행하세요. 권한 없는(unprivileged) Debian 13 컨테이너를 만들고, 한 줄 설치 스크립트로 그 안에 OwnGit을 설치한 뒤 설정 링크를 보여 줍니다.
+Proxmox VE 호스트에서는 도우미 스크립트가 권한 없는(unprivileged) Debian 13 컨테이너를 만들고 한 줄 설치 스크립트로 그 안에 OwnGit을 설치합니다. OwnGit은 호스트와 함께 시작하는 서비스로 실행됩니다. Proxmox 웹 화면에 있는 노드의 Shell처럼 호스트의 셸에서 root로 다음을 실행하세요.
 
 ```sh
 /usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/proxmox.sh | /bin/sh
 ```
 
-저장소를 호스트의 폴더에 두는 방법 같은 옵션과 업데이트 방법은 [Proxmox VE에서 실행하기](docs/OPERATIONS.ko.md#proxmox-ve에서-실행하기)에 있습니다.
+터미널에서 실행하면 스크립트가 마지막에 설정 링크를 보여 줍니다. OwnGit 릴리스에서 받은 것은 호스트에서 하나도 실행하지 않습니다. 중간에 실패하면 스크립트가 이번에 만든 컨테이너를 지웁니다.
+
+저장소를 호스트의 폴더에 두는 방법 같은 옵션, 컨테이너 안에서 OwnGit 명령을 실행하는 방법, 업데이트 방법은 [Proxmox VE에서 실행하기](docs/OPERATIONS.ko.md#proxmox-ve에서-실행하기)에 있습니다.
 
 ### 업데이트와 제거
 
@@ -128,6 +130,7 @@ OwnGit은 스스로 업데이트하지 않습니다. 새 릴리스가 나오면 
 | npm | `npm install -g owngit@X.Y.Z` |
 | Arch Linux `PKGBUILD`(`owngit-bin`) | 새 릴리스의 `PKGBUILD`를 `makepkg -si`로 빌드합니다 |
 | 릴리스 압축 파일이나 한 줄 설치 | 새 릴리스의 설치 스크립트를 실행합니다. 스크립트는 압축 파일을 `SHA256SUMS`와 대조한 뒤 그 안의 `owngit`으로 지금 파일을 바꿉니다. Windows에서는 새 릴리스를 지금 폴더 옆의 새 폴더에 풉니다 |
+| Proxmox VE 도우미 스크립트 | 위의 설치 스크립트 명령을 컨테이너의 셸(`pct enter ID`)에서 실행합니다. 명령은 `pct exec ID -- /usr/local/bin/owngit update`로 볼 수 있습니다 |
 | 컨테이너 이미지 | `compose.yaml`이 있는 폴더에서 `docker compose pull && docker compose up -d`를 실행합니다. 새 이미지로 컨테이너를 다시 만들고 데이터 볼륨은 그대로 둡니다 |
 
 서비스가 이 OwnGit을 실행하고 있으면 명령이 `owngit service install`도 실행해 서비스를 새 버전으로 다시 시작합니다.

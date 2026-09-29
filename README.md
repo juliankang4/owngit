@@ -39,7 +39,7 @@ To try it, pick an [install](#install) route and follow the [Quickstart](#quicks
 
 ## Install
 
-Every route except the container needs Git with an executable `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you, and the container image includes it. The one-line installer is the quickest route; the others follow.
+Every route except the container needs Git with an executable `git-http-backend` on the host. Homebrew, the Arch Linux package and the Proxmox VE helper install Git for you, and the container image includes it. The one-line installer is the quickest route; the others follow.
 
 ### One-line installer
 
@@ -110,13 +110,15 @@ Docker keeps OwnGit running in the background, so this route skips `owngit servi
 
 ### Proxmox VE
 
-On a Proxmox VE host, run this as root in the host's shell. It creates an unprivileged Debian 13 container, installs OwnGit in it with the one-line installer, and prints the setup link:
+On a Proxmox VE host, a helper script creates an unprivileged Debian 13 container, installs OwnGit in it with the one-line installer, and runs it as a service that starts with the host. Run it as root in the host's shell, for example the node's Shell in the Proxmox web interface:
 
 ```sh
 /usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/proxmox.sh | /bin/sh
 ```
 
-[Run on Proxmox VE](docs/OPERATIONS.md#run-on-proxmox-ve) lists its options, such as keeping the repositories in a folder of the host, and how to update.
+Run from a terminal, the script ends with the setup link. Nothing from the OwnGit release runs on the host itself, and a failed run removes the container it created.
+
+[Run on Proxmox VE](docs/OPERATIONS.md#run-on-proxmox-ve) lists its options, such as keeping the repositories in a folder of the host, and explains how to run OwnGit's commands in the container and how to update it.
 
 ### Update and remove
 
@@ -128,6 +130,7 @@ OwnGit never updates itself. When a newer release exists, the dashboard shows a 
 | npm | `npm install -g owngit@X.Y.Z` |
 | The Arch Linux `PKGBUILD` (`owngit-bin`) | builds the new release's `PKGBUILD` with `makepkg -si` |
 | A release archive or the one-line installer | runs the new release's installer, which checks the archive against `SHA256SUMS` and puts its `owngit` in place of this one; on Windows it unpacks the new release into a folder beside the current one |
+| The Proxmox VE helper | the installer command above, run in the container's shell (`pct enter ID`); `pct exec ID -- /usr/local/bin/owngit update` prints it |
 | The container image | `docker compose pull && docker compose up -d`, run in the folder of `compose.yaml`; it recreates the container with the new image and keeps the data volume |
 
 When a service runs this OwnGit, the command also runs `owngit service install`, which restarts the service with the new version.
