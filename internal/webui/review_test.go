@@ -113,6 +113,7 @@ var settingsActions = []struct {
 	{ActionChangeAdminPassword, AccessOpen},
 	{ActionAcknowledgeInsecure, AccessOpen},
 	{ActionSetUpdateCheck, AccessOpen},
+	{ActionSetTrayIcon, AccessOpen},
 	{ActionSaveNetwork, AccessOpen},
 }
 

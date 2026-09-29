@@ -86,7 +86,15 @@ type App struct {
 	UpdateCommand func(version string) (command, start string, restart bool)
 	// Diagnose runs the checkup of this computer that "owngit doctor"
 	// runs, from this server's own facts. Nil shows no checkup.
-	Diagnose    func(ctx context.Context) []webui.Finding
+	Diagnose func(ctx context.Context) []webui.Finding
+	// TrayToken is the token of state.TrayAccessFile that TrayStatusPath
+	// answers to. Empty leaves that path unanswered.
+	TrayToken string
+	// TrayDesktop is true when this computer has a desktop where the tray
+	// icon can show (service.Environment.Desktop).
+	TrayDesktop bool
+	// trayCheckup is the checkup the tray status reuses.
+	trayCheckup trayCheckup
 	HTTPTimeout time.Duration
 	// ImportRunTimeout is the deadline of an import run started by this
 	// server. The request itself keeps ImportResponseMargin more, so a run
@@ -350,6 +358,10 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	if strings.HasPrefix(request.URL.Path, "/assets/") {
 		app.Renderer.Assets().ServeHTTP(writer, cloneWithPath(request, strings.TrimPrefix(request.URL.Path, "/assets")))
+		return
+	}
+	if request.URL.Path == TrayStatusPath {
+		app.handleTrayStatus(writer, request)
 		return
 	}
 

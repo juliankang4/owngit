@@ -13,6 +13,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 	r := newRenderer(t)
 	own := map[string][]string{
 		GroupUpdate:     {"update_check"},
+		GroupTray:       {"tray_icon"},
 		GroupAccess:     {"access_mode", "access_password"},
 		GroupAdmin:      {"new_admin_password"},
 		GroupConfirm:    {"admin_confirmation", "no_ask_ack"},

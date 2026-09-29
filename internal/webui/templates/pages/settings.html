@@ -171,6 +171,29 @@
   </form>
 </section>
 
+{{/* The OwnGit icon belongs to the computer that runs OwnGit, whichever
+     browser changes it. The switch is how a hidden icon comes back, since
+     the icon itself is gone while hidden. */}}
+{{$ti := $p.Tray}}{{$gn := forAction $p.Group "tray" $p.Notices}}{{$focus := firstError $gn "tray_icon" "admin_password"}}
+{{$on := draft $p.Group $p.Draft "tray" "tray_icon" (onOff $ti.Shown)}}
+<section class="grp" id="grp-tray" aria-labelledby="grp-tray-h" data-group="tray"{{if hasError $gn}} data-group-refused{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "tray" "Title" (bi $lang "settings.tray.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.tray.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $ti.Unreadable}}
+    <p class="setblock__now">{{icon "info"}}{{bi $lang "settings.tray.unreadable"}}</p>
+  {{end}}
+  {{if not $ti.Desktop}}
+    <p class="setblock__d">{{bi $lang "settings.tray.no_desktop"}}</p>
+  {{end}}
+  <form class="gform" method="post" action="{{tabURL "general"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="set_tray_icon">
+    {{template "switch" dict "Lang" $lang "ID" "tray-icon" "Name" "tray_icon" "On" (eq $on "on") "Saved" (onOff $ti.Shown) "Label" (bi $lang "settings.tray.switch") "Help" (bi $lang "settings.tray.help") }}
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "tray" "Notices" $gn "Focus" $focus "Cancel" (tabURL "general")}}
+  </form>
+</section>
+
 {{/* The checkup is "owngit doctor" of the computer where OwnGit runs: each
      problem with the one command that repairs it there. OwnGit never runs a
      repair from the browser. The findings hold that computer's paths, so an

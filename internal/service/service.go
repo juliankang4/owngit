@@ -149,6 +149,26 @@ func (env Environment) Headless() bool {
 	return !env.GraphicalSession && !(display && !ssh)
 }
 
+// Desktop reports whether this computer has a desktop where the OwnGit icon
+// of this account can show, whichever session asks: unlike Headless, a
+// terminal reached over SSH does not change the answer. On Linux a graphical
+// session must exist (see GraphicalSession), or a display be set outside
+// SSH, and not for root inside a container; on macOS this user must be
+// logged in at the desktop. Every Windows computer has a desktop. Other
+// platforms have no icon.
+func (env Environment) Desktop() bool {
+	switch {
+	case env.Windows:
+		return true
+	case env.Darwin:
+		return env.GraphicalSession
+	case !env.Linux || env.EUID == 0 && env.InContainer:
+		return false
+	}
+	display := env.Getenv("DISPLAY") != "" || env.Getenv("WAYLAND_DISPLAY") != ""
+	return env.GraphicalSession || display && !env.ssh()
+}
+
 // ShowsBrowser reports whether a browser that this process opens appears
 // on a screen that a person sees: this session has a visible desktop and
 // is not headless.

@@ -36,6 +36,13 @@ const (
 	MsgSettingsUpdateSwitch MessageCode = "settings.update.switch"
 	MsgSettingsUpdateScope  MessageCode = "settings.update.scope"
 
+	MsgSettingsTrayTitle      MessageCode = "settings.tray.title"
+	MsgSettingsTrayScope      MessageCode = "settings.tray.scope"
+	MsgSettingsTraySwitch     MessageCode = "settings.tray.switch"
+	MsgSettingsTrayHelp       MessageCode = "settings.tray.help"
+	MsgSettingsTrayNoDesktop  MessageCode = "settings.tray.no_desktop"
+	MsgSettingsTrayUnreadable MessageCode = "settings.tray.unreadable"
+
 	MsgSettingsAccessScope    MessageCode = "settings.access.scope"
 	MsgSettingsAccessMode     MessageCode = "settings.access.mode"
 	MsgSettingsAccessModePass MessageCode = "settings.access.mode_password"
@@ -130,6 +137,25 @@ var settingsCatalog = map[MessageCode]message{
 	MsgSettingsUpdateScope: {
 		en: "Whole server. Applies as soon as you save.",
 		ko: "서버 전체 설정이며 저장하면 바로 적용됩니다.",
+	},
+
+	MsgSettingsTrayTitle: {en: "OwnGit icon", ko: "OwnGit 아이콘"},
+	MsgSettingsTrayScope: {
+		en: "The computer that runs OwnGit, not the computer this browser is on.",
+		ko: "이 브라우저가 있는 컴퓨터가 아니라 OwnGit이 실행되는 컴퓨터에 적용됩니다.",
+	},
+	MsgSettingsTraySwitch: {en: "Show the OwnGit icon in the menu bar, notification area or panel", ko: "메뉴 막대, 알림 영역 또는 패널에 OwnGit 아이콘 표시"},
+	MsgSettingsTrayHelp: {
+		en: "Turn it on to show the icon again after it was hidden. Hiding the icon never stops OwnGit: Git and the dashboard keep working. On that computer, \"owngit tray on\" and \"owngit tray off\" do the same.",
+		ko: "숨긴 아이콘을 다시 보이게 하려면 켜세요. 아이콘을 숨겨도 OwnGit은 멈추지 않으며 Git과 대시보드는 그대로 동작합니다. 그 컴퓨터에서 \"owngit tray on\"과 \"owngit tray off\"로도 바꿀 수 있습니다.",
+	},
+	MsgSettingsTrayNoDesktop: {
+		en: "That computer has no desktop session now, so no icon shows there. It follows this setting once it has one.",
+		ko: "그 컴퓨터에는 지금 데스크톱 세션이 없어 아이콘이 보이지 않습니다. 데스크톱 세션이 생기면 이 설정을 따릅니다.",
+	},
+	MsgSettingsTrayUnreadable: {
+		en: "OwnGit could not read whether the icon is hidden. The OwnGit log says why. Saving sets it again.",
+		ko: "아이콘을 숨겼는지 읽지 못했습니다. 이유는 OwnGit 로그에 있으며, 저장하면 다시 설정됩니다.",
 	},
 
 	MsgSettingsAccessScope: {

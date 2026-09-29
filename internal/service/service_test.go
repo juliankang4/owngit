@@ -47,6 +47,33 @@ func TestHeadlessDetection(t *testing.T) {
 	}
 }
 
+// A computer with a desktop stays one when asked over SSH: the OwnGit icon
+// belongs to the computer, not to the session that asks.
+func TestDesktopDetection(t *testing.T) {
+	ssh := map[string]string{"SSH_CONNECTION": "192.0.2.10 50000 192.0.2.20 22"}
+	desktop := map[string]string{"WAYLAND_DISPLAY": "wayland-1"}
+	for _, test := range []struct {
+		name string
+		env  Environment
+		want bool
+	}{
+		{"Linux service on a desktop", Environment{Getenv: environ(nil), EUID: 1000, Linux: true, GraphicalSession: true}, true},
+		{"SSH into a Linux desktop", Environment{Getenv: environ(ssh), EUID: 1000, Linux: true, GraphicalSession: true}, true},
+		{"Linux server", Environment{Getenv: environ(nil), EUID: 1000, Linux: true}, false},
+		{"SSH into a Linux server", Environment{Getenv: environ(ssh), EUID: 1000, Linux: true}, false},
+		{"a display without logind", Environment{Getenv: environ(desktop), EUID: 1000, Linux: true}, true},
+		{"root in a container", Environment{Getenv: environ(desktop), EUID: 0, Linux: true, InContainer: true, GraphicalSession: true}, false},
+		{"Mac logged in at the desktop", Environment{Getenv: environ(ssh), EUID: 501, Darwin: true, GraphicalSession: true}, true},
+		{"Mac without a desktop login", Environment{Getenv: environ(nil), EUID: 501, Darwin: true}, false},
+		{"Windows over SSH", Environment{Getenv: environ(ssh), Windows: true, NoDesktop: true}, true},
+		{"another platform", Environment{Getenv: environ(desktop), EUID: 1000}, false},
+	} {
+		if got := test.env.Desktop(); got != test.want {
+			t.Errorf("%s: Desktop() = %v, want %v", test.name, got, test.want)
+		}
+	}
+}
+
 func TestChooseMode(t *testing.T) {
 	desktop := Environment{Getenv: environ(map[string]string{"DISPLAY": ":0"}), EUID: 1000, Linux: true, GraphicalSession: true}
 	ssh := Environment{Getenv: environ(map[string]string{"SSH_CONNECTION": "x"}), EUID: 1000, Linux: true, GraphicalSession: true}

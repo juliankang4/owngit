@@ -409,7 +409,7 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgSetupCompleted), {Kind: webui.NoticeWarning, Code: webui.MsgSetupFileRemains}}
 	case "repository_created":
 		return []webui.Notice{webui.Success(webui.MsgRepoCreated)}
-	case "settings_saved":
+	case "settings_saved", "tray_saved":
 		return []webui.Notice{webui.Success(webui.MsgSettingsSaved)}
 	case "network_saved":
 		return []webui.Notice{webui.Success(webui.MsgNetSaved)}

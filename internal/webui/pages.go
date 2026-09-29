@@ -188,6 +188,10 @@ const (
 	// Fields: admin_password, update_check ("on", or "off" or absent for
 	// off, as an unticked switch sends nothing).
 	ActionSetUpdateCheck = "set_update_check"
+	// ActionSetTrayIcon shows or hides the OwnGit icon on the computer
+	// that runs OwnGit. Fields: admin_password, tray_icon ("on", or "off"
+	// or absent for off).
+	ActionSetTrayIcon = "set_tray_icon"
 	// ActionSaveAccess saves the Access group: who can read and push, and
 	// a new shared password. It turns the shared password on, changes it or
 	// turns it off, as the fields ask. Fields: admin_password, access_mode
@@ -267,6 +271,7 @@ func SettingsTabOfPath(path string) (string, bool) {
 // never sends or resets another group's fields.
 const (
 	GroupUpdate     = "update"
+	GroupTray       = "tray"
 	GroupAccess     = "access"
 	GroupAdmin      = "admin"
 	GroupConfirm    = "confirm"
@@ -281,7 +286,7 @@ const (
 
 // settingsGroupTabs names the tab of each group.
 var settingsGroupTabs = map[string]string{
-	GroupUpdate: SettingsGeneral,
+	GroupUpdate: SettingsGeneral, GroupTray: SettingsGeneral,
 	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess, GroupConfirm: SettingsAccess, GroupSession: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
 	GroupBranch: SettingsRepositories, GroupTransfer: SettingsRepositories,
@@ -298,6 +303,8 @@ func SettingsActionGroup(action string) string {
 	switch action {
 	case ActionSetUpdateCheck:
 		return GroupUpdate
+	case ActionSetTrayIcon:
+		return GroupTray
 	case ActionSaveAccess, ActionEnableAccessPassword, ActionChangeAccessPassword, ActionDisableAccessPassword:
 		return GroupAccess
 	case ActionChangeAdminPassword:
@@ -350,6 +357,8 @@ type SettingsPage struct {
 	CloneHint string
 	// UpdateCheck is the new-release check setting.
 	UpdateCheck UpdateCheckInfo
+	// Tray is the OwnGit icon of the computer that runs OwnGit.
+	Tray TrayInfo
 	// Policies are the server-wide policies of the tab shown.
 	Policies Policies
 	// Network is the network settings block. See NetworkInfo.
@@ -400,6 +409,16 @@ type UpdateCheckInfo struct {
 	// ForcedOff is true when the server started with --no-update-check,
 	// which overrides the saved setting.
 	ForcedOff bool
+}
+
+// TrayInfo describes the OwnGit icon on the Settings page.
+type TrayInfo struct {
+	// Shown is false when the owner hid the icon.
+	Shown bool
+	// Desktop is true when the computer has a desktop to show it on.
+	Desktop bool
+	// Unreadable is true when whether it is hidden could not be read.
+	Unreadable bool
 }
 
 // Policies are the saved server-wide policies. Only the tab that shows a

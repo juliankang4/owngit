@@ -190,6 +190,8 @@ func runCommand(command string, arguments []string) error {
 		return restoreState(arguments)
 	case "upgrade-backup":
 		return upgradeBackupCommand(arguments)
+	case "tray":
+		return trayCommand(arguments)
 	case "pr":
 		return prCommand(arguments)
 	case "repo":
@@ -603,6 +605,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			return current.RepositoryRoot, err
 		}),
 		HeadlessListen: headlessListenInUse(headlessSetup, network),
+		TrayDesktop:    environment.Desktop(),
 		// First-run setup inside this process starts the same import runtime
 		// that an initialized startup starts above, and lets the release
 		// check run without waiting a day.
@@ -635,6 +638,17 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	gitHandler.Authorize = application.AuthorizeGit
 	gitHandler.OnReceive = noteChange
+	gitHandler.OnPush = application.RecordPush
+	// The tray icon of this computer reads the server's status with the
+	// token of the tray access file, which only this account can read.
+	// Without it Git and the dashboard work as before.
+	if target, err := localTarget(listener.Addr().String()); err != nil {
+		logf("the tray icon cannot read the status: %v", err)
+	} else if access, err := state.PublishTrayAccess(stateDirectory, "http://"+target); err != nil {
+		logf("the tray icon cannot read the status: %v", err)
+	} else {
+		application.TrayToken = access.Token
+	}
 	// Activity is counted in the background under the serving lifetime, so
 	// startup does not wait for it and the dashboard finds it ready.
 	application.StartBackground(ctx)
@@ -1275,7 +1289,7 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|service|health|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|upgrade-backup|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|settings|skill|mcp|update|uninstall|doctor|version] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|service|health|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|upgrade-backup|tray|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|settings|skill|mcp|update|uninstall|doctor|version] [options]")
 	fmt.Fprintln(writer, "Run owngit <command> --help for the options of a command.")
 }
 
@@ -1317,6 +1331,7 @@ var commandOperands = map[string]string{
 	"import credentials": "<name>",
 	"import resolve":     "<name>",
 	"upgrade-backup":     "[on|off]",
+	"tray":               "[on|off|status]",
 }
 
 // parseFlags parses a command's flags. On -h or --help it prints the

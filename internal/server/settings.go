@@ -214,6 +214,15 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		if err == nil && value == "on" && app.Releases != nil {
 			app.Releases.Wake()
 		}
+	case webui.ActionSetTrayIcon:
+		// An unticked switch sends nothing, which means off.
+		value := postValue(request, "tray_icon")
+		if value != "on" && value != "off" && value != "" {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+			return
+		}
+		err = app.setTrayHidden(value != "on")
+		notice = "tray_saved"
 	case webui.ActionSaveConfirmation:
 		err = app.Auth.SetAdminConfirmation(request.Context(), choice)
 		// A password typed for the new choice starts its window now, in
@@ -339,6 +348,7 @@ func settingsResultURL(action, notice string) string {
 // saved Settings change.
 var settingsNoticeGroups = map[string]string{
 	"settings_saved":         webui.GroupUpdate,
+	"tray_saved":             webui.GroupTray,
 	"access_enabled":         webui.GroupAccess,
 	"access_changed":         webui.GroupAccess,
 	"access_disabled":        webui.GroupAccess,
@@ -458,7 +468,7 @@ type settingsView struct {
 // sends nothing.
 var settingsDraftFields = map[string]bool{
 	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "general_session": false, "initial_branch": false,
-	"transfer_size": false, "transfer_size_unit": false, "transfer_time": false, "transfer_time_unit": false, "check_logs": false, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
+	"transfer_size": false, "transfer_size_unit": false, "transfer_time": false, "transfer_time_unit": false, "check_logs": false, "update_check": true, "tray_icon": true, "tailscale": true, "home_network": true, "insecure_ack": true,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.
@@ -530,6 +540,9 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 		page.CloneHint = app.serverOrigin(request) + "/git/"
 	}
 	page.UpdateCheck = webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil}
+	if tab == webui.SettingsGeneral {
+		page.Tray = app.trayInfo(request)
+	}
 	// The checkup reads this computer's firewall and folder owners, which
 	// can take a moment, so it runs only for the administrator, who alone
 	// sees it, and only on its tab.
