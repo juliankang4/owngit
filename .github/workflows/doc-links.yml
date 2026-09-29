@@ -2,14 +2,11 @@ name: Document links
 
 # Checks every relative link and heading anchor in the repository's Markdown,
 # by GitHub's anchor rules, and the links from Go source to documents, with
-# tools/doclinks. It runs on pull requests that change Markdown or Go source,
-# the two places such links are written.
+# tools/doclinks. It runs on every pull request, because renaming or removing
+# any file can break a link to it.
 
 on:
   pull_request:
-    paths:
-      - "**.md"
-      - "**.go"
   workflow_dispatch:
 
 permissions:
