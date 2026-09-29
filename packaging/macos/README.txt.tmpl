@@ -13,28 +13,43 @@ Apple's linker is not a publisher signature.
 {{- end}}
 
 Install
-  Copy OwnGit.app to your own ~/Applications folder with Finder. Installation
-  does not start OwnGit or add a Login Item.
+  Copy OwnGit.app to your Applications folder (or ~/Applications) with
+  Finder, then open it from there. OwnGit.app does not run from the disk
+  image, because the OwnGit service keeps starting the program inside it.
 
-Start and stop
-  Open OwnGit.app manually. The app starts the bundled OwnGit server with
-  browser opening enabled. Before setup is complete, it opens the private
-  setup file. After setup, it opens the dashboard after the server starts. Use
-  Quit OwnGit from the application menu to request a graceful stop.
+What opening the app does
+  OwnGit.app is the OwnGit icon in the menu bar. The server itself is the
+  OwnGit service, a LaunchAgent that runs {{.Helper}}
+  whenever you log in. The first time you open the app it installs that
+  service, starts it and opens setup in your browser. System Settings lists
+  the service as OwnGit under General, Login Items & Extensions. The icon
+  also opens at sign-in; turn that off in the icon's settings.
+
+The icon
+  Click the icon for the panel: whether OwnGit runs, the clone address with
+  a copy button, the three latest pushes and Open dashboard. The gear opens
+  this Mac's icon settings. Hide from the menu bar keeps the icon hidden,
+  also after the next login; turn on OwnGit icon in the dashboard's Settings,
+  run {{.Helper}} tray on, or open OwnGit.app
+  again to show it. Quit the icon closes it until you open the app or log in
+  again. Hiding or quitting the icon never stops OwnGit: clone and push keep
+  working.
+
+Stop
+  {{.Helper}} service stop stops OwnGit until the
+  next login.
 
 Upgrade
-  Quit OwnGit, retain the previous verified app until the new build starts,
-  and replace OwnGit.app. Replacing the app does not remove state or
+  Replace OwnGit.app with the new version and open it. The app restarts the
+  service with its new program. Replacing the app does not remove state or
   repositories. An older app is not promised to read state after a completed
   schema migration.
-  Earlier prototypes kept the helper binary at
-  OwnGit.app/Contents/Resources/bin/owngit. A service installed with that
-  binary no longer starts after the app is replaced; run
-  {{.Helper}} service install again.
 
 Remove
-  Quit OwnGit and move OwnGit.app to Trash. Remove a Login Item separately if
-  you created one. State and repositories are retained.
+  Run {{.Helper}} service uninstall first, then quit
+  the icon and move OwnGit.app to Trash. The service would otherwise keep
+  trying to start a program that is gone. State and repositories are
+  retained.
 
 Requirements
   Git must already be installed. Pull request merge requires Git 2.38 or newer.

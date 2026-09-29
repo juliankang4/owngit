@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// macLauncherSources are the Swift files of OwnGit.app's launcher, the menu
+// bar icon, in packaging/macos.
+var macLauncherSources = []string{"Launcher.swift", "Panel.swift", "TrayStatus.swift"}
+
 var appleBundleVersionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`)
 
 func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, error) {
@@ -75,12 +79,11 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 	if err := os.MkdirAll(filepath.Dir(launcherPath), 0o755); err != nil {
 		return nativeArtifact{}, err
 	}
-	launcherSource := filepath.Join(inputs.root, "packaging", "macos", "Launcher.swift")
-	lifecycleSource := filepath.Join(inputs.root, "packaging", "macos", "Lifecycle.swift")
-	if _, err := inputs.run(inputs.xcrun, []string{
-		"swiftc", "-O", "-gnone", "-framework", "AppKit", "-o", launcherPath,
-		launcherSource, lifecycleSource,
-	}, nil); err != nil {
+	arguments := []string{"swiftc", "-O", "-gnone", "-framework", "AppKit", "-framework", "ServiceManagement", "-o", launcherPath}
+	for _, source := range macLauncherSources {
+		arguments = append(arguments, filepath.Join(inputs.root, "packaging", "macos", source))
+	}
+	if _, err := inputs.run(inputs.xcrun, arguments, nil); err != nil {
 		return nativeArtifact{}, err
 	}
 	if err := os.Chmod(launcherPath, 0o755); err != nil {

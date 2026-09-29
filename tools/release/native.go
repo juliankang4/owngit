@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -252,13 +253,8 @@ func loadNativeInputsWithCleanup(root, manifestPath, baseline, goTool, xcrun, hd
 			return nativeInputs{}, fmt.Errorf("inspect hdiutil: %w", err)
 		}
 		inputs.macToolchain = firstNonemptyLine(toolchain)
-		for _, relative := range []string{
-			filepath.Join("packaging", "macos", "Launcher.swift"),
-			filepath.Join("packaging", "macos", "Lifecycle.swift"),
-			filepath.Join("packaging", "macos", "Info.plist.tmpl"),
-			filepath.Join("packaging", "macos", "README.txt.tmpl"),
-		} {
-			if _, err := readRegularInput(filepath.Join(root, relative)); err != nil {
+		for _, name := range append(slices.Clone(macLauncherSources), "Info.plist.tmpl", "README.txt.tmpl") {
+			if _, err := readRegularInput(filepath.Join(root, "packaging", "macos", name)); err != nil {
 				return nativeInputs{}, err
 			}
 		}

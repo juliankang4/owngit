@@ -474,18 +474,16 @@ func TestDebVerifierRejectsMemberOrder(t *testing.T) {
 
 func TestNativeLauncherCommandsOpenOwnerDashboard(t *testing.T) {
 	root := repoRoot(t)
-	launcher := readText(t, filepath.Join(root, "packaging", "macos", "Launcher.swift"))
-	if got := strings.Count(launcher, "process.arguments ="); got != 1 {
-		t.Fatalf("macOS launcher assigns process arguments %d times, want 1", got)
-	}
-	if !strings.Contains(launcher, `process.arguments = ["serve", "--open"]`) {
-		t.Fatal("macOS launcher does not use the exact serve --open arguments")
-	}
-	if strings.Contains(launcher, `process.arguments = ["serve"]`) {
-		t.Fatal("macOS launcher still starts serve without --open")
+	// The macOS app is the menu bar icon; the OwnGit service runs the
+	// server, so the app never starts one of its own.
+	for _, source := range macLauncherSources {
+		if body := readText(t, filepath.Join(root, "packaging", "macos", source)); strings.Contains(body, `"serve"`) {
+			t.Fatalf("%s starts a server", source)
+		}
 	}
 	// The launcher and the release tool must agree on where the app holds
 	// the owngit binary.
+	launcher := readText(t, filepath.Join(root, "packaging", "macos", "Launcher.swift"))
 	if !strings.Contains(launcher, `private let helperPath = "`+appHelperPath+`"`) {
 		t.Fatalf("macOS launcher does not start the binary at %s", appHelperPath)
 	}
@@ -509,29 +507,20 @@ func TestMacLauncherTypechecks(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("Swift AppKit launcher is a macOS input")
 	}
-	macosDir := filepath.Join(repoRoot(t), "packaging", "macos")
-	launcher := filepath.Join(macosDir, "Launcher.swift")
-	lifecycle := filepath.Join(macosDir, "Lifecycle.swift")
-	command := exec.Command("xcrun", "swiftc", "-typecheck", launcher, lifecycle)
-	if output, err := command.CombinedOutput(); err != nil {
+	arguments := []string{"swiftc", "-typecheck"}
+	for _, source := range macLauncherSources {
+		arguments = append(arguments, filepath.Join(repoRoot(t), "packaging", "macos", source))
+	}
+	if output, err := exec.Command("xcrun", arguments...).CombinedOutput(); err != nil {
 		t.Fatalf("swiftc typecheck: %v\n%s", err, output)
-	}
-	body := readText(t, launcher)
-	for _, required := range []string{"capturedOutputLimit = 4 * 1024", "process.arguments = [\"serve\", \"--open\"]", "server.terminate()", "terminationReason", "finishQuitAfterServerExit", "Quit OwnGit", "NSApp.activate", "NSAlert"} {
-		if !strings.Contains(body, required) {
-			t.Errorf("launcher does not contain %q", required)
-		}
-	}
-	for _, forbidden := range []string{"LaunchAgent", "SMAppService", "NSStatusItem", "Settings", "SIGKILL", "kill("} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("launcher contains forbidden lifecycle expansion %q", forbidden)
-		}
 	}
 }
 
-func TestMacLifecyclePolicyExecutable(t *testing.T) {
+// The icon's decisions, compiled from TrayStatus.swift with a fixture that
+// feeds it the answers of the server and of owngit doctor.
+func TestMacTrayStatusPolicyExecutable(t *testing.T) {
 	if runtime.GOOS != "darwin" {
-		t.Skip("Swift Process termination policy is a macOS launcher input")
+		t.Skip("the icon's status policy is a macOS launcher input")
 	}
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "main.swift")
@@ -540,30 +529,78 @@ func TestMacLifecyclePolicyExecutable(t *testing.T) {
 func require(_ condition: Bool, _ message: String) {
     if !condition { fatalError(message) }
 }
+func data(_ text: String) -> Data { Data(text.utf8) }
 
-require(launcherExitDisposition(shutdownRequested: true, status: 0, reason: .exit) == .finishQuit, "clean requested shutdown must finish Quit")
-require(launcherExitDisposition(shutdownRequested: true, status: 1, reason: .exit) == .reportFailure, "nonzero requested shutdown must report")
-require(launcherExitDisposition(shutdownRequested: true, status: 15, reason: .uncaughtSignal) == .reportFailure, "signal termination during Quit must report")
-require(launcherExitDisposition(shutdownRequested: false, status: 0, reason: .exit) == .reportFailure, "unexpected clean exit must report")
-require(launcherExitSummary(status: 7, reason: .exit).contains("status 7"), "exit summary must include status")
-require(launcherExitSummary(status: 15, reason: .uncaughtSignal).contains("signal 15"), "signal summary must include signal")
-let failure = launcherExitMessage(status: 1, reason: .exit, diagnostics: "cleanup failed")
-require(failure.contains("status 1") && failure.contains("cleanup failed"), "diagnostics must retain status and detail")
-print("lifecycle fixture passed")
+let running = """
+{"ok":true,"state":"running","version":"1.1.3","shown":true,"dashboard_url":"http://127.0.0.1:7654","clone_address":"http://127.0.0.1:7654/git/","setup_required":false,"update":null,
+ "findings":[{"code":"doctor.unchecked_firewall","message":"m","repair":"","unchecked":true}],
+ "pushes":[{"repository_id":"notes","repository":"notes","ref":"refs/heads/main","branch":"main","refs_updated":1,"pushed_at":"2026-09-29T11:10:15.123456Z","actor":{"kind":"access"},"actor_label":"General access"}]}
+"""
+guard case .status(let status) = statusAnswer(httpStatus: 200, body: data(running)) else { fatalError("a running answer must decode") }
+require(PanelState.status(status).name == .running && status.actionableFindings.isEmpty, "unchecked findings ask for nothing")
+require(parsePushTime(status.pushes[0].pushed_at) != nil && parsePushTime("2026-09-29T11:10:15Z") != nil, "push times with and without fractions")
+let attention = running.replacingOccurrences(of: "\"state\":\"running\"", with: "\"state\":\"attention\"")
+    .replacingOccurrences(of: "\"update\":null", with: "\"update\":{\"version\":\"1.1.4\",\"notes_url\":\"\",\"command\":\"\",\"start\":\"\",\"restart\":false,\"guide_url\":\"https://example.invalid\"}")
+guard case .status(let needs) = statusAnswer(httpStatus: 200, body: data(attention)) else { fatalError("an attention answer must decode") }
+require(PanelState.status(needs).name == .attention && needs.update?.version == "1.1.4", "attention keeps the update")
+
+require(statusAnswer(httpStatus: nil, body: nil) == .noConnection, "no connection")
+require(statusAnswer(httpStatus: 401, body: data("{}")) == .unauthorized, "401")
+for code in [403, 404, 405, 421, 503, -1] {
+    require(statusAnswer(httpStatus: code, body: data(running)) == .unavailable, "status \(code) is unavailable")
+}
+require(statusAnswer(httpStatus: 200, body: data("service unavailable")) == .unavailable, "a body that is not the status")
+require(statusAnswer(httpStatus: 200, body: data(running.replacingOccurrences(of: "\"running\"", with: "\"stopped\""))) == .unavailable, "an unknown state")
+
+func doctor(_ findings: String, running: Bool = false) -> PanelState {
+    doctorState(output: data("{\"version\":\"1.1.3\",\"running\":\(running),\"findings\":[\(findings)]}"))
+}
+require(doctor("{\"code\":\"doctor.not_running\",\"message\":\"m\",\"repair\":\"owngit service start\"}") == .stopped(start: ["service", "start"]), "stopped service")
+require(doctor("{\"code\":\"doctor.not_running\",\"message\":\"m\",\"repair\":\"owngit service install\"}") == .stopped(start: ["service", "install"]), "no service")
+require(doctor("{\"code\":\"doctor.not_running\",\"message\":\"m\",\"repair\":\"sh -c anything\"}") == .unavailable(why: .noAnswer), "a repair the icon does not know is never run")
+require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\",\"repair\":\"owngit service restart\"}") == .unavailable(why: .silent(restart: ["service", "restart"])), "silent")
+require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\"}") == .unavailable(why: .silent(restart: [])), "silent without a service")
+require(doctor("{\"code\":\"doctor.address_taken\",\"message\":\"m\"}") == .unavailable(why: .addressTaken), "address taken")
+require(doctor("{\"code\":\"doctor.unchecked_server\",\"message\":\"why\",\"unchecked\":true}") == .unavailable(why: .unchecked(detail: "why")), "unchecked")
+require(doctor("", running: true) == .unavailable(why: .noAnswer), "running again")
+require(doctorState(output: nil) == .unavailable(why: .noAnswer), "doctor failed")
+require(doctorState(output: data("{\"ok\":false}")) == .unavailable(why: .noAnswer), "doctor error JSON")
+
+let helper = "/Applications/OwnGit.app/Contents/Helpers/owngit"
+let ours = InstalledAgent(program: helper, stateDir: nil)
+let otherApp = InstalledAgent(program: "/opt/other/OwnGit.app/Contents/Helpers/owngit", stateDir: nil)
+let brew = InstalledAgent(program: "/opt/homebrew/opt/owngit/bin/owngit", stateDir: nil)
+let start = PanelState.stopped(start: ["service", "start"])
+require(launchRepair(state: start, agent: nil, helper: helper, version: "1.1.3") == ["service", "start"], "start what doctor names")
+require(launchRepair(state: start, agent: brew, helper: helper, version: "1.1.3") == ["service", "start"], "start a Homebrew binary's service as it is")
+require(launchRepair(state: start, agent: otherApp, helper: helper, version: "1.1.3") == ["service", "install"], "move the service to the app that was opened")
+require(launchRepair(state: .status(status), agent: ours, helper: helper, version: "1.1.3") == nil, "a current service is left alone")
+require(launchRepair(state: .status(status), agent: ours, helper: helper, version: "1.1.4") == ["service", "install"], "a replaced app restarts its service")
+require(launchRepair(state: .status(status), agent: otherApp, helper: helper, version: "1.1.3") == ["service", "install"], "another app's service")
+require(launchRepair(state: .status(status), agent: brew, helper: helper, version: "1.1.4") == nil, "another program's service is the owner's choice")
+require(launchRepair(state: .unavailable(why: .noAnswer), agent: otherApp, helper: helper, version: "1.1.4") == nil, "nothing when the state is unknown")
+
+let plist = """
+<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>ProgramArguments</key><array>
+<string>/Applications/OwnGit.app/Contents/Helpers/owngit</string><string>serve</string><string>--state-dir</string><string>/tmp/s &amp; t</string></array></dict></plist>
+"""
+require(readInstalledAgent(data(plist)) == InstalledAgent(program: helper, stateDir: "/tmp/s & t"), "agent program and state directory")
+require(readInstalledAgent(data("nope")) == nil, "not an agent")
+require(Words.forLanguages(["ko-KR", "en"]).lang == "ko" && Words.forLanguages(["en-US", "ko"]).lang == "en" && Words.forLanguages([]).lang == "en", "language")
+print("tray status fixture passed")
 `
 	noErr(t, os.WriteFile(fixture, []byte(program), 0o600))
-	binary := filepath.Join(dir, "lifecycle-fixture")
-	lifecycle := filepath.Join(repoRoot(t), "packaging", "macos", "Lifecycle.swift")
-	command := exec.Command("xcrun", "swiftc", lifecycle, fixture, "-o", binary)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("compile lifecycle fixture: %v\n%s", err, output)
+	binary := filepath.Join(dir, "tray-status-fixture")
+	source := filepath.Join(repoRoot(t), "packaging", "macos", "TrayStatus.swift")
+	if output, err := exec.Command("xcrun", "swiftc", source, fixture, "-o", binary).CombinedOutput(); err != nil {
+		t.Fatalf("compile tray status fixture: %v\n%s", err, output)
 	}
 	output, err := exec.Command(binary).CombinedOutput()
 	if err != nil {
-		t.Fatalf("run lifecycle fixture: %v\n%s", err, output)
+		t.Fatalf("run tray status fixture: %v\n%s", err, output)
 	}
-	if string(output) != "lifecycle fixture passed\n" {
-		t.Fatalf("lifecycle fixture output = %q", output)
+	if string(output) != "tray status fixture passed\n" {
+		t.Fatalf("tray status fixture output = %q", output)
 	}
 }
 
