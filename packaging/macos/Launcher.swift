@@ -64,13 +64,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var waiting: [(PanelState) -> Void]?
     private let client = StatusClient(timeout: statusTimeout)
 
-    func applicationWillFinishLaunching(_ notification: Notification) {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // The open event that started the app is current only now, not yet
+        // in applicationWillFinishLaunching.
         let event = NSAppleEventManager.shared().currentAppleEvent
         openedAtSignIn = event?.eventID == kAEOpenApplication
             && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
-    }
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
         popover.behavior = .transient
         // The panel changes size with its state, often right after it
         // opens; without the animation every new size applies at once.
