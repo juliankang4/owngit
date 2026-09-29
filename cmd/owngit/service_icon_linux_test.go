@@ -58,4 +58,14 @@ func TestServiceInstallRegistersTheIconAtSignIn(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) || !strings.Contains(fixture.out.String(), "needs gjs with GTK 4") {
 		t.Fatalf("without gjs (%v):\n%s", err, fixture.out.String())
 	}
+
+	shared := t.TempDir()
+	noErr(t, os.WriteFile(filepath.Join(shared, "gjs"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	noErr(t, os.Chmod(shared, 0o777))
+	t.Setenv("PATH", shared)
+	fixture.out.Reset()
+	fixture.host.installIcon(stateDir, false)
+	if _, err := os.Stat(path); !os.IsNotExist(err) || !strings.Contains(fixture.out.String(), "does not start gjs at "+filepath.Join(shared, "gjs")) {
+		t.Fatalf("a gjs others can replace (%v):\n%s", err, fixture.out.String())
+	}
 }

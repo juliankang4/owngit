@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -123,5 +124,77 @@ func TestLinuxIconRefusals(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if err := Run(Options{StateDir: newStateDir(t), Stop: make(chan struct{})}); !errors.Is(err, ErrNoToolkit) {
 		t.Errorf("without gjs: %v", err)
+	}
+}
+
+// The icon runs only a gjs that no other account can replace: the file,
+// every folder above it and every link on the way.
+func TestLinuxIconRunsOnlyAProtectedGJS(t *testing.T) {
+	root := t.TempDir()
+	mark := filepath.Join(root, "ran")
+	program := []byte("#!/bin/sh\necho ran > " + mark + "\nexit 0\n")
+	folder := func(name string, mode os.FileMode) string {
+		dir := filepath.Join(root, name)
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, mode); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	write := func(path string, mode os.FileMode) {
+		if err := os.WriteFile(path, program, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	own := folder("own", 0o755)
+	write(filepath.Join(own, "gjs"), 0o755)
+	shared := folder("shared", 0o777)
+	write(filepath.Join(shared, "gjs"), 0o755)
+	writable := folder("writable", 0o755)
+	write(filepath.Join(writable, "gjs"), 0o757)
+	linked := folder("linked", 0o755)
+	if err := os.Symlink(filepath.Join(shared, "gjs"), filepath.Join(linked, "gjs")); err != nil {
+		t.Fatal(err)
+	}
+	system, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, path string
+		safe       bool
+	}{
+		{"a system program", system, true},
+		{"a program in a folder of this account", filepath.Join(own, "gjs"), true},
+		{"a folder every account can write", filepath.Join(shared, "gjs"), false},
+		{"a file every account can write", filepath.Join(writable, "gjs"), false},
+		{"a link into a folder every account can write", filepath.Join(linked, "gjs"), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolved, err := protectedProgram(test.path)
+			if test.safe {
+				if err != nil || !filepath.IsAbs(resolved) {
+					t.Fatalf("refused: %q, %v", resolved, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrUnsafeToolkit) || !strings.Contains(err.Error(), test.path) {
+				t.Fatalf("accepted or unclear: %q, %v", resolved, err)
+			}
+			t.Setenv("PATH", filepath.Dir(test.path))
+			problem := IconProblem()
+			runErr := Run(Options{StateDir: newStateDir(t), Stop: make(chan struct{})})
+			if !strings.Contains(problem, test.path) || !errors.Is(runErr, ErrUnsafeToolkit) || strings.Contains(problem, "\n") {
+				t.Fatalf("problem %q, run %v", problem, runErr)
+			}
+			if _, err := os.Stat(mark); !os.IsNotExist(err) {
+				t.Fatal("the unsafe gjs ran")
+			}
+		})
 	}
 }

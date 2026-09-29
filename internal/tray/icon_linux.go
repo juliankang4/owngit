@@ -50,8 +50,12 @@ const toolkitCheck = "imports.gi.versions.Gtk = '4.0'; imports.gi.Gtk;"
 // ErrNoToolkit means this desktop lacks gjs or GTK 4, which draw the icon.
 var ErrNoToolkit = errors.New("the OwnGit icon on Linux needs gjs with GTK 4 (the gjs package of the distribution); OwnGit keeps running without the icon")
 
+// ErrUnsafeToolkit means the gjs on PATH is one that another account could
+// replace, so running it would run that account's code as this one.
+var ErrUnsafeToolkit = errors.New("the OwnGit icon does not start gjs")
+
 // IconProblem says why the icon cannot show on this computer, or "" when it
-// can: gjs must be on PATH and load GTK 4.
+// can: gjs must be on PATH, safe from other accounts, and load GTK 4.
 func IconProblem() string {
 	if _, err := toolkit(); err != nil {
 		return err.Error()
@@ -59,11 +63,18 @@ func IconProblem() string {
 	return ""
 }
 
-// toolkit finds gjs on PATH and checks that it loads GTK 4.
+// toolkit finds gjs on PATH and checks that it loads GTK 4. It returns the
+// file the links lead to, and runs nothing that another account could
+// change: that file and every folder and link on the way to it must pass
+// state.RequireProtectedPath, as the system's /usr/bin/gjs does.
 func toolkit() (string, error) {
-	gjs, err := exec.LookPath("gjs")
+	found, err := exec.LookPath("gjs")
 	if err != nil {
 		return "", ErrNoToolkit
+	}
+	gjs, err := protectedProgram(found)
+	if err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -71,6 +82,23 @@ func toolkit() (string, error) {
 		return "", ErrNoToolkit
 	}
 	return gjs, nil
+}
+
+// protectedProgram returns the file that path leads to when no other
+// account can change it or the way to it.
+func protectedProgram(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("%w at %s: %v; OwnGit keeps running without the icon", ErrUnsafeToolkit, path, err)
+	}
+	if err := state.RequireProtectedPath(absolute); err != nil {
+		return "", fmt.Errorf("%w at %s: %v; OwnGit keeps running without the icon", ErrUnsafeToolkit, absolute, err)
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("%w at %s: %v; OwnGit keeps running without the icon", ErrUnsafeToolkit, absolute, err)
+	}
+	return resolved, nil
 }
 
 // reading is one result of the poller.
@@ -117,7 +145,8 @@ type linuxIcon struct {
 // Run shows the icon of the server of options.StateDir until the icon is
 // quit or options.Stop closes. It returns ErrAlreadyRunning when the icon
 // of that state directory already runs in this desktop session, and
-// ErrNoToolkit when gjs or GTK 4 is missing.
+// ErrNoToolkit when gjs or GTK 4 is missing, and ErrUnsafeToolkit when
+// another account could replace gjs.
 func Run(options Options) error {
 	gjs, err := toolkit()
 	if err != nil {
