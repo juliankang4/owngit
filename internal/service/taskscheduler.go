@@ -408,6 +408,97 @@ const FirewallShowScript = firewallRules + `$rule = $owned | Select-Object -Firs
 if ($rule) { $rule.ApplicationName; $rule.Profiles; $rule.Enabled; $rule.Direction; $rule.Action }
 `
 
+// FirewallAccessScript prints what decides whether other devices reach
+// the program: on the first line the network profiles in use and the
+// profiles where Windows Firewall is on, as two NET_FW_PROFILE_TYPE2
+// masks; then one line per enabled inbound rule that names the program or
+// no program (action, profiles, protocol, local ports), tab-separated.
+// Rules of a Windows service apply only to that service and are left out.
+const FirewallAccessScript = `$ErrorActionPreference = 'Stop'
+$policy = New-Object -ComObject HNetCfg.FwPolicy2
+$on = 0; foreach ($kind in 1, 2, 4) { if ($policy.FirewallEnabled($kind)) { $on = $on -bor $kind } }
+"$($policy.CurrentProfileTypes) $on"
+$program = $env:` + FirewallProgramVariable + `
+foreach ($rule in $policy.Rules) {
+  if ($rule.Direction -ne 1 -or -not $rule.Enabled -or $rule.ServiceName) { continue }
+  $app = [Environment]::ExpandEnvironmentVariables([string]$rule.ApplicationName)
+  if ($app -and $app -ne $program) { continue }
+  "$($rule.Action)` + "`t" + `$($rule.Profiles)` + "`t" + `$($rule.Protocol)` + "`t" + `$($rule.LocalPorts)"
+}
+`
+
+// FirewallAccess is what FirewallAccessScript prints, for one TCP port.
+// Each field is a NET_FW_PROFILE_TYPE2 mask.
+type FirewallAccess struct {
+	// Active are the profiles of the networks in use, and On those where
+	// Windows Firewall is on.
+	Active, On int
+	// Allowed and Blocked are the profiles where a rule allows or blocks
+	// the program on the port.
+	Allowed, Blocked int
+}
+
+// Closed returns the profiles in use, with the firewall on, where devices
+// cannot reach the program: a rule blocks it, or none allows it. Windows
+// Firewall lets a block rule win over an allow rule.
+func (access FirewallAccess) Closed() int {
+	guarded := access.Active & access.On
+	return guarded&access.Blocked | guarded&^access.Allowed
+}
+
+// ParseFirewallAccess reads FirewallAccessScript's output for port.
+func ParseFirewallAccess(output, port string) (FirewallAccess, error) {
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(output, "\r", "")), "\n")
+	var access FirewallAccess
+	if _, err := fmt.Sscanf(lines[0], "%d %d", &access.Active, &access.On); err != nil {
+		return FirewallAccess{}, fmt.Errorf("unexpected firewall profiles %q", lines[0])
+	}
+	for _, line := range lines[1:] {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 4 {
+			return FirewallAccess{}, fmt.Errorf("unexpected firewall rule %q", line)
+		}
+		action, actionErr := strconv.Atoi(fields[0])
+		profiles, profilesErr := strconv.Atoi(fields[1])
+		protocol, protocolErr := strconv.Atoi(fields[2])
+		if actionErr != nil || profilesErr != nil || protocolErr != nil {
+			return FirewallAccess{}, fmt.Errorf("unexpected firewall rule %q", line)
+		}
+		if protocol != firewallProtocolTCP && protocol != firewallProtocolAny || !portListed(fields[3], port) {
+			continue
+		}
+		if action == firewallActionAllow {
+			access.Allowed |= profiles
+		} else {
+			access.Blocked |= profiles
+		}
+	}
+	return access, nil
+}
+
+// portListed reports whether a rule's local ports, "*" or a comma list of
+// ports and ranges, include port. A rule without ports has "*".
+func portListed(ports, port string) bool {
+	want, err := strconv.Atoi(port)
+	if err != nil {
+		return false
+	}
+	for _, entry := range strings.Split(ports, ",") {
+		entry = strings.TrimSpace(entry)
+		low, high, isRange := strings.Cut(entry, "-")
+		first, firstErr := strconv.Atoi(low)
+		last := first
+		var lastErr error
+		if isRange {
+			last, lastErr = strconv.Atoi(high)
+		}
+		if entry == "*" || entry == "" || firstErr == nil && lastErr == nil && first <= want && want <= last {
+			return true
+		}
+	}
+	return false
+}
+
 // FirewallCollision reports whether a firewall script found a rule named
 // FirewallRuleName that is not OwnGit's.
 func FirewallCollision(output []byte) bool {
@@ -429,6 +520,8 @@ const (
 	firewallPrivateProfile = 2 // NET_FW_PROFILE2_PRIVATE
 	firewallDirectionIn    = 1 // NET_FW_RULE_DIRECTION_IN
 	firewallActionAllow    = 1 // NET_FW_ACTION_ALLOW
+	firewallProtocolTCP    = 6
+	firewallProtocolAny    = 256
 )
 
 // ParseFirewallRule reads FirewallShowScript's output. found is false when

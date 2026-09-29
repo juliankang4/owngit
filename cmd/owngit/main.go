@@ -206,6 +206,8 @@ func runCommand(command string, arguments []string) error {
 		return updateCommand(arguments)
 	case "uninstall":
 		return uninstallCommand(arguments)
+	case "doctor":
+		return doctorCommand(arguments)
 	default:
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", command)
@@ -572,7 +574,11 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
 		Releases:         releases,
 		UpdateCommand:    dashboardUpdateCommand(*asService),
-		HeadlessListen:   headlessListenInUse(headlessSetup, network),
+		Diagnose: serverDiagnosis(mustAbs(*stateDir), listener.Addr().String(), *asService, func(ctx context.Context) (string, error) {
+			current, err := store.Settings(ctx)
+			return current.RepositoryRoot, err
+		}),
+		HeadlessListen: headlessListenInUse(headlessSetup, network),
 		// First-run setup inside this process starts the same import runtime
 		// that an initialized startup starts above, and lets the release
 		// check run without waiting a day.
@@ -1193,7 +1199,7 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|service|health|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|upgrade-backup|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|skill|mcp|update|uninstall|version] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|service|health|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|upgrade-backup|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|skill|mcp|update|uninstall|doctor|version] [options]")
 	fmt.Fprintln(writer, "Run owngit <command> --help for the options of a command.")
 }
 

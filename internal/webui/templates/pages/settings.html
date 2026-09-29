@@ -170,6 +170,44 @@
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "update" "Notices" $gn "Focus" $focus "Cancel" (tabURL "general")}}
   </form>
 </section>
+
+{{/* The checkup is "owngit doctor" of the computer where OwnGit runs: each
+     problem with the one command that repairs it there. OwnGit never runs a
+     repair from the browser. The findings hold that computer's paths, so an
+     ordinary visitor is told where to confirm instead. */}}
+{{if or $p.Checkup.Visible (not .Chrome.Viewer.AdminConfirmed)}}
+<section class="grp" id="grp-checkup" aria-labelledby="grp-checkup-h">
+  <div class="grp__h"><h2 id="grp-checkup-h">{{bi $lang "doctor.title"}}</h2></div>
+  {{if $p.Checkup.Visible}}
+    <p class="scope">{{icon "info"}}<span>{{bi $lang "doctor.scope"}}</span></p>
+    {{range $i, $f := $p.Checkup.Findings}}
+    <div class="finding">
+      <p class="finding__t">{{statusIcon "warning"}}<span>{{biText $lang ($f.Sentence "en") ($f.Sentence "ko")}}</span></p>
+      {{with $f.Repair}}
+      <div class="clonefield finding__cmd" data-clone>
+        <label class="clonefield__l" for="checkup-repair-{{$i}}">{{bi $lang "doctor.repair"}}</label>
+        <div class="clonefield__row">
+          <input id="checkup-repair-{{$i}}" class="clonefield__v mono" type="text" readonly value="{{.}}"
+                 spellcheck="false" autocomplete="off" data-select-on-focus aria-describedby="checkup-repair-{{$i}}-help">
+          <button type="button" class="btn clonefield__copy" data-copy="checkup-repair-{{$i}}" hidden>{{icon "copy"}}<span>{{bi $lang "repo.overview.copy"}}</span></button>
+        </div>
+        <p class="clonefield__note" role="status">
+          <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
+          <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
+        </p>
+        <p class="clonefield__note" id="checkup-repair-{{$i}}-help">{{bi $lang "doctor.run_it"}}</p>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <p class="setblock__now">{{statusIcon "success"}}<span>{{bi $lang "doctor.clean"}}</span></p>
+    {{end}}
+  {{else}}
+    <p class="scope">{{icon "lock"}}<span>{{bi $lang "doctor.for_admin"}}</span></p>
+    {{with .Chrome.Nav.AdminLoginURL}}<div class="actions"><a class="btn" href="{{.}}">{{bi $lang "admin.title"}}{{template "adminLock" dict "Lang" $lang "Locked" true}}</a></div>{{end}}
+  {{end}}
+</section>
+{{end}}
 {{end}}
 
 {{/* ------------------------------------------------------------------ */}}

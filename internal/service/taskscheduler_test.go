@@ -285,3 +285,37 @@ func TestFirewallScriptsChangeOnlyOwnGitsRule(t *testing.T) {
 		t.Error("collision output misread")
 	}
 }
+
+// Only enabled inbound rules for TCP on the listen port count, whether
+// they name the program or no program; a block rule wins.
+func TestParseFirewallAccess(t *testing.T) {
+	output := "2 7\r\n" +
+		"1\t2\t256\t*\r\n" + // OwnGit's rule: any protocol, any port, private
+		"1\t4\t6\t80,443\r\n" + // a public web rule
+		"1\t4\t6\t7000-8000\r\n" + // a public range with the port
+		"0\t1\t17\t7654\r\n" + // UDP does not matter
+		"0\t1\t6\tRPC\r\n" // a keyword port does not match
+	access, err := ParseFirewallAccess(output, "7654")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (FirewallAccess{Active: 2, On: 7, Allowed: 6}); access != want {
+		t.Fatalf("access %+v, want %+v", access, want)
+	}
+	if closed := access.Closed(); closed != 0 {
+		t.Errorf("closed %d", closed)
+	}
+	access.Blocked = 2
+	if closed := access.Closed(); closed != 2 {
+		t.Errorf("a block rule: closed %d", closed)
+	}
+	if closed := (FirewallAccess{Active: 5, On: 7, Allowed: 2}).Closed(); closed != 5 {
+		t.Errorf("domain and public without a rule: closed %d", closed)
+	}
+	if _, err := ParseFirewallAccess("", "7654"); err == nil {
+		t.Error("empty output accepted")
+	}
+	if _, err := ParseFirewallAccess("2 7\n1\t2\n", "7654"); err == nil {
+		t.Error("a short rule line accepted")
+	}
+}

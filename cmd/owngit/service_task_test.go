@@ -31,6 +31,7 @@ type fakeWindows struct {
 	definition    string // the task XML, "" when there is none
 	state         string // TaskStateScript output
 	firewall      string // FirewallShowScript output
+	access        string // FirewallAccessScript output, "" when it fails
 	created       string // XML read from the file given to schtasks /Create
 	failRun       bool
 	runState      string // the state after schtasks /Run (default: Running)
@@ -68,7 +69,7 @@ func (fake *fakeWindows) script(args []string) string {
 	for name, text := range map[string]string{
 		"definition": service.TaskDefinitionScript, "state": service.TaskStateScript,
 		"firewall-show": service.FirewallShowScript, "firewall-allow": service.FirewallAllowScript,
-		"firewall-remove": service.FirewallRemoveScript,
+		"firewall-remove": service.FirewallRemoveScript, "firewall-access": service.FirewallAccessScript,
 	} {
 		if strings.HasSuffix(script, text) {
 			return name
@@ -97,6 +98,13 @@ func (fake *fakeWindows) run(_ context.Context, name string, args ...string) ([]
 			return []byte(fake.state), nil
 		case "firewall-show":
 			return []byte(fake.firewall), nil
+		case "firewall-access":
+			call += " " + fake.commandEnv[service.FirewallProgramVariable]
+			fake.calls[len(fake.calls)-1] = call
+			if fake.access == "" {
+				return []byte("Access is denied."), errors.New("exit status 1")
+			}
+			return []byte(fake.access), nil
 		case "firewall-allow", "firewall-remove":
 			// Like the scripts, nothing changes beside a rule of the same
 			// name that OwnGit did not add.
@@ -709,7 +717,7 @@ func TestTaskStatusExplainsAQueuedTask(t *testing.T) {
 	noErr(t, err)
 	out.Reset()
 	noErr(t, host.status())
-	if !strings.Contains(out.String(), "  Firewall: no rule for this owngit.exe, so other devices may be blocked; run \"owngit service install\" to add it\n") {
+	if !strings.Contains(out.String(), "  Firewall: no OwnGit rule for this owngit.exe; \"owngit doctor\" says whether other devices are blocked and how to let them in\n") {
 		t.Errorf("no firewall warning for a server on every address:\n%s", out.String())
 	}
 	// A server that answers is running, whatever state the task is in.
@@ -1176,7 +1184,7 @@ func TestTaskLeavesAFirewallRuleOwnGitDidNotAdd(t *testing.T) {
 	if !strings.Contains(out.String(), "exists that OwnGit did not add, so OwnGit adds and removes no rule of that name.") {
 		t.Errorf("install output:\n%s", out.String())
 	}
-	if err := host.allowThroughFirewall(); !errors.Is(err, errFirewallCollision) {
+	if err := host.allowThroughFirewallFor(host.serviceInstall.Executable); !errors.Is(err, errFirewallCollision) {
 		t.Errorf("allow beside the rule: %v", err)
 	}
 

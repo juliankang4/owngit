@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"fmt"
 	"html/template"
 	"time"
 )
@@ -325,6 +326,38 @@ type SettingsPage struct {
 	Network NetworkInfo
 	// Tailscale is the block for sharing on the tailnet. See TailscaleInfo.
 	Tailscale TailscaleInfo
+	// Checkup is what the checkup found on this computer. Only an
+	// administrator's General tab shows it.
+	Checkup CheckupInfo
+}
+
+// CheckupInfo is the checkup card of the General tab.
+type CheckupInfo struct {
+	// Visible is true for a confirmed administrator, who alone sees the
+	// findings, since they hold this computer's paths.
+	Visible bool
+	// Findings are the problems found, none when all is well.
+	Findings []Finding
+}
+
+// Finding is one problem that the checkup found on the computer where
+// OwnGit runs, with the one command that repairs it.
+type Finding struct {
+	// Code is the sentence, and Args fill its %s.
+	Code MessageCode `json:"code"`
+	Args []string    `json:"args,omitempty"`
+	// Repair is the command to run there, or "" when the sentence says
+	// what to change.
+	Repair string `json:"repair,omitempty"`
+}
+
+// Sentence is the finding in lang.
+func (finding Finding) Sentence(lang Lang) string {
+	args := make([]any, len(finding.Args))
+	for index, arg := range finding.Args {
+		args[index] = arg
+	}
+	return fmt.Sprintf(Text(lang, finding.Code), args...)
 }
 
 // UpdateCheckInfo describes the new-release check on the Settings page.

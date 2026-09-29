@@ -38,7 +38,7 @@ var helpCommands = []struct {
 	{"import", false}, {"import add", true}, {"import refresh", true}, {"import status", true},
 	{"import history", true}, {"import cancel", true}, {"import schedule", true},
 	{"import credentials", true}, {"import resolve", true},
-	{"skill", true}, {"mcp", true}, {"update", true},
+	{"skill", true}, {"mcp", true}, {"update", true}, {"doctor", true},
 }
 
 func TestEveryCommandPrintsHelpAndSucceeds(t *testing.T) {

@@ -1638,6 +1638,13 @@ span.hm__cell { cursor: default; }
 .gform { display: grid; gap: 12px; }
 .grp .setblock__now { justify-self: start; }
 
+/* A checkup finding: the sentence, then the command that repairs it. */
+.finding { display: grid; gap: 8px; }
+.finding + .finding { border-top: 1px solid var(--sep); padding-top: 12px; }
+.finding__t { display: flex; gap: 6px; max-width: 76ch; font-size: 12.5px; }
+.finding__t .icon { flex: none; margin-top: 2px; color: var(--warn); }
+.finding .finding__cmd { width: min(640px, 100%); }
+
 /* A labelled control beside its label on a wide window. */
 .f--row { grid-template-columns: minmax(170px, 34%) minmax(0, 1fr); align-items: center; column-gap: 16px; }
 .f--row > label { font-weight: 500; }

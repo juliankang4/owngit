@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -18,7 +17,6 @@ import (
 
 	"owngit/internal/server"
 	"owngit/internal/service"
-	"owngit/internal/state"
 	"owngit/internal/version"
 )
 
@@ -176,11 +174,15 @@ func (host *taskHost) prepareAdministrator() error {
 	return nil
 }
 
-// runPowerShell runs one of the fixed scripts of the service package.
+// runPowerShell runs one of the fixed scripts of the service package, with
+// the extra environment variables that the script reads.
 func (host *taskHost) runPowerShell(script string, extra ...string) ([]byte, error) {
 	arguments := service.PowerShellArguments(script)
-	if !host.env.Elevated {
+	switch {
+	case !host.env.Elevated && len(extra) == 0:
 		return serviceRunner(context.Background(), host.powershell(), arguments...)
+	case !host.env.Elevated:
+		return runWithEnvironment(context.Background(), append(os.Environ(), extra...), host.powershell(), arguments...)
 	}
 	environment, err := host.administratorEnvironment(extra...)
 	if err != nil {
@@ -256,15 +258,14 @@ func taskServiceCommand(action string, arguments []string) error {
 }
 
 // administratorStep runs one of the steps that need administrator rights,
-// "elevated-install", "elevated-uninstall" or "elevated-firewall", with the
-// arguments that the command asking for them passed.
+// "elevated-install" or "elevated-uninstall", with the arguments that the
+// command asking for them passed.
 func (host *taskHost) administratorStep(action string, arguments []string) error {
 	flags := flag.NewFlagSet("service "+action, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", "", "state directory the task passes")
 	headless := flags.Bool("headless", false, "the --headless value the task passes to the server")
 	installGit := flags.Bool("install-git", false, "install Git with winget when it is missing")
-	remove := flags.Bool("remove", false, "remove the firewall rule instead of adding it")
 	attach := flags.Int("attach", 0, "process whose console shows the output")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
@@ -282,19 +283,13 @@ func (host *taskHost) administratorStep(action string, arguments []string) error
 	if action == "elevated-install" {
 		return host.elevatedInstall(*stateDir, *headless, *installGit)
 	}
+	if action != "elevated-uninstall" {
+		return fmt.Errorf("unknown step %s", action)
+	}
 	if err := host.prepareAdministrator(); err != nil {
 		return err
 	}
-	switch {
-	case action == "elevated-uninstall":
-		return host.elevatedUninstall()
-	case action != "elevated-firewall":
-		return fmt.Errorf("unknown step %s", action)
-	case *remove:
-		return host.removeFirewallRule()
-	default:
-		return host.allowThroughFirewall()
-	}
+	return host.elevatedUninstall()
 }
 
 // withoutAdminRights runs an owngit command without administrator rights on
@@ -565,16 +560,27 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 // repository folder when the Administrators group owns them, as far as
 // this process can read them.
 func (host *taskHost) foldersOfAdministrators(stateDir string) []string {
-	var folders []string
-	for _, folder := range []string{stateDir, savedRepositoryRoot(stateDir)} {
+	folders, _ := host.administratorsFolders([]string{stateDir, savedRepositoryRoot(stateDir)})
+	return folders
+}
+
+// administratorsFolders returns those of folders that the Administrators
+// group owns. It skips a folder that does not exist and one whose owner
+// OwnGit never changes, and returns the other folders it could not read
+// in err.
+func (host *taskHost) administratorsFolders(folders []string) (owned []string, err error) {
+	for _, folder := range folders {
 		if folder == "" || ownershipRefusal(folder, host.env.Getenv) != "" {
 			continue
 		}
-		if owner, err := ownerOf(folder); err == nil && owner == administratorsSID {
-			folders = append(folders, folder)
+		switch owner, ownerErr := ownerOf(folder); {
+		case ownerErr == nil && owner == administratorsSID:
+			owned = append(owned, folder)
+		case ownerErr != nil && !errors.Is(ownerErr, os.ErrNotExist):
+			err = errors.Join(err, fmt.Errorf("%s: %w", folder, ownerErr))
 		}
 	}
-	return folders
+	return owned, err
 }
 
 // giveFolderToAccount makes the account the owner of folder and of what the
@@ -697,12 +703,8 @@ func (host *taskHost) runStep(name string, args ...string) error {
 	return nil
 }
 
-// allowThroughFirewall replaces OwnGit's inbound rule with one for this
-// owngit.exe on the Private profile. It needs administrator rights.
-func (host *taskHost) allowThroughFirewall() error {
-	return host.allowThroughFirewallFor(host.executable)
-}
-
+// allowThroughFirewallFor replaces OwnGit's inbound rule with one for
+// program on the Private profile. It needs administrator rights.
 func (host *taskHost) allowThroughFirewallFor(program string) error {
 	output, err := host.runPowerShell(service.FirewallAllowScript, service.FirewallProgramVariable+"="+program)
 	switch {
@@ -739,34 +741,21 @@ var errFirewallCollision = errors.New(firewallCollisionLine)
 // cannot be read, and foreign is true when a rule of the same name exists
 // that OwnGit did not add.
 func (host *taskHost) firewallRule() (rule service.FirewallRule, found, foreign bool) {
-	output, err := host.runPowerShell(service.FirewallShowScript)
-	if err != nil {
-		return service.FirewallRule{}, false, false
-	}
-	if service.FirewallCollision(output) {
-		return service.FirewallRule{}, false, true
-	}
-	rule, found = service.ParseFirewallRule(string(output))
-	return rule, found, false
+	rule, found, foreign, _ = host.readFirewallRule()
+	return rule, found, foreign
 }
 
-// ensureWindowsFirewallRule lets devices on private networks reach this
-// owngit.exe. It does nothing when the rule is already there; otherwise it
-// adds it, asking Windows once for administrator approval when needed. It
-// is for turning on access from other devices.
-func ensureWindowsFirewallRule(out io.Writer) error {
-	host, err := newTaskHost()
+// readFirewallRule is firewallRule with the error of reading it.
+func (host *taskHost) readFirewallRule() (rule service.FirewallRule, found, foreign bool, err error) {
+	output, err := host.runPowerShell(service.FirewallShowScript)
 	if err != nil {
-		return err
+		return service.FirewallRule{}, false, false, fmt.Errorf("read the Windows Firewall rule %q: %w: %s", service.FirewallRuleName, err, strings.TrimSpace(string(output)))
 	}
-	host.out = out
-	switch rule, found, foreign := host.firewallRule(); {
-	case foreign:
-		return errFirewallCollision
-	case found && rule.Allows(host.executable):
-		return nil
+	if service.FirewallCollision(output) {
+		return service.FirewallRule{}, false, true, nil
 	}
-	return host.asAdministrator([]string{"service", "elevated-firewall"}, "allow OwnGit through Windows Firewall on private networks")
+	rule, found = service.ParseFirewallRule(string(output))
+	return rule, found, false, nil
 }
 
 // stopTask asks a running server to stop, waits until the task no longer
@@ -876,27 +865,16 @@ func (host *taskHost) printTaskFacts(stateDir, address, executable string) {
 	case found && rule.Allows(executable):
 		host.printf("  Firewall: devices on private networks may connect (rule %q)\n", service.FirewallRuleName)
 	case listensBeyondThisComputer(stateDir):
-		host.printf("  Firewall: no rule for this owngit.exe, so other devices may be blocked; run \"owngit service install\" to add it\n")
+		host.printf("  Firewall: no OwnGit rule for this owngit.exe; \"owngit doctor\" says whether other devices are blocked and how to let them in\n")
 	}
 }
 
 // listensBeyondThisComputer reports whether the server of stateDir listens,
 // or will listen by its saved setting, on an address other devices reach.
 func listensBeyondThisComputer(stateDir string) bool {
-	if state.RequireExisting(stateDir) != nil {
-		return false
-	}
-	ctx := context.Background()
-	store, err := openLiveState(ctx, stateDir)
+	listen, err := serverListen(stateDir)
 	if err != nil {
 		return false
-	}
-	defer store.Close()
-	listen := server.DefaultListenAddress
-	if observed, err := store.ObserveRunningNetwork(ctx); err == nil && observed.Server == state.ServerRunning && observed.Record != nil {
-		listen = cmp.Or(observed.Record.Listen, observed.Record.Address)
-	} else if saved, err := store.NetworkSettings(ctx); err == nil && saved.Listen != "" {
-		listen = saved.Listen
 	}
 	host, _, err := net.SplitHostPort(listen)
 	return err == nil && !server.IsLoopbackHost(host)

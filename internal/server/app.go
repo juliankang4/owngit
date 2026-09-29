@@ -84,7 +84,10 @@ type App struct {
 	// starts afterwards when no service does: a program in a new place
 	// (start), or OwnGit where it runs (restart). Nil shows none.
 	UpdateCommand func(version string) (command, start string, restart bool)
-	HTTPTimeout   time.Duration
+	// Diagnose runs the checkup of this computer that "owngit doctor"
+	// runs, from this server's own facts. Nil shows no checkup.
+	Diagnose    func(ctx context.Context) []webui.Finding
+	HTTPTimeout time.Duration
 	// ImportRunTimeout is the deadline of an import run started by this
 	// server. The request itself keeps ImportResponseMargin more, so a run
 	// that reaches its deadline still returns its result. Zero uses the import

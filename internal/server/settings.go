@@ -493,6 +493,12 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 		page.CloneHint = app.serverOrigin(request) + "/git/"
 	}
 	page.UpdateCheck = webui.UpdateCheckInfo{Enabled: settings.UpdateCheck, ForcedOff: app.Releases == nil}
+	// The checkup reads this computer's firewall and folder owners, which
+	// can take a moment, so it runs only for the administrator, who alone
+	// sees it, and only on its tab.
+	if tab == webui.SettingsGeneral && chrome.Viewer.AdminConfirmed && app.Diagnose != nil {
+		page.Checkup = webui.CheckupInfo{Visible: true, Findings: app.Diagnose(request.Context())}
+	}
 	// Only the Network tab shows sharing on the tailnet, and reading it
 	// asks Tailscale, so the other tabs do not.
 	if tab == webui.SettingsNetwork {

@@ -55,7 +55,7 @@ func serviceCommand(arguments []string) error {
 		case "install", "uninstall", "status", "start", "stop", "restart",
 			// Internal steps: the report and restricted state read used by an
 			// elevated install, and the steps that run after the UAC prompt.
-			"report", "repository-root", "elevated-install", "elevated-uninstall", "elevated-firewall":
+			"report", "repository-root", "elevated-install", "elevated-uninstall":
 			return taskServiceCommand(action, rest)
 		}
 	}
@@ -838,7 +838,7 @@ func mustAbs(path string) string {
 var serviceStateCommands = map[string]bool{
 	"serve": true, "setup-link": true, "approve-host": true, "network": true, "tailscale": true,
 	"forget-check-container": true, "backup": true, "restore": true, "health": true,
-	"upgrade-backup": true,
+	"upgrade-backup": true, "doctor": true,
 }
 
 // stateDirArgument returns the value of --state-dir among arguments, or ""
