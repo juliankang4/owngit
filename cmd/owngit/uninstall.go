@@ -63,6 +63,11 @@ func programStaysLine(install service.Install, goos string, sudo bool) string {
 	return "The program " + program + " stays, because OwnGit did not put it there. To remove it, delete it (and the folder you unpacked it into, if you made one): " + command
 }
 
+// uninstallStateDir is the state directory that an uninstall without a
+// service reports: this account's default. Tests replace it, so that no test
+// reads the state of the account that runs it.
+var uninstallStateDir = func() string { return mustAbs(defaultStateDir()) }
+
 // dataStaysLine says where the data of stateDir is, for an uninstall that
 // found no service, or "" when there is no state there.
 func dataStaysLine(stateDir, repositories string) string {

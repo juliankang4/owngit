@@ -103,7 +103,7 @@ sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 
 새로 설치한 Windows에서는 누군가 화면에서 처음 로그인하기 전까지 부팅 작업이 "큐에 대기됨" 상태로 남습니다(SSH 로그인은 해당하지 않습니다). 그 뒤로는 바로, 그리고 부팅할 때마다 시작합니다. `owngit service install`과 `status`는 작업이 대기 중이면 알려 줍니다.
 
-업데이트하려면 새 릴리스를 `%ProgramFiles%\OwnGit` 밖에 설치하거나 압축을 푼 뒤 그 `owngit service install`을 실행하세요(`owngit service status`는 자기 버전이 보호된 복사본과 다르면 알려 주고, 보호 경로에서 실행한 `service install`은 거부합니다). 관리자 계정에서는 예전 서비스를 멈추고, 예전 폴더를 `OwnGit.old-TIMESTAMP`로 옮기고, 새 복사본을 설치하고, 방화벽 규칙을 새로 쓰고, 새 버전을 시작하며, 예전 폴더에 `owngit.exe`, `installed-from.txt`, `temp`만 남았으면 지웁니다. 표준 계정은 새 `owngit.exe`로 같은 명령을 실행합니다. 보호된 복사본 옆의 `installed-from.txt`에는 어느 `owngit.exe`를 복사했는지 적어 두므로, 실행 중인 서비스가 그 프로그램의 업데이트 방법을 보여 줄 수 있습니다. `owngit service uninstall`은 승인 한 번으로 작업, 방화벽 규칙, 보호된 복사본을 지우며 상태 디렉터리와 저장소는 남습니다.
+업데이트하려면 새 릴리스를 `%ProgramFiles%\OwnGit` 밖에 설치하거나 압축을 푼 뒤 그 `owngit service install`을 실행하세요(`owngit service status`는 자기 버전이 보호된 복사본과 다르면 알려 주고, 보호 경로에서 실행한 `service install`은 거부합니다). 관리자 계정에서는 예전 서비스를 멈추고, 예전 폴더를 `OwnGit.old-TIMESTAMP`로 옮기고, 새 복사본을 설치하고, 방화벽 규칙을 새로 쓰고, 새 버전을 시작하며, 예전 폴더에 `owngit.exe`, `installed-from.txt`, `temp`만 남았으면 지웁니다. 표준 계정은 새 `owngit.exe`로 같은 명령을 실행합니다. 보호된 복사본 옆의 `installed-from.txt`에는 어느 `owngit.exe`를 복사했는지 적어 두므로, 실행 중인 서비스가 그 프로그램의 업데이트 방법을 보여 줄 수 있습니다. `owngit service uninstall`은 승인 한 번으로 작업, 방화벽 규칙, 보호된 복사본을 지우며 상태 디렉터리와 저장소는 남습니다. 설치가 중간에 멈춰 작업 없이 보호된 복사본이나 규칙만 남았다면, 관리자 계정에서 같은 명령을 실행하면 그것도 지웁니다. OwnGit이 만들지 않은 파일이 함께 든 폴더는 남기고 그 사실을 알려 줍니다.
 
 ### macOS
 

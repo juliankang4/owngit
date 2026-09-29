@@ -906,15 +906,30 @@ func (host *taskHost) uninstall() error {
 	if err != nil {
 		return err
 	}
+	_, ruleFound, foreign := host.firewallRule()
 	if !found {
 		host.printf("OwnGit is not installed as a service.\n")
-		stateDir := mustAbs(defaultStateDir())
+		// An install that stopped partway can leave the service copy or
+		// the firewall rule without the task. OwnGit made them, so the same
+		// administrator step removes them.
+		_, err := os.Stat(host.serviceInstall.Directory)
+		switch {
+		case (err == nil || ruleFound) && host.env.Administrator:
+			if err := host.asAdministrator([]string{"service", "elevated-uninstall"}, "remove "+host.serviceInstall.Directory+" and the Windows Firewall rule that an earlier OwnGit service install left"); err != nil {
+				return err
+			}
+		case ruleFound:
+			host.printf("The Windows Firewall rule %q stays; an administrator can remove it with \"owngit service uninstall\".\n", service.FirewallRuleName)
+		case foreign:
+			host.printf("%s\n", firewallCollisionLine)
+		}
+		host.printServiceCopyLeft()
+		stateDir := uninstallStateDir()
 		if line := dataStaysLine(stateDir, host.repositoryRoot(stateDir)); line != "" {
 			host.printf("%s\n", line)
 		}
 		return nil
 	}
-	_, ruleFound, foreign := host.firewallRule()
 	removed := "The OwnGit service is stopped and removed"
 	switch {
 	case installed.Mode == service.ModeBootTask || ruleFound && host.env.Administrator:
@@ -943,13 +958,20 @@ func (host *taskHost) uninstall() error {
 		host.printf(" and the repositories in %s", repositories)
 	}
 	host.printf(".\n")
+	host.printServiceCopyLeft()
+	host.printf("Run \"owngit service install\" to use it again.\n")
+	return nil
+}
+
+// printServiceCopyLeft says what of the protected service folder is still
+// there: the copy, which only an administrator can delete, or the folder,
+// which holds files OwnGit did not create.
+func (host *taskHost) printServiceCopyLeft() {
 	if _, err := os.Stat(host.serviceInstall.Executable); err == nil {
 		host.printf("The service copy %s stays; an administrator can delete it.\n", host.serviceInstall.Executable)
 	} else if _, err := os.Stat(host.serviceInstall.Directory); err == nil {
 		host.printf("%s stays, because it holds files OwnGit did not create.\n", host.serviceInstall.Directory)
 	}
-	host.printf("Run \"owngit service install\" to use it again.\n")
-	return nil
 }
 
 // repositoryRoot is the saved repository folder of stateDir, read without

@@ -42,6 +42,9 @@ func TestMain(m *testing.M) {
 		return nil, errors.New("tests never run a service manager")
 	}
 	serviceRunning = func(service.Install) serviceState { return serviceState{} }
+	// An uninstall without a service reads the default state directory,
+	// which must never be the state of the account running the tests.
+	uninstallStateDir = func() string { return filepath.Join(os.TempDir(), "owngit-tests-have-no-default-state") }
 	pacmanOwner = func(string) string { return "" }
 	// The helper processes are this test binary.
 	if err := testfixture.SkipRaceExitWaitInChildren(); err != nil {

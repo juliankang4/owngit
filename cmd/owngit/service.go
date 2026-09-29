@@ -512,7 +512,7 @@ func (host *serviceHost) uninstall() error {
 // printDataStays says where the default state directory keeps its data,
 // for an uninstall that found no service.
 func (host *serviceHost) printDataStays() {
-	stateDir := mustAbs(defaultStateDir())
+	stateDir := uninstallStateDir()
 	if line := dataStaysLine(stateDir, savedRepositoryRoot(stateDir)); line != "" {
 		host.printf("%s\n", line)
 	}

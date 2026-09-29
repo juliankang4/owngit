@@ -1137,3 +1137,49 @@ func TestTaskLeavesAFirewallRuleOwnGitDidNotAdd(t *testing.T) {
 		t.Errorf("uninstall output:\n%s", out.String())
 	}
 }
+
+// An install that stopped partway can leave the service copy and OwnGit's
+// firewall rule without the task. Uninstall removes them as it would with the
+// task, keeps a folder that holds files OwnGit did not create, and without
+// administrator rights says what stays.
+func TestTaskUninstallRemovesWhatAStoppedInstallLeft(t *testing.T) {
+	for _, extra := range []bool{false, true} {
+		fake := newFakeWindows(t)
+		fake.firewall = testServiceExecutable + "\n2\nTrue\n1\n1\n"
+		host, out := testTaskHost(service.Environment{Administrator: true, Elevated: true})
+		serviceFolder(t, host)
+		noErr(t, os.WriteFile(filepath.Join(host.serviceInstall.Directory, service.ServiceCopyRecord), []byte(testUserExecutable), 0o600))
+		notes := filepath.Join(host.serviceInstall.Directory, "notes.txt")
+		if extra {
+			noErr(t, os.WriteFile(notes, []byte("the owner's file"), 0o600))
+		}
+		noErr(t, host.uninstall())
+		entries, err := os.ReadDir(host.serviceInstall.Directory)
+		switch {
+		case fake.firewall != "":
+			t.Errorf("extra=%t: the rule stayed", extra)
+		case !extra && !errors.Is(err, os.ErrNotExist):
+			t.Errorf("the folder stayed: %v %v", entries, err)
+		case extra && (len(entries) != 1 || entries[0].Name() != "notes.txt"):
+			t.Errorf("the folder holds %v, %v; want only notes.txt", entries, err)
+		}
+		want := "OwnGit is not installed as a service.\n"
+		if extra {
+			want += host.serviceInstall.Directory + " stays, because it holds files OwnGit did not create.\n"
+		}
+		if !strings.HasPrefix(out.String(), want) || !extra && strings.Contains(out.String(), "stays") {
+			t.Errorf("extra=%t output:\n%s", extra, out.String())
+		}
+	}
+
+	fake := newFakeWindows(t)
+	host, out := testTaskHost(service.Environment{})
+	serviceFolder(t, host)
+	noErr(t, host.uninstall())
+	if len(fake.elevated) != 0 || !strings.Contains(out.String(), "The service copy "+host.serviceInstall.Executable+" stays; an administrator can delete it.\n") {
+		t.Errorf("standard account: elevated %q, output:\n%s", fake.elevated, out.String())
+	}
+	if _, err := os.Stat(host.serviceInstall.Executable); err != nil {
+		t.Errorf("a standard account removed the copy: %v", err)
+	}
+}
