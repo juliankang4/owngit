@@ -38,7 +38,7 @@ OwnGit은 홈랩과 로컬 컴퓨터를 위한 셀프 호스팅 Git 서버입니
 
 어느 방법으로 설치하든 호스트에 실행 가능한 `git-http-backend`가 들어 있는 Git이 필요합니다. Homebrew와 Arch Linux 패키지는 Git을 함께 설치합니다.
 
-한 줄 설치 스크립트는 이 컴퓨터에 맞는 최신 릴리스를 내려받아 같은 릴리스의 `SHA256SUMS`와 대조한 뒤 `owngit`을 설치하고 `owngit service install`로 서비스를 시작합니다. 설정 링크는 마지막에 출력됩니다. Linux(x64, ARM64)와 macOS(Apple silicon)에서는 다음과 같이 실행합니다.
+한 줄 설치 스크립트는 이 컴퓨터에 맞는 최신 릴리스를 내려받아 같은 릴리스의 `SHA256SUMS`와 대조한 뒤 `owngit`을 설치하고 `owngit service install`로 서비스를 시작합니다. 터미널에서 실행했다면 마지막에 설정 링크가 출력됩니다. Linux(x64, ARM64)와 macOS(Apple silicon)에서는 다음과 같이 실행합니다.
 
 ```sh
 curl -fsSL https://owngit.app/install.sh | sh

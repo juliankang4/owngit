@@ -38,7 +38,7 @@ OwnGit is a self-hosted Git server for home labs and local machines. It keeps pr
 
 Every install route needs Git with an executable `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you.
 
-The one-line installer downloads the latest release for this computer, checks it against the release's `SHA256SUMS`, installs `owngit` and runs it as a service with `owngit service install`, which prints the setup link at the end. On Linux (x64, ARM64) and macOS (Apple silicon):
+The one-line installer downloads the latest release for this computer, checks it against the release's `SHA256SUMS`, installs `owngit` and runs it as a service with `owngit service install`, which prints the setup link at the end when you run it in a terminal. On Linux (x64, ARM64) and macOS (Apple silicon):
 
 ```sh
 curl -fsSL https://owngit.app/install.sh | sh

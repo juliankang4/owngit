@@ -43,7 +43,7 @@ curl -fsSL https://owngit.app/install.sh | sh -s -- --version 1.1.3 --no-service
 
 Running the installer again keeps the state and the repositories. It leaves the program alone when it is already that release, and after an upgrade `owngit service install` restarts the service with the new version, in the same mode and with the same state directory. The installer changes no PATH setting; when the program's folder is not on PATH, it says how to run it. On Windows, the folders of earlier releases stay until you delete them.
 
-The installer is in `packaging/installer/` of the source, and every release carries the same two files beside its archives. `SHA256SUMS` comes from the same release as the archive, so the check finds a damaged, incomplete or wrong download, but it is not an independent signature: whoever can change the release's files can change both. The macOS binary is also signed and notarized by Apple.
+The installer is in `packaging/installer/` of the source, and every release carries the same two files beside its archives. `SHA256SUMS` comes from the same release as the archive, so the check finds a damaged, incomplete or wrong download, but it is not an independent signature: whoever can change the release's files can change both. The macOS binary is also signed and notarized by Apple. `SHA256SUMS` does not cover the installer itself. To check it before it runs, download `install.sh` or `install.ps1` from the release, compare its SHA-256 with the one GitHub shows for that file on the release page (or compare the file with `packaging/installer/` at the release's tag), read it, and then run the file with `sh install.sh` or `& .\install.ps1`.
 
 ## First-time setup
 
