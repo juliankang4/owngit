@@ -133,11 +133,7 @@ func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) (bool, e
 				return
 			}
 			if !admitted {
-				if strings.HasPrefix(request.URL.Path, "/api/") {
-					writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
-				} else {
-					http.Error(writer, "unrecognized host\n"+webui.Text(refusedHostLang(request), webui.MsgHostRefusedHint), http.StatusMisdirectedRequest)
-				}
+				refuseHost(writer, request)
 				return
 			}
 		}
@@ -158,6 +154,14 @@ func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) (bool, e
 		writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		next.ServeHTTP(writer, request)
 	})
+}
+
+func refuseHost(writer http.ResponseWriter, request *http.Request) {
+	if strings.HasPrefix(request.URL.Path, "/api/") {
+		writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
+	} else {
+		http.Error(writer, "unrecognized host\n"+webui.Text(refusedHostLang(request), webui.MsgHostRefusedHint), http.StatusMisdirectedRequest)
+	}
 }
 
 // refusedHostLang is the language of the refused-Host page: the saved

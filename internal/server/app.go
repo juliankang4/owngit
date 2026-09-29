@@ -378,11 +378,7 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if version, admitted := containerAdmissionVersion(request.Context()); admitted && (settings.AccessMode != "password" || settings.AccessSessionVersion != version) {
-		if strings.HasPrefix(request.URL.Path, "/api/") {
-			writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
-		} else {
-			app.renderError(writer, request, http.StatusMisdirectedRequest, webui.MsgHostRefusedHint, "")
-		}
+		refuseHost(writer, request)
 		return
 	}
 	if strings.HasPrefix(request.URL.Path, "/api/") {
