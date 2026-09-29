@@ -354,6 +354,7 @@ const (
 	MsgActivityPreparing    MessageCode = "activity.preparing"
 	MsgActivityUnreadable   MessageCode = "activity.unreadable"
 	MsgActivitySkipped      MessageCode = "activity.skipped"
+	MsgActivityLeftOut      MessageCode = "activity.left_out"
 	MsgRepoNoBranches       MessageCode = "repo.no_branches"
 	MsgRepoNoTags           MessageCode = "repo.no_tags"
 	MsgRepoDefaultGone      MessageCode = "repo.default_branch_missing"
@@ -379,6 +380,7 @@ const (
 
 	MsgCommitsEmpty     MessageCode = "commits.empty"
 	MsgCommitNotFound   MessageCode = "commits.not_found"
+	MsgCommitUnreadable MessageCode = "commits.unreadable"
 	MsgCommitDiffBig    MessageCode = "commits.diff_truncated"
 	MsgCommitDiffNone   MessageCode = "commits.diff_unavailable"
 	MsgCommitDiffMerge  MessageCode = "commits.diff_merge"
@@ -450,6 +452,7 @@ const (
 	MsgActivityCounting   MessageCode = "activity.incomplete.counting"
 	MsgActivityCountRepo  MessageCode = "activity.incomplete.counting_repository"
 	MsgActivityScanFail   MessageCode = "activity.incomplete.scan_failed"
+	MsgActivityRepoFail   MessageCode = "activity.repository_unreadable"
 	MsgActivityUnavail    MessageCode = "activity.unavailable"
 	MsgActivityNotBuilt   MessageCode = "activity.unavailable.not_built"
 	MsgActivityNoChecks   MessageCode = "activity.no_check_claim"
@@ -1492,6 +1495,10 @@ var catalog = map[MessageCode]message{
 		en: "That commit does not exist in this repository.",
 		ko: "그 커밋은 이 저장소에 없습니다.",
 	},
+	MsgCommitUnreadable: {
+		en: "A commit could not be read because its author or committer date is missing or malformed:",
+		ko: "작성자 날짜나 커미터 날짜가 없거나 형식이 잘못되어 커밋을 읽지 못했습니다:",
+	},
 	MsgCommitDiffBig: {
 		en: "This change is too large to show completely.",
 		ko: "변경 내용이 너무 커서 전부 표시하지 못했습니다.",
@@ -1781,9 +1788,17 @@ var catalog = map[MessageCode]message{
 		en: "Repositories that are still being prepared or whose Git data could not be read are not counted.",
 		ko: "아직 준비 중이거나 Git 데이터를 읽지 못한 저장소는 집계하지 않았습니다.",
 	},
+	MsgActivityLeftOut: {
+		en: "Repositories that could not be read:",
+		ko: "읽지 못한 저장소:",
+	},
 	MsgActivityScanFail: {
 		en: "Some repositories could not be read while counting.",
 		ko: "집계하는 동안 일부 저장소를 읽지 못했습니다.",
+	},
+	MsgActivityRepoFail: {
+		en: "This repository's history could not be read while counting.",
+		ko: "집계하는 동안 이 저장소의 기록을 읽지 못했습니다.",
 	},
 	MsgActivityUnavail: {
 		en: "Activity is not available.",

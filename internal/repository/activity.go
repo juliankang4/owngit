@@ -167,7 +167,7 @@ func (m *Manager) activityLog(ctx context.Context, repositoryPath string, roots,
 		record := fields[offset : offset+5]
 		authored, err := ParseGitDate(record[2])
 		if err != nil {
-			return nil, false, fmt.Errorf("parse activity author date: %w", err)
+			return nil, false, unreadableCommit(string(record[0]), fmt.Errorf("author date: %w", err))
 		}
 		records = append(records, ActivityRecord{
 			OID: string(record[0]), Source: string(record[1]), AuthorName: string(record[3]), AuthoredAt: authored, Subject: string(record[4]),

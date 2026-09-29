@@ -103,13 +103,18 @@
     {{/* An incomplete count is stated plainly. A partial total must never
          read as the authoritative number. */}}
     {{if not $g.Complete}}
-      <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "activity.incomplete"}} {{bi $lang $g.IncompleteReason}}</span></p>
+      <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "activity.incomplete"}} {{bi $lang $g.IncompleteReason}}{{template "activityLeftOut" dict "Lang" $lang "G" $g}}</span></p>
     {{end}}
     <p class="hm__note">{{bi $lang "activity.no_check_claim"}}</p>
   {{else}}
-    <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang $g.UnavailableReason}}</span></p>
+    <p class="hm__warn">{{icon "warning"}}<span>{{bi $lang $g.UnavailableReason}}{{template "activityLeftOut" dict "Lang" $lang "G" $g}}</span></p>
   {{end}}
 </section>
+{{end}}
+
+{{/* The repositories a graph left out because they could not be read. */}}
+{{define "activityLeftOut"}}
+{{- with .G.Unreadable}} {{bi $.Lang "activity.left_out"}} {{range $i, $name := .}}{{if $i}}, {{end}}<span dir="auto">{{$name}}</span>{{end}}{{end -}}
 {{end}}
 
 {{/* One commit row in an activity list.

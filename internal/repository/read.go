@@ -554,6 +554,10 @@ func (m *Manager) CommitFiles(ctx context.Context, id, oid string) (Commit, []Ch
 		end += next + 1
 	}
 	commits, err := parseCommits(data[:end])
+	var unreadable *UnreadableCommitError
+	if errors.As(err, &unreadable) && len(unreadable.OIDs) == 1 && unreadable.OIDs[0] == oid {
+		return Commit{}, nil, err
+	}
 	if err != nil || len(commits) != 1 || commits[0].OID != oid {
 		return Commit{}, nil, notDescribed()
 	}

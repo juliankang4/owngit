@@ -82,7 +82,7 @@ func (m *Manager) readRefSnapshot(ctx context.Context, repositoryPath string) (s
 					snapshot.Head = Commit{OID: oid}
 					authored, err := ParseGitDate(parts[5])
 					if err != nil {
-						snapshot.HeadErr = fmt.Errorf("parse default branch author date: %w", err)
+						snapshot.HeadErr = unreadableCommit(oid, fmt.Errorf("author date: %w", err))
 					} else {
 						snapshot.Head = Commit{OID: oid, AuthorName: string(parts[4]), AuthoredAt: authored, Subject: string(parts[6])}
 						snapshot.HeadFound = true

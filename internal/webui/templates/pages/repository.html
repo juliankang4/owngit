@@ -363,7 +363,9 @@
     {{end}}
     {{end}}
   {{else if not $p.Commits.List}}
-    <div class="empty"><p class="empty__lead">{{bi $lang "commits.empty"}}</p></div>
+    {{/* Commits that could not be read are named in the notices above, so
+         the history is not called empty. */}}
+    {{if not $p.Commits.Unreadable}}<div class="empty"><p class="empty__lead">{{bi $lang "commits.empty"}}</p></div>{{end}}
   {{else}}
     <nav class="clist clist--page" {{biAttr $lang "aria-label" "app.commit_history"}}>
       <div class="clist__list">

@@ -550,6 +550,9 @@ type ActivityGraph struct {
 	Complete bool
 	// IncompleteReason explains why. Used only when Complete is false.
 	IncompleteReason MessageCode
+	// Unreadable names the repositories left out because their Git data
+	// could not be read.
+	Unreadable []string
 	// Available is false when activity could not be computed at all; the
 	// renderer shows an explanation instead of an empty graph.
 	Available bool
@@ -1002,6 +1005,10 @@ type CommitsView struct {
 	Detail *CommitDetail
 	// NotFound is true when a requested commit id does not resolve.
 	NotFound bool
+	// Unreadable is true when commits of this view could not be read. The
+	// page's notices name them; List holds the others, and an opened commit
+	// that could not be read has no Detail.
+	Unreadable bool
 }
 
 // CommitSummary is one commit row.

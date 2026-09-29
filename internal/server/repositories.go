@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -695,7 +696,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	if resolved {
 		// One extra commit says whether older history exists without counting it.
 		commits, err := app.Repositories.CommitsAt(request.Context(), page.Repo.ID, page.Ref.Revision, overviewRecentCommits+1)
-		if err != nil {
+		if err := app.noteUnreadableCommits(request, page, selectedRef, err); err != nil {
 			return err
 		}
 		if len(commits) > 0 {
@@ -706,7 +707,11 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 			for _, commit := range commits {
 				page.Overview.Recent = append(page.Overview.Recent, app.commitSummary(page.Repo.ID, selectedRef, commit))
 			}
-			page.Overview.Head = page.Overview.Recent[0]
+			// An unreadable tip leaves the latest commit unknown, not its
+			// parent.
+			if commits[0].OID == page.Ref.Revision {
+				page.Overview.Head = page.Overview.Recent[0]
+			}
 		}
 		// The README answers what the repository is. It is found and
 		// rendered exactly as the code view does for the top folder.
@@ -786,7 +791,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		page.Overview.AllRefsURL = overviewRefsURL(request, true)
 	}
 
-	page.Overview.Activity = app.repositoryActivityGraph(request, page.Repo.ID, page.Repo.Name, activityKey)
+	page.Overview.Activity = app.repositoryActivityGraph(request, page, activityKey)
 	return nil
 }
 
@@ -968,9 +973,31 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 	return nil
 }
 
+// noteUnreadableCommits keeps a page that shows commits when some of them
+// could not be read: the page shows the others, and one notice names each
+// unreadable commit and links to its own page. Any other error is returned.
+func (app *App) noteUnreadableCommits(request *http.Request, page *webui.RepositoryPage, ref string, err error) error {
+	var unreadable *repository.UnreadableCommitError
+	if !errors.As(err, &unreadable) {
+		return err
+	}
+	logFailure(request, "commit read", err)
+	for _, oid := range unreadable.OIDs {
+		named := func(notice webui.Notice) bool {
+			return notice.Code == webui.MsgCommitUnreadable && notice.Detail == shortOID(oid)
+		}
+		if !slices.ContainsFunc(page.Chrome.Notices, named) {
+			page.Chrome.Notices = append(page.Chrome.Notices, webui.Notice{
+				Kind: webui.NoticeWarning, Code: webui.MsgCommitUnreadable, Detail: shortOID(oid), Link: commitURL(page.Repo.ID, ref, oid, ""),
+			})
+		}
+	}
+	return nil
+}
+
 // fillCommits fills the Commits tab: the list, or the commit openedOID. A
-// ref, commit or path that does not exist is marked on the page; a read that
-// failed is returned.
+// ref, commit or path that does not exist is marked on the page, and so is a
+// commit that could not be read; any other read that failed is returned.
 func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, openedOID string) error {
 	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
 	if err != nil {
@@ -984,9 +1011,10 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 			return nil
 		}
 		commits, err := app.Repositories.CommitsAt(request.Context(), page.Repo.ID, page.Ref.Revision, repository.CommitPageSize)
-		if err != nil {
+		if err := app.noteUnreadableCommits(request, page, selectedRef, err); err != nil {
 			return err
 		}
+		page.Commits.Unreadable = err != nil
 		for _, commit := range commits {
 			page.Commits.List = append(page.Commits.List, app.commitSummary(page.Repo.ID, selectedRef, commit))
 		}
@@ -1021,7 +1049,11 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		return nil
 	}
 	if err != nil {
-		return err
+		if err := app.noteUnreadableCommits(request, page, selectedRef, err); err != nil {
+			return err
+		}
+		page.Commits.Unreadable = true
+		return nil
 	}
 	// A commit opens with every file's diff. An address naming one file, as
 	// the note on a file left out of a large commit does, loads that file's
@@ -1242,7 +1274,7 @@ func (app *App) repositorySummary(request *http.Request, stored state.Repository
 		result.Head = app.commitSummary(stored.ID, "refs/heads/"+summary.DefaultBranch, snapshot.Head)
 	case snapshot.HeadErr != nil:
 		result.HeadUnreadable = true
-		logFailure(request, "latest commit read", snapshot.HeadErr)
+		logFailure(request, "latest commit read", fmt.Errorf("repository %q: %w", stored.ID, snapshot.HeadErr))
 	}
 	return result
 }
@@ -1255,18 +1287,17 @@ func (app *App) commitSummary(repositoryID, ref string, commit repository.Commit
 }
 
 type activityObservation struct {
-	entries   []webui.ActivityEntry
-	counts    map[string]int
-	complete  bool
-	available bool
+	entries  []webui.ActivityEntry
+	counts   map[string]int
+	complete bool
 	// counting is true while some repository is still being counted.
 	counting bool
 	// preparing is true when some repository was skipped because it is
 	// still being prepared after startup.
 	preparing bool
-	// unreadable is true when some repository was skipped because its refs
-	// could not be read.
-	unreadable bool
+	// unreadable names the repositories skipped because their refs or their
+	// history could not be read. The server log has each cause.
+	unreadable []string
 }
 
 // observeActivity gathers one bounded, current-history-first observation per
@@ -1275,28 +1306,23 @@ type activityObservation struct {
 // incomplete for both outputs. Observations come from activityCache, keyed by
 // the refs in keys.
 func (app *App) observeActivity(ctx context.Context, repositories []state.Repository, keys []string, maximum int) activityObservation {
-	observation := activityObservation{counts: make(map[string]int), complete: true, available: true}
+	observation := activityObservation{counts: make(map[string]int), complete: true}
 	ids := make([]string, len(repositories))
 	for index, stored := range repositories {
 		ids[index] = stored.ID
 	}
 	parts := app.activity.observe(ctx, app.Repositories, ids, keys, maximum, activityWait)
 	for index, part := range parts {
-		if errors.Is(part.err, errRefsUnlisted) {
-			// Its refs were not read: it is being prepared, by design, or its
-			// Git data could not be read. It is left out and the others are
-			// still shown.
+		if part.err != nil {
+			// It was not counted: it is being prepared, by design, or its
+			// refs or history could not be read. It is left out, the page
+			// names it, and the others are still shown.
 			observation.complete = false
-			if app.Repositories.Preparing(ids[index]) {
+			if errors.Is(part.err, errRefsUnlisted) && app.Repositories.Preparing(ids[index]) {
 				observation.preparing = true
 			} else {
-				observation.unreadable = true
+				observation.unreadable = append(observation.unreadable, repositories[index].Name)
 			}
-			continue
-		}
-		if part.err != nil {
-			observation.available = false
-			observation.complete = false
 			continue
 		}
 		if part.incomplete || part.pending {
@@ -1311,24 +1337,28 @@ func (app *App) observeActivity(ctx context.Context, repositories []state.Reposi
 	return observation
 }
 
-// describe sets the graph's completeness and availability from the
-// observation. Counting in progress takes precedence over the limit reason.
+// describe sets the graph's completeness and availability, and the
+// repositories it left out as unreadable, from the observation. Counting in progress takes
+// precedence over the limit reason.
 func (observation activityObservation) describe(graph *webui.ActivityGraph) {
 	graph.Complete = observation.complete
-	graph.Available = observation.available
+	graph.Unreadable = observation.unreadable
+	unreadable := len(observation.unreadable) != 0
 	switch {
 	case observation.counting:
 		graph.IncompleteReason = webui.MsgActivityCounting
-	case observation.preparing && observation.unreadable:
+	case observation.preparing && unreadable:
 		graph.IncompleteReason = webui.MsgActivitySkipped
 	case observation.preparing:
 		graph.IncompleteReason = webui.MsgActivityPreparing
-	case observation.unreadable:
+	case unreadable:
 		graph.IncompleteReason = webui.MsgActivityUnreadable
 	case !observation.complete:
 		graph.IncompleteReason = webui.MsgActivityLimit
 	}
-	if !observation.available {
+	// With no repository read, there is no count to show, not a count of zero.
+	if unreadable && len(observation.unreadable) == graph.RepositoryCount {
+		graph.Available = false
 		graph.UnavailableReason = webui.MsgActivityScanFail
 	}
 }
@@ -1415,12 +1445,16 @@ func languagePercent(value float64) string {
 // repositoryActivityGraph builds one repository's activity graph from the
 // shared cache, with the repository's own full budget. key is the activity key
 // of the ref snapshot the page was built from.
-func (app *App) repositoryActivityGraph(request *http.Request, id, name, key string) webui.ActivityGraph {
+func (app *App) repositoryActivityGraph(request *http.Request, page *webui.RepositoryPage, key string) webui.ActivityGraph {
 	year := selectedYear(request, app.now().Year())
 	ctx := request.Context()
-	part := app.activity.observe(ctx, app.Repositories, []string{id}, []string{key}, app.activityLimit(), activityWait)[0]
+	name := page.Repo.Name
+	part := app.activity.observe(ctx, app.Repositories, []string{page.Repo.ID}, []string{key}, app.activityLimit(), activityWait)[0]
 	if part.err != nil {
-		return unavailableActivityGraph(year, name)
+		// A commit that could not be read is named at the top of the page.
+		// The count logged any other cause.
+		_ = app.noteUnreadableCommits(request, page, "", part.err)
+		return webui.ActivityGraph{Year: year, Scope: name, UnavailableReason: webui.MsgActivityRepoFail}
 	}
 	counts := make(map[string]int)
 	for _, record := range part.records {
@@ -1496,10 +1530,6 @@ func emptyActivityGraph(year int, now time.Time, scope string) webui.ActivityGra
 	graph := buildActivityGraph(nil, year, now, 1)
 	graph.Scope = scope
 	return graph
-}
-
-func unavailableActivityGraph(year int, scope string) webui.ActivityGraph {
-	return webui.ActivityGraph{Year: year, Scope: scope, Available: false, Complete: false, UnavailableReason: webui.MsgActivityScanFail}
 }
 
 func selectedYear(request *http.Request, fallback int) int {

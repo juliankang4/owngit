@@ -274,23 +274,59 @@ func parseCommits(output []byte) ([]Commit, error) {
 		return nil, errors.New("Git returned malformed commit metadata")
 	}
 	commits := make([]Commit, 0, len(fields)/10)
+	var unreadable *UnreadableCommitError
 	for offset := 0; offset < len(fields); offset += 10 {
 		record := fields[offset : offset+10]
+		oid := string(record[0])
+		var cause error
 		authored, err := ParseGitDate(record[4])
 		if err != nil {
-			return nil, fmt.Errorf("parse commit author date: %w", err)
+			cause = fmt.Errorf("author date: %w", err)
 		}
 		committed, err := ParseGitDate(record[7])
-		if err != nil {
-			return nil, fmt.Errorf("parse commit committer date: %w", err)
+		if err != nil && cause == nil {
+			cause = fmt.Errorf("committer date: %w", err)
 		}
-		commits = append(commits, Commit{
-			OID: string(record[0]), Parents: strings.Fields(string(record[1])), AuthorName: string(record[2]),
-			AuthorEmail: string(record[3]), AuthoredAt: authored, CommitterName: string(record[5]), CommitterEmail: string(record[6]),
-			CommittedAt: committed, Subject: string(record[8]), Body: strings.TrimSpace(string(record[9])),
-		})
+		switch {
+		case cause == nil:
+			commits = append(commits, Commit{
+				OID: oid, Parents: strings.Fields(string(record[1])), AuthorName: string(record[2]),
+				AuthorEmail: string(record[3]), AuthoredAt: authored, CommitterName: string(record[5]), CommitterEmail: string(record[6]),
+				CommittedAt: committed, Subject: string(record[8]), Body: strings.TrimSpace(string(record[9])),
+			})
+		case unreadable == nil:
+			unreadable = unreadableCommit(oid, cause)
+		default:
+			unreadable.OIDs = append(unreadable.OIDs, oid)
+		}
+	}
+	if unreadable != nil {
+		return commits, unreadable
 	}
 	return commits, nil
+}
+
+// UnreadableCommitError names commits that exist but whose metadata OwnGit
+// cannot show, such as a pushed commit without an author line, whose author
+// date Git prints empty. A reader that returns it also returns, in order,
+// every other commit it read, so a page can show those and name these.
+type UnreadableCommitError struct {
+	OIDs []string
+	// Cause says why the first of them could not be read.
+	Cause error
+}
+
+func (e *UnreadableCommitError) Error() string {
+	if len(e.OIDs) == 1 {
+		return "commit " + e.OIDs[0] + " could not be read: " + e.Cause.Error()
+	}
+	return "commits " + strings.Join(e.OIDs, ", ") + " could not be read: " + e.Cause.Error()
+}
+
+func (e *UnreadableCommitError) Unwrap() error { return e.Cause }
+
+func unreadableCommit(oid string, cause error) *UnreadableCommitError {
+	return &UnreadableCommitError{OIDs: []string{oid}, Cause: cause}
 }
 
 func validateShortRef(value string) error {

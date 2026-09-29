@@ -108,38 +108,49 @@ func TestCommitWithAnOversizedOffsetIsShown(t *testing.T) {
 
 // A default branch tip whose author date cannot be read leaves the refs, the
 // other branches and their history readable, and the snapshot says the tip
-// is unreadable instead of absent. Both ways the tip is read agree: the ref
-// listing (no author line at all) and git log (an author line without a
-// date, whose subject for-each-ref and git log print differently).
+// is unreadable instead of absent. Both ways the tip is read agree and name
+// it: the ref listing (no author line at all) and git log (an author line
+// without a date, whose subject for-each-ref and git log print differently).
+// The tip's own history still lists the commits behind it.
 func TestUnreadableDefaultTipLeavesTheRepositoryReadable(t *testing.T) {
-	for name, test := range map[string]struct{ header, cause string }{
-		"ref listing": {"committer C <c@example.invalid> 1700000000 +0000\n\nno author\n", "parse default branch author date"},
-		"git log":     {"author A <a@example.invalid>\ncommitter C <c@example.invalid> 1700000000 +0000\n\ntwo  spaces\n", "parse commit author date"},
+	for name, header := range map[string]string{
+		"ref listing": "committer C <c@example.invalid> 1700000000 +0000\n\nno author\n",
+		"git log":     "author A <a@example.invalid>\ncommitter C <c@example.invalid> 1700000000 +0000\n\ntwo  spaces\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			manager, remote, work := newTestRepository(t)
 			ctx := context.Background()
 			commitFile(t, work, "other", "other", "2024-03-04T05:06:07+09:00")
 			runGit(t, work, "push", "origin", "HEAD:refs/heads/main", "HEAD:refs/heads/other")
+			parent := gitOutput(t, "", "--git-dir", remote, "rev-parse", "main")
 			tree := gitOutput(t, "", "--git-dir", remote, "rev-parse", "main^{tree}")
 			command := exec.Command("git", "--git-dir", remote, "hash-object", "--literally", "-t", "commit", "-w", "--stdin")
-			command.Stdin = strings.NewReader("tree " + tree + "\n" + test.header)
+			command.Stdin = strings.NewReader("tree " + tree + "\nparent " + parent + "\n" + header)
 			output, err := command.CombinedOutput()
 			noErr(t, err)
 			tip := strings.TrimSpace(string(output))
 			runGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/main", tip)
 			wroteRefs(manager, "sample")
+			namesTip := func(err error) bool {
+				var unreadable *UnreadableCommitError
+				return errors.As(err, &unreadable) && len(unreadable.OIDs) == 1 && unreadable.OIDs[0] == tip
+			}
 
 			snapshot, err := manager.RefSnapshot(ctx, "sample")
-			if err != nil || len(snapshot.Summary.Branches) != 2 || snapshot.HeadFound || snapshot.HeadErr == nil ||
-				!strings.Contains(snapshot.HeadErr.Error(), test.cause) || snapshot.Head.OID != tip {
+			if err != nil || len(snapshot.Summary.Branches) != 2 || snapshot.HeadFound || !namesTip(snapshot.HeadErr) || snapshot.Head.OID != tip {
 				t.Fatalf("snapshot = %+v, %v", snapshot, err)
 			}
 			if _, commits, err := manager.Commits(ctx, "sample", "refs/heads/other", 10); err != nil || len(commits) != 1 {
 				t.Fatalf("other branch history = %+v, %v", commits, err)
 			}
-			if _, _, err := manager.Commits(ctx, "sample", "refs/heads/main", 10); err == nil {
-				t.Fatal("the unreadable tip's own history was read without an error")
+			if _, commits, err := manager.Commits(ctx, "sample", "refs/heads/main", 10); !namesTip(err) || len(commits) != 1 || commits[0].OID != parent {
+				t.Fatalf("the unreadable tip's own history = %+v, %v", commits, err)
+			}
+			if _, _, err := manager.CommitFiles(ctx, "sample", tip); !namesTip(err) {
+				t.Fatalf("the unreadable tip's own page: %v", err)
+			}
+			if _, err := manager.Activity(ctx, "sample", 10); !namesTip(err) {
+				t.Fatalf("activity: %v", err)
 			}
 		})
 	}
