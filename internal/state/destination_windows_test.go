@@ -56,27 +56,7 @@ func TestWindowsDestinationHoldsTheWayAndTheStage(t *testing.T) {
 // first. A folder made by hand beside the stage is the control. The Windows
 // test run creates the second local account; without it the test is skipped.
 func TestWindowsAnotherAccountCannotExchangeTheStage(t *testing.T) {
-	other, as := otherAccount(t)
-	user, _, err := processIdentity()
-	noErr(t, err)
-	parent := filepath.Join(t.TempDir(), "parent")
-	noErr(t, os.Mkdir(parent, 0o700))
-	const (
-		fileAddFile         = 0x2
-		fileAddSubdirectory = 0x4
-		fileDeleteChild     = 0x40
-	)
-	changes := windows.ACCESS_MASK(windows.FILE_LIST_DIRECTORY | fileAddFile | fileAddSubdirectory | fileDeleteChild)
-	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
-		{AccessPermissions: fileAllAccess, AccessMode: windows.GRANT_ACCESS, Inheritance: windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER, TrusteeValue: windows.TrusteeValueFromSID(user)}},
-		{AccessPermissions: changes | windows.DELETE | windows.FILE_TRAVERSE | windows.FILE_READ_ATTRIBUTES | windows.READ_CONTROL | windows.SYNCHRONIZE,
-			AccessMode: windows.GRANT_ACCESS, Inheritance: windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER, TrusteeValue: windows.TrusteeValueFromSID(other)}},
-	}, nil)
-	noErr(t, err)
-	noErr(t, windows.SetNamedSecurityInfo(parent, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
+	parent, as := sharedParent(t)
 
 	control := filepath.Join(parent, "by-hand")
 	noErr(t, os.Mkdir(control, 0o700))
@@ -107,5 +87,62 @@ func TestWindowsAnotherAccountCannotExchangeTheStage(t *testing.T) {
 	}
 	if _, err := os.Stat(stage); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// sharedParent makes a folder in which another local account may list,
+// create, rename and remove names, and returns it with a function that runs
+// code as that account.
+func sharedParent(t *testing.T) (string, func(f func())) {
+	t.Helper()
+	other, as := otherAccount(t)
+	user, _, err := processIdentity()
+	noErr(t, err)
+	parent := filepath.Join(t.TempDir(), "parent")
+	noErr(t, os.Mkdir(parent, 0o700))
+	const (
+		fileAddFile         = 0x2
+		fileAddSubdirectory = 0x4
+		fileDeleteChild     = 0x40
+	)
+	changes := windows.ACCESS_MASK(windows.FILE_LIST_DIRECTORY | fileAddFile | fileAddSubdirectory | fileDeleteChild)
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{AccessPermissions: fileAllAccess, AccessMode: windows.GRANT_ACCESS, Inheritance: windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER, TrusteeValue: windows.TrusteeValueFromSID(user)}},
+		{AccessPermissions: changes | windows.DELETE | windows.FILE_TRAVERSE | windows.FILE_READ_ATTRIBUTES | windows.READ_CONTROL | windows.SYNCHRONIZE,
+			AccessMode: windows.GRANT_ACCESS, Inheritance: windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER, TrusteeValue: windows.TrusteeValueFromSID(other)}},
+	}, nil)
+	noErr(t, err)
+	noErr(t, windows.SetNamedSecurityInfo(parent, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
+	return parent, as
+}
+
+// A rehearsal folder in a folder that another account may change can be
+// neither renamed nor opened by that account while it is held, and removing
+// it empties it while it is still held.
+func TestWindowsAnotherAccountCannotExchangeARehearsalFolder(t *testing.T) {
+	parent, as := sharedParent(t)
+	area, err := OpenStagingArea(parent)
+	noErr(t, err)
+	defer area.Close()
+	stage, err := area.CreateStage("owngit-verify-test")
+	noErr(t, err)
+	noErr(t, os.WriteFile(filepath.Join(stage, "restored"), []byte("private"), 0o600))
+	var renameErr, openErr error
+	as(func() {
+		renameErr = os.Rename(stage, stage+"-stolen")
+		var dir *os.File
+		if dir, openErr = os.Open(stage); openErr == nil {
+			dir.Close()
+		}
+	})
+	if renameErr == nil || openErr == nil {
+		t.Fatalf("the other account reached the held rehearsal folder: rename %v, open %v", renameErr, openErr)
+	}
+	noErr(t, area.RemoveStage())
+	if _, err := os.Lstat(stage); !os.IsNotExist(err) {
+		t.Fatalf("the rehearsal folder stays: %v", err)
 	}
 }
