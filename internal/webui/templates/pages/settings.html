@@ -699,6 +699,38 @@
   {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
 
+{{/* Whether repositories that follow the server keep overwritten and
+     deleted history. While Do not keep is chosen, the group says what
+     stops being kept. */}}
+{{$gn := forAction $p.Group "history" $p.Notices}}{{$focus := firstError $gn "kept_history" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "history"}}
+{{$saved := $p.Policies.KeptHistory}}{{$kept := draft $p.Group $p.Draft "history" "kept_history" $saved}}
+<section class="grp" id="grp-history" aria-labelledby="grp-history-h" data-group="history"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "history" "Title" (bi $lang "kept_history.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "kept_history.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
+  <form class="gform" method="post" action="{{tabURL "repositories"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_kept_history">
+    <div class="f f--row">
+      <label for="kept-history">{{bi $lang "kept_history.label"}}</label>
+      <select id="kept-history" name="kept_history" data-saved="{{if not $bad}}{{$saved}}{{end}}"
+              {{template "netDescribed" dict "Notices" $gn "Scope" "history" "Field" "kept_history" "Help" "kept-history-help"}}{{if eq $focus "kept_history"}} autofocus{{end}}>
+        {{range keptMenu}}
+          <option value="{{.Value}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq .Value $kept}} selected{{end}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "history" "Field" "kept_history"}}
+      <p class="f__help" id="kept-history-help">{{bi $lang "kept_history.help"}}</p>
+    </div>
+    <p class="wn" data-show-if="kept_history=off">{{icon "warning"}}<span>{{bi $lang "kept_history.off_warning"}}</span></p>
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "history" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
+  </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
+</section>
+
 <section class="grp" id="grp-repositories" aria-labelledby="grp-repositories-h">
   <div class="grp__h"><h2 id="grp-repositories-h">{{bi $lang "settings.repositories.title"}}</h2></div>
   {{if $nav.Repositories}}

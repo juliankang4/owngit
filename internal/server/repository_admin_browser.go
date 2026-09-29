@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -148,11 +149,27 @@ func hasBranch(summary repository.Summary, name string) bool {
 }
 
 func (app *App) renderRepositorySettings(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selected string, status int) {
+	app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, selected, nil, status)
+}
+
+// historyForm is what the kept history and protection form sent, shown
+// again with its notices after a refused save.
+type historyForm struct {
+	kept    state.KeptHistoryChoice
+	protect bool
+	notices []webui.Notice
+}
+
+// renderRepositorySettingsPage renders the Settings tab. The kept history
+// and protection form shows history when it was refused, and otherwise the
+// saved choices; a saved row that cannot be read shows the defaults and
+// says so.
+func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selected string, history *historyForm, status int) {
 	base := app.baseRepositoryPage(request, chrome, stored, summary)
 	self := repositorySettingsURL(stored.ID)
 	page := webui.RepositorySettingsPage{
 		Chrome: chrome, Repo: base.Repo, Tabs: repositoryTabs(base, webui.RepoTabSettings),
-		SelfURL: self, DefaultBranchURL: self + "/default-branch",
+		SelfURL: self, DefaultBranchURL: self + "/default-branch", HistoryURL: self + "/history",
 		DefaultBranch:        summary.DefaultBranch,
 		DefaultBranchMissing: summary.DefaultOID == "" && len(summary.Branches) > 0,
 		ConfiguredChecksURL:  configuredChecksURL(stored.ID),
@@ -160,6 +177,29 @@ func (app *App) renderRepositorySettings(writer http.ResponseWriter, request *ht
 		HelperCredentialsURL: baseHelperCredentialsURL(stored.ID),
 		ImportURL:            base.ImportsURL,
 		DeleteURL:            base.DeleteURL,
+	}
+	saved, err := app.Store.RepositoryRefPolicy(request.Context(), stored.ID)
+	if errors.As(err, new(*state.PolicyError)) {
+		logFailure(request, "repository settings read", err)
+		saved, err, page.HistoryUnreadable = state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryDefault}, nil, true
+	}
+	if err != nil {
+		app.answerUnavailable(writer, request, "repository settings read", err)
+		return
+	}
+	page.KeptHistory, page.ProtectDefaultBranch = string(saved.KeptHistory), saved.ProtectDefaultBranch
+	if history != nil {
+		page.KeptHistory, page.ProtectDefaultBranch, page.HistoryNotices = string(history.kept), history.protect, history.notices
+	}
+	serverKeeps, err := app.Store.KeptHistory(request.Context())
+	switch {
+	case errors.As(err, new(*state.PolicyError)):
+		logFailure(request, "server kept history read", err)
+	case err != nil:
+		app.answerUnavailable(writer, request, "server kept history read", err)
+		return
+	default:
+		page.ServerKeepsHistory = onOff(serverKeeps)
 	}
 	if summary.DefaultOID != "" {
 		page.Selected = summary.DefaultBranch
@@ -173,6 +213,53 @@ func (app *App) renderRepositorySettings(writer http.ResponseWriter, request *ht
 		}
 	}
 	app.render(writer, request, status, page)
+}
+
+// handleSaveHistory saves the repository's kept history choice and default
+// branch protection. Both apply to pushes and imports that start after the
+// save. The result notice warns about what turning either off allows.
+func (app *App) handleSaveHistory(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, session state.Session) {
+	writer.Header().Set("Cache-Control", "no-store")
+	if !app.parseForm(writer, request) {
+		return
+	}
+	if !constantEqual(session.CSRF, postValue(request, "csrf")) {
+		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+		return
+	}
+	kept, valid := state.ParseKeptHistoryChoice(postValue(request, "kept_history"))
+	form := &historyForm{kept: kept, protect: postValue(request, "protect_default_branch") == "on"}
+	refuse := func(notice webui.Notice, status int) {
+		if !valid {
+			form.kept = state.KeptHistoryDefault
+		}
+		form.notices = append(form.notices, notice)
+		app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, "", form, status)
+	}
+	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
+		refuse(adminPasswordNotice(request, err, "admin_password"))
+		return
+	}
+	if !valid {
+		refuse(webui.Error("kept_history", webui.MsgSettingsUnknownAct), http.StatusBadRequest)
+		return
+	}
+	warnings, err := app.saveRefPolicy(request.Context(), stored.ID, state.RepositoryRefPolicyChange{KeptHistory: &form.kept, ProtectDefaultBranch: &form.protect})
+	if err != nil {
+		refuse(webui.Error("", webui.MsgRepoHistoryFailed), unavailable(request, "repository settings save", err))
+		return
+	}
+	keptOff, protectOff := slices.Contains(warnings, webui.MsgRepoHistoryKeptOff), slices.Contains(warnings, webui.MsgRepoHistoryProtectOff)
+	notice := "history_saved"
+	switch {
+	case keptOff && protectOff:
+		notice = "history_saved_both_off"
+	case keptOff:
+		notice = "history_saved_kept_off"
+	case protectOff:
+		notice = "history_saved_protect_off"
+	}
+	app.noticeRedirect(writer, request, repositorySettingsURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
 }
 
 // ---------------------------------------------------------------------------

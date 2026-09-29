@@ -20,7 +20,7 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 		t.Fatal("settings set without a setting was accepted")
 	}
 	if _, err := captureStdout(func() error {
-		return settingsCommand(append([]string{"set", "--session", "7d", "--initial-branch", "trunk", "--transfer-size", "512MB", "--transfer-time", "2h", "--check-logs", "indefinite"}, remote...))
+		return settingsCommand(append([]string{"set", "--session", "7d", "--initial-branch", "trunk", "--transfer-size", "512MB", "--transfer-time", "2h", "--check-logs", "indefinite", "--kept-history", "off"}, remote...))
 	}); err != nil {
 		t.Fatalf("settings set: %v", err)
 	}
@@ -46,7 +46,48 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 	if saved, err := fixture.store.CheckLogRetention(context.Background()); err != nil || saved != state.KeepCheckLogs {
 		t.Fatalf("saved=%q err=%v", saved, err)
 	}
+	if saved, err := fixture.store.KeptHistory(context.Background()); err != nil || saved {
+		t.Fatalf("saved kept history=%v err=%v", saved, err)
+	}
 	if err := settingsCommand(append([]string{"set", "--transfer-size", "4gb"}, remote...)); err == nil {
 		t.Fatal("a size without a known unit was accepted")
+	}
+}
+
+// repo settings set changes only the choices it names, and repo settings
+// show prints them with what the repository does now.
+func TestRepoSettingsCommandSetsAndShows(t *testing.T) {
+	fixture := startImportCLIServer(t)
+	passwordPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "admin"), "admin-password\n")
+	remote := []string{"--server", fixture.url, "--accept-insecure-http", "--password-file", passwordPath, "--repository", "project"}
+	for _, refused := range [][]string{
+		{"set"}, {"set", "--protect-default-branch", "yes"}, {"show", "--kept-history", "on"},
+	} {
+		if err := repoCommand(append(append([]string{"settings"}, refused...), remote...)); err == nil {
+			t.Fatalf("repo settings %v was accepted", refused)
+		}
+	}
+	printed, err := captureStdout(func() error {
+		return repoCommand(append([]string{"settings", "set", "--kept-history", "off", "--protect-default-branch", "on"}, remote...))
+	})
+	if err != nil {
+		t.Fatalf("repo settings set: %v", err)
+	}
+	var answer struct {
+		Settings map[string]any `json:"settings"`
+		Warnings []string       `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(printed), &answer); err != nil || len(answer.Warnings) != 1 {
+		t.Fatalf("repo settings set printed %q (%v)", printed, err)
+	}
+	if saved, err := fixture.store.RepositoryRefPolicy(context.Background(), "project"); err != nil || saved != (state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOff, ProtectDefaultBranch: true}) {
+		t.Fatalf("saved=%+v err=%v", saved, err)
+	}
+	printed, err = captureStdout(func() error { return repoCommand(append([]string{"settings", "show"}, remote...)) })
+	if err != nil {
+		t.Fatalf("repo settings show: %v", err)
+	}
+	if err := json.Unmarshal([]byte(printed), &answer); err != nil || answer.Settings["kept_history"] != "off" || answer.Settings["kept_history_now"] != "off" || answer.Settings["protect_default_branch"] != true {
+		t.Fatalf("repo settings show printed %q (%v)", printed, err)
 	}
 }

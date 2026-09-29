@@ -441,6 +441,10 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgTransferSaved)}
 	case "check_logs_saved":
 		return []webui.Notice{webui.Success(webui.MsgCheckLogsSaved)}
+	case "kept_history_on":
+		return []webui.Notice{webui.Success(webui.MsgKeptHistorySaved)}
+	case "kept_history_off":
+		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgKeptHistorySavedOff}}
 	case "insecure_acknowledged":
 		return []webui.Notice{webui.Success(webui.MsgSettingsAckDone)}
 	case "logout":
@@ -504,6 +508,14 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgRTRevokedDone)}
 	case "default_branch_saved":
 		return []webui.Notice{webui.Success(webui.MsgRepoDefaultBranchSaved)}
+	case "history_saved":
+		return []webui.Notice{webui.Success(webui.MsgRepoHistorySaved)}
+	case "history_saved_kept_off":
+		return []webui.Notice{webui.Success(webui.MsgRepoHistorySaved), {Kind: webui.NoticeWarning, Code: webui.MsgRepoHistoryKeptOff}}
+	case "history_saved_protect_off":
+		return []webui.Notice{webui.Success(webui.MsgRepoHistorySaved), {Kind: webui.NoticeWarning, Code: webui.MsgRepoHistoryProtectOff}}
+	case "history_saved_both_off":
+		return []webui.Notice{webui.Success(webui.MsgRepoHistorySaved), {Kind: webui.NoticeWarning, Code: webui.MsgRepoHistoryKeptOff}, {Kind: webui.NoticeWarning, Code: webui.MsgRepoHistoryProtectOff}}
 	default:
 		return nil
 	}

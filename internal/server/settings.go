@@ -270,6 +270,17 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		}
 		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{CheckLogs: &retention})
 		notice = "check_logs_saved"
+	case webui.ActionSaveKeptHistory:
+		keep, valid := parseOnOff(postValue(request, "kept_history"))
+		if !valid {
+			app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("kept_history", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest, settingsView{AdminVerified: true})
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{KeptHistory: &keep})
+		notice = "kept_history_on"
+		if !keep {
+			notice = "kept_history_off"
+		}
 	case webui.ActionSaveNetwork:
 		app.saveNetwork(writer, request, settings, csrf)
 		return
@@ -363,6 +374,8 @@ var settingsNoticeGroups = map[string]string{
 	"initial_branch_saved":   webui.GroupBranch,
 	"transfer_saved":         webui.GroupTransfer,
 	"check_logs_saved":       webui.GroupLogs,
+	"kept_history_on":        webui.GroupHistory,
+	"kept_history_off":       webui.GroupHistory,
 	"insecure_acknowledged":  webui.GroupConnection,
 	"network_saved":          webui.GroupNetwork,
 	"tailscale_on":           webui.GroupTailscale,

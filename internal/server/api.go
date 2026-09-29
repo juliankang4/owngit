@@ -67,6 +67,9 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		case "import":
 			app.handleImportAPI(writer, request, repositoryID, remainder)
 			return
+		case "settings":
+			app.handleRepositorySettingsAPI(writer, request, repositoryID, remainder)
+			return
 		case "archive":
 			app.handleArchiveAPI(writer, request, settings, repositoryID, remainder)
 			return

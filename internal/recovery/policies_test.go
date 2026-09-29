@@ -11,16 +11,21 @@ import (
 
 // The server-wide policies of Settings belong to the installation, like the
 // administrator confirmation: a backup does not carry them, and a restored
-// installation starts with every default.
+// installation starts with every default. A repository's own kept history
+// choice and default branch protection describe the repository and come
+// back with it.
 func TestServerPoliciesStayWithTheirInstallation(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	store, manager := newBackupStore(t, root)
-	session, branch, logs := state.Session30Days, "trunk", state.KeepCheckLogs
+	session, branch, logs, off := state.Session30Days, "trunk", state.KeepCheckLogs, false
 	noErr(t, store.SavePolicies(ctx, state.PolicyChange{
 		Session: &session, InitialBranch: &branch, CheckLogs: &logs,
-		GitTransfer: &state.GitTransferLimits{MaximumBytes: 64 << 30, Operation: 24 * time.Hour},
+		GitTransfer: &state.GitTransferLimits{MaximumBytes: 64 << 30, Operation: 24 * time.Hour}, KeptHistory: &off,
 	}))
+	on, protect := state.KeptHistoryOn, true
+	_, err := store.SaveRepositoryRefPolicy(ctx, "project", state.RepositoryRefPolicyChange{KeptHistory: &on, ProtectDefaultBranch: &protect})
+	noErr(t, err)
 	backup := filepath.Join(root, "backup")
 	noErr(t, Create(ctx, store, manager, backup))
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
@@ -39,5 +44,11 @@ func TestServerPoliciesStayWithTheirInstallation(t *testing.T) {
 	}
 	if got, err := restored.CheckLogRetention(ctx); err != nil || got != state.DefaultCheckLogRetention {
 		t.Fatalf("raw log retention=%q err=%v", got, err)
+	}
+	if got, err := restored.KeptHistory(ctx); err != nil || !got {
+		t.Fatalf("server kept history=%v err=%v", got, err)
+	}
+	if got, err := restored.RepositoryRefPolicy(ctx, "project"); err != nil || got != (state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOn, ProtectDefaultBranch: true}) {
+		t.Fatalf("repository choices=%+v err=%v", got, err)
 	}
 }

@@ -21,6 +21,7 @@ func repositorySettingsPage(c Chrome) RepositorySettingsPage {
 		Chrome: c, Repo: evidenceRepo(), Tabs: adminRepoTabs(RepoTabSettings),
 		SelfURL: "/repositories/r1/settings", DefaultBranchURL: "/repositories/r1/settings/default-branch",
 		DefaultBranch: "main", Branches: []string{"fix/cursor", "main"}, Selected: "main",
+		HistoryURL: "/repositories/r1/settings/history", KeptHistory: "default", ServerKeepsHistory: "on",
 		ConfiguredChecksURL: "/repositories/r1/configured-checks", RunnerTokensURL: "/repositories/r1/runner-tokens",
 		HelperCredentialsURL: "/repositories/r1/helper-credentials", ImportURL: "/repositories/r1/import",
 		DeleteURL: "/repositories/r1/delete",

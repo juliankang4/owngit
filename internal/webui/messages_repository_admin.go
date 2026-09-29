@@ -61,6 +61,22 @@ const (
 	MsgRepoDefaultBranchSaved   MessageCode = "repoadmin.default_branch.saved"
 	MsgRepoDefaultBranchUnknown MessageCode = "repoadmin.default_branch.unknown"
 	MsgRepoDefaultBranchFailed  MessageCode = "repoadmin.default_branch.failed"
+	MsgRepoHistoryTitle         MessageCode = "repoadmin.history.title"
+	MsgRepoHistoryHelp          MessageCode = "repoadmin.history.help"
+	MsgRepoHistoryUnreadable    MessageCode = "repoadmin.history.unreadable"
+	MsgRepoHistorySave          MessageCode = "repoadmin.history.save"
+	MsgRepoHistorySaved         MessageCode = "repoadmin.history.saved"
+	MsgRepoHistoryKeptOff       MessageCode = "repoadmin.history.kept_off"
+	MsgRepoHistoryProtectOff    MessageCode = "repoadmin.history.protect_off"
+	MsgRepoHistoryFailed        MessageCode = "repoadmin.history.failed"
+	MsgRepoKeptLabel            MessageCode = "repoadmin.kept.label"
+	MsgRepoKeptHelp             MessageCode = "repoadmin.kept.help"
+	MsgRepoKeptDefaultOn        MessageCode = "repoadmin.kept.default_on"
+	MsgRepoKeptDefaultOff       MessageCode = "repoadmin.kept.default_off"
+	MsgRepoKeptDefaultUnknown   MessageCode = "repoadmin.kept.default_unknown"
+	MsgRepoProtectLabel         MessageCode = "repoadmin.protect.label"
+	MsgRepoProtectHelp          MessageCode = "repoadmin.protect.help"
+	MsgRepoProtectOffWarning    MessageCode = "repoadmin.protect.off_warning"
 	MsgRepoBusy                 MessageCode = "repoadmin.busy"
 	MsgRepoBusyImport           MessageCode = "repoadmin.busy.import"
 	MsgRepoBusyCheck            MessageCode = "repoadmin.busy.check"
@@ -189,6 +205,46 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoDefaultBranchFailed: {
 		en: "The default branch could not be changed. Nothing was changed.",
 		ko: "기본 브랜치를 바꾸지 못했습니다. 바뀐 것은 없습니다.",
+	},
+	MsgRepoHistoryTitle: {en: "History and default branch protection", ko: "기록 보관과 기본 브랜치 보호"},
+	MsgRepoHistoryHelp: {
+		en: "What OwnGit does when a push or an import overwrites or deletes a branch or tag in this repository. A change applies to pushes and imports that start after you save.",
+		ko: "이 저장소에서 푸시나 가져오기로 브랜치나 태그를 덮어쓰거나 지울 때 OwnGit이 어떻게 할지 정합니다. 저장한 뒤 시작하는 푸시와 가져오기부터 적용됩니다.",
+	},
+	MsgRepoHistoryUnreadable: {
+		en: "The saved choices of this repository cannot be read, so pushes and imports to it are refused until you save them again. The form shows the defaults.",
+		ko: "이 저장소에 저장된 선택을 읽을 수 없어, 다시 저장할 때까지 이 저장소로 오는 푸시와 가져오기를 거부합니다. 양식에는 기본값이 보입니다.",
+	},
+	MsgRepoHistorySave:  {en: "Save", ko: "저장"},
+	MsgRepoHistorySaved: {en: "Saved. The next push or import follows these choices.", ko: "저장했습니다. 다음 푸시나 가져오기부터 이 선택을 따릅니다."},
+	MsgRepoHistoryKeptOff: {
+		en: "This repository no longer keeps history that is overwritten or deleted from now on. History already kept stays.",
+		ko: "이제부터 이 저장소에서 덮어쓰거나 지운 기록은 보관하지 않습니다. 이미 보관된 기록은 그대로 남습니다.",
+	},
+	MsgRepoHistoryProtectOff: {
+		en: "The default branch is no longer protected. Pushes that rewrite or delete it are accepted again.",
+		ko: "이제 기본 브랜치를 보호하지 않습니다. 기본 브랜치를 다시 쓰거나 지우는 푸시도 다시 받아들입니다.",
+	},
+	MsgRepoHistoryFailed: {
+		en: "The choices could not be saved. Nothing was changed.",
+		ko: "선택을 저장하지 못했습니다. 바뀐 것은 없습니다.",
+	},
+	MsgRepoKeptLabel: {en: "Kept history", ko: "보관된 기록"},
+	MsgRepoKeptHelp: {
+		en: "When a force push, an import or a deletion replaces the commits of a branch or tag, OwnGit can keep them as kept history, which you can browse and restore. The server setting is under Settings, Repositories.",
+		ko: "강제 푸시나 가져오기, 삭제로 브랜치나 태그의 커밋이 바뀌면 OwnGit은 이전 커밋을 보관된 기록으로 남겨 둘 수 있고, 이 기록은 둘러보거나 되돌릴 수 있습니다. 서버 설정은 설정의 저장소 탭에 있습니다.",
+	},
+	MsgRepoKeptDefaultOn:      {en: "Follow the server setting (now Keep)", ko: "서버 설정 따르기 (지금은 보관)"},
+	MsgRepoKeptDefaultOff:     {en: "Follow the server setting (now Do not keep)", ko: "서버 설정 따르기 (지금은 보관하지 않음)"},
+	MsgRepoKeptDefaultUnknown: {en: "Follow the server setting (cannot be read now)", ko: "서버 설정 따르기 (지금은 읽을 수 없음)"},
+	MsgRepoProtectLabel:       {en: "Protect the default branch", ko: "기본 브랜치 보호"},
+	MsgRepoProtectHelp: {
+		en: "Refuses a push that rewrites the default branch (one that is not a fast-forward) or deletes it. Pushes that add commits to it, and every other branch and tag, work as before. When you change the default branch, the protection moves to the new one.",
+		ko: "기본 브랜치를 다시 쓰는 푸시(빨리 감기가 아닌 푸시)나 지우는 푸시를 거부합니다. 커밋을 더하는 푸시와 다른 브랜치, 태그는 전과 같이 동작합니다. 기본 브랜치를 바꾸면 보호도 새 기본 브랜치로 옮겨 갑니다.",
+	},
+	MsgRepoProtectOffWarning: {
+		en: "Turning the protection off lets anyone who can push rewrite or delete the default branch again.",
+		ko: "보호를 끄면 푸시할 수 있는 사람은 누구나 기본 브랜치를 다시 쓰거나 지울 수 있게 됩니다.",
 	},
 	MsgRepoBusy: {
 		en: "The repository is busy with another operation, such as an import, a check, or a push. Try again when it finishes.",

@@ -66,6 +66,7 @@ func settingsSet(arguments []string) error {
 	transferSize := flags.String("transfer-size", "", "the most one Git transfer may receive and, separately, send, such as 4GB or 512MB, from 1MB to 64GB")
 	transferTime := flags.String("transfer-time", "", "how long one Git transfer may take, such as 30m or 2h, from 1m to 24h")
 	checkLogs := flags.String("check-logs", "", "how long raw check logs are kept: 7d, 30d, 90d, 365d or indefinite")
+	keptHistory := flags.String("kept-history", "", "whether repositories that follow the server keep overwritten and deleted history: on or off")
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
@@ -82,6 +83,9 @@ func settingsSet(arguments []string) error {
 	}
 	if given["check-logs"] {
 		change["check_logs"] = *checkLogs
+	}
+	if given["kept-history"] {
+		change["kept_history"] = *keptHistory
 	}
 	transfer := map[string]int64{}
 	if given["transfer-size"] {

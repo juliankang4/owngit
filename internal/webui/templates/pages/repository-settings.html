@@ -50,6 +50,49 @@
   {{end}}
 </section>
 
+{{/* Kept history and default branch protection. Both apply to pushes and
+     imports that start after a save. The warnings say what Do not keep and
+     turning protection off allow; they are shown with the choices, so the
+     form needs no script. */}}
+{{$hn := $p.HistoryNotices}}
+<section class="setblock" aria-labelledby="rset-history-h">
+  <h3 id="rset-history-h" class="setblock__h">{{icon "kept"}}{{bi $lang "repoadmin.history.title"}}</h3>
+  <p class="setblock__d">{{bi $lang "repoadmin.history.help"}}</p>
+  {{if $p.HistoryUnreadable}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "repoadmin.history.unreadable"}}</span></p>{{end}}
+  {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $hn "Scope" "rset-history" "Field" "" "Focus" 0}}
+  <form class="form" method="post" action="{{$p.HistoryURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="lang" value="{{$lang}}">
+    <div class="f">
+      <label for="rset-kept">{{bi $lang "repoadmin.kept.label"}}</label>
+      <select id="rset-kept" name="kept_history" aria-describedby="rset-kept-help"
+              {{template "fieldInvalid" dict "Notices" $hn "Scope" "rset-history" "Field" "kept_history"}}>
+        {{$follow := "repoadmin.kept.default_unknown"}}
+        {{if eq $p.ServerKeepsHistory "on"}}{{$follow = "repoadmin.kept.default_on"}}{{else if eq $p.ServerKeepsHistory "off"}}{{$follow = "repoadmin.kept.default_off"}}{{end}}
+        <option value="default" data-en="{{t "en" (code $follow)}}" data-ko="{{t "ko" (code $follow)}}"{{if eq $p.KeptHistory "default"}} selected{{end}}>{{t $lang (code $follow)}}</option>
+        {{range keptMenu}}
+          <option value="{{.Value}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq .Value $p.KeptHistory}} selected{{end}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $hn "Scope" "rset-history" "Field" "kept_history"}}
+      <p class="f__help" id="rset-kept-help">{{bi $lang "repoadmin.kept.help"}}</p>
+    </div>
+    <p class="wn">{{icon "warning"}}<span>{{bi $lang "kept_history.off_warning"}}</span></p>
+    <div class="f">
+      <label class="check">
+        <input type="checkbox" name="protect_default_branch" value="on" aria-describedby="rset-protect-help"{{if $p.ProtectDefaultBranch}} checked{{end}}>
+        <span class="check__t">{{bi $lang "repoadmin.protect.label"}}</span>
+      </label>
+      <p class="f__help" id="rset-protect-help">{{bi $lang "repoadmin.protect.help"}}</p>
+    </div>
+    {{if $p.ProtectDefaultBranch}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "repoadmin.protect.off_warning"}}</span></p>{{end}}
+    {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $hn "Scope" "rset-history" "ID" "rset-history-password"}}
+    <div class="actions">
+      <button type="submit" class="btn btn--primary">{{bi $lang "repoadmin.history.save"}}</button>
+    </div>
+  </form>
+</section>
+
 <section class="setblock" aria-labelledby="rset-pages-h">
   <h3 id="rset-pages-h" class="setblock__h">{{bi $lang "repoadmin.pages.title"}}</h3>
   <ul class="rset__links">

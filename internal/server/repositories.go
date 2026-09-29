@@ -422,6 +422,10 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.handleSetDefaultBranch(writer, request, stored, summary, chrome, session)
 		return
 	}
+	if len(parts) == 3 && parts[1] == "settings" && parts[2] == "history" && request.Method == http.MethodPost {
+		app.handleSaveHistory(writer, request, stored, summary, chrome, session)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "import" {
 		app.handleImportPage(writer, request, stored, summary, chrome)
 		return

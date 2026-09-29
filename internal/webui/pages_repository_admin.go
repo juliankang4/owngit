@@ -39,6 +39,22 @@ type RepositorySettingsPage struct {
 	// disabled "Choose a branch" entry first, so nothing is chosen for them.
 	Branches []string
 	Selected string
+	// HistoryURL is the POST target that saves kept history and default
+	// branch protection.
+	HistoryURL string
+	// KeptHistory is the repository's own choice, one of "default", "on"
+	// and "off". ServerKeepsHistory is the server setting it follows under
+	// "default": "on", "off", or "" when it cannot be read.
+	KeptHistory        string
+	ServerKeepsHistory string
+	// ProtectDefaultBranch is the saved protection of the default branch.
+	ProtectDefaultBranch bool
+	// HistoryUnreadable is true when the saved choices cannot be read. The
+	// form then shows the defaults, and saving it replaces the saved row.
+	HistoryUnreadable bool
+	// HistoryNotices are the notices of a refused save of these choices,
+	// shown in their form.
+	HistoryNotices []Notice
 	// The repository's other administrator screens, each with one line of
 	// explanation on the page. An empty URL renders no entry.
 	ConfiguredChecksURL  string

@@ -13,12 +13,14 @@ import (
 )
 
 // Server-wide policies: how long a sign-in lasts, the branch new
-// repositories start on, the Git transfer limits and how long raw check logs
-// are kept. The Settings tabs and the owner API (/api/v1/settings) read and
-// save them through the same state accessors, which hold their choices and
-// bounds. The first three apply to what starts after they are saved: a
-// sign-in, a new repository, a transfer. The log choice applies at once to
-// the logs kept, and the next cleanup deletes the ones it no longer keeps.
+// repositories start on, the Git transfer limits, whether repositories keep
+// overwritten and deleted history, and how long raw check logs are kept.
+// The Settings tabs and the owner API (/api/v1/settings) read and save them
+// through the same state accessors, which hold their choices and bounds.
+// The first four apply to what starts after they are saved: a sign-in, a
+// new repository, a transfer, a push or an import. The log choice applies
+// at once to the logs kept, and the next cleanup deletes the ones it no
+// longer keeps.
 
 // tabPolicies reads the policies tab shows to admin, a confirmed
 // administrator; nobody else is shown a saved value. A saved value that
@@ -68,6 +70,14 @@ func (app *App) tabPolicies(request *http.Request, tab string, admin bool) (webu
 		}
 		policies.TransferSize = webui.FormatLimit(webui.LimitSize, limits.MaximumBytes, "")
 		policies.TransferTime = webui.FormatLimit(webui.LimitDuration, limits.Operation.Milliseconds(), "")
+		keep, err := app.Store.KeptHistory(request.Context())
+		if err = unreadable(webui.GroupHistory, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if policies.Unreadable[webui.GroupHistory] {
+			keep = true
+		}
+		policies.KeptHistory = onOff(keep)
 	}
 	if tab == webui.SettingsStorage {
 		retention, err := app.Store.CheckLogRetention(request.Context())
@@ -120,6 +130,9 @@ type settingsJSON struct {
 	// CheckLogs is how long raw check logs are kept, one of
 	// state.CheckLogRetentions.
 	CheckLogs *string `json:"check_logs,omitempty"`
+	// KeptHistory is "on" when repositories that follow the server keep
+	// overwritten and deleted history, and "off" when they do not.
+	KeptHistory *string `json:"kept_history,omitempty"`
 }
 
 type gitTransferJSON struct {
@@ -134,6 +147,8 @@ type settingsResponse struct {
 	// Settings leaves out. Only a PATCH answers with it: the change it
 	// asked for was saved.
 	Unreadable []unreadableSetting `json:"unreadable,omitempty"`
+	// Warnings say what a PATCH turned off allows now, as Settings does.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type unreadableSetting struct {
@@ -156,6 +171,7 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 	if !app.authorizeAdminAPI(writer, request) {
 		return
 	}
+	var warnings []string
 	if request.Method == http.MethodPatch {
 		var change settingsJSON
 		if !decodeAPIJSON(writer, request, &change) {
@@ -201,6 +217,17 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 			}
 			policies.CheckLogs = &retention
 		}
+		if change.KeptHistory != nil {
+			keep, valid := parseOnOff(*change.KeptHistory)
+			if !valid {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "kept_history must be on or off.", nil)
+				return
+			}
+			policies.KeptHistory = &keep
+			if !keep {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgKeptHistorySavedOff))
+			}
+		}
 		if err := app.Store.SavePolicies(request.Context(), policies); err != nil {
 			writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
 			return
@@ -214,7 +241,7 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 		app.writeSettingsReadError(writer, request, err)
 		return
 	}
-	response := settingsResponse{OK: true, Settings: current}
+	response := settingsResponse{OK: true, Settings: current, Warnings: warnings}
 	for _, problem := range unreadable {
 		logFailure(request, "settings read", problem)
 		response.Unreadable = append(response.Unreadable, unreadableSetting{Setting: problem.Setting(), Message: problem.Advice()})
@@ -247,6 +274,9 @@ func (app *App) savedSettings(ctx context.Context) (current settingsJSON, unread
 	}
 	if retention, readErr := app.Store.CheckLogRetention(ctx); keep(readErr) {
 		current.CheckLogs = pointer(string(retention))
+	}
+	if kept, readErr := app.Store.KeptHistory(ctx); keep(readErr) {
+		current.KeptHistory = pointer(onOff(kept))
 	}
 	return current, unreadable, err
 }
@@ -299,6 +329,18 @@ func writeSettingUnreadable(writer http.ResponseWriter, request *http.Request, o
 }
 
 func pointer[T any](value T) *T { return &value }
+
+func onOff(value bool) string {
+	if value {
+		return "on"
+	}
+	return "off"
+}
+
+// parseOnOff reads "on" or "off".
+func parseOnOff(value string) (on, valid bool) {
+	return value == "on", value == "on" || value == "off"
+}
 
 // choiceList names the choices of a policy for a refusal.
 func choiceList[T ~string](choices []T) string {

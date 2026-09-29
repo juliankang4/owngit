@@ -140,7 +140,7 @@ func allPages(lang Lang) map[string]Page {
 			Policies: Policies{Visible: true, Session: "12h"},
 		},
 		"settings-repositories": SettingsPage{Chrome: c, Tab: SettingsRepositories, SubmitURL: "/settings", Policies: Policies{
-			Visible: true, InitialBranch: "main", TransferSize: LimitInput{Amount: "4", Unit: "GB"}, TransferTime: LimitInput{Amount: "30", Unit: "min"},
+			Visible: true, InitialBranch: "main", TransferSize: LimitInput{Amount: "4", Unit: "GB"}, TransferTime: LimitInput{Amount: "30", Unit: "min"}, KeptHistory: "on",
 		}},
 		"settings-storage": SettingsPage{
 			Chrome: c, Tab: SettingsStorage, SubmitURL: "/settings",

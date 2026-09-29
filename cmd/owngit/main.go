@@ -1113,7 +1113,8 @@ func restoreState(arguments []string) error {
 func restoredSettingsNotice() string {
 	limits := state.DefaultGitTransferLimits
 	return fmt.Sprintf("Server-wide settings start at their defaults, as on a new installation: a sign-in with the shared password lasts %s, "+
-		"new repositories start on %s, one Git transfer may move %d GB and take %s, and raw check logs are kept %s. "+
+		"new repositories start on %s, one Git transfer may move %d GB and take %s, raw check logs are kept %s, "+
+		"and repositories that follow the server keep overwritten and deleted history. Each repository's own kept history choice and default branch protection come back with it. "+
 		"Set them again under Settings or with owngit settings set. The administrator password check and the new release check are also at their defaults; set them under Settings.",
 		plainDuration(state.DefaultGeneralSession.Length()), state.DefaultInitialBranch, limits.MaximumBytes>>30,
 		plainDuration(limits.Operation), plainDuration(state.DefaultCheckLogRetention.Duration()))

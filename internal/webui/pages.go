@@ -215,6 +215,10 @@ const (
 	// ActionSaveCheckLogs saves how long raw check logs are kept. Fields:
 	// admin_password, check_logs (one of CheckLogChoices).
 	ActionSaveCheckLogs = "save_check_logs"
+	// ActionSaveKeptHistory saves whether repositories that follow the
+	// server keep overwritten and deleted history. Fields: admin_password,
+	// kept_history ("on" or "off").
+	ActionSaveKeptHistory = "save_kept_history"
 )
 
 // The Settings tabs. Each is its own address, so a tab works as an ordinary
@@ -278,6 +282,7 @@ const (
 	GroupSession    = "session"
 	GroupBranch     = "branch"
 	GroupTransfer   = "transfer"
+	GroupHistory    = "history"
 	GroupLogs       = "logs"
 	GroupConnection = "connection"
 	GroupNetwork    = "network"
@@ -289,7 +294,7 @@ var settingsGroupTabs = map[string]string{
 	GroupUpdate: SettingsGeneral, GroupTray: SettingsGeneral,
 	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess, GroupConfirm: SettingsAccess, GroupSession: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
-	GroupBranch: SettingsRepositories, GroupTransfer: SettingsRepositories,
+	GroupBranch: SettingsRepositories, GroupTransfer: SettingsRepositories, GroupHistory: SettingsRepositories,
 	GroupLogs: SettingsStorage,
 }
 
@@ -317,6 +322,8 @@ func SettingsActionGroup(action string) string {
 		return GroupBranch
 	case ActionSaveTransfers:
 		return GroupTransfer
+	case ActionSaveKeptHistory:
+		return GroupHistory
 	case ActionSaveCheckLogs:
 		return GroupLogs
 	case ActionAcknowledgeInsecure:
@@ -437,6 +444,9 @@ type Policies struct {
 	// CheckLogs is how long raw check logs are kept, one of
 	// CheckLogChoices.
 	CheckLogs string
+	// KeptHistory is "on" when repositories that follow the server keep
+	// overwritten and deleted history, and "off" when they do not.
+	KeptHistory string
 	// Visible is true for a confirmed administrator. Otherwise no saved
 	// value is read or shown, and each group says where to confirm.
 	Visible bool
