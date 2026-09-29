@@ -43,8 +43,14 @@ func testRef(oid, name, capabilities string) string {
 }
 
 type scriptedSource struct {
-	t                 *testing.T
-	advertisement     string
+	t             *testing.T
+	advertisement string
+	// v2 marks advertisement as a protocol v2 capability advertisement.
+	// lsRefsResponse then answers the ls-refs command, and postResponse the
+	// fetch command.
+	v2                bool
+	lsRefsResponse    string
+	lsRefsBody        string
 	postResponse      string
 	wantAuthorization string
 	getCount          int
@@ -61,8 +67,13 @@ func (s *scriptedSource) serveHTTP(writer http.ResponseWriter, request *http.Req
 	if request.Header.Get("Authorization") != s.wantAuthorization {
 		s.t.Errorf("source received an unexpected Authorization header")
 	}
-	if got := request.Header.Get("Git-Protocol"); got != "version=1" {
-		s.t.Errorf("Git-Protocol = %q, want version=1", got)
+	// Discovery asks for v2; a v0 source gets version 1 on its pack request.
+	wantProtocol := "version=2"
+	if request.Method == http.MethodPost && !s.v2 {
+		wantProtocol = "version=1"
+	}
+	if got := request.Header.Get("Git-Protocol"); got != wantProtocol {
+		s.t.Errorf("Git-Protocol = %q, want %s", got, wantProtocol)
 	}
 	if got := request.Header.Get("Accept-Encoding"); got != "identity" {
 		s.t.Errorf("Accept-Encoding = %q, want identity", got)
@@ -89,8 +100,13 @@ func (s *scriptedSource) serveHTTP(writer http.ResponseWriter, request *http.Req
 		if err != nil {
 			s.t.Errorf("read upload request: %v", err)
 		}
-		s.postBody = string(body)
 		writer.Header().Set("Content-Type", resultMediaType)
+		if s.v2 && strings.HasPrefix(string(body), testPacket("command=ls-refs\n")) {
+			s.lsRefsBody = string(body)
+			_, _ = io.WriteString(writer, s.lsRefsResponse)
+			return
+		}
+		s.postBody = string(body)
 		_, _ = io.WriteString(writer, s.postResponse)
 	default:
 		s.t.Errorf("unexpected source path %q", request.URL.Path)

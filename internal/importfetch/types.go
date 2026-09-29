@@ -101,7 +101,7 @@ func DefaultLimits() Limits {
 		Advertisement:         advertisement,
 		MaxRequestBytes:       8 << 20,
 		MaxPackBytes:          maxPack,
-		MaxTotalBodyBytes:     maxPack + advertisement.MaxTotalBytes + 64,
+		MaxTotalBodyBytes:     maxPack + sidebandOverhead(maxPack) + 2*advertisement.MaxTotalBytes + 64,
 		MaxHeaderBytes:        64 << 10,
 		MaxURLBytes:           8 << 10,
 		MaxCredentialBytes:    16 << 10,

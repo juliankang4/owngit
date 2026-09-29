@@ -23,7 +23,7 @@ const (
 
 // Fetch obtains one advertised source snapshot and, when nonempty, one raw
 // full PACK. It performs no retry. The source host is resolved once, the whole
-// answer set is checked, and both HTTPS requests dial one selected literal
+// answer set is checked, and every HTTPS request dials one selected literal
 // address while TLS verifies the original hostname.
 func Fetch(ctx context.Context, request Request, consume PackConsumer) (*Result, error) {
 	if ctx == nil {
@@ -70,7 +70,11 @@ func Fetch(ctx context.Context, request Request, consume PackConsumer) (*Result,
 	if consume == nil {
 		return nil, fetchError("validate pack consumer", ErrInvalidRequest, nil)
 	}
-	requestBody, err := buildUploadRequest(advertisement, limits.MaxRequestBytes)
+	build := buildUploadRequest
+	if advertisement.ProtocolVersion == 2 {
+		build = buildFetchCommand
+	}
+	requestBody, err := build(advertisement, limits.MaxRequestBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -85,9 +89,15 @@ func Fetch(ctx context.Context, request Request, consume PackConsumer) (*Result,
 	}, nil
 }
 
+// fetchAdvertisement reads what the source advertises. It asks for Git
+// protocol v2. A v2 server answers with its capabilities, and an ls-refs
+// command then lists only HEAD, branches and tags (importgit.LsRefsPrefixes),
+// so refs an import does not use, such as pull request refs, are neither
+// listed nor counted. A server without v2 answers with its v0 or v1
+// advertisement of every ref, which is used as before.
 func fetchAdvertisement(ctx context.Context, client *http.Client, base *url.URL, authentication Authentication, limits Limits, budget *bodyBudget) (*importgit.Advertisement, error) {
 	target := endpoint(base, "info/refs", "service=git-upload-pack")
-	request, err := newRequest(ctx, http.MethodGet, target, nil, authentication, advertisementMediaType, "")
+	request, err := newRequest(ctx, http.MethodGet, target, nil, authentication, advertisementMediaType, "", "version=2")
 	if err != nil {
 		return nil, err
 	}
@@ -106,47 +116,115 @@ func fetchAdvertisement(ctx context.Context, client *http.Client, base *url.URL,
 		return nil, fetchError("read advertisement", ErrResponseTooLarge, nil)
 	}
 	advertisement, err := importgit.Parse(budget.reader(response.Body), importgit.Options{
-		Service: importgit.DefaultService,
-		Limits:  limits.Advertisement,
+		Service:    importgit.DefaultService,
+		Limits:     limits.Advertisement,
+		ProtocolV2: true,
 	})
 	if err != nil {
-		if errors.Is(err, errTotalBodyExceeded) || errors.Is(err, importgit.ErrLimitExceeded) {
-			return nil, fetchError("read advertisement", ErrResponseTooLarge, advertisementCause(err))
-		}
-		return nil, fetchError("parse advertisement", ErrAdvertisement, advertisementCause(err))
+		return nil, advertisementError(err)
+	}
+	if advertisement.ProtocolVersion == 2 {
+		return listRefs(ctx, client, base, authentication, advertisement, limits, budget)
 	}
 	return advertisement, nil
 }
 
-func fetchPack(ctx context.Context, client *http.Client, base *url.URL, authentication Authentication, advertisement *importgit.Advertisement, body []byte, consume PackConsumer, limits Limits, budget *bodyBudget) (int64, error) {
-	target := endpoint(base, "git-upload-pack", "")
-	request, err := newRequest(ctx, http.MethodPost, target, bytes.NewReader(body), authentication, resultMediaType, requestMediaType)
+// listRefs runs the ls-refs command of a protocol v2 server that advertised
+// capabilities. Its answer has the advertisement's limits and counts toward
+// the total body budget.
+func listRefs(ctx context.Context, client *http.Client, base *url.URL, authentication Authentication, capabilities *importgit.Advertisement, limits Limits, budget *bodyBudget) (*importgit.Advertisement, error) {
+	body, err := buildLsRefsCommand(capabilities, limits.MaxRequestBytes)
 	if err != nil {
-		return 0, err
+		return nil, err
+	}
+	response, err := postCommand(ctx, client, base, authentication, body, "version=2", limits)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if !contentLengthWithin(response, limits.Advertisement.MaxTotalBytes) || !contentLengthWithin(response, budget.remaining) {
+		return nil, fetchError("read advertisement", ErrResponseTooLarge, nil)
+	}
+	advertisement, err := importgit.ParseLsRefs(budget.reader(response.Body), capabilities, importgit.Options{
+		Service: importgit.DefaultService,
+		Limits:  limits.Advertisement,
+	})
+	if err != nil {
+		return nil, advertisementError(err)
+	}
+	return advertisement, nil
+}
+
+// advertisementError classifies a failure to read an advertisement or an
+// ls-refs answer.
+func advertisementError(err error) error {
+	if errors.Is(err, errTotalBodyExceeded) || errors.Is(err, importgit.ErrLimitExceeded) {
+		return fetchError("read advertisement", ErrResponseTooLarge, advertisementCause(err))
+	}
+	return fetchError("parse advertisement", ErrAdvertisement, advertisementCause(err))
+}
+
+// postCommand POSTs an upload-pack request body with the given Git-Protocol
+// value and checks the answer's status and media type.
+func postCommand(ctx context.Context, client *http.Client, base *url.URL, authentication Authentication, body []byte, protocol string, limits Limits) (*http.Response, error) {
+	target := endpoint(base, "git-upload-pack", "")
+	request, err := newRequest(ctx, http.MethodPost, target, bytes.NewReader(body), authentication, resultMediaType, requestMediaType, protocol)
+	if err != nil {
+		return nil, err
 	}
 	if len(target.String()) > limits.MaxURLBytes || requestHeaderBytes(request) > limits.MaxHeaderBytes {
-		return 0, fetchError("encode upload-pack request", ErrInvalidRequest, nil)
+		return nil, fetchError("encode upload-pack request", ErrInvalidRequest, nil)
 	}
 	response, err := do(client, request)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateResponse(response, http.StatusOK, resultMediaType); err != nil {
+		response.Body.Close()
+		return nil, err
+	}
+	return response, nil
+}
+
+// fetchPack requests the pack of the advertised objects and hands it to
+// consume. A v0 or v1 answer is a NAK and the raw pack. A protocol v2 answer
+// is a packfile section whose pack arrives on side-band 1; sideband reads it
+// under the same pack and body limits.
+func fetchPack(ctx context.Context, client *http.Client, base *url.URL, authentication Authentication, advertisement *importgit.Advertisement, body []byte, consume PackConsumer, limits Limits, budget *bodyBudget) (int64, error) {
+	v2 := advertisement.ProtocolVersion == 2
+	protocol := "version=1"
+	maximumResponse := limits.MaxPackBytes + 8
+	if v2 {
+		protocol = "version=2"
+		maximumResponse = limits.MaxPackBytes + sidebandOverhead(limits.MaxPackBytes)
+	}
+	response, err := postCommand(ctx, client, base, authentication, body, protocol, limits)
 	if err != nil {
 		return 0, err
 	}
 	defer response.Body.Close()
-	if err := validateResponse(response, http.StatusOK, resultMediaType); err != nil {
-		return 0, err
-	}
-	maximumResponse := limits.MaxPackBytes + 8
 	if !contentLengthWithin(response, maximumResponse) || !contentLengthWithin(response, budget.remaining) {
 		return 0, fetchError("read upload-pack response", ErrResponseTooLarge, nil)
 	}
 
 	entity := budget.reader(response.Body)
-	if err := readNAK(entity); err != nil {
+	var source io.Reader = entity
+	var sideband *sidebandReader
+	if v2 {
+		if err := readPackfileSection(entity); err != nil {
+			return 0, err
+		}
+		sideband = &sidebandReader{source: entity}
+		source = sideband
+	} else if err := readNAK(entity); err != nil {
 		return 0, err
 	}
-	pack := &packReader{source: entity, remaining: limits.MaxPackBytes}
+	pack := &packReader{source: source, remaining: limits.MaxPackBytes}
 	var signature [4]byte
 	if _, err := io.ReadFull(pack, signature[:]); err != nil {
+		if sideband != nil && sideband.failure != nil && !budget.exceeded {
+			return 0, sideband.failure
+		}
 		return 0, uploadProtocolReadError(err)
 	}
 	if string(signature[:]) != "PACK" {
@@ -157,6 +235,11 @@ func fetchPack(ctx context.Context, client *http.Client, base *url.URL, authenti
 	consumerErr := consume(ctx, advertisement, presented)
 	if pack.exceeded || budget.exceeded {
 		return 0, fetchError("consume pack", ErrResponseTooLarge, nil)
+	}
+	// The server's own error, or a broken side-band, explains a pack that
+	// ended early better than the consumer that read it.
+	if sideband != nil && sideband.failure != nil {
+		return 0, sideband.failure
 	}
 	if consumerErr != nil {
 		return 0, fetchError("consume pack", ErrConsumer, safeContextCause(ctx, nil))
@@ -173,6 +256,8 @@ func fetchPack(ctx context.Context, client *http.Client, base *url.URL, authenti
 		switch {
 		case pack.exceeded || budget.exceeded || errors.Is(err, errPackExceeded) || errors.Is(err, errTotalBodyExceeded):
 			return 0, fetchError("consume pack", ErrResponseTooLarge, nil)
+		case sideband != nil && sideband.failure != nil:
+			return 0, sideband.failure
 		case read > 0:
 			return 0, fetchError("consume pack", ErrConsumerStoppedEarly, nil)
 		case errors.Is(err, io.EOF):
@@ -185,14 +270,14 @@ func fetchPack(ctx context.Context, client *http.Client, base *url.URL, authenti
 	return pack.consumed, nil
 }
 
-func newRequest(ctx context.Context, method string, target *url.URL, body io.Reader, authentication Authentication, accept, contentType string) (*http.Request, error) {
+func newRequest(ctx context.Context, method string, target *url.URL, body io.Reader, authentication Authentication, accept, contentType, protocol string) (*http.Request, error) {
 	request, err := http.NewRequestWithContext(ctx, method, target.String(), body)
 	if err != nil {
 		return nil, fetchError("encode HTTPS request", ErrInvalidRequest, nil)
 	}
 	request.Header.Set("Accept", accept)
 	request.Header.Set("Accept-Encoding", "identity")
-	request.Header.Set("Git-Protocol", "version=1")
+	request.Header.Set("Git-Protocol", protocol)
 	request.Header.Set("User-Agent", "OwnGit-Importer")
 	request.Header.Set("Connection", "close")
 	request.Close = true
