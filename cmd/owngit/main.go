@@ -560,16 +560,16 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if err := policy.Add(parsedOrigin.Host); err != nil {
 		return fmt.Errorf("trust setup origin: %w", err)
 	}
-	// In the container image, a browser on the computer that runs the
-	// container opens http://localhost:PORT, which reaches OwnGit from the
-	// container's gateway.
-	if inContainerImage() {
-		if gateway, err := containerGateway(); err != nil {
-			logf("could not find the container's gateway, so localhost on the computer that runs the container is refused: %v", err)
-		} else {
-			policy.CountAsThisComputer(gateway)
-			logf("running in the OwnGit container image: connections from its gateway %s, the computer that runs the container, count as this computer", gateway)
-		}
+	container, err := inContainerImage()
+	if err != nil {
+		return err
+	}
+	if container {
+		policy.InContainer(func() (bool, error) {
+			current, err := store.Settings(ctx)
+			return current.Initialized && current.AccessMode == "password", err
+		})
+		logf("running in the OwnGit container image: localhost from another address is accepted only while access needs a password")
 	}
 
 	home, _ := os.UserHomeDir()
@@ -714,7 +714,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			return err
 		}
 		logf("owner setup file: %s", path)
-		if inContainerImage() {
+		if container {
 			logf("to see the setup link, run \"docker compose exec -it owngit owngit setup-link\" where the container runs")
 		}
 		if target := serveOpenTarget(false, *openOwner, *noOpen, path, origin); target != "" {

@@ -28,7 +28,10 @@ func uninstallCommand(arguments []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("uninstall takes no arguments")
 	}
-	install := detectInstall()
+	install, err := detectInstall()
+	if err != nil {
+		return err
+	}
 	// Read before the service step, which can make root act as the owngit
 	// account.
 	sudo := needsSudo(install)

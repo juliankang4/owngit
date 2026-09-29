@@ -10,12 +10,15 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
@@ -234,36 +237,6 @@ func TestLoopbackHostNamesAreAcceptedOnlyFromLoopbackPeers(t *testing.T) {
 	}
 }
 
-// In the container image the Docker host's own connections arrive from the
-// container's gateway, which then counts as this computer. Other containers
-// on the same network and other devices keep their own addresses and stay
-// refused, and without the container image the gateway is refused too.
-func TestContainerGatewayCountsAsThisComputer(t *testing.T) {
-	gateway := "172.18.0.1:51000"
-	neighbours := append([]string{"172.18.0.3:40000", "172.18.0.2:40000", "172.17.0.1:40000", "[fd00::1]:40000"}, nonLoopbackPeers...)
-	plain := NewHostPolicy()
-	contained := NewHostPolicy()
-	contained.CountAsThisComputer(netip.MustParseAddr("::ffff:172.18.0.1"))
-	for _, name := range loopbackHostValues {
-		if plain.Allows(name, gateway) {
-			t.Errorf("without the container image, Host %q from the gateway is accepted", name)
-		}
-		for _, peer := range []string{gateway, "[::ffff:172.18.0.1]:51000", "172.18.0.1", "127.0.0.1:40000"} {
-			if !contained.Allows(name, peer) {
-				t.Errorf("Host %q from %q is refused in the container image", name, peer)
-			}
-		}
-		for _, peer := range neighbours {
-			if contained.Allows(name, peer) {
-				t.Errorf("Host %q from %q is accepted in the container image", name, peer)
-			}
-		}
-	}
-	if contained.Allows("attacker.invalid", gateway) {
-		t.Error("the gateway made an unknown name acceptable")
-	}
-}
-
 // A device that sends a loopback Host is refused on every path, before and
 // after setup, even in open access mode where Git needs no password. The
 // loopback peer and a kept name from another device still work.
@@ -388,4 +361,85 @@ func TestTrustedProxiesAndLoopbackHosts(t *testing.T) {
 	if host := app.Network.Resolver().Resolve(request).Host; host != "localhost" {
 		t.Fatalf("local proxy's X-Forwarded-Host localhost was ignored: %q", host)
 	}
+}
+
+// In the container image a peer address does not tell the computer running
+// the container from another device, so a loopback Host from any peer is
+// accepted exactly while access needs a password, and every such request
+// still meets the sign-in. In open access, before setup, and when the access
+// mode cannot be read, it is refused as outside the image.
+func TestContainerAcceptsLoopbackNamesOnlyBehindTheSignIn(t *testing.T) {
+	gitRefs := "/git/demo.git/info/refs?service=git-upload-pack"
+	serve := func(app *App, signInRequired func() (bool, error)) func(path, host, peer string) *httptest.ResponseRecorder {
+		app.Hosts = NewHostPolicy("gitbox.lan")
+		app.Hosts.InContainer(signInRequired)
+		handler := app.Handler()
+		return func(path, host, peer string) *httptest.ResponseRecorder {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request.Host, request.RemoteAddr = host, peer
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			return response
+		}
+	}
+	accessMode := func(store interface {
+		Settings(context.Context) (state.Settings, error)
+	}) func() (bool, error) {
+		return func() (bool, error) {
+			settings, err := store.Settings(context.Background())
+			return settings.Initialized && settings.AccessMode == "password", err
+		}
+	}
+	for _, mode := range []string{"open", "password"} {
+		t.Run(mode, func(t *testing.T) {
+			app, store, repositoryRoot := newTestApp(t)
+			noErr(t, os.MkdirAll(repositoryRoot, 0o700))
+			canonical, err := filepath.EvalSymlinks(repositoryRoot)
+			noErr(t, err)
+			shared := ""
+			if mode == "password" {
+				shared = fixturePasswordHash(t, "shared-password")
+			}
+			noErr(t, store.CompleteSetup(context.Background(), canonical, mode, shared, fixturePasswordHash(t, "admin-password"), true))
+			app.Repositories.SetRoot(canonical)
+			_, err = app.Repositories.Create(context.Background(), "demo", "")
+			noErr(t, err)
+			send := serve(app, accessMode(store))
+			for _, host := range loopbackHostValues {
+				for _, peer := range nonLoopbackPeers {
+					page, api, git := send("/", host, peer), send("/api/v1/repositories", host, peer), send(gitRefs, host, peer)
+					if mode == "open" {
+						if page.Code != http.StatusMisdirectedRequest || api.Code != http.StatusMisdirectedRequest || git.Code != http.StatusMisdirectedRequest {
+							t.Fatalf("open access, Host %q from %q: %d %d %d, want 421", host, peer, page.Code, api.Code, git.Code)
+						}
+						continue
+					}
+					if page.Code != http.StatusSeeOther || !strings.HasPrefix(page.Header().Get("Location"), "/login") || api.Code != http.StatusUnauthorized || git.Code != http.StatusUnauthorized {
+						t.Fatalf("password access, Host %q from %q: page %d to %q, API %d, Git %d; want the sign-in", host, peer, page.Code, page.Header().Get("Location"), api.Code, git.Code)
+					}
+				}
+			}
+			// This computer keeps working in both modes.
+			if response := send(gitRefs, "localhost:7654", "127.0.0.1:40000"); mode == "open" && response.Code != http.StatusOK {
+				t.Fatalf("Git from this computer: %d", response.Code)
+			}
+		})
+	}
+
+	t.Run("before setup", func(t *testing.T) {
+		app, store, _ := newTestApp(t)
+		send := serve(app, accessMode(store))
+		for _, path := range []string{"/", "/api/v1/repositories", "/login"} {
+			if response := send(path, "localhost:7654", remotePeer); response.Code != http.StatusMisdirectedRequest {
+				t.Fatalf("GET %s before setup: %d, want 421", path, response.Code)
+			}
+		}
+	})
+	t.Run("unreadable access mode", func(t *testing.T) {
+		app := newConfiguredApp(t)
+		send := serve(app, func() (bool, error) { return true, errors.New("state unreadable") })
+		if response := send("/", "localhost:7654", remotePeer); response.Code == http.StatusSeeOther || response.Code == http.StatusOK {
+			t.Fatalf("an unreadable access mode admitted the request: %d", response.Code)
+		}
+	})
 }

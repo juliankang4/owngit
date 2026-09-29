@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,7 +35,10 @@ func updateCommand(arguments []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("update takes no arguments")
 	}
-	install := detectInstall()
+	install, err := detectInstall()
+	if err != nil {
+		return err
+	}
 	checker := &releasecheck.Checker{Current: version.Version, URL: releaseCheckEndpoint}
 	if err := checker.Check(context.Background()); err != nil {
 		return fmt.Errorf("could not ask GitHub for the latest release: %w", err)
@@ -126,14 +131,18 @@ func noUpdateCommand(install service.Install, latest string) string {
 // the registration is read as the command reads it.
 func dashboardUpdateCommand(asService bool) func(string) (command, start string, restart bool) {
 	var (
-		once     sync.Once
-		install  service.Install
-		platform service.Platform
-		runs     serviceState
+		once       sync.Once
+		install    service.Install
+		platform   service.Platform
+		runs       serviceState
+		installErr error
 	)
 	return func(latest string) (string, string, bool) {
 		once.Do(func() {
-			install = detectInstall()
+			if install, installErr = detectInstall(); installErr != nil {
+				log.Printf("the new-release notice shows no update command: %v", installErr)
+				return
+			}
 			runs = serviceState{this: asService}
 			if !asService && runtime.GOOS != "windows" {
 				runs = serviceFor(install)
@@ -146,6 +155,9 @@ func dashboardUpdateCommand(asService bool) func(string) (command, start string,
 			}
 			platform = updatePlatform(install, runs)
 		})
+		if installErr != nil {
+			return "", "", false
+		}
 		command := install.UpdateCommand(latest, platform)
 		start := install.StartAfterUpdate(latest, platform)
 		return command, start, command != "" && !runs.this && start == ""
@@ -182,17 +194,18 @@ func runningExecutable() (string, error) {
 // detectInstall finds how the running program was installed, from facts on
 // this computer: where the file is, which package pacman lists it in, the
 // route record of the container image, and for the Windows service copy
-// the record of the file it was copied from.
-func detectInstall() service.Install {
+// the record of the file it was copied from. The error says that the route
+// record exists but could not be read, so the route is not known.
+func detectInstall() (service.Install, error) {
 	executable, err := runningExecutable()
 	if err != nil {
-		return service.Install{Route: service.RouteUnknown}
+		return service.Install{Route: service.RouteUnknown}, nil
 	}
 	if runtime.GOOS == "windows" {
 		if paths, err := servicePaths(); err == nil && sameFile(executable, paths.Executable) {
 			source, err := os.ReadFile(filepath.Join(paths.Directory, service.ServiceCopyRecord))
 			if err != nil || !filepath.IsAbs(string(source)) {
-				return service.Install{Route: service.RouteUnknown, Executable: executable}
+				return service.Install{Route: service.RouteUnknown, Executable: executable}, nil
 			}
 			executable = string(source)
 		}
@@ -200,11 +213,15 @@ func detectInstall() service.Install {
 	install := service.ClassifyExecutable(executable)
 	if runtime.GOOS == "linux" {
 		install = install.OwnedBy(pacmanOwner(executable))
-		if record, err := os.ReadFile(routeRecord); err == nil {
+		record, err := os.ReadFile(routeRecord)
+		switch {
+		case err == nil:
 			install = install.RecordedAs(string(record))
+		case !errors.Is(err, fs.ErrNotExist):
+			return install, fmt.Errorf("could not read the install route record: %w", err)
 		}
 	}
-	return install
+	return install, nil
 }
 
 // routeRecord is service.RouteRecordPath; tests replace it.

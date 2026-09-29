@@ -15,10 +15,24 @@ import (
 type HostPolicy struct {
 	mu      sync.RWMutex
 	allowed map[string]struct{}
-	// dockerHost is the address from which the computer that runs the
-	// OwnGit container reaches it, or the zero Addr outside the container
-	// image. See CountAsThisComputer.
-	dockerHost netip.Addr
+	// signInRequired is set only in the OwnGit container image; see
+	// InContainer.
+	signInRequired func() (bool, error)
+}
+
+// InContainer makes the policy follow the rule of the OwnGit container
+// image, where a connection's peer address cannot tell the computer that
+// runs the container from another device: Docker's proxy for IPv6 and
+// rootless Docker forward every client from an address inside the
+// container network. There a loopback name is accepted from a peer that is
+// not a loopback address only while signInRequired reports that access
+// needs a password. The Host check then only has to stop DNS rebinding,
+// which never produces a loopback name, and every peer still meets the
+// sign-in. While access is open, and before setup, such a request is
+// refused, as outside the image. signInRequired must not be nil; call
+// InContainer before the policy serves requests.
+func (policy *HostPolicy) InContainer(signInRequired func() (bool, error)) {
+	policy.signInRequired = signInRequired
 }
 
 func NewHostPolicy(hosts ...string) *HostPolicy {
@@ -51,28 +65,17 @@ func (policy *HostPolicy) Remove(value string) {
 	policy.mu.Unlock()
 }
 
-// CountAsThisComputer makes connections from gateway count as this
-// computer's own, like loopback connections. Only OwnGit in its container
-// image calls it, with the container's default gateway: Docker forwards the
-// connections that the computer running the container makes to a published
-// port on its own loopback address, so they arrive from that gateway. Other
-// containers and devices that reach the container directly keep their own
-// addresses. It must be called before the policy serves requests.
-func (policy *HostPolicy) CountAsThisComputer(gateway netip.Addr) {
-	policy.dockerHost = gateway.Unmap()
-}
-
 // Allows reports whether the policy accepts requestHost on a connection from
 // peer, the raw address of the connection's other end (requestctx.Info.Peer,
 // never a forwarded client address). A name that points at this computer,
-// such as localhost, 127.0.0.1 or ::1, is accepted only on a connection from
-// this computer: any device can send it as Host, and only this computer's
-// own connections, including a proxy or Tailscale Serve running here, use
-// it. They come from a loopback address, or in the container image from
-// the address given to CountAsThisComputer.
+// such as localhost, 127.0.0.1 or ::1, is accepted only when peer is a
+// loopback address: any device can send it as Host, and only this computer's
+// own connections, including a proxy or Tailscale Serve running here, use it.
+// In the container image it is also accepted from other peers while access
+// needs a password (see InContainer); when that cannot be read, it is not.
 func (policy *HostPolicy) Allows(requestHost, peer string) bool {
 	host, err := normalizeHost(requestHost)
-	if err != nil || loopbackName(host) && !policy.fromThisComputer(peer) {
+	if err != nil || loopbackName(host) && !loopbackPeer(peer) && !policy.signInGuards() {
 		return false
 	}
 	policy.mu.RLock()
@@ -148,19 +151,24 @@ func loopbackName(host string) bool {
 	return err == nil && address.Unmap().IsLoopback()
 }
 
-// fromThisComputer reports whether a connection's raw peer address, with or
-// without a port, is a loopback address, IPv4-mapped IPv6 included, or the
-// address given to CountAsThisComputer.
-func (policy *HostPolicy) fromThisComputer(peer string) bool {
+// signInGuards reports whether, in the container image, access needs a
+// password now.
+func (policy *HostPolicy) signInGuards() bool {
+	if policy.signInRequired == nil {
+		return false
+	}
+	required, err := policy.signInRequired()
+	return err == nil && required
+}
+
+// loopbackPeer reports whether a connection's raw peer address, with or
+// without a port, is a loopback address, IPv4-mapped IPv6 included.
+func loopbackPeer(peer string) bool {
 	if host, _, err := net.SplitHostPort(peer); err == nil {
 		peer = host
 	}
 	address, err := netip.ParseAddr(peer)
-	if err != nil {
-		return false
-	}
-	address = address.Unmap()
-	return address.IsLoopback() || policy.dockerHost.IsValid() && address == policy.dockerHost
+	return err == nil && address.Unmap().IsLoopback()
 }
 
 // refuseFunnel refuses every request that carries Tailscale's Funnel header.

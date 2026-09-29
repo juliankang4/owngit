@@ -31,7 +31,8 @@ func TestUpdateCommandPrintsTheCommandAndRunsNothing(t *testing.T) {
 		Newer                                           bool
 	}
 	noErr(t, json.Unmarshal([]byte(output), &answer))
-	install := detectInstall()
+	install, err := detectInstall()
+	noErr(t, err)
 	platform := updatePlatform(install, serviceState{})
 	want, start := install.UpdateCommand("99.0.0", platform), install.StartAfterUpdate("99.0.0", platform)
 	if answer.Current != version.Version || answer.Latest != "99.0.0" || !answer.Newer || answer.Route != string(install.Route) || answer.Command != want || answer.Start != start {

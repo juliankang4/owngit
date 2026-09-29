@@ -4,8 +4,8 @@ name: container publish
 # GitHub Container Registry as ghcr.io/juliankang4/owngit, for linux/amd64
 # and linux/arm64. The image holds the release's own linux archives, checked
 # against its SHA256SUMS, so the program in the image is the released one.
-# Tags: the version (1.2.3), its minor (1.2), and latest when the version is
-# the latest release. Each image carries SLSA provenance and an SBOM.
+# Tags: the version (1.2.3), its minor (1.2) when it is the newest release of
+# that minor, and latest when it is the latest release. Each image carries SLSA provenance and an SBOM.
 # Each architecture is built and checked on a runner of that architecture,
 # pushed by digest, and the tags then name both digests.
 #
@@ -78,6 +78,7 @@ jobs:
           ref: refs/tags/v${{ inputs.version }}
           persist-credentials: false
 
+      # The image's revision label names the commit of the release tag.
       - name: Check the source version
         run: |
           declared="$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/version/version.go)"
@@ -85,6 +86,7 @@ jobs:
             echo "tag v$VERSION declares version '$declared'" >&2
             exit 1
           fi
+          echo "REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Download the release
         env:
@@ -100,13 +102,16 @@ jobs:
 
       - name: Set up the builder
         run: |
-          docker buildx create --name owngit --driver docker-container --use
+          # BuildKit v0.32.2, pinned so the published image does not depend
+          # on where a tag points on the day.
+          docker buildx create --name owngit --driver docker-container --use \
+            --driver-opt image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
           docker buildx inspect --bootstrap
 
       - name: Check the image
         run: |
           docker buildx build --load --platform "$PLATFORM" \
-            --build-arg "VERSION=$VERSION" --build-arg "REVISION=$GITHUB_SHA" \
+            --build-arg "VERSION=$VERSION" --build-arg "REVISION=$REVISION" \
             --tag owngit-check -f packaging/container/Dockerfile "$RUNNER_TEMP/context"
           reported="$(docker run --rm owngit-check owngit version)"
           if [ "$reported" != "owngit $VERSION" ]; then
@@ -130,7 +135,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
           docker buildx build --platform "$PLATFORM" \
-            --build-arg "VERSION=$VERSION" --build-arg "REVISION=$GITHUB_SHA" \
+            --build-arg "VERSION=$VERSION" --build-arg "REVISION=$REVISION" \
             --provenance mode=max --sbom true \
             --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" \
             --metadata-file "$RUNNER_TEMP/metadata.json" \
@@ -166,8 +171,18 @@ jobs:
               exit 1
             fi
           done
-          tags=("$IMAGE:$VERSION" "$IMAGE:${VERSION%.*}")
+          # X.Y and latest move only to the newest release of their range,
+          # so publishing an older patch again never moves them back.
+          minor="${VERSION%.*}"
+          releases="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[].tagName')"
+          newest_minor="$(printf '%s\n' "$releases" | grep -E "^v${minor//./\\.}\.(0|[1-9][0-9]*)$" | sort -V | tail -n 1)"
           latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          tags=("$IMAGE:$VERSION")
+          if [ "$newest_minor" = "v$VERSION" ]; then
+            tags+=("$IMAGE:$minor")
+          else
+            echo "the newest $minor release is $newest_minor, so $minor stays where it is"
+          fi
           if [ "$latest" = "v$VERSION" ]; then
             tags+=("$IMAGE:latest")
           else
