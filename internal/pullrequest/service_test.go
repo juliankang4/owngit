@@ -992,6 +992,13 @@ type serviceFixture struct {
 
 func newServiceFixture(t *testing.T) *serviceFixture {
 	t.Helper()
+	return newServiceFixtureWithFormat(t, repository.ObjectFormatSHA1)
+}
+
+// newServiceFixtureWithFormat is newServiceFixture with a repository and a
+// working copy that use object format.
+func newServiceFixtureWithFormat(t *testing.T, format string) *serviceFixture {
+	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
@@ -1004,12 +1011,17 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	runner, err := gitexec.New("", filepath.Join(stateRoot, "runtime"))
 	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
-	stored, err := manager.Create(ctx, "project", "pull request fixture")
+	var stored state.Repository
+	if format == repository.ObjectFormatSHA1 {
+		stored, err = manager.Create(ctx, "project", "pull request fixture")
+	} else {
+		stored, err = manager.CreateWithOptions(ctx, "project", "pull request fixture", repository.CreateOptions{ObjectFormat: format})
+	}
 	noErr(t, err)
 	remote, err := manager.Path(stored.ID)
 	noErr(t, err)
 	work := filepath.Join(root, "work")
-	runFixtureGit(t, "", "init", "--initial-branch=main", work)
+	runFixtureGit(t, "", "init", "--object-format="+format, "--initial-branch=main", work)
 	runFixtureGit(t, work, "config", "user.name", "PR Test")
 	runFixtureGit(t, work, "config", "user.email", "pr-test@example.invalid")
 	runFixtureGit(t, work, "remote", "add", "origin", remote)
