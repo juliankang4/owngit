@@ -2156,7 +2156,22 @@ func (s *Store) AcknowledgeInsecureHTTP(ctx context.Context) error {
 // acknowledgeInsecureHTTP records that plain HTTP was acknowledged.
 const acknowledgeInsecureHTTP = `UPDATE metadata SET value='true' WHERE key='insecure_http_accepted'`
 
+// SetAdminPassword replaces the administrator password whatever it was. It
+// is local recovery for an owner who no longer knows it.
 func (s *Store) SetAdminPassword(ctx context.Context, encoded string) error {
+	return s.replaceAdminPassword(ctx, encoded, nil)
+}
+
+// ChangeAdminPassword replaces the administrator password only while the
+// administrator version the caller verified is current, and returns
+// ErrAccessChanged, changing nothing, once another change replaced it.
+func (s *Store) ChangeAdminPassword(ctx context.Context, encoded string, verified int64) error {
+	return s.replaceAdminPassword(ctx, encoded, &verified)
+}
+
+// replaceAdminPassword stores encoded, ends every administrator session
+// and moves to the next version, after comparing verified when given.
+func (s *Store) replaceAdminPassword(ctx context.Context, encoded string, verified *int64) error {
 	if encoded == "" {
 		return errors.New("password hash is required")
 	}
@@ -2165,6 +2180,15 @@ func (s *Store) SetAdminPassword(ctx context.Context, encoded string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if verified != nil {
+		current, err := credentialVersionCurrent(ctx, tx, "admin", *verified)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return ErrAccessChanged
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO passwords(kind,encoded) VALUES('admin',?) ON CONFLICT(kind) DO UPDATE SET encoded=excluded.encoded`, encoded); err != nil {
 		return err
 	}

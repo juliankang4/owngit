@@ -190,7 +190,14 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		var encoded string
 		encoded, err = auth.HashPassword(newPassword)
 		if err == nil {
-			err = app.Store.SetAdminPassword(request.Context(), encoded)
+			// A password changed since the confirmation is no longer the
+			// current one, so it cannot replace its replacement.
+			err = app.Store.ChangeAdminPassword(request.Context(), encoded, verified.version)
+		}
+		if errors.Is(err, state.ErrAccessChanged) {
+			notice, status := adminPasswordNotice(request, auth.ErrInvalidCredentials, "admin_password")
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{notice}, status)
+			return
 		}
 		ends, notice = adminCookie, "admin_password_changed"
 	case webui.ActionAcknowledgeInsecure:

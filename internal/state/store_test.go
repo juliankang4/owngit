@@ -99,6 +99,51 @@ func TestSetupAndCredentialModeTransitions(t *testing.T) {
 	}
 }
 
+// Two changes of the administrator password confirmed at the same version:
+// the first saved wins, and the later one changes nothing.
+func TestAdministratorPasswordChangeNeedsTheVersionItConfirmed(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	noErr(t, store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
+	settings, err := store.Settings(ctx)
+	noErr(t, err)
+	confirmed := settings.AdminSessionVersion
+
+	noErr(t, store.ChangeAdminPassword(ctx, "owner-hash", confirmed))
+	settings, err = store.Settings(ctx)
+	noErr(t, err)
+	owner := settings.AdminSessionVersion
+	if owner == confirmed {
+		t.Fatal("changing the administrator password kept its version")
+	}
+	noErr(t, store.CreateSession(ctx, "owner-admin", "admin", "csrf", owner, time.Now().Add(time.Hour)))
+
+	if err := store.ChangeAdminPassword(ctx, "stale-hash", confirmed); !errors.Is(err, ErrAccessChanged) {
+		t.Fatalf("change confirmed at a replaced version: %v", err)
+	}
+	encoded, err := store.PasswordHash(ctx, "admin")
+	noErr(t, err)
+	settings, err = store.Settings(ctx)
+	noErr(t, err)
+	if encoded != "owner-hash" || settings.AdminSessionVersion != owner {
+		t.Fatalf("refused change altered the password: hash=%q version=%d, want owner-hash at %d", encoded, settings.AdminSessionVersion, owner)
+	}
+	if _, ok, err := store.Session(ctx, "owner-admin", "admin", time.Now()); err != nil || !ok {
+		t.Fatalf("refused change ended the owner's session: ok=%v err=%v", ok, err)
+	}
+
+	// Local recovery replaces the password whatever version was confirmed.
+	noErr(t, store.SetAdminPassword(ctx, "reset-hash"))
+	encoded, err = store.PasswordHash(ctx, "admin")
+	noErr(t, err)
+	if encoded != "reset-hash" {
+		t.Fatalf("recovery did not replace the password: %q", encoded)
+	}
+	if _, ok, err := store.Session(ctx, "owner-admin", "admin", time.Now()); err != nil || ok {
+		t.Fatalf("recovery kept an administrator session: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestOnlyOneConcurrentSetupCompletionWins(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
