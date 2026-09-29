@@ -20,8 +20,6 @@ struct PanelModel: Equatable {
     var failure: String?
     var showingSettings = false
     var signIn = SignIn.off
-    /// The app runs from a place that disappears, such as a disk image.
-    var misplaced = false
 }
 
 /// What the owner asked for in the panel.
@@ -159,13 +157,6 @@ final class PanelViewController: NSViewController {
             status = answer
         }
         add(header(state: state, status: status))
-        if model.misplaced {
-            add(notice([label(words.moveApp)]))
-            let quit = PanelButton(title: words.quit) { [perform] _ in perform(.quit) }
-            add(quit)
-            firstControl = quit
-            return
-        }
         if let failure = model.failure {
             add(notice([label(String(format: words.failed, failure), selectable: true)]))
         }

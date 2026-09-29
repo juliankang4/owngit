@@ -77,9 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.contentViewController = panel
         popover.delegate = self
         if runsFromTemporaryPlace() {
-            model.misplaced = true
-            showIcon()
-            showPanelSoon()
+            fail(words.moveApp)
             return
         }
         readAgent()
@@ -87,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard FileManager.default.fileExists(atPath: stateDir.path) else {
             // Nothing ran yet: the first check finds OwnGit stopped and
             // installs the service.
-            startVisible(openPanel: true)
+            startVisible()
             return
         }
         runHelper(["tray", "status", "--json", "--state-dir", stateDir.path]) { [self] result in
@@ -96,14 +94,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
             if report.available && report.shown {
-                startVisible(openPanel: false)
+                startVisible()
             } else {
                 hideIcon()
             }
         }
     }
 
-    /// Opening the app again while it runs shows the panel, and shows the
+    /// Opening the app again while it runs shows the panel, or shows the
     /// icon again when it was hidden.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if statusItem != nil {
@@ -115,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 fail(String(format: words.readFailed, result.failureText))
                 return
             }
-            startVisible(openPanel: true)
+            startVisible()
         }
         return false
     }
@@ -147,11 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: - Icon and panel
 
-    private func startVisible(openPanel: Bool) {
+    private func startVisible() {
         showIcon()
-        if openPanel {
-            showPanelSoon()
-        }
         refresh { [self] state in
             if let repair = launchRepair(state: state, agent: agent, helper: helper.path, version: appVersion) {
                 run(repair)
@@ -185,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let button = statusItem?.button else {
             return
         }
-        let name = model.misplaced ? nil : model.state?.name
+        let name = model.state?.name
         button.image = menuBarImage(name)
         let label = name.map { "OwnGit, " + words.stateName($0) } ?? "OwnGit"
         button.setAccessibilityLabel(label)
@@ -196,14 +191,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            showPanel()
-        }
-    }
-
-    /// showPanelSoon opens the panel once macOS has placed a new icon in
-    /// the menu bar.
-    private func showPanelSoon() {
-        DispatchQueue.main.async { [self] in
             showPanel()
         }
     }
@@ -244,13 +231,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func tick() {
-        if model.misplaced {
-            return
-        }
         if statusItem == nil {
             let hidden = stateDir.appendingPathComponent("tray-hidden")
             if !FileManager.default.fileExists(atPath: hidden.path) {
-                startVisible(openPanel: false)
+                startVisible()
             }
             return
         }
@@ -263,9 +247,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// the server does not answer. done receives the new state; a call
     /// while a check runs waits for that check.
     private func refresh(done: ((PanelState) -> Void)? = nil) {
-        if model.misplaced {
-            return
-        }
         if waiting != nil {
             done.map { waiting?.append($0) }
             return
