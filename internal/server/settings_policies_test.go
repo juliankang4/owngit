@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +185,45 @@ func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
 	}
 	if status, _, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"maximum_bytes": 1 << 30, "operation_seconds": 600}}); status != http.StatusOK {
 		t.Fatalf("PATCH both limits over an unreadable value status=%d", status)
+	}
+}
+
+// Repositories shows any saved transfer limit exactly, whatever the API or
+// the command line saved it in, so saving the form unchanged stores the
+// same limits.
+func TestTransferLimitsSurviveAnUnchangedSave(t *testing.T) {
+	fixture, server, _ := newConfirmationFixture(t, false, state.ConfirmEveryTime)
+	browser := openConfirmationBrowser(t, server, false)
+	shown := func(body, id string) (amount, unit string) {
+		t.Helper()
+		input := regexp.MustCompile(`(?s)<input id="` + id + `"[^>]*?value="([^"]*)"`).FindStringSubmatch(body)
+		menu := regexp.MustCompile(`(?s)<select id="` + id + `-unit".*?</select>`).FindString(body)
+		selected := regexp.MustCompile(`<option value="([^"]*)" selected`).FindStringSubmatch(menu)
+		if input == nil || selected == nil {
+			t.Fatalf("%s is not shown with a unit:\n%s", id, body)
+		}
+		return input[1], selected[1]
+	}
+	for _, saved := range []state.GitTransferLimits{
+		{MaximumBytes: 1<<20 + 1, Operation: 90 * time.Second},
+		{MaximumBytes: 1536 << 10, Operation: 5400 * time.Second},
+		{MaximumBytes: 64 << 30, Operation: 24 * time.Hour},
+	} {
+		if status, _, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{
+			"maximum_bytes": saved.MaximumBytes, "operation_seconds": int64(saved.Operation / time.Second),
+		}}); status != http.StatusOK {
+			t.Fatalf("PATCH %+v status=%d", saved, status)
+		}
+		page := browser.get("/settings/repositories")
+		size, sizeUnit := shown(page.body, "transfer-size")
+		duration, durationUnit := shown(page.body, "transfer-time")
+		requireSaved(t, "unchanged transfer limits", browser.post("/settings/repositories", url.Values{
+			"action": {webui.ActionSaveTransfers}, "admin_password": {"admin-password"},
+			"transfer_size": {size}, "transfer_size_unit": {sizeUnit}, "transfer_time": {duration}, "transfer_time_unit": {durationUnit},
+		}))
+		if limits, err := fixture.store.GitTransferLimits(context.Background()); err != nil || limits != saved {
+			t.Fatalf("shown as %s %s and %s %s, saved back as %+v (err=%v), want %+v", size, sizeUnit, duration, durationUnit, limits, err, saved)
+		}
 	}
 }
 

@@ -30,7 +30,7 @@ func templateFuncs() template.FuncMap {
 		"biUntil":      biUntil,
 		"adminChoices": AdminConfirmChoices,
 		"sessionMenu":  SessionChoices,
-		"unitsFrom":    UnitsFrom,
+		"limitUnits":   LimitKind.Units,
 		"logsMenu":     CheckLogChoices,
 		"confirmAfter": confirmAfter,
 		"tsUse":        tsUse,

@@ -432,15 +432,3 @@ func fieldDefault(lang Lang, defaults map[string]int64, field string) template.H
 		strings.ReplaceAll(Text(LangEN, MsgCCDefaultIs), "%s", humanLimit(LangEN, limit.Kind, value)),
 		strings.ReplaceAll(Text(LangKO, MsgCCDefaultIs), "%s", humanLimit(LangKO, limit.Kind, value)))
 }
-
-// UnitsFrom lists the units of kind from the one named smallest up, for a
-// field whose smaller units would never be used.
-func UnitsFrom(kind LimitKind, smallest string) []LimitUnit {
-	units := kind.Units()
-	for index, unit := range units {
-		if unit.Name == smallest {
-			return units[index:]
-		}
-	}
-	return units
-}

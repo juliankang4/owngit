@@ -659,8 +659,8 @@
   <form class="gform" method="post" action="{{tabURL "repositories"}}" data-group-form>
     <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
     <input type="hidden" name="action" value="save_transfers">
-    {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-size" "Field" "transfer_size" "Units" (unitsFrom "size" "MB") "Saved" $p.Policies.TransferSize "Label" (code "transfer.size") "Help" (code "transfer.size_help")}}
-    {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-time" "Field" "transfer_time" "Units" (unitsFrom "duration" "min") "Saved" $p.Policies.TransferTime "Label" (code "transfer.time") "Help" (code "transfer.time_help")}}
+    {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-size" "Field" "transfer_size" "Units" (limitUnits "size") "Saved" $p.Policies.TransferSize "Label" (code "transfer.size") "Help" (code "transfer.size_help")}}
+    {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-time" "Field" "transfer_time" "Units" (limitUnits "duration") "Saved" $p.Policies.TransferTime "Label" (code "transfer.time") "Help" (code "transfer.time_help")}}
     <p class="wn">{{icon "warning"}}<span>{{bi $lang "transfer.higher"}}</span></p>
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "transfer" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
   </form>
