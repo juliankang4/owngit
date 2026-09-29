@@ -67,7 +67,9 @@ func LaunchAgentOutputPath(home string) string {
 // user's background session; launchd never runs both at once. Like the
 // systemd units it passes the installing shell's PATH, a private umask and a
 // stop timeout long enough for an orderly shutdown, and never --listen or
-// --base-url.
+// --base-url. When plan.App is set, the agent names that app in
+// AssociatedBundleIdentifiers, so that System Settings lists the service
+// under the app's name instead of the name of the developer who signed it.
 func RenderLaunchAgent(plan Plan) (string, error) {
 	if plan.Mode != ModeLaunchAgent {
 		return "", fmt.Errorf("no LaunchAgent for mode %q", plan.Mode)
@@ -98,6 +100,12 @@ func RenderLaunchAgent(plan Plan) (string, error) {
 	line("<dict>")
 	line("\t<key>Label</key>")
 	line("\t%s", str(LaunchAgentLabel))
+	if plan.App != "" {
+		line("\t<key>AssociatedBundleIdentifiers</key>")
+		line("\t<array>")
+		line("\t\t%s", str(plan.App))
+		line("\t</array>")
+	}
 	line("\t<key>ProgramArguments</key>")
 	line("\t<array>")
 	for _, argument := range arguments {
@@ -364,6 +372,27 @@ func stringList(value any) []string {
 		}
 	}
 	return words
+}
+
+// AppBundleID returns the bundle identifier of the app that holds
+// executable as its helper, at APP.app/Contents/Helpers, from the app's
+// Info.plist. It returns "" for an executable outside an app bundle.
+func AppBundleID(ctx context.Context, run Runner, executable string) (string, error) {
+	helpers := filepath.Dir(executable)
+	contents := filepath.Dir(helpers)
+	if filepath.Base(helpers) != "Helpers" || filepath.Base(contents) != "Contents" || filepath.Ext(filepath.Dir(contents)) != ".app" {
+		return "", nil
+	}
+	info := filepath.Join(contents, "Info.plist")
+	plist, err := readAnyPlist(ctx, run, info)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", info, err)
+	}
+	identifier, _ := plist["CFBundleIdentifier"].(string)
+	if identifier == "" {
+		return "", fmt.Errorf("%s names no CFBundleIdentifier", info)
+	}
+	return identifier, nil
 }
 
 // AgentExecutable is the path the agent starts: Homebrew's opt link for a

@@ -350,6 +350,34 @@ func TestLaunchAgentInstallWritesTheAgent(t *testing.T) {
 	}
 }
 
+// The service of the program inside OwnGit.app names the app, so that
+// System Settings lists it as OwnGit; a damaged app installs nothing.
+func TestLaunchAgentInstallFromTheAppNamesTheApp(t *testing.T) {
+	fake := recordLaunchctl(t)
+	host, _ := testLaunchAgentHost(t, macDesktop(), "")
+	contents := filepath.Join(host.account.HomeDir, "Applications", "OwnGit.app", "Contents")
+	noErr(t, os.MkdirAll(filepath.Join(contents, "Helpers"), 0o755))
+	info := filepath.Join(contents, "Info.plist")
+	noErr(t, os.WriteFile(info, []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>app.owngit.OwnGit</string></dict></plist>
+`), 0o644))
+	host.agentExecutable = filepath.Join(contents, "Helpers", "owngit")
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := host.install(stateDir, nil); !errors.Is(err, service.ErrNotLoaded) {
+		t.Fatalf("install: %v", err)
+	}
+	if !strings.Contains(fake.bootstrapped, "<key>AssociatedBundleIdentifiers</key>\n\t<array>\n\t\t<string>app.owngit.OwnGit</string>") ||
+		!strings.Contains(fake.bootstrapped, "<string>"+host.agentExecutable+"</string>") {
+		t.Fatalf("the agent does not name the app:\n%s", fake.bootstrapped)
+	}
+
+	fake.bootstrapped = ""
+	noErr(t, os.WriteFile(info, []byte("not a property list"), 0o644))
+	if err := host.install(stateDir, nil); err == nil || !strings.Contains(err.Error(), "inside an app") || fake.bootstrapped != "" {
+		t.Fatalf("install from a damaged app: %v, bootstrapped %q", err, fake.bootstrapped)
+	}
+}
+
 // An agent installed without a desktop login stays headless when it is
 // installed again from the desktop, and a desktop agent says so explicitly.
 func TestLaunchAgentReinstallKeepsHeadless(t *testing.T) {

@@ -33,6 +33,10 @@ type Plan struct {
 	Headless bool
 	// Path is the PATH of the service. Empty keeps the systemd default.
 	Path string
+	// App is the bundle identifier of the macOS app that holds Executable
+	// (see AppBundleID), or "". The LaunchAgent names it so that macOS lists
+	// the service under the app's name.
+	App string
 }
 
 // UnitPath is where the plan's unit lives. userConfigDir is the installing

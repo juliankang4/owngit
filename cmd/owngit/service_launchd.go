@@ -171,6 +171,9 @@ func (host *launchAgentHost) install(stateDirFlag string, headlessFlag *bool) er
 		host.printf("OwnGit was installed with npm, so the service runs the executable of its platform package directly: %s\n", host.agentExecutable)
 	}
 	plan := host.agentPlan(stateDir, headlessFlag, existing, found)
+	if plan.App, err = service.AppBundleID(context.Background(), serviceRunner, plan.Executable); err != nil {
+		return fmt.Errorf("the service would run the program inside an app, but %w", err)
+	}
 	agent, err := service.RenderLaunchAgent(plan)
 	if err != nil {
 		return err

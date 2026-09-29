@@ -100,6 +100,71 @@ func lintPlist(t *testing.T, agent string) {
 	}
 }
 
+// An agent that runs the helper inside OwnGit.app names the app, so that
+// System Settings lists the service as OwnGit; other agents name no app.
+func TestRenderLaunchAgentNamesTheApp(t *testing.T) {
+	plan := launchAgentPlan("/Users/example")
+	plan.App = "app.owngit.OwnGit"
+	agent, err := RenderLaunchAgent(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plist, err := parsePlist([]byte(agent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stringList(plist["AssociatedBundleIdentifiers"]); !slices.Equal(got, []string{"app.owngit.OwnGit"}) {
+		t.Fatalf("AssociatedBundleIdentifiers = %q\n%s", got, agent)
+	}
+	lintPlist(t, agent)
+
+	plan.App = ""
+	if agent, err = RenderLaunchAgent(plan); err != nil || strings.Contains(agent, "AssociatedBundleIdentifiers") {
+		t.Fatalf("an agent without an app: %v\n%s", err, agent)
+	}
+}
+
+func TestAppBundleID(t *testing.T) {
+	dir := t.TempDir()
+	app := filepath.Join(dir, "OwnGit.app", "Contents")
+	if err := os.MkdirAll(filepath.Join(app, "Helpers"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(app, "Helpers", "owngit")
+	info := filepath.Join(app, "Info.plist")
+	write := func(identifier string) {
+		t.Helper()
+		body := `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleName</key><string>OwnGit</string>` + identifier + `</dict></plist>`
+		if err := os.WriteFile(info, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`<key>CFBundleIdentifier</key><string>app.owngit.OwnGit</string>`)
+	if got, err := AppBundleID(context.Background(), nil, helper); err != nil || got != "app.owngit.OwnGit" {
+		t.Fatalf("AppBundleID = %q, %v", got, err)
+	}
+	for _, outside := range []string{
+		"/opt/homebrew/opt/owngit/bin/owngit",
+		filepath.Join(dir, "OwnGit", "Contents", "Helpers", "owngit"),
+		filepath.Join(dir, "OwnGit.app", "Contents", "MacOS", "owngit"),
+	} {
+		if got, err := AppBundleID(context.Background(), nil, outside); err != nil || got != "" {
+			t.Errorf("AppBundleID(%s) = %q, %v; want no app", outside, got, err)
+		}
+	}
+	// A helper in a damaged app is not installed under no name.
+	write("")
+	if got, err := AppBundleID(context.Background(), nil, helper); err == nil {
+		t.Fatalf("an Info.plist without an identifier gave %q", got)
+	}
+	if err := os.Remove(info); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := AppBundleID(context.Background(), nil, helper); err == nil {
+		t.Fatalf("a missing Info.plist gave %q", got)
+	}
+}
+
 func TestRenderLaunchAgentRefuses(t *testing.T) {
 	for name, change := range map[string]func(*Plan){
 		"relative executable":      func(plan *Plan) { plan.Executable = "owngit" },
