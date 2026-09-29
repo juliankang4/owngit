@@ -30,6 +30,7 @@ const (
 	MsgTrayUpdateGuide   MessageCode = "tray.update_guide"
 	MsgTrayMoreFindings  MessageCode = "tray.more_findings"
 	MsgTrayRepairRun     MessageCode = "tray.repair_run"
+	MsgTrayStartRun      MessageCode = "tray.start_run"
 	MsgTrayNoStatus      MessageCode = "tray.no_status"
 )
 
@@ -42,8 +43,8 @@ var trayCatalog = map[MessageCode]message{
 	MsgTrayCloneAddress: {en: "Clone address", ko: "클론 주소"},
 	MsgTrayCloneHelp:    {en: "Add the repository name to this address when cloning.", ko: "클론할 때 이 주소 뒤에 저장소 이름을 붙이세요."},
 	MsgTrayCopy:         {en: "Copy", ko: "복사"},
-	MsgTrayCopied:       {en: "Copied", ko: "복사함"},
-	MsgTrayCopyFailed:   {en: "Not copied", ko: "복사 못 함"},
+	MsgTrayCopied:       {en: "Copied", ko: "복사됨"},
+	MsgTrayCopyFailed:   {en: "Not copied", ko: "복사하지 못함"},
 	MsgTrayRecent:       {en: "Recent pushes", ko: "최근 푸시"},
 	MsgTrayNoPushes:     {en: "No pushes yet.", ko: "아직 푸시가 없습니다."},
 	MsgTrayPushesLater:  {en: "Recent pushes appear here while OwnGit runs.", ko: "OwnGit이 실행 중일 때 최근 푸시가 여기에 보입니다."},
@@ -67,6 +68,7 @@ var trayCatalog = map[MessageCode]message{
 	MsgTrayUpdateGuide:   {en: "The dashboard says how to update this install.", ko: "이 설치를 업데이트하는 방법은 대시보드에 있습니다."},
 	MsgTrayMoreFindings:  {en: "The dashboard Settings list %d more.", ko: "나머지 %d건은 대시보드 설정에서 볼 수 있습니다."},
 	MsgTrayRepairRun:     {en: "To repair it, run this command:", ko: "고치려면 이 명령을 실행하세요:"},
+	MsgTrayStartRun:      {en: "To start OwnGit, run this command:", ko: "OwnGit을 시작하려면 이 명령을 실행하세요:"},
 	MsgTrayNoStatus: {
 		en: "OwnGit could not report its status just now. The icon asks again in a few seconds.",
 		ko: "지금은 OwnGit 상태를 확인하지 못했습니다. 몇 초 뒤에 다시 확인합니다.",

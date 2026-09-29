@@ -279,6 +279,15 @@ type highContrast struct {
 	defaultScheme *uint16
 }
 
+// call calls a Win32 function. Pass a Go pointer as
+// uintptr(unsafe.Pointer(&x)) written in the call itself: with
+// go:uintptrescapes the compiler then keeps x on the heap and alive during
+// the call, which matters because many calls (GetMessage, DispatchMessage,
+// BeginPaint, Shell_NotifyIcon and others) run the window procedure in Go
+// meanwhile, and a Go stack can move then. A helper that converts the
+// pointer loses that guarantee.
+//
+//go:uintptrescapes
 func call(proc *windows.LazyProc, args ...uintptr) uintptr {
 	result, _, _ := proc.Call(args...)
 	return result
@@ -302,8 +311,6 @@ func indexNUL(text string) int {
 	return len(text)
 }
 
-func ptr[T any](value *T) uintptr { return uintptr(unsafe.Pointer(value)) }
-
 // fromAddress is the structure at an address that Windows passed, as in the
 // lParam of WM_DRAWITEM, or that it returned.
 func fromAddress[T any](address uintptr) *T { return *(**T)(unsafe.Pointer(&address)) }
@@ -317,7 +324,7 @@ func dibSection(pixels []uint8, size int) uintptr {
 	header := bitmapInfoHeader{width: int32(size), height: -int32(size), planes: 1, bitCount: 32}
 	header.size = uint32(unsafe.Sizeof(header))
 	var bits unsafe.Pointer
-	bitmap := call(procCreateDIBSection, 0, ptr(&header), 0, uintptr(unsafe.Pointer(&bits)), 0, 0)
+	bitmap := call(procCreateDIBSection, 0, uintptr(unsafe.Pointer(&header)), 0, uintptr(unsafe.Pointer(&bits)), 0, 0)
 	if bitmap == 0 || bits == nil {
 		return 0
 	}
@@ -371,5 +378,5 @@ func newIcon(coverage []uint8, size int, color uint32) uintptr {
 	mask := call(procCreateBitmap, uintptr(size), uintptr(size), 1, 1, uintptr(unsafe.Pointer(&maskBits[0])))
 	defer call(procDeleteObject, mask)
 	info := iconInfo{isIcon: 1, mask: mask, color: colorBitmap}
-	return call(procCreateIconIndirect, ptr(&info))
+	return call(procCreateIconIndirect, uintptr(unsafe.Pointer(&info)))
 }

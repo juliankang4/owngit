@@ -72,7 +72,14 @@ func NewView(report Report, lang webui.Lang, now time.Time) View {
 		case report.Condition == Unavailable:
 			view.Notice = []string{text(webui.MsgTrayNoStatus)}
 		}
-		command(webui.MsgTrayRepairRun, report.Repair)
+		// The checkup's command for a stopped OwnGit ("owngit service
+		// start", or "owngit service install" when the service is gone)
+		// starts it; other commands repair.
+		if report.Condition == Stopped {
+			command(webui.MsgTrayStartRun, report.Repair)
+		} else {
+			command(webui.MsgTrayRepairRun, report.Repair)
+		}
 		return view
 	}
 	view.Subtitle = text(webui.MsgTrayVersion, status.Version)

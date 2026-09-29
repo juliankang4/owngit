@@ -171,20 +171,26 @@ func Run(options Options) error {
 		}
 	}()
 	var msg message
-	for int32(call(procGetMessage, ptr(&msg), 0, 0, 0)) > 0 {
+	for {
+		got := int32(call(procGetMessage, uintptr(unsafe.Pointer(&msg)), 0, 0, 0))
+		if got == 0 {
+			return nil
+		}
+		if got < 0 {
+			return errors.New("the icon's messages could not be read")
+		}
 		// Enter on a focused button presses it; the dialog manager would
 		// press Open instead, since the buttons are drawn by the icon.
 		if msg.message == wmKeyDown && msg.wParam == vkReturn && a.isButton(call(procGetFocus)) {
 			call(procSendMessage, call(procGetFocus), bmClick, 0, 0)
 			continue
 		}
-		if call(procIsDialogMessage, a.hwnd, ptr(&msg)) != 0 {
+		if call(procIsDialogMessage, a.hwnd, uintptr(unsafe.Pointer(&msg))) != 0 {
 			continue
 		}
-		call(procTranslateMessage, ptr(&msg))
-		call(procDispatchMessage, ptr(&msg))
+		call(procTranslateMessage, uintptr(unsafe.Pointer(&msg)))
+		call(procDispatchMessage, uintptr(unsafe.Pointer(&msg)))
 	}
-	return nil
 }
 
 // userLanguage is Korean when Windows shows its own text in Korean, and
@@ -207,17 +213,17 @@ func (a *app) createWindow() error {
 		cursor: call(procLoadCursor, 0, idcArrow), className: utf16("OwnGitIcon"),
 	}
 	class.size = uint32(unsafe.Sizeof(class))
-	if call(procRegisterClassEx, ptr(&class)) == 0 {
+	if call(procRegisterClassEx, uintptr(unsafe.Pointer(&class))) == 0 {
 		return errors.New("register the window of the OwnGit icon")
 	}
-	a.taskbarCreated = uint32(call(procRegisterWindowMessage, ptr(utf16("TaskbarCreated"))))
-	a.hwnd = call(procCreateWindowEx, wsExToolWindow|wsExTopmost|wsExControlParent, ptr(class.className), ptr(utf16("OwnGit")),
+	a.taskbarCreated = uint32(call(procRegisterWindowMessage, uintptr(unsafe.Pointer(utf16("TaskbarCreated")))))
+	a.hwnd = call(procCreateWindowEx, wsExToolWindow|wsExTopmost|wsExControlParent, uintptr(unsafe.Pointer(class.className)), uintptr(unsafe.Pointer(utf16("OwnGit"))),
 		wsPopup|wsClipChildren, 0, 0, 0, 0, 0, 0, a.instance, 0)
 	if a.hwnd == 0 {
 		return errors.New("create the window of the OwnGit icon")
 	}
 	corner := int32(dwmwcpRound)
-	call(procDwmSetWindowAttribute, a.hwnd, dwmwaCornerPref, ptr(&corner), unsafe.Sizeof(corner))
+	call(procDwmSetWindowAttribute, a.hwnd, dwmwaCornerPref, uintptr(unsafe.Pointer(&corner)), unsafe.Sizeof(corner))
 	a.readTheme()
 	a.setDPI(uint32(call(procGetDpiForSystem)))
 	a.createControls()
@@ -270,7 +276,7 @@ func (a *app) createControls() {
 }
 
 func (a *app) child(class string, style uintptr, id int) uintptr {
-	return call(procCreateWindowEx, 0, ptr(utf16(class)), ptr(utf16("")), wsChild|style, 0, 0, 0, 0, a.hwnd, uintptr(id), a.instance, 0)
+	return call(procCreateWindowEx, 0, uintptr(unsafe.Pointer(utf16(class))), uintptr(unsafe.Pointer(utf16(""))), wsChild|style, 0, 0, 0, 0, a.hwnd, uintptr(id), a.instance, 0)
 }
 
 func (a *app) setText(control uintptr, text string) {
@@ -278,7 +284,7 @@ func (a *app) setText(control uintptr, text string) {
 		return
 	}
 	a.texts[control] = text
-	call(procSetWindowText, control, ptr(utf16(text)))
+	call(procSetWindowText, control, uintptr(unsafe.Pointer(utf16(text))))
 }
 
 func (a *app) isButton(control uintptr) bool {
@@ -518,23 +524,23 @@ func (a *app) placePanel() {
 	anchor, ok := a.iconRect()
 	if !ok {
 		var cursor pointXY
-		call(procGetCursorPos, ptr(&cursor))
+		call(procGetCursorPos, uintptr(unsafe.Pointer(&cursor)))
 		anchor = rect{cursor.x, cursor.y, cursor.x, cursor.y}
 	}
 	center := pointXY{anchor.left + anchor.width()/2, anchor.top + anchor.height()/2}
 	monitor := call(procMonitorFromPoint, uintptr(*(*uint64)(unsafe.Pointer(&center))), monitorNearest)
 	info := monitorInfo{}
 	info.size = uint32(unsafe.Sizeof(info))
-	call(procGetMonitorInfo, monitor, ptr(&info))
+	call(procGetMonitorInfo, monitor, uintptr(unsafe.Pointer(&info)))
 	var dpiX, dpiY uint32
-	if call(procGetDpiForMonitor, monitor, 0, ptr(&dpiX), ptr(&dpiY)) == 0 && dpiX != 0 {
+	if call(procGetDpiForMonitor, monitor, 0, uintptr(unsafe.Pointer(&dpiX)), uintptr(unsafe.Pointer(&dpiY))) == 0 && dpiX != 0 {
 		a.setDPI(dpiX)
 	}
 	width, height := a.layout()
 	margin := a.scale(8)
 	x := clamp(center.x-width/2, info.work.left+margin, info.work.right-width-margin)
 	y := clamp(anchor.top-height-margin, info.work.top+margin, info.work.bottom-height-margin)
-	call(procSetWindowText, a.hwnd, ptr(utf16("OwnGit, "+a.view.State)))
+	call(procSetWindowText, a.hwnd, uintptr(unsafe.Pointer(utf16("OwnGit, "+a.view.State))))
 	call(procSetWindowPos, a.hwnd, hwndTopmost, uintptr(x), uintptr(y), uintptr(width), uintptr(height), swpShowWindow)
 	a.redraw()
 }
@@ -559,7 +565,7 @@ func (a *app) command(id int) {
 	case idCancel:
 		a.closePanel()
 		data := a.iconData()
-		call(procShellNotifyIcon, nimSetFocus, ptr(&data))
+		call(procShellNotifyIcon, nimSetFocus, uintptr(unsafe.Pointer(&data)))
 	case idCopyCommand:
 		a.copy(a.controls.copyCmd, idCopyCommand, a.view.Command)
 	case idCopyClone:
@@ -668,19 +674,19 @@ func (a *app) applyIcon() {
 	tip, _ := windows.UTF16FromString(a.view.Tooltip)
 	copy(data.tip[:len(data.tip)-1], tip)
 	if a.iconAdded {
-		if call(procShellNotifyIcon, nimModify, ptr(&data)) != 0 {
+		if call(procShellNotifyIcon, nimModify, uintptr(unsafe.Pointer(&data))) != 0 {
 			return
 		}
 		// Explorer lost the icon; add it again.
 		a.iconAdded = false
 	}
-	if call(procShellNotifyIcon, nimAdd, ptr(&data)) == 0 {
+	if call(procShellNotifyIcon, nimAdd, uintptr(unsafe.Pointer(&data))) == 0 {
 		// Explorer may not be ready yet at sign-in; the next reading tries
 		// again.
 		return
 	}
 	data.version = notifyIconVersion4
-	call(procShellNotifyIcon, nimSetVersion, ptr(&data))
+	call(procShellNotifyIcon, nimSetVersion, uintptr(unsafe.Pointer(&data)))
 	a.iconAdded = true
 }
 
@@ -689,7 +695,7 @@ func (a *app) removeIcon() {
 		return
 	}
 	data := a.iconData()
-	call(procShellNotifyIcon, nimDelete, ptr(&data))
+	call(procShellNotifyIcon, nimDelete, uintptr(unsafe.Pointer(&data)))
 	a.iconAdded = false
 }
 
@@ -697,7 +703,7 @@ func (a *app) iconRect() (rect, bool) {
 	identifier := notifyIconIdentifier{hwnd: a.hwnd, id: 1}
 	identifier.size = uint32(unsafe.Sizeof(identifier))
 	var r rect
-	return r, a.iconAdded && call(procShellNotifyIconGetRect, ptr(&identifier), ptr(&r)) == 0
+	return r, a.iconAdded && call(procShellNotifyIconGetRect, uintptr(unsafe.Pointer(&identifier)), uintptr(unsafe.Pointer(&r))) == 0
 }
 
 // Colors and fonts.
@@ -717,7 +723,7 @@ func (a *app) readTheme() {
 	}
 	contrast := highContrast{}
 	contrast.size = uint32(unsafe.Sizeof(contrast))
-	call(procSystemParametersInfo, spiGetHighContrast, uintptr(contrast.size), ptr(&contrast), 0)
+	call(procSystemParametersInfo, spiGetHighContrast, uintptr(contrast.size), uintptr(unsafe.Pointer(&contrast)), 0)
 	switch {
 	case contrast.flags&hcfHighContrastOn != 0:
 		system := func(index int) uint32 { return uint32(call(procGetSysColor, uintptr(index))) }
@@ -777,7 +783,7 @@ func (a *app) setDPI(dpi uint32) {
 		}
 	}
 	font := func(pixels int32, weight int, face string) uintptr {
-		return call(procCreateFont, uintptr(-a.scale(pixels)), 0, 0, 0, uintptr(weight), 0, 0, 0, defaultCharset, 0, 0, cleartypeQuality, 0, ptr(utf16(face)))
+		return call(procCreateFont, uintptr(-a.scale(pixels)), 0, 0, 0, uintptr(weight), 0, 0, 0, defaultCharset, 0, 0, cleartypeQuality, 0, uintptr(unsafe.Pointer(utf16(face))))
 	}
 	a.fonts.normal = font(14, fwNormal, "Segoe UI")
 	a.fonts.semibold = font(14, fwSemiBold, "Segoe UI")
@@ -825,7 +831,7 @@ func (a *app) measure(font uintptr, text string, width int32) (int32, int32) {
 	if text == "" {
 		text = " "
 	}
-	call(procDrawText, hdc, ptr(utf16(text)), ^uintptr(0), ptr(&area), format)
+	call(procDrawText, hdc, uintptr(unsafe.Pointer(utf16(text))), ^uintptr(0), uintptr(unsafe.Pointer(&area)), format)
 	return area.width(), area.height()
 }
 
@@ -991,12 +997,12 @@ func (a *app) redraw() {
 
 func (a *app) paint() {
 	var paint paintStruct
-	hdc := call(procBeginPaint, a.hwnd, ptr(&paint))
-	defer call(procEndPaint, a.hwnd, ptr(&paint))
+	hdc := call(procBeginPaint, a.hwnd, uintptr(unsafe.Pointer(&paint)))
+	defer call(procEndPaint, a.hwnd, uintptr(unsafe.Pointer(&paint)))
 	var client rect
-	call(procGetClientRect, a.hwnd, ptr(&client))
-	call(procFillRect, hdc, ptr(&client), a.brush(a.colors.bg))
-	call(procFrameRect, hdc, ptr(&client), a.brush(a.colors.line))
+	call(procGetClientRect, a.hwnd, uintptr(unsafe.Pointer(&client)))
+	call(procFillRect, hdc, uintptr(unsafe.Pointer(&client)), a.brush(a.colors.bg))
+	call(procFrameRect, hdc, uintptr(unsafe.Pointer(&client)), a.brush(a.colors.line))
 	size := int(a.tile.width())
 	drawPixels(hdc, Tile(size), size, a.tile.left, a.tile.top)
 	symbolSize := int(a.symbol.width())
@@ -1008,7 +1014,7 @@ func (a *app) paint() {
 		a.roundRect(hdc, field, a.colors.field, a.colors.line, a.scale(4))
 	}
 	line := rect{a.scale(16), a.separator, client.right - a.scale(16), a.separator + max(1, a.scale(1))}
-	call(procFillRect, hdc, ptr(&line), a.brush(a.colors.line))
+	call(procFillRect, hdc, uintptr(unsafe.Pointer(&line)), a.brush(a.colors.line))
 }
 
 func (a *app) roundRect(hdc uintptr, r rect, fill, outline uint32, radius int32) {
@@ -1078,7 +1084,7 @@ func (a *app) drawButton(item *drawItemStruct) {
 		background = a.noticeColor()
 	}
 	r := item.rect
-	call(procFillRect, item.hdc, ptr(&r), a.brush(background))
+	call(procFillRect, item.hdc, uintptr(unsafe.Pointer(&r)), a.brush(background))
 	fill, outline, text := a.colors.button, a.colors.buttonLine, a.colors.fg
 	switch {
 	case item.item == c.open:
@@ -1095,7 +1101,7 @@ func (a *app) drawButton(item *drawItemStruct) {
 	call(procSetBkMode, item.hdc, transparent)
 	call(procSetTextColor, item.hdc, uintptr(text))
 	label := a.texts[item.item]
-	call(procDrawText, item.hdc, ptr(utf16(label)), ^uintptr(0), ptr(&r), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
+	call(procDrawText, item.hdc, uintptr(unsafe.Pointer(utf16(label))), ^uintptr(0), uintptr(unsafe.Pointer(&r)), dtCenter|dtVCenter|dtSingleLine|dtNoPrefix)
 	call(procSelectObject, item.hdc, old)
 	if item.itemState&odsFocus != 0 && item.itemState&odsNoFocusRect == 0 {
 		pen := call(procCreatePen, 0, uintptr(max(2, a.scale(2))), uintptr(a.colors.fg))

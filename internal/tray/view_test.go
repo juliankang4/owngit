@@ -77,7 +77,7 @@ func TestViewOfAServerThatNeedsAttention(t *testing.T) {
 
 func TestViewWithoutAnAnswer(t *testing.T) {
 	stopped := NewView(Report{Condition: Stopped, Message: "OwnGit is not running.", Repair: "owngit service start"}, webui.LangEN, time.Now())
-	if stopped.State != "Not running" || !reflect.DeepEqual(stopped.Notice, []string{"OwnGit is not running."}) || stopped.Command != "owngit service start" ||
+	if stopped.State != "Not running" || !reflect.DeepEqual(stopped.Notice, []string{"OwnGit is not running."}) || stopped.Command != "owngit service start" || stopped.CommandIntro != "To start OwnGit, run this command:" ||
 		stopped.CloneAddress != "" || stopped.DashboardURL != "" || stopped.Subtitle != "" || stopped.NoPushes != "Recent pushes appear here while OwnGit runs." {
 		t.Errorf("stopped %+v", stopped)
 	}
