@@ -238,7 +238,7 @@ func upgradeBackupOf(folder *os.File, name, stateDir string) bool {
 // use: a POSIX shell, or PowerShell on Windows.
 func quoteForShell(word string) string {
 	if runtime.GOOS == "windows" {
-		return "'" + strings.ReplaceAll(word, "'", "''") + "'"
+		return service.PowerShellQuote(word)
 	}
 	return service.ShellQuote(word)
 }

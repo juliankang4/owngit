@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"owngit/internal/service"
 	"owngit/internal/tailscale"
 )
 
@@ -90,8 +91,6 @@ func readTailscale(ctx context.Context, command tailscale.Command, timeout time.
 // serves OwnGit there. The listen address makes OwnGit accept the Tailscale
 // IP address and the base URL its MagicDNS name, when there is one. It is
 // printed for the owner to copy; OwnGit never runs it and saves nothing.
-// Every part is quoted by shellQuote, so the command holds no control or
-// direction characters and can be printed as it is.
 func tailscaleCommand(command string, found Tailscale, port, stateDir string) string {
 	address := net.JoinHostPort(found.IPv4, port)
 	host := found.Name
@@ -114,17 +113,42 @@ func localOnlyCommand(command, port, stateDir string) string {
 // networkSetCommand is "network set" with options, run by command (see
 // commandWord) and with the state folder when it is not the default.
 func networkSetCommand(command, stateDir string, options ...string) string {
-	parts := append([]string{"network", "set"}, options...)
+	words := append([]string{command, "network", "set"}, options...)
 	if stateDir != "" {
-		parts = append(parts, "--state-dir", stateDir)
+		words = append(words, "--state-dir", stateDir)
 	}
-	for i, part := range parts {
-		parts[i] = shellQuote(part)
-	}
-	return command + " " + strings.Join(parts, " ")
+	return commandLine(words...)
 }
 
-// commandWord is how a printed command starts this OwnGit: "owngit" when
+// commandLine is words, the program first, as one command for the shell
+// the owner uses here: PowerShell on Windows, where a quoted program runs
+// only after the call operator, and a POSIX shell elsewhere. Each word is
+// quoted when it needs it, and the command holds no control or direction
+// character raw, so it can be printed as it is.
+func commandLine(words ...string) string {
+	quoted := make([]string, len(words))
+	for i, word := range words {
+		quoted[i] = commandQuote(word)
+	}
+	if runtime.GOOS == "windows" && quoted[0] != words[0] {
+		quoted[0] = "& " + quoted[0]
+	}
+	return strings.Join(quoted, " ")
+}
+
+// commandQuote quotes a word of a command for this system's shell (see
+// commandLine) when it needs quoting.
+func commandQuote(word string) string {
+	if runtime.GOOS != "windows" {
+		return shellQuote(word)
+	}
+	if word != "" && strings.Trim(word, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/\\._-:=") == "" {
+		return word
+	}
+	return service.PowerShellQuote(word)
+}
+
+// commandWord is the program that a printed command runs: "owngit" when
 // that name on PATH is this executable, and otherwise this executable's
 // path, as for a copy from an archive that is not on PATH. Without the path
 // of this executable, "owngit" is the best hint left.
@@ -136,17 +160,7 @@ func commandWord() string {
 	if onPath, err := exec.LookPath("owngit"); err == nil && sameFile(onPath, self) {
 		return "owngit"
 	}
-	quoted := shellQuote(self)
-	if runtime.GOOS == "windows" && quoted != self {
-		if strings.HasPrefix(quoted, "$'") {
-			// PowerShell cannot take the escaped form, and the path must
-			// not reach the terminal raw.
-			return "owngit"
-		}
-		// PowerShell runs a quoted path only after its call operator.
-		return "& '" + strings.ReplaceAll(self, "'", "''") + "'"
-	}
-	return quoted
+	return self
 }
 
 // sameFile reports whether the paths name the same file.

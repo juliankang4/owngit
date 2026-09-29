@@ -618,7 +618,7 @@ func (f *flow) finishedElsewhere() error {
 
 func (f *flow) stopped() {
 	f.screen.blankLine()
-	f.screen.card(f.say("stop_title"), []item{textItem(f.say("stop_body"), rolePlain), textItem(f.say("stop_resume", "cmd", f.command), rolePlain)},
+	f.screen.card(f.say("stop_title"), []item{textItem(f.say("stop_body"), rolePlain), textItem(f.say("stop_resume", "cmd", commandLine(f.command, "serve")), rolePlain)},
 		cardStyle{titleRole: roleWarn, marker: "[!]", markerRole: roleWarn})
 	f.screen.blankLine()
 }

@@ -53,7 +53,7 @@ func TestWindowsCommandStopsAfterAFailedDownload(t *testing.T) {
 	// A closed local port fails the download; a marker file stands in for
 	// the service install.
 	command = strings.Replace(command, "https://github.com/juliankang4/owngit/releases/download/v1.1.3/", "http://127.0.0.1:9/", 1)
-	command = strings.Replace(command, "& "+powerShellQuote(filepath.Join(folder, "owngit.exe"))+" service install", "New-Item -ItemType File "+powerShellQuote(marker), 1)
+	command = strings.Replace(command, "& "+PowerShellQuote(filepath.Join(folder, "owngit.exe"))+" service install", "New-Item -ItemType File "+PowerShellQuote(marker), 1)
 	if !strings.Contains(command, "127.0.0.1:9") || !strings.Contains(command, "last-step-ran") {
 		t.Fatalf("test command not rewritten: %s", command)
 	}
@@ -64,7 +64,7 @@ func TestWindowsCommandStopsAfterAFailedDownload(t *testing.T) {
 		}
 	}
 	// The same chain reaches the last step when every step succeeds.
-	ok := powerShellChain([]string{"Write-Output first", "New-Item -ItemType File " + powerShellQuote(marker) + " | Out-Null"})
+	ok := powerShellChain([]string{"Write-Output first", "New-Item -ItemType File " + PowerShellQuote(marker) + " | Out-Null"})
 	if output, err := exec.Command(powershell, "-NoProfile", "-NonInteractive", "-Command", ok).CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, output)
 	}

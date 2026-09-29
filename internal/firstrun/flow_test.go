@@ -529,10 +529,7 @@ func TestCommandWordRunsThisExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", t.TempDir())
-	want := shellQuote(self)
-	if runtime.GOOS == "windows" && want != self {
-		want = "& '" + strings.ReplaceAll(self, "'", "''") + "'"
-	}
+	want := self
 	if got := commandWord(); got != want {
 		t.Fatalf("with no owngit on PATH: %q, want %q", got, want)
 	}
@@ -555,5 +552,40 @@ func TestCommandWordRunsThisExecutable(t *testing.T) {
 	t.Setenv("PATH", linked)
 	if got := commandWord(); got != "owngit" {
 		t.Fatalf("with this executable on PATH: %q, want owngit", got)
+	}
+}
+
+// Every word of a printed command is data in the shell the owner uses here:
+// PowerShell on Windows, a POSIX shell elsewhere. The expected commands are
+// written out by hand from each shell's quoting rules.
+func TestCommandLineQuotesEveryWordForThisShell(t *testing.T) {
+	for _, test := range []struct {
+		program, stateDir, posix, powerShell string
+	}{
+		{`C:\Users\you\owngit.exe`, "/srv/owngit",
+			`'C:\Users\you\owngit.exe' serve --state-dir /srv/owngit`,
+			`C:\Users\you\owngit.exe serve --state-dir /srv/owngit`},
+		{"/opt/own git/owngit", "/srv/it's here",
+			`'/opt/own git/owngit' serve --state-dir '/srv/it'\''s here'`,
+			`& '/opt/own git/owngit' serve --state-dir '/srv/it''s here'`},
+		// PowerShell also ends a single-quoted string at U+2018 to U+201B.
+		{"/tmp/O\u2019Brien/owngit", "/tmp/a\u2018b\u201ac\u201bd",
+			"'/tmp/O\u2019Brien/owngit' serve --state-dir '/tmp/a\u2018b\u201ac\u201bd'",
+			"& '/tmp/O\u2019\u2019Brien/owngit' serve --state-dir '/tmp/a\u2018\u2018b\u201a\u201ac\u201b\u201bd'"},
+		{"/tmp/$(touch marker)/owngit", "/tmp/`id`&calc;x",
+			`'/tmp/$(touch marker)/owngit' serve --state-dir '/tmp/` + "`id`" + `&calc;x'`,
+			`& '/tmp/$(touch marker)/owngit' serve --state-dir '/tmp/` + "`id`" + `&calc;x'`},
+		// A direction character is escaped, never printed raw.
+		{"/tmp/\u202eexe/owngit", "/tmp/\u202edir$",
+			`$'/tmp/\xe2\x80\xaeexe/owngit' serve --state-dir $'/tmp/\xe2\x80\xaedir$'`,
+			`& "/tmp/$([char]0x202E)exe/owngit" serve --state-dir "/tmp/$([char]0x202E)dir` + "`$" + `"`},
+	} {
+		want := test.posix
+		if runtime.GOOS == "windows" {
+			want = test.powerShell
+		}
+		if got := commandLine(test.program, "serve", "--state-dir", test.stateDir); got != want {
+			t.Errorf("%q with %q:\n got %s\nwant %s", test.program, test.stateDir, got, want)
+		}
 	}
 }

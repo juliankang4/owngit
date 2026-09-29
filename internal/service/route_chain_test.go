@@ -32,8 +32,12 @@ func TestPowerShellQuote(t *testing.T) {
 		`C:\Data\O'Brien\owngit.exe`: `'C:\Data\O''Brien\owngit.exe'`,
 		"C:\\Data\\O\u2019Brien":     "'C:\\Data\\O\u2019\u2019Brien'",
 		"\u2018\u201a\u201b":         "'\u2018\u2018\u201a\u201a\u201b\u201b'",
+		`C:\$(calc)\a;b&c` + "`x":    "'C:\\$(calc)\\a;b&c`x'",
+		// A control or direction character never reaches the terminal raw.
+		"C:\\a\u202eb\\\u201c$`\"": "\"C:\\a$([char]0x202E)b\\`\u201c`$```\"\"",
+		"a\u0085b":                 "\"a$([char]0x0085)b\"",
 	} {
-		if got := powerShellQuote(word); got != want {
+		if got := PowerShellQuote(word); got != want {
 			t.Errorf("%q: %q, want %q", word, got, want)
 		}
 	}

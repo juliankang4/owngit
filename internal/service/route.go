@@ -1,9 +1,11 @@
 package service
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Route is who put the OwnGit program on this computer. The one who put a
@@ -196,11 +198,11 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 			// parameters. Windows PowerShell 5.1 has no literal form of
 			// Invoke-WebRequest -OutFile, so .NET downloads the archive.
 			folder := windowsReleaseFolder(install, version)
-			zip := powerShellQuote(folder + ".zip")
-			owngit = "& " + powerShellQuote(filepath.Join(folder, "owngit.exe"))
+			zip := PowerShellQuote(folder + ".zip")
+			owngit = "& " + PowerShellQuote(filepath.Join(folder, "owngit.exe"))
 			steps = append(steps,
-				"(New-Object Net.WebClient).DownloadFile("+powerShellQuote(url)+", "+zip+")",
-				"Expand-Archive -LiteralPath "+zip+" -DestinationPath "+powerShellQuote(folder))
+				"(New-Object Net.WebClient).DownloadFile("+PowerShellQuote(url)+", "+zip+")",
+				"Expand-Archive -LiteralPath "+zip+" -DestinationPath "+PowerShellQuote(folder))
 			break
 		}
 		// The new file takes this one's place, which a running program
@@ -242,7 +244,7 @@ func (install Install) RemoveCommand(goos string, sudo bool) string {
 		return "sudo pacman -R " + shellWord(install.Package)
 	case RouteArchive:
 		if goos == "windows" {
-			return "Remove-Item -LiteralPath " + powerShellQuote(install.Executable)
+			return "Remove-Item -LiteralPath " + PowerShellQuote(install.Executable)
 		}
 		if sudo {
 			return "sudo rm " + shellWord(install.Executable)
@@ -274,11 +276,33 @@ func shellWord(word string) string {
 	return shellQuote(word)
 }
 
-// powerShellQuote quotes a word for PowerShell. PowerShell ends a
-// single-quoted string at any of the single-quote characters U+0027 and
-// U+2018 to U+201B, so each is doubled, as PowerShell's own escaping does.
-func powerShellQuote(word string) string {
+// PowerShellQuote quotes a word for PowerShell, for commands shown to the
+// owner. PowerShell ends a single-quoted string at any of the single-quote
+// characters U+0027 and U+2018 to U+201B, so each is doubled, as
+// PowerShell's own escaping does. A word with a control or direction
+// character, which must not reach a terminal raw, is written as a
+// double-quoted string instead: each such character becomes
+// $([char]0xXXXX), and a backtick escapes the characters that end or expand
+// the string there (the backtick, $, and the double quotes U+0022 and
+// U+201C to U+201E).
+func PowerShellQuote(word string) string {
 	var quoted strings.Builder
+	if strings.IndexFunc(word, hiddenRune) >= 0 {
+		quoted.WriteByte('"')
+		for _, r := range word {
+			switch {
+			case hiddenRune(r):
+				fmt.Fprintf(&quoted, "$([char]0x%04X)", r)
+			case r == '`' || r == '$' || r == '"' || r == '\u201c' || r == '\u201d' || r == '\u201e':
+				quoted.WriteByte('`')
+				quoted.WriteRune(r)
+			default:
+				quoted.WriteRune(r)
+			}
+		}
+		quoted.WriteByte('"')
+		return quoted.String()
+	}
 	quoted.WriteByte('\'')
 	for _, r := range word {
 		quoted.WriteRune(r)
@@ -289,4 +313,10 @@ func powerShellQuote(word string) string {
 	}
 	quoted.WriteByte('\'')
 	return quoted.String()
+}
+
+// hiddenRune reports a control or direction character. All of them are in
+// the Basic Multilingual Plane, so [char] can name each.
+func hiddenRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)
 }
