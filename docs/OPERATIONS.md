@@ -1524,6 +1524,8 @@ owngit restore \
 
 Then start the earlier version. The restored repositories, as they were at the upgrade, are in the new folder beside the backup; another new folder in a place this account can create works as well. While the earlier version uses the restored repositories there, keep the `-backups` folder.
 
+When the earlier version is 1.0.3, fix the helper credential and runner token files that OwnGit 1.1.0 or later wrote. They start with an `owngit-server:` line, and 1.0.3 reads that line as part of the token, so the connection fails. Delete the first line of each file, or create the file again with 1.0.3.
+
 #### When the upgrade backup fails
 
 When the backup cannot be made, for example because the disk is full, the folder cannot be created or the repository folder is not available, OwnGit does not upgrade the state and stops with the reason. The earlier version can still use the state. Fix the cause and start OwnGit again.
