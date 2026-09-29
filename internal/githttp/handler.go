@@ -43,10 +43,13 @@ type Handler struct {
 	// OnReceive wakes check reconciliation after git-receive-pack exits. It is
 	// advisory and must never change the already completed Git response.
 	OnReceive func(string)
-	// OnPush runs after a push updated at least one ref, with the refs it
-	// updated in the order Git reported them. It runs once the response is
-	// complete, and must never change it. A push that updated no ref, and
-	// one whose report did not reach the client complete, does not run it.
+	// OnPush runs after a push changed at least one ref, with the refs it
+	// changed in the order Git reported them. It runs once OwnGit has read
+	// Git's complete report and passed it on, also when the client then
+	// failed to receive its end, and must never change the response. A push
+	// that changed no ref does not run it, and neither does one whose
+	// client left before OwnGit read the whole report, although Git may
+	// have changed refs for it.
 	OnPush func(ctx context.Context, repositoryID string, updates []RefUpdate)
 	// Limits returns the limits of a transfer that starts now. New reads
 	// the ones the owner saved (state.GitTransferLimits), so a change

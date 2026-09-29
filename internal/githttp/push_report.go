@@ -249,6 +249,11 @@ func (commands *pushCommands) command(payload []byte) {
 	if len(fields) != 3 || !objectID(fields[0]) || !objectID(fields[1]) || len(fields[2]) == 0 {
 		return
 	}
+	// A command that names the value the ref already has changes nothing,
+	// even when Git answers it with "ok".
+	if bytes.Equal(fields[0], fields[1]) {
+		return
+	}
 	ref := string(fields[2])
 	if _, seen := commands.byRef[ref]; seen {
 		return
@@ -282,10 +287,11 @@ func presentObject(value []byte) string {
 	return string(value)
 }
 
-// updates returns the refs the push updated: each ref that a complete
+// updates returns the refs the push changed: each ref that a complete
 // report accepted, with the command the request gave for it, in the
 // report's order. receive-pack reports only the refs it was asked to
-// update, so every accepted ref has a command.
+// update, so every accepted ref has a command unless that command changed
+// nothing (see command).
 func (report *pushReport) updates(commands *pushCommands) []RefUpdate {
 	if !report.unpackSeen || !report.ended || report.stopped {
 		return nil

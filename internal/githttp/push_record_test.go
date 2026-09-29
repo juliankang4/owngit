@@ -3,9 +3,11 @@ package githttp
 import (
 	"context"
 	"crypto/rand"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -75,8 +77,31 @@ func TestOnPushReportsTheRefsEachPushUpdated(t *testing.T) {
 	runHTTPGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	expect("create main", []RefUpdate{{Ref: "refs/heads/main", New: first}})
 
-	runHTTPGit(t, work, "push", "origin", "HEAD:refs/heads/main")
-	expect("up to date")
+	// Commands that change nothing are answered "ok" by Git but are not
+	// pushes: the same old and new value, and deleting a missing ref. A
+	// request without commands is not one either.
+	empty := exec.Command("git", "pack-objects", "--stdout")
+	empty.Stdin = strings.NewReader("")
+	emptyPack, err := empty.Output()
+	noErr(t, err)
+	zero := strings.Repeat("0", len(first))
+	for name, body := range map[string]string{
+		"same value":         packet(first+" "+first+" refs/heads/main\x00report-status\n") + "0000" + string(emptyPack),
+		"delete missing ref": packet(zero+" "+zero+" refs/heads/missing\x00report-status delete-refs\n") + "0000",
+		"no commands":        "0000",
+	} {
+		response, err := http.Post(server.URL+"/git/sample.git/git-receive-pack", "application/x-git-receive-pack-request", strings.NewReader(body))
+		noErr(t, err)
+		report, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if name != "no commands" && !strings.Contains(string(report), "ok refs/heads/") {
+			t.Fatalf("%s: Git did not accept the command: %d %q", name, response.StatusCode, report)
+		}
+		expect(name)
+	}
+	if refs := httpGitOutput(t, work, "ls-remote", "origin", "refs/*"); refs != first+"\trefs/heads/main" {
+		t.Fatalf("refs after commands that change nothing: %q", refs)
+	}
 
 	second := commit("second")
 	runHTTPGit(t, work, "tag", "-a", "v1", "-m", "v1")
@@ -100,6 +125,11 @@ func TestOnPushReportsTheRefsEachPushUpdated(t *testing.T) {
 		t.Fatalf("refused rewind succeeded: %s", output)
 	}
 	expect("partly refused", []RefUpdate{{Ref: "refs/heads/other", New: second}})
+	// An atomic push with one refused ref changes nothing.
+	if output, err := httpGitCombined(work, "push", "--atomic", "--force", "origin", first+":refs/heads/main", "HEAD:refs/heads/atomic"); err == nil {
+		t.Fatalf("refused atomic push succeeded: %s", output)
+	}
+	expect("atomic refused")
 
 	limits := useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 64 << 10 })
 	large := make([]byte, 1<<20)
