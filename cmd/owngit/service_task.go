@@ -540,7 +540,7 @@ func (host *taskHost) elevatedInstall(stateDir string, headless, installGit bool
 	if moved != "" {
 		entries, err := os.ReadDir(moved)
 		for _, entry := range entries {
-			if entry.Name() != "owngit.exe" && entry.Name() != "temp" && entry.Name() != service.ServiceCopyRecord {
+			if !serviceFolderFile(entry.Name()) {
 				err = errors.New("it holds files OwnGit did not create")
 				break
 			}
@@ -912,10 +912,10 @@ func (host *taskHost) uninstall() error {
 		host.printf("OwnGit is not installed as a service.\n")
 		// An install that stopped partway can leave the service copy or
 		// the firewall rule without the task. OwnGit made them, so the same
-		// administrator step removes them.
-		_, err := os.Stat(host.serviceInstall.Directory)
+		// administrator step removes them. A folder that holds only files
+		// OwnGit did not create needs no approval, since nothing goes.
 		switch {
-		case (err == nil || ruleFound) && host.env.Administrator:
+		case (host.serviceCopyLeft() || ruleFound) && host.env.Administrator:
 			if err := host.asAdministrator([]string{"service", "elevated-uninstall"}, "remove "+host.serviceInstall.Directory+" and the Windows Firewall rule that an earlier OwnGit service install left"); err != nil {
 				return err
 			}
@@ -962,6 +962,23 @@ func (host *taskHost) uninstall() error {
 	host.printServiceCopyLeft()
 	host.printf("Run \"owngit service install\" to use it again.\n")
 	return nil
+}
+
+// serviceCopyLeft reports whether the protected service folder holds what
+// an earlier install made there (the copy, its record or its temporary
+// folder), or nothing at all, or cannot be read.
+func (host *taskHost) serviceCopyLeft() bool {
+	entries, err := os.ReadDir(host.serviceInstall.Directory)
+	if err != nil {
+		return !errors.Is(err, os.ErrNotExist)
+	}
+	return len(entries) == 0 || slices.ContainsFunc(entries, func(entry os.DirEntry) bool { return serviceFolderFile(entry.Name()) })
+}
+
+// serviceFolderFile reports whether name is a file or folder that OwnGit
+// creates in the protected service folder.
+func serviceFolderFile(name string) bool {
+	return strings.EqualFold(name, "owngit.exe") || strings.EqualFold(name, "temp") || strings.EqualFold(name, service.ServiceCopyRecord)
 }
 
 // printServiceCopyLeft says what of the protected service folder is still

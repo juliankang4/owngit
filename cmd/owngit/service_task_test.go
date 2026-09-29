@@ -1246,8 +1246,21 @@ func TestTaskUninstallRemovesWhatAStoppedInstallLeft(t *testing.T) {
 		}
 	}
 
+	// What stays of a folder that holds only the owner's files needs no
+	// approval, since nothing is removed.
 	fake := newFakeWindows(t)
-	host, out := testTaskHost(service.Environment{})
+	host, out := testTaskHost(service.Environment{Administrator: true})
+	serviceFolder(t, host)
+	noErr(t, os.RemoveAll(host.serviceInstall.Executable))
+	noErr(t, os.RemoveAll(host.serviceInstall.Temp))
+	noErr(t, os.WriteFile(filepath.Join(host.serviceInstall.Directory, "notes.txt"), []byte("the owner's file"), 0o600))
+	noErr(t, host.uninstall())
+	if len(fake.elevated) != 0 || !strings.Contains(out.String(), host.serviceInstall.Directory+" stays, because it holds files OwnGit did not create.\n") {
+		t.Errorf("only the owner's files: elevated %q, output:\n%s", fake.elevated, out.String())
+	}
+
+	fake = newFakeWindows(t)
+	host, out = testTaskHost(service.Environment{})
 	serviceFolder(t, host)
 	noErr(t, host.uninstall())
 	if len(fake.elevated) != 0 || !strings.Contains(out.String(), "The service copy "+host.serviceInstall.Executable+" stays; an administrator can delete it.\n") {
