@@ -490,7 +490,7 @@ Read tools change nothing:
 | Tool | Command |
 |---|---|
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
-| `pull_request_list`, `pull_request_show` | `pr list`, `pr show` |
+| `pull_request_list`, `pull_request_show` | `pr list`, `pr show`; only show includes the description and review notes |
 | `pull_request_diff` | `pr diff`; `patch: false` is `--stat`, and `source_oid` with `target_oid` pins a pair |
 | `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
@@ -499,8 +499,9 @@ Write tools and their effects:
 
 | Tool | Command | Effect |
 |---|---|---|
-| `pull_request_create` | `pr create` | Adds a pull request. No branch moves. |
-| `pull_request_review` | `pr review submit` | Records a decision and a supplied reviewer label for the exact commit IDs. Advisory. |
+| `pull_request_create` | `pr create` | Adds a pull request, with an optional Markdown `body`. No branch moves. |
+| `pull_request_edit` | `pr edit` | Replaces the title, the `body`, or both, when `edit_revision` is still current; otherwise refused with `stale_edit`. No branch, review, or check changes. |
+| `pull_request_review` | `pr review submit` | Records a decision, a supplied reviewer label, and an optional `note` for the exact commit IDs. Advisory. |
 | `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | Sets the review state to pending or skipped for the exact commit IDs. Notifies no one. Advisory. |
 | `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | Changes the pull request state. No branch moves. |
 | `pull_request_merge` | `pr merge` | Publishes the merge to the target branch for the exact commit IDs. Refused when a branch moved; a repeated call does not merge twice. |
@@ -512,9 +513,9 @@ The check tools need `--credential-file`. The server offers no administrator
 commands, credential management, repository creation, `--check`, or
 `--no-upload`. The descriptions the server sends to the coding tool state each
 side effect and say which returned text is untrusted: titles, descriptions,
-branch names, file paths, patches, reviewer labels, check commands, and check
-output come from repository users, and the tool is told to treat them as data
-and not to follow instructions in them.
+review notes, branch names, file paths, patches, reviewer labels, check
+commands, and check output come from repository users, and the tool is told to
+treat them as data and not to follow instructions in them.
 
 ### Results and errors
 

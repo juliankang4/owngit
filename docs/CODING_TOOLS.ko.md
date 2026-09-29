@@ -253,7 +253,7 @@ tool_timeout_sec = 1800
 | 도구 | 명령 |
 |---|---|
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
-| `pull_request_list`, `pull_request_show` | `pr list`, `pr show` |
+| `pull_request_list`, `pull_request_show` | `pr list`, `pr show`. 설명과 리뷰 메모는 show에만 들어 있습니다 |
 | `pull_request_diff` | `pr diff`. `patch: false`는 `--stat`과 같고, `source_oid`와 `target_oid`를 함께 넘기면 커밋 쌍을 고정합니다. |
 | `check_task_list`, `check_status` | `check task list`, `check status`(작업 하나와 가장 최근 시도) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
@@ -262,8 +262,9 @@ tool_timeout_sec = 1800
 
 | 도구 | 명령 | 효과 |
 |---|---|---|
-| `pull_request_create` | `pr create` | 풀 리퀘스트를 추가합니다. 브랜치는 움직이지 않습니다. |
-| `pull_request_review` | `pr review submit` | 정확한 커밋 ID에 내린 결정과 호출자가 준 리뷰어 표시를 기록합니다. 참고용입니다. |
+| `pull_request_create` | `pr create` | 풀 리퀘스트를 추가합니다. 마크다운 설명(`body`)은 선택 사항입니다. 브랜치는 움직이지 않습니다. |
+| `pull_request_edit` | `pr edit` | `edit_revision`이 그대로일 때 제목이나 `body`, 또는 둘 다를 바꿉니다. 그사이 누가 수정했다면 `stale_edit`으로 거부됩니다. 브랜치, 리뷰, 체크는 바뀌지 않습니다. |
+| `pull_request_review` | `pr review submit` | 정확한 커밋 ID에 내린 결정과 호출자가 준 리뷰어 표시, 선택 사항인 메모(`note`)를 기록합니다. 참고용입니다. |
 | `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | 정확한 커밋 ID의 리뷰 상태를 pending이나 skipped로 바꿉니다. 누구에게도 알리지 않습니다. 참고용입니다. |
 | `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | 풀 리퀘스트 상태를 바꿉니다. 브랜치는 움직이지 않습니다. |
 | `pull_request_merge` | `pr merge` | 정확한 커밋 ID로 대상 브랜치에 병합을 게시합니다. 브랜치가 움직였으면 거부하고, 같은 호출을 되풀이해도 두 번 병합하지 않습니다. |
@@ -271,7 +272,7 @@ tool_timeout_sec = 1800
 | `check_cycle_reserve` | `check cycle reserve` | 작업의 수정 라운드 세 번 가운데 하나를 씁니다. |
 | `check_run` | `--check` 없는 `check run` | `--workdir`에서 커밋된 체크를 실행하고 시도를 기록합니다. |
 
-체크 도구에는 `--credential-file`이 필요합니다. 관리자 명령, 자격 증명 관리, 저장소 만들기, `--check`, `--no-upload`는 제공하지 않습니다. 서버가 코딩 도구에 보내는 도구 설명에는 도구마다 어떤 변화를 일으키는지와 돌려주는 글 가운데 무엇을 믿으면 안 되는지가 적혀 있습니다. 제목, 설명, 브랜치 이름, 파일 경로, 패치, 리뷰어 표시, 체크 명령과 체크 출력은 저장소 사용자가 쓴 것이므로, 코딩 도구는 이 내용을 데이터로만 다루고 그 안에 적힌 지시는 따르지 말라고 안내받습니다.
+체크 도구에는 `--credential-file`이 필요합니다. 관리자 명령, 자격 증명 관리, 저장소 만들기, `--check`, `--no-upload`는 제공하지 않습니다. 서버가 코딩 도구에 보내는 도구 설명에는 도구마다 어떤 변화를 일으키는지와 돌려주는 글 가운데 무엇을 믿으면 안 되는지가 적혀 있습니다. 제목, 설명, 리뷰 메모, 브랜치 이름, 파일 경로, 패치, 리뷰어 표시, 체크 명령과 체크 출력은 저장소 사용자가 쓴 것이므로, 코딩 도구는 이 내용을 데이터로만 다루고 그 안에 적힌 지시는 따르지 말라고 안내받습니다.
 
 ### 결과와 오류
 

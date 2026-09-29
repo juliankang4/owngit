@@ -666,7 +666,7 @@ A publication is unresolved when OwnGit cannot prove how it ended, for example w
 
 ## Command-line pull requests
 
-A push does not create a pull request. After pushing distinct source and target branches, create one (`--review` is optional):
+A push does not create a pull request. After pushing distinct source and target branches, create one (`--body-file` and `--review` are optional):
 
 ```sh
 owngit pr create \
@@ -676,21 +676,23 @@ owngit pr create \
   --source feature-branch \
   --target main \
   --title "Describe the change" \
+  --body-file description.md \
   --review request \
   --password-file /path/to/owner-only-shared-password-file
 ```
 
-`--review skip` records that review was intentionally skipped, not approved; without `--review`, `pr review request` can still be run later. `--password-file` holds the shared general-access password, never the administrator password, with the same owner-only checks as `reset-admin`; omit it when access is open. `--accept-insecure-http` records your consent to plain HTTP for that command only. The CLI rejects credentials embedded in the URL and does not follow redirects. Inside a clone of an OwnGit repository, `--server` and `--repository` come from the clone's `origin` remote, and a password file is then sent only when its first line names that server ([Inside a clone](CODING_TOOLS.md#inside-a-clone), [Credential files and the server line](CODING_TOOLS.md#credential-files-and-the-server-line)).
+`--body-file` reads the Markdown description from a file, or from standard input when it is `-`. `--review skip` records that review was intentionally skipped, not approved; without `--review`, `pr review request` can still be run later. `--password-file` holds the shared general-access password, never the administrator password, with the same owner-only checks as `reset-admin`; omit it when access is open. `--accept-insecure-http` records your consent to plain HTTP for that command only. The CLI rejects credentials embedded in the URL and does not follow redirects. Inside a clone of an OwnGit repository, `--server` and `--repository` come from the clone's `origin` remote, and a password file is then sent only when its first line names that server ([Inside a clone](CODING_TOOLS.md#inside-a-clone), [Credential files and the server line](CODING_TOOLS.md#credential-files-and-the-server-line)).
 
 The other commands take the same `--server`, `--accept-insecure-http`, `--repository` and `--password-file` flags. `pr show` reports the current source and target object IDs, and every review decision and merge must supply both:
 
 ```sh
 owngit pr list
 owngit pr show --number 1
+owngit pr edit --number 1 --edit-revision 0 --title "New title" --body-file description.md
 owngit pr diff --number 1
 owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
 owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
-  --decision approved --reviewer "existing-tool: reviewer label"
+  --decision approved --reviewer "existing-tool: reviewer label" --note-file note.md
 owngit pr review skip --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
 owngit pr merge --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
 owngit pr close --number 1
@@ -698,7 +700,10 @@ owngit pr reopen --number 1
 ```
 
 - Only one pull request can be open per source and target pair; a second is refused with `pull_request_exists`, and `error.details.number` names the open one. Closing (`pr close` or Close pull request on the page) changes no branch, keeps the history, and frees the pair; `pr reopen` opens it again unless another one is open for the pair. A merged pull request cannot be closed or reopened (`pull_request_merged`). Closing and reopening need the same access as merging.
-- A review is `approved` or `changes_requested`; the reviewer label records who supplied it and does not claim independence. A pending or changes-requested review does not hold a merge. When a branch moves, earlier decisions no longer apply; inspect again and decide for the new object IDs.
+- A description and a review note are Markdown of at most 64 KiB; the page shows them without HTML or images. `pr show` includes the description (`body`) and the five newest review notes, and `pr list` leaves both out.
+- `pr edit` takes the `edit_revision` that `pr show` printed and changes what you pass: `--title`, `--body-file`, or both. If someone edited the pull request since, nothing changes and the command fails with `stale_edit`, with the current revision in `error.details.current_edit_revision`; show it again and reapply your change. Edit title and description on the page works the same way and keeps your text in the form. Editing is possible in every state, including after a merge, and changes no branch, review, check or merge record.
+- A review is `approved` or `changes_requested`; the reviewer label records who supplied it and does not claim independence. A pending or changes-requested review does not hold a merge. When a branch moves, earlier decisions no longer apply; inspect again and decide for the new object IDs. A review can carry a note (`--note-file`, or Record a review on the page) that stays with the two commits it reviewed; after either branch moves, the note is still shown, marked as about earlier commits.
+- Results name the access that made a change in `created_by`, `edited_by`, `merged_by` and each note's `actor`. OwnGit records what authorized the request, which is general access today, and never takes it from a Git commit author.
 - `pr diff` prints what the pull request changes with the object IDs it compared (`--stat` without the patch, `--patch` only the patch); see [Pull request changes](CODING_TOOLS.md#pull-request-changes). The changes are what the source changed since it branched off the target, from the merge base to the source; when the branches share no commit or have more than one merge base, the page says so and shows no change list.
 - Every command writes a JSON result; failures carry a stable `error.code` and a nonzero exit status, and `connection_failed` names the cause. `checks` in a pull request result reports the evidence for the current source revision, or `absent`; it is `stale` when other checks ran than those in the `.owngit/checks.json` of that revision. Checks are advisory and never block a merge.
 - Merge makes a fast-forward or a merge commit with the old target as first parent, authored as `OwnGit <owngit@localhost>` with the number and title in the message; it never squashes, rebases, force-updates or deletes the source branch, and a retried or interrupted merge never creates a second commit. When the target already contains the source, the pull request is recorded as merged with `merge.mode` `up_to_date` and no new commit. Merge needs Git 2.38 or newer on the OwnGit host (`unsupported_git` otherwise).
