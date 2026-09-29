@@ -159,7 +159,7 @@ On Windows the command also puts the OwnGit icon in the notification area: click
 
 On a Mac with a desktop the command also opens the OwnGit icon in the menu bar, which then opens whenever you sign in: click it for the status, the clone address, the latest pushes and the dashboard. Hiding or quitting the icon never stops OwnGit. See [The icon on macOS](docs/OPERATIONS.md#the-icon-on-macos).
 
-On a Linux desktop the command also shows the OwnGit icon in the panel; click it for the status, the clone address and the latest pushes. See [The icon on Linux](docs/OPERATIONS.md#the-icon-on-linux).
+On a Linux desktop the command also shows the OwnGit icon in the panel, and the icon then starts whenever you sign in. Open it for the status, the clone address and the latest pushes. GNOME shows the icon only with its AppIndicator extension. See [The icon on Linux](docs/OPERATIONS.md#the-icon-on-linux).
 
 ### Run in the foreground
 
