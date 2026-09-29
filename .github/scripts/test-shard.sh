@@ -130,7 +130,8 @@ awk -F '\t' -v dir="$work" '
 
 # Runs one job; a job without a status file counts as failed below. A slow
 # runner can take more than Go's default 10 minutes for one package, so the
-# limit is raised.
+# limit is raised. -count=1 runs every test even when a restored build cache
+# holds an earlier result.
 worker='
 	dir=$SHARD_WORK id=$1
 	shift
@@ -140,7 +141,7 @@ worker='
 		case " $SHARD_NO_RACE " in *" $pkg "*) [ "$flag" = -race ] && continue ;; esac
 		flags+=("$flag")
 	done
-	if go test ${flags[@]+"${flags[@]}"} -timeout 30m -run "$(cat "$dir/$id.run")" "$pkg" >"$dir/$id.log" 2>&1; then
+	if go test ${flags[@]+"${flags[@]}"} -count=1 -timeout 30m -run "$(cat "$dir/$id.run")" "$pkg" >"$dir/$id.log" 2>&1; then
 		status=0
 	else
 		status=$?

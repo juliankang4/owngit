@@ -5,8 +5,8 @@ name: CI
 # and pushes to main do not run the checks again. Tests run on Linux (with the
 # race detector), Windows, and macOS, on fresh runners. actions/setup-go
 # restores the Go module cache and the Go build cache that an earlier run with
-# the same go.sum saved on that system; the build cache can also hold test
-# results, which go test reuses when a test's inputs are unchanged.
+# the same go.sum saved on that system. Tests run with -count=1, so no earlier
+# test result is reused.
 #
 # A pull request tests only the packages its change can affect, as chosen by
 # .github/scripts/affected-packages.sh: those whose tests contain a changed
