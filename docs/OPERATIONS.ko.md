@@ -657,7 +657,7 @@ owngit network show
 
 `network show`는 저장된 값, 실행 중인 서버가 실제로 쓰는 값, 다시 시작해야 하는지를 보여 주고 `--json`을 붙이면 같은 내용을 JSON으로 출력합니다. 설정 화면의 네트워크 탭에도 같은 내용이 있어 다음 시작 때 쓸 저장된 값과 실행 중인 서버가 쓰는 값을 나란히 보여 줍니다. 관리자 비밀번호로 바꿀 수 있으며 화면을 연 뒤에 설정이 바뀌었다면 저장을 거부합니다.
 
-서비스 정의(LaunchAgent의 `ProgramArguments`, 유닛의 `ExecStart`)에서 `--listen`, `--base-url`, `--allowed-host`, `--trusted-proxy`를 넘기면 시작할 때마다 저장된 값보다 옵션이 우선하므로 빼 두세요. `owngit service install`이 쓰는 유닛은 이 옵션을 넘기지 않습니다. Homebrew 서비스는 `owngit serve --no-open`을 실행하므로 다른 기기에서 접속하려면 다음과 같이 합니다.
+서비스 정의(LaunchAgent의 `ProgramArguments`, 유닛의 `ExecStart`)에서 `--listen`, `--base-url`, `--allowed-host`, `--trusted-proxy`를 넘기면 시작할 때마다 저장된 값보다 옵션이 우선하므로 빼 두세요. `owngit service install`이 쓰는 유닛은 이 옵션을 넘기지 않습니다. Homebrew 서비스는 이 옵션 없이 `owngit serve --no-open`만 실행하므로 저장된 값을 씁니다. 다른 기기에서 접속하려면 다음과 같이 합니다.
 
 ```sh
 owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654

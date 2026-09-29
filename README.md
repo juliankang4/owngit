@@ -171,9 +171,9 @@ owngit serve
 
 From a source build, run `./bin/owngit serve`. From an unpacked archive, run `./owngit serve` in its folder (in Windows Command Prompt, `owngit serve`).
 
-The first start from a terminal runs setup there. Choose English or 한국어, then "Continue in this terminal" or "Open the web dashboard"; in the browser you get a short code to approve in the terminal.
+The first start from a terminal runs setup there. Choose English or 한국어, then "Continue in this terminal" or "Open the web dashboard". If you choose the web dashboard, the browser shows a short code; approve the browser in the terminal when the terminal shows the same code.
 
-When OwnGit starts without a terminal, it writes an owner-readable setup file in the state directory and logs the file's path. It also opens that file in your browser, unless it was started with `--no-open`, as every OwnGit service is. `owngit setup-link` prints a new link, and the link itself never reaches a log. See [First-time setup](docs/OPERATIONS.md#first-time-setup).
+When OwnGit starts without a terminal, it writes an owner-readable setup file in the state directory and logs the file's path. Unless it was started with `--no-open`, it also opens that file in your browser. Every OwnGit service starts with `--no-open`, so for a service, the log is where to look. `owngit setup-link` prints a new link, and the link itself never reaches a log. See [First-time setup](docs/OPERATIONS.md#first-time-setup).
 
 ### First repository
 

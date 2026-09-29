@@ -657,7 +657,7 @@ owngit network show
 
 `network show` lists the saved values, what a running server actually uses, and whether a restart is needed; `--json` prints the same as JSON. The Network tab of Settings shows the same, the saved value for the next start next to the value the running server uses. It changes them with the administrator password, and refuses a save when the settings changed after you opened the page.
 
-A service definition that passes `--listen`, `--base-url`, `--allowed-host` or `--trusted-proxy` (the `ProgramArguments` of a LaunchAgent, the `ExecStart` of a unit) overrides the saved values at every start, so leave them out. The units that `owngit service install` writes never pass them. The Homebrew service runs `owngit serve --no-open`, so to reach it from other devices:
+A service definition that passes `--listen`, `--base-url`, `--allowed-host` or `--trusted-proxy` (the `ProgramArguments` of a LaunchAgent, the `ExecStart` of a unit) overrides the saved values at every start, so leave them out. The units that `owngit service install` writes never pass them. The Homebrew service runs `owngit serve --no-open` without any of them, so it uses the saved values. To reach it from other devices:
 
 ```sh
 owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654
