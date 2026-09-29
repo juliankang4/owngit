@@ -256,3 +256,28 @@ func TestReadUsesOnlyProvenAnswers(t *testing.T) {
 		t.Errorf("the icon opens %q", view.DashboardURL)
 	}
 }
+
+// Opening the dashboard asks again: a status read while OwnGit ran does
+// not open the browser at a program that took the address since, and a
+// genuine server takes one request.
+func TestDashboardIsProvenAtTheClick(t *testing.T) {
+	fake := newFakeServer(t)
+	client := NewClient(fake.stateDir, nil)
+	if report := client.Read(context.Background(), "en"); report.Condition != Running || report.Dashboard != fake.URL {
+		t.Fatalf("while OwnGit runs: %+v", report)
+	}
+	fake.requests = nil
+	if dashboard, err := client.Dashboard(context.Background(), "en"); err != nil || dashboard != fake.URL || len(fake.requests) != 1 {
+		t.Fatalf("genuine server: %q, %v, requests %q", dashboard, err, fake.requests)
+	}
+	// OwnGit stops and another program answers at its address.
+	fake.sign = func(string, string, []byte) string { return "" }
+	if dashboard, err := client.Dashboard(context.Background(), "en"); err == nil || dashboard != "" {
+		t.Fatalf("imposter: %q, %v", dashboard, err)
+	}
+	// Nothing answers at all.
+	fake.Close()
+	if dashboard, err := client.Dashboard(context.Background(), "en"); err == nil || dashboard != "" {
+		t.Fatalf("stopped: %q, %v", dashboard, err)
+	}
+}

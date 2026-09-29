@@ -35,6 +35,7 @@ import (
 const (
 	wmTray    = wmApp + 1 // the notification area icon's events
 	wmReading = wmApp + 2 // the poller has a new reading
+	wmOpen    = wmApp + 3 // the dashboard's address was proven, or not
 )
 
 // Control IDs. Open is IDOK, so Enter outside a button opens the
@@ -105,6 +106,10 @@ type app struct {
 	fields               []rect
 	separator            int32
 	closedAt, openedAt   time.Time
+	// opening is true while a click waits for the proof of the dashboard's
+	// address; openTarget is the proven address, or "".
+	opening    bool
+	openTarget string
 }
 
 type panelControls struct {
@@ -354,6 +359,17 @@ func (a *app) handle(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		a.mu.Unlock()
 		a.apply()
 		return 0
+	case wmOpen:
+		a.opening = false
+		a.mu.Lock()
+		target := a.openTarget
+		a.mu.Unlock()
+		if target != "" && openURL(target) {
+			a.closePanel()
+		} else {
+			a.askAgain()
+		}
+		return 0
 	case wmTray:
 		switch lParam & 0xFFFF {
 		case ninSelect, ninKeySelect:
@@ -440,11 +456,34 @@ func (a *app) primary() {
 		return
 	}
 	a.openedAt = time.Now()
-	if a.view.DashboardURL != "" && openURL(a.view.DashboardURL) {
-		a.closePanel()
+	if a.view.DashboardURL != "" {
+		a.openDashboard()
 		return
 	}
 	a.openPanel()
+}
+
+// openDashboard opens the dashboard after the server proves, right now,
+// that it still answers there; otherwise it opens nothing and reads the
+// status again. The browser brings the owner's OwnGit sign-in along, so a
+// program that took the address after an earlier reading must not get it.
+func (a *app) openDashboard() {
+	if a.opening {
+		return
+	}
+	a.opening = true
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), answerTimeout+connectTimeout)
+		defer cancel()
+		target, err := NewClient(a.stateDir, nil).Dashboard(ctx, string(a.lang))
+		if err != nil {
+			target = ""
+		}
+		a.mu.Lock()
+		a.openTarget = target
+		a.mu.Unlock()
+		call(procPostMessage, a.hwnd, wmOpen, 0, 0)
+	}()
 }
 
 func (a *app) togglePanel() {
@@ -516,9 +555,7 @@ func (a *app) closePanel() {
 func (a *app) command(id int) {
 	switch id {
 	case idOpen:
-		if openURL(a.view.DashboardURL) {
-			a.closePanel()
-		}
+		a.openDashboard()
 	case idCancel:
 		a.closePanel()
 		data := a.iconData()

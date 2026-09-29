@@ -125,6 +125,19 @@ func (client *Client) Read(ctx context.Context, lang string) Report {
 	return Report{Condition: Unavailable, Message: diagnosis.Message, Repair: diagnosis.Repair}
 }
 
+// Dashboard asks the server again and returns the dashboard's address
+// only when this answer proves that OwnGit sent it. The icon calls it
+// right when the owner asks to open the dashboard, so a status read
+// earlier, from a server that stopped since, never sends the browser to a
+// program that took its address.
+func (client *Client) Dashboard(ctx context.Context, lang string) (string, error) {
+	_, dashboard, err := client.status(ctx, lang)
+	if err != nil {
+		return "", err
+	}
+	return dashboard, nil
+}
+
 // status asks the server once, and once more with the access file read
 // again when the token is refused. A token is kept only while it works.
 func (client *Client) status(ctx context.Context, lang string) (server.TrayStatus, string, error) {
