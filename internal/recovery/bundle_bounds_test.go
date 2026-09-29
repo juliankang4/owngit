@@ -176,6 +176,14 @@ func TestRoomNeededSaturates(t *testing.T) {
 	if got := roomNeeded([]uint64{3, 5}); got != 13 {
 		t.Fatalf("roomNeeded(3, 5)=%d, want 13", got)
 	}
+	// The refusal names the saturated size, not a size that wrapped around.
+	message := (&SpaceError{Dir: "/place", Needed: math.MaxUint64, Free: 1 << 30}).Error()
+	if want := fmt.Sprintf("at least %d MiB is needed and 1024 MiB is free", uint64(math.MaxUint64>>20)+1); !strings.Contains(message, want) {
+		t.Fatalf("message=%q, want %q", message, want)
+	}
+	if got := mebibytes(1<<20 + 1); got != 2 {
+		t.Fatalf("mebibytes(1 MiB + 1)=%d, want 2", got)
+	}
 }
 
 // A full disk is recognized as Go, Git and SQLite report it.

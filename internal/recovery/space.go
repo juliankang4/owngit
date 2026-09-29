@@ -28,7 +28,15 @@ func (e *SpaceError) Error() string {
 
 func (e *SpaceError) Unwrap() error { return e.Err }
 
-func mebibytes(size uint64) uint64 { return (size + 1<<20 - 1) >> 20 }
+// mebibytes rounds size up to whole MiB, without wrapping around for the
+// largest sizes.
+func mebibytes(size uint64) uint64 {
+	whole := size >> 20
+	if size&(1<<20-1) != 0 {
+		whole++
+	}
+	return whole
+}
 
 // checkSpace refuses a restore of repositories into dir when its file
 // system has less room than they need at least (roomNeeded). The sizes are
