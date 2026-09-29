@@ -99,8 +99,16 @@ func verify(ctx context.Context, input, temporary, gitPath string, operations re
 		return fail(fmt.Errorf("create the folder for the rehearsal: %w", err))
 	}
 	err = rehearse(ctx, &result, input, scratch, gitPath, operations)
-	if ctx.Err() != nil {
+	var space *SpaceError
+	switch {
+	case ctx.Err() != nil:
 		err = fmt.Errorf("the verification was interrupted: %w", ctx.Err())
+	case errors.As(err, &space):
+		// The rehearsal folder is gone when the caller reads this; name
+		// the folder that holds it.
+		space.Dir = area.Dir()
+	case diskFull(err):
+		err = &SpaceError{Dir: area.Dir(), Err: err}
 	}
 	if err != nil {
 		result.Error = err.Error()

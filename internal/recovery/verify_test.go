@@ -95,9 +95,8 @@ func TestVerifyRehearsesTheRestoreAndLeavesNothingBehind(t *testing.T) {
 }
 
 // A backup whose bundles are damaged is not verified. Each repository says
-// whether it failed and why: every bundle is compared with its digest first,
-// and one whose digest matches but that Git cannot restore fails on its own
-// while the others are still restored and checked.
+// whether it failed and why, and a failed repository does not stop the
+// others from being restored and checked.
 func TestVerifyNamesEachRepositoryThatFails(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -136,8 +135,8 @@ func TestVerifyNamesEachRepositoryThatFails(t *testing.T) {
 		t.Fatalf("statuses=%v", statuses)
 	}
 
-	// A bundle that no longer matches its digest stops the rehearsal before
-	// anything is restored; the other repositories were not checked.
+	// A bundle that no longer matches its digest fails too, and is named
+	// with the other.
 	project := filepath.Join(backup, "repositories", "project.bundle")
 	file, err = os.OpenFile(project, os.O_APPEND|os.O_WRONLY, 0)
 	noErr(t, err)
@@ -145,13 +144,13 @@ func TestVerifyNamesEachRepositoryThatFails(t *testing.T) {
 	noErr(t, err)
 	noErr(t, file.Close())
 	result, err = Verify(ctx, backup, temporary, "")
-	if err == nil || result.Verified || !strings.Contains(result.Error, "checksum mismatch") {
+	if err == nil || result.Verified || !strings.Contains(result.Error, "checksum mismatch") || !strings.Contains(result.Error, `repository "second"`) {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 	for _, item := range result.Repositories {
-		wantStatus := VerifyNotRun
-		if item.ID == "project" {
-			wantStatus = VerifyFailed
+		wantStatus := VerifyFailed
+		if item.ID == "empty" {
+			wantStatus = VerifyPassed
 		}
 		if item.Status != wantStatus {
 			t.Errorf("repository %+v, want %s", item, wantStatus)

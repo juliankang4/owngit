@@ -585,20 +585,11 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	// portable names, safe to show.
 	rehearsal := operations.rehearsal
 	rehearsal.begin(manifest)
-	// Every repository is checked, and each failure is named, before
-	// restore stops.
-	var failures []error
-	for index, item := range manifest.Repositories {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := checkBundleFile(inputRoot, item); err != nil {
-			rehearsal.record(index, err)
-			failures = append(failures, repositoryFailure(item.ID, err))
-		}
-	}
-	if len(failures) != 0 {
-		return errors.Join(failures...)
+	// A restore that the repository folder has no room for is refused
+	// before anything is created, and says so; it is no defect of the
+	// backup.
+	if err := checkSpace(inputRoot, filepath.Dir(repositoryTarget), manifest.Repositories); err != nil {
+		return err
 	}
 
 	suffix, err := randomSuffix()
@@ -629,14 +620,20 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	if err != nil {
 		return err
 	}
+	// Every repository is checked, and each failure is named, before
+	// restore stops. An interruption or a full disk stops it at once and
+	// leaves the repository not checked: neither is a defect of the backup.
+	var failures []error
 	for index, item := range manifest.Repositories {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		err := restoreRepository(ctx, runner, inputRoot, repositoryStage, item)
 		if ctx.Err() != nil {
-			// Interrupted, not failed: the repository stays not checked.
 			return ctx.Err()
+		}
+		if diskFull(err) {
+			return &SpaceError{Dir: filepath.Dir(repositoryTarget), Err: err}
 		}
 		rehearsal.record(index, err)
 		if err != nil {
@@ -804,28 +801,73 @@ func repositoryFailure(id string, err error) error {
 	return fmt.Errorf("validate and restore repository %q: %w", id, err)
 }
 
-// checkBundleFile checks that the bundle of item is a regular file with the
-// digest the manifest records.
-func checkBundleFile(inputRoot string, item RepositoryManifest) error {
-	if item.Empty {
-		return nil
-	}
+// copyBundle copies the bundle of item into a new private file in
+// repositoryStage, hashing the bytes as it copies them, and returns the
+// copy once its digest is the one the manifest records. Git then reads the
+// copy, so it restores exactly the bytes that were checked, whatever
+// happens to the backup meanwhile. The bundle is opened once, and refused
+// unless it is the regular file that the path named before the open, not a
+// link; exactly the size it had at the open is read, so a file that grows
+// cannot keep the check going. The copy stops when ctx ends.
+func copyBundle(ctx context.Context, inputRoot, repositoryStage string, item RepositoryManifest) (string, error) {
 	bundlePath := filepath.Join(inputRoot, filepath.FromSlash(item.Bundle))
-	if err := requireRegularFile(bundlePath); err != nil {
-		return fmt.Errorf("inspect bundle: %w", err)
-	}
-	digest, err := fileSHA256(bundlePath)
+	named, err := os.Lstat(bundlePath)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("inspect bundle: %w", err)
 	}
-	if digest != item.SHA256 {
-		return errors.New("bundle checksum mismatch: the bundle is not the one the manifest records")
+	source, err := os.Open(bundlePath)
+	if err != nil {
+		return "", fmt.Errorf("open bundle: %w", err)
 	}
-	return nil
+	defer source.Close()
+	opened, err := source.Stat()
+	if err != nil {
+		return "", fmt.Errorf("inspect bundle: %w", err)
+	}
+	if !named.Mode().IsRegular() || !os.SameFile(named, opened) {
+		return "", errors.New("bundle is not a regular file")
+	}
+	copyPath := filepath.Join(repositoryStage, "."+item.ID+".bundle")
+	target, err := state.CreatePrivateFile(copyPath)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.New()
+	copied, err := io.Copy(io.MultiWriter(target, hash), contextReader{ctx: ctx, reader: io.LimitReader(source, opened.Size())})
+	if closeErr := target.Close(); err == nil {
+		err = closeErr
+	}
+	switch {
+	case err != nil:
+		err = fmt.Errorf("copy bundle: %w", err)
+	case copied != opened.Size():
+		err = errors.New("bundle changed while it was read")
+	case hex.EncodeToString(hash.Sum(nil)) != item.SHA256:
+		err = errors.New("bundle checksum mismatch: the bundle is not the one the manifest records")
+	}
+	if err != nil {
+		_ = os.Remove(copyPath)
+		return "", err
+	}
+	return copyPath, nil
+}
+
+// contextReader reads until ctx ends.
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
 }
 
 // restoreRepository restores item from its bundle into a new repository in
-// repositoryStage and checks it: the bundle is complete, the refs and HEAD
+// repositoryStage and checks it: the bundle has the digest that the
+// manifest records (copyBundle), is complete, the refs and HEAD
 // are the ones the manifest records, and git fsck finds every object that
 // they reach. Git computed each object's name from its content when it
 // indexed the bundle, so fsck checks only that the objects connect, as
@@ -838,7 +880,11 @@ func restoreRepository(ctx context.Context, runner commandRunner, inputRoot, rep
 		return err
 	}
 	if !item.Empty {
-		bundlePath := filepath.Join(inputRoot, filepath.FromSlash(item.Bundle))
+		bundlePath, err := copyBundle(ctx, inputRoot, repositoryStage, item)
+		if err != nil {
+			return err
+		}
+		defer os.Remove(bundlePath)
 		if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "bundle", "verify", bundlePath); err != nil {
 			return fmt.Errorf("verify bundle: %w", err)
 		}

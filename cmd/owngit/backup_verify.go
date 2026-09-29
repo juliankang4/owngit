@@ -44,6 +44,7 @@ func verifyBackup(arguments []string) error {
 		}
 	} else {
 		printVerification(os.Stdout, result)
+		printSpaceHint(os.Stdout, err)
 	}
 	switch {
 	case ctx.Err() != nil:
@@ -93,4 +94,12 @@ func quoted(paths []string) []string {
 		quoted[index] = strconv.Quote(path)
 	}
 	return quoted
+}
+
+// printSpaceHint says how to give a rehearsal that ran out of room more.
+func printSpaceHint(writer io.Writer, err error) {
+	var space *recovery.SpaceError
+	if errors.As(err, &space) {
+		fmt.Fprintln(writer, "Choose a folder with more free space with --temp-dir DIR.")
+	}
 }

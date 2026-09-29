@@ -144,6 +144,9 @@ func (d *Destination) RemoveStage() error {
 	return os.Remove(path)
 }
 
+// Dir is the held parent.
+func (d *Destination) Dir() string { return d.parent.Name() }
+
 // ReleaseStage stops holding the stage, which renaming or removing it needs
 // on Windows. The parent stays held.
 func (d *Destination) ReleaseStage() {

@@ -1039,6 +1039,7 @@ func restoreState(arguments []string) error {
 		result, err := recovery.Verify(ctx, *input, *temporary, *gitPath)
 		if !result.Verified {
 			printVerification(os.Stdout, result)
+			printSpaceHint(os.Stdout, err)
 			return errors.New("the backup did not pass verification, so nothing was restored")
 		}
 		fmt.Printf("Backup verified: %d repositories and the database passed the rehearsal.\n", len(result.Repositories))
