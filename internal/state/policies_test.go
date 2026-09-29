@@ -173,8 +173,9 @@ func TestRawLogRetentionAppliesToTheLogsKept(t *testing.T) {
 
 // A cleanup reads the raw logs it removes and stops at the first it keeps:
 // its query walks check_raw_log_starts by key, with no scan of the attempts
-// and no sort. With many attempts and many logs kept, removing a large
-// backlog stays linear, and a cleanup with nothing due returns at once.
+// and no sort, which the query plan below shows. With many attempts and many
+// logs kept, a backlog is then removed in full and a cleanup with nothing due
+// removes nothing. Times are logged, not checked: they depend on the machine.
 func TestPruneReadsOnlyTheLogsItRemoves(t *testing.T) {
 	store, ctx, now := newProjectStore(t)
 	rows, err := store.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+pruneCheckLogBatch, now.Unix(), checkLogPruneBatch)
@@ -208,16 +209,13 @@ func TestPruneReadsOnlyTheLogsItRemoves(t *testing.T) {
 	removed, err := store.PruneCheckLogs(ctx, now)
 	backlog := time.Since(started)
 	if err != nil || removed != 8000 {
-		t.Fatalf("removing 8000 due logs: removed=%d err=%v in %v", removed, err, backlog)
+		t.Fatalf("removing 8000 due logs: removed=%d err=%v", removed, err)
 	}
 	started = time.Now()
 	removed, err = store.PruneCheckLogs(ctx, now)
 	idle := time.Since(started)
-	// The 28000 older attempts stay in the database. A cleanup that walked
-	// them would take about as long as removing the backlog; one that reads
-	// by key finishes in a small part of that time on any machine.
-	if err != nil || removed != 0 || idle > backlog/10 {
-		t.Fatalf("a cleanup with nothing due: removed=%d err=%v in %v (the backlog took %v)", removed, err, idle, backlog)
+	if err != nil || removed != 0 {
+		t.Fatalf("a cleanup with nothing due: removed=%d err=%v", removed, err)
 	}
 	if kept, err := store.TableRowCount(ctx, "check_raw_logs"); err != nil || kept != 8001 {
 		t.Fatalf("logs kept=%d err=%v, want 8001", kept, err)
