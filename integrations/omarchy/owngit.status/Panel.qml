@@ -34,6 +34,7 @@ Panel {
   property bool reading: false
   property string copying: ""
   // The exit code and output of "owngit tray open", which arrive apart.
+  property bool openPending: false
   property int openCode: -1
   property var openText: null
   property int cursor: 0
@@ -71,15 +72,6 @@ Panel {
     readProc.command = commandFor("read")
     reading = true
     readProc.running = true
-    // A program that cannot start stops at once without an answer; an
-    // answer that already arrived is kept.
-    Qt.callLater(function() {
-      if (root.reading && !readProc.running && readProc.processId === null) {
-        root.reading = false
-        root.panel = null
-        root.problem = root.words.noProgram
-      }
-    })
   }
 
   function accept(text) {
@@ -105,10 +97,6 @@ Panel {
     notice = ""
     copyProc.command = ["wl-copy", "--", String(value)]
     copyProc.running = true
-    // wl-copy that cannot start stops at once without an exit code.
-    Qt.callLater(function() {
-      if (root.copying !== "" && !copyProc.running && copyProc.processId === null) copyFailed()
-    })
   }
 
   function copyFailed() {
@@ -122,6 +110,7 @@ Panel {
     notice = ""
     openCode = -1
     openText = null
+    openPending = true
     openProc.command = commandFor("open")
     openProc.running = true
   }
@@ -130,6 +119,7 @@ Panel {
   // shows why "owngit tray open" opened nothing and reads the status again.
   function openDone() {
     if (openCode < 0 || openText === null) return
+    openPending = false
     if (openCode === 0) {
       root.close()
       return
@@ -183,6 +173,7 @@ Panel {
       root.openCode = exitCode
       root.openDone()
     }
+
   }
 
   Process {
@@ -204,6 +195,26 @@ Panel {
     repeat: true
     triggeredOnStart: true
     onTriggered: root.refresh()
+  }
+
+  // A program that cannot start stops without an exit code or output, so
+  // a process that stopped while its answer is still awaited did not run.
+  Timer {
+    interval: 1000
+    repeat: true
+    running: root.reading || root.copying !== "" || root.openPending
+    onTriggered: {
+      if (root.reading && !readProc.running) {
+        root.reading = false
+        root.panel = null
+        root.problem = root.words.noProgram
+      }
+      if (root.copying !== "" && !copyProc.running) root.copyFailed()
+      if (root.openPending && !openProc.running) {
+        root.openPending = false
+        root.notice = root.words.noProgram
+      }
+    }
   }
 
   Timer {
