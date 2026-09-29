@@ -36,12 +36,12 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
     }
 
     if (-not $Dir) { $Dir = [IO.Path]::Combine($env:LOCALAPPDATA, 'Programs', 'OwnGit') }
-    $Dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir).TrimEnd('\')
+    $Dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir).TrimEnd('\', '/')
     # "owngit service install" keeps its protected copy in
     # %ProgramFiles%\OwnGit, and "owngit uninstall" removes what it finds
     # there, so the program you install lives elsewhere.
     $serviceFolder = [IO.Path]::Combine($env:ProgramFiles, 'OwnGit')
-    if ($Dir -eq $serviceFolder -or $Dir.StartsWith($serviceFolder + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    if ($Dir -eq $serviceFolder -or $Dir.StartsWith($serviceFolder + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
         throw "$serviceFolder belongs to ""owngit service install""; choose another -Dir."
     }
 
