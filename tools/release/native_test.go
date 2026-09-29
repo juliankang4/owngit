@@ -573,7 +573,7 @@ require(answer(401, "running") == .unauthorized, "401")
 for code in [400, 403, 405, 421, 503, -1] {
     require(answer(code, "running") == .unavailable, "status \(code) is unavailable")
 }
-require(answer(404, "not status") == .noStatus, "a server without the status route")
+require(answer(404, "not status") == .notFound, "a 404 goes to doctor")
 
 // The client against loopback servers that the Go test runs.
 let client = StatusClient(timeout: 20)
@@ -596,8 +596,8 @@ for other in ["https://127.0.0.1:7654", "http://example.invalid:7654", "http://1
     require(dashboardURL(access: other) == nil, "not a local dashboard: \(other)")
 }
 
-func doctor(_ findings: String, running: Bool = false) -> PanelState {
-    doctorState(output: data("{\"version\":\"1.1.3\",\"running\":\(running),\"findings\":[\(findings)]}"))
+func doctor(_ findings: String, running: Bool = false, asked: DoctorAsked = .refused) -> PanelState {
+    doctorState(output: data("{\"version\":\"1.1.3\",\"running\":\(running),\"findings\":[\(findings)]}"), asked: asked)
 }
 require(doctor("{\"code\":\"doctor.not_running\",\"message\":\"m\",\"repair\":\"owngit service start\"}") == .stopped(start: ["service", "start"]), "stopped service")
 require(doctor("{\"code\":\"doctor.not_running\",\"message\":\"m\",\"repair\":\"owngit service install\"}") == .stopped(start: ["service", "install"]), "no service")
@@ -606,10 +606,13 @@ require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\",\"repair\":\"owngi
 require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\"}") == .unavailable(why: .silent(restart: [])), "silent without a service")
 require(doctor("{\"code\":\"doctor.address_taken\",\"message\":\"m\"}") == .unavailable(why: .addressTaken), "address taken")
 require(doctor("{\"code\":\"doctor.unchecked_server\",\"message\":\"why\",\"unchecked\":true}") == .unavailable(why: .unchecked(detail: "why")), "unchecked")
-require(doctor("", running: true) == .unavailable(why: .noStatus), "a running server that writes no access file is older than the icon")
+require(doctor("", running: true) == .unavailable(why: .starting), "refused, then answering doctor: starting")
+require(doctor("", running: true, asked: .notFound) == .unavailable(why: .noStatus), "a running OwnGit without the status route")
+require(doctor("", running: true, asked: .noAccessFile) == .unavailable(why: .noStatus), "a running OwnGit that wrote no access file")
+require(doctor("{\"code\":\"doctor.address_taken\",\"message\":\"m\"}", asked: .notFound) == .unavailable(why: .addressTaken), "another program answering 404")
 require(doctor("") == .unavailable(why: .noAnswer), "not running and nothing named")
-require(doctorState(output: nil) == .unavailable(why: .noAnswer), "doctor failed")
-require(doctorState(output: data("{\"ok\":false}")) == .unavailable(why: .noAnswer), "doctor error JSON")
+require(doctorState(output: nil, asked: .notFound) == .unavailable(why: .noAnswer), "doctor failed")
+require(doctorState(output: data("{\"ok\":false}"), asked: .refused) == .unavailable(why: .noAnswer), "doctor error JSON")
 
 let helper = "/Applications/OwnGit.app/Contents/Helpers/owngit"
 let ours = InstalledAgent(program: helper, stateDir: nil)
@@ -629,6 +632,8 @@ require(launchRepair(state: start, agent: earlierLayout, helper: helper, version
 require(launchRepair(state: .unavailable(why: .noStatus), agent: ours, helper: helper, version: "1.1.3") == ["service", "install"], "an earlier app's server at this path is restarted with this program")
 require(launchRepair(state: .unavailable(why: .noStatus), agent: earlierLayout, helper: helper, version: "1.1.3") == ["service", "install"], "an earlier app's server moves to this app")
 require(launchRepair(state: .unavailable(why: .noStatus), agent: brew, helper: helper, version: "1.1.3") == nil, "an older Homebrew server is the owner's to update")
+require(launchRepair(state: .unavailable(why: .starting), agent: ours, helper: helper, version: "1.1.3") == nil, "a starting server is asked again, not reinstalled")
+require(launchRepair(state: .unavailable(why: .addressTaken), agent: ours, helper: helper, version: "1.1.3") == nil, "another program at the address is not a reason to reinstall")
 
 let plist = """
 <?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>ProgramArguments</key><array>

@@ -279,6 +279,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             update { $0.state = state }
             callers.forEach { $0(state) }
+            if state == .unavailable(why: .starting) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.refresh() }
+            }
         }
     }
 
@@ -290,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         else {
             // No access file: this state directory's server never started,
             // or it is unreadable. doctor tells which.
-            askDoctor(done: done)
+            askDoctor(.noAccessFile, done: done)
             return
         }
         client.ask(url: url, access: access) { answer in
@@ -301,20 +304,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 case .unauthorized where retry:
                     // A new start wrote a new token.
                     requestStatus(retry: false, done: done)
-                case .noStatus:
-                    done(.unavailable(why: .noStatus))
+                case .notFound:
+                    askDoctor(.notFound, done: done)
                 case .unauthorized, .unavailable:
                     done(.unavailable(why: .noAnswer))
                 case .noConnection:
-                    askDoctor(done: done)
+                    askDoctor(.refused, done: done)
                 }
             }
         }
     }
 
-    private func askDoctor(done: @escaping (PanelState) -> Void) {
+    private func askDoctor(_ asked: DoctorAsked, done: @escaping (PanelState) -> Void) {
         runHelper(["doctor", "--json", "--state-dir", stateDir.path]) { result in
-            done(doctorState(output: result.status == 0 ? result.output : nil))
+            done(doctorState(output: result.status == 0 ? result.output : nil, asked: asked))
         }
     }
 

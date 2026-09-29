@@ -171,8 +171,10 @@ enum Unavailable: Equatable {
     /// The server did not give a valid status answer.
     case noAnswer
     /// OwnGit runs but does not offer the icon's status: a version older
-    /// than the icon.
+    /// than the icon, or one that could not write its access file.
     case noStatus
+    /// OwnGit refused the status request but answers now: it was starting.
+    case starting
     /// OwnGit runs but does not answer; restart holds owngit arguments that
     /// restart it, or is empty.
     case silent(restart: [String])
@@ -187,9 +189,20 @@ enum StatusAnswer: Equatable {
     case status(TrayStatus)
     case unauthorized
     case noConnection
-    /// The server answered without the status route.
-    case noStatus
+    /// Something at OwnGit's address answered 404: an OwnGit without the
+    /// status route, or another program. doctor tells which.
+    case notFound
     case unavailable
+}
+
+/// Why the icon asks owngit doctor.
+enum DoctorAsked: Equatable {
+    /// The status request found no server (refused or timed out).
+    case refused
+    /// Something at the address answered 404.
+    case notFound
+    /// There is no readable access file.
+    case noAccessFile
 }
 
 /// statusAnswer reads the HTTP answer of GET /tray/status. httpStatus is nil
@@ -204,7 +217,7 @@ func statusAnswer(httpStatus: Int?, body: Data?, proof: String?, secret: String,
         return .unauthorized
     }
     if httpStatus == 404 {
-        return .noStatus
+        return .notFound
     }
     guard httpStatus == 200, let body,
           proves(proof, secret: secret, nonce: nonce, body: body),
@@ -262,8 +275,8 @@ final class StatusClient: NSObject, URLSessionTaskDelegate {
 }
 
 /// doctorState reads "owngit doctor --json" after the server did not
-/// answer. output is nil when the command failed.
-func doctorState(output: Data?) -> PanelState {
+/// answer as asked says. output is nil when the command failed.
+func doctorState(output: Data?, asked: DoctorAsked) -> PanelState {
     guard let output, let report = try? JSONDecoder().decode(DoctorReport.self, from: output) else {
         return .unavailable(why: .noAnswer)
     }
@@ -280,10 +293,12 @@ func doctorState(output: Data?) -> PanelState {
     if let unchecked = codes["doctor.unchecked_server"] {
         return .unavailable(why: .unchecked(detail: unchecked.message))
     }
-    // Running without such a finding, while the status request found no
-    // access file or no server: a server that writes no access file is
-    // older than the icon.
-    return .unavailable(why: report.running ? .noStatus : .noAnswer)
+    guard report.running else {
+        return .unavailable(why: .noAnswer)
+    }
+    // OwnGit answers doctor now. After a refused request it was starting;
+    // after a 404 or without an access file it does not offer the status.
+    return .unavailable(why: asked == .refused ? .starting : .noStatus)
 }
 
 /// The service commands the icon may run for the owner, as doctor names
@@ -387,7 +402,7 @@ struct Words {
     let openDashboard, finishSetup, setupLine: String
     let updateLine, runInTerminal, copyCommand, updateInDashboard, restartAfterUpdate: String
     let stoppedLine, start, restart, working: String
-    let noAnswerLine, noStatusLine, silentLine, addressTakenLine, uncheckedLine: String
+    let noAnswerLine, noStatusLine, startingLine, silentLine, addressTakenLine, uncheckedLine: String
     let hide, hideHelp: String
     let settings, settingsTitle, back: String
     let openAtSignIn, openAtSignInHelp, allowSignIn, openLoginItems: String
@@ -413,7 +428,8 @@ struct Words {
         stoppedLine: "OwnGit is not running.", start: "Start OwnGit", restart: "Restart OwnGit",
         working: "Working…",
         noAnswerLine: "OwnGit's status could not be read. The icon asks again in a moment.",
-        noStatusLine: "The OwnGit that runs is older than this icon and does not report its status. Update OwnGit, then restart it.",
+        noStatusLine: "The OwnGit that runs does not report its status to the icon: it is older than this icon, or it could not write its access file, as its log says. Update OwnGit if it is older, then restart it.",
+        startingLine: "OwnGit is starting. The icon asks again in a moment.",
         silentLine: "OwnGit is running but does not answer.",
         addressTakenLine: "Another program answers at OwnGit's address.",
         uncheckedLine: "OwnGit could not tell whether its server runs: %@",
@@ -447,7 +463,8 @@ struct Words {
         stoppedLine: "OwnGit이 실행 중이 아닙니다.", start: "OwnGit 시작", restart: "OwnGit 다시 시작",
         working: "처리하는 중…",
         noAnswerLine: "OwnGit 상태를 읽지 못했습니다. 잠시 뒤 다시 확인합니다.",
-        noStatusLine: "실행 중인 OwnGit이 이 아이콘보다 오래된 버전이라 상태를 알려 주지 않습니다. OwnGit을 업데이트한 뒤 다시 시작하세요.",
+        noStatusLine: "실행 중인 OwnGit이 아이콘에 상태를 알려 주지 않습니다. 이 아이콘보다 오래된 버전이거나, 로그에 나오듯 접근 파일을 쓰지 못했습니다. 오래된 버전이면 업데이트한 뒤 OwnGit을 다시 시작하세요.",
+        startingLine: "OwnGit이 시작하는 중입니다. 잠시 뒤 다시 확인합니다.",
         silentLine: "OwnGit이 실행 중이지만 응답하지 않습니다.",
         addressTakenLine: "다른 프로그램이 OwnGit 주소에서 응답하고 있습니다.",
         uncheckedLine: "OwnGit 서버가 실행 중인지 확인하지 못했습니다: %@",

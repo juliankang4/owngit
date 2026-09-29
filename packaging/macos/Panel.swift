@@ -269,6 +269,8 @@ final class PanelViewController: NSViewController {
                 return [label(words.noAnswerLine)]
             case .noStatus:
                 return [label(words.noStatusLine)]
+            case .starting:
+                return [label(words.startingLine)]
             case .silent(let restart):
                 var lines: [NSView] = [label(words.silentLine)]
                 if !restart.isEmpty {
