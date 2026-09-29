@@ -46,11 +46,14 @@ func (m *Manager) HoldForBackup() (*BackupHold, error) {
 	return &BackupHold{m: m}, nil
 }
 
-// Add holds ids and stops a maintenance of any of them that is running; it
-// starts again later from its first step.
-func (h *BackupHold) Add(ids ...string) {
+// Set holds exactly ids, releasing any other repository, and stops a
+// maintenance of any of them that is running; it starts again later from
+// its first step. Each attempt of a capture holds the repositories
+// recorded when it began.
+func (h *BackupHold) Set(ids ...string) {
 	s := &h.m.backup
 	s.mu.Lock()
+	s.held = make(map[string]bool, len(ids))
 	for _, id := range ids {
 		s.held[id] = true
 	}

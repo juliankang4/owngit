@@ -3,6 +3,7 @@ package recovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -195,11 +196,16 @@ func TestCaptureGivesUpABusyRepository(t *testing.T) {
 	}
 	busy := manager.Locks.For("zeta")
 	busy.Lock()
-	locks := &captureLocks{manager: manager, taken: map[string]time.Time{}}
+	locks := &captureLocks{manager: manager, report: &CaptureReport{}, taken: map[string]time.Time{}}
 	reason, err := locks.take(context.Background(), []string{"project", "zeta"})
 	busy.Unlock()
 	if err != nil || !strings.Contains(reason, `"zeta"`) {
 		t.Fatalf("reason=%q err=%v", reason, err)
+	}
+	// Writes to project waited while the attempt tried zeta; the report
+	// counts that wait although the attempt was given up.
+	if locks.report.LongestHold < captureLockWindow-time.Second || locks.report.LongestHoldRepository != "project" {
+		t.Fatalf("report=%+v", *locks.report)
 	}
 	// The given-up wait takes the lock once it is free and releases it at
 	// once, so it may still hold it for a moment.
@@ -509,4 +515,69 @@ func TestBackupReadsHeadInEachRefBackend(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A repository whose deletion finishes while a backup starts, after the
+// backup listed it but before it took the repository's lock, is left out of
+// the backup; a repository still recorded at the backup's instant whose
+// folder is missing fails the backup by name.
+func TestBackupLeavesOutARepositoryDeletedAsItStarts(t *testing.T) {
+	for _, recorded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recorded=%v", recorded), func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			store, manager := newBackupStore(t, root)
+			if _, err := manager.Create(ctx, "going", ""); err != nil {
+				t.Fatal(err)
+			}
+			going, err := manager.Path("going")
+			noErr(t, err)
+			runner := &deletingRunner{delegate: manager.Git, path: going, moved: filepath.Join(root, "moved-away"), deleteRecord: func() error {
+				if recorded {
+					return nil
+				}
+				return store.Exec(ctx, `DELETE FROM repositories WHERE id='going'`)
+			}}
+			backup := filepath.Join(root, "backup")
+			_, err = create(ctx, store, manager, runner, backup, manifestLimit)
+			if recorded {
+				if err == nil || !strings.Contains(err.Error(), `"going"`) {
+					t.Fatalf("err=%v", err)
+				}
+				assertNoRecoveryOutputOrStages(t, backup, ".owngit-backup-")
+				return
+			}
+			noErr(t, err)
+			manifest, err := readManifest(filepath.Join(backup, manifestName))
+			noErr(t, err)
+			if len(manifest.Repositories) != 1 || manifest.Repositories[0].ID != "project" {
+				t.Fatalf("repositories=%+v", manifest.Repositories)
+			}
+		})
+	}
+}
+
+// deletingRunner finishes a deletion of the repository at path when the
+// backup first reads that repository's configuration: the record goes,
+// then the folder moves away, as Manager.Delete does.
+type deletingRunner struct {
+	delegate     commandRunner
+	path, moved  string
+	deleteRecord func() error
+	once         sync.Once
+}
+
+func (runner *deletingRunner) Run(ctx context.Context, directory string, stdin io.Reader, arguments ...string) (gitexec.Result, error) {
+	if directory == runner.path && strings.Contains(strings.Join(arguments, " "), "config --local --get-regexp") {
+		var err error
+		runner.once.Do(func() {
+			if err = runner.deleteRecord(); err == nil {
+				err = os.Rename(runner.path, runner.moved)
+			}
+		})
+		if err != nil {
+			return gitexec.Result{}, err
+		}
+	}
+	return runner.delegate.Run(ctx, directory, stdin, arguments...)
 }

@@ -18,7 +18,7 @@ func TestBackupHoldRefusesDeletionAndMaintenance(t *testing.T) {
 	if _, err := manager.HoldForBackup(); !errors.Is(err, ErrBackupRunning) {
 		t.Fatalf("second backup err=%v", err)
 	}
-	hold.Add("sample")
+	hold.Set("sample")
 
 	before := inventory(t, fixture.remote)
 	steps, err := manager.maintain(ctx, "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults())

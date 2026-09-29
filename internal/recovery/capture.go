@@ -124,27 +124,35 @@ func captureOnce(ctx context.Context, store *state.Store, manager *repository.Ma
 		ids = append(ids, stored.ID)
 	}
 	slices.Sort(ids)
-	hold.Add(ids...)
+	hold.Set(ids...)
 	if preparing := preparingRepositories(manager, ids); preparing != "" {
 		return capturedState{}, preparing, nil
 	}
+	// A repository's storage is read before the locks, so no Git process
+	// for it runs while writes wait. A deletion that finishes before the
+	// capture takes the repository's lock can remove the folder meanwhile;
+	// such a repository is not at the instant, so its error counts only if
+	// the repository is still recorded then.
 	folders := make(map[string]capturedRepository, len(ids))
+	unreadable := make(map[string]error)
 	for _, id := range ids {
 		if err := repository.ValidateID(id); err != nil {
 			return capturedState{}, "", fmt.Errorf("repository %q has an unsupported ID: %w", id, err)
 		}
 		path, err := manager.StoragePath(id)
 		if err != nil {
-			return capturedState{}, "", fmt.Errorf("open repository %q: %w", id, err)
+			unreadable[id] = fmt.Errorf("open repository %q: %w", id, err)
+			continue
 		}
 		storage, err := readRepositoryStorage(ctx, runner, id, path)
 		if err != nil {
-			return capturedState{}, "", err
+			unreadable[id] = err
+			continue
 		}
 		folders[id] = capturedRepository{path: path, repositoryStorage: storage}
 	}
 
-	locks := &captureLocks{manager: manager, taken: map[string]time.Time{}}
+	locks := &captureLocks{manager: manager, report: report, taken: map[string]time.Time{}}
 	defer locks.releaseAll()
 	if busy, err := locks.take(ctx, ids); err != nil || busy != "" {
 		return capturedState{}, busy, err
@@ -157,7 +165,7 @@ func captureOnce(ctx context.Context, store *state.Store, manager *repository.Ma
 	at := time.Now().UTC()
 	roster := read.Repositories()
 	for _, stored := range roster {
-		if _, locked := locks.taken[stored.ID]; !locked {
+		if !locks.holds(stored.ID) {
 			return capturedState{}, fmt.Sprintf("repository %q was created while the backup began", stored.ID), nil
 		}
 	}
@@ -167,19 +175,22 @@ func captureOnce(ctx context.Context, store *state.Store, manager *repository.Ma
 	// A repository deleted before its lock was taken is not at the instant.
 	for _, id := range ids {
 		if !slices.ContainsFunc(roster, func(stored state.Repository) bool { return stored.ID == id }) {
-			locks.release(id, report)
+			locks.release(id)
 			hold.Release(id)
 		}
 	}
 
 	repositories := make([]capturedRepository, len(roster))
 	for index, stored := range roster {
+		if err := unreadable[stored.ID]; err != nil {
+			return capturedState{}, "", err
+		}
 		if manager.UnsettledRefWriter(stored.ID) {
 			return capturedState{}, "", fmt.Errorf("repository %q: an import's Git process that writes its refs could not be stopped and may still change them; restart OwnGit, then back up again", stored.ID)
 		}
 		repositories[index] = folders[stored.ID]
 	}
-	if err := readCapturedRefs(ctx, runner, roster, repositories, locks, report); err != nil {
+	if err := readCapturedRefs(ctx, runner, roster, repositories, locks); err != nil {
 		return capturedState{}, "", err
 	}
 	snapshot, err := read.Finish(ctx)
@@ -204,7 +215,7 @@ func preparingRepositories(manager *repository.Manager, ids []string) string {
 
 // readCapturedRefs reads refs and HEAD of every repository, a few at a
 // time, releasing each repository's lock as soon as they are read.
-func readCapturedRefs(ctx context.Context, runner commandRunner, roster []state.Repository, repositories []capturedRepository, locks *captureLocks, report *CaptureReport) error {
+func readCapturedRefs(ctx context.Context, runner commandRunner, roster []state.Repository, repositories []capturedRepository, locks *captureLocks) error {
 	indexes := make(chan int)
 	failures := make([]error, len(roster))
 	var workers sync.WaitGroup
@@ -213,7 +224,7 @@ func readCapturedRefs(ctx context.Context, runner commandRunner, roster []state.
 			for index := range indexes {
 				captured := &repositories[index]
 				item, err := inspectRepository(ctx, runner, captured.path, roster[index], captured.refStorage)
-				locks.release(roster[index].ID, report)
+				locks.release(roster[index].ID)
 				// Objects are never removed while the backup holds the
 				// repository, so a detached HEAD's object is checked after
 				// the lock is released.
@@ -239,9 +250,11 @@ func readCapturedRefs(ctx context.Context, runner commandRunner, roster []state.
 }
 
 // captureLocks are the read locks a capture holds, with the time each was
-// taken, so the report can say how long writes waited.
+// taken. Every release, including those of an attempt that is given up,
+// counts in the report's longest hold.
 type captureLocks struct {
 	manager *repository.Manager
+	report  *CaptureReport
 	mu      sync.Mutex
 	taken   map[string]time.Time
 }
@@ -259,34 +272,46 @@ func (locks *captureLocks) take(ctx context.Context, ids []string) (string, erro
 			}
 			return fmt.Sprintf("repository %q stayed busy with a Git write, such as a push", id), nil
 		}
+		locks.mu.Lock()
 		locks.taken[id] = time.Now()
+		locks.mu.Unlock()
 	}
 	return "", nil
 }
 
-// release unlocks id if it is still locked and records how long it was.
-func (locks *captureLocks) release(id string, report *CaptureReport) {
+func (locks *captureLocks) holds(id string) bool {
 	locks.mu.Lock()
 	defer locks.mu.Unlock()
-	taken, locked := locks.taken[id]
-	if !locked {
-		return
-	}
-	delete(locks.taken, id)
-	locks.manager.Locks.For(id).RUnlock()
-	if held := time.Since(taken); held > report.LongestHold {
-		report.LongestHold = held
-		report.LongestHoldRepository = id
-	}
+	_, locked := locks.taken[id]
+	return locked
+}
+
+// release unlocks id if it is still locked.
+func (locks *captureLocks) release(id string) {
+	locks.mu.Lock()
+	defer locks.mu.Unlock()
+	locks.releaseLocked(id)
 }
 
 func (locks *captureLocks) releaseAll() {
 	locks.mu.Lock()
 	defer locks.mu.Unlock()
 	for id := range locks.taken {
-		locks.manager.Locks.For(id).RUnlock()
+		locks.releaseLocked(id)
 	}
-	clear(locks.taken)
+}
+
+func (locks *captureLocks) releaseLocked(id string) {
+	taken, locked := locks.taken[id]
+	if !locked {
+		return
+	}
+	delete(locks.taken, id)
+	locks.manager.Locks.For(id).RUnlock()
+	if held := time.Since(taken); held > locks.report.LongestHold {
+		locks.report.LongestHold = held
+		locks.report.LongestHoldRepository = id
+	}
 }
 
 // bundleCaptured writes the bundle of a captured repository to bundlePath.
