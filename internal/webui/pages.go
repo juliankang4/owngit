@@ -416,6 +416,9 @@ type Policies struct {
 	// CheckLogs is how long raw check logs are kept, one of
 	// CheckLogChoices.
 	CheckLogs string
+	// Visible is true for a confirmed administrator. Otherwise no saved
+	// value is read or shown, and each group says where to confirm.
+	Visible bool
 	// Unreadable holds the groups whose saved value could not be read.
 	// Such a group says so and shows the default as a change to save.
 	Unreadable map[string]bool

@@ -274,6 +274,7 @@
   <p class="scope">{{icon "info"}}<span>{{bi $lang "session.scope"}}</span></p>
   {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
   {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
   <form class="gform" method="post" action="{{tabURL "access"}}" data-group-form>
     <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
     <input type="hidden" name="action" value="save_session">
@@ -290,6 +291,7 @@
     </div>
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "session" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access")}}
   </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
 
 {{/* Changing the administrator password stays an explicit form: the current
@@ -633,6 +635,7 @@
   <p class="scope">{{icon "info"}}<span>{{bi $lang "initial_branch.scope"}}</span></p>
   {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
   {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
   <form class="gform" method="post" action="{{tabURL "repositories"}}" data-group-form>
     <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
     <input type="hidden" name="action" value="save_initial_branch">
@@ -646,6 +649,7 @@
     </div>
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "branch" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
   </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
 
 {{/* The size and time limits of each Git transfer, with explicit units. */}}
@@ -656,6 +660,7 @@
   <p class="scope">{{icon "info"}}<span>{{bi $lang "transfer.scope"}}</span></p>
   {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
   {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
   <form class="gform" method="post" action="{{tabURL "repositories"}}" data-group-form>
     <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
     <input type="hidden" name="action" value="save_transfers">
@@ -664,6 +669,7 @@
     <p class="wn">{{icon "warning"}}<span>{{bi $lang "transfer.higher"}}</span></p>
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "transfer" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
   </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
 
 <section class="grp" id="grp-repositories" aria-labelledby="grp-repositories-h">
@@ -707,6 +713,7 @@
   <p class="scope">{{icon "info"}}<span>{{bi $lang "check_logs.scope"}}</span></p>
   {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
   {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
   <form class="gform" method="post" action="{{tabURL "storage"}}" data-group-form>
     <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
     <input type="hidden" name="action" value="save_check_logs">
@@ -723,6 +730,7 @@
     </div>
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "logs" "Notices" $gn "Focus" $focus "Cancel" (tabURL "storage")}}
   </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
 {{end}}
 
@@ -751,6 +759,13 @@
   {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Group "Field" .Field}}
   <p class="f__help" id="{{$help}}">{{bi $lang .Help}}</p>
 </div>
+{{end}}
+
+{{/* A server-wide policy's saved value is administrator information: an
+     ordinary visitor sees what the setting does and where to confirm. */}}
+{{define "policyAdminOnly"}}
+  <p class="scope">{{icon "lock"}}<span>{{bi .Lang "policy.admin_only"}}</span></p>
+  {{with .Chrome.Nav.AdminLoginURL}}<div class="actions"><a class="btn" href="{{.}}">{{bi $.Lang "admin.title"}}{{template "adminLock" dict "Lang" $.Lang "Locked" true}}</a></div>{{end}}
 {{end}}
 
 {{/* A group heading with its "Not saved" mark, which the script shows while

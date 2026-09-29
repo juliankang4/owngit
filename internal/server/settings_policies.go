@@ -20,11 +20,15 @@ import (
 // sign-in, a new repository, a transfer. The log choice applies at once to
 // the logs kept, and the next cleanup deletes the ones it no longer keeps.
 
-// tabPolicies reads the policies tab shows. A saved value that cannot be
-// read (state.PolicyError) does not stop the page: its group says so and
-// offers the default to save in its place.
-func (app *App) tabPolicies(request *http.Request, tab string) (webui.Policies, error) {
-	policies := webui.Policies{Unreadable: map[string]bool{}}
+// tabPolicies reads the policies tab shows to admin, a confirmed
+// administrator; nobody else is shown a saved value. A saved value that
+// cannot be read (state.PolicyError) does not stop the page: its group says
+// so and offers the default to save in its place.
+func (app *App) tabPolicies(request *http.Request, tab string, admin bool) (webui.Policies, error) {
+	policies := webui.Policies{Unreadable: map[string]bool{}, Visible: admin}
+	if !admin {
+		return policies, nil
+	}
 	// unreadable reports a saved value the owner has to set again, and
 	// passes on any other error.
 	unreadable := func(group string, err error) error {

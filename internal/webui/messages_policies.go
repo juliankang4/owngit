@@ -6,6 +6,7 @@ const (
 	// MsgPolicyUnreadable is shown in a group whose saved value cannot be
 	// read.
 	MsgPolicyUnreadable MessageCode = "policy.unreadable"
+	MsgPolicyAdminOnly  MessageCode = "policy.admin_only"
 
 	MsgSessionTitle MessageCode = "session.title"
 	MsgSessionScope MessageCode = "session.scope"
@@ -141,6 +142,10 @@ var policiesCatalog = map[MessageCode]message{
 	MsgCheckLogs365d:       {en: "1 year", ko: "1년"},
 	MsgCheckLogsIndefinite: {en: "Keep indefinitely", ko: "계속 보관"},
 
+	MsgPolicyAdminOnly: {
+		en: "Only an administrator sees the saved value and changes it.",
+		ko: "저장된 값은 관리자로 확인한 뒤에 보고 바꿀 수 있습니다.",
+	},
 	MsgSessionUnreadableSignIn: {
 		en: "Nobody can sign in with the shared password because the saved sign-in length cannot be read. An administrator can set it again with owngit settings set --session.",
 		ko: "저장된 로그인 유지 시간을 읽을 수 없어 지금은 공유 비밀번호로 로그인할 수 없습니다. 관리자가 owngit settings set --session으로 다시 정하면 됩니다.",

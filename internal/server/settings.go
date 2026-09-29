@@ -228,7 +228,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	case webui.ActionSaveSession:
 		choice, valid := state.ParseGeneralSession(postValue(request, "general_session"))
 		if !valid {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("general_session", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+			app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("general_session", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest, settingsView{AdminVerified: true})
 			return
 		}
 		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{Session: &choice})
@@ -236,7 +236,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	case webui.ActionSaveInitialBranch:
 		branch := postValue(request, "initial_branch")
 		if state.ValidateInitialBranch(branch) != nil {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("initial_branch", webui.MsgInitialBranchInvalid)}, http.StatusUnprocessableEntity)
+			app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("initial_branch", webui.MsgInitialBranchInvalid)}, http.StatusUnprocessableEntity, settingsView{AdminVerified: true})
 			return
 		}
 		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{InitialBranch: &branch})
@@ -244,7 +244,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	case webui.ActionSaveTransfers:
 		limits, notices := transferLimitsForm(request)
 		if len(notices) > 0 {
-			app.renderSettings(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity)
+			app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity, settingsView{AdminVerified: true})
 			return
 		}
 		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{GitTransfer: &limits})
@@ -252,7 +252,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	case webui.ActionSaveCheckLogs:
 		retention, valid := state.ParseCheckLogRetention(postValue(request, "check_logs"))
 		if !valid {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("check_logs", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+			app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("check_logs", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest, settingsView{AdminVerified: true})
 			return
 		}
 		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{CheckLogs: &retention})
@@ -536,7 +536,7 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 	if tab == webui.SettingsGeneral && chrome.Viewer.AdminConfirmed && app.Diagnose != nil {
 		page.Checkup = webui.CheckupInfo{Visible: true, Findings: app.Diagnose(request.Context())}
 	}
-	if page.Policies, err = app.tabPolicies(request, tab); err != nil {
+	if page.Policies, err = app.tabPolicies(request, tab, chrome.Viewer.AdminConfirmed || view.AdminVerified); err != nil {
 		app.answerUnavailable(writer, request, "settings read", err)
 		return
 	}

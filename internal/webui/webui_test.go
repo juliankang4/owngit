@@ -137,11 +137,15 @@ func allPages(lang Lang) map[string]Page {
 		},
 		"settings-access": SettingsPage{
 			Chrome: c, Tab: SettingsAccess, SubmitURL: "/settings", AccessMode: AccessPassword,
+			Policies: Policies{Visible: true, Session: "12h"},
 		},
-		"settings-repositories": SettingsPage{Chrome: c, Tab: SettingsRepositories, SubmitURL: "/settings"},
+		"settings-repositories": SettingsPage{Chrome: c, Tab: SettingsRepositories, SubmitURL: "/settings", Policies: Policies{
+			Visible: true, InitialBranch: "main", TransferSize: LimitInput{Amount: "4", Unit: "GB"}, TransferTime: LimitInput{Amount: "30", Unit: "min"},
+		}},
 		"settings-storage": SettingsPage{
 			Chrome: c, Tab: SettingsStorage, SubmitURL: "/settings",
-			Storage: StorageInfo{Visible: true, Label: "Home server", Path: "/volume1/git"},
+			Storage:  StorageInfo{Visible: true, Label: "Home server", Path: "/volume1/git"},
+			Policies: Policies{Visible: true, CheckLogs: "30d"},
 		},
 		"settings-network": SettingsPage{
 			Chrome: c, Tab: SettingsNetwork, SubmitURL: "/settings", AccessMode: AccessPassword,

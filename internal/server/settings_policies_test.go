@@ -52,6 +52,7 @@ func TestSessionLengthAppliesToLaterSignIns(t *testing.T) {
 			t.Fatalf("session ok=%v err=%v ends %v, want %v", ok, err, session.Expires, clock.Now().Add(check.life))
 		}
 	}
+	after.adminSignIn()
 	if page := after.get("/settings/access"); !strings.Contains(page.body, `name="general_session" data-saved="7d"`) {
 		t.Fatalf("Access does not show the saved length:\n%s", page.body)
 	}
@@ -161,6 +162,7 @@ func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
 	fixture, server, _ := newConfirmationFixture(t, false, state.ConfirmEveryTime)
 	ctx := context.Background()
 	browser := openConfirmationBrowser(t, server, false)
+	browser.adminSignIn()
 	save := func(size, sizeUnit, duration, durationUnit string) browserHTTPResult {
 		return browser.post("/settings/repositories", url.Values{
 			"action": {webui.ActionSaveTransfers}, "admin_password": {"admin-password"},
@@ -204,6 +206,7 @@ func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
 func TestTransferLimitsSurviveAnUnchangedSave(t *testing.T) {
 	fixture, server, _ := newConfirmationFixture(t, false, state.ConfirmEveryTime)
 	browser := openConfirmationBrowser(t, server, false)
+	browser.adminSignIn()
 	shown := func(body, id string) (amount, unit string) {
 		t.Helper()
 		input := regexp.MustCompile(`(?s)<input id="` + id + `"[^>]*?value="([^"]*)"`).FindStringSubmatch(body)
@@ -243,6 +246,7 @@ func TestRawLogRetentionIsSavedFromStorageAndTheAPI(t *testing.T) {
 	fixture, server, _ := newConfirmationFixture(t, false, state.ConfirmEveryTime)
 	ctx := context.Background()
 	browser := openConfirmationBrowser(t, server, false)
+	browser.adminSignIn()
 	save := func(choice string) browserHTTPResult {
 		return browser.post("/settings/storage", url.Values{"action": {webui.ActionSaveCheckLogs}, "check_logs": {choice}, "admin_password": {"admin-password"}})
 	}
@@ -374,5 +378,60 @@ func TestPolicyMenusOfferEveryStateChoice(t *testing.T) {
 	}
 	if menu, stateChoices := values(webui.CheckLogChoices()), choiceList(state.CheckLogRetentions); strings.Join(menu, ", ") != stateChoices {
 		t.Fatalf("raw log menu %v, state %s", menu, stateChoices)
+	}
+}
+
+// Only a confirmed administrator is shown the saved server-wide settings.
+// Anyone else who opens Settings sees what each does and where to confirm,
+// with no saved value in the page. Do not ask confirms every dashboard
+// viewer, so they see them.
+func TestSavedPoliciesAreShownOnlyToAnAdministrator(t *testing.T) {
+	saved := []string{`data-saved="30d"`, "trunk-policy", `data-saved="45"`, `data-saved="indefinite"`}
+	fields := []string{`name="general_session"`, `name="initial_branch"`, `name="transfer_size"`, `name="check_logs"`}
+	for _, test := range []struct {
+		name      string
+		protected bool
+		choice    state.AdminConfirmation
+		admin     bool
+		shown     bool
+	}{
+		{"Open mode", false, state.ConfirmEveryTime, false, false},
+		{"general session", true, state.Confirm30Minutes, false, false},
+		{"administrator", true, state.ConfirmEveryTime, true, true},
+		{"Do not ask", true, state.ConfirmNever, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture, server, _ := newConfirmationFixture(t, test.protected, test.choice)
+			session, branch, logs := state.Session30Days, "trunk-policy", state.KeepCheckLogs
+			noErr(t, fixture.store.SavePolicies(context.Background(), state.PolicyChange{
+				Session: &session, InitialBranch: &branch, CheckLogs: &logs,
+				GitTransfer: &state.GitTransferLimits{MaximumBytes: 3 << 30, Operation: 45 * time.Minute},
+			}))
+			browser := openConfirmationBrowser(t, server, test.protected)
+			if test.admin {
+				browser.adminSignIn()
+			}
+			var body strings.Builder
+			for _, tab := range []string{"access", "repositories", "storage"} {
+				page := browser.get("/settings/" + tab)
+				if page.status != http.StatusOK {
+					t.Fatalf("%s status=%d", tab, page.status)
+				}
+				body.WriteString(page.body)
+			}
+			for _, text := range append(saved, fields...) {
+				if strings.Contains(body.String(), text) != test.shown {
+					t.Errorf("%q shown=%v, want %v", text, !test.shown, test.shown)
+				}
+			}
+			if strings.Contains(body.String(), enText(webui.MsgPolicyAdminOnly)) == test.shown {
+				t.Errorf("the administrator line shown=%v, want %v", test.shown, !test.shown)
+			}
+			for _, scope := range []webui.MessageCode{webui.MsgSessionScope, webui.MsgInitialBranchScope, webui.MsgTransferScope, webui.MsgCheckLogsScope} {
+				if !strings.Contains(body.String(), enText(scope)) {
+					t.Errorf("the explanation %s is missing", scope)
+				}
+			}
+		})
 	}
 }
