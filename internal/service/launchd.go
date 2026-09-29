@@ -404,6 +404,11 @@ const AppName = "OwnGit.app"
 // sign-in and exits without showing anything.
 const AppSignInOff = "--sign-in-off"
 
+// AppAtSignIn is the launcher argument of a launch the owner did not ask
+// for, such as a restart after an update: a hidden icon stays hidden and
+// no panel opens.
+const AppAtSignIn = "--at-sign-in"
+
 // AppLauncher is the icon's executable inside app.
 func AppLauncher(app string) string {
 	return filepath.Join(app, "Contents", "MacOS", "OwnGitLauncher")

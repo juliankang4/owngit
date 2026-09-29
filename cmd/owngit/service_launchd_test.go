@@ -48,9 +48,10 @@ func testLaunchAgentHost(t *testing.T, env service.Environment, homebrew string)
 type fakeLaunchctl struct {
 	calls  []string
 	loaded []string
-	// iconRunning keeps an icon process that pkill does not end.
-	iconRunning  bool
-	bootstrapped string
+	// iconRunning is an icon process for pgrep; pkill ends it only when
+	// iconQuits.
+	iconRunning, iconQuits bool
+	bootstrapped           string
 }
 
 func recordLaunchctl(t *testing.T, loaded ...string) *fakeLaunchctl {
@@ -62,6 +63,11 @@ func recordLaunchctl(t *testing.T, loaded ...string) *fakeLaunchctl {
 		fake.calls = append(fake.calls, name+" "+strings.Join(args, " "))
 		switch {
 		case name == "/usr/bin/open", filepath.Base(name) == "OwnGitLauncher":
+			return nil, nil
+		case name == "/usr/bin/pkill":
+			if fake.iconQuits {
+				fake.iconRunning = false
+			}
 			return nil, nil
 		case name == "/usr/bin/pgrep":
 			if fake.iconRunning {
@@ -399,6 +405,8 @@ func TestLaunchAgentOpensTheIcon(t *testing.T) {
 	app := filepath.Join(filepath.Dir(host.agentExecutable), "OwnGit.app")
 	noErr(t, os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0o755))
 	noErr(t, os.WriteFile(service.AppLauncher(app), nil, 0o755))
+	app, err := filepath.EvalSymlinks(app)
+	noErr(t, err)
 	stateDir := filepath.Join(t.TempDir(), "state")
 	noErr(t, os.Mkdir(stateDir, 0o700))
 	opened := func() bool {
@@ -426,6 +434,29 @@ func TestLaunchAgentOpensTheIcon(t *testing.T) {
 		t.Error("the icon was opened again by its own command")
 	}
 	host.env = macDesktop()
+
+	// An update replaced the app of a running icon: it is quit and opened
+	// again as at sign-in, without the first install's panel.
+	reopened := func() bool {
+		defer func() { fake.calls = nil }()
+		pattern := "-U " + strconv.Itoa(host.uid) + " -f " + iconPattern(app)
+		return slices.Contains(fake.calls, "/usr/bin/pkill "+pattern) &&
+			slices.Contains(fake.calls, "/usr/bin/open "+app+" --args "+service.AppAtSignIn) &&
+			!slices.Contains(fake.calls, "/usr/bin/open "+app)
+	}
+	fake.iconRunning, fake.iconQuits = true, true
+	host.openIcon(stateDir, false)
+	if !reopened() || !strings.Contains(out.String(), "restarted with this version") {
+		t.Fatalf("the running icon was not restarted: %v\n%s", fake.calls, out)
+	}
+	// One that does not quit is not opened again, which would open its panel.
+	fake.iconRunning, fake.iconQuits = true, false
+	host.openIcon(stateDir, false)
+	if slices.ContainsFunc(fake.calls, func(call string) bool { return strings.HasPrefix(call, "/usr/bin/open") }) || !strings.Contains(out.String(), "did not quit") {
+		t.Fatalf("an icon that did not quit was opened again: %v\n%s", fake.calls, out)
+	}
+	fake.calls, fake.iconRunning = nil, false
+
 	held, err := state.OpenStateDirectory(stateDir)
 	noErr(t, err)
 	noErr(t, state.SetTrayHidden(held, true))
@@ -433,6 +464,12 @@ func TestLaunchAgentOpensTheIcon(t *testing.T) {
 	host.openIcon(stateDir, false)
 	if opened() {
 		t.Error("a hidden icon was opened")
+	}
+	// A hidden icon that runs is restarted as at sign-in, so it stays hidden.
+	fake.iconRunning, fake.iconQuits = true, true
+	host.openIcon(stateDir, false)
+	if !reopened() {
+		t.Error("a running hidden icon was not restarted as at sign-in")
 	}
 
 	// A program without an app beside it opens nothing.

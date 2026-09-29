@@ -502,6 +502,10 @@ func TestNativeLauncherCommandsOpenOwnerDashboard(t *testing.T) {
 	if !strings.Contains(status, `let signInOffArgument = "`+service.AppSignInOff+`"`) {
 		t.Fatalf("the launcher does not take %s", service.AppSignInOff)
 	}
+	// owngit service install and restart reopen a running icon with this one.
+	if !strings.Contains(status, `let atSignInArgument = "`+service.AppAtSignIn+`"`) {
+		t.Fatalf("the launcher does not take %s", service.AppAtSignIn)
+	}
 	assertDesktopLaunchCommand(t, readText(t, filepath.Join(root, "packaging", "linux", "owngit.desktop")))
 }
 

@@ -196,18 +196,23 @@ func (host *launchAgentHost) install(stateDirFlag string, headlessFlag *bool) er
 }
 
 // openIcon opens OwnGit.app, the menu bar icon that came with this program,
-// so that it shows now; the app then opens itself at every sign-in. It
-// does nothing without the app, for a headless service, without this
-// user's desktop login, when the owner hid the icon, and when the icon
-// itself runs this command. The service runs either way, so a failure is
-// only reported.
+// so that it shows now; the app then opens itself at every sign-in. An
+// icon of this account that already runs is restarted instead, so that it
+// runs the app an update just replaced; it opens as at sign-in, so a
+// hidden icon stays hidden and no panel opens. Without a running icon it
+// does nothing when the owner hid the icon. It never acts without the app,
+// for a headless service, without this user's desktop login, or when the
+// icon itself runs this command. The service runs either way, so a
+// failure is only reported.
 func (host *launchAgentHost) openIcon(stateDir string, headless bool) {
-	app := service.AppPath(host.agentExecutable)
-	if app == "" || headless || !host.env.GraphicalSession || host.env.Getenv("OWNGIT_FROM_ICON") != "" || trayHiddenIn(stateDir) {
+	if headless {
 		return
 	}
-	if err := requireProtectedPath(service.AppLauncher(app)); err != nil {
-		host.printf("OwnGit does not open its menu bar icon at %s, because %v. OwnGit runs without it.\n", app, err)
+	if host.restartIcon() || trayHiddenIn(stateDir) {
+		return
+	}
+	app, ok := host.iconApp()
+	if !ok {
 		return
 	}
 	if output, err := serviceRunner(context.Background(), "/usr/bin/open", app); err != nil {
@@ -215,6 +220,54 @@ func (host *launchAgentHost) openIcon(stateDir string, headless bool) {
 		return
 	}
 	host.printf("The OwnGit icon is in the menu bar and opens when you sign in. \"owngit tray off\" hides it; OwnGit keeps running.\n")
+}
+
+// iconApp returns the OwnGit.app of the service's program, resolved to
+// the place macOS runs it from, when this command may open it.
+func (host *launchAgentHost) iconApp() (string, bool) {
+	app := service.AppPath(host.agentExecutable)
+	if app == "" || !host.env.GraphicalSession || host.env.Getenv("OWNGIT_FROM_ICON") != "" {
+		return "", false
+	}
+	if resolved, err := filepath.EvalSymlinks(app); err == nil {
+		app = resolved
+	}
+	if err := requireProtectedPath(service.AppLauncher(app)); err != nil {
+		host.printf("OwnGit does not open its menu bar icon at %s, because %v. OwnGit runs without it.\n", app, err)
+		return "", false
+	}
+	return app, true
+}
+
+// restartIcon quits this account's running icon of the service's app and
+// opens it again as at sign-in. It reports whether an icon was running.
+func (host *launchAgentHost) restartIcon() bool {
+	app, ok := host.iconApp()
+	if !ok {
+		return false
+	}
+	ctx := context.Background()
+	account, running := strconv.Itoa(host.uid), iconPattern(app)
+	if output, _ := serviceRunner(ctx, "/usr/bin/pgrep", "-U", account, "-f", running); strings.TrimSpace(string(output)) == "" {
+		return false
+	}
+	_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-U", account, "-f", running)
+	if !iconExited(ctx, account, running) {
+		host.printf("The OwnGit icon at %s did not quit, so it still runs the earlier app until you quit it or sign in again.\n", app)
+		return true
+	}
+	if output, err := serviceRunner(ctx, "/usr/bin/open", app, "--args", service.AppAtSignIn); err != nil {
+		host.printf("The OwnGit menu bar icon did not open again (%v: %s). Open %s to show it; OwnGit runs without it.\n", err, strings.TrimSpace(string(output)), app)
+		return true
+	}
+	host.printf("The OwnGit icon was restarted with this version.\n")
+	return true
+}
+
+// iconPattern matches the command line of the icon of app for pgrep and
+// pkill.
+func iconPattern(app string) string {
+	return "^" + regexp.QuoteMeta(service.AppLauncher(app)) + "( |$)"
 }
 
 // closeIcon quits OwnGit.app, the menu bar icon, of the given programs and
@@ -239,7 +292,7 @@ func (host *launchAgentHost) closeIcon(programs ...string) {
 		}
 		done[app] = true
 		launcher := service.AppLauncher(app)
-		running := "^" + regexp.QuoteMeta(launcher) + "( |$)"
+		running := iconPattern(app)
 		// Only this account's icon: another account may run the same app,
 		// and root must not quit every account's icon. pkill exits 1 when
 		// no icon runs; whether one is left is checked after it.
@@ -502,7 +555,11 @@ func (host *launchAgentHost) control(action string) error {
 	}
 	if !found {
 		if host.homebrew != "" {
-			return host.brewServices(action)
+			if err := host.brewServices(action); err != nil || action != "restart" {
+				return err
+			}
+			host.restartIcon()
+			return nil
 		}
 		return errors.New("OwnGit is not installed as a service; run \"owngit service install\"")
 	}
@@ -522,5 +579,8 @@ func (host *launchAgentHost) control(action string) error {
 		return fmt.Errorf("OwnGit did not answer within %s: %w; see the log: %s", serviceStartTimeout, err, host.logHint(service.ModeLaunchAgent))
 	}
 	host.printf("OwnGit is running at http://%s.\n", address)
+	if action == "restart" && !installed.Headless {
+		host.restartIcon()
+	}
 	return nil
 }
