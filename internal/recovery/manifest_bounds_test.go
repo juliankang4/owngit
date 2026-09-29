@@ -254,3 +254,21 @@ func (reader failingReader) Read([]byte) (int, error) {
 	reader.t.Error("a manifest past the limit was read")
 	return 0, io.EOF
 }
+
+// A write error reaches the caller whether it happens while records are
+// written or when the last of them is flushed.
+func TestManifestWritePreservesUnderlyingIOErrors(t *testing.T) {
+	sentinel := errors.New("synthetic manifest I/O failure")
+	for _, manifest := range []Manifest{
+		{Format: backupFormat, Version: backupVersion},
+		{Format: backupFormat, Version: backupVersion, PullRequests: []PullRequestManifest{{Body: strings.Repeat("b", 64<<10)}, {Body: "after"}}},
+	} {
+		if err := writeManifest(errorManifestWriter{err: sentinel}, manifest); !errors.Is(err, sentinel) {
+			t.Fatalf("write error=%v", err)
+		}
+	}
+}
+
+type errorManifestWriter struct{ err error }
+
+func (writer errorManifestWriter) Write([]byte) (int, error) { return 0, writer.err }
