@@ -126,47 +126,57 @@ var errAdminPasswordMissing = errors.New("administrator password missing")
 // is on; it is for changing the administrator password and for turning Do
 // not ask on.
 //
-// It returns the password when this request verified it, and "" when the
-// change needed none. A verified password starts this browser's remembered
-// confirmation under a remembering choice, unless always; chrome, when
+// It returns the password and version when this request verified them, and
+// an empty password when the change needed none. A verified password starts
+// this browser's remembered confirmation under a remembering choice, unless
+// always; chrome, when
 // given, then shows it. An error is errAdminPasswordMissing, an
 // authentication error of auth.Manager.VerifyCredential, or a failure to
 // decide; adminPasswordNotice describes each.
-func (app *App) confirmAdmin(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome, always bool) (string, error) {
+type adminPasswordProof struct {
+	password string
+	version  int64
+}
+
+func (app *App) confirmAdmin(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome, always bool) (adminPasswordProof, error) {
 	// A typed password confirms a change whatever the choice and this
 	// browser's session are, so a failure to read them decides only a
 	// change that typed none.
 	authority, readErr := app.adminAuthority(writer, request)
 	if readErr == nil && !always && authority.changesFreely() {
-		return "", nil
+		return adminPasswordProof{}, nil
 	}
 	password := postValue(request, "admin_password")
 	if password == "" {
 		if readErr != nil {
-			return "", readErr
+			return adminPasswordProof{}, readErr
 		}
-		return "", errAdminPasswordMissing
+		return adminPasswordProof{}, errAdminPasswordMissing
 	}
-	if err := app.Auth.VerifyCredential(request.Context(), "admin", password, requestctx.Of(request).ClientAddress); err != nil {
-		return "", err
+	version, err := app.Auth.VerifyCredentialVersion(request.Context(), "admin", password, requestctx.Of(request).ClientAddress)
+	if err != nil {
+		return adminPasswordProof{}, err
+	}
+	if err := app.Auth.ConfirmCredentialVersion(request.Context(), "admin", version); err != nil {
+		return adminPasswordProof{}, err
 	}
 	if readErr == nil && !always && authority.choice.Window() > 0 {
-		app.rememberAdmin(writer, request, chrome)
+		if err := app.rememberAdmin(writer, request, chrome, version); err != nil {
+			return adminPasswordProof{}, err
+		}
 	}
-	return password, nil
+	return adminPasswordProof{password: password, version: version}, nil
 }
 
 // rememberAdmin starts this browser's remembered confirmation after this
 // request verified the administrator password, in place of the
 // administrator session the browser held, which may have been only a page
-// session. chrome, when given, then shows it. The change is confirmed
-// whether or not remembering it works; a session that could not be saved
-// only means the next change asks again, which the page then shows.
-func (app *App) rememberAdmin(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome) {
-	session, err := app.Auth.StartAdminSession(request.Context(), heldCookie(writer, request, adminCookie))
+// session. chrome, when given, then shows it. The caller handles a failed
+// insertion rather than treating it as a current administrator session.
+func (app *App) rememberAdmin(writer http.ResponseWriter, request *http.Request, chrome *webui.Chrome, version int64) error {
+	session, err := app.Auth.StartAdminSession(request.Context(), heldCookie(writer, request, adminCookie), version)
 	if err != nil {
-		logFailure(request, "administrator confirmation start", err)
-		return
+		return err
 	}
 	app.setCookie(writer, request, adminCookie, session.Token, session.Expires, true)
 	if chrome != nil {
@@ -176,6 +186,7 @@ func (app *App) rememberAdmin(writer http.ResponseWriter, request *http.Request,
 			fillAdminViewer(chrome, authority)
 		}
 	}
+	return nil
 }
 
 // fillAdminViewer puts this browser's administrator state into chrome:

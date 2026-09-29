@@ -147,7 +147,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", passwordRuleMessage(validateErr, webui.MsgSetupAccessPassShort))}, http.StatusUnprocessableEntity)
 			return
 		}
-		same, sameErr := app.sameAsAdminPassword(request, verified, password)
+		same, sameErr := app.sameAsAdminPassword(request, verified.password, password)
 		if sameErr != nil {
 			app.renderNotSaved(writer, request, settings, csrf, action, "administrator password read", sameErr)
 			return
@@ -174,7 +174,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", passwordRuleMessage(validateErr, webui.MsgSetupAdminShort))}, http.StatusUnprocessableEntity)
 			return
 		}
-		if verified == newPassword {
+		if verified.password == newPassword {
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", webui.MsgSettingsAdminSame)}, http.StatusUnprocessableEntity)
 			return
 		}
@@ -231,8 +231,10 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		err = app.Auth.SetAdminConfirmation(request.Context(), choice)
 		// A password typed for the new choice starts its window now, in
 		// place of the session this browser held under the old one.
-		if err == nil && verified != "" && choice.Window() > 0 {
-			app.rememberAdmin(writer, request, nil)
+		if err == nil && verified.password != "" && choice.Window() > 0 {
+			if rememberErr := app.rememberAdmin(writer, request, nil, verified.version); rememberErr != nil {
+				logFailure(request, "administrator confirmation start", rememberErr)
+			}
 		}
 		notice = "confirmation_saved"
 		if choice == state.ConfirmNever {

@@ -146,7 +146,7 @@ func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddres
 		return NewSession{}, err
 	}
 	if kind == "admin" {
-		return m.StartAdminSession(ctx, replaced)
+		return m.StartAdminSession(ctx, replaced, version)
 	}
 	// A general session lasts as long as the owner chose when it starts.
 	choice, err := m.Store.GeneralSession(ctx)
@@ -164,15 +164,18 @@ func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddres
 	return NewSession{Token: token, CSRF: csrf, Expires: expires}, nil
 }
 
-// StartAdminSession starts an administrator session for this browser after
-// the caller verified the administrator password, in place of replaced, the
+// StartAdminSession starts an administrator session for this browser using
+// the version verified by the caller, in place of replaced, the
 // administrator session this browser holds ("" for none). Under a
 // confirmation choice that remembers the password it lasts that window;
 // otherwise it lasts AdminSessionLife and only opens the administrator
 // pages, while every change still asks for the password.
-func (m *Manager) StartAdminSession(ctx context.Context, replaced string) (NewSession, error) {
+func (m *Manager) StartAdminSession(ctx context.Context, replaced string, version int64) (NewSession, error) {
 	token, csrf := RandomToken(32), RandomToken(32)
-	expires, err := m.Store.StartAdminSession(ctx, replaced, token, csrf, m.now(), m.adminLife)
+	expires, err := m.Store.StartAdminSession(ctx, replaced, token, csrf, version, m.now(), m.adminLife)
+	if errors.Is(err, state.ErrAccessChanged) {
+		return NewSession{}, ErrInvalidCredentials
+	}
 	if err != nil {
 		return NewSession{}, err
 	}
@@ -198,14 +201,20 @@ func (m *Manager) adminLife(choice state.AdminConfirmation) time.Duration {
 	return 15 * time.Minute
 }
 
-// VerifyCredential accepts the shared password only while the version it
-// checked remains current. Administrator checks have no access version.
+// VerifyCredential accepts a password only while the version it checked
+// remains current.
 func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAddress string) error {
 	version, err := m.VerifyCredentialVersion(ctx, kind, password, remoteAddress)
-	if err != nil || kind != "general" {
+	if err != nil {
 		return err
 	}
-	current, err := m.Store.AccessVersionCurrent(ctx, version)
+	return m.ConfirmCredentialVersion(ctx, kind, version)
+}
+
+// ConfirmCredentialVersion rejects a password whose checked revision changed
+// before the authorization decision.
+func (m *Manager) ConfirmCredentialVersion(ctx context.Context, kind string, version int64) error {
+	current, err := m.Store.CredentialVersionCurrent(ctx, kind, version)
 	if err != nil {
 		return err
 	}
@@ -215,8 +224,8 @@ func (m *Manager) VerifyCredential(ctx context.Context, kind, password, remoteAd
 	return nil
 }
 
-// VerifyCredentialVersion returns the access version read with the password
-// hash. Callers that grant access must check that version when they act.
+// VerifyCredentialVersion returns the version read with the password hash.
+// Callers that grant access must check that version when they act.
 func (m *Manager) VerifyCredentialVersion(ctx context.Context, kind, password, remoteAddress string) (int64, error) {
 	if kind != "general" && kind != "admin" {
 		return 0, errors.New("invalid authentication kind")
@@ -238,13 +247,7 @@ func (m *Manager) VerifyCredentialVersion(ctx context.Context, kind, password, r
 	if blocked {
 		return 0, ErrRateLimited
 	}
-	var encoded string
-	var version int64
-	if kind == "general" {
-		encoded, version, err = m.Store.AccessPassword(ctx)
-	} else {
-		encoded, err = m.Store.PasswordHash(ctx, "admin")
-	}
+	encoded, version, err := m.Store.PasswordCredential(ctx, kind)
 	if errors.Is(err, state.ErrAccessChanged) {
 		return 0, ErrInvalidCredentials
 	}
