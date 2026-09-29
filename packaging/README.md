@@ -1,11 +1,11 @@
 # Packaging templates
 
-The files here are inputs for `tools/release`. They produce portable archives, native prototypes, and package-manager files. Every output is unsigned unless a [signed macOS release](#signed-macos-release) is requested. `packaging` output is what gets published to the Homebrew tap and npm and attached to GitHub Releases as the Arch Linux `PKGBUILD`; the native prototypes are not published. [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#releases) shows how to run the release tool.
+Most files here are inputs for `tools/release`. They produce portable archives, native prototypes, and package-manager files. Every output is unsigned unless a [signed macOS release](#signed-macos-release) is requested. `packaging` output is what gets published to the Homebrew tap and npm and attached to GitHub Releases as the Arch Linux `PKGBUILD`; the native prototypes are not published. [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#releases) shows how to run the release tool.
 
 ## Layout
 
 - `archive/README.txt.tmpl` is placed in every portable archive.
-- `container/` holds the container image: `Dockerfile`, `compose.yaml`, and `context.sh`, which prepares the build context from the release's Linux archives after checking them against `SHA256SUMS`. The `container publish` workflow builds and publishes the image; see [Releases in docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#releases).
+- `container/` holds the container image files, which `tools/release` does not use. The `container publish` workflow builds the image from a published release; see [Releases in docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#releases). `context.sh` checks the release's two Linux archives against `SHA256SUMS` and unpacks them as the build context, `Dockerfile` builds the image from that context, and `compose.yaml` is the Compose file that users save to run the image.
 - `installer/` holds the one-line installers, `install.sh` for Linux and macOS and `install.ps1` for Windows, and `proxmox.sh`, which a Proxmox VE host runs as root to create a container and run `install.sh` in it. `build` copies them unchanged into its output folder, so every release carries the same files. Their tests are `tools/release/installer_test.go` and `tools/release/proxmox_test.go`.
 - `macos/` contains the AppKit launcher, the prototype `Info.plist`, and the app instructions.
 - `linux/` contains the Debian control file, the desktop entry, and the package instructions.

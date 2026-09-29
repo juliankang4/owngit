@@ -349,10 +349,10 @@ strength of an unmeasured `0`.
 
 ## Repositories
 
-`owngit repo` lists, shows, and creates repositories and prints one JSON
-object. It uses general access, like `owngit pr`: pass the shared
-general-access password with `--password-file`, or omit it when access is
-open. There is no delete or rename.
+`owngit repo` lists, shows, and creates repositories, restores their files
+from earlier commits, and prints one JSON object. It uses general access,
+like `owngit pr`: pass the shared general-access password with
+`--password-file`, or omit it when access is open. There is no delete or rename.
 
 ```sh
 owngit repo list --server https://owngit.example.test
@@ -377,10 +377,10 @@ Unlike the other `repo` commands, they need the administrator password in
 ([Credential files and the server line](#credential-files-and-the-server-line)).
 
 `owngit repo kept-history` and `owngit repo restore` bring back files from an
-earlier commit, as the dashboard's restore pages do and with the same general
-access
-([Restoring repository files](OPERATIONS.md#restoring-repository-files)).
-Preview first, then apply with the preview's `expected_head`:
+earlier commit, as the dashboard's restore pages do, and use the same general
+access ([Restoring repository files](OPERATIONS.md#restoring-repository-files)).
+A restore takes two steps: preview it, then apply it with the `expected_head`
+that the preview returned.
 
 ```sh
 owngit repo kept-history
@@ -388,20 +388,43 @@ owngit repo restore preview --source OID --target main --path src/app.go
 owngit repo restore apply --source OID --target main --path src/app.go --expected-head OID
 ```
 
-`--target` is a branch name such as `main`, not a full ref name such as the
-`source_ref` of kept history (`refs/heads/main`), which is refused as
-`invalid_restore`. Without `--path` the whole tree is restored, which also
-deletes files the source commit does not have. The preview lists each changed path with `status`
-(`added`, `modified`, `deleted`), `old_mode` and `new_mode`, `additions`,
-`deletions` and `binary`, and says whether applying creates the branch
-(`creates_branch`) or adds one commit with `result_tree` on `expected_head`.
-Apply answers with `commit_oid`, or fails with `stale_revision` when the branch
-moved after the preview, `restore_no_changes`, `restore_unsupported` (a
-submodule, or a path whose replacement would remove unselected files beneath
-it), `invalid_restore`, or `restore_failed` when the restore could not be
-completed and may have happened; read the target branch before trying again. A
-restore never rewrites history. The API routes are
-`GET /api/v1/repositories/ID/kept-history`,
+`repo kept-history` lists, newest first, the earlier values of branches and
+tags that a force push, an import, or a deletion replaced. Each entry names
+the ref it was kept from (`source_ref`), the commit to restore from
+(`commit_oid`), and the new branch that the dashboard offers for it
+(`restore_target`).
+
+`--source` is the full ID of the commit to restore from. `--target` is a
+branch name such as `main`, never a full ref name such as
+`refs/heads/main`, the form `source_ref` uses. Repeat `--path` for each file
+to restore. Without `--path` the whole tree is restored, which also deletes
+files that the source commit does not have. A whole-tree restore onto a branch
+that does not exist creates that branch at the source commit.
+
+The preview changes nothing. It lists each changed path with `status`
+(`added`, `modified`, or `deleted`), `old_mode` and `new_mode` (`120000` is a
+symbolic link), `additions`, `deletions`, and `binary`. `creates_branch` says
+whether applying creates the branch; otherwise applying adds one commit with
+the tree `result_tree` on top of `expected_head`. `can_apply` is false when
+the branch already has these files. A restore never rewrites history.
+
+Apply answers with `commit_oid`. A refused request fails with one of these
+codes:
+
+- `stale_revision`: the branch moved after the preview. Nothing changed;
+  preview again.
+- `restore_no_changes`: the branch already has these files.
+- `restore_unsupported`: the selection includes a submodule, would remove
+  unselected files beneath a selected path, or selects files for a branch that
+  does not exist.
+- `invalid_restore`: the request is invalid, for example a full ref name as
+  the target, a source that is not a full commit ID of this repository, or a
+  target branch whose name some file systems treat as the same as another
+  branch's, such as `Main` beside `main`.
+- `restore_failed`: the restore could not be completed, and it may have taken
+  effect anyway. Read the target branch before trying again.
+
+The API routes are `GET /api/v1/repositories/ID/kept-history`,
 `POST /api/v1/repositories/ID/restore/preview` and
 `POST /api/v1/repositories/ID/restore`.
 
@@ -448,25 +471,34 @@ optional query parameters `source_oid` and `target_oid`.
 
 ## Pull request mergeability
 
-`owngit pr mergeability --number N` works out whether a pull request can
-merge now and prints one JSON object. It uses general access like
-`owngit pr diff` and writes nothing: no ref, no record, and no object in the
-repository.
+`owngit pr mergeability --number N` answers whether an open pull request can
+merge now, for its current source and target commits, and prints one JSON
+object. It changes nothing: it creates no ref, no record, and no object in the
+repository. It uses general access, like `owngit pr diff`.
 
 ```sh
 owngit pr mergeability --number 3
 owngit pr mergeability --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
 ```
 
-`source` and `target` are the commits the answer is about. `status` is
-`clean` (with `method`: `fast_forward`, `merge_commit` or `up_to_date`),
-`conflict` (with at most 100 `conflict_paths`, `conflict_paths_truncated` when
-more exist, or `reason` `no_merge_base`), `unavailable` (with `reason`, such
-as `unsupported_git`, `source_branch_missing` or `repository_unavailable`,
-and `message`), or `stale`. With `--source-oid` and `--target-oid` the answer
-is `stale`, with the current pair in `source` and `target`, unless that pair
-is still current. The answer is not stored and does not hold a merge open;
-`pr merge` checks again. The API route is
+`source` and `target` name the commits the answer is about. `status` is one
+of these:
+
+- `clean`: the merge would succeed. `method` is `fast_forward`,
+  `merge_commit`, or `up_to_date`.
+- `conflict`: `conflict_paths` lists up to 100 conflicting paths, and
+  `conflict_paths_truncated` is true when there are more. Git can report a
+  conflict without naming a file, and `conflict_paths` is then absent. When
+  the branches share no history, `reason` is `no_merge_base` instead.
+- `unavailable`: OwnGit could not tell. `reason` says why, for example
+  `unsupported_git` (Git older than 2.38), `source_branch_missing`, or
+  `repository_unavailable`, and `message` explains it.
+- `stale`: a branch moved away from the pair given with `--source-oid` and
+  `--target-oid`. `source` and `target` then hold the current pair.
+
+Pass `--source-oid` and `--target-oid` from an earlier answer to check that
+same pair again. The answer is not stored and does not reserve the merge:
+`pr merge` checks again when it runs. The API route is
 `GET /api/v1/repositories/ID/pull-requests/N/mergeability`, with the optional
 query parameters `source_oid` and `target_oid`.
 
@@ -561,10 +593,10 @@ Read tools change nothing:
 | Tool | Command |
 |---|---|
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
-| `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview`; the preview lists every path a restore would change and its `expected_head` |
+| `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview`; `source_oid`, `target_branch`, and `paths` stand for `--source`, `--target`, and `--path`, and the preview returns the `expected_head` that applying needs |
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show`; only show includes the description and review notes |
 | `pull_request_diff` | `pr diff`; `patch: false` is `--stat`, and `source_oid` with `target_oid` pins a pair |
-| `pull_request_mergeability` | `pr mergeability`; `source_oid` with `target_oid` answers `stale` when they moved |
+| `pull_request_mergeability` | `pr mergeability`; `source_oid` with `target_oid` answers `stale` when a branch moved away from them |
 | `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 
@@ -578,7 +610,7 @@ Write tools and their effects:
 | `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | Sets the review state to pending or skipped for the exact commit IDs. Notifies no one. Advisory. |
 | `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | Changes the pull request state. No branch moves. |
 | `pull_request_merge` | `pr merge` | Publishes the merge to the target branch for the exact commit IDs. Refused when a branch moved; a repeated call does not merge twice. |
-| `repository_restore_apply` | `repo restore apply` | Adds one commit with the previewed files on the target branch, or creates a branch that does not exist, only while the branch is at the preview's `expected_head`; otherwise refused with `stale_revision`. Never rewrites history; a repeated call does not restore twice. |
+| `repository_restore_apply` | `repo restore apply` | Applies a preview: adds one commit with the previewed files on the target branch, or creates the branch when it does not exist. Refused with `stale_revision` unless the branch is still at the preview's `expected_head`. Never rewrites history; a repeated call does not restore twice. |
 | `check_task_create` | `check task new` | Adds a task. |
 | `check_cycle_reserve` | `check cycle reserve` | Uses one of the task's three correction rounds. |
 | `check_run` | `check run` without `--check` | Runs the committed checks in `--workdir` and records the attempt. |

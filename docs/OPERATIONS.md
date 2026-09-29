@@ -341,30 +341,51 @@ It never deletes the state directory or the repositories, and it prints where th
 
 ## Run in a container
 
-The OwnGit container image, `ghcr.io/juliankang4/owngit`, runs on Linux on x64 and ARM64 computers with Docker Engine and Docker Compose. Each release has the tags `X.Y.Z`, `X.Y` and `latest`, with build provenance. The image holds the release's `owngit` program and Git on Debian 13, and runs as the account `owngit` (user and group ID 10001), never as root. It needs no privileged mode, no Linux capabilities, no Docker socket and no host network.
+On a Linux computer with Docker Engine and Docker Compose, OwnGit can run as a container instead of a service. The image is `ghcr.io/juliankang4/owngit`, for x64 and ARM64. Each release is tagged `X.Y.Z`, `X.Y` and `latest` and comes with build provenance.
 
-Save [`compose.yaml`](../packaging/container/compose.yaml) in a new folder and start OwnGit there:
+Save [`compose.yaml`](../packaging/container/compose.yaml) in a new folder, then in that folder start OwnGit and show the setup link:
 
 ```sh
 docker compose up -d
 docker compose exec -it owngit owngit setup-link
 ```
 
-`setup-link` shows the one-time setup link only on a terminal, which `-it` gives it. The log that `docker compose logs` shows names only the setup file inside the container, never the link. Open the link, `http://localhost:7654/setup#...`, in a browser on the computer that runs the container. From another device, use that computer's name or address in place of `localhost`, for example `http://nas.local:7654/setup#...`; the setup page then offers to keep accepting that name, which other devices use from then on. `docker compose ps` shows the container as `healthy` once `owngit health` inside it gets an answer.
+`-it` gives the command a terminal, which it needs to show the one-time setup link. Without one, the command names only the setup file inside the container. The log that `docker compose logs` shows names that file too, never the link. The link, `http://localhost:7654/setup#...`, works once within 15 minutes. Open it in a browser on the computer that runs the container. From another device, put that computer's name or address in place of `localhost`, for example `http://nas.local:7654/setup#...`. The setup page then offers to keep accepting that name, and other devices use it from then on.
 
-Other commands run the same way, for example `docker compose exec owngit owngit doctor`.
+Setup offers open access by default, where anyone who can reach OwnGit gets in without a password. With open access, finish setup at the computer's name or address, even on the computer that runs the container. After setup, OwnGit in a container refuses `localhost` from outside the container, and [localhost and other addresses](#localhost-and-other-addresses) explains why.
+
+`docker compose ps` shows the container as `healthy` once `owngit health` inside it gets an answer. Other commands run the same way, for example `docker compose exec owngit owngit doctor`.
+
+The image holds the release's `owngit` program and Git on Debian 13. It runs as the account `owngit` (user and group ID 10001), never as root. OwnGit needs no privileged mode, Linux capabilities, Docker socket or host network, and `compose.yaml` drops every capability and blocks new privileges.
 
 ### Where the data lives
 
-Everything lives in the volume `owngit-data`, mounted at `/data`: the state in `/data/owngit`, the repositories in `/data/OwnGit-Repositories` (the folder setup suggests), and the [backups made before an upgrade](#backup-before-an-upgrade) in `/data/owngit-backups`. Restarting, recreating or updating the container keeps the volume. `docker compose down` removes the container and keeps the volume; `docker compose down -v` deletes the volume with all repositories.
+Everything lives in the volume `owngit-data`, mounted at `/data`:
 
-The state must stay on a local disk. To keep the repositories on a network share, mount the share at another path in the container, such as `/repositories`, and choose that folder in setup; the state stays in the volume.
+- the state in `/data/owngit`;
+- the repositories in `/data/OwnGit-Repositories`, the folder setup suggests;
+- the [backups made before an upgrade](#backup-before-an-upgrade) in `/data/owngit-backups`.
+
+Restarting, recreating or updating the container keeps the volume. `docker compose down` removes the container and keeps the volume. `docker compose down -v` deletes the volume, with every repository in it.
+
+Keep `/data` on a local disk, because the [state directory](#state-directory) must be on one. To keep the repositories on a network share, mount the share at another path in the container, such as `/repositories`, and choose that folder in setup.
 
 ### localhost and other addresses
 
-OwnGit listens on every address inside the container, and the `ports` line of `compose.yaml` decides who reaches it. `"7654:7654"` publishes it on every address of the computer that runs the container; `"127.0.0.1:7654:7654"` keeps it on that computer only. To use another port, change the first number, for example `"8080:7654"`, and use that port in the setup link.
+OwnGit listens on every address inside the container, and the `ports` line of `compose.yaml` decides who reaches it. `"7654:7654"` publishes it on every address of the computer that runs the container. `"127.0.0.1:7654:7654"` keeps it on that computer only, and there `localhost` works only while access needs the shared password, as the next paragraph explains. To use another port, change the first number, for example `"8080:7654"`, and use that port in the setup link too.
 
-Inside a container, OwnGit cannot tell the computer that runs it from other devices by their address: Docker forwards IPv6 connections, and rootless Docker every connection, from an address inside the container network. So OwnGit in the container image accepts `localhost`, `127.0.0.1` and `::1` from outside the container only while access needs the shared password, and every visitor then meets the sign-in page. In open access, the default, it refuses them with a page that says to use the computer's name or address instead, on that computer too. So for open access, finish setup at that name or address and keep it, or allow one later with `docker compose exec owngit owngit network set --allowed-host nas.local` and `docker compose restart`. Before setup only the setup link works, as on every computer. Wrong passwords are counted per address. When Docker hides device addresses, as it does for IPv6 through Docker's proxy and for rootless Docker, wrong passwords from every device count together. Four wrong tries from anyone on the network block sign-in for 15 minutes, including for someone with the right password. The block ends by itself. On ordinary Docker, IPv4 keeps each device's address, so those attempts are counted separately.
+In a container, OwnGit accepts `localhost`, `127.0.0.1` and `::1` from outside the container only while access needs the shared password, when every visitor must sign in anyway. With open access, the default, it refuses them with a page that says to use the computer's name or address instead, also on the computer that runs the container. The reason is that OwnGit cannot tell that computer from other devices by their address: Docker forwards IPv6 connections from an address inside the container network, and rootless Docker forwards every connection that way.
+
+For open access, finish setup at the computer's name or address and keep it. To allow a name later, save it and restart the container:
+
+```sh
+docker compose exec owngit owngit network set --allowed-host nas.local
+docker compose restart
+```
+
+Before setup, only the setup link works, as with any OwnGit.
+
+OwnGit counts wrong passwords per address: four within 10 minutes block that address for 15 minutes ([Git transfer limits](#git-transfer-limits)). With ordinary Docker, IPv4 connections keep each device's address, so each device is counted on its own. IPv6 connections through Docker's proxy, and every connection under rootless Docker, arrive from one address. Wrong passwords from all those devices then count together, so four wrong tries from anyone on the network block sign-in for everyone for 15 minutes, including someone with the right password. The block ends by itself.
 
 ### Update
 
@@ -374,7 +395,9 @@ When a newer release exists, the dashboard notice and `owngit update` show the c
 docker compose pull && docker compose up -d
 ```
 
-Run it in the folder of `compose.yaml` on the computer that runs the container. It downloads the new image and recreates the container with it; the volume stays. OwnGit backs up the state before it upgrades it, as described in [Backup before an upgrade](#backup-before-an-upgrade). To keep a backup that you made yourself as well, stop OwnGit and make one first:
+Run it on the computer that runs the container, in the folder of `compose.yaml`. It downloads the new image and recreates the container with it, and the volume stays. OwnGit backs up the state before it upgrades it, as described in [Backup before an upgrade](#backup-before-an-upgrade).
+
+To keep a backup of your own as well, stop OwnGit, back it up, update, and verify the backup:
 
 ```sh
 docker compose stop
@@ -384,7 +407,7 @@ docker compose up -d
 docker compose exec owngit owngit backup verify /data/backup-before-update
 ```
 
-The output folder must not exist yet, so use a new name each time. A backup in the volume goes when the volume goes; to keep one elsewhere, mount a folder that the account `owngit` (ID 10001) owns and that no other account can change, and write the backup there.
+The output folder must not exist yet, so use a new name each time. A backup in the volume is deleted with the volume. To keep one elsewhere, mount a folder that the account `owngit` (ID 10001) owns and that no other account can change, and write the backup there.
 
 ### Running as another account
 
@@ -397,6 +420,8 @@ services:
     volumes:
       - ./owngit-data:/data
 ```
+
+Create that folder first, in the folder of `compose.yaml`:
 
 ```sh
 sudo install -d -o 1000 -g 1000 -m 700 owngit-data
@@ -895,9 +920,25 @@ To bring back files from an earlier commit, start a restore from one of these pl
 
 Choose a source commit and a target branch, preview the complete list of additions, changes and deletions, and apply. OwnGit adds a new commit on the target branch, or recreates a deleted branch at the selected commit, only if the branch still has the previewed tip.
 
-The same restore works on the command line and through the [MCP server](CODING_TOOLS.md#mcp-server), with general access like the restore pages. `owngit repo kept-history --repository NAME` lists kept history as JSON, each entry with the branch or tag it came from, its commit and the new branch the dashboard offers for it (`restore_target`). `owngit repo restore preview --repository NAME --source OID --target BRANCH` previews a whole-tree restore onto the branch named, such as `main`; add `--path FILE` once for each file to restore only those. The preview changes nothing and lists every path the restore adds, changes or deletes with its Git modes before and after (`120000` is a symbolic link), and the branch tip it was made against as `expected_head`. `owngit repo restore apply` with the same options and `--expected-head` set to that value applies it. When the branch moved after the preview, apply is refused with `stale_revision` and changes nothing; preview again.
+A restore changes only Git content in OwnGit, never another computer's working tree. It never rewrites history, so it also works on a [protected default branch](#changing-the-default-branch) and adds nothing to kept history.
 
-A selected-file restore keeps unselected files, modes, binary files and symbolic links as they are, and never follows links on the host. It refuses a submodule, or a path whose replacement would remove unselected files beneath it. It also refuses a target branch whose name some file systems treat as the same as another branch, such as `Main` beside `main`, and names that branch. Restore changes only Git content in OwnGit, never another computer's working tree. A restore never rewrites history, so it also works on a [protected default branch](#changing-the-default-branch) and keeps nothing in kept history.
+A selected-file restore keeps unselected files, modes, binary files and symbolic links as they are, and never follows links on the host. It refuses a submodule, or a path whose replacement would remove unselected files beneath it.
+
+OwnGit also refuses a target branch whose name some file systems treat as the same as another branch's, such as `Main` beside `main`. Delete or rename one of the two first. On the command line and through MCP, the refusal (`invalid_restore`) names the other branch.
+
+#### Restoring on the command line
+
+The command line and the [MCP server](CODING_TOOLS.md#mcp-server) offer the same restore, with the same general access as the restore pages. Preview first, then apply what you previewed:
+
+```sh
+owngit repo kept-history --repository NAME
+owngit repo restore preview --repository NAME --source OID --target main
+owngit repo restore apply --repository NAME --source OID --target main --expected-head OID
+```
+
+- `repo kept-history` lists kept history as JSON. Each entry has the branch or tag it came from, its commit, and in `restore_target` the new branch the dashboard offers to restore it into.
+- `repo restore preview` shows what restoring the whole tree of the source commit (`--source`, a full commit ID) onto the target branch would do. `--target` takes a branch name such as `main`, not a full ref name starting with `refs/`. To restore only some files, add `--path FILE` once for each. The preview changes nothing. It lists every path the restore adds, changes or deletes, with its Git modes before and after (`120000` is a symbolic link), and gives the branch tip it was made against as `expected_head`.
+- `repo restore apply` takes the same options and `--expected-head` set to that value. If the branch moved after the preview, apply is refused with `stale_revision` and changes nothing; preview again.
 
 ### Kept history
 
@@ -1191,7 +1232,13 @@ owngit pr reopen --number 1
 - A review is `approved` or `changes_requested`; the reviewer label records who supplied it and does not claim independence. A pending or changes-requested review does not hold a merge. When a branch moves, earlier decisions no longer apply; inspect again and decide for the new object IDs. A review can carry a note (`--note-file`, or Record a review on the page) that stays with the two commits it reviewed. After either branch moves, the note is still shown, marked as about earlier commits.
 - Results name the access that made a change in `created_by`, `edited_by`, `merged_by`, `review.actor` (the current review, request or skip) and each note's `actor`. OwnGit records what authorized the request, which is general access today, and never takes it from a Git commit author. A field is left out when OwnGit recorded nobody: for changes made before OwnGit 1.1.3, and for a merge OwnGit finished on its own after an interruption.
 - `pr diff` prints what the pull request changes with the object IDs it compared (`--stat` without the patch, `--patch` only the patch); see [Pull request changes](CODING_TOOLS.md#pull-request-changes). The changes are what the source changed since it branched off the target, from the merge base to the source. When the branches share no commit or have more than one merge base, the page says so and shows no change list.
-- `pr mergeability` (or Check mergeability on the pull request page) works out whether the pull request can merge now, for its current source and target commits, and changes nothing. `status` is `clean` with the `method` a merge would use (`fast_forward`, `merge_commit` or `up_to_date`), `conflict` with up to 100 `conflict_paths` (`conflict_paths_truncated` when there are more; `reason` `no_merge_base` when the branches share no history), `unavailable` with a `reason` when OwnGit could not tell (for example `unsupported_git`, or `source_branch_missing`), or `stale`. OwnGit checks only when asked: opening or listing pull requests never calculates a merge. The answer is kept nowhere and no longer applies once either branch moves; pass `--source-oid` and `--target-oid` from an earlier answer to get `stale` when they moved. A merge checks again itself. On the page, a conflict answer disables Merge until the page is opened again.
+- `pr mergeability`, or Check mergeability on the pull request page, tells whether the pull request can merge now, for its current source and target commits. It changes nothing, and OwnGit works it out only when asked: opening or listing pull requests never calculates a merge. `status` is one of these:
+  - `clean`, with the `method` a merge would use: `fast_forward`, `merge_commit` or `up_to_date`;
+  - `conflict`, with up to 100 `conflict_paths` (and `conflict_paths_truncated` when there are more), or with `reason` `no_merge_base` when the branches share no history;
+  - `unavailable`, with a `reason` when OwnGit could not tell, such as `unsupported_git` or `source_branch_missing`;
+  - `stale`, when the commits you passed are no longer current; `source` and `target` then hold the current ones.
+
+  The answer is not stored and stops applying once either branch moves. To check whether an earlier answer still holds, pass its object IDs as `--source-oid` and `--target-oid`. A merge checks again by itself. On the page, a conflict answer turns off Merge until you open the page again.
 - Every command writes a JSON result. Failures carry a stable `error.code` and a nonzero exit status, and `connection_failed` names the cause. `checks` in a pull request result reports the evidence for the current source revision, or `absent`. It is `stale` when other checks ran than those in the `.owngit/checks.json` of that revision. Checks are advisory and never block a merge.
 - Merge makes a fast-forward, or a merge commit with the old target as first parent, authored as `OwnGit <owngit@localhost>` with the number and title in the message. It never squashes, rebases, force-updates or deletes the source branch, and a retried or interrupted merge never creates a second commit. When the target already contains the source, the pull request is recorded as merged with `merge.mode` `up_to_date` and no new commit. Merge needs Git 2.38 or newer on the OwnGit host (`unsupported_git` otherwise).
 

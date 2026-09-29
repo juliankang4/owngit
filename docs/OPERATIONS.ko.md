@@ -341,30 +341,51 @@ OwnGit이 직접 고치지는 않으니 명령은 이 컴퓨터에서 실행하�
 
 ## 컨테이너로 실행하기
 
-OwnGit 컨테이너 이미지 `ghcr.io/juliankang4/owngit`은 x64와 ARM64 Linux 컴퓨터에서 Docker Engine과 Docker Compose로 실행합니다. 릴리스마다 `X.Y.Z`, `X.Y`, `latest` 태그가 붙고 빌드 출처 증명(provenance)이 함께 올라갑니다. 이미지에는 Debian 13 위에 릴리스의 `owngit` 프로그램과 Git이 들어 있고, root가 아닌 `owngit` 계정(사용자와 그룹 ID 10001)으로 실행합니다. 특권 모드, Linux 권한(capability), Docker 소켓, 호스트 네트워크는 필요하지 않습니다.
+Docker Engine과 Docker Compose가 있는 Linux 컴퓨터에서는 OwnGit을 서비스 대신 컨테이너로 실행할 수 있습니다. 이미지는 x64와 ARM64용 `ghcr.io/juliankang4/owngit`입니다. 릴리스마다 `X.Y.Z`, `X.Y`, `latest` 태그가 붙고 빌드 출처 증명(provenance)이 함께 올라갑니다.
 
-[`compose.yaml`](../packaging/container/compose.yaml)을 새 폴더에 저장하고 그 폴더에서 OwnGit을 시작하세요.
+[`compose.yaml`](../packaging/container/compose.yaml)을 새 폴더에 저장하고 그 폴더에서 OwnGit을 시작한 뒤 설정 링크를 확인하세요.
 
 ```sh
 docker compose up -d
 docker compose exec -it owngit owngit setup-link
 ```
 
-`setup-link`는 터미널에서만 일회용 설정 링크를 보여 주며, `-it`가 터미널을 붙여 줍니다. `docker compose logs`로 보는 로그에는 컨테이너 안 설정 파일의 경로만 남고 링크는 남지 않습니다. 링크 `http://localhost:7654/setup#...`는 컨테이너를 실행하는 컴퓨터의 브라우저에서 여세요. 다른 기기에서 열 때는 `localhost` 자리에 그 컴퓨터의 이름이나 주소를 넣으세요(예: `http://nas.local:7654/setup#...`). 설정 페이지가 그 이름을 계속 받아들일지 묻고, 이후 다른 기기에서는 그 이름으로 접속합니다. 컨테이너 안에서 `owngit health`가 응답을 받으면 `docker compose ps`에 `healthy`로 보입니다.
+일회용 설정 링크는 터미널에서만 보이므로 `-it`로 터미널을 붙여 실행합니다. 터미널이 없으면 명령은 컨테이너 안 설정 파일의 경로만 알려 줍니다. `docker compose logs`로 보는 로그에도 그 경로만 남고 링크는 남지 않습니다. 링크 `http://localhost:7654/setup#...`는 15분 안에 한 번만 쓸 수 있습니다. 컨테이너를 실행하는 컴퓨터의 브라우저에서 여세요. 다른 기기에서 열 때는 `localhost` 자리에 그 컴퓨터의 이름이나 주소를 넣으세요(예: `http://nas.local:7654/setup#...`). 설정 페이지가 그 이름을 계속 받아들일지 묻습니다. 받아들이면 이후 다른 기기에서도 그 이름으로 접속합니다.
 
-다른 명령도 같은 방식으로 실행합니다. 예: `docker compose exec owngit owngit doctor`
+설정은 기본으로 공개 접속을 제안합니다. 공개 접속에서는 OwnGit에 접속할 수 있는 누구나 비밀번호 없이 들어옵니다. 공개 접속으로 쓴다면 컨테이너를 실행하는 컴퓨터에서도 그 컴퓨터의 이름이나 주소로 설정을 마치세요. 설정을 마친 뒤에는 컨테이너 안의 OwnGit이 컨테이너 밖에서 온 `localhost`를 거부합니다. 그 이유는 [localhost와 다른 주소](#localhost와-다른-주소)에 있습니다.
+
+컨테이너 안에서 `owngit health`가 응답을 받으면 `docker compose ps`에 `healthy`로 표시됩니다. 다른 명령도 같은 방식으로 실행합니다. 예: `docker compose exec owngit owngit doctor`
+
+이미지에는 Debian 13 위에 릴리스의 `owngit` 프로그램과 Git이 들어 있습니다. OwnGit은 root가 아닌 `owngit` 계정(사용자와 그룹 ID 10001)으로 실행됩니다. 특권 모드, Linux 권한(capability), Docker 소켓, 호스트 네트워크는 필요하지 않으며, `compose.yaml`은 모든 권한을 빼고 새 권한을 얻지 못하게 막습니다.
 
 ### 데이터 위치
 
-모든 데이터는 `/data`에 연결된 볼륨 `owngit-data`에 있습니다. 상태는 `/data/owngit`, 저장소는 `/data/OwnGit-Repositories`(설정에서 제안하는 폴더), [업그레이드 전 백업](#업그레이드-전-백업)은 `/data/owngit-backups`에 둡니다. 컨테이너를 다시 시작하거나 새로 만들거나 업데이트해도 볼륨은 그대로입니다. `docker compose down`은 컨테이너만 지우고 볼륨은 남깁니다. `docker compose down -v`는 저장소를 모두 포함한 볼륨까지 지웁니다.
+모든 데이터는 `/data`에 연결된 볼륨 `owngit-data`에 있습니다.
 
-상태는 로컬 디스크에 있어야 합니다. 저장소를 네트워크 공유 폴더에 두려면 공유 폴더를 컨테이너 안의 다른 경로(예: `/repositories`)에 연결하고 설정에서 그 폴더를 고르세요. 상태는 볼륨에 그대로 남습니다.
+- 상태: `/data/owngit`
+- 저장소: `/data/OwnGit-Repositories`(설정에서 제안하는 폴더)
+- [업그레이드 전 백업](#업그레이드-전-백업): `/data/owngit-backups`
+
+컨테이너를 다시 시작하거나 새로 만들거나 업데이트해도 볼륨은 그대로입니다. `docker compose down`은 컨테이너만 지우고 볼륨은 남깁니다. `docker compose down -v`는 볼륨을 지우며 그 안의 저장소도 모두 사라집니다.
+
+[상태 디렉터리](#상태-디렉터리)는 로컬 디스크에 있어야 하므로 `/data`도 로컬 디스크에 두세요. 저장소를 네트워크 공유 폴더에 두려면 공유 폴더를 컨테이너 안의 다른 경로(예: `/repositories`)에 연결하고 설정에서 그 폴더를 고르세요.
 
 ### localhost와 다른 주소
 
-OwnGit은 컨테이너 안의 모든 주소에서 연결을 받고, 누가 접속할 수 있는지는 `compose.yaml`의 `ports` 줄이 정합니다. `"7654:7654"`는 컨테이너를 실행하는 컴퓨터의 모든 주소에 포트를 엽니다. `"127.0.0.1:7654:7654"`로 쓰면 그 컴퓨터에서만 접속할 수 있습니다. 다른 포트를 쓰려면 앞의 숫자를 바꾸고(예: `"8080:7654"`) 설정 링크에서도 그 포트를 쓰세요.
+OwnGit은 컨테이너 안의 모든 주소에서 연결을 받습니다. 누가 접속할 수 있는지는 `compose.yaml`의 `ports` 줄이 정합니다. `"7654:7654"`는 컨테이너를 실행하는 컴퓨터의 모든 주소에 포트를 엽니다. `"127.0.0.1:7654:7654"`로 쓰면 그 컴퓨터에서만 접속할 수 있는데, 이때 `localhost`는 아래 설명처럼 접속에 공용 비밀번호가 필요할 때만 쓸 수 있습니다. 다른 포트를 쓰려면 앞의 숫자를 바꾸고(예: `"8080:7654"`) 설정 링크에서도 그 포트를 쓰세요.
 
-컨테이너 안의 OwnGit은 접속한 주소만으로는 컨테이너를 실행하는 컴퓨터와 다른 기기를 구별할 수 없습니다. Docker는 IPv6 연결을, rootless Docker는 모든 연결을 컨테이너 네트워크 안의 주소에서 전달하기 때문입니다. 그래서 컨테이너 이미지의 OwnGit은 컨테이너 밖에서 온 `localhost`, `127.0.0.1`, `::1`을 접속에 공유 비밀번호가 필요할 때만 받아들이며, 이때 모든 방문자는 로그인 페이지를 거칩니다. 기본값인 공개 접속에서는 이 이름을 거부하고, 대신 그 컴퓨터의 이름이나 주소를 쓰라는 페이지를 보여 줍니다. 컨테이너를 실행하는 컴퓨터에서도 마찬가지입니다. 그러니 공개 접속으로 쓰려면 그 이름이나 주소로 설정을 마치고 그 이름을 계속 받아들이도록 하거나, 나중에 `docker compose exec owngit owngit network set --allowed-host nas.local`과 `docker compose restart`로 허용하세요. 설정 전에는 어느 컴퓨터에서나 그렇듯 설정 링크만 쓸 수 있습니다. 틀린 비밀번호는 주소별로 셉니다. Docker의 프록시를 거치는 IPv6 연결이나 rootless Docker처럼 기기 주소가 숨겨지면, 모든 기기의 잘못된 비밀번호 입력을 합쳐서 셉니다. 네트워크에 있는 누구든 비밀번호를 네 번 틀리면 올바른 비밀번호를 아는 사람까지 15분 동안 로그인할 수 없습니다. 차단은 시간이 지나면 자동으로 풀립니다. 일반 Docker의 IPv4 연결에서는 각 기기의 주소가 유지되어 횟수를 따로 셉니다.
+컨테이너 안의 OwnGit은 컨테이너 밖에서 온 `localhost`, `127.0.0.1`, `::1`을 접속에 공용 비밀번호가 필요할 때만 받아들입니다. 이 경우에는 어차피 모든 방문자가 로그인해야 합니다. 기본값인 공개 접속에서는 이 이름을 거부하고, 그 컴퓨터의 이름이나 주소를 쓰라는 페이지를 보여 줍니다. 컨테이너를 실행하는 컴퓨터에서 접속해도 마찬가지입니다. 컨테이너 안에서는 접속한 주소만으로 그 컴퓨터와 다른 기기를 구별할 수 없기 때문입니다. Docker는 IPv6 연결을 컨테이너 네트워크 안의 주소에서 전달하고 rootless Docker는 모든 연결을 그렇게 전달합니다.
+
+공개 접속으로 쓰려면 그 컴퓨터의 이름이나 주소로 설정을 마치고 그 이름을 계속 받아들이도록 하세요. 나중에 이름을 허용하려면 저장한 뒤 컨테이너를 다시 시작합니다.
+
+```sh
+docker compose exec owngit owngit network set --allowed-host nas.local
+docker compose restart
+```
+
+설정을 마치기 전에는 다른 OwnGit과 마찬가지로 설정 링크만 쓸 수 있습니다.
+
+OwnGit은 틀린 비밀번호를 주소별로 세며 한 주소에서 10분 안에 4번 틀리면 그 주소를 15분 동안 막습니다([Git 전송 제한](#git-전송-제한)). 일반 Docker의 IPv4 연결은 기기마다 주소가 유지되므로 기기별로 따로 셉니다. Docker의 프록시를 거치는 IPv6 연결과 rootless Docker의 모든 연결은 한 주소에서 들어옵니다. 이때는 이 기기들의 틀린 비밀번호를 합쳐서 셉니다. 그래서 네트워크의 누구든 4번 틀리면 올바른 비밀번호를 아는 사람까지 모두 15분 동안 로그인할 수 없습니다. 차단은 시간이 지나면 저절로 풀립니다.
 
 ### 업데이트
 
@@ -374,7 +395,9 @@ OwnGit은 컨테이너 안의 모든 주소에서 연결을 받고, 누가 접�
 docker compose pull && docker compose up -d
 ```
 
-컨테이너를 실행하는 컴퓨터의 `compose.yaml`이 있는 폴더에서 실행하세요. 새 이미지를 내려받아 그 이미지로 컨테이너를 새로 만들며, 볼륨은 그대로 남습니다. OwnGit은 [업그레이드 전 백업](#업그레이드-전-백업)에 나온 대로 상태를 업그레이드하기 전에 백업합니다. 직접 만든 백업도 따로 남기려면 OwnGit을 멈추고 먼저 백업하세요.
+컨테이너를 실행하는 컴퓨터의 `compose.yaml`이 있는 폴더에서 실행하세요. 새 이미지를 내려받아 그 이미지로 컨테이너를 새로 만들며 볼륨은 그대로 남습니다. OwnGit은 [업그레이드 전 백업](#업그레이드-전-백업)에 나온 대로 상태를 업그레이드하기 전에 백업합니다.
+
+직접 만든 백업도 남기려면 OwnGit을 멈추고 백업한 뒤 업데이트하고 백업을 검증하세요.
 
 ```sh
 docker compose stop
@@ -384,11 +407,11 @@ docker compose up -d
 docker compose exec owngit owngit backup verify /data/backup-before-update
 ```
 
-출력 폴더는 아직 없어야 하므로 매번 새 이름을 쓰세요. 볼륨 안의 백업은 볼륨을 지우면 함께 사라집니다. 다른 곳에 남기려면 `owngit` 계정(ID 10001)이 소유하고 다른 계정은 바꿀 수 없는 폴더를 연결해 그곳에 백업하세요.
+출력 폴더는 아직 없어야 하므로 매번 새 이름을 쓰세요. 볼륨 안의 백업은 볼륨을 지우면 함께 지워집니다. 다른 곳에 남기려면 `owngit` 계정(ID 10001)이 소유하고 다른 계정은 바꿀 수 없는 폴더를 연결해 그곳에 백업하세요.
 
 ### 다른 계정으로 실행하기
 
-컴퓨터에 있는 폴더의 소유자에 맞추는 경우처럼 OwnGit을 다른 계정으로 실행하려면 `compose.yaml`에 `user:`를 지정하고, `/data`를 그 계정이 소유하며 다른 계정은 바꿀 수 없는 폴더로 두세요.
+컴퓨터에 있는 폴더의 소유자에 맞추는 경우처럼 OwnGit을 다른 계정으로 실행하려면 `compose.yaml`에 `user:`를 지정하고 `/data`를 그 계정이 소유하며 다른 계정은 바꿀 수 없는 폴더로 두세요.
 
 ```yaml
 services:
@@ -398,11 +421,13 @@ services:
       - ./owngit-data:/data
 ```
 
+그 폴더는 `compose.yaml`이 있는 폴더에서 먼저 만듭니다.
+
 ```sh
 sudo install -d -o 1000 -g 1000 -m 700 owngit-data
 ```
 
-기본 `compose.yaml`의 이름 있는 볼륨은 `owngit` 계정이 소유하므로 다른 계정은 쓸 수 없습니다. 다른 계정이 바꿀 수 있는 `/data` 폴더는 OwnGit이 거부하며, 로그에 그 문제를 고치는 `chmod` 명령을 알려 줍니다.
+기본 `compose.yaml`의 이름 있는 볼륨은 `owngit` 계정이 소유하므로 다른 계정은 쓸 수 없습니다. 다른 계정이 바꿀 수 있는 `/data` 폴더는 OwnGit이 거부하며 로그에 그 문제를 고치는 `chmod` 명령을 알려 줍니다.
 
 ## Proxmox VE에서 실행하기
 
@@ -895,9 +920,25 @@ $io::SetAccessControl($f, $acl)
 
 원본 커밋과 대상 브랜치를 고르고 추가, 변경, 삭제될 파일의 전체 목록을 미리 본 뒤 적용합니다. OwnGit은 대상 브랜치의 끝 커밋이 미리 볼 때와 그대로일 때만 새 커밋을 추가하거나, 삭제된 브랜치를 선택한 커밋에서 다시 만듭니다.
 
-같은 되돌리기를 명령줄과 [MCP 서버](CODING_TOOLS.ko.md#mcp-서버)에서도 할 수 있으며, 되돌리기 화면과 마찬가지로 일반 접근을 씁니다. `owngit repo kept-history --repository NAME`은 보관된 기록을 JSON으로 보여 주며, 항목마다 어느 브랜치나 태그에서 보관됐는지, 그 커밋, 대시보드가 되돌릴 곳으로 제안하는 새 브랜치(`restore_target`)가 들어 있습니다. `owngit repo restore preview --repository NAME --source OID --target BRANCH`는 `main` 같은 브랜치에 트리 전체를 되돌릴 때의 변화를 미리 보여 주고, 일부 파일만 되돌리려면 파일마다 `--path FILE`을 붙입니다. 미리 보기는 아무것도 바꾸지 않으며, 되돌리기로 추가, 변경, 삭제될 모든 경로를 전후의 Git 파일 모드(`120000`은 심볼릭 링크)와 함께 보여 주고, 미리 볼 때의 브랜치 끝 커밋을 `expected_head`로 알려 줍니다. 같은 옵션에 `--expected-head`로 그 값을 넣어 `owngit repo restore apply`를 실행하면 적용됩니다. 미리 본 뒤 브랜치가 움직였으면 적용은 `stale_revision`으로 거부되고 아무것도 바뀌지 않으니 다시 미리 봅니다.
+되돌리기는 OwnGit 안의 Git 내용만 바꾸며 다른 컴퓨터의 워킹 트리는 건드리지 않습니다. 기록을 다시 쓰지 않으므로 [보호된 기본 브랜치](#기본-브랜치-바꾸기)에서도 동작하고 보관된 기록에 새로 남는 것도 없습니다.
 
-일부 파일만 되돌릴 때는 선택하지 않은 파일, 파일 모드, 바이너리 파일, 심볼릭 링크를 그대로 두고, 호스트에서 링크를 따라가지 않습니다. 서브모듈이나, 바꾸면 그 아래의 선택하지 않은 파일이 지워지는 경로는 거부합니다. `main` 옆의 `Main`처럼 일부 파일 시스템이 다른 브랜치와 같은 이름으로 보는 대상 브랜치도 그 브랜치를 알려 주며 거부합니다. 되돌리기는 OwnGit 안의 Git 내용만 바꾸며 다른 컴퓨터의 워킹 트리는 건드리지 않습니다. 되돌리기는 기록을 다시 쓰지 않으므로 [보호된 기본 브랜치](#기본-브랜치-바꾸기)에서도 동작하고 보관된 기록에 남기는 것도 없습니다.
+일부 파일만 되돌릴 때는 선택하지 않은 파일, 파일 모드, 바이너리 파일, 심볼릭 링크를 그대로 두고, 호스트에서 링크를 따라가지 않습니다. 서브모듈이나, 바꾸면 그 아래의 선택하지 않은 파일이 지워지는 경로는 거부합니다.
+
+`main` 옆의 `Main`처럼 일부 파일 시스템이 다른 브랜치와 같은 이름으로 보는 대상 브랜치도 거부합니다. 둘 중 하나를 먼저 지우거나 이름을 바꾸세요. 명령줄과 MCP에서는 거부(`invalid_restore`) 메시지에 겹치는 브랜치 이름이 나옵니다.
+
+#### 명령줄에서 되돌리기
+
+명령줄과 [MCP 서버](CODING_TOOLS.ko.md#mcp-서버)에서도 같은 되돌리기를 할 수 있으며, 되돌리기 화면과 같은 일반 접근을 씁니다. 먼저 미리 본 다음 그 내용을 적용합니다.
+
+```sh
+owngit repo kept-history --repository NAME
+owngit repo restore preview --repository NAME --source OID --target main
+owngit repo restore apply --repository NAME --source OID --target main --expected-head OID
+```
+
+- `repo kept-history`는 보관된 기록을 JSON으로 보여 줍니다. 항목마다 어느 브랜치나 태그에서 보관됐는지, 그 커밋, 그리고 대시보드가 되돌릴 곳으로 제안하는 새 브랜치(`restore_target`)가 들어 있습니다.
+- `repo restore preview`는 원본 커밋(`--source`, 전체 커밋 ID)의 트리 전체를 대상 브랜치에 되돌리면 무엇이 바뀌는지 보여 줍니다. `--target`에는 `refs/`로 시작하는 전체 ref 이름이 아니라 `main` 같은 브랜치 이름을 씁니다. 일부 파일만 되돌리려면 파일마다 `--path FILE`을 붙입니다. 미리 보기는 아무것도 바꾸지 않습니다. 되돌리기로 추가, 변경, 삭제될 모든 경로를 전후의 Git 파일 모드(`120000`은 심볼릭 링크)와 함께 보여 주고 미리 볼 때의 브랜치 끝 커밋을 `expected_head`로 알려 줍니다.
+- `repo restore apply`는 같은 옵션에 `--expected-head`로 그 값을 넣어 실행합니다. 미리 본 뒤 브랜치가 움직였으면 적용은 `stale_revision`으로 거부되고 아무것도 바뀌지 않으니 다시 미리 보세요.
 
 ### 보관된 기록
 
@@ -1191,7 +1232,13 @@ owngit pr reopen --number 1
 - 리뷰는 `approved` 또는 `changes_requested`입니다. 리뷰어 라벨은 누가 제출했는지 기록할 뿐 독립적인 리뷰였다는 뜻은 아닙니다. 대기 중이거나 변경을 요청한 리뷰가 병합을 막지는 않습니다. 브랜치가 움직이면 이전 결정은 더 이상 적용되지 않으므로 다시 살펴보고 새 객체 ID로 결정하세요. 리뷰에는 메모를 남길 수 있고(`--note-file` 또는 페이지의 리뷰 결과 기록) 메모는 리뷰한 두 커밋에 묶입니다. 어느 브랜치든 움직인 뒤에도 메모는 이전 커밋 기준이라는 표시와 함께 계속 보입니다.
 - 결과의 `created_by`, `edited_by`, `merged_by`, `review.actor`(지금 리뷰, 리뷰 요청 또는 생략)와 각 메모의 `actor`는 그 변경을 한 접근 방식을 알려 줍니다. OwnGit은 요청을 허가한 접근 방식을 기록하며(지금은 일반 접근) Git 커밋 작성자에서 가져오지 않습니다. OwnGit 1.1.3 전에 한 변경과, 중단된 병합을 OwnGit이 스스로 마무리한 경우에는 기록된 사람이 없어 이 필드가 빠집니다.
 - `pr diff`는 풀 리퀘스트가 바꾸는 내용을 비교한 객체 ID와 함께 출력합니다(`--stat`은 패치 없이, `--patch`는 패치만). [풀 리퀘스트 변경 내용](CODING_TOOLS.ko.md#풀-리퀘스트-변경-내용)을 보세요. 변경 내용은 원본이 대상에서 갈라진 뒤 바꾼 내용, 곧 병합 기준(merge base)에서 원본까지의 차이입니다. 두 브랜치에 공통 커밋이 없거나 병합 기준이 여러 개이면 페이지가 그 이유를 알리고 변경 목록을 표시하지 않습니다.
-- `pr mergeability`(또는 풀 리퀘스트 페이지의 병합 가능 여부 확인)는 현재 원본과 대상 커밋으로 지금 병합할 수 있는지 확인하며 아무것도 바꾸지 않습니다. `status`는 병합하면 쓰일 방식 `method`(`fast_forward`, `merge_commit`, `up_to_date`)와 함께 `clean`, 충돌한 경로를 최대 100개 담은 `conflict_paths`와 함께 `conflict`(더 있으면 `conflict_paths_truncated`, 두 브랜치에 공통 기록이 없으면 `reason`이 `no_merge_base`), OwnGit이 알아낼 수 없을 때 `reason`(예: `unsupported_git`, `source_branch_missing`)과 함께 `unavailable`, 또는 `stale`입니다. OwnGit은 요청할 때만 확인하며 풀 리퀘스트를 열거나 목록을 볼 때는 병합을 계산하지 않습니다. 답은 어디에도 저장하지 않고 어느 브랜치든 움직이면 더 이상 맞지 않습니다. 이전 답의 객체 ID를 `--source-oid`와 `--target-oid`로 넘기면 그사이 움직였을 때 `stale`을 받습니다. 병합은 스스로 다시 확인합니다. 페이지에서 충돌이라는 답을 받으면 페이지를 다시 열 때까지 병합 버튼이 꺼집니다.
+- `pr mergeability`나 풀 리퀘스트 페이지의 병합 가능 여부 확인은 현재 원본과 대상 커밋으로 지금 병합할 수 있는지 알려 줍니다. 이 확인은 아무것도 바꾸지 않습니다. OwnGit은 요청할 때만 확인하므로 풀 리퀘스트를 열거나 목록을 볼 때는 병합을 계산하지 않습니다. `status`는 다음 가운데 하나입니다.
+  - `clean`: 병합하면 쓰일 방식 `method`(`fast_forward`, `merge_commit`, `up_to_date`)가 함께 나옵니다.
+  - `conflict`: 충돌한 경로가 `conflict_paths`에 최대 100개 나오고 더 있으면 `conflict_paths_truncated`가 붙습니다. 두 브랜치에 공통 기록이 없으면 `reason`이 `no_merge_base`입니다.
+  - `unavailable`: OwnGit이 알아낼 수 없었을 때이며 `unsupported_git`이나 `source_branch_missing` 같은 `reason`이 함께 나옵니다.
+  - `stale`: 넘긴 커밋이 더 이상 현재 커밋이 아닐 때이며 `source`와 `target`에 현재 커밋이 나옵니다.
+
+  답은 어디에도 저장되지 않고 어느 브랜치든 움직이면 더 이상 맞지 않습니다. 이전 답이 아직 맞는지 확인하려면 그 답의 객체 ID를 `--source-oid`와 `--target-oid`로 넘기세요. 병합할 때는 OwnGit이 스스로 다시 확인합니다. 페이지에서 충돌이라는 답을 받으면 페이지를 다시 열 때까지 병합 버튼이 꺼집니다.
 - 모든 명령은 JSON 결과를 출력합니다. 실패하면 바뀌지 않는 `error.code`와 0이 아닌 종료 코드를 내고, `connection_failed`에는 원인이 함께 나옵니다. 풀 리퀘스트 결과의 `checks`는 현재 원본 리비전에 기록된 체크 결과를 알려 주며, 기록이 없으면 `absent`입니다. 그 리비전의 `.owngit/checks.json`과 다른 체크를 실행했다면 `stale`입니다. 체크는 참고용이며 병합을 막지 않습니다.
 - 병합은 fast-forward를 하거나, 이전 대상을 첫째 부모로 하는 병합 커밋을 만듭니다. 작성자는 `OwnGit <owngit@localhost>`이고 메시지에는 번호와 제목이 들어갑니다. squash, rebase, 강제 갱신, 원본 브랜치 삭제는 하지 않으며, 병합을 다시 시도하거나 중간에 끊겨도 커밋이 두 번 만들어지지 않습니다. 대상에 원본이 이미 들어 있으면 새 커밋 없이 `merge.mode`가 `up_to_date`인 병합으로 기록됩니다. 병합하려면 OwnGit 호스트에 Git 2.38 이상이 필요합니다(그 밖에는 `unsupported_git`).
 

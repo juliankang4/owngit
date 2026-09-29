@@ -177,7 +177,7 @@ JSON 객체에는 `ok`, `registered`, `uploaded`, `attempt_id`, `cycle_id`, `tas
 
 ## 저장소
 
-`owngit repo`는 저장소 목록을 보여 주고, 저장소 하나의 정보를 읽고, 새 저장소를 만들며, 결과를 JSON 객체 하나로 출력합니다. `owngit pr`과 같이 일반 접근을 쓰므로 공용 비밀번호를 `--password-file`로 넘기고 접근이 열려 있으면 생략합니다. 삭제나 이름 변경은 없습니다.
+`owngit repo`는 저장소 목록을 보여 주고, 저장소 하나의 정보를 읽고, 새 저장소를 만들고, 이전 커밋의 파일을 되살리며 결과를 JSON 객체 하나로 출력합니다. `owngit pr`과 같이 일반 접근을 쓰므로 공용 비밀번호를 `--password-file`로 넘기고 접근이 열려 있으면 생략합니다. 삭제나 이름 변경은 없습니다.
 
 ```sh
 owngit repo list --server https://owngit.example.test
@@ -190,7 +190,7 @@ owngit repo create --server https://owngit.example.test --name example-project \
 
 `owngit repo settings show`와 `owngit repo settings set`은 저장소 하나의 [보관된 기록과 기본 브랜치 보호](OPERATIONS.ko.md#보관된-기록) 설정을 읽고 바꿉니다. 다른 `repo` 명령과 달리 `--password-file`에 관리자 비밀번호를 넣어야 합니다. 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져오며 이때 비밀번호 파일에 그 서버가 적혀 있어야 합니다([자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄) 참고).
 
-`owngit repo kept-history`와 `owngit repo restore`는 대시보드의 되돌리기 화면과 같은 일반 접근으로 이전 커밋의 파일을 되살립니다([저장소 파일 되돌리기](OPERATIONS.ko.md#저장소-파일-되돌리기) 참고). 먼저 미리 보고, 미리 보기의 `expected_head`로 적용합니다.
+`owngit repo kept-history`와 `owngit repo restore`는 대시보드의 되돌리기 화면처럼 이전 커밋의 파일을 되살리며 일반 접근도 그 화면과 같습니다([저장소 파일 되돌리기](OPERATIONS.ko.md#저장소-파일-되돌리기) 참고). 되돌리기는 두 단계입니다. 먼저 미리 보고, 미리 보기가 돌려준 `expected_head`를 넣어 적용합니다.
 
 ```sh
 owngit repo kept-history
@@ -198,7 +198,21 @@ owngit repo restore preview --source OID --target main --path src/app.go
 owngit repo restore apply --source OID --target main --path src/app.go --expected-head OID
 ```
 
-`--target`에는 `main` 같은 브랜치 이름을 넣습니다. 보관된 기록의 `source_ref`(`refs/heads/main`) 같은 전체 ref 이름은 `invalid_restore`로 거부됩니다. `--path`가 없으면 트리 전체를 되돌리며, 원본 커밋에 없는 파일은 지워집니다. 미리 보기는 바뀌는 경로마다 `status`(`added`, `modified`, `deleted`), `old_mode`와 `new_mode`, `additions`, `deletions`, `binary`를 보여 주고, 적용하면 브랜치를 새로 만드는지(`creates_branch`) 아니면 `expected_head` 위에 `result_tree`로 커밋 하나를 추가하는지 알려 줍니다. 적용은 `commit_oid`를 돌려주거나, 미리 본 뒤 브랜치가 움직였으면 `stale_revision`, 바뀔 것이 없으면 `restore_no_changes`, 서브모듈이나 바꾸면 그 아래의 선택하지 않은 파일이 지워지는 경로면 `restore_unsupported`, 요청이 잘못됐으면 `invalid_restore`로 실패합니다. 되돌리기를 끝내지 못해 실제로 적용됐는지 알 수 없으면 `restore_failed`로 실패하니, 다시 시도하기 전에 대상 브랜치를 읽어 확인합니다. 되돌리기는 기록을 다시 쓰지 않습니다. API 경로는 `GET /api/v1/repositories/ID/kept-history`, `POST /api/v1/repositories/ID/restore/preview`, `POST /api/v1/repositories/ID/restore`입니다.
+`repo kept-history`는 강제 푸시, 가져오기, 삭제로 바뀐 브랜치와 태그의 이전 값을 최신순으로 보여 줍니다. 항목마다 어느 ref에서 보관했는지(`source_ref`), 되돌릴 때 쓸 커밋(`commit_oid`), 대시보드가 되돌릴 곳으로 제안하는 새 브랜치(`restore_target`)가 들어 있습니다.
+
+`--source`에는 되돌릴 때 쓸 커밋의 전체 ID를 넣습니다. `--target`에는 `main` 같은 브랜치 이름을 넣습니다. `source_ref`가 쓰는 `refs/heads/main` 같은 전체 ref 이름은 받지 않습니다. 되돌릴 파일마다 `--path`를 한 번씩 붙입니다. `--path`가 없으면 트리 전체를 되돌리고 원본 커밋에 없는 파일은 지워집니다. 없는 브랜치에 트리 전체를 되돌리면 원본 커밋에서 그 브랜치를 만듭니다.
+
+미리 보기는 아무것도 바꾸지 않습니다. 바뀌는 경로마다 `status`(`added`, `modified`, `deleted`), `old_mode`와 `new_mode`(`120000`은 심볼릭 링크), `additions`, `deletions`, `binary`를 보여 줍니다. `creates_branch`는 적용하면 브랜치를 새로 만드는지 알려 줍니다. 새로 만들지 않으면 적용할 때 `expected_head` 위에 트리가 `result_tree`인 커밋 하나를 추가합니다. 브랜치에 이미 같은 파일이 있으면 `can_apply`가 false입니다. 되돌리기는 기록을 다시 쓰지 않습니다.
+
+적용에 성공하면 `commit_oid`를 돌려줍니다. 거부된 요청은 다음 코드 가운데 하나로 실패합니다.
+
+- `stale_revision`: 미리 본 뒤 브랜치가 움직였습니다. 바뀐 것은 없으니 다시 미리 봅니다.
+- `restore_no_changes`: 브랜치에 이미 같은 파일이 있습니다.
+- `restore_unsupported`: 선택에 서브모듈이 들어 있거나, 선택한 경로 아래의 선택하지 않은 파일이 지워지거나, 없는 브랜치에 일부 파일만 되돌리려고 했습니다.
+- `invalid_restore`: 요청이 잘못됐습니다. 대상에 전체 ref 이름을 넣었거나, 원본이 이 저장소 커밋의 전체 ID가 아닌 경우가 여기에 듭니다. `main` 옆의 `Main`처럼 일부 파일 시스템이 다른 브랜치와 같은 이름으로 보는 대상 브랜치도 거부됩니다.
+- `restore_failed`: 되돌리기를 끝내지 못했지만 실제로는 적용됐을 수도 있습니다. 다시 시도하기 전에 대상 브랜치를 읽어 확인합니다.
+
+API 경로는 `GET /api/v1/repositories/ID/kept-history`, `POST /api/v1/repositories/ID/restore/preview`, `POST /api/v1/repositories/ID/restore`입니다.
 
 ## 풀 리퀘스트 변경 내용
 
@@ -217,14 +231,21 @@ owngit pr diff --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
 
 ## 풀 리퀘스트 병합 가능 여부
 
-`owngit pr mergeability --number N`은 풀 리퀘스트를 지금 병합할 수 있는지 확인해 JSON 객체 하나로 출력합니다. `owngit pr diff`처럼 일반 접근을 쓰며 아무것도 쓰지 않습니다. ref, 기록, 저장소 안의 객체 어느 것도 만들지 않습니다.
+`owngit pr mergeability --number N`은 열려 있는 풀 리퀘스트를 현재 원본과 대상 커밋으로 지금 병합할 수 있는지 확인해 JSON 객체 하나로 출력합니다. 아무것도 바꾸지 않으며 ref, 기록, 저장소 안의 객체 어느 것도 만들지 않습니다. `owngit pr diff`처럼 일반 접근을 씁니다.
 
 ```sh
 owngit pr mergeability --number 3
 owngit pr mergeability --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
 ```
 
-`source`와 `target`은 답이 가리키는 커밋입니다. `status`는 `clean`(`method`는 `fast_forward`, `merge_commit`, `up_to_date` 가운데 하나), `conflict`(충돌 경로를 최대 100개 담은 `conflict_paths`, 더 있으면 `conflict_paths_truncated`, 또는 `reason`이 `no_merge_base`), `unavailable`(`unsupported_git`, `source_branch_missing`, `repository_unavailable` 같은 `reason`과 `message`), `stale` 가운데 하나입니다. `--source-oid`와 `--target-oid`를 넘기면 그 쌍이 여전히 현재 쌍일 때만 확인하고, 아니면 `source`와 `target`에 현재 쌍을 담아 `stale`로 답합니다. 답은 저장하지 않으며 병합을 예약하지도 않습니다. `pr merge`는 다시 확인합니다. API 경로는 `GET /api/v1/repositories/ID/pull-requests/N/mergeability`이며 선택 쿼리 매개변수로 `source_oid`와 `target_oid`를 받습니다.
+`source`와 `target`은 답이 가리키는 커밋입니다. `status`는 다음 가운데 하나입니다.
+
+- `clean`: 병합할 수 있습니다. `method`는 `fast_forward`, `merge_commit`, `up_to_date` 가운데 하나입니다.
+- `conflict`: `conflict_paths`에 충돌한 경로가 최대 100개 들어 있고 더 있으면 `conflict_paths_truncated`가 true입니다. Git이 충돌한 파일을 알려 주지 않으면 `conflict_paths`가 없습니다. 두 브랜치에 공통 기록이 없으면 대신 `reason`이 `no_merge_base`입니다.
+- `unavailable`: OwnGit이 알아낼 수 없었습니다. `reason`에는 `unsupported_git`(Git 2.38 미만), `source_branch_missing`, `repository_unavailable` 같은 이유가, `message`에는 설명이 들어 있습니다.
+- `stale`: `--source-oid`와 `--target-oid`로 준 쌍에서 브랜치가 움직였습니다. 이때 `source`와 `target`에는 현재 쌍이 들어 있습니다.
+
+이전 답의 커밋을 `--source-oid`와 `--target-oid`로 넘기면 같은 쌍을 다시 확인합니다. 답은 저장하지 않고 병합을 예약하지도 않으며 `pr merge`는 실행할 때 다시 확인합니다. API 경로는 `GET /api/v1/repositories/ID/pull-requests/N/mergeability`이며 선택 쿼리 매개변수로 `source_oid`와 `target_oid`를 받습니다.
 
 ## MCP 서버
 
@@ -281,10 +302,10 @@ tool_timeout_sec = 1800
 | 도구 | 명령 |
 |---|---|
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
-| `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview`. 미리 보기는 되돌리기로 바뀔 모든 경로와 `expected_head`를 보여 줍니다 |
+| `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview`. `source_oid`, `target_branch`, `paths`는 `--source`, `--target`, `--path`에 해당하고 미리 보기는 적용에 필요한 `expected_head`를 돌려줍니다 |
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show`. 설명과 리뷰 메모는 show에만 들어 있습니다 |
 | `pull_request_diff` | `pr diff`. `patch: false`는 `--stat`과 같고, `source_oid`와 `target_oid`를 함께 넘기면 커밋 쌍을 고정합니다. |
-| `pull_request_mergeability` | `pr mergeability`. `source_oid`와 `target_oid`를 함께 넘기면 그사이 움직였을 때 `stale`로 답합니다. |
+| `pull_request_mergeability` | `pr mergeability`. `source_oid`와 `target_oid`를 함께 넘기면 그사이 브랜치가 움직였을 때 `stale`로 답합니다. |
 | `check_task_list`, `check_status` | `check task list`, `check status`(작업 하나와 가장 최근 시도) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 
@@ -298,7 +319,7 @@ tool_timeout_sec = 1800
 | `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | 정확한 커밋 ID의 리뷰 상태를 pending이나 skipped로 바꿉니다. 누구에게도 알리지 않습니다. 참고용입니다. |
 | `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | 풀 리퀘스트 상태를 바꿉니다. 브랜치는 움직이지 않습니다. |
 | `pull_request_merge` | `pr merge` | 정확한 커밋 ID로 대상 브랜치에 병합을 게시합니다. 브랜치가 움직였으면 거부하고 같은 호출을 되풀이해도 두 번 병합하지 않습니다. |
-| `repository_restore_apply` | `repo restore apply` | 브랜치가 미리 보기의 `expected_head`에 그대로 있을 때만 미리 본 파일로 대상 브랜치에 커밋 하나를 추가하거나, 없는 브랜치를 만듭니다. 브랜치가 움직였으면 `stale_revision`으로 거부합니다. 기록을 다시 쓰지 않으며 같은 호출을 되풀이해도 두 번 되돌리지 않습니다. |
+| `repository_restore_apply` | `repo restore apply` | 미리 본 내용을 적용합니다. 미리 본 파일로 대상 브랜치에 커밋 하나를 추가하거나 브랜치가 없으면 새로 만듭니다. 브랜치가 미리 보기의 `expected_head`에 그대로 있지 않으면 `stale_revision`으로 거부합니다. 기록을 다시 쓰지 않으며 같은 호출을 되풀이해도 두 번 되돌리지 않습니다. |
 | `check_task_create` | `check task new` | 작업을 추가합니다. |
 | `check_cycle_reserve` | `check cycle reserve` | 작업의 수정 라운드 세 번 가운데 하나를 씁니다. |
 | `check_run` | `--check` 없는 `check run` | `--workdir`에서 커밋된 체크를 실행하고 시도를 기록합니다. |

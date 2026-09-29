@@ -39,7 +39,7 @@ To try it, pick an [install](#install) route and follow the [Quickstart](#quicks
 
 ## Install
 
-Every route needs Git with an executable `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you. The one-line installer is the quickest route; the others follow.
+Every route except the container needs Git with an executable `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you, and the container image includes it. The one-line installer is the quickest route; the others follow.
 
 ### One-line installer
 
@@ -97,14 +97,16 @@ go build -o bin/owngit ./cmd/owngit
 
 ### Container
 
-On Linux (x64, ARM64) with Docker Engine and Docker Compose, save [`packaging/container/compose.yaml`](packaging/container/compose.yaml) in a new folder and run:
+The container image runs OwnGit on Linux (x64, ARM64) with Docker Engine and Docker Compose. Save [`packaging/container/compose.yaml`](packaging/container/compose.yaml) in a new folder. In that folder, start OwnGit and print the setup link:
 
 ```sh
 docker compose up -d
 docker compose exec -it owngit owngit setup-link
 ```
 
-Open the setup link in a browser on that computer, or from another device with that computer's name or address in place of `localhost`. [Run in a container](docs/OPERATIONS.md#run-in-a-container) covers setup from another device, where the data lives, updates, backups and running as another account.
+Docker keeps OwnGit running in the background, so this route skips `owngit service install` in the [Quickstart](#quickstart). Open the setup link in a browser on the computer that runs the container. From another device, put that computer's name or address in place of `localhost` in the link. The link works once, within 15 minutes; the second command prints a new one.
+
+[Run in a container](docs/OPERATIONS.md#run-in-a-container) explains where the data lives, updates, backups, how sign-in works in a container, and running as another account.
 
 ### Proxmox VE
 
@@ -126,10 +128,11 @@ OwnGit never updates itself. When a newer release exists, the dashboard shows a 
 | npm | `npm install -g owngit@X.Y.Z` |
 | The Arch Linux `PKGBUILD` (`owngit-bin`) | builds the new release's `PKGBUILD` with `makepkg -si` |
 | A release archive or the one-line installer | runs the new release's installer, which checks the archive against `SHA256SUMS` and puts its `owngit` in place of this one; on Windows it unpacks the new release into a folder beside the current one |
+| The container image | `docker compose pull && docker compose up -d`, run in the folder of `compose.yaml`; it recreates the container with the new image and keeps the data volume |
 
 When a service runs this OwnGit, the command also runs `owngit service install`, which restarts the service with the new version.
 
-`owngit uninstall` removes what `owngit service install` created: the service and, on Windows, the copy in Program Files. The state and the repositories stay, and the command says where they are. It does not remove the program files, which belong to whatever installed them. It ends by naming the command for that: `brew uninstall owngit`, `npm uninstall -g owngit`, `sudo pacman -R owngit-bin`, or, for an archive, the file to delete. See [Update and uninstall](docs/OPERATIONS.md#update-and-uninstall).
+`owngit uninstall` removes what `owngit service install` created: the service and, on Windows, the copy in Program Files. The state and the repositories stay, and the command says where they are. It does not remove the program files, which belong to whatever installed them. It ends by naming the command for that: `brew uninstall owngit`, `npm uninstall -g owngit`, `sudo pacman -R owngit-bin`, or, for an archive, the file to delete. In the container it names `docker compose down`, which removes the container and keeps the data volume. See [Update and uninstall](docs/OPERATIONS.md#update-and-uninstall).
 
 ## Quickstart
 

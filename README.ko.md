@@ -39,7 +39,7 @@ OwnGit은 혼자 또는 작은 그룹이 쓰는 셀프 호스팅 Git 서버(self
 
 ## 설치
 
-어느 방법으로 설치하든 호스트에 실행 가능한 `git-http-backend`가 들어 있는 Git이 필요합니다. Homebrew와 Arch Linux 패키지는 Git을 함께 설치합니다. 가장 빠른 방법은 한 줄 설치입니다. 다른 방법은 그 아래에 있습니다.
+컨테이너를 빼면 어느 방법으로 설치하든 호스트에 실행 가능한 `git-http-backend`가 들어 있는 Git이 필요합니다. Homebrew와 Arch Linux 패키지는 Git을 함께 설치하고 컨테이너 이미지에는 Git이 들어 있습니다. 가장 빠른 방법은 한 줄 설치입니다. 다른 방법은 그 아래에 있습니다.
 
 ### 한 줄 설치
 
@@ -97,14 +97,16 @@ go build -o bin/owngit ./cmd/owngit
 
 ### 컨테이너
 
-Docker Engine과 Docker Compose가 있는 Linux(x64, ARM64)에서는 [`packaging/container/compose.yaml`](packaging/container/compose.yaml)을 새 폴더에 저장하고 다음을 실행하세요.
+컨테이너 이미지로 Docker Engine과 Docker Compose가 있는 Linux(x64, ARM64)에서 OwnGit을 실행할 수 있습니다. [`packaging/container/compose.yaml`](packaging/container/compose.yaml)을 새 폴더에 저장하고 그 폴더에서 OwnGit을 시작한 뒤 설정 링크를 출력하세요.
 
 ```sh
 docker compose up -d
 docker compose exec -it owngit owngit setup-link
 ```
 
-설정 링크는 그 컴퓨터의 브라우저에서 열거나, 다른 기기에서 `localhost` 자리에 그 컴퓨터의 이름이나 주소를 넣어 여세요. 다른 기기에서 설정하는 방법, 데이터 위치, 업데이트, 백업, 다른 계정으로 실행하는 방법은 [컨테이너로 실행하기](docs/OPERATIONS.ko.md#컨테이너로-실행하기)에 있습니다.
+Docker가 OwnGit을 백그라운드에서 계속 실행하므로 [빠른 시작](#빠른-시작)의 `owngit service install`은 건너뜁니다. 설정 링크는 컨테이너를 실행하는 컴퓨터의 브라우저에서 여세요. 다른 기기에서 열 때는 링크의 `localhost` 자리에 그 컴퓨터의 이름이나 주소를 넣습니다. 링크는 15분 안에 한 번만 쓸 수 있고 두 번째 명령을 다시 실행하면 새 링크가 나옵니다.
+
+데이터 위치, 업데이트, 백업, 컨테이너에서 로그인이 동작하는 방식, 다른 계정으로 실행하는 방법은 [컨테이너로 실행하기](docs/OPERATIONS.ko.md#컨테이너로-실행하기)에 있습니다.
 
 ### Proxmox VE
 
@@ -126,10 +128,11 @@ OwnGit은 스스로 업데이트하지 않습니다. 새 릴리스가 나오면 
 | npm | `npm install -g owngit@X.Y.Z` |
 | Arch Linux `PKGBUILD`(`owngit-bin`) | 새 릴리스의 `PKGBUILD`를 `makepkg -si`로 빌드합니다 |
 | 릴리스 압축 파일이나 한 줄 설치 | 새 릴리스의 설치 스크립트를 실행합니다. 스크립트는 압축 파일을 `SHA256SUMS`와 대조한 뒤 그 안의 `owngit`으로 지금 파일을 바꿉니다. Windows에서는 새 릴리스를 지금 폴더 옆의 새 폴더에 풉니다 |
+| 컨테이너 이미지 | `compose.yaml`이 있는 폴더에서 `docker compose pull && docker compose up -d`를 실행합니다. 새 이미지로 컨테이너를 다시 만들고 데이터 볼륨은 그대로 둡니다 |
 
 서비스가 이 OwnGit을 실행하고 있으면 명령이 `owngit service install`도 실행해 서비스를 새 버전으로 다시 시작합니다.
 
-`owngit uninstall`은 `owngit service install`이 만든 것, 곧 서비스와 Windows의 Program Files 안 복사본을 지웁니다. 상태와 저장소는 그대로 두고 위치를 알려 줍니다. 프로그램 파일은 그 파일을 설치한 쪽의 몫이라 지우지 않고 마지막에 지우는 명령을 알려 줍니다. `brew uninstall owngit`, `npm uninstall -g owngit`, `sudo pacman -R owngit-bin` 가운데 하나이거나, 압축 파일로 설치했다면 지울 파일입니다. 자세한 내용은 [업데이트와 제거](docs/OPERATIONS.ko.md#업데이트와-제거)를 보세요.
+`owngit uninstall`은 `owngit service install`이 만든 것, 곧 서비스와 Windows의 Program Files 안 복사본을 지웁니다. 상태와 저장소는 그대로 두고 위치를 알려 줍니다. 프로그램 파일은 그 파일을 설치한 쪽의 몫이라 지우지 않고 마지막에 지우는 명령을 알려 줍니다. `brew uninstall owngit`, `npm uninstall -g owngit`, `sudo pacman -R owngit-bin` 가운데 하나이거나, 압축 파일로 설치했다면 지울 파일입니다. 컨테이너에서는 `docker compose down`을 알려 줍니다. 이 명령은 컨테이너를 지우고 데이터 볼륨은 남깁니다. 자세한 내용은 [업데이트와 제거](docs/OPERATIONS.ko.md#업데이트와-제거)를 보세요.
 
 ## 빠른 시작
 
