@@ -9,6 +9,14 @@ import (
 	"testing"
 )
 
+// No test here reaches this Mac's own Tailscale, such as through Find: the
+// app, its files, lsof and the open source socket are looked for where
+// nothing is, unless a test points them at synthetic ones.
+func init() {
+	nowhere := "/nonexistent/owngit-test"
+	macAppBundle, openSourceSocket, macStandaloneDir, lsofPath = nowhere, nowhere, nowhere, nowhere
+}
+
 // OwnGit reaches Tailscale on macOS in the order of Tailscale's own client:
 // the app while it answers for this user (the App Store variant through the
 // file its IPNExtension keeps open, as lsof lists it, then the Standalone
