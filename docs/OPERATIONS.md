@@ -60,6 +60,7 @@ The setup page asks you to accept plain HTTP and offers to keep accepting the ad
 | `owngit service status` | Whether OwnGit runs and answers, who runs it, the unit, agent or task, where the log is, the state directory and the addresses. |
 | `owngit service start`, `stop`, `restart` | Start, stop or restart the service. A stopped service starts again at its next boot or login trigger. |
 | `owngit service uninstall` | Stop the service and remove its unit, agent or task. The state directory, the repositories and, on Linux, the `owngit` account stay, and the command says where the data is. For a Linux user service it reminds you that lingering stays on (`loginctl disable-linger` turns it off). |
+| `owngit uninstall` | The same, and then how to remove the program itself; see [Update and uninstall](#update-and-uninstall). |
 
 Every unit or agent starts `owngit serve --state-dir DIR --no-open --headless=true` or `--headless=false` and never passes `--listen` or `--base-url`, so the saved [network settings](#network-settings) apply. Run `owngit service install` again after you replace the binary with a new release: it rewrites the unit and restarts the service in the same mode with the same state directory. The headless choice of the first install is kept; `--headless=true` or `--headless=false` changes it, and to go back to this computer only after a headless start also run `owngit network set --listen 127.0.0.1:7654`.
 
@@ -102,7 +103,7 @@ An administrator account's task starts `%ProgramFiles%\OwnGit\owngit.exe serve -
 
 On a newly installed Windows, a boot task stays "Queued" until someone signs in at the screen for the first time (a sign-in over SSH does not count); after that it starts at once and at every boot. `owngit service install` and `status` say so when they find the task queued.
 
-To update, unpack or install the new release outside `%ProgramFiles%\OwnGit` and run its `owngit service install` (`owngit service status` tells you when its version differs from the protected copy; `service install` is refused from the protected path). From an administrator account it stops the old service, moves the old folder to `OwnGit.old-TIMESTAMP`, installs the new copy, refreshes the firewall rule, starts the new version, and removes the old folder when it holds nothing but `owngit.exe` and `temp`. A standard account runs the same command with the new `owngit.exe`. `owngit service uninstall` removes the task, the firewall rule and the protected copy with one approval; the state directory and the repositories stay.
+To update, unpack or install the new release outside `%ProgramFiles%\OwnGit` and run its `owngit service install` (`owngit service status` tells you when its version differs from the protected copy; `service install` is refused from the protected path). From an administrator account it stops the old service, moves the old folder to `OwnGit.old-TIMESTAMP`, installs the new copy, refreshes the firewall rule, starts the new version, and removes the old folder when it holds nothing but `owngit.exe`, `installed-from.txt` and `temp`. A standard account runs the same command with the new `owngit.exe`. The protected copy keeps a note of the `owngit.exe` it was copied from, `installed-from.txt`, so the running service can show how that program is updated. `owngit service uninstall` removes the task, the firewall rule and the protected copy with one approval; the state directory and the repositories stay.
 
 ### macOS
 
@@ -133,6 +134,23 @@ The unit also sets `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKern
 ### Health check
 
 `GET /healthz` answers `200 OK` with an empty body while OwnGit serves HTTP, before and after setup, and reads no state. Like every other path, it answers only a Host name OwnGit accepts, so a monitor on another device must use an approved name or address. `owngit health` checks the server of a state directory on this computer and exits 0 when it answers; `owngit service status` and `install` use the same check.
+
+## Update and uninstall
+
+OwnGit tells how it was installed from facts on this computer, not from guesses:
+
+| Route | How OwnGit knows | Update command | Removing the program |
+| --- | --- | --- | --- |
+| Homebrew | The program is in Homebrew's `Cellar/owngit` | `brew upgrade owngit` | `brew uninstall owngit` |
+| npm | The program is `bin/owngit` of an `owngit-<platform>` package in `node_modules` | `npm install -g owngit@X.Y.Z` | `npm uninstall -g owngit` |
+| Arch Linux package | `pacman -Qo` names the package that holds the program | builds the new release's `PKGBUILD` with `makepkg -si` in a new temporary folder | `sudo pacman -R owngit-bin` |
+| Release archive | None of the above | downloads the release archive for this platform and moves its `owngit` over this one (with `sudo` when your account cannot write that folder); on Windows, unpacks the new release into a folder named after it beside the current one | delete the file (and the folder you unpacked, if you made one) |
+
+When a service of your account runs this program, the command ends with `owngit service install`, which rewrites the service for the new version and restarts it; Homebrew's service goes through `brew services restart owngit` as before. On Windows, when your sign-in task runs the npm program itself, the command starts with `owngit service stop`, because Windows does not let npm replace a running program. When the service runs a different OwnGit, for example a release archive while you update the npm copy, the command updates only this program and leaves the service alone; `owngit update` says so. Without a service, restart OwnGit yourself afterwards. A macOS app bundle or an archive for a platform without a release archive has no command; `owngit update` says what to do instead.
+
+`owngit update` asks GitHub for the latest release when you run it, even when the daily check is off, and prints the release, the route, the program path and the command. `owngit update --json` prints the same as JSON. Neither the command nor the dashboard runs anything.
+
+`owngit uninstall` removes what OwnGit itself created with `owngit service install`: the service unit, LaunchAgent or scheduled task, `brew services`' registration for a Homebrew install (with `brew services stop`), and on Windows the protected copy in `%ProgramFiles%\OwnGit` with its firewall rule. It never deletes the state directory or the repositories and prints where they are, so a later install uses them again; there is no separate step that deletes data. Files that a package manager installed are its to remove, so OwnGit leaves them and prints its command, and a program you placed yourself stays with the command that deletes it. Running `owngit service install` again, or reinstalling with the same route, keeps the state and the repositories.
 
 ## Settings
 
@@ -380,7 +398,7 @@ set_real_ip_from 127.0.0.1;
 
 ## New-release notice
 
-After setup, OwnGit asks GitHub once a day whether a newer release exists: one HTTPS request to `https://api.github.com/repos/juliankang4/owngit/releases/latest` with a User-Agent that names OwnGit and its version, about 30 seconds after a start or right after setup. No repository data is sent; GitHub sees the server's address. Drafts and prereleases are ignored. Apart from [imports](#importing-from-another-git-host), this is the only connection OwnGit opens to another host. When a newer version exists, the dashboard shows a notice with links to the release notes and to [Install](../README.md#install); OwnGit never downloads or installs anything itself, and Dismiss hides the notice for that version in the current browser. A failed check shows nothing and writes at most one log line.
+After setup, OwnGit asks GitHub once a day whether a newer release exists: one HTTPS request to `https://api.github.com/repos/juliankang4/owngit/releases/latest` with a User-Agent that names OwnGit and its version, about 30 seconds after a start or right after setup. No repository data is sent; GitHub sees the server's address. Drafts and prereleases are ignored. Apart from [imports](#importing-from-another-git-host) and `owngit update` when you run it, this is the only connection OwnGit opens to another host. When a newer version exists, the dashboard shows a notice with the command that updates this installation (see [Update and uninstall](#update-and-uninstall)), a Copy button, and links to the release notes and to [Install](../README.md#install); OwnGit never downloads or installs anything itself, and Dismiss hides the notice for that version in the current browser. A failed check shows nothing and writes at most one log line.
 
 Turn the check off on the General tab of Settings, under Update check, and save with the administrator password; the setting belongs to this installation host and is not in backups. For a deployment that must never check, start the server with `--no-update-check`, which wins over the saved setting:
 

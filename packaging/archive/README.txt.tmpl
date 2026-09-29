@@ -22,9 +22,14 @@ Data
   "owngit", or in ~/.owngit when no configuration directory is available.
   Repositories live in the storage directory chosen during setup.
 
+Update
+  {{.Invocation}} update prints the one command that replaces this program
+  with the newest release. OwnGit never runs it or updates itself.
+
 Remove
-  Delete this directory. Repositories and state are kept unless you delete
-  them yourself.
+  {{.Invocation}} uninstall removes the service that "service install"
+  registered, then delete this directory. Repositories and state are kept
+  unless you delete them yourself.
 
 Version
   {{.Invocation}} version

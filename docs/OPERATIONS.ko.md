@@ -60,6 +60,7 @@ owngit serve
 | `owngit service status` | OwnGit이 실행 중이고 응답하는지, 누가 실행하는지, 유닛, 에이전트 또는 작업, 로그 위치, 상태 디렉터리, 주소를 보여 줍니다. |
 | `owngit service start`, `stop`, `restart` | 서비스를 시작하거나 멈추거나 다시 시작합니다. 멈춘 서비스는 다음 부팅 또는 로그인 조건에 맞으면 다시 켜집니다. |
 | `owngit service uninstall` | 서비스를 멈추고 유닛, 에이전트 또는 작업을 지웁니다. 상태 디렉터리와 저장소, Linux에서는 `owngit` 계정도 남으며 데이터가 어디 있는지 알려 줍니다. Linux 사용자 서비스라면 lingering이 켜진 채 남는다고 알려 줍니다(`loginctl disable-linger`로 끕니다). |
+| `owngit uninstall` | 위와 같이 한 뒤 프로그램 자체를 지우는 방법을 알려 줍니다. [업데이트와 제거](#업데이트와-제거)를 보세요. |
 
 모든 유닛과 에이전트는 `owngit serve --state-dir DIR --no-open --headless=true` 또는 `--headless=false`를 실행하고 `--listen`이나 `--base-url`은 넘기지 않으므로 저장된 [네트워크 설정](#네트워크-설정)이 적용됩니다. 실행 파일을 새 릴리스로 바꾼 뒤에는 `owngit service install`을 다시 실행하세요. 같은 방식과 같은 상태 디렉터리로 유닛을 다시 쓰고 서비스를 다시 시작합니다. 처음 설치할 때 정한 화면 없음(headless) 여부는 유지되며 `--headless=true`나 `--headless=false`로 바꿀 수 있습니다. 화면 없는 컴퓨터로 시작한 뒤 이 컴퓨터에서만 쓰도록 되돌리려면 `owngit network set --listen 127.0.0.1:7654`도 실행하세요.
 
@@ -102,7 +103,7 @@ sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 
 새로 설치한 Windows에서는 누군가 화면에서 처음 로그인하기 전까지 부팅 작업이 "큐에 대기됨" 상태로 남습니다(SSH 로그인은 해당하지 않습니다). 그 뒤로는 바로, 그리고 부팅할 때마다 시작합니다. `owngit service install`과 `status`는 작업이 대기 중이면 알려 줍니다.
 
-업데이트하려면 새 릴리스를 `%ProgramFiles%\OwnGit` 밖에 설치하거나 압축을 푼 뒤 그 `owngit service install`을 실행하세요(`owngit service status`는 자기 버전이 보호된 복사본과 다르면 알려 주고, 보호 경로에서 실행한 `service install`은 거부합니다). 관리자 계정에서는 예전 서비스를 멈추고, 예전 폴더를 `OwnGit.old-TIMESTAMP`로 옮기고, 새 복사본을 설치하고, 방화벽 규칙을 새로 쓰고, 새 버전을 시작하며, 예전 폴더에 `owngit.exe`와 `temp`만 남았으면 지웁니다. 표준 계정은 새 `owngit.exe`로 같은 명령을 실행합니다. `owngit service uninstall`은 승인 한 번으로 작업, 방화벽 규칙, 보호된 복사본을 지우며 상태 디렉터리와 저장소는 남습니다.
+업데이트하려면 새 릴리스를 `%ProgramFiles%\OwnGit` 밖에 설치하거나 압축을 푼 뒤 그 `owngit service install`을 실행하세요(`owngit service status`는 자기 버전이 보호된 복사본과 다르면 알려 주고, 보호 경로에서 실행한 `service install`은 거부합니다). 관리자 계정에서는 예전 서비스를 멈추고, 예전 폴더를 `OwnGit.old-TIMESTAMP`로 옮기고, 새 복사본을 설치하고, 방화벽 규칙을 새로 쓰고, 새 버전을 시작하며, 예전 폴더에 `owngit.exe`, `installed-from.txt`, `temp`만 남았으면 지웁니다. 표준 계정은 새 `owngit.exe`로 같은 명령을 실행합니다. 보호된 복사본 옆의 `installed-from.txt`에는 어느 `owngit.exe`를 복사했는지 적어 두므로, 실행 중인 서비스가 그 프로그램의 업데이트 방법을 보여 줄 수 있습니다. `owngit service uninstall`은 승인 한 번으로 작업, 방화벽 규칙, 보호된 복사본을 지우며 상태 디렉터리와 저장소는 남습니다.
 
 ### macOS
 
@@ -133,6 +134,23 @@ Linux의 시스템 서비스에는 systemd 강화 설정이 걸리지만, 이 �
 ### 상태 확인
 
 `GET /healthz`는 OwnGit이 HTTP를 제공하는 동안 설치 전후와 관계없이 빈 본문의 `200 OK`로 응답하며 상태를 읽지 않습니다. 다른 경로와 마찬가지로 OwnGit이 받아들이는 Host 이름에만 응답하므로, 다른 기기의 모니터는 승인된 이름이나 주소를 써야 합니다. `owngit health`는 이 컴퓨터의 상태 디렉터리를 쓰는 서버를 확인하고 응답하면 종료 코드 0으로 끝납니다. `owngit service status`와 `install`도 같은 확인을 씁니다.
+
+## 업데이트와 제거
+
+OwnGit은 어떻게 설치됐는지 짐작하지 않고 이 컴퓨터에서 확인할 수 있는 사실로 판단합니다.
+
+| 설치 방법 | 판단 근거 | 업데이트 명령 | 프로그램 지우기 |
+| --- | --- | --- | --- |
+| Homebrew | 프로그램이 Homebrew의 `Cellar/owngit` 안에 있습니다 | `brew upgrade owngit` | `brew uninstall owngit` |
+| npm | 프로그램이 `node_modules` 안 `owngit-<플랫폼>` 패키지의 `bin/owngit`입니다 | `npm install -g owngit@X.Y.Z` | `npm uninstall -g owngit` |
+| Arch Linux 패키지 | `pacman -Qo`가 프로그램이 든 패키지를 알려 줍니다 | 새 임시 폴더에서 새 릴리스의 `PKGBUILD`를 `makepkg -si`로 빌드합니다 | `sudo pacman -R owngit-bin` |
+| 릴리스 압축 파일 | 위 어디에도 해당하지 않습니다 | 이 플랫폼의 릴리스 압축 파일을 내려받아 그 안의 `owngit`을 지금 파일 자리로 옮깁니다(내 계정이 그 폴더에 쓸 수 없으면 `sudo`를 붙입니다). Windows에서는 새 릴리스를 지금 폴더 옆에 릴리스 이름으로 된 폴더에 풉니다 | 파일을 지웁니다(따로 만든 폴더에 풀었다면 그 폴더도) |
+
+내 계정의 서비스가 이 프로그램을 실행하고 있으면 명령 끝에 `owngit service install`이 붙습니다. 이 명령이 서비스를 새 버전에 맞게 다시 쓰고 다시 시작합니다. Homebrew 서비스는 전처럼 `brew services restart owngit`으로 다시 시작합니다. Windows에서 로그인 작업이 npm 프로그램을 직접 실행하고 있으면 명령이 `owngit service stop`으로 시작합니다. Windows에서는 실행 중인 프로그램 파일을 npm이 바꿀 수 없기 때문입니다. 서비스가 다른 OwnGit을 실행하고 있다면(예를 들어 서비스는 압축 파일로 받은 것을 돌리는데 npm 쪽을 업데이트할 때) 명령은 이 프로그램만 업데이트하고 서비스는 건드리지 않으며, `owngit update`가 그렇다고 알려 줍니다. 서비스 없이 실행 중이라면 업데이트한 뒤 OwnGit을 직접 다시 시작하세요. macOS 앱 번들이나 릴리스 압축 파일이 없는 플랫폼에는 명령이 없으며, `owngit update`가 대신 할 일을 알려 줍니다.
+
+`owngit update`는 실행할 때마다 GitHub에 최신 릴리스를 묻습니다. 하루 한 번 하는 확인을 꺼 두었어도 마찬가지입니다. 결과로 릴리스, 설치 방법, 프로그램 경로, 명령을 출력하며, `owngit update --json`은 같은 내용을 JSON으로 출력합니다. 이 명령도 대시보드도 무언가를 직접 실행하지는 않습니다.
+
+`owngit uninstall`은 OwnGit이 `owngit service install`로 직접 만든 것만 지웁니다. 서비스 유닛, LaunchAgent나 예약 작업, Homebrew로 설치했다면 `brew services`에 등록된 서비스(`brew services stop`으로), Windows에서는 `%ProgramFiles%\OwnGit`의 보호된 복사본과 방화벽 규칙이 그 대상입니다. 상태 디렉터리와 저장소는 절대 지우지 않고 위치를 알려 주므로, 나중에 다시 설치하면 그대로 이어서 씁니다. 데이터를 지우는 단계는 따로 없습니다. 패키지 관리자가 설치한 파일은 그 관리자가 지울 몫이라 OwnGit은 남겨 두고 해당 명령을 알려 주며, 직접 가져다 둔 프로그램도 남겨 두고 지우는 명령을 알려 줍니다. `owngit service install`을 다시 실행하거나 같은 방법으로 다시 설치해도 상태와 저장소는 그대로 남습니다.
 
 ## 설정 화면
 
@@ -380,7 +398,7 @@ set_real_ip_from 127.0.0.1;
 
 ## 새 릴리스 알림
 
-설정을 마친 뒤 OwnGit은 하루에 한 번 GitHub에 새 릴리스가 있는지 묻습니다. OwnGit과 그 버전을 밝힌 User-Agent를 담아 `https://api.github.com/repos/juliankang4/owngit/releases/latest`에 HTTPS 요청을 한 번 보내며, 서버가 시작되고 약 30초 뒤나 설정을 마친 직후에 합니다. 저장소 데이터는 보내지 않으며, GitHub는 서버의 주소를 볼 수 있습니다. 초안과 사전 릴리스는 무시합니다. [가져오기](#다른-git-호스트에서-가져오기)를 빼면 OwnGit이 다른 호스트에 여는 연결은 이것뿐입니다. 새 버전이 있으면 대시보드에 릴리스 노트와 [설치](../README.ko.md#설치)로 가는 링크가 있는 알림이 나타납니다. OwnGit은 아무것도 직접 내려받거나 설치하지 않으며, 알림 닫기는 지금 쓰는 브라우저에서 그 버전의 알림을 숨깁니다. 확인에 실패하면 아무것도 표시하지 않고 로그를 최대 한 줄만 남깁니다.
+설정을 마친 뒤 OwnGit은 하루에 한 번 GitHub에 새 릴리스가 있는지 묻습니다. OwnGit과 그 버전을 밝힌 User-Agent를 담아 `https://api.github.com/repos/juliankang4/owngit/releases/latest`에 HTTPS 요청을 한 번 보내며, 서버가 시작되고 약 30초 뒤나 설정을 마친 직후에 합니다. 저장소 데이터는 보내지 않으며, GitHub는 서버의 주소를 볼 수 있습니다. 초안과 사전 릴리스는 무시합니다. [가져오기](#다른-git-호스트에서-가져오기)와 직접 실행한 `owngit update`를 빼면 OwnGit이 다른 호스트에 여는 연결은 이것뿐입니다. 새 버전이 있으면 대시보드에 알림이 나타나며, 이 설치에 맞는 업데이트 명령([업데이트와 제거](#업데이트와-제거) 참고)과 복사 버튼, 릴리스 노트와 [설치](../README.ko.md#설치)로 가는 링크가 함께 나옵니다. OwnGit은 아무것도 직접 내려받거나 설치하지 않으며, 알림 닫기는 지금 쓰는 브라우저에서 그 버전의 알림을 숨깁니다. 확인에 실패하면 아무것도 표시하지 않고 로그를 최대 한 줄만 남깁니다.
 
 확인을 끄려면 설정 화면 일반 탭의 업데이트 확인에서 끄고 관리자 비밀번호로 저장하세요. 이 설정은 이 설치 호스트에 속하며 백업에 들어가지 않습니다. 절대 확인하면 안 되는 환경이라면 서버를 `--no-update-check`로 시작하세요. 이 옵션이 저장된 설정보다 우선합니다.
 

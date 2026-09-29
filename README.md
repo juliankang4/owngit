@@ -68,6 +68,21 @@ cd owngit
 go build -o bin/owngit ./cmd/owngit
 ```
 
+### Update and remove
+
+OwnGit never updates itself. When a newer release exists, the dashboard notice shows the one command that updates OwnGit the way it was installed, with a Copy button, and `owngit update` prints the same command:
+
+| Installed with | The command |
+| --- | --- |
+| Homebrew | `brew upgrade owngit` |
+| npm | `npm install -g owngit@X.Y.Z` |
+| The Arch Linux `PKGBUILD` | builds the new release's `PKGBUILD` with `makepkg -si` |
+| A release archive | downloads the new archive and puts its `owngit` in place of this one; on Windows it unpacks the new release into a folder beside the current one |
+
+When a service runs this OwnGit, the command ends with `owngit service install`, which restarts the service with the new version.
+
+`owngit uninstall` removes what `owngit service install` created: the service and, on Windows, the copy in Program Files. The state and the repositories stay, and the command says where they are. The program files belong to whatever put them there, so the command ends by naming how to remove them: `brew uninstall owngit`, `npm uninstall -g owngit`, `sudo pacman -R owngit-bin`, or the file to delete for an archive. See [Update and uninstall](docs/OPERATIONS.md#update-and-uninstall).
+
 ## Quickstart
 
 On Linux, macOS and Windows, install OwnGit as a service that runs in the background and starts again by itself:
