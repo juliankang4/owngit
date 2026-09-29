@@ -706,9 +706,10 @@ func (run *psInstall) must(t *testing.T, env []string, arguments ...string) stri
 	return output
 }
 
-// mustFailWith checks the whole output of a refused run, which is exactly
-// want: the installer's own lines and its message, without PowerShell's
-// error record, and exit code 1.
+// mustFailWith checks a refused run: exit code 1, and output that starts
+// exactly with want (the installer's own lines and its one-line message,
+// kept whole so a command in it can be copied), followed only by
+// PowerShell's record of "OwnGit was not installed."
 func (run *psInstall) mustFailWith(t *testing.T, env []string, want string, arguments ...string) {
 	t.Helper()
 	output, err := run.do(t, env, arguments...)
@@ -716,8 +717,10 @@ func (run *psInstall) mustFailWith(t *testing.T, env []string, want string, argu
 	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
 		t.Fatalf("install.ps1 %s: %v, want exit code 1:\n%s", strings.Join(arguments, " "), err, output)
 	}
-	if got := strings.ReplaceAll(output, "\r\n", "\n"); got != want {
-		t.Fatalf("install.ps1 %s printed:\n%s\nwant:\n%s", strings.Join(arguments, " "), got, want)
+	got := strings.ReplaceAll(output, "\r\n", "\n")
+	rest, found := strings.CutPrefix(got, want)
+	if !found || !strings.Contains(rest, "OwnGit was not installed.") || strings.Contains(rest, "owngit install:") {
+		t.Fatalf("install.ps1 %s printed:\n%s\nwant it to start with:\n%s", strings.Join(arguments, " "), got, want)
 	}
 }
 
@@ -805,6 +808,31 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		}
 		if log := readLog(t, run.log); log != "1.0.0 service install\n" {
 			t.Errorf("owngit ran as %q", log)
+		}
+	})
+
+	// A failed install fails whatever runs it, however PowerShell was
+	// started: a script file (-File) stops at the installer and exits with
+	// 1, as -Command does.
+	t.Run("a failure fails the command under -File and -Command", func(t *testing.T) {
+		run := newPsInstall(t, release, shell)
+		script := psQuote(filepath.Join(repoRoot(t), "packaging", "installer", "install.ps1"))
+		wrapper := filepath.Join(run.home, "wrapper.ps1")
+		body := trustTestCertificate + "[OwnGitTestTrust]::Thumb = '" + run.thumb + "'\n" +
+			"[IO.File]::ReadAllText(" + script + ") | Invoke-Expression\n'the wrapper went on'\n"
+		noErr(t, os.WriteFile(wrapper, []byte(body), 0o644))
+		for _, mode := range [][]string{{"-File", wrapper}, {"-Command", "& " + psQuote(wrapper)}} {
+			command := exec.Command(run.shell, append([]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"}, mode...)...)
+			command.Env = append(append([]string{}, run.env...), "OWNGIT_RELEASES=https://127.0.0.1:1/releases")
+			command.Dir = run.home
+			output, err := command.CombinedOutput()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+				t.Errorf("%s: %v, want exit code 1:\n%s", mode[0], err, output)
+			}
+			if !strings.Contains(string(output), "owngit install: Could not download https://127.0.0.1:1/releases/latest/download/SHA256SUMS") || strings.Contains(string(output), "the wrapper went on") {
+				t.Errorf("%s printed:\n%s", mode[0], output)
+			}
 		}
 	})
 

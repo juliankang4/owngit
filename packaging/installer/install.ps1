@@ -236,8 +236,9 @@ try {
     # One plain line, without PowerShell's error record around it, so a
     # command in the message can be copied as it is.
     $Host.UI.WriteErrorLine('owngit install: ' + $_.Exception.Message)
-    # exit would close the PowerShell window under iex, so the pipeline is
-    # stopped instead: nothing after it runs, PowerShell adds no message,
-    # and the command fails (powershell -Command exits with 1).
-    throw [Management.Automation.PipelineStoppedException]::new()
+    # Then a short terminating error, so the command fails in every form:
+    # powershell -File and -Command exit with 1, and a script that runs the
+    # installer stops there. PowerShell prints its own few lines for it.
+    # exit is never used, because under iex it would close the window.
+    throw 'OwnGit was not installed.'
 }
