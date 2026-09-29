@@ -95,3 +95,73 @@ func TestImportStillRefusesOtherObjectFaults(t *testing.T) {
 		})
 	}
 }
+
+// Strict indexing lets malformed dates through by their fsck message ID, but
+// an import completes only if every commit it brings has author and committer
+// dates the history pages can show. A commit that fails is named, and nothing
+// is published, even when no ref reaches the commit.
+func TestImportRefusesCommitDatesOwnGitCannotShow(t *testing.T) {
+	for _, test := range []struct {
+		name, author string
+		unreferenced bool
+	}{
+		{name: "letters as the offset", author: "author A <a@example.invalid> 10 +abcd"},
+		{name: "no date", author: "author A <a@example.invalid>not-a-date"},
+		{name: "unreferenced commit in the pack", author: "author A <a@example.invalid> 10 +abcd", unreferenced: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			base := f.commit("one", "one\n")
+			tree := f.git(f.source, "rev-parse", base+"^{tree}")
+			bad := f.writeLiteral("commit", fmt.Sprintf("tree %s\nparent %s\n%s\ncommitter A <a@example.invalid> 10 +0000\n\nunreadable date\n", tree, base, test.author))
+			if test.unreferenced {
+				f.transport.packOverride = func() []byte {
+					return f.gitInput(f.source, []byte("refs/heads/main\n"+bad+"\n"), "pack-objects", "--revs", "--stdout")
+				}
+			} else {
+				f.git(f.source, "update-ref", "refs/heads/main", bad)
+			}
+
+			result, err := f.importProject(ImportInput{})
+			if err == nil || problemCode(err) != CodeVerifyFailed || !strings.Contains(err.Error(), bad) {
+				t.Fatalf("import result=%+v err=%v, want %s naming %s", result.Run, err, CodeVerifyFailed, bad)
+			}
+			assertImportDestinationAbsent(t, f)
+		})
+	}
+}
+
+// The date check reads commits in batches of commitDateBatch. A history
+// longer than one batch imports, and an unreadable commit is found in the
+// first batch and in the last.
+func TestCommitDateCheckCoversEveryBatch(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	tree := f.git(f.source, "rev-parse", "HEAD^{tree}")
+	var stream strings.Builder
+	for index := 1; index <= commitDateBatch+1; index++ {
+		fmt.Fprintf(&stream, "commit refs/heads/long\ncommitter A <a@example.invalid> %d +0900\ndata 0\n", 1_000_000+index)
+		if index == 1 {
+			stream.WriteString("from refs/heads/main\n")
+		}
+		fmt.Fprintf(&stream, "M 040000 %s \"\"\n", tree)
+	}
+	f.gitInput(f.source, []byte(stream.String()), "fast-import", "--quiet")
+	f.mustImport(ImportInput{})
+	if got, want := f.destinationRefs()["refs/heads/long"], f.git(f.source, "rev-parse", "refs/heads/long"); got != want {
+		t.Fatalf("long history = %s, want %s", got, want)
+	}
+
+	f.git(f.source, "commit", "--allow-empty", "-m", "two")
+	// Git packs recent commits first, so the newest bad commit lands in the
+	// first batch and the oldest in the last.
+	for _, committed := range []string{"4000000000", "10"} {
+		bad := f.writeLiteral("commit", fmt.Sprintf("tree %s\nauthor A <a@example.invalid> 10 +abcd\ncommitter A <a@example.invalid> %s +0000\n\nunreadable date\n", tree, committed))
+		f.transport.packOverride = func() []byte {
+			return f.gitInput(f.source, []byte("refs/heads/main\nrefs/heads/long\n"+bad+"\n"), "pack-objects", "--revs", "--stdout")
+		}
+		if _, err := f.refresh(); err == nil || problemCode(err) != CodeVerifyFailed || !strings.Contains(err.Error(), bad) {
+			t.Fatalf("refresh with a bad commit at %s: err=%v, want %s naming %s", committed, err, CodeVerifyFailed, bad)
+		}
+	}
+}

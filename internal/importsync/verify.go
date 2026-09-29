@@ -13,6 +13,7 @@ import (
 	"owngit/internal/checksource"
 	"owngit/internal/gitexec"
 	"owngit/internal/importgit"
+	"owngit/internal/repository"
 )
 
 // lfsInspection records what one bounded Git LFS pointer scan actually
@@ -57,7 +58,8 @@ func (s *Service) createStagingRepository(ctx context.Context, path, objectForma
 // changes neither a path, a file type, a link nor a submodule, so accepting it
 // cannot place a file or reach outside the repository. Every other check,
 // including the .git, .gitmodules and symbolic link checks, still refuses the
-// pack.
+// pack. A date these two let through that Git cannot render at all is refused
+// later by verifyCommitDates, before publication.
 //
 //   - badTimezone: an author or committer offset such as +051800 (rails/rails
 //     commit 4cf94979, psf/requests commit 5e6ecdad).
@@ -143,6 +145,85 @@ func (s *Service) verifyStaging(ctx context.Context, run *runState) error {
 	if _, err := s.Repositories.Git.RunWithLimits(ctx, run.stagingPath, nil, run.limits.commandLimits(run.limits.VerifyTimeout),
 		"--git-dir", ".", "fsck", "--connectivity-only", "--no-progress", "--no-dangling"); err != nil {
 		return newProblem(CodeVerifyFailed, "staged object graph failed a connectivity check", err)
+	}
+	return s.verifyCommitDates(ctx, run)
+}
+
+// commitDateBatch is how many commits one git log process reads for
+// verifyCommitDates, which bounds that process's output and the memory of the
+// check however many commits the pack holds.
+const commitDateBatch = 10_000
+
+// verifyCommitDates refuses a pack holding a commit whose author or committer
+// date OwnGit cannot show. Strict indexing lets old date spellings through
+// (historicFormatWarnings), so this decides with the reader the history and
+// commit pages use: a date Git still renders, such as a +051800 offset, is
+// kept, and an unreadable one refuses the import before publication. It
+// covers every commit in the staged pack, including commits no ref reaches,
+// because the whole pack is published. Tags are not checked: no page reads a
+// tagger date, and old tags without one are accepted.
+func (s *Service) verifyCommitDates(ctx context.Context, run *runState) error {
+	if err := s.runtimeCurrentForRun(run); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, run.limits.VerifyTimeout)
+	defer cancel()
+	batch := make([]string, 0, commitDateBatch)
+	list := func(stdout io.Reader) error {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			kind, oid, _ := strings.Cut(scanner.Text(), " ")
+			if kind != "commit" {
+				continue
+			}
+			batch = append(batch, oid)
+			if len(batch) == commitDateBatch {
+				if err := s.checkCommitDates(ctx, run, batch); err != nil {
+					return err
+				}
+				batch = batch[:0]
+			}
+		}
+		return scanner.Err()
+	}
+	if _, err := s.Repositories.Git.StreamGit(ctx, run.stagingPath, list,
+		"--git-dir", ".", "cat-file", "--batch-all-objects", "--unordered", "--batch-check=%(objecttype) %(objectname)"); err != nil {
+		var problem *Problem
+		if errors.As(err, &problem) {
+			return problem
+		}
+		return newProblem(CodeVerifyFailed, "staged commits could not be listed", err)
+	}
+	return s.checkCommitDates(ctx, run, batch)
+}
+
+// checkCommitDates reads the author and committer dates of oids as the pages
+// do and refuses the first one repository.ParseGitDate cannot read.
+func (s *Service) checkCommitDates(ctx context.Context, run *runState, oids []string) error {
+	if len(oids) == 0 {
+		return nil
+	}
+	input := strings.NewReader(strings.Join(oids, "\n") + "\n")
+	// An OID, two raw dates and separators take well under 192 bytes.
+	stdout, truncated, err := s.runStagingGit(ctx, run, input, int64(len(oids))*192+(1<<20),
+		"--git-dir", ".", "log", "--no-walk=unsorted", "--stdin", "-z", "--no-decorate", repository.GitDateOption, "--format=%H%x00%ad%x00%cd")
+	if err != nil || truncated {
+		return newProblem(CodeVerifyFailed, "staged commit dates could not be read", err)
+	}
+	fields := bytes.Split(bytes.TrimSuffix(stdout, []byte{0}), []byte{0})
+	if len(fields) != 3*len(oids) {
+		return newProblem(CodeVerifyFailed, "Git did not report the date of every staged commit", nil)
+	}
+	for index, oid := range oids {
+		record := fields[3*index : 3*index+3]
+		if string(record[0]) != oid {
+			return newProblem(CodeVerifyFailed, "Git reported staged commit dates out of order", nil)
+		}
+		for _, date := range record[1:] {
+			if _, err := repository.ParseGitDate(date); err != nil {
+				return newProblem(CodeVerifyFailed, fmt.Sprintf("commit %s has an author or committer date that OwnGit cannot read, so its history could not be shown", oid), nil)
+			}
+		}
 	}
 	return nil
 }

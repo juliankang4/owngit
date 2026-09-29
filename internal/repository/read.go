@@ -467,7 +467,7 @@ func (m *Manager) CommitsAt(ctx context.Context, id, commitOID string, limit int
 		limit = 100
 	}
 	result, err := m.cachedRead(ctx, id, "log", commitListKey(commitOID, limit), func(repositoryPath string) (cachedResult, bool, error) {
-		output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "log", "-z", "--no-decorate", "--max-count="+strconv.Itoa(limit), gitDateOption, "--format="+commitLogFormat, commitOID)
+		output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "log", "-z", "--no-decorate", "--max-count="+strconv.Itoa(limit), GitDateOption, "--format="+commitLogFormat, commitOID)
 		if err != nil {
 			return cachedResult{}, false, err
 		}
@@ -528,7 +528,7 @@ func (m *Manager) CommitFiles(ctx context.Context, id, oid string) (Commit, []Ch
 	}
 	result, err := m.cachedRead(ctx, id, "commit-files", oid, func(repositoryPath string) (cachedResult, bool, error) {
 		output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "log", "--no-walk", "--max-count=1", "-z", "--no-decorate",
-			gitDateOption, "--format="+commitLogFormat, "--raw", "--numstat", "--no-renames", "--root", "--no-ext-diff", "--no-textconv", oid)
+			GitDateOption, "--format="+commitLogFormat, "--raw", "--numstat", "--no-renames", "--root", "--no-ext-diff", "--no-textconv", oid)
 		if err != nil {
 			return cachedResult{}, false, err
 		}

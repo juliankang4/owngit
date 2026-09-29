@@ -31,7 +31,7 @@ func TestParseGitDate(t *testing.T) {
 		{"1312735823 +2360", 0},
 		{"1312735823 -99999999999999999999", 0},
 	} {
-		got, err := parseGitDate([]byte(test.raw))
+		got, err := ParseGitDate([]byte(test.raw))
 		if err != nil {
 			t.Fatalf("%q: %v", test.raw, err)
 		}
@@ -50,7 +50,7 @@ func TestParseGitDate(t *testing.T) {
 		"-5 +0000", "abc +0000", "1312735823  +0000", "1312735823 +0000 x", "2011-08-07T12:00:00+05:30",
 		"99999999999999999999 +0000",
 	} {
-		if got, err := parseGitDate([]byte(raw)); !errors.Is(err, errMalformedGitDate) {
+		if got, err := ParseGitDate([]byte(raw)); !errors.Is(err, errMalformedGitDate) {
 			t.Errorf("%q: %v, %v, want a malformed date", raw, got, err)
 		}
 	}

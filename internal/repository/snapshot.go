@@ -75,7 +75,7 @@ func (m *Manager) readRefSnapshot(ctx context.Context, repositoryPath string) (s
 			if string(parts[3]) == "*" && len(parts) == 7 {
 				summary.DefaultBranch, summary.DefaultOID = branch.Name, oid
 				if objectType == "commit" {
-					authored, err := parseGitDate(parts[5])
+					authored, err := ParseGitDate(parts[5])
 					if err != nil {
 						return RefSnapshot{}, false, fmt.Errorf("parse default branch author date: %w", err)
 					}

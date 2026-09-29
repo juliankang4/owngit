@@ -7,10 +7,11 @@ import (
 	"time"
 )
 
-// gitDateOption makes git log print %ad and %cd as Git's raw date, which
-// parseGitDate reads. for-each-ref prints the same form for
-// %(authordate:raw).
-const gitDateOption = "--date=raw"
+// GitDateOption makes git log print %ad and %cd as Git's raw date, which
+// ParseGitDate reads. for-each-ref prints the same form for
+// %(authordate:raw). Every reader of commit dates uses both, so an import
+// can refuse a commit whose date these pages could not show.
+const GitDateOption = "--date=raw"
 
 // maxZoneOffset is the largest offset a time.Time can carry into JSON:
 // MarshalJSON refuses a zone of 24 hours or more.
@@ -18,14 +19,14 @@ const maxZoneOffset = 24*time.Hour - time.Minute
 
 var errMalformedGitDate = errors.New("Git returned a malformed date")
 
-// parseGitDate reads a date Git printed in its raw form, "<seconds since the
+// ParseGitDate reads a date Git printed in its raw form, "<seconds since the
 // epoch> <offset>", such as "1312735823 +0530". The instant comes from the
 // seconds, so it is always exact. Git reads the offset as hours and minutes,
 // HHMM, and so does this. An offset of less than 24 hours keeps its zone.
 // Git also accepts a larger one from old history, such as +051800 in
 // rails/rails; that date is shown in UTC. Text in any other form is an
 // error.
-func parseGitDate(raw []byte) (time.Time, error) {
+func ParseGitDate(raw []byte) (time.Time, error) {
 	seconds, offset, found := strings.Cut(string(raw), " ")
 	if !found || !allDigits(seconds) || len(offset) < 5 || (offset[0] != '+' && offset[0] != '-') || !allDigits(offset[1:]) {
 		return time.Time{}, errMalformedGitDate
