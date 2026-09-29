@@ -737,6 +737,10 @@ print("tray status fixture passed")
 		noErr(t, os.WriteFile(filepath.Join(scratch, folder, "owngit"), nil, 0o755))
 		noErr(t, os.Chmod(filepath.Join(scratch, folder), mode))
 	}
+	// The rule names the folder it refuses by its real path, and the
+	// temporary folder is reached through /var, a link to /private/var.
+	scratch, err := filepath.EvalSymlinks(scratch)
+	noErr(t, err)
 	if output, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file", filepath.Join(scratch, "acl")).CombinedOutput(); err != nil {
 		t.Fatalf("chmod +a: %v\n%s", err, output)
 	}
