@@ -1,7 +1,7 @@
 # OwnGit installer for Windows (Windows PowerShell 5.1 and PowerShell 7).
 #
-#   irm https://owngit.app/install.ps1 | iex
-#   & ([scriptblock]::Create((irm https://owngit.app/install.ps1))) -Version 1.1.3 -NoService
+#   irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
+#   & ([scriptblock]::Create((irm -MaximumRedirection 0 https://owngit.app/install.ps1))) -Version 1.1.3 -NoService
 #
 # It downloads the release archive over HTTPS, checks it against the
 # SHA256SUMS file of the same release, unpacks it into a folder named after

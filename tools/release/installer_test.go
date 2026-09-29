@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1093,4 +1094,54 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 			t.Fatalf("a refused run created %v in %s", names, programFiles)
 		}
 	})
+}
+
+// Every published document and script shows the one-line installers only
+// in their safe forms: curl and sh from the system folders, HTTPS for every
+// redirect, and no redirect for irm. The example commands at the top of
+// each script are the ones in OPERATIONS, as they are.
+func TestInstallerCommandsAreTheSafeForms(t *testing.T) {
+	root := repoRoot(t)
+	operations := readText(t, filepath.Join(root, "docs", "OPERATIONS.md"))
+	checked := 0
+	noErr(t, filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			if path != root && (strings.HasPrefix(name, ".") || name == "testdata" || name == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch filepath.Ext(name) {
+		case ".md", ".sh", ".ps1":
+		default:
+			return nil
+		}
+		relative, _ := filepath.Rel(root, path)
+		for number, line := range strings.Split(readText(t, path), "\n") {
+			shell := strings.Contains(line, "curl") && strings.Contains(line, "install.sh")
+			powerShell := strings.Contains(line, "install.ps1") && (strings.Contains(line, "irm") || strings.Contains(line, "Invoke-RestMethod") || strings.Contains(line, "Invoke-WebRequest") || strings.Contains(line, "iwr ") || strings.Contains(line, "DownloadString"))
+			switch {
+			case shell && (!strings.Contains(line, "/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL ") || !strings.Contains(line, "| /bin/sh")),
+				powerShell && (!strings.Contains(line, "irm -MaximumRedirection 0 ") || strings.Contains(line, "DownloadString")):
+				t.Errorf("%s:%d shows an unsafe installer command: %s", relative, number+1, line)
+			case shell || powerShell:
+				checked++
+			}
+		}
+		if filepath.Dir(relative) == filepath.Join("packaging", "installer") {
+			for _, line := range strings.Split(readText(t, path), "\n") {
+				if command, found := strings.CutPrefix(line, "#   "); found && !strings.Contains(operations, "\n"+command+"\n") {
+					t.Errorf("%s shows %q, which is not a line of docs/OPERATIONS.md", relative, command)
+				}
+			}
+		}
+		return nil
+	}))
+	if checked < 8 {
+		t.Errorf("found only %d installer commands; the check is not reading the documents", checked)
+	}
 }

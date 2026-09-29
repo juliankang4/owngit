@@ -1,8 +1,8 @@
 #!/bin/sh
 # OwnGit installer for Linux and macOS.
 #
-#   curl -fsSL https://owngit.app/install.sh | sh
-#   curl -fsSL https://owngit.app/install.sh | sh -s -- --version 1.1.3 --no-service
+#   /usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | /bin/sh
+#   /usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | /bin/sh -s -- --version 1.1.3 --no-service
 #
 # It downloads the release archive for this computer over HTTPS, checks it
 # against the SHA256SUMS file of the same release, puts owngit in place and
