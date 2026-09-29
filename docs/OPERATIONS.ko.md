@@ -103,7 +103,7 @@ sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 
 새로 설치한 Windows에서는 누군가 화면에서 처음 로그인하기 전까지 부팅 작업이 "큐에 대기됨" 상태로 남습니다(SSH 로그인은 해당하지 않습니다). 그 뒤로는 바로, 그리고 부팅할 때마다 시작합니다. `owngit service install`과 `status`는 작업이 대기 중이면 알려 줍니다.
 
-업데이트하려면 새 릴리스를 `%ProgramFiles%\OwnGit` 밖에 설치하거나 압축을 푼 뒤 그 `owngit service install`을 실행하세요(`owngit service status`는 자기 버전이 보호된 복사본과 다르면 알려 주고, 보호 경로에서 실행한 `service install`은 거부합니다). 관리자 계정에서는 예전 서비스를 멈추고, 예전 폴더를 `OwnGit.old-TIMESTAMP`로 옮기고, 새 복사본을 설치하고, 방화벽 규칙을 새로 쓰고, 새 버전을 시작하며, 예전 폴더에 `owngit.exe`, `installed-from.txt`, `temp`만 남았으면 지웁니다. 표준 계정은 새 `owngit.exe`로 같은 명령을 실행합니다. 보호된 복사본 옆의 `installed-from.txt`에는 어느 `owngit.exe`를 복사했는지 적어 두므로, 실행 중인 서비스가 그 프로그램의 업데이트 방법을 보여 줄 수 있습니다. `owngit service uninstall`은 승인 한 번으로 작업, 방화벽 규칙, 보호된 복사본을 지우며 상태 디렉터리와 저장소는 남습니다. 설치가 중간에 멈춰 작업 없이 보호된 복사본이나 규칙만 남았다면, 관리자 계정에서 같은 명령을 실행하면 그것도 지웁니다. OwnGit이 만들지 않은 파일이 함께 든 폴더는 남기고 그 사실을 알려 줍니다.
+업데이트하려면 새 릴리스를 `%ProgramFiles%\OwnGit` 밖에 설치하거나 압축을 푼 뒤 그 `owngit service install`을 실행하세요(`owngit service status`는 자기 버전이 보호된 복사본과 다르면 알려 주고, 보호 경로에서 실행한 `service install`은 거부합니다). 관리자 계정에서는 예전 서비스를 멈추고, 예전 폴더를 `OwnGit.old-TIMESTAMP`로 옮기고, 새 복사본을 설치하고, 방화벽 규칙을 새로 쓰고, 새 버전을 시작하며, 예전 폴더에 `owngit.exe`, `installed-from.txt`, `temp`만 남았으면 지웁니다. 표준 계정은 새 `owngit.exe`로 같은 명령을 실행합니다. 보호된 복사본 옆의 `installed-from.txt`에는 어느 `owngit.exe`를 복사했는지 적어 두므로, 실행 중인 서비스가 그 프로그램의 업데이트 방법을 보여 줄 수 있습니다. `owngit service uninstall`은 승인 한 번으로 작업, 방화벽 규칙, 보호된 복사본을 지우며 상태 디렉터리와 저장소는 남습니다. 설치가 중간에 멈춰 작업은 없이 보호된 복사본이나 규칙만 남았을 때도 관리자 계정에서 같은 명령을 실행하면 함께 지웁니다. OwnGit이 만들지 않은 파일이 함께 든 폴더는 남기고 그 사실을 알려 줍니다.
 
 ### macOS
 
@@ -142,9 +142,9 @@ OwnGit은 어떻게 설치됐는지 짐작하지 않고 이 컴퓨터에서 확�
 | 설치 방법 | 판단 근거 | 업데이트 명령 | 프로그램 지우기 |
 | --- | --- | --- | --- |
 | Homebrew | 프로그램이 Homebrew의 `Cellar/owngit` 안에 있습니다 | `brew upgrade owngit` | `brew uninstall owngit` |
-| npm | 프로그램이 `node_modules` 안 `owngit-<플랫폼>` 패키지의 `bin/owngit`입니다 | `npm install -g owngit@X.Y.Z`. 내 계정이 전역 `node_modules` 폴더에 쓸 수 없으면 `sudo npm`으로 실행합니다 | `npm uninstall -g owngit`. 같은 경우 `sudo`를 붙입니다 |
+| npm | 프로그램이 `node_modules` 안 `owngit-<플랫폼>` 패키지의 `bin/owngit`입니다 | `npm install -g owngit@X.Y.Z`. 내 계정이 전역 `node_modules` 폴더에 쓸 수 없으면 `sudo npm`으로 실행합니다 | `npm uninstall -g owngit`(쓸 수 없으면 `sudo`를 붙입니다) |
 | Arch Linux 패키지 | root만 바꿀 수 있는 `/usr/bin/pacman`의 `-Qo`가 프로그램이 든 패키지를 알려 줍니다 | `owngit-bin`이면 새 임시 폴더에서 새 릴리스의 `PKGBUILD`를 `makepkg -si`로 빌드합니다. 다른 패키지라면 릴리스 `PKGBUILD`가 그 패키지를 바꿔 버리므로 명령을 보여 주지 않습니다. 설치한 방법 그대로 업데이트하세요 | `sudo pacman -R`과 패키지 이름 |
-| 릴리스 압축 파일 | 위 어디에도 해당하지 않습니다 | 이 플랫폼의 릴리스 압축 파일을 내려받아 그 안의 `owngit`을 지금 파일 자리로 옮깁니다. 내 계정이 그 폴더에 쓸 수 없으면 `sudo install -m 0755`로 root 소유의 복사본을 넣습니다. root가 설치한 서비스는 root 소유의 프로그램만 실행하기 때문입니다. Windows에서는 새 릴리스를 지금 폴더 옆에 릴리스 이름으로 된 폴더에 풉니다 | 파일을 지웁니다(따로 만든 폴더에 풀었다면 그 폴더도) |
+| 릴리스 압축 파일 | 위 어디에도 해당하지 않습니다 | 이 플랫폼의 릴리스 압축 파일을 내려받아 그 안의 `owngit`을 지금 파일 자리로 옮깁니다. 내 계정이 그 폴더에 쓸 수 없으면 `sudo install -m 0755`로 root가 소유한 파일을 넣습니다. root가 설치한 서비스는 root만 바꿀 수 있는 프로그램만 실행하기 때문입니다. Windows에서는 새 릴리스를 지금 폴더 옆에 릴리스 이름으로 된 폴더에 풉니다 | 파일을 지웁니다(따로 만든 폴더에 풀었다면 그 폴더도) |
 
 내 계정의 서비스가 이 프로그램을 실행하고 있으면 명령 끝에 `owngit service install`이 붙습니다. 이 명령이 서비스를 새 버전에 맞게 다시 쓰고 다시 시작합니다. Homebrew 서비스는 전처럼 `brew services restart owngit`으로 다시 시작합니다. Windows에서 로그인 작업이 npm 프로그램을 직접 실행하고 있으면 명령이 `owngit service stop`으로 시작합니다. Windows에서는 실행 중인 프로그램 파일을 npm이 바꿀 수 없기 때문입니다. 서비스가 다른 OwnGit을 실행하고 있다면(예를 들어 서비스는 압축 파일로 받은 것을 돌리는데 npm 쪽을 업데이트할 때) 명령은 이 프로그램만 업데이트하고 서비스는 건드리지 않으며 `owngit update`가 그렇다고 알려 줍니다. 서비스 없이 실행 중이라면 업데이트한 뒤 OwnGit을 직접 다시 시작하세요. Windows에서 압축 파일로 업데이트했다면 명령이 알려 주는 새 폴더의 `owngit.exe`로 시작합니다. Windows 압축 파일 업데이트가 중간에 멈췄다면 새 폴더와 `.zip`을 지운 뒤 명령을 다시 실행하세요. 명령이 로그인 작업을 멈춘 뒤 npm이 실패했다면 `owngit service start`로 예전 버전을 다시 시작할 수 있습니다. macOS 앱 번들이나 릴리스 압축 파일이 없는 플랫폼에는 명령이 없으며 `owngit update`가 대신 할 일을 알려 줍니다. `makepkg`는 root로 실행되지 않으므로 root에게도 Arch Linux 명령을 보여 주지 않습니다. 평소 쓰는 계정으로 `owngit update`를 실행하세요. Windows에서는 명령의 각 단계를 앞 단계가 성공했을 때만 실행하며 Windows PowerShell과 PowerShell 7 모두 같습니다.
 
