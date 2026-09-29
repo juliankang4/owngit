@@ -38,6 +38,20 @@ OwnGit is a self-hosted Git server for home labs and local machines. It keeps pr
 
 Every install route needs Git with an executable `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you.
 
+The one-line installer downloads the latest release for this computer, checks it against the release's `SHA256SUMS`, installs `owngit` and runs it as a service with `owngit service install`, which prints the setup link at the end. On Linux (x64, ARM64) and macOS (Apple silicon):
+
+```sh
+curl -fsSL https://owngit.app/install.sh | sh
+```
+
+On Windows (x64), in PowerShell:
+
+```powershell
+irm https://owngit.app/install.ps1 | iex
+```
+
+[One-line installer](docs/OPERATIONS.md#one-line-installer) lists its options, such as a pinned version or no service, and where it puts the program.
+
 With [Homebrew](https://brew.sh) on macOS (Apple silicon) or Linux (x64, ARM64):
 
 ```sh
@@ -77,9 +91,9 @@ OwnGit never updates itself. When a newer release exists, the dashboard notice s
 | Homebrew | `brew upgrade owngit` |
 | npm | `npm install -g owngit@X.Y.Z` |
 | The Arch Linux `PKGBUILD` (`owngit-bin`) | builds the new release's `PKGBUILD` with `makepkg -si` |
-| A release archive | downloads the new archive and puts its `owngit` in place of this one; on Windows it unpacks the new release into a folder beside the current one |
+| A release archive or the one-line installer | runs the new release's installer, which checks the archive against `SHA256SUMS` and puts its `owngit` in place of this one; on Windows it unpacks the new release into a folder beside the current one |
 
-When a service runs this OwnGit, the command ends with `owngit service install`, which restarts the service with the new version.
+When a service runs this OwnGit, the command also runs `owngit service install`, which restarts the service with the new version.
 
 `owngit uninstall` removes what `owngit service install` created: the service and, on Windows, the copy in Program Files. The state and the repositories stay, and the command says where they are. The program files belong to whatever put them there, so the command ends by naming how to remove them: `brew uninstall owngit`, `npm uninstall -g owngit`, `sudo pacman -R owngit-bin`, or the file to delete for an archive. See [Update and uninstall](docs/OPERATIONS.md#update-and-uninstall).
 

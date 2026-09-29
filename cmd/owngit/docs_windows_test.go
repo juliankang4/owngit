@@ -45,9 +45,16 @@ func TestWindowsDocumentedPasswordFileCommands(t *testing.T) {
 		t.Run(test.document, func(t *testing.T) {
 			content, err := os.ReadFile(filepath.Join("..", "..", "docs", test.document))
 			noErr(t, err)
-			blocks := powerShellBlocks(content)
+			// Other PowerShell blocks, such as the one-line installer, are
+			// not about the password file.
+			var blocks []string
+			for _, block := range powerShellBlocks(content) {
+				if strings.Contains(block, "owngit-password.txt") {
+					blocks = append(blocks, block)
+				}
+			}
 			if len(blocks) != 1 {
-				t.Fatalf("%d PowerShell blocks, want 1", len(blocks))
+				t.Fatalf("%d PowerShell blocks make the password file, want 1", len(blocks))
 			}
 			testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
 				home := t.TempDir()

@@ -38,6 +38,20 @@ OwnGit은 홈랩과 로컬 컴퓨터를 위한 셀프 호스팅 Git 서버입니
 
 어느 방법으로 설치하든 호스트에 실행 가능한 `git-http-backend`가 들어 있는 Git이 필요합니다. Homebrew와 Arch Linux 패키지는 Git을 함께 설치합니다.
 
+한 줄 설치 스크립트는 이 컴퓨터에 맞는 최신 릴리스를 내려받아 같은 릴리스의 `SHA256SUMS`와 대조한 뒤 `owngit`을 설치하고 `owngit service install`로 서비스를 시작합니다. 설정 링크는 마지막에 출력됩니다. Linux(x64, ARM64)와 macOS(Apple silicon)에서는 다음과 같이 실행합니다.
+
+```sh
+curl -fsSL https://owngit.app/install.sh | sh
+```
+
+Windows(x64)에서는 PowerShell에서 실행합니다.
+
+```powershell
+irm https://owngit.app/install.ps1 | iex
+```
+
+버전 고정, 서비스 없이 설치하기 같은 옵션과 프로그램을 두는 위치는 [한 줄 설치](docs/OPERATIONS.ko.md#한-줄-설치)에 있습니다.
+
 macOS(Apple silicon)나 Linux(x64, ARM64)에서 [Homebrew](https://brew.sh)로 설치합니다.
 
 ```sh
@@ -77,9 +91,9 @@ OwnGit은 스스로 업데이트하지 않습니다. 새 릴리스가 나오면 
 | Homebrew | `brew upgrade owngit` |
 | npm | `npm install -g owngit@X.Y.Z` |
 | Arch Linux `PKGBUILD`(`owngit-bin`) | 새 릴리스의 `PKGBUILD`를 `makepkg -si`로 빌드합니다 |
-| 릴리스 압축 파일 | 새 압축 파일을 내려받아 그 안의 `owngit`으로 지금 파일을 바꿉니다. Windows에서는 새 릴리스를 지금 폴더 옆의 새 폴더에 풉니다 |
+| 릴리스 압축 파일이나 한 줄 설치 | 새 릴리스의 설치 스크립트를 실행합니다. 스크립트는 압축 파일을 `SHA256SUMS`와 대조한 뒤 그 안의 `owngit`으로 지금 파일을 바꿉니다. Windows에서는 새 릴리스를 지금 폴더 옆의 새 폴더에 풉니다 |
 
-서비스가 이 OwnGit을 실행하고 있으면 명령 끝에 `owngit service install`이 붙어 서비스를 새 버전으로 다시 시작합니다.
+서비스가 이 OwnGit을 실행하고 있으면 명령이 `owngit service install`도 실행해 서비스를 새 버전으로 다시 시작합니다.
 
 `owngit uninstall`은 `owngit service install`이 만든 것, 곧 서비스와 Windows의 Program Files 안 복사본을 지웁니다. 상태와 저장소는 그대로 두고 위치를 알려 줍니다. 프로그램 파일은 그 파일을 설치한 쪽의 몫이라서 마지막에 지우는 방법을 알려 줍니다. `brew uninstall owngit`, `npm uninstall -g owngit`, `sudo pacman -R owngit-bin`이나, 압축 파일로 설치했다면 지울 파일을 알려 줍니다. 자세한 내용은 [업데이트와 제거](docs/OPERATIONS.ko.md#업데이트와-제거)를 보세요.
 

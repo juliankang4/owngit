@@ -5,6 +5,7 @@ The files here are inputs for `tools/release`. They produce portable archives, n
 ## Layout
 
 - `archive/README.txt.tmpl` is placed in every portable archive.
+- `installer/` holds the one-line installers, `install.sh` for Linux and macOS and `install.ps1` for Windows. `build` copies them unchanged into its output folder, so every release carries the same files. Their tests are `tools/release/installer_test.go`.
 - `macos/` contains the AppKit launcher, the prototype `Info.plist`, and the app instructions.
 - `linux/` contains the Debian control file, the desktop entry, and the package instructions.
 - `homebrew/owngit.rb.tmpl` is the Homebrew formula template.
