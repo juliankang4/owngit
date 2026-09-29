@@ -16,9 +16,11 @@ import (
 func localAPIFor(string) (bool, Dialer) {
 	path, service := tailscaledSocket("/")
 	var accounts []uint32
-	if account, err := user.Lookup(service); service != "" && err == nil {
-		if uid, err := strconv.ParseUint(account.Uid, 10, 32); err == nil {
-			accounts = append(accounts, uint32(uid))
+	if service != "" {
+		if account, err := user.Lookup(service); err == nil {
+			if uid, err := strconv.ParseUint(account.Uid, 10, 32); err == nil {
+				accounts = append(accounts, uint32(uid))
+			}
 		}
 	}
 	return false, unixSocket(path, accounts...)
