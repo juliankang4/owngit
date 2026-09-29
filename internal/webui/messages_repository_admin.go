@@ -240,7 +240,7 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoProtectLabel:       {en: "Protect the default branch", ko: "기본 브랜치 보호"},
 	MsgRepoProtectHelp: {
 		en: "Refuses a push that rewrites the default branch (one that is not a fast-forward) or deletes it. Pushes that add commits to it, and every other branch and tag, work as before. When you change the default branch, the protection moves to the new one.",
-		ko: "기본 브랜치를 다시 쓰는 푸시(빨리 감기가 아닌 푸시)나 지우는 푸시를 거부합니다. 커밋을 더하는 푸시와 다른 브랜치, 태그는 전과 같이 동작합니다. 기본 브랜치를 바꾸면 보호도 새 기본 브랜치로 옮겨 갑니다.",
+		ko: "기본 브랜치를 다시 쓰는 푸시(fast-forward가 아닌 푸시)나 지우는 푸시를 거부합니다. 커밋을 더하는 푸시와 다른 브랜치, 태그는 전과 같이 동작합니다. 기본 브랜치를 바꾸면 보호도 새 기본 브랜치로 옮겨 갑니다.",
 	},
 	MsgRepoProtectOffWarning: {
 		en: "Turning the protection off lets anyone who can push rewrite or delete the default branch again.",
