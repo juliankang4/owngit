@@ -248,6 +248,9 @@ func (host *serviceHost) install(stateDirFlag string, headlessFlag *bool) error 
 	case found:
 		headless = existing.Headless
 	}
+	if err := host.requireProtectedExecutables(mode, headless); err != nil {
+		return err
+	}
 	if mode == service.ModeHomebrew {
 		return host.installHomebrew(stateDir, headless)
 	}
@@ -363,6 +366,29 @@ func (host *serviceHost) userServiceProblem() string {
 		return "lingering needs a password"
 	}
 	return ""
+}
+
+// requireProtectedExecutables refuses, before anything changes, an install
+// whose service unit or icon entry would name an owngit that another
+// account could replace, since both run it as this account. The dedicated
+// account's install checks its binary itself, and Homebrew's service is
+// Homebrew's; the icon entry names Homebrew's opt link.
+func (host *serviceHost) requireProtectedExecutables(mode service.Mode, headless bool) error {
+	var paths []string
+	if mode == service.ModeUser || mode == service.ModeSystem {
+		paths = append(paths, host.executable)
+	}
+	if mode != service.ModeAccount && !headless && host.env.Desktop() {
+		if entry := service.AgentExecutable("", host.executable); !slices.Contains(paths, entry) {
+			paths = append(paths, entry)
+		}
+	}
+	for _, path := range paths {
+		if err := requireProtectedPath(path); err != nil {
+			return fmt.Errorf("the service would run %s, but %w; move owngit to a folder only you or root can change, such as ~/.local/bin, or install it with the installer", path, err)
+		}
+	}
+	return nil
 }
 
 func (host *serviceHost) installHomebrew(stateDir string, headless bool) error {

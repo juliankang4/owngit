@@ -76,16 +76,9 @@ func toolkit() (string, error) {
 // protectedProgram returns the file that path leads to when no other
 // account can change it or the way to it.
 func protectedProgram(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
+	resolved, err := state.ProtectedProgram(path)
 	if err != nil {
 		return "", fmt.Errorf("%w at %s: %v; OwnGit keeps running without the icon", ErrUnsafeToolkit, path, err)
-	}
-	if err := state.RequireProtectedPath(absolute); err != nil {
-		return "", fmt.Errorf("%w at %s: %v; OwnGit keeps running without the icon", ErrUnsafeToolkit, absolute, err)
-	}
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		return "", fmt.Errorf("%w at %s: %v; OwnGit keeps running without the icon", ErrUnsafeToolkit, absolute, err)
 	}
 	return resolved, nil
 }

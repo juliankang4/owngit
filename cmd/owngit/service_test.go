@@ -629,10 +629,13 @@ func newInstallFixture(t *testing.T, env service.Environment, existing *service.
 		env: env, account: &user.User{Username: "alice", HomeDir: home}, group: "alice",
 		executable: "/usr/local/bin/owngit", userConfigDir: filepath.Join(home, ".config"), out: &fixture.out,
 	}
-	previousFind, previousWait, previousRunner, previousLook, previousRun := findInstalled, waitForService, serviceRunner, lookPath, runScript
+	previousFind, previousWait, previousRunner, previousLook, previousRun, previousCheck := findInstalled, waitForService, serviceRunner, lookPath, runScript, requireProtectedPath
 	t.Cleanup(func() {
-		findInstalled, waitForService, serviceRunner, lookPath, runScript = previousFind, previousWait, previousRunner, previousLook, previousRun
+		findInstalled, waitForService, serviceRunner, lookPath, runScript, requireProtectedPath = previousFind, previousWait, previousRunner, previousLook, previousRun, previousCheck
 	})
+	// The fixture's executable is a name, not a file; the protected-path
+	// rule has its own test.
+	requireProtectedPath = func(string) error { return nil }
 	findInstalled = func(string) (service.Installed, bool, error) {
 		if existing == nil {
 			return service.Installed{}, false, nil

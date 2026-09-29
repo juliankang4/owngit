@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"owngit/internal/service"
+	"owngit/internal/state"
 )
 
 // On a Linux desktop the install makes the icon start at sign-in through
@@ -120,5 +121,78 @@ func TestServiceInstallOnADesktopStartsTheIcon(t *testing.T) {
 			!slices.Equal(started, []string{"/usr/local/bin/owngit", stateDir}) {
 			t.Fatalf("manager down %v: install %v, entry %v %q, started %q\n%s", managerDown, err, readErr, entry, started, fixture.out.String())
 		}
+	}
+}
+
+// The install refuses, before anything changes, a service or icon entry
+// that would run an owngit another account could replace; a binary in a
+// folder of this account and Homebrew's opt link are fine.
+func TestServiceInstallRunsOnlyAProtectedOwnGit(t *testing.T) {
+	root := t.TempDir()
+	folder := func(path string, mode os.FileMode) string {
+		noErr(t, os.MkdirAll(path, 0o700))
+		noErr(t, os.Chmod(path, mode))
+		return path
+	}
+	binary := func(path string) string {
+		noErr(t, os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755))
+		return path
+	}
+	own := binary(filepath.Join(folder(filepath.Join(root, "own"), 0o755), "owngit"))
+	shared := binary(filepath.Join(folder(filepath.Join(root, "shared"), 0o777), "owngit"))
+	linked := filepath.Join(folder(filepath.Join(root, "linked"), 0o755), "owngit")
+	noErr(t, os.Symlink(shared, linked))
+	cellar := filepath.Join(root, "brew", "Cellar", "owngit", "1.1.3", "bin")
+	folder(cellar, 0o755)
+	brewed := binary(filepath.Join(cellar, "owngit"))
+	folder(filepath.Join(root, "brew", "opt"), 0o755)
+	noErr(t, os.Symlink(filepath.Join("..", "Cellar", "owngit", "1.1.3"), filepath.Join(root, "brew", "opt", "owngit")))
+	sharedCellar := filepath.Join(root, "sharedbrew", "Cellar", "owngit", "1.1.3", "bin")
+	folder(sharedCellar, 0o755)
+	sharedBrewed := binary(filepath.Join(sharedCellar, "owngit"))
+	folder(filepath.Join(root, "sharedbrew", "opt"), 0o777)
+	noErr(t, os.Symlink(filepath.Join("..", "Cellar", "owngit", "1.1.3"), filepath.Join(root, "sharedbrew", "opt", "owngit")))
+
+	for _, test := range []struct {
+		name, executable string
+		mode             service.Mode
+		refused          string
+	}{
+		{"a binary in a folder of this account", own, service.ModeUser, ""},
+		{"a folder every account can write", shared, service.ModeUser, shared},
+		{"a link into such a folder", linked, service.ModeSystem, linked},
+		{"Homebrew's opt link", brewed, service.ModeHomebrew, ""},
+		{"an opt link others can replace", sharedBrewed, service.ModeHomebrew, filepath.Join(root, "sharedbrew", "opt", "owngit", "bin", "owngit")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newInstallFixture(t, desktopEnv, nil, false)
+			requireProtectedPath = state.RequireProtectedPath
+			fixture.host.executable = test.executable
+			err := fixture.host.requireProtectedExecutables(test.mode, false)
+			if test.refused == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "the service would run "+test.refused+", but") || !strings.Contains(err.Error(), "~/.local/bin") {
+				t.Fatalf("accepted or unclear: %v", err)
+			}
+			// The whole install stops before a unit, root script or icon
+			// entry is written.
+			if test.mode == service.ModeHomebrew {
+				return
+			}
+			installErr := fixture.host.install(filepath.Join(t.TempDir(), "state"), nil)
+			if installErr == nil || len(fixture.commands) != 0 || len(fixture.scripts) != 0 {
+				t.Fatalf("install %v, commands %q, scripts %d", installErr, fixture.commands, len(fixture.scripts))
+			}
+			if _, err := os.Stat(service.UserUnitPath(fixture.host.userConfigDir)); !os.IsNotExist(err) {
+				t.Fatalf("a unit was written: %v", err)
+			}
+			if _, err := os.Stat(service.AutostartPath(fixture.host.userConfigDir)); !os.IsNotExist(err) {
+				t.Fatalf("an icon entry was written: %v", err)
+			}
+		})
 	}
 }

@@ -300,7 +300,16 @@ func Open(path string) error {
 	case "windows":
 		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
 	default:
-		command = exec.Command("xdg-open", path)
+		// xdg-open comes from PATH; it runs only when no other account
+		// can replace it, since it runs as this account.
+		opener, err := exec.LookPath("xdg-open")
+		if err == nil {
+			opener, err = state.ProtectedProgram(opener)
+		}
+		if err != nil {
+			return fmt.Errorf("start the browser: %w", err)
+		}
+		command = exec.Command(opener, path)
 	}
 	command.Stdin = nil
 	command.Stdout = nil
