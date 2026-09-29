@@ -227,9 +227,10 @@ func TestTailscaleRefusedOnlyWhenTheOwnerCanFixIt(t *testing.T) {
 
 // Tailscale may have a change when a read back shows it, or when the read
 // back failed and the change command succeeded or failed without a refusal
-// (Refused). A read back that shows no change, or a command Tailscale
-// refused, rules it out. The timeout is the value tailscale.Command returns
-// at its time limit, which no test here waits for.
+// (Refused). A read back that shows no change, or a change Tailscale
+// refused, whatever the read back shows, rules it out. The timeout is the
+// value tailscale.Command returns at its time limit, which no test here
+// waits for.
 func TestTailscaleMayHaveTheChangeWhenItShowsItOrItsOutcomeIsUnknown(t *testing.T) {
 	timedOut := &tailscale.Error{Kind: tailscale.KindTimeout}
 	refused := &tailscale.Error{Kind: tailscale.KindPermission}
@@ -247,7 +248,8 @@ func TestTailscaleMayHaveTheChangeWhenItShowsItOrItsOutcomeIsUnknown(t *testing.
 		{"timed out and shown", timedOut, nil, true, true},
 		{"timed out and not shown", timedOut, nil, false, false},
 		{"timed out and not read back", timedOut, readFailed, false, true},
-		{"refused and shown", refused, nil, true, true},
+		{"refused and shown", refused, nil, true, false},
+		{"changed meanwhile and shown", &tailscale.Error{Kind: tailscale.KindServeChanged}, nil, true, false},
 		{"refused and not read back", refused, readFailed, false, false},
 		{"failed and not read back", failed, readFailed, false, true},
 		{"unreadable and not read back", unreadable, readFailed, false, true},

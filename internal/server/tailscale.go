@@ -54,16 +54,16 @@ var ErrTailscaleAhead = errors.New("OwnGit's settings were not saved, and Tailsc
 // endpoint after the change command returned changeErr and the read back
 // returned readErr: the read back shows the change, or it could not be read
 // while the command succeeded or failed without a refusal (Refused), such as
-// a timeout, so its outcome is unknown. A read back that shows no change, or
-// a command Tailscale refused, rules it out. A change Tailscale did not apply
-// because the configuration had changed since OwnGit read it
-// (TailscaleProblemServeChanged) is ruled out whatever the read back shows,
-// which is then the other change.
+// a timeout, so its outcome is unknown. A read back that shows no change
+// rules it out. So does a change Tailscale refused (Refused), such as one
+// made from a configuration that changed since OwnGit read it or one this
+// user may not make, whatever the read back shows: Tailscale checks before
+// it applies anything, so what the read back shows is someone else's.
 func tailscaleMayHave(changeErr, readErr error, shown bool) bool {
-	if tailscale.KindOf(changeErr) == tailscale.KindServeChanged {
+	if changeErr != nil && refused(changeErr) {
 		return false
 	}
-	return shown || readErr != nil && (changeErr == nil || !refused(changeErr))
+	return shown || readErr != nil
 }
 
 // refused reports whether err is a refusal the owner can fix

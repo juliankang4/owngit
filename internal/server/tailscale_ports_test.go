@@ -439,3 +439,52 @@ func TestTailscaleChangesStopWhenServeChangesMeanwhile(t *testing.T) {
 		})
 	}
 }
+
+// Tailscale checks a change before it applies anything, so a change it
+// refuses, here for a user who may not change Serve, was not applied,
+// whatever someone else did meanwhile: turning on does not take a matching
+// endpoint that another user made as OwnGit's, and turning off keeps
+// sharing on when another user removed the endpoint.
+func TestTailscaleRefusedChangeWasNotAppliedWhateverTheReadBackShows(t *testing.T) {
+	ctx := context.Background()
+	target := tailscale.Target(7654)
+	exact := tailscale.ServeConfig{
+		TCP: map[string]tailscale.TCPHandler{"443": {HTTPS: true}},
+		Web: map[string]tailscale.WebServer{tailscaletest.Name + ":443": {Handlers: map[string]tailscale.Handler{"/": {Proxy: target}}}},
+	}
+	for _, test := range []struct {
+		name      string
+		on        bool
+		meanwhile tailscale.ServeConfig
+	}{
+		{"on, another user adds the same endpoint", true, exact},
+		{"off, another user removes the endpoint", false, tailscale.ServeConfig{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+			if !test.on {
+				_, err := app.Tailscale.On(ctx, nil, 0)
+				noErr(t, err)
+			}
+			_, _, _, before := savedSharing(t, app.Store)
+			meanwhile := test.meanwhile
+			fake.Update(func(s *tailscaletest.State) { s.ChangedBeforeWrite, s.WriteDenied = &meanwhile, true })
+			var err error
+			if test.on {
+				_, err = app.Tailscale.On(ctx, nil, 0)
+			} else {
+				_, err = app.Tailscale.Off(ctx)
+			}
+			var refusal *TailscaleError
+			if !errors.As(err, &refusal) || refusal.Problem != string(tailscale.KindPermission) || errors.Is(err, ErrTailscaleAhead) {
+				t.Fatalf("err=%v, want the permission refusal alone", err)
+			}
+			if _, _, _, after := savedSharing(t, app.Store); !reflect.DeepEqual(after, before) {
+				t.Fatalf("the sharing record is %+v, want %+v", after, before)
+			}
+			if serve := fake.State().Serve; !reflect.DeepEqual(serve, meanwhile) {
+				t.Fatalf("Tailscale has %+v, want the other user's %+v", serve, meanwhile)
+			}
+		})
+	}
+}
