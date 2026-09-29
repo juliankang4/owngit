@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/netip"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -19,23 +16,12 @@ import (
 
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
-	"owngit/internal/testfixture"
 )
 
-func TestMain(m *testing.M) {
-	tailscaletest.RunIfFake()
-	// The fake tailscale is this test binary.
-	if err := testfixture.SkipRaceExitWaitInChildren(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	os.Exit(m.Run())
-}
-
-// Each fake's commands reach its own state, also while another fake
-// exists, so a command started for one test cannot report or record the
-// fake of another.
-func TestFakeCommandsKeepTheirOwnState(t *testing.T) {
+// Each fake's LocalAPI answers from its own state, also while another fake
+// exists, so a request made for one test cannot report or record the fake of
+// another.
+func TestFakesKeepTheirOwnState(t *testing.T) {
 	first := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
 	other := tailscaletest.Running()
 	other.Self.DNSName, other.CertDomains = "other.tail0000.ts.net.", []string{"other.tail0000.ts.net"}
@@ -45,30 +31,15 @@ func TestFakeCommandsKeepTheirOwnState(t *testing.T) {
 		want string
 	}{{first, tailscaletest.Name}, {second, "other.tail0000.ts.net"}} {
 		status, err := test.fake.Command().Status(context.Background())
-		if err != nil || status.Name != test.want || !reflect.DeepEqual(test.fake.Calls(), []string{"status --json"}) {
+		if err != nil || status.Name != test.want || !reflect.DeepEqual(test.fake.Calls(), []string{tailscaletest.StatusRead}) {
 			t.Fatalf("want %s: status=%+v err=%v calls=%q", test.want, status, err, test.fake.Calls())
 		}
 	}
 }
 
-// A fake answers every invocation itself, so an unsupported command fails
-// instead of running the test binary's tests.
-func TestFakeCommandsRejectUnknownArguments(t *testing.T) {
-	fake := tailscaletest.New(t, tailscaletest.State{})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, fake.Path, "-test.run=^$").CombinedOutput()
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(output), "unsupported command") {
-		t.Fatalf("unknown fake command: err=%v output=%s", err, output)
-	}
-}
-
-// Fake commands in other processes and the test's own reads and changes
-// overlap without failing or losing a change, because each holds the
-// state's lock. On Windows a read beside a command's save failed with a
-// sharing violation.
-func TestFakeStateSurvivesOverlappingCommandsAndReads(t *testing.T) {
+// LocalAPI requests and the test's own reads and changes overlap without
+// failing or losing a change.
+func TestFakeStateSurvivesOverlappingRequestsAndReads(t *testing.T) {
 	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running()})
 	command := fake.Command()
 	const commands = 8
@@ -79,11 +50,7 @@ func TestFakeStateSurvivesOverlappingCommandsAndReads(t *testing.T) {
 			errs <- err
 		}()
 	}
-	// The test changes and reads the state while the commands run, and
-	// leaves the lock free for a moment after each change, as any test does
-	// between its steps. A command retries a busy lock every 25 ms, so a
-	// loop that took the lock again at once could hold it at each of those
-	// tries, most easily under the race detector, until the command gave up.
+	// The test changes and reads the state while the requests run.
 	changes := 0
 	for done := 0; done < commands; {
 		select {
@@ -101,7 +68,7 @@ func TestFakeStateSurvivesOverlappingCommandsAndReads(t *testing.T) {
 	reads, marks := 0, 0
 	for _, call := range fake.Calls() {
 		switch {
-		case call == "status --json":
+		case call == tailscaletest.StatusRead:
 			reads++
 		case call == "test "+strconv.Itoa(marks):
 			marks++
@@ -149,9 +116,8 @@ func TestStatusNamesWhatKeepsHTTPSFromWorking(t *testing.T) {
 		{"another control server", func(state *tailscaletest.State) {
 			state.Status.Self.DNSName, state.Status.CertDomains = "gitbox.headscale.internal.", nil
 		}, tailscale.KindHTTPSUnavailable},
-		{"daemon not running", func(state *tailscaletest.State) {
-			state.StatusError = "failed to connect to local Tailscale daemon for /localapi/v0/status; not running? Is tailscaled running?"
-		}, tailscale.KindNotRunning},
+		{"daemon not running", func(state *tailscaletest.State) { state.NotRunning = true }, tailscale.KindNotRunning},
+		{"status refused", func(state *tailscaletest.State) { state.StatusError = "synthetic status failure" }, tailscale.KindFailed},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -445,7 +411,7 @@ func TestTailnetAddresses(t *testing.T) {
 	state := tailscaletest.State{Status: tailscaletest.Running()}
 	state.Status.Self.TailscaleIPs = []string{"100.64.0.7", "not an address", "192.168.1.5"}
 	fake := tailscaletest.New(t, state)
-	status, err := tailscale.Command{Path: fake.Path}.Status(context.Background())
+	status, err := fake.Command().Status(context.Background())
 	if err != nil || !reflect.DeepEqual(status.Addresses, []netip.Addr{netip.MustParseAddr("100.64.0.7")}) {
 		t.Fatalf("addresses=%v err=%v", status.Addresses, err)
 	}

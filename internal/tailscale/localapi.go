@@ -16,8 +16,10 @@ import (
 	"time"
 )
 
-// OwnGit reads and changes Tailscale Serve through the daemon's LocalAPI, the
-// local HTTP interface the tailscale command itself uses. Its serve-config
+// OwnGit reads Tailscale's status and reads and changes Tailscale Serve
+// through the daemon's LocalAPI, the local HTTP interface the tailscale
+// command itself uses, so that everything OwnGit acts on comes from
+// Tailscale's own service (see unixSocket). Its serve-config
 // resource answers a read with the configuration and a version (the ETag
 // header), and applies a change only while the configuration still has the
 // version given in the change's If-Match header; otherwise it answers 412
@@ -44,9 +46,14 @@ import (
 // the password the LocalAPI asks for, or "" when it asks for none.
 type Dialer func(ctx context.Context) (net.Conn, string, error)
 
-// serveConfigURL is the LocalAPI resource of the Serve configuration. The
-// LocalAPI accepts this host name on every transport.
-const serveConfigURL = "http://local-tailscaled.sock/localapi/v0/serve-config"
+// The LocalAPI resources OwnGit uses: Tailscale's status without the list of
+// other devices, as "tailscale status --json --peers=false" reads it,
+// and the Serve configuration. The LocalAPI accepts this host name on every
+// transport.
+const (
+	statusURL      = "http://local-tailscaled.sock/localapi/v0/status?peers=false"
+	serveConfigURL = "http://local-tailscaled.sock/localapi/v0/serve-config"
+)
 
 // unixSocket returns a Dialer for tailscaled's Unix socket at path. It
 // keeps the connection only when the process listening there runs as
@@ -75,10 +82,11 @@ func unixSocket(path string, accounts ...uint32) Dialer {
 	}
 }
 
-// serveConfig sends one request to the serve-config resource: a read when
-// body is nil, otherwise a change that applies only while the configuration
-// has version ifMatch. It returns the version of a read and its body.
-func (command Command) serveConfig(ctx context.Context, timeout time.Duration, ifMatch string, body []byte) (string, []byte, error) {
+// localAPI sends one request to the LocalAPI resource at url: a read when
+// body is nil, otherwise a change that, for the Serve configuration, applies
+// only while the configuration has version ifMatch. It returns the version
+// of a read and its body.
+func (command Command) localAPI(ctx context.Context, timeout time.Duration, url, ifMatch string, body []byte) (string, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if command.LocalAPI == nil {
@@ -96,7 +104,7 @@ func (command Command) serveConfig(ctx context.Context, timeout time.Duration, i
 	if body != nil {
 		method = http.MethodPost
 	}
-	request, err := http.NewRequestWithContext(ctx, method, serveConfigURL, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return "", nil, err
 	}

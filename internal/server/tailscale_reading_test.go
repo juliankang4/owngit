@@ -24,7 +24,7 @@ func TestReadingAfterAChangeIsNewAndRunsAfterTheEarlierOne(t *testing.T) {
 	reads := func() int {
 		count := 0
 		for _, call := range fake.Calls() {
-			if call == "status --json" || call == tailscaletest.ServeRead {
+			if call == tailscaletest.StatusRead || call == tailscaletest.ServeRead {
 				count++
 			}
 		}

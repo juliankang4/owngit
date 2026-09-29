@@ -1,22 +1,20 @@
 // Package tailscale lets OwnGit be shared on the owner's tailnet over HTTPS
 // with Tailscale Serve.
 //
-// It reads Tailscale's status with the host's tailscale command, and reads
-// and changes the Serve configuration through Tailscale's LocalAPI
-// (localapi.go), where a change applies only to the configuration it was
-// made from. It adds or removes exactly one HTTPS endpoint and keeps
-// everything else in the configuration as Tailscale gave it. It never turns
-// on Funnel and never runs up, down, set, cert or sudo. Every command passes
-// an argument array without a shell, and every call has a time limit.
+// It reads Tailscale's status, and reads and changes the Serve configuration,
+// through Tailscale's LocalAPI (localapi.go), where a change applies only to
+// the configuration it was made from. It adds or removes exactly one HTTPS
+// endpoint and keeps everything else in the configuration as Tailscale gave
+// it. It never turns on Funnel and never runs the tailscale command: the
+// command it finds only shows that Tailscale is installed, and which
+// variant. Every call has a time limit.
 package tailscale
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -34,12 +32,13 @@ const (
 	writeTimeout = 30 * time.Second
 )
 
-// maxOutput bounds what one command may print or one LocalAPI answer hold.
+// maxOutput bounds what one LocalAPI answer may hold.
 const maxOutput = 4 << 20
 
-// Command is a tailscale executable found on this computer.
+// Command is Tailscale as found on this computer: its tailscale executable
+// and the LocalAPI of the Tailscale that executable talks to.
 type Command struct {
-	// Path is the executable.
+	// Path is the executable. OwnGit does not run it.
 	Path string
 	// MacApp is true when Path runs the Tailscale app for macOS (the App
 	// Store or Standalone variant) instead of the open source tailscaled.
@@ -191,7 +190,7 @@ func KindOf(err error) Kind {
 	return KindFailed
 }
 
-// Status is the part of "tailscale status --json" OwnGit uses.
+// Status is the part of Tailscale's status OwnGit uses.
 type Status struct {
 	// BackendState is Tailscale's state, such as "Running" or "NeedsLogin".
 	BackendState string
@@ -265,10 +264,13 @@ func (status Status) Usable() error {
 	return &Error{Kind: KindHTTPSOff}
 }
 
-// Status runs "tailscale status --json".
+// Status reads Tailscale's status from the LocalAPI, as "tailscale status
+// --json" does. A signed-out Tailscale answers too, with its state.
 func (command Command) Status(ctx context.Context) (Status, error) {
-	output, err := command.run(ctx, readTimeout, "status", "--json")
-	// A logged-out client may exit with an error and still print its state.
+	_, content, err := command.localAPI(ctx, readTimeout, statusURL, "", nil)
+	if err != nil {
+		return Status{}, err
+	}
 	var raw struct {
 		BackendState string
 		Version      string
@@ -283,10 +285,7 @@ func (command Command) Status(ctx context.Context) (Status, error) {
 		CurrentTailnet *struct{ MagicDNSEnabled bool }
 		MagicDNSSuffix string
 	}
-	if decodeErr := json.Unmarshal(output, &raw); decodeErr != nil || raw.BackendState == "" {
-		if err != nil {
-			return Status{}, err
-		}
+	if err := json.Unmarshal(content, &raw); err != nil || raw.BackendState == "" {
 		return Status{}, &Error{Kind: KindUnreadable}
 	}
 	status := Status{BackendState: raw.BackendState, Version: raw.Version, CertDomains: raw.CertDomains}
@@ -317,7 +316,7 @@ func (command Command) Status(ctx context.Context) (Status, error) {
 // made from it binds to. A daemon that gives no version cannot bind a
 // change, and the read fails with KindOutdated.
 func (command Command) ServeConfig(ctx context.Context) (ServeConfig, error) {
-	version, content, err := command.serveConfig(ctx, readTimeout, "", nil)
+	version, content, err := command.localAPI(ctx, readTimeout, serveConfigURL, "", nil)
 	if err != nil {
 		return ServeConfig{}, err
 	}
@@ -359,52 +358,8 @@ func (command Command) change(ctx context.Context, read ServeConfig, name string
 	if err != nil {
 		return err
 	}
-	_, _, err = command.serveConfig(ctx, writeTimeout, read.version, content)
+	_, _, err = command.localAPI(ctx, writeTimeout, serveConfigURL, read.version, content)
 	return err
-}
-
-// run runs one command with a time limit and no input. The environment is
-// OwnGit's own, so the owner's settings for their tailscale apply, plus
-// TAILSCALE_BE_CLI, which makes the macOS app executable act as the command
-// line tool when it is started by a program instead of a terminal.
-func (command Command) run(ctx context.Context, timeout time.Duration, arguments ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	process := exec.CommandContext(ctx, command.Path, arguments...)
-	process.Env = append(os.Environ(), "TAILSCALE_BE_CLI=1")
-	process.Stdin = nil
-	process.WaitDelay = 2 * time.Second
-	var stdout, stderr limitedBuffer
-	process.Stdout, process.Stderr = &stdout, &stderr
-	err := process.Run()
-	switch {
-	case ctx.Err() != nil:
-		return stdout.Bytes(), &Error{Kind: KindTimeout}
-	case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
-		return nil, ErrNotInstalled
-	case stdout.overflow:
-		return nil, &Error{Kind: KindUnreadable}
-	case err != nil:
-		return stdout.Bytes(), classify(stderr.String() + "\n" + stdout.String())
-	}
-	return stdout.Bytes(), nil
-}
-
-// classify turns what a failed command printed into an Error.
-func classify(output string) error {
-	lower := strings.ToLower(output)
-	detail := shorten(output)
-	switch {
-	case strings.Contains(lower, "access denied"), strings.Contains(lower, "permission denied"),
-		strings.Contains(lower, "operation not permitted"), strings.Contains(lower, "must be root"):
-		return &Error{Kind: KindPermission, Detail: detail}
-	case strings.Contains(lower, "failed to connect to local tailscale"), strings.Contains(lower, "doesn't appear to be running"),
-		strings.Contains(lower, "is tailscaled running"), strings.Contains(lower, "tailscaled not running"):
-		return &Error{Kind: KindNotRunning}
-	case strings.Contains(lower, "logged out"), strings.Contains(lower, "needslogin"):
-		return &Error{Kind: KindLoggedOut}
-	}
-	return &Error{Kind: KindFailed, Detail: detail}
 }
 
 // shorten keeps the first 300 printable characters of output on one line.
@@ -434,20 +389,6 @@ func validName(name string) bool {
 		}
 	}
 	return true
-}
-
-// limitedBuffer keeps at most maxOutput bytes.
-type limitedBuffer struct {
-	bytes.Buffer
-	overflow bool
-}
-
-func (buffer *limitedBuffer) Write(p []byte) (int, error) {
-	if buffer.Len()+len(p) > maxOutput {
-		buffer.overflow = true
-		return len(p), nil
-	}
-	return buffer.Buffer.Write(p)
 }
 
 // Target is the Serve proxy target for OwnGit listening on port: Tailscale

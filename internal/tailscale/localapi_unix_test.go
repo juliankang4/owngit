@@ -91,9 +91,16 @@ func TestUnixSocketTrustsOnlyTailscalesServiceAccount(t *testing.T) {
 		})
 	}
 
-	// Reading Serve through a refused socket sends nothing and reports why.
+	// Reading status or Serve through a refused socket sends nothing and
+	// reports why.
 	tailscaledUID = me + 1
 	command := Command{LocalAPI: unixSocket(path)}
+	if _, err := command.Status(context.Background()); KindOf(err) != KindUntrustedSocket {
+		t.Fatalf("Status: %v", err)
+	}
+	if n := <-received; n != 0 {
+		t.Fatalf("the refused socket received %d bytes", n)
+	}
 	if _, err := command.ServeConfig(context.Background()); KindOf(err) != KindUntrustedSocket {
 		t.Fatalf("ServeConfig: %v", err)
 	}

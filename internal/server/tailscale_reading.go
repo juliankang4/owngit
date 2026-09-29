@@ -19,8 +19,8 @@ import (
 // Serve configuration read run at a time, and none again within the TTL.
 const tailscaleReadingTTL = 3 * time.Second
 
-// tailscaleReading is what a report reads from Tailscale: the status with
-// the tailscale command and the Serve configuration through the LocalAPI.
+// tailscaleReading is what a report reads from Tailscale's LocalAPI: the
+// status and the Serve configuration.
 type tailscaleReading struct {
 	command    tailscale.Command
 	commandErr error
@@ -147,8 +147,8 @@ func (sharing *Tailscale) finish(life context.Context, flight *readingInFlight, 
 }
 
 // addresses returns this computer's Tailscale addresses for the connection
-// label of a page, without waiting for the tailscale command, which can
-// take up to its time limit when tailscaled does not answer. When the
+// label of a page, without waiting for Tailscale, which can take up to its
+// time limit when tailscaled does not answer. When the
 // latest reading is older than tailscaleReadingTTL, it starts one in the
 // background, whose addresses later pages use. Only before the first
 // reading has finished does it wait for it, up to tailnetLabelWait.

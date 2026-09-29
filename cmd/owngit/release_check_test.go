@@ -19,7 +19,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	tailscaletest.RunIfFake()
 	// No test may run or reach the real Tailscale: only a fake's path given
 	// with --tailscale finds a command, and its LocalAPI is the fake's.
 	findTailscale = tailscaletest.Find
@@ -42,7 +41,7 @@ func TestMain(m *testing.M) {
 	serviceRunner = func(context.Context, string, ...string) ([]byte, error) {
 		return nil, errors.New("tests never run a service manager")
 	}
-	// The fake tailscale and the helper processes are this test binary.
+	// The helper processes are this test binary.
 	if err := testfixture.SkipRaceExitWaitInChildren(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

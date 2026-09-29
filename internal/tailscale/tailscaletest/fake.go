@@ -1,23 +1,14 @@
-// Package tailscaletest provides a fake Tailscale for tests: a fake tailscale
-// command and a fake LocalAPI. No test runs the real tailscale, reaches the
-// real LocalAPI or changes this computer's Tailscale settings.
+// Package tailscaletest provides a fake Tailscale for tests: a fake
+// LocalAPI and an empty file that stands for the tailscale command. No test
+// reaches the real LocalAPI or changes this computer's Tailscale settings,
+// and OwnGit never runs the command.
 //
-// The fake command is the test binary itself, linked under a private path
-// for each fake: a package's TestMain calls RunIfFake, which acts as
-// tailscale when the process runs from such a path and the arguments are a
-// tailscale command. The fake LocalAPI is a loopback HTTP server in the test
-// process that answers the serve-config resource as Tailscale does, with a
-// version (ETag) and a change applied only to the version it was made from
-// (If-Match). Fake.Command returns a tailscale.Command that uses both.
-//
-// The state file beside the command's path says what the fake reports and
-// records every call, so a test can check exactly what OwnGit asked. A
-// command therefore reaches the state of the fake it was started from,
-// whatever another test set up meanwhile. The test, the LocalAPI and every
-// command, each in its own process, read and change the state file only
-// while holding the lock file next to it. On Windows a file that one process
-// has open cannot be replaced by another, so a read beside a command's save
-// would fail with a sharing violation.
+// The fake LocalAPI is a loopback HTTP server in the test process that
+// answers Tailscale's status and the serve-config resource as Tailscale
+// does, with a version (ETag) and a change applied only to the version it
+// was made from (If-Match). Fake.Command returns a tailscale.Command that
+// reaches it. The fake's state says what it reports and records every
+// request, so a test can check exactly what OwnGit asked.
 package tailscaletest
 
 import (
@@ -26,29 +17,30 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"owngit/internal/state"
 	"owngit/internal/tailscale"
 )
 
 // State is what the fake reports and what it was asked.
 type State struct {
-	// Status is printed for "status --json", unless StatusError is set.
+	// Status is the answer to a status read, unless StatusError is set.
 	Status Status `json:"status"`
-	// StatusError is printed to standard error for "status --json", which
-	// then fails, like a client whose daemon does not run.
+	// StatusError is the error the LocalAPI answers a status read with.
 	StatusError string `json:"status_error,omitempty"`
+	// NotRunning makes every connection to the LocalAPI fail, as when
+	// tailscaled does not run.
+	NotRunning bool `json:"not_running,omitempty"`
 	// Serve is the Serve configuration, and ServeExtra its fields that
 	// tailscale.ServeConfig does not name, such as Services, which the
 	// LocalAPI keeps and reports as Tailscale keeps fields OwnGit does not
@@ -76,7 +68,7 @@ type State struct {
 	// before it takes effect, as Tailscale does while it fetches a
 	// certificate. Other calls are answered meanwhile.
 	WriteDelay int `json:"write_delay,omitempty"`
-	// ReadDelay does the same for "status --json" and reads of the Serve
+	// ReadDelay does the same for status reads and reads of the Serve
 	// configuration, as a slow tailscaled does.
 	ReadDelay int `json:"read_delay,omitempty"`
 	// ServeReadErrorAfterWrite is the error the LocalAPI answers reads of
@@ -90,17 +82,17 @@ type State struct {
 	// Tailscale kept the change.
 	WriteErrorAfterChange string `json:"write_error_after_change,omitempty"`
 
-	// Calls are the argument lists the fake command was run with and the
-	// LocalAPI requests (ServeRead, ServeWrite), in order.
+	// Calls are the LocalAPI requests (StatusRead, ServeRead, ServeWrite),
+	// in order, and whatever a test adds.
 	Calls [][]string `json:"calls,omitempty"`
-	// Running counts the commands and LocalAPI requests in progress, delays
-	// included, and MaxRunning the most that were in progress at once, so a
-	// test can tell whether calls overlapped. A command killed during its
-	// delay stays counted.
+	// Running counts the LocalAPI requests in progress, delays included, and
+	// MaxRunning the most that were in progress at once, so a test can tell
+	// whether calls overlapped. A request abandoned during its delay stays
+	// counted until the delay ends.
 	Running    int `json:"running,omitempty"`
 	MaxRunning int `json:"max_running,omitempty"`
 
-	// HoldReads makes "status --json" and reads of the Serve configuration
+	// HoldReads makes status reads and reads of the Serve configuration
 	// wait, after any ReadDelay, until the test clears it, so a test can
 	// change the state at a known point: a waiting read answers from the
 	// state as it is when released. PassReads lets that many more reads
@@ -110,7 +102,7 @@ type State struct {
 	HeldReads int  `json:"held_reads,omitempty"`
 }
 
-// Status is the subset of "tailscale status --json" the fake prints.
+// Status is the subset of Tailscale's status the fake answers.
 type Status struct {
 	BackendState   string          `json:"BackendState"`
 	Version        string          `json:"Version,omitempty"`
@@ -148,6 +140,7 @@ func Running() Status {
 
 // Calls recorded for LocalAPI requests.
 const (
+	StatusRead = "status GET"
 	ServeRead  = "serve-config GET"
 	ServeWrite = "serve-config POST"
 )
@@ -156,13 +149,17 @@ const (
 // Tailscale app for macOS does.
 const localAPIPassword = "synthetic-localapi-password"
 
-// Fake is one fake tailscale command, its LocalAPI and its state file.
+// Fake is one fake Tailscale: its LocalAPI, its state and the file that
+// stands for its tailscale command.
 type Fake struct {
 	t *testing.T
-	// Path runs the fake command.
+	// Path is the empty file that stands for the tailscale command.
 	Path     string
-	file     string
 	localAPI *httptest.Server
+	// mu guards state, the State as JSON, so that every reader gets its own
+	// copy.
+	mu    sync.Mutex
+	state []byte
 }
 
 // fakes are the fakes of this process by Path, for Find.
@@ -178,38 +175,41 @@ func Find(path string) (tailscale.Command, error) {
 	return tailscale.Command{}, tailscale.ErrNotInstalled
 }
 
-// Command returns the command that runs the fake and reaches its LocalAPI.
+// Command returns the command whose LocalAPI is the fake's.
 func (fake *Fake) Command() tailscale.Command {
 	address := fake.localAPI.Listener.Addr().String()
 	return tailscale.Command{Path: fake.Path, LocalAPI: func(ctx context.Context) (net.Conn, string, error) {
+		var notRunning bool
+		if err := fake.update(func(state *State) bool { notRunning = state.NotRunning; return false }); err != nil {
+			return nil, "", err
+		}
+		if notRunning {
+			return nil, "", errors.New("fake tailscale: connection refused")
+		}
 		var dialer net.Dialer
 		conn, err := dialer.DialContext(ctx, "tcp", address)
 		return conn, localAPIPassword, err
 	}}
 }
 
-// New creates a fake that reports state. Its executable, LocalAPI and state
-// file belong to this test.
+// New creates a fake that reports state. Its LocalAPI and the file that
+// stands for its command belong to this test.
 func New(t *testing.T, state State) *Fake {
 	t.Helper()
-	executable, err := os.Executable()
+	name := "tailscale"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	content, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "tailscale"+filepath.Ext(executable))
-	if err := os.Link(executable, path); err != nil {
-		// The build cache and the temporary folder can be on different
-		// file systems.
-		if err := copyExecutable(executable, path); err != nil {
-			t.Fatal(err)
-		}
-	}
-	fake := &Fake{t: t, Path: path, file: stateFile(path)}
-	// No command can run before Path is returned, so this needs no lock.
-	if err := store(fake.file, state); err != nil {
-		t.Fatal(err)
-	}
-	fake.localAPI = httptest.NewServer(http.HandlerFunc(fake.serveConfig))
+	fake := &Fake{t: t, Path: path, state: content}
+	fake.localAPI = httptest.NewServer(http.HandlerFunc(fake.answer))
 	fakes.Store(path, fake)
 	t.Cleanup(func() {
 		fakes.Delete(path)
@@ -218,28 +218,10 @@ func New(t *testing.T, state State) *Fake {
 	return fake
 }
 
-func stateFile(executable string) string {
-	return executable + ".json"
-}
-
-func copyExecutable(source, target string) error {
-	in, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(out, in)
-	return errors.Join(copyErr, out.Close())
-}
-
 // Update changes the fake's state.
 func (fake *Fake) Update(change func(*State)) {
 	fake.t.Helper()
-	if err := update(fake.file, func(state *State) bool { change(state); return true }); err != nil {
+	if err := fake.update(func(state *State) bool { change(state); return true }); err != nil {
 		fake.t.Fatal(err)
 	}
 }
@@ -248,7 +230,7 @@ func (fake *Fake) Update(change func(*State)) {
 func (fake *Fake) State() State {
 	fake.t.Helper()
 	var current State
-	if err := update(fake.file, func(state *State) bool { current = *state; return false }); err != nil {
+	if err := fake.update(func(state *State) bool { current = *state; return false }); err != nil {
 		fake.t.Fatal(err)
 	}
 	return current
@@ -276,7 +258,7 @@ func (fake *Fake) AwaitHeldReads(n int) {
 	}
 }
 
-// Calls returns the commands run so far, each joined with spaces.
+// Calls returns the calls so far, each joined with spaces.
 func (fake *Fake) Calls() []string {
 	fake.t.Helper()
 	var calls []string
@@ -286,94 +268,44 @@ func (fake *Fake) Calls() []string {
 	return calls
 }
 
-// Writes returns the calls so far that change Tailscale, or would: Serve
-// changes and commands other than reads.
+// Writes returns the calls so far that change Tailscale, or would: every
+// call other than a read.
 func (fake *Fake) Writes() []string {
 	var writes []string
 	for _, call := range fake.Calls() {
-		if call != "version" && call != "status --json" && call != ServeRead {
+		if call != StatusRead && call != ServeRead {
 			writes = append(writes, call)
 		}
 	}
 	return writes
 }
 
-// update runs change on the state with the lock held, and saves the state
-// when change returns true.
-func update(file string, change func(*State) bool) error {
-	unlock, err := lockFile(file + ".lock")
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	state, err := load(file)
-	if err != nil {
+// update runs change on a copy of the state and keeps that copy when
+// change returns true.
+func (fake *Fake) update(change func(*State) bool) error {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	var state State
+	if err := json.Unmarshal(fake.state, &state); err != nil {
 		return err
 	}
 	if !change(&state) {
 		return nil
 	}
-	return store(file, state)
-}
-
-func load(file string) (State, error) {
-	var state State
-	content, err := os.ReadFile(file)
-	if err != nil {
-		return state, err
-	}
-	return state, json.Unmarshal(content, &state)
-}
-
-// store writes the state in place. Every reader holds the lock, so none
-// sees a half-written file. Replacing the file by a rename instead fails
-// on Windows while any other handle is open on it, even one that only
-// reads its attributes, such as another fake command checking that the
-// file exists or a virus scanner looking at the last write.
-func store(file string, state State) error {
-	content, err := json.MarshalIndent(state, "", "  ")
+	content, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(file, content, 0o600)
+	fake.state = content
+	return nil
 }
 
-// RunIfFake acts as tailscale and exits when this process was started as
-// a fake. Call it first in TestMain. A fake answers every invocation, so an
-// unsupported command fails rather than running the tests.
-func RunIfFake() {
-	executable, err := os.Executable()
-	if err != nil {
-		return
-	}
-	file := stateFile(executable)
-	if _, err := os.Stat(file); err != nil {
-		return
-	}
-	os.Exit(run(file, os.Args[1:]))
-}
-
-// run handles one fake command. It returns the command's exit code, or 3
-// when the state cannot be read or saved.
-func run(file string, arguments []string) int {
-	code := 0
-	err := call(file, arguments, false, strings.Join(arguments, " ") == "status --json", func(state *State) {
-		code = handle(state, arguments)
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 3
-	}
-	return code
-}
-
-// call runs one call of the fake, a command or a LocalAPI request: it counts
-// the call as running, waits for the delay of a write or a read and for a
-// held read to be released, then records the call and answers it with the
-// state held.
-func call(file string, arguments []string, write, read bool, answer func(*State)) error {
+// call runs one LocalAPI request: it counts the call as running, waits for
+// the delay of a write or a read and for a held read to be released, then
+// records the call and answers it from the state.
+func (fake *Fake) call(name string, write, read bool, answer func(*State)) error {
 	var started State
-	err := update(file, func(state *State) bool {
+	err := fake.update(func(state *State) bool {
 		state.Running++
 		state.MaxRunning = max(state.MaxRunning, state.Running)
 		started = *state
@@ -388,13 +320,13 @@ func call(file string, arguments []string, write, read bool, answer func(*State)
 		time.Sleep(time.Duration(started.ReadDelay) * time.Millisecond)
 	}
 	if read {
-		if err := awaitRelease(file); err != nil {
+		if err := fake.awaitRelease(); err != nil {
 			return err
 		}
 	}
-	return update(file, func(state *State) bool {
+	return fake.update(func(state *State) bool {
 		state.Running--
-		state.Calls = append(state.Calls, arguments)
+		state.Calls = append(state.Calls, []string{name})
 		answer(state)
 		return true
 	})
@@ -402,11 +334,11 @@ func call(file string, arguments []string, write, read bool, answer func(*State)
 
 // awaitRelease returns once this read may answer: nothing holds reads, or a
 // pass is left (HoldReads).
-func awaitRelease(file string) error {
+func (fake *Fake) awaitRelease() error {
 	held := false
 	for {
 		released := false
-		err := update(file, func(state *State) bool {
+		err := fake.update(func(state *State) bool {
 			if state.HoldReads && state.PassReads == 0 {
 				if held {
 					return false
@@ -431,39 +363,54 @@ func awaitRelease(file string) error {
 	}
 }
 
-func handle(state *State, arguments []string) int {
-	command := strings.Join(arguments, " ")
-	switch {
-	case command == "version":
-		fmt.Println("1.102.5-test")
-		return 0
-	case command == "status --json":
-		if state.StatusError != "" {
-			fmt.Fprintln(os.Stderr, state.StatusError)
-			return 1
-		}
-		content, _ := json.MarshalIndent(state.Status, "", "  ")
-		fmt.Println(string(content))
-		return 0
-	}
-	fmt.Fprintf(os.Stderr, "fake tailscale: unsupported command %q\n", command)
-	return 2
-}
-
-// serveConfig answers a LocalAPI request to the serve-config resource as
-// Tailscale does: a read gets the configuration and its version, the SHA-256
-// of the JSON, in the ETag header; a change replaces the configuration only
-// when its If-Match header has the current version, and is otherwise
-// answered 412 without a change.
-func (fake *Fake) serveConfig(response http.ResponseWriter, request *http.Request) {
+// answer answers a LocalAPI request as Tailscale does. A status read, of
+// the status without other devices, gets Status. A read of the serve-config
+// resource gets the configuration and its version, the SHA-256 of the JSON,
+// in the ETag header; a change replaces the configuration only when its
+// If-Match header has the current version, and is otherwise answered 412
+// without a change.
+func (fake *Fake) answer(response http.ResponseWriter, request *http.Request) {
 	if _, password, _ := request.BasicAuth(); password != localAPIPassword {
 		http.Error(response, "bad password", http.StatusForbidden)
 		return
 	}
-	if request.URL.Path != "/localapi/v0/serve-config" || request.Host != "local-tailscaled.sock" {
+	if request.Host != "local-tailscaled.sock" {
 		http.NotFound(response, request)
 		return
 	}
+	switch {
+	case request.URL.Path == "/localapi/v0/status" && request.Method == http.MethodGet && request.URL.RawQuery == "peers=false":
+		fake.status(response)
+	case request.URL.Path == "/localapi/v0/serve-config":
+		fake.serveConfig(response, request)
+	default:
+		http.NotFound(response, request)
+	}
+}
+
+// status answers a status read.
+func (fake *Fake) status(response http.ResponseWriter) {
+	var code int
+	var answer []byte
+	err := fake.call(StatusRead, false, true, func(state *State) {
+		if state.StatusError != "" {
+			code, answer = http.StatusInternalServerError, errorJSON(state.StatusError)
+			return
+		}
+		code = http.StatusOK
+		answer, _ = json.Marshal(state.Status)
+	})
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(code)
+	response.Write(answer)
+}
+
+// serveConfig answers a request to the serve-config resource.
+func (fake *Fake) serveConfig(response http.ResponseWriter, request *http.Request) {
 	write := request.Method == http.MethodPost
 	name := ServeRead
 	if write {
@@ -477,7 +424,7 @@ func (fake *Fake) serveConfig(response http.ResponseWriter, request *http.Reques
 	var status int
 	var answer []byte
 	var version string
-	err = call(fake.file, []string{name}, write, !write, func(state *State) {
+	err = fake.call(name, write, !write, func(state *State) {
 		if write {
 			status, answer = state.change(request.Header.Get("If-Match"), body)
 			return
@@ -560,23 +507,4 @@ func versionOf(content []byte) string {
 func errorJSON(text string) []byte {
 	content, _ := json.Marshal(struct{ Error string }{text})
 	return content
-}
-
-// lockFile holds the operating system's lock on the file at path, waiting
-// up to five seconds for another fake call to release it. The file is kept
-// between calls: on Windows a name that was just deleted cannot be created
-// again while any handle to it is still open, so a lock taken by creating
-// and deleting a file failed now and then with "Access is denied".
-func lockFile(path string) (func(), error) {
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(25 * time.Millisecond) {
-		release, err := state.AcquireExclusiveFileLock(path)
-		switch {
-		case err == nil:
-			return release, nil
-		case !errors.Is(err, state.ErrInstanceRunning):
-			return nil, fmt.Errorf("fake tailscale: lock %s: %w", path, err)
-		case time.Now().After(deadline):
-			return nil, fmt.Errorf("fake tailscale: lock %s is still held after five seconds", path)
-		}
-	}
 }

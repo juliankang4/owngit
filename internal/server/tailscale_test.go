@@ -291,9 +291,7 @@ func TestTailscaleProblemsChangeNothing(t *testing.T) {
 			fakeState.Status.Self.DNSName, fakeState.Status.CertDomains = "gitbox.headscale.internal.", nil
 		}, string(tailscale.KindHTTPSUnavailable), 0},
 		{"MagicDNS off", func(fakeState *tailscaletest.State) { fakeState.Status.CurrentTailnet.MagicDNSEnabled = false }, string(tailscale.KindMagicDNSOff), 0},
-		{"daemon down", func(fakeState *tailscaletest.State) {
-			fakeState.StatusError = "failed to connect to local Tailscale daemon; it doesn't appear to be running"
-		}, string(tailscale.KindNotRunning), 0},
+		{"daemon down", func(fakeState *tailscaletest.State) { fakeState.NotRunning = true }, string(tailscale.KindNotRunning), 0},
 		{"not the operator", func(fakeState *tailscaletest.State) { fakeState.WriteDenied = true }, string(tailscale.KindPermission), 1},
 		{"Tailscale older than 1.50", func(fakeState *tailscaletest.State) { fakeState.Unversioned = true }, string(tailscale.KindOutdated), 0},
 		{"change not kept", func(fakeState *tailscaletest.State) { fakeState.IgnoreWrites = true }, TailscaleProblemReadBack, 1},
@@ -763,7 +761,7 @@ func TestTurningOnAfterARenameDoesNotTakeOverAnEndpointForTheNewName(t *testing.
 func reads(fake *tailscaletest.Fake) int {
 	count := 0
 	for _, call := range fake.Calls() {
-		if call == "status --json" || call == tailscaletest.ServeRead {
+		if call == tailscaletest.StatusRead || call == tailscaletest.ServeRead {
 			count++
 		}
 	}

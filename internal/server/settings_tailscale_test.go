@@ -745,7 +745,7 @@ func TestSharingPageDoesNotWaitForTailscaleBeyondItsDeadline(t *testing.T) {
 	}
 	// Only turning on was answered; the page's reading is still waiting.
 	fake.AwaitHeldReads(1)
-	if calls := fake.Calls(); !slices.Equal(calls, []string{"status --json"}) {
+	if calls := fake.Calls(); !slices.Equal(calls, []string{tailscaletest.StatusRead}) {
 		t.Fatalf("answered %q, want only the status read of turning on", calls)
 	}
 	// The reading goes on in the background; wait for it before the fake

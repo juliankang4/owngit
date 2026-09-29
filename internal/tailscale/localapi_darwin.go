@@ -148,3 +148,17 @@ func macStandaloneCredentials() (int, string, error) {
 	}
 	return port, password, nil
 }
+
+// limitedBuffer keeps at most maxOutput bytes.
+type limitedBuffer struct {
+	bytes.Buffer
+	overflow bool
+}
+
+func (buffer *limitedBuffer) Write(p []byte) (int, error) {
+	if buffer.Len()+len(p) > maxOutput {
+		buffer.overflow = true
+		return len(p), nil
+	}
+	return buffer.Buffer.Write(p)
+}

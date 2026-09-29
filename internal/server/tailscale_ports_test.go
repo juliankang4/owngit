@@ -578,3 +578,40 @@ func TestTailscaleChangeWithALostAnswerMayBeApplied(t *testing.T) {
 		t.Fatalf("record after turning off: %+v", record)
 	}
 }
+
+// Sharing acts only on what Tailscale's LocalAPI answers, the connection
+// whose listener OwnGit checks (tailscale.Command.LocalAPI): the name it
+// writes to Serve and saves comes from the status read there, and the
+// tailscale command found beside it, here another fake with another name,
+// is asked nothing.
+func TestSharingActsOnlyOnWhatTheLocalAPIAnswers(t *testing.T) {
+	ctx := context.Background()
+	app, real := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	const otherName = "other.tail0000.ts.net"
+	otherStatus := tailscaletest.Running()
+	otherStatus.Self.DNSName, otherStatus.CertDomains = otherName+".", []string{otherName}
+	other := tailscaletest.New(t, tailscaletest.State{Status: otherStatus})
+	command := other.Command()
+	command.LocalAPI = real.Command().LocalAPI
+	app.Tailscale.Find = func() (tailscale.Command, error) { return command, nil }
+	target := tailscale.Target(7654)
+
+	change, err := app.Tailscale.On(ctx, nil, 443)
+	if err != nil || change.Record.Name != tailscaletest.Name || !change.Record.Confirmed {
+		t.Fatalf("turning on: %+v %v", change.Record, err)
+	}
+	serve := real.State().Serve
+	if !serve.Endpoint(tailscaletest.Name, 443, target).Exact || !serve.Endpoint(otherName, 443, target).Free {
+		t.Fatalf("Tailscale has %+v", serve)
+	}
+	settings, hosts, _, _ := savedSharing(t, app.Store)
+	if settings.BaseURL != "https://"+tailscaletest.Name || !slices.Equal(hosts, []string{tailscaletest.Name}) {
+		t.Fatalf("saved base URL %q, hosts %v", settings.BaseURL, hosts)
+	}
+	if _, err := app.Tailscale.Off(ctx); err != nil || !real.Endpoint(443, target).Free {
+		t.Fatalf("turning off: %v, endpoint %+v", err, real.Endpoint(443, target))
+	}
+	if calls := other.Calls(); len(calls) != 0 {
+		t.Fatalf("the other Tailscale was asked %q", calls)
+	}
+}
