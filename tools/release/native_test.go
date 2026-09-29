@@ -612,6 +612,10 @@ require(doctor("", running: true, asked: .noAccessFile) == .unavailable(why: .no
 require(doctor("{\"code\":\"doctor.address_taken\",\"message\":\"m\"}", asked: .notFound) == .unavailable(why: .addressTaken), "another program answering 404")
 require(doctor("") == .unavailable(why: .noAnswer), "not running and nothing named")
 require(doctorState(output: nil, asked: .notFound) == .unavailable(why: .noAnswer), "doctor failed")
+require(boundedStarting(.unavailable(why: .starting), checks: 0) == .unavailable(why: .starting), "first starting answer")
+require(boundedStarting(.unavailable(why: .starting), checks: startingChecks - 1) == .unavailable(why: .starting), "starting within the bound")
+require(boundedStarting(.unavailable(why: .starting), checks: startingChecks) == .unavailable(why: .noStatus), "starting past the bound")
+require(boundedStarting(.unavailable(why: .noStatus), checks: startingChecks) == .unavailable(why: .noStatus), "other states pass")
 require(doctorState(output: data("{\"ok\":false}"), asked: .refused) == .unavailable(why: .noAnswer), "doctor error JSON")
 
 let helper = "/Applications/OwnGit.app/Contents/Helpers/owngit"

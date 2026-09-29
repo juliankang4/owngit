@@ -276,13 +276,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// refresh asks the server for its status, and asks owngit doctor when
     /// the server does not answer. done receives the new state; a call
     /// while a check runs waits for that check.
+    /// startingInARow counts the checks in a row that found OwnGit starting.
+    private var startingInARow = 0
+
     private func refresh(done: ((PanelState) -> Void)? = nil) {
         if waiting != nil {
             done.map { waiting?.append($0) }
             return
         }
         waiting = done.map { [$0] } ?? []
-        requestStatus(retry: true) { [self] state in
+        requestStatus(retry: true) { [self] answer in
+            let state = boundedStarting(answer, checks: startingInARow)
+            startingInARow = state == .unavailable(why: .starting) ? startingInARow + 1 : 0
             let callers = waiting ?? []
             waiting = nil
             if case .status(let status) = state, !status.shown {
