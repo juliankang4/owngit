@@ -265,7 +265,7 @@ var importCatalog = map[MessageCode]message{
 	MsgImportErrorNetwork:       {en: "The source could not be reached.", ko: "원본에 연결할 수 없었습니다."},
 	MsgImportErrorProtocol:      {en: "The source sent a response that OwnGit could not accept.", ko: "원본이 OwnGit이 받아들일 수 없는 응답을 보냈습니다."},
 	MsgImportErrorTooLarge:      {en: "The source is larger than the import limits.", ko: "원본이 가져오기 한도보다 큽니다."},
-	MsgImportErrorTooManyRefs:   {en: "The source has more than 50,000 refs, the most an import accepts. Pull request refs count too, although they are not imported. Clone the source and push its branches and tags to a new repository instead.", ko: "원본의 ref가 가져오기 한도인 50,000개를 넘습니다. 풀 리퀘스트 ref는 가져오지 않지만 개수에는 들어갑니다. 원본을 clone한 뒤 브랜치와 태그를 새 저장소에 푸시하세요."},
+	MsgImportErrorTooManyRefs:   {en: "The source has more than 50,000 refs, the most an import accepts. If the source does not support Git protocol v2, pull request refs count too, although they are not imported. Clone the source and push its branches and tags to a new repository instead.", ko: "원본의 ref가 가져오기 한도인 50,000개를 넘습니다. 원본이 Git 프로토콜 v2를 지원하지 않으면 가져오지 않는 풀 리퀘스트 ref도 개수에 들어갑니다. 원본을 clone한 뒤 브랜치와 태그를 새 저장소에 푸시하세요."},
 	MsgImportErrorIndex:         {en: "The received pack could not be indexed.", ko: "받은 팩을 색인하지 못했습니다."},
 	MsgImportErrorVerify:        {en: "The received content did not pass verification.", ko: "받은 내용이 검증을 통과하지 못했습니다."},
 	MsgImportErrorPublish:       {en: "The imported refs could not be published.", ko: "가져온 ref를 게시하지 못했습니다."},
