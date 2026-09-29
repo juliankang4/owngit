@@ -145,6 +145,7 @@ func TestParseLsRefsRefusals(t *testing.T) {
 		{"zero peeled", []string{sha1A + " refs/tags/v peeled:" + zero1}, ErrInvalidObjectID},
 		{"short peeled", []string{sha1A + " refs/tags/v peeled:1234"}, ErrInvalidObjectID},
 		{"bad symref", []string{sha1A + " HEAD symref-target:main"}, ErrInvalidName},
+		{"two symrefs", []string{sha1A + " HEAD symref-target:refs/heads/a symref-target:refs/heads/b"}, ErrConflictingRefs},
 		{"symref disagrees", []string{sha1A + " HEAD symref-target:refs/heads/main", sha1B + " refs/heads/main"}, ErrConflictingRefs},
 		{"remote error", []string{"ERR denied"}, ErrRemoteError},
 	} {

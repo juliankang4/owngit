@@ -163,10 +163,11 @@ func (s *parseState) readLsRefsRecord(offset int64, line string) error {
 		return err
 	}
 	ref := &s.result.Refs[len(s.result.Refs)-1]
+	symref := false
 	for _, attribute := range fields[2:] {
 		switch key, value, _ := strings.Cut(attribute, ":"); key {
 		case "symref-target":
-			if ref.SymrefTarget != "" {
+			if symref {
 				return s.fail(offset, ErrConflictingRefs, "a ref has more than one symref target")
 			}
 			if err := validateRefName(value); err != nil {
@@ -174,7 +175,7 @@ func (s *parseState) readLsRefsRecord(offset int64, line string) error {
 			}
 			// applySymrefs copies the statement onto the ref and HEAD and
 			// checks it against an advertised target.
-			ref.SymrefTarget = value
+			symref = true
 			s.result.Symrefs = append(s.result.Symrefs, Symref{Name: name, Target: value})
 		case "peeled":
 			if ref.PeeledOID != "" {
