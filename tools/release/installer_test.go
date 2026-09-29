@@ -762,7 +762,13 @@ type psInstall struct {
 }
 
 func newPsInstall(t *testing.T, release *syntheticRelease, shell string) *psInstall {
-	home := t.TempDir()
+	// The installer names folders by their final path, so a temporary folder
+	// with a short (8.3) name, as on the CI runner, is compared by its long
+	// name.
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	sum := sha1.Sum(release.server.Certificate().Raw)
 	run := &psInstall{shell: shell, home: home, log: filepath.Join(home, "owngit.log"), thumb: strings.ToUpper(hex.EncodeToString(sum[:]))}
 	run.env = append(os.Environ(),
