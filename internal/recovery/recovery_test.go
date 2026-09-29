@@ -204,6 +204,24 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 	noErr(t, Create(ctx, store, manager, filepath.Join(sticky, "backup")))
 	noErr(t, Restore(ctx, backup, filepath.Join(sticky, "state"), filepath.Join(sticky, "repositories"), ""))
 	noErr(t, Restore(ctx, filepath.Join(sticky, "backup"), filepath.Join(root, "state"), filepath.Join(root, "repositories"), ""))
+
+	// Missing folders on the way are created (QA-124), but only where no
+	// other account can create names, as for a state directory.
+	for _, test := range []struct{ folder, refusal string }{
+		{shared, refusal},
+		{sticky, "other accounts can create names in " + sticky},
+	} {
+		missing := filepath.Join(test.folder, "missing")
+		err := Restore(ctx, backup, filepath.Join(missing, "state"), filepath.Join(root, "unused-repositories"), "")
+		if err == nil || !strings.Contains(err.Error(), test.refusal) {
+			t.Fatalf("Restore below %s: error=%v, want %q", missing, err, test.refusal)
+		}
+		if _, err := os.Lstat(missing); !os.IsNotExist(err) {
+			t.Fatalf("the refused restore created %s (%v)", missing, err)
+		}
+	}
+	noErr(t, Restore(ctx, backup, filepath.Join(root, "new", "state"), filepath.Join(root, "other", "deeper", "repositories"), ""))
+	noErr(t, Create(ctx, store, manager, filepath.Join(root, "backups", "daily", "backup")))
 }
 
 // Root restoring into a folder that another account owns is told to run the

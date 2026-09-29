@@ -31,9 +31,11 @@ type Destination struct {
 	stage  *os.File
 }
 
-// OpenDestination checks the parent of the folder path and holds it. The
-// parent may be on a network share, except when OwnGit runs as root or as
-// an elevated administrator on Windows, as for OpenDirectory.
+// OpenDestination checks the parent of the folder path and holds it,
+// creating it and its missing parents private to this account, as
+// CreateDirectory creates a state directory's. The parent may be on a
+// network share, except when OwnGit runs as root or as an elevated
+// administrator on Windows, as for OpenDirectory.
 func OpenDestination(path string) (*Destination, error) {
 	return openDestination(path, false)
 }

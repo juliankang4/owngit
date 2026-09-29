@@ -219,13 +219,13 @@ func OpenPrivateFolderIn(parent *os.File, name string) (*os.File, error) {
 }
 
 // openDestinationParent opens the parent of the Destination path through
-// openDirectory's walk, which checks no owner of a folder on the way,
-// names it by its final path, as a state directory is named, and holds the
-// way to it (holdWay): the access list that a folder inherits from its
-// drive's root lets other accounts rename it, so the way is held rather
-// than checked.
+// openDirectory's walk, which checks no owner of a folder on the way and
+// creates the missing ones private to this account, names it by its final
+// path, as a state directory is named, and holds the way to it (holdWay):
+// the access list that a folder inherits from its drive's root lets other
+// accounts rename it, so the way is held rather than checked.
 func openDestinationParent(path string, local bool) (*os.File, func(), error) {
-	parent, err := walkFolders(filepath.Dir(path), false, local)
+	parent, err := walkFolders(filepath.Dir(path), true, local)
 	if err != nil {
 		return nil, nil, err
 	}

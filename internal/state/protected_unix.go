@@ -401,9 +401,7 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 	}
 	var mayCreate func(wayEntry) error
 	if create {
-		mayCreate = func(entry wayEntry) error {
-			return notProtected(absolute, requireNoOtherWriter(entry.path, entry.info))
-		}
+		mayCreate = mayCreateOnTheWay(absolute)
 	}
 	dir, _, missing, err := walkWay(absolute, wayCheck(absolute, local, true), mayCreate)
 	if err != nil {
@@ -464,6 +462,14 @@ func notLocalState(name string) error {
 // the held directory while this account does not change it.
 func holdWay(*os.File) (func(), error) { return func() {}, nil }
 
+// mayCreateOnTheWay lets walkWay create the missing folders on the way to
+// path only in a folder where no other account can create names.
+func mayCreateOnTheWay(path string) func(wayEntry) error {
+	return func(entry wayEntry) error {
+		return notProtected(path, requireNoOtherWriter(entry.path, entry.info))
+	}
+}
+
 // requireNoOtherWriter refuses a folder that another account could create
 // names in, sticky or not.
 func requireNoOtherWriter(name string, info os.FileInfo) error {
@@ -482,18 +488,15 @@ func notProtected(path string, err error) error {
 	return fmt.Errorf("%s is not protected: %w; choose a folder that other accounts cannot change", path, err)
 }
 
-// openDestinationParent opens the parent of the Destination path and checks
-// it as a folder on the way to path (wayCheck), so no other account can
-// change the way to it or rename or remove what this account puts in it,
-// and the way needs no hold.
+// openDestinationParent opens the parent of the Destination path, creating
+// it and its missing parents as openDirectory does, and checks it as a
+// folder on the way to path (wayCheck), so no other account can change the
+// way to it or rename or remove what this account puts in it, and the way
+// needs no hold.
 func openDestinationParent(path string, local bool) (*os.File, func(), error) {
-	dir, _, missing, err := walkWay(filepath.Dir(path), wayCheck(path, local, false), nil)
+	dir, _, _, err := walkWay(filepath.Dir(path), wayCheck(path, local, false), mayCreateOnTheWay(path))
 	if err != nil {
 		return nil, nil, err
-	}
-	if missing != "" {
-		dir.Close()
-		return nil, nil, &os.PathError{Op: "open", Path: filepath.Dir(path), Err: fs.ErrNotExist}
 	}
 	return dir, func() {}, nil
 }

@@ -3,8 +3,42 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+// A Destination whose parent is missing creates it and the missing folders
+// above it, each private to this account, as a state directory's are made
+// (QA-124).
+func TestDestinationCreatesMissingParentsPrivately(t *testing.T) {
+	root := t.TempDir()
+	destination, err := OpenDestination(filepath.Join(root, "new", "deeper", "restored"))
+	noErr(t, err)
+	defer destination.Close()
+	if _, err := os.Lstat(destination.Path); !os.IsNotExist(err) {
+		t.Fatalf("the destination itself exists: %v", err)
+	}
+	held, err := OpenDirectory(root, false)
+	noErr(t, err)
+	defer held.Close()
+	for _, name := range []string{"new", "deeper"} {
+		folder, err := OpenPrivateFolderIn(held, name)
+		noErr(t, err)
+		defer folder.Close()
+		if runtime.GOOS != "windows" {
+			info, err := folder.Stat()
+			noErr(t, err)
+			if info.Mode().Perm() != 0o700 {
+				t.Fatalf("%s has mode %v", folder.Name(), info.Mode())
+			}
+		}
+		held = folder
+	}
+	stage, err := destination.CreateStage("restored.stage")
+	noErr(t, err)
+	destination.ReleaseStage()
+	noErr(t, os.Rename(stage, destination.Path))
+}
 
 // A Destination is named in its resolved parent, and its stage is a new
 // folder private to this account: an entry that already has the stage's
