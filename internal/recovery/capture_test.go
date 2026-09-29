@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/auth"
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -395,4 +396,47 @@ func (runner stoppingRunner) Run(ctx context.Context, directory string, stdin io
 		select {}
 	}
 	return runner.delegate.Run(ctx, directory, stdin, arguments...)
+}
+
+// With OWNGIT_TEST_SHARED_REPOSITORY_ROOT naming a folder on an SMB or NFS
+// share, repositories kept there and a state kept locally back up while
+// serving, and the backup verifies and restores.
+func TestBackupWhileServingWithSharedRepositories(t *testing.T) {
+	shared := os.Getenv("OWNGIT_TEST_SHARED_REPOSITORY_ROOT")
+	if shared == "" {
+		t.Skip("set OWNGIT_TEST_SHARED_REPOSITORY_ROOT to a folder on an SMB or NFS share")
+	}
+	ctx := context.Background()
+	root := t.TempDir()
+	repositoriesRoot, err := os.MkdirTemp(shared, "owngit-backup-test-")
+	noErr(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(repositoriesRoot) })
+	store, err := state.Open(ctx, filepath.Join(root, "state"))
+	noErr(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	adminHash, err := auth.HashPassword("admin-password")
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(ctx, repositoriesRoot, "open", "", adminHash, false))
+	runner, err := gitexec.New("", filepath.Join(root, "state", "runtime"))
+	noErr(t, err)
+	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoriesRoot}
+	for _, name := range []string{"alpha", "beta"} {
+		if _, err := manager.Create(ctx, name, ""); err != nil {
+			t.Fatal(err)
+		}
+		path, err := manager.Path(name)
+		noErr(t, err)
+		writeRefAsAPush(t, manager, name, "update-ref", "refs/heads/main", commitInto(t, path, name))
+	}
+	backup := filepath.Join(root, "backup")
+	report, err := CreateWhileServing(ctx, store, manager, backup)
+	noErr(t, err)
+	t.Logf("report=%+v", report)
+	temporary := filepath.Join(root, "temporary")
+	noErr(t, os.Mkdir(temporary, 0o700))
+	verification, err := Verify(ctx, backup, temporary, "")
+	noErr(t, err)
+	if !verification.Verified {
+		t.Fatalf("verification=%+v", verification)
+	}
 }
