@@ -963,6 +963,9 @@ func forgetCheckContainer(arguments []string) error {
 }
 
 func backupState(arguments []string) error {
+	if len(arguments) != 0 && arguments[0] == "verify" {
+		return verifyBackup(arguments[1:])
+	}
 	flags := flag.NewFlagSet("backup", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
@@ -1020,11 +1023,25 @@ func restoreState(arguments []string) error {
 	input := flags.String("input", "", "offline backup directory")
 	repositoryRoot := flags.String("repository-root", "", "new repository storage directory")
 	gitPath := flags.String("git", "", "Git executable path")
+	verifyFirst := flags.Bool("verify", false, "rehearse the restore first, as backup verify does, and restore only a verified backup")
+	temporary := flags.String("temp-dir", "", "folder for the rehearsal of --verify (default: the system's temporary folder)")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *input == "" || *repositoryRoot == "" {
 		return errors.New("restore requires --input and --repository-root and accepts no positional arguments")
+	}
+	if *verifyFirst {
+		result, err := recovery.Verify(context.Background(), *input, *temporary, *gitPath)
+		if !result.Verified {
+			printVerification(os.Stdout, result)
+			return errors.New("the backup did not pass verification, so nothing was restored")
+		}
+		fmt.Printf("Backup verified: %d repositories and the database passed the rehearsal.\n", len(result.Repositories))
+		if err != nil {
+			// Only the rehearsal folder was left behind.
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
 	}
 	if err := recovery.Restore(context.Background(), *input, *stateDir, *repositoryRoot, *gitPath); err != nil {
 		return err
@@ -1231,6 +1248,7 @@ func isHelpArgument(argument string) bool {
 // them, keyed by flag set name, for the usage line.
 var commandOperands = map[string]string{
 	"approve-host":       "<host>",
+	"backup verify":      "<backup>",
 	"import add":         "<name> <url>",
 	"import refresh":     "<name>",
 	"import status":      "<name>",

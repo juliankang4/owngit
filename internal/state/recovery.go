@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -63,6 +64,44 @@ type RecoveryCheckCycle struct {
 type CheckResultRecord struct {
 	AttemptID string
 	CheckResult
+}
+
+// CheckDatabase runs SQLite's integrity and foreign key checks on the whole
+// database, as backup verification does on the state it restored.
+func (s *Store) CheckDatabase(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA integrity_check`)
+	if err != nil {
+		return fmt.Errorf("check database integrity: %w", err)
+	}
+	var problems []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			rows.Close()
+			return fmt.Errorf("check database integrity: %w", err)
+		}
+		if line != "ok" {
+			problems = append(problems, line)
+		}
+	}
+	if err := closeRows(rows); err != nil {
+		return fmt.Errorf("check database integrity: %w", err)
+	}
+	if len(problems) != 0 {
+		return fmt.Errorf("the database is damaged: %s", strings.Join(problems, "; "))
+	}
+	violations, err := s.db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("check database foreign keys: %w", err)
+	}
+	violated := violations.Next()
+	if err := closeRows(violations); err != nil {
+		return fmt.Errorf("check database foreign keys: %w", err)
+	}
+	if violated {
+		return errors.New("the database has a record that refers to a missing record")
+	}
+	return nil
 }
 
 // RecoverySnapshot reads all portable state in one database transaction.

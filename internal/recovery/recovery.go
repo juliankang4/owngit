@@ -526,6 +526,9 @@ type restoreOperations struct {
 	rename          func(string, string) error
 	openState       func(context.Context, string) (*state.Store, error)
 	prepareExisting func(context.Context, *repository.Manager, *gitexec.Runner) error
+	// rehearsal, set by Verify, is told what the backup holds and how each
+	// repository's checks ended.
+	rehearsal *Verification
 }
 
 func defaultRestoreOperations() restoreOperations {
@@ -575,24 +578,22 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	if err != nil {
 		return err
 	}
+	rehearsal := operations.rehearsal
+	rehearsal.begin(manifest)
 	if err := validateManifest(manifest); err != nil {
 		return err
 	}
-	for _, item := range manifest.Repositories {
-		if item.Empty {
-			continue
+	// Every repository is checked, and each failure is named, before
+	// restore stops.
+	var failures []error
+	for index, item := range manifest.Repositories {
+		if err := checkBundleFile(inputRoot, item); err != nil {
+			rehearsal.record(index, err)
+			failures = append(failures, repositoryFailure(item.ID, err))
 		}
-		bundlePath := filepath.Join(inputRoot, filepath.FromSlash(item.Bundle))
-		if err := requireRegularFile(bundlePath); err != nil {
-			return fmt.Errorf("inspect bundle for %q: %w", item.ID, err)
-		}
-		digest, err := fileSHA256(bundlePath)
-		if err != nil {
-			return err
-		}
-		if digest != item.SHA256 {
-			return fmt.Errorf("bundle checksum mismatch for repository %q", item.ID)
-		}
+	}
+	if len(failures) != 0 {
+		return errors.Join(failures...)
 	}
 
 	suffix, err := randomSuffix()
@@ -623,10 +624,18 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	if err != nil {
 		return err
 	}
-	for _, item := range manifest.Repositories {
-		if err := restoreRepository(ctx, runner, inputRoot, repositoryStage, item); err != nil {
-			return fmt.Errorf("validate and restore repository %q: %w", item.ID, err)
+	for index, item := range manifest.Repositories {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
+		err := restoreRepository(ctx, runner, inputRoot, repositoryStage, item)
+		rehearsal.record(index, err)
+		if err != nil {
+			failures = append(failures, repositoryFailure(item.ID, err))
+		}
+	}
+	if len(failures) != 0 {
+		return errors.Join(failures...)
 	}
 
 	store, err := operations.openState(ctx, stateStage)
@@ -781,6 +790,39 @@ func readRefs(ctx context.Context, runner commandRunner, repositoryPath string) 
 	return refs, nil
 }
 
+// repositoryFailure names the repository whose restore check failed.
+func repositoryFailure(id string, err error) error {
+	return fmt.Errorf("validate and restore repository %q: %w", id, err)
+}
+
+// checkBundleFile checks that the bundle of item is a regular file with the
+// digest the manifest records.
+func checkBundleFile(inputRoot string, item RepositoryManifest) error {
+	if item.Empty {
+		return nil
+	}
+	bundlePath := filepath.Join(inputRoot, filepath.FromSlash(item.Bundle))
+	if err := requireRegularFile(bundlePath); err != nil {
+		return fmt.Errorf("inspect bundle: %w", err)
+	}
+	digest, err := fileSHA256(bundlePath)
+	if err != nil {
+		return err
+	}
+	if digest != item.SHA256 {
+		return errors.New("bundle checksum mismatch: the bundle is not the one the manifest records")
+	}
+	return nil
+}
+
+// restoreRepository restores item from its bundle into a new repository in
+// repositoryStage and checks it: the bundle is complete, the refs and HEAD
+// are the ones the manifest records, and git fsck finds every object that
+// they reach. Git computed each object's name from its content when it
+// indexed the bundle, so fsck checks only that the objects connect, as
+// import verification does; a full fsck would also refuse history that
+// OwnGit accepts on push and import, such as a commit with a malformed time
+// zone.
 func restoreRepository(ctx context.Context, runner commandRunner, inputRoot, repositoryStage string, item RepositoryManifest) error {
 	repositoryPath := filepath.Join(repositoryStage, item.ID+".git")
 	if _, err := runner.Run(ctx, "", nil, "init", "--bare", "--initial-branch=main", repositoryPath); err != nil {
@@ -833,6 +875,9 @@ func restoreRepository(ctx context.Context, runner commandRunner, inputRoot, rep
 		if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-e", ref.OID+"^{object}"); err != nil {
 			return fmt.Errorf("restored object %s is missing: %w", ref.OID, err)
 		}
+	}
+	if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "fsck", "--connectivity-only", "--no-progress", "--no-dangling"); err != nil {
+		return fmt.Errorf("git fsck: %w", err)
 	}
 	return nil
 }
