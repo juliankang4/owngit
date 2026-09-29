@@ -37,7 +37,11 @@ func waitForTransfersToEnd(t *testing.T, handler *Handler) {
 // push, such as one left before OwnGit started, stays for the startup cleanup.
 func TestAPushOverTheRequestLimitLeavesNoQuarantine(t *testing.T) {
 	handler, work, _ := idleFixture(t, 16, time.Minute)
-	limits := useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 256 << 10 })
+	// OwnGit can put as much as a pipe holds into Git's input before
+	// receive-pack starts, up to 1 MiB (16 pages of 64 KiB). Above that,
+	// receive-pack has made its quarantine and read part of the pack when the
+	// limit stops it, so the push leaves objects for OwnGit to remove.
+	limits := useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 2 << 20 })
 	logs := captureLog(t)
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -47,7 +51,7 @@ func TestAPushOverTheRequestLimitLeavesNoQuarantine(t *testing.T) {
 	noErr(t, os.Mkdir(earlier, 0o755))
 	noErr(t, os.WriteFile(filepath.Join(earlier, "kept"), []byte("kept"), 0o644))
 
-	content := make([]byte, 2<<20)
+	content := make([]byte, 4<<20)
 	_, err = rand.Read(content)
 	noErr(t, err)
 	noErr(t, os.WriteFile(filepath.Join(work, "large.bin"), content, 0o600))
