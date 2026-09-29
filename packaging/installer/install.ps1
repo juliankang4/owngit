@@ -89,9 +89,65 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
             } finally { $response.Dispose() }
         }
     }
-    function DigestOf([string]$File) {
-        (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant()
+    function HashOf([IO.Stream]$Stream) {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { ([BitConverter]::ToString($sha.ComputeHash($Stream)) -replace '-', '').ToLowerInvariant() } finally { $sha.Dispose() }
     }
+    function DigestOf([string]$File) {
+        $stream = [IO.File]::OpenRead($File)
+        try { HashOf $stream } finally { $stream.Dispose() }
+    }
+
+    # Nobody but this account, SYSTEM, the administrators and TrustedInstaller
+    # (and CREATOR OWNER, which means whoever creates an entry) may be able
+    # to change the folders the installer uses; otherwise another account
+    # could swap the checked program before it runs.
+    $trusted = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544',
+        'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464', 'S-1-3-0')
+    # Why another account can change the folder, or nothing. For the folder
+    # the installer creates entries in ($Holds), any right to create or
+    # remove entries counts, inheritable ones included, since what the
+    # installer creates inherits them; for the folders above it, the rights
+    # to rename or re-permit the way.
+    function Test-Folder([string]$Folder, [bool]$Holds) {
+        if ([IO.File]::GetAttributes($Folder) -band [IO.FileAttributes]::ReparsePoint) { return 'it is a link' }
+        try { $acl = Get-Acl -LiteralPath $Folder } catch { return 'its permissions cannot be read' }
+        if ($trusted -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return 'it belongs to another account' }
+        $mask = 0x100D0040
+        if ($Holds) { $mask = 0x500D0046 }
+        foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($rule.AccessControlType -ne 'Allow' -or $trusted -contains $rule.IdentityReference.Value) { continue }
+            if (-not $Holds -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
+            if (([int64][int]$rule.FileSystemRights) -band $mask) {
+                $who = $rule.IdentityReference.Value
+                try { $who = $rule.IdentityReference.Translate([Security.Principal.NTAccount]).Value } catch { }
+                return "$who can change it"
+            }
+        }
+    }
+    # Require-Way checks every folder from the drive root to $Folder, which
+    # exists; $Folder is the one the installer creates entries in.
+    function Require-Way([string]$Folder, [string]$Use) {
+        $root = [IO.Path]::GetPathRoot($Folder)
+        if ($root.StartsWith('\\') -or [IO.DriveInfo]::new($root).DriveType -eq 'Network') {
+            throw "$Folder is on a network share, whose server decides who can change it; $Use."
+        }
+        $way = $root
+        $parts = @($Folder.Substring($root.Length).Split([char[]]'\/', [StringSplitOptions]::RemoveEmptyEntries))
+        for ($i = -1; $i -lt $parts.Count; $i++) {
+            if ($i -ge 0) { $way = [IO.Path]::Combine($way, $parts[$i]) }
+            $reason = Test-Folder $way ($i -eq $parts.Count - 1)
+            if ($reason) { throw "Another account can change $way ($reason); $Use." }
+        }
+    }
+    $existing = $Dir
+    while (-not [IO.Directory]::Exists($existing)) {
+        $existing = [IO.Path]::GetDirectoryName($existing)
+        if (-not $existing) { throw "$Dir is on a drive that does not exist." }
+    }
+    Require-Way $existing 'choose a folder that only you can change with -Dir'
+    $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    Require-Way $tempParent.TrimEnd('\') 'set TEMP to a folder that only you can change'
 
     # The digest and the archive name come from the release's SHA256SUMS.
     # Without -Version, the name of the latest release's archive gives its
@@ -125,28 +181,23 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
             throw "$name does not match the release's SHA256SUMS (got $actual, expected $digest). Nothing was changed."
         }
         Add-Type -AssemblyName System.IO.Compression.FileSystem
+        # The digest of owngit.exe in the checked archive, which the program
+        # that runs below must have.
+        $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+        try {
+            $entry = $archive.GetEntry('owngit.exe')
+            if (-not $entry) { throw "$name holds no owngit.exe. Nothing was changed." }
+            $stream = $entry.Open()
+            try { $expected = HashOf $stream } finally { $stream.Dispose() }
+        } finally { $archive.Dispose() }
         if ([IO.Directory]::Exists($folder)) {
-            $archive = [IO.Compression.ZipFile]::OpenRead($zip)
-            try {
-                $entry = $archive.GetEntry('owngit.exe')
-                $same = $false
-                if ($entry -and [IO.File]::Exists($program)) {
-                    $check = [Security.Cryptography.SHA256]::Create()
-                    $stream = $entry.Open()
-                    try { $same = ([BitConverter]::ToString($check.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() -eq (DigestOf $program) }
-                    finally { $stream.Dispose() }
-                }
-            } finally { $archive.Dispose() }
-            if (-not $same) {
+            if (-not [IO.File]::Exists($program) -or (DigestOf $program) -ne $expected) {
                 throw "$folder exists but does not hold this release. Move it away and run the installer again."
             }
             "OwnGit $Version is already in $folder."
         } else {
             [void][IO.Directory]::CreateDirectory($Dir)
             [IO.Compression.ZipFile]::ExtractToDirectory($zip, $staged)
-            if (-not [IO.File]::Exists([IO.Path]::Combine($staged, 'owngit.exe'))) {
-                throw "$name holds no owngit.exe. Nothing was changed."
-            }
             [IO.Directory]::Move($staged, $folder)
             "Installed OwnGit $Version in $folder."
         }
@@ -159,18 +210,24 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
     # PowerShell ends a single-quoted string at any of these quote marks, so
     # each is doubled.
     $run = "& '" + ($program -replace "(['\u2018-\u201B])", '$1$1') + "'"
-    if ($NoService) {
-        "Run it now with: $run serve"
-        "Or run it as a service that starts by itself: $run service install"
-        return
-    }
-    # Messages that owngit writes to standard error are not failures; its
-    # exit code is.
-    $ErrorActionPreference = 'Continue'
-    & $program service install
-    if ($LASTEXITCODE -ne 0) {
-        throw """owngit service install"" did not finish. OwnGit $Version stays in $folder; after fixing what it reported, run: $run service install"
-    }
+    # The program stays open, readable by others but not replaceable, from
+    # its last check until "owngit service install" has run from it.
+    $held = [IO.File]::Open($program, 'Open', 'Read', 'Read')
+    try {
+        if ((HashOf $held) -ne $expected) { throw "$program changed after it was checked; run the installer again." }
+        if ($NoService) {
+            "Run it now with: $run serve"
+            "Or run it as a service that starts by itself: $run service install"
+            return
+        }
+        # Messages that owngit writes to standard error are not failures;
+        # its exit code is.
+        $ErrorActionPreference = 'Continue'
+        & $program service install
+        if ($LASTEXITCODE -ne 0) {
+            throw """owngit service install"" did not finish. OwnGit $Version stays in $folder; after fixing what it reported, run: $run service install"
+        }
+    } finally { $held.Dispose() }
 }
 
 try {

@@ -524,6 +524,50 @@ func TestInstallSh(t *testing.T) {
 		}
 	})
 
+	// Another account must not be able to change the folder that gets the
+	// program, a folder on the way to it, or the folder that holds the
+	// download folder; the mode bits stand in for that account here.
+	t.Run("folders another account can change are refused before downloading", func(t *testing.T) {
+		run := newShInstall(t, release)
+		base := filepath.Join(run.home, "ways")
+		noErr(t, os.Mkdir(base, 0o755))
+		folder := func(name string, mode os.FileMode) string {
+			path := filepath.Join(base, name)
+			noErr(t, os.MkdirAll(path, 0o755))
+			noErr(t, os.Chmod(path, mode))
+			return path
+		}
+		shared := folder("shared", 0o757)
+		sticky := folder("sticky", os.ModeSticky|0o777)
+		above := folder("above", 0o757)
+		below := folder(filepath.Join("above", "private"), 0o755)
+		noErr(t, os.Chmod(above, 0o757))
+		before := release.served()
+		for _, tc := range []struct{ target, refused, env string }{
+			{filepath.Join(shared, "owngit"), shared + " (every account can write it)", ""},
+			{filepath.Join(shared, "new", "owngit"), shared + " (every account can write it)", ""},
+			{filepath.Join(sticky, "owngit"), sticky + " (every account can write it)", ""},
+			{filepath.Join(below, "owngit"), above + " (every account can write it)", ""},
+			{filepath.Join(run.home, "bin", "owngit"), shared + " (every account can write it); set TMPDIR", "TMPDIR=" + shared},
+		} {
+			var env []string
+			if tc.env != "" {
+				env = []string{tc.env}
+			}
+			run.mustFail(t, env, "another account can change "+tc.refused, "--to", tc.target)
+			if _, err := os.Stat(tc.target); !os.IsNotExist(err) {
+				t.Errorf("a refused run left %s", tc.target)
+			}
+		}
+		if served := release.served(); served != before {
+			t.Errorf("refused runs downloaded %d files", served-before)
+		}
+		// A sticky folder that every account can write is fine above the
+		// folder that gets the program, as /tmp is for every other case.
+		target := filepath.Join(folder(filepath.Join("sticky", "mine"), 0o755), "owngit")
+		run.must(t, nil, "--no-service", "--to", target)
+	})
+
 	t.Run("a link at the target is refused before downloading", func(t *testing.T) {
 		run := newShInstall(t, release)
 		target := filepath.Join(run.home, "bin", "owngit")
@@ -729,6 +773,35 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		run.mustFailWith(t, nil, "owngit install: Could not download "+release.url()+"/download/"+path+" (it leads to "+plain+", which is not HTTPS). Nothing was changed.\n", "-Dir", psQuote(dir))
 		if names := dirNames(t, dir); len(names) != 0 {
 			t.Fatalf("%s holds %v", dir, names)
+		}
+	})
+
+	// Another account must not be able to change -Dir, a folder on the way
+	// to it, or TEMP. BUILTIN\Users stands in for that account.
+	t.Run("folders another account can change are refused before downloading", func(t *testing.T) {
+		run := newPsInstall(t, release, shell)
+		icacls := func(path string, grant string) {
+			if output, err := exec.Command("icacls", path, "/grant", "*S-1-5-32-545:"+grant).CombinedOutput(); err != nil {
+				t.Fatalf("icacls %s: %v\n%s", path, err, output)
+			}
+		}
+		shared := filepath.Join(run.home, "shared")
+		noErr(t, os.Mkdir(shared, 0o755))
+		icacls(shared, "(OI)(CI)M")
+		above := filepath.Join(run.home, "above")
+		below := filepath.Join(above, "private")
+		noErr(t, os.MkdirAll(below, 0o755))
+		icacls(above, "(DC)")
+		before := release.served()
+		run.mustFail(t, nil, "Another account can change "+shared+" (BUILTIN\\Users can change it); choose a folder", "-Dir", psQuote(shared))
+		run.mustFail(t, nil, "Another account can change "+shared+" (BUILTIN\\Users can change it); choose a folder", "-Dir", psQuote(filepath.Join(shared, "new")))
+		run.mustFail(t, nil, "Another account can change "+above+" (BUILTIN\\Users can change it); choose a folder", "-Dir", psQuote(below))
+		run.mustFail(t, []string{"TEMP=" + shared, "TMP=" + shared}, "Another account can change "+shared+" (BUILTIN\\Users can change it); set TEMP", "-Dir", psQuote(filepath.Join(run.home, "og")))
+		if served := release.served(); served != before {
+			t.Errorf("refused runs downloaded %d files", served-before)
+		}
+		if names := dirNames(t, shared); len(names) != 0 {
+			t.Errorf("%s holds %v", shared, names)
 		}
 	})
 

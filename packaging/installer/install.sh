@@ -38,6 +38,73 @@ system() {
 	return 1
 }
 
+# changeable prints why another account can change FOLDER ($1), or nothing:
+# it belongs to another account (not root), others or a shared group can
+# write it, or an access list allows changes. HOLDS ($2) is 1 for the
+# folder the installer creates entries in, where a sticky folder does not
+# help, since others can still take a name that does not exist yet; above
+# it a sticky folder such as /tmp is fine, since others cannot rename what
+# is in it. The rule is the one OwnGit uses for its state folder.
+changeable() {
+	info=$(ls -ldn -- "$1") || {
+		echo "it cannot be read"
+		return
+	}
+	set -f
+	# shellcheck disable=SC2086 # the fields of ls are wanted
+	set -- "$1" "$2" $info
+	set +f
+	mode=$3 uid=$5 gid=$6
+	if [ "$uid" != 0 ] && [ "$uid" != "$euid" ]; then
+		echo "it belongs to another account"
+		return
+	fi
+	case $2$mode in 0?????????[tT]*) return ;; esac
+	case $mode in ????????w*)
+		echo "every account can write it"
+		return
+		;;
+	esac
+	case $mode in ?????w*)
+		if [ "$gid" != "$own_group" ] && ! { [ "$os" = darwin ] && { [ "$gid" = 0 ] || [ "$gid" = 80 ]; }; }; then
+			echo "its group can write it"
+			return
+		fi
+		;;
+	esac
+	case $mode in ??????????+*)
+		# shellcheck disable=SC2010 # the access list lines of ls are read, not names
+		if [ "$os" = linux ]; then
+			echo "it has an access list"
+		elif ls -lde -- "$1" | grep -Eq '^ *[0-9]+: .* allow .*(add_file|add_subdirectory|delete|writesecurity|chown)'; then
+			echo "its access list lets others change it"
+		fi
+		;;
+	esac
+}
+
+# require_way refuses when another account can change FOLDER ($1), which
+# exists, or a folder on the way to it; see changeable. USE ($3) says what
+# to do instead.
+require_way() {
+	way=$(cd -P -- "$1" && pwd -P) || fail "could not read $1"
+	holds=$2 use=$3 folder=""
+	set -f
+	old_ifs=$IFS
+	IFS=/
+	# shellcheck disable=SC2086 # split at every /
+	set -- $way
+	IFS=$old_ifs
+	set +f
+	for part in "$@"; do
+		folder=${folder%/}/$part
+		last=0
+		[ "$folder" != "$way" ] || last=$holds
+		reason=$(changeable "$folder" "$last")
+		[ -z "$reason" ] || fail "another account can change $folder ($reason); $use"
+	done
+}
+
 usage() {
 	cat <<'EOF'
 Usage: install.sh [--version X.Y.Z] [--to PATH] [--no-service]
@@ -115,6 +182,18 @@ main() {
 		fail "$target is a link to $(readlink "$target"), which another install may own; update that install its own way, or choose a regular file with --to"
 	dir=$(dirname "$target")
 
+	# Nobody but this account (and root) may be able to change the folders
+	# the installer uses, or another account could swap the checked program
+	# before it runs. A group counts as this account's own only when it is
+	# its private group, named like the account.
+	euid=$("$id" -u)
+	own_group=none
+	if [ "$euid" != 0 ] && [ "$("$id" -gn)" = "$("$id" -un)" ]; then own_group=$("$id" -g); fi
+	existing=$dir
+	while [ ! -d "$existing" ]; do existing=$(dirname "$existing"); done
+	require_way "$existing" 1 "choose a folder that only you (or root) can change with --to"
+	require_way "${TMPDIR:-/tmp}" 0 "set TMPDIR to a folder that only you can change"
+
 	tmp=$("$mktemp" -d)
 	trap 'rm -f "$tmp/SHA256SUMS" "$tmp/archive.tar.gz" "$tmp/owngit"; rmdir "$tmp"' EXIT
 	fetch() {
@@ -151,8 +230,6 @@ main() {
 	# sudo only when this account cannot write the folder (or the nearest
 	# folder that exists, when it has to be made). A copy that sudo puts
 	# there belongs to root, as a service that root installed requires.
-	existing=$dir
-	while [ ! -d "$existing" ]; do existing=$(dirname "$existing"); done
 	sudo=""
 	if [ ! -w "$existing" ]; then
 		sudo=$(system sudo) ||
@@ -166,8 +243,8 @@ main() {
 		# The new file takes the old one's place in one rename, so the
 		# program at the path is always whole; a running OwnGit keeps
 		# running the old file until it restarts.
-		staged=$dir/.owngit-$version-$$
 		$sudo mkdir -p "$dir" || fail "could not create $dir"
+		staged=$($sudo "$mktemp" "$dir/.owngit.XXXXXXXX") || fail "could not write in $dir"
 		if ! $sudo "$install" -m 0755 "$tmp/owngit" "$staged" || ! $sudo mv -f "$staged" "$target"; then
 			$sudo rm -f "$staged"
 			fail "could not put owngit at $target"
