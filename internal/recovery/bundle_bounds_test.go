@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -168,6 +169,20 @@ func TestVerifyManyRepositoriesAndALargeOne(t *testing.T) {
 		}
 	}
 	assertEmpty(t, temporary)
+}
+
+// The room a restore needs cannot wrap around to a small number, however
+// large the bundles claim to be.
+func TestRoomNeededSaturates(t *testing.T) {
+	if got := roomNeeded([]uint64{1 << 62, 1 << 62, 1 << 62}); got != math.MaxUint64 {
+		t.Fatalf("roomNeeded of three 4 EiB bundles=%d, want the largest value", got)
+	}
+	if got := roomNeeded([]uint64{math.MaxUint64}); got != math.MaxUint64 {
+		t.Fatalf("roomNeeded of one huge bundle=%d", got)
+	}
+	if got := roomNeeded([]uint64{3, 5}); got != 13 {
+		t.Fatalf("roomNeeded(3, 5)=%d, want 13", got)
+	}
 }
 
 // A full disk is recognized as Go, Git and SQLite report it.

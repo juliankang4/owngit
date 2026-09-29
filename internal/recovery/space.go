@@ -2,6 +2,8 @@ package recovery
 
 import (
 	"fmt"
+	"math"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,13 +35,11 @@ func mebibytes(size uint64) uint64 { return (size + 1<<20 - 1) >> 20 }
 var freeSpace = diskFreeSpace
 
 // checkSpace refuses a restore of repositories into dir when its file
-// system has less room than they need at least: their bundles, which the
-// restored repositories take about as much as, and the largest bundle once
-// more for the copy that restore checks and reads (copyBundle). The sizes
-// are those of the files now; a bundle that cannot be inspected is left to
-// the restore to report.
+// system has less room than they need at least (roomNeeded). The sizes are
+// those of the files now; a bundle that cannot be inspected is left to the
+// restore to report.
 func checkSpace(inputRoot, dir string, repositories []RepositoryManifest) error {
-	var needed, largest uint64
+	var sizes []uint64
 	for _, item := range repositories {
 		if item.Empty {
 			continue
@@ -48,11 +48,9 @@ func checkSpace(inputRoot, dir string, repositories []RepositoryManifest) error 
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		size := uint64(info.Size())
-		needed += size
-		largest = max(largest, size)
+		sizes = append(sizes, uint64(info.Size()))
 	}
-	needed += largest
+	needed := roomNeeded(sizes)
 	free, known, err := freeSpace(dir)
 	if err != nil {
 		return fmt.Errorf("read the free space in %s: %w", dir, err)
@@ -61,6 +59,28 @@ func checkSpace(inputRoot, dir string, repositories []RepositoryManifest) error 
 		return &SpaceError{Dir: dir, Needed: needed, Free: free}
 	}
 	return nil
+}
+
+// roomNeeded is the room that restoring bundles of these sizes needs at
+// least: the bundles, which the restored repositories take about as much
+// as, and the largest once more for the copy that restore checks and reads
+// (copyBundle). A sum that 64 bits cannot hold, which only files far larger
+// than any disk reach, is the largest value, so no disk has that room.
+func roomNeeded(sizes []uint64) uint64 {
+	var needed, largest uint64
+	add := func(size uint64) {
+		sum, carry := bits.Add64(needed, size, 0)
+		if carry != 0 {
+			sum = math.MaxUint64
+		}
+		needed = sum
+	}
+	for _, size := range sizes {
+		add(size)
+		largest = max(largest, size)
+	}
+	add(largest)
+	return needed
 }
 
 // diskFull reports whether err says that a disk was full, as Go, Git or
