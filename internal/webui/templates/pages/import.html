@@ -119,7 +119,7 @@
   {{if $p.Last}}
     <p><span class="pill">{{importToken $lang $p.Last.Kind}}</span> <span class="pill pill--off">{{importToken $lang $p.Last.Status}}</span> <span class="mono">{{$p.Last.ID}}</span></p>
     {{with $p.Last.ErrorClass}}<p>{{importError $lang .}}</p>{{end}}
-    {{with $p.Last.Message}}<details><summary>{{bi $lang "import.technical_details"}}</summary><p class="mono">{{.}}</p></details>{{end}}
+    {{with $p.Last.Message}}<details><summary>{{bi $lang "import.technical_details"}}</summary><p class="mono" dir="auto">{{.}}</p></details>{{end}}
   {{else}}
     <p>{{bi $lang "import.no_run"}}</p>
   {{end}}
@@ -132,7 +132,7 @@
   {{if $p.Refs}}
   <ul>
     {{range $p.Refs}}
-      <li><span class="mono">{{.Name}}</span> <span class="pill pill--off">{{importToken $lang .State}}</span></li>
+      <li><span class="mono" dir="auto">{{.Name}}</span> <span class="pill pill--off">{{importToken $lang .State}}</span></li>
     {{end}}
   </ul>
   {{else}}

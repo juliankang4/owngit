@@ -3,7 +3,7 @@
 
 <div class="rhead">
   <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
-  {{with $p.Repo.Description}}<p class="rhead__desc">{{.}}</p>{{end}}
+  {{with $p.Repo.Description}}<p class="rhead__desc" dir="auto">{{.}}</p>{{end}}
 </div>
 
 <div class="rpane">
@@ -24,12 +24,12 @@
       {{range $p.Items}}
         <a class="prrow" href="{{.URL}}">
           <span class="prrow__id mono">{{prNumber .Number}}</span>
-          <span class="prrow__t">{{.Title}}</span>
+          <span class="prrow__t" dir="auto">{{.Title}}</span>
           <span class="prrow__s">{{template "stateChip" dict "Lang" $lang "S" (prState .State)}}</span>
           <span class="prrow__b">
-            <span class="mono">{{.Source.Branch}}</span>
+            <span class="mono" dir="auto">{{.Source.Branch}}</span>
             <span class="prrow__into">{{bi $lang "pr.branch_flow"}}</span>
-            <span class="mono">{{.Target.Branch}}</span>
+            <span class="mono" dir="auto">{{.Target.Branch}}</span>
           </span>
           {{/* The row states each kind of evidence as its own chip. A pull
                request with no check and no review reads as two absences

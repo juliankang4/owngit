@@ -65,8 +65,8 @@
     <div class="checks">
       {{range .Checks}}
         <div class="checkdef">
-          <span class="checkdef__n">{{.Name}}</span>
-          <span class="checkdef__c mono">{{.Command}}</span>
+          <span class="checkdef__n" dir="auto">{{.Name}}</span>
+          <span class="checkdef__c mono" dir="auto">{{.Command}}</span>
         </div>
       {{end}}
     </div>
@@ -161,7 +161,7 @@
         <dt>{{bi $lang "cc.state.file"}}</dt>
         <dd>
           {{template "stateChip" dict "Lang" $lang "S" (checkFileState .)}}
-          {{if .Branch}}<span class="mono ccstatus__sub">{{.Branch}}</span>{{end}}
+          {{if .Branch}}<span class="mono ccstatus__sub" dir="auto">{{.Branch}}</span>{{end}}
           {{if .Found}}<span class="ccstatus__sub">{{checkFileCount $lang .Checks}}</span>{{end}}
           {{with .Problem}}<span class="ccstatus__problem mono">{{.}}</span>{{end}}
         </dd>

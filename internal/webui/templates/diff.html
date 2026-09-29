@@ -67,8 +67,8 @@
   <div class="dfile__h">
     {{with $id}}<button type="button" class="dfile__fold" aria-expanded="true" aria-controls="{{.}}-b" data-diff-fold hidden>{{icon "chevron"}}<span class="visually-hidden">{{$.F.Path}}</span></button>{{end}}
     {{template "diffStatus" dict "Lang" $lang "F" .}}
-    <span class="dfile__p">{{.Path}}</span>
-    {{with .OldPath}}<span class="dfile__old">{{bi $lang "diff.renamed_from"}}: <span class="mono">{{.}}</span></span>{{end}}
+    <span class="dfile__p" dir="auto">{{.Path}}</span>
+    {{with .OldPath}}<span class="dfile__old">{{bi $lang "diff.renamed_from"}}: <span class="mono" dir="auto">{{.}}</span></span>{{end}}
     <span class="dfile__n">{{template "diffCounts" dict "Lang" $lang "F" .}}</span>
   </div>
   <div class="dfile__b"{{with $id}} id="{{.}}-b"{{end}}>

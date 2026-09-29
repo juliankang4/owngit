@@ -18,9 +18,9 @@
   {{if $p.DefaultBranchMissing}}
     {{/* An imported repository whose HEAD names a branch it does not have is
          the case this form exists for, so the state is named plainly. */}}
-    <p class="ev__warn" role="status">{{icon "warning"}}<span>{{bi $lang "repoadmin.default_branch.missing"}} <span class="mono">{{$p.DefaultBranch}}</span></span></p>
+    <p class="ev__warn" role="status">{{icon "warning"}}<span>{{bi $lang "repoadmin.default_branch.missing"}} <span class="mono" dir="auto">{{$p.DefaultBranch}}</span></span></p>
   {{else if $p.DefaultBranch}}
-    <p class="rset__now">{{bi $lang "repoadmin.default_branch.current"}} <span class="mono">{{$p.DefaultBranch}}</span></p>
+    <p class="rset__now">{{bi $lang "repoadmin.default_branch.current"}} <span class="mono" dir="auto">{{$p.DefaultBranch}}</span></p>
   {{end}}
 
   {{if $p.Branches}}

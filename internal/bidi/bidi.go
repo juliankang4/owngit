@@ -12,6 +12,7 @@ package bidi
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -44,6 +45,20 @@ func EscapeJSON(encoded []byte) []byte {
 		return encoded
 	}
 	return append(out, encoded[copied:]...)
+}
+
+// Isolate returns text for a plain-text place beside other words, such as a
+// window title: without its direction controls, which change nothing there
+// but the order, and between FIRST STRONG ISOLATE and POP DIRECTIONAL
+// ISOLATE, so it cannot reorder the words around it and takes the direction
+// of its own letters. Markup isolates text with dir="auto" instead.
+func Isolate(text string) string {
+	return "\u2068" + strings.Map(func(r rune) rune {
+		if Control(r) {
+			return -1
+		}
+		return r
+	}, text) + "\u2069"
 }
 
 // MarshalJSON is json.Marshal with every direction control escaped. Every

@@ -16,7 +16,7 @@
 <p class="backline"><a class="back" href="{{$p.ListURL}}">{{icon "back"}}{{bi $lang "pr.title"}}</a></p>
 
 <div class="phead">
-  <h1><span class="mono prhead__id">{{prNumber $p.Number}}</span> {{$p.Title}}</h1>
+  <h1><span class="mono prhead__id">{{prNumber $p.Number}}</span> <span dir="auto">{{$p.Title}}</span></h1>
 
   {{/* Direction on one line. A merge decision needs to know where the change
        goes; the object ids behind it are record and live with the rest of
@@ -28,10 +28,10 @@
        phrase placed between the two branch names read as nonsense; the arrow
        is correct in both languages and keeps the branch names intact. */}}
   <p class="prdir">
-    {{icon "branch"}}<span class="mono">{{$p.Source.Branch}}</span>
+    {{icon "branch"}}<span class="mono" dir="auto">{{$p.Source.Branch}}</span>
     {{if not $p.Source.Resolved}}{{with revisionNote $p.Source}}<span class="pill pill--missing">{{icon "warning"}}{{bi $lang .}}</span>{{end}}{{end}}
     <span class="prdir__i">{{bi $lang "pr.branch_flow"}}</span>
-    {{icon "branch"}}<span class="mono">{{$p.Target.Branch}}</span>
+    {{icon "branch"}}<span class="mono" dir="auto">{{$p.Target.Branch}}</span>
     {{if not $p.Target.Resolved}}{{with revisionNote $p.Target}}<span class="pill pill--missing">{{icon "warning"}}{{bi $lang .}}</span>{{end}}{{end}}
   </p>
 
@@ -197,7 +197,7 @@
   <section class="prnote">
     <p class="prnote__head">
       {{template "stateChip" dict "Lang" $lang "S" (reviewDecisionState .Decision)}}
-      <span>{{.ReviewerLabel}}</span>
+      <span dir="auto">{{.ReviewerLabel}}</span>
       <span>{{biDateTime $lang .SubmittedAt}}</span>
       {{if not .Current}}<span class="pill">{{icon "clock"}}{{bi $lang "pr.notes.earlier"}}</span>{{end}}
     </p>

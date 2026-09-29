@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"owngit/internal/bidi"
 )
 
 //go:embed templates/*.html templates/pages/*.html templates/standalone/*.html
@@ -436,7 +438,7 @@ func pullRequestTitle(p PullRequestPage) string {
 	if p.Title == "" {
 		return number + " " + p.Repo.Name
 	}
-	return number + " " + p.Title
+	return number + " " + bidi.Isolate(p.Title)
 }
 
 func authTitle(lang Lang, scope AuthScope) string {

@@ -256,7 +256,7 @@
   {{range .PageNotices}}
     <p class="notice notice--{{.Kind}}"{{if eq .Kind "error"}} role="alert"{{else}} role="status"{{end}}>
       {{statusIcon .Kind}}
-      <span>{{biNotice $.Lang .}}{{if .Link}} <a class="mono" href="{{.Link}}">{{.Detail}}</a>{{else}}{{with .Detail}} <span class="mono">{{.}}</span>{{end}}{{end}}</span>
+      <span>{{biNotice $.Lang .}}{{if .Link}} <a class="mono" href="{{.Link}}" dir="auto">{{.Detail}}</a>{{else}}{{with .Detail}} <span class="mono" dir="auto">{{.}}</span>{{end}}{{end}}</span>
     </p>
   {{end}}
 </div>
@@ -277,7 +277,7 @@
 {{range .Notices}}
   {{if eq .Field $field}}
     <p class="fieldnote fieldnote--{{.Kind}}" id="{{$id}}">
-      {{statusIcon .Kind}}<span>{{biNotice $lang .}}{{with .Detail}} <span class="mono">{{.}}</span>{{end}}</span>
+      {{statusIcon .Kind}}<span>{{biNotice $lang .}}{{with .Detail}} <span class="mono" dir="auto">{{.}}</span>{{end}}</span>
     </p>
   {{end}}
 {{end}}
@@ -306,7 +306,7 @@
 {{range $i, $n := .Notices}}
   {{if eq $n.Field $field}}
     <p class="fieldnote fieldnote--{{$n.Kind}}" id="{{$id}}"{{if eq $n.Kind "error"}} role="alert" tabindex="-1"{{if eq $i $focus}} autofocus{{end}}{{else}} role="status"{{end}}>
-      {{statusIcon $n.Kind}}<span>{{biNotice $lang $n}}{{with $n.Detail}} <span class="mono">{{.}}</span>{{end}}</span>
+      {{statusIcon $n.Kind}}<span>{{biNotice $lang $n}}{{with $n.Detail}} <span class="mono" dir="auto">{{.}}</span>{{end}}</span>
     </p>
   {{end}}
 {{end}}

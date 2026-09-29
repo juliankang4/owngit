@@ -107,7 +107,7 @@ func TestCodeTabDocumentAndSource(t *testing.T) {
 		PreviewURL: "/c?path=README.md", SourceURL: "/c?path=README.md&view=source",
 		Rendered: template.HTML(`<h1 id="md-title">Title</h1>`)}
 	out := render(t, r, codePage(LangEN, doc))
-	if !strings.Contains(out, `<article class="md"><h1 id="md-title">Title</h1></article>`) || strings.Contains(out, `class="codebox"`) {
+	if !strings.Contains(out, `<article class="md" dir="auto"><h1 id="md-title">Title</h1></article>`) || strings.Contains(out, `class="codebox"`) {
 		t.Error("the preview does not show the rendered document alone")
 	}
 	if !strings.Contains(out, `href="/c?path=README.md" aria-current="true"`) || strings.Contains(out, "data-wrap-toggle") {
@@ -116,7 +116,7 @@ func TestCodeTabDocumentAndSource(t *testing.T) {
 	source := *doc
 	source.ShowSource = true
 	out = render(t, r, codePage(LangEN, &source))
-	if strings.Contains(out, `<article class="md">`) || !strings.Contains(out, "&lt;b&gt;raw&lt;/b&gt;") || !strings.Contains(out, `href="/c?path=README.md&amp;view=source" aria-current="true"`) {
+	if strings.Contains(out, `<article class="md"`) || !strings.Contains(out, "&lt;b&gt;raw&lt;/b&gt;") || !strings.Contains(out, `href="/c?path=README.md&amp;view=source" aria-current="true"`) {
 		t.Error("the source view does not show escaped lines")
 	}
 	if !strings.Contains(out, `data-wrap-toggle aria-pressed="false" hidden`) {
@@ -176,7 +176,7 @@ func TestCodeTabFolderShowsListingAndReadme(t *testing.T) {
 	page.Code.File = nil
 	page.Code.Readme = &ReadmeView{Path: "internal/README.md", URL: "/r", Rendered: template.HTML("<p>Hello</p>")}
 	out := render(t, r, page)
-	if !strings.Contains(out, `<nav class="flist"`) || !strings.Contains(out, `<article class="md"><p>Hello</p></article>`) {
+	if !strings.Contains(out, `<nav class="flist"`) || !strings.Contains(out, `<article class="md" dir="auto"><p>Hello</p></article>`) {
 		t.Error("the folder lacks its listing or README")
 	}
 	if strings.Contains(out, "data-drawer") {
@@ -184,7 +184,7 @@ func TestCodeTabFolderShowsListingAndReadme(t *testing.T) {
 	}
 	page.Code.Readme = &ReadmeView{Path: "internal/README.md", URL: "/r", Note: MsgReadmeNotShown}
 	out = render(t, r, page)
-	if !strings.Contains(out, `<a href="/r">internal/README.md</a>`) || !strings.Contains(out, wantText(LangEN, MsgReadmeNotShown)) || strings.Contains(out, `<article class="md">`) {
+	if !strings.Contains(out, `<a href="/r" dir="auto">internal/README.md</a>`) || !strings.Contains(out, wantText(LangEN, MsgReadmeNotShown)) || strings.Contains(out, `<article class="md"`) {
 		t.Error("a README that was not rendered does not say so with a link to it")
 	}
 }

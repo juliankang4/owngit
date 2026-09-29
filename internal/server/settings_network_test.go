@@ -227,7 +227,7 @@ func TestSavingNetworkSettingsRefusesInvalidValues(t *testing.T) {
 			t.Errorf("%s=%q: the refused form does not place the reader on one field", test.field, test.value)
 		}
 		// The submitted text comes back so it can be corrected.
-		if !strings.Contains(result.body, strings.Split(test.value, "\n")[0]) || test.detail != "" && !strings.Contains(result.body, `<span class="mono">`+test.detail+`</span>`) {
+		if !strings.Contains(result.body, strings.Split(test.value, "\n")[0]) || test.detail != "" && !strings.Contains(result.body, `<span class="mono" dir="auto">`+test.detail+`</span>`) {
 			t.Errorf("%s=%q: the submitted value or the refused entry is not shown", test.field, test.value)
 		}
 		settings, hosts, proxies := savedNetwork(t, app.Store)

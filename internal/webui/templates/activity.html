@@ -128,10 +128,10 @@
        without clipping the status badge beside it. The title attribute keeps
        the whole name available when it is visually shortened. */}}
   <span class="row__ref">
-    {{icon "branch"}}<span class="row__refname" title="{{$e.Ref}}">{{$e.Ref}}</span>
+    {{icon "branch"}}<span class="row__refname" dir="auto" title="{{$e.Ref}}">{{$e.Ref}}</span>
     {{if $e.RefRetained}}<span class="pill pill--kept">{{bi $lang "repo.retained.title"}}</span>{{end}}
   </span>
-  <span class="row__msg">{{$e.Commit.Subject}}</span>
+  <span class="row__msg" dir="auto">{{$e.Commit.Subject}}</span>
   {{if .Dated}}
   <time class="row__time" datetime="{{$when.Format "2006-01-02T15:04:05Z07:00"}}" {{biAttrText $lang "title" (dateTime "en" $when) (dateTime "ko" $when)}}>
     <span aria-hidden="true">{{biRelative $lang .Now $when}}</span><span class="visually-hidden">{{biDateTime $lang $when}}</span>

@@ -34,10 +34,10 @@
         <input type="hidden" name="source" value="{{$p.Source.OID}}">
         <p class="restore__commit">
           <span class="mono">{{$p.Source.ShortOID}}</span>
-          <span class="restore__subject">{{$p.Source.Subject}}</span>
+          <span class="restore__subject" dir="auto">{{$p.Source.Subject}}</span>
         </p>
         <p class="restore__meta">
-          {{with $p.Source.AuthorName}}<span>{{.}}</span>{{end}}
+          {{with $p.Source.AuthorName}}<span dir="auto">{{.}}</span>{{end}}
           <span>{{biRelative $lang $now $p.Source.AuthorDate}}</span>
         </p>
         <p class="f__help">{{bi $lang "restore.source.help"}}</p>
@@ -123,7 +123,7 @@
               <li class="rpath">
                 <label class="check">
                   <input type="checkbox" name="path" value="{{$path.Path}}"{{if $path.Selected}} checked{{end}}>
-                  <span class="check__t mono">{{$path.Path}}</span>
+                  <span class="check__t mono" dir="auto">{{$path.Path}}</span>
                   {{/* The status is a word and a shape, never a colour on its
                        own, and a deletion is stated on its own row instead of
                        being folded into a directory. */}}
@@ -159,17 +159,17 @@
       <h2 class="setblock__h">{{bi $lang "restore.source.label"}}</h2>
       <p class="restore__commit">
         <span class="mono">{{$p.Source.ShortOID}}</span>
-        <span class="restore__subject">{{$p.Source.Subject}}</span>
+        <span class="restore__subject" dir="auto">{{$p.Source.Subject}}</span>
       </p>
       <p class="restore__meta">
-        {{with $p.Source.AuthorName}}<span>{{.}}</span>{{end}}
+        {{with $p.Source.AuthorName}}<span dir="auto">{{.}}</span>{{end}}
         <span>{{biRelative $lang $now $p.Source.AuthorDate}}</span>
       </p>
     </div>
 
     <div class="restore__to">
       <h2 class="setblock__h">{{bi $lang "restore.target.label"}}</h2>
-      <p class="restore__commit"><span class="mono">{{$p.TargetBranch}}</span></p>
+      <p class="restore__commit"><span class="mono" dir="auto">{{$p.TargetBranch}}</span></p>
       {{/* Whether the branch would be created is the backend's observation,
            made together with the tip this preview was computed against.
            Comparing the name against the suggestion list instead would be a
@@ -197,7 +197,7 @@
       <p class="restore__scope-t">{{bi $lang "restore.scope.files"}}</p>
       {{with pickedPaths $p.Paths}}
         <ul class="rpaths rpaths--plain">
-          {{range .}}<li class="rpath"><span class="mono">{{.Path}}</span></li>{{end}}
+          {{range .}}<li class="rpath"><span class="mono" dir="auto">{{.Path}}</span></li>{{end}}
         </ul>
       {{end}}
     {{else}}
@@ -234,7 +234,7 @@
       <div class="restore__deletes">
         <p class="restore__deletes-h">{{icon "warning"}}<span>{{bi $lang "restore.preview.deletes"}}</span></p>
         <ul class="rpaths rpaths--plain">
-          {{range $gone}}<li class="rpath"><span class="mono">{{.Path}}</span></li>{{end}}
+          {{range $gone}}<li class="rpath"><span class="mono" dir="auto">{{.Path}}</span></li>{{end}}
         </ul>
       </div>
     {{end}}
@@ -243,7 +243,7 @@
       {{range $p.Changes}}
         {{$status := .Status}}
         <span class="fchip fchip--static">
-          <span class="fchip__p">{{.Path}}</span>
+          <span class="fchip__p" dir="auto">{{.Path}}</span>
           <span class="fchip__n">
             {{with changeStatus $status}}<span class="rpath__s rpath__s--{{$status}}">{{bi $lang .}}</span>{{end}}
             {{if .Binary}}<span>{{bi $lang "restore.preview.binary_file"}}</span>

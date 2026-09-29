@@ -67,7 +67,7 @@ func TestNoticeLinkRendersAsALink(t *testing.T) {
 	chrome := fullChrome(LangEN)
 	chrome.Notices = []Notice{Error("", MsgPRAlreadyOpen).WithLink("#3", "/repositories/r1/pull-requests/3")}
 	out := render(t, r, OverviewPage{Chrome: chrome, Activity: sampleGraph()})
-	if !strings.Contains(out, Text(LangEN, MsgPRAlreadyOpen)+`</span> <a class="mono" href="/repositories/r1/pull-requests/3">#3</a>`) {
+	if !strings.Contains(out, Text(LangEN, MsgPRAlreadyOpen)+`</span> <a class="mono" href="/repositories/r1/pull-requests/3" dir="auto">#3</a>`) {
 		t.Error("the notice does not link to the open pull request")
 	}
 }

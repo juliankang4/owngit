@@ -636,7 +636,7 @@ func resultNamed(t *testing.T, document, name string) string {
 		if end := strings.Index(part, `<div class="result">`); end >= 0 {
 			part = part[:end]
 		}
-		if strings.Contains(part, `<span class="result__n">`+name+`</span>`) {
+		if strings.Contains(part, `<span class="result__n" dir="auto">`+name+`</span>`) {
 			return part
 		}
 	}

@@ -3,7 +3,7 @@
 
 <div class="rhead">
   <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
-  {{with $p.Repo.Description}}<p class="rhead__desc">{{.}}</p>{{end}}
+  {{with $p.Repo.Description}}<p class="rhead__desc" dir="auto">{{.}}</p>{{end}}
 </div>
 
 <div class="rpane">
@@ -15,7 +15,7 @@
 
   <div class="card">
     <div class="ev__head">
-      <h2 class="setblock__h">{{.Task.Title}}</h2>
+      <h2 class="setblock__h" dir="auto">{{.Task.Title}}</h2>
       {{template "stateChip" dict "Lang" $lang "S" (taskState .Task.Status)}}
     </div>
 
@@ -98,8 +98,8 @@
       <div class="checks">
         {{range $p.Configuration.Checks}}
           <div class="checkdef">
-            <span class="checkdef__n">{{.Name}}</span>
-            <span class="checkdef__c mono">{{.Command}}</span>
+            <span class="checkdef__n" dir="auto">{{.Name}}</span>
+            <span class="checkdef__c mono" dir="auto">{{.Command}}</span>
           </div>
         {{end}}
       </div>
@@ -123,7 +123,7 @@
       <div class="tasklist">
         {{range $p.Tasks}}
           <a class="taskrow" href="{{.URL}}">
-            <span class="taskrow__t">{{.Title}}</span>
+            <span class="taskrow__t" dir="auto">{{.Title}}</span>
             <span class="taskrow__s">{{template "stateChip" dict "Lang" $lang "S" (taskState .Status)}}</span>
             {{/* A task with no run yet shows the absence rather than an
                  empty slot that could be read as a pass. */}}

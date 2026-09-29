@@ -92,7 +92,7 @@
             {{else if .DefaultBranchMissing}}
               {{icon "warning"}}<span class="pill pill--missing">{{bi $lang "repo.default_branch_missing.short"}}</span>
             {{else if .DefaultBranch}}
-              {{icon "branch"}}<span class="row__refname" title="{{.DefaultBranch}}">{{.DefaultBranch}}</span>
+              {{icon "branch"}}<span class="row__refname" dir="auto" title="{{.DefaultBranch}}">{{.DefaultBranch}}</span>
             {{end}}
           </span>
           {{/* An empty repository is named by its badge, so the message shows
@@ -101,9 +101,9 @@
             {{if .Preparing}}{{bi $lang "repo.preparing"}}
             {{else if .Unreadable}}{{bi $lang "repo.unreadable"}}
             {{else if .Busy}}{{bi $lang "repo.busy.row"}}
-            {{else if .Empty}}{{.Description}}
-            {{else if .Head.Subject}}{{.Head.Subject}}
-            {{else if .Description}}{{.Description}}{{end}}
+            {{else if .Empty}}<span dir="auto">{{.Description}}</span>
+            {{else if .Head.Subject}}<span dir="auto">{{.Head.Subject}}</span>
+            {{else if .Description}}<span dir="auto">{{.Description}}</span>{{end}}
           </span>
           <span class="row__when">{{biRelative $lang $now $updated}}</span>
         </a>

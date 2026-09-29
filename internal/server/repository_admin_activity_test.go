@@ -127,14 +127,14 @@ func TestDefaultBranchChangeReachesDashboardAndOverview(t *testing.T) {
 
 	dashboard = settledGET(t, client, server.URL+"/")
 	row := repositoryRow(t, dashboard)
-	if !strings.Contains(row, `title="feature"`) || strings.Contains(row, `title="main"`) || !strings.Contains(row, `<span class="row__msg"> feature </span>`) {
+	if !strings.Contains(row, `title="feature"`) || strings.Contains(row, `title="main"`) || !strings.Contains(row, `<span class="row__msg"> <span dir="auto">feature</span> </span>`) {
 		t.Fatalf("dashboard row does not show the new default branch and its tip:\n%s", row)
 	}
 	if !strings.Contains(dashboard, "2 commits in ") {
 		t.Fatalf("dashboard lost the activity count:\n%s", dashboard)
 	}
 	overview := settledGET(t, client, server.URL+"/repositories/project")
-	if !strings.Contains(overview, `<span class="mono">feature</span>`) {
+	if !strings.Contains(overview, `<span class="mono" dir="auto">feature</span>`) {
 		t.Fatalf("overview does not name the new default branch:\n%s", overview)
 	}
 	if got := activityLogCounts(t, tracePath)["project"]["current"]; got != walks {

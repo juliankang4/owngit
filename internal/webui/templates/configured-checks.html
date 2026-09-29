@@ -88,7 +88,7 @@
     <dd>{{bi $lang (executorName $j.Executor)}}</dd>
   </div>
   {{with $j.WorkflowPath}}
-    <div><dt>{{bi $lang "cc.job.workflow"}}</dt><dd class="mono">{{.}}</dd></div>
+    <div><dt>{{bi $lang "cc.job.workflow"}}</dt><dd class="mono" dir="auto">{{.}}</dd></div>
   {{end}}
   {{if $j.ConfigurationVersion}}
     <div><dt>{{bi $lang "cc.job.configuration"}}</dt><dd class="mono">v{{$j.ConfigurationVersion}}</dd></div>

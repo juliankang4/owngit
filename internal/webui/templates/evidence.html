@@ -178,7 +178,7 @@
 
     <dl class="ev__facts">
       {{with $e.ReviewerLabel}}
-        <div><dt>{{bi $lang "evidence.review.reviewer"}}</dt><dd>{{.}}</dd></div>
+        <div><dt>{{bi $lang "evidence.review.reviewer"}}</dt><dd dir="auto">{{.}}</dd></div>
       {{end}}
       {{with $e.ShortSourceOID}}
         <div><dt>{{bi $lang $e.RevisionLabel}}</dt><dd class="mono">{{.}}</dd></div>
@@ -199,7 +199,7 @@
 {{$lang := .Lang}}{{$r := .R}}
 <div class="revline">
   <span class="revline__l">{{bi $lang (code .Label)}}</span>
-  <span class="revline__b">{{icon "branch"}}<span class="mono">{{$r.Branch}}</span></span>
+  <span class="revline__b">{{icon "branch"}}<span class="mono" dir="auto">{{$r.Branch}}</span></span>
   {{if $r.Resolved}}
     <span class="revline__o mono">{{$r.ShortOID}}</span>
   {{else}}
@@ -319,13 +319,13 @@
       <div class="result">
         <div class="result__head">
           {{template "stateChip" dict "Lang" $lang "S" (resultState .)}}
-          <span class="result__n">{{.Name}}</span>
+          <span class="result__n" dir="auto">{{.Name}}</span>
           {{with exitCode .}}<span class="result__x">{{bi $lang "tasks.attempts.exit_code"}} <span class="mono">{{.}}</span></span>{{end}}
           <span class="result__t">{{biText $lang (duration "en" .DurationMS) (duration "ko" .DurationMS)}}</span>
         </div>
         {{/* The command is recorded data. It is shown as text so a reader can
              see exactly what ran, and it is never treated as markup. */}}
-        <p class="result__cmd mono">{{.Command}}</p>
+        <p class="result__cmd mono" dir="auto">{{.Command}}</p>
         {{if .OutputExcerpt}}
           <div class="codebox codebox--short" tabindex="0" role="region" aria-label="{{.Name}}">
             <pre class="result__out">{{.OutputExcerpt}}</pre>
@@ -361,10 +361,10 @@
 {{define "prText"}}
 {{$lang := .Lang}}{{$t := .T}}
 {{if $t.HTML}}
-  <article class="md prtext">{{$t.HTML}}</article>
+  <article class="md prtext" dir="auto">{{$t.HTML}}</article>
 {{else if $t.Text}}
   <p class="hm__note">{{bi $lang $t.NotRendered}}</p>
-  <div class="prtext prtext--plain">{{$t.Text}}</div>
+  <div class="prtext prtext--plain" dir="auto">{{$t.Text}}</div>
 {{else}}
   <p class="ev__note">{{bi $lang (code .Empty)}}</p>
 {{end}}

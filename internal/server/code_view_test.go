@@ -82,7 +82,7 @@ func TestCodeViewRendersDocumentsWithoutRepositoryMarkup(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("preview status=%d", status)
 	}
-	document := preview[strings.Index(preview, `<article class="md">`):]
+	document := preview[strings.Index(preview, `<article class="md" dir="auto">`):]
 	document = document[:strings.Index(document, "</article>")]
 	for _, want := range []string{
 		`<h1 id="md-guide">Guide</h1>`,
@@ -104,7 +104,7 @@ func TestCodeViewRendersDocumentsWithoutRepositoryMarkup(t *testing.T) {
 	}
 
 	source, _ := dashboardGET(t, client, base+"&path=README.md&view=source")
-	if strings.Contains(source, `<article class="md">`) || !strings.Contains(source, "&lt;script&gt;alert(&#39;readme&#39;)&lt;/script&gt;") {
+	if strings.Contains(source, `<article class="md"`) || !strings.Contains(source, "&lt;script&gt;alert(&#39;readme&#39;)&lt;/script&gt;") {
 		t.Error("the source view does not show the escaped file text")
 	}
 	if !strings.Contains(source, `data-wrap-toggle aria-pressed="false" hidden`) {
@@ -367,7 +367,7 @@ func TestHostileReadmeFallsBackToSource(t *testing.T) {
 	if elapsed := time.Since(start); status != http.StatusOK || elapsed > 5*time.Second {
 		t.Fatalf("folder status=%d after %v", status, elapsed)
 	}
-	if !strings.Contains(folder, "main.go") || !strings.Contains(folder, "too large or too complex to show here") || strings.Contains(folder, `<article class="md">`) {
+	if !strings.Contains(folder, "main.go") || !strings.Contains(folder, "too large or too complex to show here") || strings.Contains(folder, `<article class="md"`) {
 		t.Error("the folder does not list its files and name its README without rendering it")
 	}
 	file, _ := dashboardGET(t, client, base+"&path=README.md")
@@ -395,7 +395,7 @@ func TestAmplifyingReadmesDoNotGrowTheServer(t *testing.T) {
 	runtime.ReadMemStats(&before)
 	for _, folder := range []string{"links", "table", "links", "table"} {
 		body, status := dashboardGET(t, client, server.URL+"/repositories/amplifiers/code?ref=refs%2Fheads%2Fmain&path="+folder)
-		if status != http.StatusOK || !strings.Contains(body, "too large or too complex to show here") || strings.Contains(body, `<article class="md">`) {
+		if status != http.StatusOK || !strings.Contains(body, "too large or too complex to show here") || strings.Contains(body, `<article class="md"`) {
 			t.Fatalf("%s: status %d without the note", folder, status)
 		}
 	}
@@ -437,7 +437,7 @@ func TestUnavailableHelperIsNamedOnThePage(t *testing.T) {
 	}
 
 	markdown.SetHelper(executable)
-	if folder, _ = dashboardGET(t, client, base); !strings.Contains(folder, `<article class="md">`) {
+	if folder, _ = dashboardGET(t, client, base); !strings.Contains(folder, `<article class="md" dir="auto">`) {
 		t.Error("the README was remembered as a failure and stays unrendered")
 	}
 }
@@ -570,7 +570,7 @@ func TestOverviewShowsTheRenderedReadme(t *testing.T) {
 	client := &http.Client{}
 
 	body, status := dashboardGET(t, client, server.URL+"/repositories/with-readme")
-	if status != http.StatusOK || !strings.Contains(body, `<section class="readme"`) || !strings.Contains(body, `<article class="md">`) {
+	if status != http.StatusOK || !strings.Contains(body, `<section class="readme"`) || !strings.Contains(body, `<article class="md" dir="auto">`) {
 		t.Fatalf("overview status=%d has no rendered README", status)
 	}
 	readme := body[strings.Index(body, `<section class="readme"`):]

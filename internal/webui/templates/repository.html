@@ -16,7 +16,7 @@
   <div class="rhead__id">
     <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
     {{if $p.Repo.Description}}
-      <p class="rhead__desc">{{$p.Repo.Description}}</p>
+      <p class="rhead__desc" dir="auto">{{$p.Repo.Description}}</p>
     {{end}}
   </div>
   {{if $clone}}{{template "clonefield" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL}}{{end}}

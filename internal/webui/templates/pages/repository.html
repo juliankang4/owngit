@@ -22,7 +22,7 @@
   <dl class="facts" {{biAttr $lang "aria-label" "repo.overview.summary_label"}}>
     <div class="facts__i">
       <dt>{{bi $lang "repo.overview.default_branch"}}</dt>
-      <dd>{{if $o.DefaultBranch}}{{icon "branch"}}<span class="mono">{{$o.DefaultBranch}}</span>
+      <dd>{{if $o.DefaultBranch}}{{icon "branch"}}<span class="mono" dir="auto">{{$o.DefaultBranch}}</span>
           {{else}}{{icon "warning"}}<span>{{bi $lang "repo.overview.no_default_branch"}}</span>{{end}}</dd>
     </div>
     <div class="facts__i"><dt>{{bi $lang "app.branches"}}</dt><dd>{{number $o.BranchCount}}</dd></div>
@@ -68,8 +68,8 @@
         {{range $o.Recent}}
           <a class="row row--commit" href="{{.URL}}">
             <span class="row__name mono">{{.ShortOID}}</span>
-            <span class="row__ref">{{if eq $p.Ref.Kind "tag"}}{{icon "tag"}}{{else if eq $p.Ref.Kind "branch"}}{{icon "branch"}}{{else}}{{icon "commit"}}{{end}}<span class="row__refname" title="{{$p.Ref.Name}}">{{$p.Ref.Name}}</span></span>
-            <span class="row__msg">{{.Subject}}</span>
+            <span class="row__ref">{{if eq $p.Ref.Kind "tag"}}{{icon "tag"}}{{else if eq $p.Ref.Kind "branch"}}{{icon "branch"}}{{else}}{{icon "commit"}}{{end}}<span class="row__refname" dir="auto" title="{{$p.Ref.Name}}">{{$p.Ref.Name}}</span></span>
+            <span class="row__msg" dir="auto">{{.Subject}}</span>
             <span class="row__when">{{biRelative $lang $now .AuthorDate}}</span>
           </a>
         {{end}}
@@ -213,9 +213,9 @@
       {{range $i, $cr := $c.Crumbs}}
         {{if $i}}<span class="crumbs__sep" aria-hidden="true">/</span>{{end}}
         {{if or $cr.Current (not $cr.URL)}}
-          <span class="crumbs__here" aria-current="page">{{$cr.Name}}</span>
+          <span class="crumbs__here" dir="auto" aria-current="page">{{$cr.Name}}</span>
         {{else}}
-          <a href="{{$cr.URL}}">{{$cr.Name}}</a>
+          <a href="{{$cr.URL}}" dir="auto">{{$cr.Name}}</a>
         {{end}}
       {{end}}
     </nav>
@@ -251,7 +251,7 @@
   {{else if $c.NotFound}}
     <div class="empty">
       <p class="empty__lead">{{bi $lang "code.path_missing"}}</p>
-      <p class="mono">{{$c.Path}}</p>
+      <p class="mono" dir="auto">{{$c.Path}}</p>
       <a class="btn" href="{{$p.CodeURL}}">{{bi $lang "app.root_folder"}}</a>
     </div>
   {{else if $f}}
@@ -271,7 +271,7 @@
     {{else if and .Document (not .ShowSource) .Rendered}}
       {{/* Rendered by internal/markdown: raw HTML from the file is never
            passed through, and every address was resolved by OwnGit. */}}
-      <article class="md">{{.Rendered}}</article>
+      <article class="md" dir="auto">{{.Rendered}}</article>
     {{else}}
       {{if and .Document (not .Rendered) (not .ShowSource) .NotRendered}}<p class="hm__note">{{bi $lang .NotRendered}}</p>{{end}}
       {{/* Repository content is rendered as text through the template's
@@ -298,7 +298,7 @@
       <ul>
         {{with $c.UpURL}}<li><a class="flist__row" href="{{.}}">{{icon "up"}}<span class="flist__name">{{bi $lang "app.up_one_level"}}</span></a></li>{{end}}
         {{range $c.Entries}}
-          <li><a class="flist__row" href="{{.URL}}">{{template "entryIcon" .}}<span class="flist__name">{{.Name}}</span>{{if eq .Kind "file"}}<span class="flist__n">{{bytes .Size}}</span>{{end}}</a></li>
+          <li><a class="flist__row" href="{{.URL}}">{{template "entryIcon" .}}<span class="flist__name" dir="auto">{{.Name}}</span>{{if eq .Kind "file"}}<span class="flist__n">{{bytes .Size}}</span>{{end}}</a></li>
         {{end}}
       </ul>
       {{if not $c.Entries}}<p class="empty">{{bi $lang "code.empty_directory"}}</p>{{end}}
@@ -326,11 +326,11 @@
     <p class="backline"><a class="back" href="{{$p.CommitsURL}}">{{icon "back"}}{{bi $lang "commits.back_to_list"}}</a></p>
     {{template "refbar" dict "Lang" $lang "Ref" $p.Ref "Action" $p.CommitsURL}}
     <div class="chead">
-      <h2 class="chead__msg">{{.Commit.Subject}}</h2>
-      {{with .Body}}<p class="cdetail__body">{{.}}</p>{{end}}
+      <h2 class="chead__msg" dir="auto">{{.Commit.Subject}}</h2>
+      {{with .Body}}<p class="cdetail__body" dir="auto">{{.}}</p>{{end}}
       <p class="cdetail__meta">
         <span class="mono">{{.Commit.ShortOID}}</span>
-        <span>{{.Commit.AuthorName}}</span>
+        <span dir="auto">{{.Commit.AuthorName}}</span>
         <span>{{biDateTime $lang .Commit.AuthorDate}}</span>
         {{range .Parents}}<a class="mono" href="{{.URL}}">{{.ShortOID}}</a>{{end}}
       </p>
@@ -369,8 +369,8 @@
       <div class="clist__list">
         {{range $p.Commits.List}}
           <a class="clist__row" href="{{.URL}}">
-            <span class="clist__msg">{{.Subject}}</span>
-            <span class="clist__meta"><span>{{.ShortOID}}</span><span>{{.AuthorName}}</span><span>{{biRelative $lang $now .AuthorDate}}</span></span>
+            <span class="clist__msg" dir="auto">{{.Subject}}</span>
+            <span class="clist__meta"><span>{{.ShortOID}}</span><span dir="auto">{{.AuthorName}}</span><span>{{biRelative $lang $now .AuthorDate}}</span></span>
           </a>
         {{end}}
       </div>
@@ -400,7 +400,7 @@
       <li>
         <a class="tree__row" href="{{.URL}}"{{if and $c.File (eq .Path $c.File.Path)}} aria-current="page"{{end}}>
           {{template "entryIcon" .}}
-          <span class="tree__name">{{.Name}}</span>
+          <span class="tree__name" dir="auto">{{.Name}}</span>
           {{if eq .Kind "file"}}<span class="tree__n">{{bytes .Size}}</span>{{end}}
         </a>
       </li>
@@ -415,8 +415,8 @@
 {{$lang := .Lang}}
 {{with .R}}
   <section class="readme" aria-labelledby="readme-h">
-    <h2 class="readme__h" id="readme-h">{{icon "file"}}<a href="{{.URL}}">{{.Path}}</a></h2>
-    {{if .Rendered}}<article class="md">{{.Rendered}}</article>{{else}}<p class="hm__note">{{bi $lang .Note}}</p>{{end}}
+    <h2 class="readme__h" id="readme-h">{{icon "file"}}<a href="{{.URL}}" dir="auto">{{.Path}}</a></h2>
+    {{if .Rendered}}<article class="md" dir="auto">{{.Rendered}}</article>{{else}}<p class="hm__note">{{bi $lang .Note}}</p>{{end}}
   </section>
 {{end}}
 {{end}}
@@ -432,13 +432,13 @@
     <div class="refline">
       <span class="refline__n">
         {{if .Retained}}{{icon "kept"}}{{else if eq .Kind "tag"}}{{icon "tag"}}{{else}}{{icon "branch"}}{{end}}
-        {{if .URL}}<a href="{{.URL}}">{{.Name}}</a>{{else}}<span class="mono">{{.Name}}</span>{{end}}
+        {{if .URL}}<a href="{{.URL}}" dir="auto">{{.Name}}</a>{{else}}<span class="mono" dir="auto">{{.Name}}</span>{{end}}
         {{if .IsDefault}}<span class="pill pill--default">{{biText $lang "Default" "기본"}}</span>{{end}}
         {{if .Annotated}}<span class="pill">{{biText $lang "Annotated" "주석"}}</span>{{end}}
         {{if .Retained}}<span class="pill pill--kept">{{bi $lang "repo.retained.title"}}</span>{{end}}
       </span>
       <span class="refline__when">{{if not .Tip.AuthorDate.IsZero}}{{biRelative $lang $now .Tip.AuthorDate}}{{end}}</span>
-      <span class="refline__msg">{{.Tip.Subject}}</span>
+      <span class="refline__msg" dir="auto">{{.Tip.Subject}}</span>
       {{with .RestoreURL}}<a class="refline__act" href="{{.}}">{{bi $lang "restore.open"}}</a>{{end}}
     </div>
   {{end}}
