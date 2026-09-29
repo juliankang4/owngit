@@ -153,7 +153,7 @@ main() {
 			--gateway) gateway=$2 ;;
 			--repositories) folder=$2 ;;
 			--template) template=$2 ;;
-			--version) version=${2#v} ;;
+			--version) version=$2 ;;
 			esac
 			shift 2
 			;;
@@ -182,7 +182,10 @@ main() {
 		fail "--repositories takes an absolute path of letters, digits and ._+@- whose parts do not start with a dot, such as /tank/owngit, not $folder"
 	[ -z "$template" ] || matches "$template" '[A-Za-z][A-Za-z0-9._-]*:vztmpl/[A-Za-z0-9._+-]+' ||
 		fail "--template takes a template volume such as local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst, not $template"
-	[ -z "$version" ] || matches "$version" '[0-9]+\.[0-9]+\.[0-9]+' || fail "--version takes a release number such as 1.1.3, not $version"
+	if [ -n "$version" ]; then
+		matches "$version" 'v?[0-9]+\.[0-9]+\.[0-9]+' || fail "--version takes a release number such as 1.1.3, not $version"
+		version=${version#v}
+	fi
 	releases=${OWNGIT_RELEASES:-https://github.com/juliankang4/owngit/releases}
 	matches "$releases" 'https://[^[:space:]]+' || fail "OWNGIT_RELEASES must be an https:// address, not $releases"
 
@@ -356,6 +359,11 @@ start_and_wait() {
 # the folder's old owner and mode.
 undo() {
 	[ "$1" != 0 ] || return 0
+	# The run may end because its terminal or reader went away. Then a
+	# message fails, and a message or another signal must not stop the
+	# removal, which inherits the ignored signals.
+	set +e
+	trap '' HUP INT PIPE TERM
 	if [ -n "$created" ]; then
 		say "Removing container $created, which this run created."
 		pct stop "$created" >/dev/null 2>&1 || true

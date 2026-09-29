@@ -42,6 +42,7 @@ func TestProxmoxScriptChecksEveryValueFirst(t *testing.T) {
 		{arguments: []string{"--id", "99"}, want: "--id takes a number from 100"},
 		{arguments: []string{"--memory", "1024M"}, want: "--memory takes a whole number"},
 		{arguments: []string{"--version", "latest"}, want: "--version takes a release number"},
+		{arguments: []string{"--version", "v"}, want: "--version takes a release number"},
 		{arguments: []string{"--storage"}, want: "--storage needs a value"},
 		{arguments: []string{"--repositories="}, want: "--repositories needs a value"},
 		{arguments: []string{"--version", ""}, want: "--version needs a value"},
