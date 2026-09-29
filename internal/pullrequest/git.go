@@ -345,35 +345,51 @@ func (service *Service) requireMergeCapability(ctx context.Context) error {
 	return nil
 }
 
-func (service *Service) planMerge(ctx context.Context, repositoryPath string, intent state.PullRequestMergeIntent) (state.PullRequestMergeIntent, error) {
-	intent.UpdatedAt = service.now()
-	intent.Status = state.MergeIntentPlanned
+// mergeMethod is how a merge of sourceOID into targetOID goes: up_to_date,
+// fast_forward or merge_commit. It is empty when the two commits share no
+// history, which a merge refuses as a conflict.
+func (service *Service) mergeMethod(ctx context.Context, repositoryPath, sourceOID, targetOID string) (string, error) {
 	// A source the target already contains has nothing to merge. Like Git's
 	// "Already up to date", the target stays where it is and no commit is
 	// written; the pull request is still recorded as merged at that target.
-	contained, err := service.isAncestor(ctx, repositoryPath, intent.SourceOID, intent.TargetOID)
+	contained, err := service.isAncestor(ctx, repositoryPath, sourceOID, targetOID)
 	if err != nil {
-		return state.PullRequestMergeIntent{}, err
+		return "", err
 	}
 	if contained {
-		intent.Mode = "up_to_date"
-		intent.ResultOID = intent.TargetOID
-		return intent, nil
+		return "up_to_date", nil
 	}
-	fastForward, err := service.isAncestor(ctx, repositoryPath, intent.TargetOID, intent.SourceOID)
+	fastForward, err := service.isAncestor(ctx, repositoryPath, targetOID, sourceOID)
 	if err != nil {
-		return state.PullRequestMergeIntent{}, err
+		return "", err
 	}
 	if fastForward {
-		intent.Mode = "fast_forward"
-		intent.ResultOID = intent.SourceOID
-		return intent, nil
+		return "fast_forward", nil
 	}
-	hasBase, err := service.hasMergeBase(ctx, repositoryPath, intent.TargetOID, intent.SourceOID)
+	hasBase, err := service.hasMergeBase(ctx, repositoryPath, targetOID, sourceOID)
+	if err != nil || !hasBase {
+		return "", err
+	}
+	return "merge_commit", nil
+}
+
+func (service *Service) planMerge(ctx context.Context, repositoryPath string, intent state.PullRequestMergeIntent) (state.PullRequestMergeIntent, error) {
+	intent.UpdatedAt = service.now()
+	intent.Status = state.MergeIntentPlanned
+	method, err := service.mergeMethod(ctx, repositoryPath, intent.SourceOID, intent.TargetOID)
 	if err != nil {
 		return state.PullRequestMergeIntent{}, err
 	}
-	if !hasBase {
+	switch method {
+	case "up_to_date":
+		intent.Mode = method
+		intent.ResultOID = intent.TargetOID
+		return intent, nil
+	case "fast_forward":
+		intent.Mode = method
+		intent.ResultOID = intent.SourceOID
+		return intent, nil
+	case "":
 		return state.PullRequestMergeIntent{}, NewProblem("merge_conflict", "The source and target branches do not share mergeable history.")
 	}
 	treeOID, err := service.calculateMergeTree(ctx, repositoryPath, intent.TargetOID, intent.SourceOID)
