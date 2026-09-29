@@ -15,6 +15,7 @@ func TestSetupFolderChooserPreservesManualSubmission(t *testing.T) {
 			`<dialog id="folder-chooser"`, `aria-labelledby="folder-title" aria-describedby="folder-host"`,
 			`data-list-url="/setup/folders" data-create-url="/setup/folders/new"`, `role="status" aria-live="polite"`,
 			`data-folder-list aria-label=`, `data-folder-cancel autofocus`, `data-folder-use disabled`,
+			`class="form f folderchooser__new"`,
 			`data-folder-message="folder.denied" hidden`, `data-folder-message="folder.empty" hidden`,
 			`data-en="Choose folder" data-ko="폴더 선택"`,
 		} {

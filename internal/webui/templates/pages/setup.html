@@ -186,7 +186,7 @@
     </div>
     <p class="fieldnote" data-folder-limit hidden>{{bi $lang "folder.limit"}}</p>
     <button type="button" class="btn" data-folder-retry hidden>{{bi $lang "folder.retry"}}</button>
-    <form class="form folderchooser__new" method="post" action="/setup/folders/new" data-folder-create>
+    <form class="form f folderchooser__new" method="post" action="/setup/folders/new" data-folder-create>
       <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
       <label for="folder-name">{{bi $lang "folder.name"}}</label>
       <div class="folderfield">
