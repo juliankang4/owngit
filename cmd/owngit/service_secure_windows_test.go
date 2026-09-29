@@ -4,9 +4,11 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -182,8 +184,9 @@ func TestExpandSystemPathUsesOnlyKnownSystemVariables(t *testing.T) {
 }
 
 func TestServiceEnvironmentDoesNotInheritUserValues(t *testing.T) {
-	paths, err := platformServiceInstallPaths()
-	noErr(t, err)
+	directory := t.TempDir()
+	paths := serviceInstallPaths{Directory: directory, Executable: filepath.Join(directory, "owngit.exe"), Temp: filepath.Join(directory, "temp")}
+	noErr(t, os.Mkdir(paths.Temp, 0o700))
 	previousPath, hadPath := os.LookupEnv("PATH")
 	previousModules, hadModules := os.LookupEnv("PSModulePath")
 	noErr(t, os.Setenv("PATH", `C:\attacker`))
@@ -210,5 +213,31 @@ func TestServiceEnvironmentDoesNotInheritUserValues(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("environment lacks %q:\n%s", want, joined)
 		}
+	}
+}
+
+// PowerShell creates a missing TEMP folder. Before an install creates the
+// protected folder, an administrator's PowerShell gets the Windows temp folder,
+// so that a query creates nothing in Program Files.
+func TestServiceEnvironmentBeforeTheServiceFolderExists(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "OwnGit")
+	paths := serviceInstallPaths{Directory: directory, Executable: filepath.Join(directory, "owngit.exe"), Temp: filepath.Join(directory, "temp")}
+	environment, err := platformServiceEnvironment(paths, nil)
+	noErr(t, err)
+	windowsDir, err := windows.KnownFolderPath(windows.FOLDERID_Windows, 0)
+	noErr(t, err)
+	temp := filepath.Join(windowsDir, "Temp")
+	if !slices.Contains(environment, "TEMP="+temp) || !slices.Contains(environment, "TMP="+temp) {
+		t.Fatalf("environment:\n%s", strings.Join(environment, "\n"))
+	}
+	system, err := windows.GetSystemDirectory()
+	noErr(t, err)
+	command := exec.Command(filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-Command", "exit 0")
+	command.Env = environment
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("PowerShell: %v: %s", err, output)
+	}
+	if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("PowerShell created %s: %v", directory, err)
 	}
 }

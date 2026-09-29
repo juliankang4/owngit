@@ -311,6 +311,13 @@ func platformServiceEnvironment(paths serviceInstallPaths, extra []string) ([]st
 	if err != nil {
 		return nil, err
 	}
+	// PowerShell creates a missing TEMP folder, so until an install creates
+	// the protected one, the Windows temp folder stands in for it. Windows
+	// gives other users no access to the files an administrator creates there.
+	temp := paths.Temp
+	if _, err := os.Lstat(temp); errors.Is(err, os.ErrNotExist) {
+		temp = filepath.Join(windowsDir, "Temp")
+	}
 	programFiles, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
 	if err != nil {
 		return nil, err
@@ -353,8 +360,8 @@ func platformServiceEnvironment(paths serviceInstallPaths, extra []string) ([]st
 		"PSModulePath=" + filepath.Join(programFiles, "WindowsPowerShell", "Modules") + ";" + filepath.Join(system, "WindowsPowerShell", "v1.0", "Modules"),
 		"SystemDrive=" + filepath.VolumeName(windowsDir),
 		"SystemRoot=" + windowsDir,
-		"TEMP=" + paths.Temp,
-		"TMP=" + paths.Temp,
+		"TEMP=" + temp,
+		"TMP=" + temp,
 		"windir=" + windowsDir,
 	}
 	for _, entry := range extra {
