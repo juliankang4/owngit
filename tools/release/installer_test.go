@@ -677,13 +677,15 @@ func (run *psInstall) do(t *testing.T, env []string, arguments ...string) (strin
 }
 
 // trustTestCertificate makes .NET accept the synthetic release's certificate
-// in this PowerShell only. A compiled callback, because PowerShell 7 calls it
-// on a thread where a script block cannot run.
+// in this PowerShell only. The callback is compiled, because PowerShell 7
+// calls it on a thread where a script block cannot run, and the delegate is
+// made in C#, because Windows PowerShell 5.1 cannot convert a method to one.
 const trustTestCertificate = `Add-Type -TypeDefinition 'public static class OwnGitTestTrust {
   public static string Thumb;
-  public static bool Check(object sender, System.Security.Cryptography.X509Certificates.X509Certificate certificate, System.Security.Cryptography.X509Certificates.X509Chain chain, System.Net.Security.SslPolicyErrors errors) { return certificate.GetCertHashString() == Thumb; }
+  public static readonly System.Net.Security.RemoteCertificateValidationCallback Callback = Check;
+  static bool Check(object sender, System.Security.Cryptography.X509Certificates.X509Certificate certificate, System.Security.Cryptography.X509Certificates.X509Chain chain, System.Net.Security.SslPolicyErrors errors) { return certificate.GetCertHashString() == Thumb; }
 }'
-[Net.ServicePointManager]::ServerCertificateValidationCallback = [Net.Security.RemoteCertificateValidationCallback][OwnGitTestTrust]::Check
+[Net.ServicePointManager]::ServerCertificateValidationCallback = [OwnGitTestTrust]::Callback
 `
 
 // powerShell runs a command in the environment of this run.
