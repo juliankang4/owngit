@@ -701,7 +701,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRMergeBlocked:  {en: "The merge was refused.", ko: "병합이 거부되었습니다."},
 	MsgPRNotFound:      {en: "That pull request does not exist.", ko: "해당 풀 리퀘스트가 없습니다."},
 	MsgPRNotOpen:       {en: "That pull request is not open.", ko: "해당 풀 리퀘스트는 열려 있지 않습니다."},
-	MsgPRInvalidTitle:  {en: "Enter a title of 1 to 500 characters on one line.", ko: "한 줄로 1자에서 500자 사이의 제목을 입력하세요."},
+	MsgPRInvalidTitle:  {en: "Enter a title on one line, in 500 bytes or fewer: up to 500 characters in English, or about 160 in Korean.", ko: "제목은 줄바꿈 없이 500바이트 이내로 입력하세요. 영문은 500자, 한글은 약 160자입니다."},
 	MsgPRInvalidBranch: {en: "That branch name cannot be used here.", ko: "여기서는 사용할 수 없는 브랜치 이름입니다."},
 	MsgPRSameBranch:    {en: "Pick two different branches.", ko: "서로 다른 브랜치를 골라 주세요."},
 	MsgPRFailed:        {en: "The pull request operation did not complete.", ko: "풀 리퀘스트 작업을 끝내지 못했습니다."},

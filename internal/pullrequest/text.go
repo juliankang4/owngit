@@ -52,7 +52,7 @@ func (input EditInput) CheckText() (EditInput, error) {
 func (input ReviewSubmitInput) CheckText() (ReviewSubmitInput, error) {
 	reviewer := strings.TrimSpace(input.ReviewerLabel)
 	if !validLabel(reviewer, 200) {
-		return input, NewProblem("invalid_reviewer_label", "The supplied reviewer label must contain 1 to 200 characters and no line breaks.")
+		return input, NewProblem("invalid_reviewer_label", "The supplied reviewer label must be one line of 1 to 200 bytes of UTF-8 text: up to 200 characters in English, or about 66 in Korean.")
 	}
 	note, err := pullRequestText(input.Note, "invalid_note", "review note")
 	if err != nil {
@@ -66,7 +66,7 @@ func (input ReviewSubmitInput) CheckText() (ReviewSubmitInput, error) {
 func pullRequestTitle(value string) (string, error) {
 	title := strings.TrimSpace(value)
 	if !validLabel(title, 500) {
-		return "", NewProblem("invalid_title", "The pull request title must contain 1 to 500 characters and no line breaks.")
+		return "", NewProblem("invalid_title", "The pull request title must be one line of 1 to 500 bytes of UTF-8 text: up to 500 characters in English, or about 160 in Korean.")
 	}
 	return title, nil
 }
@@ -83,6 +83,9 @@ func pullRequestText(value, code, name string) (string, error) {
 	return text, nil
 }
 
+// validLabel reports whether value is one line of 1 to maximum bytes of
+// UTF-8. The limit counts bytes, as the stored record and its backup do, so
+// every message about it says what that means for Korean text.
 func validLabel(value string, maximum int) bool {
 	return value != "" && len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsAny(value, "\x00\r\n")
 }

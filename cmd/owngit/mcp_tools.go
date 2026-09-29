@@ -232,7 +232,7 @@ func (server *mcpServer) buildTools() []mcpTool {
 			Description: "Create a pull request from source_branch into target_branch. It adds a pull request record on the OwnGit server and moves no branch. " +
 				"review is request (ask for a review) or skip (record that review is skipped); leave it out to decide later. An open pull request for the same branch pair is refused.",
 			InputSchema: server.schema(true, []string{"title", "source_branch", "target_branch"}, map[string]toolInputField{
-				"title":         {Type: "string", Description: "Pull request title."},
+				"title":         {Type: "string", Description: "Pull request title: one line of at most 500 bytes."},
 				"body":          {Type: "string", Description: "Optional Markdown description, at most 64 KiB. Images and HTML are not shown."},
 				"source_branch": {Type: "string", Description: "Branch with the changes, already pushed to the server."},
 				"target_branch": {Type: "string", Description: "Branch to merge into."},
@@ -260,7 +260,7 @@ func (server *mcpServer) buildTools() []mcpTool {
 			InputSchema: server.schema(true, []string{"number", "edit_revision"}, map[string]toolInputField{
 				"number":        numberField,
 				"edit_revision": {Type: "integer", Description: "edit_revision from pull_request_show."},
-				"title":         {Type: "string", Description: "New title. Leave out to keep the title."},
+				"title":         {Type: "string", Description: "New title, one line of at most 500 bytes. Leave out to keep the title."},
 				"body":          {Type: "string", Description: "New Markdown description, at most 64 KiB; an empty string clears it. Leave out to keep the description."},
 			}),
 			Annotations: toolAnnotations{},
@@ -287,7 +287,7 @@ func (server *mcpServer) buildTools() []mcpTool {
 				"source_oid": sourceOIDField,
 				"target_oid": targetOIDField,
 				"decision":   {Type: "string", Enum: []string{"approved", "changes_requested"}, Description: "Review result."},
-				"reviewer":   {Type: "string", Description: "Reviewer label to record."},
+				"reviewer":   {Type: "string", Description: "Reviewer label to record: one line of at most 200 bytes."},
 				"note":       {Type: "string", Description: "Optional Markdown review note, at most 64 KiB."},
 			}),
 			Annotations: toolAnnotations{},

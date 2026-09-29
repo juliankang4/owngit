@@ -63,6 +63,34 @@ func TestPullRequestDescriptionIsKeptWithWhoCreatedIt(t *testing.T) {
 	}
 }
 
+// A title and a reviewer label count bytes, as their messages say: 166
+// Korean characters fit in a title's 500 bytes and 167 do not, and 66 fit in
+// a reviewer label's 200 bytes and 67 do not.
+func TestTitleAndReviewerLimitsCountBytes(t *testing.T) {
+	for _, test := range []struct {
+		characters int
+		check      func(string) error
+		code       string
+	}{
+		{166, func(text string) error {
+			_, err := (CreateInput{Title: text}).CheckText()
+			return err
+		}, "invalid_title"},
+		{66, func(text string) error {
+			_, err := (ReviewSubmitInput{ReviewerLabel: text}).CheckText()
+			return err
+		}, "invalid_reviewer_label"},
+	} {
+		if err := test.check(strings.Repeat("한", test.characters)); err != nil {
+			t.Errorf("%d Korean characters were refused: %v", test.characters, err)
+		}
+		err := test.check(strings.Repeat("한", test.characters+1))
+		if problemCode(err) != test.code || !strings.Contains(err.Error(), "bytes") {
+			t.Errorf("%d Korean characters: err=%v", test.characters+1, err)
+		}
+	}
+}
+
 // Text is at most 64 KiB of UTF-8 without NUL, counted after CRLF becomes LF.
 // Titles keep their own rule.
 func TestPullRequestTextLimits(t *testing.T) {

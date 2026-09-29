@@ -79,8 +79,8 @@ var pullRequestTextCatalog = map[MessageCode]message{
 		ko: "메모는 최대 64KiB까지 쓸 수 있습니다.",
 	},
 	MsgPRInvalidReviewer: {
-		en: "Enter who reviewed, 1 to 200 characters on one line.",
-		ko: "리뷰한 사람이나 도구를 한 줄로 1자에서 200자 사이로 입력하세요.",
+		en: "Enter who reviewed on one line, in 200 bytes or fewer: up to 200 characters in English, or about 66 in Korean.",
+		ko: "리뷰한 사람이나 도구를 줄바꿈 없이 200바이트 이내로 입력하세요. 영문은 200자, 한글은 약 66자입니다.",
 	},
 	MsgPRInvalidDecision: {en: "Choose Approve or Request changes.", ko: "승인이나 변경 요청 중 하나를 고르세요."},
 	MsgPRReviewMoved: {
