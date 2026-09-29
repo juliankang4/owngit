@@ -220,8 +220,9 @@ func TestSetupStaysOnTheAddressItWasOpenedBy(t *testing.T) {
 
 // A dashboard page opened directly over plain HTTP by the name of an HTTPS
 // base URL moves there once a trusted proxy has passed OwnGit a request for
-// that base URL over HTTPS. A proxy OwnGit does not trust, or one that
-// passed plain HTTP, shows nothing, and a new base URL waits for its own
+// that base URL over HTTPS. A proxy OwnGit does not trust, one that passed
+// plain HTTP, or one that passed HTTPS for another name shows nothing, and a
+// new base URL waits for its own
 // request: one for the earlier base URL does not count for it.
 func TestBrowserPagesMoveToTheBaseURLOnceItsProxyServedIt(t *testing.T) {
 	app := newConfiguredApp(t)
@@ -254,6 +255,12 @@ func TestBrowserPagesMoveToTheBaseURLOnceItsProxyServedIt(t *testing.T) {
 	fromProxy("git.example.internal", "http")
 	if location := direct(opened); location != "" {
 		t.Fatalf("moved after the proxy passed plain HTTP: %q", location)
+	}
+	// Another site behind the same proxy proves nothing about the base URL.
+	noErr(t, app.Hosts.Add("other.example.internal"))
+	fromProxy("other.example.internal", "https")
+	if location := direct(opened); location != "" {
+		t.Fatalf("moved after the proxy passed HTTPS for another name: %q", location)
 	}
 	fromProxy("git.example.internal", "https")
 	if location := direct(opened); location != base+"/activity?days=7" {
