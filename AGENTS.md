@@ -2,7 +2,7 @@
 
 ## Audience and scope
 
-These instructions govern agents changing OwnGit's source. They do not govern end users or projects hosted in OwnGit. Read [Product principles in CONTRIBUTING.md](CONTRIBUTING.md#product-principles) before changing product behavior.
+These instructions govern agents changing OwnGit's source. They do not govern end users or projects hosted in OwnGit. Read [Product principles in docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#product-principles) before changing product behavior.
 
 - These rules apply across the repository. Read any applicable directory-level `AGENTS.md` before changing a file.
 - Keep durable rules here. Put detailed procedures in public development documentation and link them from the relevant rule. Public instructions must not depend on private planning files, a contributor's machine configuration, or a particular coding-agent setup.

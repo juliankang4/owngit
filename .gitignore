@@ -42,5 +42,5 @@ Desktop.ini
 *.test.exe
 *.prof
 
-# Scratch directory for comparing regenerated notices (see CONTRIBUTING.md)
+# Scratch directory for comparing regenerated notices (see docs/DEVELOPMENT.md)
 /THIRD_PARTY_NOTICES.new/

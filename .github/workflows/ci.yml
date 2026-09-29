@@ -1,6 +1,6 @@
 name: CI
 
-# Runs the checks from CONTRIBUTING.md on every pull request. Pull requests
+# Runs the checks on every pull request. Pull requests
 # merge by fast-forward, so main receives the commits that already passed here
 # and pushes to main do not run the checks again. Tests run on Linux (with the
 # race detector), Windows, and macOS, on fresh runners. actions/setup-go
