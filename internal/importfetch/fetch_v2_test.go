@@ -96,13 +96,21 @@ func TestFetchV2SHA256AndEmptySource(t *testing.T) {
 
 // The ls-refs answer has the advertisement's limits and validation.
 func TestFetchV2RefListFailures(t *testing.T) {
-	pull := v2Source(t, []string{testPacket(testSHA1A + " refs/pull/1/head\n")}, "")
+	// A server may list refs outside the prefixes; they are neither wanted
+	// nor returned.
+	pull := v2Source(t, append([]string{testPacket(testSHA1B + " refs/pull/1/head\n")}, testV2Refs[:2]...), "000dpackfile\n"+testBand(1, "PACK")+"0000")
 	_, request := startSource(t, pull)
-	if _, err := Fetch(context.Background(), request, consumeAll); !errors.Is(err, ErrAdvertisement) || !errors.Is(err, importgit.ErrInvalidRecord) {
-		t.Fatalf("unrequested ref: %v", err)
+	result, err := Fetch(context.Background(), request, consumeAll)
+	if err != nil || len(result.Advertisement.Refs) != 2 {
+		t.Fatalf("unrequested ref: %+v, %v", result, err)
 	}
-	if _, posts, _ := pull.counts(); posts != 1 {
-		t.Fatalf("posts = %d, want only ls-refs", posts)
+	if _, posts, body := pull.counts(); posts != 2 || strings.Contains(body, testSHA1B) {
+		t.Fatalf("posts = %d, fetch %q wants the unrequested ref", posts, body)
+	}
+	malformed := v2Source(t, []string{testPacket(testZero1 + " refs/pull/1/head\n")}, "")
+	_, request = startSource(t, malformed)
+	if _, err := Fetch(context.Background(), request, consumeAll); !errors.Is(err, ErrAdvertisement) || !errors.Is(err, importgit.ErrInvalidObjectID) {
+		t.Fatalf("malformed unrequested ref: %v", err)
 	}
 
 	many := v2Source(t, testV2Refs, "")

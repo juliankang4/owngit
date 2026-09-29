@@ -131,13 +131,15 @@ func TestParseLsRefsRefusals(t *testing.T) {
 		records []string
 		target  error
 	}{
-		{"pull request ref", []string{sha1A + " refs/pull/1/head"}, ErrInvalidRecord},
-		{"note", []string{sha1A + " refs/notes/commits"}, ErrInvalidRecord},
-		{"prefix without slash", []string{sha1A + " refs/headsx"}, ErrInvalidRecord},
 		{"duplicate", []string{sha1A + " refs/heads/main", sha1B + " refs/heads/main"}, ErrConflictingRefs},
 		{"zero", []string{zero1 + " refs/heads/main"}, ErrInvalidObjectID},
 		{"sha256 width", []string{sha2A + " refs/heads/main"}, ErrObjectFormat},
-		{"unborn", []string{"unborn HEAD symref-target:refs/heads/main"}, ErrObjectFormat},
+		{"unborn", []string{"unborn HEAD symref-target:refs/heads/main"}, ErrInvalidRecord},
+		{"unrequested ref with the zero ID", []string{zero1 + " refs/pull/1/head"}, ErrInvalidObjectID},
+		{"unrequested ref with a bad name", []string{sha1A + " refs/pull/1..2/head"}, ErrInvalidName},
+		{"unrequested ref with a bad attribute", []string{sha1A + " refs/pull/1/head peeled:1234"}, ErrInvalidObjectID},
+		{"unrequested ref with an unknown attribute", []string{sha1A + " refs/pull/1/head other:x"}, ErrInvalidRecord},
+		{"unrequested ref repeated", []string{sha1A + " refs/pull/1/head", sha1B + " refs/pull/1/head"}, ErrConflictingRefs},
 		{"no name", []string{sha1A}, ErrInvalidRecord},
 		{"bad name", []string{sha1A + " refs/heads/a..b"}, ErrInvalidName},
 		{"unrequested attribute", []string{sha1A + " refs/heads/main other:x"}, ErrInvalidRecord},
@@ -176,5 +178,32 @@ func TestParseLsRefsRefusals(t *testing.T) {
 	long := Options{Limits: Limits{MaxTotalBytes: 64}}
 	if _, err := lsRefs(t, capabilities, long, sha1A+" refs/heads/a", sha1A+" refs/heads/b"); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("total bytes: %v", err)
+	}
+}
+
+// ref-prefix only narrows the answer, so a server may list other refs. They
+// are validated and counted like any other record, then left out.
+func TestParseLsRefsLeavesOutUnrequestedRefs(t *testing.T) {
+	capabilities := parseV2(t, v2Capabilities(true, githubCapabilities...))
+	records := []string{
+		sha1A + " HEAD symref-target:refs/heads/main",
+		sha1A + " refs/heads/main",
+		sha1B + " refs/pull/1/head",
+		sha1C + " refs/notes/commits symref-target:refs/heads/main",
+		sha1B + " refs/headsx",
+	}
+	result, err := lsRefs(t, capabilities, Options{}, records...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Refs) != 2 || result.Refs[0].Name != "HEAD" || result.Refs[1].Name != "refs/heads/main" ||
+		len(result.Symrefs) != 1 || result.Empty {
+		t.Fatalf("ls-refs = %+v", result)
+	}
+	if _, err := lsRefs(t, capabilities, Options{Limits: Limits{MaxRefRecords: 4}}, records...); !errors.Is(err, ErrTooManyRefs) {
+		t.Fatalf("unrequested refs are not counted: %v", err)
+	}
+	if only, err := lsRefs(t, capabilities, Options{}, sha1B+" refs/pull/1/head"); err != nil || !only.Empty {
+		t.Fatalf("only unrequested refs: %+v, %v", only, err)
 	}
 }

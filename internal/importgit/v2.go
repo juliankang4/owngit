@@ -78,8 +78,8 @@ func (s *parseState) readV2Capabilities() error {
 // capabilities, the Advertisement Parse returned for that server. The result
 // describes the source as Parse does for a v0 server: the refs, HEAD, their
 // peeled values and symrefs, validated by the same rules and bounded by the
-// same limits. A ref outside LsRefsPrefixes is refused, because a server
-// that lists one was not asked for it. No refs at all is Empty.
+// same limits. A ref outside LsRefsPrefixes, which a server may list, is
+// validated and counted, then left out. No refs at all is Empty.
 func ParseLsRefs(source io.Reader, capabilities *Advertisement, options Options) (*Advertisement, error) {
 	if source == nil || capabilities == nil || capabilities.ProtocolVersion != 2 {
 		return nil, fmt.Errorf("%w: ls-refs needs a protocol v2 capability advertisement and a response body", ErrInvalidOptions)
@@ -148,52 +148,75 @@ func (s *parseState) readLsRefsRecord(offset int64, line string) error {
 	if len(fields) < 2 {
 		return s.fail(offset, ErrInvalidRecord, "the record is not an object ID followed by a name")
 	}
+	if fields[0] == "unborn" {
+		return s.fail(offset, ErrInvalidRecord, "the server sent an unborn record, which ls-refs did not ask for")
+	}
 	oid, name, err := s.splitRecord(offset, fields[0]+" "+fields[1])
 	if err != nil {
 		return err
+	}
+	symrefTarget, peeled := "", ""
+	for _, attribute := range fields[2:] {
+		switch key, value, _ := strings.Cut(attribute, ":"); key {
+		case "symref-target":
+			if symrefTarget != "" {
+				return s.fail(offset, ErrConflictingRefs, "a ref has more than one symref target")
+			}
+			if err := validateRefName(value); err != nil {
+				return s.fail(offset, ErrInvalidName, "symref target: "+err.Error())
+			}
+			symrefTarget = value
+		case "peeled":
+			if peeled != "" {
+				return s.fail(offset, ErrConflictingRefs, "a ref has more than one peeled value")
+			}
+			if len(value) != s.oidWidth || !isHexOID(value) {
+				return s.fail(offset, ErrInvalidObjectID, "a peeled value is not an object ID of the advertised format")
+			}
+			peeled = canonicalOID(value)
+			if isZeroOID(peeled) {
+				return s.fail(offset, ErrInvalidObjectID, "a peeled value is the zero object ID")
+			}
+		default:
+			return s.fail(offset, ErrInvalidRecord, "the record carries an attribute that was not requested")
+		}
 	}
 	requested := false
 	for _, prefix := range LsRefsPrefixes {
 		requested = requested || name == prefix || (strings.HasSuffix(prefix, "/") && strings.HasPrefix(name, prefix))
 	}
 	if !requested {
-		return s.fail(offset, ErrInvalidRecord, "the server listed a ref outside the requested prefixes")
+		// ref-prefix only narrows the answer: gitprotocol-v2 lets a server
+		// list other refs and has the client filter them. Such a record is
+		// validated and counted like any other, then left out, so it is
+		// neither fetched nor published.
+		if isZeroOID(oid) {
+			return s.fail(offset, ErrInvalidObjectID, "a ref has the zero object ID")
+		}
+		if err := validateRefName(name); err != nil {
+			return s.fail(offset, ErrInvalidName, err.Error())
+		}
+		if s.unrequested[name] {
+			return s.fail(offset, ErrConflictingRefs, "the advertisement repeats a ref name")
+		}
+		if s.unrequested == nil {
+			s.unrequested = map[string]bool{}
+		}
+		s.unrequested[name] = true
+		return nil
 	}
 	if err := s.addRef(offset, oid, name); err != nil {
 		return err
 	}
-	ref := &s.result.Refs[len(s.result.Refs)-1]
-	symref := false
-	for _, attribute := range fields[2:] {
-		switch key, value, _ := strings.Cut(attribute, ":"); key {
-		case "symref-target":
-			if symref {
-				return s.fail(offset, ErrConflictingRefs, "a ref has more than one symref target")
-			}
-			if err := validateRefName(value); err != nil {
-				return s.fail(offset, ErrInvalidName, "symref target: "+err.Error())
-			}
-			// applySymrefs copies the statement onto the ref and HEAD and
-			// checks it against an advertised target.
-			symref = true
-			s.result.Symrefs = append(s.result.Symrefs, Symref{Name: name, Target: value})
-		case "peeled":
-			if ref.PeeledOID != "" {
-				return s.fail(offset, ErrConflictingRefs, "a ref has more than one peeled value")
-			}
-			if len(value) != s.oidWidth || !isHexOID(value) {
-				return s.fail(offset, ErrInvalidObjectID, "a peeled value is not an object ID of the advertised format")
-			}
-			value = canonicalOID(value)
-			if isZeroOID(value) {
-				return s.fail(offset, ErrInvalidObjectID, "a peeled value is the zero object ID")
-			}
-			ref.PeeledOID = value
-			if name == "HEAD" {
-				s.result.Head.PeeledOID = value
-			}
-		default:
-			return s.fail(offset, ErrInvalidRecord, "the record carries an attribute that was not requested")
+	if symrefTarget != "" {
+		// applySymrefs copies the statement onto the ref and HEAD and checks
+		// it against an advertised target.
+		s.result.Symrefs = append(s.result.Symrefs, Symref{Name: name, Target: symrefTarget})
+	}
+	if peeled != "" {
+		s.result.Refs[len(s.result.Refs)-1].PeeledOID = peeled
+		if name == "HEAD" {
+			s.result.Head.PeeledOID = peeled
 		}
 	}
 	return nil
