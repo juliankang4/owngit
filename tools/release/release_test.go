@@ -182,6 +182,41 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	if sums := readText(t, filepath.Join(dir, "SHA256SUMS")); strings.Contains(sums, "install.") {
 		t.Errorf("SHA256SUMS lists an installer script:\n%s", sums)
 	}
+	noErrf(t, verifyRelease(dir, root, "go"), "verify rejected the installers of a fresh build")
+	for _, recorded := range document.Installers {
+		source, err := os.ReadFile(filepath.Join(root, "packaging", "installer", recorded.Path))
+		noErr(t, err)
+		if recorded.SHA256 != sha256Bytes(source) || recorded.Size != int64(len(source)) {
+			t.Errorf("the manifest records %s as %s (%d bytes)", recorded.Path, recorded.SHA256, recorded.Size)
+		}
+	}
+	t.Run("installer changed after the build", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		noErr(t, os.WriteFile(filepath.Join(copied, "install.sh"), []byte("#!/bin/sh\necho changed\n"), 0o644))
+		expectReleaseError(t, copied, root, "installer install.sh does not match the manifest")
+	})
+	t.Run("installer missing", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		noErr(t, os.Remove(filepath.Join(copied, "install.ps1")))
+		expectReleaseError(t, copied, root, "installer install.ps1")
+	})
+	t.Run("installer and manifest both differ from the source", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		changed := []byte("#!/bin/sh\necho changed\n")
+		noErr(t, os.WriteFile(filepath.Join(copied, "install.sh"), changed, 0o644))
+		edited := document
+		edited.Installers = append([]fileEntry{}, document.Installers...)
+		edited.Installers[0].SHA256, edited.Installers[0].Size = sha256Bytes(changed), int64(len(changed))
+		writeManifest(t, copied, edited)
+		expectReleaseError(t, copied, root, "installer install.sh differs from packaging/installer/install.sh")
+	})
+	t.Run("manifest without installers", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		edited := document
+		edited.Installers = nil
+		writeManifest(t, copied, edited)
+		expectReleaseError(t, copied, root, "the manifest lists the installers")
+	})
 	// The skill is the reviewed one, not an edited copy.
 	if !strings.Contains(string(byName["integrations/skills/owngit-checks/SKILL.md"].data), "name: owngit-checks") {
 		t.Error("the packaged skill has no skill name in its front matter")
@@ -1336,6 +1371,15 @@ func refreshArchiveIdentity(t *testing.T, dir string, document manifest, built *
 	noErr(t, err)
 	built.SHA256 = digest
 	built.Size = info.Size()
+}
+
+func expectReleaseError(t *testing.T, dir, source, want string) {
+	t.Helper()
+	err := verifyRelease(dir, source, "go")
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("verify error %v does not contain %q", err, want)
+	}
+	t.Logf("rejected: %v", err)
 }
 
 func expectVerifyError(t *testing.T, dir, want string) {

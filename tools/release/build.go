@@ -139,6 +139,9 @@ type manifest struct {
 	Version   string     `json:"version"`
 	Source    sourceInfo `json:"source"`
 	Artifacts []artifact `json:"artifacts"`
+	// Installers are the one-line installers beside the archives. They are
+	// not in SHA256SUMS, which lists exactly the archives.
+	Installers []fileEntry `json:"installers"`
 }
 
 func buildCommand(arguments []string) error {
@@ -237,9 +240,11 @@ func buildCommand(arguments []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := writeFile(filepath.Join(outDir, name), data, 0o644); err != nil {
+		digest, err := writeFile(filepath.Join(outDir, name), data, 0o644)
+		if err != nil {
 			return err
 		}
+		document.Installers = append(document.Installers, fileEntry{Path: name, Mode: "0644", Size: int64(len(data)), SHA256: digest})
 	}
 	if err := writeChecksums(outDir, document.Artifacts); err != nil {
 		return err
@@ -256,15 +261,15 @@ func buildCommand(arguments []string) error {
 	if *skipVerify {
 		return nil
 	}
-	return verifyBuilt(outDir, *goTool)
+	return verifyBuilt(outDir, root, *goTool)
 }
 
 // verifyBuilt runs the final verification of a finished build. The
 // checksums and manifest are already written by then and describe the
 // archives truthfully, so a failure or interruption here says so and how to
 // repeat the check.
-func verifyBuilt(outDir, goTool string) error {
-	if err := verifyDir(outDir, goTool); err != nil {
+func verifyBuilt(outDir, source, goTool string) error {
+	if err := verifyRelease(outDir, source, goTool); err != nil {
 		return fmt.Errorf("the checksums and manifest in %s are written, but their final verification did not pass: %w; check them again with: release verify -dir %s", outDir, err, outDir)
 	}
 	return nil

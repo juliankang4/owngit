@@ -72,6 +72,7 @@ func forbiddenReason(name string) string {
 func verifyCommand(arguments []string) error {
 	set := flag.NewFlagSet("verify", flag.ContinueOnError)
 	dir := set.String("dir", "dist", "directory holding manifest.json and the archives")
+	source := set.String("source", ".", "module root whose packaging/installer the installers must equal")
 	goTool := set.String("go", "go", "Go toolchain command")
 	if err := parseFlags(set, arguments); err != nil {
 		return err
@@ -80,7 +81,47 @@ func verifyCommand(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	return verifyDir(absolute, *goTool)
+	root, err := moduleRoot(*source)
+	if err != nil {
+		return err
+	}
+	return verifyRelease(absolute, root, *goTool)
+}
+
+// verifyRelease verifies a release output folder: the archives and
+// SHA256SUMS (verifyDir), and the installers, which must match the manifest
+// and packaging/installer in source.
+func verifyRelease(dir, source, goTool string) error {
+	if err := verifyDir(dir, goTool); err != nil {
+		return err
+	}
+	document, err := readManifest(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return err
+	}
+	var names []string
+	for _, recorded := range document.Installers {
+		names = append(names, recorded.Path)
+		data, err := os.ReadFile(filepath.Join(dir, recorded.Path))
+		if err != nil {
+			return fmt.Errorf("installer %s: %w", recorded.Path, err)
+		}
+		if int64(len(data)) != recorded.Size || sha256Bytes(data) != recorded.SHA256 {
+			return fmt.Errorf("installer %s does not match the manifest", recorded.Path)
+		}
+		checkedIn, err := os.ReadFile(filepath.Join(source, "packaging", "installer", recorded.Path))
+		if err != nil {
+			return fmt.Errorf("installer %s: %w", recorded.Path, err)
+		}
+		if string(checkedIn) != string(data) {
+			return fmt.Errorf("installer %s differs from packaging/installer/%s in %s", recorded.Path, recorded.Path, source)
+		}
+	}
+	if strings.Join(names, ",") != strings.Join(installerScripts, ",") {
+		return fmt.Errorf("the manifest lists the installers %q, want %q", names, installerScripts)
+	}
+	fmt.Printf("verified the installers %s in %s\n", strings.Join(names, " and "), dir)
+	return nil
 }
 
 func verifyDir(dir, goTool string) error {

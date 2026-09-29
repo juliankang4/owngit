@@ -332,7 +332,7 @@ func TestBuildTargetSignsDarwinBinary(t *testing.T) {
 // manifest are written, says that they exist and how to check them again.
 func TestFinalVerifyFailureNamesTheWrittenRecords(t *testing.T) {
 	dir := sharedDist(t)
-	err := verifyBuilt(dir, "false")
+	err := verifyBuilt(dir, repoRoot(t), "false")
 	for _, want := range []string{"the checksums and manifest in " + dir + " are written", "check them again with: release verify -dir " + dir} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("error %v lacks %q", err, want)
