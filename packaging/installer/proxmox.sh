@@ -85,24 +85,34 @@ already_there() {
 	exit 0
 }
 
+# only_root reports whether folder $1 belongs to root and no group or
+# other account can write it.
+only_root() {
+	# shellcheck disable=SC2046 # the owner and mode are two words
+	set -- $(stat -c '%u %a' "$1")
+	[ "$1" = 0 ] || return 1
+	case $2 in *[2367]? | *[2367]) return 1 ;; esac
+}
+
 # check_folder refuses a repository folder that another account could
-# redirect or that already holds something: every folder on the way must be
-# a real folder that belongs to root and that only root can change, and the
-# folder itself must be missing or empty. A folder that exists gets a new
-# owner, the container's owngit account, so nothing in it may be there yet.
+# redirect or fill: the folder and every folder on the way must be real
+# folders that belong to root and that only root can change, and the
+# folder must be missing or empty. A folder that exists gets a new owner,
+# the container's owngit account, so nothing in it may be there yet. It
+# runs before any work and again just before the folder changes owner.
 check_folder() {
+	only_root / || fail "another account can change /, and so redirect the repository folder"
 	current="" rest=${1#/}
 	while [ -n "$rest" ]; do
-		parent=${current:-/}
-		# shellcheck disable=SC2046 # the owner and mode are two words
-		set -- $(stat -c '%u %a' "$parent")
-		[ "$1" = 0 ] || fail "$parent belongs to another account, which could redirect the repository folder; choose a folder inside folders that only root can change"
-		case $2 in *[2367]? | *[2367]) fail "another account can change $parent, and so redirect the repository folder; choose a folder inside folders that only root can change" ;; esac
 		current=$current/${rest%%/*}
 		case $rest in */*) rest=${rest#*/} ;; *) rest="" ;; esac
 		[ ! -L "$current" ] || fail "$current is a link; name the folder it leads to"
 		[ -e "$current" ] || return 0
 		[ -d "$current" ] || fail "$current is not a folder"
+		only_root "$current" && continue
+		[ -z "$rest" ] ||
+			fail "another account can change $current, and so redirect the repository folder; choose a folder inside folders that only root can change"
+		fail "another account owns or can write $current, and could put files in it before the container gets it; let only root change it with \"chown root:root $current && chmod go-w $current\", or choose a new folder"
 	done
 	[ -z "$(ls -A "$current")" ] ||
 		fail "$current is not empty, and its content would get the container's owner; choose a new or empty folder, and bring repositories in through OwnGit (import or restore) after setup"
@@ -269,6 +279,9 @@ main() {
 		inside install -d -o owngit -g owngit -m 0700 "$inner" || fail "could not create $inner in the container"
 		say "Stopping the container to add $folder."
 		pct shutdown "$ctid" --timeout 120 || fail "could not stop container $ctid"
+		# The install took minutes; check the folder again right before it
+		# changes owner and goes into the container.
+		check_folder "$folder"
 		if [ -d "$folder" ]; then
 			before=$(stat -c '%u:%g %a' "$folder")
 		else
