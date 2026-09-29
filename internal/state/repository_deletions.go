@@ -144,6 +144,10 @@ var repositoryDeletionStatements = []string{
 	`DELETE FROM import_stagings WHERE repository_id=?`,
 	`DELETE FROM import_initial_destinations WHERE repository_id=?`,
 	`DELETE FROM import_sources WHERE repository_id=?`,
+	`DELETE FROM repository_names WHERE repository_id=?`,
+	`DELETE FROM repository_policies WHERE repository_id=?`,
+	`DELETE FROM share_links WHERE repository_id=?`,
+	`DELETE FROM push_events WHERE repository_id=?`,
 	`DELETE FROM repositories WHERE id=?`,
 }
 

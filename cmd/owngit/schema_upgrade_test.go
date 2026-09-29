@@ -12,7 +12,7 @@ import (
 	"owngit/internal/testfixture"
 )
 
-const baselineUpgradeLine = "state database upgraded from the committed baseline (no schema version) to schema 15"
+const baselineUpgradeLine = "state database upgraded from the committed baseline (no schema version) to schema 16"
 
 // createBaselineStateForTest writes a committed baseline state whose
 // repository exists with the pull request revision it records, so the

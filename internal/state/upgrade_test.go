@@ -5,24 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 )
-
-// withSyntheticStep16 makes schema 15, which the current release writes, an
-// older released schema, as the next release's schema step will.
-func withSyntheticStep16(t *testing.T) {
-	t.Helper()
-	original := schemaSteps
-	schemaSteps = append(slices.Clone(original), schemaStep{version: 16, statements: []string{`CREATE TABLE synthetic_step(title TEXT NOT NULL)`}})
-	t.Cleanup(func() { schemaSteps = original })
-}
 
 // beforeUpgrade runs after the inspection and before anything in the state
 // directory changes. It gets a copy that opens upgraded while the state
 // keeps its bytes, and its error leaves the state at the older schema.
 func TestBeforeUpgradeSeesTheStateUnchangedAndCanStopTheUpgrade(t *testing.T) {
-	withSyntheticStep16(t)
 	ctx := context.Background()
 	directory := filepath.Join(t.TempDir(), "state")
 	createReleasedSchemaWithPullRequest(t, directory, 15)
@@ -72,7 +61,6 @@ func TestBeforeUpgradeSeesTheStateUnchangedAndCanStopTheUpgrade(t *testing.T) {
 // A state that a stopped process left with a write-ahead log is copied with
 // it, so the copy holds what only the log holds.
 func TestCopyIncludesTheWriteAheadLog(t *testing.T) {
-	withSyntheticStep16(t)
 	source := filepath.Join(t.TempDir(), "source")
 	createReleasedSchemaWithPullRequest(t, source, 15)
 	db := openSchemaDatabase(t, filepath.Join(source, databaseName))
@@ -125,7 +113,6 @@ func TestNewStateHasNoUpgrade(t *testing.T) {
 // The copy is the database as inspected: one that changed since is a
 // change during inspection, not a backup of other bytes.
 func TestCopyOfAChangedStateIsRefused(t *testing.T) {
-	withSyntheticStep16(t)
 	directory := filepath.Join(t.TempDir(), "state")
 	createReleasedSchemaWithPullRequest(t, directory, 15)
 	_, err := openWithBeforeUpgrade(t, directory, func(ctx context.Context, upgrade *Upgrade) error {

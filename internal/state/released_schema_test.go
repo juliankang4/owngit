@@ -11,8 +11,8 @@ import (
 )
 
 // Every released schema opens at the current schema, and a rebuilt table keeps
-// every row that refers to it. Schema 14 (1.0.0 to 1.0.2) is upgraded in place
-// to schema 15, which admits closed pull requests.
+// every row that refers to it. Schema 14 (1.0.0 to 1.0.2) and schema 15
+// (1.0.3 to 1.1.2) are upgraded in place.
 func TestReleasedSchemasUpgradeAndKeepPullRequestHistory(t *testing.T) {
 	var released []int
 	for _, step := range schemaSteps {
@@ -20,7 +20,7 @@ func TestReleasedSchemasUpgradeAndKeepPullRequestHistory(t *testing.T) {
 			released = append(released, step.version)
 		}
 	}
-	if len(released) == 0 || released[0] != 14 {
+	if !slices.Equal(released, []int{14, 15}) {
 		t.Fatalf("released schemas=%v", released)
 	}
 	for _, version := range released {
@@ -37,13 +37,12 @@ func TestReleasedSchemasUpgradeAndKeepPullRequestHistory(t *testing.T) {
 	}
 }
 
-// The chain is table-driven: a test-only step 16 makes schema 14 two steps
-// behind, and it upgrades through schema 15 and 16 in one Open. Schema 15
-// becomes a released schema that upgrades one step, and the refusal messages
-// follow the table.
+// The chain is table-driven: a test-only step 17 after the unreleased step
+// 16 upgrades schema 14 through three steps and schema 15 through two in one
+// Open, and the refusal messages follow the table.
 func TestSchemaChainRunsEveryLaterStep(t *testing.T) {
 	original := schemaSteps
-	schemaSteps = append(slices.Clone(original), schemaStep{version: 16, statements: []string{
+	schemaSteps = append(slices.Clone(original), schemaStep{version: 17, statements: []string{
 		`CREATE TABLE synthetic_step(title TEXT NOT NULL)`,
 		`INSERT INTO synthetic_step(title) SELECT title FROM pull_requests`,
 	}})
@@ -54,9 +53,9 @@ func TestSchemaChainRunsEveryLaterStep(t *testing.T) {
 		t.Run("upgrade from "+strconv.Itoa(version), func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
 			createReleasedSchemaWithPullRequest(t, directory, version)
-			store := openUpgradedSchema(t, directory, 16)
+			store := openUpgradedSchema(t, directory, 17)
 			defer store.Close()
-			if upgrade, want := store.SchemaUpgrade(), "state database upgraded from schema "+strconv.Itoa(version)+" to 16"; upgrade != want {
+			if upgrade, want := store.SchemaUpgrade(), "state database upgraded from schema "+strconv.Itoa(version)+" to 17"; upgrade != want {
 				t.Fatalf("upgrade reported %q, want %q", upgrade, want)
 			}
 			var copied int
@@ -71,8 +70,8 @@ func TestSchemaChainRunsEveryLaterStep(t *testing.T) {
 
 	t.Run("refusals", func(t *testing.T) {
 		for version, want := range map[int]string{
-			13: "state database uses the unreleased development schema 13; this build upgrades only the committed baseline (no schema version) and released schemas 14 and 15, and opens schema 16",
-			17: "state database schema version 17 is newer than this OwnGit build supports (16)",
+			16: "state database uses the unreleased development schema 16; this build upgrades only the committed baseline (no schema version) and released schemas 14 and 15, and opens schema 17",
+			18: "state database schema version 18 is newer than this OwnGit build supports (17)",
 		} {
 			directory := filepath.Join(t.TempDir(), "state")
 			createNumberedSchemaDatabase(t, directory, version)
@@ -217,7 +216,7 @@ func TestSchemaUpgradeIsReportedOnce(t *testing.T) {
 	createMigratedSchemaDatabase(t, directory, 14)
 	store, err := Open(ctx, directory)
 	noErr(t, err)
-	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from schema 14 to 15" {
+	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from schema 14 to 16" {
 		t.Fatalf("released schema upgrade reported %q", upgrade)
 	}
 	noErr(t, store.Close())

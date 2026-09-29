@@ -331,7 +331,7 @@ func classifySchema(ctx context.Context, db queryRower) (schemaClass, error) {
 	case version > current:
 		return schemaClass{}, fmt.Errorf("state database schema version %d is newer than this OwnGit build supports (%d)", version, current)
 	case isReleasedSchema(version):
-		return schemaReleased(version), nil
+		return validateReleasedSchema(ctx, db, version)
 	case version >= 1:
 		return schemaClass{}, fmt.Errorf("state database uses the unreleased development schema %d; this build upgrades only the committed baseline (no schema version) and %s, and opens schema %d", version, describeReleasedSchemas(), current)
 	default:
@@ -400,6 +400,53 @@ func readSchemaVersion(ctx context.Context, db queryRower) (int, bool, error) {
 		return 0, false, fmt.Errorf("invalid state schema version %q", value)
 	}
 	return version, true, nil
+}
+
+// validateReleasedSchema accepts a database at the released version only
+// when its catalog is exactly the one the schema steps up to that version
+// create. A database someone altered is refused before anything changes,
+// like an unknown schema, instead of being upgraded into a catalog that no
+// build wrote.
+func validateReleasedSchema(ctx context.Context, db queryRower, version int) (schemaClass, error) {
+	fingerprint, _, err := schemaFingerprint(ctx, db)
+	if err != nil {
+		return schemaClass{}, fmt.Errorf("inspect state database schema %d: %w", version, err)
+	}
+	expected, err := stepsFingerprint(ctx, version)
+	if err != nil {
+		return schemaClass{}, err
+	}
+	if fingerprint != expected {
+		return schemaClass{}, fmt.Errorf("state database says schema %d but its tables differ from the ones OwnGit wrote at schema %d, so this build does not upgrade it", version, version)
+	}
+	return schemaReleased(version), nil
+}
+
+// stepsFingerprint returns the catalog fingerprint that the schema steps up
+// to version produce on an empty in-memory database.
+func stepsFingerprint(ctx context.Context, version int) (string, error) {
+	db, err := sql.Open("sqlite", "file:owngit-schema-steps?mode=memory")
+	if err != nil {
+		return "", fmt.Errorf("prepare the schema %d catalog: %w", version, err)
+	}
+	defer db.Close()
+	// Every connection has its own memory database.
+	db.SetMaxOpenConns(1)
+	for _, step := range schemaSteps {
+		if step.version > version {
+			break
+		}
+		for _, statement := range step.statements {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				return "", fmt.Errorf("prepare the schema %d catalog: %w", version, err)
+			}
+		}
+	}
+	fingerprint, _, err := schemaFingerprint(ctx, db)
+	if err != nil {
+		return "", fmt.Errorf("prepare the schema %d catalog: %w", version, err)
+	}
+	return fingerprint, nil
 }
 
 // validateUnversionedSchema accepts an empty database or the exact committed
@@ -551,8 +598,11 @@ type schemaStep struct {
 // 11 adds inbound import state, version 12 records structured HEAD ownership,
 // version 13 records machine-local ownership of unpublished initial
 // destinations, version 14 admits the owner_resolved intent status, and
-// version 15 admits closed pull requests. The 1.0.0 to 1.0.2 releases wrote
-// schema 14 and 1.0.3 wrote schema 15.
+// version 15 admits closed pull requests, and version 16 adds the durable
+// fields of 1.1.3: pull request text and actors, repository names and
+// policies, import options, share links, scheduled backups and recent pushes.
+// The 1.0.0 to 1.0.2 releases wrote schema 14, and 1.0.3 to 1.1.2 wrote
+// schema 15.
 // Schema 12 has no ownership rows. A missing row never authorizes removal or
 // publication of a look-alike directory.
 var schemaSteps = []schemaStep{
@@ -1298,6 +1348,110 @@ var schemaSteps = []schemaStep{
 			merge_source_oid,merge_target_oid,merge_oid,merge_receipt_ref,merged_at FROM pull_requests`,
 		`DROP TABLE pull_requests`,
 		`ALTER TABLE pull_requests_v15 RENAME TO pull_requests`,
+	}},
+	// Schema 16 holds every durable field of the 1.1.3 release. Columns that
+	// hold an actor keep canonical Actor JSON, or '' when nobody was recorded.
+	{version: 16, statements: []string{
+		// Pull request text, its edits, and who created, edited and merged it.
+		`ALTER TABLE pull_requests ADD COLUMN body TEXT NOT NULL DEFAULT '' CHECK (length(CAST(body AS BLOB)) <= 65536)`,
+		`ALTER TABLE pull_requests ADD COLUMN edit_revision INTEGER NOT NULL DEFAULT 0 CHECK (edit_revision >= 0)`,
+		`ALTER TABLE pull_requests ADD COLUMN edited_at INTEGER`,
+		`ALTER TABLE pull_requests ADD COLUMN created_by TEXT NOT NULL DEFAULT '' CHECK (created_by = '' OR (json_valid(created_by) AND length(CAST(created_by AS BLOB)) <= 1024))`,
+		`ALTER TABLE pull_requests ADD COLUMN edited_by TEXT NOT NULL DEFAULT '' CHECK (edited_by = '' OR (json_valid(edited_by) AND length(CAST(edited_by AS BLOB)) <= 1024))`,
+		`ALTER TABLE pull_requests ADD COLUMN merged_by TEXT NOT NULL DEFAULT '' CHECK (merged_by = '' OR (json_valid(merged_by) AND length(CAST(merged_by AS BLOB)) <= 1024))`,
+		// A review row binds the source and target revisions it reviewed, so
+		// its note is bound to both.
+		`ALTER TABLE pull_request_reviews ADD COLUMN note TEXT NOT NULL DEFAULT '' CHECK (length(CAST(note AS BLOB)) <= 65536)`,
+		`ALTER TABLE pull_request_reviews ADD COLUMN actor TEXT NOT NULL DEFAULT '' CHECK (actor = '' OR (json_valid(actor) AND length(CAST(actor AS BLOB)) <= 1024))`,
+		// A repository answers at its ID until it is renamed. The ID and the
+		// storage folder never change; a rename records the current name and
+		// keeps the previous one as an alias until alias_until.
+		`CREATE TABLE repository_names (
+			name TEXT PRIMARY KEY CHECK (length(name) BETWEEN 1 AND 100),
+			repository_id TEXT NOT NULL,
+			kind TEXT NOT NULL CHECK (kind IN ('current','alias')),
+			created_at INTEGER NOT NULL,
+			alias_until INTEGER,
+			CHECK ((kind = 'current') = (alias_until IS NULL)),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE UNIQUE INDEX repository_names_current ON repository_names(repository_id) WHERE kind = 'current'`,
+		`CREATE INDEX repository_names_repository ON repository_names(repository_id,kind,name)`,
+		// A repository's own policies. No row means every default; a NULL
+		// retain_history follows the server default.
+		`CREATE TABLE repository_policies (
+			repository_id TEXT PRIMARY KEY,
+			retain_history INTEGER CHECK (retain_history IN (0,1)),
+			protect_default_branch INTEGER NOT NULL DEFAULT 0 CHECK (protect_default_branch IN (0,1)),
+			extra_ref_prefixes TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(extra_ref_prefixes) AND length(CAST(extra_ref_prefixes AS BLOB)) <= 4096),
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		// Import refresh behaviour is portable. Connection choices are
+		// machine-local like allow_private_network: a restore resets them.
+		`ALTER TABLE import_sources ADD COLUMN overwrite_diverged INTEGER NOT NULL DEFAULT 0 CHECK (overwrite_diverged IN (0,1))`,
+		`ALTER TABLE import_sources ADD COLUMN follow_upstream_deletions INTEGER NOT NULL DEFAULT 0 CHECK (follow_upstream_deletions IN (0,1))`,
+		`ALTER TABLE import_sources ADD COLUMN extra_ref_prefixes TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(extra_ref_prefixes) AND length(CAST(extra_ref_prefixes AS BLOB)) <= 4096)`,
+		`ALTER TABLE import_sources ADD COLUMN allow_plain_http INTEGER NOT NULL DEFAULT 0 CHECK (allow_plain_http IN (0,1))`,
+		`ALTER TABLE import_sources ADD COLUMN redirect_policy TEXT NOT NULL DEFAULT 'refuse' CHECK (redirect_policy IN ('refuse','same_origin','approved'))`,
+		`ALTER TABLE import_sources ADD COLUMN approved_redirect_origin TEXT NOT NULL DEFAULT '' CHECK (length(CAST(approved_redirect_origin AS BLOB)) <= 2048)`,
+		`ALTER TABLE import_sources ADD COLUMN allow_reserved_addresses INTEGER NOT NULL DEFAULT 0 CHECK (allow_reserved_addresses IN (0,1))`,
+		`ALTER TABLE import_sources ADD COLUMN limits_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(limits_json) AND length(CAST(limits_json AS BLOB)) <= 4096)`,
+		// Read-only share links are machine-local authority. Only a hash of
+		// the secret is stored, and a restore brings no link back.
+		`CREATE TABLE share_links (
+			id TEXT PRIMARY KEY CHECK (length(id) = 32),
+			repository_id TEXT NOT NULL,
+			secret_hash BLOB NOT NULL UNIQUE CHECK (length(secret_hash) = 32),
+			scope TEXT NOT NULL CHECK (scope IN ('browse','clone')),
+			label TEXT NOT NULL DEFAULT '' CHECK (length(CAST(label AS BLOB)) <= 100),
+			password_hash TEXT NOT NULL DEFAULT '' CHECK (length(password_hash) <= 512),
+			created_by TEXT NOT NULL DEFAULT '' CHECK (created_by = '' OR (json_valid(created_by) AND length(CAST(created_by AS BLOB)) <= 1024)),
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER,
+			revoked_at INTEGER,
+			last_used_at INTEGER,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX share_links_repository ON share_links(repository_id,created_at,id)`,
+		// Scheduled backups and their runs are machine-local. At most one run
+		// is running, so a restart cannot start a second one beside it.
+		`CREATE TABLE backup_schedule (
+			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+			enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),
+			interval_seconds INTEGER NOT NULL CHECK (interval_seconds BETWEEN 3600 AND 2592000),
+			destination TEXT NOT NULL CHECK (length(CAST(destination AS BLOB)) BETWEEN 1 AND 4096),
+			keep INTEGER NOT NULL CHECK (keep BETWEEN 1 AND 1000),
+			verify INTEGER NOT NULL DEFAULT 1 CHECK (verify IN (0,1)),
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE backup_runs (
+			id TEXT PRIMARY KEY CHECK (length(id) = 32),
+			kind TEXT NOT NULL CHECK (kind IN ('scheduled','manual')),
+			status TEXT NOT NULL CHECK (status IN ('running','succeeded','failed','interrupted')),
+			destination TEXT NOT NULL CHECK (length(CAST(destination AS BLOB)) BETWEEN 1 AND 4096),
+			backup_name TEXT NOT NULL DEFAULT '' CHECK (length(CAST(backup_name AS BLOB)) <= 255),
+			verification TEXT NOT NULL DEFAULT 'not_run' CHECK (verification IN ('not_run','passed','failed')),
+			message TEXT NOT NULL DEFAULT '' CHECK (length(CAST(message AS BLOB)) <= 500),
+			started_at INTEGER NOT NULL,
+			finished_at INTEGER
+		)`,
+		`CREATE UNIQUE INDEX backup_runs_running ON backup_runs(status) WHERE status = 'running'`,
+		`CREATE INDEX backup_runs_recent ON backup_runs(started_at,id)`,
+		// Recent successful pushes for the tray, machine-local and bounded by
+		// the writer. It is not a delivery queue.
+		`CREATE TABLE push_events (
+			sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+			repository_id TEXT NOT NULL,
+			ref_name TEXT NOT NULL CHECK (length(CAST(ref_name AS BLOB)) BETWEEN 1 AND 500),
+			old_oid TEXT NOT NULL CHECK (old_oid = '' OR length(old_oid) IN (40,64)),
+			new_oid TEXT NOT NULL CHECK (new_oid = '' OR length(new_oid) IN (40,64)),
+			refs_updated INTEGER NOT NULL CHECK (refs_updated >= 1),
+			actor TEXT NOT NULL DEFAULT '' CHECK (actor = '' OR (json_valid(actor) AND length(CAST(actor AS BLOB)) <= 1024)),
+			pushed_at INTEGER NOT NULL,
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX push_events_repository ON push_events(repository_id,sequence)`,
 	}},
 }
 
