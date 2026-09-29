@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/bidi"
 	"owngit/internal/checkapi"
 	"owngit/internal/pullrequest"
 	"owngit/internal/version"
@@ -107,6 +108,10 @@ func (session *mcpSession) receive() rpcTestResponse {
 		if strings.Count(line, "\n") != 1 || !strings.HasSuffix(line, "\n") {
 			session.t.Fatalf("a message is not one line: %q", line)
 		}
+		// Every message and every result in it escapes direction controls.
+		if strings.IndexFunc(line, bidi.Control) >= 0 {
+			session.t.Fatalf("a message holds a direction control as it is: %q", line)
+		}
 		var response rpcTestResponse
 		if err := json.Unmarshal([]byte(line), &response); err != nil || response.JSONRPC != "2.0" {
 			session.t.Fatalf("invalid response %q: %v", line, err)
@@ -157,6 +162,9 @@ func (session *mcpSession) call(tool string, arguments any) (string, bool) {
 	noErr(session.t, json.Unmarshal(response.Result, &result))
 	if len(result.Content) != 1 || result.Content[0].Type != "text" {
 		session.t.Fatalf("%s: content %+v", tool, result.Content)
+	}
+	if strings.IndexFunc(result.Content[0].Text, bidi.Control) >= 0 {
+		session.t.Fatalf("%s: the result holds a direction control as it is: %q", tool, result.Content[0].Text)
 	}
 	return result.Content[0].Text, result.IsError
 }
@@ -703,6 +711,18 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	if isError || edited.PullRequest == nil || *edited.PullRequest.Body != "Second" || edited.PullRequest.Title != "Feature" || edited.PullRequest.EditRevision != 1 {
 		t.Fatalf("edit: %s", text)
 	}
+	// A title with direction controls comes back escaped, and the same.
+	const reordering = "Feature \u202eevil\u202c \u2067x\u2069"
+	text, isError = session.call("pull_request_edit", map[string]any{"number": number, "edit_revision": 1, "title": reordering})
+	decodeToolJSON(t, text, &edited)
+	if isError || edited.PullRequest.Title != reordering || !strings.Contains(text, `Feature \u202eevil\u202c`) {
+		t.Fatalf("edit with direction controls: %s", text)
+	}
+	text, isError = session.call("pull_request_edit", map[string]any{"number": number, "edit_revision": 2, "title": "Feature"})
+	decodeToolJSON(t, text, &edited)
+	if isError || edited.PullRequest.Title != "Feature" {
+		t.Fatalf("edit back: %s", text)
+	}
 	if code := session.callError("pull_request_edit", map[string]any{"number": number, "edit_revision": 0, "title": "Stale"}); code != "stale_edit" {
 		t.Fatalf("a stale edit: %q", code)
 	}
@@ -711,7 +731,7 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	}
 	// A body over the limit gets the server's code, although escaping would
 	// make the request itself too large.
-	if code := session.callError("pull_request_edit", map[string]any{"number": number, "edit_revision": 1, "body": strings.Repeat("<", 70<<10)}); code != "invalid_body" {
+	if code := session.callError("pull_request_edit", map[string]any{"number": number, "edit_revision": 3, "body": strings.Repeat("<", 70<<10)}); code != "invalid_body" {
 		t.Fatalf("an edit over the limit: %q", code)
 	}
 	if code := session.callError("pull_request_create", map[string]any{"title": "Again", "source_branch": "feature", "target_branch": "main"}); code == "" {

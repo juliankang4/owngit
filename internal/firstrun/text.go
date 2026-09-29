@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"owngit/internal/bidi"
 )
 
 // runeRange is an inclusive range of code points.
@@ -75,7 +77,7 @@ func displayValue(value string) string {
 			out.WriteString(`\r`)
 		case r < 0x20 || (r >= 0x7F && r <= 0x9F):
 			fmt.Fprintf(&out, `\x%02x`, r)
-		case directionControl(r):
+		case bidi.Control(r):
 			fmt.Fprintf(&out, `\u%04x`, r)
 		default:
 			out.WriteRune(r)
@@ -84,15 +86,9 @@ func displayValue(value string) string {
 	return out.String()
 }
 
-// directionControl reports whether r changes the order in which the
-// characters around it are shown, so a value could look like another one.
-func directionControl(r rune) bool {
-	return r == 0x061C || r == 0x200E || r == 0x200F || (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069)
-}
-
 // unshowable reports whether displayValue shows r as an escape.
 func unshowable(r rune) bool {
-	return r < 0x20 || (r >= 0x7F && r <= 0x9F) || directionControl(r)
+	return r < 0x20 || (r >= 0x7F && r <= 0x9F) || bidi.Control(r)
 }
 
 // composeHangul applies the Unicode composition of conjoining Hangul jamo

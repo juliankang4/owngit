@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"owngit/internal/apiclient"
+	"owngit/internal/bidi"
 	"owngit/internal/server"
 	"owngit/internal/state"
 	"owngit/internal/tailscale"
@@ -448,8 +450,15 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 	}
 }
 
+// printJSON prints value as indented JSON, with direction controls escaped
+// like every JSON result.
 func printJSON(value any) error {
-	encoder := json.NewEncoder(os.Stdout)
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(value)
+	if err := encoder.Encode(value); err != nil {
+		return err
+	}
+	_, err := os.Stdout.Write(bidi.EscapeJSON(output.Bytes()))
+	return err
 }

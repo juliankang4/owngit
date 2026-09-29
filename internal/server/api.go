@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"owngit/internal/auth"
+	"owngit/internal/bidi"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/requestctx"
@@ -379,17 +380,20 @@ func writeAPIJSON(writer http.ResponseWriter, status int, value any) {
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(true)
-	if err := encoder.Encode(value); err != nil || output.Len() > maximumAPIResponse {
+	err := encoder.Encode(value)
+	encoded := bidi.EscapeJSON(output.Bytes())
+	if err != nil || len(encoded) > maximumAPIResponse {
 		output.Reset()
 		_ = json.NewEncoder(&output).Encode(pullrequest.ErrorEnvelope{
 			OK: false, Error: pullrequest.ErrorDescription{Code: "response_too_large", Message: "The API response exceeds the supported size."},
 		})
+		encoded = output.Bytes()
 		status = http.StatusInsufficientStorage
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.WriteHeader(status)
-	_, _ = writer.Write(output.Bytes())
+	_, _ = writer.Write(encoded)
 }
 
 // apiStatus is the status that answers err by its pull request problem

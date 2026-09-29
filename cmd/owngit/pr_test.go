@@ -19,6 +19,7 @@ import (
 
 	"owngit/internal/apiclient"
 	"owngit/internal/auth"
+	"owngit/internal/bidi"
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
 	"owngit/internal/pullrequest"
@@ -247,6 +248,9 @@ func runPRCommandJSON(t *testing.T, arguments []string) pullrequest.SuccessEnvel
 	t.Helper()
 	output, err := captureStdout(func() error { return prCommand(arguments) })
 	noErr(t, err)
+	if strings.IndexFunc(output, bidi.Control) >= 0 {
+		t.Fatalf("CLI JSON holds a direction control as it is: %q", output)
+	}
 	var envelope pullrequest.SuccessEnvelope
 	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
 		t.Fatalf("decode CLI JSON output: %v\n%s", err, output)
@@ -311,6 +315,22 @@ func TestStructuredPRFailureContainsStableCodeWithoutCause(t *testing.T) {
 	}
 }
 
+// The command line escapes direction controls in the JSON it prints, also in
+// an answer from a server that did not, and in its error objects, so they
+// cannot reorder the fields around a title in a terminal.
+func TestCLIJSONEscapesDirectionControls(t *testing.T) {
+	printed, err := captureStdout(func() error { return writeJSON([]byte("{\"title\":\"a\u202eb\u2066c\"}")) })
+	noErr(t, err)
+	if printed != `{"title":"a\u202eb\u2066c"}`+"\n" {
+		t.Fatalf("printed %q", printed)
+	}
+	var output bytes.Buffer
+	writeStructuredCommandError(&output, cliProblem("invalid_title", "Refused \u202etitle"))
+	if strings.IndexFunc(output.String(), bidi.Control) >= 0 || !strings.Contains(output.String(), `Refused \u202etitle`) {
+		t.Fatalf("error object %q", output.String())
+	}
+}
+
 // Text over its limit is refused with the server's code before anything is
 // sent, whatever its characters. 70 KiB of "<" grows six times as JSON, so
 // without the check it would be refused as too large a request instead, and a
@@ -360,7 +380,7 @@ func TestPRTextSurvivesBackupAndRestore(t *testing.T) {
 		return path
 	}
 	created := runPRCommandJSON(t, append([]string{
-		"create", "--title", "Described", "--source", "feature", "--target", "main",
+		"create", "--title", "Described \u2067\u05e9\u2069", "--source", "feature", "--target", "main",
 		"--body-file", write("body.md", "## Why\r\n\r\nFirst draft.\r\n"),
 	}, fixture.remoteFlags...)).PullRequest
 	if created.Body == nil || *created.Body != "## Why\n\nFirst draft.\n" || created.EditRevision != 0 {
@@ -370,7 +390,7 @@ func TestPRTextSurvivesBackupAndRestore(t *testing.T) {
 	edited := runPRCommandJSON(t, append([]string{
 		"edit", "--number", number, "--edit-revision", "0", "--body-file", write("edit.md", "Final text.\n"),
 	}, fixture.remoteFlags...)).PullRequest
-	if edited.Title != "Described" || *edited.Body != "Final text.\n" || edited.EditRevision != 1 {
+	if edited.Title != "Described \u2067\u05e9\u2069" || *edited.Body != "Final text.\n" || edited.EditRevision != 1 {
 		t.Fatalf("edited=%+v", edited)
 	}
 	err := prCommand(append([]string{"edit", "--number", number, "--edit-revision", "0", "--title", "Stale"}, fixture.remoteFlags...))

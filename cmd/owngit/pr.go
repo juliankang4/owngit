@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"owngit/internal/apiclient"
+	"owngit/internal/bidi"
 	"owngit/internal/pullrequest"
 	"owngit/internal/state"
 )
@@ -446,7 +447,8 @@ func writeStructuredCommandError(writer io.Writer, err error) bool {
 	}
 	description := pullrequest.ErrorDescription{Code: coded.ErrorCode(), Message: coded.Error()}
 	description.Details = coded.ErrorDetails()
-	_ = json.NewEncoder(writer).Encode(pullrequest.ErrorEnvelope{OK: false, Error: description})
+	encoded, _ := bidi.MarshalJSON(pullrequest.ErrorEnvelope{OK: false, Error: description})
+	_, _ = writer.Write(append(encoded, '\n'))
 	return true
 }
 

@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"owngit/internal/apiclient"
+	"owngit/internal/bidi"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/version"
@@ -402,9 +403,9 @@ func rpcIDKey(id json.RawMessage) string {
 }
 
 func (server *mcpServer) send(response rpcResponse) {
-	encoded, err := json.Marshal(response)
+	encoded, err := bidi.MarshalJSON(response)
 	if err != nil {
-		encoded, _ = json.Marshal(rpcResponse{JSONRPC: "2.0", ID: response.ID, Error: &rpcError{Code: -32603, Message: "The response could not be encoded."}})
+		encoded, _ = bidi.MarshalJSON(rpcResponse{JSONRPC: "2.0", ID: response.ID, Error: &rpcError{Code: -32603, Message: "The response could not be encoded."}})
 	}
 	server.writeMu.Lock()
 	defer server.writeMu.Unlock()
@@ -521,7 +522,10 @@ func (server *mcpServer) callTool(ctx context.Context, tool *mcpTool, arguments 
 	if content == nil {
 		content = errorEnvelope(err)
 	}
-	text := fitResult(bytes.TrimRight(content, "\n"), server.resultLimit)
+	// The result is the command line's JSON, with direction controls
+	// escaped as it prints them, so the text a coding tool shows cannot
+	// reorder the fields around a title either.
+	text := fitResult(bidi.EscapeJSON(bytes.TrimRight(content, "\n")), server.resultLimit)
 	return toolResult{Content: []toolContent{{Type: "text", Text: string(text)}}, IsError: err != nil}
 }
 
@@ -559,7 +563,7 @@ func fitResult(content []byte, limit int) []byte {
 		sort.Strings(paths)
 		note["cut"] = paths
 		root["result_truncated"] = note
-		encoded, err := json.Marshal(root)
+		encoded, err := bidi.MarshalJSON(root)
 		if err == nil && len(encoded) <= limit {
 			return encoded
 		}
@@ -569,7 +573,7 @@ func fitResult(content []byte, limit int) []byte {
 		}
 	}
 	note["cut"] = []string{"*"}
-	encoded, _ := json.Marshal(map[string]any{"ok": root["ok"], "result_truncated": note})
+	encoded, _ := bidi.MarshalJSON(map[string]any{"ok": root["ok"], "result_truncated": note})
 	return encoded
 }
 
@@ -651,7 +655,7 @@ func walkJSON(value any, path string, set func(any), visit func(jsonSlot)) {
 }
 
 func encodedLength(value any) int {
-	encoded, _ := json.Marshal(value)
+	encoded, _ := bidi.MarshalJSON(value)
 	return len(encoded)
 }
 

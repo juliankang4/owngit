@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -244,9 +243,7 @@ func networkShow(arguments []string) error {
 		}
 	}
 	if *asJSON {
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(struct {
+		return printJSON(struct {
 			networkReport
 			// StateMissing says that the state directory holds no OwnGit
 			// state yet, so the report shows the defaults.

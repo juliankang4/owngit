@@ -310,3 +310,42 @@ func TestBrowserFormOverTheLimitSaysSo(t *testing.T) {
 		t.Fatalf("an oversized form changed the record: %+v", record)
 	}
 }
+
+// directionControls are the Unicode direction controls, the ones a title or
+// note could use to reorder what is shown around it.
+const directionControls = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+
+// Direction controls in pull request text reach API clients as \uXXXX
+// escapes, in a result and in a list, so they cannot reorder the fields
+// after them where the JSON is shown; decoded, the text is unchanged.
+func TestAPIEscapesDirectionControls(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	endpoint := server.URL + "/api/v1/repositories/project/pull-requests"
+	title := "Fix " + directionControls + " done"
+	created := apiRequest(t, http.MethodPost, endpoint, map[string]any{
+		"title": title, "body": "a\u202eb", "source_branch": "feature", "target_branch": "main",
+	}, "", "")
+	for name, response := range map[string]*http.Response{
+		"create": created,
+		"list":   apiRequest(t, http.MethodGet, endpoint, nil, "", ""),
+	} {
+		content, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		noErr(t, err)
+		if response.StatusCode != http.StatusOK || strings.ContainsAny(string(content), directionControls) || !strings.Contains(string(content), `Fix \u061c\u200e`) {
+			t.Fatalf("%s status=%d: %s", name, response.StatusCode, content)
+		}
+		var decoded struct {
+			PullRequest  *pullrequest.View  `json:"pull_request"`
+			PullRequests []pullrequest.View `json:"pull_requests"`
+		}
+		noErr(t, json.Unmarshal(content, &decoded))
+		if decoded.PullRequest == nil && len(decoded.PullRequests) == 1 {
+			decoded.PullRequest = &decoded.PullRequests[0]
+		}
+		if decoded.PullRequest == nil || decoded.PullRequest.Title != title {
+			t.Fatalf("%s decoded to %+v", name, decoded)
+		}
+	}
+}

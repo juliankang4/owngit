@@ -1,12 +1,12 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 
 	"owngit/internal/auth"
+	"owngit/internal/bidi"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -343,7 +343,7 @@ func (app *App) settingsAnswer(writer http.ResponseWriter, request *http.Request
 			app.setCookie(writer, request, noticeCookie, notice, app.now().Add(noticeCookieMaxAge), true)
 		}
 	}
-	body, err := json.Marshal(struct {
+	body, err := bidi.MarshalJSON(struct {
 		Location string `json:"location"`
 	}{target})
 	if err != nil {

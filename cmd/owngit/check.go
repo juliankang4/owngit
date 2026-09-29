@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"owngit/internal/apiclient"
+	"owngit/internal/bidi"
 	"owngit/internal/checkapi"
 	"owngit/internal/checkexec"
 	"owngit/internal/checkworkflow"
@@ -733,7 +734,11 @@ func writeResult(content []byte, err error) error {
 	return writeJSON(content)
 }
 
+// writeJSON prints a JSON result: one from the server as it came, or one the
+// command made. Direction controls are escaped, as the server does, so an
+// older server's answer cannot reorder the fields around a title either.
 func writeJSON(content []byte) error {
+	content = bidi.EscapeJSON(content)
 	if _, err := os.Stdout.Write(content); err != nil {
 		return &apiclient.Error{Code: "output_failed", Message: "The JSON result could not be written.", Cause: err}
 	}
