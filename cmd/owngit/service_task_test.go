@@ -1136,6 +1136,28 @@ func TestTaskLeavesAFirewallRuleOwnGitDidNotAdd(t *testing.T) {
 	if !strings.Contains(out.String(), "exists that OwnGit did not add") || strings.Contains(out.String(), "with its Windows Firewall rule") {
 		t.Errorf("uninstall output:\n%s", out.String())
 	}
+
+	// Without a service folder yet, here beside a sign-in task, the
+	// refused install creates none and keeps the task.
+	fake = newFakeWindows(t)
+	fake.existing(t, service.ModeLogonTask, testSID, testStateDir)
+	fake.firewall = service.FirewallForeign + "\n"
+	fake.git = true
+	definition = fake.definition
+	host, _ = testTaskHost(service.Environment{Administrator: true, Elevated: true})
+	directory := filepath.Join(t.TempDir(), "OwnGit")
+	host.serviceInstall = serviceInstallPaths{Directory: directory, Executable: testServiceExecutable, Temp: filepath.Join(directory, "temp")}
+	if err := host.install("", nil); !errors.As(err, &exit) || exit.code != elevatedMessageExit || fake.definition != definition {
+		t.Errorf("install beside a sign-in task: %v", err)
+	}
+	for _, call := range fake.calls {
+		if call != "powershell definition" && call != "powershell firewall-show" {
+			t.Errorf("the refused install ran %q; calls %q", call, fake.calls)
+		}
+	}
+	if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the refused install created %s: %v", directory, err)
+	}
 }
 
 // An install that stopped partway can leave the service copy and OwnGit's
