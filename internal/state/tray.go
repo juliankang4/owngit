@@ -1,7 +1,9 @@
 package state
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -60,33 +62,74 @@ func SetTrayHidden(held *os.File, hidden bool) error {
 }
 
 // TrayAccess is the content of TrayAccessFile: the loopback address of the
-// running server and the token its tray status answers to.
+// running server, the token its tray status answers to, and the secret with
+// which it proves that an answer is its own.
 type TrayAccess struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`
+	Proof string `json:"proof"`
 }
 
-// trayTokenBytes is the size of the random tray token.
+// trayTokenBytes is the size of the random tray token and of the proof
+// secret.
 const trayTokenBytes = 32
 
-// PublishTrayAccess makes a new token for a server that answers at url and
-// writes both to TrayAccessFile in the held state directory. Every start
-// makes a new token, so a token that reached a program listening at the
+// The tray status proves its answer: the icon sends a new random nonce in
+// TrayNonceHeader with every request, and the server answers with
+// TrayProof of that nonce and the exact body in TrayProofHeader. Only the
+// server and the icon hold the proof secret, which never crosses the
+// connection, so a program that took the address while OwnGit was stopped
+// cannot answer as OwnGit, even with the token the icon sent it.
+const (
+	TrayNonceHeader = "X-OwnGit-Tray-Nonce"
+	TrayProofHeader = "X-OwnGit-Tray-Proof"
+)
+
+// TrayProof is the proof of a tray status answer: HMAC-SHA256 with the
+// proof secret over "owngit tray status", the nonce and the body, each
+// ended by a newline, in unpadded base64url.
+func TrayProof(secret, nonce string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("owngit tray status\n" + nonce + "\n"))
+	mac.Write(body)
+	mac.Write([]byte("\n"))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// NewTrayNonce returns a new random nonce for one status request.
+func NewTrayNonce() (string, error) {
+	random := make([]byte, trayTokenBytes)
+	if _, err := rand.Read(random); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(random), nil
+}
+
+// ValidTrayNonce reports whether nonce has the form NewTrayNonce makes.
+func ValidTrayNonce(nonce string) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(nonce)
+	return err == nil && len(decoded) == trayTokenBytes
+}
+
+// PublishTrayAccess makes a new token and proof secret for a server that
+// answers at url and writes them to TrayAccessFile in the held state
+// directory. Every start makes new ones, so a token that reached a program listening at the
 // address while OwnGit was stopped is worthless once OwnGit runs again; the
 // icon reads the file again when its token is refused. The file is written
 // under a temporary name, made private to this account before anything is
 // written to it, and then renamed, so a reader never sees a partial file.
 func PublishTrayAccess(held *os.File, url string) (TrayAccess, error) {
-	random := make([]byte, trayTokenBytes+8)
+	random := make([]byte, 2*trayTokenBytes+8)
 	if _, err := rand.Read(random); err != nil {
 		return TrayAccess{}, err
 	}
-	access := TrayAccess{URL: url, Token: base64.RawURLEncoding.EncodeToString(random[:trayTokenBytes])}
+	encode := base64.RawURLEncoding.EncodeToString
+	access := TrayAccess{URL: url, Token: encode(random[:trayTokenBytes]), Proof: encode(random[trayTokenBytes : 2*trayTokenBytes])}
 	content, err := json.Marshal(access)
 	if err != nil {
 		return TrayAccess{}, err
 	}
-	temporary := ".tray-access-" + base64.RawURLEncoding.EncodeToString(random[trayTokenBytes:])
+	temporary := ".tray-access-" + encode(random[2*trayTokenBytes:])
 	file, err := OpenOwnFile(held, temporary, os.O_WRONLY|os.O_CREATE)
 	if err != nil {
 		return TrayAccess{}, fmt.Errorf("write the tray access file: %w", err)

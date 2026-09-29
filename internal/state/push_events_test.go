@@ -129,7 +129,7 @@ func TestPublishTrayAccess(t *testing.T) {
 	}
 	first, err := PublishTrayAccess(held, "http://127.0.0.1:7654")
 	noErr(t, err)
-	if len(first.Token) != 43 || first.URL != "http://127.0.0.1:7654" || read() != first {
+	if len(first.Token) != 43 || len(first.Proof) != 43 || first.Proof == first.Token || first.URL != "http://127.0.0.1:7654" || read() != first {
 		t.Fatalf("first access = %+v, file %+v", first, read())
 	}
 	// A file another account could read gets a private replacement.
@@ -154,5 +154,29 @@ func TestPublishTrayAccess(t *testing.T) {
 		if strings.HasPrefix(entry.Name(), ".tray-access-") {
 			t.Fatalf("temporary file %s left behind", entry.Name())
 		}
+	}
+}
+
+// A proof binds the secret, the nonce and the exact body.
+func TestTrayProof(t *testing.T) {
+	nonce, err := NewTrayNonce()
+	noErr(t, err)
+	other, err := NewTrayNonce()
+	noErr(t, err)
+	if !ValidTrayNonce(nonce) || nonce == other || ValidTrayNonce("") || ValidTrayNonce("AAAA") || ValidTrayNonce(nonce+"A") {
+		t.Fatalf("nonces %q %q", nonce, other)
+	}
+	proof := TrayProof("secret", nonce, []byte(`{"ok":true}`))
+	for name, changed := range map[string]string{
+		"secret": TrayProof("secret2", nonce, []byte(`{"ok":true}`)),
+		"nonce":  TrayProof("secret", other, []byte(`{"ok":true}`)),
+		"body":   TrayProof("secret", nonce, []byte(`{"ok":true} `)),
+	} {
+		if changed == proof {
+			t.Errorf("another %s gives the same proof", name)
+		}
+	}
+	if proof != TrayProof("secret", nonce, []byte(`{"ok":true}`)) || len(proof) != 43 {
+		t.Errorf("proof %q", proof)
 	}
 }

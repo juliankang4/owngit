@@ -2,6 +2,7 @@ package tray
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ func TestViewOfARunningServer(t *testing.T) {
 			{RepositoryID: "site", Ref: "refs/tags/v1", PushedAt: now.Add(-26 * time.Hour)},
 		},
 	}
-	view := NewView(Report{Condition: Running, Status: status}, webui.LangEN, now)
+	view := NewView(Report{Condition: Running, Status: status, Dashboard: "http://127.0.0.1:7654"}, webui.LangEN, now)
 	want := View{
 		Condition: Running, State: "Running", Tooltip: "OwnGit: Running",
 		Subtitle: "Version 1.1.3, 127.0.0.1:7654", CloneAddress: status.CloneAddress, DashboardURL: status.DashboardURL,
@@ -62,13 +63,15 @@ func TestViewOfAServerThatNeedsAttention(t *testing.T) {
 		"A", "B",
 		"The dashboard Settings list 2 more.",
 	}
-	if !reflect.DeepEqual(view.Notice, notice) || view.Command != status.Update.Command || view.CommandIntro != "To update, run this command:" || view.GuideURL != "" {
-		t.Errorf("notice %q, command %q (%q), guide %q", view.Notice, view.Command, view.CommandIntro, view.GuideURL)
+	if !reflect.DeepEqual(view.Notice, notice) || view.Command != status.Update.Command || view.CommandIntro != "To update, run this command:" {
+		t.Errorf("notice %q, command %q (%q)", view.Notice, view.Command, view.CommandIntro)
 	}
+	// Without a command the dashboard, which the icon opens, says how; the
+	// guide address of the answer is not opened.
 	status.Update = &server.TrayUpdate{Version: "1.1.4", GuideURL: "https://github.com/juliankang4/owngit#install"}
 	view = NewView(Report{Condition: Attention, Status: status}, webui.LangEN, time.Now())
-	if view.Command != "repair-a" || view.CommandIntro != "To repair it, run this command:" || view.GuideURL != status.Update.GuideURL {
-		t.Errorf("without an update command: command %q (%q), guide %q", view.Command, view.CommandIntro, view.GuideURL)
+	if view.Command != "repair-a" || view.CommandIntro != "To repair it, run this command:" || !slices.Contains(view.Notice, "The dashboard says how to update this install.") {
+		t.Errorf("without an update command: command %q (%q), notice %q", view.Command, view.CommandIntro, view.Notice)
 	}
 }
 

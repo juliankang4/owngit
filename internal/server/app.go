@@ -88,8 +88,9 @@ type App struct {
 	// runs, from this server's own facts. Nil shows no checkup.
 	Diagnose func(ctx context.Context) []webui.Finding
 	// TrayToken is the token of state.TrayAccessFile that TrayStatusPath
-	// answers to. Empty leaves that path unanswered.
-	TrayToken string
+	// answers to, and TrayProof the secret with which it proves its
+	// answers (state.TrayProof). Either empty leaves that path unanswered.
+	TrayToken, TrayProof string
 	// TrayAvailable is true when this install offers the OwnGit icon: it
 	// runs as the account that signs in at the desktop, not as a dedicated
 	// service account.

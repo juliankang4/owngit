@@ -17,7 +17,13 @@ import (
 	"owngit/internal/webui"
 )
 
-const trayTestToken = "synthetic-tray-token"
+const (
+	trayTestToken = "synthetic-tray-token"
+	trayTestProof = "synthetic-tray-proof"
+)
+
+// trayNonce is the nonce of trayGET's requests.
+const trayNonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 // trayGET asks the tray status of handler as a program on this computer
 // would, with token, and decodes the answer.
@@ -28,6 +34,7 @@ func trayGET(t *testing.T, handler http.Handler, token string, change func(*http
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
+	request.Header.Set(state.TrayNonceHeader, trayNonce)
 	if change != nil {
 		change(request)
 	}
@@ -40,6 +47,9 @@ func trayGET(t *testing.T, handler http.Handler, token string, change func(*http
 	body := recorder.Body.Bytes()
 	if recorder.Code == http.StatusOK {
 		noErr(t, json.Unmarshal(body, &status))
+		if proof := recorder.Header().Get(state.TrayProofHeader); proof != state.TrayProof(trayTestProof, request.Header.Get(state.TrayNonceHeader), body) {
+			t.Fatalf("the answer carries the proof %q", proof)
+		}
 	} else {
 		noErr(t, json.Unmarshal(body, &failure))
 	}
@@ -52,7 +62,7 @@ func trayGET(t *testing.T, handler http.Handler, token string, change func(*http
 func TestTrayStatusListsPushesThroughTheServer(t *testing.T) {
 	app, store, _, server := releaseApp(t, "v1.0.3")
 	noErr(t, app.Releases.Check(context.Background()))
-	app.TrayToken = trayTestToken
+	app.TrayToken, app.TrayProof = trayTestToken, trayTestProof
 	app.GitHTTP.OnPush = app.RecordPush
 	app.UpdateCommand = func(version string) (string, string, bool) { return "brew upgrade owngit", "", false }
 	start := time.Now().Add(-time.Second)
@@ -80,6 +90,7 @@ func TestTrayStatusListsPushesThroughTheServer(t *testing.T) {
 	request, err := http.NewRequest(http.MethodGet, server.URL+TrayStatusPath, nil)
 	noErr(t, err)
 	request.Header.Set("Authorization", "Bearer "+trayTestToken)
+	request.Header.Set(state.TrayNonceHeader, trayNonce)
 	response, err := http.DefaultClient.Do(request)
 	noErr(t, err)
 	defer response.Body.Close()
@@ -124,7 +135,7 @@ func TestTrayStatusRefusesWithoutTheTokenOrFromElsewhere(t *testing.T) {
 	if code, _, _ := trayGET(t, handler, trayTestToken, nil); code != http.StatusNotFound {
 		t.Fatalf("without a published token: %d, want 404", code)
 	}
-	app.TrayToken = trayTestToken
+	app.TrayToken, app.TrayProof = trayTestToken, trayTestProof
 	for name, test := range map[string]struct {
 		token  string
 		change func(*http.Request)
@@ -141,7 +152,9 @@ func TestTrayStatusRefusesWithoutTheTokenOrFromElsewhere(t *testing.T) {
 		"forwarded by a proxy here": {trayTestToken, func(request *http.Request) {
 			request.Header.Set("X-Forwarded-For", "192.0.2.10")
 		}, http.StatusForbidden, "not_local"},
-		"post": {trayTestToken, func(request *http.Request) { request.Method = http.MethodPost }, http.StatusMethodNotAllowed, "method_not_allowed"},
+		"post":        {trayTestToken, func(request *http.Request) { request.Method = http.MethodPost }, http.StatusMethodNotAllowed, "method_not_allowed"},
+		"no nonce":    {trayTestToken, func(request *http.Request) { request.Header.Del(state.TrayNonceHeader) }, http.StatusBadRequest, "invalid_nonce"},
+		"short nonce": {trayTestToken, func(request *http.Request) { request.Header.Set(state.TrayNonceHeader, "AAAA") }, http.StatusBadRequest, "invalid_nonce"},
 		"this computer by its own address": {trayTestToken, func(request *http.Request) {
 			request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.5:50000"
 			local := &net.TCPAddr{IP: net.ParseIP("192.0.2.5"), Port: 7654}
@@ -167,13 +180,13 @@ func TestTrayStatusRefusesWithoutTheTokenOrFromElsewhere(t *testing.T) {
 // reused for a minute.
 func TestTrayStatusStates(t *testing.T) {
 	notSetUp, _, _ := newTestApp(t)
-	notSetUp.TrayToken = trayTestToken
+	notSetUp.TrayToken, notSetUp.TrayProof = trayTestToken, trayTestProof
 	if code, status, _ := trayGET(t, notSetUp.Handler(), trayTestToken, nil); code != http.StatusOK || status.State != "attention" || !status.SetupRequired {
 		t.Fatalf("before setup: %d %+v", code, status)
 	}
 
 	app := newConfiguredApp(t)
-	app.TrayToken = trayTestToken
+	app.TrayToken, app.TrayProof = trayTestToken, trayTestProof
 	now := time.Unix(1_900_000_000, 0)
 	app.Now = func() time.Time { return now }
 	runs := 0

@@ -42,7 +42,6 @@ const (
 const (
 	idOpen        = idOK
 	idCopyCommand = 10
-	idGuide       = 11
 	idCopyClone   = 12
 	idHide        = 13
 	idQuit        = 14
@@ -111,7 +110,7 @@ type app struct {
 type panelControls struct {
 	title, subtitle, state                  uintptr
 	notice, commandIntro, command, copyCmd  uintptr
-	guide, cloneLabel, clone, copyClone     uintptr
+	cloneLabel, clone, copyClone            uintptr
 	recent, noPushes                        uintptr
 	pushes                                  [3][3]uintptr
 	open, section, hide, quit, keepsRunning uintptr
@@ -237,7 +236,6 @@ func (a *app) createControls() {
 	c.commandIntro = static(ssLeft)
 	c.command = edit()
 	c.copyCmd = button(idCopyCommand)
-	c.guide = button(idGuide)
 	c.cloneLabel = static(ssLeft)
 	c.clone = edit()
 	c.copyClone = button(idCopyClone)
@@ -257,7 +255,6 @@ func (a *app) createControls() {
 	a.setText(c.cloneLabel, text(webui.MsgTrayCloneAddress))
 	a.setText(c.copyCmd, text(webui.MsgTrayCopy))
 	a.setText(c.copyClone, text(webui.MsgTrayCopy))
-	a.setText(c.guide, text(webui.MsgTrayUpdateGuide))
 	a.setText(c.recent, text(webui.MsgTrayRecent))
 	a.setText(c.open, text(webui.MsgTrayOpen))
 	a.setText(c.section, text(webui.MsgTrayThisComputer))
@@ -530,10 +527,6 @@ func (a *app) command(id int) {
 		a.copy(a.controls.copyCmd, idCopyCommand, a.view.Command)
 	case idCopyClone:
 		a.copy(a.controls.copyClone, idCopyClone, a.view.CloneAddress)
-	case idGuide:
-		if openURL(a.view.GuideURL) {
-			a.closePanel()
-		}
 	case idHide:
 		a.hideIcon()
 	case idQuit:
@@ -860,8 +853,8 @@ func (a *app) layout() (int32, int32) {
 
 	// Notice: what needs doing, and its one command.
 	a.notice = rect{}
-	hide(c.notice, c.commandIntro, c.command, c.copyCmd, c.guide)
-	if len(view.Notice) > 0 || view.Command != "" || view.GuideURL != "" {
+	hide(c.notice, c.commandIntro, c.command, c.copyCmd)
+	if len(view.Notice) > 0 || view.Command != "" {
 		top := y
 		x, w := pad+s(12), inner-s(24)
 		y += s(10)
@@ -879,10 +872,6 @@ func (a *app) layout() (int32, int32) {
 			y += h + s(6)
 			a.setText(c.command, view.Command)
 			field(c.command, c.copyCmd, x, y, w)
-			y += buttonHeight + s(8)
-		}
-		if view.GuideURL != "" {
-			place(c.guide, x-s(12), y, buttonWidth(a.texts[c.guide]), buttonHeight)
 			y += buttonHeight + s(8)
 		}
 		y += s(2)
@@ -1023,7 +1012,7 @@ func (a *app) controlColors(hdc, control uintptr) uintptr {
 	c := &a.controls
 	background, text := a.colors.bg, a.colors.fg
 	switch control {
-	case c.notice, c.commandIntro, c.copyCmd, c.guide:
+	case c.notice, c.commandIntro, c.copyCmd:
 		background = a.noticeColor()
 	case c.command, c.clone:
 		background = a.colors.field
@@ -1042,13 +1031,13 @@ func (a *app) controlColors(hdc, control uintptr) uintptr {
 	return a.brush(background)
 }
 
-// drawButton draws a button: Open filled with the accent color, How to
-// update as a link, the others outlined; a focus ring when the keyboard
-// moved the focus there.
+// drawButton draws a button: Open filled with the accent color, the
+// others outlined, and a focus ring when the keyboard moved the focus
+// there.
 func (a *app) drawButton(item *drawItemStruct) {
 	c := &a.controls
 	background := a.colors.bg
-	if item.item == c.copyCmd || item.item == c.guide {
+	if item.item == c.copyCmd {
 		background = a.noticeColor()
 	}
 	r := item.rect
@@ -1057,8 +1046,6 @@ func (a *app) drawButton(item *drawItemStruct) {
 	switch {
 	case item.item == c.open:
 		fill, outline, text = a.colors.accent, a.colors.accent, a.colors.onAccent
-	case item.item == c.guide:
-		fill, outline, text = background, background, a.colors.accent
 	case item.itemState&odsSelected != 0:
 		fill = a.colors.buttonPressed
 	}

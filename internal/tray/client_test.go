@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"owngit/internal/server"
 	"owngit/internal/state"
@@ -21,13 +22,17 @@ type fakeServer struct {
 	*httptest.Server
 	stateDir string
 	token    string
+	// proof is the secret the server proves its answers with; sign
+	// computes the proof header of an answer from it.
+	proof    string
+	sign     func(secret, nonce string, body []byte) string
 	answer   func(http.ResponseWriter)
 	requests []string
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
 	t.Helper()
-	fake := &fakeServer{stateDir: t.TempDir(), token: "first"}
+	fake := &fakeServer{stateDir: t.TempDir(), token: "first", proof: "first-proof", sign: state.TrayProof}
 	fake.Server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		fake.requests = append(fake.requests, request.URL.RequestURI()+" "+request.Header.Get("Authorization"))
 		if request.Header.Get("Authorization") != "Bearer "+fake.token {
@@ -36,7 +41,14 @@ func newFakeServer(t *testing.T) *fakeServer {
 			writer.Write([]byte(`{"ok":false,"error":{"code":"unauthorized"}}`))
 			return
 		}
-		fake.answer(writer)
+		recorder := httptest.NewRecorder()
+		fake.answer(recorder)
+		for name, values := range recorder.Header() {
+			writer.Header()[name] = values
+		}
+		writer.Header().Set(state.TrayProofHeader, fake.sign(fake.proof, request.Header.Get(state.TrayNonceHeader), recorder.Body.Bytes()))
+		writer.WriteHeader(recorder.Code)
+		writer.Write(recorder.Body.Bytes())
 	}))
 	t.Cleanup(fake.Close)
 	fake.answer = answerStatus(server.TrayStatus{OK: true, State: "running", Version: "1.1.3", Shown: true})
@@ -46,7 +58,7 @@ func newFakeServer(t *testing.T) *fakeServer {
 
 func (fake *fakeServer) publish(t *testing.T, url, token string) {
 	t.Helper()
-	content, err := json.Marshal(state.TrayAccess{URL: url, Token: token})
+	content, err := json.Marshal(state.TrayAccess{URL: url, Token: token, Proof: fake.proof})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +98,7 @@ func TestReadNamesWhatTheServerSays(t *testing.T) {
 	fake := newFakeServer(t)
 	checkup := &diagnosis{}
 	client := NewClient(fake.stateDir, checkup.run)
-	if report := client.Read(context.Background(), "ko"); report.Condition != Running || report.Status == nil || report.Status.Version != "1.1.3" {
+	if report := client.Read(context.Background(), "ko"); report.Condition != Running || report.Status == nil || report.Status.Version != "1.1.3" || report.Dashboard != fake.URL {
 		t.Fatalf("running: %+v", report)
 	}
 	if want := "/tray/status?lang=ko Bearer first"; len(fake.requests) != 1 || fake.requests[0] != want {
@@ -197,5 +209,50 @@ func TestReadSendsTheTokenOnlyToThisComputer(t *testing.T) {
 	}
 	if len(fake.requests) != 0 {
 		t.Errorf("requests reached the server: %q", fake.requests)
+	}
+}
+
+// Only an answer that proves it comes from the server holding this
+// start's secret is used: a program that took the address answers without
+// the secret, or replays a proof made for another nonce, and is "Status
+// unavailable", never its data and never "stopped".
+func TestReadUsesOnlyProvenAnswers(t *testing.T) {
+	fake := newFakeServer(t)
+	fake.answer = answerStatus(server.TrayStatus{OK: true, State: "running", DashboardURL: "http://127.0.0.1:1/elsewhere", CloneAddress: "http://192.0.2.1/git/"})
+	var lastNonce string
+	for name, sign := range map[string]func(string, string, []byte) string{
+		"no proof":       func(string, string, []byte) string { return "" },
+		"another secret": func(_, nonce string, body []byte) string { return state.TrayProof("guessed", nonce, body) },
+		"another nonce": func(secret, _ string, body []byte) string {
+			return state.TrayProof(secret, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", body)
+		},
+		"a changed body": func(secret, nonce string, body []byte) string {
+			return state.TrayProof(secret, nonce, append(body, ' '))
+		},
+		"the last nonce": func(secret, nonce string, body []byte) string {
+			stale := lastNonce
+			lastNonce = nonce
+			return state.TrayProof(secret, stale, body)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake.sign = sign
+			checkup := &diagnosis{result: Diagnosis{Stopped: true}}
+			client := NewClient(fake.stateDir, checkup.run)
+			for range 2 {
+				if report := client.Read(context.Background(), "en"); report.Condition != Unavailable || report.Status != nil || report.Dashboard != "" || checkup.ran != 0 {
+					t.Fatalf("%+v, checkup ran %d times", report, checkup.ran)
+				}
+			}
+		})
+	}
+	fake.sign = state.TrayProof
+	report := NewClient(fake.stateDir, nil).Read(context.Background(), "en")
+	if report.Condition != Running || report.Dashboard != fake.URL {
+		t.Fatalf("the real server: %+v", report)
+	}
+	// The icon opens the address it knows, not the one in the answer.
+	if view := NewView(report, "en", time.Now()); view.DashboardURL != fake.URL {
+		t.Errorf("the icon opens %q", view.DashboardURL)
 	}
 }

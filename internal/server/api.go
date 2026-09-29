@@ -407,6 +407,12 @@ func writeAPIError(writer http.ResponseWriter, status int, code, message string,
 }
 
 func writeAPIJSON(writer http.ResponseWriter, status int, value any) {
+	status, encoded := encodeAPIJSON(status, value)
+	writeEncodedAPIJSON(writer, status, encoded)
+}
+
+// encodeAPIJSON returns the status and body writeAPIJSON sends for value.
+func encodeAPIJSON(status int, value any) (int, []byte) {
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(true)
@@ -420,6 +426,11 @@ func writeAPIJSON(writer http.ResponseWriter, status int, value any) {
 		encoded = output.Bytes()
 		status = http.StatusInsufficientStorage
 	}
+	return status, encoded
+}
+
+// writeEncodedAPIJSON sends a body encodeAPIJSON made.
+func writeEncodedAPIJSON(writer http.ResponseWriter, status int, encoded []byte) {
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.WriteHeader(status)

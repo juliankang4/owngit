@@ -5,6 +5,7 @@ package tray
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,10 @@ type Report struct {
 	Condition Condition
 	// Status is the server's answer, for Running and Attention.
 	Status *server.TrayStatus
+	// Dashboard is the dashboard's address that the icon opens, for
+	// Running and Attention: the loopback address of the access file, never
+	// an address from the answer.
+	Dashboard string
 	// Message and Repair explain Stopped, and Unavailable when the checkup
 	// said why; Repair is a command or "".
 	Message, Repair string
@@ -101,12 +106,12 @@ func NewClient(stateDir string, diagnose func(context.Context, string) (Diagnosi
 
 // Read reads the server's status in lang ("en" or "ko").
 func (client *Client) Read(ctx context.Context, lang string) Report {
-	status, err := client.status(ctx, lang)
+	status, dashboard, err := client.status(ctx, lang)
 	switch {
 	case err == nil && status.State == "attention":
-		return Report{Condition: Attention, Status: &status}
+		return Report{Condition: Attention, Status: &status, Dashboard: dashboard}
 	case err == nil:
-		return Report{Condition: Running, Status: &status}
+		return Report{Condition: Running, Status: &status, Dashboard: dashboard}
 	case !errors.Is(err, errNoConnection) || client.Diagnose == nil:
 		return Report{Condition: Unavailable}
 	}
@@ -122,23 +127,24 @@ func (client *Client) Read(ctx context.Context, lang string) Report {
 
 // status asks the server once, and once more with the access file read
 // again when the token is refused. A token is kept only while it works.
-func (client *Client) status(ctx context.Context, lang string) (server.TrayStatus, error) {
+func (client *Client) status(ctx context.Context, lang string) (server.TrayStatus, string, error) {
 	for attempt := 0; ; attempt++ {
 		if client.access == nil {
 			access, err := readAccess(filepath.Join(client.StateDir, state.TrayAccessFile))
 			if err != nil {
-				return server.TrayStatus{}, fmt.Errorf("%w: %w", errNoConnection, err)
+				return server.TrayStatus{}, "", fmt.Errorf("%w: %w", errNoConnection, err)
 			}
 			client.access = &access
 		}
-		status, code, err := client.ask(ctx, *client.access, lang)
+		access := *client.access
+		status, code, err := client.ask(ctx, access, lang)
 		if err != nil || code != http.StatusOK {
 			client.access = nil
 		}
 		if code == http.StatusUnauthorized && attempt == 0 {
 			continue
 		}
-		return status, err
+		return status, strings.TrimSuffix(access.URL, "/"), err
 	}
 }
 
@@ -153,7 +159,12 @@ func (client *Client) ask(ctx context.Context, access state.TrayAccess, lang str
 	if err != nil {
 		return server.TrayStatus{}, 0, err
 	}
+	nonce, err := state.NewTrayNonce()
+	if err != nil {
+		return server.TrayStatus{}, 0, err
+	}
 	request.Header.Set("Authorization", "Bearer "+access.Token)
+	request.Header.Set(state.TrayNonceHeader, nonce)
 	request.Header.Set("Accept", "application/json")
 	response, err := client.http.Do(request)
 	if err != nil {
@@ -170,6 +181,12 @@ func (client *Client) ask(ctx context.Context, access state.TrayAccess, lang str
 	}
 	if response.StatusCode != http.StatusOK {
 		return server.TrayStatus{}, response.StatusCode, fmt.Errorf("the status answered %s", response.Status)
+	}
+	// Nothing of an answer is used before it proves that this server, which
+	// holds the secret of the access file, answered this request.
+	proof := state.TrayProof(access.Proof, nonce, body)
+	if !hmac.Equal([]byte(response.Header.Get(state.TrayProofHeader)), []byte(proof)) {
+		return server.TrayStatus{}, response.StatusCode, errors.New("the status answer does not prove that OwnGit sent it")
 	}
 	if kind, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type")); kind != "application/json" {
 		return server.TrayStatus{}, response.StatusCode, errors.New("the status answer is not JSON")
@@ -206,7 +223,7 @@ func readAccess(path string) (state.TrayAccess, error) {
 		return state.TrayAccess{}, err
 	}
 	var access state.TrayAccess
-	if err := json.Unmarshal(content, &access); err != nil || access.URL == "" || access.Token == "" {
+	if err := json.Unmarshal(content, &access); err != nil || access.URL == "" || access.Token == "" || access.Proof == "" {
 		return state.TrayAccess{}, fmt.Errorf("%s is not a tray access file", path)
 	}
 	return access, nil

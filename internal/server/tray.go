@@ -25,7 +25,9 @@ import (
 // a proxy, and that carries the token of state.TrayAccessFile, which only
 // the account that runs OwnGit can read. So neither another device nor
 // another account on this computer learns the recent pushes it lists.
-// HealthPath stays without data.
+// Every answer carries the proof of the request's nonce (state.TrayProof),
+// so the icon knows it came from this server. HealthPath stays without
+// data.
 const TrayStatusPath = "/tray/status"
 
 // trayPushes is how many recent pushes the tray status lists.
@@ -114,7 +116,7 @@ type trayCheckup struct {
 }
 
 func (app *App) handleTrayStatus(writer http.ResponseWriter, request *http.Request) {
-	if app.TrayToken == "" {
+	if app.TrayToken == "" || app.TrayProof == "" {
 		writeAPIError(writer, http.StatusNotFound, "not_found", "Not found.", nil)
 		return
 	}
@@ -134,12 +136,19 @@ func (app *App) handleTrayStatus(writer http.ResponseWriter, request *http.Reque
 		writeAPIError(writer, http.StatusUnauthorized, "unauthorized", "Send the token of the tray access file.", nil)
 		return
 	}
+	nonce := request.Header.Get(state.TrayNonceHeader)
+	if !state.ValidTrayNonce(nonce) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_nonce", "Send a new nonce in "+state.TrayNonceHeader+".", nil)
+		return
+	}
 	status, err := app.trayStatus(request)
 	if err != nil {
 		writeAPIError(writer, unavailable(request, "tray status read", err), "status_unavailable", "OwnGit runs but could not read its status. The OwnGit log says why.", nil)
 		return
 	}
-	writeAPIJSON(writer, http.StatusOK, status)
+	code, body := encodeAPIJSON(http.StatusOK, status)
+	writer.Header().Set(state.TrayProofHeader, state.TrayProof(app.TrayProof, nonce, body))
+	writeEncodedAPIJSON(writer, code, body)
 }
 
 // fromThisComputer reports whether request came over a direct connection

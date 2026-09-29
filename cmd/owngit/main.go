@@ -669,7 +669,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		if err != nil {
 			logf("the OwnGit icon cannot read the status until OwnGit starts again, because the tray access file could not be written: %v", err)
 		}
-		application.TrayToken = access.Token
+		application.TrayToken, application.TrayProof = access.Token, access.Proof
 	}
 	// Activity is counted in the background under the serving lifetime, so
 	// startup does not wait for it and the dashboard finds it ready.

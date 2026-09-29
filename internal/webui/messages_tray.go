@@ -64,7 +64,7 @@ var trayCatalog = map[MessageCode]message{
 		ko: "그다음 OwnGit을 다시 실행하세요: %s",
 	},
 	MsgTrayUpdateRestart: {en: "Then restart OwnGit.", ko: "그다음 OwnGit을 다시 시작하세요."},
-	MsgTrayUpdateGuide:   {en: "How to update", ko: "업데이트 방법"},
+	MsgTrayUpdateGuide:   {en: "The dashboard says how to update this install.", ko: "이 설치를 업데이트하는 방법은 대시보드에 있습니다."},
 	MsgTrayMoreFindings:  {en: "The dashboard Settings list %d more.", ko: "나머지 %d건은 대시보드 설정에서 볼 수 있습니다."},
 	MsgTrayRepairRun:     {en: "To repair it, run this command:", ko: "고치려면 이 명령을 실행하세요:"},
 	MsgTrayNoStatus: {

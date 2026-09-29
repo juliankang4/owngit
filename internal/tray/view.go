@@ -22,17 +22,14 @@ type View struct {
 	// it, or "".
 	Notice                []string
 	CommandIntro, Command string
-	// GuideURL explains how to update when the install route has no
-	// command.
-	GuideURL string
 	// CloneAddress is "" when the server did not answer.
 	CloneAddress string
 	// Pushes are the latest successful pushes, newest first; NoPushes is
 	// the sentence shown instead when there are none.
 	Pushes   []PushRow
 	NoPushes string
-	// DashboardURL is the dashboard's address, or "" when the server did
-	// not answer.
+	// DashboardURL is the dashboard's address on this computer, or "" when
+	// the server did not answer. It is the only address the icon opens.
 	DashboardURL string
 }
 
@@ -82,7 +79,7 @@ func NewView(report Report, lang webui.Lang, now time.Time) View {
 	if parsed, err := url.Parse(status.DashboardURL); err == nil && parsed.Host != "" {
 		view.Subtitle += ", " + parsed.Host
 	}
-	view.CloneAddress, view.DashboardURL = status.CloneAddress, status.DashboardURL
+	view.CloneAddress, view.DashboardURL = status.CloneAddress, report.Dashboard
 	if status.SetupRequired {
 		view.Notice = append(view.Notice, text(webui.MsgTraySetup))
 	}
@@ -90,7 +87,7 @@ func NewView(report Report, lang webui.Lang, now time.Time) View {
 		view.Notice = append(view.Notice, text(webui.MsgTrayUpdate, update.Version, status.Version))
 		command(webui.MsgTrayUpdateRun, update.Command)
 		if update.Command == "" {
-			view.GuideURL = update.GuideURL
+			view.Notice = append(view.Notice, text(webui.MsgTrayUpdateGuide))
 		}
 		if update.Start != "" {
 			view.Notice = append(view.Notice, text(webui.MsgTrayUpdateStart, update.Start))

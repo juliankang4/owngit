@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -121,7 +122,7 @@ func TestServePublishesTrayAccess(t *testing.T) {
 	}
 	served := startServed(t, stateDir)
 	access := read()
-	if access.URL != served.url || access.Token == "" {
+	if access.URL != served.url || access.Token == "" || access.Proof == "" || access.Proof == access.Token {
 		t.Fatalf("access file %+v for a server at %s", access, served.url)
 	}
 	if runtime.GOOS != "windows" {
@@ -136,12 +137,20 @@ func TestServePublishesTrayAccess(t *testing.T) {
 		request, err := http.NewRequest(http.MethodGet, access.URL+server.TrayStatusPath, nil)
 		noErr(t, err)
 		request.Header.Set("Authorization", "Bearer "+token)
+		nonce, err := state.NewTrayNonce()
+		noErr(t, err)
+		request.Header.Set(state.TrayNonceHeader, nonce)
 		response, err := http.DefaultClient.Do(request)
 		noErr(t, err)
 		defer response.Body.Close()
 		var answer server.TrayStatus
 		if response.StatusCode == http.StatusOK {
-			noErr(t, json.NewDecoder(response.Body).Decode(&answer))
+			body, err := io.ReadAll(response.Body)
+			noErr(t, err)
+			if response.Header.Get(state.TrayProofHeader) != state.TrayProof(access.Proof, nonce, body) {
+				t.Fatal("the answer does not carry the proof of this start's secret")
+			}
+			noErr(t, json.Unmarshal(body, &answer))
 			if answer.State != "attention" || !answer.SetupRequired {
 				t.Fatalf("status before setup: %+v", answer)
 			}
@@ -157,7 +166,7 @@ func TestServePublishesTrayAccess(t *testing.T) {
 	served.stop()
 	again := startServed(t, stateDir)
 	next := read()
-	if next.Token == access.Token || next.URL != again.url {
+	if next.Token == access.Token || next.Proof == access.Proof || next.URL != again.url {
 		t.Fatalf("after a restart the access file holds %+v, before %+v", next, access)
 	}
 	old := access.Token
