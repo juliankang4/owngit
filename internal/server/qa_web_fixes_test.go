@@ -48,7 +48,7 @@ func TestSecondPullRequestForABranchPairIsRefusedEverywhere(t *testing.T) {
 			"source_oid": {fixture.sourceOID}, "target_oid": {fixture.targetOID},
 		}, server.URL)
 		if result.status != http.StatusConflict || !strings.Contains(result.body, webui.Text(lang, webui.MsgPRAlreadyOpen)) ||
-			!strings.Contains(result.body, `href="/repositories/project/pull-requests/1">#1</a>`) {
+			!strings.Contains(result.body, `href="/repositories/project/pull-requests/1" dir="auto">#1</a>`) {
 			t.Fatalf("%s browser second create status=%d, want a refusal linking #1", lang, result.status)
 		}
 	}
@@ -335,7 +335,7 @@ func TestCloseAndReopenPullRequestInBrowserAndAPI(t *testing.T) {
 	second.Body.Close()
 	refused := browserForm(t, client, server.URL+"/repositories/project/pull-requests/1/reopen", csrf, server.URL)
 	if refused.status != http.StatusConflict || !strings.Contains(refused.body, webui.Text(webui.LangEN, webui.MsgPRAlreadyOpen)) ||
-		!strings.Contains(refused.body, `href="/repositories/project/pull-requests/2">#2</a>`) {
+		!strings.Contains(refused.body, `href="/repositories/project/pull-requests/2" dir="auto">#2</a>`) {
 		t.Fatalf("reopen beside an open pull request status=%d", refused.status)
 	}
 	api := apiRequest(t, http.MethodPost, endpoint+"/1/reopen", map[string]any{}, "", "")
