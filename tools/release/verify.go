@@ -99,9 +99,16 @@ func verifyRelease(dir, source, goTool string) error {
 	if err != nil {
 		return err
 	}
+	// The names come first, so a manifest cannot make verify read any
+	// other path.
 	var names []string
 	for _, recorded := range document.Installers {
 		names = append(names, recorded.Path)
+	}
+	if strings.Join(names, ",") != strings.Join(installerScripts, ",") {
+		return fmt.Errorf("the manifest lists the installers %q, want %q", names, installerScripts)
+	}
+	for _, recorded := range document.Installers {
 		data, err := os.ReadFile(filepath.Join(dir, recorded.Path))
 		if err != nil {
 			return fmt.Errorf("installer %s: %w", recorded.Path, err)
@@ -116,9 +123,6 @@ func verifyRelease(dir, source, goTool string) error {
 		if string(checkedIn) != string(data) {
 			return fmt.Errorf("installer %s differs from packaging/installer/%s in %s", recorded.Path, recorded.Path, source)
 		}
-	}
-	if strings.Join(names, ",") != strings.Join(installerScripts, ",") {
-		return fmt.Errorf("the manifest lists the installers %q, want %q", names, installerScripts)
 	}
 	fmt.Printf("verified the installers %s in %s\n", strings.Join(names, " and "), dir)
 	return nil

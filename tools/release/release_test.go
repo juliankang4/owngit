@@ -210,6 +210,14 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 		writeManifest(t, copied, edited)
 		expectReleaseError(t, copied, root, "installer install.sh differs from packaging/installer/install.sh")
 	})
+	t.Run("manifest names another file as an installer", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		edited := document
+		edited.Installers = append([]fileEntry{}, document.Installers...)
+		edited.Installers[0].Path = filepath.Join("..", "outside.sh")
+		writeManifest(t, copied, edited)
+		expectReleaseError(t, copied, root, "the manifest lists the installers")
+	})
 	t.Run("manifest without installers", func(t *testing.T) {
 		copied := copyDist(t, dir)
 		edited := document
