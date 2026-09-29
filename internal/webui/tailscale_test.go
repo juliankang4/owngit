@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -279,6 +280,33 @@ func TestTailscaleMessagesFitAnyPort(t *testing.T) {
 		en, ko := fmt.Sprintf(Text(LangEN, code), list, test.port), fmt.Sprintf(Text(LangKO, code), list, test.port)
 		if !strings.Contains(en, test.en) || !strings.Contains(ko, test.ko) || !strings.Contains(ko, test.port+" 포트를 쓰고") {
 			t.Errorf("%d passed ports:\nEN %s\nKO %s", len(test.passed), en, ko)
+		}
+	}
+}
+
+// A viewer who is not the administrator gets a Tailscale problem without its
+// detail (TailscaleProblemBrief), so a message that ends before the detail
+// has a complete sentence for that viewer. Only the refusals named here end
+// before their detail without one: the administrator alone gets them, from
+// a change on the Settings page or the command line, always with the
+// detail. Any other problem, such as a new kind of Tailscale failure, needs
+// its brief.
+func TestAViewerGetsACompleteSentenceForEveryTailscaleProblem(t *testing.T) {
+	administratorOnly := []string{"port_taken", "owners_endpoint", "other_port", "endpoint_changed", "listen_option", "unrecorded"}
+	for code := range catalog {
+		problem, ok := strings.CutPrefix(string(code), "tailscale.problem.")
+		if !ok || strings.HasSuffix(problem, "_brief") || strings.HasSuffix(problem, "_listed") || slices.Contains(administratorOnly, problem) {
+			continue
+		}
+		for _, lang := range Langs() {
+			if text := strings.TrimSpace(Text(lang, TailscaleProblemBrief(code))); strings.HasSuffix(text, ":") {
+				t.Errorf("%s: a viewer gets %q, which ends before the detail it does not see; add %s_brief", code, text, code)
+			}
+		}
+	}
+	for _, problem := range administratorOnly {
+		if !Has(MessageCode("tailscale.problem." + problem)) {
+			t.Errorf("tailscale.problem.%s is named but not in the catalog", problem)
 		}
 	}
 }
