@@ -195,13 +195,15 @@ func TestAttemptReadersUseTheirOwnQuerySurface(t *testing.T) {
 	for _, transactional := range []bool{false, true} {
 		t.Run(map[bool]string{false: "pool", true: "transaction"}[transactional], func(t *testing.T) {
 			store, fault := openFaultStore(t)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+			ctx := t.Context()
 			now := time.Unix(1_800_000_000, 0)
 			noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "project", CreatedAt: now}))
 			task, err := store.CreateTask(ctx, "project", "Attempt reader", now)
 			noErr(t, err)
 			_, attempt := recordAttempt(t, store, attemptFor(task, strings.Repeat("a", 40), now, AttemptPassed))
+			// Bound the reader checks, not fixture creation on a slow disk.
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
 			var queryer querier = store.db
 			read := func(id string) (CheckAttempt, bool, error) { return store.CheckAttemptByID(ctx, "project", id) }
 			if transactional {
