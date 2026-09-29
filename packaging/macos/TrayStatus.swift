@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // What the OwnGit icon shows, decided from the answers of the running
@@ -11,6 +12,56 @@ import Foundation
 struct TrayAccess: Decodable, Equatable {
     let url: String
     let token: String
+    /// The secret with which the server proves its answers. It never
+    /// crosses the connection.
+    let proof: String
+}
+
+/// statusURL is the status address of the server in the access file.
+func statusURL(access: TrayAccess, lang: String) -> URL? {
+    dashboardURL(access: access.url).flatMap {
+        URL(string: "/tray/status?lang=" + lang, relativeTo: $0)?.absoluteURL
+    }
+}
+
+/// The headers of the status proof: the icon sends a new nonce with every
+/// request, and the server answers with trayProof of that nonce and the
+/// exact body.
+let trayNonceHeader = "X-OwnGit-Tray-Nonce"
+let trayProofHeader = "X-OwnGit-Tray-Proof"
+
+/// newTrayNonce returns 32 new random bytes in unpadded base64url.
+func newTrayNonce() -> String {
+    base64URL(Data(SymmetricKey(size: .bits256).withUnsafeBytes { Array($0) }))
+}
+
+func base64URL(_ data: Data) -> String {
+    data.base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+
+private func fromBase64URL(_ text: String) -> Data? {
+    var standard = text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+    standard += String(repeating: "=", count: (4 - standard.count % 4) % 4)
+    return Data(base64Encoded: standard)
+}
+
+/// trayProofMessage is what the server's HMAC-SHA256 covers.
+private func trayProofMessage(nonce: String, body: Data) -> Data {
+    Data("owngit tray status\n\(nonce)\n".utf8) + body + Data("\n".utf8)
+}
+
+/// proves reports, in constant time, whether proof is the server's proof
+/// of body for nonce under secret.
+func proves(_ proof: String?, secret: String, nonce: String, body: Data) -> Bool {
+    guard let proof, !secret.isEmpty, let code = fromBase64URL(proof), code.count == 32 else {
+        return false
+    }
+    return HMAC<SHA256>.isValidAuthenticationCode(
+        code, authenticating: trayProofMessage(nonce: nonce, body: body),
+        using: SymmetricKey(data: Data(secret.utf8)))
 }
 
 /// dashboardURL is the address of this computer's server from the access
@@ -27,14 +78,6 @@ func dashboardURL(access: String) -> URL? {
     return url
 }
 
-/// webLink accepts only an https address, the form of the release notes and
-/// install guide links.
-func webLink(_ address: String) -> URL? {
-    guard let url = URL(string: address), url.scheme == "https", url.host != nil else {
-        return nil
-    }
-    return url
-}
 
 /// The answer of "owngit tray status --json".
 struct TrayReport: Decodable, Equatable {
@@ -150,8 +193,10 @@ enum StatusAnswer: Equatable {
 }
 
 /// statusAnswer reads the HTTP answer of GET /tray/status. httpStatus is nil
-/// when no connection was made (refused or timed out).
-func statusAnswer(httpStatus: Int?, body: Data?) -> StatusAnswer {
+/// when no connection was made (refused or timed out). A 200 answer counts
+/// only when proof is the server's proof of the body for the nonce sent;
+/// nothing in the body is read before that.
+func statusAnswer(httpStatus: Int?, body: Data?, proof: String?, secret: String, nonce: String) -> StatusAnswer {
     guard let httpStatus else {
         return .noConnection
     }
@@ -162,12 +207,58 @@ func statusAnswer(httpStatus: Int?, body: Data?) -> StatusAnswer {
         return .noStatus
     }
     guard httpStatus == 200, let body,
+          proves(proof, secret: secret, nonce: nonce, body: body),
           let status = try? JSONDecoder().decode(TrayStatus.self, from: body), status.ok,
           status.state == "running" || status.state == "attention"
     else {
         return .unavailable
     }
     return .status(status)
+}
+
+/// StatusClient asks the server for its status: straight at the address of
+/// the access file, with no proxy and no redirect, and with a new nonce
+/// whose proof the answer must carry.
+final class StatusClient: NSObject, URLSessionTaskDelegate {
+    private var session: URLSession!
+
+    init(timeout: TimeInterval) {
+        super.init()
+        let configuration = URLSessionConfiguration.ephemeral
+        // The server's address is on this Mac; no proxy may see the token.
+        configuration.connectionProxyDictionary = [:]
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+    }
+
+    /// ask sends one status request to url and calls done, on a background
+    /// queue, with how it ended.
+    func ask(url: URL, access: TrayAccess, done: @escaping (StatusAnswer) -> Void) {
+        let nonce = newTrayNonce()
+        var request = URLRequest(url: url)
+        request.setValue("Bearer " + access.token, forHTTPHeaderField: "Authorization")
+        request.setValue(nonce, forHTTPHeaderField: trayNonceHeader)
+        session.dataTask(with: request) { data, response, error in
+            let http = response as? HTTPURLResponse
+            var httpStatus = http?.statusCode
+            if let error = error as? URLError {
+                let noConnection: Set<URLError.Code> = [.cannotConnectToHost, .timedOut, .networkConnectionLost]
+                httpStatus = noConnection.contains(error.code) ? nil : -1
+            } else if error != nil {
+                httpStatus = -1
+            }
+            done(statusAnswer(httpStatus: httpStatus, body: data,
+                              proof: http?.value(forHTTPHeaderField: trayProofHeader),
+                              secret: access.proof, nonce: nonce))
+        }.resume()
+    }
+
+    /// A redirect is not followed: its own answer is not the status.
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
 }
 
 /// doctorState reads "owngit doctor --json" after the server did not
@@ -277,7 +368,7 @@ struct Words {
     let cloneAddress, cloneHelp, copy, copied, copyCloneAddress: String
     let recentPushes, noPushes: String
     let openDashboard, finishSetup, setupLine: String
-    let updateLine, runInTerminal, copyCommand, howToUpdate, restartAfterUpdate: String
+    let updateLine, runInTerminal, copyCommand, updateInDashboard, restartAfterUpdate: String
     let stoppedLine, start, restart, working: String
     let noAnswerLine, noStatusLine, silentLine, addressTakenLine, uncheckedLine: String
     let hide, hideHelp: String
@@ -287,7 +378,7 @@ struct Words {
     let moveApp: String
     let failed: String
     let readFailed: String
-    let noDashboard, openFailed: String
+    let noDashboard, openFailed, notConfirmed: String
 
     static let en = Words(
         lang: "en",
@@ -299,7 +390,7 @@ struct Words {
         openDashboard: "Open dashboard", finishSetup: "Finish setup",
         setupLine: "Setup is not complete. Finish it in your browser.",
         updateLine: "OwnGit %@ is available. You are running %@.", runInTerminal: "Run in a terminal:",
-        copyCommand: "Copy command", howToUpdate: "How to update",
+        copyCommand: "Copy command", updateInDashboard: "The dashboard says how to update this install.",
         restartAfterUpdate: "Restart OwnGit after the update.",
         stoppedLine: "OwnGit is not running.", start: "Start OwnGit", restart: "Restart OwnGit",
         working: "Working…",
@@ -318,7 +409,8 @@ struct Words {
         failed: "That did not work: %@",
         readFailed: "OwnGit could not read the icon setting: %@",
         noDashboard: "OwnGit could not read this computer's dashboard address from %@. Start OwnGit and try again.",
-        openFailed: "macOS could not open %@."
+        openFailed: "macOS could not open %@.",
+        notConfirmed: "OwnGit did not confirm that it answers at this computer's address, so nothing was opened."
     )
 
     static let ko = Words(
@@ -331,7 +423,7 @@ struct Words {
         openDashboard: "대시보드 열기", finishSetup: "설정 마치기",
         setupLine: "설정이 끝나지 않았습니다. 브라우저에서 마저 진행하세요.",
         updateLine: "OwnGit %@ 버전이 나왔습니다. 지금 쓰는 버전은 %@입니다.", runInTerminal: "터미널에서 실행:",
-        copyCommand: "명령 복사", howToUpdate: "업데이트 방법",
+        copyCommand: "명령 복사", updateInDashboard: "이 설치를 업데이트하는 방법은 대시보드에 나옵니다.",
         restartAfterUpdate: "업데이트한 뒤 OwnGit을 다시 시작하세요.",
         stoppedLine: "OwnGit이 실행 중이 아닙니다.", start: "OwnGit 시작", restart: "OwnGit 다시 시작",
         working: "처리하는 중…",
@@ -350,7 +442,8 @@ struct Words {
         failed: "완료하지 못했습니다: %@",
         readFailed: "OwnGit 아이콘 설정을 읽지 못했습니다: %@",
         noDashboard: "%@에서 이 컴퓨터의 대시보드 주소를 읽지 못했습니다. OwnGit을 시작한 뒤 다시 해 보세요.",
-        openFailed: "macOS가 %@ 주소를 열지 못했습니다."
+        openFailed: "macOS가 %@ 주소를 열지 못했습니다.",
+        notConfirmed: "이 컴퓨터의 주소에서 OwnGit이 응답하는지 확인하지 못해 아무것도 열지 않았습니다."
     )
 
     /// forLanguages picks Korean when the first preferred language is

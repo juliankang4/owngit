@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,8 +16,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"owngit/internal/state"
 )
 
 const testNativeBaseline = "accepted-core-sha256=abc123;release-sha256=def456"
@@ -531,35 +536,59 @@ func require(_ condition: Bool, _ message: String) {
 }
 func data(_ text: String) -> Data { Data(text.utf8) }
 
-let running = """
-{"ok":true,"state":"running","version":"1.1.3","shown":true,"dashboard_url":"http://127.0.0.1:7654","clone_address":"http://127.0.0.1:7654/git/","setup_required":false,"update":null,
- "findings":[{"code":"doctor.unchecked_firewall","message":"m","repair":"","unchecked":true}],
- "pushes":[{"repository_id":"notes","repository":"notes","ref":"refs/heads/main","branch":"main","refs_updated":1,"pushed_at":"2026-09-29T11:10:15.123456Z","actor":{"kind":"access"},"actor_label":"General access"}]}
-"""
-guard case .status(let status) = statusAnswer(httpStatus: 200, body: data(running)) else { fatalError("a running answer must decode") }
+// The bodies and their proofs come from the Go test, which makes them
+// with the server's rule (state.TrayProof).
+let fixtures = try! JSONDecoder().decode([String: [String: String]].self,
+    from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])))
+let proof = fixtures["proof"]!
+let secret = proof["secret"]!, nonce = proof["nonce"]!
+func body(_ name: String) -> Data { data(fixtures["body"]![name]!) }
+func answer(_ code: Int?, _ name: String, proof: String? = nil) -> StatusAnswer {
+    statusAnswer(httpStatus: code, body: body(name), proof: proof ?? fixtures["good"]![name], secret: secret, nonce: nonce)
+}
+
+guard case .status(let status) = answer(200, "running") else { fatalError("a proven running answer must decode") }
 require(PanelState.status(status).name == .running && status.actionableFindings.isEmpty, "unchecked findings ask for nothing")
 require(parsePushTime(status.pushes[0].pushed_at) != nil && parsePushTime("2026-09-29T11:10:15Z") != nil, "push times with and without fractions")
-let attention = running.replacingOccurrences(of: "\"state\":\"running\"", with: "\"state\":\"attention\"")
-    .replacingOccurrences(of: "\"update\":null", with: "\"update\":{\"version\":\"1.1.4\",\"notes_url\":\"\",\"command\":\"\",\"start\":\"\",\"restart\":false,\"guide_url\":\"https://example.invalid\"}")
-guard case .status(let needs) = statusAnswer(httpStatus: 200, body: data(attention)) else { fatalError("an attention answer must decode") }
+guard case .status(let needs) = answer(200, "attention") else { fatalError("a proven attention answer must decode") }
 require(PanelState.status(needs).name == .attention && needs.update?.version == "1.1.4", "attention keeps the update")
 
-require(statusAnswer(httpStatus: nil, body: nil) == .noConnection, "no connection")
-require(statusAnswer(httpStatus: 401, body: data("{}")) == .unauthorized, "401")
-for code in [403, 405, 421, 503, -1] {
-    require(statusAnswer(httpStatus: code, body: data(running)) == .unavailable, "status \(code) is unavailable")
+// Only a proof of this body, for this nonce, under this secret counts.
+require(statusAnswer(httpStatus: 200, body: body("running"), proof: nil, secret: secret, nonce: nonce) == .unavailable, "no proof")
+require(answer(200, "running", proof: fixtures["bad"]!["other secret"]) == .unavailable, "a proof under another secret")
+require(answer(200, "running", proof: fixtures["bad"]!["other nonce"]) == .unavailable, "a proof for an earlier nonce")
+require(answer(200, "running", proof: fixtures["good"]!["attention"]) == .unavailable, "a proof of another body")
+require(answer(200, "running", proof: "not base64url!") == .unavailable, "a malformed proof")
+require(statusAnswer(httpStatus: 200, body: body("running"), proof: fixtures["good"]!["running"], secret: "", nonce: nonce) == .unavailable, "an access file without the proof secret")
+require(answer(200, "not status") == .unavailable, "a proven body that is not the status")
+require(answer(200, "stopped") == .unavailable, "a proven unknown state")
+
+require(answer(nil, "running") == .noConnection, "no connection")
+require(answer(401, "running") == .unauthorized, "401")
+for code in [400, 403, 405, 421, 503, -1] {
+    require(answer(code, "running") == .unavailable, "status \(code) is unavailable")
 }
-require(statusAnswer(httpStatus: 404, body: data("404 page not found")) == .noStatus, "a server without the status route")
-require(statusAnswer(httpStatus: 200, body: data("service unavailable")) == .unavailable, "a body that is not the status")
-require(statusAnswer(httpStatus: 200, body: data(running.replacingOccurrences(of: "\"running\"", with: "\"stopped\""))) == .unavailable, "an unknown state")
+require(answer(404, "not status") == .noStatus, "a server without the status route")
+
+// The client against loopback servers that the Go test runs.
+let client = StatusClient(timeout: 20)
+func ask(_ server: String) -> StatusAnswer {
+    let access = TrayAccess(url: fixtures["server"]![server]!, token: proof["token"]!, proof: secret)
+    let done = DispatchSemaphore(value: 0)
+    var result = StatusAnswer.noConnection
+    client.ask(url: statusURL(access: access, lang: "en")!, access: access) { result = $0; done.signal() }
+    done.wait()
+    return result
+}
+guard case .status = ask("genuine") else { fatalError("the genuine server is proven in one request") }
+guard case .status = ask("taken") else { fatalError("the first answer comes from the genuine server") }
+require(ask("taken") == .unavailable, "another program that took the port and replays the last proven answer")
+require(ask("unproven") == .unavailable, "another program without the proof")
+require(ask("redirect") == .unavailable, "a redirect is not followed")
 
 require(dashboardURL(access: "http://127.0.0.1:7654") != nil && dashboardURL(access: "http://[::1]:8123/") != nil, "the loopback address from the access file")
 for other in ["https://127.0.0.1:7654", "http://example.invalid:7654", "http://127.0.0.1", "http://127.0.0.1:7654/elsewhere", "http://u@127.0.0.1:7654", "file:///tmp"] {
     require(dashboardURL(access: other) == nil, "not a local dashboard: \(other)")
-}
-require(webLink("https://github.com/juliankang4/owngit#install") != nil, "an https guide")
-for other in ["http://example.invalid", "file:///Applications", "owngit://x", ""] {
-    require(webLink(other) == nil, "not a web link: \(other)")
 }
 
 func doctor(_ findings: String, running: Bool = false) -> PanelState {
@@ -611,13 +640,113 @@ print("tray status fixture passed")
 	if output, err := exec.Command("xcrun", "swiftc", source, fixture, "-o", binary).CombinedOutput(); err != nil {
 		t.Fatalf("compile tray status fixture: %v\n%s", err, output)
 	}
-	output, err := exec.Command(binary).CombinedOutput()
+	output, err := exec.Command(binary, writeTrayStatusFixtures(t, dir)).CombinedOutput()
 	if err != nil {
 		t.Fatalf("run tray status fixture: %v\n%s", err, output)
 	}
 	if string(output) != "tray status fixture passed\n" {
 		t.Fatalf("tray status fixture output = %q", output)
 	}
+}
+
+// writeTrayStatusFixtures writes the answers the Swift fixture reads, with
+// proofs made by the server's rule, and starts loopback servers for its
+// client: a genuine server; one whose port another program takes after
+// its first answer and replays that answer; one without a proof; and one
+// that redirects to a genuine server, which must never be reached.
+func writeTrayStatusFixtures(t *testing.T, dir string) string {
+	t.Helper()
+	const token = "fixture-token"
+	secret, err := state.NewTrayNonce()
+	noErr(t, err)
+	nonce, err := state.NewTrayNonce()
+	noErr(t, err)
+	running := `{"ok":true,"state":"running","version":"1.1.3","shown":true,"dashboard_url":"http://127.0.0.1:7654","clone_address":"http://127.0.0.1:7654/git/","setup_required":false,"update":null,` +
+		`"findings":[{"code":"doctor.unchecked_firewall","message":"m","repair":"","unchecked":true}],` +
+		`"pushes":[{"repository_id":"notes","repository":"notes","ref":"refs/heads/main","branch":"main","refs_updated":1,"pushed_at":"2026-09-29T11:10:15.123456Z","actor":{"kind":"access"},"actor_label":"General access"}]}`
+	bodies := map[string]string{
+		"running": running,
+		"attention": strings.NewReplacer(`"state":"running"`, `"state":"attention"`,
+			`"update":null`, `"update":{"version":"1.1.4","notes_url":"","command":"","start":"","restart":false,"guide_url":""}`).Replace(running),
+		"stopped":    strings.Replace(running, `"running"`, `"stopped"`, 1),
+		"not status": "service unavailable",
+	}
+	good := map[string]string{}
+	for name, body := range bodies {
+		good[name] = state.TrayProof(secret, nonce, []byte(body))
+	}
+	otherNonce, err := state.NewTrayNonce()
+	noErr(t, err)
+	bad := map[string]string{
+		"other secret": state.TrayProof(secret+"x", nonce, []byte(running)),
+		"other nonce":  state.TrayProof(secret, otherNonce, []byte(running)),
+	}
+
+	var mu sync.Mutex
+	var takenAnswers, redirectedTo int
+	var lastProof string
+	genuine := func(writer http.ResponseWriter, request *http.Request) {
+		requestNonce := request.Header.Get(state.TrayNonceHeader)
+		if request.URL.Path != "/tray/status" || request.Header.Get("Authorization") != "Bearer "+token || !state.ValidTrayNonce(requestNonce) {
+			http.Error(writer, "bad request", http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		lastProof = state.TrayProof(secret, requestNonce, []byte(running))
+		writer.Header().Set(state.TrayProofHeader, lastProof)
+		mu.Unlock()
+		_, _ = writer.Write([]byte(running))
+	}
+	start := func(handler http.HandlerFunc) string {
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		return server.URL
+	}
+	target := start(func(writer http.ResponseWriter, request *http.Request) {
+		mu.Lock()
+		redirectedTo++
+		mu.Unlock()
+		genuine(writer, request)
+	})
+	servers := map[string]string{
+		"genuine": start(genuine),
+		"taken": start(func(writer http.ResponseWriter, request *http.Request) {
+			mu.Lock()
+			takenAnswers++
+			first, proof := takenAnswers == 1, lastProof
+			mu.Unlock()
+			if first {
+				genuine(writer, request)
+				return
+			}
+			writer.Header().Set(state.TrayProofHeader, proof)
+			_, _ = writer.Write([]byte(running))
+		}),
+		"unproven": start(func(writer http.ResponseWriter, _ *http.Request) {
+			_, _ = writer.Write([]byte(running))
+		}),
+		"redirect": start(func(writer http.ResponseWriter, request *http.Request) {
+			http.Redirect(writer, request, target+request.URL.RequestURI(), http.StatusFound)
+		}),
+	}
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if redirectedTo != 0 {
+			t.Errorf("the redirect target was reached %d times", redirectedTo)
+		}
+		if takenAnswers != 2 {
+			t.Errorf("the taken port answered %d requests, want 2", takenAnswers)
+		}
+	})
+	encoded, err := json.Marshal(map[string]map[string]string{
+		"proof": {"secret": secret, "nonce": nonce, "token": token},
+		"body":  bodies, "good": good, "bad": bad, "server": servers,
+	})
+	noErr(t, err)
+	path := filepath.Join(dir, "fixtures.json")
+	noErr(t, os.WriteFile(path, encoded, 0o600))
+	return path
 }
 
 // hdiutil create is retried only while it reports a busy resource, with a

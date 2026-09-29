@@ -63,14 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// The callers waiting for the check that runs now, or nil when none
     /// runs.
     private var waiting: [(PanelState) -> Void]?
-    private let session: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        // The server's address is on this Mac; no proxy may see the token.
-        configuration.connectionProxyDictionary = [:]
-        configuration.timeoutIntervalForRequest = statusTimeout
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: configuration)
-    }()
+    private let client = StatusClient(timeout: statusTimeout)
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         let event = NSAppleEventManager.shared().currentAppleEvent
@@ -286,25 +279,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let accessFile = stateDir.appendingPathComponent("tray-access.json")
         guard let data = try? Data(contentsOf: accessFile),
               let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
-              let server = dashboardURL(access: access.url),
-              let url = URL(string: "/tray/status?lang=" + words.lang, relativeTo: server)?.absoluteURL
+              let url = statusURL(access: access, lang: words.lang)
         else {
             // No access file: this state directory's server never started,
             // or it is unreadable. doctor tells which.
             askDoctor(done: done)
             return
         }
-        var request = URLRequest(url: url)
-        request.setValue("Bearer " + access.token, forHTTPHeaderField: "Authorization")
-        session.dataTask(with: request) { data, response, error in
-            var httpStatus = (response as? HTTPURLResponse)?.statusCode
-            if let error = error as? URLError {
-                let noConnection: Set<URLError.Code> = [.cannotConnectToHost, .timedOut, .networkConnectionLost]
-                httpStatus = noConnection.contains(error.code) ? nil : -1
-            } else if error != nil {
-                httpStatus = -1
-            }
-            let answer = statusAnswer(httpStatus: httpStatus, body: data)
+        client.ask(url: url, access: access) { answer in
             DispatchQueue.main.async { [self] in
                 switch answer {
                 case .status(let status):
@@ -320,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     askDoctor(done: done)
                 }
             }
-        }.resume()
+        }
     }
 
     private func askDoctor(done: @escaping (PanelState) -> Void) {
@@ -334,23 +316,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func perform(_ action: PanelAction) {
         switch action {
         case .openDashboard:
-            let accessFile = stateDir.appendingPathComponent("tray-access.json")
-            guard let data = try? Data(contentsOf: accessFile),
-                  let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
-                  let url = dashboardURL(access: access.url)
-            else {
-                update { $0.failure = String(format: words.noDashboard, accessFile.path) }
-                return
-            }
-            open(url)
+            confirmServer { [self] in openDashboard() }
         case .finishSetup:
-            popover.performClose(nil)
-            openSetup()
+            confirmServer { [self] in
+                popover.performClose(nil)
+                openSetup()
+            }
         case .copy(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-        case .openLink(let url):
-            open(url)
         case .run(let arguments):
             run(arguments)
         case .hide:
@@ -376,6 +350,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         case .close:
             popover.performClose(nil)
         }
+    }
+
+    /// confirmServer asks the server for a new proven status right when the
+    /// owner asks to open it, and does then only when the answer is proven.
+    /// An earlier answer does not count: OwnGit may have stopped since, and
+    /// another program may answer at its address.
+    private func confirmServer(then: @escaping () -> Void) {
+        update {
+            $0.busy = true
+            $0.failure = nil
+        }
+        requestStatus(retry: true) { [self] state in
+            let proven: Bool
+            if case .status = state { proven = true } else { proven = false }
+            update {
+                $0.busy = false
+                $0.state = state
+                $0.failure = proven ? nil : words.notConfirmed
+            }
+            if proven {
+                then()
+            }
+        }
+    }
+
+    private func openDashboard() {
+        let accessFile = stateDir.appendingPathComponent("tray-access.json")
+        guard let data = try? Data(contentsOf: accessFile),
+              let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
+              let url = dashboardURL(access: access.url)
+        else {
+            update { $0.failure = String(format: words.noDashboard, accessFile.path) }
+            return
+        }
+        open(url)
     }
 
     /// open opens an address in the browser and closes the panel, or keeps

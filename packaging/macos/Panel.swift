@@ -27,7 +27,6 @@ enum PanelAction {
     case openDashboard
     case finishSetup
     case copy(String)
-    case openLink(URL)
     case run([String])
     case hide
     case settings(Bool)
@@ -241,11 +240,7 @@ final class PanelViewController: NSViewController {
             if let update = status.update {
                 lines.append(label(String(format: words.updateLine, update.version, status.version)))
                 if update.command.isEmpty {
-                    if let guide = webLink(update.guide_url) {
-                        lines.append(PanelButton(title: words.howToUpdate) { [perform] _ in perform(.openLink(guide)) })
-                    } else if !update.guide_url.isEmpty {
-                        lines.append(label(update.guide_url, secondary: true, size: 11, selectable: true))
-                    }
+                    lines.append(label(words.updateInDashboard, secondary: true, size: 11))
                 } else {
                     lines.append(label(words.runInTerminal, secondary: true, size: 11))
                     lines.append(code(update.command))
