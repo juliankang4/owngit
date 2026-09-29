@@ -150,13 +150,26 @@ type Error struct {
 	// Detail is what Tailscale printed or answered on failure, shortened,
 	// for KindFailed and KindPermission; never OwnGit's own words.
 	Detail string
+	// cause is the connection's error when an exchange with Tailscale
+	// failed without an answer. Error includes it for logs; it is not
+	// Tailscale's words, so it is never in Detail.
+	cause error
 }
 
 func (err *Error) Error() string {
+	text := "tailscale: " + string(err.Kind)
 	if err.Detail != "" {
-		return "tailscale: " + string(err.Kind) + ": " + err.Detail
+		text += ": " + err.Detail
 	}
-	return "tailscale: " + string(err.Kind)
+	if err.cause != nil {
+		text += " (" + err.cause.Error() + ")"
+	}
+	return text
+}
+
+// Unwrap returns the connection's error behind a failed exchange, or nil.
+func (err *Error) Unwrap() error {
+	return err.cause
 }
 
 // KindOf returns the Kind of err, or KindFailed for another error.

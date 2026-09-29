@@ -138,9 +138,11 @@ func dialFailure(ctx context.Context, err error) error {
 }
 
 // exchangeFailure classifies a request that failed after it was sent.
+// Tailscale said nothing then, so there is no detail; the connection's error
+// is kept for logs.
 func exchangeFailure(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return &Error{Kind: KindTimeout}
 	}
-	return &Error{Kind: KindFailed, Detail: shorten(err.Error())}
+	return &Error{Kind: KindFailed, cause: err}
 }

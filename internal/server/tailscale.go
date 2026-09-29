@@ -540,6 +540,9 @@ type TailscaleError struct {
 	Port   int
 	// MacApp is true for the Tailscale app for macOS.
 	MacApp bool
+	// cause is the connection's error behind a failed exchange with
+	// Tailscale (tailscale.Error), for logs only.
+	cause error
 }
 
 // Problems of turning sharing on or off, besides the tailscale.Kind values.
@@ -595,6 +598,9 @@ func (err *TailscaleError) Error() string {
 	}
 	if len(err.Found) > 0 {
 		text += " (" + TailscaleUsesText(err.Found) + ")"
+	}
+	if err.cause != nil {
+		text += " (" + err.cause.Error() + ")"
 	}
 	return text
 }
@@ -1040,7 +1046,7 @@ func tailscaleError(err error, macApp bool) error {
 	}
 	var failure *tailscale.Error
 	if errors.As(err, &failure) {
-		return &TailscaleError{Problem: string(failure.Kind), Detail: failure.Detail, MacApp: macApp}
+		return &TailscaleError{Problem: string(failure.Kind), Detail: failure.Detail, MacApp: macApp, cause: errors.Unwrap(failure)}
 	}
 	return err
 }
@@ -1060,7 +1066,9 @@ func whyWriteFailed(ctx context.Context, command tailscale.Command, err error) e
 	}
 	switch kind := tailscale.KindOf(status.Usable()); kind {
 	case tailscale.KindStopped, tailscale.KindLoggedOut, tailscale.KindNeedsApproval, tailscale.KindNotRunning:
-		return &tailscale.Error{Kind: kind, Detail: failure.Detail}
+		explained := *failure
+		explained.Kind = kind
+		return &explained
 	}
 	return err
 }

@@ -526,6 +526,8 @@ func (conn *answerLostConn) Read(content []byte) (int, error) {
 // is stopped afterwards: the stopped state explains the failure but is not
 // Tailscale refusing the change. Turning on keeps its pending record, which
 // turning on again confirms, and turning off says the change may be there.
+// Tailscale said nothing, so the refusal has no detail; the lost connection
+// is named only in the error's text, which the log shows.
 func TestTailscaleChangeWithALostAnswerMayBeApplied(t *testing.T) {
 	ctx := context.Background()
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
@@ -549,6 +551,10 @@ func TestTailscaleChangeWithALostAnswerMayBeApplied(t *testing.T) {
 	_, err := app.Tailscale.On(ctx, nil, 0)
 	if !errors.Is(err, ErrTailscaleAhead) || !fake.Endpoint(443, target).Exact {
 		t.Fatalf("turning on: err=%v, endpoint %+v", err, fake.Endpoint(443, target))
+	}
+	var refusal *TailscaleError
+	if !errors.As(err, &refusal) || refusal.Problem != string(tailscale.KindStopped) || refusal.Detail != "" || !strings.Contains(err.Error(), io.ErrUnexpectedEOF.Error()) {
+		t.Fatalf("turning on: %#v, text %q", refusal, err)
 	}
 	if _, _, _, record := savedSharing(t, app.Store); record == nil || !record.Created || record.Confirmed {
 		t.Fatalf("record after a lost answer: %+v", record)
