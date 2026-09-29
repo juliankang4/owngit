@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -233,5 +234,36 @@ func TestSchemaUpgradeIsReportedOnce(t *testing.T) {
 	noErr(t, reopened.migrate(ctx, schemaReleased(14)))
 	if upgrade := reopened.SchemaUpgrade(); upgrade != "" {
 		t.Fatalf("already migrated database reported %q", upgrade)
+	}
+}
+
+// The steps run in one transaction, so a step that fails leaves a released
+// database at its schema with every row.
+func TestFailingStepLeavesTheReleasedSchema(t *testing.T) {
+	original := schemaSteps
+	schemaSteps = append(slices.Clone(original), schemaStep{version: 17, statements: []string{
+		`CREATE TABLE step_17(value TEXT)`,
+		`INSERT INTO missing_table(value) VALUES(1)`,
+	}})
+	t.Cleanup(func() { schemaSteps = original })
+	ctx := context.Background()
+	directory := filepath.Join(t.TempDir(), "state")
+	createReleasedSchemaWithPullRequest(t, directory, 15)
+	store, err := Open(ctx, directory)
+	if store != nil {
+		_ = store.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "apply state schema migration 17") {
+		t.Fatalf("failing step error=%v", err)
+	}
+	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
+	defer db.Close()
+	if version, _, err := readSchemaVersion(ctx, db); err != nil || version != 15 {
+		t.Fatalf("failed migration left schema %d err=%v", version, err)
+	}
+	var added, requests int
+	noErr(t, db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM sqlite_master WHERE name IN ('share_links','step_17')),(SELECT COUNT(*) FROM pull_requests)`).Scan(&added, &requests))
+	if added != 0 || requests != 1 {
+		t.Fatalf("failed migration left %d new tables and %d pull requests", added, requests)
 	}
 }

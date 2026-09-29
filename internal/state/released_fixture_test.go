@@ -19,7 +19,11 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 		file    string
 		version int
 	}{
+		{file: "schema14-1.0.1.sql", version: 14},
 		{file: "schema14-1.0.2.sql", version: 14},
+		{file: "schema15-1.0.3.sql", version: 15},
+		{file: "schema15-1.0.3-upgraded-from-1.0.2.sql", version: 15},
+		{file: "schema15-baseline-upgraded-by-1.0.3.sql", version: 15},
 		{file: "schema15-1.1.2.sql", version: 15},
 		{file: "schema15-1.1.2-upgraded-from-1.0.2.sql", version: 15},
 	} {
@@ -29,7 +33,7 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 			db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
 			before := tableRowCounts(t, db)
 			noErr(t, db.Close())
-			if before["repositories"] == 0 || before["pull_requests"] == 0 || before["check_jobs"] == 0 {
+			if before["repositories"] == 0 || before["pull_requests"] == 0 || before["pull_request_reviews"] == 0 {
 				t.Fatalf("fixture has too few records: %v", before)
 			}
 
@@ -90,7 +94,7 @@ func TestAlteredReleasedDatabaseIsRefusedUnchanged(t *testing.T) {
 			if store != nil {
 				_ = store.Close()
 			}
-			want := "state database says schema 15 but its tables differ from the ones OwnGit wrote at schema 15, so this build does not upgrade it"
+			want := "state database says schema 15 but its tables differ from the ones OwnGit wrote at schema 15, so this build does not upgrade it; undo the change to its tables, or restore a backup of the state with the OwnGit version that made the backup"
 			if err == nil || err.Error() != want {
 				t.Fatalf("altered schema error=%v", err)
 			}

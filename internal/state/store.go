@@ -417,7 +417,7 @@ func validateReleasedSchema(ctx context.Context, db queryRower, version int) (sc
 		return schemaClass{}, err
 	}
 	if fingerprint != expected {
-		return schemaClass{}, fmt.Errorf("state database says schema %d but its tables differ from the ones OwnGit wrote at schema %d, so this build does not upgrade it", version, version)
+		return schemaClass{}, fmt.Errorf("state database says schema %d but its tables differ from the ones OwnGit wrote at schema %d, so this build does not upgrade it; undo the change to its tables, or restore a backup of the state with the OwnGit version that made the backup", version, version)
 	}
 	return schemaReleased(version), nil
 }
@@ -430,19 +430,24 @@ func stepsFingerprint(ctx context.Context, version int) (string, error) {
 		return "", fmt.Errorf("prepare the schema %d catalog: %w", version, err)
 	}
 	defer db.Close()
-	// Every connection has its own memory database.
-	db.SetMaxOpenConns(1)
+	// Every connection has its own memory database, so all statements use
+	// this one.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return "", fmt.Errorf("prepare the schema %d catalog: %w", version, err)
+	}
+	defer conn.Close()
 	for _, step := range schemaSteps {
 		if step.version > version {
 			break
 		}
 		for _, statement := range step.statements {
-			if _, err := db.ExecContext(ctx, statement); err != nil {
+			if _, err := conn.ExecContext(ctx, statement); err != nil {
 				return "", fmt.Errorf("prepare the schema %d catalog: %w", version, err)
 			}
 		}
 	}
-	fingerprint, _, err := schemaFingerprint(ctx, db)
+	fingerprint, _, err := schemaFingerprint(ctx, conn)
 	if err != nil {
 		return "", fmt.Errorf("prepare the schema %d catalog: %w", version, err)
 	}
