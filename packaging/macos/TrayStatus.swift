@@ -320,16 +320,44 @@ func helperArguments(_ repair: String?) -> [String]? {
 /// exit (service.AppSignInOff).
 let signInOffArgument = "--sign-in-off"
 
-/// ownGitProgram is the owngit program the icon runs: the one inside the
-/// app (Contents/Helpers, where tools/release places it in the disk image),
-/// else the one beside the app, as a release archive, the installer and npm
-/// lay them out, else the one in the bin folder beside it, as Homebrew does.
-/// Without any, it is the path inside the app, which the icon reports as
-/// missing.
+/// afterUpdateArgument marks an icon that opened itself again after an
+/// update removed the folder it ran from.
+let afterUpdateArgument = "--after-update"
+
+/// The icon's own settings: whether it registered to open at sign-in, and
+/// from which place.
+let signInConfiguredKey = "OpenAtSignInConfigured"
+let signInPathKey = "OpenAtSignInPath"
+/// The owner turned opening at sign-in off in the panel.
+let signInOffKey = "OpenAtSignInOff"
+
+/// homebrewStableFolder is Homebrew's version-independent folder of the
+/// formula, PREFIX/opt/owngit, for an app in PREFIX/Cellar/owngit/VERSION,
+/// the versioned folder that macOS runs it from and that an upgrade removes.
+func homebrewStableFolder(app: URL) -> URL? {
+    let version = app.deletingLastPathComponent()
+    let formula = version.deletingLastPathComponent()
+    let cellar = formula.deletingLastPathComponent()
+    guard formula.lastPathComponent == "owngit", cellar.lastPathComponent == "Cellar" else {
+        return nil
+    }
+    return cellar.deletingLastPathComponent().appendingPathComponent("opt/owngit")
+}
+
+/// ownGitProgram is the owngit program the icon runs: for a Homebrew app the
+/// one in Homebrew's stable folder, which stays valid across upgrades; else
+/// the one inside the app (Contents/Helpers, where tools/release places it
+/// in the disk image); else the one beside the app, as a release archive,
+/// the installer and npm lay them out; else the one in the bin folder beside
+/// it. Without any, it is the path inside the app, which the icon reports
+/// as missing.
 func ownGitProgram(app: URL, isExecutable: (URL) -> Bool) -> URL {
     let inside = app.appendingPathComponent("Contents/Helpers/owngit")
     let folder = app.deletingLastPathComponent()
-    let candidates = [inside, folder.appendingPathComponent("owngit"), folder.appendingPathComponent("bin/owngit")]
+    var candidates = [inside, folder.appendingPathComponent("owngit"), folder.appendingPathComponent("bin/owngit")]
+    if let stable = homebrewStableFolder(app: app) {
+        candidates.insert(stable.appendingPathComponent("bin/owngit"), at: 0)
+    }
     return candidates.first(where: isExecutable) ?? inside
 }
 
@@ -411,7 +439,7 @@ struct Words {
     let failed: String
     let readFailed: String
     let noDashboard, openFailed, notConfirmed: String
-    let noProgram: String
+    let noProgram, unprotected: String
 
     static let en = Words(
         lang: "en",
@@ -445,7 +473,8 @@ struct Words {
         noDashboard: "OwnGit could not read this computer's dashboard address from %@. Start OwnGit and try again.",
         openFailed: "macOS could not open %@.",
         notConfirmed: "OwnGit did not confirm that it answers at this computer's address, so nothing was opened.",
-        noProgram: "OwnGit.app needs the owngit program inside it or beside it, but %@ is missing. Install OwnGit again."
+        noProgram: "OwnGit.app needs the owngit program inside it or beside it, but %@ is missing. Install OwnGit again.",
+        unprotected: "OwnGit is at %@, where another account on this Mac could change it. Move OwnGit to a folder only you can change, then open it again."
     )
 
     static let ko = Words(
@@ -480,7 +509,8 @@ struct Words {
         noDashboard: "%@에서 이 컴퓨터의 대시보드 주소를 읽지 못했습니다. OwnGit을 시작한 뒤 다시 해 보세요.",
         openFailed: "macOS가 %@ 주소를 열지 못했습니다.",
         notConfirmed: "이 컴퓨터의 주소에서 OwnGit이 응답하는지 확인하지 못해 아무것도 열지 않았습니다.",
-        noProgram: "owngit 프로그램을 찾지 못했습니다: %@. 이 프로그램은 OwnGit.app 안이나 옆에 있어야 합니다. OwnGit을 다시 설치하세요."
+        noProgram: "owngit 프로그램을 찾지 못했습니다: %@. 이 프로그램은 OwnGit.app 안이나 옆에 있어야 합니다. OwnGit을 다시 설치하세요.",
+        unprotected: "OwnGit이 %@에 있어 이 Mac의 다른 계정이 바꿀 수 있습니다. 나만 바꿀 수 있는 폴더로 OwnGit을 옮긴 뒤 다시 여세요."
     )
 
     /// forLanguages picks Korean when the first preferred language is

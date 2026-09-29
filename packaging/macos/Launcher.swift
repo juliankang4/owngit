@@ -68,8 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // The open event that started the app is current only now, not yet
         // in applicationWillFinishLaunching.
         let event = NSAppleEventManager.shared().currentAppleEvent
+        // An icon that opens itself again after an update counts like a
+        // sign-in launch: it keeps a hidden icon hidden.
         openedAtSignIn = event?.eventID == kAEOpenApplication
             && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+            || CommandLine.arguments.contains(afterUpdateArgument)
         popover.behavior = .transient
         // The panel changes size with its state, often right after it
         // opens; without the animation every new size applies at once.
@@ -82,6 +85,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         guard FileManager.default.isExecutableFile(atPath: helper.path) else {
             fail(String(format: words.noProgram, helper.path))
+            return
+        }
+        // Before the icon registers for sign-in or runs owngit, no other
+        // account may be able to replace either program.
+        for program in [Bundle.main.executablePath ?? "", helper.path] where protectedPathProblem(program) != nil {
+            fail(String(format: words.unprotected, Bundle.main.bundlePath))
             return
         }
         readAgent()
@@ -249,6 +258,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func tick() {
+        if reopenAfterUpdate() {
+            return
+        }
         if statusItem == nil {
             let hidden = stateDir.appendingPathComponent("tray-hidden")
             if !FileManager.default.fileExists(atPath: hidden.path) {
@@ -445,14 +457,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Settings. A registration that fails is tried again at the next open;
     /// the settings view shows the switch off meanwhile, and turning it on
     /// there shows the reason.
+    /// When the app now runs from another place than the one registered,
+    /// as after a Homebrew upgrade, the registration is renewed for this
+    /// place, unless the owner turned it off in the panel. One turned off in
+    /// System Settings stays off there.
     private func setUpSignInOnce() {
-        let key = "OpenAtSignInConfigured"
-        if UserDefaults.standard.bool(forKey: key) {
+        let defaults = UserDefaults.standard
+        let here = Bundle.main.bundlePath
+        let configured = defaults.bool(forKey: signInConfiguredKey)
+        if configured && defaults.string(forKey: signInPathKey) == here || defaults.bool(forKey: signInOffKey) {
             return
         }
         if (try? SMAppService.mainApp.register()) != nil {
-            UserDefaults.standard.set(true, forKey: key)
+            defaults.set(true, forKey: signInConfiguredKey)
+            defaults.set(here, forKey: signInPathKey)
         }
+    }
+
+    /// reopenAfterUpdate opens the icon again from Homebrew's stable place
+    /// when an upgrade removed the versioned folder it runs from, and quits
+    /// this one. It returns whether it did.
+    private func reopenAfterUpdate() -> Bool {
+        let bundle = Bundle.main.bundleURL
+        guard !FileManager.default.fileExists(atPath: bundle.path),
+              let stable = homebrewStableFolder(app: bundle)?.appendingPathComponent("OwnGit.app"),
+              FileManager.default.fileExists(atPath: stable.path)
+        else {
+            return false
+        }
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-n", stable.path, "--args", afterUpdateArgument]
+        guard (try? open.run()) != nil else {
+            return false
+        }
+        NSApp.terminate(nil)
+        return true
     }
 
     private func signInState() -> SignIn {
@@ -468,9 +508,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         do {
             if on {
                 try SMAppService.mainApp.register()
+                UserDefaults.standard.set(Bundle.main.bundlePath, forKey: signInPathKey)
             } else {
                 try SMAppService.mainApp.unregister()
             }
+            UserDefaults.standard.set(!on, forKey: signInOffKey)
         } catch {
             failure = error.localizedDescription
         }
@@ -554,6 +596,10 @@ struct OwnGitLauncher {
         // "owngit service uninstall" runs the launcher with this argument:
         // the icon stops opening at sign-in, and nothing is shown.
         if CommandLine.arguments.dropFirst().first == signInOffArgument {
+            // Opening the app again later registers it again.
+            for key in [signInConfiguredKey, signInPathKey, signInOffKey] {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
             do {
                 try SMAppService.mainApp.unregister()
             } catch {

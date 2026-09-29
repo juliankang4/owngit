@@ -16,7 +16,7 @@ import (
 
 // macLauncherSources are the Swift files of OwnGit.app's launcher, the menu
 // bar icon, in packaging/macos.
-var macLauncherSources = []string{"Launcher.swift", "Panel.swift", "TrayStatus.swift"}
+var macLauncherSources = []string{"Launcher.swift", "Panel.swift", "ProtectedPath.swift", "TrayStatus.swift"}
 
 var appleBundleVersionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`)
 

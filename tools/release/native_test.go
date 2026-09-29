@@ -648,16 +648,67 @@ require(program("/Applications/OwnGit.app", ["/Applications/OwnGit.app/Contents/
 require(program("/opt/local/bin/OwnGit.app", ["/opt/local/bin/owngit"]) == "/opt/local/bin/owngit", "the program beside the app")
 require(program("/opt/homebrew/opt/owngit/OwnGit.app", ["/opt/homebrew/opt/owngit/bin/owngit"]) == "/opt/homebrew/opt/owngit/bin/owngit", "the program in the bin folder beside the app")
 require(program("/opt/x/OwnGit.app", []) == "/opt/x/OwnGit.app/Contents/Helpers/owngit", "no program")
+require(program("/opt/homebrew/Cellar/owngit/1.1.3/OwnGit.app", ["/opt/homebrew/opt/owngit/bin/owngit", "/opt/homebrew/Cellar/owngit/1.1.3/bin/owngit"]) == "/opt/homebrew/opt/owngit/bin/owngit", "Homebrew's stable folder, which survives an upgrade")
+require(homebrewStableFolder(app: URL(fileURLWithPath: "/opt/homebrew/Cellar/owngit/1.1.3/OwnGit.app"))?.path == "/opt/homebrew/opt/owngit" && homebrewStableFolder(app: URL(fileURLWithPath: "/Applications/OwnGit.app")) == nil, "the stable folder only for Homebrew's Cellar")
+
+// Who may change the way to a program (the rule of state.RequireProtectedPath).
+let me: uid_t = 501, own: gid_t = 501
+func folder(_ owner: uid_t = 501, _ mode: mode_t = 0o755, group: gid_t = 20, acl: Bool = false) -> PathFacts {
+    PathFacts(kind: .folder, owner: owner, group: group, mode: mode, target: "", accessListWriter: acl)
+}
+let tree: [String: PathFacts] = [
+    "/": folder(0), "/opt/me": folder(), "/opt/me/bin": folder(),
+    "/opt/me/bin/owngit": PathFacts(kind: .file, owner: 501, group: 20, mode: 0o755, target: "", accessListWriter: false),
+    "/tmp": folder(0, 0o1777), "/tmp/x": PathFacts(kind: .file, owner: 501, group: 20, mode: 0o755, target: "", accessListWriter: false),
+    "/opt": folder(0), "/opt/mine": PathFacts(kind: .link, owner: 501, group: 20, mode: 0o755, target: "/opt/me/bin", accessListWriter: false),
+    "/opt/theirs": PathFacts(kind: .link, owner: 502, group: 20, mode: 0o755, target: "/opt/me/bin", accessListWriter: false),
+    "/opt/loop": PathFacts(kind: .link, owner: 501, group: 20, mode: 0o755, target: "/opt/loop", accessListWriter: false),
+    "/Applications": folder(0, 0o775, group: 80),
+]
+func problem(_ path: String, _ changes: [String: PathFacts] = [:]) -> String? {
+    protectedPathProblem(path, me: me, ownGroup: own) { changes[$0] ?? tree[$0] }
+}
+for (path, changes, want, why) in [
+    ("/opt/me/bin/owngit", [:], nil, "a private folder"),
+    ("/opt/me/bin/owngit", ["/opt/me/bin": folder(502)], "/opt/me/bin", "another account's folder"),
+    ("/opt/me/bin/owngit", ["/opt/me/bin": folder(501, 0o775)], "/opt/me/bin", "a folder the staff group may write"),
+    ("/opt/me/bin/owngit", ["/opt/me/bin": folder(501, 0o775, group: own)], nil, "a folder only this account's own group may write"),
+    ("/opt/me/bin/owngit", ["/opt/me/bin": folder(501, 0o775, group: 80)], nil, "a folder the admin group may write"),
+    ("/opt/me/bin/owngit", ["/opt/me/bin": folder(acl: true)], "/opt/me/bin", "an access list that lets another account write"),
+    ("/opt/mine/owngit", [:], nil, "this account's link to a private folder"),
+    ("/opt/theirs/owngit", [:], "/opt/theirs", "another account's link"),
+    ("/opt/loop/owngit", [:], "/opt/loop", "a link loop"),
+    ("/tmp/x", [:], nil, "a sticky folder that everyone writes, above the file"),
+    ("/tmp", [:], "/tmp", "a folder in place of the program"),
+    ("/opt/me/bin/missing", [:], "/opt/me/bin/missing", "a missing program"),
+] as [(String, [String: PathFacts], String?, String)] {
+    require(problem(path, changes) == want, "\(why): got \(problem(path, changes) ?? "nil")")
+}
+// The same rule on this Mac's own files.
+let scratch = CommandLine.arguments[2]
+require(protectedPathProblem(scratch + "/private/owngit") == nil, "a private folder on disk")
+require(protectedPathProblem(scratch + "/shared/owngit") == scratch + "/shared", "a group-writable folder on disk")
+require(protectedPathProblem(scratch + "/acl/owngit") == scratch + "/acl", "an access list that lets everyone add files, on disk")
 require(Words.forLanguages(["ko-KR", "en"]).lang == "ko" && Words.forLanguages(["en-US", "ko"]).lang == "en" && Words.forLanguages([]).lang == "en", "language")
 print("tray status fixture passed")
 `
 	noErr(t, os.WriteFile(fixture, []byte(program), 0o600))
 	binary := filepath.Join(dir, "tray-status-fixture")
-	source := filepath.Join(repoRoot(t), "packaging", "macos", "TrayStatus.swift")
-	if output, err := exec.Command("xcrun", "swiftc", source, fixture, "-o", binary).CombinedOutput(); err != nil {
+	sources := filepath.Join(repoRoot(t), "packaging", "macos")
+	if output, err := exec.Command("xcrun", "swiftc", filepath.Join(sources, "TrayStatus.swift"), filepath.Join(sources, "ProtectedPath.swift"), fixture, "-o", binary).CombinedOutput(); err != nil {
 		t.Fatalf("compile tray status fixture: %v\n%s", err, output)
 	}
-	output, err := exec.Command(binary, writeTrayStatusFixtures(t, dir)).CombinedOutput()
+	// A private folder and one its group may write, for the path rule.
+	scratch := filepath.Join(dir, "paths")
+	for folder, mode := range map[string]os.FileMode{"private": 0o700, "shared": 0o770, "acl": 0o700} {
+		noErr(t, os.MkdirAll(filepath.Join(scratch, folder), 0o700))
+		noErr(t, os.WriteFile(filepath.Join(scratch, folder, "owngit"), nil, 0o755))
+		noErr(t, os.Chmod(filepath.Join(scratch, folder), mode))
+	}
+	if output, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file", filepath.Join(scratch, "acl")).CombinedOutput(); err != nil {
+		t.Fatalf("chmod +a: %v\n%s", err, output)
+	}
+	output, err := exec.Command(binary, writeTrayStatusFixtures(t, dir), scratch).CombinedOutput()
 	if err != nil {
 		t.Fatalf("run tray status fixture: %v\n%s", err, output)
 	}
