@@ -129,6 +129,13 @@ type Platform struct {
 // releaseDownloads is where release assets are.
 const releaseDownloads = "https://github.com/juliankang4/owngit/releases/download/v"
 
+// installerSource is where the installer of a release tag is. It is the
+// same file as the release asset and answers without a redirect.
+const installerSource = "https://raw.githubusercontent.com/juliankang4/owngit/v"
+
+// httpsOnly keeps curl on HTTPS for the first request and every redirect.
+const httpsOnly = "curl --proto '=https' --proto-redir '=https' "
+
 // releaseTargets are the platforms with a release archive, and its format.
 var releaseTargets = map[string]string{
 	"darwin/arm64": "tar.gz", "linux/amd64": "tar.gz", "linux/arm64": "tar.gz", "windows/amd64": "zip",
@@ -186,7 +193,7 @@ func (install Install) UpdateCommand(version string, platform Platform) string {
 		if install.Package != ReleasePackage || platform.Root {
 			return ""
 		}
-		steps = append(steps, "(cd \"$(mktemp -d)\" && curl -fLO "+releaseDownloads+version+"/PKGBUILD && makepkg -si)")
+		steps = append(steps, "(cd \"$(mktemp -d)\" && "+httpsOnly+"-fLO "+releaseDownloads+version+"/PKGBUILD && makepkg -si)")
 	case RouteArchive:
 		return install.installerCommand(version, platform)
 	default:
@@ -216,15 +223,16 @@ func (install Install) installerCommand(version string, platform Platform) strin
 		return ""
 	}
 	if platform.GOOS == "windows" {
-		script := PowerShellQuote(releaseDownloads + version + "/install.ps1")
-		command := "& ([scriptblock]::Create((New-Object Net.WebClient).DownloadString(" + script + "))) -Version " + version +
+		// No redirect is followed, so the script cannot come over HTTP.
+		script := PowerShellQuote(installerSource + version + "/packaging/installer/install.ps1")
+		command := "& ([scriptblock]::Create((irm -MaximumRedirection 0 " + script + "))) -Version " + version +
 			" -Dir " + PowerShellQuote(filepath.Dir(filepath.Dir(install.Executable)))
 		if !platform.Service {
 			command += " -NoService"
 		}
 		return command
 	}
-	command := "curl -fsSL " + releaseDownloads + version + "/install.sh | sh -s -- --version " + version + " --to " + shellWord(install.Executable)
+	command := httpsOnly + "-fsSL " + installerSource + version + "/packaging/installer/install.sh | sh -s -- --version " + version + " --to " + shellWord(install.Executable)
 	if !platform.Service {
 		command += " --no-service"
 	}

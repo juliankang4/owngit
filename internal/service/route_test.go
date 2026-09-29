@@ -75,10 +75,10 @@ func TestUpdateCommand(t *testing.T) {
 		{"npm", npm, linux, "npm install -g owngit@1.1.3"},
 		{"npm service", npm, withService(linux), "npm install -g owngit@1.1.3 && owngit service install"},
 		{"npm with sudo", npm, withService(sudo), "sudo npm install -g owngit@1.1.3 && owngit service install"},
-		{"pacman service", pacman, withService(linux), `(cd "$(mktemp -d)" && curl -fLO https://github.com/juliankang4/owngit/releases/download/v1.1.3/PKGBUILD && makepkg -si) && owngit service install`},
-		{"archive", archive, linux, "curl -fsSL https://github.com/juliankang4/owngit/releases/download/v1.1.3/install.sh | sh -s -- --version 1.1.3 --to /home/you/bin/owngit --no-service"},
-		{"archive with sudo", archive, withService(sudo), "curl -fsSL https://github.com/juliankang4/owngit/releases/download/v1.1.3/install.sh | sh -s -- --version 1.1.3 --to /home/you/bin/owngit"},
-		{"archive with a space", spaced, withService(mac), "curl -fsSL https://github.com/juliankang4/owngit/releases/download/v1.1.3/install.sh | sh -s -- --version 1.1.3 --to '/Users/you/My Tools/owngit'"},
+		{"pacman service", pacman, withService(linux), `(cd "$(mktemp -d)" && curl --proto '=https' --proto-redir '=https' -fLO https://github.com/juliankang4/owngit/releases/download/v1.1.3/PKGBUILD && makepkg -si) && owngit service install`},
+		{"archive", archive, linux, "curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/juliankang4/owngit/v1.1.3/packaging/installer/install.sh | sh -s -- --version 1.1.3 --to /home/you/bin/owngit --no-service"},
+		{"archive with sudo", archive, withService(sudo), "curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/juliankang4/owngit/v1.1.3/packaging/installer/install.sh | sh -s -- --version 1.1.3 --to /home/you/bin/owngit"},
+		{"archive with a space", spaced, withService(mac), "curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/juliankang4/owngit/v1.1.3/packaging/installer/install.sh | sh -s -- --version 1.1.3 --to '/Users/you/My Tools/owngit'"},
 		{"pacman as root", pacman, Platform{GOOS: "linux", GOARCH: "amd64", Service: true, Root: true}, ""},
 		{"another pacman package", ClassifyExecutable("/usr/bin/owngit").OwnedBy("owngit-git"), withService(linux), ""},
 		{"archive without a release target", archive, Platform{GOOS: "darwin", GOARCH: "amd64"}, ""},
@@ -110,7 +110,7 @@ func TestArchiveCommandPassesThePathToTheInstaller(t *testing.T) {
 	noErr(t, os.WriteFile(stub, []byte("printf '%s\\n' \"$@\" >"+shellQuote(got)+"\n"), 0o644))
 	program := "/Users/you/O'Brien Tools/owngit"
 	command := ClassifyExecutable(program).UpdateCommand("1.1.3", Platform{GOOS: "darwin", GOARCH: "arm64"})
-	download := "curl -fsSL " + releaseDownloads + "1.1.3/install.sh"
+	download := httpsOnly + "-fsSL " + installerSource + "1.1.3/packaging/installer/install.sh"
 	if !strings.HasPrefix(command, download+" | ") {
 		t.Fatalf("command %s", command)
 	}

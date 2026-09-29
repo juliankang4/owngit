@@ -21,7 +21,7 @@ func TestUpdateCommandOnWindows(t *testing.T) {
 		t.Fatalf("routes %s and %s", archive.Route, npm.Route)
 	}
 	platform := Platform{GOOS: "windows", GOARCH: "amd64", Service: true}
-	want := "& ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://github.com/juliankang4/owngit/releases/download/v1.1.3/install.ps1'))) -Version 1.1.3 -Dir 'C:\\Users\\you\\Downloads'"
+	want := "& ([scriptblock]::Create((irm -MaximumRedirection 0 'https://raw.githubusercontent.com/juliankang4/owngit/v1.1.3/packaging/installer/install.ps1'))) -Version 1.1.3 -Dir 'C:\\Users\\you\\Downloads'"
 	if got := archive.UpdateCommand("1.1.3", platform); got != want {
 		t.Errorf("archive:\n got %s\nwant %s", got, want)
 	}
@@ -80,7 +80,7 @@ func testBracketedPaths(t *testing.T, powershell string) {
 	stub := "param([string]$Version, [switch]$NoService, [string]$Dir)\n" +
 		"[IO.File]::WriteAllLines(" + PowerShellQuote(record) + ", [string[]]@($Version, $NoService.IsPresent, $Dir))\n"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1.1.3/install.ps1" {
+		if r.URL.Path != "/v1.1.3/packaging/installer/install.ps1" {
 			http.NotFound(w, r)
 			return
 		}
@@ -89,7 +89,7 @@ func testBracketedPaths(t *testing.T, powershell string) {
 	defer server.Close()
 
 	install := Install{Route: RouteArchive, Executable: filepath.Join(dir, "owngit_1.1.2_windows_amd64", "owngit.exe")}
-	command := strings.Replace(install.UpdateCommand("1.1.3", Platform{GOOS: "windows", GOARCH: "amd64"}), releaseDownloads, server.URL+"/v", 1)
+	command := strings.Replace(install.UpdateCommand("1.1.3", Platform{GOOS: "windows", GOARCH: "amd64"}), installerSource, server.URL+"/v", 1)
 	if output, err := exec.Command(powershell, "-NoProfile", "-NonInteractive", "-Command", command).CombinedOutput(); err != nil {
 		t.Fatalf("%s: %v\n%s", command, err, output)
 	}

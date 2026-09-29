@@ -41,13 +41,13 @@ Every install route needs Git with an executable `git-http-backend` on the host.
 The one-line installer downloads the latest release for this computer, checks it against the release's `SHA256SUMS`, installs `owngit` and runs it as a service with `owngit service install`, which prints the setup link at the end when you run it in a terminal. On Linux (x64, ARM64) and macOS (Apple silicon):
 
 ```sh
-curl -fsSL https://owngit.app/install.sh | sh
+curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | sh
 ```
 
 On Windows (x64), in PowerShell:
 
 ```powershell
-irm https://owngit.app/install.ps1 | iex
+irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 ```
 
 [One-line installer](docs/OPERATIONS.md#one-line-installer) lists its options, such as a pinned version or no service, and where it puts the program.

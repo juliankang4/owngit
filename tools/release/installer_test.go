@@ -43,6 +43,7 @@ type syntheticRelease struct {
 	mu       sync.Mutex
 	files    map[string][]byte // "vX.Y.Z/NAME" -> content
 	override map[string][]byte // replaces files; nil content answers 404
+	redirect map[string]string // answers with a redirect to the address
 	requests int
 }
 
@@ -73,7 +74,7 @@ func newSyntheticRelease(t *testing.T, versions ...string) *syntheticRelease {
 	t.Helper()
 	release := &syntheticRelease{
 		latest: versions[len(versions)-1], archive: map[string]string{}, program: map[string][]byte{},
-		files: map[string][]byte{}, override: map[string][]byte{},
+		files: map[string][]byte{}, override: map[string][]byte{}, redirect: map[string]string{},
 	}
 	for _, version := range versions {
 		program := fakeOwngit(t, version)
@@ -116,7 +117,12 @@ func (release *syntheticRelease) serve(writer http.ResponseWriter, request *http
 	if replaced, ok := release.override[path]; ok {
 		data, found = replaced, replaced != nil
 	}
+	target, redirected := release.redirect[path]
 	release.mu.Unlock()
+	if redirected {
+		http.Redirect(writer, request, target, http.StatusFound)
+		return
+	}
 	if !found {
 		http.NotFound(writer, request)
 		return
@@ -134,6 +140,24 @@ func (release *syntheticRelease) replace(t *testing.T, path string, content []by
 		delete(release.override, path)
 		release.mu.Unlock()
 	})
+}
+
+// redirectToHTTP answers "vX.Y.Z/NAME" for one test with a redirect to the
+// same file on a plain HTTP server, and returns that address.
+func (release *syntheticRelease) redirectToHTTP(t *testing.T, path string) string {
+	content := release.files[path]
+	plain := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.Write(content) }))
+	t.Cleanup(plain.Close)
+	target := plain.URL + "/" + path
+	release.mu.Lock()
+	release.redirect[path] = target
+	release.mu.Unlock()
+	t.Cleanup(func() {
+		release.mu.Lock()
+		delete(release.redirect, path)
+		release.mu.Unlock()
+	})
+	return target
 }
 
 func (release *syntheticRelease) url() string { return release.server.URL + "/releases" }
@@ -375,6 +399,17 @@ func TestInstallSh(t *testing.T) {
 		}
 		if names := dirNames(t, filepath.Dir(target)); len(names) != 1 {
 			t.Errorf("the folder holds %v, want only owngit", names)
+		}
+	})
+
+	t.Run("a redirect to plain HTTP is refused", func(t *testing.T) {
+		run := newShInstall(t, release)
+		target := filepath.Join(run.home, "bin", "owngit")
+		run.must(t, nil, "--version", "1.0.0", "--to", target)
+		release.redirectToHTTP(t, "v2.0.0/"+release.archive["2.0.0"])
+		run.mustFail(t, nil, "could not download "+release.url()+"/download/v2.0.0/"+release.archive["2.0.0"]+"; nothing was changed", "--to", target)
+		if got := release.versionOf(t, target); got != "1.0.0" {
+			t.Fatalf("the program is now %q, want 1.0.0", got)
 		}
 	})
 
@@ -650,6 +685,17 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		}
 		if log := readLog(t, run.log); log != "1.0.0 service install\n" {
 			t.Errorf("owngit ran as %q", log)
+		}
+	})
+
+	t.Run("a redirect to plain HTTP is refused", func(t *testing.T) {
+		run := newPsInstall(t, release, shell)
+		dir := filepath.Join(run.home, "og")
+		path := "v2.0.0/" + release.archive["2.0.0"]
+		plain := release.redirectToHTTP(t, path)
+		run.mustFailWith(t, nil, "owngit install: Could not download "+release.url()+"/download/"+path+" (it leads to "+plain+", which is not HTTPS). Nothing was changed.\n", "-Dir", psQuote(dir))
+		if names := dirNames(t, dir); len(names) != 0 {
+			t.Fatalf("%s holds %v", dir, names)
 		}
 	})
 

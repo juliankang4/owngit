@@ -54,12 +54,39 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
         }
     }
 
-    $web = New-Object Net.WebClient
+    # Fetch follows at most five redirects itself, and only to HTTPS, so no
+    # hop of a download can be plain HTTP.
     function Fetch([string]$Url, [string]$File) {
-        try {
-            if ($File) { $web.DownloadFile($Url, $File) } else { $web.DownloadString($Url) }
-        } catch {
-            throw "Could not download $Url ($($_.Exception.GetBaseException().Message.TrimEnd('.'))). Nothing was changed."
+        $uri = [Uri]$Url
+        for ($hop = 0; ; $hop++) {
+            if ($uri.Scheme -ne 'https') { throw "Could not download $Url (it leads to $uri, which is not HTTPS). Nothing was changed." }
+            if ($hop -gt 5) { throw "Could not download $Url (too many redirects). Nothing was changed." }
+            $request = [Net.HttpWebRequest]::Create($uri)
+            $request.AllowAutoRedirect = $false
+            try { $response = $request.GetResponse() }
+            catch {
+                $reason = $_.Exception.GetBaseException().Message.TrimEnd('.')
+                for ($e = $_.Exception; $e; $e = $e.InnerException) {
+                    if ($e -is [Net.WebException] -and $e.Response) { $reason = "HTTP $([int]$e.Response.StatusCode)"; break }
+                }
+                throw "Could not download $Url ($reason). Nothing was changed."
+            }
+            try {
+                $code = [int]$response.StatusCode
+                if ($code -ge 300 -and $code -lt 400) {
+                    $location = $response.Headers['Location']
+                    if (-not $location) { throw "Could not download $Url (HTTP $code without a location). Nothing was changed." }
+                    $uri = [Uri]::new($uri, $location)
+                    continue
+                }
+                $stream = $response.GetResponseStream()
+                if (-not $File) { return (New-Object IO.StreamReader($stream)).ReadToEnd() }
+                $out = [IO.File]::Create($File)
+                try { $stream.CopyTo($out) } finally { $out.Dispose() }
+                return
+            } catch [IO.IOException], [Net.WebException] {
+                throw "Could not download $Url ($($_.Exception.GetBaseException().Message.TrimEnd('.'))). Nothing was changed."
+            } finally { $response.Dispose() }
         }
     }
     function DigestOf([string]$File) {
