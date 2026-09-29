@@ -256,3 +256,71 @@ func TestGiveFolderWithinChecksTheFinalPath(t *testing.T) {
 		t.Errorf("output:\n%s", out.String())
 	}
 }
+
+// The walk changes the folder that was checked: when a junction on the
+// requested path is pointed elsewhere after the check (here inside the
+// check itself, the last moment before the walk), nothing at the new
+// target changes. Changing owners to the Administrators group needs
+// administrator rights.
+func TestGiveOwnershipWalksWhatItChecked(t *testing.T) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("changing owners to the Administrators group needs administrator rights")
+	}
+	sid, err := platformCurrentAccountSID()
+	noErr(t, err)
+	administrators, err := windows.StringToSid(administratorsSID)
+	noErr(t, err)
+	temporary, err := windows.UTF16PtrFromString(t.TempDir())
+	noErr(t, err)
+	long := make([]uint16, windows.MAX_LONG_PATH)
+	n, err := windows.GetLongPathName(temporary, &long[0], uint32(len(long)))
+	noErr(t, err)
+	base := windows.UTF16ToString(long[:n])
+	checkedDir, otherDir := filepath.Join(base, "checked"), filepath.Join(base, "other")
+	junction := filepath.Join(base, "profile", "j")
+	paths := []string{
+		filepath.Join(checkedDir, "tools"), filepath.Join(checkedDir, "tools", "sub"), filepath.Join(checkedDir, "tools", "sub", "file"),
+		filepath.Join(otherDir, "tools"), filepath.Join(otherDir, "tools", "sub"), filepath.Join(otherDir, "tools", "sub", "secret"),
+	}
+	for _, dir := range []string{paths[1], paths[4], filepath.Dir(junction)} {
+		noErr(t, os.MkdirAll(dir, 0o700))
+	}
+	noErr(t, os.WriteFile(paths[2], []byte("x"), 0o600))
+	noErr(t, os.WriteFile(paths[5], []byte("x"), 0o600))
+	for _, path := range paths {
+		noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, administrators, nil, nil, nil))
+	}
+	mklink := func() error {
+		if output, err := exec.Command("cmd", "/c", "mklink", "/J", junction, otherDir).CombinedOutput(); err != nil {
+			return fmt.Errorf("mklink: %v\n%s", err, output)
+		}
+		return nil
+	}
+	if output, err := exec.Command("cmd", "/c", "mklink", "/J", junction, checkedDir).CombinedOutput(); err != nil {
+		t.Fatalf("mklink: %v\n%s", err, output)
+	}
+	checked := ""
+	changed, failed, err := platformGiveOwnership(filepath.Join(junction, "tools"), sid, func(finalPath, owner string) error {
+		checked = finalPath
+		if output, err := exec.Command("cmd", "/c", "rmdir", junction).CombinedOutput(); err != nil {
+			return fmt.Errorf("rmdir: %v\n%s", err, output)
+		}
+		return mklink()
+	})
+	noErr(t, err)
+	if _, err := os.Stat(filepath.Join(junction, "tools", "sub", "secret")); err != nil {
+		t.Fatalf("the junction was not pointed elsewhere: %v", err)
+	}
+	if !strings.EqualFold(checked, paths[0]) || changed != 3 || failed != 0 {
+		t.Errorf("checked %q, changed %d, failed %d; want %q, 3 and 0", checked, changed, failed, paths[0])
+	}
+	for i, path := range paths {
+		want := sid
+		if i >= 3 {
+			want = administratorsSID
+		}
+		if got, err := platformOwnerOf(path); err != nil || got != want {
+			t.Errorf("%s: owner %s (%v), want %s", path, got, err, want)
+		}
+	}
+}
