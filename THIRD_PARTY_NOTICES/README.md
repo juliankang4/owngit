@@ -29,6 +29,7 @@ The entries fall into two groups:
 - `github.com/yuin/goldmark` v1.8.6: LICENSE
 - `golang.org/x/crypto` v0.57.0: LICENSE, PATENTS
 - `golang.org/x/sys` v0.48.0: LICENSE, PATENTS
+- `golang.org/x/text` v0.42.0: LICENSE, PATENTS
 - `modernc.org/libc` v1.75.7: LICENSE, LICENSE-3RD-PARTY.md
 - `modernc.org/mathutil` v1.7.1: LICENSE
 - `modernc.org/memory` v1.12.1: LICENSE, LICENSE-GO, LICENSE-LOGO, LICENSE-MMAP-GO

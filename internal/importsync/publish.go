@@ -104,9 +104,9 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		expected: map[string]string{}, desired: map[string]string{}, observed: map[string]string{}, retained: map[string]string{},
 		skipped: run.selected.skipped, headExpected: destHEAD, headDesired: destHEAD, keepHistory: run.writes.KeepHistory,
 	}
-	// A name that differs only in letter case from another destination ref,
-	// or from another ref this refresh writes, is left as it is: the rule
-	// pushes follow too (repository.RefCaseConflicts).
+	// A ref whose name a file system can treat as the same as another
+	// destination ref's name, or another name this refresh writes, is left
+	// as it is: the rule pushes follow too (repository.RefNameConflicts).
 	existing := make([]string, 0, len(dest)+len(destSymrefs))
 	for _, names := range []map[string]string{dest, destSymrefs} {
 		for name := range names {
@@ -117,7 +117,7 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 	for _, ref := range run.selected.refs {
 		writes = append(writes, ref.Name)
 	}
-	conflicts := repository.RefCaseConflicts(existing, writes)
+	conflicts := repository.RefNameConflicts(existing, writes)
 	caseBlocked := map[string]bool{}
 	for _, ref := range run.selected.refs {
 		upstream := ref.OID

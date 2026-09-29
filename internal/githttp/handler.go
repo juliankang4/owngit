@@ -351,8 +351,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	extraEnvironment = append(extraEnvironment, refWrites...)
 	if route.service == "git-receive-pack" && request.Method == http.MethodPost {
 		// A push creates, changes and deletes no ref whose name differs from
-		// another only in letter case (caseConflictGate).
-		path, variable, remove, err := h.caseConflictFile()
+		// another only in letter case or Unicode form (nameConflictGate).
+		path, variable, remove, err := h.nameConflictFile()
 		if err != nil {
 			_ = body.Close()
 			logCause(request.Context(), fmt.Sprintf("Git push to repository %q could not start", route.repositoryID), err)
@@ -361,8 +361,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 		defer remove()
 		extraEnvironment = append(extraEnvironment, variable)
-		body = &caseConflictGate{ReadCloser: body, refuseAll: remove, check: func(names []string) error {
-			err := h.writeCaseConflicts(streamContext, repositoryPath, path, names)
+		body = &nameConflictGate{ReadCloser: body, refuseAll: remove, check: func(names []string) error {
+			err := h.writeNameConflicts(streamContext, repositoryPath, path, names)
 			if err != nil {
 				logCause(request.Context(), fmt.Sprintf("Git push to repository %q could not check its ref names", route.repositoryID), err)
 			}

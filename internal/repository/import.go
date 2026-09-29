@@ -50,33 +50,6 @@ func ProvenanceRefName(kind, short, oid string) string {
 	return "refs/owngit/provenance/" + kind + "/" + short + "/" + oid
 }
 
-// RefCaseConflicts returns the names in writes that share their name,
-// apart from letter case, with another name in existing or in writes. A
-// push or an import creates, changes and deletes none of them. On a file
-// system that ignores letter case, such as the usual one on macOS and
-// Windows, two such names are one file, so writing one would change or
-// remove the other; the rule is the same on every system, so a repository
-// behaves the same wherever it is stored.
-func RefCaseConflicts(existing, writes []string) map[string]bool {
-	spellings := make(map[string]map[string]bool, len(existing)+len(writes))
-	for _, names := range [][]string{existing, writes} {
-		for _, name := range names {
-			folded := strings.ToLower(name)
-			if spellings[folded] == nil {
-				spellings[folded] = map[string]bool{}
-			}
-			spellings[folded][name] = true
-		}
-	}
-	conflicts := map[string]bool{}
-	for _, name := range writes {
-		if len(spellings[strings.ToLower(name)]) > 1 {
-			conflicts[name] = true
-		}
-	}
-	return conflicts
-}
-
 // RefRecord is one fully-resolved reference.
 type RefRecord struct {
 	Name         string

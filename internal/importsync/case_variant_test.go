@@ -162,3 +162,33 @@ func TestRefreshLeavesRefsThatShareANameApartFromCase(t *testing.T) {
 		t.Fatalf("reconciled counts=%+v normal counts=%+v", reconciled, run)
 	}
 }
+
+// A source ref whose name a file system treats as the same as a packed
+// local ref beyond letter case (here ß and ss) is left uncreated too, by
+// the rule pushes follow (repository.RefNameKey).
+func TestUpstreamFoldedVariantOfPackedLocalRefStaysDivergent(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.git(f.source, "branch", "strasse")
+	f.mustImport(ImportInput{})
+	path := f.destinationPath()
+	local := f.git(path, "rev-parse", "refs/heads/strasse")
+	f.git(path, "pack-refs", "--all")
+
+	f.git(f.source, "checkout", "-q", "strasse")
+	f.commit("two", "two\n")
+	f.git(f.source, "checkout", "-q", "main")
+	renameAdvertisedRef(f, "refs/heads/strasse", "refs/heads/straße")
+
+	run, err := f.refresh()
+	if err != nil || run.Status != state.ImportRunComplete {
+		t.Fatalf("refresh run=%+v err=%v", run, err)
+	}
+	if run.RefsDivergent != 1 || run.RefsCreated != 0 {
+		t.Fatalf("refresh counts created=%d divergent=%d", run.RefsCreated, run.RefsDivergent)
+	}
+	listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+	if strings.Contains(listed, "straße") || !strings.Contains(listed, "refs/heads/strasse "+local) {
+		t.Fatalf("refs after refresh:\n%s", listed)
+	}
+}

@@ -27,16 +27,16 @@ var maximumPushCommands = 16 << 20
 // errPushRequest reports a push request that is not a plain command list.
 var errPushRequest = errors.New("invalid Git push request")
 
-// caseConflictGate passes a push request to Git. It holds back the flush
+// nameConflictGate passes a push request to Git. It holds back the flush
 // packet that ends the command list until it has written, to the file the
-// update hook reads (OWNGIT_CASE_CONFLICTS_FILE), every ref of the push
-// that shares its name apart from letter case with another ref of the
-// repository or of the push (repository.RefCaseConflicts). The hook
+// update hook reads (OWNGIT_NAME_CONFLICTS_FILE), every ref of the push
+// whose name a file system can treat as the same as another ref's name in
+// the repository or in the push (repository.RefNameConflicts). The hook
 // refuses creating, changing or deleting those refs. When the command list
 // is not one OwnGit reads, such as a signed push or one over
 // maximumPushCommands, the gate removes the file, which makes the hook
 // refuse every ref, and passes the request on unchanged.
-type caseConflictGate struct {
+type nameConflictGate struct {
 	io.ReadCloser
 	check     func([]string) error
 	refuseAll func()
@@ -47,7 +47,7 @@ type caseConflictGate struct {
 	done     bool   // the command list has ended; pass the rest through
 }
 
-func (gate *caseConflictGate) Read(buffer []byte) (int, error) {
+func (gate *nameConflictGate) Read(buffer []byte) (int, error) {
 	for !gate.done && len(gate.ready) == 0 {
 		start := gate.commands.Len()
 		err := gate.readPacket()
@@ -75,7 +75,7 @@ func (gate *caseConflictGate) Read(buffer []byte) (int, error) {
 
 // readPacket reads one pkt-line of the command list and makes it ready. At
 // the flush packet it first checks the names.
-func (gate *caseConflictGate) readPacket() error {
+func (gate *nameConflictGate) readPacket() error {
 	start := gate.commands.Len()
 	if _, err := io.CopyN(&gate.commands, gate.ReadCloser, 4); err != nil {
 		return err
@@ -110,10 +110,10 @@ func (gate *caseConflictGate) readPacket() error {
 	return nil
 }
 
-// caseConflictFile creates the empty file a push's update hook reads and
+// nameConflictFile creates the empty file a push's update hook reads and
 // returns the variable that names it and a function that removes it.
-func (h *Handler) caseConflictFile() (string, string, func(), error) {
-	file, err := os.CreateTemp(h.Git.TempDir, "owngit-case-conflicts-*")
+func (h *Handler) nameConflictFile() (string, string, func(), error) {
+	file, err := os.CreateTemp(h.Git.TempDir, "owngit-name-conflicts-*")
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -123,13 +123,13 @@ func (h *Handler) caseConflictFile() (string, string, func(), error) {
 		remove()
 		return "", "", nil, err
 	}
-	return path, "OWNGIT_CASE_CONFLICTS_FILE=" + filepath.ToSlash(path), remove, nil
+	return path, "OWNGIT_NAME_CONFLICTS_FILE=" + filepath.ToSlash(path), remove, nil
 }
 
-// writeCaseConflicts writes to path, one per line, the names that share
-// their name apart from letter case with another ref of the repository or
+// writeNameConflicts writes to path, one per line, the names that share
+// their repository.RefNameKey with another ref of the repository or
 // with another of names. The caller holds the repository write lock.
-func (h *Handler) writeCaseConflicts(ctx context.Context, repositoryPath, path string, names []string) error {
+func (h *Handler) writeNameConflicts(ctx context.Context, repositoryPath, path string, names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
@@ -140,7 +140,7 @@ func (h *Handler) writeCaseConflicts(ctx context.Context, repositoryPath, path s
 	}
 	existing := strings.Split(strings.TrimSuffix(string(result.Stdout), "\n"), "\n")
 	var refused strings.Builder
-	for name := range repository.RefCaseConflicts(existing, names) {
+	for name := range repository.RefNameConflicts(existing, names) {
 		refused.WriteString(name + "\n")
 	}
 	return os.WriteFile(path, []byte(refused.String()), 0o600)
