@@ -781,7 +781,7 @@ When a force push, an import or a deletion replaces the commits of a branch or t
 
 A change applies to pushes and imports that start after you save; a run already going keeps the choices it started with. With Do not keep, the commits replaced from then on are not kept, so they are not listed in kept history and cannot be restored from it. They may still open by their full commit ID. History kept before stays and can still be restored; nothing is deleted. Fast-forward pushes, merges, restores, backups and repository deletion work the same either way.
 
-`owngit repo settings show --repository NAME` prints a repository's choices as JSON, with `kept_history_now` for what it does now. Both `repo settings` commands need a `--password-file` holding the administrator password. Inside a clone of the repository they take `--server` and `--repository` from its `origin` remote, and the password file must then name that server on its first line ([Credential files and the server line](CODING_TOOLS.md#credential-files-and-the-server-line)). If a repository's saved choices cannot be read, pushes and imports to it are refused until you save them again; on the command line, give both `--kept-history` and `--protect-default-branch`. While the server-wide choice cannot be read, a repository cannot be set to follow it; choose Keep or Do not keep for the repository, or set the server choice again.
+`owngit repo settings show --repository NAME` prints a repository's choices as JSON, with `kept_history_now` for what it does now. Both `repo settings` commands need a `--password-file` holding the administrator password. Inside a clone of the repository they take `--server` and `--repository` from its `origin` remote, and the password file must then name that server on its first line ([Credential files and the server line](CODING_TOOLS.md#credential-files-and-the-server-line)). If a repository's saved choices cannot be read, pushes and imports to it are refused until you save them again; on the command line, give both `--kept-history` and `--protect-default-branch`. While the server-wide choice cannot be read, any change that leaves a repository following it is refused and saves nothing, including turning protection on or off. Choose Keep or Do not keep for the repository in the same change, or set the server choice again.
 
 ### Changing the default branch
 
@@ -845,7 +845,9 @@ git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
 git ls-remote --heads --tags owngit
 ```
 
-A push is refused when a branch or tag name matches another one apart from letter case or accents, such as `Main` beside `main`, because some file systems store the two as one file. Git then shows `OwnGit refused changing ... Use a clearly different name.`; rename the branch or tag to a clearly different name.
+A push that creates or updates a branch or tag is refused when its name, or any folder in its name, matches another ref apart from letter case, apart from how an accented letter or a Hangul syllable is encoded (as one character or as parts), or through letters that some file systems treat as equal, such as `ß` and `ss` or `ı` and `i`. Those file systems store the two names as one file. Examples are `Main` beside `main`, `Release/x` beside `release/main`, and `기본` written as jamo beside `기본` written as syllables. Names that differ in their letters are different names, so `cafe` and `café` can both exist. Git then shows `OwnGit refused changing refs/heads/NAME because another branch or tag, or one of its folders, has a name that some file systems treat as the same, ...` Use a clearly different name.
+
+A repository can already hold two such names, for example after it was copied from a system that tells them apart. Pushes that create or update either one are refused until you delete one of them with `git push origin --delete NAME`. That deletion changes only the ref you name, and its last commit stays in kept history when kept history is on. The default branch cannot be deleted this way under any spelling: delete the other name, or choose another default branch first.
 
 OwnGit accepts pushes only to `refs/heads/*` and `refs/tags/*`, so `git push --mirror` from another host's mirror clone fails for refs such as `refs/pull/*`. Pushing between two OwnGit installations carries neither kept history nor repository records; use an [offline backup](#offline-backups) for those. To keep pulling from a host that stays in use, see [Importing from another Git host](#importing-from-another-git-host).
 
@@ -983,8 +985,8 @@ A refresh never overwrites local work:
 - A tag changes only while it is still the exact tag last seen.
 - Anything else is divergent and kept, and the run reports it.
 - A ref deleted at the source is never removed locally (**Deleted at source** in the Import tab and `import status`).
-- A source ref whose name differs from a local one only in letter case or accents is reported as divergent instead of created.
-- Every replaced value stays in kept history.
+- A source ref whose name, or any folder in its name, matches a local ref in the way described under [Moving an existing repository into OwnGit](#moving-an-existing-repository-into-owngit) is reported as divergent instead of created, and HEAD does not follow the source to such a name. `cafe` and `café` are different names.
+- A replaced value stays in kept history when kept history was on for the repository as the refresh started; with Do not keep it is not kept.
 - HEAD follows the source only when OwnGit set it on an earlier import from the same source and nothing changed it since.
 
 After you change the source URL, OwnGit has not yet seen the new source's refs, so refs that differ are reported as divergent instead of being replaced.
