@@ -259,7 +259,7 @@ func TestMemoryStopComesNearTheLimit(t *testing.T) {
 	}
 }
 
-// The review's documents: a small table whose rows are padded to thousands
+// Costly documents: a small table whose rows are padded to thousands
 // of cells, and reference links that multiply the output. Rendered in a
 // child without the estimate, each is stopped by one of the child's limits.
 // Which limit comes first depends on the machine: a slow one reaches the time

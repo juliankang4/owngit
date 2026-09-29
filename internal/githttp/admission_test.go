@@ -14,7 +14,7 @@ import (
 
 // One repository keeps all its slots, a repository with no transfer running
 // always finds the extra slot, and a request that finds no slot waits only for
-// the queue wait (QA-019).
+// the queue wait.
 func TestAdmissionKeepsASlotForIdleRepositoriesAndBoundsTheWait(t *testing.T) {
 	slots := newAdmission(4)
 	ctx := context.Background()

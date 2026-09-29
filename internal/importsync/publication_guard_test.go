@@ -16,7 +16,7 @@ import (
 	"owngit/internal/state"
 )
 
-// Finding 1: a callback result can never commit after the deadline, and the
+// A callback result can never commit after the deadline, and the
 // runner reports whether the callback was still running when it returned. A
 // callback that returns inside the grace interval is joined; one that ignores
 // its context is reported as detached so the caller can hold its own guards.
@@ -116,7 +116,7 @@ func TestProductionPreparedCallbackJoinIsBoundedUnderCancellation(t *testing.T) 
 	f.git(path, "--git-dir", ".", "update-ref", "--no-deref", "refs/heads/main", old, old)
 }
 
-// Finding 2: readback must use exact named-ref kinds, and the two false
+// Readback must use exact named-ref kinds, and the two false
 // classifications are proven independently. A resolved alias whose object
 // equals the desired OID is still not a direct publication, and a retention
 // name that an independent writer turned into a dangling alias is neither
@@ -234,7 +234,7 @@ func TestReconcileAbsentToDanglingAliasIsUnresolved(t *testing.T) {
 	}
 }
 
-// Finding 3: prepared validation and readback use fixed namespace arguments.
+// Prepared validation and readback use fixed namespace arguments.
 // The argv size must not grow with the number or length of ref names, so the
 // check counts the bytes the fixed prefixes occupy rather than depending on the
 // host ARG_MAX.
@@ -283,7 +283,7 @@ func TestPublicationRefQueriesUseFixedNamespaceArguments(t *testing.T) {
 	}
 }
 
-// Finding 4: the platform indirect-path check applies to repository root, raw
+// The platform indirect-path check applies to repository root, raw
 // HEAD, HEAD.lock and cleanup identity. On Unix the check is ModeSymlink; the
 // Windows reparse-point tests live in head_windows_test.go.
 func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {

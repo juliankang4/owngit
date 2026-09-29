@@ -257,7 +257,7 @@ func TestRegisteredRepositoryIsServedOnlyAfterPreparation(t *testing.T) {
 
 // PrepareUnavailable locks a served repository only when its storage cannot
 // be read, never starts preparation for a repository that no longer exists,
-// and leaves a repository with readable storage served (QA-009).
+// and leaves a repository with readable storage served.
 func TestPrepareUnavailableLocksOnlyUnavailableStorage(t *testing.T) {
 	manager, _, _ := newTestRepository(t)
 	ctx := context.Background()
@@ -291,8 +291,7 @@ func TestPrepareUnavailableLocksOnlyUnavailableStorage(t *testing.T) {
 }
 
 // A repository locked because its storage was unavailable is prepared again
-// soon after the storage returns, not after the whole retry wait (review of
-// QA-009).
+// soon after the storage returns, not after the whole retry wait.
 func TestUnavailableStorageIsRetriedOnceReadable(t *testing.T) {
 	manager, _, _ := newTestRepository(t)
 	previous := storageProbeInterval

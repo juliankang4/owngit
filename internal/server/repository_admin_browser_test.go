@@ -352,7 +352,7 @@ func TestRepositoryDeleteFilesRemovesTheFolder(t *testing.T) {
 func TestRemovalNoticeTrustsOnlyItsOwnCookie(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)
-	// A crafted link without the action says nothing at all (QA-046).
+	// A crafted link without the action says nothing at all.
 	plain := browserGET(t, client, server.URL+"/?notice="+removedNotice)
 	if strings.Contains(plain.body, "The repository was removed.") || strings.Contains(plain.body, removedFolderName) {
 		t.Fatal("a crafted notice link claimed a removal")

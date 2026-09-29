@@ -1032,7 +1032,7 @@ func TestCheckEvidenceNeverOverclaims(t *testing.T) {
 					BoundToCurrentRevision: true, Provenance: ReviewFromRequest, SubmittedAt: testNow}
 			}),
 			markup: []string{`>요청한 커밋</span></dt><dd class="mono">7f2c1a0</dd>`}, noMarkup: []string{"테스트한 커밋", ">대상 커밋</span></dt>"}},
-		// QA-043: only a given review names the revision it tested. A request
+		// Only a given review names the revision it tested. A request
 		// and a skip keep their revision under a label that says what it is.
 		screen{name: "a pending review in English is requested for its revision",
 			page: with(pullRequestPage(fullChrome(LangEN), prFixtureFailing), func(p *PullRequestPage) {

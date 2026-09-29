@@ -598,7 +598,7 @@ func (app *App) selectRef(request *http.Request, page *webui.RepositoryPage, sum
 		page.Ref.Tags = append(page.Ref.Tags, webui.RefOption{Name: tag.Name, URL: withRef(request.URL.Path, full), Selected: selected == full})
 	}
 	// The tabs keep only a ref that resolves. A missing one would send each
-	// tab to a not-found page (QA-054), so they then open the repository's
+	// tab to a not-found page, so they then open the repository's
 	// default addresses; the picker still shows the missing name.
 	if resolved {
 		page.OverviewURL = withRef(page.OverviewURL, selected)
@@ -1341,7 +1341,7 @@ func (app *App) overviewLanguages(request *http.Request, id, commitOID string) w
 	switch {
 	case errors.Is(err, repository.ErrRepositoryInUse):
 		// Only this panel waits for the operation; the rest of the page is
-		// answered from what could be read (QA-058).
+		// answered from what could be read.
 		return webui.LanguageSummary{Note: webui.MsgRepoLanguagesBusy}
 	case err != nil:
 		logFailure(request, "language count", err)

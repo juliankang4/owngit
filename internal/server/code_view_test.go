@@ -350,7 +350,7 @@ func TestPullRequestFilesPastTheLimitAreMarked(t *testing.T) {
 
 // A README that goldmark would render for minutes is refused at once; the
 // folder still lists its files, and the file view shows the source with the
-// reason. The README is the review's round 2 shape: empty list items, which
+// reason. The README has empty list items, which
 // do not end a paragraph, between lines of emphasis delimiters.
 func TestHostileReadmeFallsBackToSource(t *testing.T) {
 	app := newConfiguredApp(t)
@@ -376,10 +376,10 @@ func TestHostileReadmeFallsBackToSource(t *testing.T) {
 	}
 }
 
-// Documents that would take gigabytes to render (the review's round 3
-// cases) cost the server no memory: the padded table is refused by the
-// estimate, and the reused reference link, which passes it, is stopped in
-// the child process. A second view starts nothing.
+// Documents that would take gigabytes to render cost the server no memory:
+// the padded table is refused by the estimate, and the reused reference
+// link, which passes it, is stopped in the child process. A second view
+// starts nothing.
 func TestAmplifyingReadmesDoNotGrowTheServer(t *testing.T) {
 	app := newConfiguredApp(t)
 	amplifier := "[a]: http://x.y/" + strings.Repeat("a", 40000) + " \"" + strings.Repeat("t", 40000) + "\"\n\n" + strings.Repeat("[a]\n", 10000)

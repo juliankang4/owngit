@@ -22,7 +22,7 @@ import (
 )
 
 // Stopping the server while a Git transfer is still streaming ends the
-// transfer after the shutdown wait, logs it, and succeeds (QA-022).
+// transfer after the shutdown wait, logs it, and succeeds.
 func TestStopServingEndsARunningTransferAndSucceeds(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

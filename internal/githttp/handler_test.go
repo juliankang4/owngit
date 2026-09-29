@@ -270,7 +270,7 @@ func httpGitBytes(directory string, arguments ...string) ([]byte, error) {
 }
 
 // Every name that repository creation accepts is reachable over Git HTTP,
-// including a name that ends with a dot (QA-021).
+// including a name that ends with a dot.
 func TestSmartHTTPServesEveryCreatableRepositoryName(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)

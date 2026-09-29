@@ -178,7 +178,7 @@ func TestBrowserAndGitThroughATrustedReverseProxy(t *testing.T) {
 	}
 
 	// Git clone and push over the proxy. Cloning 64 branches makes Git gzip
-	// its upload-pack request (QA-001).
+	// its upload-pack request.
 	git := fixture.gitClient(t)
 	remote := origin + "/git/project.git"
 	source := filepath.Join(t.TempDir(), "source")

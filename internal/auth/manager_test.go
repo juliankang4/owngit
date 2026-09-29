@@ -50,8 +50,7 @@ func TestAuthenticationAttemptsAreBoundedAndSessionsAreVersioned(t *testing.T) {
 }
 
 // Parallel requests with the correct password are never refused by the
-// failure limit, and parallel wrong passwords still stop at the limit
-// (QA-018).
+// failure limit, and parallel wrong passwords still stop at the limit.
 func TestParallelCorrectPasswordsAreAcceptedAndParallelGuessesStopAtTheLimit(t *testing.T) {
 	store, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {

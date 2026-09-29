@@ -86,7 +86,7 @@ func quoteShell(value string) string {
 // An abandoned operation whose client stalls its upload returns at once
 // instead of at the operation deadline: when the response exceeds its limit,
 // when the gzip body turns out corrupt mid-stream, and when the body passes
-// the request size limit (QA-007).
+// the request size limit.
 func TestAbandonedOperationWithStalledUploadReturnsPromptly(t *testing.T) {
 	root := t.TempDir()
 	eager := filepath.Join(root, "git-http-backend")

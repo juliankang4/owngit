@@ -103,7 +103,7 @@ func TestBusyRepositoryDoesNotStallPagesPastTheirDeadline(t *testing.T) {
 		t.Fatalf("cached code page of a busy repository status=%d in %s", status, elapsed)
 	}
 	// The overview's reads, the language count included, wait no longer
-	// than the page's deadline (QA-058): the page explains the wait.
+	// than the page's deadline: the page explains the wait.
 	status, body, _, elapsed = get("/repositories/busy")
 	if status != http.StatusServiceUnavailable || !strings.Contains(body, "is using the repository") || elapsed > app.HTTPTimeout {
 		t.Fatalf("overview of a busy repository status=%d in %s", status, elapsed)

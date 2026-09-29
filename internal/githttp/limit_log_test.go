@@ -12,8 +12,7 @@ import (
 )
 
 // A transfer cut by the response size limit or by the operation time limit
-// logs why, so the documented limits can be recognised in the server log
-// (QA-020).
+// logs why, so the documented limits can be recognised in the server log.
 func TestTransferLimitsAreLogged(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	handler, err := New(runner, manager, "", 1)

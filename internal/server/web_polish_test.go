@@ -35,7 +35,7 @@ func afterAction(t *testing.T, jar http.CookieJar, serverURL, notice string) {
 	jar.SetCookies(parsed, []*http.Cookie{{Name: noticeCookie, Value: notice, Path: "/"}})
 }
 
-// QA-045: the Code tab answers 404 for a path or a branch or tag that does
+// The Code tab answers 404 for a path or a branch or tag that does
 // not exist, keeps the repository sidebar, and links back.
 func TestCodeTabAnswersNotFoundForAMissingPathOrRef(t *testing.T) {
 	app := newConfiguredApp(t)
@@ -74,7 +74,7 @@ func TestCodeTabAnswersNotFoundForAMissingPathOrRef(t *testing.T) {
 	}
 }
 
-// QA-046: a result notice appears only after the action that produced it,
+// A result notice appears only after the action that produced it,
 // once. A crafted address with a notice shows nothing.
 func TestResultNoticesNeedTheirAction(t *testing.T) {
 	app := newConfiguredApp(t)
@@ -114,7 +114,7 @@ func TestResultNoticesNeedTheirAction(t *testing.T) {
 	}
 }
 
-// QA-044: leaving shared access confirms it on the sign-in page at once, and
+// Leaving shared access confirms it on the sign-in page at once, and
 // the next sign-in does not repeat it.
 func TestLeavingSharedAccessIsConfirmedOnTheSignInPage(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
@@ -162,7 +162,7 @@ func TestLeavingSharedAccessIsConfirmedOnTheSignInPage(t *testing.T) {
 	}
 }
 
-// QA-046 for pull requests: a pull request result shows after its own
+// For pull requests: a pull request result shows after its own
 // action, once, and never from the address alone, even where the state
 // would confirm it.
 func TestPullRequestResultNoticesNeedTheirAction(t *testing.T) {

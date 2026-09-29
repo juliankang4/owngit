@@ -47,7 +47,7 @@ func capped(s string) string {
 }
 
 // The shapes that made goldmark slow are refused before rendering, including
-// the reviewer's round 2 inputs, which hid one paragraph from a line scan
+// inputs that hid one paragraph from a line scan
 // that followed the grammar: lines that look like fences or empty list items
 // but do not end a paragraph.
 func TestSlowShapesAreRefused(t *testing.T) {
@@ -63,26 +63,25 @@ func TestSlowShapesAreRefused(t *testing.T) {
 		"processing instructions":         "x\n" + fillTo("x <?", "\n"),
 		"declarations":                    "x\n" + fillTo("x <!X", "\n"),
 		"unclosed comments":               "x\n" + fillTo("x <!--", "\n"),
-		"indented tilde fences (R2)":      alternate("    ~~~", emphasis),
-		"tab-indented fences (R2)":        alternate("\t~~~", emphasis),
-		"indented backtick fences (R2)":   alternate("    ```", emphasis),
-		"empty star items (R2)":           "x\n" + alternate("* ", emphasis),
-		"empty plus items (R2)":           "x\n" + alternate("+ ", emphasis),
+		"indented tilde fences":           alternate("    ~~~", emphasis),
+		"tab-indented fences":             alternate("\t~~~", emphasis),
+		"indented backtick fences":        alternate("    ```", emphasis),
+		"empty star items":                "x\n" + alternate("* ", emphasis),
+		"empty plus items":                "x\n" + alternate("+ ", emphasis),
 		"quote markers only":              alternate(">", "> "+emphasis),
 		"HTML after an open comment":      "<!--\n\n<table>\n-->\n" + fillTo(emphasis, "\n"),
 		"HTML inside a closed fence":      "```\n<table>\n```\n" + fillTo(emphasis, "\n"),
 		"uppercase tag, not skipped":      "<TABLE>\n" + fillTo(emphasis, "\n"),
 		"indented tag, not skipped":       " <table>\n" + fillTo(emphasis, "\n"),
-		"growing fence lengths (R2)":      growingFences(emphasis),
+		"growing fence lengths":           growingFences(emphasis),
 		"emphasis after a fence ends":     "- a\n  ```\n" + fillTo(emphasis, "\n"),
 		"emphasis in a block quote":       fillTo("> "+emphasis, "\n"),
 		"emphasis after a paragraph item": "x\n" + fillTo("2. "+emphasis, "\n"),
-		// Round 3 review.
-		"padded table (R3)":             tableRows(4000, 2000),
-		"padded narrow table (R3)":      tableRows(100, 3000),
-		"unclosed backtick runs (R3)":   backtickOpeners(48<<10) + fillTo("a", "\n"),
-		"escaped pipes in tables (R3)":  fillTo("|a|\n|-|\n|`\\|`|\n|`\\|`|", "\n\n"),
-		"escaped pipes in a table (R3)": "|a|\n|-|\n" + fillTo("|`\\|`|", "\n"),
+		"padded table":                    tableRows(4000, 2000),
+		"padded narrow table":             tableRows(100, 3000),
+		"unclosed backtick runs":          backtickOpeners(48<<10) + fillTo("a", "\n"),
+		"escaped pipes in tables":         fillTo("|a|\n|-|\n|`\\|`|\n|`\\|`|", "\n\n"),
+		"escaped pipes in a table":        "|a|\n|-|\n" + fillTo("|`\\|`|", "\n"),
 	}
 	starts := childStarts.Load()
 	for name, source := range cases {
@@ -147,8 +146,8 @@ func TestShapesAtTheBudgetRenderInTime(t *testing.T) {
 		"declarations":               "x\n" + fillTo("x <!X", "\n"),
 		"comments":                   "x\n" + fillTo("x <!--", "\n"),
 		"CDATA":                      "x\n" + fillTo("x <![CDATA[", "\n"),
-		"empty items (R2)":           "x\n" + alternate("* ", emphasis),
-		"indented fences (R2)":       alternate("    ~~~", emphasis),
+		"empty items":                "x\n" + alternate("* ", emphasis),
+		"indented fences":            alternate("    ~~~", emphasis),
 		"repeated headings":          fillTo("# a", "\n"),
 		"nested quotes":              fillTo(strings.Repeat(">", maxNesting)+"a", "\n"),
 		"nested lists and quotes":    fillTo(strings.Repeat("- > ", maxNesting/2)+"a", "\n"),
@@ -203,8 +202,8 @@ func definitionsAndUses() string {
 	return b.String()
 }
 
-// Documents written by people, including the shapes the round 2 check
-// refused, render.
+// Documents written by people, including shapes an earlier check refused,
+// render.
 func TestCommonDocumentsRender(t *testing.T) {
 	for name, source := range map[string]string{
 		"contributors table":      contributorsReadme(300),

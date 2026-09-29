@@ -17,9 +17,7 @@ import (
 	"owngit/internal/webui"
 )
 
-// Regressions for the pre-release web QA findings QA-008 and QA-010 to QA-016.
-
-// QA-008: a second open pull request for one branch pair is refused in the
+// A second open pull request for one branch pair is refused in the
 // browser and the API with the same code, and the browser links to the first.
 func TestSecondPullRequestForABranchPairIsRefusedEverywhere(t *testing.T) {
 	fixture := newAPIFixture(t, false)
@@ -58,7 +56,7 @@ func TestSecondPullRequestForABranchPairIsRefusedEverywhere(t *testing.T) {
 	}
 }
 
-// QA-008: merging a source the target already contains writes no commit, and
+// Merging a source the target already contains writes no commit, and
 // the page says so in words rather than a raw mode value.
 func TestBrowserMergeOfAContainedSourceIsAlreadyUpToDate(t *testing.T) {
 	fixture := newAPIFixture(t, false)
@@ -90,7 +88,7 @@ func TestBrowserMergeOfAContainedSourceIsAlreadyUpToDate(t *testing.T) {
 	}
 }
 
-// QA-011: merge and review after the source branch was deleted explain the
+// Merge and review after the source branch was deleted explain the
 // refusal on the page, and the API answers 409 rather than 500.
 func TestActionsAfterTheSourceBranchWasDeletedExplainTheRefusal(t *testing.T) {
 	fixture := newAPIFixture(t, false)
@@ -115,9 +113,9 @@ func TestActionsAfterTheSourceBranchWasDeletedExplainTheRefusal(t *testing.T) {
 	}
 }
 
-// QA-016: a notice from the address shows only when the pull request's state
+// A notice from the address shows only when the pull request's state
 // confirms it. Each address here comes with the notice cookie its action
-// would set (QA-046), so the state check alone decides.
+// would set, so the state check alone decides.
 func TestPullRequestNoticesMustMatchTheState(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)
@@ -154,7 +152,7 @@ func TestPullRequestNoticesMustMatchTheState(t *testing.T) {
 	}
 }
 
-// QA-010: after a session ends, a form submission sends the reader back to
+// After a session ends, a form submission sends the reader back to
 // the page that held the form, never to its POST-only address or off-site.
 func TestLoginNextNeverPointsAtAPostOnlyAddress(t *testing.T) {
 	for _, test := range []struct {
@@ -168,7 +166,7 @@ func TestLoginNextNeverPointsAtAPostOnlyAddress(t *testing.T) {
 		{"other site", http.MethodPost, "/repositories/alpha/pull-requests/4/merge", "http://evil.test/repositories/alpha", "/repositories/alpha/pull-requests/4"},
 		{"scheme-relative trick", http.MethodPost, "/repositories", "http://owngit.test//evil.test/x", "/"},
 		{"form rendered on its own POST address", http.MethodPost, "/repositories/alpha/pull-requests/4/merge", "http://owngit.test/repositories/alpha/pull-requests/4/merge", "/repositories/alpha/pull-requests/4"},
-		// Round 2 (F2): the page holding the form was itself shown at another
+		// The page holding the form was itself shown at another
 		// POST-only address, the refused merge.
 		{"form on a refused merge page", http.MethodPost, "/repositories/a/pull-requests/1/review/request", "http://owngit.test/repositories/a/pull-requests/1/merge", "/repositories/a/pull-requests/1"},
 		{"close from a refused review page", http.MethodPost, "/repositories/a/pull-requests/1/close", "http://owngit.test/repositories/a/pull-requests/1/review/skip", "/repositories/a/pull-requests/1"},
@@ -208,7 +206,7 @@ func TestExpiredSessionFormSubmissionReturnsToTheForm(t *testing.T) {
 	}
 }
 
-// QA-012 and QA-013: each password rule names itself, counts characters, and
+// Each password rule names itself, counts characters, and
 // reads the same in English and Korean.
 func TestSettingsPasswordRulesNameTheRuleThatFailed(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
@@ -254,7 +252,7 @@ func TestSettingsPasswordRulesNameTheRuleThatFailed(t *testing.T) {
 	}
 }
 
-// QA-015: the appearance links work without JavaScript. The backend saves a
+// The appearance links work without JavaScript. The backend saves a
 // valid choice in a preference cookie and renders it.
 func TestAppearanceChoiceWorksWithoutJavaScript(t *testing.T) {
 	fixture := newAPIFixture(t, false)

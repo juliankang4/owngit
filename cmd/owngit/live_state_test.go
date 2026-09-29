@@ -34,7 +34,7 @@ func unstableOpens(t *testing.T, count int) *int {
 	return &attempts
 }
 
-// QA-062: approve-host and reset-admin work while the running server writes
+// Approve-host and reset-admin work while the running server writes
 // to the state directory.
 func TestOfflineCommandsRetryWhenTheServerWritesDuringInspection(t *testing.T) {
 	root := t.TempDir()

@@ -181,7 +181,7 @@ func (m *Manager) Languages(ctx context.Context, id, commitOID string) (Language
 	}
 	// The count is a side panel of the overview. It waits for the repository
 	// only briefly, and never past the request, so an operation holding the
-	// repository cannot hold the page (QA-058). A count that could not start
+	// repository cannot hold the page. A count that could not start
 	// is not cached and is tried on the next visit.
 	lock := m.Locks.For(id)
 	waitCtx, stopWaiting := context.WithTimeout(ctx, languageLockWait)

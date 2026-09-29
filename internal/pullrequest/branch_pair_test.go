@@ -8,7 +8,7 @@ import (
 	"owngit/internal/state"
 )
 
-// QA-008: one open pull request per source and target branch pair, and a
+// One open pull request per source and target branch pair, and a
 // merge of a source the target already contains writes no commit.
 
 func TestSecondOpenPullRequestForABranchPairIsRefused(t *testing.T) {

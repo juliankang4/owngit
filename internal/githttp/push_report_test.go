@@ -15,7 +15,7 @@ func sideband(band byte, payload string) string {
 }
 
 // The push report finds failures in both report framings, split at any byte,
-// and describes them only with fixed text (QA-023).
+// and describes them only with fixed text.
 func TestPushReportClassifiesInBandFailures(t *testing.T) {
 	const secret = "refs/heads/request-secret"
 	for _, test := range []struct {

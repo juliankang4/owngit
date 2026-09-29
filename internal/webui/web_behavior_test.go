@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// Regressions for the pre-release web QA findings and minor observations.
-
 // A merge record names its method in words, in both languages, and only a
 // real merge commit is labelled as one.
 func TestMergeRecordNamesTheMethod(t *testing.T) {
@@ -72,7 +70,7 @@ func TestNoticeLinkRendersAsALink(t *testing.T) {
 	}
 }
 
-// QA-015: the appearance controls are links the backend understands, and the
+// The appearance controls are links the backend understands, and the
 // saved choice is rendered by the server.
 func TestAppearanceLinksWorkWithoutScripting(t *testing.T) {
 	r := newRenderer(t)

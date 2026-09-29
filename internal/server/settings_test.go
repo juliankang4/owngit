@@ -202,7 +202,7 @@ func TestSettingsChangesConfirmTheSave(t *testing.T) {
 // Turning the shared password off keeps the reader on Settings, so the save is
 // confirmed there too. Turning it on or changing it ends the current session
 // by design, so the reader signs in again, and the sign-in page confirms the
-// save (QA-014).
+// save.
 func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
 	askEveryTime(t, app)

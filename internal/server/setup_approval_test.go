@@ -569,7 +569,7 @@ func (b *setupBrowser) follow(status int, location, body string) (string, string
 	return path, body
 }
 
-// QA-053: after first setup, the "Setup finished" notice is shown once on
+// After first setup, the "Setup finished" notice is shown once on
 // the dashboard, also when shared access first asks for the password, and
 // also after setup in the terminal. It comes from the setup itself through
 // the notice cookie, never from an address alone. When the used setup file

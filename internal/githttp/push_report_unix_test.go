@@ -13,7 +13,7 @@ import (
 )
 
 // A push that Git refuses inside the protocol, where git-http-backend still
-// exits 0, logs one line with a fixed reason (QA-023).
+// exits 0, logs one line with a fixed reason.
 func TestRefusedPushIsLoggedWithoutRequestContent(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("file permissions do not stop root")

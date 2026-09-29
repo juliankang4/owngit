@@ -46,7 +46,7 @@ func TestPasswordPolicy(t *testing.T) {
 	}
 }
 
-// QA-013: both limits count characters (code points), not bytes.
+// Both limits count characters (code points), not bytes.
 func TestPasswordLimitsCountCharacters(t *testing.T) {
 	for _, test := range []struct {
 		name     string

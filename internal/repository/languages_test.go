@@ -304,7 +304,7 @@ func TestLanguagesAttributeFailures(t *testing.T) {
 	}
 }
 
-// QA-058: a count waits only briefly for an operation that holds the
+// A count waits only briefly for an operation that holds the
 // repository and never past the request. It then reports the repository as
 // in use, caches nothing, and counts on the next call.
 func TestLanguagesDoNotWaitForABusyRepository(t *testing.T) {

@@ -252,9 +252,9 @@ func jobCounts(total, active uint32) windowsJobAccounting {
 	return windowsJobAccounting{totalProcesses: total, activeProcesses: active}
 }
 
-// QA-004: a main process that exited and was waited can still be counted, or
+// A main process that exited and was waited can still be counted, or
 // counted but not listed, while cleanup captures the job. These are the forms
-// the Windows lab recorded; cleanup must wait for them to settle instead of
+// Windows reports; cleanup must wait for them to settle instead of
 // reporting a passing command's cleanup as failed.
 func TestTerminateOwnedProcessSettlesExitedProcessDepartures(t *testing.T) {
 	listChanged := errors.New("owned job process list changed during capture: assigned=1 listed=0")

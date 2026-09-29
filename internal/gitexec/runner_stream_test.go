@@ -263,7 +263,7 @@ func TestStreamPreservesCancellationWithCleanupFailures(t *testing.T) {
 	}
 }
 
-// QA-051: cancellation must terminate the process while the consumer's read
+// Cancellation must terminate the process while the consumer's read
 // of its output is still pending. Closing stdout first ends that read on Unix
 // and can block on Windows until the silent process exits by itself, so the
 // read must still be pending when termination starts.

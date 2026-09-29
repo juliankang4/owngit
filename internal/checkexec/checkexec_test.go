@@ -311,7 +311,7 @@ func TestRunReportsCleanupFailureOnEveryPath(t *testing.T) {
 	}
 }
 
-// QA-004: after a command exits and is waited, its main process is gone and
+// After a command exits and is waited, its main process is gone and
 // Windows reports EINVAL for a kill. Cleanup must not attempt it or report its
 // failure; only the owner termination failure explains the error.
 func TestRunDoesNotKillAWaitedMainProcess(t *testing.T) {

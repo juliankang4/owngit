@@ -96,7 +96,7 @@ func TestDashboardRendersRealEscapedGitDataAndRetainedHistory(t *testing.T) {
 			t.Errorf("GET %s executed repository text as markup", target)
 		}
 	}
-	// A missing ref the address names is not found (QA-054), with its own
+	// A missing ref the address names is not found, with its own
 	// notice rather than the deleted default branch's.
 	body, status := dashboardGET(t, client, server.URL+"/repositories/real-project?ref=refs%2Fheads%2Fmissing")
 	if status != http.StatusNotFound || !strings.Contains(body, "That branch or tag does not exist") || strings.Contains(body, "default branch no longer exists") {

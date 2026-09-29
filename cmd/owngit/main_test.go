@@ -200,7 +200,7 @@ func TestBackupRefusesStateHeldByLiveServer(t *testing.T) {
 	}
 }
 
-// QA-013: a password file follows the same character rules as the web page.
+// A password file follows the same character rules as the web page.
 func TestReadPrivatePasswordCountsCharacters(t *testing.T) {
 	for _, test := range []struct {
 		name, content string

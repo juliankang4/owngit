@@ -13,11 +13,11 @@ import (
 	"owngit/internal/webui"
 )
 
-// QA-054: the overview and the Commits tab answer 404 for a branch or tag
+// The overview and the Commits tab answer 404 for a branch or tag
 // that does not exist, and a commit address answers 404 for a commit that
 // is not in this repository, including one that exists in another
 // repository. Each keeps the repository sidebar and a way back, like the
-// Code tab (QA-045). An empty repository and a deleted default branch stay
+// Code tab. An empty repository and a deleted default branch stay
 // ordinary pages.
 func TestMissingRefOrCommitAnswersNotFound(t *testing.T) {
 	app := newConfiguredApp(t)

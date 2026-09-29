@@ -304,8 +304,7 @@ func TestDeletionDuringAPreparationAttemptExplainsTheWait(t *testing.T) {
 // While OwnGit serves, a repository whose folder disappears is locked and
 // prepared again like at startup, and one whose Git data alone cannot be read
 // is only marked: the dashboard lists every repository, the cause stays in
-// the server log, and both are shown normally again once they can be read
-// (QA-009).
+// the server log, and both are shown normally again once they can be read.
 func TestUnreadableRepositoryAtRuntimeKeepsTheDashboard(t *testing.T) {
 	app := newConfiguredApp(t)
 	for _, name := range []string{"alpha", "gone", "broken"} {
@@ -408,7 +407,7 @@ func TestUnreadableRepositoryAtRuntimeKeepsTheDashboard(t *testing.T) {
 
 // A dashboard that listed a repository just before it was deleted leaves it
 // out and starts no preparation for it, so a repository created again under
-// that name is served at once (review of QA-009). Slow repositories are
+// that name is served at once. Slow repositories are
 // simulated by holding their locks, so the deleted one is read last.
 func TestDashboardDuringDeletionStartsNoPreparation(t *testing.T) {
 	app := newConfiguredApp(t)
