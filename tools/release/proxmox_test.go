@@ -43,6 +43,9 @@ func TestProxmoxScriptChecksEveryValueFirst(t *testing.T) {
 		{arguments: []string{"--memory", "1024M"}, want: "--memory takes a whole number"},
 		{arguments: []string{"--version", "latest"}, want: "--version takes a release number"},
 		{arguments: []string{"--storage"}, want: "--storage needs a value"},
+		{arguments: []string{"--repositories="}, want: "--repositories needs a value"},
+		{arguments: []string{"--version", ""}, want: "--version needs a value"},
+		{arguments: []string{"--ip", "192.168.1.50/24"}, want: "--ip needs --gateway"},
 		{arguments: []string{"--force"}, want: "unknown option --force"},
 		{env: "OWNGIT_RELEASES=http://mirror.example/releases", want: "OWNGIT_RELEASES must be an https:// address"},
 	} {

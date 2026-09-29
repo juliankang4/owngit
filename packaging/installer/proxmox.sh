@@ -50,9 +50,10 @@ Creates an unprivileged Debian 13 container with OwnGit on this Proxmox VE host.
   --memory MB            memory (default 1024)
   --bridge NAME          network bridge (default vmbr0)
   --ip ADDRESS/PREFIX    fixed IPv4 address, such as 192.168.1.50/24 (default: DHCP)
-  --gateway ADDRESS      IPv4 gateway for --ip
+  --gateway ADDRESS      IPv4 gateway, needed with --ip
   --repositories FOLDER  keep the repositories in FOLDER on this host, which
-                         must be new or empty (default: inside the container)
+                         must be new or empty and whose parent must exist
+                         (default: inside the container)
   --template VOLUME      a Debian 13 template you have, such as
                          local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst
                          (default: the newest debian-13-standard)
@@ -79,6 +80,9 @@ is_owngit() {
 # ends the run.
 already_there() {
 	say "OwnGit's container $1 ($(config_value "$2" hostname)) already exists, so nothing was changed."
+	# /etc/pve/local holds the containers of this node.
+	[ -f "/etc/pve/local/lxc/$1.conf" ] ||
+		say "It is on the node $(basename "$(dirname "$(dirname "$2")")"); run the commands below there."
 	say "To update OwnGit in it, run \"pct exec $1 -- $program update\", which prints the update command,"
 	say "and run that command in the container's shell, which \"pct enter $1\" opens."
 	say "If the container is stopped, start it first with \"pct start $1\"."
@@ -107,7 +111,12 @@ check_folder() {
 		current=$current/${rest%%/*}
 		case $rest in */*) rest=${rest#*/} ;; *) rest="" ;; esac
 		[ ! -L "$current" ] || fail "$current is a link; name the folder it leads to"
-		[ -e "$current" ] || return 0
+		if [ ! -e "$current" ]; then
+			# Only the folder itself is created, so that a failed run can
+			# remove everything it made.
+			[ -z "$rest" ] || fail "$current does not exist; create the folders above the repository folder first"
+			return 0
+		fi
 		[ -d "$current" ] || fail "$current is not a folder"
 		only_root "$current" && continue
 		[ -z "$rest" ] ||
@@ -131,7 +140,7 @@ main() {
 		esac
 		case $1 in
 		--id | --hostname | --storage | --disk | --cores | --memory | --bridge | --ip | --gateway | --repositories | --template | --version)
-			[ $# -ge 2 ] || fail "$1 needs a value (see --help)"
+			[ $# -ge 2 ] && [ -n "$2" ] || fail "$1 needs a value (see --help)"
 			case $1 in
 			--id) ctid=$2 ;;
 			--hostname) hostname=$2 ;;
@@ -166,7 +175,8 @@ main() {
 		[ -z "$gateway" ] || fail "--gateway goes with --ip"
 	else
 		matches "$ip" "$address/([1-9]|[12][0-9]|3[0-2])" || fail "--ip takes an IPv4 address with its prefix, such as 192.168.1.50/24, not $ip"
-		[ -z "$gateway" ] || matches "$gateway" "$address" || fail "--gateway takes an IPv4 address, not $gateway"
+		[ -n "$gateway" ] || fail "--ip needs --gateway, since the container has no route out without one"
+		matches "$gateway" "$address" || fail "--gateway takes an IPv4 address, not $gateway"
 	fi
 	[ -z "$folder" ] || matches "$folder" '(/[A-Za-z0-9_+@-][A-Za-z0-9._+@-]*)+' ||
 		fail "--repositories takes an absolute path of letters, digits and ._+@- whose parts do not start with a dot, such as /tank/owngit, not $folder"
@@ -198,7 +208,8 @@ main() {
 			fail "ID $ctid is in use by another container or virtual machine; choose another with --id, or leave it out for the next free one"
 	fi
 
-	storages=$(pvesm status --content rootdir --enabled 1 | awk 'NR > 1 { printf " %s", $1 }') || fail "could not list the storages"
+	storages=$(pvesm status --content rootdir --enabled 1) || fail "could not list the storages with pvesm status"
+	storages=$(printf '%s\n' "$storages" | awk 'NR > 1 { printf " %s", $1 }')
 	if [ -z "$storage" ]; then
 		for name in local-lvm local-zfs; do
 			case "$storages " in *" $name "*) storage=$name && break ;; esac
@@ -216,11 +227,13 @@ main() {
 	else
 		arch=$(dpkg --print-architecture)
 		pattern="debian-13-standard_[0-9][^_]*_${arch}\\.tar\\.zst"
-		name=$(pveam list local 2>/dev/null | awk '{ sub(/^local:vztmpl\//, "", $1); print $1 }' | grep -Ex "$pattern" | sort -V | tail -n 1 || true)
+		list=$(pveam list local) || fail "could not list the templates of the storage local with pveam list; name a template with --template"
+		name=$(printf '%s\n' "$list" | awk '{ sub(/^local:vztmpl\//, "", $1); print $1 }' | grep -Ex "$pattern" | sort -V | tail -n 1 || true)
 		if [ -z "$name" ]; then
 			say "Downloading the Debian 13 template."
 			pveam update >/dev/null || fail "could not update the template list; nothing was changed"
-			name=$(pveam available --section system | awk '{ print $2 }' | grep -Ex "$pattern" | sort -V | tail -n 1 || true)
+			list=$(pveam available --section system) || fail "could not read the template list; nothing was changed"
+			name=$(printf '%s\n' "$list" | awk '{ print $2 }' | grep -Ex "$pattern" | sort -V | tail -n 1 || true)
 			[ -n "$name" ] || fail "Proxmox lists no Debian 13 template for $arch; name one with --template"
 			pveam download local "$name" || fail "could not download $name; nothing was changed"
 		fi
@@ -236,7 +249,7 @@ main() {
 	# the owner's yet.
 	created="" made="" before=""
 	trap 'undo $?' EXIT
-	trap 'exit 1' HUP INT TERM
+	trap 'exit 1' HUP INT PIPE TERM
 	say "Creating container $ctid ($hostname) from $template."
 	pct create "$ctid" "$template" --unprivileged 1 --features nesting=1 --ostype debian \
 		--hostname "$hostname" --tags "$tag" --onboot 1 \
