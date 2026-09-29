@@ -14,16 +14,19 @@ import (
 // Stable problem codes. A later HTTP or CLI binding maps them to user-facing
 // responses without parsing messages.
 const (
-	CodeInvalidSource      = "invalid_source"
-	CodeNotConfigured      = "not_configured"
-	CodeBusy               = "busy"
-	CodeRepositoryMissing  = "repository_missing"
-	CodeRepositoryTaken    = "repository_taken"
-	CodeUnsupportedFormat  = "unsupported_object_format"
-	CodeUnsupportedRefs    = "unsupported_refs"
-	CodeNetwork            = "network"
-	CodeProtocol           = "protocol"
-	CodeTooLarge           = "too_large"
+	CodeInvalidSource     = "invalid_source"
+	CodeNotConfigured     = "not_configured"
+	CodeBusy              = "busy"
+	CodeRepositoryMissing = "repository_missing"
+	CodeRepositoryTaken   = "repository_taken"
+	CodeUnsupportedFormat = "unsupported_object_format"
+	CodeUnsupportedRefs   = "unsupported_refs"
+	CodeNetwork           = "network"
+	CodeProtocol          = "protocol"
+	CodeTooLarge          = "too_large"
+	// CodeTooManyRefs reports a source that advertises more refs than an
+	// import accepts, counting the refs it would not import.
+	CodeTooManyRefs        = "too_many_refs"
 	CodeIndexFailed        = "index_failed"
 	CodeVerifyFailed       = "verify_failed"
 	CodePublishFailed      = "publish_failed"
@@ -207,7 +210,7 @@ func classifyFetchError(err error) *Problem {
 	case errors.Is(fetchError, importfetch.ErrMediaType), errors.Is(fetchError, importfetch.ErrContentEncoding), errors.Is(fetchError, importfetch.ErrResponseHeaders):
 		return newProblem(CodeProtocol, "source returned an unsupported HTTP response", err)
 	case errors.Is(err, importgit.ErrTooManyRefs):
-		return newProblem(CodeTooLarge, "source advertises more refs than an import accepts, counting refs it does not import such as pull request refs; clone the source and push its branches and tags to a new repository instead", err)
+		return newProblem(CodeTooManyRefs, fmt.Sprintf("source advertises more than %d refs, the most an import accepts, counting refs it does not import such as pull request refs; clone the source and push its branches and tags to a new repository instead", importgit.DefaultLimits().MaxRefRecords), err)
 	case errors.Is(fetchError, importfetch.ErrRequestTooLarge), errors.Is(fetchError, importfetch.ErrResponseTooLarge):
 		return newProblem(CodeTooLarge, "source exceeds a configured transfer bound", err)
 	case errors.Is(fetchError, importfetch.ErrAdvertisement):

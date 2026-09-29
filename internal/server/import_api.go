@@ -534,7 +534,7 @@ func importProblemHTTP(request *http.Request, step string, err error) (int, stri
 		status = unavailable(request, step, err)
 	case importsync.CodeInvalidSource, importsync.CodeInvalidSchedule, importsync.CodeUnsupportedFormat, importsync.CodeUnsupportedRefs, importsync.CodeUnsupported:
 		status = http.StatusUnprocessableEntity
-	case importsync.CodeTooLarge:
+	case importsync.CodeTooLarge, importsync.CodeTooManyRefs:
 		status = http.StatusRequestEntityTooLarge
 	case importsync.CodeCancelled:
 		status = http.StatusOK

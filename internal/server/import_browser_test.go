@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -76,6 +78,27 @@ func TestNewImportKeepsCAWhenCredentialFormIsNone(t *testing.T) {
 	}, server.URL)
 	if result.status != http.StatusSeeOther || gotCA != caPEM || strings.Contains(result.body, caPEM) {
 		t.Fatalf("CA-only import status=%d ca=%q body=%s", result.status, gotCA, result.body)
+	}
+}
+
+// A first import of a source with more refs than an import accepts
+// explains that on the form, as the API and the command line do.
+func TestNewImportExplainsTooManyRefs(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	fixture.app.Imports.Fetch = func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
+		return nil, fmt.Errorf("%w: %w", &importfetch.Error{Op: "read advertisement", Kind: importfetch.ErrResponseTooLarge}, importgit.ErrTooManyRefs)
+	}
+	server := serve(t, fixture.app.Handler())
+	client, jar := newBrowserClient(t)
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "refs-admin")
+	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		result := browserForm(t, client, server.URL+"/repositories/new-import?lang="+string(lang), url.Values{
+			"csrf": {csrf}, "name": {"manyrefs"}, "url": {"https://example.invalid/team/manyrefs.git"},
+			"mode": {"standalone"}, "credential_form": {"none"}, "admin_password": {"admin-password"},
+		}, server.URL)
+		if result.status != http.StatusRequestEntityTooLarge || !strings.Contains(result.body, html.EscapeString(webui.Text(lang, webui.MsgImportErrorTooManyRefs))) {
+			t.Fatalf("%s: too many refs status=%d body=%s", lang, result.status, result.body)
+		}
 	}
 }
 

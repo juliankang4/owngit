@@ -106,7 +106,7 @@ func TestTLSFailureIsNamed(t *testing.T) {
 func TestTooManyRefsIsExplained(t *testing.T) {
 	tooLarge := &importfetch.Error{Op: "read advertisement", Kind: importfetch.ErrResponseTooLarge}
 	problem := classifyFetchError(fmt.Errorf("%w: %w", tooLarge, importgit.ErrTooManyRefs))
-	if problem.Code != CodeTooLarge || !strings.Contains(problem.Message, "more refs than an import accepts") || !strings.Contains(problem.Message, "pull request refs") {
+	if problem.Code != CodeTooManyRefs || !strings.Contains(problem.Message, "more than 50000 refs") || !strings.Contains(problem.Message, "pull request refs") {
 		t.Fatalf("too many refs classified as %s %q", problem.Code, problem.Message)
 	}
 	if problem := classifyFetchError(tooLarge); problem.Code != CodeTooLarge || problem.Message != "source exceeds a configured transfer bound" {
