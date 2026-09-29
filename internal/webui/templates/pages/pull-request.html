@@ -199,7 +199,7 @@
       {{template "stateChip" dict "Lang" $lang "S" (reviewDecisionState .Decision)}}
       <span>{{.ReviewerLabel}}</span>
       <span>{{biDateTime $lang .SubmittedAt}}</span>
-      {{if not .Current}}<span class="pill pill--missing">{{icon "clock"}}{{bi $lang "pr.notes.earlier"}}</span>{{end}}
+      {{if not .Current}}<span class="pill">{{icon "clock"}}{{bi $lang "pr.notes.earlier"}}</span>{{end}}
     </p>
     <dl class="ev__facts">
       <div><dt>{{bi $lang "pr.source"}}</dt><dd class="mono">{{.ShortSourceOID}}</dd></div>
