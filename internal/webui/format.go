@@ -30,6 +30,7 @@ func templateFuncs() template.FuncMap {
 		"biUntil":      biUntil,
 		"adminChoices": AdminConfirmChoices,
 		"sessionMenu":  SessionChoices,
+		"unitsFrom":    UnitsFrom,
 		"confirmAfter": confirmAfter,
 		"tsUse":        tsUse,
 		"diffTotals":   diffTotals,

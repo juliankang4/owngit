@@ -197,7 +197,7 @@ func TestSmartHTTPInflatesGzipBodiesWithinTheRequestLimit(t *testing.T) {
 	noErr(t, err)
 	handler.BackendPath = backend
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
-	handler.MaximumRequest = 1 << 20
+	limits := useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 1 << 20 })
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	logs := captureLog(t)
@@ -219,7 +219,7 @@ func TestSmartHTTPInflatesGzipBodiesWithinTheRequestLimit(t *testing.T) {
 	// backend before it answers, so the answer is 413 and the backend's own
 	// report of what it read never arrives.
 	bomb := gzipBytes(t, make([]byte, 64<<20))
-	if len(bomb) >= int(handler.MaximumRequest) {
+	if len(bomb) >= int(limits.MaximumRequest) {
 		t.Fatalf("compressed bomb is %d bytes; it must fit under the limit to test inflation", len(bomb))
 	}
 	response := postPack(t, server.URL, "git-receive-pack", "gzip", bomb)

@@ -177,7 +177,7 @@ func TestArchiveFailureBeforeTheFirstByteIsAnError(t *testing.T) {
 // with an error, and what arrived is not a readable archive.
 func TestArchiveStopsAtTheResponseLimitWithoutAValidArchive(t *testing.T) {
 	handler, commitOID := archiveFixture(t, 300<<10)
-	handler.MaximumResponse = 100 << 10
+	limits := useLimits(t, handler, func(limits *Limits) { limits.MaximumResponse = 100 << 10 })
 	previous := archiveHoldback
 	archiveHoldback = 1 << 10
 	t.Cleanup(func() { archiveHoldback = previous })
@@ -188,7 +188,7 @@ func TestArchiveStopsAtTheResponseLimitWithoutAValidArchive(t *testing.T) {
 		if response.StatusCode != http.StatusOK || err == nil {
 			t.Fatalf("%s: status=%d read error=%v, want a transfer that ends with an error", format, response.StatusCode, err)
 		}
-		if len(body) == 0 || int64(len(body)) > handler.MaximumResponse {
+		if len(body) == 0 || int64(len(body)) > limits.MaximumResponse {
 			t.Fatalf("%s: received %d bytes", format, len(body))
 		}
 		if entries, err := read(body); err == nil {
@@ -264,7 +264,7 @@ func TestArchiveASCIINameNamesTheCommit(t *testing.T) {
 // answers busy, without writing anything.
 func TestArchiveLockWaitEndsAsBusy(t *testing.T) {
 	handler, commitOID := archiveFixture(t, 16)
-	handler.OperationTimeout = 300 * time.Millisecond
+	useLimits(t, handler, func(limits *Limits) { limits.Operation = 300 * time.Millisecond })
 	lock := handler.Repositories.Locks.For("sample")
 	lock.Lock()
 	defer lock.Unlock()

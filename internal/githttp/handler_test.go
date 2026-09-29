@@ -211,6 +211,19 @@ func TestPushReleasesTheRepositoryBeforeTheClientFinishes(t *testing.T) {
 	lock.Unlock()
 }
 
+// useLimits makes every transfer of handler run under its current limits
+// changed by change, and returns them so a test can change them again
+// between transfers.
+func useLimits(t *testing.T, handler *Handler, change func(*Limits)) *Limits {
+	t.Helper()
+	current, err := handler.Limits(context.Background())
+	noErr(t, err)
+	limits := &current
+	change(limits)
+	handler.Limits = func(context.Context) (Limits, error) { return *limits, nil }
+	return limits
+}
+
 func newHTTPTestRepository(t *testing.T) (*repository.Manager, *gitexec.Runner) {
 	t.Helper()
 	root := t.TempDir()

@@ -3,18 +3,21 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
-// Server-wide policies: how long a sign-in lasts and the branch new
-// repositories start on. The Settings tabs and the owner API
-// (/api/v1/settings) read and save them through the same state accessors,
-// which hold their choices and bounds. Each applies from the moment it is
-// saved to what starts afterwards: a sign-in, a new repository.
+// Server-wide policies: how long a sign-in lasts, the branch new
+// repositories start on and the Git transfer limits. The Settings tabs and
+// the owner API (/api/v1/settings) read and save them through the same
+// state accessors, which hold their choices and bounds. Each applies from
+// the moment it is saved to what starts afterwards: a sign-in, a new
+// repository, a transfer.
 
 // tabPolicies reads the policies tab shows. A saved value that cannot be
 // read (state.PolicyError) does not stop the page: its group says so and
@@ -51,8 +54,41 @@ func (app *App) tabPolicies(request *http.Request, tab string) (webui.Policies, 
 			branch = state.DefaultInitialBranch
 		}
 		policies.InitialBranch = branch
+		limits, err := app.Store.GitTransferLimits(request.Context())
+		if err = unreadable(webui.GroupTransfer, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if limits == (state.GitTransferLimits{}) {
+			limits = state.DefaultGitTransferLimits
+		}
+		policies.TransferSize = webui.FormatLimit(webui.LimitSize, limits.MaximumBytes, "")
+		policies.TransferTime = webui.FormatLimit(webui.LimitDuration, limits.Operation.Milliseconds(), "")
 	}
 	return policies, nil
+}
+
+// transferLimitsForm reads the Git transfer limits a Settings form sent,
+// or the notices that refuse them.
+func transferLimitsForm(request *http.Request) (state.GitTransferLimits, []webui.Notice) {
+	var limits state.GitTransferLimits
+	var notices []webui.Notice
+	size, err := webui.ParseLimit(webui.LimitSize, webui.LimitInput{Amount: postValue(request, "transfer_size"), Unit: postValue(request, "transfer_size_unit")})
+	switch {
+	case err != nil:
+		notices = append(notices, webui.Error("transfer_size", webui.LimitNoticeCode(webui.LimitSize, err)))
+	case !state.ValidTransferBytes(size):
+		notices = append(notices, webui.Error("transfer_size", webui.MsgCCFieldRange))
+	}
+	milliseconds, err := webui.ParseLimit(webui.LimitDuration, webui.LimitInput{Amount: postValue(request, "transfer_time"), Unit: postValue(request, "transfer_time_unit")})
+	operation := time.Duration(milliseconds) * time.Millisecond
+	switch {
+	case err != nil:
+		notices = append(notices, webui.Error("transfer_time", webui.LimitNoticeCode(webui.LimitDuration, err)))
+	case milliseconds > state.MaximumTransferOperation.Milliseconds() || !state.ValidTransferOperation(operation):
+		notices = append(notices, webui.Error("transfer_time", webui.MsgCCFieldRange))
+	}
+	limits.MaximumBytes, limits.Operation = size, operation
+	return limits, notices
 }
 
 // settingsJSON is the owner API's view of the policies. A PATCH names only
@@ -63,6 +99,14 @@ type settingsJSON struct {
 	Session *string `json:"session,omitempty"`
 	// InitialBranch is the branch new repositories start on.
 	InitialBranch *string `json:"initial_branch,omitempty"`
+	// GitTransfer holds the Git transfer limits. A PATCH may name one of
+	// them; the other keeps its saved value.
+	GitTransfer *gitTransferJSON `json:"git_transfer,omitempty"`
+}
+
+type gitTransferJSON struct {
+	MaximumBytes     *int64 `json:"maximum_bytes,omitempty"`
+	OperationSeconds *int64 `json:"operation_seconds,omitempty"`
 }
 
 type settingsResponse struct {
@@ -107,6 +151,18 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 			}
 			policies.InitialBranch = change.InitialBranch
 		}
+		if change.GitTransfer != nil {
+			limits, problem, err := app.changedTransferLimits(request.Context(), *change.GitTransfer)
+			if err != nil {
+				app.writeSettingsReadError(writer, request, err)
+				return
+			}
+			if problem != "" {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
+				return
+			}
+			policies.GitTransfer = &limits
+		}
 		if err := app.Store.SavePolicies(request.Context(), policies); err != nil {
 			writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
 			return
@@ -130,7 +186,42 @@ func (app *App) savedSettings(ctx context.Context) (settingsJSON, error) {
 	if err != nil {
 		return settingsJSON{}, err
 	}
-	return settingsJSON{Session: pointer(string(session)), InitialBranch: &branch}, nil
+	limits, err := app.Store.GitTransferLimits(ctx)
+	if err != nil {
+		return settingsJSON{}, err
+	}
+	return settingsJSON{Session: pointer(string(session)), InitialBranch: &branch, GitTransfer: &gitTransferJSON{
+		MaximumBytes: &limits.MaximumBytes, OperationSeconds: pointer(int64(limits.Operation / time.Second)),
+	}}, nil
+}
+
+// changedTransferLimits applies a PATCH of the Git transfer limits to the
+// saved ones. problem says why the result is refused; err is a saved value
+// that cannot be read, which the owner replaces by naming both limits.
+func (app *App) changedTransferLimits(ctx context.Context, change gitTransferJSON) (limits state.GitTransferLimits, problem string, err error) {
+	if change.MaximumBytes == nil && change.OperationSeconds == nil {
+		return limits, "git_transfer must name maximum_bytes, operation_seconds or both.", nil
+	}
+	if change.MaximumBytes == nil || change.OperationSeconds == nil {
+		if limits, err = app.Store.GitTransferLimits(ctx); err != nil {
+			return limits, "", err
+		}
+	}
+	if change.MaximumBytes != nil {
+		limits.MaximumBytes = *change.MaximumBytes
+	}
+	if seconds := change.OperationSeconds; seconds != nil {
+		// A number past the bound is refused before it is converted, where
+		// it could overflow.
+		if maximum := int64(state.MaximumTransferOperation / time.Second); *seconds > maximum {
+			return limits, fmt.Sprintf("git_transfer: operation_seconds is at most %d.", maximum), nil
+		}
+		limits.Operation = time.Duration(*seconds) * time.Second
+	}
+	if err := limits.Validate(); err != nil {
+		return limits, "git_transfer: " + err.Error() + ".", nil
+	}
+	return limits, "", nil
 }
 
 // writeSettingsReadError answers a policy that could not be read: one whose

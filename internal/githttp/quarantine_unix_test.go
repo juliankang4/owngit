@@ -52,7 +52,7 @@ func TestARefusedPushKeepsTheQuarantineOfAnotherPush(t *testing.T) {
 	limited, err := New(handler.Git, handler.Repositories, "", 2)
 	noErr(t, err)
 	limited.Authorize = handler.Authorize
-	limited.MaximumRequest = 64 << 10
+	useLimits(t, limited, func(limits *Limits) { limits.MaximumRequest = 64 << 10 })
 	limitedServer := httptest.NewServer(limited)
 	defer limitedServer.Close()
 	large := filepath.Join(t.TempDir(), "large")

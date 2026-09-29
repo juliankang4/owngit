@@ -241,6 +241,14 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		}
 		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{InitialBranch: &branch})
 		notice = "initial_branch_saved"
+	case webui.ActionSaveTransfers:
+		limits, notices := transferLimitsForm(request)
+		if len(notices) > 0 {
+			app.renderSettings(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity)
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{GitTransfer: &limits})
+		notice = "transfer_saved"
 	case webui.ActionSaveNetwork:
 		app.saveNetwork(writer, request, settings, csrf)
 		return
@@ -331,6 +339,7 @@ var settingsNoticeGroups = map[string]string{
 	"confirmation_off":       webui.GroupConfirm,
 	"session_saved":          webui.GroupSession,
 	"initial_branch_saved":   webui.GroupBranch,
+	"transfer_saved":         webui.GroupTransfer,
 	"insecure_acknowledged":  webui.GroupConnection,
 	"network_saved":          webui.GroupNetwork,
 	"tailscale_on":           webui.GroupTailscale,
@@ -439,7 +448,8 @@ type settingsView struct {
 // A switch or checkbox is written "on" or "off", since an unticked one
 // sends nothing.
 var settingsDraftFields = map[string]bool{
-	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "general_session": false, "initial_branch": false, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
+	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "general_session": false, "initial_branch": false,
+	"transfer_size": false, "transfer_size_unit": false, "transfer_time": false, "transfer_time_unit": false, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.

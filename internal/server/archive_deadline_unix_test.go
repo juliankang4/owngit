@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/githttp"
 	"owngit/internal/pullrequest"
+	"owngit/internal/state"
 )
 
 // slowArchiveStart makes git archive wait before it writes anything. Every
@@ -48,8 +51,8 @@ func TestArchiveOutlivesThePageDeadline(t *testing.T) {
 	}
 
 	for target, want := range map[string]time.Duration{
-		"/repositories/project/archive":        fixture.app.GitHTTP.OperationTimeout + 2*replyReserve,
-		"/api/v1/repositories/project/archive": fixture.app.GitHTTP.OperationTimeout + 2*replyReserve,
+		"/repositories/project/archive":        state.DefaultGitTransferLimits.Operation + 2*replyReserve,
+		"/api/v1/repositories/project/archive": state.DefaultGitTransferLimits.Operation + 2*replyReserve,
 		"/repositories/project/code":           time.Second,
 		"/repositories/project/archive/x":      time.Second,
 		"/repositories/a/b/archive":            time.Second,
@@ -67,7 +70,9 @@ func TestArchiveOutlivesThePageDeadline(t *testing.T) {
 // in its route's format, never an empty success.
 func TestArchiveFailureBeforeTheFirstByteAnswersAnError(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	fixture.app.GitHTTP.OperationTimeout = time.Second
+	fixture.app.GitHTTP.Limits = func(context.Context) (githttp.Limits, error) {
+		return githttp.Limits{MaximumRequest: 4 << 30, MaximumResponse: 4 << 30, Operation: time.Second}, nil
+	}
 	server := serve(t, fixture.app.Handler())
 	api := server.URL + "/api/v1/repositories/project/archive?ref=main&format=zip"
 	browser := server.URL + "/repositories/project/archive?ref=main&format=zip"

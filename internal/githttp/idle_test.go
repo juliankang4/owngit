@@ -52,7 +52,7 @@ func idleFixture(t *testing.T, size int, idle time.Duration) (*Handler, string, 
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	handler.IdleTimeout = idle
-	handler.OperationTimeout = 20 * time.Second
+	useLimits(t, handler, func(limits *Limits) { limits.Operation = 20 * time.Second })
 	return handler, work, httpGitOutput(t, work, "rev-parse", "HEAD")
 }
 

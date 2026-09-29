@@ -41,14 +41,16 @@ type Handler struct {
 	Authorize func(*http.Request) (bool, error)
 	// OnReceive wakes check reconciliation after git-receive-pack exits. It is
 	// advisory and must never change the already completed Git response.
-	OnReceive        func(string)
-	MaximumRequest   int64
-	MaximumResponse  int64
-	OperationTimeout time.Duration
+	OnReceive func(string)
+	// Limits returns the limits of a transfer that starts now. New reads
+	// the ones the owner saved (state.GitTransferLimits), so a change
+	// applies to the next transfer. A transfer whose limits cannot be read
+	// is refused with 503.
+	Limits func(context.Context) (Limits, error)
 	// IdleTimeout stops a transfer whose client moves no data for this long:
 	// a response write the client does not accept, or a request body read
 	// that receives nothing. Time that Git spends working without output does
-	// not count. Zero leaves only OperationTimeout.
+	// not count. Zero leaves only the operation limit (Limits.Operation).
 	IdleTimeout time.Duration
 	// QueueWait bounds how long a request waits for a transfer slot before
 	// it is refused with 503 and Retry-After.
@@ -58,6 +60,18 @@ type Handler struct {
 	operationMu sync.Mutex
 	operations  sync.WaitGroup
 	closing     bool
+}
+
+// Limits bound one transfer: a clone, fetch or push, or an archive
+// download. Zero leaves a bound out.
+type Limits struct {
+	// MaximumRequest bounds the bytes a transfer receives, after gzip is
+	// inflated, and MaximumResponse the bytes it sends.
+	MaximumRequest  int64
+	MaximumResponse int64
+	// Operation bounds how long it takes, from when it starts to wait for
+	// a transfer slot.
+	Operation time.Duration
 }
 
 func New(git *gitexec.Runner, repositories *repository.Manager, backendPath string, maximumConcurrent int) (*Handler, error) {
@@ -77,9 +91,23 @@ func New(git *gitexec.Runner, repositories *repository.Manager, backendPath stri
 	}
 	return &Handler{
 		Git: git, Repositories: repositories, BackendPath: backendPath,
-		MaximumRequest: 4 << 30, MaximumResponse: 4 << 30, OperationTimeout: 30 * time.Minute,
+		Limits: func(ctx context.Context) (Limits, error) {
+			saved, err := repositories.Store.GitTransferLimits(ctx)
+			return Limits{MaximumRequest: saved.MaximumBytes, MaximumResponse: saved.MaximumBytes, Operation: saved.Operation}, err
+		},
 		IdleTimeout: time.Minute, QueueWait: 90 * time.Second, slots: newAdmission(maximumConcurrent),
 	}, nil
+}
+
+// transferLimits reads the limits of a transfer that starts now. When they
+// cannot be read it logs why and returns false.
+func (h *Handler) transferLimits(ctx context.Context, what string) (Limits, bool) {
+	limits, err := h.Limits(ctx)
+	if err != nil {
+		logCause(ctx, what+" failed: the Git transfer limits could not be read", err)
+		return Limits{}, false
+	}
+	return limits, true
 }
 
 func DiscoverBackend(ctx context.Context, git *gitexec.Runner) (string, error) {
@@ -145,7 +173,12 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.NotFound(writer, request)
 		return
 	}
-	if h.MaximumRequest > 0 && request.ContentLength > h.MaximumRequest {
+	limits, ok := h.transferLimits(request.Context(), fmt.Sprintf("Git %s request for repository %q", requestKind(route, request.Method), route.repositoryID))
+	if !ok {
+		http.Error(writer, "Git transfer settings cannot be read; the OwnGit log says why", http.StatusServiceUnavailable)
+		return
+	}
+	if limits.MaximumRequest > 0 && request.ContentLength > limits.MaximumRequest {
 		// The limit would stop the body anyway. Refusing it here is certain:
 		// a backend that stops reading early can exit before the body reaches
 		// the limit, and its failure would hide the cause.
@@ -200,8 +233,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	operationContext := request.Context()
 	cancel := func() {}
 	var deadline time.Time
-	if h.OperationTimeout > 0 {
-		deadline = time.Now().Add(h.OperationTimeout)
+	if limits.Operation > 0 {
+		deadline = time.Now().Add(limits.Operation)
 		operationContext, cancel = context.WithDeadline(operationContext, deadline)
 		// Context cancellation alone does not interrupt a blocked socket Read or
 		// Write. Connection deadlines bound both directions without buffering a
@@ -209,7 +242,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		_ = controller.SetReadDeadline(deadline)
 		_ = controller.SetWriteDeadline(deadline)
 	}
-	if h.OperationTimeout > 0 || h.IdleTimeout > 0 {
+	if limits.Operation > 0 || h.IdleTimeout > 0 {
 		defer func() {
 			_ = controller.SetReadDeadline(time.Time{})
 			_ = controller.SetWriteDeadline(time.Time{})
@@ -234,12 +267,12 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		deadlines: deadlines,
 	}
 	body := io.ReadCloser(network)
-	if h.MaximumRequest > 0 {
+	if limits.MaximumRequest > 0 {
 		// The subprocess copies stdin on its own goroutine. Passing the live
 		// ResponseWriter to MaxBytesReader would let that goroutine write a 413
 		// concurrently with the CGI response copier. The handler reports the
 		// returned MaxBytesError after both owned streams have stopped instead.
-		body = http.MaxBytesReader(nil, body, h.MaximumRequest)
+		body = http.MaxBytesReader(nil, body, limits.MaximumRequest)
 	}
 	if gzipped {
 		// Git clients gzip upload-pack requests over 1 KiB. Inflate here so the
@@ -269,8 +302,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 		inflated.Multistream(false)
 		body = &gzipBody{inflated: inflated, buffered: buffered, source: source, cancel: cancelStream, closed: make(chan struct{})}
-		if h.MaximumRequest > 0 {
-			body = http.MaxBytesReader(nil, body, h.MaximumRequest)
+		if limits.MaximumRequest > 0 {
+			body = http.MaxBytesReader(nil, body, limits.MaximumRequest)
 		}
 		contentLength = -1
 	}
@@ -304,7 +337,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		quarantinesListed = listErr == nil
 	}
 	stderr, err := h.Git.Stream(streamContext, h.BackendPath, repositoryPath, input, extraEnvironment, func(stdout io.Reader) error {
-		err := h.copyCGIResponse(committed, stdout, observer)
+		err := h.copyCGIResponse(committed, stdout, observer, limits.MaximumResponse)
 		consumeFailed.Store(err != nil)
 		return err
 	})
@@ -720,7 +753,7 @@ func (h *Handler) cgiEnvironment(request *http.Request, route route, contentLeng
 
 // copyCGIResponse copies the backend's CGI response to writer. A non-nil
 // observer also receives the body bytes as they are copied.
-func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, observer io.Writer) error {
+func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, observer io.Writer, maximum int64) error {
 	reader := bufio.NewReaderSize(stdout, 32<<10)
 	totalHeaderBytes := 0
 	status := http.StatusOK
@@ -780,8 +813,8 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 	if observer != nil {
 		body = io.TeeReader(reader, observer)
 	}
-	if h.MaximumResponse > 0 {
-		body = &io.LimitedReader{R: body, N: h.MaximumResponse + 1}
+	if maximum > 0 {
+		body = &io.LimitedReader{R: body, N: maximum + 1}
 	}
 	buffer := make([]byte, 32<<10)
 	var written int64
@@ -792,7 +825,7 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 				return err
 			}
 			written += int64(n)
-			if h.MaximumResponse > 0 && written > h.MaximumResponse {
+			if maximum > 0 && written > maximum {
 				return errResponseTooLarge
 			}
 			if reader.Buffered() == 0 {

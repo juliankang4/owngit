@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -46,6 +47,7 @@ func (s *Store) policyValue(ctx context.Context, key string) (value string, foun
 type PolicyChange struct {
 	Session       *GeneralSession
 	InitialBranch *string
+	GitTransfer   *GitTransferLimits
 }
 
 // SavePolicies checks every policy change names and saves them all in one
@@ -63,6 +65,16 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 			return err
 		}
 		values[initialBranchKey] = *change.InitialBranch
+	}
+	if change.GitTransfer != nil {
+		if err := change.GitTransfer.Validate(); err != nil {
+			return err
+		}
+		stored, err := change.GitTransfer.stored()
+		if err != nil {
+			return err
+		}
+		values[gitTransferLimitsKey] = stored
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -164,4 +176,100 @@ func (s *Store) InitialBranch(ctx context.Context) (string, error) {
 		return "", &PolicyError{Key: initialBranchKey, Value: name, Cause: err}
 	}
 	return name, nil
+}
+
+// GitTransferLimits bound each Git transfer: a clone, fetch or push, or an
+// archive download. They are stored as a JSON object, in which a missing
+// field means its default.
+type GitTransferLimits struct {
+	// MaximumBytes bounds what a transfer receives and, apart, what it
+	// sends.
+	MaximumBytes int64
+	// Operation bounds how long a transfer takes.
+	Operation time.Duration
+}
+
+// The bounds of the Git transfer limits. The largest keep one transfer from
+// filling a disk or holding one of the few transfer slots for more than a
+// day.
+const (
+	MinimumTransferBytes     = 1 << 20
+	MaximumTransferBytes     = 64 << 30
+	MinimumTransferOperation = time.Minute
+	MaximumTransferOperation = 24 * time.Hour
+
+	gitTransferLimitsKey = "git_transfer_limits"
+)
+
+// DefaultGitTransferLimits apply while nothing was saved.
+var DefaultGitTransferLimits = GitTransferLimits{MaximumBytes: 4 << 30, Operation: 30 * time.Minute}
+
+// ValidTransferBytes reports whether the largest transfer is within its
+// bounds, 1 MiB to 64 GiB.
+func ValidTransferBytes(bytes int64) bool {
+	return bytes >= MinimumTransferBytes && bytes <= MaximumTransferBytes
+}
+
+// ValidTransferOperation reports whether the longest transfer is within its
+// bounds, a whole number of seconds from 1 minute to 24 hours.
+func ValidTransferOperation(operation time.Duration) bool {
+	return operation >= MinimumTransferOperation && operation <= MaximumTransferOperation && operation%time.Second == 0
+}
+
+// Validate checks the limits against their bounds.
+func (l GitTransferLimits) Validate() error {
+	if !ValidTransferBytes(l.MaximumBytes) {
+		return errors.New("the largest transfer is from 1 MiB to 64 GiB")
+	}
+	if !ValidTransferOperation(l.Operation) {
+		return errors.New("the longest transfer is a whole number of seconds from 1 minute to 24 hours")
+	}
+	return nil
+}
+
+// gitTransferJSON is the stored form of GitTransferLimits.
+type gitTransferJSON struct {
+	MaximumBytes     *int64 `json:"maximum_bytes,omitempty"`
+	OperationSeconds *int64 `json:"operation_seconds,omitempty"`
+}
+
+// GitTransferLimits returns the limits of a transfer that starts now.
+func (s *Store) GitTransferLimits(ctx context.Context) (GitTransferLimits, error) {
+	raw, found, err := s.policyValue(ctx, gitTransferLimitsKey)
+	if err != nil || !found {
+		return DefaultGitTransferLimits, err
+	}
+	limits := DefaultGitTransferLimits
+	var stored gitTransferJSON
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	err = decoder.Decode(&stored)
+	if err == nil && decoder.More() {
+		err = errors.New("more than one JSON value")
+	}
+	if err == nil {
+		if stored.MaximumBytes != nil {
+			limits.MaximumBytes = *stored.MaximumBytes
+		}
+		// A number of seconds past the bound is refused before it is
+		// converted, where it could overflow.
+		if seconds := stored.OperationSeconds; seconds != nil && *seconds > int64(MaximumTransferOperation/time.Second) {
+			err = errors.New("the longest transfer is more than 24 hours")
+		} else if seconds != nil {
+			limits.Operation = time.Duration(*seconds) * time.Second
+		}
+	}
+	if err == nil {
+		err = limits.Validate()
+	}
+	if err != nil {
+		return GitTransferLimits{}, &PolicyError{Key: gitTransferLimitsKey, Value: raw, Cause: err}
+	}
+	return limits, nil
+}
+
+func (l GitTransferLimits) stored() (string, error) {
+	seconds := int64(l.Operation / time.Second)
+	encoded, err := json.Marshal(gitTransferJSON{MaximumBytes: &l.MaximumBytes, OperationSeconds: &seconds})
+	return string(encoded), err
 }

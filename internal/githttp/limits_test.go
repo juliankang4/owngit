@@ -80,7 +80,7 @@ func TestStalledChunkedBodyTimesOutAndReapsOperation(t *testing.T) {
 	noErr(t, err)
 	handler.BackendPath = backend
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
-	handler.OperationTimeout = 75 * time.Millisecond
+	useLimits(t, handler, func(limits *Limits) { limits.Operation = 75 * time.Millisecond })
 	runner.TerminationGrace = 25 * time.Millisecond
 	body := &stalledRequestBody{closed: make(chan struct{})}
 	request := httptest.NewRequest(http.MethodPost, "http://example.test/git/sample.git/git-receive-pack", body)
@@ -118,7 +118,7 @@ func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) 
 	noErr(t, err)
 	handler.BackendPath = backend
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
-	handler.OperationTimeout = 75 * time.Millisecond
+	useLimits(t, handler, func(limits *Limits) { limits.Operation = 75 * time.Millisecond })
 	runner.TerminationGrace = 25 * time.Millisecond
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -191,7 +191,7 @@ func TestUploadLimitRejectsPushWithoutChangingRef(t *testing.T) {
 	runHTTPGit(t, work, "push", "origin", "HEAD:refs/heads/main")
 	old := httpGitOutput(t, work, "rev-parse", "HEAD")
 
-	handler.MaximumRequest = 64 << 10
+	useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 64 << 10 })
 	logs := captureLog(t)
 	payload := make([]byte, 1<<20)
 	if _, err := rand.Read(payload); err != nil {

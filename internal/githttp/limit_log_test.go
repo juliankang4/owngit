@@ -37,15 +37,15 @@ func TestTransferLimitsAreLogged(t *testing.T) {
 		}
 	}
 
-	handler.MaximumResponse = 64 << 10
+	limits := useLimits(t, handler, func(limits *Limits) { limits.MaximumResponse = 64 << 10 })
 	response, err := http.Get(server.URL + "/git/sample.git/info/refs?service=git-upload-pack")
 	noErr(t, err)
 	_, _ = io.Copy(io.Discard, response.Body)
 	response.Body.Close()
 	waitForLine(`Git fetch ref advertisement request for repository "sample" failed: response exceeded the size limit`)
 
-	handler.MaximumResponse = 4 << 30
-	handler.OperationTimeout = 100 * time.Millisecond
+	limits.MaximumResponse = 4 << 30
+	limits.Operation = 100 * time.Millisecond
 	connection, err := net.Dial("tcp", server.Listener.Addr().String())
 	noErr(t, err)
 	defer connection.Close()

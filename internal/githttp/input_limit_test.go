@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"owngit/internal/state"
 )
 
 // A request that declares a length over the request limit is refused before
@@ -25,7 +28,7 @@ import (
 // (on Windows, whose pipes hold little, it usually does).
 func TestADeclaredLengthOverTheRequestLimitIsRefusedBeforeGit(t *testing.T) {
 	handler, _, _ := idleFixture(t, 16, time.Minute)
-	handler.MaximumRequest = 64 << 10
+	useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 64 << 10 })
 	logs := captureLog(t)
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -118,7 +121,7 @@ func TestABodyThatEndsEarlyStopsGitAtOnce(t *testing.T) {
 // an empty success.
 func TestAChunkedPushOverTheRequestLimitGets413(t *testing.T) {
 	handler, _, head := idleFixture(t, 16, time.Minute)
-	handler.MaximumRequest = 256 << 10
+	useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 256 << 10 })
 	logs := captureLog(t)
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -166,5 +169,46 @@ func TestAChunkedPushOverTheRequestLimitGets413(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), `Git push request for repository "sample" failed: request body exceeded the size limit`) {
 		t.Fatalf("the log does not name the request limit:\n%s", logs.String())
+	}
+}
+
+// Each transfer reads the limits the owner saved when it starts, so a new
+// limit applies to the next transfer, and a saved value that cannot be read
+// refuses the transfer instead of falling back to a default.
+func TestTransfersUseTheLimitsSavedWhenTheyStart(t *testing.T) {
+	manager, runner := newHTTPTestRepository(t)
+	handler, err := New(runner, manager, "", 1)
+	noErr(t, err)
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
+	logs := captureLog(t)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	push := func() int {
+		t.Helper()
+		body := append([]byte("0000"), bytes.Repeat([]byte("0"), 2<<20)...)
+		response, err := http.Post(server.URL+"/git/sample.git/git-receive-pack", "application/x-git-receive-pack-request", bytes.NewReader(body))
+		noErr(t, err)
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		return response.StatusCode
+	}
+	save := func(bytes int64) {
+		t.Helper()
+		noErr(t, manager.Store.SavePolicies(context.Background(), state.PolicyChange{GitTransfer: &state.GitTransferLimits{MaximumBytes: bytes, Operation: time.Minute}}))
+	}
+	save(1 << 20)
+	if status := push(); status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a 2 MiB push under a 1 MiB limit: status %d, want 413", status)
+	}
+	save(4 << 20)
+	if status := push(); status == http.StatusRequestEntityTooLarge {
+		t.Fatal("a 2 MiB push under a 4 MiB limit was refused as too large")
+	}
+	noErr(t, manager.Store.Exec(context.Background(), `UPDATE metadata SET value='{"maximum_bytes":1}' WHERE key='git_transfer_limits'`))
+	if status := push(); status != http.StatusServiceUnavailable {
+		t.Fatalf("a push under limits that cannot be read: status %d, want 503", status)
+	}
+	if !strings.Contains(logs.String(), "the Git transfer limits could not be read") {
+		t.Fatalf("the log does not say why: %s", logs.String())
 	}
 }

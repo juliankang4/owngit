@@ -29,7 +29,7 @@ func TestResponseToAnUnreadBodyKeepsTheConnectionUsable(t *testing.T) {
 	handler.BackendPath = backend
 	authorized := true
 	handler.Authorize = func(*http.Request) (bool, error) { return authorized, nil }
-	handler.MaximumRequest = 1 << 20
+	useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 1 << 20 })
 	handler.QueueWait = 100 * time.Millisecond
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -121,7 +121,7 @@ func TestResponseToAnUnreadBodyKeepsTheConnectionUsable(t *testing.T) {
 		tiny, err := New(runner, manager, backend, 1)
 		noErr(t, err)
 		tiny.Authorize = func(*http.Request) (bool, error) { return true, nil }
-		tiny.MaximumRequest = 8
+		useLimits(t, tiny, func(limits *Limits) { limits.MaximumRequest = 8 })
 		tinyServer := httptest.NewServer(tiny)
 		defer tinyServer.Close()
 		for _, body := range [][]byte{bomb, gzipBytes(t, large)} {

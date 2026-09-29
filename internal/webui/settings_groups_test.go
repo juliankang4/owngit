@@ -18,6 +18,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 		GroupConfirm:    {"admin_confirmation", "no_ask_ack"},
 		GroupSession:    {"general_session"},
 		GroupBranch:     {"initial_branch"},
+		GroupTransfer:   {"transfer_size", "transfer_size_unit", "transfer_time", "transfer_time_unit"},
 		GroupConnection: {"insecure_ack"},
 		GroupNetwork:    {"network_revision", "listen", "base_url", "allowed_hosts", "trusted_proxies", "insecure_ack"},
 		GroupTailscale:  {"tailscale", "home_network"},

@@ -109,12 +109,12 @@ func TestAbandonedOperationWithStalledUploadReturnsPromptly(t *testing.T) {
 			handler, err := New(runner, manager, test.backend, 1)
 			noErr(t, err)
 			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
-			handler.MaximumResponse = 16
-			handler.MaximumRequest = test.maximumRequest
 			// A handler that waited for the operation deadline would take 30
 			// seconds, far beyond the 10-second bound below, however slowly a
 			// busy machine starts the backend.
-			handler.OperationTimeout = 30 * time.Second
+			limits := useLimits(t, handler, func(limits *Limits) {
+				limits.MaximumResponse, limits.MaximumRequest, limits.Operation = 16, test.maximumRequest, 30*time.Second
+			})
 			returned := make(chan time.Time, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				handler.ServeHTTP(writer, request)
@@ -132,7 +132,7 @@ func TestAbandonedOperationWithStalledUploadReturnsPromptly(t *testing.T) {
 			select {
 			case finished := <-returned:
 				if elapsed := finished.Sub(started); elapsed > 10*time.Second {
-					t.Fatalf("handler returned after %s, want well before the %s operation deadline", elapsed, handler.OperationTimeout)
+					t.Fatalf("handler returned after %s, want well before the %s operation deadline", elapsed, limits.Operation)
 				}
 			case <-time.After(60 * time.Second):
 				t.Fatal("handler did not return")

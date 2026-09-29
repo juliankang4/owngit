@@ -648,6 +648,24 @@
   </form>
 </section>
 
+{{/* The size and time limits of each Git transfer, with explicit units. */}}
+{{$gn := forAction $p.Group "transfer" $p.Notices}}{{$focus := firstError $gn "transfer_size" "transfer_time" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "transfer"}}
+<section class="grp" id="grp-transfer" aria-labelledby="grp-transfer-h" data-group="transfer"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "transfer" "Title" (bi $lang "transfer.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "transfer.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  <form class="gform" method="post" action="{{tabURL "repositories"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_transfers">
+    {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-size" "Field" "transfer_size" "Units" (unitsFrom "size" "MB") "Saved" $p.Policies.TransferSize "Label" (code "transfer.size") "Help" (code "transfer.size_help")}}
+    {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-time" "Field" "transfer_time" "Units" (unitsFrom "duration" "min") "Saved" $p.Policies.TransferTime "Label" (code "transfer.time") "Help" (code "transfer.time_help")}}
+    <p class="wn">{{icon "warning"}}<span>{{bi $lang "transfer.higher"}}</span></p>
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "transfer" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
+  </form>
+</section>
+
 <section class="grp" id="grp-repositories" aria-labelledby="grp-repositories-h">
   <div class="grp__h"><h2 id="grp-repositories-h">{{bi $lang "settings.repositories.title"}}</h2></div>
   {{if $nav.Repositories}}
@@ -684,6 +702,29 @@
 {{/* ------------------------------------------------------------------ */}}
 {{/* Shared parts of a group                                             */}}
 {{/* ------------------------------------------------------------------ */}}
+
+{{/* An amount with a unit menu, such as 4 GB. A refused form shows what was
+     typed; a saved value that cannot be read shows the default as a change
+     to save (Bad). */}}
+{{define "setAmount"}}{{$lang := .Lang}}{{$p := .Page}}{{$help := print .ID "-help"}}
+{{$amount := draft $p.Group $p.Draft .Group .Field .Saved.Amount}}{{$unit := draft $p.Group $p.Draft .Group (print .Field "_unit") .Saved.Unit}}
+<div class="f f--row">
+  <label for="{{.ID}}">{{bi $lang .Label}}</label>
+  <div class="cclimit__row">
+    <input id="{{.ID}}" name="{{.Field}}" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" required
+           value="{{$amount}}" data-saved="{{if not .Bad}}{{.Saved.Amount}}{{end}}"
+           {{template "netDescribed" dict "Notices" .Notices "Scope" .Group "Field" .Field "Help" $help}}{{if eq .Focus .Field}} autofocus{{end}}>
+    <label class="visually-hidden" for="{{.ID}}-unit">{{bi $lang .Label}} ({{bi $lang "cc.unit.word"}})</label>
+    <select id="{{.ID}}-unit" name="{{.Field}}_unit" data-saved="{{.Saved.Unit}}">
+      {{range .Units}}
+        <option value="{{.Name}}"{{if eq .Name $unit}} selected{{end}} {{biOption .Label}}>{{t $lang .Label}}</option>
+      {{end}}
+    </select>
+  </div>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Group "Field" .Field}}
+  <p class="f__help" id="{{$help}}">{{bi $lang .Help}}</p>
+</div>
+{{end}}
 
 {{/* A group heading with its "Not saved" mark, which the script shows while
      the group holds a change. */}}

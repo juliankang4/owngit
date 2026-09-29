@@ -99,7 +99,7 @@ func TestArchiveCancellationStopsGit(t *testing.T) {
 func TestArchiveTimeoutStopsGitAndFailsTheTransfer(t *testing.T) {
 	handler, commitOID := archiveFixture(t, 16)
 	pidFile := slowArchiveGit(t, handler)
-	handler.OperationTimeout = 500 * time.Millisecond
+	useLimits(t, handler, func(limits *Limits) { limits.Operation = 500 * time.Millisecond })
 	logs := captureLog(t)
 	server := serveArchiveOf(t, handler, commitOID)
 	response, err := http.Get(server.URL + "?format=zip")

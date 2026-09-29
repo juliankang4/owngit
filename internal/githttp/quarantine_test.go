@@ -37,7 +37,7 @@ func waitForTransfersToEnd(t *testing.T, handler *Handler) {
 // push, such as one left before OwnGit started, stays for the startup cleanup.
 func TestAPushOverTheRequestLimitLeavesNoQuarantine(t *testing.T) {
 	handler, work, _ := idleFixture(t, 16, time.Minute)
-	handler.MaximumRequest = 256 << 10
+	limits := useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 256 << 10 })
 	logs := captureLog(t)
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -55,7 +55,7 @@ func TestAPushOverTheRequestLimitLeavesNoQuarantine(t *testing.T) {
 	runHTTPGit(t, work, "commit", "-q", "-m", "large")
 	output, err := httpGitCombined(work, "push", server.URL+"/git/sample.git", "HEAD:refs/heads/main")
 	if err == nil {
-		t.Fatalf("a push of %d bytes over a %d byte limit succeeded:\n%s", len(content), handler.MaximumRequest, output)
+		t.Fatalf("a push of %d bytes over a %d byte limit succeeded:\n%s", len(content), limits.MaximumRequest, output)
 	}
 	waitForTransfersToEnd(t, handler)
 	if got := quarantines(t, handler, "sample"); !slices.Equal(got, []string{"tmp_objdir-incoming-Earlie"}) {

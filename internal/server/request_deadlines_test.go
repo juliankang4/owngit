@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"owngit/internal/importfetch"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
@@ -35,7 +36,7 @@ func longOperationServer(t *testing.T, page time.Duration) (apiFixture, string) 
 	fixture := newAPIFixture(t, true)
 	fixture.app.HTTPTimeout = page
 	fixture.app.ImportRunTimeout = time.Hour
-	fixture.app.GitHTTP.OperationTimeout = time.Hour
+	noErr(t, fixture.store.SavePolicies(context.Background(), state.PolicyChange{GitTransfer: &state.GitTransferLimits{MaximumBytes: 4 << 30, Operation: time.Hour}}))
 	server := httptest.NewUnstartedServer(fixture.app.Handler())
 	// The production server settings, with this test's page deadline as the
 	// server read limit.

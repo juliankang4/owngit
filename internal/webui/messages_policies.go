@@ -25,6 +25,15 @@ const (
 	MsgInitialBranchHelp    MessageCode = "initial_branch.help"
 	MsgInitialBranchInvalid MessageCode = "initial_branch.invalid"
 	MsgInitialBranchSaved   MessageCode = "initial_branch.saved"
+
+	MsgTransferTitle    MessageCode = "transfer.title"
+	MsgTransferScope    MessageCode = "transfer.scope"
+	MsgTransferSize     MessageCode = "transfer.size"
+	MsgTransferSizeHelp MessageCode = "transfer.size_help"
+	MsgTransferTime     MessageCode = "transfer.time"
+	MsgTransferTimeHelp MessageCode = "transfer.time_help"
+	MsgTransferHigher   MessageCode = "transfer.higher"
+	MsgTransferSaved    MessageCode = "transfer.saved"
 )
 
 var policiesCatalog = map[MessageCode]message{
@@ -71,6 +80,30 @@ var policiesCatalog = map[MessageCode]message{
 	MsgInitialBranchSaved: {
 		en: "Saved. Repositories created from now on start on this branch.",
 		ko: "저장했습니다. 이제부터 만드는 저장소는 이 브랜치로 시작합니다.",
+	},
+
+	MsgTransferTitle: {en: "Git transfers", ko: "Git 전송"},
+	MsgTransferScope: {
+		en: "Clones, fetches, pushes and archive downloads that start after you save. Transfers already running keep their limits.",
+		ko: "저장한 뒤 시작하는 클론, 가져오기(fetch), 푸시, 압축 파일 내려받기에 적용됩니다. 이미 진행 중인 전송은 원래 한도를 그대로 씁니다.",
+	},
+	MsgTransferSize: {en: "Largest transfer", ko: "최대 전송 크기"},
+	MsgTransferSizeHelp: {
+		en: "The most one transfer may receive, and apart the most it may send: from 1 MB to 64 GB (1 GB is 1024 MB). The default is 4 GB. A larger push is refused, and a larger clone or fetch is cut off.",
+		ko: "전송 하나가 받을 수 있는 최대 크기이자, 따로 보낼 수 있는 최대 크기입니다. 1 MB부터 64 GB까지 정할 수 있고(1 GB는 1024 MB) 기본값은 4 GB입니다. 이보다 큰 푸시는 거부되고, 이보다 큰 클론이나 가져오기(fetch)는 중간에 끊깁니다.",
+	},
+	MsgTransferTime: {en: "Longest transfer", ko: "최대 전송 시간"},
+	MsgTransferTimeHelp: {
+		en: "How long one transfer may take: from 1 minute to 24 hours. The default is 30 minutes.",
+		ko: "전송 하나에 걸릴 수 있는 최대 시간입니다. 1분부터 24시간까지 정할 수 있고 기본값은 30분입니다.",
+	},
+	MsgTransferHigher: {
+		en: "Higher limits let large or slow transfers keep the server busy for longer and use more disk space.",
+		ko: "한도를 높이면 크거나 느린 전송이 서버를 더 오래 붙잡고 디스크도 더 많이 씁니다.",
+	},
+	MsgTransferSaved: {
+		en: "Saved. Transfers that start from now on use the new limits.",
+		ko: "저장했습니다. 이제부터 시작하는 전송에 새 한도가 적용됩니다.",
 	},
 }
 

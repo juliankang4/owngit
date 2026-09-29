@@ -142,3 +142,48 @@ func TestInitialBranchAppliesToLaterRepositories(t *testing.T) {
 		t.Fatalf("GET status=%d settings=%v", status, settings)
 	}
 }
+
+// The Git transfer limits are saved in the units they are typed in, and a
+// value outside their bounds is refused with what was typed kept. The API
+// changes one limit and keeps the other, and replaces an unreadable saved
+// value only when it names both.
+func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
+	fixture, server, _ := newConfirmationFixture(t, false, state.ConfirmEveryTime)
+	ctx := context.Background()
+	browser := openConfirmationBrowser(t, server, false)
+	save := func(size, sizeUnit, duration, durationUnit string) browserHTTPResult {
+		return browser.post("/settings/repositories", url.Values{
+			"action": {webui.ActionSaveTransfers}, "admin_password": {"admin-password"},
+			"transfer_size": {size}, "transfer_size_unit": {sizeUnit}, "transfer_time": {duration}, "transfer_time_unit": {durationUnit},
+		})
+	}
+	for _, refused := range [][4]string{{"65", "GB", "30", "min"}, {"4", "GB", "25", "h"}, {"0.5", "MB", "30", "min"}, {"four", "GB", "30", "min"}} {
+		result := save(refused[0], refused[1], refused[2], refused[3])
+		if result.status != http.StatusUnprocessableEntity || !strings.Contains(result.body, `value="`+refused[0]+`"`) {
+			t.Fatalf("%v: status=%d", refused, result.status)
+		}
+	}
+	requireSaved(t, "transfer limits", save("8", "GB", "2", "h"))
+	if limits, err := fixture.store.GitTransferLimits(ctx); err != nil || limits != (state.GitTransferLimits{MaximumBytes: 8 << 30, Operation: 2 * time.Hour}) {
+		t.Fatalf("saved %+v err=%v", limits, err)
+	}
+	page := browser.get("/settings/repositories")
+	if !strings.Contains(page.body, `name="transfer_size" type="text"`) || !strings.Contains(page.body, `value="8" data-saved="8"`) || !strings.Contains(page.body, `value="2" data-saved="2"`) {
+		t.Fatalf("Repositories does not show the saved limits:\n%s", page.body)
+	}
+
+	if status, _, settings := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"maximum_bytes": 1 << 30}}); status != http.StatusOK ||
+		settings["git_transfer"].(map[string]any)["operation_seconds"] != float64(7200) {
+		t.Fatalf("PATCH one limit status=%d settings=%v", status, settings)
+	}
+	if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"operation_seconds": 30}}); status != http.StatusBadRequest || code != "invalid_settings" {
+		t.Fatalf("PATCH below the bound status=%d code=%s", status, code)
+	}
+	noErr(t, fixture.store.Exec(ctx, `UPDATE metadata SET value='{"maximum_bytes":"many"}' WHERE key='git_transfer_limits'`))
+	if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"operation_seconds": 600}}); status != http.StatusConflict || code != "setting_unreadable" {
+		t.Fatalf("PATCH one limit over an unreadable value status=%d code=%s", status, code)
+	}
+	if status, _, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"maximum_bytes": 1 << 30, "operation_seconds": 600}}); status != http.StatusOK {
+		t.Fatalf("PATCH both limits over an unreadable value status=%d", status)
+	}
+}

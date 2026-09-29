@@ -220,9 +220,15 @@ func (app *App) requestTimeout(request *http.Request) (time.Duration, time.Durat
 	}
 	// An archive download is a Git transfer. Its own operation deadline ends
 	// it first; the request keeps the reply reserve beyond that, so the limit
-	// that fires is the one the log names.
-	if archiveRoute(request) && app.GitHTTP.OperationTimeout > 0 {
-		return app.GitHTTP.OperationTimeout + 2*replyReserve, replyReserve
+	// that fires is the one the log names. When the limits cannot be read
+	// here, the request gets the longest a transfer may take, and the
+	// transfer, which reads them again, refuses to start.
+	if archiveRoute(request) {
+		operation := state.MaximumTransferOperation
+		if limits, err := app.GitHTTP.Limits(request.Context()); err == nil && limits.Operation > 0 {
+			operation = limits.Operation
+		}
+		return operation + 2*replyReserve, replyReserve
 	}
 	return app.pageTimeout()
 }

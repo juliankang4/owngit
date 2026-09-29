@@ -204,6 +204,10 @@ const (
 	// ActionSaveInitialBranch saves the branch new repositories start on.
 	// Fields: admin_password, initial_branch.
 	ActionSaveInitialBranch = "save_initial_branch"
+	// ActionSaveTransfers saves the Git transfer limits. Fields:
+	// admin_password, transfer_size and transfer_time, each with its
+	// _unit (see LimitInput).
+	ActionSaveTransfers = "save_transfers"
 )
 
 // The Settings tabs. Each is its own address, so a tab works as an ordinary
@@ -265,6 +269,7 @@ const (
 	GroupConfirm    = "confirm"
 	GroupSession    = "session"
 	GroupBranch     = "branch"
+	GroupTransfer   = "transfer"
 	GroupConnection = "connection"
 	GroupNetwork    = "network"
 	GroupTailscale  = "tailscale"
@@ -275,7 +280,7 @@ var settingsGroupTabs = map[string]string{
 	GroupUpdate: SettingsGeneral,
 	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess, GroupConfirm: SettingsAccess, GroupSession: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
-	GroupBranch: SettingsRepositories,
+	GroupBranch: SettingsRepositories, GroupTransfer: SettingsRepositories,
 }
 
 // SettingsGroupTab returns the tab that shows group, or "" for an unknown
@@ -298,6 +303,8 @@ func SettingsActionGroup(action string) string {
 		return GroupSession
 	case ActionSaveInitialBranch:
 		return GroupBranch
+	case ActionSaveTransfers:
+		return GroupTransfer
 	case ActionAcknowledgeInsecure:
 		return GroupConnection
 	case ActionSaveNetwork:
@@ -396,6 +403,9 @@ type Policies struct {
 	Session string
 	// InitialBranch is the branch new repositories start on.
 	InitialBranch string
+	// TransferSize and TransferTime are the Git transfer limits: the
+	// largest transfer and the longest.
+	TransferSize, TransferTime LimitInput
 	// Unreadable holds the groups whose saved value could not be read.
 	// Such a group says so and shows the default as a change to save.
 	Unreadable map[string]bool

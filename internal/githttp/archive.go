@@ -89,17 +89,21 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 	defer h.operations.Done()
 
 	ctx := request.Context()
+	limits, ok := h.transferLimits(ctx, fmt.Sprintf("Git archive request for repository %q", repositoryID))
+	if !ok {
+		return &ArchiveError{Status: http.StatusServiceUnavailable, Message: "The Git transfer settings cannot be read. The OwnGit log says why."}
+	}
 	controller := http.NewResponseController(writer)
 	var deadline time.Time
-	if h.OperationTimeout > 0 {
-		deadline = time.Now().Add(h.OperationTimeout)
+	if limits.Operation > 0 {
+		deadline = time.Now().Add(limits.Operation)
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 		// A blocked write to a stalled client does not see the context.
 		_ = controller.SetWriteDeadline(deadline)
 	}
-	if h.OperationTimeout > 0 || h.IdleTimeout > 0 {
+	if limits.Operation > 0 || h.IdleTimeout > 0 {
 		defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
 	}
 	deadlines := &transferDeadlines{controller: controller, idle: h.IdleTimeout, overall: deadline}
@@ -119,7 +123,7 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 	}
 	defer lock.RUnlock()
 
-	sent := &archiveResponse{ResponseWriter: writer, deadlines: deadlines, limit: h.MaximumResponse, contentType: contentType, disposition: attachmentDisposition(filename, repositoryID+"-"+shortCommitID(commitOID)+extension)}
+	sent := &archiveResponse{ResponseWriter: writer, deadlines: deadlines, limit: limits.MaximumResponse, contentType: contentType, disposition: attachmentDisposition(filename, repositoryID+"-"+shortCommitID(commitOID)+extension)}
 	held := &holdbackWriter{next: sent, hold: archiveHoldback}
 	var compressed *gzip.Writer
 	_, err = h.Git.StreamGit(ctx, repositoryPath, func(stdout io.Reader) error {
