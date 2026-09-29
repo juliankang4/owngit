@@ -117,9 +117,15 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 	if destHEAD.kind == headSymbolic {
 		existing = append(existing, destHEAD.target)
 	}
-	writes := make([]string, 0, len(run.selected.refs))
+	writes := make([]string, 0, len(run.selected.refs)+1)
 	for _, ref := range run.selected.refs {
 		writes = append(writes, ref.Name)
+	}
+	// The branch the source's HEAD names is a proposed name too, even when
+	// the source advertises no ref under it: an owned HEAD may follow it.
+	sourceHEAD := sourceHEADIdentity(run.advertisement)
+	if sourceHEAD.kind == headSymbolic {
+		writes = append(writes, sourceHEAD.target)
 	}
 	conflicts := repository.RefNameConflicts(existing, writes)
 	caseBlocked := map[string]bool{}
@@ -181,7 +187,6 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		}
 	}
 
-	sourceHEAD := sourceHEADIdentity(run.advertisement)
 	plan.observed[state.ImportHeadRef] = sourceHEAD.encode()
 	switch {
 	case run.initialDestination != nil && sourceHEAD.kind != headAbsent:
@@ -193,9 +198,10 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		plan.headChange = !sameHEADIdentity(destHEAD, sourceHEAD)
 		plan.headOwned = true
 	case sourceHEAD.kind != headAbsent && observations.headKnown && observations.headOwned && sameHEADIdentity(observations.head, destHEAD) &&
-		!caseBlocked[sourceHEAD.target]:
+		!caseBlocked[sourceHEAD.target] && !(sourceHEAD.kind == headSymbolic && conflicts[sourceHEAD.target]):
 		// An owned HEAD follows the source unless its target was left
-		// uncreated because of a case-only variant; that HEAD stays local.
+		// uncreated, or is a spelling that conflicts with another ref or
+		// folder (repository.RefNameConflicts); that HEAD stays local.
 		plan.headDesired = sourceHEAD
 		plan.headChange = !sameHEADIdentity(destHEAD, sourceHEAD)
 		plan.headOwned = true

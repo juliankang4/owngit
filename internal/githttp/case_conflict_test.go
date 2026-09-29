@@ -413,3 +413,62 @@ func TestPushRefusesAFolderSpelledLikeAnother(t *testing.T) {
 		})
 	}
 }
+
+// When HEAD names a spelling that does not exist (Main, or release/main)
+// and the only ref of that name is spelled otherwise (main, Release/main),
+// that ref is the default branch on storage that ignores letter case. A
+// push neither deletes nor rewrites it; deleting a look-alike is allowed
+// only while the exact name HEAD points to exists
+// (TestDeletingOneOfTwoLookAlikeRefsKeepsTheOther).
+func TestPushKeepsTheRefHEADResolvesToThroughALookAlike(t *testing.T) {
+	for _, format := range []string{repository.ObjectFormatSHA1, repository.ObjectFormatSHA256} {
+		t.Run(format, func(t *testing.T) {
+			ctx := context.Background()
+			manager, runner := newHTTPTestRepository(t)
+			handler, err := New(runner, manager, "", 2)
+			noErr(t, err)
+			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			work := filepath.Join(t.TempDir(), "work")
+			runHTTPGit(t, "", "init", "--object-format="+format, "--initial-branch=w", work)
+			runHTTPGit(t, work, "config", "user.name", "Head Test")
+			runHTTPGit(t, work, "config", "user.email", "head@example.invalid")
+			noErr(t, os.WriteFile(filepath.Join(work, "file"), []byte("file\n"), 0o600))
+			runHTTPGit(t, work, "add", "file")
+			runHTTPGit(t, work, "commit", "-m", "file")
+			tip := httpGitOutput(t, work, "rev-parse", "HEAD")
+			runHTTPGit(t, work, "checkout", "-q", "--orphan", "replacement")
+			runHTTPGit(t, work, "commit", "-q", "-m", "replacement")
+			replacement := httpGitOutput(t, work, "rev-parse", "HEAD")
+			for index, test := range []struct{ ref, head string }{
+				{"refs/heads/main", "refs/heads/Main"},
+				{"refs/heads/Release/main", "refs/heads/release/main"},
+			} {
+				for _, protect := range []bool{true, false} {
+					id := fmt.Sprintf("heads-%d-%v", index, protect)
+					_, err := manager.CreateWithOptions(ctx, id, "", repository.CreateOptions{ObjectFormat: format})
+					noErr(t, err)
+					remote, err := manager.Path(id)
+					noErr(t, err)
+					_, err = manager.Store.SaveRepositoryRefPolicy(ctx, id, state.RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
+					noErr(t, err)
+					url := server.URL + "/git/" + id + ".git"
+					runHTTPGit(t, work, "push", url, tip+":"+test.ref)
+					runHTTPGit(t, "", "--git-dir", remote, "pack-refs", "--all")
+					runHTTPGit(t, "", "--git-dir", remote, "symbolic-ref", "HEAD", test.head)
+					want := test.ref + " " + tip
+					for _, spec := range []string{":" + test.ref, "+" + replacement + ":" + test.ref, ":" + test.head} {
+						output, err := httpGitCombined(work, "push", url, spec)
+						if err == nil {
+							t.Fatalf("%s protect=%v: push %s was accepted: %s", test.ref, protect, spec, output)
+						}
+						if got := httpGitOutput(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); got != want {
+							t.Fatalf("%s protect=%v: push %s changed refs:\n%s", test.ref, protect, spec, got)
+						}
+					}
+				}
+			}
+		})
+	}
+}

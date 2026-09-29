@@ -137,7 +137,12 @@ type pushCommand struct {
 // repository, the branch HEAD names, or another ref of the push
 // (repository.RefNameConflicts). A deletion of such a ref that exists under
 // exactly that name is allowed, so an owner can remove one of two
-// look-alike refs; OwnGit first packs the repository's refs, so that Git
+// look-alike refs, unless it would remove the default branch: the deleted
+// ref is the name HEAD points to, or shares its RefNameKey while that exact
+// name does not exist (so it is the ref HEAD resolves to on storage that
+// ignores letter case). Every other write to a spelling of the default
+// branch other than the exact one is a conflict and refused, so default
+// branch protection covers every spelling. OwnGit first packs the repository's refs, so that Git
 // deletes only that exact entry and no file that the other name shares on
 // storage that ignores letter case. The caller holds the repository write
 // lock.
@@ -155,9 +160,11 @@ func (h *Handler) writeNameConflicts(ctx context.Context, repositoryPath, path s
 	for _, name := range existing {
 		present[name] = true
 	}
+	defaultBranch := ""
 	head, err := h.Repositories.Git.RunWithLimits(ctx, repositoryPath, nil, limits, "--git-dir", ".", "symbolic-ref", "--quiet", "HEAD")
 	if err == nil {
-		existing = append(existing, strings.TrimSpace(string(head.Stdout)))
+		defaultBranch = strings.TrimSpace(string(head.Stdout))
+		existing = append(existing, defaultBranch)
 	}
 	names := make([]string, len(updates))
 	for index, update := range updates {
@@ -169,7 +176,11 @@ func (h *Handler) writeNameConflicts(ctx context.Context, repositoryPath, path s
 	for _, update := range updates {
 		switch {
 		case !conflicts[update.name]:
-		case update.deletes && present[update.name]:
+		case update.deletes && present[update.name] && update.name != defaultBranch &&
+			(present[defaultBranch] || repository.RefNameKey(update.name) != repository.RefNameKey(defaultBranch)):
+			// Deleting a look-alike leaves the default branch in place: it
+			// is not a spelling of the branch HEAD names, or that branch
+			// exists under its exact name too.
 			pack = true
 		default:
 			refused.WriteString(update.name + "\n")

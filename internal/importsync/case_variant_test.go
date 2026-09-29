@@ -247,3 +247,40 @@ func TestUpstreamHFSPlusVariantOfPackedDefaultBranchStaysDivergent(t *testing.T)
 		t.Fatalf("refs after refresh:\n%s", listed)
 	}
 }
+
+// A source that keeps advertising main but points its HEAD at an absent
+// look-alike (Main) does not move the owned HEAD: the HEAD target counts as
+// a proposed name, conflicts with main, and HEAD stays on main.
+func TestOwnedHEADDoesNotFollowAnUnadvertisedLookAlikeTarget(t *testing.T) {
+	for _, format := range []string{"sha1", "sha256"} {
+		t.Run(format, func(t *testing.T) {
+			f := newFixture(t)
+			if format == "sha256" {
+				f.format = format
+				f.source = filepath.Join(f.root, "source-sha256")
+				f.initSource()
+			}
+			f.commit("one", "one\n")
+			initial := f.mustImport(ImportInput{})
+			markHEADOwnedForTest(t, f, initial.Run.ID)
+			path := f.destinationPath()
+			local := f.git(path, "rev-parse", "refs/heads/main")
+			f.git(path, "pack-refs", "--all")
+
+			f.commit("two", "two\n")
+			f.transport.mutateAdvertised = func(advertisement *importgit.Advertisement) {
+				advertisement.Head.SymrefTarget = "refs/heads/Main"
+			}
+			run, err := f.refresh()
+			if err != nil || run.Status != state.ImportRunComplete {
+				t.Fatalf("refresh run=%+v err=%v", run, err)
+			}
+			if head := f.git(path, "symbolic-ref", "HEAD"); head != "refs/heads/main" {
+				t.Fatalf("destination HEAD=%s", head)
+			}
+			if listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); listed != "refs/heads/main "+local {
+				t.Fatalf("refs after refresh:\n%s", listed)
+			}
+		})
+	}
+}
