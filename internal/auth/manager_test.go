@@ -23,7 +23,7 @@ func TestAuthenticationAttemptsAreBoundedAndSessionsAreVersioned(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Unix(1_800_000_000, 0)
-	manager := &Manager{Store: store, Now: func() time.Time { return now }, SessionLife: time.Hour}
+	manager := &Manager{Store: store, Now: func() time.Time { return now }}
 	for attempt := 0; attempt < 4; attempt++ {
 		if _, err := manager.Authenticate(context.Background(), "general", "wrong-password", "192.0.2.4:1234", ""); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("attempt %d error=%v, want ordinary credential failure", attempt+1, err)
@@ -63,7 +63,7 @@ func TestParallelCorrectPasswordsAreAcceptedAndParallelGuessesStopAtTheLimit(t *
 	if err := store.CompleteSetup(context.Background(), t.TempDir(), "password", accessHash, adminHash, true); err != nil {
 		t.Fatal(err)
 	}
-	manager := &Manager{Store: store, SessionLife: time.Hour}
+	manager := &Manager{Store: store}
 	parallel := func(count int, password string) []error {
 		errs := make([]error, count)
 		var group sync.WaitGroup

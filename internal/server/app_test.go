@@ -272,7 +272,7 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	manager := newRepositoryManager(t, store, filepath.Join(root, "runtime"))
 	gitHandler, err := githttp.New(manager.Git, manager, "", 2)
 	noErr(t, err)
-	authentication := &auth.Manager{Store: store, SessionLife: time.Hour, AdminSessionLife: 5 * time.Minute}
+	authentication := &auth.Manager{Store: store, AdminSessionLife: 5 * time.Minute}
 	renderer, err := webui.New()
 	noErr(t, err)
 	// The pull request and import services are part of every app, as they

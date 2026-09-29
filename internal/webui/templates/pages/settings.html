@@ -264,6 +264,34 @@
   </form>
 </section>
 
+{{/* How long a sign-in with the shared password lasts. A saved value that
+     cannot be read shows the default as a change to save. */}}
+{{$gn := forAction $p.Group "session" $p.Notices}}{{$focus := firstError $gn "general_session" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "session"}}
+{{$saved := $p.Policies.Session}}{{$session := draft $p.Group $p.Draft "session" "general_session" $saved}}
+<section class="grp" id="grp-session" aria-labelledby="grp-session-h" data-group="session"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "session" "Title" (bi $lang "session.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "session.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  <form class="gform" method="post" action="{{tabURL "access"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_session">
+    <div class="f f--row">
+      <label for="session-length">{{bi $lang "session.label"}}</label>
+      <select id="session-length" name="general_session" data-saved="{{if not $bad}}{{$saved}}{{end}}"
+              {{template "netDescribed" dict "Notices" $gn "Scope" "session" "Field" "general_session" "Help" "session-length-help"}}{{if eq $focus "general_session"}} autofocus{{end}}>
+        {{range sessionMenu}}
+          <option value="{{.Value}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq .Value $session}} selected{{end}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "session" "Field" "general_session"}}
+      <p class="f__help" id="session-length-help">{{bi $lang "session.help"}}</p>
+    </div>
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "session" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access")}}
+  </form>
+</section>
+
 {{/* Changing the administrator password stays an explicit form: the current
      password is its own confirmation. */}}
 {{$gn := forAction $p.Group "admin" $p.Notices}}{{$focus := firstError $gn "admin_password" "new_admin_password"}}

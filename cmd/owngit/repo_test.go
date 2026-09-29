@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"owngit/internal/auth"
 	"owngit/internal/gitexec"
@@ -46,7 +45,7 @@ func startRepositoryCLIServer(t *testing.T, sharedPassword string) (serverURL, p
 	noErr(t, err)
 	hosts := server.NewHostPolicy()
 	application := &server.App{
-		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
+		Store: store, Auth: &auth.Manager{Store: store}, Repositories: manager,
 		PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
 		GitHTTP:      gitHandler, Hosts: hosts,
 		Network: server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts}),

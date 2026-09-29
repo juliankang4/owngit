@@ -225,6 +225,14 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		if choice == state.ConfirmNever {
 			notice = "confirmation_off"
 		}
+	case webui.ActionSaveSession:
+		choice, valid := state.ParseGeneralSession(postValue(request, "general_session"))
+		if !valid {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("general_session", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+			return
+		}
+		err = app.Store.SetGeneralSession(request.Context(), choice)
+		notice = "session_saved"
 	case webui.ActionSaveNetwork:
 		app.saveNetwork(writer, request, settings, csrf)
 		return
@@ -313,6 +321,7 @@ var settingsNoticeGroups = map[string]string{
 	"admin_password_changed": webui.GroupAdmin,
 	"confirmation_saved":     webui.GroupConfirm,
 	"confirmation_off":       webui.GroupConfirm,
+	"session_saved":          webui.GroupSession,
 	"insecure_acknowledged":  webui.GroupConnection,
 	"network_saved":          webui.GroupNetwork,
 	"tailscale_on":           webui.GroupTailscale,
@@ -421,7 +430,7 @@ type settingsView struct {
 // A switch or checkbox is written "on" or "off", since an unticked one
 // sends nothing.
 var settingsDraftFields = map[string]bool{
-	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
+	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "general_session": false, "update_check": true, "tailscale": true, "home_network": true, "insecure_ack": true,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.
@@ -498,6 +507,10 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 	// sees it, and only on its tab.
 	if tab == webui.SettingsGeneral && chrome.Viewer.AdminConfirmed && app.Diagnose != nil {
 		page.Checkup = webui.CheckupInfo{Visible: true, Findings: app.Diagnose(request.Context())}
+	}
+	if page.Policies, err = app.tabPolicies(request, tab); err != nil {
+		app.answerUnavailable(writer, request, "settings read", err)
+		return
 	}
 	// Only the Network tab shows sharing on the tailnet, and reading it
 	// asks Tailscale, so the other tabs do not.

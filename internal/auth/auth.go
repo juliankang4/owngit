@@ -57,8 +57,7 @@ var (
 )
 
 type Manager struct {
-	Store       *state.Store
-	SessionLife time.Duration
+	Store *state.Store
 	// AdminSessionLife is how long an administrator sign-in keeps the
 	// administrator pages open when the confirmation choice remembers no
 	// password (Every time, Do not ask). A remembering choice sets its own.
@@ -148,16 +147,17 @@ func (m *Manager) Authenticate(ctx context.Context, kind, password, remoteAddres
 	if kind == "admin" {
 		return m.StartAdminSession(ctx, replaced)
 	}
-	life := m.SessionLife
-	if life <= 0 {
-		life = 12 * time.Hour
+	// A general session lasts as long as the owner chose when it starts.
+	choice, err := m.Store.GeneralSession(ctx)
+	if err != nil {
+		return NewSession{}, err
 	}
 	settings, err := m.Store.Settings(ctx)
 	if err != nil {
 		return NewSession{}, err
 	}
 	token, csrf := RandomToken(32), RandomToken(32)
-	expires := m.now().Add(life)
+	expires := m.now().Add(choice.Length())
 	if err := m.Store.StartSession(ctx, replaced, token, kind, csrf, settings.AccessSessionVersion, expires); err != nil {
 		return NewSession{}, err
 	}

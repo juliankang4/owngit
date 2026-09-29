@@ -116,7 +116,7 @@ func startImportCLIServer(t *testing.T, fetchDelay ...time.Duration) *importCLIS
 	fixture := &importCLIServer{}
 	hosts := server.NewHostPolicy()
 	application := &server.App{
-		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
+		Store: store, Auth: &auth.Manager{Store: store}, Repositories: manager,
 		GitHTTP: gitHandler, Hosts: hosts,
 		Imports: &importsync.Service{Store: store, Repositories: manager, Fetch: func(ctx context.Context, request importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 			fixture.token = request.Authentication.BearerToken

@@ -38,6 +38,7 @@ var helpCommands = []struct {
 	{"import", false}, {"import add", true}, {"import refresh", true}, {"import status", true},
 	{"import history", true}, {"import cancel", true}, {"import schedule", true},
 	{"import credentials", true}, {"import resolve", true},
+	{"settings", false}, {"settings show", true}, {"settings set", true},
 	{"skill", true}, {"mcp", true}, {"update", true}, {"doctor", true},
 }
 

@@ -39,6 +39,10 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
 		return
 	}
+	if request.URL.Path == "/api/v1/settings" {
+		app.handleSettingsAPI(writer, request)
+		return
+	}
 	if id, ok := repositoryAPIRoute(request.URL.Path); ok {
 		app.handleRepositoryAPI(writer, request, settings, id)
 		return

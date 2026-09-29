@@ -197,6 +197,10 @@ const (
 	// asked. Fields: admin_password, admin_confirmation (one of
 	// AdminConfirmChoices), no_ask_ack (required to turn Do not ask on).
 	ActionSaveConfirmation = "save_confirmation"
+	// ActionSaveSession saves how long a sign-in with the shared password
+	// lasts. Fields: admin_password, general_session (one of
+	// SessionChoices).
+	ActionSaveSession = "save_session"
 )
 
 // The Settings tabs. Each is its own address, so a tab works as an ordinary
@@ -256,6 +260,7 @@ const (
 	GroupAccess     = "access"
 	GroupAdmin      = "admin"
 	GroupConfirm    = "confirm"
+	GroupSession    = "session"
 	GroupConnection = "connection"
 	GroupNetwork    = "network"
 	GroupTailscale  = "tailscale"
@@ -264,7 +269,7 @@ const (
 // settingsGroupTabs names the tab of each group.
 var settingsGroupTabs = map[string]string{
 	GroupUpdate: SettingsGeneral,
-	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess, GroupConfirm: SettingsAccess,
+	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess, GroupConfirm: SettingsAccess, GroupSession: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
 }
 
@@ -284,6 +289,8 @@ func SettingsActionGroup(action string) string {
 		return GroupAdmin
 	case ActionSaveConfirmation:
 		return GroupConfirm
+	case ActionSaveSession:
+		return GroupSession
 	case ActionAcknowledgeInsecure:
 		return GroupConnection
 	case ActionSaveNetwork:
@@ -322,6 +329,8 @@ type SettingsPage struct {
 	CloneHint string
 	// UpdateCheck is the new-release check setting.
 	UpdateCheck UpdateCheckInfo
+	// Policies are the server-wide policies of the tab shown.
+	Policies Policies
 	// Network is the network settings block. See NetworkInfo.
 	Network NetworkInfo
 	// Tailscale is the block for sharing on the tailnet. See TailscaleInfo.
@@ -370,6 +379,17 @@ type UpdateCheckInfo struct {
 	// ForcedOff is true when the server started with --no-update-check,
 	// which overrides the saved setting.
 	ForcedOff bool
+}
+
+// Policies are the saved server-wide policies. Only the tab that shows a
+// policy reads it; the others leave it empty.
+type Policies struct {
+	// Session is how long a sign-in with the shared password lasts, one
+	// of SessionChoices.
+	Session string
+	// Unreadable holds the groups whose saved value could not be read.
+	// Such a group says so and shows the default as a change to save.
+	Unreadable map[string]bool
 }
 
 func (SettingsPage) page() string     { return "settings" }

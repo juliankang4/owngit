@@ -210,6 +210,8 @@ func runCommand(command string, arguments []string) error {
 		return runnerCredentialCommand(arguments)
 	case "runner":
 		return runnerCommand(arguments)
+	case "settings":
+		return settingsCommand(arguments)
 	case "import":
 		return importCommand(arguments)
 	case "update":
@@ -504,7 +506,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if err != nil {
 		return err
 	}
-	authentication := &auth.Manager{Store: store, SessionLife: 12 * time.Hour, AdminSessionLife: 15 * time.Minute}
+	authentication := &auth.Manager{Store: store, AdminSessionLife: 15 * time.Minute}
 	listener, err := net.Listen("tcp", network.Listen)
 	if err != nil {
 		return network.listenError(err)
@@ -1231,7 +1233,7 @@ func defaultStatePath(configured, home string) string {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit [serve|service|health|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|upgrade-backup|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|skill|mcp|update|uninstall|doctor|version] [options]")
+	fmt.Fprintln(writer, "Usage: owngit [serve|service|health|setup-link|reset-admin|approve-host|network|tailscale|forget-check-container|backup|restore|upgrade-backup|repo|pr|check|helper-credential|check-policy|check-job|runner-credential|runner|import|settings|skill|mcp|update|uninstall|doctor|version] [options]")
 	fmt.Fprintln(writer, "Run owngit <command> --help for the options of a command.")
 }
 

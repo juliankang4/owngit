@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"owngit/internal/apiclient"
 	"owngit/internal/auth"
@@ -132,7 +131,7 @@ func newPRCLIFixture(t *testing.T) prCLIFixture {
 	}
 	gitHandler, err := githttp.New(runner, manager, "", 2)
 	noErr(t, err)
-	authentication := &auth.Manager{Store: store, SessionLife: time.Hour}
+	authentication := &auth.Manager{Store: store}
 	hosts := server.NewHostPolicy()
 	application := &server.App{
 		Store: store, Auth: authentication, Repositories: manager,

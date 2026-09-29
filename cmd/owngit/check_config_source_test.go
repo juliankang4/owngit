@@ -47,7 +47,7 @@ func startCheckCLIServer(t *testing.T) (remoteFlags []string, taskID, work strin
 	noErr(t, err)
 	hosts := server.NewHostPolicy()
 	application := &server.App{
-		Store: store, Auth: &auth.Manager{Store: store, SessionLife: time.Hour}, Repositories: manager,
+		Store: store, Auth: &auth.Manager{Store: store}, Repositories: manager,
 		PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
 		GitHTTP:      gitHandler, Hosts: hosts,
 		Network: server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts}),
