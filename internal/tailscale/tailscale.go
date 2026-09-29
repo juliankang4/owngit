@@ -59,6 +59,10 @@ var (
 	openSourceSocket = "/var/run/tailscaled.socket"
 )
 
+// tailscaledUID is the account Tailscale's service runs as: root. A variable
+// only so tests can serve a synthetic LocalAPI socket.
+var tailscaledUID uint32 = 0
+
 // candidates lists where the tailscale command may be, in order: on PATH,
 // then where the installers put it, since a service manager often starts
 // OwnGit with a short PATH.
@@ -129,6 +133,10 @@ const (
 	// administrator accounts reach its LocalAPI, and this account is not
 	// one.
 	KindMacAppAdmin Kind = "mac_app_admin"
+	// KindUntrustedSocket: the process listening at tailscaled's Unix
+	// socket does not run as Tailscale's service account, or this system
+	// cannot tell which account it runs as, so OwnGit did not use it.
+	KindUntrustedSocket Kind = "untrusted_socket"
 	// KindOutdated: the daemon is older than Tailscale 1.50 and cannot
 	// apply a change only to the Serve configuration it was made from.
 	KindOutdated Kind = "outdated"
@@ -148,7 +156,9 @@ const (
 type Error struct {
 	Kind Kind
 	// Detail is what Tailscale printed or answered on failure, shortened,
-	// for KindFailed and KindPermission; never OwnGit's own words.
+	// for KindFailed and KindPermission; never OwnGit's own words. For
+	// KindUntrustedSocket it is the socket's path and, when known, the uid
+	// and name of the account listening there.
 	Detail string
 	// cause is the connection's error when an exchange with Tailscale
 	// failed without an answer. Error includes it for logs; it is not

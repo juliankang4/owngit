@@ -173,6 +173,10 @@ var tailscaleCatalog = map[MessageCode]message{
 		en: "The Standalone Tailscale app for macOS lets only administrator accounts of this Mac change its settings. Run OwnGit with an administrator account, and try again.",
 		ko: "macOS용 Tailscale Standalone 앱은 이 Mac의 관리자 계정에서만 설정을 바꿀 수 있습니다. 관리자 계정으로 OwnGit을 실행한 뒤 다시 시도하세요.",
 	},
+	"tailscale.problem.untrusted_socket": {
+		en: "OwnGit did not use Tailscale's socket, because it could not confirm that Tailscale's own service answers there. A program of another account may be listening in its place. Check which program listens on this socket, then restart Tailscale. Socket and account:",
+		ko: "Tailscale 서비스가 직접 응답하는지 확인할 수 없어 OwnGit이 Tailscale 소켓을 쓰지 않았습니다. 다른 계정의 프로그램이 대신 응답하고 있을 수 있습니다. 이 소켓에서 응답하는 프로그램을 확인한 뒤 Tailscale을 다시 시작하세요. 소켓과 계정:",
+	},
 	"tailscale.problem.outdated": {
 		en: "Tailscale on this computer is older than version 1.50. OwnGit needs 1.50 or later to change Serve settings without overwriting other changes. Update Tailscale and try again.",
 		ko: "이 컴퓨터의 Tailscale이 1.50보다 오래된 버전입니다. OwnGit이 다른 변경을 덮어쓰지 않고 Serve 설정을 바꾸려면 1.50 이상이 필요합니다. Tailscale을 업데이트한 뒤 다시 시도하세요.",

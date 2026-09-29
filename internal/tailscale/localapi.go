@@ -10,6 +10,9 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os/user"
+	"slices"
+	"strconv"
 	"time"
 )
 
@@ -28,6 +31,14 @@ import (
 // port with a password for the Tailscale app for macOS, and a named pipe on
 // Windows. Tailscale grants the same rights there as to the tailscale
 // command run by the same user.
+//
+// The app's port is proven by its password, and only an administrator may
+// serve the named pipe. A Unix socket proves nothing by its path: another
+// account could listen where Tailscale's socket belongs, such as in a shared
+// folder, and answer in Tailscale's place. So OwnGit uses a Unix socket only
+// when the kernel reports that the process listening there runs as
+// Tailscale's service account (unixSocket). Linux, macOS and FreeBSD report
+// it; on any other system OwnGit uses no Unix socket.
 
 // Dialer connects to Tailscale's LocalAPI and returns the connection and
 // the password the LocalAPI asks for, or "" when it asks for none.
@@ -37,12 +48,30 @@ type Dialer func(ctx context.Context) (net.Conn, string, error)
 // LocalAPI accepts this host name on every transport.
 const serveConfigURL = "http://local-tailscaled.sock/localapi/v0/serve-config"
 
-// unixSocket returns a Dialer for tailscaled's Unix socket at path.
-func unixSocket(path string) Dialer {
+// unixSocket returns a Dialer for tailscaled's Unix socket at path. It
+// keeps the connection only when the process listening there runs as
+// tailscaledUID or as one of accounts, and otherwise fails with
+// KindUntrustedSocket.
+func unixSocket(path string, accounts ...uint32) Dialer {
 	return func(ctx context.Context) (net.Conn, string, error) {
 		var dialer net.Dialer
 		conn, err := dialer.DialContext(ctx, "unix", path)
-		return conn, "", err
+		if err != nil {
+			return nil, "", err
+		}
+		uid, err := socketPeer(conn.(*net.UnixConn))
+		if err == nil && (uid == tailscaledUID || slices.Contains(accounts, uid)) {
+			return conn, "", nil
+		}
+		conn.Close()
+		detail := path
+		if err == nil {
+			detail += ", uid " + strconv.FormatUint(uint64(uid), 10)
+			if account, lookupErr := user.LookupId(strconv.FormatUint(uint64(uid), 10)); lookupErr == nil {
+				detail += " (" + account.Username + ")"
+			}
+		}
+		return nil, "", &Error{Kind: KindUntrustedSocket, Detail: detail}
 	}
 }
 

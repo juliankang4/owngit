@@ -209,7 +209,7 @@ func TestTailscaleRefusedOnlyWhenTheOwnerCanFixIt(t *testing.T) {
 		string(tailscale.KindNotInstalled), string(tailscale.KindNotRunning), string(tailscale.KindLoggedOut),
 		string(tailscale.KindStopped), string(tailscale.KindNeedsApproval), string(tailscale.KindMagicDNSOff),
 		string(tailscale.KindHTTPSOff), string(tailscale.KindHTTPSUnavailable), string(tailscale.KindPermission),
-		string(tailscale.KindMacAppAdmin), string(tailscale.KindOutdated),
+		string(tailscale.KindMacAppAdmin), string(tailscale.KindUntrustedSocket), string(tailscale.KindOutdated),
 		TailscaleProblemTaken, TailscaleProblemOtherPort, TailscaleProblemUnrecorded,
 		TailscaleProblemChanged, TailscaleProblemListenOption, TailscaleProblemNotOn, TailscaleProblemServeChanged,
 		TailscaleProblemOwnersEndpoint,

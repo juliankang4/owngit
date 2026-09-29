@@ -48,11 +48,14 @@ func TestMacLocalAPIFollowsTheTailscaleCommandsOrder(t *testing.T) {
 	if err := os.Mkdir(standalone, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	saved := []string{macStandaloneDir, lsofPath, openSourceSocket, macAppBundle}
+	saved, savedUID := []string{macStandaloneDir, lsofPath, openSourceSocket, macAppBundle}, tailscaledUID
 	macStandaloneDir, lsofPath = standalone, lsof
 	openSourceSocket, macAppBundle = filepath.Join(short, "s.sock"), filepath.Join(dir, "Tailscale.app")
+	// The synthetic tailscaled runs as this test's account.
+	tailscaledUID = uint32(os.Geteuid())
 	t.Cleanup(func() {
 		macStandaloneDir, lsofPath, openSourceSocket, macAppBundle = saved[0], saved[1], saved[2], saved[3]
+		tailscaledUID = savedUID
 	})
 
 	check := func(name, wantPassword string, wantMacApp bool) {
