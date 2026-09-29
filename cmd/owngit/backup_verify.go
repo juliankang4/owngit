@@ -64,7 +64,11 @@ func printVerification(writer io.Writer, result recovery.Verification) {
 	}
 	fmt.Fprintln(writer)
 	for _, item := range result.Repositories {
-		fmt.Fprintf(writer, "  %-7s  %s (%d refs)", strings.ReplaceAll(item.Status, "_", " "), item.ID, item.Refs)
+		refs := "refs"
+		if item.Refs == 1 {
+			refs = "ref"
+		}
+		fmt.Fprintf(writer, "  %-7s  %s (%d %s)", strings.ReplaceAll(item.Status, "_", " "), item.ID, item.Refs, refs)
 		if item.Error != "" {
 			fmt.Fprintf(writer, ": %s", item.Error)
 		}
