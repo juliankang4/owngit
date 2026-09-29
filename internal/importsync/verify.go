@@ -52,18 +52,21 @@ func (s *Service) createStagingRepository(ctx context.Context, path, objectForma
 }
 
 // historicFormatWarnings are the fsck message IDs that strict indexing
-// reports as warnings instead of refusing the pack. Each one is a formatting
-// fault in the author, committer or tagger line of an old commit or tag,
-// found in popular public repositories, and says nothing about paths, file
-// modes, links, submodules or object structure, so accepting it cannot place
-// a file or reach outside the repository. Every other check, including the
-// .git, .gitmodules and symbolic link checks, still refuses the pack.
+// reports as warnings instead of refusing the pack. Each one is a spelling
+// fault that old versions of Git wrote into popular public repositories. It
+// changes neither a path, a file type, a link nor a submodule, so accepting it
+// cannot place a file or reach outside the repository. Every other check,
+// including the .git, .gitmodules and symbolic link checks, still refuses the
+// pack.
 //
-//   - badTimezone: an offset such as +051800 (rails/rails commit 4cf94979,
-//     psf/requests commit 5e6ecdad).
+//   - badTimezone: an author or committer offset such as +051800 (rails/rails
+//     commit 4cf94979, psf/requests commit 5e6ecdad).
 //   - missingSpaceBeforeDate: a tagger line without a date (30 tags in
 //     coreutils/coreutils, such as v4.5.1).
-var historicFormatWarnings = []string{"badTimezone", "missingSpaceBeforeDate"}
+//   - zeroPaddedFilemode: a directory mode written 040000 instead of 40000,
+//     which still means a directory (141 trees in rails/rails). Git itself
+//     only warns about it; --strict alone would refuse it.
+var historicFormatWarnings = []string{"badTimezone", "missingSpaceBeforeDate", "zeroPaddedFilemode"}
 
 // strictIndexPackArguments is shared by staging and destination indexing so a
 // pack cannot pass through either object store without Git's strict checks,

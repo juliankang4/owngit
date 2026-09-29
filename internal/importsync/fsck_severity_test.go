@@ -24,9 +24,10 @@ func (f *fixture) treeEntry(mode, name, oid string) string {
 	return mode + " " + name + "\x00" + string(raw)
 }
 
-// Popular repositories hold old commits and tags whose dates are malformed.
-// An import accepts exactly those faults, in staging and in the destination.
-func TestImportAcceptsHistoricDateFaults(t *testing.T) {
+// Popular repositories hold old commits, tags and trees that old versions of
+// Git spelled wrongly. An import accepts exactly those faults, in staging and
+// in the destination.
+func TestImportAcceptsHistoricFormatFaults(t *testing.T) {
 	f := newFixture(t)
 	base := f.commit("one", "one\n")
 	tree := f.git(f.source, "rev-parse", base+"^{tree}")
@@ -35,22 +36,27 @@ func TestImportAcceptsHistoricDateFaults(t *testing.T) {
 		"author A <a@example.invalid> 1312735823 +051800\ncommitter A <a@example.invalid> 1312735823 +051800\n\nbad time zone\n", tree, base))
 	// missingSpaceBeforeDate, as in coreutils/coreutils tag v4.5.1.
 	tag := f.writeLiteral("tag", fmt.Sprintf("object %s\ntype commit\ntag v1\ntagger T <t@example.invalid>\n\nno date\n", commit))
+	// zeroPaddedFilemode, as in 141 rails/rails trees.
+	padded := f.writeLiteral("tree", f.treeEntry("040000", "dir", tree))
+	old := f.writeLiteral("commit", fmt.Sprintf("tree %s\nparent %s\n"+
+		"author A <a@example.invalid> 1312735823 +0000\ncommitter A <a@example.invalid> 1312735823 +0000\n\npadded mode\n", padded, base))
 	f.git(f.source, "update-ref", "refs/heads/main", commit)
+	f.git(f.source, "update-ref", "refs/heads/old", old)
 	f.git(f.source, "update-ref", "refs/tags/v1", tag)
 
 	f.mustImport(ImportInput{})
 	refs := f.destinationRefs()
-	if refs["refs/heads/main"] != commit || refs["refs/tags/v1"] != tag {
-		t.Fatalf("destination refs = %v, want main %s and v1 %s", refs, commit, tag)
+	if refs["refs/heads/main"] != commit || refs["refs/heads/old"] != old || refs["refs/tags/v1"] != tag {
+		t.Fatalf("destination refs = %v, want main %s, old %s and v1 %s", refs, commit, old, tag)
 	}
-	for _, oid := range []string{commit, tag, base} {
+	for _, oid := range []string{commit, tag, base, old, padded} {
 		f.git(f.destinationPath(), "--git-dir", ".", "cat-file", "-e", oid)
 	}
 }
 
 // Every other strict check still refuses the pack: the path, link and
-// submodule checks strict indexing exists for, and date faults outside the
-// list, even beside an accepted one.
+// submodule checks strict indexing exists for, and faults outside the list,
+// even beside an accepted one.
 func TestImportStillRefusesOtherObjectFaults(t *testing.T) {
 	for _, test := range []struct {
 		name string
