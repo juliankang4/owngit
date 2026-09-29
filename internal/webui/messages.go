@@ -1147,12 +1147,12 @@ var catalog = map[MessageCode]message{
 	// One %s: the owngit program that serves.
 	MsgDoctorWindowsRule: {
 		en: "OwnGit listens for other devices, but no Windows Firewall rule lets devices on private networks reach %s. The repair asks Windows once for administrator approval and adds OwnGit's rule.",
-		ko: "OwnGit이 다른 기기의 접속을 받도록 설정되어 있지만, 개인 네트워크의 기기가 %s에 연결하도록 허용하는 Windows 방화벽 규칙이 없습니다. 고치는 명령은 Windows에 관리자 승인을 한 번 요청하고 OwnGit 규칙을 추가합니다.",
+		ko: "OwnGit이 다른 기기의 접속을 받도록 설정되어 있지만 개인 네트워크의 기기가 %s에 연결하도록 허용하는 Windows 방화벽 규칙이 없습니다. 고치는 명령은 Windows에 관리자 승인을 한 번 요청하고 OwnGit 규칙을 추가합니다.",
 	},
 	// One %s: the owngit program that serves.
 	MsgDoctorWindowsRuleAsk: {
 		en: "OwnGit listens for other devices, but no Windows Firewall rule lets devices on private networks reach %s. An administrator can allow it with this command in a terminal opened with \"Run as administrator\".",
-		ko: "OwnGit이 다른 기기의 접속을 받도록 설정되어 있지만, 개인 네트워크의 기기가 %s에 연결하도록 허용하는 Windows 방화벽 규칙이 없습니다. 관리자가 \"관리자 권한으로 실행\"으로 연 터미널에서 이 명령을 실행하면 허용됩니다.",
+		ko: "OwnGit이 다른 기기의 접속을 받도록 설정되어 있지만 개인 네트워크의 기기가 %s에 연결하도록 허용하는 Windows 방화벽 규칙이 없습니다. 관리자가 \"관리자 권한으로 실행\"으로 연 터미널에서 이 명령을 실행하면 허용됩니다.",
 	},
 	// One %s: the owngit program that serves.
 	MsgDoctorWindowsBlocked: {
