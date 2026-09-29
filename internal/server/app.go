@@ -167,6 +167,9 @@ func (app *App) AuthorizeGit(request *http.Request) (bool, error) {
 		logFailure(request, "Git access check", err)
 		return false, err
 	}
+	if version, admitted := containerAdmissionVersion(request.Context()); admitted && (settings.AccessMode != "password" || settings.AccessSessionVersion != version) {
+		return false, nil
+	}
 	if !settings.Initialized {
 		return false, nil
 	}
@@ -372,6 +375,14 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	settings, err := app.Store.Settings(request.Context())
 	if err != nil {
 		app.answerUnavailable(writer, request, "settings read", err)
+		return
+	}
+	if version, admitted := containerAdmissionVersion(request.Context()); admitted && (settings.AccessMode != "password" || settings.AccessSessionVersion != version) {
+		if strings.HasPrefix(request.URL.Path, "/api/") {
+			writeAPIError(writer, http.StatusMisdirectedRequest, "unrecognized_host", "The request Host is not approved.", nil)
+		} else {
+			app.renderError(writer, request, http.StatusMisdirectedRequest, webui.MsgHostRefusedHint, "")
+		}
 		return
 	}
 	if strings.HasPrefix(request.URL.Path, "/api/") {

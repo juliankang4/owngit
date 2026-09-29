@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/netip"
@@ -17,7 +18,7 @@ type HostPolicy struct {
 	allowed map[string]struct{}
 	// signInRequired is set only in the OwnGit container image; see
 	// InContainer.
-	signInRequired func() (bool, error)
+	signInRequired func() (bool, int64, error)
 }
 
 // InContainer makes the policy follow the rule of the OwnGit container
@@ -31,7 +32,7 @@ type HostPolicy struct {
 // sign-in. While access is open, and before setup, such a request is
 // refused, as outside the image. signInRequired must not be nil; call
 // InContainer before the policy serves requests.
-func (policy *HostPolicy) InContainer(signInRequired func() (bool, error)) {
+func (policy *HostPolicy) InContainer(signInRequired func() (bool, int64, error)) {
 	policy.signInRequired = signInRequired
 }
 
@@ -74,14 +75,39 @@ func (policy *HostPolicy) Remove(value string) {
 // In the container image it is also accepted from other peers while access
 // needs a password (see InContainer); when that cannot be read, it is not.
 func (policy *HostPolicy) Allows(requestHost, peer string) bool {
+	allowed, _ := policy.allow(requestHost, peer)
+	return allowed
+}
+
+type containerAdmissionKey struct{}
+
+// containerAdmissionVersion is set only for a remote loopback Host admitted
+// because shared-password access was enabled at the Host check.
+func containerAdmissionVersion(ctx context.Context) (int64, bool) {
+	version, ok := ctx.Value(containerAdmissionKey{}).(int64)
+	return version, ok
+}
+
+func (policy *HostPolicy) allow(requestHost, peer string) (bool, *int64) {
 	host, err := normalizeHost(requestHost)
-	if err != nil || loopbackName(host) && !loopbackPeer(peer) && !policy.signInGuards() {
-		return false
+	if err != nil {
+		return false, nil
+	}
+	var admission *int64
+	if loopbackName(host) && !loopbackPeer(peer) {
+		if policy.signInRequired == nil {
+			return false, nil
+		}
+		required, version, err := policy.signInRequired()
+		if err != nil || !required {
+			return false, nil
+		}
+		admission = &version
 	}
 	policy.mu.RLock()
 	_, allowed := policy.allowed[host]
 	policy.mu.RUnlock()
-	return allowed
+	return allowed, admission
 }
 
 func (policy *HostPolicy) Middleware(next http.Handler) http.Handler {
@@ -95,7 +121,9 @@ func (policy *HostPolicy) Middleware(next http.Handler) http.Handler {
 // security headers apply either way.
 func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) (bool, error), unavailable func(http.ResponseWriter, *http.Request, string, error), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if info := requestctx.Of(request); !policy.Allows(info.Host, info.Peer) {
+		info := requestctx.Of(request)
+		allowed, admission := policy.allow(info.Host, info.Peer)
+		if !allowed {
 			admitted, err := false, error(nil)
 			if admit != nil {
 				admitted, err = admit(request)
@@ -112,6 +140,9 @@ func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) (bool, e
 				}
 				return
 			}
+		}
+		if admission != nil {
+			request = request.WithContext(context.WithValue(request.Context(), containerAdmissionKey{}, *admission))
 		}
 		if origin := request.Header.Get("Origin"); origin != "" && !sameOrigin(request, origin) {
 			if strings.HasPrefix(request.URL.Path, "/api/") {
@@ -149,16 +180,6 @@ func loopbackName(host string) bool {
 	}
 	address, err := netip.ParseAddr(host)
 	return err == nil && address.Unmap().IsLoopback()
-}
-
-// signInGuards reports whether, in the container image, access needs a
-// password now.
-func (policy *HostPolicy) signInGuards() bool {
-	if policy.signInRequired == nil {
-		return false
-	}
-	required, err := policy.signInRequired()
-	return err == nil && required
 }
 
 // loopbackPeer reports whether a connection's raw peer address, with or

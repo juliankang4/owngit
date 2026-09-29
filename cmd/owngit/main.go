@@ -565,9 +565,9 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	if container {
-		policy.InContainer(func() (bool, error) {
+		policy.InContainer(func() (bool, int64, error) {
 			current, err := store.Settings(ctx)
-			return current.Initialized && current.AccessMode == "password", err
+			return current.Initialized && current.AccessMode == "password", current.AccessSessionVersion, err
 		})
 		logf("running in the OwnGit container image: localhost from another address is accepted only while access needs a password")
 	}

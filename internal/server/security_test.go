@@ -370,7 +370,7 @@ func TestTrustedProxiesAndLoopbackHosts(t *testing.T) {
 // mode cannot be read, it is refused as outside the image.
 func TestContainerAcceptsLoopbackNamesOnlyBehindTheSignIn(t *testing.T) {
 	gitRefs := "/git/demo.git/info/refs?service=git-upload-pack"
-	serve := func(app *App, signInRequired func() (bool, error)) func(path, host, peer string) *httptest.ResponseRecorder {
+	serve := func(app *App, signInRequired func() (bool, int64, error)) func(path, host, peer string) *httptest.ResponseRecorder {
 		app.Hosts = NewHostPolicy("gitbox.lan")
 		app.Hosts.InContainer(signInRequired)
 		handler := app.Handler()
@@ -384,10 +384,10 @@ func TestContainerAcceptsLoopbackNamesOnlyBehindTheSignIn(t *testing.T) {
 	}
 	accessMode := func(store interface {
 		Settings(context.Context) (state.Settings, error)
-	}) func() (bool, error) {
-		return func() (bool, error) {
+	}) func() (bool, int64, error) {
+		return func() (bool, int64, error) {
 			settings, err := store.Settings(context.Background())
-			return settings.Initialized && settings.AccessMode == "password", err
+			return settings.Initialized && settings.AccessMode == "password", settings.AccessSessionVersion, err
 		}
 	}
 	for _, mode := range []string{"open", "password"} {
@@ -437,7 +437,7 @@ func TestContainerAcceptsLoopbackNamesOnlyBehindTheSignIn(t *testing.T) {
 	})
 	t.Run("unreadable access mode", func(t *testing.T) {
 		app := newConfiguredApp(t)
-		send := serve(app, func() (bool, error) { return true, errors.New("state unreadable") })
+		send := serve(app, func() (bool, int64, error) { return true, 0, errors.New("state unreadable") })
 		if response := send("/", "localhost:7654", remotePeer); response.Code == http.StatusSeeOther || response.Code == http.StatusOK {
 			t.Fatalf("an unreadable access mode admitted the request: %d", response.Code)
 		}
