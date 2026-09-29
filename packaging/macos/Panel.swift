@@ -170,11 +170,7 @@ final class PanelViewController: NSViewController {
         let tile = NSImageView(image: tileImage(size: 32))
         tile.setAccessibilityElement(false)
         let name = label("OwnGit", size: 13, weight: .semibold)
-        var sub = String(format: words.version, status?.version ?? appVersion)
-        if let status, let host = URL(string: status.dashboard_url)?.host {
-            let port = URL(string: status.dashboard_url)?.port.map { ":\($0)" } ?? ""
-            sub += ", " + host + port
-        }
+        let sub = String(format: words.version, status?.version ?? appVersion)
         let names = NSStackView(views: [name, label(sub, secondary: true, size: 11)])
         names.orientation = .vertical
         names.alignment = .leading
