@@ -135,6 +135,9 @@ func renderNPM(outDir string, inputs npmInputs) error {
 			OS: []string{npmOS(current)}, CPU: []string{npmCPU(current)},
 			Files: []string{npmBinaryPath(current), "README.md", "LICENSE", "THIRD_PARTY_NOTICES/"},
 		}
+		if _, ok := payload.entries[iconAppName+"/Contents/Info.plist"]; ok {
+			document.Files = append(document.Files, "bin/"+iconAppName+"/")
+		}
 		if err := writeNPMPackage(filepath.Join(outDir, name), document, files); err != nil {
 			return err
 		}
@@ -214,6 +217,13 @@ func npmPlatformFiles(inputs npmInputs, payload portablePayload) ([]nativePackag
 		nativePackageFile{path: npmBinaryPath(payload.target), mode: 0o755, data: payload.binary.data},
 		nativePackageFile{path: "README.md", mode: 0o644, data: readme},
 	)
+	// OwnGit.app, the macOS menu bar icon, beside the executable, as in the
+	// release archive.
+	for name, entry := range payload.entries {
+		if strings.HasPrefix(name, iconAppName+"/") {
+			files = append(files, nativePackageFile{path: "bin/" + name, mode: entry.mode, data: entry.data})
+		}
+	}
 	return files, nil
 }
 

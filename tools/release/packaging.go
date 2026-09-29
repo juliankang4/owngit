@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -31,6 +32,8 @@ type packagingData struct {
 	LinuxAMD64      artifactRef
 	LinuxARM64      artifactRef
 	WindowsAMD64    artifactRef
+	// DarwinApp is true when the macOS archive holds OwnGit.app.
+	DarwinApp bool
 }
 
 type artifactRef struct {
@@ -224,6 +227,9 @@ func packagingCommand(arguments []string) error {
 			return fmt.Errorf("manifest SHA-256 of %s is not 64 lowercase hexadecimal characters", built.Name)
 		}
 		*ref = artifactRef{Name: built.Name, SHA256: built.SHA256, SHA256Upper: strings.ToUpper(built.SHA256), Size: built.Size}
+		if built.Target == "darwin/arm64" {
+			data.DarwinApp = slices.ContainsFunc(built.Files, func(file fileEntry) bool { return file.Path == iconAppName+"/Contents/Info.plist" })
+		}
 	}
 	for _, name := range []string{"darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64"} {
 		if refs[name].Name == "" {

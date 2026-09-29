@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -164,6 +165,25 @@ func TestNPMPackages(t *testing.T) {
 				t.Fatalf("%s carries %s, which the archive does not", name, path)
 			}
 		}
+		// The macOS icon app comes from the archive unchanged, beside the
+		// executable, and only in the package whose archive has it.
+		apps := 0
+		for path, sha := range recorded {
+			if strings.HasPrefix(path, iconAppName+"/") {
+				apps++
+				if packaged["bin/"+path] != sha {
+					t.Fatalf("%s bin/%s sha256 %q, archive %s", name, path, packaged["bin/"+path], sha)
+				}
+			}
+		}
+		for path := range packaged {
+			if strings.HasPrefix(path, "bin/"+iconAppName+"/") {
+				apps--
+			}
+		}
+		if apps != 0 || current.goos == "darwin" && runtime.GOOS == "darwin" && !slices.Contains(platform.Files, "bin/"+iconAppName+"/") {
+			t.Fatalf("%s does not carry the archive's %s exactly (files %v)", name, iconAppName, platform.Files)
+		}
 	}
 
 	if runtime.GOOS != "windows" {
@@ -171,6 +191,7 @@ func TestNPMPackages(t *testing.T) {
 		for _, current := range releaseTargets {
 			executables[npmPackageName(current)+"/"+npmBinaryPath(current)] = true
 		}
+		executables[npmPackageName(releaseTargets[0])+"/bin/"+iconAppName+"/Contents/MacOS/OwnGitLauncher"] = true
 		err := filepath.WalkDir(npmDir, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err

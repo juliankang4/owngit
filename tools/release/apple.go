@@ -111,9 +111,11 @@ func (signer *appleSigner) sign(path, identifier string, hardenedRuntime bool) e
 	return nil
 }
 
-// signTool signs and notarizes a bare owngit binary in place. The binary
-// cannot hold a stapled ticket, so Gatekeeper finds its ticket online.
-func (signer *appleSigner) signTool(binary string) (*appleSignature, error) {
+// signTool signs and notarizes a bare owngit binary in place, together
+// with the icon app beside it when app is not "". The binary cannot hold a
+// stapled ticket, so Gatekeeper finds its ticket online; the app gets its
+// ticket stapled and must pass Gatekeeper's check.
+func (signer *appleSigner) signTool(binary, app string) (*appleSignature, error) {
 	unsigned, err := sha256File(binary)
 	if err != nil {
 		return nil, err
@@ -124,20 +126,47 @@ func (signer *appleSigner) signTool(binary string) (*appleSignature, error) {
 	if err := checkDeveloperIDSignature(signer.run, binary, signer.team, appleToolIdentifier, false); err != nil {
 		return nil, err
 	}
+	if app != "" {
+		if err := signer.sign(app, "", true); err != nil {
+			return nil, err
+		}
+		if err := checkDeveloperIDSignature(signer.run, app, signer.team, appleBundleID, true); err != nil {
+			return nil, err
+		}
+	}
 	// notarytool accepts a zip, a disk image or an installer package, not a
-	// bare Mach-O file.
+	// bare Mach-O file. One zip holds the binary and the app, so one
+	// submission covers both.
 	scratch, err := os.MkdirTemp("", "owngit-notarize-")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(scratch)
 	archive := filepath.Join(scratch, filepath.Base(binary)+".zip")
-	if _, err := signer.run("ditto", []string{"-c", "-k", "--keepParent", binary, archive}, nil); err != nil {
+	zip := []string{"-c", "-k", "--keepParent", binary, archive}
+	if app != "" {
+		payload := filepath.Join(scratch, "payload")
+		for _, source := range []string{binary, app} {
+			if _, err := signer.run("ditto", []string{source, filepath.Join(payload, filepath.Base(source))}, nil); err != nil {
+				return nil, fmt.Errorf("stage %s for notarization: %w", filepath.Base(source), err)
+			}
+		}
+		zip = []string{"-c", "-k", payload, archive}
+	}
+	if _, err := signer.run("ditto", zip, nil); err != nil {
 		return nil, fmt.Errorf("zip %s for notarization: %w", filepath.Base(binary), err)
 	}
 	submission, err := signer.notarize(archive)
 	if err != nil {
 		return nil, err
+	}
+	if app != "" {
+		if err := signer.staple(app); err != nil {
+			return nil, fmt.Errorf("Apple accepted the binary and app (submission %s), but %w", submission, err)
+		}
+		if err := signer.assess(app, "execute"); err != nil {
+			return nil, fmt.Errorf("Apple accepted the binary and app (submission %s), but %w", submission, err)
+		}
 	}
 	return &appleSignature{
 		TeamID: signer.team, Identifier: appleToolIdentifier,
@@ -219,7 +248,7 @@ func (signer *appleSigner) notaryLog(id string) string {
 	return strings.Join(lines, "\n  ")
 }
 
-// staple attaches the notarization ticket to a disk image, so Gatekeeper
+// staple attaches the notarization ticket to a disk image or an app, so Gatekeeper
 // can check it offline, and validates the attached ticket.
 func (signer *appleSigner) staple(path string) error {
 	for _, action := range []string{"staple", "validate"} {

@@ -7,9 +7,6 @@ import ServiceManagement
 // and starts whenever the owner logs in. Opening the app makes sure that
 // service exists and runs; quitting or hiding the icon never stops it.
 
-// The owngit binary inside the app. Apple reserves Contents/Helpers for helper
-// tools; tools/release (appHelperPath) places the binary at the same path.
-private let helperPath = "Contents/Helpers/owngit"
 
 // How often the icon asks the server while the panel is open, and while it
 // is closed.
@@ -44,7 +41,9 @@ struct HelperResult {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let words = Words.forLanguages(Locale.preferredLanguages)
-    private let helper = Bundle.main.bundleURL.appendingPathComponent(helperPath)
+    private let helper = ownGitProgram(app: Bundle.main.bundleURL) {
+        FileManager.default.isExecutableFile(atPath: $0.path)
+    }
     private let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
     private let agentURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/app.owngit.server.plist")
@@ -80,6 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.delegate = self
         if runsFromTemporaryPlace() {
             fail(words.moveApp)
+            return
+        }
+        guard FileManager.default.isExecutableFile(atPath: helper.path) else {
+            fail(String(format: words.noProgram, helper.path))
             return
         }
         readAgent()
@@ -159,6 +162,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func startVisible() {
         showIcon()
         refresh { [self] state in
+            // At sign-in launchd starts the service by itself, and a service
+            // the owner removed stays removed.
+            if openedAtSignIn {
+                return
+            }
             if let repair = launchRepair(state: state, agent: agent, helper: helper.path, version: appVersion) {
                 run(repair)
             }
@@ -505,6 +513,8 @@ private func runCommand(_ executable: URL, _ arguments: [String]) -> HelperResul
     process.arguments = arguments
     var environment = ProcessInfo.processInfo.environment
     environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    // The icon already runs, so "owngit service install" does not open it.
+    environment["OWNGIT_FROM_ICON"] = "1"
     process.environment = environment
     let output = Pipe()
     let errors = Pipe()

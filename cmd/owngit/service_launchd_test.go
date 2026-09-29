@@ -57,6 +57,8 @@ func recordLaunchctl(t *testing.T, loaded ...string) *fakeLaunchctl {
 	serviceRunner = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		fake.calls = append(fake.calls, name+" "+strings.Join(args, " "))
 		switch {
+		case name == "/usr/bin/open":
+			return nil, nil
 		case len(args) == 0:
 		case args[0] == "enable":
 			return nil, nil
@@ -373,8 +375,62 @@ func TestLaunchAgentInstallFromTheAppNamesTheApp(t *testing.T) {
 
 	fake.bootstrapped = ""
 	noErr(t, os.WriteFile(info, []byte("not a property list"), 0o644))
-	if err := host.install(stateDir, nil); err == nil || !strings.Contains(err.Error(), "inside an app") || fake.bootstrapped != "" {
+	if err := host.install(stateDir, nil); err == nil || !strings.Contains(err.Error(), "icon app") || fake.bootstrapped != "" {
 		t.Fatalf("install from a damaged app: %v, bootstrapped %q", err, fake.bootstrapped)
+	}
+}
+
+// service install opens the icon app that came with the program, so it
+// shows and registers itself for sign-in, only in the owner's desktop
+// login, for a service that is not headless, when the icon is not hidden
+// and when the icon did not run the command itself.
+func TestLaunchAgentOpensTheIcon(t *testing.T) {
+	fake := recordLaunchctl(t)
+	host, out := testLaunchAgentHost(t, macDesktop(), "")
+	app := filepath.Join(filepath.Dir(host.agentExecutable), "OwnGit.app")
+	noErr(t, os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0o755))
+	noErr(t, os.WriteFile(service.AppLauncher(app), nil, 0o755))
+	stateDir := filepath.Join(t.TempDir(), "state")
+	noErr(t, os.Mkdir(stateDir, 0o700))
+	opened := func() bool {
+		defer func() { fake.calls = nil }()
+		return slices.Contains(fake.calls, "/usr/bin/open "+app)
+	}
+
+	host.openIcon(stateDir, false)
+	if !opened() || !strings.Contains(out.String(), "owngit tray off") {
+		t.Fatalf("the icon was not opened: %v\n%s", fake.calls, out)
+	}
+	host.openIcon(stateDir, true)
+	if opened() {
+		t.Error("a headless service opened the icon")
+	}
+	host.env = macWithoutDesktop()
+	host.openIcon(stateDir, false)
+	if opened() {
+		t.Error("the icon opened without a desktop login")
+	}
+	host.env = macDesktop()
+	host.env.Getenv = func(name string) string { return map[string]string{"OWNGIT_FROM_ICON": "1"}[name] }
+	host.openIcon(stateDir, false)
+	if opened() {
+		t.Error("the icon was opened again by its own command")
+	}
+	host.env = macDesktop()
+	held, err := state.OpenStateDirectory(stateDir)
+	noErr(t, err)
+	noErr(t, state.SetTrayHidden(held, true))
+	noErr(t, held.Close())
+	host.openIcon(stateDir, false)
+	if opened() {
+		t.Error("a hidden icon was opened")
+	}
+
+	// A program without an app beside it opens nothing.
+	plain, _ := testLaunchAgentHost(t, macDesktop(), "")
+	plain.openIcon(stateDir, false)
+	if len(fake.calls) != 0 {
+		t.Errorf("a program without an app ran %v", fake.calls)
 	}
 }
 

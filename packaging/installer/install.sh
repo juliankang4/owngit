@@ -231,7 +231,7 @@ main() {
 	require_way "${TMPDIR:-/tmp}" 0 "set TMPDIR to a folder that only you can change"
 
 	tmp=$("$mktemp" -d)
-	trap 'rm -f "$tmp/SHA256SUMS" "$tmp/archive.tar.gz" "$tmp/owngit"; rmdir "$tmp"' EXIT
+	trap 'rm -f "$tmp/SHA256SUMS" "$tmp/archive.tar.gz" "$tmp/owngit"; rm -rf "$tmp/OwnGit.app"; rmdir "$tmp"' EXIT
 	fetch() {
 		"$curl" --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 2 -o "$2" "$1" ||
 			fail "could not download $1; nothing was changed"
@@ -262,6 +262,15 @@ main() {
 	[ "$actual" = "$digest" ] ||
 		fail "$name does not match the release's SHA256SUMS (got $actual, expected $digest); nothing was changed"
 	"$tar" -xzf "$tmp/archive.tar.gz" -C "$tmp" owngit || fail "could not unpack owngit from $name; nothing was changed"
+	# The macOS archive holds OwnGit.app, the menu bar icon, which goes
+	# beside the program.
+	app=""
+	if [ "$os" = darwin ] && "$tar" -tzf "$tmp/archive.tar.gz" | grep -q '^OwnGit\.app/'; then
+		"$tar" -xzf "$tmp/archive.tar.gz" -C "$tmp" OwnGit.app || fail "could not unpack OwnGit.app from $name; nothing was changed"
+		app=$dir/OwnGit.app
+		[ ! -L "$app" ] ||
+			fail "$app is a link to $(readlink "$app"), which another install may own; choose another folder with --to"
+	fi
 
 	# sudo only when this account cannot write the folder (or the nearest
 	# folder that exists, when it has to be made). A copy that sudo puts
@@ -286,6 +295,27 @@ main() {
 			fail "could not put owngit at $target"
 		fi
 		say "Installed OwnGit $version at $target."
+	fi
+	if [ -n "$app" ]; then
+		# The new app is copied beside the old one and takes its place with
+		# renames; the old one is removed afterwards.
+		staged=$($sudo "$mktemp" -d "$dir/.OwnGit.app.XXXXXXXX") || fail "could not write in $dir"
+		old=""
+		if ! $sudo cp -R "$tmp/OwnGit.app/." "$staged/" || ! $sudo chmod 0755 "$staged"; then
+			$sudo rm -rf "$staged"
+			fail "could not put OwnGit.app at $app"
+		fi
+		if [ -e "$app" ]; then
+			old=$($sudo "$mktemp" -d "$dir/.OwnGit.app.old.XXXXXXXX") && $sudo mv "$app" "$old/" ||
+				fail "could not replace $app"
+		fi
+		if ! $sudo mv "$staged" "$app"; then
+			[ -z "$old" ] || $sudo mv "$old/OwnGit.app" "$app"
+			$sudo rm -rf "$staged"
+			fail "could not put OwnGit.app at $app"
+		fi
+		[ -z "$old" ] || $sudo rm -rf "$old"
+		say "Installed the OwnGit menu bar icon at $app."
 	fi
 
 	case ":$user_path:" in

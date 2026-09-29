@@ -131,6 +131,19 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 	if _, ok := byName["THIRD_PARTY_NOTICES/bundled-assets/pretendard/PRETENDARD-LICENSE.txt"]; !ok {
 		t.Fatal("the archive carries no notice for the embedded font")
 	}
+	// On a Mac the macOS archive carries the menu bar icon beside the
+	// program, and the app starts that program rather than one inside it.
+	if native == "darwin/arm64" {
+		launcher, ok := byName[iconAppName+"/Contents/MacOS/OwnGitLauncher"]
+		if !ok || launcher.mode != 0o755 || !strings.Contains(string(byName[iconAppName+"/Contents/Info.plist"].data), "<string>"+appleBundleID+"</string>") {
+			t.Fatalf("the macOS archive has no working %s", iconAppName)
+		}
+		for name := range byName {
+			if strings.HasPrefix(name, iconAppName+"/Contents/Helpers/") {
+				t.Fatalf("the archive's app holds %s", name)
+			}
+		}
+	}
 
 	// An installed user copies the coding-tool skill and its guide from the
 	// archive. Verifying the names alone would pass on an empty file, so the

@@ -488,9 +488,9 @@ func TestNativeLauncherCommandsOpenOwnerDashboard(t *testing.T) {
 	}
 	// The launcher and the release tool must agree on where the app holds
 	// the owngit binary.
-	launcher := readText(t, filepath.Join(root, "packaging", "macos", "Launcher.swift"))
-	if !strings.Contains(launcher, `private let helperPath = "`+appHelperPath+`"`) {
-		t.Fatalf("macOS launcher does not start the binary at %s", appHelperPath)
+	status := readText(t, filepath.Join(root, "packaging", "macos", "TrayStatus.swift"))
+	if !strings.Contains(status, `app.appendingPathComponent("`+appHelperPath+`")`) {
+		t.Fatalf("macOS launcher does not look for the binary at %s", appHelperPath)
 	}
 	assertDesktopLaunchCommand(t, readText(t, filepath.Join(root, "packaging", "linux", "owngit.desktop")))
 }
@@ -631,6 +631,13 @@ let plist = """
 """
 require(readInstalledAgent(data(plist)) == InstalledAgent(program: helper, stateDir: "/tmp/s & t"), "agent program and state directory")
 require(readInstalledAgent(data("nope")) == nil, "not an agent")
+func program(_ app: String, _ present: [String]) -> String {
+    ownGitProgram(app: URL(fileURLWithPath: app)) { present.contains($0.path) }.path
+}
+require(program("/Applications/OwnGit.app", ["/Applications/OwnGit.app/Contents/Helpers/owngit", "/Applications/owngit"]) == "/Applications/OwnGit.app/Contents/Helpers/owngit", "the program inside the app first")
+require(program("/opt/local/bin/OwnGit.app", ["/opt/local/bin/owngit"]) == "/opt/local/bin/owngit", "the program beside the app")
+require(program("/opt/homebrew/opt/owngit/OwnGit.app", ["/opt/homebrew/opt/owngit/bin/owngit"]) == "/opt/homebrew/opt/owngit/bin/owngit", "the program in the bin folder beside the app")
+require(program("/opt/x/OwnGit.app", []) == "/opt/x/OwnGit.app/Contents/Helpers/owngit", "no program")
 require(Words.forLanguages(["ko-KR", "en"]).lang == "ko" && Words.forLanguages(["en-US", "ko"]).lang == "en" && Words.forLanguages([]).lang == "en", "language")
 print("tray status fixture passed")
 `
@@ -747,6 +754,48 @@ func writeTrayStatusFixtures(t *testing.T, dir string) string {
 	path := filepath.Join(dir, "fixtures.json")
 	noErr(t, os.WriteFile(path, encoded, 0o600))
 	return path
+}
+
+// The macOS archive may hold OwnGit.app beside the program: with its bundle
+// ID, version and launcher, and without a program of its own. A signed
+// archive must hold it, and other archives never do.
+func TestVerifyIconApp(t *testing.T) {
+	darwin, err := targetFor("darwin/arm64")
+	noErr(t, err)
+	linux, err := targetFor("linux/amd64")
+	noErr(t, err)
+	plist := func(identifier, version string) []byte {
+		return []byte("<plist><dict><key>CFBundleExecutable</key>\n  <string>OwnGitLauncher</string><key>CFBundleIdentifier</key>\n  <string>" +
+			identifier + "</string><key>CFBundleShortVersionString</key>\n  <string>" + version + "</string></dict></plist>")
+	}
+	app := func(extra ...archiveEntry) []archiveEntry {
+		return append([]archiveEntry{
+			{name: "owngit", mode: 0o755},
+			{name: "OwnGit.app/Contents/Info.plist", mode: 0o644, data: plist(appleBundleID, "1.2.3")},
+			{name: "OwnGit.app/Contents/MacOS/OwnGitLauncher", mode: 0o755},
+		}, extra...)
+	}
+	signed := artifact{AppleSignature: &appleSignature{TeamID: "TEAMID1234", Identifier: appleToolIdentifier}}
+	noErr(t, verifyIconApp(nil, "linux", darwin, app(), artifact{}, "1.2.3"))
+	noErr(t, verifyIconApp(nil, "linux", darwin, app()[:1], artifact{}, "1.2.3"))
+	noErr(t, verifyIconApp(nil, "linux", darwin, app(), signed, "1.2.3"))
+	for _, bad := range []struct {
+		name    string
+		target  target
+		entries []archiveEntry
+		built   artifact
+	}{
+		{"in the linux archive", linux, app(), artifact{}},
+		{"missing from a signed archive", darwin, app()[:1], signed},
+		{"another version", darwin, append(app()[:1], archiveEntry{name: "OwnGit.app/Contents/Info.plist", data: plist(appleBundleID, "1.2.2")}, app()[2]), artifact{}},
+		{"another bundle", darwin, append(app()[:1], archiveEntry{name: "OwnGit.app/Contents/Info.plist", data: plist("example.other", "1.2.3")}, app()[2]), artifact{}},
+		{"a launcher that is not executable", darwin, append(app()[:2], archiveEntry{name: "OwnGit.app/Contents/MacOS/OwnGitLauncher", mode: 0o644}), artifact{}},
+		{"a program inside", darwin, app(archiveEntry{name: "OwnGit.app/Contents/Helpers/owngit", mode: 0o755}), artifact{}},
+	} {
+		if err := verifyIconApp(nil, "linux", bad.target, bad.entries, bad.built, "1.2.3"); err == nil {
+			t.Errorf("an app %s was accepted", bad.name)
+		}
+	}
 }
 
 // hdiutil create is retried only while it reports a busy resource, with a

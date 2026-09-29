@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -247,8 +248,81 @@ func verifyArtifact(dir, goTool, appVersion string, built artifact) (artifactCov
 	if err := verifyReadmeVersion(entries, appVersion); err != nil {
 		return artifactCoverage{}, err
 	}
+	if err := verifyIconApp(runNativeCommand, runtime.GOOS, expected, entries, built, appVersion); err != nil {
+		return artifactCoverage{}, err
+	}
 	linked, err := verifyBinary(goTool, expected, entries, built, appVersion, noticeModules, noticeDocument)
 	return artifactCoverage{linked: linked, notices: noticeModules}, err
+}
+
+// plistStringPattern finds a string value of an XML property list key.
+var plistStringPattern = regexp.MustCompile(`<key>([A-Za-z]+)</key>\s*<string>([^<]*)</string>`)
+
+// verifyIconApp checks OwnGit.app in the macOS archive: its bundle ID and
+// version, its launcher, no owngit program inside it (the archive has the
+// program beside it), and on macOS the Developer ID signature of a signed
+// archive. A signed macOS archive must hold the app; an unsigned one may be
+// built without it on another host. Other archives never hold it.
+func verifyIconApp(run commandRunner, host string, expected target, entries []archiveEntry, built artifact, appVersion string) error {
+	prefix := iconAppName + "/"
+	app := map[string]archiveEntry{}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.name, prefix) {
+			app[strings.TrimPrefix(entry.name, prefix)] = entry
+		}
+	}
+	switch {
+	case expected.goos != "darwin" && len(app) > 0:
+		return fmt.Errorf("the %s archive holds %s", expected, iconAppName)
+	case expected.goos != "darwin":
+		return nil
+	case len(app) == 0 && built.AppleSignature != nil:
+		return fmt.Errorf("the signed %s archive has no %s", expected, iconAppName)
+	case len(app) == 0:
+		return nil
+	}
+	info, ok := app["Contents/Info.plist"]
+	if !ok {
+		return fmt.Errorf("%s has no Contents/Info.plist", iconAppName)
+	}
+	values := map[string]string{}
+	for _, match := range plistStringPattern.FindAllStringSubmatch(string(info.data), -1) {
+		values[match[1]] = match[2]
+	}
+	if values["CFBundleIdentifier"] != appleBundleID || values["CFBundleShortVersionString"] != appVersion || values["CFBundleExecutable"] != "OwnGitLauncher" {
+		return fmt.Errorf("%s names bundle %q version %q executable %q, want %s %s OwnGitLauncher", iconAppName, values["CFBundleIdentifier"], values["CFBundleShortVersionString"], values["CFBundleExecutable"], appleBundleID, appVersion)
+	}
+	if launcher, ok := app["Contents/MacOS/OwnGitLauncher"]; !ok || launcher.mode&0o111 == 0 {
+		return fmt.Errorf("%s has no executable Contents/MacOS/OwnGitLauncher", iconAppName)
+	}
+	for name := range app {
+		if strings.HasPrefix(name, "Contents/Helpers/") {
+			return fmt.Errorf("%s in the archive holds %s; the archive's program is beside it", iconAppName, name)
+		}
+	}
+	signature := built.AppleSignature
+	if signature == nil {
+		return nil
+	}
+	if host != "darwin" {
+		fmt.Printf("%s: the Developer ID signature of %s is recorded but can be checked only on macOS\n", expected, iconAppName)
+		return nil
+	}
+	dir, err := os.MkdirTemp("", "owngit-verify-app-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	for name, entry := range app {
+		path := filepath.Join(dir, iconAppName, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, entry.data, os.FileMode(entry.mode)); err != nil {
+			return err
+		}
+	}
+	return checkDeveloperIDSignature(run, filepath.Join(dir, iconAppName), signature.TeamID, appleBundleID, true)
 }
 
 func targetFor(name string) (target, error) {

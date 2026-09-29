@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -86,7 +87,13 @@ func newSyntheticRelease(t *testing.T, versions ...string) *syntheticRelease {
 			data = zipOf(t, map[string][]byte{"owngit.exe": program, "README.txt": []byte("OwnGit " + version + "\n")})
 		} else {
 			name = fmt.Sprintf("owngit_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
-			data = tarGzOf(t, map[string][]byte{"owngit": program, "README.txt": []byte("OwnGit " + version + "\n")})
+			files := map[string][]byte{"owngit": program, "README.txt": []byte("OwnGit " + version + "\n")}
+			if runtime.GOOS == "darwin" {
+				// The macOS archive holds the icon app beside the program.
+				files["OwnGit.app/Contents/Info.plist"] = []byte("OwnGit.app " + version + "\n")
+				files["OwnGit.app/Contents/MacOS/OwnGitLauncher"] = []byte("launcher " + version + "\n")
+			}
+			data = tarGzOf(t, files)
 		}
 		other := fmt.Sprintf("owngit_%s_linux_arm64.tar.gz", version)
 		if name == other {
@@ -243,6 +250,30 @@ func readLog(t *testing.T, path string) string {
 	return string(data)
 }
 
+// installedNames is what install.sh puts in the program's folder: the
+// program, and on macOS the icon app beside it.
+func installedNames() []string {
+	if runtime.GOOS == "darwin" {
+		return []string{"OwnGit.app", "owngit"}
+	}
+	return []string{"owngit"}
+}
+
+// appVersionAt reads the version the synthetic OwnGit.app beside target
+// holds, or "" when there is none.
+func appVersionAt(t *testing.T, target string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(target), "OwnGit.app", "Contents", "Info.plist"))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	noErr(t, err)
+	if info, err := os.Stat(filepath.Join(filepath.Dir(target), "OwnGit.app", "Contents", "MacOS", "OwnGitLauncher")); err != nil || info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("the app's launcher is not executable: %v", err)
+	}
+	return strings.TrimSpace(strings.TrimPrefix(string(data), "OwnGit.app "))
+}
+
 func dirNames(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -346,8 +377,8 @@ func TestInstallSh(t *testing.T) {
 		if log := readLog(t, run.log); log != "2.0.0 service install\n" {
 			t.Errorf("owngit ran as %q, want one service install", log)
 		}
-		if names := dirNames(t, filepath.Dir(target)); len(names) != 1 {
-			t.Errorf("the folder holds %v, want only owngit", names)
+		if names := dirNames(t, filepath.Dir(target)); !slices.Equal(names, installedNames()) {
+			t.Errorf("the folder holds %v, want %v", names, installedNames())
 		}
 	})
 
@@ -376,6 +407,14 @@ func TestInstallSh(t *testing.T) {
 		if got := release.versionOf(t, target); got != "1.0.0" {
 			t.Fatalf("installed %q, want 1.0.0:\n%s", got, output)
 		}
+		if runtime.GOOS == "darwin" {
+			if got := appVersionAt(t, target); got != "1.0.0" || !strings.Contains(output, "Installed the OwnGit menu bar icon at ") {
+				t.Errorf("the icon app beside the program is %q, want 1.0.0:\n%s", got, output)
+			}
+		}
+		if names := dirNames(t, filepath.Dir(target)); !slices.Equal(names, installedNames()) {
+			t.Errorf("the folder holds %v after the replacement, want %v", names, installedNames())
+		}
 		if log := readLog(t, run.log); log != "2.0.0 service install\n1.0.0 service install\n" {
 			t.Errorf("owngit ran as %q", log)
 		}
@@ -394,8 +433,8 @@ func TestInstallSh(t *testing.T) {
 		if log := readLog(t, run.log); log != "1.0.0 service install\n" {
 			t.Errorf("owngit ran as %q after the refusal", log)
 		}
-		if names := dirNames(t, filepath.Dir(target)); len(names) != 1 {
-			t.Errorf("the folder holds %v, want only owngit", names)
+		if names := dirNames(t, filepath.Dir(target)); !slices.Equal(names, installedNames()) {
+			t.Errorf("the folder holds %v, want %v", names, installedNames())
 		}
 	})
 
@@ -524,8 +563,8 @@ func TestInstallSh(t *testing.T) {
 		if owner := fileOwner(info); owner != 0 || info.Mode().Perm() != 0o755 {
 			t.Errorf("the program belongs to %d with mode %v, want root and 0755", owner, info.Mode().Perm())
 		}
-		if names := dirNames(t, dir); len(names) != 1 {
-			t.Errorf("the folder holds %v, want only owngit", names)
+		if names := dirNames(t, dir); !slices.Equal(names, installedNames()) {
+			t.Errorf("the folder holds %v, want %v", names, installedNames())
 		}
 		if log := readLog(t, run.log); log != "2.0.0 service install\n" {
 			t.Errorf("owngit ran as %q", log)

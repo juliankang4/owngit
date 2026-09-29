@@ -172,7 +172,7 @@ func (host *launchAgentHost) install(stateDirFlag string, headlessFlag *bool) er
 	}
 	plan := host.agentPlan(stateDir, headlessFlag, existing, found)
 	if plan.App, err = service.AppBundleID(context.Background(), serviceRunner, plan.Executable); err != nil {
-		return fmt.Errorf("the service would run the program inside an app, but %w", err)
+		return fmt.Errorf("the OwnGit icon app of %s is damaged: %w; install OwnGit again", plan.Executable, err)
 	}
 	agent, err := service.RenderLaunchAgent(plan)
 	if err != nil {
@@ -186,7 +186,46 @@ func (host *launchAgentHost) install(stateDirFlag string, headlessFlag *bool) er
 	if !gui {
 		host.printf("%s is not logged in on this Mac's screen now, so OwnGit runs in the background until the Mac restarts.\n", host.account.Username)
 	}
-	return host.reportStarted(plan.Mode, host.agentPath, stateDir)
+	if err := host.reportStarted(plan.Mode, host.agentPath, stateDir); err != nil {
+		return err
+	}
+	host.openIcon(stateDir, plan.Headless)
+	return nil
+}
+
+// openIcon opens OwnGit.app, the menu bar icon that came with this program,
+// so that it shows now; the app then opens itself at every sign-in. It
+// does nothing without the app, for a headless service, without this
+// user's desktop login, when the owner hid the icon, and when the icon
+// itself runs this command. The service runs either way, so a failure is
+// only reported.
+func (host *launchAgentHost) openIcon(stateDir string, headless bool) {
+	app := service.AppPath(host.agentExecutable)
+	if app == "" || headless || !host.env.GraphicalSession || host.env.Getenv("OWNGIT_FROM_ICON") != "" || trayHiddenIn(stateDir) {
+		return
+	}
+	if err := requireProtectedPath(service.AppLauncher(app)); err != nil {
+		host.printf("OwnGit does not open its menu bar icon at %s, because %v. OwnGit runs without it.\n", app, err)
+		return
+	}
+	if output, err := serviceRunner(context.Background(), "/usr/bin/open", app); err != nil {
+		host.printf("The OwnGit menu bar icon did not open (%v: %s). Open %s to show it; OwnGit runs without it.\n", err, strings.TrimSpace(string(output)), app)
+		return
+	}
+	host.printf("The OwnGit icon is in the menu bar and opens when you sign in. \"owngit tray off\" hides it; OwnGit keeps running.\n")
+}
+
+// trayHiddenIn reports whether the owner hid the icon for stateDir. A state
+// directory that cannot be read yet, as before the first start, has not
+// hidden it.
+func trayHiddenIn(stateDir string) bool {
+	held, err := state.OpenStateDirectory(stateDir)
+	if err != nil {
+		return false
+	}
+	defer held.Close()
+	hidden, err := state.TrayHidden(held)
+	return err == nil && hidden
 }
 
 // agentStateDir is the state directory of a new or updated service. A
@@ -260,7 +299,11 @@ func (host *launchAgentHost) installWithBrew(stateDir string, agentFound bool) e
 		}
 		host.printf("The OwnGit LaunchAgent of an earlier install is removed, so only brew services runs OwnGit.\n")
 	}
-	return host.reportStarted(service.ModeHomebrew, "", stateDir)
+	if err := host.reportStarted(service.ModeHomebrew, "", stateDir); err != nil {
+		return err
+	}
+	host.openIcon(stateDir, false)
+	return nil
 }
 
 // yieldToHomebrew runs when "owngit serve" starts under Homebrew's service:

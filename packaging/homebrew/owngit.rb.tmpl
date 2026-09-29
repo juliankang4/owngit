@@ -32,6 +32,11 @@ class Owngit < Formula
 
   def install
     bin.install "owngit"
+{{- if .DarwinApp}}
+    # OwnGit.app, the menu bar icon, next to the bin folder of the program;
+    # "owngit service install" opens it from there.
+    prefix.install "OwnGit.app" if OS.mac?
+{{- end}}
     prefix.install "LICENSE"
     prefix.install "THIRD_PARTY_NOTICES"
   end

@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -295,10 +296,24 @@ func buildTarget(goTool, root, outDir, readmeTemplate string, current target, ap
 	if _, err := runGo(goTool, root, environment, "build", "-trimpath", "-buildvcs=false", "-o", binaryPath, "./cmd/owngit"); err != nil {
 		return artifact{}, err
 	}
+	// The macOS archive holds OwnGit.app, the menu bar icon, beside the
+	// program. Building it takes Xcode's Swift compiler, so another host
+	// builds the archive without it; a signed build runs on macOS.
+	app := ""
+	if current.goos == "darwin" {
+		if runtime.GOOS == "darwin" {
+			app = filepath.Join(stage, iconAppName)
+			if err := buildIconApp(runNativeCommand, "xcrun", root, app, appVersion); err != nil {
+				return artifact{}, fmt.Errorf("build %s: %w", iconAppName, err)
+			}
+		} else {
+			fmt.Printf("%s: built without %s, which needs a macOS host with Xcode\n", current, iconAppName)
+		}
+	}
 	var signature *appleSignature
 	if signer != nil && current.goos == "darwin" {
 		var err error
-		if signature, err = signer.signTool(binaryPath); err != nil {
+		if signature, err = signer.signTool(binaryPath, app); err != nil {
 			return artifact{}, err
 		}
 	}
@@ -319,6 +334,11 @@ func buildTarget(goTool, root, outDir, readmeTemplate string, current target, ap
 
 	if err := add(current.binary, binaryPath, 0o755); err != nil {
 		return artifact{}, err
+	}
+	if app != "" {
+		if err := addTree(iconAppName, app, add); err != nil {
+			return artifact{}, err
+		}
 	}
 	if err := add("LICENSE", filepath.Join(root, "LICENSE"), 0o644); err != nil {
 		return artifact{}, err
@@ -410,6 +430,37 @@ func buildTarget(goTool, root, outDir, readmeTemplate string, current target, ap
 		})
 	}
 	return built, nil
+}
+
+// iconAppName is the menu bar icon app in the macOS archive.
+const iconAppName = "OwnGit.app"
+
+// addTree adds every file under dir to the archive as name/relative path,
+// executable files with mode 0755 and others with 0644. Only regular files
+// and folders may appear there.
+func addTree(name, dir string, add func(name, path string, mode int64) error) error {
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		archived := name + "/" + filepath.ToSlash(relative)
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", archived)
+		}
+		mode := int64(0o644)
+		if info.Mode().Perm()&0o111 != 0 {
+			mode = 0o755
+		}
+		return add(archived, path, mode)
+	})
 }
 
 // renderArchiveReadme renders the short note placed inside every archive.

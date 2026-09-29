@@ -117,7 +117,7 @@ func TestNewAppleSignerOptions(t *testing.T) {
 func TestSignToolSignsChecksAndNotarizes(t *testing.T) {
 	fake := &fakeApple{}
 	binary := writeTestBinary(t, "linker output")
-	signature, err := fake.signer().signTool(binary)
+	signature, err := fake.signer().signTool(binary, "")
 	noErr(t, err)
 	want := appleSignature{TeamID: testTeam, Identifier: appleToolIdentifier, NotarySubmission: testSubmit, UnsignedSHA256: sha256Bytes([]byte("linker output"))}
 	if *signature != want {
@@ -152,7 +152,7 @@ func TestSignToolSignsChecksAndNotarizes(t *testing.T) {
 // before anything is submitted to Apple.
 func TestSignToolMissingIdentity(t *testing.T) {
 	fake := &fakeApple{signError: &nativeCommandError{command: "codesign --force --sign", message: "error: The specified item could not be found in the keychain."}}
-	_, err := fake.signer().signTool(writeTestBinary(t, "linker output"))
+	_, err := fake.signer().signTool(writeTestBinary(t, "linker output"), "")
 	if err == nil || !strings.Contains(err.Error(), "could not be found in the keychain") || !strings.Contains(err.Error(), "sign owngit") {
 		t.Fatalf("error %v, want codesign's message", err)
 	}
@@ -505,7 +505,7 @@ func TestAdHocSigningWithRealCodesign(t *testing.T) {
 		payload, err := loadPortablePayload(dist, document, "darwin/arm64")
 		noErr(t, err)
 		binary := writeTestBinary(t, string(payload.binary.data))
-		signature, err := signer.signTool(binary)
+		signature, err := signer.signTool(binary, "")
 		noErr(t, err)
 		signed, err := sha256File(binary)
 		noErr(t, err)

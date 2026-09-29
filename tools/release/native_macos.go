@@ -50,10 +50,6 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 	if err != nil {
 		return nativeArtifact{}, err
 	}
-	infoPlist, err := renderNativeTemplate(filepath.Join(inputs.root, "packaging", "macos", "Info.plist.tmpl"), struct{ Version, BundleID string }{inputs.manifest.Version, appleBundleID})
-	if err != nil {
-		return nativeArtifact{}, err
-	}
 	readme, err := renderNativeTemplate(filepath.Join(inputs.root, "packaging", "macos", "README.txt.tmpl"), struct {
 		Version, Helper string
 		Signed          bool
@@ -74,38 +70,16 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 	defer os.RemoveAll(stage)
 	volume := filepath.Join(stage, "volume")
 	app := filepath.Join(volume, "OwnGit.app")
-	contents := filepath.Join(app, "Contents")
-	launcherPath := filepath.Join(contents, "MacOS", "OwnGitLauncher")
-	if err := os.MkdirAll(filepath.Dir(launcherPath), 0o755); err != nil {
-		return nativeArtifact{}, err
-	}
-	arguments := []string{"swiftc", "-O", "-gnone", "-framework", "AppKit", "-framework", "ServiceManagement", "-o", launcherPath}
-	for _, source := range macLauncherSources {
-		arguments = append(arguments, filepath.Join(inputs.root, "packaging", "macos", source))
-	}
-	if _, err := inputs.run(inputs.xcrun, arguments, nil); err != nil {
-		return nativeArtifact{}, err
-	}
-	if err := os.Chmod(launcherPath, 0o755); err != nil {
-		return nativeArtifact{}, err
-	}
-	if err := rejectEmbeddedHostPaths(launcherPath, inputs.root); err != nil {
+	if err := buildIconApp(inputs.run, inputs.xcrun, inputs.root, app, inputs.manifest.Version); err != nil {
 		return nativeArtifact{}, err
 	}
 
 	helper := "OwnGit.app/" + appHelperPath
 	files := []nativePackageFile{
-		{path: "OwnGit.app/Contents/Info.plist", mode: 0o644, data: infoPlist},
-		{path: "OwnGit.app/Contents/PkgInfo", mode: 0o644, data: []byte("APPL????")},
 		{path: helper, mode: 0o755, data: payload.binary.data},
 		{path: "OwnGit.app/Contents/Resources/package-provenance.json", mode: 0o644, data: provenance},
 		{path: "README.txt", mode: 0o644, data: readme},
 	}
-	launcherData, err := os.ReadFile(launcherPath)
-	if err != nil {
-		return nativeArtifact{}, err
-	}
-	files = append(files, nativePackageFile{path: "OwnGit.app/Contents/MacOS/OwnGitLauncher", mode: 0o755, data: launcherData})
 	for _, file := range shared {
 		name := filepath.ToSlash(filepath.Join("OwnGit.app", "Contents", "Resources", file.path))
 		files = append(files, nativePackageFile{path: name, mode: file.mode, data: file.data})
@@ -129,9 +103,6 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 		if _, err := writeFile(path, file.data, os.FileMode(file.mode)); err != nil {
 			return nativeArtifact{}, err
 		}
-	}
-	if _, err := inputs.run("plutil", []string{"-lint", filepath.Join(contents, "Info.plist")}, nil); err != nil {
-		return nativeArtifact{}, err
 	}
 	packagedBinaryDigest, err := sha256File(filepath.Join(volume, filepath.FromSlash(helper)))
 	if err != nil {
@@ -210,6 +181,46 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 		ApplicationBinarySHA256:  payload.binary.sha,
 		PackagedProvenanceSHA256: sha256Bytes(provenance), AppleSignature: signature, Files: shipped,
 	}, nil
+}
+
+// buildIconApp builds OwnGit.app, the menu bar icon, at app: its Info.plist,
+// PkgInfo and the launcher compiled from packaging/macos. It holds no owngit
+// program; the disk image adds one inside it, and a release archive has one
+// beside it.
+func buildIconApp(run commandRunner, xcrun, root, app, version string) error {
+	if !appleBundleVersionPattern.MatchString(version) {
+		return fmt.Errorf("version %q is not valid for CFBundleVersion", version)
+	}
+	contents := filepath.Join(app, "Contents")
+	launcherPath := filepath.Join(contents, "MacOS", "OwnGitLauncher")
+	if err := os.MkdirAll(filepath.Dir(launcherPath), 0o755); err != nil {
+		return err
+	}
+	infoPlist, err := renderNativeTemplate(filepath.Join(root, "packaging", "macos", "Info.plist.tmpl"), struct{ Version, BundleID string }{version, appleBundleID})
+	if err != nil {
+		return err
+	}
+	if _, err := writeFile(filepath.Join(contents, "Info.plist"), infoPlist, 0o644); err != nil {
+		return err
+	}
+	if _, err := writeFile(filepath.Join(contents, "PkgInfo"), []byte("APPL????"), 0o644); err != nil {
+		return err
+	}
+	arguments := []string{"swiftc", "-O", "-gnone", "-framework", "AppKit", "-framework", "ServiceManagement", "-o", launcherPath}
+	for _, source := range macLauncherSources {
+		arguments = append(arguments, filepath.Join(root, "packaging", "macos", source))
+	}
+	if _, err := run(xcrun, arguments, nil); err != nil {
+		return err
+	}
+	if err := os.Chmod(launcherPath, 0o755); err != nil {
+		return err
+	}
+	if err := rejectEmbeddedHostPaths(launcherPath, root); err != nil {
+		return err
+	}
+	_, err = run("plutil", []string{"-lint", filepath.Join(contents, "Info.plist")}, nil)
+	return err
 }
 
 // stapleAndAssess finishes an accepted DMG: it staples the ticket for

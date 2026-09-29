@@ -301,6 +301,19 @@ func helperArguments(_ repair: String?) -> [String]? {
     return Array(repair.split(separator: " ").dropFirst().map(String.init))
 }
 
+/// ownGitProgram is the owngit program the icon runs: the one inside the
+/// app (Contents/Helpers, where tools/release places it in the disk image),
+/// else the one beside the app, as a release archive, the installer and npm
+/// lay them out, else the one in the bin folder beside it, as Homebrew does.
+/// Without any, it is the path inside the app, which the icon reports as
+/// missing.
+func ownGitProgram(app: URL, isExecutable: (URL) -> Bool) -> URL {
+    let inside = app.appendingPathComponent("Contents/Helpers/owngit")
+    let folder = app.deletingLastPathComponent()
+    let candidates = [inside, folder.appendingPathComponent("owngit"), folder.appendingPathComponent("bin/owngit")]
+    return candidates.first(where: isExecutable) ?? inside
+}
+
 /// The OwnGit LaunchAgent as the icon reads it: the program it runs and the
 /// state directory it passes.
 struct InstalledAgent: Equatable {
@@ -379,6 +392,7 @@ struct Words {
     let failed: String
     let readFailed: String
     let noDashboard, openFailed, notConfirmed: String
+    let noProgram: String
 
     static let en = Words(
         lang: "en",
@@ -410,7 +424,8 @@ struct Words {
         readFailed: "OwnGit could not read the icon setting: %@",
         noDashboard: "OwnGit could not read this computer's dashboard address from %@. Start OwnGit and try again.",
         openFailed: "macOS could not open %@.",
-        notConfirmed: "OwnGit did not confirm that it answers at this computer's address, so nothing was opened."
+        notConfirmed: "OwnGit did not confirm that it answers at this computer's address, so nothing was opened.",
+        noProgram: "OwnGit.app needs the owngit program inside it or beside it, but %@ is missing. Install OwnGit again."
     )
 
     static let ko = Words(
@@ -443,7 +458,8 @@ struct Words {
         readFailed: "OwnGit 아이콘 설정을 읽지 못했습니다: %@",
         noDashboard: "%@에서 이 컴퓨터의 대시보드 주소를 읽지 못했습니다. OwnGit을 시작한 뒤 다시 해 보세요.",
         openFailed: "macOS가 %@ 주소를 열지 못했습니다.",
-        notConfirmed: "이 컴퓨터의 주소에서 OwnGit이 응답하는지 확인하지 못해 아무것도 열지 않았습니다."
+        notConfirmed: "이 컴퓨터의 주소에서 OwnGit이 응답하는지 확인하지 못해 아무것도 열지 않았습니다.",
+        noProgram: "owngit 프로그램을 찾지 못했습니다: %@. 이 프로그램은 OwnGit.app 안이나 옆에 있어야 합니다. OwnGit을 다시 설치하세요."
     )
 
     /// forLanguages picks Korean when the first preferred language is

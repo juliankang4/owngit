@@ -165,6 +165,52 @@ func TestAppBundleID(t *testing.T) {
 	}
 }
 
+// The icon app of a program: the app it is inside, else OwnGit.app beside
+// it (archive, installer, npm), else beside its bin folder (Homebrew).
+func TestAppPath(t *testing.T) {
+	dir := t.TempDir()
+	mkdir := func(path string) string {
+		t.Helper()
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	inside := mkdir(filepath.Join(dir, "Applications", "OwnGit.app"))
+	mkdir(filepath.Join(inside, "Contents", "Helpers"))
+	beside := mkdir(filepath.Join(dir, "local", "bin", "OwnGit.app"))
+	brew := mkdir(filepath.Join(dir, "opt", "owngit", "OwnGit.app"))
+	mkdir(filepath.Join(dir, "opt", "owngit", "bin"))
+	mkdir(filepath.Join(dir, "plain", "bin"))
+	if err := os.WriteFile(filepath.Join(dir, "plain", "bin", "OwnGit.app"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for executable, want := range map[string]string{
+		filepath.Join(inside, "Contents", "Helpers", "owngit"): inside,
+		filepath.Join(dir, "local", "bin", "owngit"):           beside,
+		filepath.Join(dir, "opt", "owngit", "bin", "owngit"):   brew,
+		filepath.Join(dir, "plain", "bin", "owngit"):           "",
+		filepath.Join(dir, "nowhere", "owngit"):                "",
+	} {
+		if got := AppPath(executable); got != want {
+			t.Errorf("AppPath(%s) = %q, want %q", executable, got, want)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(beside, "Contents", "Info.plist"), []byte(`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>app.owngit.OwnGit</string></dict></plist>`), 0o644); err == nil {
+		t.Fatal("the beside app has no Contents folder yet")
+	}
+	mkdir(filepath.Join(beside, "Contents"))
+	if err := os.WriteFile(filepath.Join(beside, "Contents", "Info.plist"), []byte(`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>app.owngit.OwnGit</string></dict></plist>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := AppBundleID(context.Background(), nil, filepath.Join(dir, "local", "bin", "owngit")); err != nil || got != "app.owngit.OwnGit" {
+		t.Fatalf("AppBundleID beside = %q, %v", got, err)
+	}
+	if _, err := AppBundleID(context.Background(), nil, filepath.Join(dir, "opt", "owngit", "bin", "owngit")); err == nil {
+		t.Fatal("an app without Info.plist is named")
+	}
+}
+
 func TestRenderLaunchAgentRefuses(t *testing.T) {
 	for name, change := range map[string]func(*Plan){
 		"relative executable":      func(plan *Plan) { plan.Executable = "owngit" },

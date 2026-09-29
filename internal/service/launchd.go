@@ -374,16 +374,45 @@ func stringList(value any) []string {
 	return words
 }
 
-// AppBundleID returns the bundle identifier of the app that holds
-// executable as its helper, at APP.app/Contents/Helpers, from the app's
-// Info.plist. It returns "" for an executable outside an app bundle.
+// AppPath returns OwnGit.app, the menu bar icon, that belongs to the
+// program at executable: the app that holds it as its helper, at
+// APP.app/Contents/Helpers; else OwnGit.app beside it, as a release
+// archive, the installer and npm lay them out; else OwnGit.app beside its
+// bin folder, as Homebrew installs it. It returns "" when there is none.
+func AppPath(executable string) string {
+	folder := filepath.Dir(executable)
+	contents := filepath.Dir(folder)
+	if filepath.Base(folder) == "Helpers" && filepath.Base(contents) == "Contents" && filepath.Ext(filepath.Dir(contents)) == ".app" {
+		return filepath.Dir(contents)
+	}
+	candidates := []string{filepath.Join(folder, AppName)}
+	if filepath.Base(folder) == "bin" {
+		candidates = append(candidates, filepath.Join(filepath.Dir(folder), AppName))
+	}
+	for _, app := range candidates {
+		if info, err := os.Stat(app); err == nil && info.IsDir() {
+			return app
+		}
+	}
+	return ""
+}
+
+// AppName is the folder name of the icon app.
+const AppName = "OwnGit.app"
+
+// AppLauncher is the icon's executable inside app.
+func AppLauncher(app string) string {
+	return filepath.Join(app, "Contents", "MacOS", "OwnGitLauncher")
+}
+
+// AppBundleID returns the bundle identifier of the app AppPath finds for
+// executable, from the app's Info.plist, or "" when there is no app.
 func AppBundleID(ctx context.Context, run Runner, executable string) (string, error) {
-	helpers := filepath.Dir(executable)
-	contents := filepath.Dir(helpers)
-	if filepath.Base(helpers) != "Helpers" || filepath.Base(contents) != "Contents" || filepath.Ext(filepath.Dir(contents)) != ".app" {
+	app := AppPath(executable)
+	if app == "" {
 		return "", nil
 	}
-	info := filepath.Join(contents, "Info.plist")
+	info := filepath.Join(app, "Contents", "Info.plist")
 	plist, err := readAnyPlist(ctx, run, info)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", info, err)
