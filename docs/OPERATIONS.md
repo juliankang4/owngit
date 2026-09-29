@@ -375,7 +375,7 @@ The command line reads and changes the same five through the administrator API. 
 - `owngit settings show` prints these settings as JSON.
 - `owngit settings set` changes only the ones its options name, such as `--session 7d`.
 
-When a saved setting cannot be read, for example after a hand edit of the state database, `show` fails and names it. `set` still saves the settings it names and lists the unreadable one under `unreadable`; setting it again replaces it.
+When a saved setting cannot be read, for example after a hand edit of the state database, `show` fails and names it. `set` still saves the settings it names and lists the unreadable one under `unreadable`; setting it again replaces it. While the server-wide kept history choice cannot be read, pushes and imports to every repository that follows it are refused.
 
 These settings belong to this installation host and are not in backups, so a restored installation starts with the defaults.
 
@@ -781,7 +781,7 @@ When a force push, an import or a deletion replaces the commits of a branch or t
 
 A change applies to pushes and imports that start after you save. With Do not keep, the commits replaced from then on are not kept, and OwnGit cannot show or restore them. History kept before stays and can still be restored; nothing is deleted. Fast-forward pushes, merges, restores, backups and repository deletion work the same either way.
 
-`owngit repo settings show --repository NAME` prints a repository's choices as JSON, with `kept_history_now` for what it does now. Like `owngit settings`, both `repo settings` commands need `--server` and a `--password-file` holding the administrator password. If a repository's saved choices cannot be read, pushes and imports to it are refused until you save them again.
+`owngit repo settings show --repository NAME` prints a repository's choices as JSON, with `kept_history_now` for what it does now. Like `owngit settings`, both `repo settings` commands need `--server` and a `--password-file` holding the administrator password. If a repository's saved choices cannot be read, pushes and imports to it are refused until you save them again; on the command line, give both `--kept-history` and `--protect-default-branch`.
 
 ### Changing the default branch
 
@@ -1187,7 +1187,7 @@ owngit backup \
   --output /path/to/new-backup
 ```
 
-While a repository keeps history, a secret ever pushed to it stays visible in the browser and in every later backup, even after a force-push or branch deletion. Only [deleting the repository](#deleting-a-repository) with its files then removes it, and earlier backups still contain it. Rotate any secret you push by mistake.
+A secret that was ever pushed stays in the repository's Git data, even after a force-push or branch deletion and even with kept history off, and anyone who can read the repository and has its commit ID can still open it in the browser. While the repository keeps history, it also stays in kept history and in every later backup. Only [deleting the repository](#deleting-a-repository) with its files removes it, and earlier backups still contain it. Rotate any secret you push by mistake.
 
 ### What a backup holds
 
